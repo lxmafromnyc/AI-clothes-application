@@ -1,4 +1,4 @@
-# Wove — AI clothing finder
+# FindWear — AI clothing finder
 
 A four-page static website for an AI clothing recommendation product. You tell it the
 style, colour, occasion, fit, budget and brands you want; it returns a ranked shortlist
