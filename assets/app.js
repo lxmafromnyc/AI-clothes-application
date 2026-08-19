@@ -46,20 +46,18 @@
 /* ---------- home: preview panel ---------- */
 (function heroPanel() {
   const list = document.getElementById('hero-picks');
-  if (!list || typeof CATALOG === 'undefined') return;
+  if (!list || typeof HERO_PICKS === 'undefined') return;
 
-  const picks = [[2, 96], [7, 93], [3, 91]];
-  list.innerHTML = picks.map(([id, score]) => {
-    const item = CATALOG.find((i) => i.id === id);
-    return `<div class="mini-item">
+  const EXTERNAL = '<svg class="ext" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7M9 7h8v8"/></svg>';
+
+  list.innerHTML = HERO_PICKS.map((item) => `<a class="mini-item" href="${item.url}" target="_blank" rel="noopener noreferrer">
       ${miniArt(item)}
       <div class="mini-meta">
-        <strong>${item.name}</strong>
-        <span>${item.brand} &middot; $${item.price}</span>
+        <strong class="mini-name">${item.name}</strong>
+        <span class="mini-retailer">${item.retailer}${item.price ? ` &middot; $${item.price}` : ''}${EXTERNAL}</span>
       </div>
-      <span class="match-pill">${score}%</span>
-    </div>`;
-  }).join('');
+      <span class="match-pill">${item.score}%</span>
+    </a>`).join('');
 })();
 
 /* ---------- find clothes ---------- */

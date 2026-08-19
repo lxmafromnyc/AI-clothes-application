@@ -60,6 +60,39 @@ const CATALOG = [
   { id: 24, name: 'Fleece Sweatpant',       brand: 'Kinfield',     price: 72,  type: 'trousers', color: 'Earth',   styles: ['Sporty', 'Streetwear'],     occasions: ['Everyday', 'Active'],  fits: ['Relaxed', 'Oversized'] }
 ];
 
+/* ---------- homepage demo picks ----------
+   Real, purchasable products. Names and product-page URLs come from UNIQLO's
+   live US storefront. Prices are deliberately not shown here: they change
+   often and could not be read from the live product pages, and a guessed
+   price would be worse than none. Add `price` to an entry and it renders. */
+
+const HERO_PICKS = [
+  {
+    name: "Men's Extra Fine Merino Crew Neck Long-Sleeve Sweater",
+    retailer: 'UNIQLO',
+    url: 'https://www.uniqlo.com/us/en/products/E429066-000/00',
+    color: 'Neutral',
+    type: 'knit',
+    score: 96
+  },
+  {
+    name: "Men's Extra Fine Cotton Broadcloth Shirt",
+    retailer: 'UNIQLO',
+    url: 'https://www.uniqlo.com/us/en/products/E439611-000/00',
+    color: 'White',
+    type: 'shirt',
+    score: 93
+  },
+  {
+    name: "Women's Pleated Wide Pants",
+    retailer: 'UNIQLO',
+    url: 'https://www.uniqlo.com/us/en/products/E460311-000/00',
+    color: 'Black',
+    type: 'trousers',
+    score: 91
+  }
+];
+
 /* ---------- rendering ---------- */
 
 function tileArt(item) {

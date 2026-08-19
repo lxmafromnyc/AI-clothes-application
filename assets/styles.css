@@ -301,6 +301,7 @@ button, input, select { font: inherit; color: inherit; }
   transition: background .2s var(--ease);
 }
 .mini-item + .mini-item { margin-top: 2px; }
+.mini-item { align-items: center; }
 .mini-item:hover { background: var(--surface-2); }
 .mini-thumb {
   width: 46px; height: 58px;
@@ -313,6 +314,19 @@ button, input, select { font: inherit; color: inherit; }
 .mini-meta { min-width: 0; flex: 1; }
 .mini-meta strong { display: block; font-size: 14.5px; font-weight: 600; letter-spacing: -.015em; }
 .mini-meta span { font-size: 13px; color: var(--muted); }
+.mini-name { line-height: 1.32; }
+.mini-retailer {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 3px;
+  font-weight: 500;
+}
+.mini-retailer .ext { width: 11px; height: 11px; opacity: .75; }
+a.mini-item { color: inherit; text-decoration: none; }
+a.mini-item:hover .mini-name { color: var(--accent-ink); text-decoration: underline; text-underline-offset: 2px; }
+a.mini-item:hover .mini-retailer { color: var(--ink-2); }
+a.mini-item:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .match-pill {
   flex: none;
   font-size: 12px;
