@@ -1,5 +1,5 @@
 /* =========================================================
-   Wove — sample catalog + shared rendering helpers
+   FindWear — sample catalog + shared rendering helpers
    ========================================================= */
 
 const STYLES = ['Minimal', 'Classic', 'Streetwear', 'Sporty', 'Bohemian', 'Bold'];
