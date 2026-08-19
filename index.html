@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wove — Tell the AI what you want to wear</title>
+<meta name="description" content="Tell Wove the style, colour, occasion, fit and budget you want. The AI finds clothes that match — in seconds.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='9' fill='%235B54E8'/><path d='M16 6l2.5 7.5L26 16l-7.5 2.5L16 26l-2.5-7.5L6 16l7.5-2.5z' fill='white'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/styles.css">
+<script>document.documentElement.classList.add('js');</script>
+</head>
+<body>
+
+<header class="site-header">
+  <div class="container">
+    <div class="nav">
+      <a class="brand" href="index.html">
+        <span class="mark"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2l1.9 5.6L19.5 9.5 13.9 11.4 12 17l-1.9-5.6L4.5 9.5l5.6-1.9L12 2z"/></svg></span>
+        Wove
+      </a>
+      <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" aria-label="Open menu"><span></span></button>
+      <nav class="nav-links" id="site-nav" aria-label="Main">
+        <a href="index.html" aria-current="page">Home</a>
+        <a href="find-clothes.html">Find Clothes</a>
+        <a href="discover.html">Discover</a>
+        <a href="about.html">About</a>
+      </nav>
+    </div>
+  </div>
+</header>
+
+<main>
+
+  <section class="hero">
+    <div class="container">
+      <div class="hero-grid">
+        <div>
+          <span class="eyebrow"><span class="dot"></span>AI clothing finder</span>
+          <h1>Tell the AI what you want to wear.<br><span class="grad">It finds the clothes.</span></h1>
+          <p class="lead">Choose your style, colours, occasion, fit and budget. Wove reads your preferences and returns a shortlist of pieces that actually match.</p>
+          <div class="btn-row">
+            <a class="btn btn-primary btn-lg" href="find-clothes.html">
+              Find my clothes
+              <svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+            </a>
+            <a class="btn btn-ghost btn-lg" href="discover.html">Browse styles</a>
+          </div>
+          <p class="hero-note">
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2l1.9 5.6L19.5 9.5 13.9 11.4 12 17l-1.9-5.6L4.5 9.5l5.6-1.9L12 2z"/></svg>
+            Takes about 30 seconds. No account needed.
+          </p>
+        </div>
+
+        <div class="panel" aria-label="Example of a Wove recommendation">
+          <div class="panel-head">
+            <span class="panel-label">YOU ASKED FOR</span>
+          </div>
+          <div class="panel-chips">
+            <span>Minimal</span><span>Neutral</span><span>Work</span><span>Under $150</span>
+          </div>
+          <p class="panel-divider">
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2l1.9 5.6L19.5 9.5 13.9 11.4 12 17l-1.9-5.6L4.5 9.5l5.6-1.9L12 2z"/></svg>
+            Wove found
+          </p>
+          <div id="hero-picks"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="container">
+      <div class="section-head center reveal">
+        <h2>Three steps, one shortlist</h2>
+        <p class="lead" style="margin-inline:auto">No endless scrolling and no filters to fight with.</p>
+      </div>
+      <div class="steps">
+        <div class="step reveal" style="--d:0ms">
+          <span class="step-num">1</span>
+          <h3>Say what you like</h3>
+          <p>Tap through style, colour, occasion, fit, budget and brands. A few taps is enough.</p>
+        </div>
+        <div class="step reveal" style="--d:90ms">
+          <span class="step-num">2</span>
+          <h3>The AI matches</h3>
+          <p>Every piece is scored against your preferences, then ranked from closest to loosest fit.</p>
+        </div>
+        <div class="step reveal" style="--d:180ms">
+          <span class="step-num">3</span>
+          <h3>See why it picked them</h3>
+          <p>Each result explains its match in one line, so the whole list is easy to scan.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" style="padding-top:0">
+    <div class="container">
+      <div class="cta-band reveal">
+        <h2>Ready to see your picks?</h2>
+        <p>Set your preferences once and get a shortlist built around them.</p>
+        <a class="btn btn-primary btn-lg" href="find-clothes.html">
+          Find my clothes
+          <svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </a>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="container">
+    <div class="footer-inner">
+      <a class="brand" href="index.html">
+        <span class="mark"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2l1.9 5.6L19.5 9.5 13.9 11.4 12 17l-1.9-5.6L4.5 9.5l5.6-1.9L12 2z"/></svg></span>
+        Wove
+      </a>
+      <nav class="footer-links" aria-label="Footer">
+        <a href="index.html">Home</a>
+        <a href="find-clothes.html">Find Clothes</a>
+        <a href="discover.html">Discover</a>
+        <a href="about.html">About</a>
+      </nav>
+    </div>
+    <p class="footer-note">Wove is a demo experience — recommendations come from a sample catalogue.</p>
+  </div>
+</footer>
+
+<script src="assets/catalog.js"></script>
+<script src="assets/app.js"></script>
+</body>
+</html>

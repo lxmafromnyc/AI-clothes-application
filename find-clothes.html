@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Find Clothes — Wove</title>
+<meta name="description" content="Enter your style, colour, occasion, fit, budget and brands. Wove's AI recommends clothes that match.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='9' fill='%235B54E8'/><path d='M16 6l2.5 7.5L26 16l-7.5 2.5L16 26l-2.5-7.5L6 16l7.5-2.5z' fill='white'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/styles.css">
+<script>document.documentElement.classList.add('js');</script>
+</head>
+<body>
+
+<header class="site-header">
+  <div class="container">
+    <div class="nav">
+      <a class="brand" href="index.html">
+        <span class="mark"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2l1.9 5.6L19.5 9.5 13.9 11.4 12 17l-1.9-5.6L4.5 9.5l5.6-1.9L12 2z"/></svg></span>
+        Wove
+      </a>
+      <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" aria-label="Open menu"><span></span></button>
+      <nav class="nav-links" id="site-nav" aria-label="Main">
+        <a href="index.html">Home</a>
+        <a href="find-clothes.html" aria-current="page">Find Clothes</a>
+        <a href="discover.html">Discover</a>
+        <a href="about.html">About</a>
+      </nav>
+    </div>
+  </div>
+</header>
+
+<main>
+
+  <div class="narrow">
+    <div class="page-head">
+      <span class="eyebrow"><span class="dot"></span>Your preferences</span>
+      <h1>Tell Wove what you want</h1>
+      <p class="lead">Tap the preferences that sound like you. The AI does the rest.</p>
+    </div>
+  </div>
+
+  <section class="section section--tight" style="padding-top:44px">
+    <div class="narrow">
+
+      <form class="form-card" id="pref-form" novalidate>
+
+        <fieldset class="field">
+          <div class="field-head">
+            <h2>Style</h2>
+            <span class="field-hint">Pick as many as you like</span>
+          </div>
+          <div class="chips">
+            <label class="chip"><input type="checkbox" name="style" value="Minimal">Minimal</label>
+            <label class="chip"><input type="checkbox" name="style" value="Classic">Classic</label>
+            <label class="chip"><input type="checkbox" name="style" value="Streetwear">Streetwear</label>
+            <label class="chip"><input type="checkbox" name="style" value="Sporty">Sporty</label>
+            <label class="chip"><input type="checkbox" name="style" value="Bohemian">Bohemian</label>
+            <label class="chip"><input type="checkbox" name="style" value="Bold">Bold</label>
+          </div>
+        </fieldset>
+
+        <fieldset class="field">
+          <div class="field-head">
+            <h2>Colour</h2>
+            <span class="field-hint">Tones you actually wear</span>
+          </div>
+          <div class="chips">
+            <label class="chip"><input type="checkbox" name="color" value="Neutral"><span class="swatch" style="background:#D7C9B6"></span>Neutral</label>
+            <label class="chip"><input type="checkbox" name="color" value="Black"><span class="swatch" style="background:#1E1E22"></span>Black</label>
+            <label class="chip"><input type="checkbox" name="color" value="White"><span class="swatch" style="background:#F5F4F1"></span>White</label>
+            <label class="chip"><input type="checkbox" name="color" value="Blue"><span class="swatch" style="background:#5B7FB9"></span>Blue</label>
+            <label class="chip"><input type="checkbox" name="color" value="Green"><span class="swatch" style="background:#6F8F70"></span>Green</label>
+            <label class="chip"><input type="checkbox" name="color" value="Earth"><span class="swatch" style="background:#A97B54"></span>Earth</label>
+            <label class="chip"><input type="checkbox" name="color" value="Pastel"><span class="swatch" style="background:#E4C6E6"></span>Pastel</label>
+            <label class="chip"><input type="checkbox" name="color" value="Bright"><span class="swatch" style="background:#EF6F5B"></span>Bright</label>
+          </div>
+        </fieldset>
+
+        <fieldset class="field">
+          <div class="field-head">
+            <h2>Occasion</h2>
+            <span class="field-hint">Where you'll wear it</span>
+          </div>
+          <div class="chips">
+            <label class="chip"><input type="checkbox" name="occasion" value="Everyday">Everyday</label>
+            <label class="chip"><input type="checkbox" name="occasion" value="Work">Work</label>
+            <label class="chip"><input type="checkbox" name="occasion" value="Evening">Evening</label>
+            <label class="chip"><input type="checkbox" name="occasion" value="Weekend">Weekend</label>
+            <label class="chip"><input type="checkbox" name="occasion" value="Active">Active</label>
+          </div>
+        </fieldset>
+
+        <fieldset class="field">
+          <div class="field-head">
+            <h2>Fit</h2>
+            <span class="field-hint">How it should sit</span>
+          </div>
+          <div class="chips">
+            <label class="chip"><input type="checkbox" name="fit" value="Slim">Slim</label>
+            <label class="chip"><input type="checkbox" name="fit" value="Regular">Regular</label>
+            <label class="chip"><input type="checkbox" name="fit" value="Relaxed">Relaxed</label>
+            <label class="chip"><input type="checkbox" name="fit" value="Oversized">Oversized</label>
+          </div>
+        </fieldset>
+
+        <div class="field">
+          <div class="field-head">
+            <h2><label for="budget">Budget</label></h2>
+            <span class="field-hint">Per piece</span>
+          </div>
+          <div class="budget-row">
+            <input type="range" id="budget" name="budget" min="40" max="400" step="10" value="200">
+            <span class="budget-value" id="budget-value">Up to $200</span>
+          </div>
+        </div>
+
+        <fieldset class="field">
+          <div class="field-head">
+            <h2>Brands</h2>
+            <span class="field-hint">Optional</span>
+          </div>
+          <div class="chips">
+            <label class="chip"><input type="checkbox" name="brand" value="Northfold">Northfold</label>
+            <label class="chip"><input type="checkbox" name="brand" value="Halden">Halden</label>
+            <label class="chip"><input type="checkbox" name="brand" value="Coveworks">Coveworks</label>
+            <label class="chip"><input type="checkbox" name="brand" value="Atlas Supply">Atlas Supply</label>
+            <label class="chip"><input type="checkbox" name="brand" value="Rue Nine">Rue Nine</label>
+            <label class="chip"><input type="checkbox" name="brand" value="Terrace">Terrace</label>
+            <label class="chip"><input type="checkbox" name="brand" value="Kinfield">Kinfield</label>
+            <label class="chip"><input type="checkbox" name="brand" value="Solstice">Solstice</label>
+          </div>
+        </fieldset>
+
+        <div class="form-actions">
+          <button class="btn btn-primary btn-lg" type="submit">
+            Get my recommendations
+            <svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+          </button>
+          <button class="link-btn" type="button" id="reset-form">Start over</button>
+        </div>
+        <p class="form-error" id="form-error" role="alert">Pick at least one preference so the AI has something to work with.</p>
+      </form>
+
+      <div class="results" id="results" hidden></div>
+
+    </div>
+  </section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="container">
+    <div class="footer-inner">
+      <a class="brand" href="index.html">
+        <span class="mark"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2l1.9 5.6L19.5 9.5 13.9 11.4 12 17l-1.9-5.6L4.5 9.5l5.6-1.9L12 2z"/></svg></span>
+        Wove
+      </a>
+      <nav class="footer-links" aria-label="Footer">
+        <a href="index.html">Home</a>
+        <a href="find-clothes.html">Find Clothes</a>
+        <a href="discover.html">Discover</a>
+        <a href="about.html">About</a>
+      </nav>
+    </div>
+    <p class="footer-note">Wove is a demo experience — recommendations come from a sample catalogue.</p>
+  </div>
+</footer>
+
+<script src="assets/catalog.js"></script>
+<script src="assets/app.js"></script>
+</body>
+</html>
