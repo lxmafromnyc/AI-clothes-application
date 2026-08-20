@@ -504,6 +504,85 @@ input[type="range"]::-moz-range-thumb {
 }
 .form-error.show { display: block; }
 
+/* ---------- ask box (find clothes) ---------- */
+
+.sr-only {
+  position: absolute; width: 1px; height: 1px;
+  padding: 0; margin: -1px; overflow: hidden;
+  clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+.ask-card {
+  scroll-margin-top: 96px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow);
+  padding: 22px 22px 20px;
+  transition: border-color .2s var(--ease), box-shadow .2s var(--ease);
+}
+.ask-card:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 4px var(--accent-soft), var(--shadow);
+}
+.ask-card textarea {
+  display: block;
+  width: 100%;
+  border: 0;
+  outline: none;
+  resize: none;
+  background: transparent;
+  font-family: inherit;
+  font-size: clamp(17px, 1.9vw, 20px);
+  line-height: 1.5;
+  letter-spacing: -.015em;
+  color: var(--ink);
+  padding: 6px 6px 10px;
+}
+.ask-card textarea::placeholder { color: var(--muted); }
+
+.ask-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+.ask-actions .link-btn { margin-left: auto; }
+
+.ask-examples {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 18px;
+  font-size: 14px;
+  color: var(--muted);
+}
+.example {
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  border-radius: var(--r-pill);
+  padding: 7px 14px;
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--ink-2);
+  cursor: pointer;
+  transition: border-color .18s var(--ease), color .18s var(--ease), transform .18s var(--ease);
+}
+.example:hover { border-color: var(--ink); color: var(--ink); transform: translateY(-1px); }
+
+/* what the interpreter took from the request */
+.understood { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; }
+.understood span {
+  padding: 5px 11px;
+  border-radius: var(--r-pill);
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
 /* ---------- results ---------- */
 
 .results { padding-top: 60px; scroll-margin-top: 96px; }
@@ -742,6 +821,10 @@ a.item-card:hover .item-brand { color: var(--accent-ink); }
   .item-body { padding: 13px 13px 15px; }
   .form-actions .btn-primary { flex: 1 1 100%; }
   .form-actions .link-btn { margin-left: 0; }
+  .ask-card { padding: 18px; border-radius: var(--r-lg); }
+  .ask-actions { flex-wrap: wrap; }
+  .ask-actions .btn-primary { flex: 1 1 100%; }
+  .ask-actions .link-btn { margin-left: 0; }
   .btn { width: auto; }
   .hero .btn-row .btn { flex: 1 1 auto; }
 }

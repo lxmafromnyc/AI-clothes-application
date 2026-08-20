@@ -124,11 +124,6 @@ function orderFacet(counts, key) {
   return known.concat(rest);
 }
 
-function chipHtml(name, value, swatch) {
-  const dot = swatch ? `<span class="swatch" style="background:${(COLORS[value] || FALLBACK_COLOR).dot}"></span>` : '';
-  return `<label class="chip"><input type="checkbox" name="${name}" value="${esc(value)}">${dot}${esc(value)}</label>`;
-}
-
 /* ---------- mobile navigation ---------- */
 (function nav() {
   const toggle = document.querySelector('.nav-toggle');
@@ -198,74 +193,103 @@ function chipHtml(name, value, swatch) {
   });
 })();
 
-/* ---------- find clothes ---------- */
+/* ---------- find clothes ----------
+   One text box. What the shopper types goes to the interpreter, which
+   returns structured preferences, and those are matched against whatever
+   products the data source holds. */
 (function finder() {
-  const form = document.getElementById('pref-form');
-  if (!form || typeof Products === 'undefined') return;
+  const form = document.getElementById('ask-form');
+  if (!form || typeof Products === 'undefined' || typeof Interpreter === 'undefined') return;
 
-  const budget = document.getElementById('budget');
-  const budgetValue = document.getElementById('budget-value');
+  const input = document.getElementById('ask');
   const results = document.getElementById('results');
   const error = document.getElementById('form-error');
   const reset = document.getElementById('reset-form');
-  let maxBudget = Number(budget.max);
+  const examples = document.getElementById('ask-examples');
 
-  const syncBudget = () => {
-    budgetValue.textContent = Number(budget.value) >= maxBudget ? 'Any price' : `Up to $${budget.value}`;
-    const pct = ((budget.value - budget.min) / (budget.max - budget.min)) * 100;
-    budget.style.background = `linear-gradient(90deg, var(--accent) 0%, var(--accent-2) ${pct}%, var(--surface-2) ${pct}%)`;
+  /* the vocabulary the catalogue can actually match, handed to the
+     interpreter so it maps a request onto values that exist */
+  function vocabulary() {
+    const f = Products.facets();
+    return {
+      categories: [...new Set(Products.all().map((p) => p.category).filter(Boolean))],
+      colors: [...f.colors.keys()],
+      occasions: [...f.occasions.keys()],
+      fits: [...f.fits.keys()],
+      brands: [...f.brands.keys()],
+      styles: [...f.styles.keys()]
+    };
+  }
+
+  const lower = (list) => list.map((v) => String(v).toLowerCase());
+  const overlap = (values, wanted) => {
+    const want = lower(wanted);
+    return values.filter((v) => want.includes(String(v).toLowerCase()));
   };
-  budget.addEventListener('input', syncBudget);
-
-  /* chip styling is delegated so it survives the controls being rebuilt
-     whenever the data source changes */
-  form.addEventListener('change', (e) => {
-    const chip = e.target.closest('.chip');
-    if (chip) chip.classList.toggle('is-checked', e.target.checked);
-  });
-
-  const picked = (name) => [...form.querySelectorAll(`input[name="${name}"]:checked`)].map((i) => i.value);
-  const overlap = (a, b) => a.filter((v) => b.includes(v));
 
   function score(item, prefs) {
-    const weights = { style: 3, color: 2.6, occasion: 2.6, fit: 2.2, brand: 3 };
+    const weights = { category: 3.2, color: 2.6, occasion: 2.4, fit: 2.2, brand: 3, style: 2 };
     let earned = 0;
     let possible = 0;
     const hits = {};
     const take = (key, weight, matches) => {
-      if (!prefs[key].length) return;
       possible += weight;
       if (matches.length) { earned += weight; hits[key] = matches[0]; }
     };
 
-    take('style', weights.style, overlap(item.styles, prefs.style));
-    take('color', weights.color, overlap(item.colors, prefs.color));
-    take('occasion', weights.occasion, overlap(item.occasions, prefs.occasion));
-    take('fit', weights.fit, overlap(item.fits, prefs.fit));
-    take('brand', weights.brand, prefs.brand.includes(item.brand) ? [item.brand] : []);
+    if (prefs.categories.length) take('category', weights.category, lower(prefs.categories).includes(String(item.category).toLowerCase()) ? [item.category] : []);
+    if (prefs.colors.length) take('color', weights.color, overlap(item.colors, prefs.colors));
+    if (prefs.occasions.length) take('occasion', weights.occasion, overlap(item.occasions, prefs.occasions));
+    if (prefs.fits.length) take('fit', weights.fit, overlap(item.fits, prefs.fits));
+    if (prefs.styles.length) take('style', weights.style, overlap(item.styles, prefs.styles));
+    if (prefs.brands.length) take('brand', weights.brand, lower(prefs.brands).includes(item.brand.toLowerCase()) ? [item.brand] : []);
 
-    return { ratio: possible ? earned / possible : 0, hits };
+    /* a light nudge when words from the request appear in the product name */
+    const name = item.name.toLowerCase();
+    const wordHit = prefs.keywords.some((w) => w.length > 3 && name.includes(w));
+    if (wordHit) earned += 0.6;
+
+    return { ratio: possible ? Math.min(earned / possible, 1) : 0, hits };
   }
 
   function reason(hits, prefs, item) {
     const parts = [];
-    if (hits.style) parts.push(`${hits.style.toLowerCase()} cut`);
-    if (hits.color) parts.push(`${hits.color.toLowerCase()} tones`);
-    if (hits.occasion) parts.push(`made for ${hits.occasion.toLowerCase()}`);
-    if (hits.fit) parts.push(`${hits.fit.toLowerCase()} fit`);
-    if (hits.brand) parts.push(`by ${hits.brand}, a brand you picked`);
-    /* only claim the budget when the product actually has a price */
-    if (prefs.budget < maxBudget && item.price != null) parts.push(`inside your $${prefs.budget} budget`);
+    if (hits.category) parts.push(`the ${String(hits.category).toLowerCase()} you asked for`);
+    if (hits.color) parts.push(`${String(hits.color).toLowerCase()} tones`);
+    if (hits.fit) parts.push(`${String(hits.fit).toLowerCase()} fit`);
+    if (hits.occasion) parts.push(`made for ${String(hits.occasion).toLowerCase()}`);
+    if (hits.brand) parts.push(`by ${hits.brand}`);
+    if (hits.style) parts.push(`${String(hits.style).toLowerCase()} styling`);
+    if (prefs.maxPrice && item.price != null) parts.push(`under $${prefs.maxPrice}`);
 
     const text = parts.slice(0, 3).join(', ');
+    if (!text) return 'Close to what you described.';
     return text.charAt(0).toUpperCase() + text.slice(1) + '.';
   }
 
+  /* what the interpreter took from the request, shown back to the shopper */
+  function understood(prefs) {
+    const chips = [
+      ...prefs.categories, ...prefs.colors, ...prefs.fits, ...prefs.occasions,
+      ...prefs.styles, ...prefs.brands
+    ];
+    if (prefs.gender) chips.unshift(prefs.gender);
+    if (prefs.season) chips.push(prefs.season);
+    if (prefs.maxPrice) chips.push(`under $${prefs.maxPrice}`);
+    if (prefs.minPrice) chips.push(`over $${prefs.minPrice}`);
+    return chips.slice(0, 7);
+  }
+
   function render(prefs) {
-    const capped = prefs.budget < maxBudget;
+    const withinBudget = (item) => {
+      if (item.price == null) return true; /* unknown price cannot be ruled out */
+      if (prefs.maxPrice && item.price > prefs.maxPrice) return false;
+      if (prefs.minPrice && item.price < prefs.minPrice) return false;
+      return true;
+    };
+
     const scored = Products.all()
-      /* a product with no price cannot be ruled out by a budget */
-      .filter((item) => !capped || item.price == null || item.price <= prefs.budget)
+      .filter(withinBudget)
       .map((item) => {
         const { ratio, hits } = score(item, prefs);
         return { ...item, ratio, score: Math.round(70 + ratio * 28), why: reason(hits, prefs, item) };
@@ -274,14 +298,16 @@ function chipHtml(name, value, swatch) {
       .sort((a, b) => b.ratio - a.ratio || (a.price ?? Infinity) - (b.price ?? Infinity))
       .slice(0, 8);
 
-    const summary = [...prefs.style, ...prefs.color, ...prefs.occasion, ...prefs.fit, ...prefs.brand]
-      .slice(0, 4).join(' · ');
+    const chips = understood(prefs);
+    const readback = chips.length
+      ? `<div class="understood">${chips.map((c) => `<span>${esc(c)}</span>`).join('')}</div>`
+      : '';
 
     if (!scored.length) {
-      results.innerHTML = `<div class="results-head"><div><h2>No matches yet</h2></div></div>
+      results.innerHTML = `<div class="results-head"><div><h2>No matches yet</h2>${readback}</div></div>
         <div class="empty">
-          <h3>Nothing in the catalogue fits all of that</h3>
-          <p>Try raising the budget or picking a second style — the results widen straight away.</p>
+          <h3>Nothing in the catalogue fits that request</h3>
+          <p>Try describing it a little differently, or ask for something broader.</p>
         </div>`;
       return;
     }
@@ -289,71 +315,60 @@ function chipHtml(name, value, swatch) {
     results.innerHTML = `<div class="results-head">
         <div>
           <h2>${scored.length} ${scored.length === 1 ? 'piece' : 'pieces'} picked for you</h2>
-          <p>Matched on ${summary}${capped ? ` · under $${prefs.budget}` : ''}</p>
+          ${readback}
         </div>
       </div>
       <div class="grid">${scored.map(resultCard).join('')}</div>`;
     bindImageFallback(results);
   }
 
-  form.addEventListener('submit', (e) => {
-    e.preventDefault();
-    const prefs = {
-      style: picked('style'),
-      color: picked('color'),
-      occasion: picked('occasion'),
-      fit: picked('fit'),
-      brand: picked('brand'),
-      budget: Number(budget.value)
-    };
-
-    const total = prefs.style.length + prefs.color.length + prefs.occasion.length + prefs.fit.length + prefs.brand.length;
-    if (!total) {
-      error.classList.add('show');
-      return;
-    }
+  async function search(query) {
     error.classList.remove('show');
-
     results.hidden = false;
     results.innerHTML = `<p class="thinking">
       <span class="spark"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2l1.9 5.6L19.5 9.5 13.9 11.4 12 17l-1.9-5.6L4.5 9.5l5.6-1.9L12 2z"/></svg></span>
-      Reading your preferences and matching pieces…</p>`;
+      Reading your request…</p>`;
     results.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
-    window.setTimeout(() => render(prefs), 650);
+    const { preferences } = await Interpreter.interpret(query, vocabulary());
+    render(preferences);
+  }
+
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const query = input.value.trim();
+    if (!query) {
+      error.classList.add('show');
+      input.focus();
+      return;
+    }
+    search(query);
   });
 
+  /* Enter submits, Shift+Enter makes a new line */
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      form.requestSubmit();
+    }
+  });
+
+  if (examples) {
+    examples.addEventListener('click', (e) => {
+      const button = e.target.closest('.example');
+      if (!button) return;
+      input.value = button.textContent.trim();
+      search(input.value);
+    });
+  }
+
   reset.addEventListener('click', () => {
-    form.reset();
-    form.querySelectorAll('.chip').forEach((chip) => chip.classList.remove('is-checked'));
-    syncBudget();
+    input.value = '';
     error.classList.remove('show');
     results.hidden = true;
     results.innerHTML = '';
+    input.focus();
     form.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  });
-
-  /* the preference controls are rebuilt from whatever the data contains */
-  Products.subscribe((items) => {
-    const f = Products.facets();
-    const fill = (facetKey, inputName, swatch) => {
-      const holder = form.querySelector(`.chips[data-facet="${facetKey}"]`);
-      if (holder) holder.innerHTML = orderFacet(f[facetKey], facetKey).map((v) => chipHtml(inputName, v, swatch)).join('');
-    };
-    fill('styles', 'style');
-    fill('colors', 'color', true);
-    fill('occasions', 'occasion');
-    fill('fits', 'fit');
-
-    const brands = form.querySelector('.chips[data-facet="brands"]');
-    if (brands) brands.innerHTML = [...f.brands.keys()].sort((a, b) => a.localeCompare(b))
-      .map((v) => chipHtml('brand', v)).join('');
-
-    /* keep the slider able to reach the most expensive product on offer */
-    maxBudget = Math.max(400, Math.ceil(f.maxPrice / 50) * 50);
-    budget.max = String(maxBudget);
-    if (Number(budget.value) > maxBudget) budget.value = String(maxBudget);
-    syncBudget();
   });
 })();
 

@@ -1,48 +1,121 @@
 # FindWear — AI clothing finder
 
-A four-page static website for an AI clothing recommendation product. You tell it the
-style, colour, occasion, fit, budget and brands you want; it returns a ranked shortlist
-of pieces with a one-line reason for each match.
+A four-page site where you describe the clothes you want in your own words and get
+back a ranked shortlist. "I need a black shirt for school under $50" is a complete
+request — there is no form to fill in.
 
 ## Pages
 
 | Page | File | What it does |
 | --- | --- | --- |
-| Home | `index.html` | States the value proposition immediately and points to one primary CTA |
-| Find Clothes | `find-clothes.html` | Preference form (style, colour, occasion, fit, budget, brands) → ranked recommendations |
+| Home | `index.html` | States the value proposition and links to the finder |
+| Find Clothes | `find-clothes.html` | One text box → AI reads the request → ranked recommendations |
 | Discover | `discover.html` | Browse the catalogue, filtered by style |
-| About | `about.html` | What the site does and how the recommendation flow works |
+| About | `about.html` | What the site does and how the matching works |
 
 ## Running it
 
-No build step and no dependencies — it is plain HTML, CSS and JavaScript.
+The site itself is plain HTML, CSS and JavaScript with no build step.
 
 ```sh
 python3 -m http.server 8000
 # then open http://localhost:8000
 ```
 
-Opening `index.html` directly in a browser works too.
+Opening `index.html` directly in a browser also works. Without the interpreter
+endpoint below, requests are read by a local fallback parser instead of the AI —
+the page still works, it just understands less.
 
 ## Structure
 
 ```
 index.html, find-clothes.html, discover.html, about.html
-assets/styles.css    design tokens + all shared components
-assets/catalog.js    sample catalogue and card rendering
-assets/app.js        navigation, recommendations, filtering
+api/interpret.js        serverless endpoint; calls OpenAI, holds the API key
+assets/products.js      data layer: normalises any source into one schema
+assets/catalog.js       demo product source, replaceable by a real feed
+assets/interpret.js     sends the request to the endpoint; local fallback
+assets/app.js           rendering and page behaviour
+assets/styles.css       design tokens and all shared components
 ```
 
-## How the matching works
+## Connecting the AI
 
-`assets/app.js` scores every catalogue item against the selected preferences — style,
-colour, occasion and fit are weighted signals, a chosen brand is a strong boost, and the
-budget is a hard ceiling. Scores are normalised into the match percentage shown on each
-card, and the matched signals are turned into the "why this piece" line beneath it.
+`api/interpret.js` turns a written request into structured preferences. It runs
+server-side so `OPENAI_API_KEY` is never sent to a browser. **Do not move this
+call into the frontend** — a key in client JavaScript is a key anyone can take.
+
+### Deploying
+
+GitHub Pages serves static files only and cannot run this function. To get the AI
+path, deploy somewhere with serverless support. The site is static, so any of
+these work and all have a free tier:
+
+**Vercel** — `api/interpret.js` is picked up as-is.
+
+```sh
+npx vercel
+npx vercel env add OPENAI_API_KEY
+```
+
+**Netlify** — point `netlify.toml` at the file, or move it to
+`netlify/functions/interpret.js` and export `handler`.
+
+**Cloudflare Pages** — move it to `functions/api/interpret.js` and wrap the logic
+in `export async function onRequestPost({ request, env })`, reading the key from
+`env.OPENAI_API_KEY` rather than `process.env`.
+
+### Environment variables
+
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `OPENAI_API_KEY` | yes | Your OpenAI key. Without it the endpoint returns 503 and the frontend falls back to local parsing. |
+| `OPENAI_MODEL` | no | Model to call. Defaults to `gpt-4o-mini`; set it to whatever your account has access to. |
+| `ALLOWED_ORIGIN` | no | Only set this if the frontend is on a different origin than the function. Left unset, no CORS header is sent and the endpoint is same-origin only. |
+
+### Worth knowing
+
+- The endpoint caps requests at 400 characters and asks the model for JSON only,
+  then re-validates every field before returning it — a malformed or hostile
+  reply cannot reach the matching code.
+- Upstream errors are logged server-side but never echoed to the browser, since
+  they can quote the request.
+- There is no rate limiting. This endpoint spends your OpenAI credit, so put your
+  host's rate limiting or an auth check in front of it before making it public.
+
+## The product catalogue
+
+Every product, demo or real, is normalised by `assets/products.js` into one shape:
+
+```
+id, name, brand, price, productUrl, imageUrl,
+category, styles, occasions, fits, colors, sizes
+```
+
+Feeds disagree about field names, so `style`/`styles`, `color`/`colors`,
+`url`/`productUrl`, `image`/`imageUrl` and similar are all accepted; `"$49.90"`
+parses to a number and `"S,M,L"` to a list. Records missing a name or brand are
+dropped rather than throwing, and only `http(s)` links survive.
+
+Swapping the demo catalogue for real data is one call:
+
+```js
+Products.load(DEMO_PRODUCTS);          // this repo's demo data
+Products.load('/api/products.json');   // a URL returning JSON
+Products.load(() => queryDatabase());  // a function or promise
+```
+
+The interface subscribes to the store, so filter options, Discover pills and the
+matching vocabulary all rebuild from whatever arrives. Unfamiliar colours and
+garment categories fall back to neutral artwork rather than breaking.
 
 ## Notes
 
 - Typeface is Inter, loaded from Google Fonts.
-- Item artwork is generated in the browser from CSS gradients and inline SVG, so there
-  are no image assets to load.
-- The catalogue is a small sample set for demonstration; it is not real inventory.
+- Products without an `imageUrl` — which is all of them today — render generated
+  artwork built from CSS gradients and inline SVG. Set `imageUrl` on a product
+  and it renders the photo; if that photo fails to load, the artwork returns.
+- `price` and `imageUrl` are `null` throughout the demo catalogue because no
+  retailer domain was reachable from the environment this was built in, so no
+  value could be verified. They are ordinary data fields.
+- The catalogue is a small sample set plus three real listings; it is not real
+  inventory.

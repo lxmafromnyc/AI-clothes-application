@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Find Clothes — FindWear</title>
-<meta name="description" content="Enter your style, colour, occasion, fit, budget and brands. FindWear's AI recommends clothes that match.">
+<meta name="description" content="Describe the clothes you want in your own words. FindWear's AI reads your request and finds pieces that match.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='9' fill='%235B54E8'/><path d='M16 6l2.5 7.5L26 16l-7.5 2.5L16 26l-2.5-7.5L6 16l7.5-2.5z' fill='white'/></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -36,77 +36,35 @@
 
   <div class="narrow">
     <div class="page-head">
-      <span class="eyebrow"><span class="dot"></span>Your preferences</span>
+      <span class="eyebrow"><span class="dot"></span>AI clothing finder</span>
       <h1>Tell FindWear what you want</h1>
-      <p class="lead">Tap the preferences that sound like you. The AI does the rest.</p>
+      <p class="lead">Describe it however you like. FindWear reads your request and finds the pieces that fit.</p>
     </div>
   </div>
 
-  <section class="section section--tight" style="padding-top:44px">
+  <section class="section section--tight" style="padding-top:36px">
     <div class="narrow">
 
-      <form class="form-card" id="pref-form" novalidate>
-
-        <fieldset class="field">
-          <div class="field-head">
-            <h2>Style</h2>
-            <span class="field-hint">Pick as many as you like</span>
-          </div>
-          <div class="chips" data-facet="styles"></div>
-        </fieldset>
-
-        <fieldset class="field">
-          <div class="field-head">
-            <h2>Colour</h2>
-            <span class="field-hint">Tones you actually wear</span>
-          </div>
-          <div class="chips" data-facet="colors"></div>
-        </fieldset>
-
-        <fieldset class="field">
-          <div class="field-head">
-            <h2>Occasion</h2>
-            <span class="field-hint">Where you'll wear it</span>
-          </div>
-          <div class="chips" data-facet="occasions"></div>
-        </fieldset>
-
-        <fieldset class="field">
-          <div class="field-head">
-            <h2>Fit</h2>
-            <span class="field-hint">How it should sit</span>
-          </div>
-          <div class="chips" data-facet="fits"></div>
-        </fieldset>
-
-        <div class="field">
-          <div class="field-head">
-            <h2><label for="budget">Budget</label></h2>
-            <span class="field-hint">Per piece</span>
-          </div>
-          <div class="budget-row">
-            <input type="range" id="budget" name="budget" min="40" max="400" step="10" value="200">
-            <span class="budget-value" id="budget-value">Up to $200</span>
-          </div>
-        </div>
-
-        <fieldset class="field">
-          <div class="field-head">
-            <h2>Brands</h2>
-            <span class="field-hint">Optional</span>
-          </div>
-          <div class="chips" data-facet="brands"></div>
-        </fieldset>
-
-        <div class="form-actions">
+      <form class="ask-card" id="ask-form">
+        <label class="sr-only" for="ask">What are you looking for?</label>
+        <textarea id="ask" name="ask" rows="3" maxlength="400"
+          placeholder="What are you looking for?"></textarea>
+        <div class="ask-actions">
           <button class="btn btn-primary btn-lg" type="submit">
-            Get my recommendations
+            Find my clothes
             <svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
           </button>
           <button class="link-btn" type="button" id="reset-form">Start over</button>
         </div>
-        <p class="form-error" id="form-error" role="alert">Pick at least one preference so the AI has something to work with.</p>
+        <p class="form-error" id="form-error" role="alert">Tell FindWear what you are looking for first.</p>
       </form>
+
+      <p class="ask-examples" id="ask-examples">
+        <span>Try</span>
+        <button type="button" class="example">a black shirt for school under $50</button>
+        <button type="button" class="example">loose neutral clothes for fall</button>
+        <button type="button" class="example">a white button-up for work</button>
+      </p>
 
       <div class="results" id="results" hidden></div>
 
@@ -134,6 +92,7 @@
 </footer>
 
 <script src="assets/products.js"></script>
+<script src="assets/interpret.js"></script>
 <script src="assets/catalog.js"></script>
 <script src="assets/app.js"></script>
 </body>
