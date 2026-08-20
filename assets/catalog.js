@@ -61,10 +61,14 @@ const CATALOG = [
 ];
 
 /* ---------- homepage demo picks ----------
-   Real, purchasable products. Names and product-page URLs come from UNIQLO's
-   live US storefront. Prices are deliberately not shown here: they change
-   often and could not be read from the live product pages, and a guessed
-   price would be worse than none. Add `price` to an entry and it renders. */
+   Real, purchasable products across three well-known retailers, so the demo
+   reads as a cross-store finder rather than one shop's catalogue. Names and
+   product-page URLs come from each retailer's own live product pages.
+
+   Prices are deliberately absent: every retailer domain is unreachable from
+   the build environment, so no price could be read from the source, and a
+   remembered price would be both unverified and quickly stale. Add a `price`
+   to any entry below and it renders automatically as "RETAILER · $NN". */
 
 const HERO_PICKS = [
   {
@@ -76,17 +80,17 @@ const HERO_PICKS = [
     score: 96
   },
   {
-    name: "Men's Extra Fine Cotton Broadcloth Shirt",
-    retailer: 'UNIQLO',
-    url: 'https://www.uniqlo.com/us/en/products/E439611-000/00',
+    name: 'Oxford Shirt — White',
+    retailer: 'ZARA',
+    url: 'https://www.zara.com/us/en/oxford-shirt-p06887613.html',
     color: 'White',
     type: 'shirt',
     score: 93
   },
   {
-    name: "Women's Pleated Wide Pants",
-    retailer: 'UNIQLO',
-    url: 'https://www.uniqlo.com/us/en/products/E460311-000/00',
+    name: 'Wide-leg Pants — Black',
+    retailer: 'H&M',
+    url: 'https://www2.hm.com/en_us/productpage.1090271001.html',
     color: 'Black',
     type: 'trousers',
     score: 91

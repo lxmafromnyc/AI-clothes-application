@@ -48,13 +48,14 @@
   const list = document.getElementById('hero-picks');
   if (!list || typeof HERO_PICKS === 'undefined') return;
 
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const EXTERNAL = '<svg class="ext" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7M9 7h8v8"/></svg>';
 
   list.innerHTML = HERO_PICKS.map((item) => `<a class="mini-item" href="${item.url}" target="_blank" rel="noopener noreferrer">
       ${miniArt(item)}
       <div class="mini-meta">
-        <strong class="mini-name">${item.name}</strong>
-        <span class="mini-retailer">${item.retailer}${item.price ? ` &middot; $${item.price}` : ''}${EXTERNAL}</span>
+        <strong class="mini-name">${esc(item.name)}</strong>
+        <span class="mini-retailer">${esc(item.retailer)}${item.price ? ` &middot; $${item.price}` : ''}${EXTERNAL}</span>
       </div>
       <span class="match-pill">${item.score}%</span>
     </a>`).join('');
