@@ -1,0 +1,11 @@
+# Secrets — the OpenAI key belongs in the host's environment, never in the repo
+.env
+.env.*
+!.env.example
+
+# Vercel CLI local state (contains project linkage, and pulls env vars locally)
+.vercel
+
+# Node
+node_modules/
+npm-debug.log*

@@ -32,6 +32,8 @@ request — a keyword match is never presented as an AI reading.
 ```
 index.html, find-clothes.html, discover.html, about.html
 api/interpret.js        serverless endpoint; calls OpenAI, holds the API key
+scripts/verify-api.sh   checks a deployed endpoint end to end
+.env.example            template; the real .env is git-ignored
 assets/products.js      data layer: normalises any source into one schema
 assets/catalog.js       demo product source, replaceable by a real feed
 assets/interpret.js     sends the request to the endpoint; local fallback
@@ -45,39 +47,67 @@ assets/styles.css       design tokens and all shared components
 server-side so `OPENAI_API_KEY` is never sent to a browser. **Do not move this
 call into the frontend** — a key in client JavaScript is a key anyone can take.
 
-### Deploying
+### Deploying to production
 
-GitHub Pages serves static files only and cannot run this function, so a
-Pages-only deployment always falls back to local parsing. To get the AI path,
-deploy somewhere with serverless support. The site is static, so any of these
-work and all have a free tier:
+The live setup is: **GitHub Pages (site) → Vercel (interpreter) → OpenAI**. Pages
+serves static files only and cannot run the function, which is why the two are
+split. Run these from the repository root.
 
-**Vercel** — `api/interpret.js` is picked up as-is.
+**1. Deploy the function.** No `vercel.json` is needed — Vercel treats `api/*.js`
+as serverless functions and serves the rest as static files, which is exactly
+this layout. Deploying the whole repo is fine and gives you a second, fully
+working same-origin copy of the site at the Vercel URL.
 
 ```sh
-npx vercel
-npx vercel env add OPENAI_API_KEY
+npm i -g vercel        # once
+vercel login
+vercel --prod          # note the URL it prints, e.g. https://findwear.vercel.app
 ```
 
-**Netlify** — point `netlify.toml` at the file, or move it to
-`netlify/functions/interpret.js` and export `handler`.
+**2. Store the key.** It lives only in Vercel's encrypted environment. It is
+never committed, never bundled, and never sent to a browser.
 
-**Cloudflare Pages** — move it to `functions/api/interpret.js` and wrap the logic
-in `export async function onRequestPost({ request, env })`, reading the key from
-`env.OPENAI_API_KEY` rather than `process.env`.
+```sh
+vercel env add OPENAI_API_KEY production      # paste the key when prompted
+vercel env add ALLOWED_ORIGIN production      # value: https://lxmafromnyc.github.io
+vercel --prod                                 # redeploy so the vars take effect
+```
 
-#### Keeping the site on GitHub Pages
+`ALLOWED_ORIGIN` is scheme and host only — no path, no trailing slash. For this
+repository's Pages site that is exactly `https://lxmafromnyc.github.io`.
 
-You can leave the pages on GitHub Pages and deploy only the function elsewhere.
-Tell the frontend where it lives, either with a meta tag in `find-clothes.html`:
+**3. Point the site at the function.** In `find-clothes.html`, replace the
+commented hint in `<head>` with a real tag using your Vercel URL:
 
 ```html
-<meta name="findwear-api" content="https://your-app.vercel.app/api/interpret">
+<meta name="findwear-api" content="https://YOUR-APP.vercel.app/api/interpret">
 ```
 
-or by setting `window.FINDWEAR_API` before `assets/interpret.js` loads. Then set
-`ALLOWED_ORIGIN` on the function to your Pages origin, since the two are now
-different origins.
+Commit and push to `main`; Pages redeploys itself.
+
+**4. Verify the whole chain.**
+
+```sh
+./scripts/verify-api.sh https://YOUR-APP.vercel.app/api/interpret https://lxmafromnyc.github.io
+```
+
+It sends the real request *"Find me a black oversized hoodie under $80"*, then
+checks the response came back tagged `source: "openai"`, that a colour, a fit and
+the $80 budget were extracted, that CORS allows your Pages origin, that preflight
+works, that `GET` and empty queries are refused, and that no key material appears
+in the response. It exits non-zero if anything fails and names the fix — a `503`
+tells you the key is missing, a missing CORS header tells you `ALLOWED_ORIGIN`
+is unset.
+
+Then open the live Ask page, type the same request, and confirm no fallback
+notice appears. A notice means the browser did not get an AI reading, and its
+wording says which step failed.
+
+### If you would rather not split the hosting
+
+Deploying everything to Vercel removes steps 3 and 4's CORS entirely: the site
+and the function share an origin, `/api/interpret` resolves by default, and
+`ALLOWED_ORIGIN` can stay unset. The Pages site can then just redirect there.
 
 ### Environment variables
 
