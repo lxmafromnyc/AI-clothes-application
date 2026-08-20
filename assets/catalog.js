@@ -65,10 +65,19 @@ const CATALOG = [
    reads as a cross-store finder rather than one shop's catalogue. Names and
    product-page URLs come from each retailer's own live product pages.
 
-   Prices are deliberately absent: every retailer domain is unreachable from
-   the build environment, so no price could be read from the source, and a
-   remembered price would be both unverified and quickly stale. Add a `price`
-   to any entry below and it renders automatically as "RETAILER · $NN". */
+   Prices and photos are deliberately absent. Every retailer domain, image
+   CDN and stock-photo host is unreachable from the build environment, so
+   neither could be read from the source, and unverified values would be
+   guesses. Both are one field away:
+
+     price: 49.9                                   -> "UNIQLO · $49.9"
+     image: 'assets/products/uniqlo-merino.jpg'    -> product photo
+     image: 'https://image.uniqlo.com/....jpg'     -> also works
+
+   A local file under assets/products/ is the sturdier option: retailers
+   rotate CDN paths and some block off-site referrers, either of which turns
+   a hotlinked photo into a gap. If an image fails to load for any reason the
+   drawn tile below takes over, so the panel never shows a broken image. */
 
 const HERO_PICKS = [
   {

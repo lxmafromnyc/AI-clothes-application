@@ -51,14 +51,28 @@
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const EXTERNAL = '<svg class="ext" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7M9 7h8v8"/></svg>';
 
-  list.innerHTML = HERO_PICKS.map((item) => `<a class="mini-item" href="${item.url}" target="_blank" rel="noopener noreferrer">
-      ${miniArt(item)}
+  /* A pick shows its product photo when it has one, and the drawn tile
+     otherwise. If the photo fails to load the tile takes over, so a dead
+     image URL degrades quietly instead of showing a broken-image icon. */
+  const thumb = (item, i) => (item.image
+    ? `<div class="mini-thumb mini-thumb--photo"><img src="${esc(item.image)}" alt="${esc(item.name)}" data-pick="${i}" loading="lazy" decoding="async"></div>`
+    : miniArt(item));
+
+  list.innerHTML = HERO_PICKS.map((item, i) => `<a class="mini-item" href="${item.url}" target="_blank" rel="noopener noreferrer">
+      ${thumb(item, i)}
       <div class="mini-meta">
         <strong class="mini-name">${esc(item.name)}</strong>
         <span class="mini-retailer">${esc(item.retailer)}${item.price ? ` &middot; $${item.price}` : ''}${EXTERNAL}</span>
       </div>
       <span class="match-pill">${item.score}%</span>
     </a>`).join('');
+
+  list.querySelectorAll('img[data-pick]').forEach((img) => {
+    img.addEventListener('error', () => {
+      const holder = img.closest('.mini-thumb');
+      if (holder) holder.outerHTML = miniArt(HERO_PICKS[Number(img.dataset.pick)]);
+    }, { once: true });
+  });
 })();
 
 /* ---------- find clothes ---------- */
