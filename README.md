@@ -61,7 +61,7 @@ working same-origin copy of the site at the Vercel URL.
 ```sh
 npm i -g vercel        # once
 vercel login
-vercel --prod          # note the URL it prints, e.g. https://findwear.vercel.app
+vercel --prod          # deployed: https://ai-clothes-application.vercel.app
 ```
 
 **2. Store the key.** It lives only in Vercel's encrypted environment. It is
@@ -76,19 +76,21 @@ vercel --prod                                 # redeploy so the vars take effect
 `ALLOWED_ORIGIN` is scheme and host only — no path, no trailing slash. For this
 repository's Pages site that is exactly `https://lxmafromnyc.github.io`.
 
-**3. Point the site at the function.** In `find-clothes.html`, replace the
-commented hint in `<head>` with a real tag using your Vercel URL:
+**3. Point the site at the function.** Already done — `find-clothes.html`
+carries the tag:
 
 ```html
-<meta name="findwear-api" content="https://YOUR-APP.vercel.app/api/interpret">
+<meta name="findwear-api" content="https://ai-clothes-application.vercel.app/api/interpret">
 ```
 
-Commit and push to `main`; Pages redeploys itself.
+This is the only place the endpoint is configured. Change it here if the
+deployment URL ever changes; `window.FINDWEAR_API` overrides it at runtime if
+you need to point somewhere else without editing the file.
 
 **4. Verify the whole chain.**
 
 ```sh
-./scripts/verify-api.sh https://YOUR-APP.vercel.app/api/interpret https://lxmafromnyc.github.io
+./scripts/verify-api.sh https://ai-clothes-application.vercel.app/api/interpret https://lxmafromnyc.github.io
 ```
 
 It sends the real request *"Find me a black oversized hoodie under $80"*, then
