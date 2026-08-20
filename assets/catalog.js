@@ -1,11 +1,34 @@
 /* =========================================================
-   FindWear — sample catalog + shared rendering helpers
+   FindWear — product data
+
+   One shape for every product, whether it is a real listing or a sample
+   row. Rendering never inspects anything else, so this array can be
+   replaced wholesale by an export from a real product feed and the whole
+   site keeps working.
+
+     id          number        stable identifier
+     name        string        product name as the retailer lists it
+     brand       string        brand or retailer name
+     price       number|null   listed price in USD; null hides the price
+     productUrl  string|null   official product page; null renders no link
+     imageUrl    string|null   product photo; null falls back to drawn art
+     type        string        garment kind, selects the fallback artwork
+     color       string        colour family, used for matching and art
+     styles      string[]      matching vocabulary, see STYLES below
+     occasions   string[]      matching vocabulary, see OCCASIONS below
+     fits        string[]      matching vocabulary, see FITS below
+
+   price and imageUrl are null on every row today because no retailer
+   domain or image host is reachable from the build environment, so
+   neither could be read from the source. Populating them is a data job,
+   not a code change: set the fields and the frontend renders them. An
+   imageUrl that fails to load falls back to the drawn tile, so a feed
+   with some dead image links degrades cleanly rather than breaking.
    ========================================================= */
 
 const STYLES = ['Minimal', 'Classic', 'Streetwear', 'Sporty', 'Bohemian', 'Bold'];
 const OCCASIONS = ['Everyday', 'Work', 'Evening', 'Weekend', 'Active'];
 const FITS = ['Slim', 'Regular', 'Relaxed', 'Oversized'];
-const BRANDS = ['Northfold', 'Halden', 'Coveworks', 'Atlas Supply', 'Rue Nine', 'Terrace', 'Kinfield', 'Solstice'];
 
 /* colour families drive the card artwork */
 const COLORS = {
@@ -33,128 +56,369 @@ const SILHOUETTES = {
   sneaker: '<path d="M9 44 L9 39 L20 35 L28 28 L33 28 L38 37 L46 39 L54 42 L54 47 L9 47 Z"/><path d="M7 47 h50 v5 h-50 z" opacity=".5"/>'
 };
 
-const CATALOG = [
-  { id: 1,  name: 'Boxy Cotton Tee',        brand: 'Northfold',    price: 42,  type: 'tee',      color: 'White',   styles: ['Minimal', 'Sporty'],        occasions: ['Everyday', 'Weekend'], fits: ['Relaxed', 'Oversized'] },
-  { id: 2,  name: 'Merino Crew Knit',       brand: 'Halden',       price: 128, type: 'knit',     color: 'Neutral', styles: ['Minimal', 'Classic'],       occasions: ['Work', 'Everyday'],    fits: ['Regular', 'Slim'] },
-  { id: 3,  name: 'Wide Leg Trouser',       brand: 'Coveworks',    price: 96,  type: 'trousers', color: 'Black',   styles: ['Minimal', 'Classic'],       occasions: ['Work', 'Evening'],     fits: ['Relaxed'] },
-  { id: 4,  name: 'Cropped Track Jacket',   brand: 'Atlas Supply', price: 88,  type: 'jacket',   color: 'Bright',  styles: ['Streetwear', 'Sporty'],     occasions: ['Weekend', 'Active'],   fits: ['Regular', 'Relaxed'] },
-  { id: 5,  name: 'Slip Midi Dress',        brand: 'Rue Nine',     price: 145, type: 'dress',    color: 'Pastel',  styles: ['Bohemian', 'Classic'],      occasions: ['Evening', 'Weekend'],  fits: ['Slim', 'Regular'] },
-  { id: 6,  name: 'Washed Denim Jacket',    brand: 'Terrace',      price: 118, type: 'jacket',   color: 'Blue',    styles: ['Classic', 'Streetwear'],    occasions: ['Everyday', 'Weekend'], fits: ['Regular', 'Oversized'] },
-  { id: 7,  name: 'Poplin Shirt',           brand: 'Kinfield',     price: 74,  type: 'shirt',    color: 'White',   styles: ['Minimal', 'Classic'],       occasions: ['Work', 'Everyday'],    fits: ['Slim', 'Regular'] },
-  { id: 8,  name: 'Ribbed Knit Skirt',      brand: 'Solstice',     price: 68,  type: 'skirt',    color: 'Earth',   styles: ['Minimal', 'Bohemian'],      occasions: ['Everyday', 'Work'],    fits: ['Slim', 'Regular'] },
-  { id: 9,  name: 'Oversized Hoodie',       brand: 'Atlas Supply', price: 79,  type: 'knit',     color: 'Green',   styles: ['Streetwear', 'Sporty'],     occasions: ['Weekend', 'Active'],   fits: ['Oversized', 'Relaxed'] },
-  { id: 10, name: 'Tailored Wool Coat',     brand: 'Halden',       price: 298, type: 'coat',     color: 'Neutral', styles: ['Classic', 'Minimal'],       occasions: ['Work', 'Evening'],     fits: ['Regular', 'Slim'] },
-  { id: 11, name: 'Cargo Utility Pant',     brand: 'Coveworks',    price: 92,  type: 'trousers', color: 'Green',   styles: ['Streetwear', 'Sporty'],     occasions: ['Everyday', 'Weekend'], fits: ['Relaxed', 'Oversized'] },
-  { id: 12, name: 'Silk Column Dress',      brand: 'Rue Nine',     price: 245, type: 'dress',    color: 'Black',   styles: ['Classic', 'Bold'],          occasions: ['Evening'],             fits: ['Slim'] },
-  { id: 13, name: 'Court Sneaker',          brand: 'Northfold',    price: 110, type: 'sneaker',  color: 'White',   styles: ['Minimal', 'Sporty'],        occasions: ['Everyday', 'Active'],  fits: ['Regular'] },
-  { id: 14, name: 'Linen Camp Shirt',       brand: 'Terrace',      price: 64,  type: 'shirt',    color: 'Blue',    styles: ['Bohemian', 'Classic'],      occasions: ['Weekend', 'Everyday'], fits: ['Relaxed'] },
-  { id: 15, name: 'Performance Short',      brand: 'Atlas Supply', price: 48,  type: 'shorts',   color: 'Black',   styles: ['Sporty'],                   occasions: ['Active', 'Weekend'],   fits: ['Regular', 'Slim'] },
-  { id: 16, name: 'Colour Block Knit',      brand: 'Solstice',     price: 132, type: 'knit',     color: 'Bright',  styles: ['Bold', 'Streetwear'],       occasions: ['Weekend', 'Everyday'], fits: ['Relaxed', 'Oversized'] },
-  { id: 17, name: 'Pleated Midi Skirt',     brand: 'Kinfield',     price: 86,  type: 'skirt',    color: 'Pastel',  styles: ['Classic', 'Bohemian'],      occasions: ['Work', 'Evening'],     fits: ['Regular'] },
-  { id: 18, name: 'Straight Leg Jean',      brand: 'Terrace',      price: 108, type: 'trousers', color: 'Blue',    styles: ['Classic', 'Streetwear'],    occasions: ['Everyday', 'Weekend'], fits: ['Regular', 'Slim'] },
-  { id: 19, name: 'Cropped Puffer',         brand: 'Coveworks',    price: 189, type: 'jacket',   color: 'Bright',  styles: ['Bold', 'Sporty'],           occasions: ['Weekend', 'Active'],   fits: ['Regular', 'Oversized'] },
-  { id: 20, name: 'Tencel Wrap Top',        brand: 'Rue Nine',     price: 58,  type: 'shirt',    color: 'Earth',   styles: ['Bohemian', 'Minimal'],      occasions: ['Everyday', 'Evening'], fits: ['Slim', 'Regular'] },
-  { id: 21, name: 'Heavyweight Pocket Tee', brand: 'Northfold',    price: 38,  type: 'tee',      color: 'Neutral', styles: ['Minimal', 'Streetwear'],    occasions: ['Everyday', 'Weekend'], fits: ['Relaxed', 'Regular'] },
-  { id: 22, name: 'Double Breasted Blazer', brand: 'Halden',       price: 210, type: 'jacket',   color: 'Neutral', styles: ['Classic', 'Bold'],          occasions: ['Work', 'Evening'],     fits: ['Regular', 'Oversized'] },
-  { id: 23, name: 'Printed Maxi Dress',     brand: 'Solstice',     price: 156, type: 'dress',    color: 'Green',   styles: ['Bohemian', 'Bold'],         occasions: ['Weekend', 'Evening'],  fits: ['Relaxed'] },
-  { id: 24, name: 'Fleece Sweatpant',       brand: 'Kinfield',     price: 72,  type: 'trousers', color: 'Earth',   styles: ['Sporty', 'Streetwear'],     occasions: ['Everyday', 'Active'],  fits: ['Relaxed', 'Oversized'] }
-];
-
-/* ---------- homepage demo picks ----------
-   Real, purchasable products across three well-known retailers, so the demo
-   reads as a cross-store finder rather than one shop's catalogue. Names and
-   product-page URLs come from each retailer's own live product pages.
-
-   Prices and photos are deliberately absent. Every retailer domain, image
-   CDN and stock-photo host is unreachable from the build environment, so
-   neither could be read from the source, and unverified values would be
-   guesses. Both are one field away:
-
-     price: 49.9                                   -> "UNIQLO · $49.9"
-     image: 'assets/products/uniqlo-merino.jpg'    -> product photo
-     image: 'https://image.uniqlo.com/....jpg'     -> also works
-
-   A local file under assets/products/ is the sturdier option: retailers
-   rotate CDN paths and some block off-site referrers, either of which turns
-   a hotlinked photo into a gap. If an image fails to load for any reason the
-   drawn tile below takes over, so the panel never shows a broken image. */
-
-const HERO_PICKS = [
+const PRODUCTS = [
   {
+    id: 101,
     name: "Men's Extra Fine Merino Crew Neck Long-Sleeve Sweater",
-    retailer: 'UNIQLO',
-    url: 'https://www.uniqlo.com/us/en/products/E429066-000/00',
-    color: 'Neutral',
+    brand: 'UNIQLO',
+    price: null,
+    productUrl: 'https://www.uniqlo.com/us/en/products/E429066-000/00',
+    imageUrl: null,
     type: 'knit',
-    score: 96
+    color: 'Neutral',
+    styles: ['Minimal', 'Classic'],
+    occasions: ['Work', 'Everyday'],
+    fits: ['Regular', 'Slim']
   },
   {
+    id: 102,
     name: 'Oxford Shirt — White',
-    retailer: 'ZARA',
-    url: 'https://www.zara.com/us/en/oxford-shirt-p06887613.html',
-    color: 'White',
+    brand: 'ZARA',
+    price: null,
+    productUrl: 'https://www.zara.com/us/en/oxford-shirt-p06887613.html',
+    imageUrl: null,
     type: 'shirt',
-    score: 93
+    color: 'White',
+    styles: ['Classic', 'Minimal'],
+    occasions: ['Work', 'Everyday'],
+    fits: ['Regular']
   },
   {
+    id: 103,
     name: "XX Chino Standard Taper Fit Men's Pants — Black",
-    retailer: "LEVI'S",
-    url: 'https://www.levi.com/US/en_US/chino-pants/levis-chino-pants-for-men/levis-xx-chino-standard-taper-fit-mens-pants/p/171960005',
-    color: 'Black',
+    brand: "LEVI'S",
+    price: null,
+    productUrl: 'https://www.levi.com/US/en_US/chino-pants/levis-chino-pants-for-men/levis-xx-chino-standard-taper-fit-mens-pants/p/171960005',
+    imageUrl: null,
     type: 'trousers',
-    score: 91
+    color: 'Black',
+    styles: ['Minimal', 'Classic'],
+    occasions: ['Work', 'Everyday'],
+    fits: ['Slim', 'Regular']
+  },
+  {
+    id: 1,
+    name: 'Boxy Cotton Tee',
+    brand: 'Northfold',
+    price: 42,
+    productUrl: null,
+    imageUrl: null,
+    type: 'tee',
+    color: 'White',
+    styles: ['Minimal', 'Sporty'],
+    occasions: ['Everyday', 'Weekend'],
+    fits: ['Relaxed', 'Oversized']
+  },
+  {
+    id: 2,
+    name: 'Merino Crew Knit',
+    brand: 'Halden',
+    price: 128,
+    productUrl: null,
+    imageUrl: null,
+    type: 'knit',
+    color: 'Neutral',
+    styles: ['Minimal', 'Classic'],
+    occasions: ['Work', 'Everyday'],
+    fits: ['Regular', 'Slim']
+  },
+  {
+    id: 3,
+    name: 'Wide Leg Trouser',
+    brand: 'Coveworks',
+    price: 96,
+    productUrl: null,
+    imageUrl: null,
+    type: 'trousers',
+    color: 'Black',
+    styles: ['Minimal', 'Classic'],
+    occasions: ['Work', 'Evening'],
+    fits: ['Relaxed']
+  },
+  {
+    id: 4,
+    name: 'Cropped Track Jacket',
+    brand: 'Atlas Supply',
+    price: 88,
+    productUrl: null,
+    imageUrl: null,
+    type: 'jacket',
+    color: 'Bright',
+    styles: ['Streetwear', 'Sporty'],
+    occasions: ['Weekend', 'Active'],
+    fits: ['Regular', 'Relaxed']
+  },
+  {
+    id: 5,
+    name: 'Slip Midi Dress',
+    brand: 'Rue Nine',
+    price: 145,
+    productUrl: null,
+    imageUrl: null,
+    type: 'dress',
+    color: 'Pastel',
+    styles: ['Bohemian', 'Classic'],
+    occasions: ['Evening', 'Weekend'],
+    fits: ['Slim', 'Regular']
+  },
+  {
+    id: 6,
+    name: 'Washed Denim Jacket',
+    brand: 'Terrace',
+    price: 118,
+    productUrl: null,
+    imageUrl: null,
+    type: 'jacket',
+    color: 'Blue',
+    styles: ['Classic', 'Streetwear'],
+    occasions: ['Everyday', 'Weekend'],
+    fits: ['Regular', 'Oversized']
+  },
+  {
+    id: 7,
+    name: 'Poplin Shirt',
+    brand: 'Kinfield',
+    price: 74,
+    productUrl: null,
+    imageUrl: null,
+    type: 'shirt',
+    color: 'White',
+    styles: ['Minimal', 'Classic'],
+    occasions: ['Work', 'Everyday'],
+    fits: ['Slim', 'Regular']
+  },
+  {
+    id: 8,
+    name: 'Ribbed Knit Skirt',
+    brand: 'Solstice',
+    price: 68,
+    productUrl: null,
+    imageUrl: null,
+    type: 'skirt',
+    color: 'Earth',
+    styles: ['Minimal', 'Bohemian'],
+    occasions: ['Everyday', 'Work'],
+    fits: ['Slim', 'Regular']
+  },
+  {
+    id: 9,
+    name: 'Oversized Hoodie',
+    brand: 'Atlas Supply',
+    price: 79,
+    productUrl: null,
+    imageUrl: null,
+    type: 'knit',
+    color: 'Green',
+    styles: ['Streetwear', 'Sporty'],
+    occasions: ['Weekend', 'Active'],
+    fits: ['Oversized', 'Relaxed']
+  },
+  {
+    id: 10,
+    name: 'Tailored Wool Coat',
+    brand: 'Halden',
+    price: 298,
+    productUrl: null,
+    imageUrl: null,
+    type: 'coat',
+    color: 'Neutral',
+    styles: ['Classic', 'Minimal'],
+    occasions: ['Work', 'Evening'],
+    fits: ['Regular', 'Slim']
+  },
+  {
+    id: 11,
+    name: 'Cargo Utility Pant',
+    brand: 'Coveworks',
+    price: 92,
+    productUrl: null,
+    imageUrl: null,
+    type: 'trousers',
+    color: 'Green',
+    styles: ['Streetwear', 'Sporty'],
+    occasions: ['Everyday', 'Weekend'],
+    fits: ['Relaxed', 'Oversized']
+  },
+  {
+    id: 12,
+    name: 'Silk Column Dress',
+    brand: 'Rue Nine',
+    price: 245,
+    productUrl: null,
+    imageUrl: null,
+    type: 'dress',
+    color: 'Black',
+    styles: ['Classic', 'Bold'],
+    occasions: ['Evening'],
+    fits: ['Slim']
+  },
+  {
+    id: 13,
+    name: 'Court Sneaker',
+    brand: 'Northfold',
+    price: 110,
+    productUrl: null,
+    imageUrl: null,
+    type: 'sneaker',
+    color: 'White',
+    styles: ['Minimal', 'Sporty'],
+    occasions: ['Everyday', 'Active'],
+    fits: ['Regular']
+  },
+  {
+    id: 14,
+    name: 'Linen Camp Shirt',
+    brand: 'Terrace',
+    price: 64,
+    productUrl: null,
+    imageUrl: null,
+    type: 'shirt',
+    color: 'Blue',
+    styles: ['Bohemian', 'Classic'],
+    occasions: ['Weekend', 'Everyday'],
+    fits: ['Relaxed']
+  },
+  {
+    id: 15,
+    name: 'Performance Short',
+    brand: 'Atlas Supply',
+    price: 48,
+    productUrl: null,
+    imageUrl: null,
+    type: 'shorts',
+    color: 'Black',
+    styles: ['Sporty'],
+    occasions: ['Active', 'Weekend'],
+    fits: ['Regular', 'Slim']
+  },
+  {
+    id: 16,
+    name: 'Colour Block Knit',
+    brand: 'Solstice',
+    price: 132,
+    productUrl: null,
+    imageUrl: null,
+    type: 'knit',
+    color: 'Bright',
+    styles: ['Bold', 'Streetwear'],
+    occasions: ['Weekend', 'Everyday'],
+    fits: ['Relaxed', 'Oversized']
+  },
+  {
+    id: 17,
+    name: 'Pleated Midi Skirt',
+    brand: 'Kinfield',
+    price: 86,
+    productUrl: null,
+    imageUrl: null,
+    type: 'skirt',
+    color: 'Pastel',
+    styles: ['Classic', 'Bohemian'],
+    occasions: ['Work', 'Evening'],
+    fits: ['Regular']
+  },
+  {
+    id: 18,
+    name: 'Straight Leg Jean',
+    brand: 'Terrace',
+    price: 108,
+    productUrl: null,
+    imageUrl: null,
+    type: 'trousers',
+    color: 'Blue',
+    styles: ['Classic', 'Streetwear'],
+    occasions: ['Everyday', 'Weekend'],
+    fits: ['Regular', 'Slim']
+  },
+  {
+    id: 19,
+    name: 'Cropped Puffer',
+    brand: 'Coveworks',
+    price: 189,
+    productUrl: null,
+    imageUrl: null,
+    type: 'jacket',
+    color: 'Bright',
+    styles: ['Bold', 'Sporty'],
+    occasions: ['Weekend', 'Active'],
+    fits: ['Regular', 'Oversized']
+  },
+  {
+    id: 20,
+    name: 'Tencel Wrap Top',
+    brand: 'Rue Nine',
+    price: 58,
+    productUrl: null,
+    imageUrl: null,
+    type: 'shirt',
+    color: 'Earth',
+    styles: ['Bohemian', 'Minimal'],
+    occasions: ['Everyday', 'Evening'],
+    fits: ['Slim', 'Regular']
+  },
+  {
+    id: 21,
+    name: 'Heavyweight Pocket Tee',
+    brand: 'Northfold',
+    price: 38,
+    productUrl: null,
+    imageUrl: null,
+    type: 'tee',
+    color: 'Neutral',
+    styles: ['Minimal', 'Streetwear'],
+    occasions: ['Everyday', 'Weekend'],
+    fits: ['Relaxed', 'Regular']
+  },
+  {
+    id: 22,
+    name: 'Double Breasted Blazer',
+    brand: 'Halden',
+    price: 210,
+    productUrl: null,
+    imageUrl: null,
+    type: 'jacket',
+    color: 'Neutral',
+    styles: ['Classic', 'Bold'],
+    occasions: ['Work', 'Evening'],
+    fits: ['Regular', 'Oversized']
+  },
+  {
+    id: 23,
+    name: 'Printed Maxi Dress',
+    brand: 'Solstice',
+    price: 156,
+    productUrl: null,
+    imageUrl: null,
+    type: 'dress',
+    color: 'Green',
+    styles: ['Bohemian', 'Bold'],
+    occasions: ['Weekend', 'Evening'],
+    fits: ['Relaxed']
+  },
+  {
+    id: 24,
+    name: 'Fleece Sweatpant',
+    brand: 'Kinfield',
+    price: 72,
+    productUrl: null,
+    imageUrl: null,
+    type: 'trousers',
+    color: 'Earth',
+    styles: ['Sporty', 'Streetwear'],
+    occasions: ['Everyday', 'Active'],
+    fits: ['Relaxed', 'Oversized']
   }
 ];
 
-/* ---------- rendering ---------- */
+/* Brand list for the Find Clothes filter, derived from the data so it can
+   never drift out of sync with the products actually present. */
+const BRANDS = [...new Set(PRODUCTS.map((p) => p.brand))].sort();
 
-function tileArt(item) {
-  const c = COLORS[item.color];
-  const ink = c.dark ? 'rgba(255,255,255,.44)' : 'rgba(22,23,28,.26)';
-  return `<div class="item-media" style="background:linear-gradient(150deg, ${c.from}, ${c.to})">
-      <svg class="silhouette" viewBox="0 0 64 64" fill="${ink}" aria-hidden="true">${SILHOUETTES[item.type]}</svg>`;
-}
+/* The homepage demo panel: product ids plus the match score shown. */
+const HERO_PICKS = [
+  { id: 101, score: 96 },
+  { id: 102, score: 93 },
+  { id: 103, score: 91 }
+];
 
-function miniArt(item) {
-  const c = COLORS[item.color];
-  const ink = c.dark ? 'rgba(255,255,255,.46)' : 'rgba(22,23,28,.26)';
-  return `<div class="mini-thumb" style="background:linear-gradient(150deg, ${c.from}, ${c.to})">
-      <svg viewBox="0 0 64 64" fill="${ink}" aria-hidden="true">${SILHOUETTES[item.type]}</svg></div>`;
-}
-
-const SPARK = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2l1.9 5.6L19.5 9.5 13.9 11.4 12 17l-1.9-5.6L4.5 9.5l5.6-1.9L12 2zM19 15l.9 2.6 2.6.9-2.6.9L19 22l-.9-2.6-2.6-.9 2.6-.9L19 15z"/></svg>';
-
-/* card for the Find Clothes results (with match score + reason) */
-function resultCard(item, index) {
-  return `<article class="item-card" style="--i:${index}">
-    ${tileArt(item)}
-      <span class="item-badge">${item.score}% match</span>
-    </div>
-    <div class="item-body">
-      <p class="item-brand">${item.brand}</p>
-      <h3 class="item-name">${item.name}</h3>
-      <div class="item-row">
-        <span class="item-price">$${item.price}</span>
-        <div class="item-tags"><span>${item.color}</span><span>${item.fits[0]}</span></div>
-      </div>
-      <p class="item-why">${SPARK}<span>${item.why}</span></p>
-    </div>
-  </article>`;
-}
-
-/* card for Discover (browsing, no score) */
-function browseCard(item, index) {
-  return `<article class="item-card" style="--i:${index}">
-    ${tileArt(item)}
-      <span class="item-badge">${item.styles[0]}</span>
-    </div>
-    <div class="item-body">
-      <p class="item-brand">${item.brand}</p>
-      <h3 class="item-name">${item.name}</h3>
-      <div class="item-row">
-        <span class="item-price">$${item.price}</span>
-        <div class="item-tags"><span>${item.color}</span><span>${item.occasions[0]}</span></div>
-      </div>
-    </div>
-  </article>`;
-}
+const productById = (id) => PRODUCTS.find((p) => p.id === id);
