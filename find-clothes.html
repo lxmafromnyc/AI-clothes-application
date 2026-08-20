@@ -52,14 +52,7 @@
             <h2>Style</h2>
             <span class="field-hint">Pick as many as you like</span>
           </div>
-          <div class="chips">
-            <label class="chip"><input type="checkbox" name="style" value="Minimal">Minimal</label>
-            <label class="chip"><input type="checkbox" name="style" value="Classic">Classic</label>
-            <label class="chip"><input type="checkbox" name="style" value="Streetwear">Streetwear</label>
-            <label class="chip"><input type="checkbox" name="style" value="Sporty">Sporty</label>
-            <label class="chip"><input type="checkbox" name="style" value="Bohemian">Bohemian</label>
-            <label class="chip"><input type="checkbox" name="style" value="Bold">Bold</label>
-          </div>
+          <div class="chips" data-facet="styles"></div>
         </fieldset>
 
         <fieldset class="field">
@@ -67,16 +60,7 @@
             <h2>Colour</h2>
             <span class="field-hint">Tones you actually wear</span>
           </div>
-          <div class="chips">
-            <label class="chip"><input type="checkbox" name="color" value="Neutral"><span class="swatch" style="background:#D7C9B6"></span>Neutral</label>
-            <label class="chip"><input type="checkbox" name="color" value="Black"><span class="swatch" style="background:#1E1E22"></span>Black</label>
-            <label class="chip"><input type="checkbox" name="color" value="White"><span class="swatch" style="background:#F5F4F1"></span>White</label>
-            <label class="chip"><input type="checkbox" name="color" value="Blue"><span class="swatch" style="background:#5B7FB9"></span>Blue</label>
-            <label class="chip"><input type="checkbox" name="color" value="Green"><span class="swatch" style="background:#6F8F70"></span>Green</label>
-            <label class="chip"><input type="checkbox" name="color" value="Earth"><span class="swatch" style="background:#A97B54"></span>Earth</label>
-            <label class="chip"><input type="checkbox" name="color" value="Pastel"><span class="swatch" style="background:#E4C6E6"></span>Pastel</label>
-            <label class="chip"><input type="checkbox" name="color" value="Bright"><span class="swatch" style="background:#EF6F5B"></span>Bright</label>
-          </div>
+          <div class="chips" data-facet="colors"></div>
         </fieldset>
 
         <fieldset class="field">
@@ -84,13 +68,7 @@
             <h2>Occasion</h2>
             <span class="field-hint">Where you'll wear it</span>
           </div>
-          <div class="chips">
-            <label class="chip"><input type="checkbox" name="occasion" value="Everyday">Everyday</label>
-            <label class="chip"><input type="checkbox" name="occasion" value="Work">Work</label>
-            <label class="chip"><input type="checkbox" name="occasion" value="Evening">Evening</label>
-            <label class="chip"><input type="checkbox" name="occasion" value="Weekend">Weekend</label>
-            <label class="chip"><input type="checkbox" name="occasion" value="Active">Active</label>
-          </div>
+          <div class="chips" data-facet="occasions"></div>
         </fieldset>
 
         <fieldset class="field">
@@ -98,12 +76,7 @@
             <h2>Fit</h2>
             <span class="field-hint">How it should sit</span>
           </div>
-          <div class="chips">
-            <label class="chip"><input type="checkbox" name="fit" value="Slim">Slim</label>
-            <label class="chip"><input type="checkbox" name="fit" value="Regular">Regular</label>
-            <label class="chip"><input type="checkbox" name="fit" value="Relaxed">Relaxed</label>
-            <label class="chip"><input type="checkbox" name="fit" value="Oversized">Oversized</label>
-          </div>
+          <div class="chips" data-facet="fits"></div>
         </fieldset>
 
         <div class="field">
@@ -122,16 +95,7 @@
             <h2>Brands</h2>
             <span class="field-hint">Optional</span>
           </div>
-          <div class="chips">
-            <label class="chip"><input type="checkbox" name="brand" value="Northfold">Northfold</label>
-            <label class="chip"><input type="checkbox" name="brand" value="Halden">Halden</label>
-            <label class="chip"><input type="checkbox" name="brand" value="Coveworks">Coveworks</label>
-            <label class="chip"><input type="checkbox" name="brand" value="Atlas Supply">Atlas Supply</label>
-            <label class="chip"><input type="checkbox" name="brand" value="Rue Nine">Rue Nine</label>
-            <label class="chip"><input type="checkbox" name="brand" value="Terrace">Terrace</label>
-            <label class="chip"><input type="checkbox" name="brand" value="Kinfield">Kinfield</label>
-            <label class="chip"><input type="checkbox" name="brand" value="Solstice">Solstice</label>
-          </div>
+          <div class="chips" data-facet="brands"></div>
         </fieldset>
 
         <div class="form-actions">
@@ -169,6 +133,7 @@
   </div>
 </footer>
 
+<script src="assets/products.js"></script>
 <script src="assets/catalog.js"></script>
 <script src="assets/app.js"></script>
 </body>
