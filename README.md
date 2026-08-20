@@ -23,8 +23,9 @@ python3 -m http.server 8000
 ```
 
 Opening `index.html` directly in a browser also works. Without the interpreter
-endpoint below, requests are read by a local fallback parser instead of the AI —
-the page still works, it just understands less.
+endpoint below, requests are read by a small local parser instead of the AI. The
+page still returns results, and says on screen that the AI did not read the
+request — a keyword match is never presented as an AI reading.
 
 ## Structure
 
@@ -46,9 +47,10 @@ call into the frontend** — a key in client JavaScript is a key anyone can take
 
 ### Deploying
 
-GitHub Pages serves static files only and cannot run this function. To get the AI
-path, deploy somewhere with serverless support. The site is static, so any of
-these work and all have a free tier:
+GitHub Pages serves static files only and cannot run this function, so a
+Pages-only deployment always falls back to local parsing. To get the AI path,
+deploy somewhere with serverless support. The site is static, so any of these
+work and all have a free tier:
 
 **Vercel** — `api/interpret.js` is picked up as-is.
 
@@ -64,13 +66,53 @@ npx vercel env add OPENAI_API_KEY
 in `export async function onRequestPost({ request, env })`, reading the key from
 `env.OPENAI_API_KEY` rather than `process.env`.
 
+#### Keeping the site on GitHub Pages
+
+You can leave the pages on GitHub Pages and deploy only the function elsewhere.
+Tell the frontend where it lives, either with a meta tag in `find-clothes.html`:
+
+```html
+<meta name="findwear-api" content="https://your-app.vercel.app/api/interpret">
+```
+
+or by setting `window.FINDWEAR_API` before `assets/interpret.js` loads. Then set
+`ALLOWED_ORIGIN` on the function to your Pages origin, since the two are now
+different origins.
+
 ### Environment variables
 
 | Variable | Required | Purpose |
 | --- | --- | --- |
 | `OPENAI_API_KEY` | yes | Your OpenAI key. Without it the endpoint returns 503 and the frontend falls back to local parsing. |
 | `OPENAI_MODEL` | no | Model to call. Defaults to `gpt-4o-mini`; set it to whatever your account has access to. |
-| `ALLOWED_ORIGIN` | no | Only set this if the frontend is on a different origin than the function. Left unset, no CORS header is sent and the endpoint is same-origin only. |
+| `ALLOWED_ORIGIN` | no | Only set this if the frontend is on a different origin than the function, e.g. pages on GitHub Pages and the function on Vercel. Left unset, no CORS header is sent and the endpoint is same-origin only. |
+
+Set the key as a secret in your host's dashboard or CLI (`npx vercel env add
+OPENAI_API_KEY`). Never put it in a file you commit, and never move the OpenAI
+call into the frontend — a key in client JavaScript is a key anyone can read.
+
+### How a request flows
+
+```
+"a black oversized hoodie under $80"
+        |
+        v
+  POST /api/interpret          browser sends the request plus the
+        |                      vocabulary the catalogue can match
+        v
+  OpenAI chat completions      key lives here, server-side only
+        |
+        v
+  { categories: ["knit"], colors: ["Black"],
+    fits: ["Oversized"], maxPrice: 80, ... }
+        |
+        v
+  matched against the catalogue, ranked, rendered
+```
+
+If any step fails, the frontend reads the request locally instead and shows a
+notice saying so, naming the reason: no interpreter connected, deployed without
+a key, unreachable, or an unusable reply.
 
 ### Worth knowing
 

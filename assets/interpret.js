@@ -1,20 +1,36 @@
 /* =========================================================
    FindWear — request interpretation (client side)
 
-   Sends what the shopper typed to /api/interpret, which calls OpenAI
-   server-side so the API key never reaches the browser.
+   Sends what the shopper typed to the interpreter endpoint, which calls
+   OpenAI server-side so the API key never reaches the browser. This is the
+   real path and the one production should use.
 
-   If that endpoint is absent or unconfigured — a plain static host has no
-   server — the same request is interpreted locally instead, so the page
-   still returns results rather than an error. The local reading is
-   deliberately simple; the served endpoint is the real one.
+   When that endpoint cannot answer, the request is read by a small local
+   parser instead so the page still returns something. That result is
+   always reported as `source: "local"` with the reason attached, and the
+   interface says so plainly. A keyword match is never passed off as an AI
+   reading.
+
+   Endpoint location: same-origin /api/interpret by default. When the
+   static site and the function live on different hosts — GitHub Pages
+   cannot run a function — point at it with either:
+
+     <meta name="findwear-api" content="https://your-app.vercel.app/api/interpret">
+     window.FINDWEAR_API = 'https://your-app.vercel.app/api/interpret';
    ========================================================= */
 
 (function (global) {
   'use strict';
 
-  const ENDPOINT = '/api/interpret';
+  const DEFAULT_ENDPOINT = '/api/interpret';
   const REQUEST_TIMEOUT = 12000;
+
+  function endpoint() {
+    if (global.FINDWEAR_API) return String(global.FINDWEAR_API);
+    const tag = global.document && global.document.querySelector('meta[name="findwear-api"]');
+    const href = tag && tag.getAttribute('content');
+    return href ? href.trim() : DEFAULT_ENDPOINT;
+  }
 
   const EMPTY = () => ({
     categories: [], colors: [], occasions: [], fits: [], brands: [], styles: [],
@@ -138,32 +154,54 @@
     return prefs;
   }
 
+  /* why a request could not be read by the AI, in words the interface can
+     show without dressing a keyword match up as something it is not */
+  const FALLBACK_REASON = {
+    'not-configured': 'The AI interpreter is deployed but has no OpenAI key set, so this request was read by a basic local keyword match instead.',
+    unreachable: 'The AI interpreter could not be reached, so this request was read by a basic local keyword match instead.',
+    'no-endpoint': 'No AI interpreter is connected to this site, so this request was read by a basic local keyword match instead.',
+    'bad-reply': 'The AI interpreter returned something unusable, so this request was read by a basic local keyword match instead.'
+  };
+
   async function interpret(query, vocabulary) {
     const text = String(query || '').trim();
-    if (!text) return { preferences: EMPTY(), source: 'empty' };
+    if (!text) return { preferences: EMPTY(), source: 'empty', reason: null, notice: null };
 
+    const local = (reason) => ({
+      preferences: localInterpret(text, vocabulary),
+      source: 'local',
+      reason,
+      notice: FALLBACK_REASON[reason] || FALLBACK_REASON.unreachable
+    });
+
+    let response;
     try {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
-      const response = await fetch(ENDPOINT, {
+      response = await fetch(endpoint(), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query: text, vocabulary: vocabulary || {} }),
         signal: controller.signal
       });
       clearTimeout(timer);
-
-      if (response.ok) {
-        const data = await response.json();
-        if (data && data.preferences) {
-          return { preferences: shape(data.preferences), source: 'openai' };
-        }
-      }
     } catch (err) {
-      /* no endpoint, offline, or it timed out — read it here instead */
+      /* nothing answered: no function deployed, offline, or timed out */
+      return local('no-endpoint');
     }
-    return { preferences: localInterpret(text, vocabulary), source: 'local' };
+
+    if (response.status === 404) return local('no-endpoint');
+    if (response.status === 503) return local('not-configured');
+    if (!response.ok) return local('unreachable');
+
+    try {
+      const data = await response.json();
+      if (!data || !data.preferences) return local('bad-reply');
+      return { preferences: shape(data.preferences), source: 'openai', reason: null, notice: null };
+    } catch (err) {
+      return local('bad-reply');
+    }
   }
 
-  global.Interpreter = { interpret, localInterpret, shape, EMPTY };
+  global.Interpreter = { interpret, localInterpret, shape, EMPTY, endpoint, FALLBACK_REASON };
 })(typeof window !== 'undefined' ? window : globalThis);

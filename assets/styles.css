@@ -583,6 +583,22 @@ input[type="range"]::-moz-range-thumb {
   font-weight: 600;
 }
 
+/* said plainly when a request was not read by the AI */
+.notice {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin: 0 0 24px;
+  padding: 14px 16px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r);
+  background: var(--surface-2);
+  color: var(--ink-2);
+  font-size: 14px;
+  line-height: 1.5;
+}
+.notice svg { width: 17px; height: 17px; flex: none; margin-top: 1px; color: var(--muted); }
+
 /* ---------- results ---------- */
 
 .results { padding-top: 60px; scroll-margin-top: 96px; }

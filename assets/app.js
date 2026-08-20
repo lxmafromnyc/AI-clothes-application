@@ -280,7 +280,7 @@ function orderFacet(counts, key) {
     return chips.slice(0, 7);
   }
 
-  function render(prefs) {
+  function render(prefs, outcome) {
     const withinBudget = (item) => {
       if (item.price == null) return true; /* unknown price cannot be ruled out */
       if (prefs.maxPrice && item.price > prefs.maxPrice) return false;
@@ -303,8 +303,17 @@ function orderFacet(counts, key) {
       ? `<div class="understood">${chips.map((c) => `<span>${esc(c)}</span>`).join('')}</div>`
       : '';
 
+    /* never let a local keyword match read as an AI interpretation */
+    const notice = outcome && outcome.source !== 'openai' && outcome.notice
+      ? `<p class="notice" role="status">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg>
+          <span>${esc(outcome.notice)}</span>
+        </p>`
+      : '';
+
     if (!scored.length) {
       results.innerHTML = `<div class="results-head"><div><h2>No matches yet</h2>${readback}</div></div>
+        ${notice}
         <div class="empty">
           <h3>Nothing in the catalogue fits that request</h3>
           <p>Try describing it a little differently, or ask for something broader.</p>
@@ -318,6 +327,7 @@ function orderFacet(counts, key) {
           ${readback}
         </div>
       </div>
+      ${notice}
       <div class="grid">${scored.map(resultCard).join('')}</div>`;
     bindImageFallback(results);
   }
@@ -330,8 +340,8 @@ function orderFacet(counts, key) {
       Reading your request…</p>`;
     results.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
-    const { preferences } = await Interpreter.interpret(query, vocabulary());
-    render(preferences);
+    const outcome = await Interpreter.interpret(query, vocabulary());
+    render(outcome.preferences, outcome);
   }
 
   form.addEventListener('submit', (e) => {
