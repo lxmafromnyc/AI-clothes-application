@@ -88,9 +88,9 @@ const HERO_PICKS = [
     score: 93
   },
   {
-    name: 'Wide-leg Pants — Black',
-    retailer: 'H&M',
-    url: 'https://www2.hm.com/en_us/productpage.1090271001.html',
+    name: "XX Chino Standard Taper Fit Men's Pants — Black",
+    retailer: "LEVI'S",
+    url: 'https://www.levi.com/US/en_US/chino-pants/levis-chino-pants-for-men/levis-xx-chino-standard-taper-fit-mens-pants/p/171960005',
     color: 'Black',
     type: 'trousers',
     score: 91
