@@ -196,6 +196,29 @@ product shown — it is not matched up after the fact. Mapping:
 A listing whose `images` association is absent or empty gets **no** image — none
 is substituted from another listing — and the gate then drops the record.
 
+### Verifying the product source in production
+
+Once `PRODUCT_SOURCE` and the provider's credentials are set and the deployment
+has been rebuilt, check the endpoint directly:
+
+```sh
+curl -s -X POST https://ai-clothes-application.vercel.app/api/search \
+  -H 'Content-Type: application/json' \
+  --data '{"intent":{"categories":["knit"],"colors":["Black"],"maxPrice":80,"keywords":["hoodie"]},"limit":6}'
+```
+
+What the reply tells you:
+
+| Response | Meaning |
+| --- | --- |
+| `"source":"etsy"` with a populated `products` array | Live. Each entry carries a real title, brand, price, image URL and listing URL. |
+| `"source":"etsy"`, `products` empty, `rejected` populated | The source answered but nothing passed the gate. `rejected` names the missing field for each dropped record. |
+| `503` `"No product source is configured."` | `PRODUCT_SOURCE` is unset, or names a provider whose credentials are missing. Environment variables only apply to deployments built after they were added, so a redeploy is usually what is missing. |
+| `502` | The provider was reached but failed. The reason is in the function logs, never in the response. |
+
+Environment variables take effect on the next build, not on the running
+deployment, so any change to them needs a redeploy before it is visible.
+
 ### Adding another provider
 
 1. Create `api/providers/<name>.js` exporting `{ name, configured, search }`:
