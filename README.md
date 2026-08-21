@@ -34,6 +34,7 @@ index.html, find-clothes.html, discover.html, about.html
 api/interpret.js        serverless endpoint; calls OpenAI, holds the API key
 api/search.js           serverless endpoint; asks the product source for real listings
 api/providers/          product source adapters and the verification gate
+api/providers/etsy.js   Etsy Open API v3 adapter
 assets/search.js        sends interpreted intent to /api/search
 scripts/verify-api.sh   checks a deployed endpoint end to end
 .env.example            template; the real .env is git-ignored
@@ -167,7 +168,35 @@ registry in `api/providers/product-source.js` ships with only a `none`
 placeholder, so the endpoint answers 503 and the interface says plainly that no
 product source is connected.
 
-### Adding a provider
+### Etsy (implemented)
+
+Set these in the server environment to switch the site onto live Etsy listings:
+
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `PRODUCT_SOURCE` | yes | Set to `etsy` |
+| `ETSY_API_KEY` | yes | The app keystring, sent as the `x-api-key` header |
+| `ETSY_SHARED_SECRET` | no | **Not used.** It exists for the OAuth 2.0 authorization-code flow, which only user-scoped endpoints need. Searching public listings needs no user context, so this adapter never reads or transmits it. |
+
+The adapter calls `GET /v3/application/listings/active` with
+`includes=Images,Shop`, which nests each listing's own images and shop inside
+that listing. That association is what guarantees the photo belongs to the
+product shown — it is not matched up after the fact. Mapping:
+
+| FindWear | Etsy Open API v3 |
+| --- | --- |
+| `title` | `ShopListing.title`, unmodified |
+| `productUrl` | `ShopListing.url` — "the full URL to the listing's page on Etsy" |
+| `price` | `Money.amount / Money.divisor` |
+| `imageUrl` | `ListingImage.url_570xN` from that listing's own `images` |
+| `brand` | `Shop.shop_name`, the maker |
+| `retailer` | Etsy, where the page lives |
+| availability | `state === 'active'` and `quantity > 0` |
+
+A listing whose `images` association is absent or empty gets **no** image — none
+is substituted from another listing — and the gate then drops the record.
+
+### Adding another provider
 
 1. Create `api/providers/<name>.js` exporting `{ name, configured, search }`:
 

@@ -201,7 +201,11 @@ function verifyAll(records, context) {
         Vercel environment
    --------------------------------------------------------- */
 
+const etsy = require('./etsy');
+
 const PROVIDERS = {
+  [etsy.name]: etsy,
+
   /* Placeholder used when nothing is configured. It returns no products
      rather than inventing any, which is what makes /api/search answer
      "not configured" instead of serving something fabricated. */

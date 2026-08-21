@@ -79,6 +79,15 @@ function bindImageFallback(root) {
 
 /* A product with no productUrl is not a real listing. It is marked on the
    card itself so a sample row can never read as something you can buy. */
+/* Money keeps its cents: 72.5 from a source must read $72.50, not $72.5.
+   Whole amounts stay whole, matching how the catalogue rows read. */
+function formatPrice(value) {
+  if (value == null) return '';
+  const n = Number(value);
+  if (!Number.isFinite(n)) return '';
+  return '$' + (Number.isInteger(n) ? String(n) : n.toFixed(2));
+}
+
 const SAMPLE_BADGE = '<span class="item-badge item-badge--sample">Sample</span>';
 
 /* Shown once above any grid that contains placeholder rows. */
@@ -100,7 +109,7 @@ function productCard(item, index, badge, extra) {
       <p class="item-brand">${esc(item.brand)}${linked ? EXTERNAL : ''}</p>
       <h3 class="item-name">${esc(item.name)}</h3>
       <div class="item-row">
-        <span class="item-price">${item.price == null ? '' : `$${item.price}`}</span>
+        <span class="item-price">${formatPrice(item.price)}</span>
         <div class="item-tags">${tags}</div>
       </div>
       ${extra || ''}
@@ -201,7 +210,7 @@ function orderFacet(counts, key) {
         ${media(item, 'mini-thumb', linked ? '' : '<span class="mini-sample">Sample</span>')}
         <div class="mini-meta">
           <strong class="mini-name">${esc(item.name)}</strong>
-          <span class="mini-retailer">${esc(item.brand)}${item.price == null ? '' : ` &middot; $${item.price}`}${linked ? EXTERNAL : ''}</span>
+          <span class="mini-retailer">${esc(item.brand)}${item.price == null ? '' : ` &middot; ${formatPrice(item.price)}`}${linked ? EXTERNAL : ''}</span>
         </div>
         <span class="match-pill">${score}%</span>
       </${tag}>`;
