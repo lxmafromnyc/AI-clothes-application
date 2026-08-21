@@ -90,7 +90,9 @@ function productCard(item, index, badge, extra) {
   const linked = Boolean(item.productUrl);
   const tag = linked ? 'a' : 'article';
   const attrs = linked ? ` href="${esc(item.productUrl)}" target="_blank" rel="noopener noreferrer"` : '';
-  const tags = [item.colors[0], item.fits[0]].filter(Boolean)
+  /* provider records carry colors and sizes; catalogue rows carry fits.
+     Read both defensively so either shape renders. */
+  const tags = [(item.colors || [])[0], (item.fits || [])[0] || (item.sizes || []).join(' / ')].filter(Boolean)
     .map((t) => `<span>${esc(t)}</span>`).join('');
   return `<${tag} class="item-card" style="--i:${index}"${attrs}>
     ${media(item, 'item-media', (badge || '') + (linked ? '' : SAMPLE_BADGE))}
@@ -109,6 +111,13 @@ function productCard(item, index, badge, extra) {
 const resultCard = (item, index) => productCard(item, index,
   `<span class="item-badge">${item.score}% match</span>`,
   `<p class="item-why">${SPARK}<span>${esc(item.why)}</span></p>`);
+
+/* A verified record from the product source. The badge names the retailer
+   rather than a match percentage: FindWear did not score these, the source
+   returned them for the request, and showing a made-up score would be
+   inventing information about a real product. */
+const providerCard = (item, index) => productCard(item, index,
+  `<span class="item-badge">${esc(item.retailer)}</span>`);
 
 const browseCard = (item, index) => productCard(item, index,
   item.styles[0] ? `<span class="item-badge">${esc(item.styles[0])}</span>` : '');
@@ -289,7 +298,28 @@ function orderFacet(counts, key) {
     return chips.slice(0, 7);
   }
 
-  function render(prefs, outcome) {
+  /* Verified records from the product source. Every field shown came from
+     the source and passed the gate in api/providers/product-source.js. */
+  function renderProducts(found, outcome) {
+    const chips = understood(outcome.preferences);
+    const readback = chips.length
+      ? `<div class="understood">${chips.map((c) => `<span>${esc(c)}</span>`).join('')}</div>`
+      : '';
+    const notice = outcome.source !== 'openai' && outcome.notice
+      ? `<p class="notice" role="status"><span>${esc(outcome.notice)}</span></p>` : '';
+
+    results.innerHTML = `<div class="results-head">
+        <div>
+          <h2>${found.products.length} ${found.products.length === 1 ? 'piece' : 'pieces'} found</h2>
+          ${readback}
+        </div>
+      </div>
+      ${notice}
+      <div class="grid">${found.products.map(providerCard).join('')}</div>`;
+    bindImageFallback(results);
+  }
+
+  function render(prefs, outcome, found) {
     const withinBudget = (item) => {
       if (item.price == null) return true; /* unknown price cannot be ruled out */
       if (prefs.maxPrice && item.price > prefs.maxPrice) return false;
@@ -312,6 +342,10 @@ function orderFacet(counts, key) {
       ? `<div class="understood">${chips.map((c) => `<span>${esc(c)}</span>`).join('')}</div>`
       : '';
 
+    /* said plainly when the shown items are samples, not real listings */
+    const sourceNotice = found && found.notice
+      ? `<p class="notice" role="status"><span>${esc(found.notice)}</span></p>` : '';
+
     /* never let a local keyword match read as an AI interpretation */
     const notice = outcome && outcome.source !== 'openai' && outcome.notice
       ? `<p class="notice" role="status">
@@ -323,6 +357,7 @@ function orderFacet(counts, key) {
     if (!scored.length) {
       results.innerHTML = `<div class="results-head"><div><h2>No matches yet</h2>${readback}</div></div>
         ${notice}
+        ${sourceNotice}
         <div class="empty">
           <h3>Nothing in the catalogue fits that request</h3>
           <p>Try describing it a little differently, or ask for something broader.</p>
@@ -337,6 +372,7 @@ function orderFacet(counts, key) {
         </div>
       </div>
       ${notice}
+      ${sourceNotice}
       ${sampleNote(scored)}
       <div class="grid">${scored.map(resultCard).join('')}</div>`;
     bindImageFallback(results);
@@ -351,7 +387,14 @@ function orderFacet(counts, key) {
     results.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
     const outcome = await Interpreter.interpret(query, vocabulary());
-    render(outcome.preferences, outcome);
+
+    /* real products first; the sample catalogue only when no source answers */
+    const found = typeof ProductSearch === 'undefined'
+      ? { source: null, products: [], notice: null }
+      : await ProductSearch.find(outcome.preferences);
+
+    if (found.products.length) renderProducts(found, outcome);
+    else render(outcome.preferences, outcome, found);
   }
 
   form.addEventListener('submit', (e) => {

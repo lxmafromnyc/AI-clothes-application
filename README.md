@@ -32,6 +32,9 @@ request — a keyword match is never presented as an AI reading.
 ```
 index.html, find-clothes.html, discover.html, about.html
 api/interpret.js        serverless endpoint; calls OpenAI, holds the API key
+api/search.js           serverless endpoint; asks the product source for real listings
+api/providers/          product source adapters and the verification gate
+assets/search.js        sends interpreted intent to /api/search
 scripts/verify-api.sh   checks a deployed endpoint end to end
 .env.example            template; the real .env is git-ignored
 assets/products.js      data layer: normalises any source into one schema
@@ -155,6 +158,59 @@ a key, unreachable, or an unusable reply.
   they can quote the request.
 - There is no rate limiting. This endpoint spends your OpenAI credit, so put your
   host's rate limiting or an auth check in front of it before making it public.
+
+## Product search
+
+`/api/search` takes the structured intent from `/api/interpret` and asks the
+configured product source for real listings. No provider is hard-coded: the
+registry in `api/providers/product-source.js` ships with only a `none`
+placeholder, so the endpoint answers 503 and the interface says plainly that no
+product source is connected.
+
+### Adding a provider
+
+1. Create `api/providers/<name>.js` exporting `{ name, configured, search }`:
+
+```js
+module.exports = {
+  name: 'example',
+  defaultRetailer: 'Example Store',
+  configured: () => Boolean(process.env.EXAMPLE_API_KEY),
+  async search(intent, { limit }) {
+    // intent is the interpreter's output:
+    //   categories, colors, occasions, fits, brands, styles,
+    //   maxPrice, minPrice, season, gender, keywords
+    // return raw records; field names are mapped for you
+  }
+};
+```
+
+2. Register it in `PROVIDERS` in `product-source.js`.
+3. Set `PRODUCT_SOURCE=example` and the provider's credentials in Vercel.
+
+That is the whole integration. The frontend, the schema and the rendering do
+not change.
+
+### The verification gate
+
+Every record must arrive from the source with all six of:
+
+```
+title   brand   price   imageUrl   productUrl   retailer
+```
+
+A record missing any one is dropped, never filled in. `productUrl` must also
+address a specific product page — a bare origin, or a path reading as a search
+or category listing, is rejected, because a homepage link is not the product
+the card claims to show. Out-of-stock records are dropped; a source that says
+nothing about stock is not assumed to be out of stock. The response reports how
+many records were rejected and why, so a badly behaved provider is visible
+rather than silently thinning the results.
+
+Records are shown in the order the source returned them, badged with the
+retailer name. FindWear does not attach a match percentage to a provider
+result: it did not score them, and displaying a made-up score would be
+inventing information about a real product.
 
 ## The product catalogue
 
