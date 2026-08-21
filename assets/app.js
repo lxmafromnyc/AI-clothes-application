@@ -77,6 +77,15 @@ function bindImageFallback(root) {
   });
 }
 
+/* A product with no productUrl is not a real listing. It is marked on the
+   card itself so a sample row can never read as something you can buy. */
+const SAMPLE_BADGE = '<span class="item-badge item-badge--sample">Sample</span>';
+
+/* Shown once above any grid that contains placeholder rows. */
+const SAMPLE_NOTE = 'Items marked <strong>Sample</strong> are placeholder data for the demo, not real listings.';
+const sampleNote = (items) => (items.some((i) => !i.productUrl)
+  ? `<p class="sample-note">${SAMPLE_NOTE}</p>` : '');
+
 function productCard(item, index, badge, extra) {
   const linked = Boolean(item.productUrl);
   const tag = linked ? 'a' : 'article';
@@ -84,7 +93,7 @@ function productCard(item, index, badge, extra) {
   const tags = [item.colors[0], item.fits[0]].filter(Boolean)
     .map((t) => `<span>${esc(t)}</span>`).join('');
   return `<${tag} class="item-card" style="--i:${index}"${attrs}>
-    ${media(item, 'item-media', badge)}
+    ${media(item, 'item-media', (badge || '') + (linked ? '' : SAMPLE_BADGE))}
     <div class="item-body">
       <p class="item-brand">${esc(item.brand)}${linked ? EXTERNAL : ''}</p>
       <h3 class="item-name">${esc(item.name)}</h3>
@@ -180,7 +189,7 @@ function orderFacet(counts, key) {
       const tag = linked ? 'a' : 'div';
       const attrs = linked ? ` href="${esc(item.productUrl)}" target="_blank" rel="noopener noreferrer"` : '';
       return `<${tag} class="mini-item"${attrs}>
-        ${media(item, 'mini-thumb')}
+        ${media(item, 'mini-thumb', linked ? '' : '<span class="mini-sample">Sample</span>')}
         <div class="mini-meta">
           <strong class="mini-name">${esc(item.name)}</strong>
           <span class="mini-retailer">${esc(item.brand)}${item.price == null ? '' : ` &middot; $${item.price}`}${linked ? EXTERNAL : ''}</span>
@@ -328,6 +337,7 @@ function orderFacet(counts, key) {
         </div>
       </div>
       ${notice}
+      ${sampleNote(scored)}
       <div class="grid">${scored.map(resultCard).join('')}</div>`;
     bindImageFallback(results);
   }
@@ -396,6 +406,8 @@ function orderFacet(counts, key) {
       ? Products.all()
       : Products.all().filter((i) => i.styles.includes(active));
     count.textContent = `${items.length} ${items.length === 1 ? 'piece' : 'pieces'}`;
+    const note = document.getElementById('discover-note');
+    if (note) note.innerHTML = sampleNote(items);
     grid.innerHTML = items.map(browseCard).join('');
     bindImageFallback(grid);
   }
