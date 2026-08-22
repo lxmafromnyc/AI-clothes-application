@@ -72,6 +72,49 @@ const envelope = (products) => ({ status: 'OK', request_id: 'req-1', data: produ
    1. Intent -> query
    --------------------------------------------------------- */
 
+console.log('\nprovider selection');
+
+const { getProvider, DEFAULT_SOURCE } = require('../api/providers/product-source');
+
+const selectWith = (env) => {
+  const saved = {};
+  ['PRODUCT_SOURCE', 'OPENWEBNINJA_API_KEY', 'ETSY_API_KEY'].forEach((k) => { saved[k] = process.env[k]; delete process.env[k]; });
+  Object.assign(process.env, env);
+  try { return getProvider(); }
+  finally {
+    ['PRODUCT_SOURCE', 'OPENWEBNINJA_API_KEY', 'ETSY_API_KEY'].forEach((k) => {
+      if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k];
+    });
+  }
+};
+
+test('the key alone is enough to go live — PRODUCT_SOURCE is optional', () => {
+  assert.strictEqual(selectWith({ OPENWEBNINJA_API_KEY: 'k' }).name, 'openwebninja');
+});
+
+test('naming the default explicitly selects the same provider', () => {
+  assert.strictEqual(selectWith({ PRODUCT_SOURCE: 'openwebninja', OPENWEBNINJA_API_KEY: 'k' }).name, 'openwebninja');
+});
+
+test('no key and no setting selects nothing, so /api/search answers 503', () => {
+  const p = selectWith({});
+  assert.strictEqual(p.name, 'none');
+  assert.strictEqual(p.configured(), false);
+});
+
+test('Etsy is never selected unless it is asked for by name', () => {
+  assert.notStrictEqual(selectWith({ ETSY_API_KEY: 'k' }).name, 'etsy');
+  assert.strictEqual(selectWith({ PRODUCT_SOURCE: 'etsy', ETSY_API_KEY: 'k' }).name, 'etsy');
+});
+
+test('a misspelt PRODUCT_SOURCE selects nothing rather than silently defaulting', () => {
+  assert.strictEqual(selectWith({ PRODUCT_SOURCE: 'openwebninjaa', OPENWEBNINJA_API_KEY: 'k' }).name, 'none');
+});
+
+test('the default source is the OpenWeb Ninja adapter', () => {
+  assert.strictEqual(DEFAULT_SOURCE, 'openwebninja');
+});
+
 console.log('\nintent -> search query');
 
 /* what /api/interpret produces for "black oversized Nike hoodie under $80" */

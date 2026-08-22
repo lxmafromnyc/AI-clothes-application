@@ -244,11 +244,19 @@ function verifyAll(records, context) {
    means writing an adapter and registering it here; nothing else in the
    system changes, and no page has any knowledge of which one is live.
 
+   PRODUCT_SOURCE is optional. Left unset, the DEFAULT_SOURCE below is
+   used if its credentials are present, so a deployment needs only the
+   provider's key to go live rather than two environment variables that
+   have to agree. Setting PRODUCT_SOURCE always wins — including setting
+   it to something unrecognised, which selects nothing rather than
+   quietly falling back, because a typo should be visible as a 503 and
+   not silently answered by a different provider than the one named.
+
    To add one:
      1. create api/providers/<name>.js exporting { name, configured, search }
      2. require it below and add it to PROVIDERS
-     3. set PRODUCT_SOURCE=<name> plus that provider's credentials in the
-        Vercel environment
+     3. set that provider's credentials in the Vercel environment, and
+        PRODUCT_SOURCE=<name> unless it is the default
    --------------------------------------------------------- */
 
 const openwebninja = require('./openwebninja');
@@ -271,10 +279,18 @@ const PROVIDERS = {
   }
 };
 
+/* The provider a deployment runs on when PRODUCT_SOURCE says nothing. */
+const DEFAULT_SOURCE = openwebninja.name;
+
 function getProvider() {
   const requested = text(process.env.PRODUCT_SOURCE).toLowerCase();
-  if (requested && PROVIDERS[requested]) return PROVIDERS[requested];
-  return PROVIDERS.none;
+
+  /* an explicit choice is honoured, right or wrong */
+  if (requested) return PROVIDERS[requested] || PROVIDERS.none;
+
+  /* nothing asked for: the default, but only if it can actually run */
+  const fallback = PROVIDERS[DEFAULT_SOURCE];
+  return fallback && fallback.configured() ? fallback : PROVIDERS.none;
 }
 
 module.exports = {
@@ -284,6 +300,7 @@ module.exports = {
   verifyAll,
   isProductPage,
   linkFault,
+  DEFAULT_SOURCE,
   toPrice,
   toAbsoluteUrl,
   FIELD_ALIASES,

@@ -125,8 +125,8 @@ and the function share an origin, `/api/interpret` resolves by default, and
 | --- | --- | --- |
 | `OPENAI_API_KEY` | yes | Your OpenAI key. Without it the endpoint returns 503 and the frontend falls back to local parsing. |
 | `OPENAI_MODEL` | no | Model to call. Defaults to `gpt-4o-mini`; set it to whatever your account has access to. |
-| `PRODUCT_SOURCE` | yes | Which adapter in `api/providers/` finds the products. `openwebninja` is what this deployment runs. |
 | `OPENWEBNINJA_API_KEY` | yes | The product source's key. Without it `/api/search` returns 503 and the frontend falls back to the sample catalogue, labelled as such. |
+| `PRODUCT_SOURCE` | no | Which adapter in `api/providers/` finds the products. Unset runs `openwebninja`, which is what this deployment uses. |
 | `ALLOWED_ORIGIN` | no | Only set this if the frontend is on a different origin than the function, e.g. pages on GitHub Pages and the function on Vercel. Left unset, no CORS header is sent and the endpoint is same-origin only. |
 
 Both keys are server-side secrets. Set them in your host's dashboard or CLI
@@ -223,8 +223,8 @@ than one shop's catalogue. Set these in the server environment:
 
 | Variable | Required | Purpose |
 | --- | --- | --- |
-| `PRODUCT_SOURCE` | yes | Set to `openwebninja` |
-| `OPENWEBNINJA_API_KEY` | yes | Your API key, sent as the `x-api-key` header |
+| `OPENWEBNINJA_API_KEY` | yes | Your API key, sent as the `x-api-key` header. This is the only variable the product search needs. |
+| `PRODUCT_SOURCE` | no | Which adapter to run. Left unset, the OpenWeb Ninja adapter is used when its key is present. Set it only to run a different one. |
 | `OPENWEBNINJA_COUNTRY` | no | Marketplace to search, ISO 3166-1 alpha-2. Defaults to `us` |
 | `OPENWEBNINJA_LANGUAGE` | no | Result language, ISO 639-1. Defaults to `en` |
 
@@ -234,9 +234,14 @@ a response — a 502 from the provider is logged server-side and reported to the
 browser as a generic message, so neither the key nor the upstream body leaks.
 
 ```sh
-vercel env add PRODUCT_SOURCE production        # openwebninja
 vercel env add OPENWEBNINJA_API_KEY production
 ```
+
+Setting `PRODUCT_SOURCE` is not necessary — an unset value runs the OpenWeb
+Ninja adapter whenever its key is present, so there is no second variable that
+has to agree with the first. An explicit value always wins, and one naming no
+adapter selects none, so a typo surfaces as a 503 rather than quietly running
+something else.
 
 Environment variables apply to the next build, not the running deployment, so
 redeploy after adding them.
@@ -313,9 +318,10 @@ differs.
 
 ### Etsy (kept, unused)
 
-`api/providers/etsy.js` still works and is still registered. Nothing depends on
-it: setting `PRODUCT_SOURCE=etsy` and `ETSY_API_KEY` switches to it, and
-deleting one `require` and one registry line removes it. It searches a single
+`api/providers/etsy.js` still works and is still registered, but production
+never calls it: nothing selects Etsy unless `PRODUCT_SOURCE=etsy` names it
+explicitly, and an unset `PRODUCT_SOURCE` runs OpenWeb Ninja instead. Deleting
+one `require` and one registry line removes it entirely. It searches a single
 catalogue, which is why it is no longer the default.
 
 ### Testing the pipeline
