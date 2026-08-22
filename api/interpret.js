@@ -22,6 +22,7 @@
    ========================================================= */
 
 const { handledPreflight } = require('./_cors');
+const { envReport } = require('./_env-report');
 
 const OPENAI_URL = 'https://api.openai.com/v1/chat/completions';
 const DEFAULT_MODEL = 'gpt-4o-mini';
@@ -107,7 +108,9 @@ module.exports = async function handler(req, res) {
 
   const key = process.env.OPENAI_API_KEY;
   if (!key) {
-    /* the frontend treats this as "interpret it locally instead" */
+    /* the frontend treats this as "interpret it locally instead".
+       States only — never values. See api/_env-report.js. */
+    console.warn('Interpreter not configured. env:', envReport());
     return res.status(503).json({ error: 'Interpreter is not configured.' });
   }
 

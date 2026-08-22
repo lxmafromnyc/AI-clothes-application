@@ -24,6 +24,7 @@
 
 const { getProvider, verifyAll } = require('./providers/product-source');
 const { handledPreflight } = require('./_cors');
+const { envReport } = require('./_env-report');
 
 const MAX_LIMIT = 24;
 const DEFAULT_LIMIT = 12;
@@ -75,7 +76,12 @@ module.exports = async function handler(req, res) {
   const provider = getProvider();
   if (!provider.configured()) {
     /* No real source is connected. Saying so is the whole point: the
-       alternative would be serving something invented. */
+       alternative would be serving something invented.
+
+       The log records which variables this function can actually see, so
+       "never configured" and "configured somewhere this deployment
+       cannot read" can be told apart. States only — never values. */
+    console.warn('No product source configured. env:', envReport());
     return res.status(503).json({
       error: 'No product source is configured.',
       source: null

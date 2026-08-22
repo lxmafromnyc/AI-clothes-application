@@ -72,6 +72,57 @@ const envelope = (products) => ({ status: 'OK', request_id: 'req-1', data: produ
    1. Intent -> query
    --------------------------------------------------------- */
 
+console.log('\nconfiguration reporting');
+
+const { envReport, stateOf, REPORTED } = require('../api/_env-report');
+
+const SECRET = 'sk-proj-DO-NOT-LOG-abcdef0123456789';
+
+const withReported = (env, fn) => {
+  const saved = {};
+  REPORTED.forEach((k) => { saved[k] = process.env[k]; delete process.env[k]; });
+  Object.assign(process.env, env);
+  try { return fn(); }
+  finally { REPORTED.forEach((k) => { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }); }
+};
+
+test('reports the three states the 503 needs told apart', () => {
+  withReported({ OPENAI_API_KEY: SECRET, OPENWEBNINJA_API_KEY: '', VERCEL_ENV: 'production' }, () => {
+    assert.strictEqual(stateOf('OPENAI_API_KEY'), 'present');
+    assert.strictEqual(stateOf('OPENWEBNINJA_API_KEY'), 'empty', 'a blank value looks configured in a dashboard');
+    assert.strictEqual(stateOf('ALLOWED_ORIGIN'), 'absent');
+    assert.strictEqual(stateOf('VERCEL_ENV'), 'present');
+  });
+});
+
+test('the report never contains a value, however hostile', () => {
+  const hostile = [SECRET, 'a'.repeat(200), 'present', 'absent', 'OPENAI_API_KEY=leaked', '\n\nOPENAI_API_KEY=leaked'];
+  hostile.forEach((value) => {
+    withReported({ OPENAI_API_KEY: value, OPENWEBNINJA_API_KEY: value, ALLOWED_ORIGIN: value, VERCEL_ENV: value }, () => {
+      const report = envReport();
+      assert.ok(!report.includes(SECRET), 'a key must never appear');
+      assert.ok(!report.includes('leaked'), 'a crafted value must not forge a field');
+      assert.ok(!report.includes('aaaa'), 'no value fragment may appear');
+      /* the only strings it may emit are the fixed names and three words */
+      report.split(' ').forEach((pair) => {
+        const [name, state] = pair.split('=');
+        assert.ok(REPORTED.includes(name), `unexpected name ${name}`);
+        assert.ok(['present', 'empty', 'absent'].includes(state), `unexpected state ${state}`);
+      });
+    });
+  });
+});
+
+test('the report cannot reveal a value length', () => {
+  const short = withReported({ OPENAI_API_KEY: 'x' }, envReport);
+  const long = withReported({ OPENAI_API_KEY: 'x'.repeat(500) }, envReport);
+  assert.strictEqual(short, long, 'a short and a long key must be indistinguishable');
+});
+
+test('only the four named variables are ever reported', () => {
+  assert.deepStrictEqual(REPORTED, ['OPENAI_API_KEY', 'OPENWEBNINJA_API_KEY', 'ALLOWED_ORIGIN', 'VERCEL_ENV']);
+});
+
 console.log('\ncross-origin access control');
 
 const { isAllowed, configuredOrigins, handledPreflight } = require('../api/_cors');
@@ -611,6 +662,38 @@ const okResponse = (body) => ({ ok: true, status: 200, json: async () => body, t
      Once a source IS configured, a failed or empty search must say so
      rather than pad the page with demo rows. assets/search.js decides
      that, so it is loaded here and driven directly. */
+
+  console.log('\nwhat reaches the log');
+
+  const captureWarnings = async (fn) => {
+    const real = console.warn; const lines = [];
+    console.warn = (...args) => lines.push(args.join(' '));
+    try { await fn(); } finally { console.warn = real; }
+    return lines;
+  };
+
+  await testAsync('a 503 logs the configuration state, with no value in it', async () => {
+    delete process.env.OPENWEBNINJA_API_KEY;
+    delete process.env.PRODUCT_SOURCE;
+    process.env.OPENAI_API_KEY = SECRET;
+    const handler = require('../api/search');
+    const lines = await captureWarnings(() => handler({ method: 'POST', headers: {}, body: { intent: {} }, on: () => {} }, fakeRes()));
+    assert.strictEqual(lines.length, 1, 'exactly one line');
+    assert.ok(/OPENWEBNINJA_API_KEY=absent/.test(lines[0]), lines[0]);
+    assert.ok(/OPENAI_API_KEY=present/.test(lines[0]), lines[0]);
+    assert.ok(!lines[0].includes(SECRET), 'the key must not be in the log');
+    delete process.env.OPENAI_API_KEY;
+  });
+
+  await testAsync('a successful search logs nothing at all', async () => {
+    process.env.OPENWEBNINJA_API_KEY = 'test-key';
+    delete process.env.PRODUCT_SOURCE;
+    const handler = require('../api/search');
+    const lines = await captureWarnings(() => withStubbedFetch(
+      async () => okResponse(envelope([product()])),
+      () => handler({ method: 'POST', headers: {}, body: { intent: nikeIntent, limit: 3 }, on: () => {} }, fakeRes())));
+    assert.strictEqual(lines.length, 0, 'no request contents, no env state, nothing');
+  });
 
   console.log('\nclient search states');
 
