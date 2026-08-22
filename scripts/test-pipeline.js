@@ -428,6 +428,73 @@ const okResponse = (body) => ({ ok: true, status: 200, json: async () => body, t
     assert.ok(!JSON.stringify(res.body).includes('upstream detail'));
   });
 
+  /* -------------------------------------------------------
+     7. What the page is allowed to show
+     -------------------------------------------------------
+     The sample catalogue may stand in only when nothing is connected.
+     Once a source IS configured, a failed or empty search must say so
+     rather than pad the page with demo rows. assets/search.js decides
+     that, so it is loaded here and driven directly. */
+
+  console.log('\nclient search states');
+
+  const loadClient = () => {
+    const g = { fetch: null, AbortController, setTimeout, clearTimeout, FINDWEAR_SEARCH_API: 'http://test/api/search' };
+    const src = require('fs').readFileSync(require('path').join(__dirname, '../assets/search.js'), 'utf8');
+    new Function('window', 'globalThis', `${src}`).call(g, g, g);
+    return g.ProductSearch;
+  };
+
+  const clientAnswer = async (fetchImpl) => {
+    const client = loadClient();
+    const realFetch = global.fetch;
+    global.fetch = fetchImpl;
+    try { return await client.find({ categories: ['hoodie'] }, 12); }
+    finally { global.fetch = realFetch; }
+  };
+
+  const jsonResponse = (status, body) => ({ status, ok: status >= 200 && status < 300, json: async () => body });
+
+  await testAsync('verified products come back as state "ok"', async () => {
+    const r = await clientAnswer(async () => jsonResponse(200, { source: 'openwebninja', products: [{ name: 'Hoodie', productUrl: 'https://shop.com/p/1' }] }));
+    assert.strictEqual(r.state, 'ok');
+    assert.strictEqual(r.products.length, 1);
+  });
+
+  await testAsync('503 is the only state that permits the sample catalogue', async () => {
+    const r = await clientAnswer(async () => jsonResponse(503, { error: 'No product source is configured.' }));
+    assert.strictEqual(r.state, 'not-configured');
+  });
+
+  await testAsync('a configured source that fails is "unavailable", not "not-configured"', async () => {
+    const r = await clientAnswer(async () => jsonResponse(502, { error: 'unavailable' }));
+    assert.strictEqual(r.state, 'unavailable', 'samples must not be shown for a 502');
+    assert.ok(r.notice && !/sample/i.test(r.notice), 'the notice must not promise sample items');
+  });
+
+  await testAsync('an unreachable endpoint is "unavailable" rather than assumed unconfigured', async () => {
+    const r = await clientAnswer(async () => { throw new Error('network down'); });
+    assert.strictEqual(r.state, 'unavailable');
+  });
+
+  await testAsync('a source answering with nothing verifiable is "empty"', async () => {
+    const r = await clientAnswer(async () => jsonResponse(200, { source: 'openwebninja', products: [], rejected: { 'missing-image-url': 3 } }));
+    assert.strictEqual(r.state, 'empty');
+    assert.strictEqual(r.products.length, 0);
+    assert.deepStrictEqual(r.rejected, { 'missing-image-url': 3 });
+  });
+
+  await testAsync('no state but "not-configured" ever promises sample items', async () => {
+    for (const [label, impl] of [
+      ['502', async () => jsonResponse(502, {})],
+      ['network failure', async () => { throw new Error('down'); }],
+      ['empty result', async () => jsonResponse(200, { source: 'openwebninja', products: [] })]
+    ]) {
+      const r = await clientAnswer(impl);
+      assert.ok(!/sample/i.test(r.notice || ''), `${label} must not offer sample items`);
+    }
+  });
+
   console.log(`\n${passed} passed, ${failures.length} failed\n`);
   process.exit(failures.length ? 1 : 0);
 })();

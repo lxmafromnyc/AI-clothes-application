@@ -5,10 +5,18 @@
    holds the product source's credentials server-side and returns only
    records that passed verification.
 
-   When no product source is configured the endpoint answers 503, and this
-   module reports that plainly. FindWear then falls back to its sample
-   catalogue, which is labelled as such on every card — a placeholder row
-   is never presented as a real listing.
+   What comes back is a `state`, and it decides what the page may show:
+
+     ok               verified products; they are what is rendered
+     not-configured   the endpoint answered 503, meaning no product source
+                      is connected at all. Only here may the sample
+                      catalogue stand in, and every row is labelled.
+     unavailable      a source IS connected but the call failed. Samples
+                      are NOT shown: a configured deployment showing
+                      placeholder rows would read as real stock.
+     empty            the source answered and nothing passed the gate.
+                      Also no samples — the honest answer is "nothing
+                      matched", not a page of demo items.
 
    Endpoint: derived from the interpreter endpoint, so one meta tag
    configures both. Override separately if needed:
@@ -35,7 +43,11 @@
   }
 
   const NOT_CONNECTED = 'No product source is connected yet, so these are FindWear’s sample items rather than real listings.';
-  const UNAVAILABLE = 'The product source could not be reached, so these are FindWear’s sample items rather than real listings.';
+  const UNAVAILABLE = 'The product search could not be reached, so no live results are available right now.';
+  const FAILED = 'The product search failed, so no live results are available right now.';
+  const NOTHING = 'The product search ran but returned nothing that could be verified for this request.';
+
+  const answer = (state, extra) => Object.assign({ source: null, products: [], notice: null, state }, extra || {});
 
   async function find(intent, limit) {
     let response;
@@ -50,14 +62,21 @@
       });
       clearTimeout(timer);
     } catch (err) {
-      return { source: null, products: [], notice: NOT_CONNECTED };
+      /* the endpoint could not be reached at all. Whether a source is
+         configured behind it is unknowable from here, so this is treated
+         as an outage rather than as an unconfigured deployment: showing
+         samples on what may be a live site is the worse mistake. */
+      return answer('unavailable', { notice: UNAVAILABLE });
     }
 
+    /* 503 is this endpoint's own "no product source is configured", and
+       404 means it is not deployed. Both mean nothing is connected, which
+       is the one case the sample catalogue may stand in for. */
     if (response.status === 503 || response.status === 404) {
-      return { source: null, products: [], notice: NOT_CONNECTED };
+      return answer('not-configured', { notice: NOT_CONNECTED });
     }
     if (!response.ok) {
-      return { source: null, products: [], notice: UNAVAILABLE };
+      return answer('unavailable', { notice: FAILED });
     }
 
     try {
@@ -65,11 +84,11 @@
       const products = Array.isArray(data.products) ? data.products : [];
       if (!products.length) {
         /* the source answered but had nothing verifiable for this request */
-        return { source: data.source || null, products: [], notice: null, empty: true };
+        return answer('empty', { source: data.source || null, notice: NOTHING, rejected: data.rejected || null });
       }
-      return { source: data.source || 'provider', products, notice: null };
+      return { source: data.source || 'provider', products, notice: null, state: 'ok' };
     } catch (err) {
-      return { source: null, products: [], notice: UNAVAILABLE };
+      return answer('unavailable', { notice: FAILED });
     }
   }
 

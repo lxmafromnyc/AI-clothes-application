@@ -334,6 +334,27 @@ function orderFacet(counts, key) {
     bindImageFallback(results);
   }
 
+  /* A configured source that returned nothing. The request readback stays,
+     so it is clear what was searched for, and the reason is stated plainly
+     instead of being filled with placeholder products. */
+  function renderNothing(found, outcome) {
+    const chips = understood(outcome.preferences);
+    const readback = chips.length
+      ? `<div class="understood">${chips.map((c) => `<span>${esc(c)}</span>`).join('')}</div>`
+      : '';
+    const heading = found.state === 'empty' ? 'No matches found' : 'Product search unavailable';
+    const detail = found.state === 'empty'
+      ? 'Nothing came back that could be verified for this request. Try describing it a little differently, or ask for something broader.'
+      : 'This is a problem on our side, not with your request. Try again in a moment.';
+
+    results.innerHTML = `<div class="results-head"><div><h2>${heading}</h2>${readback}</div></div>
+      ${found.notice ? `<p class="notice" role="status"><span>${esc(found.notice)}</span></p>` : ''}
+      <div class="empty">
+        <h3>${heading}</h3>
+        <p>${esc(detail)}</p>
+      </div>`;
+  }
+
   function render(prefs, outcome, found) {
     const withinBudget = (item) => {
       if (item.price == null) return true; /* unknown price cannot be ruled out */
@@ -409,7 +430,12 @@ function orderFacet(counts, key) {
       : await ProductSearch.find(outcome.preferences);
 
     if (found.products.length) renderProducts(found, outcome);
-    else render(outcome.preferences, outcome, found);
+    /* The sample catalogue stands in only when nothing is connected. Once
+       a product source IS configured, a failed or empty search says so —
+       a deployment that can sell things must never pad the page with demo
+       rows, however clearly they are labelled. */
+    else if (found.state === 'not-configured') render(outcome.preferences, outcome, found);
+    else renderNothing(found, outcome);
   }
 
   form.addEventListener('submit', (e) => {

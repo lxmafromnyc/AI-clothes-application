@@ -173,10 +173,18 @@ If the interpreter fails, the frontend reads the request locally instead and
 shows a notice saying so, naming the reason: no interpreter connected, deployed
 without a key, unreachable, or an unusable reply.
 
-If the product source fails or is not configured, the sample catalogue is shown
-instead, with a notice saying these are sample items rather than real listings
-and a `Sample` badge on every row that is not a real listing. No product is
-ever invented to fill the gap.
+What the page may show when there are no products depends on why:
+
+| `/api/search` says | State | The page shows |
+| --- | --- | --- |
+| `503` / `404` | `not-configured` | the sample catalogue, with a notice and a `Sample` badge on every row that is not a real listing |
+| `502`, or unreachable | `unavailable` | "Product search unavailable" — **no** sample rows |
+| `200`, empty `products` | `empty` | "No matches found" — **no** sample rows |
+
+The sample catalogue stands in only when nothing is connected at all. Once a
+product source is configured, a failed or empty search says so plainly: a
+deployment that can sell things must never pad the page with demo rows, however
+clearly they are labelled. No product is ever invented to fill the gap.
 
 ### Worth knowing
 
