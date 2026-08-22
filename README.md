@@ -317,31 +317,55 @@ as `max_price`, and any offer that still comes back above it is dropped.
 
 #### Mapping
 
+Confirmed against a live response: the commerce fields appear at the **top
+level** of a search record, not only nested under `offer`. Both shapes are read.
+
 | FindWear | OpenWeb Ninja |
 | --- | --- |
 | `title` | `product_title` |
 | `imageUrl` | `product_photos[0]`, from that product's own photo list |
-| `price` | `offer.price`, parsed from the string the offer carries |
-| `retailer` | `offer.store_name` |
-| `productUrl` | `offer.offer_page_url` — the retailer's own page |
-| `brand` | `product_attributes.Brand`, when the product has one |
+| `price` | `price`, or the price of the resolved offer |
+| `retailer` | `store_name` — a domain, e.g. `nike.com` |
+| `productUrl` | the resolved offer's `offer_page_url` — **never** `product_page_url` |
+| `brand` | `product_attributes.Brand`, when present |
 
-The product-level `product_page_url` is Google Shopping's comparison page for
-the item, not a retailer's product page. It is deliberately never used, and the
-gate rejects Google hosts as a second line of defence.
+#### Where a direct retailer URL actually comes from
 
-#### Why the image cannot belong to a different product
+`/search` returns Google Shopping's **product view**. Its `product_page_url` is
+a Google URL — a live response returned a `google.com/search?…` URL in it. It is
+never the retailer's page, so it is never used as one. `store_name` is a domain,
+and a domain is not a URL: no link is ever built from it.
 
-This is the property the provider was chosen for, so it is enforced by the
-shape of the data rather than by care.
+The per-seller links live behind a second endpoint, confirmed in the vendor's
+OpenAPI manifest:
 
-A search result is one product object carrying **both** its own photos and its
-own merchant offer. `toRecord()` reads both out of that same object in one
-pass: the image comes from the product, and the price, retailer and link all
-come from that product's own offer. No second request is made, no image is
-looked up separately, and there is no code path that can pair one record's
-photo with another's link. A product that arrives without photos gets no image
-— none is substituted from anywhere — and the gate then drops it.
+```
+GET /realtime-product-search/v2/product-offers?product_id=…
+"Get all offers available for a product. Each page of offers contains
+ offers from 10 sellers."
+```
+
+So the adapter:
+
+1. uses whatever link the search record already carries, if it is a real
+   retailer URL — some records have one
+2. otherwise asks `/product-offers` for that `product_id` and takes the first
+   offer that has one, preferring the shop the search result named
+3. otherwise leaves the record without a URL, and the gate drops it
+
+Nothing is inferred at any step.
+
+**This costs one extra request per product that needs a link.** A page of 12
+products is up to 13 requests rather than 1. On the $25/mo Pro plan that is
+roughly 770 shopper searches a month rather than 10,000. Two knobs bound it:
+
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `OPENWEBNINJA_RESOLVE_OFFERS` | on | `off` skips the lookups entirely — cheaper, and almost everything is then dropped for having no retailer link |
+| `OPENWEBNINJA_OFFER_BUDGET_MS` | 6000 | total wall-clock budget for the lookups; whatever resolved by then is what shows |
+
+Lookups also stop early once enough records have a link, and only products
+that need one are looked up at all.
 
 #### Response fields: what is verified, and what is not
 

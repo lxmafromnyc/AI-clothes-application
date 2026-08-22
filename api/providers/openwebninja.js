@@ -33,37 +33,60 @@
    without the shopper asking would narrow their results on our guess.
 
    ---------------------------------------------------------
+   Where a direct retailer URL actually comes from
+   ---------------------------------------------------------
+   /search returns Google Shopping's PRODUCT view. Its `product_page_url`
+   is a Google URL — Google's own page for the item — and a live response
+   confirmed it can even be a /search URL. It is never the retailer's
+   product page, so it is never used as one. `store_name` is a domain
+   ("nike.com"), which the store-reviews endpoint corroborates by keying
+   on `store_domain`; a domain is not a URL and no URL is built from it.
+
+   The per-seller links live behind a second endpoint:
+
+     GET /realtime-product-search/v2/product-offers?product_id=...
+     "Get all offers available for a product. Each page of offers
+      contains offers from 10 sellers."
+
+   So a direct retailer URL costs one extra request per product. This
+   adapter therefore:
+
+     1. reads whatever the search record already carries, and uses it
+        directly if it yields a real retailer URL — some records do
+     2. otherwise asks /product-offers for that product_id and takes the
+        first offer that has one
+     3. otherwise leaves the record without a URL, and the gate drops it
+
+   Nothing is inferred at any step. A product with no obtainable retailer
+   link is dropped, never linked to Google and never linked to a URL
+   assembled out of a store domain.
+
+   ---------------------------------------------------------
    Why the image cannot be attached to the wrong product
    ---------------------------------------------------------
-   This is the property the provider was chosen for, so it is enforced
-   structurally rather than by convention.
+   The image always comes from the product record it belongs to, and the
+   price, retailer and link always come from ONE offer — either the offer
+   embedded in that product record, or one offer object returned by
+   /product-offers for that product's own id. The three are read out of
+   the same object in one pass, so the price shown is the price at the
+   shop being linked to. There is no path that pairs one product's photo
+   with another's link.
 
-   A search result is one product object. That object carries its own
-   photos AND its own merchant offer. toRecord() below reads both out of
-   the SAME object in one pass: the image comes from `product`, the price,
-   retailer and product URL come from `product`'s own offer. Nothing is
-   looked up elsewhere, no second request is made, and there is no code
-   path that can pair a photo from one record with a link from another.
-
-   If a product arrives without photos, no image is substituted from
-   anywhere — the field is left absent and the gate drops the record.
-   Same for a product with no usable offer.
+   A product with no photos gets no image; none is substituted.
 
    ---------------------------------------------------------
-   Response schema: what is verified and what is tolerated
+   Response shape: what is confirmed
    ---------------------------------------------------------
-   The vendor documents the envelope as { status, request_id, data } with
-   `data` carrying the product list. The per-field names below are drawn
-   from the vendor's published response documentation. They could not be
-   confirmed against a live call while this adapter was written, so the
-   mapping is written to accept the documented spellings and their obvious
-   variants, and to FAIL CLOSED on anything else: an unrecognised shape
-   yields a record missing its required fields, which the gate rejects and
-   counts. A wrong guess therefore shows up as an empty result set with a
-   populated `rejected` tally — never as an invented product.
+   Confirmed from a live response: product_title, price, product_photos,
+   store_name and product_page_url appear at the TOP level of a search
+   record, not only nested under `offer`. Both shapes are read, because
+   both have been observed.
 
-   Run `node scripts/probe-openwebninja.js "<query>"` with a real key to
-   print the live field names and confirm the mapping.
+   The per-offer field names from /product-offers are not confirmed, so
+   they are matched tolerantly and FAIL CLOSED: an unrecognised shape
+   yields no URL, and the gate drops the record. A wrong guess shows up
+   as an empty result set with a populated `rejected` tally, never as a
+   product pointing somewhere it should not.
 
    ---------------------------------------------------------
    Credentials
@@ -72,12 +95,22 @@
                             only inside this serverless function; it is
                             never included in a response and never reaches
                             a browser.
+     OPENWEBNINJA_RESOLVE_OFFERS
+                            set to "off" to skip the /product-offers step.
+                            Cheaper by one request per product, and almost
+                            everything is then dropped for having no
+                            retailer link. Default on.
+     OPENWEBNINJA_OFFER_BUDGET_MS
+                            total wall-clock budget for the offer lookups,
+                            default 6000. Whatever is resolved when it
+                            expires is what gets shown.
    ========================================================= */
 
 'use strict';
 
 const API_ROOT = 'https://api.openwebninja.com/realtime-product-search/v2';
 const SEARCH_URL = `${API_ROOT}/search`;
+const OFFERS_URL = `${API_ROOT}/product-offers`;
 const REQUEST_TIMEOUT = 15000;
 const MAX_TERMS = 12;
 
@@ -86,6 +119,14 @@ const MAX_TERMS = 12;
    the page, but never more than the endpoint accepts. */
 const API_LIMIT_MAX = 120;
 const OVERFETCH = 2;
+
+/* Offer lookups cost one request each, so they are bounded three ways:
+   only products that need one are looked up, only until enough records
+   have a link, and only until the wall-clock budget runs out. Whatever
+   resolved by then is what gets shown. */
+const OFFER_CONCURRENCY = 4;
+const DEFAULT_OFFER_BUDGET_MS = 6000;
+const offersEnabled = () => text(process.env.OPENWEBNINJA_RESOLVE_OFFERS).toLowerCase() !== 'off';
 
 const text = (v) => (v === undefined || v === null ? '' : String(v).trim());
 
@@ -182,13 +223,36 @@ function imageFrom(product) {
   return text(single) || null;
 }
 
-/* The merchant offer belonging to THIS product.
+/* Google's own surfaces. `product_page_url` points at one of these by
+   design, so it is recognised and refused rather than displayed. */
+const GOOGLE_HOST = /(^|\.)(google\.[a-z]{2,3}(\.[a-z]{2})?|googleadservices\.com|googleusercontent\.com|gstatic\.com|googlesyndication\.com)$/i;
 
-   `offer` is the documented single-offer field on a search result. The
-   array forms are accepted because the same product shape is reused by
-   the vendor's offers endpoint. Whichever is found, one offer object is
-   returned and every commercial field is then read out of that one
-   object, so price, retailer and URL always describe the same listing. */
+/* Returns an absolute retailer URL, or null. Null for anything on a
+   Google host, anything unparseable, and anything that is not http(s) —
+   so a value that is not a retailer link can never be mistaken for one.
+   The authoritative check still runs in the verification gate; this one
+   exists so the adapter knows whether it needs to go and find a link. */
+function looksDirect(value) {
+  const raw = text(value);
+  if (!raw) return null;
+  let url;
+  try { url = new URL(raw); } catch (err) { return null; }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;
+  if (GOOGLE_HOST.test(url.hostname)) return null;
+  return url.href;
+}
+
+/* Field names carrying a seller's own link. `product_page_url` is
+   deliberately absent: it is Google's page for the item, and a live
+   response returned a google.com/search URL in it. */
+const OFFER_URL_KEYS = ['offer_page_url', 'offerPageUrl', 'buy_now_url', 'offer_url', 'seller_link', 'link', 'url'];
+const STORE_KEYS = ['store_name', 'storeName', 'merchant_name', 'seller_name', 'store', 'merchant', 'seller', 'source', 'store_domain'];
+const OFFER_PRICE_KEYS = ['price', 'offer_price', 'current_price', 'sale_price', 'store_price'];
+
+/* An offer embedded in a search record. Live responses put these at the
+   top level of the product too, so the product itself is accepted as an
+   offer-like object — the fields are read from whichever carries them,
+   but always from ONE object, never mixed between two. */
 function offerFrom(product) {
   const direct = product.offer || product.top_offer || product.best_offer;
   if (direct && typeof direct === 'object' && !Array.isArray(direct)) return direct;
@@ -203,20 +267,35 @@ function offerFrom(product) {
   return null;
 }
 
-/* The retailer's own product page.
+/* Price, retailer and link out of one offer-like object. Returns null
+   unless that object yields a real retailer URL, because a price and a
+   shop name with no link to the thing being priced is not a product we
+   can honestly show. */
+function commerceFrom(source) {
+  if (!source || typeof source !== 'object') return null;
+  const productUrl = looksDirect(firstOf(source, OFFER_URL_KEYS));
+  if (!productUrl) return null;
 
-   `offer_page_url` is the documented direct buy-now link. The product-level
-   `product_page_url` is Google Shopping's own page for the item and is
-   deliberately NOT accepted here: it is not a retailer product page, and
-   presenting it as one would misrepresent where the card leads. The gate
-   rejects Google hosts as a second line of defence. */
-const OFFER_URL_KEYS = ['offer_page_url', 'offerPageUrl', 'buy_now_url', 'offer_url', 'link', 'url', 'product_url'];
-const STORE_KEYS = ['store_name', 'storeName', 'merchant_name', 'seller_name', 'store', 'merchant', 'seller', 'source'];
-const OFFER_PRICE_KEYS = ['price', 'offer_price', 'current_price', 'sale_price', 'store_price'];
+  const priceSource = firstOf(source, OFFER_PRICE_KEYS);
+  return {
+    price: toPrice(priceSource),
+    currency: currencyFrom(priceSource),
+    retailer: text(firstOf(source, STORE_KEYS)),
+    productUrl
+  };
+}
+
+/* The commerce fields a search record can supply on its own: from its
+   embedded offer if it has one, otherwise from its own top-level fields.
+   Null when neither yields a retailer link — which is the common case,
+   and what sends this product to /product-offers. */
+function inlineCommerce(product) {
+  return commerceFrom(offerFrom(product)) || commerceFrom(product);
+}
 
 /* Brand is optional. It is used when the source supplies one and omitted
    when it does not — the retailer's name is never copied into it, because
-   "Walmart" is not the brand of a hoodie Walmart sells. */
+   "nike.com" is a shop, not the brand of everything it sells. */
 function brandFrom(product) {
   const direct = firstOf(product, ['brand', 'product_brand', 'brand_name', 'manufacturer']);
   if (text(direct)) return text(direct);
@@ -229,27 +308,29 @@ function brandFrom(product) {
   return null;
 }
 
-/* Maps one product to one record. Every value comes from this product or
-   from this product's own offer; a field neither carries is omitted, so
-   the gate rejects the record rather than displaying a blank or a guess. */
+/* Maps one product to one record.
+
+   The title, image, brand and id come from the product itself. The
+   price, retailer and link come from one offer, when the record already
+   carries one that has a real retailer URL. When it does not, those
+   three are left absent together — never half-filled — and search()
+   fills them from that product's own offers, or the gate drops it. */
 function toRecord(product) {
   if (!product || typeof product !== 'object') return null;
 
-  const offer = offerFrom(product);
-  const priceSource = offer ? firstOf(offer, OFFER_PRICE_KEYS) : undefined;
+  const commerce = inlineCommerce(product);
 
   const record = {
     title: text(firstOf(product, ['product_title', 'productTitle', 'title', 'name'])),
-    /* from the product record itself */
     imageUrl: imageFrom(product),
-    /* all three from the SAME offer object */
-    price: toPrice(priceSource),
-    currency: currencyFrom(priceSource),
-    retailer: offer ? text(firstOf(offer, STORE_KEYS)) : '',
-    productUrl: offer ? text(firstOf(offer, OFFER_URL_KEYS)) : '',
-
     brand: brandFrom(product),
-    sku: text(firstOf(product, ['product_id', 'productId', 'id'])) || undefined
+    sku: text(firstOf(product, ['product_id', 'productId', 'id'])) || undefined,
+
+    /* all three from the same offer, or none of them */
+    price: commerce ? commerce.price : undefined,
+    currency: commerce ? commerce.currency : undefined,
+    retailer: commerce ? commerce.retailer : undefined,
+    productUrl: commerce ? commerce.productUrl : undefined
   };
 
   /* strip absent values so the gate sees a missing field, not an empty one */
@@ -257,6 +338,26 @@ function toRecord(product) {
     if (record[k] === null || record[k] === undefined || record[k] === '') delete record[k];
   });
   return record;
+}
+
+/* Prefers the offer from the shop the search result named, so the card
+   shows the retailer the search actually found, and falls back to the
+   first seller that has a usable link. */
+function pickOffer(offers, preferredStore) {
+  const list = Array.isArray(offers) ? offers.filter((o) => o && typeof o === 'object') : [];
+  const wanted = text(preferredStore).toLowerCase();
+
+  if (wanted) {
+    for (const offer of list) {
+      const store = text(firstOf(offer, STORE_KEYS)).toLowerCase();
+      if (store && store === wanted && commerceFrom(offer)) return commerceFrom(offer);
+    }
+  }
+  for (const offer of list) {
+    const commerce = commerceFrom(offer);
+    if (commerce) return commerce;
+  }
+  return null;
 }
 
 /* -----------------------------------------------------------
@@ -278,15 +379,92 @@ function resultsFrom(payload) {
   return [];
 }
 
-async function search(intent, options) {
+/* One GET against the API. The key travels as a header, never in the
+   query string, and the response body is never surfaced to a browser. */
+async function apiGet(url, params) {
   const key = process.env.OPENWEBNINJA_API_KEY;
   if (!key) throw new Error('OPENWEBNINJA_API_KEY is not set');
 
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
+  let response;
+  try {
+    response = await fetch(`${url}?${params.toString()}`, {
+      headers: { 'x-api-key': key, Accept: 'application/json' },
+      signal: controller.signal
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '');
+    throw new Error(`OpenWeb Ninja responded ${response.status}: ${detail.slice(0, 200)}`);
+  }
+  return response.json();
+}
+
+/* The sellers for one product. A failure here is not fatal: that one
+   product ends up without a link and the gate drops it, rather than the
+   whole search failing because one lookup did. */
+async function offersFor(productId, region) {
+  const params = new URLSearchParams({ product_id: String(productId), country: region.country, language: region.language });
+  try {
+    const payload = await apiGet(OFFERS_URL, params);
+    return resultsFrom(payload);
+  } catch (err) {
+    console.warn('Offer lookup failed for product', String(productId), err && err.message);
+    return [];
+  }
+}
+
+/* Fills in the records that arrived without a retailer link, in small
+   parallel batches, stopping as soon as enough records have one or the
+   budget expires. Mutates in place; a record left unresolved keeps no
+   price, retailer or URL and is dropped by the gate. */
+async function resolveMissingOffers(records, wanted, region) {
+  if (!offersEnabled()) return;
+
+  const budget = Number(process.env.OPENWEBNINJA_OFFER_BUDGET_MS) || DEFAULT_OFFER_BUDGET_MS;
+  const deadline = Date.now() + budget;
+  const pending = records.filter((r) => !r.productUrl && r.sku);
+  let resolved = records.filter((r) => r.productUrl).length;
+
+  for (let i = 0; i < pending.length; i += OFFER_CONCURRENCY) {
+    if (resolved >= wanted || Date.now() >= deadline) break;
+
+    const batch = pending.slice(i, i + OFFER_CONCURRENCY);
+    const found = await Promise.all(batch.map(async (record) => {
+      const offers = await offersFor(record.sku, region);
+      /* preferredStore is the shop the search result named, so the card
+         keeps showing the retailer the search actually found */
+      return pickOffer(offers, record.retailerHint);
+    }));
+
+    found.forEach((commerce, n) => {
+      if (!commerce) return;
+      const record = batch[n];
+      /* all three together, from the one offer they came from */
+      record.price = commerce.price;
+      record.currency = commerce.currency;
+      record.retailer = commerce.retailer;
+      record.productUrl = commerce.productUrl;
+      resolved += 1;
+    });
+  }
+}
+
+async function search(intent, options) {
   const wanted = Math.min(Math.max(Number(options && options.limit) || 12, 1), 100);
+  const region = {
+    country: process.env.OPENWEBNINJA_COUNTRY || 'us',
+    language: process.env.OPENWEBNINJA_LANGUAGE || 'en'
+  };
+
   const params = new URLSearchParams({
     q: queryFrom(intent) || 'clothing',
-    country: process.env.OPENWEBNINJA_COUNTRY || 'us',
-    language: process.env.OPENWEBNINJA_LANGUAGE || 'en',
+    country: region.country,
+    language: region.language,
     limit: String(Math.min(wanted * OVERFETCH, API_LIMIT_MAX)),
     sort_by: 'BEST_MATCH'
   });
@@ -296,27 +474,23 @@ async function search(intent, options) {
   if (intent && intent.minPrice) params.set('min_price', String(intent.minPrice));
   if (intent && intent.maxPrice) params.set('max_price', String(intent.maxPrice));
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
-  let response;
-  try {
-    response = await fetch(`${SEARCH_URL}?${params.toString()}`, {
-      headers: { 'x-api-key': key, Accept: 'application/json' },
-      signal: controller.signal
-    });
-  } finally {
-    clearTimeout(timer);
-  }
+  const payload = await apiGet(SEARCH_URL, params);
+  const products = resultsFrom(payload);
 
-  if (!response.ok) {
-    /* logged server-side only; /api/search returns a generic message so
-       the key and the upstream detail never reach a browser */
-    const detail = await response.text().catch(() => '');
-    throw new Error(`OpenWeb Ninja responded ${response.status}: ${detail.slice(0, 200)}`);
-  }
+  const records = products.map((product) => {
+    const record = toRecord(product);
+    if (!record) return null;
+    /* remembered only to prefer the same shop when looking up offers;
+       never displayed, and never used to build a URL */
+    record.retailerHint = text(firstOf(product, STORE_KEYS));
+    return record;
+  }).filter(Boolean);
 
-  const payload = await response.json();
-  const records = resultsFrom(payload).map(toRecord).filter(Boolean);
+  /* the search endpoint returns Google's product view, so most records
+     arrive without a retailer link; this fetches the sellers for them */
+  await resolveMissingOffers(records, wanted, region);
+
+  records.forEach((r) => { delete r.retailerHint; });
 
   /* The source filters on price, but an offer that slipped past the
      ceiling is dropped rather than shown: "under $80" is the shopper's
@@ -343,6 +517,13 @@ module.exports = {
   /* exported for tests and for scripts/probe-openwebninja.js */
   toRecord,
   queryFrom,
+  looksDirect,
+  commerceFrom,
+  inlineCommerce,
+  pickOffer,
+  offersFor,
+  resolveMissingOffers,
+  OFFERS_URL,
   imageFrom,
   offerFrom,
   brandFrom,

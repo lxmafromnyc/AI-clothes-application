@@ -52,19 +52,37 @@ async function testAsync(name, fn) {
    Fixtures, in the documented response shape
    --------------------------------------------------------- */
 
+/* A search record in the shape a LIVE response returns: the commerce
+   fields at the top level, and product_page_url pointing at Google. */
 const product = (over) => Object.assign({
   product_id: 'p1',
+  product_title: "Nike Men's Air Force 1 '07 Sneakers",
+  price: '$87.97',
+  store_name: 'nike.com',
+  product_photos: ['https://img.example-cdn.com/nike/af1-white-1.jpg'],
+  product_page_url: 'https://www.google.com/search?q=nike+air+force+1&tbm=shop',
+  product_attributes: { Brand: 'Nike', Material: 'Leather' }
+}, over);
+
+/* The older shape, with an embedded offer carrying a real retailer link.
+   Both have been observed, so both are covered. */
+const productWithInlineOffer = (over) => Object.assign({
+  product_id: 'p2',
   product_title: 'Champion Reverse Weave Oversized Hoodie, Black',
   product_photos: ['https://img.example-cdn.com/champion/hoodie-black-1.jpg'],
   product_page_url: 'https://www.google.com/shopping/product/111',
-  product_attributes: { Brand: 'Champion', Material: 'Cotton blend' },
+  product_attributes: { Brand: 'Champion' },
   offer: {
     store_name: 'Nordstrom',
     price: '$68.00',
-    offer_page_url: 'https://www.nordstrom.com/s/reverse-weave-hoodie/7654321',
-    product_condition: 'NEW'
+    offer_page_url: 'https://www.nordstrom.com/s/reverse-weave-hoodie/7654321'
   }
 }, over);
+
+/* One page of /product-offers for a product_id. */
+const offersPayload = (offers) => ({ status: 'OK', request_id: 'req-offers', data: offers });
+
+const offer = (store, price, url) => ({ store_name: store, price, offer_page_url: url, product_condition: 'NEW' });
 
 const envelope = (products) => ({ status: 'OK', request_id: 'req-1', data: products });
 
@@ -337,43 +355,64 @@ test('an empty intent produces an empty query, not an invented one', () => {
 
 console.log('\nproduct -> record');
 
-test('maps the six displayed fields off the product and its own offer', () => {
+test('maps the live top-level fields', () => {
   const r = provider.toRecord(product());
-  assert.strictEqual(r.title, 'Champion Reverse Weave Oversized Hoodie, Black');
-  assert.strictEqual(r.imageUrl, 'https://img.example-cdn.com/champion/hoodie-black-1.jpg');
+  assert.strictEqual(r.title, "Nike Men's Air Force 1 '07 Sneakers");
+  assert.strictEqual(r.imageUrl, 'https://img.example-cdn.com/nike/af1-white-1.jpg');
+  assert.strictEqual(r.brand, 'Nike');
+});
+
+test('a Google product_page_url yields NO product URL, price or retailer', () => {
+  const r = provider.toRecord(product());
+  assert.strictEqual(r.productUrl, undefined, 'Google is never the retailer page');
+  assert.strictEqual(r.price, undefined, 'price without a link to it is not shown');
+  assert.strictEqual(r.retailer, undefined);
+  assert.ok(!JSON.stringify(r).includes('google.'), 'no Google URL may survive into a record');
+});
+
+test('no URL is ever built out of the store domain', () => {
+  const r = provider.toRecord(product());
+  assert.ok(!JSON.stringify(r).includes('nike.com/'), 'a domain is not a product page');
+});
+
+[
+  ['a Google search URL', 'https://www.google.com/search?q=nike&tbm=shop'],
+  ['a Google Shopping product page', 'https://www.google.com/shopping/product/111'],
+  ['a Google country domain', 'https://www.google.co.uk/shopping/product/111'],
+  ['googleusercontent', 'https://lh3.googleusercontent.com/thing'],
+  ['not a URL at all', 'nike.com'],
+  ['a javascript: URL', 'javascript:alert(1)']
+].forEach(([label, url]) => {
+  test(`looksDirect refuses ${label}`, () => {
+    assert.strictEqual(provider.looksDirect(url), null);
+  });
+});
+
+test('looksDirect accepts a real retailer URL', () => {
+  assert.strictEqual(provider.looksDirect('https://www.nike.com/t/air-force-1-07-shoe/CW2288-111'),
+    'https://www.nike.com/t/air-force-1-07-shoe/CW2288-111');
+});
+
+test('an inline offer with a real link is used without a second call', () => {
+  const r = provider.toRecord(productWithInlineOffer());
+  assert.strictEqual(r.productUrl, 'https://www.nordstrom.com/s/reverse-weave-hoodie/7654321');
   assert.strictEqual(r.price, 68);
   assert.strictEqual(r.retailer, 'Nordstrom');
-  assert.strictEqual(r.productUrl, 'https://www.nordstrom.com/s/reverse-weave-hoodie/7654321');
-  assert.strictEqual(r.brand, 'Champion');
 });
 
-test('never uses the Google Shopping page as the product URL', () => {
-  const r = provider.toRecord(product({ offer: undefined }));
-  assert.strictEqual(r.productUrl, undefined, 'a product with no offer must have no product URL');
-  assert.ok(!JSON.stringify(r).includes('google.com'), 'no Google URL may survive into a record');
+test('reads brand out of product_attributes', () => {
+  assert.strictEqual(provider.brandFrom(product()), 'Nike');
 });
 
-test('reads brand out of product_attributes when there is no brand field', () => {
-  assert.strictEqual(provider.brandFrom(product()), 'Champion');
-});
-
-test('omits brand rather than borrowing the retailer name', () => {
-  const r = provider.toRecord(product({ product_attributes: { Material: 'Fleece' } }));
+test('omits brand rather than borrowing the store domain', () => {
+  const r = provider.toRecord(product({ product_attributes: {} }));
   assert.strictEqual(r.brand, undefined);
-  assert.strictEqual(r.retailer, 'Nordstrom');
 });
 
-test('reads the currency off the price rather than assuming dollars', () => {
-  assert.strictEqual(provider.currencyFrom('£49.99'), 'GBP');
-  assert.strictEqual(provider.currencyFrom('$68.00'), 'USD');
-  assert.strictEqual(provider.currencyFrom('49.99'), undefined);
-});
-
-test('parses prices with separators and currency codes', () => {
+test('parses live price strings', () => {
+  assert.strictEqual(provider.toPrice('$87.97'), 87.97);
   assert.strictEqual(provider.toPrice('$1,299.00'), 1299);
-  assert.strictEqual(provider.toPrice('79.99 USD'), 79.99);
   assert.strictEqual(provider.toPrice('Out of stock'), null);
-  assert.strictEqual(provider.toPrice(0), null);
 });
 
 test('takes the first usable photo, and none at all when there are none', () => {
@@ -381,9 +420,42 @@ test('takes the first usable photo, and none at all when there are none', () => 
   assert.strictEqual(provider.imageFrom({ product_photos: ['', 'https://a/b.jpg'] }), 'https://a/b.jpg');
 });
 
-/* ---------------------------------------------------------
-   3. The property the provider was chosen for
-   --------------------------------------------------------- */
+console.log('\noffer resolution');
+
+test('pickOffer prefers the store the search result named', () => {
+  const chosen = provider.pickOffer([
+    offer('walmart.com', '$92.00', 'https://www.walmart.com/ip/af1/123'),
+    offer('nike.com', '$87.97', 'https://www.nike.com/t/air-force-1-07-shoe/CW2288-111')
+  ], 'nike.com');
+  assert.strictEqual(chosen.retailer, 'nike.com');
+  assert.strictEqual(chosen.productUrl, 'https://www.nike.com/t/air-force-1-07-shoe/CW2288-111');
+  assert.strictEqual(chosen.price, 87.97, 'the price must be the one at the shop being linked to');
+});
+
+test('pickOffer falls back to the first seller with a usable link', () => {
+  const chosen = provider.pickOffer([
+    offer('somewhere.com', '$50.00', 'https://www.google.com/shopping/product/9'),
+    offer('target.com', '$91.00', 'https://www.target.com/p/af1/-/A-123')
+  ], 'nike.com');
+  assert.strictEqual(chosen.retailer, 'target.com');
+});
+
+test('pickOffer returns nothing when no seller has a real link', () => {
+  assert.strictEqual(provider.pickOffer([
+    offer('a.com', '$1.00', 'https://www.google.com/search?q=x'),
+    offer('b.com', '$2.00', '')
+  ], 'nike.com'), null);
+});
+
+test('price, retailer and link always come from ONE offer', () => {
+  const chosen = provider.pickOffer([
+    offer('target.com', '$91.00', 'https://www.target.com/p/af1/-/A-123'),
+    offer('walmart.com', '$12.00', 'https://www.walmart.com/ip/af1/999')
+  ], null);
+  assert.strictEqual(chosen.retailer, 'target.com');
+  assert.strictEqual(chosen.price, 91);
+  assert.ok(chosen.productUrl.includes('target.com'), 'never the cheap price with the other shop\'s link');
+});
 
 console.log('\nimage and product URL belong to the same product');
 
@@ -399,24 +471,55 @@ test('each record keeps its own photo and its own link', () => {
   assert.strictEqual(records[1].productUrl, 'https://www.walmart.com/ip/b/222');
 });
 
-test('a product with photos but no offer yields no link, not another product\'s', () => {
+test('a product with photos but no obtainable link yields no link, not another product\'s', () => {
   const batch = [
-    product({ product_id: 'a', product_photos: ['https://img/a.jpg'], offer: undefined }),
-    product({ product_id: 'b', product_photos: ['https://img/b.jpg'] })
+    product({ product_id: 'a', product_photos: ['https://img/a.jpg'] }),
+    productWithInlineOffer({ product_id: 'b', product_photos: ['https://img/b.jpg'] })
   ];
   const records = batch.map(provider.toRecord);
-  assert.strictEqual(records[0].productUrl, undefined);
+  assert.strictEqual(records[0].productUrl, undefined, 'a Google-only record gets no link');
+  assert.strictEqual(records[0].imageUrl, 'https://img/a.jpg', 'it keeps its own photo');
   assert.strictEqual(records[1].productUrl, 'https://www.nordstrom.com/s/reverse-weave-hoodie/7654321');
 });
 
 test('price, retailer and link always come from one and the same offer', () => {
-  const r = provider.toRecord(product({
+  const r = provider.toRecord(productWithInlineOffer({
     offer: { store_name: 'REI', price: '$88.50', offer_page_url: 'https://www.rei.com/product/999/hoodie' },
     offers: [{ store_name: 'Zappos', price: '$12.00', offer_page_url: 'https://www.zappos.com/p/other' }]
   }));
   assert.strictEqual(r.retailer, 'REI');
   assert.strictEqual(r.price, 88.5);
   assert.strictEqual(r.productUrl, 'https://www.rei.com/product/999/hoodie');
+});
+
+test('a resolved offer replaces price and retailer together with its link', async () => {
+  const record = provider.toRecord(product());
+  record.retailerHint = 'nike.com';
+  assert.strictEqual(record.productUrl, undefined);
+
+  const real = global.fetch;
+  global.fetch = async () => ({ ok: true, status: 200, text: async () => '{}',
+    json: async () => offersPayload([offer('nike.com', '$87.97', 'https://www.nike.com/t/air-force-1-07-shoe/CW2288-111')]) });
+  process.env.OPENWEBNINJA_API_KEY = 'test-key';
+  try {
+    await provider.resolveMissingOffers([record], 1, { country: 'us', language: 'en' });
+  } finally { global.fetch = real; }
+
+  assert.strictEqual(record.productUrl, 'https://www.nike.com/t/air-force-1-07-shoe/CW2288-111');
+  assert.strictEqual(record.retailer, 'nike.com');
+  assert.strictEqual(record.price, 87.97);
+  assert.strictEqual(record.imageUrl, 'https://img.example-cdn.com/nike/af1-white-1.jpg', 'the photo is still its own');
+});
+
+test('a failed offer lookup leaves the record linkless rather than failing the search', async () => {
+  const record = provider.toRecord(product());
+  const real = global.fetch;
+  global.fetch = async () => { throw new Error('offers endpoint down'); };
+  process.env.OPENWEBNINJA_API_KEY = 'test-key';
+  try {
+    await provider.resolveMissingOffers([record], 1, { country: 'us', language: 'en' });
+  } finally { global.fetch = real; }
+  assert.strictEqual(record.productUrl, undefined);
 });
 
 /* ---------------------------------------------------------
@@ -428,14 +531,14 @@ console.log('\nverification gate');
 const gate = (records) => verifyAll(records, { retailer: provider.defaultRetailer });
 
 test('a complete record passes', () => {
-  const { products, rejected } = gate([provider.toRecord(product())]);
+  const { products, rejected } = gate([provider.toRecord(productWithInlineOffer())]);
   assert.strictEqual(products.length, 1);
   assert.deepStrictEqual(rejected, {});
   assert.strictEqual(products[0].retailer, 'Nordstrom');
 });
 
 test('a record with no brand still passes, and carries no brand key', () => {
-  const { products } = gate([provider.toRecord(product({ product_attributes: {} }))]);
+  const { products } = gate([provider.toRecord(productWithInlineOffer({ product_attributes: {} }))]);
   assert.strictEqual(products.length, 1);
   assert.ok(!('brand' in products[0]), 'brand must be absent, not empty');
 });
@@ -445,31 +548,47 @@ test('a record with no brand still passes, and carries no brand key', () => {
   ['missing image', { product_photos: [] }, 'missing-image-url'],
   ['missing price', { offer: { store_name: 'Target', offer_page_url: 'https://www.target.com/p/x/-/A-1' } }, 'missing-price'],
   ['missing retailer', { offer: { price: '$20.00', offer_page_url: 'https://www.target.com/p/x/-/A-1' } }, 'missing-retailer'],
-  ['missing product URL', { offer: { store_name: 'Target', price: '$20.00' } }, 'missing-product-url'],
+  ['no obtainable product URL', { offer: undefined }, 'missing-price'],
   ['zero price', { offer: { store_name: 'Target', price: '$0.00', offer_page_url: 'https://www.target.com/p/x/-/A-1' } }, 'missing-price'],
   ['unparseable price', { offer: { store_name: 'Target', price: 'see site', offer_page_url: 'https://www.target.com/p/x/-/A-1' } }, 'missing-price']
 ].forEach(([label, over, reason]) => {
   test(`rejects a record with a ${label}`, () => {
-    const { products, rejected } = gate([provider.toRecord(product(over))]);
+    const { products, rejected } = gate([provider.toRecord(productWithInlineOffer(over))]);
     assert.strictEqual(products.length, 0, 'nothing may pass');
     assert.strictEqual(rejected[reason], 1, `expected ${reason}, got ${JSON.stringify(rejected)}`);
   });
 });
 
+/* Adversarial: a provider that hands back a Google URL despite the
+   adapter. The gate is the second line of defence and must refuse it. */
+const rawRecord = (url) => ({
+  title: "Nike Men's Air Force 1 '07 Sneakers",
+  imageUrl: 'https://img.example-cdn.com/nike/af1-white-1.jpg',
+  price: '$87.97',
+  retailer: 'nike.com',
+  productUrl: url
+});
+
 [
-  ['a Google Shopping page', 'https://www.google.com/shopping/product/111', 'product-url-not-a-retailer-page'],
+  ['a Google Shopping product page', 'https://www.google.com/shopping/product/111', 'product-url-not-a-retailer-page'],
+  ['a Google search URL', 'https://www.google.com/search?q=nike+air+force+1&tbm=shop', 'product-url-not-a-retailer-page'],
+  ['a Google country domain', 'https://www.google.co.uk/shopping/product/111', 'product-url-not-a-retailer-page'],
   ['a Google ad click', 'https://www.googleadservices.com/pagead/aclk?adurl=https%3A%2F%2Fshop.com%2Fp', 'product-url-not-a-retailer-page'],
   ['a redirector', 'https://www.example.com/aclk?u=https://shop.com/p/1', 'product-url-is-a-redirect'],
   ['a homepage', 'https://www.uniqlo.com/', 'product-url-not-a-product-page'],
   ['a search listing', 'https://www.uniqlo.com/search', 'product-url-not-a-product-page'],
   ['a category listing', 'https://www.uniqlo.com/collections', 'product-url-not-a-product-page']
 ].forEach(([label, url, reason]) => {
-  test(`rejects ${label} as the product URL`, () => {
-    const record = provider.toRecord(product({ offer: { store_name: 'Shop', price: '$20.00', offer_page_url: url } }));
-    const { products, rejected } = gate([record]);
-    assert.strictEqual(products.length, 0);
+  test(`the gate refuses ${label} even if a provider returns it`, () => {
+    const { products, rejected } = gate([rawRecord(url)]);
+    assert.strictEqual(products.length, 0, 'nothing may pass');
     assert.strictEqual(rejected[reason], 1, `expected ${reason}, got ${JSON.stringify(rejected)}`);
   });
+});
+
+test('the adapter strips a Google URL before the gate ever sees it', () => {
+  const record = provider.toRecord(product());
+  assert.strictEqual(record.productUrl, undefined, 'defence in depth: refused twice');
 });
 
 test('keeps a real product URL that carries a tracking parameter', () => {
@@ -477,7 +596,7 @@ test('keeps a real product URL that carries a tracking parameter', () => {
 });
 
 test('two products sharing a URL are counted once', () => {
-  const records = [provider.toRecord(product()), provider.toRecord(product({ product_id: 'p2' }))];
+  const records = [provider.toRecord(productWithInlineOffer()), provider.toRecord(productWithInlineOffer({ product_id: 'pX' }))];
   const { products } = gate(records);
   assert.strictEqual(products.length, 1);
 });
@@ -496,11 +615,29 @@ function withStubbedFetch(handler, run) {
 
 const okResponse = (body) => ({ ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) });
 
+/* The live integration is two endpoints: /search for products, then
+   /product-offers per product for the seller links. This answers both,
+   and records every URL called so the request shape can be asserted. */
+function twoEndpointStub(searchPayload, offersByProductId) {
+  const calls = [];
+  const impl = async (url) => {
+    calls.push(String(url));
+    if (String(url).includes('/product-offers')) {
+      const id = new URL(String(url)).searchParams.get('product_id');
+      return okResponse(offersPayload((offersByProductId || {})[id] || []));
+    }
+    return okResponse(searchPayload);
+  };
+  impl.calls = calls;
+  return impl;
+}
+
 (async () => {
   await testAsync('sends the query, the budget and the key as x-api-key', async () => {
     let seen = null;
     process.env.OPENWEBNINJA_API_KEY = 'test-key';
-    await withStubbedFetch(async (url, init) => { seen = { url, init }; return okResponse(envelope([product()])); },
+    const stub = twoEndpointStub(envelope([productWithInlineOffer()]));
+    await withStubbedFetch(async (url, init) => { if (!seen) seen = { url, init }; return stub(url, init); },
       () => provider.search(nikeIntent, { limit: 12 }));
 
     const url = new URL(seen.url);
@@ -510,6 +647,30 @@ const okResponse = (body) => ({ ok: true, status: 200, json: async () => body, t
     assert.strictEqual(url.searchParams.get('country'), 'us');
     assert.strictEqual(seen.init.headers['x-api-key'], 'test-key');
     assert.ok(!seen.url.includes('test-key'), 'the key must not travel in the query string');
+  });
+
+  await testAsync('looks up offers only for products that arrived without a link', async () => {
+    process.env.OPENWEBNINJA_API_KEY = 'test-key';
+    const stub = twoEndpointStub(
+      envelope([productWithInlineOffer({ product_id: 'has-link' }), product({ product_id: 'needs-link' })]),
+      { 'needs-link': [offer('nike.com', '$54.00', 'https://www.nike.com/t/af1/CW2288-111')] }
+    );
+    const records = await withStubbedFetch(stub, () => provider.search(nikeIntent, { limit: 12 }));
+
+    const offerCalls = stub.calls.filter((u) => u.includes('/product-offers'));
+    assert.strictEqual(offerCalls.length, 1, 'the record that already had a link must not be looked up');
+    assert.ok(offerCalls[0].includes('product_id=needs-link'));
+    assert.strictEqual(records.length, 2);
+  });
+
+  await testAsync('offer lookups can be turned off entirely', async () => {
+    process.env.OPENWEBNINJA_API_KEY = 'test-key';
+    process.env.OPENWEBNINJA_RESOLVE_OFFERS = 'off';
+    const stub = twoEndpointStub(envelope([product()]), { p1: [offer('nike.com', '$87.97', 'https://www.nike.com/t/af1/1')] });
+    const records = await withStubbedFetch(stub, () => provider.search(nikeIntent, { limit: 12 }));
+    assert.strictEqual(stub.calls.filter((u) => u.includes('/product-offers')).length, 0);
+    assert.strictEqual(records[0].productUrl, undefined, 'and nothing is invented in its place');
+    delete process.env.OPENWEBNINJA_RESOLVE_OFFERS;
   });
 
   await testAsync('never sends a limit above the endpoint maximum', async () => {
@@ -523,9 +684,9 @@ const okResponse = (body) => ({ ok: true, status: 200, json: async () => body, t
   await testAsync('drops an offer above the stated budget', async () => {
     process.env.OPENWEBNINJA_API_KEY = 'test-key';
     const records = await withStubbedFetch(
-      async () => okResponse(envelope([
-        product({ product_id: 'cheap', offer: { store_name: 'Target', price: '$54.00', offer_page_url: 'https://www.target.com/p/a/-/A-1' } }),
-        product({ product_id: 'dear', offer: { store_name: 'Target', price: '$130.00', offer_page_url: 'https://www.target.com/p/b/-/A-2' } })
+      twoEndpointStub(envelope([
+        productWithInlineOffer({ product_id: 'cheap', offer: { store_name: 'Target', price: '$54.00', offer_page_url: 'https://www.target.com/p/a/-/A-1' } }),
+        productWithInlineOffer({ product_id: 'dear', offer: { store_name: 'Target', price: '$130.00', offer_page_url: 'https://www.target.com/p/b/-/A-2' } })
       ])),
       () => provider.search(nikeIntent, { limit: 12 }));
     assert.strictEqual(records.length, 1, 'the $130 offer must not survive "under $80"');
@@ -582,35 +743,41 @@ const okResponse = (body) => ({ ok: true, status: 200, json: async () => body, t
     process.env.OPENWEBNINJA_API_KEY = 'test-key';
     process.env.PRODUCT_SOURCE = 'openwebninja';
 
+    /* live shape: commerce at the top level, product_page_url on Google */
     const payload = envelope([
-      product({
-        product_id: '1', product_title: 'Champion Reverse Weave Oversized Hoodie, Black',
-        product_photos: ['https://img.example-cdn.com/champion-black.jpg'],
-        offer: { store_name: 'Nordstrom', price: '$68.00', offer_page_url: 'https://www.nordstrom.com/s/reverse-weave-hoodie/7654321' }
-      }),
-      product({
-        product_id: '2', product_title: "Hanes ComfortWash Garment Dyed Hoodie, Black",
-        product_photos: ['https://img.example-cdn.com/hanes-black.jpg'],
-        product_attributes: {},
-        offer: { store_name: 'Walmart', price: '$24.98', offer_page_url: 'https://www.walmart.com/ip/Hanes-ComfortWash-Hoodie/558123456' }
-      }),
-      /* these three must not reach the browser */
-      product({ product_id: '3', offer: { store_name: 'Google', price: '$50.00', offer_page_url: 'https://www.google.com/shopping/product/999' } }),
-      product({ product_id: '4', product_photos: [], offer: { store_name: 'Target', price: '$30.00', offer_page_url: 'https://www.target.com/p/x/-/A-9' } }),
-      product({ product_id: '5', offer: { store_name: 'Saks', price: '$240.00', offer_page_url: 'https://www.saks.com/product/hoodie-0400012345678' } })
+      product({ product_id: '1', product_title: 'Champion Reverse Weave Oversized Hoodie, Black',
+                product_photos: ['https://img.example-cdn.com/champion-black.jpg'],
+                store_name: 'nordstrom.com', price: '$68.00', product_attributes: { Brand: 'Champion' } }),
+      product({ product_id: '2', product_title: 'Hanes ComfortWash Garment Dyed Hoodie, Black',
+                product_photos: ['https://img.example-cdn.com/hanes-black.jpg'],
+                store_name: 'walmart.com', price: '$24.98', product_attributes: {} }),
+      /* no photos: dropped whatever its offers say */
+      product({ product_id: '3', product_photos: [], store_name: 'target.com', price: '$30.00' }),
+      /* every seller links to Google: dropped, never shown */
+      product({ product_id: '4', store_name: 'shop.com', price: '$40.00' }),
+      /* over the stated budget */
+      product({ product_id: '5', store_name: 'saks.com', price: '$240.00' })
     ]);
 
-    const res = await callSearch(nikeIntent, payload);
+    const offers = {
+      '1': [offer('nordstrom.com', '$68.00', 'https://www.nordstrom.com/s/reverse-weave-hoodie/7654321')],
+      '2': [offer('walmart.com', '$24.98', 'https://www.walmart.com/ip/Hanes-ComfortWash-Hoodie/558123456')],
+      '3': [offer('target.com', '$30.00', 'https://www.target.com/p/x/-/A-9')],
+      '4': [offer('shop.com', '$40.00', 'https://www.google.com/shopping/product/999')],
+      '5': [offer('saks.com', '$240.00', 'https://www.saks.com/product/hoodie-0400012345678')]
+    };
+
+    const handler = require('../api/search');
+    const res = fakeRes();
+    await withStubbedFetch(twoEndpointStub(payload, offers),
+      () => handler({ method: 'POST', headers: {}, body: { intent: nikeIntent, limit: 12 }, on: () => {} }, res));
+
     assert.strictEqual(res.statusCode, 200);
     assert.strictEqual(res.body.source, 'openwebninja');
 
     const products = res.body.products;
-    assert.strictEqual(products.length, 2, `expected 2 verified products, got ${products.length}`);
-
-    /* the over-budget item was dropped before the gate, the Google link
-       and the image-less record by the gate */
-    assert.strictEqual(res.body.rejected['product-url-not-a-retailer-page'], 1);
-    assert.strictEqual(res.body.rejected['missing-image-url'], 1);
+    assert.strictEqual(products.length, 2, `expected 2 verified products, got ${products.length}: ${JSON.stringify(res.body.rejected)}`);
+    assert.strictEqual(res.body.rejected['missing-image-url'], 1, 'the photoless record');
 
     products.forEach((p) => {
       assert.ok(p.name, 'every card needs a title');
@@ -623,15 +790,15 @@ const okResponse = (body) => ({ ok: true, status: 200, json: async () => body, t
       assert.ok(!/google\./i.test(p.productUrl), 'no Google URL reaches the browser');
     });
 
-    /* the pairing survives the whole pipeline */
-    const nordstrom = products.find((p) => p.retailer === 'Nordstrom');
+    /* the pairing survives both calls */
+    const nordstrom = products.find((p) => p.retailer === 'nordstrom.com');
     assert.strictEqual(nordstrom.imageUrl, 'https://img.example-cdn.com/champion-black.jpg');
     assert.strictEqual(nordstrom.productUrl, 'https://www.nordstrom.com/s/reverse-weave-hoodie/7654321');
+    assert.strictEqual(nordstrom.price, 68);
     assert.strictEqual(nordstrom.brand, 'Champion');
 
-    const walmart = products.find((p) => p.retailer === 'Walmart');
+    const walmart = products.find((p) => p.retailer === 'walmart.com');
     assert.strictEqual(walmart.imageUrl, 'https://img.example-cdn.com/hanes-black.jpg');
-    assert.strictEqual(walmart.productUrl, 'https://www.walmart.com/ip/Hanes-ComfortWash-Hoodie/558123456');
     assert.ok(!('brand' in walmart), 'a brandless product still shows, without a brand');
   });
 

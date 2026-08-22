@@ -95,7 +95,38 @@ async function main() {
   console.log('\n--- adapter mapping of product[0] ---');
   console.log(JSON.stringify(provider.toRecord(first), null, 2));
 
+  /* the search endpoint returns Google's product view, so this shows
+     whether a retailer link is obtainable and from where */
+  const inline = provider.inlineCommerce(first);
+  console.log('\n--- can this record supply a retailer link on its own? ---');
+  console.log(inline ? `  yes: ${inline.retailer} -> ${inline.productUrl}`
+                     : '  no. product_page_url is Google\'s, so /product-offers is needed.');
+
   const records = results.map(provider.toRecord).filter(Boolean);
+  records.forEach((r, i) => { r.retailerHint = String((results[i] && results[i].store_name) || ''); });
+
+  const needing = records.filter((r) => !r.productUrl).length;
+  console.log(`\n--- resolving offers for ${needing} of ${records.length} records ---`);
+  const region = { country: 'us', language: 'en' };
+
+  if (needing) {
+    const sample = records.find((r) => !r.productUrl && r.sku);
+    if (sample) {
+      const offers = provider.resultsFrom(await (async () => {
+        const params = new URLSearchParams({ product_id: sample.sku, country: 'us', language: 'en' });
+        const res = await fetch(`${provider.OFFERS_URL}?${params}`, { headers: { 'x-api-key': process.env.OPENWEBNINJA_API_KEY, Accept: 'application/json' } });
+        console.log(`  GET /product-offers?product_id=${sample.sku} -> ${res.status}`);
+        return res.ok ? res.json() : {};
+      })());
+      console.log(`  offers returned: ${offers.length}`);
+      if (offers.length) dump('offer[0]', offers[0]);
+      else console.log('  NONE. No seller links are obtainable for this product.');
+    }
+  }
+
+  await provider.resolveMissingOffers(records, records.length, region);
+  records.forEach((r) => { delete r.retailerHint; });
+
   const { products, rejected } = verifyAll(records, { retailer: provider.defaultRetailer });
 
   console.log('\n--- verification gate, whole batch ---');
