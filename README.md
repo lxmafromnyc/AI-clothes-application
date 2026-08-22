@@ -141,19 +141,25 @@ Both endpoints spend money — one on OpenAI credit, the other on product-search
 quota — so who may call them from a browser is decided in one place,
 `api/_cors.js`, rather than twice with a chance of drifting apart.
 
-Three sources of allowed origins, in order of how much configuration each needs:
+Four sources of allowed origins, in order of how much configuration each needs:
 
-1. **The deployment's own origin**, matched against the request's `Host`
+1. **FindWear's own published site**, listed as `SITE_ORIGINS` in `api/_cors.js`.
+   The Pages site is a fact about the project, not a deployment setting, so it
+   lives in the repository where it cannot go missing. These are public
+   origins, not secrets — the same hostname is already in the meta tag of every
+   page — and keeping them here means the site cannot be locked out of its own
+   API by a mistyped or undelivered environment variable.
+2. **The deployment's own origin**, matched against the request's `Host`
    header. A page served from the same host as the function is same-origin by
    definition. No configuration, and it keeps working on production, preview
    and custom domains alike.
-2. **The deployment's Vercel hostnames**, from the system environment variables
+3. **The deployment's Vercel hostnames**, from the system environment variables
    Vercel injects at runtime (`VERCEL_PROJECT_PRODUCTION_URL`,
    `VERCEL_BRANCH_URL`, `VERCEL_URL`). Needs *Automatically expose System
    Environment Variables* left enabled in project settings, which is the
    default.
-3. **`ALLOWED_ORIGIN`**, for anything else — the GitHub Pages site, chiefly.
-   One origin or several, comma-separated. A trailing slash is tolerated and
+4. **`ALLOWED_ORIGIN`**, for anything the first three do not cover. It adds to
+   the list and cannot remove from it. One origin or several, comma-separated. A trailing slash is tolerated and
    stripped, because pasting a URL out of an address bar brings one along and
    the resulting mismatch is invisible in a dashboard.
 

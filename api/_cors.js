@@ -9,21 +9,34 @@
    ---------------------------------------------------------
    Which origins are allowed
    ---------------------------------------------------------
-   Three sources, in order of how much configuration they need:
+   Four sources, in order of how much configuration they need:
 
-     1. The deployment's own origin, matched against the request's Host
+     1. FindWear's own published site, listed in SITE_ORIGINS below. This
+        project has a known front door — the GitHub Pages site — and it
+        is a fact about the project, not a deployment setting. Keeping it
+        in code means the site cannot be locked out of its own API by a
+        missing or mistyped environment variable, which is exactly what
+        happened: every request from the Pages site was refused 403
+        because ALLOWED_ORIGIN never reached the running function.
+
+        Nothing is weakened by this. These are public origins, not
+        secrets, and the same hostname is already in the meta tag of
+        every page. It removes a whole class of configuration error.
+
+     2. The deployment's own origin, matched against the request's Host
         header. A page served from the same host as the function is
         same-origin by definition, so this needs no configuration and
         keeps working on production, preview and custom domains alike.
 
-     2. The deployment's Vercel hostnames, read from the system
+     3. The deployment's Vercel hostnames, read from the system
         environment variables Vercel injects at runtime
         (VERCEL_PROJECT_PRODUCTION_URL, VERCEL_BRANCH_URL, VERCEL_URL).
         These need "Automatically expose System Environment Variables"
         left enabled in the project settings, which is the default.
 
-     3. ALLOWED_ORIGIN, for origins that are neither: the GitHub Pages
-        site, chiefly. One origin, or several separated by commas:
+     4. ALLOWED_ORIGIN, for anything the first three do not cover. It
+        ADDS to the list; it can no longer remove from it. One origin, or
+        several separated by commas:
 
           ALLOWED_ORIGIN=https://lxmafromnyc.github.io
           ALLOWED_ORIGIN=https://lxmafromnyc.github.io,https://findwear.example
@@ -52,9 +65,17 @@
 
 const trimSlash = (value) => String(value || '').trim().replace(/\/+$/, '');
 
+/* FindWear's published front ends. A property of the project rather than
+   of any one deployment, so they belong in the repository where they
+   cannot go missing. Add an origin here when the site gains a new home;
+   use ALLOWED_ORIGIN for anything deployment-specific. */
+const SITE_ORIGINS = [
+  'https://lxmafromnyc.github.io'
+];
+
 /* Origins named in configuration, plus the ones Vercel tells us about. */
 function configuredOrigins() {
-  const origins = new Set();
+  const origins = new Set(SITE_ORIGINS);
 
   String(process.env.ALLOWED_ORIGIN || '')
     .split(',')
@@ -129,4 +150,4 @@ function handledPreflight(req, res) {
   return false;
 }
 
-module.exports = { applyCors, handledPreflight, configuredOrigins, isSameOrigin, isAllowed };
+module.exports = { applyCors, handledPreflight, configuredOrigins, isSameOrigin, isAllowed, SITE_ORIGINS };

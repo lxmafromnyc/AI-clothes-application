@@ -87,6 +87,28 @@ const withEnv = (env, fn) => {
 
 const reqFrom = (origin, host) => ({ headers: Object.assign({}, origin ? { origin } : {}, host ? { host } : {}) });
 
+test('the published site is allowed with no environment variables at all', () => {
+  withEnv({}, () => {
+    const origin = 'https://lxmafromnyc.github.io';
+    assert.ok(isAllowed(reqFrom(origin), origin),
+      'the site must never be locked out of its own API by a missing env var');
+  });
+});
+
+test('ALLOWED_ORIGIN adds to the built-in list and cannot remove from it', () => {
+  withEnv({ ALLOWED_ORIGIN: 'https://somewhere.else' }, () => {
+    assert.ok(isAllowed(reqFrom('https://lxmafromnyc.github.io'), 'https://lxmafromnyc.github.io'));
+    assert.ok(isAllowed(reqFrom('https://somewhere.else'), 'https://somewhere.else'));
+  });
+});
+
+test('building the site origin in does not widen the allowlist', () => {
+  withEnv({}, () => {
+    ['https://evil.example.com', 'https://lxmafromnyc.github.io.evil.com', 'https://notlxmafromnyc.github.io']
+      .forEach((origin) => assert.ok(!isAllowed(reqFrom(origin), origin), `${origin} must stay refused`));
+  });
+});
+
 test('an origin named in ALLOWED_ORIGIN is allowed', () => {
   withEnv({ ALLOWED_ORIGIN: 'https://lxmafromnyc.github.io' }, () => {
     assert.ok(isAllowed(reqFrom('https://lxmafromnyc.github.io'), 'https://lxmafromnyc.github.io'));
@@ -118,7 +140,8 @@ test("the deployment's own Vercel origins are allowed without configuration", ()
 test('a page on the same host as the function is allowed with no configuration at all', () => {
   withEnv({}, () => {
     assert.ok(isAllowed(reqFrom('https://anything.example', 'anything.example'), 'https://anything.example'));
-    assert.strictEqual(configuredOrigins().size, 0, 'nothing was configured');
+    assert.ok(!configuredOrigins().has('https://anything.example'),
+      'the Host match allows it, not the configured list');
   });
 });
 
