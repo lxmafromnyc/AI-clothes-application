@@ -95,6 +95,12 @@ const SAMPLE_NOTE = 'Items marked <strong>Sample</strong> are placeholder data f
 const sampleNote = (items) => (items.some((i) => !i.productUrl)
   ? `<p class="sample-note">${SAMPLE_NOTE}</p>` : '');
 
+/* `brand` is optional on a verified record: a cross-retailer source often
+   has no separate brand for a listing, and the gate lets such a product
+   through rather than dropping a real item over a field it never claimed.
+   The line is therefore rendered only when the source supplied one — the
+   retailer already has its own badge, and repeating it here would read as
+   a brand the source never stated. */
 function productCard(item, index, badge, extra) {
   const linked = Boolean(item.productUrl);
   const tag = linked ? 'a' : 'article';
@@ -106,7 +112,7 @@ function productCard(item, index, badge, extra) {
   return `<${tag} class="item-card" style="--i:${index}"${attrs}>
     ${media(item, 'item-media', (badge || '') + (linked ? '' : SAMPLE_BADGE))}
     <div class="item-body">
-      <p class="item-brand">${esc(item.brand)}${linked ? EXTERNAL : ''}</p>
+      <p class="item-brand">${item.brand ? esc(item.brand) : ''}${linked ? EXTERNAL : ''}</p>
       <h3 class="item-name">${esc(item.name)}</h3>
       <div class="item-row">
         <span class="item-price">${formatPrice(item.price)}</span>
@@ -210,7 +216,7 @@ function orderFacet(counts, key) {
         ${media(item, 'mini-thumb', linked ? '' : '<span class="mini-sample">Sample</span>')}
         <div class="mini-meta">
           <strong class="mini-name">${esc(item.name)}</strong>
-          <span class="mini-retailer">${esc(item.brand)}${item.price == null ? '' : ` &middot; ${formatPrice(item.price)}`}${linked ? EXTERNAL : ''}</span>
+          <span class="mini-retailer">${esc(item.brand || item.retailer || '')}${item.price == null ? '' : ` &middot; ${formatPrice(item.price)}`}${linked ? EXTERNAL : ''}</span>
         </div>
         <span class="match-pill">${score}%</span>
       </${tag}>`;
@@ -328,6 +334,27 @@ function orderFacet(counts, key) {
     bindImageFallback(results);
   }
 
+  /* A configured source that returned nothing. The request readback stays,
+     so it is clear what was searched for, and the reason is stated plainly
+     instead of being filled with placeholder products. */
+  function renderNothing(found, outcome) {
+    const chips = understood(outcome.preferences);
+    const readback = chips.length
+      ? `<div class="understood">${chips.map((c) => `<span>${esc(c)}</span>`).join('')}</div>`
+      : '';
+    const heading = found.state === 'empty' ? 'No matches found' : 'Product search unavailable';
+    const detail = found.state === 'empty'
+      ? 'Nothing came back that could be verified for this request. Try describing it a little differently, or ask for something broader.'
+      : 'This is a problem on our side, not with your request. Try again in a moment.';
+
+    results.innerHTML = `<div class="results-head"><div><h2>${heading}</h2>${readback}</div></div>
+      ${found.notice ? `<p class="notice" role="status"><span>${esc(found.notice)}</span></p>` : ''}
+      <div class="empty">
+        <h3>${heading}</h3>
+        <p>${esc(detail)}</p>
+      </div>`;
+  }
+
   function render(prefs, outcome, found) {
     const withinBudget = (item) => {
       if (item.price == null) return true; /* unknown price cannot be ruled out */
@@ -403,7 +430,12 @@ function orderFacet(counts, key) {
       : await ProductSearch.find(outcome.preferences);
 
     if (found.products.length) renderProducts(found, outcome);
-    else render(outcome.preferences, outcome, found);
+    /* The sample catalogue stands in only when nothing is connected. Once
+       a product source IS configured, a failed or empty search says so —
+       a deployment that can sell things must never pad the page with demo
+       rows, however clearly they are labelled. */
+    else if (found.state === 'not-configured') render(outcome.preferences, outcome, found);
+    else renderNothing(found, outcome);
   }
 
   form.addEventListener('submit', (e) => {

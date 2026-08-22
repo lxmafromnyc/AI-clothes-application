@@ -32,12 +32,28 @@
    ---------------------------------------------------------
    A record is displayed only when the source supplied ALL of:
 
-     title, brand, price, imageUrl, productUrl, retailer
+     title, price, imageUrl, productUrl, retailer
 
-   Anything missing one is dropped rather than filled in. productUrl must
-   also address a specific product page — a bare origin, or a path that
-   reads as a search or category listing, is rejected, because a link to a
-   homepage is not the product the card claims to show.
+   Anything missing one is dropped rather than filled in.
+
+   `brand` is OPTIONAL. Cross-retailer sources often carry no separate
+   brand for a listing, and a product is still a real product without one.
+   When the source supplies a brand it is shown; when it does not, the
+   field is omitted and the record still passes. What is never done is
+   substituting something else for it — a retailer's name in the brand
+   field would be a fabricated attribution, which is exactly what this
+   gate exists to prevent.
+
+   productUrl must address a specific product page on the retailer's own
+   site. Three kinds of link are rejected:
+
+     * a bare origin, or a path that reads as a search or category
+       listing — a homepage is not the product the card claims to show
+     * an aggregator or search-engine host, Google Shopping included — a
+       comparison page is not a retailer's product page
+     * a redirector, meaning a path like /aclk or a query parameter whose
+       value is itself another URL — where it lands cannot be verified
+       from the link, so it cannot be presented as the product page
    ========================================================= */
 
 'use strict';
@@ -61,6 +77,22 @@ const FIELD_ALIASES = {
 
 /* Paths that indicate a listing or search page rather than one product. */
 const NON_PRODUCT_PATH = /^\/?(search|s|browse|category|categories|c|shop|collections?|results?|find)\/?$/i;
+
+/* Hosts that index other shops rather than selling anything themselves.
+   A Google Shopping page for an item is a comparison page: it is not the
+   retailer's product page, so it is rejected however product-like its
+   path looks. */
+const AGGREGATOR_HOST = /(^|\.)(google\.[a-z]{2,3}(\.[a-z]{2})?|googleadservices\.com|googlesyndication\.com|googleusercontent\.com|gstatic\.com|bing\.com|duckduckgo\.com|yahoo\.com|yandex\.[a-z]+|shopping\.com|shopzilla\.com|pricegrabber\.com)$/i;
+
+/* Paths used by ad servers and click-through redirectors. */
+const REDIRECT_PATH = /^\/?(url|aclk|aclick|clk|click|redirect|redir|out|go|goto|jump|ref|link)\/?$/i;
+
+/* A redirect carries its destination in a query parameter. Both halves
+   must match — a known forwarding key AND a value that is itself a URL —
+   so a genuine product link that happens to carry a `returnUrl` tracking
+   parameter is not mistaken for a redirector. */
+const REDIRECT_PARAM = /^(url|u|q|to|dest|destination|target|adurl|redirect|redirect_uri|redirect_url|r|out|link|goto|continue|next)$/i;
+const URL_VALUED = /^(https?:)?\/\//i;
 
 const firstOf = (record, keys) => {
   for (const key of keys) {
@@ -93,20 +125,35 @@ function toAbsoluteUrl(value) {
   }
 }
 
-/* A product page has a path beyond the origin and does not read as a
-   listing. This is a guard against homepage and search-page links, not a
-   guarantee the page exists — only fetching it could prove that. */
-function isProductPage(href) {
+/* Names what is wrong with a product link, or null when nothing is.
+
+   These are guards against homepage, comparison and redirect links, not a
+   guarantee the page exists — only fetching it could prove that. Each
+   fault returns its own reason so a provider handing back the wrong kind
+   of URL is visible in the rejected tally rather than lumped together. */
+function linkFault(href) {
+  let url;
   try {
-    const url = new URL(href);
-    const path = url.pathname.replace(/\/+$/, '');
-    if (!path || path === '') return Boolean(url.search);
-    if (NON_PRODUCT_PATH.test(path)) return false;
-    return true;
+    url = new URL(href);
   } catch (err) {
-    return false;
+    return 'product-url-unparseable';
   }
+
+  if (AGGREGATOR_HOST.test(url.hostname)) return 'product-url-not-a-retailer-page';
+
+  const path = url.pathname.replace(/\/+$/, '');
+  if (REDIRECT_PATH.test(path)) return 'product-url-is-a-redirect';
+  for (const [key, value] of url.searchParams.entries()) {
+    if (REDIRECT_PARAM.test(key) && URL_VALUED.test(value)) return 'product-url-is-a-redirect';
+  }
+
+  if (!path || path === '') return url.search ? null : 'product-url-not-a-product-page';
+  if (NON_PRODUCT_PATH.test(path)) return 'product-url-not-a-product-page';
+  return null;
 }
+
+/* Kept as the plain yes/no form of the same rules. */
+const isProductPage = (href) => linkFault(href) === null;
 
 function toList(value) {
   if (value === undefined || value === null) return [];
@@ -134,38 +181,40 @@ function toProduct(raw, context) {
   const pick = (field) => firstOf(raw, FIELD_ALIASES[field]);
 
   const title = text(pick('title'));
-  const brand = text(pick('brand'));
   const price = toPrice(pick('price'));
   const imageUrl = toAbsoluteUrl(pick('imageUrl'));
   const productUrl = toAbsoluteUrl(pick('productUrl'));
   const retailer = text(pick('retailer')) || text(context && context.retailer);
+  /* optional: shown when the source has it, omitted when it does not */
+  const brand = text(pick('brand'));
 
   /* every displayed field must have come from the source */
   if (!title) return { ok: false, reason: 'missing-title' };
-  if (!brand) return { ok: false, reason: 'missing-brand' };
   if (price === null) return { ok: false, reason: 'missing-price' };
   if (!imageUrl) return { ok: false, reason: 'missing-image-url' };
   if (!productUrl) return { ok: false, reason: 'missing-product-url' };
   if (!retailer) return { ok: false, reason: 'missing-retailer' };
-  if (!isProductPage(productUrl)) return { ok: false, reason: 'product-url-not-a-product-page' };
   if (!inStock(pick('availability'))) return { ok: false, reason: 'out-of-stock' };
 
-  return {
-    ok: true,
-    product: {
-      id: text(pick('sku')) || productUrl,
-      name: title,
-      brand,
-      price,
-      currency: text(pick('currency')) || 'USD',
-      imageUrl,
-      productUrl,
-      retailer,
-      category: text(pick('category')).toLowerCase(),
-      colors: toList(pick('colors')),
-      sizes: toList(pick('sizes'))
-    }
+  const fault = linkFault(productUrl);
+  if (fault) return { ok: false, reason: fault };
+
+  const product = {
+    id: text(pick('sku')) || productUrl,
+    name: title,
+    price,
+    currency: text(pick('currency')) || 'USD',
+    imageUrl,
+    productUrl,
+    retailer,
+    category: text(pick('category')).toLowerCase(),
+    colors: toList(pick('colors')),
+    sizes: toList(pick('sizes'))
   };
+  /* absent rather than empty, so the interface can tell the difference */
+  if (brand) product.brand = brand;
+
+  return { ok: true, product };
 }
 
 /* Runs a whole batch through the gate and reports what was dropped, so a
@@ -191,19 +240,33 @@ function verifyAll(records, context) {
 /* ---------------------------------------------------------
    Provider registry
    ---------------------------------------------------------
-   No provider is implemented yet, deliberately. Adding one means writing
-   an adapter and registering it here; nothing else in the system changes.
+   FindWear runs on whichever adapter PRODUCT_SOURCE names. Adding another
+   means writing an adapter and registering it here; nothing else in the
+   system changes, and no page has any knowledge of which one is live.
+
+   PRODUCT_SOURCE is optional. Left unset, the DEFAULT_SOURCE below is
+   used if its credentials are present, so a deployment needs only the
+   provider's key to go live rather than two environment variables that
+   have to agree. Setting PRODUCT_SOURCE always wins — including setting
+   it to something unrecognised, which selects nothing rather than
+   quietly falling back, because a typo should be visible as a 503 and
+   not silently answered by a different provider than the one named.
 
    To add one:
      1. create api/providers/<name>.js exporting { name, configured, search }
      2. require it below and add it to PROVIDERS
-     3. set PRODUCT_SOURCE=<name> plus that provider's credentials in the
-        Vercel environment
+     3. set that provider's credentials in the Vercel environment, and
+        PRODUCT_SOURCE=<name> unless it is the default
    --------------------------------------------------------- */
 
+const openwebninja = require('./openwebninja');
+/* kept registered and working, but no longer the provider FindWear runs
+   on. Nothing outside this file refers to it, so it can be dropped by
+   deleting one require and one line below. */
 const etsy = require('./etsy');
 
 const PROVIDERS = {
+  [openwebninja.name]: openwebninja,
   [etsy.name]: etsy,
 
   /* Placeholder used when nothing is configured. It returns no products
@@ -216,10 +279,18 @@ const PROVIDERS = {
   }
 };
 
+/* The provider a deployment runs on when PRODUCT_SOURCE says nothing. */
+const DEFAULT_SOURCE = openwebninja.name;
+
 function getProvider() {
   const requested = text(process.env.PRODUCT_SOURCE).toLowerCase();
-  if (requested && PROVIDERS[requested]) return PROVIDERS[requested];
-  return PROVIDERS.none;
+
+  /* an explicit choice is honoured, right or wrong */
+  if (requested) return PROVIDERS[requested] || PROVIDERS.none;
+
+  /* nothing asked for: the default, but only if it can actually run */
+  const fallback = PROVIDERS[DEFAULT_SOURCE];
+  return fallback && fallback.configured() ? fallback : PROVIDERS.none;
 }
 
 module.exports = {
@@ -228,6 +299,8 @@ module.exports = {
   toProduct,
   verifyAll,
   isProductPage,
+  linkFault,
+  DEFAULT_SOURCE,
   toPrice,
   toAbsoluteUrl,
   FIELD_ALIASES,

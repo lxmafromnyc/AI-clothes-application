@@ -34,9 +34,13 @@ index.html, find-clothes.html, discover.html, about.html
 api/interpret.js        serverless endpoint; calls OpenAI, holds the API key
 api/search.js           serverless endpoint; asks the product source for real listings
 api/providers/          product source adapters and the verification gate
-api/providers/etsy.js   Etsy Open API v3 adapter
+api/providers/openwebninja.js  OpenWeb Ninja Real-Time Product Search adapter
+api/providers/etsy.js   Etsy Open API v3 adapter, kept as an alternative
 assets/search.js        sends interpreted intent to /api/search
-scripts/verify-api.sh   checks a deployed endpoint end to end
+scripts/verify-api.sh          checks a deployed interpreter endpoint
+scripts/verify-search.sh       checks a deployed search endpoint
+scripts/probe-openwebninja.js  prints the provider's live response fields
+scripts/test-pipeline.js       offline test of the whole server pipeline
 .env.example            template; the real .env is git-ignored
 assets/products.js      data layer: normalises any source into one schema
 assets/catalog.js       demo product source, replaceable by a real feed
@@ -121,11 +125,15 @@ and the function share an origin, `/api/interpret` resolves by default, and
 | --- | --- | --- |
 | `OPENAI_API_KEY` | yes | Your OpenAI key. Without it the endpoint returns 503 and the frontend falls back to local parsing. |
 | `OPENAI_MODEL` | no | Model to call. Defaults to `gpt-4o-mini`; set it to whatever your account has access to. |
+| `OPENWEBNINJA_API_KEY` | yes | The product source's key. Without it `/api/search` returns 503 and the frontend falls back to the sample catalogue, labelled as such. |
+| `PRODUCT_SOURCE` | no | Which adapter in `api/providers/` finds the products. Unset runs `openwebninja`, which is what this deployment uses. |
 | `ALLOWED_ORIGIN` | no | Only set this if the frontend is on a different origin than the function, e.g. pages on GitHub Pages and the function on Vercel. Left unset, no CORS header is sent and the endpoint is same-origin only. |
 
-Set the key as a secret in your host's dashboard or CLI (`npx vercel env add
-OPENAI_API_KEY`). Never put it in a file you commit, and never move the OpenAI
-call into the frontend — a key in client JavaScript is a key anyone can read.
+Both keys are server-side secrets. Set them in your host's dashboard or CLI
+(`npx vercel env add OPENAI_API_KEY`, `npx vercel env add
+OPENWEBNINJA_API_KEY`). Never put either in a file you commit, never prefix
+one so a bundler would publish it, and never move either call into the frontend
+— a key in client JavaScript is a key anyone can read.
 
 ### How a request flows
 
@@ -137,18 +145,46 @@ call into the frontend — a key in client JavaScript is a key anyone can read.
         |                      vocabulary the catalogue can match
         v
   OpenAI chat completions      key lives here, server-side only
-        |
+        |                      the model reads the request; it never
+        |                      names a product, price, shop or URL
         v
-  { categories: ["knit"], colors: ["Black"],
+  { categories: ["hoodie"], colors: ["Black"],
     fits: ["Oversized"], maxPrice: 80, ... }
         |
         v
-  matched against the catalogue, ranked, rendered
+  POST /api/search             the interpreted constraints, nothing else
+        |
+        v
+  OpenWeb Ninja                q=black oversized hoodie, max_price=80
+  Real-Time Product Search     key lives here, server-side only
+        |
+        v
+  real products, each carrying its own photo
+  and its own retailer offer
+        |
+        v
+  the verification gate        drops anything without a title, price,
+        |                      image, retailer or direct product URL
+        v
+  rendered, badged with the retailer, linking to its page
 ```
 
-If any step fails, the frontend reads the request locally instead and shows a
-notice saying so, naming the reason: no interpreter connected, deployed without
-a key, unreachable, or an unusable reply.
+If the interpreter fails, the frontend reads the request locally instead and
+shows a notice saying so, naming the reason: no interpreter connected, deployed
+without a key, unreachable, or an unusable reply.
+
+What the page may show when there are no products depends on why:
+
+| `/api/search` says | State | The page shows |
+| --- | --- | --- |
+| `503` / `404` | `not-configured` | the sample catalogue, with a notice and a `Sample` badge on every row that is not a real listing |
+| `502`, or unreachable | `unavailable` | "Product search unavailable" — **no** sample rows |
+| `200`, empty `products` | `empty` | "No matches found" — **no** sample rows |
+
+The sample catalogue stands in only when nothing is connected at all. Once a
+product source is configured, a failed or empty search says so plainly: a
+deployment that can sell things must never pad the page with demo rows, however
+clearly they are labelled. No product is ever invented to fill the gap.
 
 ### Worth knowing
 
@@ -162,62 +198,170 @@ a key, unreachable, or an unusable reply.
 
 ## Product search
 
-`/api/search` takes the structured intent from `/api/interpret` and asks the
-configured product source for real listings. No provider is hard-coded: the
-registry in `api/providers/product-source.js` ships with only a `none`
-placeholder, so the endpoint answers 503 and the interface says plainly that no
-product source is connected.
+The two halves of a search have separate jobs, and neither does the other's:
 
-### Etsy (implemented)
+- **`/api/interpret` understands the request.** It turns "black oversized Nike
+  hoodie under $80" into structured constraints. It never names a product,
+  a price, a shop or a URL.
+- **`/api/search` finds the products.** It hands those constraints to a product
+  source, and everything shown on a card comes back from that source.
 
-Set these in the server environment to switch the site onto live Etsy listings:
+Nothing in between invents anything. The model is never asked what a product
+costs or where to buy it, because it does not know — only the source does.
+
+No provider is hard-coded: the registry in `api/providers/product-source.js`
+decides which adapter runs from `PRODUCT_SOURCE`. Unset, or naming an adapter
+whose credentials are missing, and the endpoint answers 503 and the interface
+says plainly that no product source is connected.
+
+### OpenWeb Ninja (the provider FindWear runs on)
+
+[Real-Time Product Search](https://www.openwebninja.com/api/real-time-product-search)
+searches Google Shopping's cross-retailer index, so one query reaches Amazon,
+Walmart, Target, Nordstrom, ASOS and the long tail of clothing merchants rather
+than one shop's catalogue. Set these in the server environment:
 
 | Variable | Required | Purpose |
 | --- | --- | --- |
-| `PRODUCT_SOURCE` | yes | Set to `etsy` |
-| `ETSY_API_KEY` | yes | The app keystring, sent as the `x-api-key` header |
-| `ETSY_SHARED_SECRET` | no | **Not used.** It exists for the OAuth 2.0 authorization-code flow, which only user-scoped endpoints need. Searching public listings needs no user context, so this adapter never reads or transmits it. |
+| `OPENWEBNINJA_API_KEY` | yes | Your API key, sent as the `x-api-key` header. This is the only variable the product search needs. |
+| `PRODUCT_SOURCE` | no | Which adapter to run. Left unset, the OpenWeb Ninja adapter is used when its key is present. Set it only to run a different one. |
+| `OPENWEBNINJA_COUNTRY` | no | Marketplace to search, ISO 3166-1 alpha-2. Defaults to `us` |
+| `OPENWEBNINJA_LANGUAGE` | no | Result language, ISO 639-1. Defaults to `en` |
 
-The adapter calls `GET /v3/application/listings/active` with
-`includes=Images,Shop`, which nests each listing's own images and shop inside
-that listing. That association is what guarantees the photo belongs to the
-product shown — it is not matched up after the fact. Mapping:
+Set them on the server only. The key is read inside the serverless function,
+sent as a request header rather than in the query string, and never included in
+a response — a 502 from the provider is logged server-side and reported to the
+browser as a generic message, so neither the key nor the upstream body leaks.
 
-| FindWear | Etsy Open API v3 |
+```sh
+vercel env add OPENWEBNINJA_API_KEY production
+```
+
+Setting `PRODUCT_SOURCE` is not necessary — an unset value runs the OpenWeb
+Ninja adapter whenever its key is present, so there is no second variable that
+has to agree with the first. An explicit value always wins, and one naming no
+adapter selects none, so a typo surfaces as a 503 rather than quietly running
+something else.
+
+Environment variables apply to the next build, not the running deployment, so
+redeploy after adding them.
+
+#### Intent to query
+
+The adapter builds one search phrase from the interpreter's output, in the
+order a shopper would type it — gender, colour, fit, style, brand, garment,
+occasion, then any remaining keywords:
+
+```
+{ colors: ["black"], fits: ["oversized"], brands: ["Nike"],
+  categories: ["hoodie"], maxPrice: 80 }
+
+  ->  q=black oversized nike hoodie & max_price=80 & country=us
+```
+
+Only words the shopper's own request produced are used. `season` is left out
+deliberately: it reads as a keyword to the search engine and would narrow
+results on a word used descriptively. The stated budget is passed to the source
+as `max_price`, and any offer that still comes back above it is dropped.
+
+#### Mapping
+
+| FindWear | OpenWeb Ninja |
 | --- | --- |
-| `title` | `ShopListing.title`, unmodified |
-| `productUrl` | `ShopListing.url` — "the full URL to the listing's page on Etsy" |
-| `price` | `Money.amount / Money.divisor` |
-| `imageUrl` | `ListingImage.url_570xN` from that listing's own `images` |
-| `brand` | `Shop.shop_name`, the maker |
-| `retailer` | Etsy, where the page lives |
-| availability | `state === 'active'` and `quantity > 0` |
+| `title` | `product_title` |
+| `imageUrl` | `product_photos[0]`, from that product's own photo list |
+| `price` | `offer.price`, parsed from the string the offer carries |
+| `retailer` | `offer.store_name` |
+| `productUrl` | `offer.offer_page_url` — the retailer's own page |
+| `brand` | `product_attributes.Brand`, when the product has one |
 
-A listing whose `images` association is absent or empty gets **no** image — none
-is substituted from another listing — and the gate then drops the record.
+The product-level `product_page_url` is Google Shopping's comparison page for
+the item, not a retailer's product page. It is deliberately never used, and the
+gate rejects Google hosts as a second line of defence.
 
-### Verifying the product source in production
+#### Why the image cannot belong to a different product
 
-Once `PRODUCT_SOURCE` and the provider's credentials are set and the deployment
-has been rebuilt, check the endpoint directly:
+This is the property the provider was chosen for, so it is enforced by the
+shape of the data rather than by care.
+
+A search result is one product object carrying **both** its own photos and its
+own merchant offer. `toRecord()` reads both out of that same object in one
+pass: the image comes from the product, and the price, retailer and link all
+come from that product's own offer. No second request is made, no image is
+looked up separately, and there is no code path that can pair one record's
+photo with another's link. A product that arrives without photos gets no image
+— none is substituted from anywhere — and the gate then drops it.
+
+#### Response fields: what is verified, and what is not
+
+The request parameters above are taken from the vendor's own OpenAPI-derived
+manifest, shipped in `@openwebninja/mcp-server`. The response field names come
+from the vendor's published documentation and have **not** been confirmed
+against a live call in this repository.
+
+The mapping is therefore written to fail closed. It accepts the documented
+spellings and their obvious variants, and anything it does not recognise
+produces a record missing its required fields — which the gate rejects and
+counts. A wrong field name shows up as an empty result set with a populated
+`rejected` tally. It can never show up as an invented product.
+
+To confirm the live shape, run the probe with a real key:
+
+```sh
+OPENWEBNINJA_API_KEY=... node scripts/probe-openwebninja.js "black oversized hoodie"
+```
+
+It prints the response envelope's keys, every key on the first product and on
+that product's offer, the record the adapter maps out of it, and the gate's
+verdict for the batch — enough to see at a glance which alias to add if a name
+differs.
+
+### Etsy (kept, unused)
+
+`api/providers/etsy.js` still works and is still registered, but production
+never calls it: nothing selects Etsy unless `PRODUCT_SOURCE=etsy` names it
+explicitly, and an unset `PRODUCT_SOURCE` runs OpenWeb Ninja instead. Deleting
+one `require` and one registry line removes it entirely. It searches a single
+catalogue, which is why it is no longer the default.
+
+### Testing the pipeline
+
+Offline, with no key and no network — intent, mapping, the gate's rejection
+rules, and the JSON `/api/search` returns:
+
+```sh
+node scripts/test-pipeline.js
+```
+
+Against a live deployment, with the request the interpreter produces for
+"black oversized hoodie under $80":
+
+```sh
+./scripts/verify-search.sh https://ai-clothes-application.vercel.app/api/search \
+  https://lxmafromnyc.github.io
+```
+
+It checks that every product the browser receives has a title, an absolute
+image URL, a real price, a named retailer and a direct retailer product URL,
+that none links to Google or another aggregator, and that none is over the
+stated budget.
+
+Or call it by hand:
 
 ```sh
 curl -s -X POST https://ai-clothes-application.vercel.app/api/search \
   -H 'Content-Type: application/json' \
-  --data '{"intent":{"categories":["knit"],"colors":["Black"],"maxPrice":80,"keywords":["hoodie"]},"limit":6}'
+  --data '{"intent":{"categories":["hoodie"],"colors":["black"],"fits":["oversized"],"maxPrice":80},"limit":6}'
 ```
 
 What the reply tells you:
 
 | Response | Meaning |
 | --- | --- |
-| `"source":"etsy"` with a populated `products` array | Live. Each entry carries a real title, brand, price, image URL and listing URL. |
-| `"source":"etsy"`, `products` empty, `rejected` populated | The source answered but nothing passed the gate. `rejected` names the missing field for each dropped record. |
+| `"source":"openwebninja"` with a populated `products` array | Live. Each entry carries a real title, price, image URL, retailer and product-page URL. |
+| `"source":"openwebninja"`, `products` empty, `rejected` populated | The source answered but nothing passed the gate. `rejected` names the fault for each dropped record; run the probe above to compare with the live field names. |
 | `503` `"No product source is configured."` | `PRODUCT_SOURCE` is unset, or names a provider whose credentials are missing. Environment variables only apply to deployments built after they were added, so a redeploy is usually what is missing. |
 | `502` | The provider was reached but failed. The reason is in the function logs, never in the response. |
-
-Environment variables take effect on the next build, not on the running
-deployment, so any change to them needs a redeploy before it is visible.
 
 ### Adding another provider
 
@@ -245,19 +389,33 @@ not change.
 
 ### The verification gate
 
-Every record must arrive from the source with all six of:
+Every record must arrive from the source with all five of:
 
 ```
-title   brand   price   imageUrl   productUrl   retailer
+title   price   imageUrl   productUrl   retailer
 ```
 
-A record missing any one is dropped, never filled in. `productUrl` must also
-address a specific product page — a bare origin, or a path reading as a search
-or category listing, is rejected, because a homepage link is not the product
-the card claims to show. Out-of-stock records are dropped; a source that says
-nothing about stock is not assumed to be out of stock. The response reports how
-many records were rejected and why, so a badly behaved provider is visible
-rather than silently thinning the results.
+A record missing any one is dropped, never filled in.
+
+`brand` is optional. A cross-retailer source often carries no separate brand
+for a listing, and a hoodie is still a real hoodie without one — so a brandless
+record passes, and the card simply shows no brand line. What is never done is
+putting something else there: the retailer's name in the brand field would be
+a fabricated attribution.
+
+`productUrl` must address a specific product page on the retailer's own site.
+Three kinds of link are rejected:
+
+| Rejected | Reason |
+| --- | --- |
+| `https://www.uniqlo.com/`, `https://shop.com/search` | a homepage or listing is not the product the card claims to show |
+| `https://www.google.com/shopping/product/…` | an aggregator's comparison page is not a retailer's product page |
+| `https://…/aclk?u=https://…` | a redirector's destination cannot be read off the link |
+
+Out-of-stock records are dropped; a source that says nothing about stock is not
+assumed to be out of stock. Prices must parse to a positive number. The
+response reports how many records were rejected and why, so a badly behaved
+provider is visible rather than silently thinning the results.
 
 Records are shown in the order the source returned them, badged with the
 retailer name. FindWear does not attach a match percentage to a provider
