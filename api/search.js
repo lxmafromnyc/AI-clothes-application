@@ -16,12 +16,14 @@
                       adapter that is not configured, makes this endpoint
                       answer 503 and the interface says no product source
                       is connected.
-     ALLOWED_ORIGIN   set only when the frontend is on another origin.
+     ALLOWED_ORIGIN   origins allowed to call this from a browser, beyond
+                      the deployment's own. Comma-separated. See _cors.js.
    ========================================================= */
 
 'use strict';
 
 const { getProvider, verifyAll } = require('./providers/product-source');
+const { handledPreflight } = require('./_cors');
 
 const MAX_LIMIT = 24;
 const DEFAULT_LIMIT = 12;
@@ -66,14 +68,8 @@ function readBody(req) {
 }
 
 module.exports = async function handler(req, res) {
-  const origin = process.env.ALLOWED_ORIGIN;
-  if (origin) {
-    res.setHeader('Access-Control-Allow-Origin', origin);
-    res.setHeader('Vary', 'Origin');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  }
-  if (req.method === 'OPTIONS') return res.status(204).end();
+  /* answers the preflight, and refuses an origin that is not allowed */
+  if (handledPreflight(req, res)) return;
   if (req.method !== 'POST') return res.status(405).json({ error: 'Use POST.' });
 
   const provider = getProvider();

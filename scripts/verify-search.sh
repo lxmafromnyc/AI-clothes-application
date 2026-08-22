@@ -55,6 +55,10 @@ elif [ "$code" = "503" ]; then
   note "fix: vercel env add PRODUCT_SOURCE production      (value: openwebninja)"
   note "     vercel env add OPENWEBNINJA_API_KEY production"
   note "then redeploy: env vars only apply to builds made after they were added"
+elif [ "$code" = "403" ]; then
+  bad "endpoint returned 403 — the Origin sent is not on the allowlist"
+  note "the deployment's own origin is always allowed; add others to ALLOWED_ORIGIN"
+  note "fix: vercel env add ALLOWED_ORIGIN production   (comma-separated)  then redeploy"
 elif [ "$code" = "502" ]; then
   bad "endpoint returned 502 — it reached the provider but the call failed"
   note "check the function logs: vercel logs <deployment-url>"

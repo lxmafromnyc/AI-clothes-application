@@ -72,6 +72,116 @@ const envelope = (products) => ({ status: 'OK', request_id: 'req-1', data: produ
    1. Intent -> query
    --------------------------------------------------------- */
 
+console.log('\ncross-origin access control');
+
+const { isAllowed, configuredOrigins, handledPreflight } = require('../api/_cors');
+
+const withEnv = (env, fn) => {
+  const keys = ['ALLOWED_ORIGIN', 'VERCEL_PROJECT_PRODUCTION_URL', 'VERCEL_BRANCH_URL', 'VERCEL_URL'];
+  const saved = {};
+  keys.forEach((k) => { saved[k] = process.env[k]; delete process.env[k]; });
+  Object.assign(process.env, env);
+  try { return fn(); }
+  finally { keys.forEach((k) => { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }); }
+};
+
+const reqFrom = (origin, host) => ({ headers: Object.assign({}, origin ? { origin } : {}, host ? { host } : {}) });
+
+test('an origin named in ALLOWED_ORIGIN is allowed', () => {
+  withEnv({ ALLOWED_ORIGIN: 'https://lxmafromnyc.github.io' }, () => {
+    assert.ok(isAllowed(reqFrom('https://lxmafromnyc.github.io'), 'https://lxmafromnyc.github.io'));
+  });
+});
+
+test('ALLOWED_ORIGIN accepts a comma-separated list', () => {
+  withEnv({ ALLOWED_ORIGIN: 'https://a.example, https://b.example' }, () => {
+    assert.ok(isAllowed(reqFrom('https://a.example'), 'https://a.example'));
+    assert.ok(isAllowed(reqFrom('https://b.example'), 'https://b.example'));
+    assert.ok(!isAllowed(reqFrom('https://c.example'), 'https://c.example'));
+  });
+});
+
+test('a trailing slash in the configured value is tolerated', () => {
+  withEnv({ ALLOWED_ORIGIN: 'https://lxmafromnyc.github.io/' }, () => {
+    assert.ok(isAllowed(reqFrom('https://lxmafromnyc.github.io'), 'https://lxmafromnyc.github.io'),
+      'the pasted-URL slash must not break the match');
+  });
+});
+
+test("the deployment's own Vercel origins are allowed without configuration", () => {
+  withEnv({ VERCEL_PROJECT_PRODUCTION_URL: 'ai-clothes-application.vercel.app', VERCEL_URL: 'ai-clothes-application-abc.vercel.app' }, () => {
+    assert.ok(isAllowed(reqFrom('https://ai-clothes-application.vercel.app'), 'https://ai-clothes-application.vercel.app'));
+    assert.ok(isAllowed(reqFrom('https://ai-clothes-application-abc.vercel.app'), 'https://ai-clothes-application-abc.vercel.app'));
+  });
+});
+
+test('a page on the same host as the function is allowed with no configuration at all', () => {
+  withEnv({}, () => {
+    assert.ok(isAllowed(reqFrom('https://anything.example', 'anything.example'), 'https://anything.example'));
+    assert.strictEqual(configuredOrigins().size, 0, 'nothing was configured');
+  });
+});
+
+[
+  ['another site', 'https://evil.example.com'],
+  ['a different Vercel app', 'https://somebody-else.vercel.app'],
+  ['a file:// page', 'null'],
+  ['http where https is allowed', 'http://lxmafromnyc.github.io'],
+  ['an origin carrying a trailing slash', 'https://lxmafromnyc.github.io/']
+].forEach(([label, origin]) => {
+  test(`rejects ${label}`, () => {
+    withEnv({ ALLOWED_ORIGIN: 'https://lxmafromnyc.github.io' }, () => {
+      assert.ok(!isAllowed(reqFrom(origin), origin));
+    });
+  });
+});
+
+test('no wildcard: nothing is allowed just for being on vercel.app', () => {
+  withEnv({ VERCEL_PROJECT_PRODUCTION_URL: 'ai-clothes-application.vercel.app' }, () => {
+    assert.ok(!isAllowed(reqFrom('https://attacker.vercel.app'), 'https://attacker.vercel.app'));
+  });
+});
+
+const fakeCorsRes = () => {
+  const res = { statusCode: null, headers: {}, body: null };
+  res.setHeader = (k, v) => { res.headers[k.toLowerCase()] = v; };
+  res.status = (c) => { res.statusCode = c; return res; };
+  res.json = (b) => { res.body = b; return res; };
+  res.end = () => res;
+  return res;
+};
+
+test('a rejected preflight answers 403, never a headerless 204', () => {
+  withEnv({ ALLOWED_ORIGIN: 'https://lxmafromnyc.github.io' }, () => {
+    const res = fakeCorsRes();
+    const stop = handledPreflight(Object.assign(reqFrom('https://evil.example.com'), { method: 'OPTIONS' }), res);
+    assert.strictEqual(stop, true);
+    assert.strictEqual(res.statusCode, 403, 'a 204 here would read as success in the log');
+    assert.strictEqual(res.headers['access-control-allow-origin'], undefined);
+  });
+});
+
+test('an accepted preflight answers 204 and echoes the caller, with Vary', () => {
+  withEnv({ ALLOWED_ORIGIN: 'https://lxmafromnyc.github.io' }, () => {
+    const res = fakeCorsRes();
+    handledPreflight(Object.assign(reqFrom('https://lxmafromnyc.github.io'), { method: 'OPTIONS' }), res);
+    assert.strictEqual(res.statusCode, 204);
+    assert.strictEqual(res.headers['access-control-allow-origin'], 'https://lxmafromnyc.github.io');
+    assert.strictEqual(res.headers['vary'], 'Origin');
+    assert.ok(/POST/.test(res.headers['access-control-allow-methods']));
+    assert.ok(/Content-Type/i.test(res.headers['access-control-allow-headers']));
+  });
+});
+
+test('a request with no Origin is left alone, so curl still works', () => {
+  withEnv({}, () => {
+    const res = fakeCorsRes();
+    const stop = handledPreflight({ headers: {}, method: 'POST' }, res);
+    assert.strictEqual(stop, false, 'it must fall through to the handler');
+    assert.strictEqual(res.headers['access-control-allow-origin'], undefined);
+  });
+});
+
 console.log('\nprovider selection');
 
 const { getProvider, DEFAULT_SOURCE } = require('../api/providers/product-source');

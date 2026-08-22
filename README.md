@@ -127,13 +127,58 @@ and the function share an origin, `/api/interpret` resolves by default, and
 | `OPENAI_MODEL` | no | Model to call. Defaults to `gpt-4o-mini`; set it to whatever your account has access to. |
 | `OPENWEBNINJA_API_KEY` | yes | The product source's key. Without it `/api/search` returns 503 and the frontend falls back to the sample catalogue, labelled as such. |
 | `PRODUCT_SOURCE` | no | Which adapter in `api/providers/` finds the products. Unset runs `openwebninja`, which is what this deployment uses. |
-| `ALLOWED_ORIGIN` | no | Only set this if the frontend is on a different origin than the function, e.g. pages on GitHub Pages and the function on Vercel. Left unset, no CORS header is sent and the endpoint is same-origin only. |
+| `ALLOWED_ORIGIN` | no | Extra browser origins allowed to call the endpoints, comma-separated. The deployment's own origin is always allowed without configuration, so this is only needed for a frontend hosted elsewhere — GitHub Pages calling functions on Vercel. See [Cross-origin access](#cross-origin-access). |
 
 Both keys are server-side secrets. Set them in your host's dashboard or CLI
 (`npx vercel env add OPENAI_API_KEY`, `npx vercel env add
 OPENWEBNINJA_API_KEY`). Never put either in a file you commit, never prefix
 one so a bundler would publish it, and never move either call into the frontend
 — a key in client JavaScript is a key anyone can read.
+
+### Cross-origin access
+
+Both endpoints spend money — one on OpenAI credit, the other on product-search
+quota — so who may call them from a browser is decided in one place,
+`api/_cors.js`, rather than twice with a chance of drifting apart.
+
+Three sources of allowed origins, in order of how much configuration each needs:
+
+1. **The deployment's own origin**, matched against the request's `Host`
+   header. A page served from the same host as the function is same-origin by
+   definition. No configuration, and it keeps working on production, preview
+   and custom domains alike.
+2. **The deployment's Vercel hostnames**, from the system environment variables
+   Vercel injects at runtime (`VERCEL_PROJECT_PRODUCTION_URL`,
+   `VERCEL_BRANCH_URL`, `VERCEL_URL`). Needs *Automatically expose System
+   Environment Variables* left enabled in project settings, which is the
+   default.
+3. **`ALLOWED_ORIGIN`**, for anything else — the GitHub Pages site, chiefly.
+   One origin or several, comma-separated. A trailing slash is tolerated and
+   stripped, because pasting a URL out of an address bar brings one along and
+   the resulting mismatch is invisible in a dashboard.
+
+```
+ALLOWED_ORIGIN=https://lxmafromnyc.github.io
+ALLOWED_ORIGIN=https://lxmafromnyc.github.io,https://findwear.example
+```
+
+There is deliberately no wildcard and no blanket `*.vercel.app` rule: that
+would let anybody's Vercel deployment spend this project's API credit.
+
+**A rejected origin gets a 403, preflight included.** This matters more than it
+looks. Answering a preflight `204` without the CORS headers is what a browser
+treats as a rejection, but the log only records the `204` — so a misconfigured
+deployment reads as a working one, and the failure appears to be somewhere else
+entirely. A `403` puts the reason in the log where it can be found:
+
+```
+OPTIONS /api/search → 403    the Origin is not allowed
+OPTIONS /api/search → 204    the Origin is allowed; the POST will follow
+```
+
+A request with no `Origin` header is not a browser cross-origin request —
+`curl`, a server-to-server call — and is left alone, so the verification
+scripts keep working.
 
 ### How a request flows
 
