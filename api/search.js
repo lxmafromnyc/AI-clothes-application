@@ -102,13 +102,27 @@ module.exports = async function handler(req, res) {
 
   const { products, rejected } = verifyAll(records, { retailer: provider.defaultRetailer });
 
+  /* An adapter may carry a stage-by-stage account of what it did. Without
+     one, a search that returns nothing looks identical whether the source
+     had no stock, the records could not be parsed, the links could not be
+     obtained, or the budget filter took them all. */
+  const diagnostics = records && records.diagnostics
+    ? Object.assign({}, records.diagnostics, { reachedGate: records.length, verified: products.length, rejected })
+    : null;
+
+  if (!products.length && diagnostics) {
+    /* server log only; counts and key names, never a value from a record */
+    console.warn('Search verified nothing.', JSON.stringify(diagnostics));
+  }
+
   return res.status(200).json({
     source: provider.name,
     products: products.slice(0, limit),
     /* how many the source returned that could not be verified, and why —
        so a badly behaved provider shows up instead of silently thinning */
     returned: Array.isArray(records) ? records.length : 0,
-    rejected
+    rejected,
+    diagnostics
   });
 };
 

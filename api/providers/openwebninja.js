@@ -379,6 +379,19 @@ function resultsFrom(payload) {
   return [];
 }
 
+/* Describes a payload's structure so a parsing miss can be seen in a log.
+   Key names only — never a value, so nothing from a response body can
+   leak through it. */
+function shapeOf(payload) {
+  if (Array.isArray(payload)) return `array[${payload.length}]`;
+  if (!payload || typeof payload !== 'object') return String(typeof payload);
+  const top = Object.keys(payload).join(',');
+  const data = payload.data;
+  if (Array.isArray(data)) return `{${top}} data=array[${data.length}]`;
+  if (data && typeof data === 'object') return `{${top}} data={${Object.keys(data).join(',')}}`;
+  return `{${top}} data=${typeof data}`;
+}
+
 /* One GET against the API. The key travels as a header, never in the
    query string, and the response body is never surfaced to a browser. */
 async function apiGet(url, params) {
@@ -411,10 +424,13 @@ async function offersFor(productId, region) {
   const params = new URLSearchParams({ product_id: String(productId), country: region.country, language: region.language });
   try {
     const payload = await apiGet(OFFERS_URL, params);
-    return resultsFrom(payload);
+    const offers = resultsFrom(payload);
+    /* when nothing was found, the shape says whether the array is simply
+       under a key resultsFrom does not read yet */
+    return { offers, failed: false, shape: offers.length ? null : shapeOf(payload) };
   } catch (err) {
     console.warn('Offer lookup failed for product', String(productId), err && err.message);
-    return [];
+    return { offers: [], failed: true, shape: null };
   }
 }
 
@@ -422,8 +438,21 @@ async function offersFor(productId, region) {
    parallel batches, stopping as soon as enough records have one or the
    budget expires. Mutates in place; a record left unresolved keeps no
    price, retailer or URL and is dropped by the gate. */
-async function resolveMissingOffers(records, wanted, region) {
-  if (!offersEnabled()) return;
+async function resolveMissingOffers(records, wanted, region, stats) {
+  const tally = stats || {};
+  tally.neededOfferLookup = records.filter((r) => !r.productUrl).length;
+  tally.lookupsMade = 0;
+  tally.lookupsFailed = 0;
+  tally.lookupsEmpty = 0;
+  tally.resolvedFromOffers = 0;
+  /* offers came back, but not one carried a usable retailer link — the
+     URL rule doing its job, told apart from finding no offers at all */
+  tally.noDirectLinkInOffers = 0;
+  tally.budgetExpired = false;
+  tally.noProductId = records.filter((r) => !r.productUrl && !r.sku).length;
+  tally.offersShape = null;
+
+  if (!offersEnabled()) { tally.skipped = true; return tally; }
 
   const budget = Number(process.env.OPENWEBNINJA_OFFER_BUDGET_MS) || DEFAULT_OFFER_BUDGET_MS;
   const deadline = Date.now() + budget;
@@ -431,14 +460,23 @@ async function resolveMissingOffers(records, wanted, region) {
   let resolved = records.filter((r) => r.productUrl).length;
 
   for (let i = 0; i < pending.length; i += OFFER_CONCURRENCY) {
-    if (resolved >= wanted || Date.now() >= deadline) break;
+    if (resolved >= wanted) break;
+    if (Date.now() >= deadline) { tally.budgetExpired = true; break; }
 
     const batch = pending.slice(i, i + OFFER_CONCURRENCY);
     const found = await Promise.all(batch.map(async (record) => {
-      const offers = await offersFor(record.sku, region);
-      /* preferredStore is the shop the search result named, so the card
-         keeps showing the retailer the search actually found */
-      return pickOffer(offers, record.retailerHint);
+      tally.lookupsMade += 1;
+      const result = await offersFor(record.sku, region);
+      if (result.failed) { tally.lookupsFailed += 1; return null; }
+      if (!result.offers.length) {
+        tally.lookupsEmpty += 1;
+        /* one sample is enough to see whether parsing is the problem */
+        if (!tally.offersShape) tally.offersShape = result.shape;
+        return null;
+      }
+      const commerce = pickOffer(result.offers, record.retailerHint);
+      if (!commerce) tally.noDirectLinkInOffers += 1;
+      return commerce;
     }));
 
     found.forEach((commerce, n) => {
@@ -450,8 +488,10 @@ async function resolveMissingOffers(records, wanted, region) {
       record.retailer = commerce.retailer;
       record.productUrl = commerce.productUrl;
       resolved += 1;
+      tally.resolvedFromOffers += 1;
     });
   }
+  return tally;
 }
 
 async function search(intent, options) {
@@ -477,6 +517,14 @@ async function search(intent, options) {
   const payload = await apiGet(SEARCH_URL, params);
   const products = resultsFrom(payload);
 
+  /* Every stage a record can be lost at, counted. Without this a search
+     that returns nothing looks the same whether the source had no stock,
+     the offers could not be read, or the budget filter took them all. */
+  const diagnostics = {
+    returnedByProvider: products.length,
+    searchShape: products.length ? null : shapeOf(payload)
+  };
+
   const records = products.map((product) => {
     const record = toRecord(product);
     if (!record) return null;
@@ -486,17 +534,26 @@ async function search(intent, options) {
     return record;
   }).filter(Boolean);
 
+  diagnostics.normalized = records.length;
+  diagnostics.withInlineLink = records.filter((r) => r.productUrl).length;
+
   /* the search endpoint returns Google's product view, so most records
      arrive without a retailer link; this fetches the sellers for them */
-  await resolveMissingOffers(records, wanted, region);
+  diagnostics.offers = await resolveMissingOffers(records, wanted, region, {});
 
   records.forEach((r) => { delete r.retailerHint; });
+  diagnostics.withAnyLink = records.filter((r) => r.productUrl).length;
 
   /* The source filters on price, but an offer that slipped past the
      ceiling is dropped rather than shown: "under $80" is the shopper's
      instruction, not a suggestion. Dropping is safe — it removes a real
      product from the page, it never invents one. */
-  return records.filter((r) => withinBudget(r, intent));
+  const withinLimits = records.filter((r) => withinBudget(r, intent));
+  diagnostics.droppedOverBudget = records.length - withinLimits.length;
+
+  /* carried on the array so /api/search can report it without every
+     adapter having to grow a new return shape */
+  return Object.assign(withinLimits, { diagnostics });
 }
 
 function withinBudget(record, intent) {
@@ -531,5 +588,6 @@ module.exports = {
   currencyFrom,
   resultsFrom,
   withinBudget,
+  shapeOf,
   SEARCH_URL
 };

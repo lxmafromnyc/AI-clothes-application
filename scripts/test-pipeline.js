@@ -852,14 +852,84 @@ function twoEndpointStub(searchPayload, offersByProductId) {
     delete process.env.OPENAI_API_KEY;
   });
 
-  await testAsync('a successful search logs nothing at all', async () => {
+  await testAsync('a search that verifies something logs nothing at all', async () => {
     process.env.OPENWEBNINJA_API_KEY = 'test-key';
     delete process.env.PRODUCT_SOURCE;
     const handler = require('../api/search');
     const lines = await captureWarnings(() => withStubbedFetch(
-      async () => okResponse(envelope([product()])),
+      twoEndpointStub(envelope([productWithInlineOffer()])),
       () => handler({ method: 'POST', headers: {}, body: { intent: nikeIntent, limit: 3 }, on: () => {} }, fakeRes())));
     assert.strictEqual(lines.length, 0, 'no request contents, no env state, nothing');
+  });
+
+  await testAsync('a search that verifies nothing logs the funnel, with no record content', async () => {
+    process.env.OPENWEBNINJA_API_KEY = 'test-key';
+    delete process.env.PRODUCT_SOURCE;
+    const handler = require('../api/search');
+    const res = fakeRes();
+    const lines = await captureWarnings(() => withStubbedFetch(
+      twoEndpointStub(envelope([product()]), {}),
+      () => handler({ method: 'POST', headers: {}, body: { intent: nikeIntent, limit: 3 }, on: () => {} }, res)));
+
+    assert.strictEqual(lines.length, 1, 'exactly one line');
+    assert.ok(/returnedByProvider/.test(lines[0]), lines[0]);
+    assert.ok(!lines[0].includes('Air Force'), 'no product title in the log');
+    assert.ok(!lines[0].includes('img.example-cdn'), 'no URL from a record in the log');
+
+    const d = res.body.diagnostics;
+    assert.strictEqual(d.returnedByProvider, 1);
+    assert.strictEqual(d.normalized, 1);
+    assert.strictEqual(d.withInlineLink, 0);
+    assert.strictEqual(d.offers.neededOfferLookup, 1);
+    assert.strictEqual(d.offers.lookupsEmpty, 1);
+    assert.strictEqual(d.withAnyLink, 0);
+    assert.strictEqual(d.verified, 0);
+  });
+
+  console.log('\nthe funnel accounts for every lost record');
+
+  await testAsync('reports records lost to the budget filter separately', async () => {
+    process.env.OPENWEBNINJA_API_KEY = 'test-key';
+    const records = await withStubbedFetch(
+      twoEndpointStub(envelope([product({ product_id: 'dear' })]), { dear: [offer('saks.com', '$240.00', 'https://www.saks.com/product/x-123')] }),
+      () => provider.search(nikeIntent, { limit: 12 }));
+    assert.strictEqual(records.length, 0);
+    assert.strictEqual(records.diagnostics.withAnyLink, 1, 'it did get a link');
+    assert.strictEqual(records.diagnostics.droppedOverBudget, 1, 'and was dropped for the price, not the link');
+  });
+
+  await testAsync('reports an unreadable offers payload as a shape, not as silence', async () => {
+    process.env.OPENWEBNINJA_API_KEY = 'test-key';
+    const records = await withStubbedFetch(
+      async (url) => String(url).includes('/product-offers')
+        /* the array under a key resultsFrom does not read */
+        ? okResponse({ status: 'OK', request_id: 'r', data: { offers: [offer('nike.com', '$70', 'https://www.nike.com/t/x/1')] } })
+        : okResponse(envelope([product()])),
+      () => provider.search(nikeIntent, { limit: 12 }));
+
+    const d = records.diagnostics;
+    assert.strictEqual(d.offers.lookupsEmpty, 1);
+    assert.ok(/data=\{.*offers.*\}/.test(d.offers.offersShape), `shape should name the key: ${d.offers.offersShape}`);
+    assert.ok(!d.offers.offersShape.includes('nike.com'), 'shape carries key names only, never values');
+  });
+
+  await testAsync('reports a failed lookup separately from an empty one', async () => {
+    process.env.OPENWEBNINJA_API_KEY = 'test-key';
+    const records = await withStubbedFetch(
+      async (url) => { if (String(url).includes('/product-offers')) throw new Error('down'); return okResponse(envelope([product()])); },
+      () => provider.search(nikeIntent, { limit: 12 }));
+    assert.strictEqual(records.diagnostics.offers.lookupsFailed, 1);
+    assert.strictEqual(records.diagnostics.offers.lookupsEmpty, 0);
+  });
+
+  await testAsync('reports an expired offer budget', async () => {
+    process.env.OPENWEBNINJA_API_KEY = 'test-key';
+    process.env.OPENWEBNINJA_OFFER_BUDGET_MS = '1';
+    const many = Array.from({ length: 8 }, (_, i) => product({ product_id: `p${i}` }));
+    const records = await withStubbedFetch(twoEndpointStub(envelope(many), {}),
+      () => provider.search(nikeIntent, { limit: 12 }));
+    assert.strictEqual(records.diagnostics.offers.budgetExpired, true);
+    delete process.env.OPENWEBNINJA_OFFER_BUDGET_MS;
   });
 
   console.log('\nclient search states');
