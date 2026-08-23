@@ -1,5 +1,5 @@
 /* =========================================================
-   FindWear — plan definitions and billing periods
+   Fynd — plan definitions and billing periods
 
    The single source of truth for what each plan costs and what it
    allows. The server enforces from here, the pricing page renders from
@@ -49,7 +49,7 @@ const PLANS = {
     /* how the meter phrases itself on this plan */
     usageWindow: 'today',
     limits: { tokens: 20000, searches: 3 },
-    blurb: 'Enough to try FindWear properly.',
+    blurb: 'Enough to try Fynd properly.',
     features: ['20k AI tokens/day', '3 live searches/day']
   },
   pro: {

@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /* =========================================================
-   FindWear — usage metering and enforcement tests
+   Fynd — usage metering and enforcement tests
 
    Drives the real handlers with the real metering code. Only the two
    paid upstreams — OpenAI and the product provider — are stubbed, at the
-   network boundary, so what is under test is FindWear's own accounting:
+   network boundary, so what is under test is Fynd's own accounting:
    who is charged, when, how much, and what happens when something goes
    wrong halfway through.
 

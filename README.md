@@ -1,4 +1,4 @@
-# FindWear — AI clothing finder
+# Fynd — AI clothing finder
 
 A four-page site where you describe the clothes you want in your own words and get
 back a ranked shortlist. "I need a black shirt for school under $50" is a complete
@@ -175,7 +175,7 @@ quota — so who may call them from a browser is decided in one place,
 
 Four sources of allowed origins, in order of how much configuration each needs:
 
-1. **FindWear's own published site**, listed as `SITE_ORIGINS` in `api/_cors.js`.
+1. **Fynd's own published site**, listed as `SITE_ORIGINS` in `api/_cors.js`.
    The Pages site is a fact about the project, not a deployment setting, so it
    lives in the repository where it cannot go missing. These are public
    origins, not secrets — the same hostname is already in the meta tag of every
@@ -297,7 +297,7 @@ decides which adapter runs from `PRODUCT_SOURCE`. Unset, or naming an adapter
 whose credentials are missing, and the endpoint answers 503 and the interface
 says plainly that no product source is connected.
 
-### OpenWeb Ninja (the provider FindWear runs on)
+### OpenWeb Ninja (the provider Fynd runs on)
 
 [Real-Time Product Search](https://www.openwebninja.com/api/real-time-product-search)
 searches Google Shopping's cross-retailer index, so one query reaches Amazon,
@@ -352,7 +352,7 @@ as `max_price`, and any offer that still comes back above it is dropped.
 Confirmed against a live response: the commerce fields appear at the **top
 level** of a search record, not only nested under `offer`. Both shapes are read.
 
-| FindWear | OpenWeb Ninja |
+| Fynd | OpenWeb Ninja |
 | --- | --- |
 | `title` | `product_title` |
 | `imageUrl` | `product_photos[0]`, from that product's own photo list |
@@ -525,7 +525,7 @@ response reports how many records were rejected and why, so a badly behaved
 provider is visible rather than silently thinning the results.
 
 Records are shown in the order the source returned them, badged with the
-retailer name. FindWear does not attach a match percentage to a provider
+retailer name. Fynd does not attach a match percentage to a provider
 result: it did not score them, and displaying a made-up score would be
 inventing information about a real product.
 
@@ -557,7 +557,7 @@ garment categories fall back to neutral artwork rather than breaking.
 
 ## Plans, usage and limits
 
-FindWear meters two things separately, because they cost money in
+Fynd meters two things separately, because they cost money in
 different ways and run out for different reasons:
 
 | | Free | Pro | Max |

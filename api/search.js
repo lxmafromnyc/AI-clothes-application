@@ -1,5 +1,5 @@
 /* =========================================================
-   FindWear — product search
+   Fynd — product search
 
    Takes the structured intent produced by /api/interpret and asks the
    configured product source for real listings. Every record passes the
@@ -22,7 +22,7 @@
    ---------------------------------------------------------
    Live-search metering
    ---------------------------------------------------------
-   A live search is the expensive thing FindWear does, so it is the meter
+   A live search is the expensive thing Fynd does, so it is the meter
    the interface leads with. Three rules govern it, and all three are
    enforced here rather than in the browser:
 

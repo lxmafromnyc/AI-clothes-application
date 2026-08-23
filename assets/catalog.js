@@ -1,5 +1,5 @@
 /* =========================================================
-   FindWear — demo product source
+   Fynd — demo product source
 
    Source records in the shape a real feed supplies. Nothing here is
    consumed directly: assets/products.js normalises these before anything

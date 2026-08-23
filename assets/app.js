@@ -1,5 +1,5 @@
 /* =========================================================
-   FindWear — rendering and page behaviour
+   Fynd — rendering and page behaviour
 
    Reads the canonical product shape from assets/products.js and nothing
    else. Swapping the data source changes what appears; it does not change
@@ -128,7 +128,7 @@ const resultCard = (item, index) => productCard(item, index,
   `<p class="item-why">${SPARK}<span>${esc(item.why)}</span></p>`);
 
 /* A verified record from the product source. The badge names the retailer
-   rather than a match percentage: FindWear did not score these, the source
+   rather than a match percentage: Fynd did not score these, the source
    returned them for the request, and showing a made-up score would be
    inventing information about a real product. */
 const providerCard = (item, index) => productCard(item, index,

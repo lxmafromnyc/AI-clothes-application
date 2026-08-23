@@ -1,11 +1,11 @@
 /* =========================================================
-   FindWear — OpenWeb Ninja product source
+   Fynd — OpenWeb Ninja product source
 
    Searches Google Shopping's cross-retailer index through OpenWeb Ninja's
    Real-Time Product Search API and returns records in the shape
    api/providers/product-source.js verifies.
 
-   This is the provider that gives FindWear broad coverage: one query
+   This is the provider that gives Fynd broad coverage: one query
    reaches Amazon, Walmart, Target, Best Buy, eBay, Nordstrom and the long
    tail of clothing merchants, rather than a single retailer's catalogue.
 

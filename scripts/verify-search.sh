@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Verifies a deployed FindWear product-search endpoint end to end, with the
+# Verifies a deployed Fynd product-search endpoint end to end, with the
 # request the interpreter produces for "black oversized hoodie under $80".
 #
 #   ./scripts/verify-search.sh https://your-app.vercel.app/api/search

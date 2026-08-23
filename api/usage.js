@@ -1,5 +1,5 @@
 /* =========================================================
-   FindWear — usage and plans, for the meter
+   Fynd — usage and plans, for the meter
 
    Read-only. Answers with the caller's own current usage and the public
    plan table, which is everything the usage meter and the pricing page

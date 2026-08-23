@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /* =========================================================
-   FindWear — OpenWeb Ninja response probe
+   Fynd — OpenWeb Ninja response probe
 
    Confirms the live response schema against the adapter's mapping. The
    adapter's request parameters were taken from the vendor's published

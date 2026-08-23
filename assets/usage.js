@@ -1,5 +1,5 @@
 /* =========================================================
-   FindWear — the usage meter (client side)
+   Fynd — the usage meter (client side)
 
    Renders what the server says has been used. It does not count, does
    not estimate, and does not decide anything.

@@ -1,5 +1,5 @@
 /* =========================================================
-   FindWear — cross-origin access control
+   Fynd — cross-origin access control
 
    Shared by /api/interpret and /api/search. Both endpoints spend money —
    one on OpenAI credit, the other on product-search quota — so who may
@@ -11,7 +11,7 @@
    ---------------------------------------------------------
    Four sources, in order of how much configuration they need:
 
-     1. FindWear's own published site, listed in SITE_ORIGINS below. This
+     1. Fynd's own published site, listed in SITE_ORIGINS below. This
         project has a known front door — the GitHub Pages site — and it
         is a fact about the project, not a deployment setting. Keeping it
         in code means the site cannot be locked out of its own API by a
@@ -65,7 +65,7 @@
 
 const trimSlash = (value) => String(value || '').trim().replace(/\/+$/, '');
 
-/* FindWear's published front ends. A property of the project rather than
+/* Fynd's published front ends. A property of the project rather than
    of any one deployment, so they belong in the repository where they
    cannot go missing. Add an origin here when the site gains a new home;
    use ALLOWED_ORIGIN for anything deployment-specific. */

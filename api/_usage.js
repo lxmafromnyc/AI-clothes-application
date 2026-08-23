@@ -1,5 +1,5 @@
 /* =========================================================
-   FindWear — usage metering and enforcement
+   Fynd — usage metering and enforcement
 
    Everything that decides whether a request may spend money, and records
    that it did. Both paid endpoints go through here and nothing else is

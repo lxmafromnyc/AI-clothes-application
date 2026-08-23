@@ -1,5 +1,5 @@
 /* =========================================================
-   FindWear — Etsy product source
+   Fynd — Etsy product source
 
    Searches active Etsy listings through the Open API v3 and returns them
    in the shape api/providers/product-source.js verifies.

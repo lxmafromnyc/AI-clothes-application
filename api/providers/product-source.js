@@ -1,5 +1,5 @@
 /* =========================================================
-   FindWear — product source adapter
+   Fynd — product source adapter
 
    Defines the contract every product provider must satisfy, and the gate
    every record must pass before it can reach the interface. Swapping
@@ -172,7 +172,7 @@ function inStock(value) {
   return !UNAVAILABLE.test(text(value));
 }
 
-/* Maps a raw source record onto FindWear's shape. Returns either
+/* Maps a raw source record onto Fynd's shape. Returns either
    { ok: true, product } or { ok: false, reason } — never a partial
    product, and never a field this function made up. */
 function toProduct(raw, context) {
@@ -240,7 +240,7 @@ function verifyAll(records, context) {
 /* ---------------------------------------------------------
    Provider registry
    ---------------------------------------------------------
-   FindWear runs on whichever adapter PRODUCT_SOURCE names. Adding another
+   Fynd runs on whichever adapter PRODUCT_SOURCE names. Adding another
    means writing an adapter and registering it here; nothing else in the
    system changes, and no page has any knowledge of which one is live.
 
@@ -260,7 +260,7 @@ function verifyAll(records, context) {
    --------------------------------------------------------- */
 
 const openwebninja = require('./openwebninja');
-/* kept registered and working, but no longer the provider FindWear runs
+/* kept registered and working, but no longer the provider Fynd runs
    on. Nothing outside this file refers to it, so it can be dropped by
    deleting one require and one line below. */
 const etsy = require('./etsy');

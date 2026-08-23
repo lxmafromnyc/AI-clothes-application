@@ -1,7 +1,7 @@
 /* =========================================================
-   FindWear — who is being metered
+   Fynd — who is being metered
 
-   A limit needs someone to be a limit ON. FindWear has never had
+   A limit needs someone to be a limit ON. Fynd has never had
    accounts, so this establishes the smallest identity that supports real
    enforcement without putting a login wall in front of a site that does
    not have logins yet.

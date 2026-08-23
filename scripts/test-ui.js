@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /* =========================================================
-   FindWear — interface tests
+   Fynd — interface tests
 
    Drives the real page in a real browser: dragging files onto the
    search card, choosing them with the button, removing them, and
@@ -70,7 +70,7 @@ const usageSnapshot = () => ({
 });
 
 const PLAN_TABLE = [
-  { id: 'free', name: 'Free', priceUsd: 0, priceLabel: '$0', cadence: null, blurb: 'Enough to try FindWear properly.',
+  { id: 'free', name: 'Free', priceUsd: 0, priceLabel: '$0', cadence: null, blurb: 'Enough to try Fynd properly.',
     features: ['20k AI tokens/day', '3 live searches/day'], limits: { tokens: 20000, searches: 3 } },
   { id: 'pro', name: 'Pro', priceUsd: 14.99, priceLabel: '$14.99', cadence: 'month', blurb: 'For shopping that is more than occasional.',
     features: ['1M AI tokens/month', '75 live searches/month'], limits: { tokens: 1000000, searches: 75 } },

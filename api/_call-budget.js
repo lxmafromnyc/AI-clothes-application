@@ -1,5 +1,5 @@
 /* =========================================================
-   FindWear — per-search upstream call cap
+   Fynd — per-search upstream call cap
 
    A hard ceiling on how many billable upstream calls one search may
    make, enforced by counting them rather than by trusting the code that
@@ -8,7 +8,7 @@
    ---------------------------------------------------------
    What this is guarding against
    ---------------------------------------------------------
-   One FindWear search is not one provider call. The product search
+   One Fynd search is not one provider call. The product search
    returns records that mostly carry no retailer link, so each one needs
    a separate offers lookup to become showable. With a limit of 24 and a
    bad batch, a single search could make one search call plus two dozen

@@ -1,5 +1,5 @@
 /* =========================================================
-   FindWear — usage store
+   Fynd — usage store
 
    Where the counters live. Follows the same adapter shape as
    providers/product-source.js: one interface, an adapter per backend,
@@ -254,7 +254,7 @@ function getStore() {
     warned = true;
     /* Once, and loudly. A deployment running on this is not enforcing
        anything across instances, and that must not be discovered later. */
-    console.warn('FindWear usage store is in-process memory: limits are NOT enforced across instances. Set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN.');
+    console.warn('Fynd usage store is in-process memory: limits are NOT enforced across instances. Set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN.');
   }
   return cached;
 }

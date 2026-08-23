@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Verifies a deployed FindWear interpreter endpoint end to end.
+# Verifies a deployed Fynd interpreter endpoint end to end.
 #
 #   ./scripts/verify-api.sh https://your-app.vercel.app/api/interpret
 #

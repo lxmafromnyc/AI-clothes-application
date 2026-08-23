@@ -1,5 +1,5 @@
 /* =========================================================
-   FindWear — natural-language request interpreter
+   Fynd — natural-language request interpreter
 
    Turns "a black shirt for school under $50" into structured preferences
    the catalogue can be matched against.

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /* =========================================================
-   FindWear — product pipeline test
+   Fynd — product pipeline test
 
    Exercises the whole server side of a search without touching the
    network: interpreted intent -> adapter query -> provider response ->
@@ -8,7 +8,7 @@
 
    The provider's HTTP call is stubbed with a payload in the shape the
    OpenWeb Ninja Real-Time Product Search API documents, so what is being
-   tested is FindWear's handling of it — the mapping, the gate, and the
+   tested is Fynd's handling of it — the mapping, the gate, and the
    rules about which links and which missing fields are unacceptable.
 
    A live check of the real response shape is a separate script:
@@ -128,7 +128,7 @@ test('falls back to the extension when the browser gives no type', () => {
   assert.strictEqual(A.typeOf(fileOf('notes.pdf', '')), 'application/pdf');
 });
 
-test('refuses a type FindWear does not take', () => {
+test('refuses a type Fynd does not take', () => {
   const bad = fileOf('malware.exe', 'application/x-msdownload');
   assert.ok(/does not take/.test(A.reject(bad, [])), A.reject(bad, []));
   assert.ok(/does not take/.test(A.reject(fileOf('clip.mp4', 'video/mp4'), [])));

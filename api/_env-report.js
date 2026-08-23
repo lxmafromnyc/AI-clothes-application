@@ -1,5 +1,5 @@
 /* =========================================================
-   FindWear — configuration report for the logs
+   Fynd — configuration report for the logs
 
    Both endpoints answer 503 when the credential they need is not in the
    environment. That answer is correct, but it is silent: the log records
