@@ -41,6 +41,8 @@ scripts/verify-api.sh          checks a deployed interpreter endpoint
 scripts/verify-search.sh       checks a deployed search endpoint
 scripts/probe-openwebninja.js  prints the provider's live response fields
 scripts/test-pipeline.js       offline test of the whole server pipeline
+scripts/test-ui.js             browser test of the search interface
+assets/attachments.js          drag-and-drop and file picker for the search box
 .env.example            template; the real .env is git-ignored
 assets/products.js      data layer: normalises any source into one schema
 assets/catalog.js       demo product source, replaceable by a real feed
@@ -134,6 +136,36 @@ Both keys are server-side secrets. Set them in your host's dashboard or CLI
 OPENWEBNINJA_API_KEY`). Never put either in a file you commit, never prefix
 one so a bundler would publish it, and never move either call into the frontend
 — a key in client JavaScript is a key anyone can read.
+
+### Attachments on the search box
+
+Photos and documents can be dropped onto the search card or chosen with the
+**Attach files** button. Images get a thumbnail; PDFs and other documents are
+named and labelled with their type rather than rendered as a picture they are
+not.
+
+Accepted: JPEG, PNG, WEBP, GIF, AVIF, HEIC, BMP, PDF, TXT, CSV, RTF, DOC, DOCX,
+ODT. Up to 8 files, 10 MB each, 40 MB together. A file whose type the browser
+does not report is judged by its extension, so a photo straight off a phone is
+not turned away.
+
+**Nothing is uploaded.** Files are held in the page until the search is
+submitted, and even then only a manifest travels — each file's name, type and
+size. The bytes stay in the browser, because nothing on the server can read a
+file yet, and sending megabytes to be discarded would spend the shopper's
+bandwidth and put their photos on a server for no purpose.
+
+`/api/search` accepts that manifest, shapes it, and reports back
+`attachments: { received: n, used: 0 }`. The interface says the same thing in
+words under the chips. An attachment is never presented as something that
+influenced the results, because it did not.
+
+When the backend can use them, `manifest()` in `assets/attachments.js` is the
+one function that changes.
+
+Interface behaviour is covered by `node scripts/test-ui.js`, which drives the
+real page in a browser: dragging, dropping, the picker, multiple files,
+refusals, removal and submission.
 
 ### Cross-origin access
 

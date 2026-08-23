@@ -49,15 +49,37 @@
   <section class="section section--tight" style="padding-top:36px">
     <div class="narrow">
 
-      <form class="ask-card" id="ask-form">
+      <form class="ask-card" id="ask-form" data-dropzone>
         <label class="sr-only" for="ask">What are you looking for?</label>
         <textarea id="ask" name="ask" rows="3" maxlength="400"
           placeholder="What are you looking for?"></textarea>
+
+        <!-- Shown only while a file is over the card. Hidden from
+             assistive technology: it is a visual cue for a pointer
+             gesture, and the file button below is the accessible path. -->
+        <div class="ask-dropveil" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 15v3a2 2 0 002 2h12a2 2 0 002-2v-3"/></svg>
+          <span>Drop to attach</span>
+        </div>
+
+        <ul class="attachments" id="attachments" hidden></ul>
+        <p class="attachment-note" id="attachment-note" hidden>
+          FindWear does not read attachments yet. They are sent with your search, but they do not change your results.
+        </p>
+        <p class="form-error" id="attachment-error" role="alert"></p>
+
         <div class="ask-actions">
           <button class="btn btn-primary btn-lg" type="submit">
             Find my clothes
             <svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
           </button>
+
+          <label class="attach-btn" for="ask-files">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.4 11.05l-9.19 9.19a5 5 0 01-7.07-7.07l9.19-9.19a3.5 3.5 0 014.95 4.95l-9.2 9.19a2 2 0 01-2.82-2.83l8.49-8.48"/></svg>
+            Attach files
+          </label>
+          <input class="sr-only" type="file" id="ask-files" name="ask-files">
+
           <button class="link-btn" type="button" id="reset-form">Start over</button>
         </div>
         <p class="form-error" id="form-error" role="alert">Tell FindWear what you are looking for first.</p>
@@ -98,6 +120,7 @@
 <script src="assets/products.js"></script>
 <script src="assets/interpret.js"></script>
 <script src="assets/search.js"></script>
+<script src="assets/attachments.js"></script>
 <script src="assets/catalog.js"></script>
 <script src="assets/app.js"></script>
 </body>

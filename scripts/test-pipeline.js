@@ -90,6 +90,115 @@ const envelope = (products) => ({ status: 'OK', request_id: 'req-1', data: produ
    1. Intent -> query
    --------------------------------------------------------- */
 
+console.log('\nattachment rules');
+
+const A = require('../assets/attachments.js');
+const { shapeAttachments } = require('../api/search');
+
+const fileOf = (name, type, size, modified) => ({ name, type, size: size || 1024, lastModified: modified || 1 });
+
+test('takes the image types a shopper actually has', () => {
+  ['photo.jpg', 'photo.jpeg', 'shot.png', 'pic.webp', 'anim.gif']
+    .forEach((name) => assert.ok(A.isImage(fileOf(name, 'image/' + name.split('.').pop().replace('jpg', 'jpeg'))), name));
+});
+
+test('takes documents, and does not call them images', () => {
+  const pdf = fileOf('receipt.pdf', 'application/pdf');
+  assert.ok(A.isDocument(pdf));
+  assert.ok(!A.isImage(pdf), 'a PDF must never be previewed as a picture');
+});
+
+test('falls back to the extension when the browser gives no type', () => {
+  assert.strictEqual(A.typeOf(fileOf('from-phone.HEIC', '')), 'image/heic');
+  assert.strictEqual(A.typeOf(fileOf('notes.pdf', '')), 'application/pdf');
+});
+
+test('refuses a type FindWear does not take', () => {
+  const bad = fileOf('malware.exe', 'application/x-msdownload');
+  assert.ok(/does not take/.test(A.reject(bad, [])), A.reject(bad, []));
+  assert.ok(/does not take/.test(A.reject(fileOf('clip.mp4', 'video/mp4'), [])));
+  assert.ok(/does not take/.test(A.reject(fileOf('archive.zip', 'application/zip'), [])));
+});
+
+test('refuses a file over the per-file limit', () => {
+  const huge = fileOf('huge.png', 'image/png', A.MAX_FILE_BYTES + 1);
+  assert.ok(/limit is .* per file/.test(A.reject(huge, [])), A.reject(huge, []));
+  assert.strictEqual(A.reject(fileOf('ok.png', 'image/png', A.MAX_FILE_BYTES), []), null, 'exactly the limit is fine');
+});
+
+test('refuses more than the file count allows', () => {
+  const existing = Array.from({ length: A.MAX_FILES }, (_, i) => fileOf(`f${i}.png`, 'image/png'));
+  assert.ok(/up to 8 files/.test(A.reject(fileOf('one-more.png', 'image/png'), existing)));
+});
+
+test('refuses a batch that busts the total, counting cumulatively', () => {
+  const big = () => fileOf(Math.random() + '.png', 'image/png', 9 * 1024 * 1024);
+  const batch = Array.from({ length: 6 }, big);
+  const { kept, errors } = A.sift(batch, []);
+  assert.ok(kept.length < batch.length, 'some must be refused');
+  assert.ok(errors.some((e) => /altogether/.test(e)), errors.join(' | '));
+  assert.ok(kept.reduce((n, f) => n + f.size, 0) <= A.MAX_TOTAL_BYTES);
+});
+
+test('the same file dropped twice is attached once', () => {
+  const file = fileOf('same.png', 'image/png');
+  const first = A.sift([file], []);
+  const second = A.sift([file], first.kept);
+  assert.strictEqual(first.kept.length, 1);
+  assert.strictEqual(second.kept.length, 0, 'no duplicate');
+  assert.strictEqual(second.errors.length, 0, 'and no complaint about it either');
+});
+
+test('a mixed batch keeps the good and reports the bad', () => {
+  const { kept, errors } = A.sift([
+    fileOf('good.png', 'image/png'),
+    fileOf('bad.exe', 'application/x-msdownload'),
+    fileOf('good.pdf', 'application/pdf')
+  ], []);
+  assert.strictEqual(kept.length, 2);
+  assert.strictEqual(errors.length, 1);
+});
+
+test('labels a document by its type rather than guessing a picture', () => {
+  assert.strictEqual(A.labelFor(fileOf('a.pdf', 'application/pdf')), 'PDF');
+  assert.strictEqual(A.labelFor(fileOf('a.png', 'image/png')), 'PNG');
+  assert.strictEqual(A.labelFor(fileOf('a.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')), 'DOCX');
+});
+
+test('the manifest carries names, types and sizes — and no content', () => {
+  const m = A.manifest([fileOf('photo.jpg', 'image/jpeg', 2048), fileOf('spec.pdf', 'application/pdf', 4096)]);
+  assert.deepStrictEqual(m, [
+    { name: 'photo.jpg', type: 'image/jpeg', size: 2048, kind: 'image' },
+    { name: 'spec.pdf', type: 'application/pdf', size: 4096, kind: 'document' }
+  ]);
+  const serialised = JSON.stringify(m);
+  assert.ok(!/data:|base64|content|bytes/i.test(serialised), 'no file content may be in the manifest');
+});
+
+test('the server shapes the manifest and refuses anything else in it', () => {
+  const shaped = shapeAttachments([
+    { name: 'photo.jpg', type: 'image/jpeg', size: 2048, kind: 'image', content: 'data:image/jpeg;base64,AAAA' },
+    { name: '', type: 'image/png', size: 1 },
+    'not an object',
+    { name: 'doc.pdf', type: 'application/pdf', size: -5, kind: 'nonsense' }
+  ]);
+  assert.strictEqual(shaped.length, 2, 'the nameless and the non-object are dropped');
+  assert.ok(!('content' in shaped[0]), 'a smuggled payload is not carried through');
+  assert.strictEqual(shaped[1].size, 0, 'a negative size is normalised');
+  assert.strictEqual(shaped[1].kind, 'document', 'an unknown kind falls back');
+});
+
+test('the server caps how many attachments it will consider', () => {
+  const many = Array.from({ length: 50 }, (_, i) => ({ name: `f${i}.png`, type: 'image/png', size: 1 }));
+  assert.ok(shapeAttachments(many).length <= 8);
+});
+
+test('sizes read the way a person would say them', () => {
+  assert.strictEqual(A.formatSize(512), '512 B');
+  assert.strictEqual(A.formatSize(2048), '2 KB');
+  assert.strictEqual(A.formatSize(1024 * 1024 * 2.5), '2.5 MB');
+});
+
 console.log('\nconfiguration reporting');
 
 const { envReport, stateOf, REPORTED } = require('../api/_env-report');
@@ -926,8 +1035,14 @@ function twoEndpointStub(searchPayload, offersByProductId) {
     process.env.OPENWEBNINJA_API_KEY = 'test-key';
     process.env.OPENWEBNINJA_OFFER_BUDGET_MS = '1';
     const many = Array.from({ length: 8 }, (_, i) => product({ product_id: `p${i}` }));
-    const records = await withStubbedFetch(twoEndpointStub(envelope(many), {}),
-      () => provider.search(nikeIntent, { limit: 12 }));
+    const base = twoEndpointStub(envelope(many), {});
+    /* a real pause, so the deadline is genuinely passed rather than
+       depending on how fast the machine happens to be */
+    const slow = async (url, init) => {
+      if (String(url).includes('/product-offers')) await new Promise((r) => setTimeout(r, 12));
+      return base(url, init);
+    };
+    const records = await withStubbedFetch(slow, () => provider.search(nikeIntent, { limit: 12 }));
     assert.strictEqual(records.diagnostics.offers.budgetExpired, true);
     delete process.env.OPENWEBNINJA_OFFER_BUDGET_MS;
   });

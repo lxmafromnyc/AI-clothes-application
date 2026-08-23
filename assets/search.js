@@ -49,7 +49,11 @@
 
   const answer = (state, extra) => Object.assign({ source: null, products: [], notice: null, state }, extra || {});
 
-  async function find(intent, limit) {
+  /* `attached` is a manifest — each file's name, type and size. No file
+     contents travel: nothing on the server can read one yet, and sending
+     megabytes to be discarded would spend the shopper's bandwidth and
+     put their photos somewhere for no purpose. */
+  async function find(intent, limit, attached) {
     let response;
     try {
       const controller = new AbortController();
@@ -57,7 +61,11 @@
       response = await fetch(endpoint(), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ intent: intent || {}, limit: limit || 12 }),
+        body: JSON.stringify({
+          intent: intent || {},
+          limit: limit || 12,
+          attachments: Array.isArray(attached) ? attached : []
+        }),
         signal: controller.signal
       });
       clearTimeout(timer);

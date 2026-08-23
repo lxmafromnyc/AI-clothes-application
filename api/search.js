@@ -55,6 +55,26 @@ function shapeIntent(raw) {
   };
 }
 
+/* The attachment manifest the browser sends: name, type and size only.
+   Nothing here reads a file, because no file content is transmitted —
+   see assets/search.js. It is shaped and counted so the request format
+   is settled and a future reader has something defined to consume, and
+   so the reply can state plainly that it changed nothing. */
+const MAX_ATTACHMENTS = 8;
+
+function shapeAttachments(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw.slice(0, MAX_ATTACHMENTS).map((item) => {
+    const a = item && typeof item === 'object' ? item : {};
+    return {
+      name: typeof a.name === 'string' ? a.name.slice(0, 200) : '',
+      type: typeof a.type === 'string' ? a.type.slice(0, 100) : '',
+      size: Number.isFinite(Number(a.size)) && Number(a.size) >= 0 ? Number(a.size) : 0,
+      kind: a.kind === 'image' || a.kind === 'document' ? a.kind : 'document'
+    };
+  }).filter((a) => a.name);
+}
+
 function readBody(req) {
   if (req.body && typeof req.body === 'object') return Promise.resolve(req.body);
   if (typeof req.body === 'string') {
@@ -90,6 +110,7 @@ module.exports = async function handler(req, res) {
 
   const body = await readBody(req);
   const intent = shapeIntent(body.intent);
+  const attachments = shapeAttachments(body.attachments);
   const limit = Math.min(Math.max(Number(body.limit) || DEFAULT_LIMIT, 1), MAX_LIMIT);
 
   let records;
@@ -122,8 +143,12 @@ module.exports = async function handler(req, res) {
        so a badly behaved provider shows up instead of silently thinning */
     returned: Array.isArray(records) ? records.length : 0,
     rejected,
-    diagnostics
+    diagnostics,
+    /* said out loud so an attachment is never mistaken for something
+       that shaped these results. It did not. */
+    attachments: { received: attachments.length, used: 0, reason: attachments.length ? 'Attachments are not read yet.' : null }
   });
 };
 
 module.exports.shapeIntent = shapeIntent;
+module.exports.shapeAttachments = shapeAttachments;

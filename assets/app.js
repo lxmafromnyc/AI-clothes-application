@@ -414,7 +414,7 @@ function orderFacet(counts, key) {
     bindImageFallback(results);
   }
 
-  async function search(query) {
+  async function search(query, attached) {
     error.classList.remove('show');
     results.hidden = false;
     results.innerHTML = `<p class="thinking">
@@ -427,7 +427,7 @@ function orderFacet(counts, key) {
     /* real products first; the sample catalogue only when no source answers */
     const found = typeof ProductSearch === 'undefined'
       ? { source: null, products: [], notice: null }
-      : await ProductSearch.find(outcome.preferences);
+      : await ProductSearch.find(outcome.preferences, undefined, attached);
 
     if (found.products.length) renderProducts(found, outcome);
     /* The sample catalogue stands in only when nothing is connected. Once
@@ -438,6 +438,19 @@ function orderFacet(counts, key) {
     else renderNothing(found, outcome);
   }
 
+  /* Files dropped on the card or chosen with the button. Held here
+     until the search is submitted; the module never sends anything. */
+  const attachments = typeof Attachments === 'undefined' ? null : Attachments.create({
+    zone: form,
+    input: document.getElementById('ask-files'),
+    list: document.getElementById('attachments'),
+    error: document.getElementById('attachment-error'),
+    onChange: (files) => {
+      const note = document.getElementById('attachment-note');
+      if (note) note.hidden = files.length === 0;
+    }
+  });
+
   form.addEventListener('submit', (e) => {
     e.preventDefault();
     const query = input.value.trim();
@@ -446,7 +459,7 @@ function orderFacet(counts, key) {
       input.focus();
       return;
     }
-    search(query);
+    search(query, attachments ? attachments.manifest() : []);
   });
 
   /* Enter submits, Shift+Enter makes a new line */
@@ -469,6 +482,9 @@ function orderFacet(counts, key) {
   reset.addEventListener('click', () => {
     input.value = '';
     error.classList.remove('show');
+    /* starting over drops the attachments too, and hands back the
+       object URLs their thumbnails were holding */
+    if (attachments) attachments.clear();
     results.hidden = true;
     results.innerHTML = '';
     input.focus();
