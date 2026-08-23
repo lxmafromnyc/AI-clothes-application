@@ -99,6 +99,53 @@ const dragOverOnly = ({ selector }) => {
   el.dispatchEvent(new DragEvent('dragover', { dataTransfer: dt, bubbles: true }));
 };
 
+/* Type styling is a rule about the whole interface, not about a handful
+   of selectors, so this walks the rendered document instead of checking a
+   fixed list: markup added later is covered the day it lands.
+
+   Every element that renders text of its own must draw it in plain black,
+   with none of the gradient-filled, clipped or glowing treatments the
+   interface used to carry. */
+const textStyleProblems = (page) => page.evaluate(() => {
+  const BLACK = 'rgb(0, 0, 0)';
+  const SKIP = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE']);
+  const problems = [];
+
+  const label = (el) => {
+    const id = el.id ? `#${el.id}` : '';
+    const cls = typeof el.className === 'string' && el.className.trim()
+      ? '.' + el.className.trim().split(/\s+/).join('.') : '';
+    return `${el.tagName.toLowerCase()}${id}${cls}`;
+  };
+
+  for (const el of document.querySelectorAll('body *')) {
+    if (SKIP.has(el.tagName)) continue;
+    const rendersText = Array.from(el.childNodes)
+      .some((n) => n.nodeType === Node.TEXT_NODE && n.textContent.trim());
+    if (!rendersText) continue;
+
+    const cs = getComputedStyle(el);
+    const where = `${label(el)} ("${el.textContent.trim().slice(0, 32)}")`;
+
+    if (cs.color !== BLACK) problems.push(`${where} is ${cs.color}, not black`);
+    if (cs.webkitTextFillColor && cs.webkitTextFillColor !== BLACK) {
+      problems.push(`${where} fills its glyphs with ${cs.webkitTextFillColor}`);
+    }
+    if ((cs.webkitBackgroundClip || cs.backgroundClip) === 'text') {
+      problems.push(`${where} clips a background to its text`);
+    }
+    if (/gradient/.test(cs.backgroundImage)) problems.push(`${where} sits on a gradient`);
+    if (cs.textShadow !== 'none') problems.push(`${where} has a text shadow: ${cs.textShadow}`);
+  }
+  return problems;
+});
+
+/* Placeholders are not text nodes, so they are checked on their own. */
+const placeholderColours = (page) => page.$$eval('[placeholder]', (ns) => ns.map((n) => {
+  const cs = getComputedStyle(n, '::placeholder');
+  return { selector: n.id ? `#${n.id}` : n.tagName.toLowerCase(), color: cs.color };
+}));
+
 const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
   name: n.querySelector('.attachment-name').textContent,
   meta: n.querySelector('.attachment-size').textContent,
@@ -117,7 +164,7 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     process.exit(0);
   }
 
-  const open = async () => {
+  const openPage = async (file) => {
     const page = await browser.newPage();
     await page.addInitScript(() => {
       window.FINDWEAR_API = 'http://127.0.0.1:8899/api/interpret';
@@ -127,7 +174,12 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
        stylesheet still loading blocks the scripts under it from running.
        Cutting external requests makes the page deterministic. */
     await page.route((url) => !String(url).includes('127.0.0.1'), (route) => route.abort());
-    await page.goto(`http://127.0.0.1:${PORT}/find-clothes.html`, { waitUntil: 'domcontentloaded' });
+    await page.goto(`http://127.0.0.1:${PORT}/${file}`, { waitUntil: 'domcontentloaded' });
+    return page;
+  };
+
+  const open = async () => {
+    const page = await openPage('find-clothes.html');
     /* interact only once the control is actually wired */
     await page.waitForFunction(() => window.Attachments && document.getElementById('attachments'));
     return page;
@@ -354,6 +406,110 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     assert.ok(/does not read attachments yet/i.test(note), note);
     assert.ok(/do not change your results/i.test(note), note);
     await page.close();
+  });
+
+  console.log('\ntypography and text styling');
+
+  const PAGES = ['index.html', 'find-clothes.html', 'discover.html', 'about.html'];
+
+  /* each page is given a moment to render whatever it builds from the
+     catalogue, so cards, badges and pills are audited too, not just the
+     static shell */
+  const settled = async (file) => {
+    const page = await openPage(file);
+    const built = { 'index.html': '.mini-item', 'discover.html': '.item-card' }[file];
+    if (built) await page.waitForSelector(built, { timeout: 10000 });
+    return page;
+  };
+
+  for (const file of PAGES) {
+    await test(`every piece of text on ${file} is black`, async () => {
+      const page = await settled(file);
+      const problems = await textStyleProblems(page);
+      assert.deepStrictEqual(problems, [], `\n        ${problems.join('\n        ')}`);
+      await page.close();
+    });
+  }
+
+  await test('the pages keep one clean sans-serif face', async () => {
+    for (const file of PAGES) {
+      const page = await settled(file);
+      const faces = await page.$$eval('body, h1, h2, h3, p, button, input, textarea, .item-name',
+        (ns) => [...new Set(ns.map((n) => getComputedStyle(n).fontFamily))]);
+      faces.forEach((f) => assert.ok(/^["']?Inter/.test(f), `${file} uses ${f}`));
+      await page.close();
+    }
+  });
+
+  await test('the headline is plain type, not a gradient fill', async () => {
+    const page = await settled('index.html');
+    const grad = await page.$eval('.hero h1 .grad', (n) => {
+      const cs = getComputedStyle(n);
+      return {
+        color: cs.color,
+        fill: cs.webkitTextFillColor,
+        clip: cs.webkitBackgroundClip || cs.backgroundClip,
+        image: cs.backgroundImage
+      };
+    });
+    assert.strictEqual(grad.color, 'rgb(0, 0, 0)');
+    assert.strictEqual(grad.fill, 'rgb(0, 0, 0)');
+    assert.notStrictEqual(grad.clip, 'text');
+    assert.strictEqual(grad.image, 'none');
+    await page.close();
+  });
+
+  await test('search results, badges and product text are black', async () => {
+    const page = await open();
+    await page.fill('#ask', 'black oversized hoodie');
+    await page.click('button[type=submit]');
+    await page.waitForSelector('.item-card', { timeout: 10000 });
+    const problems = await textStyleProblems(page);
+    assert.deepStrictEqual(problems, [], `\n        ${problems.join('\n        ')}`);
+    /* the retailer badge sits over the product image and used to be the
+       one coloured label left on a card */
+    assert.strictEqual(await page.$eval('.item-badge', (n) => getComputedStyle(n).color), 'rgb(0, 0, 0)');
+    await page.close();
+  });
+
+  await test('attachment chips, the drop cue and the error line are black', async () => {
+    const page = await open();
+    await page.evaluate(dropInPage, { selector: '#ask-form', files: [
+      { name: 'inspo.png', type: 'image/png', size: 1024 },
+      { name: 'sizing.pdf', type: 'application/pdf', size: 2048 }
+    ] });
+    /* an empty query with files attached puts the error line on screen */
+    await page.click('button[type=submit]');
+    await page.waitForSelector('#form-error.show');
+    /* hold the card in its drop state so the veil is rendered too */
+    await page.evaluate(dragOverOnly, { selector: '#ask-form' });
+    await page.waitForFunction(() => getComputedStyle(document.querySelector('.ask-dropveil')).display !== 'none');
+
+    const problems = await textStyleProblems(page);
+    assert.deepStrictEqual(problems, [], `\n        ${problems.join('\n        ')}`);
+    await page.close();
+  });
+
+  await test('placeholder text is black too', async () => {
+    for (const file of PAGES) {
+      const page = await settled(file);
+      (await placeholderColours(page)).forEach(({ selector, color }) => {
+        assert.strictEqual(color, 'rgb(0, 0, 0)', `${file} ${selector} placeholder is ${color}`);
+      });
+      await page.close();
+    }
+  });
+
+  await test('no stylesheet rule paints type with a gradient or a glow', async () => {
+    const css = fs.readFileSync(path.join(REPO, 'assets', 'styles.css'), 'utf8');
+    assert.ok(!/background-clip:\s*text/.test(css), 'no rule may clip a background to its text');
+    assert.ok(!/text-shadow/.test(css), 'no rule may glow');
+    /* the ink tokens every text rule resolves through */
+    ['--ink', '--ink-2', '--muted', '--accent-ink'].forEach((token) => {
+      const m = new RegExp(`${token}:\\s*([^;]+);`).exec(css);
+      assert.ok(m, `${token} should be defined`);
+      assert.strictEqual(m[1].trim().toLowerCase(), '#000000', `${token} is ${m && m[1]}`);
+    });
   });
 
   await browser.close();
