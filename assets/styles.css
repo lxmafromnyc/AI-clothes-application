@@ -197,14 +197,27 @@ button, input, select { font: inherit; color: inherit; }
   transition: transform .2s var(--ease), box-shadow .2s var(--ease), background .2s var(--ease), border-color .2s var(--ease);
 }
 .btn svg { width: 17px; height: 17px; }
-/* the primary action is set apart by a solid rule, not by a fill:
-   the label stays black like the rest of the interface */
+/* The primary action is set apart by a solid rule, not by a fill.
+
+   This button used to be filled with an indigo-to-violet gradient under
+   white type and a coloured glow, which read as an iridescent, holographic
+   label. Both the label and the arrow are now plain black on white.
+
+   Black is spelled out here as a literal rather than taken from a token,
+   and the gradient, tint, glow and animation are each turned off by name,
+   so no later token change or stale rule can bring the effect back. */
 .btn-primary {
   background: var(--surface);
-  border-color: var(--ink);
-  color: var(--ink);
+  background-image: none;
+  border-color: #000;
+  color: #000;
+  -webkit-text-fill-color: #000;
   box-shadow: var(--shadow-sm);
+  filter: none;
+  animation: none;
 }
+/* the arrow is stroked with currentColor, so it follows the label */
+.btn-primary svg { color: #000; }
 .btn-primary:hover { transform: translateY(-2px); box-shadow: var(--shadow); }
 .btn-primary:active { transform: translateY(0); }
 .btn-primary .arrow { transition: transform .2s var(--ease); }
@@ -374,8 +387,6 @@ a.mini-item:focus-visible { outline: 2px solid var(--accent); outline-offset: 2p
 .cta-band > * { position: relative; }
 .cta-band h2 { font-size: clamp(27px, 3.4vw, 38px); margin-bottom: 12px; }
 .cta-band p { color: var(--ink); max-width: 44ch; margin: 0 auto 28px; }
-.cta-band .btn-primary { background: var(--surface); color: var(--ink); border-color: var(--ink); box-shadow: var(--shadow-sm); }
-.cta-band .btn-primary:hover { box-shadow: var(--shadow); }
 
 /* ---------- page header ---------- */
 

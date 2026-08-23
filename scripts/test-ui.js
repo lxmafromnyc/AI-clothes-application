@@ -18,6 +18,7 @@ const fs = require('fs');
 const path = require('path');
 const assert = require('assert');
 const os = require('os');
+const zlib = require('zlib');
 
 const REPO = path.join(__dirname, '..');
 const PORT = 8899;
@@ -139,6 +140,77 @@ const textStyleProblems = (page) => page.evaluate(() => {
   }
   return problems;
 });
+
+/* A computed style cannot prove what a visitor sees — a tint can come
+   from a parent, a blend mode or a rule that only applies while painting.
+   These unpack a real screenshot instead and look at every pixel.
+   Playwright hands back an 8-bit PNG, so this only has to undo the
+   deflate and the per-row filters. */
+function pixelsOf(png) {
+  let pos = 8;
+  let width, height, depth, colorType;
+  const idat = [];
+  while (pos < png.length) {
+    const len = png.readUInt32BE(pos);
+    const type = png.toString('ascii', pos + 4, pos + 8);
+    const data = png.subarray(pos + 8, pos + 8 + len);
+    if (type === 'IHDR') {
+      width = data.readUInt32BE(0);
+      height = data.readUInt32BE(4);
+      depth = data[8];
+      colorType = data[9];
+    } else if (type === 'IDAT') idat.push(data);
+    pos += 12 + len;
+  }
+  assert.strictEqual(depth, 8, 'expected an 8-bit screenshot');
+  const ch = { 0: 1, 2: 3, 4: 2, 6: 4 }[colorType];
+  const raw = zlib.inflateSync(Buffer.concat(idat));
+  const stride = width * ch;
+  const out = Buffer.alloc(height * stride);
+  let prev = Buffer.alloc(stride);
+  let i = 0;
+  for (let y = 0; y < height; y += 1) {
+    const filter = raw[i]; i += 1;
+    const line = Buffer.from(raw.subarray(i, i + stride)); i += stride;
+    for (let x = 0; x < stride; x += 1) {
+      const a = x >= ch ? line[x - ch] : 0;
+      const b = prev[x];
+      const c = x >= ch ? prev[x - ch] : 0;
+      if (filter === 1) line[x] = (line[x] + a) & 255;
+      else if (filter === 2) line[x] = (line[x] + b) & 255;
+      else if (filter === 3) line[x] = (line[x] + ((a + b) >> 1)) & 255;
+      else if (filter === 4) {
+        const p = a + b - c;
+        const pa = Math.abs(p - a);
+        const pb = Math.abs(p - b);
+        const pc = Math.abs(p - c);
+        line[x] = (line[x] + (pa <= pb && pa <= pc ? a : (pb <= pc ? b : c))) & 255;
+      }
+    }
+    line.copy(out, y * stride);
+    prev = line;
+  }
+  return { width, height, ch, data: out };
+}
+
+/* A pixel whose channels disagree is carrying a hue. Black, white and
+   every grey in between have all three channels equal, so a gradient,
+   tint or iridescent fill cannot hide from this. */
+function colouredPixels(png) {
+  const { width, height, ch, data } = pixelsOf(png);
+  const found = [];
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const o = (y * width + x) * ch;
+      const r = data[o];
+      const g = data[o + 1];
+      const b = data[o + 2];
+      const sat = Math.max(r, g, b) - Math.min(r, g, b);
+      if (sat > 4) found.push({ x, y, rgb: `rgb(${r}, ${g}, ${b})`, sat });
+    }
+  }
+  return found;
+}
 
 /* Placeholders are not text nodes, so they are checked on their own. */
 const placeholderColours = (page) => page.$$eval('[placeholder]', (ns) => ns.map((n) => {
@@ -498,6 +570,117 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
       });
       await page.close();
     }
+  });
+
+  console.log('\nthe "Find my clothes" button');
+
+  /* the button appears on all four pages: the hero and the closing band
+     on the home page, the submit on Find Clothes, the band elsewhere */
+  const PRIMARY_BUTTONS = [
+    ['find-clothes.html', '#ask-form button[type=submit]'],
+    ['index.html', '.hero .btn-primary'],
+    ['index.html', '.cta-band .btn-primary'],
+    ['discover.html', '.cta-band .btn-primary'],
+    ['about.html', '.cta-band .btn-primary']
+  ];
+
+  for (const [file, selector] of PRIMARY_BUTTONS) {
+    await test(`"Find my clothes" is plain black on ${file} (${selector})`, async () => {
+      const page = await settled(file);
+      const el = await page.waitForSelector(selector);
+      assert.ok(/find my clothes/i.test((await el.textContent()).trim()),
+        `${selector} on ${file} is not the "Find my clothes" button`);
+
+      const seen = await el.evaluate((n) => {
+        const cs = getComputedStyle(n);
+        const arrow = getComputedStyle(n.querySelector('svg'));
+        return {
+          colour: cs.color,
+          fill: cs.webkitTextFillColor,
+          background: cs.backgroundImage,
+          clip: cs.webkitBackgroundClip || cs.backgroundClip,
+          glow: cs.textShadow,
+          filter: cs.filter,
+          blend: cs.mixBlendMode,
+          animation: cs.animationName,
+          arrowColour: arrow.color,
+          arrowStroke: arrow.stroke,
+          arrowFilter: arrow.filter,
+          arrowAnimation: arrow.animationName
+        };
+      });
+
+      assert.strictEqual(seen.colour, 'rgb(0, 0, 0)', 'the label must be black');
+      assert.strictEqual(seen.fill, 'rgb(0, 0, 0)', 'the glyphs must be filled black');
+      assert.strictEqual(seen.arrowColour, 'rgb(0, 0, 0)', 'the arrow must be black');
+      assert.strictEqual(seen.arrowStroke, 'rgb(0, 0, 0)', 'the arrow must be stroked black');
+      assert.strictEqual(seen.background, 'none', 'no gradient may fill the button');
+      assert.notStrictEqual(seen.clip, 'text', 'no background may be clipped to the label');
+      assert.strictEqual(seen.glow, 'none', 'no glow behind the label');
+      assert.strictEqual(seen.filter, 'none', 'no filter may tint the button');
+      assert.strictEqual(seen.arrowFilter, 'none', 'no filter may tint the arrow');
+      assert.strictEqual(seen.blend, 'normal', 'no blend mode may tint the button');
+      assert.strictEqual(seen.animation, 'none', 'nothing may animate the button');
+      assert.strictEqual(seen.arrowAnimation, 'none', 'nothing may animate the arrow');
+      await page.close();
+    });
+  }
+
+  await test('the rendered button paints no colour, resting, hovered or focused', async () => {
+    const page = await settled('find-clothes.html');
+    const el = await page.waitForSelector('#ask-form button[type=submit]');
+    for (const state of ['resting', 'hovered', 'focused']) {
+      if (state === 'hovered') await el.hover();
+      if (state === 'focused') await el.focus();
+      await page.waitForTimeout(400); /* let the transition land */
+      const coloured = colouredPixels(await el.screenshot());
+      assert.strictEqual(coloured.length, 0,
+        `${state}: ${coloured.length} coloured pixels, e.g. ${JSON.stringify(coloured.slice(0, 3))}`);
+    }
+    await page.close();
+  });
+
+  await test('the button keeps its shape, size and spacing', async () => {
+    const page = await settled('find-clothes.html');
+    const box = await page.$eval('#ask-form button[type=submit]', (n) => {
+      const cs = getComputedStyle(n);
+      const r = n.getBoundingClientRect();
+      return {
+        height: Math.round(r.height),
+        width: Math.round(r.width),
+        radius: cs.borderRadius,
+        padding: cs.padding,
+        gap: cs.gap,
+        fontSize: cs.fontSize,
+        fontWeight: cs.fontWeight,
+        display: cs.display
+      };
+    });
+    /* Measured on the build that still had the gradient fill, so this
+       pins the geometry to exactly what it was before the recolouring.
+       `display` reads flex rather than inline-flex because the button is
+       a flex item of .ask-actions and is blockified. */
+    assert.deepStrictEqual(box, {
+      height: 56,
+      width: 212,
+      radius: '999px',
+      padding: '0px 30px',
+      gap: '10px',
+      fontSize: '16.5px',
+      fontWeight: '600',
+      display: 'flex'
+    });
+    await page.close();
+  });
+
+  await test('the button still submits the search', async () => {
+    searchRequests.length = 0;
+    const page = await open();
+    await page.fill('#ask', 'black oversized hoodie');
+    await page.click('#ask-form button[type=submit]');
+    await page.waitForSelector('.item-card', { timeout: 10000 });
+    assert.strictEqual(searchRequests.length, 1);
+    await page.close();
   });
 
   await test('no stylesheet rule paints type with a gradient or a glow', async () => {
