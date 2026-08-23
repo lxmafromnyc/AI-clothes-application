@@ -555,6 +555,122 @@ The interface subscribes to the store, so filter options, Discover pills and the
 matching vocabulary all rebuild from whatever arrives. Unfamiliar colours and
 garment categories fall back to neutral artwork rather than breaking.
 
+## Plans, usage and limits
+
+FindWear meters two things separately, because they cost money in
+different ways and run out for different reasons:
+
+| | Free | Pro | Max |
+|---|---|---|---|
+| Price | $0 | $14.99/month | $79.99/month |
+| AI tokens | 20,000/day | 1,000,000/month | 5,000,000/month |
+| Live searches | 3/day | 75/month | 400/month |
+| Resets | daily, 00:00 UTC | 1st of the month, UTC | 1st of the month, UTC |
+
+Plans are defined once, in `api/_plans.js`. The server enforces from
+there, `/api/usage` publishes from there, and the pricing page and meter
+render from there, so a limit cannot read one way on screen and behave
+another way in the API.
+
+No plan is unlimited. Max is generous and its ceiling is named, because
+a promise with a hidden limit is one that eventually has to be walked
+back.
+
+### Where usage state lives
+
+In Redis, keyed by account, meter and period — `UPSTASH_REDIS_REST_URL`
+and `UPSTASH_REDIS_REST_TOKEN`, or any Upstash-shaped REST endpoint
+(Vercel KV is this API). See `api/_store.js`.
+
+It cannot live anywhere simpler. The API is serverless: two requests from
+one shopper may be served by different instances that share no memory and
+no disk, and an instance is discarded without warning. A counter in a
+module variable is a suggestion, not a limit. A counter in the browser is
+not a limit at all, because the browser is the thing being limited.
+
+Redis specifically, rather than any key-value store, because enforcement
+depends on **atomic increment**. Read-then-write cannot hold a limit
+under concurrency: two requests that both read "2 of 3 used" both proceed
+and both write 3, and the shopper gets four searches from a limit of
+three with nothing in the logs looking wrong. `INCRBY` returns the value
+after adding, indivisibly, so of two simultaneous callers one is told 3
+and the other 4 — and the one told 4 hands its slot back.
+
+Without Redis configured the API falls back to an in-process store, logs
+that limits are **not** enforced across instances, and should not be
+treated as metered.
+
+Nothing resets on a schedule. The period key (`d:2026-08-23`,
+`m:2026-08`) is part of the counter's key, so a new day or month simply
+addresses a counter that does not exist yet and reads zero. There is no
+job to run and no window where a reset half-happened.
+
+### How enforcement works
+
+The allowance is taken **before** the upstream call and corrected after:
+
+- `reserve()` — take it atomically. Concurrency is decided here.
+- `settle()` — the work succeeded; correct to what it really cost. Token
+  cost is only knowable from OpenAI's reply, so a ceiling is reserved and
+  settled down afterwards.
+- `refund()` — the work did not happen; give all of it back.
+
+A live search whose provider call fails is refunded in full: an outage
+does not cost a shopper their allowance. A search that ran and returned
+nothing **is** charged — the provider billed for it, and a thin result is
+not a free one.
+
+Repeat submissions are deduplicated by an `Idempotency-Key` the browser
+mints per submission. A repeat arriving after the first finished is
+answered from the stored result; one arriving while the first is still
+running gets 409. Either way it costs nothing, so a double-click buys one
+search. Keys are namespaced per account.
+
+### Who is metered
+
+`api/_accounts.js`. A caller with a valid `Authorization: Bearer` token
+is that account, on the plan named inside the signed token — a claim the
+server asserted, not one the browser made. A caller with no credential is
+anonymous on Free, metered against an HMAC digest of their network
+address, so clearing the browser does not hand out a fresh allowance. A
+credential that is present and does not verify is refused with 401, never
+quietly downgraded to anonymous.
+
+Anonymous metering is a floor, not a wall: a new address is a new
+anonymous account, and one office NAT shares one Free allowance. Real
+accounts are the fix, and the token path is what they arrive through.
+
+### Cost caps
+
+Two, both hard:
+
+- **Per search**: `MAX_UPSTREAM_CALLS_PER_SEARCH` (default 12, ceiling
+  40) bounds billable provider calls for one search. The pre-existing
+  `OPENWEBNINJA_OFFER_BUDGET_MS` bounds *latency*, which does not bound
+  cost — a fast provider fits more billed calls into the same
+  milliseconds.
+- **Per interpretation**: a hard `max_completion_tokens`, plus a cap on
+  how much catalogue vocabulary may be sent, so the prompt does not grow
+  with the catalogue.
+
+### What the browser is told
+
+`/api/usage` returns the caller's own usage and the public plan table.
+Never a key, a billing identity, another account's numbers, or a raw
+address. A refusal returns `429` with the limit type, current usage,
+maximum, reset timestamp and plan — everything the interface needs to
+explain it and everything a retry needs to know when to come back.
+
+The meter never counts in the page. Every number it shows arrived from
+the server, so what a shopper reads and what the next request is judged
+against cannot disagree.
+
+### Not built yet
+
+Payment. Plans, limits, metering, enforcement and the interface are done;
+Stripe is not connected, so every account is on Free until a token says
+otherwise. See "Before real payments" in the notes below.
+
 ## Notes
 
 - Typeface is Inter, loaded from Google Fonts.

@@ -30,6 +30,7 @@
         <a href="index.html">Home</a>
         <a href="find-clothes.html" aria-current="page">Find Clothes</a>
         <a href="discover.html">Discover</a>
+        <a href="pricing.html">Pricing</a>
         <a href="about.html">About</a>
       </nav>
     </div>
@@ -48,6 +49,11 @@
 
   <section class="section section--tight" style="padding-top:36px">
     <div class="narrow">
+
+      <!-- Filled from /api/usage. Hidden until the server answers: the
+           page never counts for itself, so it has nothing to show until
+           it has been told. See assets/usage.js. -->
+      <section class="usage-meter" id="usage-meter" aria-label="Your FindWear usage" hidden></section>
 
       <form class="ask-card" id="ask-form" data-dropzone>
         <label class="sr-only" for="ask">What are you looking for?</label>
@@ -110,6 +116,7 @@
         <a href="index.html">Home</a>
         <a href="find-clothes.html">Find Clothes</a>
         <a href="discover.html">Discover</a>
+        <a href="pricing.html">Pricing</a>
         <a href="about.html">About</a>
       </nav>
     </div>
@@ -122,6 +129,7 @@
 <script src="assets/search.js"></script>
 <script src="assets/attachments.js"></script>
 <script src="assets/catalog.js"></script>
+<script src="assets/usage.js"></script>
 <script src="assets/app.js"></script>
 </body>
 </html>

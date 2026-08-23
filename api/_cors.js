@@ -127,8 +127,13 @@ function applyCors(req, res) {
      Vary tells caches that the answer depends on who asked. */
   res.setHeader('Access-Control-Allow-Origin', origin);
   res.setHeader('Vary', 'Origin');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  /* Authorization carries the account's token and Idempotency-Key marks
+     a submission, so both have to survive the preflight or metering
+     cannot work cross-origin at all. GET is here for /api/usage, which
+     only reads. Which ORIGINS may ask is unchanged — that is the control
+     that matters, and it is decided above. */
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Idempotency-Key');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   /* Five minutes: long enough to save a preflight per search, short
      enough that a corrected configuration takes effect while someone is
      still looking at it. */

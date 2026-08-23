@@ -20,8 +20,23 @@
 'use strict';
 
 const assert = require('assert');
+
+/* Metering is exercised in scripts/test-usage.js. Here it must simply
+   not interfere: the in-process store keeps these cases off Redis, and
+   NODE_ENV silences the store's "not durable" warning so the tests that
+   count log lines still count only what they are about. */
+process.env.NODE_ENV = process.env.NODE_ENV || 'test';
+process.env.USAGE_STORE = 'memory';
+process.env.SESSION_SECRET = process.env.SESSION_SECRET || 'pipeline-test-secret';
+
 const provider = require('../api/providers/openwebninja');
 const { verifyAll, linkFault } = require('../api/providers/product-source');
+const { resetStore } = require('../api/_store');
+
+/* Every case below is one shopper's first search. Without this the
+   fourth search in the file would be refused by the Free daily limit —
+   correct behaviour, but a different suite's subject. */
+const freshMeters = () => resetStore();
 
 let passed = 0;
 const failures = [];
@@ -246,8 +261,20 @@ test('the report cannot reveal a value length', () => {
   assert.strictEqual(short, long, 'a short and a long key must be indistinguishable');
 });
 
-test('only the four named variables are ever reported', () => {
-  assert.deepStrictEqual(REPORTED, ['OPENAI_API_KEY', 'OPENWEBNINJA_API_KEY', 'ALLOWED_ORIGIN', 'VERCEL_ENV']);
+/* The list is pinned deliberately: adding a name here makes its STATE
+   loggable, and this test is the moment someone has to decide that on
+   purpose rather than by accident. */
+test('only the named variables are ever reported', () => {
+  assert.deepStrictEqual(REPORTED, [
+    'OPENAI_API_KEY',
+    'OPENWEBNINJA_API_KEY',
+    'ALLOWED_ORIGIN',
+    'VERCEL_ENV',
+    /* metering: both fail quietly, so their state belongs in the report */
+    'UPSTASH_REDIS_REST_URL',
+    'UPSTASH_REDIS_REST_TOKEN',
+    'SESSION_SECRET'
+  ]);
 });
 
 console.log('\ncross-origin access control');
@@ -834,6 +861,8 @@ function twoEndpointStub(searchPayload, offersByProductId) {
   const callSearch = async (intent, payload) => {
     /* required in here so the provider registry reads the env we just set */
     const handler = require('../api/search');
+    freshMeters();
+    freshMeters();
     const res = fakeRes();
     await withStubbedFetch(async () => okResponse(payload),
       () => handler({ method: 'POST', body: { intent, limit: 12 }, on: () => {} }, res));
@@ -877,6 +906,7 @@ function twoEndpointStub(searchPayload, offersByProductId) {
     };
 
     const handler = require('../api/search');
+    freshMeters();
     const res = fakeRes();
     await withStubbedFetch(twoEndpointStub(payload, offers),
       () => handler({ method: 'POST', headers: {}, body: { intent: nikeIntent, limit: 12 }, on: () => {} }, res));
@@ -923,6 +953,7 @@ function twoEndpointStub(searchPayload, offersByProductId) {
     process.env.OPENWEBNINJA_API_KEY = 'test-key';
     process.env.PRODUCT_SOURCE = 'openwebninja';
     const handler = require('../api/search');
+    freshMeters();
     const res = fakeRes();
     await withStubbedFetch(async () => ({ ok: false, status: 500, text: async () => 'upstream detail with test-key' }),
       () => handler({ method: 'POST', body: { intent: nikeIntent, limit: 12 }, on: () => {} }, res));
@@ -953,6 +984,7 @@ function twoEndpointStub(searchPayload, offersByProductId) {
     delete process.env.PRODUCT_SOURCE;
     process.env.OPENAI_API_KEY = SECRET;
     const handler = require('../api/search');
+    freshMeters();
     const lines = await captureWarnings(() => handler({ method: 'POST', headers: {}, body: { intent: {} }, on: () => {} }, fakeRes()));
     assert.strictEqual(lines.length, 1, 'exactly one line');
     assert.ok(/OPENWEBNINJA_API_KEY=absent/.test(lines[0]), lines[0]);
@@ -965,6 +997,7 @@ function twoEndpointStub(searchPayload, offersByProductId) {
     process.env.OPENWEBNINJA_API_KEY = 'test-key';
     delete process.env.PRODUCT_SOURCE;
     const handler = require('../api/search');
+    freshMeters();
     const lines = await captureWarnings(() => withStubbedFetch(
       twoEndpointStub(envelope([productWithInlineOffer()])),
       () => handler({ method: 'POST', headers: {}, body: { intent: nikeIntent, limit: 3 }, on: () => {} }, fakeRes())));
@@ -975,6 +1008,7 @@ function twoEndpointStub(searchPayload, offersByProductId) {
     process.env.OPENWEBNINJA_API_KEY = 'test-key';
     delete process.env.PRODUCT_SOURCE;
     const handler = require('../api/search');
+    freshMeters();
     const res = fakeRes();
     const lines = await captureWarnings(() => withStubbedFetch(
       twoEndpointStub(envelope([product()]), {}),

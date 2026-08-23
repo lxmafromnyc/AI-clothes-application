@@ -160,7 +160,8 @@
     'not-configured': 'The AI interpreter is deployed but has no OpenAI key set, so this request was read by a basic local keyword match instead.',
     unreachable: 'The AI interpreter could not be reached, so this request was read by a basic local keyword match instead.',
     'no-endpoint': 'No AI interpreter is connected to this site, so this request was read by a basic local keyword match instead.',
-    'bad-reply': 'The AI interpreter returned something unusable, so this request was read by a basic local keyword match instead.'
+    'bad-reply': 'The AI interpreter returned something unusable, so this request was read by a basic local keyword match instead.',
+    'over-limit': 'Your AI token allowance is used up, so this request was read by a basic local keyword match instead.'
   };
 
   async function interpret(query, vocabulary) {
@@ -180,7 +181,12 @@
       const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
       response = await fetch(endpoint(), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        /* the account's credential travels with the request, because the
+           tokens this spends are metered against it */
+        headers: Object.assign(
+          { 'Content-Type': 'application/json' },
+          (global.Usage && global.Usage.authHeaders) ? global.Usage.authHeaders() : {}
+        ),
         body: JSON.stringify({ query: text, vocabulary: vocabulary || {} }),
         signal: controller.signal
       });
@@ -192,11 +198,29 @@
 
     if (response.status === 404) return local('no-endpoint');
     if (response.status === 503) return local('not-configured');
+
+    /* The AI token allowance is gone. The local parser still reads the
+       request, so the shopper is not stopped dead — but the reply says
+       plainly that this was a keyword match, never that it was the AI. */
+    if (response.status === 429) {
+      const limit = await response.json().catch(() => null);
+      if (limit && global.Usage) global.Usage.refresh();
+      const fallback = local('over-limit');
+      if (limit) {
+        fallback.limit = limit;
+        if (global.Usage) fallback.notice = `${global.Usage.limitMessage(limit)} This request was read by a basic local keyword match instead.`;
+      }
+      return fallback;
+    }
+
     if (!response.ok) return local('unreachable');
 
     try {
       const data = await response.json();
       if (!data || !data.preferences) return local('bad-reply');
+      /* the meter travels with the answer, so the page updates without a
+         second round trip */
+      if (data.usage && global.Usage) global.Usage.absorb(data.usage);
       return { preferences: shape(data.preferences), source: 'openai', reason: null, notice: null };
     } catch (err) {
       return local('bad-reply');

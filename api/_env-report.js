@@ -31,7 +31,18 @@
 
 /* The variables whose absence explains a 503, and nothing else. Adding a
    name here makes its STATE loggable; it never makes its value loggable. */
-const REPORTED = ['OPENAI_API_KEY', 'OPENWEBNINJA_API_KEY', 'ALLOWED_ORIGIN', 'VERCEL_ENV'];
+const REPORTED = [
+  'OPENAI_API_KEY',
+  'OPENWEBNINJA_API_KEY',
+  'ALLOWED_ORIGIN',
+  'VERCEL_ENV',
+  /* metering: without a durable store and a session secret, limits are
+     not enforced across instances and tokens do not verify. Both fail
+     quietly, so their state belongs in the same report. */
+  'UPSTASH_REDIS_REST_URL',
+  'UPSTASH_REDIS_REST_TOKEN',
+  'SESSION_SECRET'
+];
 
 function stateOf(name) {
   const value = process.env[name];

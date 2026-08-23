@@ -18,6 +18,26 @@
                       is connected.
      ALLOWED_ORIGIN   origins allowed to call this from a browser, beyond
                       the deployment's own. Comma-separated. See _cors.js.
+
+   ---------------------------------------------------------
+   Live-search metering
+   ---------------------------------------------------------
+   A live search is the expensive thing FindWear does, so it is the meter
+   the interface leads with. Three rules govern it, and all three are
+   enforced here rather than in the browser:
+
+     * the allowance is taken before the provider is called, so
+       simultaneous requests cannot each pass the same check
+     * a search that never reached the provider, or whose provider call
+       failed, hands its allowance straight back — a shopper is not
+       charged for an outage
+     * a repeated submission carrying the same idempotency key is
+       answered from the first one's result and charged nothing, so a
+       double-click costs one search rather than two
+
+   Every upstream call this endpoint causes is counted against a hard
+   per-search cap. See api/_call-budget.js for why counting calls, not
+   milliseconds, is what bounds the bill.
    ========================================================= */
 
 'use strict';
@@ -25,6 +45,9 @@
 const { getProvider, verifyAll } = require('./providers/product-source');
 const { handledPreflight } = require('./_cors');
 const { envReport } = require('./_env-report');
+const { requireAccount } = require('./_accounts');
+const { createCallBudget } = require('./_call-budget');
+const usage = require('./_usage');
 
 const MAX_LIMIT = 24;
 const DEFAULT_LIMIT = 12;
@@ -93,6 +116,11 @@ module.exports = async function handler(req, res) {
   if (handledPreflight(req, res)) return;
   if (req.method !== 'POST') return res.status(405).json({ error: 'Use POST.' });
 
+  /* who is spending. A missing credential is an anonymous Free caller; a
+     credential that does not verify is refused outright. */
+  const account = requireAccount(req, res);
+  if (!account) return;
+
   const provider = getProvider();
   if (!provider.configured()) {
     /* No real source is connected. Saying so is the whole point: the
@@ -113,12 +141,61 @@ module.exports = async function handler(req, res) {
   const attachments = shapeAttachments(body.attachments);
   const limit = Math.min(Math.max(Number(body.limit) || DEFAULT_LIMIT, 1), MAX_LIMIT);
 
+  /* A resubmission of the same search — a double-click, a retry, a
+     reconnect — is recognised before anything is reserved, so it cannot
+     take a second allowance. */
+  const claim = await usage.claimSubmission(account, headerKey(req) || body.idempotencyKey);
+
+  if (claim.state === 'replay') {
+    /* the first attempt already finished: hand back what it produced */
+    return res.status(200).json(Object.assign({}, claim.result, {
+      duplicate: true,
+      duplicateReason: 'This search was already run; the original result is shown and nothing was charged.',
+      usage: await usage.snapshot(account)
+    }));
+  }
+
+  if (claim.state === 'in-flight') {
+    /* the first attempt is still running. Answering 409 rather than
+       running a second one is the whole point: two live searches is
+       exactly what a double-click must not buy. */
+    return res.status(409).json({
+      error: 'That search is already running.',
+      code: 'duplicate_in_flight',
+      duplicate: true,
+      source: provider.name,
+      usage: await usage.snapshot(account)
+    });
+  }
+
+  /* Take the allowance BEFORE the provider is called. Two simultaneous
+     searches cannot both pass this, because the counter is incremented
+     atomically and each caller is told its own resulting position. */
+  const taken = await usage.reserve(account, 'searches', 1);
+  if (!taken.ok) {
+    await usage.releaseSubmission(claim);
+    return res.status(429).json(Object.assign({ source: 'usage-limit' }, taken.limit));
+  }
+
+  /* Every billable upstream call this search makes comes out of here. */
+  const callBudget = createCallBudget();
+
   let records;
   try {
-    records = await provider.search(intent, { limit });
+    records = await provider.search(intent, { limit, budget: callBudget });
   } catch (err) {
     console.error('Product source failed', provider.name, err && err.message);
-    return res.status(502).json({ error: 'The product source is unavailable right now.', source: provider.name });
+    /* The live search did not happen, so it is not charged. This is the
+       rule that keeps an outage from costing a shopper their allowance —
+       and the claim is released so their retry is a real attempt. */
+    await usage.refund(taken.reservation);
+    await usage.releaseSubmission(claim);
+    return res.status(502).json({
+      error: 'The product source is unavailable right now.',
+      source: provider.name,
+      charged: false,
+      usage: await usage.snapshot(account)
+    });
   }
 
   const { products, rejected } = verifyAll(records, { retailer: provider.defaultRetailer });
@@ -136,7 +213,10 @@ module.exports = async function handler(req, res) {
     console.warn('Search verified nothing.', JSON.stringify(diagnostics));
   }
 
-  return res.status(200).json({
+  /* The provider answered, so the search ran and is charged — even if
+     nothing passed the gate. The call was made and billed upstream; a
+     thin result is not a free one. */
+  const answer = {
     source: provider.name,
     products: products.slice(0, limit),
     /* how many the source returned that could not be verified, and why —
@@ -144,11 +224,32 @@ module.exports = async function handler(req, res) {
     returned: Array.isArray(records) ? records.length : 0,
     rejected,
     diagnostics,
+    /* what this one search cost upstream, so a cap that is biting is
+       visible in the response rather than only in a bill */
+    upstreamCalls: callBudget.report(),
     /* said out loud so an attachment is never mistaken for something
        that shaped these results. It did not. */
     attachments: { received: attachments.length, used: 0, reason: attachments.length ? 'Attachments are not read yet.' : null }
-  });
+  };
+
+  /* stored before the reply, so a retry that overlaps the reply still
+     finds the finished result rather than starting a second search */
+  await usage.recordSubmission(claim, answer);
+
+  return res.status(200).json(Object.assign({}, answer, {
+    /* the browser renders its meter from this and never computes it
+       itself, so the number on screen is the number enforced against */
+    usage: await usage.snapshot(account)
+  }));
 };
+
+/* The standard header, preferred over a body field: a proxy or a fetch
+   wrapper can carry it without understanding the payload. */
+function headerKey(req) {
+  const headers = (req && req.headers) || {};
+  const raw = headers['idempotency-key'] || headers['x-idempotency-key'];
+  return typeof raw === 'string' ? raw.trim() : null;
+}
 
 module.exports.shapeIntent = shapeIntent;
 module.exports.shapeAttachments = shapeAttachments;

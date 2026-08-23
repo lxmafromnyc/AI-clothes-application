@@ -1015,3 +1015,130 @@ a.item-card:hover .item-name { text-decoration: underline; text-underline-offset
   .attach-btn { order: 3; }
   .attachment-name { max-width: 14ch; }
 }
+
+/* ---------- usage meter ---------- */
+
+/* Black type throughout, like everything else. The bars carry the
+   magnitude and the numbers carry the fact; no colour is used to signal
+   how full a meter is, because colour is not doing that job anywhere
+   else on the site either. */
+.usage-meter {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-sm);
+  padding: 18px 20px;
+  margin-bottom: 18px;
+}
+.usage-meter--wide { margin: 36px 0 0; }
+
+.usage-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+.usage-plan { font-size: 14px; font-weight: 650; letter-spacing: -.015em; color: var(--ink); }
+.usage-reset { font-size: 13px; color: var(--ink); }
+
+.meter-row + .meter-row { margin-top: 12px; }
+.meter-line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+.meter-label { font-size: 13px; font-weight: 500; color: var(--ink); }
+.meter-value { font-size: 13.5px; font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
+
+.meter-track {
+  height: 6px;
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+.meter-fill {
+  display: block;
+  height: 100%;
+  background: var(--ink);
+  border-radius: var(--r-pill);
+  transition: width .3s var(--ease);
+}
+/* a spent meter is marked by a full bar and its own number, not a colour */
+.meter-row.is-spent .meter-value { font-weight: 700; }
+
+.usage-foot { margin-top: 14px; font-size: 13px; }
+.usage-foot a { text-decoration: underline; text-underline-offset: 2px; color: var(--ink); }
+
+/* ---------- plans ---------- */
+
+.plan-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+.plan-card {
+  position: relative;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  padding: 30px 28px;
+  box-shadow: var(--shadow-sm);
+  transition: transform .28s var(--ease), box-shadow .28s var(--ease), border-color .28s var(--ease);
+}
+.plan-card:hover { transform: translateY(-4px); box-shadow: var(--shadow); border-color: var(--line-strong); }
+
+/* Max reads as premium through a heavier rule and more room, not through
+   a colour or a glow — and never through the word "unlimited", because
+   it has a ceiling like the others. */
+.plan-card--max { border-color: var(--ink); padding-top: 38px; }
+.plan-flag {
+  position: absolute;
+  top: 14px; left: 28px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--ink);
+}
+
+.plan-name { font-size: 19px; margin-bottom: 10px; }
+.plan-price { display: flex; align-items: baseline; gap: 3px; margin-bottom: 10px; }
+.plan-amount { font-size: 32px; font-weight: 650; letter-spacing: -.035em; }
+.plan-cadence { font-size: 14.5px; font-weight: 500; }
+.plan-blurb { font-size: 14.5px; color: var(--ink); margin-bottom: 16px; }
+
+.plan-features { list-style: none; margin: 0; padding: 0; }
+.plan-features li {
+  font-size: 14.5px;
+  padding: 9px 0;
+  border-top: 1px solid var(--line);
+  font-variant-numeric: tabular-nums;
+}
+.plan-current {
+  margin-top: 16px;
+  font-size: 12.5px;
+  font-weight: 650;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+.plan-card.is-current { border-color: var(--ink); }
+
+/* ---------- out of allowance ---------- */
+
+.limit-count {
+  font-size: 15.5px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  margin-bottom: 8px;
+}
+.limit-actions { margin-top: 20px; }
+
+@media (max-width: 860px) {
+  .plan-grid { grid-template-columns: 1fr; }
+}

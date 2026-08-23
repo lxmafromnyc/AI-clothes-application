@@ -108,6 +108,8 @@
 
 'use strict';
 
+const { createCallBudget } = require('../_call-budget');
+
 const API_ROOT = 'https://api.openwebninja.com/realtime-product-search/v2';
 const SEARCH_URL = `${API_ROOT}/search`;
 const OFFERS_URL = `${API_ROOT}/product-offers`;
@@ -420,7 +422,10 @@ async function apiGet(url, params) {
 /* The sellers for one product. A failure here is not fatal: that one
    product ends up without a link and the gate drops it, rather than the
    whole search failing because one lookup did. */
-async function offersFor(productId, region) {
+async function offersFor(productId, region, budget) {
+  /* the cap is checked before the call, not after: a refused lookup must
+     cost nothing */
+  if (budget && !budget.take()) return { offers: [], failed: false, capped: true, shape: null };
   const params = new URLSearchParams({ product_id: String(productId), country: region.country, language: region.language });
   try {
     const payload = await apiGet(OFFERS_URL, params);
@@ -438,7 +443,7 @@ async function offersFor(productId, region) {
    parallel batches, stopping as soon as enough records have one or the
    budget expires. Mutates in place; a record left unresolved keeps no
    price, retailer or URL and is dropped by the gate. */
-async function resolveMissingOffers(records, wanted, region, stats) {
+async function resolveMissingOffers(records, wanted, region, stats, callBudget) {
   const tally = stats || {};
   tally.neededOfferLookup = records.filter((r) => !r.productUrl).length;
   tally.lookupsMade = 0;
@@ -449,24 +454,31 @@ async function resolveMissingOffers(records, wanted, region, stats) {
      URL rule doing its job, told apart from finding no offers at all */
   tally.noDirectLinkInOffers = 0;
   tally.budgetExpired = false;
+  tally.callCapReached = false;
   tally.noProductId = records.filter((r) => !r.productUrl && !r.sku).length;
   tally.offersShape = null;
 
   if (!offersEnabled()) { tally.skipped = true; return tally; }
 
-  const budget = Number(process.env.OPENWEBNINJA_OFFER_BUDGET_MS) || DEFAULT_OFFER_BUDGET_MS;
-  const deadline = Date.now() + budget;
+  /* the LATENCY budget, in milliseconds — distinct from the call cap
+     above, which bounds spend rather than time */
+  const timeBudgetMs = Number(process.env.OPENWEBNINJA_OFFER_BUDGET_MS) || DEFAULT_OFFER_BUDGET_MS;
+  const deadline = Date.now() + timeBudgetMs;
   const pending = records.filter((r) => !r.productUrl && r.sku);
   let resolved = records.filter((r) => r.productUrl).length;
 
   for (let i = 0; i < pending.length; i += OFFER_CONCURRENCY) {
     if (resolved >= wanted) break;
     if (Date.now() >= deadline) { tally.budgetExpired = true; break; }
+    /* the call cap ends the fan-out outright: unlike the time budget,
+       going over it costs money rather than latency */
+    if (callBudget && callBudget.exhausted) { tally.callCapReached = true; break; }
 
     const batch = pending.slice(i, i + OFFER_CONCURRENCY);
     const found = await Promise.all(batch.map(async (record) => {
+      const result = await offersFor(record.sku, region, callBudget);
+      if (result.capped) { tally.callCapReached = true; return null; }
       tally.lookupsMade += 1;
-      const result = await offersFor(record.sku, region);
       if (result.failed) { tally.lookupsFailed += 1; return null; }
       if (!result.offers.length) {
         tally.lookupsEmpty += 1;
@@ -496,6 +508,11 @@ async function resolveMissingOffers(records, wanted, region, stats) {
 
 async function search(intent, options) {
   const wanted = Math.min(Math.max(Number(options && options.limit) || 12, 1), 100);
+  /* Every billable call this search makes comes out of here. The caller
+     supplies one so /api/search can report what a single search cost;
+     without one a default cap still applies, because an uncapped search
+     is the thing this exists to prevent. */
+  const budget = (options && options.budget) || createCallBudget();
   const region = {
     country: process.env.OPENWEBNINJA_COUNTRY || 'us',
     language: process.env.OPENWEBNINJA_LANGUAGE || 'en'
@@ -514,6 +531,8 @@ async function search(intent, options) {
   if (intent && intent.minPrice) params.set('min_price', String(intent.minPrice));
   if (intent && intent.maxPrice) params.set('max_price', String(intent.maxPrice));
 
+  /* the search itself is the first call against the cap */
+  if (!budget.take()) throw new Error('Upstream call budget exhausted before the search could run.');
   const payload = await apiGet(SEARCH_URL, params);
   const products = resultsFrom(payload);
 
@@ -539,7 +558,7 @@ async function search(intent, options) {
 
   /* the search endpoint returns Google's product view, so most records
      arrive without a retailer link; this fetches the sellers for them */
-  diagnostics.offers = await resolveMissingOffers(records, wanted, region, {});
+  diagnostics.offers = await resolveMissingOffers(records, wanted, region, {}, budget);
 
   records.forEach((r) => { delete r.retailerHint; });
   diagnostics.withAnyLink = records.filter((r) => r.productUrl).length;
@@ -550,6 +569,9 @@ async function search(intent, options) {
      product from the page, it never invents one. */
   const withinLimits = records.filter((r) => withinBudget(r, intent));
   diagnostics.droppedOverBudget = records.length - withinLimits.length;
+
+  /* what this one search actually cost upstream */
+  diagnostics.upstreamCalls = budget.report();
 
   /* carried on the array so /api/search can report it without every
      adapter having to grow a new return shape */

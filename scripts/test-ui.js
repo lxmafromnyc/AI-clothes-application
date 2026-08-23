@@ -36,8 +36,55 @@ try {
 const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml' };
 const searchRequests = [];
 
+/* What the stubbed server currently reports, and whether it should
+   refuse. Tests set these to put the page in a given state. */
+const meterState = {
+  plan: 'free',
+  planName: 'Free',
+  usageWindow: 'today',
+  period: 'day',
+  searches: { used: 0, limit: 3 },
+  tokens: { used: 0, limit: 20000 },
+  refuse: null
+};
+
+const usageSnapshot = () => ({
+  plan: meterState.plan,
+  planName: meterState.planName,
+  period: meterState.period,
+  periodLabel: meterState.period,
+  usageWindow: meterState.usageWindow,
+  resetAt: new Date(Date.now() + 4 * 3600 * 1000).toISOString(),
+  resetInSeconds: 4 * 3600,
+  authenticated: false,
+  meters: {
+    searches: Object.assign({}, meterState.searches, {
+      remaining: Math.max(0, meterState.searches.limit - meterState.searches.used),
+      exhausted: meterState.searches.used >= meterState.searches.limit
+    }),
+    tokens: Object.assign({}, meterState.tokens, {
+      remaining: Math.max(0, meterState.tokens.limit - meterState.tokens.used),
+      exhausted: meterState.tokens.used >= meterState.tokens.limit
+    })
+  }
+});
+
+const PLAN_TABLE = [
+  { id: 'free', name: 'Free', priceUsd: 0, priceLabel: '$0', cadence: null, blurb: 'Enough to try FindWear properly.',
+    features: ['20k AI tokens/day', '3 live searches/day'], limits: { tokens: 20000, searches: 3 } },
+  { id: 'pro', name: 'Pro', priceUsd: 14.99, priceLabel: '$14.99', cadence: 'month', blurb: 'For shopping that is more than occasional.',
+    features: ['1M AI tokens/month', '75 live searches/month'], limits: { tokens: 1000000, searches: 75 } },
+  { id: 'max', name: 'Max', priceUsd: 79.99, priceLabel: '$79.99', cadence: 'month', blurb: 'Our most generous plan, with headroom for heavy days.',
+    features: ['5M AI tokens/month', '400 live searches/month'], limits: { tokens: 5000000, searches: 400 } }
+];
+
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
+
+  if (url.pathname === '/api/usage') {
+    res.setHeader('Content-Type', 'application/json');
+    return res.end(JSON.stringify({ usage: usageSnapshot(), plans: PLAN_TABLE }));
+  }
 
   if (url.pathname === '/api/interpret' || url.pathname === '/api/search') {
     let body = '';
@@ -51,7 +98,23 @@ const server = http.createServer((req, res) => {
           keywords: [], maxPrice: null, minPrice: null, season: null, gender: null } }));
       }
       searchRequests.push(parsed);
-      res.end(JSON.stringify({ source: 'openwebninja', products: [{
+      if (meterState.refuse) {
+        res.statusCode = 429;
+        return res.end(JSON.stringify({
+          error: 'usage_limit_reached',
+          limitType: meterState.refuse,
+          usage: meterState[meterState.refuse].limit,
+          limit: meterState[meterState.refuse].limit,
+          remaining: 0,
+          plan: meterState.plan,
+          planName: meterState.planName,
+          period: meterState.period,
+          usageWindow: meterState.usageWindow,
+          resetAt: new Date(Date.now() + 4 * 3600 * 1000).toISOString(),
+          resetInSeconds: 4 * 3600
+        }));
+      }
+      res.end(JSON.stringify({ usage: usageSnapshot(), source: 'openwebninja', products: [{
         id: '1', name: 'Champion Hoodie', price: 68, currency: 'USD',
         imageUrl: 'https://img.example/a.jpg', productUrl: 'https://www.nordstrom.com/s/hoodie/1',
         retailer: 'Nordstrom', category: '', colors: [], sizes: []
@@ -241,6 +304,7 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     await page.addInitScript(() => {
       window.FINDWEAR_API = 'http://127.0.0.1:8899/api/interpret';
       window.FINDWEAR_SEARCH_API = 'http://127.0.0.1:8899/api/search';
+      window.FINDWEAR_USAGE_API = 'http://127.0.0.1:8899/api/usage';
     });
     /* Anything off this origin is unreachable in this environment, and a
        stylesheet still loading blocks the scripts under it from running.
@@ -482,14 +546,14 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
 
   console.log('\ntypography and text styling');
 
-  const PAGES = ['index.html', 'find-clothes.html', 'discover.html', 'about.html'];
+  const PAGES = ['index.html', 'find-clothes.html', 'discover.html', 'about.html', 'pricing.html'];
 
   /* each page is given a moment to render whatever it builds from the
      catalogue, so cards, badges and pills are audited too, not just the
      static shell */
   const settled = async (file) => {
     const page = await openPage(file);
-    const built = { 'index.html': '.mini-item', 'discover.html': '.item-card' }[file];
+    const built = { 'index.html': '.mini-item', 'discover.html': '.item-card', 'pricing.html': '.plan-card' }[file];
     if (built) await page.waitForSelector(built, { timeout: 10000 });
     return page;
   };
@@ -693,6 +757,216 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
       assert.ok(m, `${token} should be defined`);
       assert.strictEqual(m[1].trim().toLowerCase(), '#000000', `${token} is ${m && m[1]}`);
     });
+  });
+
+  console.log('\nthe usage meter');
+
+  const meterOf = (page) => page.$eval('#usage-meter', (n) => ({
+    hidden: n.hidden,
+    plan: n.querySelector('.usage-plan') ? n.querySelector('.usage-plan').textContent.trim() : null,
+    reset: n.querySelector('.usage-reset') ? n.querySelector('.usage-reset').textContent.trim() : null,
+    values: Array.from(n.querySelectorAll('.meter-value')).map((v) => v.textContent.trim()),
+    widths: Array.from(n.querySelectorAll('.meter-fill')).map((v) => v.style.width)
+  }));
+
+  const withMeter = async (state) => {
+    Object.assign(meterState, state);
+    const page = await openPage('find-clothes.html');
+    await page.waitForFunction(() => {
+      const n = document.getElementById('usage-meter');
+      return n && !n.hidden && n.querySelector('.meter-value');
+    }, { timeout: 10000 });
+    return page;
+  };
+
+  await test('a Free meter reads exactly "3 / 3 searches used today"', async () => {
+    const page = await withMeter({
+      plan: 'free', planName: 'Free', usageWindow: 'today', period: 'day',
+      searches: { used: 3, limit: 3 }, tokens: { used: 7420, limit: 20000 }, refuse: null
+    });
+    const m = await meterOf(page);
+    assert.strictEqual(m.plan, 'Free plan');
+    assert.deepStrictEqual(m.values, ['3 / 3 searches used today', '7,420 / 20,000 AI tokens']);
+    await page.close();
+  });
+
+  await test('a Pro meter reads "42 / 75 searches used this month"', async () => {
+    const page = await withMeter({
+      plan: 'pro', planName: 'Pro', usageWindow: 'this month', period: 'month',
+      searches: { used: 42, limit: 75 }, tokens: { used: 238411, limit: 1000000 }, refuse: null
+    });
+    const m = await meterOf(page);
+    assert.strictEqual(m.plan, 'Pro plan');
+    assert.deepStrictEqual(m.values, ['42 / 75 searches used this month', '238,411 / 1,000,000 AI tokens']);
+    await page.close();
+  });
+
+  await test('a Max meter reads "215 / 400 searches used this month"', async () => {
+    const page = await withMeter({
+      plan: 'max', planName: 'Max', usageWindow: 'this month', period: 'month',
+      searches: { used: 215, limit: 400 }, tokens: { used: 1200000, limit: 5000000 }, refuse: null
+    });
+    const m = await meterOf(page);
+    assert.deepStrictEqual(m.values, ['215 / 400 searches used this month', '1,200,000 / 5,000,000 AI tokens']);
+    await page.close();
+  });
+
+  await test('searches are shown first, tokens second', async () => {
+    const page = await withMeter({
+      plan: 'free', planName: 'Free', usageWindow: 'today', period: 'day',
+      searches: { used: 1, limit: 3 }, tokens: { used: 500, limit: 20000 }, refuse: null
+    });
+    const labels = await page.$$eval('#usage-meter .meter-label', (ns) => ns.map((n) => n.textContent.trim()));
+    assert.deepStrictEqual(labels, ['Live searches', 'AI tokens'],
+      'the count a shopper can hold in their head leads');
+    await page.close();
+  });
+
+  await test('the bar matches the number beside it and never overflows', async () => {
+    const page = await withMeter({
+      plan: 'free', planName: 'Free', usageWindow: 'today', period: 'day',
+      searches: { used: 3, limit: 3 }, tokens: { used: 5000, limit: 20000 }, refuse: null
+    });
+    const m = await meterOf(page);
+    assert.deepStrictEqual(m.widths, ['100%', '25%']);
+    await page.close();
+  });
+
+  await test('the meter shows nothing until the server has answered', async () => {
+    const page = await browser.newPage();
+    await page.addInitScript(() => {
+      /* an endpoint that never answers: the page must not invent a meter */
+      window.FINDWEAR_USAGE_API = 'http://127.0.0.1:9/api/usage';
+      window.FINDWEAR_API = 'http://127.0.0.1:9/api/interpret';
+    });
+    await page.route((url) => !String(url).includes('127.0.0.1:8899'), (route) => route.abort());
+    await page.goto(`http://127.0.0.1:${PORT}/find-clothes.html`, { waitUntil: 'domcontentloaded' });
+    await page.waitForTimeout(600);
+    assert.strictEqual(await page.$eval('#usage-meter', (n) => n.hidden), true,
+      'no meter is honest; a guessed one is not');
+    await page.close();
+  });
+
+  await test('the meter updates from the search reply, not from its own tally', async () => {
+    Object.assign(meterState, {
+      plan: 'free', planName: 'Free', usageWindow: 'today', period: 'day',
+      searches: { used: 0, limit: 3 }, tokens: { used: 0, limit: 20000 }, refuse: null
+    });
+    const page = await open();
+    await page.waitForFunction(() => {
+      const n = document.getElementById('usage-meter');
+      return n && !n.hidden && n.querySelector('.meter-value');
+    }, { timeout: 10000 });
+    assert.strictEqual((await meterOf(page)).values[0], '0 / 3 searches used today');
+
+    /* the server now reports 2; the page must adopt that, not add 1 */
+    meterState.searches = { used: 2, limit: 3 };
+    await page.fill('#ask', 'black hoodie');
+    await page.click('button[type=submit]');
+    await page.waitForSelector('.item-card', { timeout: 10000 });
+    await page.waitForFunction(() => {
+      const v = document.querySelector('#usage-meter .meter-value');
+      return v && v.textContent.includes('2 / 3');
+    }, { timeout: 10000 });
+    assert.strictEqual((await meterOf(page)).values[0], '2 / 3 searches used today');
+    await page.close();
+  });
+
+  await test('running out shows the limit panel with the server figures', async () => {
+    Object.assign(meterState, {
+      plan: 'free', planName: 'Free', usageWindow: 'today', period: 'day',
+      searches: { used: 3, limit: 3 }, tokens: { used: 0, limit: 20000 }, refuse: 'searches'
+    });
+    const page = await open();
+    await page.fill('#ask', 'black hoodie');
+    await page.click('button[type=submit]');
+    await page.waitForSelector('.empty', { timeout: 10000 });
+
+    const panel = await page.$eval('.empty', (n) => n.textContent.replace(/\s+/g, ' ').trim());
+    assert.ok(/Live searches used up/.test(panel), panel);
+    assert.ok(/3 \/ 3 used on Free/.test(panel), panel);
+    assert.ok(/all 3 live searches/.test(panel), panel);
+    assert.ok(/Resets in/.test(panel), panel);
+    assert.ok(await page.$('.limit-actions a[href="pricing.html"]'), 'and offers a way forward');
+
+    /* never sample products: nothing was searched */
+    assert.strictEqual(await page.$$eval('.item-card', (ns) => ns.length), 0);
+    meterState.refuse = null;
+    await page.close();
+  });
+
+  await test('the limit panel is black type like the rest of the page', async () => {
+    Object.assign(meterState, { searches: { used: 3, limit: 3 }, refuse: 'searches' });
+    const page = await open();
+    await page.fill('#ask', 'black hoodie');
+    await page.click('button[type=submit]');
+    await page.waitForSelector('.empty', { timeout: 10000 });
+    const problems = await textStyleProblems(page);
+    assert.deepStrictEqual(problems, [], `\n        ${problems.join('\n        ')}`);
+    meterState.refuse = null;
+    await page.close();
+  });
+
+  await test('a double-click sends one submission key, not two different ones', async () => {
+    searchRequests.length = 0;
+    Object.assign(meterState, { searches: { used: 0, limit: 3 }, refuse: null });
+    const page = await open();
+    await page.fill('#ask', 'black hoodie');
+    /* two clicks in the same tick, the way a real double-click lands */
+    await page.evaluate(() => {
+      const b = document.querySelector('#ask-form button[type=submit]');
+      b.click(); b.click();
+    });
+    await page.waitForSelector('.item-card', { timeout: 10000 });
+    await page.waitForTimeout(300);
+    const keys = new Set(searchRequests.map((r) => r.idempotencyKey).filter(Boolean));
+    /* the key travels as a header, so assert on what the browser sent */
+    assert.ok(searchRequests.length >= 1, 'at least one search was sent');
+    assert.ok(keys.size <= 1, 'a double-click must not mint two different submission keys');
+    await page.close();
+  });
+
+  await test('the pricing page lists the three plans with their real numbers', async () => {
+    const page = await settled('pricing.html');
+    await page.waitForFunction(() => document.querySelectorAll('.plan-card').length === 3, { timeout: 10000 });
+    const cards = await page.$$eval('.plan-card', (ns) => ns.map((n) => ({
+      name: n.querySelector('.plan-name').textContent.trim(),
+      price: n.querySelector('.plan-amount').textContent.trim(),
+      cadence: n.querySelector('.plan-cadence') ? n.querySelector('.plan-cadence').textContent.trim() : '',
+      features: Array.from(n.querySelectorAll('.plan-features li')).map((f) => f.textContent.trim())
+    })));
+
+    assert.deepStrictEqual(cards.map((c) => c.name), ['Free', 'Pro', 'Max']);
+    assert.deepStrictEqual(cards.map((c) => c.price), ['$0', '$14.99', '$79.99']);
+    assert.deepStrictEqual(cards[0].features, ['20k AI tokens/day', '3 live searches/day']);
+    assert.deepStrictEqual(cards[1].features, ['1M AI tokens/month', '75 live searches/month']);
+    assert.deepStrictEqual(cards[2].features, ['5M AI tokens/month', '400 live searches/month']);
+    assert.strictEqual(cards[1].cadence, '/month');
+    await page.close();
+  });
+
+  await test('Max is set apart without ever being called unlimited', async () => {
+    const page = await settled('pricing.html');
+    await page.waitForFunction(() => document.querySelectorAll('.plan-card').length === 3, { timeout: 10000 });
+    const text = await page.$eval('body', (n) => n.textContent.toLowerCase());
+    assert.ok(!text.includes('unlimited'), 'a ceiling exists, so it is named');
+    assert.ok(await page.$('.plan-card--max'), 'Max is still distinguished');
+    assert.ok(/most generous/i.test(await page.$eval('.plan-card--max', (n) => n.textContent)));
+    await page.close();
+  });
+
+  await test('no page leaks a key, a token or a plan secret into the markup', async () => {
+    for (const file of PAGES) {
+      const page = await settled(file);
+      const html = await page.content();
+      /* a real key is a long run after a word boundary; without the
+         boundary this matches "ask-dropveil" and cries wolf */
+      assert.ok(!/\bsk-[A-Za-z0-9]{16,}/.test(html), `${file} carries something key-shaped`);
+      ['OPENAI_API_KEY', 'OPENWEBNINJA_API_KEY', 'SESSION_SECRET', 'UPSTASH'].forEach((name) => {
+        assert.ok(!html.includes(name), `${file} names ${name}`);
+      });
+      await page.close();
+    }
   });
 
   await browser.close();

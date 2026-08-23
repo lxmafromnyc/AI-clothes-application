@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pricing — FindWear</title>
+<meta name="description" content="FindWear plans and limits: AI tokens and live product searches on Free, Pro and Max.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='9' fill='%23000000'/><path d='M16 6l2.5 7.5L26 16l-7.5 2.5L16 26l-2.5-7.5L6 16l7.5-2.5z' fill='white'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/styles.css?v=2">
+<!-- Same deployment as the interpreter; /api/usage is derived from it. -->
+<meta name="findwear-api" content="https://ai-clothes-application.vercel.app/api/interpret">
+<script>document.documentElement.classList.add('js');</script>
+</head>
+<body>
+
+<header class="site-header">
+  <div class="container">
+    <div class="nav">
+      <a class="brand" href="index.html">
+        <span class="mark"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2l1.9 5.6L19.5 9.5 13.9 11.4 12 17l-1.9-5.6L4.5 9.5l5.6-1.9L12 2z"/></svg></span>
+        FindWear
+      </a>
+      <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" aria-label="Open menu"><span></span></button>
+      <nav class="nav-links" id="site-nav" aria-label="Main">
+        <a href="index.html">Home</a>
+        <a href="find-clothes.html">Find Clothes</a>
+        <a href="discover.html">Discover</a>
+        <a href="pricing.html" aria-current="page">Pricing</a>
+        <a href="about.html">About</a>
+      </nav>
+    </div>
+  </div>
+</header>
+
+<main>
+
+  <div class="container">
+    <div class="page-head">
+      <span class="eyebrow"><span class="dot"></span>Plans and limits</span>
+      <h1>Pay for what you search</h1>
+      <p class="lead">Two things are metered: the AI tokens spent reading your request, and the live product searches that go out to real retailers. They are counted separately.</p>
+    </div>
+  </div>
+
+  <section class="section section--tight" style="padding-top:44px">
+    <div class="container">
+
+      <!-- Filled from /api/usage so the numbers on screen are the ones
+           the server enforces. The markup below stands as written if the
+           endpoint cannot be reached, and says the same thing. -->
+      <div class="plan-grid" id="plan-grid">
+        <div class="plan-card">
+          <h3 class="plan-name">Free</h3>
+          <p class="plan-price"><span class="plan-amount">$0</span></p>
+          <p class="plan-blurb">Enough to try FindWear properly.</p>
+          <ul class="plan-features">
+            <li>20k AI tokens/day</li>
+            <li>3 live searches/day</li>
+          </ul>
+        </div>
+        <div class="plan-card">
+          <h3 class="plan-name">Pro</h3>
+          <p class="plan-price"><span class="plan-amount">$14.99</span><span class="plan-cadence">/month</span></p>
+          <p class="plan-blurb">For shopping that is more than occasional.</p>
+          <ul class="plan-features">
+            <li>1M AI tokens/month</li>
+            <li>75 live searches/month</li>
+          </ul>
+        </div>
+        <div class="plan-card plan-card--max">
+          <span class="plan-flag">Most generous</span>
+          <h3 class="plan-name">Max</h3>
+          <p class="plan-price"><span class="plan-amount">$79.99</span><span class="plan-cadence">/month</span></p>
+          <p class="plan-blurb">Our most generous plan, with headroom for heavy days.</p>
+          <ul class="plan-features">
+            <li>5M AI tokens/month</li>
+            <li>400 live searches/month</li>
+          </ul>
+        </div>
+      </div>
+
+      <section class="usage-meter usage-meter--wide" id="usage-meter" aria-label="Your FindWear usage" hidden></section>
+
+    </div>
+  </section>
+
+  <section class="section" style="padding-top:8px">
+    <div class="narrow">
+
+      <div class="section-head reveal">
+        <h2>How the two meters work</h2>
+      </div>
+
+      <div class="faq-row reveal">
+        <h3>What is a live search?</h3>
+        <p>One request out to a real product source. It is the expensive part of FindWear, so it is the meter shown first — and it is only counted when the search actually runs. A search that fails before it reaches the source is not charged.</p>
+      </div>
+      <div class="faq-row reveal">
+        <h3>What are AI tokens?</h3>
+        <p>What the model spends reading your request and turning it into something the catalogue can be matched against. A typical request costs a few hundred. They are counted separately from searches, so running out of one does not stop the other.</p>
+      </div>
+      <div class="faq-row reveal">
+        <h3>When do the meters reset?</h3>
+        <p>Free resets every day at midnight UTC. Pro and Max reset on the first of each month, also UTC. Nothing carries over — each period starts at zero.</p>
+      </div>
+      <div class="faq-row reveal">
+        <h3>What happens when I run out?</h3>
+        <p>The request is refused and the page tells you which allowance ran out, how much of it there was, and when it comes back. Nothing is charged for a refused request.</p>
+      </div>
+      <div class="faq-row reveal">
+        <h3>Does a double-click cost two searches?</h3>
+        <p>No. Each submission carries its own identifier, so a repeat of the same search is recognised and answered from the first one's result without spending a second allowance.</p>
+      </div>
+      <div class="faq-row reveal">
+        <h3>Can I buy a plan yet?</h3>
+        <p>Not yet. Plans, limits and metering are built and enforced; payment is not connected, so every account is currently on Free.</p>
+      </div>
+
+    </div>
+  </section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="container">
+    <div class="footer-inner">
+      <a class="brand" href="index.html">
+        <span class="mark"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2l1.9 5.6L19.5 9.5 13.9 11.4 12 17l-1.9-5.6L4.5 9.5l5.6-1.9L12 2z"/></svg></span>
+        FindWear
+      </a>
+      <nav class="footer-links" aria-label="Footer">
+        <a href="index.html">Home</a>
+        <a href="find-clothes.html">Find Clothes</a>
+        <a href="discover.html">Discover</a>
+        <a href="pricing.html">Pricing</a>
+        <a href="about.html">About</a>
+      </nav>
+    </div>
+    <p class="footer-note">FindWear is a demo experience — recommendations come from a sample catalogue.</p>
+  </div>
+</footer>
+
+<script src="assets/products.js"></script>
+<script src="assets/interpret.js"></script>
+<script src="assets/catalog.js"></script>
+<script src="assets/usage.js"></script>
+<script src="assets/app.js"></script>
+</body>
+</html>

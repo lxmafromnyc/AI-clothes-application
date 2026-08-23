@@ -355,6 +355,40 @@ function orderFacet(counts, key) {
       </div>`;
   }
 
+  /* The allowance is gone. This says which one, how much of it there
+     was, and when it comes back — all from the server's own reply, so
+     the panel cannot disagree with the meter above it. */
+  function renderLimit(found, outcome) {
+    const chips = understood(outcome.preferences);
+    const readback = chips.length
+      ? `<div class="understood">${chips.map((c) => `<span>${esc(c)}</span>`).join('')}</div>`
+      : '';
+    const limit = found.limit || {};
+    const meter = typeof Usage === 'undefined' ? null : Usage;
+    const heading = limit.limitType === 'tokens' ? 'AI token allowance used up' : 'Live searches used up';
+    const detail = (meter && found.limit) ? meter.limitMessage(found.limit) : (found.notice || '');
+    const counted = (meter && found.limit)
+      ? `${meter.groupDigits(limit.usage)} / ${meter.groupDigits(limit.limit)}` : '';
+
+    results.innerHTML = `<div class="results-head"><div><h2>${heading}</h2>${readback}</div></div>
+      <div class="empty">
+        <h3>${heading}</h3>
+        ${counted ? `<p class="limit-count">${esc(counted)} used on ${esc(limit.planName || 'your plan')}</p>` : ''}
+        <p>${esc(detail)}</p>
+        <p class="limit-actions"><a class="btn btn-primary" href="pricing.html">See plans</a></p>
+      </div>`;
+  }
+
+  /* The same submission is already in flight. Nothing was charged and
+     the original is about to answer, so this waits rather than alarming. */
+  function renderDuplicate(found) {
+    results.innerHTML = `<div class="results-head"><div><h2>Already searching</h2></div></div>
+      <div class="empty">
+        <h3>That search is already running</h3>
+        <p>${esc(found.notice || '')}</p>
+      </div>`;
+  }
+
   function render(prefs, outcome, found) {
     const withinBudget = (item) => {
       if (item.price == null) return true; /* unknown price cannot be ruled out */
@@ -414,6 +448,12 @@ function orderFacet(counts, key) {
     bindImageFallback(results);
   }
 
+  /* One key per submission. It is generated here, at the moment the
+     shopper submits, and reused for every request that submission makes,
+     so a double-click or a retry is recognised by the server as the same
+     search rather than as a second one. A NEW search gets a new key. */
+  let submissionKey = null;
+
   async function search(query, attached) {
     error.classList.remove('show');
     results.hidden = false;
@@ -427,7 +467,13 @@ function orderFacet(counts, key) {
     /* real products first; the sample catalogue only when no source answers */
     const found = typeof ProductSearch === 'undefined'
       ? { source: null, products: [], notice: null }
-      : await ProductSearch.find(outcome.preferences, undefined, attached);
+      : await ProductSearch.find(outcome.preferences, undefined, attached, submissionKey);
+
+    /* Out of allowance is neither an outage nor an empty result: nothing
+       broke and nothing was searched, so it gets its own panel rather
+       than being dressed up as either. */
+    if (found.state === 'limit') return renderLimit(found, outcome);
+    if (found.state === 'duplicate') return renderDuplicate(found);
 
     if (found.products.length) renderProducts(found, outcome);
     /* The sample catalogue stands in only when nothing is connected. Once
@@ -459,6 +505,9 @@ function orderFacet(counts, key) {
       input.focus();
       return;
     }
+    /* a new submission, so a new key. Everything this submission sends
+       carries it, which is what makes a repeat identifiable. */
+    submissionKey = (typeof Usage !== 'undefined') ? Usage.newSubmissionKey() : null;
     search(query, attachments ? attachments.manifest() : []);
   });
 
@@ -539,4 +588,82 @@ function orderFacet(counts, key) {
 (function boot() {
   if (typeof Products === 'undefined') return;
   Products.load(typeof DEMO_PRODUCTS === 'undefined' ? [] : DEMO_PRODUCTS);
+})();
+
+/* ---------- usage meter ----------
+   Renders whatever the server last told us. It never counts, and it
+   never disables anything: the limit is the server's to enforce, and a
+   button greyed out by the page would only be a courtesy — see
+   assets/usage.js.
+
+   The meter leads with searches because a count of three is something a
+   shopper can hold in their head, and shows tokens underneath because
+   the two run out independently. */
+(function usageMeter() {
+  const mount = document.getElementById('usage-meter');
+  if (!mount || typeof Usage === 'undefined') return;
+
+  const bar = (meter, label, value) => {
+    const pct = Math.round(Usage.fraction(meter) * 100);
+    return `<div class="meter-row${meter.exhausted ? ' is-spent' : ''}">
+        <div class="meter-line">
+          <span class="meter-label">${esc(label)}</span>
+          <span class="meter-value">${esc(value)}</span>
+        </div>
+        <div class="meter-track"><span class="meter-fill" style="width:${pct}%"></span></div>
+      </div>`;
+  };
+
+  function paint(snapshot) {
+    if (!snapshot || !snapshot.meters) { mount.hidden = true; return; }
+    mount.hidden = false;
+    const m = snapshot.meters;
+    mount.innerHTML = `
+      <div class="usage-head">
+        <span class="usage-plan">${esc(snapshot.planName)} plan</span>
+        <span class="usage-reset">${esc(Usage.resetPhrase(snapshot))}</span>
+      </div>
+      ${bar(m.searches, 'Live searches', Usage.searchLine(snapshot))}
+      ${bar(m.tokens, 'AI tokens', Usage.tokenLine(snapshot))}
+      <p class="usage-foot"><a href="pricing.html">Plans and limits</a></p>`;
+  }
+
+  /* hidden until the server has answered: no meter is honest, a guessed
+     one is not */
+  mount.hidden = true;
+  Usage.subscribe(paint);
+  Usage.refresh();
+})();
+
+/* ---------- pricing table ----------
+   Built from what /api/usage publishes, so the prices and allowances on
+   screen are the ones the server enforces. If it cannot be reached the
+   markup already in the page stands as written. */
+(function pricingTable() {
+  const mount = document.getElementById('plan-grid');
+  if (!mount || typeof Usage === 'undefined') return;
+
+  const card = (plan, currentPlan) => {
+    const isCurrent = plan.id === currentPlan;
+    return `<div class="plan-card${plan.id === 'max' ? ' plan-card--max' : ''}${isCurrent ? ' is-current' : ''}">
+        ${plan.id === 'max' ? '<span class="plan-flag">Most generous</span>' : ''}
+        <h3 class="plan-name">${esc(plan.name)}</h3>
+        <p class="plan-price">
+          <span class="plan-amount">${esc(plan.priceLabel)}</span>
+          ${plan.cadence ? `<span class="plan-cadence">/${esc(plan.cadence)}</span>` : ''}
+        </p>
+        <p class="plan-blurb">${esc(plan.blurb)}</p>
+        <ul class="plan-features">
+          ${plan.features.map((f) => `<li>${esc(f)}</li>`).join('')}
+        </ul>
+        ${isCurrent ? '<p class="plan-current">Your current plan</p>' : ''}
+      </div>`;
+  };
+
+  Usage.subscribe((snapshot) => {
+    const list = (snapshot && snapshot.plans) || [];
+    if (!list.length) return;
+    mount.innerHTML = list.map((p) => card(p, snapshot.plan)).join('');
+  });
+  Usage.refresh();
 })();
