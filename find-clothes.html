@@ -40,7 +40,7 @@
   <div class="page-head">
     <div class="container">
       <h1>Find clothes</h1>
-      <p>Describe one piece you are after. Fynd reads the request and returns items that match.</p>
+      <p>Describe one piece you are after &mdash; Fynd returns items that match.</p>
     </div>
   </div>
 
@@ -49,8 +49,14 @@
 
       <form class="ask-card" id="ask-form" data-dropzone>
         <label class="ask-label" for="ask">Describe what you&rsquo;re looking for.</label>
-        <textarea id="ask" name="ask" rows="3" maxlength="400"
-          placeholder="A black oversized hoodie under $80"></textarea>
+
+        <!-- The field is a white surface inside the card's grey one, so
+             the place to type is obvious before the label is read. -->
+        <div class="ask-field">
+          <svg class="ask-field-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.6-3.6"/></svg>
+          <textarea id="ask" name="ask" rows="3" maxlength="400"
+            placeholder="Black oversized hoodie under $80"></textarea>
+        </div>
 
         <!-- Shown only while a file is over the card. Hidden from
              assistive technology: it is a visual cue for a pointer
@@ -63,7 +69,7 @@
         <ul class="attachments" id="attachments" hidden></ul>
 
         <div class="ask-actions">
-          <button class="btn btn-primary" type="submit">
+          <button class="btn btn-primary btn-lg" type="submit">
             Find my clothes
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
           </button>
@@ -73,6 +79,7 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.4 11.05l-9.19 9.19a5 5 0 01-7.07-7.07l9.19-9.19a3.5 3.5 0 014.95 4.95l-9.2 9.19a2 2 0 01-2.82-2.83l8.49-8.48"/></svg>
             Add a photo
           </label>
+          <span class="attach-hint">or drop one here</span>
 
           <button class="link-btn" type="button" id="reset-form">Clear</button>
         </div>
@@ -88,7 +95,7 @@
       </form>
 
       <p class="ask-examples" id="ask-examples">
-        <span class="examples-label">Try</span>
+        <span class="examples-label">Try one of these</span>
         <button type="button" class="example">Black oversized hoodie under $80</button>
         <button type="button" class="example">Relaxed jeans for everyday wear</button>
         <button type="button" class="example">Minimal neutral clothes for fall</button>

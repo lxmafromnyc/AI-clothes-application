@@ -31,12 +31,17 @@
   /* elevation — used only where it separates a layer from the page */
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, .05);
   --shadow: 0 1px 2px rgba(0, 0, 0, .04), 0 8px 24px -12px rgba(0, 0, 0, .18);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, .05), 0 12px 32px -14px rgba(0, 0, 0, .22);
 
   /* rhythm */
   --gap: 24px;
   --section: 88px;
 
   --ease: cubic-bezier(.2, .7, .2, 1);
+
+  /* the magnifier the suggestion chips carry, as a mask so it inherits
+     whatever ink the chip is set in */
+  --search-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='M20 20l-3.6-3.6'/%3E%3C/svg%3E");
 }
 
 *, *::before, *::after { box-sizing: border-box; }
@@ -72,19 +77,34 @@ button, input, select, textarea { font: inherit; color: inherit; }
   clip: rect(0 0 0 0); white-space: nowrap; border: 0;
 }
 
-/* skip link — visible only when focused */
+/* Skip link — clipped to a single pixel until it takes focus, rather
+   than parked off the top of the page: an offset only hides the link
+   while nothing above it is positioned or transformed, and a clipped
+   element cannot paint or reserve space whatever surrounds it. */
 .skip-link {
   position: absolute;
-  left: 16px; top: -60px;
+  width: 1px; height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  padding: 0; margin: 0; border: 0;
+}
+.skip-link:focus {
+  position: fixed;
+  left: 16px; top: 16px;
   z-index: 100;
-  padding: 10px 16px;
+  width: auto; height: auto;
+  overflow: visible;
+  clip: auto;
+  clip-path: none;
+  padding: 11px 18px;
   background: var(--ink);
   color: var(--on-dark);
   border-radius: var(--r-sm);
-  font-size: 14px; font-weight: 600;
-  transition: top .18s var(--ease);
+  font-size: 14.5px; font-weight: 600;
+  box-shadow: var(--shadow);
 }
-.skip-link:focus { top: 12px; }
 
 /* ---------- layout ---------- */
 
@@ -227,20 +247,20 @@ button, input, select, textarea { font: inherit; color: inherit; }
 
 /* ---------- hero ---------- */
 
-.hero { padding: 76px 0 32px; text-align: center; }
+.hero { padding: 60px 0 28px; text-align: center; }
 .hero h1 {
-  font-size: clamp(34px, 4.4vw, 52px);
-  letter-spacing: -.035em;
-  line-height: 1.08;
-  max-width: 26ch;
-  margin: 0 auto 18px;
+  font-size: clamp(31px, 3.6vw, 44px);
+  letter-spacing: -.032em;
+  line-height: 1.12;
+  max-width: 24ch;
+  margin: 0 auto 14px;
   text-wrap: balance;
 }
 .hero .lead {
-  color: var(--ink-2);
-  font-size: clamp(16.5px, 1.4vw, 18.5px);
+  color: var(--muted);
+  font-size: clamp(16px, 1.3vw, 17.5px);
   line-height: 1.55;
-  max-width: 54ch;
+  max-width: 50ch;
   margin: 0 auto;
   text-wrap: pretty;
 }
@@ -252,7 +272,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 
 /* ---------- search ---------- */
 
-.search-block { padding: 32px 0 0; scroll-margin-top: 76px; }
+.search-block { padding: 8px 0 72px; scroll-margin-top: 76px; }
 /* on the page that is only a search, nothing follows to open the space
    before the footer, so the block closes it itself */
 main > .search-block:last-child { padding-bottom: var(--section); }
@@ -262,23 +282,44 @@ main > .search-block:last-child { padding-bottom: var(--section); }
   font-size: 15px;
   font-weight: 600;
   color: var(--ink);
-  margin-bottom: 10px;
+  margin: 0 4px 10px;
 }
 
+/* The card is a surface, not an outline: a light panel with a real
+   border and a real shadow, carrying a white field. Two levels of
+   surface are what make the place to type unmistakable. */
 .ask-card {
   position: relative;
   scroll-margin-top: 88px;
+  background: var(--surface-2);
+  border: 1px solid var(--line-strong);
+  border-radius: 18px;
+  box-shadow: var(--shadow-card);
+  padding: 16px;
+}
+
+.ask-field {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
   background: var(--surface);
   border: 1px solid var(--line-strong);
-  border-radius: var(--r-lg);
-  box-shadow: var(--shadow-sm);
-  padding: 16px 16px 12px;
+  border-radius: var(--r);
+  padding: 15px 16px;
   transition: border-color .16s var(--ease), box-shadow .16s var(--ease);
 }
-.ask-card:focus-within {
+.ask-field:focus-within {
   border-color: var(--ink);
-  box-shadow: 0 0 0 3px rgba(0, 0, 0, .07);
+  box-shadow: 0 0 0 3px rgba(0, 0, 0, .08);
 }
+.ask-field-icon {
+  width: 20px; height: 20px;
+  flex: none;
+  margin-top: 3px;
+  color: var(--muted);
+}
+.ask-field:focus-within .ask-field-icon { color: var(--ink); }
+
 .ask-card textarea {
   display: block;
   width: 100%;
@@ -290,41 +331,43 @@ main > .search-block:last-child { padding-bottom: var(--section); }
   font-size: 18px;
   line-height: 1.5;
   color: var(--ink);
-  padding: 4px 4px 14px;
-  min-height: 84px;
+  padding: 0;
+  min-height: 62px;
 }
 .ask-card textarea::placeholder { color: var(--muted); }
 
 .ask-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding-top: 12px;
-  border-top: 1px solid var(--line);
+  gap: 10px;
+  margin-top: 14px;
 }
 .ask-actions .btn-primary { flex: none; }
 .ask-actions .link-btn { margin-left: auto; }
 
-/* attaching sits in the same row as the primary action, at the weight of
-   a quiet control — part of the box, not a feature of its own */
+/* Attaching is secondary to searching, but it is still a control: a
+   real button on the card, not a line of grey text beside one. */
 .attach-btn {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  height: 40px;
-  padding: 0 12px;
-  border: 0;
-  border-radius: var(--r-sm);
-  background: transparent;
-  font-size: 14.5px;
-  font-weight: 500;
-  color: var(--muted);
+  gap: 8px;
+  height: 48px;
+  padding: 0 18px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r);
+  background: var(--surface);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink-2);
   cursor: pointer;
-  transition: background .16s var(--ease), color .16s var(--ease);
+  transition: border-color .16s var(--ease), color .16s var(--ease);
 }
-.attach-btn svg { width: 15px; height: 15px; }
-.attach-btn:hover { background: var(--surface-2); color: var(--ink); }
+.attach-btn svg { width: 16px; height: 16px; }
+.attach-btn:hover { border-color: var(--ink); color: var(--ink); }
 #ask-files:focus-visible + .attach-btn { outline: 2px solid var(--ink); outline-offset: 2px; }
+
+/* says the drop target exists without turning it into a feature of its own */
+.attach-hint { font-size: 13.5px; color: var(--muted); }
 
 /* the whole card is the drop target, so a file can be let go anywhere
    over it rather than on a small strip */
@@ -337,9 +380,9 @@ main > .search-block:last-child { padding-bottom: var(--section); }
   align-items: center;
   justify-content: center;
   gap: 8px;
-  border-radius: var(--r-lg);
-  border: 1.5px dashed var(--ink);
-  background: rgba(255, 255, 255, .96);
+  border-radius: 18px;
+  border: 2px dashed var(--ink);
+  background: rgba(245, 245, 244, .97);
   color: var(--ink);
   font-size: 15px;
   font-weight: 600;
@@ -353,7 +396,7 @@ main > .search-block:last-child { padding-bottom: var(--section); }
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin: 4px 0 0;
+  margin: 12px 0 0;
   padding: 0;
 }
 .attachment {
@@ -361,9 +404,9 @@ main > .search-block:last-child { padding-bottom: var(--section); }
   align-items: center;
   gap: 9px;
   max-width: 100%;
-  padding: 6px 6px 6px 6px;
-  background: var(--surface-2);
-  border: 1px solid var(--line);
+  padding: 6px;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
   border-radius: var(--r-sm);
 }
 .attachment-thumb,
@@ -425,29 +468,56 @@ main > .search-block:last-child { padding-bottom: var(--section); }
 #attachment-error:empty { display: none; }
 #attachment-error { display: block; margin-top: 8px; font-size: 13.5px; font-weight: 500; color: var(--ink); }
 
-/* examples — plainly secondary to the box above them */
+/* Suggestions, not labels: they fill the box when pressed, so they are
+   built like the controls they are — secondary to the card above, but
+   plainly pressable. */
 .ask-examples {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-  margin-top: 14px;
-  font-size: 13.5px;
+  margin: 18px 4px 0;
+  font-size: 13px;
   color: var(--muted);
 }
-.ask-examples .examples-label { margin-right: 2px; }
+/* the label takes the full row, so the chips below it wrap as a set
+   rather than trailing off the end of a sentence */
+.ask-examples .examples-label {
+  flex-basis: 100%;
+  margin-bottom: 2px;
+  letter-spacing: .02em;
+}
 .example {
-  border: 1px solid var(--line);
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--line-strong);
   background: var(--surface);
   border-radius: var(--r-pill);
-  padding: 6px 13px;
+  padding: 8px 14px;
   font-size: 13.5px;
   font-weight: 500;
-  color: var(--muted);
+  color: var(--ink-2);
   cursor: pointer;
-  transition: border-color .16s var(--ease), color .16s var(--ease);
+  transition: border-color .16s var(--ease), color .16s var(--ease), background .16s var(--ease);
 }
-.example:hover { border-color: var(--ink); color: var(--ink); }
+/* The glyph is drawn by a pseudo-element rather than an inline <svg>
+   so that the chip's textContent stays exactly the query it fills the
+   box with. Masking is what tints it with the chip's own ink; where a
+   browser cannot mask, the chip is simply text, never a solid block. */
+@supports ((mask-image: none) or (-webkit-mask-image: none)) {
+  .example::before {
+    content: '';
+    width: 13px; height: 13px;
+    flex: none;
+    background: currentColor;
+    opacity: .55;
+    -webkit-mask: var(--search-glyph) center / contain no-repeat;
+    mask: var(--search-glyph) center / contain no-repeat;
+  }
+}
+.example:hover { border-color: var(--ink); color: var(--ink); background: var(--surface-2); }
+.example:active { background: var(--line); }
 
 /* ---------- results ---------- */
 
@@ -634,24 +704,33 @@ a.item-card:hover .item-name { text-decoration: underline; text-underline-offset
 
 /* ---------- steps ---------- */
 
+/* The explanation, not the product: it sits on the page's quiet
+   surface, at a smaller size than the search above it, so a visitor
+   who already knows what to do never has to step over it. */
+.how-section {
+  background: var(--surface-2);
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  padding: 52px 0;
+}
+.how-section .section-head { margin-bottom: 26px; }
+.how-section .section-head h2 { font-size: 19px; letter-spacing: -.015em; }
+
 .steps {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 0;
-  border-top: 1px solid var(--line);
+  gap: 28px;
 }
-.step { padding: 28px 32px 30px 0; border-right: 1px solid var(--line); }
-.step:last-child { border-right: 0; padding-right: 0; }
-.step:not(:first-child) { padding-left: 32px; }
+.step { display: flex; gap: 12px; align-items: baseline; }
 .step-num {
-  display: block;
-  font-size: 13px;
+  flex: none;
+  font-size: 12.5px;
   font-weight: 600;
   color: var(--muted);
-  margin-bottom: 12px;
+  font-variant-numeric: tabular-nums;
 }
-.step h3 { font-size: 17px; margin-bottom: 7px; }
-.step p { color: var(--muted); font-size: 14.5px; line-height: 1.55; }
+.step h3 { font-size: 15.5px; margin-bottom: 4px; }
+.step p { color: var(--muted); font-size: 14px; line-height: 1.5; }
 
 /* ---------- closing call to action ---------- */
 
@@ -662,6 +741,16 @@ a.item-card:hover .item-name { text-decoration: underline; text-underline-offset
   border: 1px solid var(--line);
   border-radius: var(--r-lg);
 }
+
+/* On the homepage the search is already on the page, so the closing
+   prompt is a way back to it — a quiet line and a secondary button.
+   Two identical black "Find my clothes" buttons on one page would each
+   make the other look less like the thing to press. */
+.cta-quiet {
+  text-align: center;
+  padding: 44px 0 0;
+}
+.cta-quiet p { color: var(--muted); font-size: 15.5px; margin-bottom: 16px; }
 .cta-band h2 { font-size: clamp(23px, 2.6vw, 30px); margin-bottom: 10px; text-wrap: balance; }
 .cta-band p { color: var(--muted); max-width: 44ch; margin: 0 auto 26px; font-size: 16px; text-wrap: pretty; }
 
@@ -729,9 +818,7 @@ a.item-card:hover .item-name { text-decoration: underline; text-underline-offset
 
 @media (max-width: 900px) {
   :root { --section: 64px; }
-  .steps { grid-template-columns: 1fr; border-top: 0; }
-  .step { border-right: 0; border-top: 1px solid var(--line); padding: 22px 0 24px; }
-  .step:not(:first-child) { padding-left: 0; }
+  .steps { grid-template-columns: 1fr; gap: 18px; }
   .signal-list { grid-template-columns: 1fr; gap: 0; }
 }
 
@@ -740,7 +827,7 @@ a.item-card:hover .item-name { text-decoration: underline; text-underline-offset
   .hero { padding: 44px 0 24px; }
   .hero h1 { max-width: 100%; }
   .page-head { padding: 40px 0 0; }
-  .search-block { padding-top: 24px; }
+  .search-block { padding: 4px 0 56px; }
 
   .nav-toggle { display: grid; }
   .nav-links {
@@ -766,14 +853,23 @@ a.item-card:hover .item-name { text-decoration: underline; text-underline-offset
     font-size: 16px;
   }
 
-  /* the primary action takes the full width and leads the row */
-  /* an example is tapped, not clicked, so it gets a real target */
+  /* the primary action takes the full width and leads the row; the
+     secondary controls sit under it rather than beside it */
+  .ask-card { padding: 12px; border-radius: 16px; }
+  .ask-field { padding: 13px 14px; gap: 10px; }
+  .ask-card textarea { font-size: 17px; min-height: 66px; }
+
+  .ask-actions { flex-wrap: wrap; gap: 8px; }
+  .ask-actions .btn-primary { flex: 1 1 100%; order: 1; }
+  .ask-actions .attach-btn { order: 2; height: 44px; padding: 0 14px; }
+  .ask-actions .attach-hint { display: none; }
+  .ask-actions .link-btn { order: 3; margin-left: auto; }
+
+  .ask-examples { gap: 7px; }
   .example { padding: 9px 14px; }
 
-  .ask-actions { flex-wrap: wrap; gap: 6px; }
-  .ask-actions .btn-primary { flex: 1 1 100%; order: 1; }
-  .ask-actions .attach-btn { order: 2; }
-  .ask-actions .link-btn { order: 3; margin-left: auto; }
+  .how-section { padding: 40px 0; }
+  .cta-quiet { padding-top: 34px; }
 
   .grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 14px; }
   .item-body { padding: 12px 12px 13px; }
