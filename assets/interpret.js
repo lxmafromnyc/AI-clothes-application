@@ -1,5 +1,5 @@
 /* =========================================================
-   FindWear — request interpretation (client side)
+   Fynd — request interpretation (client side)
 
    Sends what the shopper typed to the interpreter endpoint, which calls
    OpenAI server-side so the API key never reaches the browser. This is the

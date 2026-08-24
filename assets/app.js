@@ -1,5 +1,5 @@
 /* =========================================================
-   FindWear — rendering and page behaviour
+   Fynd — rendering and page behaviour
 
    Reads the canonical product shape from assets/products.js and nothing
    else. Swapping the data source changes what appears; it does not change
@@ -7,20 +7,9 @@
    ========================================================= */
 
 /* ---------- artwork ----------
-   Used when a product has no usable photo. Colour families and garment
-   kinds a feed may not know about fall back to a neutral tile and a
-   generic garment, so unfamiliar data still renders. */
-
-const COLORS = {
-  Neutral: { dot: '#D7C9B6', from: '#F0E9DF', to: '#CDBCA6', dark: false },
-  Black: { dot: '#1E1E22', from: '#33333A', to: '#121216', dark: true },
-  White: { dot: '#F5F4F1', from: '#FFFFFF', to: '#E6E4DE', dark: false },
-  Blue: { dot: '#5B7FB9', from: '#D3E0F4', to: '#5B7FB9', dark: true },
-  Green: { dot: '#6F8F70', from: '#DCE7D8', to: '#6F8F70', dark: true },
-  Earth: { dot: '#A97B54', from: '#EFD9C4', to: '#A97B54', dark: true },
-  Pastel: { dot: '#E4C6E6', from: '#FBE6EE', to: '#D9C6F0', dark: false },
-  Bright: { dot: '#EF6F5B', from: '#FFD98A', to: '#EF6F5B', dark: true }
-};
+   Drawn when a product has no usable photo. One neutral tile and a
+   garment outline: the artwork stands in for a picture, it does not
+   decorate the page, so it carries no colour of its own. */
 
 const SILHOUETTES = {
   tee: '<path d="M22 12 L12 17 L8 25 L15 29 L18 26 L18 54 L46 54 L46 26 L49 29 L56 25 L52 17 L42 12 C40 17 24 17 22 12 Z"/>',
@@ -35,9 +24,6 @@ const SILHOUETTES = {
   sneaker: '<path d="M9 44 L9 39 L20 35 L28 28 L33 28 L38 37 L46 39 L54 42 L54 47 L9 47 Z"/><path d="M7 47 h50 v5 h-50 z" opacity=".5"/>'
 };
 
-const FALLBACK_COLOR = { dot: '#C9C6C0', from: '#EFEDE9', to: '#CFCBC4', dark: false };
-
-const colorOf = (item) => COLORS[(item.colors && item.colors[0]) || ''] || FALLBACK_COLOR;
 const shapeOf = (item) => SILHOUETTES[item.category] || SILHOUETTES.tee;
 
 /* ---------- rendering ----------
@@ -46,24 +32,19 @@ const shapeOf = (item) => SILHOUETTES[item.category] || SILHOUETTES.tee;
 
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
-const SPARK = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2l1.9 5.6L19.5 9.5 13.9 11.4 12 17l-1.9-5.6L4.5 9.5l5.6-1.9L12 2zM19 15l.9 2.6 2.6.9-2.6.9L19 22l-.9-2.6-2.6-.9 2.6-.9L19 15z"/></svg>';
-const EXTERNAL = '<svg class="ext" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7M9 7h8v8"/></svg>';
+const ARROW = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7M9 7h8v8"/></svg>';
 
-function artSvg(item) {
-  const c = colorOf(item);
-  const ink = c.dark ? 'rgba(255,255,255,.44)' : 'rgba(22,23,28,.26)';
-  return `<svg class="silhouette" viewBox="0 0 64 64" fill="${ink}" aria-hidden="true">${shapeOf(item)}</svg>`;
-}
+const artSvg = (item) =>
+  `<svg class="silhouette" viewBox="0 0 64 64" fill="currentColor" aria-hidden="true">${shapeOf(item)}</svg>`;
 
-/* photo when the product has one, drawn artwork otherwise. The gradient
-   sits on the container either way, so replacing a failed photo with
-   artwork needs no style changes. */
-function media(item, cls, badge) {
-  const c = colorOf(item);
+/* photo when the product has one, drawn artwork otherwise. The tile is
+   the same neutral either way, so replacing a failed photo with artwork
+   needs no style changes. */
+function media(item, badge) {
   const inner = item.imageUrl
     ? `<img src="${esc(item.imageUrl)}" alt="${esc(item.name)}" loading="lazy" decoding="async" data-fallback="${esc(item.id)}">`
     : artSvg(item);
-  return `<div class="${cls}" style="background:linear-gradient(150deg, ${c.from}, ${c.to})">${inner}${badge || ''}</div>`;
+  return `<div class="item-media">${inner}${badge || ''}</div>`;
 }
 
 /* a dead image URL leaves drawn artwork in its place rather than a broken
@@ -77,8 +58,6 @@ function bindImageFallback(root) {
   });
 }
 
-/* A product with no productUrl is not a real listing. It is marked on the
-   card itself so a sample row can never read as something you can buy. */
 /* Money keeps its cents: 72.5 from a source must read $72.50, not $72.5.
    Whole amounts stay whole, matching how the catalogue rows read. */
 function formatPrice(value) {
@@ -88,54 +67,59 @@ function formatPrice(value) {
   return '$' + (Number.isInteger(n) ? String(n) : n.toFixed(2));
 }
 
-const SAMPLE_BADGE = '<span class="item-badge item-badge--sample">Sample</span>';
+/* A product with no productUrl is not a real listing. It is marked on the
+   card itself so a sample row can never read as something you can buy. */
+const SAMPLE_BADGE = '<span class="item-badge">Sample</span>';
 
 /* Shown once above any grid that contains placeholder rows. */
 const SAMPLE_NOTE = 'Items marked <strong>Sample</strong> are placeholder data for the demo, not real listings.';
 const sampleNote = (items) => (items.some((i) => !i.productUrl)
   ? `<p class="sample-note">${SAMPLE_NOTE}</p>` : '');
 
-/* `brand` is optional on a verified record: a cross-retailer source often
-   has no separate brand for a listing, and the gate lets such a product
-   through rather than dropping a real item over a field it never claimed.
-   The line is therefore rendered only when the source supplied one — the
-   retailer already has its own badge, and repeating it here would read as
-   a brand the source never stated. */
-function productCard(item, index, badge, extra) {
+/* The short line under the price. Three attributes at most, in one
+   order, from whichever of them the record actually carries — provider
+   records bring colours and sizes, catalogue rows bring fits and styles,
+   and both end up reading the same way. */
+function attributes(item) {
+  const sizes = (item.sizes || []).slice(0, 3).join(' / ');
+  return [
+    (item.colors || [])[0],
+    (item.fits || [])[0],
+    (item.styles || [])[0],
+    sizes || null
+  ].filter(Boolean).slice(0, 3).join(' \u00b7 ');
+}
+
+/* One card, one shape, everywhere it is used:
+
+     image -> retailer -> name -> price -> attributes -> action
+
+   Nothing on it is conditional on which page or which search produced
+   it, so a grid always reads as one set of rows. The only variation is
+   the action, which tells the truth about whether there is somewhere to
+   go: a real listing links out, a placeholder says it is a placeholder. */
+function productCard(item) {
   const linked = Boolean(item.productUrl);
   const tag = linked ? 'a' : 'article';
   const attrs = linked ? ` href="${esc(item.productUrl)}" target="_blank" rel="noopener noreferrer"` : '';
-  /* provider records carry colors and sizes; catalogue rows carry fits.
-     Read both defensively so either shape renders. */
-  const tags = [(item.colors || [])[0], (item.fits || [])[0] || (item.sizes || []).join(' / ')].filter(Boolean)
-    .map((t) => `<span>${esc(t)}</span>`).join('');
-  return `<${tag} class="item-card" style="--i:${index}"${attrs}>
-    ${media(item, 'item-media', (badge || '') + (linked ? '' : SAMPLE_BADGE))}
+  const seller = item.retailer || item.brand || '';
+  const price = formatPrice(item.price);
+  const attrLine = attributes(item);
+  const action = linked
+    ? `<span class="item-action">View item ${ARROW}<span class="sr-only">(opens in a new tab)</span></span>`
+    : '<span class="item-action item-action--muted">Sample item</span>';
+
+  return `<${tag} class="item-card"${attrs}>
+    ${media(item, linked ? '' : SAMPLE_BADGE)}
     <div class="item-body">
-      <p class="item-brand">${item.brand ? esc(item.brand) : ''}${linked ? EXTERNAL : ''}</p>
+      <p class="item-retailer">${esc(seller)}</p>
       <h3 class="item-name">${esc(item.name)}</h3>
-      <div class="item-row">
-        <span class="item-price">${formatPrice(item.price)}</span>
-        <div class="item-tags">${tags}</div>
-      </div>
-      ${extra || ''}
+      <p class="item-price${price ? '' : ' item-price--none'}">${price || 'Price at retailer'}</p>
+      <p class="item-attrs">${esc(attrLine)}</p>
+      ${action}
     </div>
   </${tag}>`;
 }
-
-const resultCard = (item, index) => productCard(item, index,
-  `<span class="item-badge">${item.score}% match</span>`,
-  `<p class="item-why">${SPARK}<span>${esc(item.why)}</span></p>`);
-
-/* A verified record from the product source. The badge names the retailer
-   rather than a match percentage: FindWear did not score these, the source
-   returned them for the request, and showing a made-up score would be
-   inventing information about a real product. */
-const providerCard = (item, index) => productCard(item, index,
-  `<span class="item-badge">${esc(item.retailer)}</span>`);
-
-const browseCard = (item, index) => productCard(item, index,
-  item.styles[0] ? `<span class="item-badge">${esc(item.styles[0])}</span>` : '');
 
 /* ---------- filter controls ----------
    Built from the values present in the data, so a new source brings its
@@ -177,55 +161,6 @@ function orderFacet(counts, key) {
   });
 })();
 
-/* ---------- reveal sections on scroll ---------- */
-(function reveal() {
-  const items = document.querySelectorAll('.reveal');
-  if (!items.length) return;
-
-  if (!('IntersectionObserver' in window)) {
-    items.forEach((el) => el.classList.add('in'));
-    return;
-  }
-  const io = new IntersectionObserver((entries) => {
-    entries.forEach((entry) => {
-      if (entry.isIntersecting) {
-        entry.target.classList.add('in');
-        io.unobserve(entry.target);
-      }
-    });
-  }, { rootMargin: '0px 0px -8% 0px', threshold: .12 });
-
-  items.forEach((el) => io.observe(el));
-})();
-
-/* ---------- home: preview panel ---------- */
-(function heroPanel() {
-  const list = document.getElementById('hero-picks');
-  if (!list || typeof Products === 'undefined') return;
-
-  Products.subscribe(() => {
-    const picks = (typeof HERO_PICKS === 'undefined' ? [] : HERO_PICKS)
-      .map(({ id, score }) => ({ item: Products.byId(id), score }))
-      .filter((p) => p.item);
-
-    list.innerHTML = picks.map(({ item, score }) => {
-      const linked = Boolean(item.productUrl);
-      const tag = linked ? 'a' : 'div';
-      const attrs = linked ? ` href="${esc(item.productUrl)}" target="_blank" rel="noopener noreferrer"` : '';
-      return `<${tag} class="mini-item"${attrs}>
-        ${media(item, 'mini-thumb', linked ? '' : '<span class="mini-sample">Sample</span>')}
-        <div class="mini-meta">
-          <strong class="mini-name">${esc(item.name)}</strong>
-          <span class="mini-retailer">${esc(item.brand || item.retailer || '')}${item.price == null ? '' : ` &middot; ${formatPrice(item.price)}`}${linked ? EXTERNAL : ''}</span>
-        </div>
-        <span class="match-pill">${score}%</span>
-      </${tag}>`;
-    }).join('');
-
-    bindImageFallback(list);
-  });
-})();
-
 /* ---------- find clothes ----------
    One text box. What the shopper types goes to the interpreter, which
    returns structured preferences, and those are matched against whatever
@@ -237,6 +172,7 @@ function orderFacet(counts, key) {
   const input = document.getElementById('ask');
   const results = document.getElementById('results');
   const error = document.getElementById('form-error');
+  const status = document.getElementById('search-status');
   const reset = document.getElementById('reset-form');
   const examples = document.getElementById('ask-examples');
 
@@ -285,22 +221,17 @@ function orderFacet(counts, key) {
     return { ratio: possible ? Math.min(earned / possible, 1) : 0, hits };
   }
 
-  function reason(hits, prefs, item) {
-    const parts = [];
-    if (hits.category) parts.push(`the ${String(hits.category).toLowerCase()} you asked for`);
-    if (hits.color) parts.push(`${String(hits.color).toLowerCase()} tones`);
-    if (hits.fit) parts.push(`${String(hits.fit).toLowerCase()} fit`);
-    if (hits.occasion) parts.push(`made for ${String(hits.occasion).toLowerCase()}`);
-    if (hits.brand) parts.push(`by ${hits.brand}`);
-    if (hits.style) parts.push(`${String(hits.style).toLowerCase()} styling`);
-    if (prefs.maxPrice && item.price != null) parts.push(`under $${prefs.maxPrice}`);
-
-    const text = parts.slice(0, 3).join(', ');
-    if (!text) return 'Close to what you described.';
-    return text.charAt(0).toUpperCase() + text.slice(1) + '.';
+  /* What the interpreter took from the request, said once above the grid.
+     This is the only place Fynd claims to have understood anything: no
+     card carries a match score or a reason of its own, so a row of
+     results reads as products rather than as assertions about them. */
+  function readback(prefs) {
+    const chips = understood(prefs);
+    if (!chips.length) return '';
+    return `<p class="understood-label">Fynd understood</p>
+      <div class="understood">${chips.map((c) => `<span>${esc(c)}</span>`).join('')}</div>`;
   }
 
-  /* what the interpreter took from the request, shown back to the shopper */
   function understood(prefs) {
     const chips = [
       ...prefs.categories, ...prefs.colors, ...prefs.fits, ...prefs.occasions,
@@ -316,43 +247,35 @@ function orderFacet(counts, key) {
   /* Verified records from the product source. Every field shown came from
      the source and passed the gate in api/providers/product-source.js. */
   function renderProducts(found, outcome) {
-    const chips = understood(outcome.preferences);
-    const readback = chips.length
-      ? `<div class="understood">${chips.map((c) => `<span>${esc(c)}</span>`).join('')}</div>`
-      : '';
     const notice = outcome.source !== 'openai' && outcome.notice
-      ? `<p class="notice" role="status"><span>${esc(outcome.notice)}</span></p>` : '';
+      ? `<p class="notice" role="status">${esc(outcome.notice)}</p>` : '';
 
     results.innerHTML = `<div class="results-head">
-        <div>
-          <h2>${found.products.length} ${found.products.length === 1 ? 'piece' : 'pieces'} found</h2>
-          ${readback}
-        </div>
+        <h2>${found.products.length} ${found.products.length === 1 ? 'piece' : 'pieces'} found</h2>
+        ${readback(outcome.preferences)}
       </div>
       ${notice}
-      <div class="grid">${found.products.map(providerCard).join('')}</div>`;
+      <div class="grid">${found.products.map(productCard).join('')}</div>`;
     bindImageFallback(results);
+    announce(`${found.products.length} ${found.products.length === 1 ? 'piece' : 'pieces'} found.`);
   }
 
   /* A configured source that returned nothing. The request readback stays,
      so it is clear what was searched for, and the reason is stated plainly
      instead of being filled with placeholder products. */
   function renderNothing(found, outcome) {
-    const chips = understood(outcome.preferences);
-    const readback = chips.length
-      ? `<div class="understood">${chips.map((c) => `<span>${esc(c)}</span>`).join('')}</div>`
-      : '';
     const heading = found.state === 'empty' ? 'No matches found' : 'Product search unavailable';
     const detail = found.state === 'empty'
       ? 'Nothing came back that could be verified for this request. Try describing it a little differently, or ask for something broader.'
       : 'This is a problem on our side, not with your request. Try again in a moment.';
 
-    results.innerHTML = `<div class="results-head"><div><h2>${heading}</h2>${readback}</div></div>
-      ${found.notice ? `<p class="notice" role="status"><span>${esc(found.notice)}</span></p>` : ''}
+    results.innerHTML = `<div class="results-head"><h2>${heading}</h2>${readback(outcome.preferences)}</div>
+      ${found.notice ? `<p class="notice" role="status">${esc(found.notice)}</p>` : ''}
       <div class="empty">
         <h3>${heading}</h3>
         <p>${esc(detail)}</p>
       </div>`;
+    announce(`${heading}. ${detail}`);
   }
 
   function render(prefs, outcome, found) {
@@ -366,60 +289,57 @@ function orderFacet(counts, key) {
     const scored = Products.all()
       .filter(withinBudget)
       .map((item) => {
-        const { ratio, hits } = score(item, prefs);
-        return { ...item, ratio, score: Math.round(70 + ratio * 28), why: reason(hits, prefs, item) };
+        const { ratio } = score(item, prefs);
+        return { ...item, ratio };
       })
       .filter((item) => item.ratio > 0)
       .sort((a, b) => b.ratio - a.ratio || (a.price ?? Infinity) - (b.price ?? Infinity))
       .slice(0, 8);
 
-    const chips = understood(prefs);
-    const readback = chips.length
-      ? `<div class="understood">${chips.map((c) => `<span>${esc(c)}</span>`).join('')}</div>`
-      : '';
-
     /* said plainly when the shown items are samples, not real listings */
     const sourceNotice = found && found.notice
-      ? `<p class="notice" role="status"><span>${esc(found.notice)}</span></p>` : '';
+      ? `<p class="notice" role="status">${esc(found.notice)}</p>` : '';
 
     /* never let a local keyword match read as an AI interpretation */
     const notice = outcome && outcome.source !== 'openai' && outcome.notice
-      ? `<p class="notice" role="status">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg>
-          <span>${esc(outcome.notice)}</span>
-        </p>`
-      : '';
+      ? `<p class="notice" role="status">${esc(outcome.notice)}</p>` : '';
 
     if (!scored.length) {
-      results.innerHTML = `<div class="results-head"><div><h2>No matches yet</h2>${readback}</div></div>
+      results.innerHTML = `<div class="results-head"><h2>No matches yet</h2>${readback(prefs)}</div>
         ${notice}
         ${sourceNotice}
         <div class="empty">
           <h3>Nothing in the catalogue fits that request</h3>
           <p>Try describing it a little differently, or ask for something broader.</p>
         </div>`;
+      announce('No matches yet. Try describing it a little differently, or ask for something broader.');
       return;
     }
 
     results.innerHTML = `<div class="results-head">
-        <div>
-          <h2>${scored.length} ${scored.length === 1 ? 'piece' : 'pieces'} picked for you</h2>
-          ${readback}
-        </div>
+        <h2>${scored.length} ${scored.length === 1 ? 'piece' : 'pieces'} picked for you</h2>
+        ${readback(prefs)}
       </div>
       ${notice}
       ${sourceNotice}
       ${sampleNote(scored)}
-      <div class="grid">${scored.map(resultCard).join('')}</div>`;
+      <div class="grid">${scored.map(productCard).join('')}</div>`;
     bindImageFallback(results);
+    announce(`${scored.length} ${scored.length === 1 ? 'piece' : 'pieces'} picked for you.`);
+  }
+
+  /* One short line for anyone not looking at the grid. */
+  function announce(text) {
+    if (status) status.textContent = text;
   }
 
   async function search(query, attached) {
     error.classList.remove('show');
+    error.textContent = '';
+    input.removeAttribute('aria-invalid');
+    announce('Searching\u2026');
     results.hidden = false;
-    results.innerHTML = `<p class="thinking">
-      <span class="spark"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2l1.9 5.6L19.5 9.5 13.9 11.4 12 17l-1.9-5.6L4.5 9.5l5.6-1.9L12 2z"/></svg></span>
-      Reading your request…</p>`;
+    results.innerHTML = '<p class="thinking"><span class="dot"></span>Reading your request…</p>';
     results.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
     const outcome = await Interpreter.interpret(query, vocabulary());
@@ -455,10 +375,13 @@ function orderFacet(counts, key) {
     e.preventDefault();
     const query = input.value.trim();
     if (!query) {
+      error.textContent = 'Tell Fynd what you\u2019re looking for first.';
       error.classList.add('show');
+      input.setAttribute('aria-invalid', 'true');
       input.focus();
       return;
     }
+    input.removeAttribute('aria-invalid');
     search(query, attachments ? attachments.manifest() : []);
   });
 
@@ -468,6 +391,15 @@ function orderFacet(counts, key) {
       e.preventDefault();
       form.requestSubmit();
     }
+  });
+
+  /* The closing call to action points back at the search. Landing there
+     with the cursor already in the box means the button does the whole
+     job in one press rather than leaving the shopper to find the field. */
+  document.querySelectorAll('a[href="#search"]').forEach((link) => {
+    link.addEventListener('click', () => {
+      window.setTimeout(() => input.focus({ preventScroll: true }), 400);
+    });
   });
 
   if (examples) {
@@ -482,6 +414,9 @@ function orderFacet(counts, key) {
   reset.addEventListener('click', () => {
     input.value = '';
     error.classList.remove('show');
+    error.textContent = '';
+    input.removeAttribute('aria-invalid');
+    announce('');
     /* starting over drops the attachments too, and hands back the
        object URLs their thumbnails were holding */
     if (attachments) attachments.clear();
@@ -508,7 +443,7 @@ function orderFacet(counts, key) {
     count.textContent = `${items.length} ${items.length === 1 ? 'piece' : 'pieces'}`;
     const note = document.getElementById('discover-note');
     if (note) note.innerHTML = sampleNote(items);
-    grid.innerHTML = items.map(browseCard).join('');
+    grid.innerHTML = items.map(productCard).join('');
     bindImageFallback(grid);
   }
 

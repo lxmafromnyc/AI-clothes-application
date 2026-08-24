@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /* =========================================================
-   FindWear — interface tests
+   Fynd — interface tests
 
    Drives the real page in a real browser: dragging files onto the
    search card, choosing them with the button, removing them, and
@@ -103,11 +103,16 @@ const dragOverOnly = ({ selector }) => {
    of selectors, so this walks the rendered document instead of checking a
    fixed list: markup added later is covered the day it lands.
 
-   Every element that renders text of its own must draw it in plain black,
-   with none of the gradient-filled, clipped or glowing treatments the
-   interface used to carry. */
-const textStyleProblems = (page) => page.evaluate(() => {
-  const BLACK = 'rgb(0, 0, 0)';
+   The rule the interface holds to: type is set in neutral ink and
+   nothing else. Primary text is black, supporting copy one step down,
+   metadata muted, and the single inverted surface (the primary button)
+   sets its label in white. Every one of those is a pure grey — equal
+   red, green and blue — so no hue can reach the type, and none of the
+   gradient-filled, clipped or glowing treatments the interface used to
+   carry may come back either. */
+const NEUTRALS = ['rgb(0, 0, 0)', 'rgb(43, 43, 43)', 'rgb(107, 107, 107)', 'rgb(255, 255, 255)'];
+
+const textStyleProblems = (page) => page.evaluate((allowed) => {
   const SKIP = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE']);
   const problems = [];
 
@@ -116,6 +121,12 @@ const textStyleProblems = (page) => page.evaluate(() => {
     const cls = typeof el.className === 'string' && el.className.trim()
       ? '.' + el.className.trim().split(/\s+/).join('.') : '';
     return `${el.tagName.toLowerCase()}${id}${cls}`;
+  };
+
+  /* a pure grey has equal channels; anything else carries a hue */
+  const grey = (value) => {
+    const m = /^rgba?\((\d+), (\d+), (\d+)/.exec(value || '');
+    return Boolean(m) && m[1] === m[2] && m[2] === m[3];
   };
 
   for (const el of document.querySelectorAll('body *')) {
@@ -127,8 +138,9 @@ const textStyleProblems = (page) => page.evaluate(() => {
     const cs = getComputedStyle(el);
     const where = `${label(el)} ("${el.textContent.trim().slice(0, 32)}")`;
 
-    if (cs.color !== BLACK) problems.push(`${where} is ${cs.color}, not black`);
-    if (cs.webkitTextFillColor && cs.webkitTextFillColor !== BLACK) {
+    if (!grey(cs.color)) problems.push(`${where} is ${cs.color}, which is not a neutral`);
+    else if (!allowed.includes(cs.color)) problems.push(`${where} is ${cs.color}, which is not one of the four inks`);
+    if (cs.webkitTextFillColor && !grey(cs.webkitTextFillColor)) {
       problems.push(`${where} fills its glyphs with ${cs.webkitTextFillColor}`);
     }
     if ((cs.webkitBackgroundClip || cs.backgroundClip) === 'text') {
@@ -138,7 +150,7 @@ const textStyleProblems = (page) => page.evaluate(() => {
     if (cs.textShadow !== 'none') problems.push(`${where} has a text shadow: ${cs.textShadow}`);
   }
   return problems;
-});
+}, NEUTRALS);
 
 /* Placeholders are not text nodes, so they are checked on their own. */
 const placeholderColours = (page) => page.$$eval('[placeholder]', (ns) => ns.map((n) => {
@@ -417,13 +429,13 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
      static shell */
   const settled = async (file) => {
     const page = await openPage(file);
-    const built = { 'index.html': '.mini-item', 'discover.html': '.item-card' }[file];
+    const built = { 'discover.html': '.item-card' }[file];
     if (built) await page.waitForSelector(built, { timeout: 10000 });
     return page;
   };
 
   for (const file of PAGES) {
-    await test(`every piece of text on ${file} is black`, async () => {
+    await test(`every piece of text on ${file} is set in neutral ink`, async () => {
       const page = await settled(file);
       const problems = await textStyleProblems(page);
       assert.deepStrictEqual(problems, [], `\n        ${problems.join('\n        ')}`);
@@ -443,7 +455,7 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
 
   await test('the headline is plain type, not a gradient fill', async () => {
     const page = await settled('index.html');
-    const grad = await page.$eval('.hero h1 .grad', (n) => {
+    const grad = await page.$eval('.hero h1', (n) => {
       const cs = getComputedStyle(n);
       return {
         color: cs.color,
@@ -459,20 +471,17 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     await page.close();
   });
 
-  await test('search results, badges and product text are black', async () => {
+  await test('search results, badges and product text are set in neutral ink', async () => {
     const page = await open();
     await page.fill('#ask', 'black oversized hoodie');
     await page.click('button[type=submit]');
     await page.waitForSelector('.item-card', { timeout: 10000 });
     const problems = await textStyleProblems(page);
     assert.deepStrictEqual(problems, [], `\n        ${problems.join('\n        ')}`);
-    /* the retailer badge sits over the product image and used to be the
-       one coloured label left on a card */
-    assert.strictEqual(await page.$eval('.item-badge', (n) => getComputedStyle(n).color), 'rgb(0, 0, 0)');
     await page.close();
   });
 
-  await test('attachment chips, the drop cue and the error line are black', async () => {
+  await test('attachment chips, the drop cue and the error line are set in neutral ink', async () => {
     const page = await open();
     await page.evaluate(dropInPage, { selector: '#ask-form', files: [
       { name: 'inspo.png', type: 'image/png', size: 1024 },
@@ -490,11 +499,13 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     await page.close();
   });
 
-  await test('placeholder text is black too', async () => {
+  /* a placeholder is an example, not the value, so it is set in the
+     muted ink — but still a neutral one */
+  await test('placeholder text is set in neutral ink', async () => {
     for (const file of PAGES) {
       const page = await settled(file);
       (await placeholderColours(page)).forEach(({ selector, color }) => {
-        assert.strictEqual(color, 'rgb(0, 0, 0)', `${file} ${selector} placeholder is ${color}`);
+        assert.ok(NEUTRALS.includes(color), `${file} ${selector} placeholder is ${color}`);
       });
       await page.close();
     }
@@ -504,11 +515,13 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     const css = fs.readFileSync(path.join(REPO, 'assets', 'styles.css'), 'utf8');
     assert.ok(!/background-clip:\s*text/.test(css), 'no rule may clip a background to its text');
     assert.ok(!/text-shadow/.test(css), 'no rule may glow');
-    /* the ink tokens every text rule resolves through */
-    ['--ink', '--ink-2', '--muted', '--accent-ink'].forEach((token) => {
+    /* the ink tokens every text rule resolves through: three levels of
+       grey and the one inverted label colour, all of them neutral */
+    const INKS = { '--ink': '#000000', '--ink-2': '#2b2b2b', '--muted': '#6b6b6b', '--on-dark': '#ffffff' };
+    Object.entries(INKS).forEach(([token, expected]) => {
       const m = new RegExp(`${token}:\\s*([^;]+);`).exec(css);
       assert.ok(m, `${token} should be defined`);
-      assert.strictEqual(m[1].trim().toLowerCase(), '#000000', `${token} is ${m && m[1]}`);
+      assert.strictEqual(m[1].trim().toLowerCase(), expected, `${token} is ${m && m[1]}`);
     });
   });
 

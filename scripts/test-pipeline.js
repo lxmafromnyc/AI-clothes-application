@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /* =========================================================
-   FindWear — product pipeline test
+   Fynd — product pipeline test
 
    Exercises the whole server side of a search without touching the
    network: interpreted intent -> adapter query -> provider response ->

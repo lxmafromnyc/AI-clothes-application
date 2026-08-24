@@ -1,5 +1,5 @@
 /* =========================================================
-   FindWear — search attachments
+   Fynd — search attachments
 
    Lets someone drop photos or documents onto the search box, or pick
    them with a button, and shows what they attached before they search.
@@ -104,7 +104,7 @@
     const already = Array.isArray(existing) ? existing : [];
 
     if (!isImage(file) && !isDocument(file)) {
-      return `${file.name} is a ${labelFor(file)} file, which FindWear does not take.`;
+      return `${file.name} is a ${labelFor(file)} file, which Fynd does not take.`;
     }
     if (Number(file.size) > MAX_FILE_BYTES) {
       return `${file.name} is ${formatSize(file.size)}. The limit is ${formatSize(MAX_FILE_BYTES)} per file.`;

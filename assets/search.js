@@ -1,5 +1,5 @@
 /* =========================================================
-   FindWear — product search (client side)
+   Fynd — product search (client side)
 
    Sends the structured intent from the interpreter to /api/search, which
    holds the product source's credentials server-side and returns only
@@ -42,7 +42,7 @@
     return base.replace(/\/interpret(\/)?$/, '/search');
   }
 
-  const NOT_CONNECTED = 'No product source is connected yet, so these are FindWear’s sample items rather than real listings.';
+  const NOT_CONNECTED = 'No product source is connected yet, so these are Fynd’s sample items rather than real listings.';
   const UNAVAILABLE = 'The product search could not be reached, so no live results are available right now.';
   const FAILED = 'The product search failed, so no live results are available right now.';
   const NOTHING = 'The product search ran but returned nothing that could be verified for this request.';

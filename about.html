@@ -3,9 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>About — FindWear</title>
-<meta name="description" content="What FindWear does and how its AI turns your preferences into clothing recommendations.">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='9' fill='%23000000'/><path d='M16 6l2.5 7.5L26 16l-7.5 2.5L16 26l-2.5-7.5L6 16l7.5-2.5z' fill='white'/></svg>">
+<title>About — Fynd</title>
+<meta name="description" content="What Fynd does, how it reads a request, and what it takes into account.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%23000000'/><text x='16' y='23' font-family='Helvetica,Arial,sans-serif' font-size='20' font-weight='700' fill='white' text-anchor='middle'>F</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -14,101 +14,79 @@
 </head>
 <body>
 
+<a class="skip-link" href="#main">Skip to content</a>
+
 <header class="site-header">
   <div class="container">
     <div class="nav">
-      <a class="brand" href="index.html">
-        <span class="mark"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2l1.9 5.6L19.5 9.5 13.9 11.4 12 17l-1.9-5.6L4.5 9.5l5.6-1.9L12 2z"/></svg></span>
-        FindWear
-      </a>
+      <a class="brand" href="index.html">Fynd</a>
       <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" aria-label="Open menu"><span></span></button>
       <nav class="nav-links" id="site-nav" aria-label="Main">
         <a href="index.html">Home</a>
         <a href="find-clothes.html">Find Clothes</a>
         <a href="discover.html">Discover</a>
-        <a href="about.html" aria-current="page">About</a>
+        <a class="nav-secondary" href="about.html" aria-current="page">About</a>
       </nav>
     </div>
   </div>
 </header>
 
-<main>
+<main id="main">
 
-  <div class="narrow">
-    <div class="page-head">
-      <span class="eyebrow"><span class="dot"></span>About FindWear</span>
-      <h1>Clothes that match you, not the algorithm</h1>
-      <p class="lead">FindWear is an AI clothing finder. You describe what you want to wear in your own words — it returns pieces that fit.</p>
+  <div class="page-head">
+    <div class="narrow">
+      <h1>About Fynd</h1>
+      <p>An AI clothing finder. You describe what you want to wear; it returns items that match.</p>
     </div>
   </div>
 
-  <section class="section section--tight" style="padding-top:44px">
+  <section class="section section--tight">
     <div class="narrow">
 
-      <div class="prose-card reveal">
-        <div class="section-head" style="margin-bottom:26px">
-          <h2>How the recommendations work</h2>
-        </div>
-        <div class="how">
-          <div class="how-item">
-            <span class="step-num">1</span>
-            <div>
-              <h3>You describe what you want</h3>
-              <p>One sentence in your own words — "a black shirt for school under $50" is plenty.</p>
-            </div>
-          </div>
-          <div class="how-item">
-            <span class="step-num">2</span>
-            <div>
-              <h3>The AI reads your request</h3>
-              <p>It works out the garment, colour, fit, occasion, budget and anything else you mentioned, then scores every piece against it.</p>
-            </div>
-          </div>
-          <div class="how-item">
-            <span class="step-num">3</span>
-            <div>
-              <h3>You get a ranked shortlist</h3>
-              <p>Strongest matches first, each with a one-line reason — so the list is quick to scan and easy to trust.</p>
-            </div>
-          </div>
-        </div>
+      <div class="prose">
+        <p>Shopping for clothes online usually means translating what is in your head into a grid of filters — category, colour, size, price, then sorting through what is left. Fynd removes that step. You write one sentence, and it works out the rest.</p>
+        <p>A request like &ldquo;a black oversized hoodie under $80&rdquo; carries a garment, a colour, a fit and a budget. Fynd reads all four, searches connected retailers for them, and shows what came back with the retailer, the price and a link.</p>
       </div>
 
-      <div class="section-head reveal" style="margin:64px 0 24px">
+      <div class="section-head section-head--spaced">
         <h2>What it takes into account</h2>
-        <p class="lead">What the AI looks for in your request, weighted by how much each usually changes what you'd actually buy.</p>
       </div>
 
-      <div class="signal-list reveal">
+      <div class="signal-list">
         <div class="signal"><h3>Garment</h3><p>What you actually asked for — a shirt, a hoodie, trousers.</p></div>
-        <div class="signal"><h3>Colour</h3><p>The tones you name, mapped to the closest ones in stock.</p></div>
+        <div class="signal"><h3>Colour</h3><p>The tones you name, mapped to the closest ones available.</p></div>
         <div class="signal"><h3>Occasion</h3><p>Work, school, evening, weekend — however you phrase it.</p></div>
-        <div class="signal"><h3>Fit</h3><p>"Loose", "oversized", "fitted" all land on the right shape.</p></div>
-        <div class="signal"><h3>Budget</h3><p>Say "under $50" and nothing above it appears.</p></div>
-        <div class="signal"><h3>Brands</h3><p>Name a label and it gets a strong nudge up the list.</p></div>
+        <div class="signal"><h3>Fit</h3><p>&ldquo;Loose&rdquo;, &ldquo;oversized&rdquo; and &ldquo;fitted&rdquo; all land on the right shape.</p></div>
+        <div class="signal"><h3>Budget</h3><p>Say &ldquo;under $50&rdquo; and nothing above it comes back.</p></div>
+        <div class="signal"><h3>Brands</h3><p>Name a label and it is weighted up the list.</p></div>
       </div>
 
-      <div class="faq-row reveal" style="margin-top:56px">
-        <h3>Is this a real shop?</h3>
-        <p>No. FindWear is a demo experience and the catalogue is a small sample set, built to show how the recommendation flow works end to end.</p>
+      <div class="section-head section-head--spaced">
+        <h2>Questions</h2>
       </div>
-      <div class="faq-row reveal">
+
+      <div class="faq-row">
+        <h3>Are these real products?</h3>
+        <p>When a product source is connected, yes — every item comes from that source and links to the retailer. When none is connected, Fynd shows a small sample catalogue and marks each row <strong>Sample</strong> so it cannot be mistaken for stock.</p>
+      </div>
+      <div class="faq-row">
         <h3>Do I need an account?</h3>
-        <p>No. Your request is used to rank the current shortlist and nothing else is stored.</p>
+        <p>No. Your request is used to run one search and nothing is stored.</p>
+      </div>
+      <div class="faq-row">
+        <h3>What happens to a photo I attach?</h3>
+        <p>Only its name, type and size are sent — never the file itself. Fynd does not read attachments yet, so they do not change your results.</p>
       </div>
 
     </div>
   </section>
 
-  <section class="section" style="padding-top:8px">
+  <section class="section section--flush">
     <div class="container">
-      <div class="cta-band reveal">
+      <div class="cta-band">
         <h2>Try it for yourself</h2>
-        <p>A few taps is all it takes to see what FindWear picks for you.</p>
-        <a class="btn btn-primary btn-lg" href="find-clothes.html">
-          Find my clothes
-          <svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
-        </a>
+        <p>One sentence is all it takes.</p>
+        <a class="btn btn-primary btn-lg" href="find-clothes.html">Find my clothes</a>
       </div>
     </div>
   </section>
@@ -118,10 +96,7 @@
 <footer class="site-footer">
   <div class="container">
     <div class="footer-inner">
-      <a class="brand" href="index.html">
-        <span class="mark"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2l1.9 5.6L19.5 9.5 13.9 11.4 12 17l-1.9-5.6L4.5 9.5l5.6-1.9L12 2z"/></svg></span>
-        FindWear
-      </a>
+      <a class="brand" href="index.html">Fynd</a>
       <nav class="footer-links" aria-label="Footer">
         <a href="index.html">Home</a>
         <a href="find-clothes.html">Find Clothes</a>
@@ -129,7 +104,7 @@
         <a href="about.html">About</a>
       </nav>
     </div>
-    <p class="footer-note">FindWear is a demo experience — recommendations come from a sample catalogue.</p>
+    <p class="footer-note">Fynd is a demo experience. Live results come from a connected product source; when none is connected, sample items are shown and labelled as such.</p>
   </div>
 </footer>
 
