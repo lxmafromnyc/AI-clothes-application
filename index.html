@@ -3,109 +3,144 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>FindWear — Tell the AI what you want to wear</title>
-<meta name="description" content="Describe the clothes you want in your own words. FindWear's AI reads your request and finds pieces that match — in seconds.">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='9' fill='%23000000'/><path d='M16 6l2.5 7.5L26 16l-7.5 2.5L16 26l-2.5-7.5L6 16l7.5-2.5z' fill='white'/></svg>">
+<title>Fynd — Describe the clothes you want, and find them</title>
+<meta name="description" content="Describe what you want to wear in plain words. Fynd reads your request and finds real clothes that match, with prices and links to the retailer.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%23000000'/><text x='16' y='23' font-family='Helvetica,Arial,sans-serif' font-size='20' font-weight='700' fill='white' text-anchor='middle'>F</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="assets/styles.css">
+<!-- Where the AI interpreter lives. The function is deployed on Vercel because
+     GitHub Pages cannot run server code; the OpenAI key is held there as an
+     environment variable and never reaches the browser. See README.md. -->
+<meta name="findwear-api" content="https://ai-clothes-application.vercel.app/api/interpret">
 <script>document.documentElement.classList.add('js');</script>
 </head>
 <body>
 
+<a class="skip-link" href="#search">Skip to search</a>
+
 <header class="site-header">
   <div class="container">
     <div class="nav">
-      <a class="brand" href="index.html">
-        <span class="mark"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2l1.9 5.6L19.5 9.5 13.9 11.4 12 17l-1.9-5.6L4.5 9.5l5.6-1.9L12 2z"/></svg></span>
-        FindWear
-      </a>
+      <a class="brand" href="index.html">Fynd</a>
       <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" aria-label="Open menu"><span></span></button>
       <nav class="nav-links" id="site-nav" aria-label="Main">
         <a href="index.html" aria-current="page">Home</a>
         <a href="find-clothes.html">Find Clothes</a>
         <a href="discover.html">Discover</a>
-        <a href="about.html">About</a>
+        <a class="nav-secondary" href="about.html">About</a>
       </nav>
     </div>
   </div>
 </header>
 
-<main>
+<main id="main">
 
   <section class="hero">
     <div class="container">
-      <div class="hero-grid">
-        <div>
-          <span class="eyebrow"><span class="dot"></span>AI clothing finder</span>
-          <h1>Tell the AI what you want to wear.<br><span class="grad">It finds the clothes.</span></h1>
-          <p class="lead">Describe what you are after in your own words. FindWear reads your request and returns a shortlist of pieces that actually match.</p>
-          <div class="btn-row">
-            <a class="btn btn-primary btn-lg" href="find-clothes.html">
-              Find my clothes
-              <svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
-            </a>
-            <a class="btn btn-ghost btn-lg" href="discover.html">Browse styles</a>
-          </div>
-          <p class="hero-note">
-            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2l1.9 5.6L19.5 9.5 13.9 11.4 12 17l-1.9-5.6L4.5 9.5l5.6-1.9L12 2z"/></svg>
-            Takes about 30 seconds. No account needed.
-          </p>
+      <h1>Describe the clothes you want. Fynd finds them.</h1>
+      <p class="lead">Type it the way you would say it — Fynd works out what you mean and returns real items from real retailers, with prices and links.</p>
+    </div>
+  </section>
+
+  <!-- The search is the product, so it sits directly under the headline
+       rather than behind a click. -->
+  <section class="search-block" id="search">
+    <div class="narrow">
+
+      <form class="ask-card" id="ask-form" data-dropzone>
+        <label class="ask-label" for="ask">Describe what you&rsquo;re looking for.</label>
+        <textarea id="ask" name="ask" rows="3" maxlength="400"
+          placeholder="A black oversized hoodie under $80"></textarea>
+
+        <!-- Shown only while a file is over the card. Hidden from
+             assistive technology: it is a visual cue for a pointer
+             gesture, and the file button below is the accessible path. -->
+        <div class="ask-dropveil" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 15v3a2 2 0 002 2h12a2 2 0 002-2v-3"/></svg>
+          <span>Drop to attach</span>
         </div>
 
-        <div class="panel" aria-label="Example of a FindWear recommendation">
-          <div class="panel-head">
-            <span class="panel-label">YOU ASKED FOR</span>
-          </div>
-          <div class="panel-chips">
-            <span>Minimal</span><span>Neutral</span><span>Work</span><span>Under $150</span>
-          </div>
-          <p class="panel-divider">
-            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2l1.9 5.6L19.5 9.5 13.9 11.4 12 17l-1.9-5.6L4.5 9.5l5.6-1.9L12 2z"/></svg>
-            FindWear found
-          </p>
-          <div id="hero-picks"></div>
+        <ul class="attachments" id="attachments" hidden></ul>
+
+        <div class="ask-actions">
+          <button class="btn btn-primary" type="submit">
+            Find my clothes
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+          </button>
+
+          <input class="sr-only" type="file" id="ask-files" name="ask-files">
+          <label class="attach-btn" for="ask-files">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.4 11.05l-9.19 9.19a5 5 0 01-7.07-7.07l9.19-9.19a3.5 3.5 0 014.95 4.95l-9.2 9.19a2 2 0 01-2.82-2.83l8.49-8.48"/></svg>
+            Add a photo
+          </label>
+
+          <button class="link-btn" type="button" id="reset-form">Clear</button>
         </div>
-      </div>
+
+        <!-- Both start empty: an alert is announced when its text
+             arrives, so a message sitting in the markup from page load
+             would never be read out. app.js writes them. -->
+        <p class="form-error" id="form-error" role="alert"></p>
+        <p class="form-error" id="attachment-error" role="alert"></p>
+        <p class="attachment-note" id="attachment-note" hidden>
+          Fynd does not read attachments yet. They are sent with your search, but they do not change your results.
+        </p>
+      </form>
+
+      <p class="ask-examples" id="ask-examples">
+        <span class="examples-label">Try</span>
+        <button type="button" class="example">Black oversized hoodie under $80</button>
+        <button type="button" class="example">Relaxed jeans for everyday wear</button>
+        <button type="button" class="example">Minimal neutral clothes for fall</button>
+      </p>
+
+    </div>
+
+    <!-- Results break out of the search column: the products are the
+         answer, so they get the full width rather than the width of the
+         box that asked the question. -->
+    <div class="container">
+      <!-- The outcome in one line, for screen readers only: the grid
+           itself is too long to announce, and the count is the part
+           worth hearing. -->
+      <p class="sr-only" id="search-status" role="status" aria-live="polite"></p>
+      <div class="results" id="results" hidden></div>
     </div>
   </section>
 
   <section class="section">
     <div class="container">
-      <div class="section-head center reveal">
-        <h2>Three steps, one shortlist</h2>
-        <p class="lead" style="margin-inline:auto">No endless scrolling and no filters to fight with.</p>
+      <div class="section-head">
+        <h2>How it works</h2>
       </div>
       <div class="steps">
-        <div class="step reveal" style="--d:0ms">
-          <span class="step-num">1</span>
-          <h3>Say it in your own words</h3>
-          <p>&ldquo;A black oversized hoodie under $80&rdquo; is a complete request. No filters to pick.</p>
+        <div class="step">
+          <span class="step-num">01</span>
+          <h3>Describe what you want</h3>
+          <p>One sentence in your own words. No filters, no categories, no account.</p>
         </div>
-        <div class="step reveal" style="--d:90ms">
-          <span class="step-num">2</span>
-          <h3>The AI reads it</h3>
-          <p>It works out the garment, colour, fit, occasion and budget, then scores every piece against them.</p>
+        <div class="step">
+          <span class="step-num">02</span>
+          <h3>Fynd understands your request</h3>
+          <p>It reads the garment, colour, fit, occasion and budget out of what you typed.</p>
         </div>
-        <div class="step reveal" style="--d:180ms">
-          <span class="step-num">3</span>
-          <h3>See why it picked them</h3>
-          <p>Each result explains its match in one line, so the whole list is easy to scan.</p>
+        <div class="step">
+          <span class="step-num">03</span>
+          <h3>Fynd finds matching clothes</h3>
+          <p>Real listings come back with the retailer, the price and a link to buy.</p>
         </div>
       </div>
     </div>
   </section>
 
-  <section class="section" style="padding-top:0">
+  <section class="section section--flush">
     <div class="container">
-      <div class="cta-band reveal">
-        <h2>Ready to see your picks?</h2>
-        <p>Set your preferences once and get a shortlist built around them.</p>
-        <a class="btn btn-primary btn-lg" href="find-clothes.html">
-          Find my clothes
-          <svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
-        </a>
+      <div class="cta-band">
+        <h2>Ready to find something?</h2>
+        <p>Describe one piece you are looking for and see what comes back.</p>
+        <a class="btn btn-primary btn-lg" href="#search">Find my clothes</a>
       </div>
     </div>
   </section>
@@ -115,10 +150,7 @@
 <footer class="site-footer">
   <div class="container">
     <div class="footer-inner">
-      <a class="brand" href="index.html">
-        <span class="mark"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2l1.9 5.6L19.5 9.5 13.9 11.4 12 17l-1.9-5.6L4.5 9.5l5.6-1.9L12 2z"/></svg></span>
-        FindWear
-      </a>
+      <a class="brand" href="index.html">Fynd</a>
       <nav class="footer-links" aria-label="Footer">
         <a href="index.html">Home</a>
         <a href="find-clothes.html">Find Clothes</a>
@@ -126,11 +158,14 @@
         <a href="about.html">About</a>
       </nav>
     </div>
-    <p class="footer-note">FindWear is a demo experience — recommendations come from a sample catalogue.</p>
+    <p class="footer-note">Fynd is a demo experience. Live results come from a connected product source; when none is connected, sample items are shown and labelled as such.</p>
   </div>
 </footer>
 
 <script src="assets/products.js"></script>
+<script src="assets/interpret.js"></script>
+<script src="assets/search.js"></script>
+<script src="assets/attachments.js"></script>
 <script src="assets/catalog.js"></script>
 <script src="assets/app.js"></script>
 </body>

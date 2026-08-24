@@ -1,5 +1,5 @@
 /* =========================================================
-   FindWear — product data layer
+   Fynd — product data layer
 
    Everything the interface renders passes through here first. A product
    source supplies records; this module normalises them into one canonical

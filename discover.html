@@ -3,9 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Discover — FindWear</title>
-<meta name="description" content="Explore clothing recommendations by style — minimal, classic, streetwear, sporty, bohemian and bold.">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='9' fill='%23000000'/><path d='M16 6l2.5 7.5L26 16l-7.5 2.5L16 26l-2.5-7.5L6 16l7.5-2.5z' fill='white'/></svg>">
+<title>Discover — Fynd</title>
+<meta name="description" content="Browse clothes by style — minimal, classic, streetwear, sporty, bohemian and bold.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%23000000'/><text x='16' y='23' font-family='Helvetica,Arial,sans-serif' font-size='20' font-weight='700' fill='white' text-anchor='middle'>F</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -14,35 +14,33 @@
 </head>
 <body>
 
+<a class="skip-link" href="#main">Skip to content</a>
+
 <header class="site-header">
   <div class="container">
     <div class="nav">
-      <a class="brand" href="index.html">
-        <span class="mark"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2l1.9 5.6L19.5 9.5 13.9 11.4 12 17l-1.9-5.6L4.5 9.5l5.6-1.9L12 2z"/></svg></span>
-        FindWear
-      </a>
+      <a class="brand" href="index.html">Fynd</a>
       <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" aria-label="Open menu"><span></span></button>
       <nav class="nav-links" id="site-nav" aria-label="Main">
         <a href="index.html">Home</a>
         <a href="find-clothes.html">Find Clothes</a>
         <a href="discover.html" aria-current="page">Discover</a>
-        <a href="about.html">About</a>
+        <a class="nav-secondary" href="about.html">About</a>
       </nav>
     </div>
   </div>
 </header>
 
-<main>
+<main id="main">
 
-  <div class="container">
-    <div class="page-head">
-      <span class="eyebrow"><span class="dot"></span>Style explorer</span>
-      <h1>Discover a style you like</h1>
-      <p class="lead">Browse pieces FindWear recommends, grouped by the styles people ask for most.</p>
+  <div class="page-head">
+    <div class="container">
+      <h1>Discover</h1>
+      <p>Browse by style if you would rather look than describe.</p>
     </div>
   </div>
 
-  <section class="section section--tight" style="padding-top:44px">
+  <section class="section section--tight">
     <div class="container">
 
       <div class="filter-bar">
@@ -56,15 +54,12 @@
     </div>
   </section>
 
-  <section class="section" style="padding-top:16px">
+  <section class="section section--flush">
     <div class="container">
-      <div class="cta-band reveal">
-        <h2>Found a style that fits?</h2>
-        <p>Tell FindWear your preferences and get a shortlist built just for you.</p>
-        <a class="btn btn-primary btn-lg" href="find-clothes.html">
-          Find my clothes
-          <svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
-        </a>
+      <div class="cta-band">
+        <h2>Know what you want instead?</h2>
+        <p>Describe it in one sentence and Fynd will look for it.</p>
+        <a class="btn btn-primary btn-lg" href="find-clothes.html">Find my clothes</a>
       </div>
     </div>
   </section>
@@ -74,10 +69,7 @@
 <footer class="site-footer">
   <div class="container">
     <div class="footer-inner">
-      <a class="brand" href="index.html">
-        <span class="mark"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2l1.9 5.6L19.5 9.5 13.9 11.4 12 17l-1.9-5.6L4.5 9.5l5.6-1.9L12 2z"/></svg></span>
-        FindWear
-      </a>
+      <a class="brand" href="index.html">Fynd</a>
       <nav class="footer-links" aria-label="Footer">
         <a href="index.html">Home</a>
         <a href="find-clothes.html">Find Clothes</a>
@@ -85,7 +77,7 @@
         <a href="about.html">About</a>
       </nav>
     </div>
-    <p class="footer-note">FindWear is a demo experience — recommendations come from a sample catalogue.</p>
+    <p class="footer-note">Fynd is a demo experience. Live results come from a connected product source; when none is connected, sample items are shown and labelled as such.</p>
   </div>
 </footer>
 

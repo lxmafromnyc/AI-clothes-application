@@ -1,17 +1,27 @@
-# FindWear — AI clothing finder
+# Fynd — AI clothing finder
 
 A four-page site where you describe the clothes you want in your own words and get
-back a ranked shortlist. "I need a black shirt for school under $50" is a complete
+back matching items. "I need a black shirt for school under $50" is a complete
 request — there is no form to fill in.
+
+The interface is deliberately plain: one typeface, three levels of neutral ink
+(black for primary text, one step down for body copy, muted for metadata), and a
+single filled element — the primary button — so the action to take is never in
+doubt. `scripts/test-ui.js` holds the interface to that rule by walking the
+rendered document rather than a fixed list of selectors.
 
 ## Pages
 
 | Page | File | What it does |
 | --- | --- | --- |
-| Home | `index.html` | States the value proposition and links to the finder |
-| Find Clothes | `find-clothes.html` | One text box → AI reads the request → ranked recommendations |
+| Home | `index.html` | States the value proposition and carries the search itself, directly under the headline |
+| Find Clothes | `find-clothes.html` | The same search, with nothing else on the page |
 | Discover | `discover.html` | Browse the catalogue, filtered by style |
-| About | `about.html` | What the site does and how the matching works |
+| About | `about.html` | What the site does and what it takes into account |
+
+Every product, wherever it appears, is drawn by one function in `assets/app.js`
+and carries the same six things in the same order — image, retailer, name,
+price, attributes, action — so a grid always reads as one set of rows.
 
 ## Running it
 
@@ -86,8 +96,10 @@ vercel --prod                                 # redeploy so the vars take effect
 `ALLOWED_ORIGIN` is scheme and host only — no path, no trailing slash. For this
 repository's Pages site that is exactly `https://lxmafromnyc.github.io`.
 
-**3. Point the site at the function.** Already done — `find-clothes.html`
-carries the tag:
+**3. Point the site at the function.** Already done — `index.html` and
+`find-clothes.html` each carry the tag. The tag name and the
+`window.FINDWEAR_API` override keep their original spelling, so an existing
+deployment needs no configuration change:
 
 ```html
 <meta name="findwear-api" content="https://ai-clothes-application.vercel.app/api/interpret">
@@ -175,7 +187,7 @@ quota — so who may call them from a browser is decided in one place,
 
 Four sources of allowed origins, in order of how much configuration each needs:
 
-1. **FindWear's own published site**, listed as `SITE_ORIGINS` in `api/_cors.js`.
+1. **Fynd's own published site**, listed as `SITE_ORIGINS` in `api/_cors.js`.
    The Pages site is a fact about the project, not a deployment setting, so it
    lives in the repository where it cannot go missing. These are public
    origins, not secrets — the same hostname is already in the meta tag of every
@@ -297,7 +309,7 @@ decides which adapter runs from `PRODUCT_SOURCE`. Unset, or naming an adapter
 whose credentials are missing, and the endpoint answers 503 and the interface
 says plainly that no product source is connected.
 
-### OpenWeb Ninja (the provider FindWear runs on)
+### OpenWeb Ninja (the provider Fynd runs on)
 
 [Real-Time Product Search](https://www.openwebninja.com/api/real-time-product-search)
 searches Google Shopping's cross-retailer index, so one query reaches Amazon,
@@ -352,7 +364,7 @@ as `max_price`, and any offer that still comes back above it is dropped.
 Confirmed against a live response: the commerce fields appear at the **top
 level** of a search record, not only nested under `offer`. Both shapes are read.
 
-| FindWear | OpenWeb Ninja |
+| Fynd | OpenWeb Ninja |
 | --- | --- |
 | `title` | `product_title` |
 | `imageUrl` | `product_photos[0]`, from that product's own photo list |
@@ -524,10 +536,11 @@ assumed to be out of stock. Prices must parse to a positive number. The
 response reports how many records were rejected and why, so a badly behaved
 provider is visible rather than silently thinning the results.
 
-Records are shown in the order the source returned them, badged with the
-retailer name. FindWear does not attach a match percentage to a provider
-result: it did not score them, and displaying a made-up score would be
-inventing information about a real product.
+Records are shown in the order the source returned them, with the retailer
+named on the card. Fynd does not attach a match percentage to any result: it
+did not score the provider's records, and a made-up score would be inventing
+information about a real product. What the request was read as is said once,
+above the grid, rather than claimed again on every card.
 
 ## The product catalogue
 
