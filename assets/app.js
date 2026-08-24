@@ -141,6 +141,51 @@ function orderFacet(counts, key) {
   return known.concat(rest);
 }
 
+/* ---------- brand ----------
+   The logo is an ordinary <img> in the markup, so it renders with or
+   without scripting. This only handles its absence: a source that will
+   not load falls back to the sibling wordmark rather than leaving a
+   broken image in the header, and an asset saved under the other
+   extension is tried once before giving up.
+
+   The favicon is swapped the same way — a <link rel="icon"> has no
+   error event, so the mark is loaded first and the icon is only
+   repointed once the file is known to be there. Until then the inline
+   mark in each page's <head> stands. */
+(function brand() {
+  const LOGO = ['assets/fynd-logo.svg', 'assets/fynd-logo.png'];
+  const MARK = ['assets/fynd-mark.svg', 'assets/fynd-mark.png'];
+
+  document.querySelectorAll('.brand').forEach((mark) => {
+    const logo = mark.querySelector('.brand-logo');
+    if (!logo) return;
+
+    let next = 1;
+    logo.addEventListener('error', function retry() {
+      if (next < LOGO.length) {
+        logo.src = LOGO[next++];
+        return;
+      }
+      logo.removeEventListener('error', retry);
+      mark.classList.add('logo-missing');
+    });
+
+    /* an error that fired before this ran is not replayed, so a load
+       that has already failed is caught here instead */
+    if (logo.complete && logo.naturalWidth === 0) logo.dispatchEvent(new Event('error'));
+  });
+
+  const icon = document.querySelector('link[rel="icon"]');
+  if (!icon) return;
+  (function tryMark(i) {
+    if (i >= MARK.length) return;
+    const probe = new Image();
+    probe.onload = () => { icon.setAttribute('href', MARK[i]); };
+    probe.onerror = () => tryMark(i + 1);
+    probe.src = MARK[i];
+  })(0);
+})();
+
 /* ---------- mobile navigation ---------- */
 (function nav() {
   const toggle = document.querySelector('.nav-toggle');

@@ -141,12 +141,27 @@ button, input, select, textarea { font: inherit; color: inherit; }
   gap: 24px;
   height: 64px;
 }
+/* The brand is the logo when the asset is there and the wordmark when
+   it is not. The image leads, so the logo needs no scripting to show;
+   app.js only swaps in the text if the file cannot be loaded, which
+   keeps the header readable rather than broken. */
 .brand {
+  display: inline-flex;
+  align-items: center;
   font-size: 19px;
   font-weight: 700;
   letter-spacing: -.045em;
   color: var(--ink);
 }
+.brand-logo {
+  display: block;
+  height: 24px;
+  width: auto;
+  /* the file's own proportions decide the width; nothing is stretched */
+}
+.brand-name { display: none; }
+.brand.logo-missing .brand-logo { display: none; }
+.brand.logo-missing .brand-name { display: inline; }
 
 .nav-links { display: flex; align-items: center; gap: 4px; }
 .nav-links a {
@@ -845,6 +860,7 @@ a.item-card:hover .item-name { text-decoration: underline; text-underline-offset
     display: none;
   }
   .nav-links.open { display: flex; }
+  .brand-logo { height: 21px; }
   .nav-links a { padding: 12px 14px; border-radius: var(--r-sm); font-size: 16px; }
   .nav-links .nav-secondary {
     margin-left: 0; padding-left: 14px;
