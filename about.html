@@ -19,13 +19,18 @@
 <header class="site-header">
   <div class="container">
     <div class="nav">
-      <a class="brand" href="index.html">Fynd</a>
+      <a class="brand" href="index.html" aria-label="Fynd — home">
+        <span class="brand-mark" aria-hidden="true">F</span>
+        <span class="brand-word">Fynd</span>
+      </a>
       <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" aria-label="Open menu"><span></span></button>
-      <nav class="nav-links" id="site-nav" aria-label="Main">
-        <a href="index.html">Home</a>
-        <a href="find-clothes.html">Find Clothes</a>
-        <a href="discover.html">Discover</a>
-        <a class="nav-secondary" href="about.html" aria-current="page">About</a>
+      <nav aria-label="Main">
+        <ul class="nav-links" id="site-nav">
+          <li><a href="index.html">Home</a></li>
+          <li><a href="find-clothes.html">Find Clothes</a></li>
+          <li><a href="discover.html">Discover</a></li>
+          <li><a href="about.html" aria-current="page">About</a></li>
+        </ul>
       </nav>
     </div>
   </div>
@@ -33,23 +38,29 @@
 
 <main id="main">
 
-  <div class="page-head">
-    <div class="narrow">
-      <h1>About Fynd</h1>
-      <p>An AI clothing finder. You describe what you want to wear; it returns items that match.</p>
+  <section class="stage">
+    <div class="container">
+      <div class="page-head">
+        <h1>About Fynd</h1>
+        <p>A clothing finder you talk to in plain words. You describe what you want to wear; it returns items that match.</p>
+      </div>
     </div>
-  </div>
+  </section>
 
   <section class="section section--tight">
     <div class="narrow">
 
       <div class="prose">
-        <p>Shopping for clothes online usually means translating what is in your head into a grid of filters — category, colour, size, price, then sorting through what is left. Fynd removes that step. You write one sentence, and it works out the rest.</p>
+        <p class="lede">Shopping for clothes online usually means translating what is in your head into a grid of filters — category, colour, size, price — and then sorting through whatever is left.</p>
+        <p>Fynd removes that step. You write one sentence, and it works out the rest.</p>
         <p>A request like &ldquo;a black oversized hoodie under $80&rdquo; carries a garment, a colour, a fit and a budget. Fynd reads all four, searches connected retailers for them, and shows what came back with the retailer, the price and a link.</p>
       </div>
 
       <div class="section-head section-head--spaced">
-        <h2>What it takes into account</h2>
+        <div>
+          <p class="eyebrow">Signals</p>
+          <h2>What it takes into account</h2>
+        </div>
       </div>
 
       <div class="signal-list">
@@ -62,7 +73,10 @@
       </div>
 
       <div class="section-head section-head--spaced">
-        <h2>Questions</h2>
+        <div>
+          <p class="eyebrow">Questions</p>
+          <h2>Good to know</h2>
+        </div>
       </div>
 
       <div class="faq-row">
@@ -81,12 +95,16 @@
     </div>
   </section>
 
-  <section class="section section--flush">
+
+  <section class="closing">
     <div class="container">
-      <div class="cta-band">
+      <div class="closing-cta">
+        <p class="eyebrow">Start here</p>
         <h2>Try it for yourself</h2>
         <p>One sentence is all it takes.</p>
-        <a class="btn btn-primary btn-lg" href="find-clothes.html">Find my clothes</a>
+        <a class="btn btn-invert btn-lg" href="find-clothes.html">Find my clothes
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </a>
       </div>
     </div>
   </section>
@@ -96,12 +114,17 @@
 <footer class="site-footer">
   <div class="container">
     <div class="footer-inner">
-      <a class="brand" href="index.html">Fynd</a>
-      <nav class="footer-links" aria-label="Footer">
-        <a href="index.html">Home</a>
-        <a href="find-clothes.html">Find Clothes</a>
-        <a href="discover.html">Discover</a>
-        <a href="about.html">About</a>
+      <a class="brand" href="index.html" aria-label="Fynd — home">
+        <span class="brand-mark" aria-hidden="true">F</span>
+        <span class="brand-word">Fynd</span>
+      </a>
+      <nav aria-label="Footer">
+        <ul class="footer-links">
+          <li><a href="index.html">Home</a></li>
+          <li><a href="find-clothes.html">Find Clothes</a></li>
+          <li><a href="discover.html">Discover</a></li>
+          <li><a href="about.html">About</a></li>
+        </ul>
       </nav>
     </div>
     <p class="footer-note">Fynd is a demo experience. Live results come from a connected product source; when none is connected, sample items are shown and labelled as such.</p>

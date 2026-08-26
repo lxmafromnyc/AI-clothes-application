@@ -5,16 +5,22 @@ back matching items. "I need a black shirt for school under $50" is a complete
 request — there is no form to fill in.
 
 The interface is deliberately plain: one typeface, three levels of neutral ink
-(black for primary text, one step down for body copy, muted for metadata), and a
-single filled element — the primary button — so the action to take is never in
-doubt. `scripts/test-ui.js` holds the interface to that rule by walking the
+(black for primary text, one step down for body copy, muted for metadata), and no
+hue anywhere. `scripts/test-ui.js` holds the interface to that rule by walking the
 rendered document rather than a fixed list of selectors.
+
+Hierarchy is carried by size, weight, space and surface. Every page opens on a
+lightly tinted band — the stage — holding the headline and the search card, and
+closes on one inverted black block that carries the call to action and the
+footer together. In between, the page is white. The search card is the only
+elevated layer and the primary button the only filled control, so the thing to
+do next is never in doubt.
 
 ## Pages
 
 | Page | File | What it does |
 | --- | --- | --- |
-| Home | `index.html` | States the value proposition and carries the search itself, directly under the headline |
+| Home | `index.html` | States the value proposition, carries the search itself directly under the headline, and shows what an answer looks like |
 | Find Clothes | `find-clothes.html` | The same search, with nothing else on the page |
 | Discover | `discover.html` | Browse the catalogue, filtered by style |
 | About | `about.html` | What the site does and what it takes into account |

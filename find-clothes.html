@@ -23,13 +23,18 @@
 <header class="site-header">
   <div class="container">
     <div class="nav">
-      <a class="brand" href="index.html">Fynd</a>
+      <a class="brand" href="index.html" aria-label="Fynd — home">
+        <span class="brand-mark" aria-hidden="true">F</span>
+        <span class="brand-word">Fynd</span>
+      </a>
       <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" aria-label="Open menu"><span></span></button>
-      <nav class="nav-links" id="site-nav" aria-label="Main">
-        <a href="index.html">Home</a>
-        <a href="find-clothes.html" aria-current="page">Find Clothes</a>
-        <a href="discover.html">Discover</a>
-        <a class="nav-secondary" href="about.html">About</a>
+      <nav aria-label="Main">
+        <ul class="nav-links" id="site-nav">
+          <li><a href="index.html">Home</a></li>
+          <li><a href="find-clothes.html" aria-current="page">Find Clothes</a></li>
+          <li><a href="discover.html">Discover</a></li>
+          <li><a href="about.html">About</a></li>
+        </ul>
       </nav>
     </div>
   </div>
@@ -37,20 +42,23 @@
 
 <main id="main">
 
-  <div class="page-head">
-    <div class="container">
-      <h1>Find clothes</h1>
-      <p>Describe one piece you are after. Fynd reads the request and returns items that match.</p>
-    </div>
-  </div>
+  <section class="stage" id="search">
+    <div class="container stage-inner">
 
-  <section class="search-block" id="search">
-    <div class="narrow">
+      <div class="page-head">
+        <h1>Find clothes</h1>
+        <p>Describe one piece you are after. Fynd reads the request and returns the items that match.</p>
+      </div>
 
+      <div class="ask-wrap">
       <form class="ask-card" id="ask-form" data-dropzone>
-        <label class="ask-label" for="ask">Describe what you&rsquo;re looking for.</label>
-        <textarea id="ask" name="ask" rows="3" maxlength="400"
-          placeholder="A black oversized hoodie under $80"></textarea>
+        <label class="sr-only" for="ask">Describe the clothes you are looking for</label>
+
+        <div class="ask-field">
+          <svg class="ask-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.8-3.8"/></svg>
+          <textarea id="ask" name="ask" rows="2" maxlength="400"
+            placeholder="A black oversized hoodie under $80"></textarea>
+        </div>
 
         <!-- Shown only while a file is over the card. Hidden from
              assistive technology: it is a visual cue for a pointer
@@ -88,37 +96,48 @@
       </form>
 
       <p class="ask-examples" id="ask-examples">
-        <span class="examples-label">Try</span>
-        <button type="button" class="example">Black oversized hoodie under $80</button>
-        <button type="button" class="example">Relaxed jeans for everyday wear</button>
-        <button type="button" class="example">Minimal neutral clothes for fall</button>
+        <span class="eyebrow examples-label">Try</span>
+        <button type="button" class="example">Minimal neutrals for fall</button>
+        <button type="button" class="example">Linen shirt for a wedding</button>
+        <button type="button" class="example">Relaxed jeans under $100</button>
       </p>
+      </div>
 
-    </div>
+      <ul class="trust-row">
+        <li>Real items from real retailers</li>
+        <li>Prices and direct links</li>
+        <li>No filters, no account</li>
+      </ul>
 
-    <!-- Results break out of the search column: the products are the
-         answer, so they get the full width rather than the width of the
-         box that asked the question. -->
-    <div class="container">
-      <!-- The outcome in one line, for screen readers only: the grid
-           itself is too long to announce, and the count is the part
-           worth hearing. -->
-      <p class="sr-only" id="search-status" role="status" aria-live="polite"></p>
-      <div class="results" id="results" hidden></div>
     </div>
   </section>
+
+  <!-- Results break out of the search column onto the page: the products
+       are the answer, so they get the full width rather than the width of
+       the box that asked the question. -->
+  <div class="container">
+    <!-- The outcome in one line, for screen readers only: the grid itself
+         is too long to announce, and the count is the part worth hearing. -->
+    <p class="sr-only" id="search-status" role="status" aria-live="polite"></p>
+    <div class="results" id="results" hidden></div>
+  </div>
 
 </main>
 
 <footer class="site-footer">
   <div class="container">
     <div class="footer-inner">
-      <a class="brand" href="index.html">Fynd</a>
-      <nav class="footer-links" aria-label="Footer">
-        <a href="index.html">Home</a>
-        <a href="find-clothes.html">Find Clothes</a>
-        <a href="discover.html">Discover</a>
-        <a href="about.html">About</a>
+      <a class="brand" href="index.html" aria-label="Fynd — home">
+        <span class="brand-mark" aria-hidden="true">F</span>
+        <span class="brand-word">Fynd</span>
+      </a>
+      <nav aria-label="Footer">
+        <ul class="footer-links">
+          <li><a href="index.html">Home</a></li>
+          <li><a href="find-clothes.html">Find Clothes</a></li>
+          <li><a href="discover.html">Discover</a></li>
+          <li><a href="about.html">About</a></li>
+        </ul>
       </nav>
     </div>
     <p class="footer-note">Fynd is a demo experience. Live results come from a connected product source; when none is connected, sample items are shown and labelled as such.</p>
