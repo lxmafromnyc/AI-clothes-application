@@ -19,13 +19,18 @@
 <header class="site-header">
   <div class="container">
     <div class="nav">
-      <a class="brand" href="index.html">Fynd</a>
+      <a class="brand" href="index.html" aria-label="Fynd — home">
+        <span class="brand-mark" aria-hidden="true">F</span>
+        <span class="brand-word">Fynd</span>
+      </a>
       <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" aria-label="Open menu"><span></span></button>
-      <nav class="nav-links" id="site-nav" aria-label="Main">
-        <a href="index.html">Home</a>
-        <a href="find-clothes.html">Find Clothes</a>
-        <a href="discover.html" aria-current="page">Discover</a>
-        <a class="nav-secondary" href="about.html">About</a>
+      <nav aria-label="Main">
+        <ul class="nav-links" id="site-nav">
+          <li><a href="index.html">Home</a></li>
+          <li><a href="find-clothes.html">Find Clothes</a></li>
+          <li><a href="discover.html" aria-current="page">Discover</a></li>
+          <li><a href="about.html">About</a></li>
+        </ul>
       </nav>
     </div>
   </div>
@@ -33,12 +38,14 @@
 
 <main id="main">
 
-  <div class="page-head">
+  <section class="stage">
     <div class="container">
-      <h1>Discover</h1>
-      <p>Browse by style if you would rather look than describe.</p>
+      <div class="page-head">
+        <h1>Discover</h1>
+        <p>Browse by style if you would rather look than describe.</p>
+      </div>
     </div>
-  </div>
+  </section>
 
   <section class="section section--tight">
     <div class="container">
@@ -54,12 +61,16 @@
     </div>
   </section>
 
-  <section class="section section--flush">
+
+  <section class="closing">
     <div class="container">
-      <div class="cta-band">
+      <div class="closing-cta">
+        <p class="eyebrow">Start here</p>
         <h2>Know what you want instead?</h2>
-        <p>Describe it in one sentence and Fynd will look for it.</p>
-        <a class="btn btn-primary btn-lg" href="find-clothes.html">Find my clothes</a>
+        <p>Describe it in one sentence and Fynd will go and look for it.</p>
+        <a class="btn btn-invert btn-lg" href="find-clothes.html">Find my clothes
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </a>
       </div>
     </div>
   </section>
@@ -69,12 +80,17 @@
 <footer class="site-footer">
   <div class="container">
     <div class="footer-inner">
-      <a class="brand" href="index.html">Fynd</a>
-      <nav class="footer-links" aria-label="Footer">
-        <a href="index.html">Home</a>
-        <a href="find-clothes.html">Find Clothes</a>
-        <a href="discover.html">Discover</a>
-        <a href="about.html">About</a>
+      <a class="brand" href="index.html" aria-label="Fynd — home">
+        <span class="brand-mark" aria-hidden="true">F</span>
+        <span class="brand-word">Fynd</span>
+      </a>
+      <nav aria-label="Footer">
+        <ul class="footer-links">
+          <li><a href="index.html">Home</a></li>
+          <li><a href="find-clothes.html">Find Clothes</a></li>
+          <li><a href="discover.html">Discover</a></li>
+          <li><a href="about.html">About</a></li>
+        </ul>
       </nav>
     </div>
     <p class="footer-note">Fynd is a demo experience. Live results come from a connected product source; when none is connected, sample items are shown and labelled as such.</p>

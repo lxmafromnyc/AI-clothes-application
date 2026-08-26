@@ -8,20 +8,21 @@
 
 /* ---------- artwork ----------
    Drawn when a product has no usable photo. One neutral tile and a
-   garment outline: the artwork stands in for a picture, it does not
-   decorate the page, so it carries no colour of its own. */
+   garment drawn as line work: the artwork stands in for a picture, it
+   does not decorate the page, so it carries no colour of its own and no
+   weight beyond a hairline. */
 
 const SILHOUETTES = {
-  tee: '<path d="M22 12 L12 17 L8 25 L15 29 L18 26 L18 54 L46 54 L46 26 L49 29 L56 25 L52 17 L42 12 C40 17 24 17 22 12 Z"/>',
-  shirt: '<path d="M23 12 L13 17 L8 26 L15 30 L18 27 L18 55 L46 55 L46 27 L49 30 L56 26 L51 17 L41 12 L32 20 Z"/><path d="M31 21 h2 v34 h-2 z" opacity=".45"/>',
-  knit: '<path d="M21 12 L8 18 L4 32 L12 36 L17 29 L17 51 L47 51 L47 29 L52 36 L60 32 L56 18 L43 12 C41 18 23 18 21 12 Z"/><path d="M17 51 h30 v5 h-30 z" opacity=".5"/>',
-  jacket: '<path d="M23 11 L11 17 L6 28 L13 32 L16 28 L16 56 L30 56 L30 22 Z"/><path d="M41 11 L53 17 L58 28 L51 32 L48 28 L48 56 L34 56 L34 22 Z"/>',
-  coat: '<path d="M23 9 L10 16 L5 31 L13 35 L16 29 L16 60 L48 60 L48 29 L51 35 L59 31 L54 16 L41 9 L32 20 Z"/><path d="M16 36 h32 v4 h-32 z" opacity=".45"/>',
-  dress: '<path d="M24 11 L15 16 L19 26 L22 24 L12 57 L52 57 L42 24 L45 26 L49 16 L40 11 C38 17 26 17 24 11 Z"/>',
-  trousers: '<path d="M17 9 h30 l2 48 h-13 l-4 -30 l-4 30 h-13 z"/>',
-  skirt: '<path d="M20 14 h24 l9 38 h-42 z"/>',
-  shorts: '<path d="M17 11 h30 l2 26 h-13 l-4 -14 l-4 14 h-13 z"/>',
-  sneaker: '<path d="M9 44 L9 39 L20 35 L28 28 L33 28 L38 37 L46 39 L54 42 L54 47 L9 47 Z"/><path d="M7 47 h50 v5 h-50 z" opacity=".5"/>'
+  tee: '<path d="M22 13 11 18 7 27 15 31 18 27 18 53 46 53 46 27 49 31 57 27 53 18 42 13"/><path d="M22 13c3 5 17 5 20 0"/>',
+  shirt: '<path d="M23 13 12 18 8 28 15 32 18 28 18 54 46 54 46 28 49 32 56 28 52 18 41 13"/><path d="M23 13 27 13 32 19 37 13 41 13"/><path d="M32 19 32 54"/>',
+  knit: '<path d="M22 13 8 20 5 33 13 37 17 30 17 50 47 50 47 30 51 37 59 33 56 20 42 13"/><path d="M22 13c4 5 16 5 20 0"/><path d="M17 50 17 55 47 55 47 50"/>',
+  jacket: '<path d="M24 12 11 18 7 30 14 34 17 29 17 55 31 55 31 22Z"/><path d="M40 12 53 18 57 30 50 34 47 29 47 55 33 55 33 22Z"/>',
+  coat: '<path d="M24 10 10 17 5 32 13 36 17 29 17 58 47 58 47 29 51 36 59 32 54 17 40 10"/><path d="M24 10 32 17 40 10"/><path d="M17 38 47 38"/>',
+  dress: '<path d="M24 12 16 17 20 26 23 24 13 56 51 56 41 24 44 26 48 17 40 12"/><path d="M24 12c3 5 13 5 16 0"/>',
+  trousers: '<path d="M18 11 46 11 48 56 36 56 32 29 28 56 16 56 18 11"/><path d="M18 17 46 17"/>',
+  skirt: '<path d="M20 15 44 15 52 52 12 52 20 15"/><path d="M20 21 44 21"/>',
+  shorts: '<path d="M18 12 46 12 48 39 36 39 32 25 28 39 16 39 18 12"/><path d="M18 18 46 18"/>',
+  sneaker: '<path d="M8 45 8 35 22 30 31 20 36 20 42 32 52 35 58 39 58 45Z"/><path d="M8 41 58 41"/>'
 };
 
 const shapeOf = (item) => SILHOUETTES[item.category] || SILHOUETTES.tee;
@@ -35,7 +36,7 @@ const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&l
 const ARROW = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7M9 7h8v8"/></svg>';
 
 const artSvg = (item) =>
-  `<svg class="silhouette" viewBox="0 0 64 64" fill="currentColor" aria-hidden="true">${shapeOf(item)}</svg>`;
+  `<svg class="silhouette" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${shapeOf(item)}</svg>`;
 
 /* photo when the product has one, drawn artwork otherwise. The tile is
    the same neutral either way, so replacing a failed photo with artwork
@@ -121,6 +122,15 @@ function productCard(item) {
   </${tag}>`;
 }
 
+/* The shape of a card, drawn while the real one is on its way, so the
+   grid arrives in place instead of appearing out of nothing. It carries
+   no text: there is nothing true to say yet. */
+const SKELETON = `<div class="skeleton-card">
+  <div class="skeleton-media"></div>
+  <div class="skeleton-line"></div>
+  <div class="skeleton-line skeleton-line--short"></div>
+</div>`;
+
 /* ---------- filter controls ----------
    Built from the values present in the data, so a new source brings its
    own styles, colours and brands without any markup changes. Known values
@@ -175,6 +185,7 @@ function orderFacet(counts, key) {
   const status = document.getElementById('search-status');
   const reset = document.getElementById('reset-form');
   const examples = document.getElementById('ask-examples');
+  const preview = document.getElementById('preview');
 
   /* the vocabulary the catalogue can actually match, handed to the
      interpreter so it maps a request onto values that exist */
@@ -228,9 +239,22 @@ function orderFacet(counts, key) {
   function readback(prefs) {
     const chips = understood(prefs);
     if (!chips.length) return '';
-    return `<p class="understood-label">Fynd understood</p>
-      <div class="understood">${chips.map((c) => `<span>${esc(c)}</span>`).join('')}</div>`;
+    return `<div class="understood">
+      <span class="understood-label">Fynd understood</span>
+      ${chips.map((c) => `<span>${esc(c)}</span>`).join('')}
+    </div>`;
   }
+
+  /* Every result state opens the same way: a kicker, then the outcome in
+     one line, then what was understood beside it. The shopper always
+     reads the same shape whether eight things came back or none. */
+  const resultsHead = (heading, prefs) => `<div class="results-head">
+      <div>
+        <p class="eyebrow">Results</p>
+        <h2>${heading}</h2>
+      </div>
+      ${readback(prefs)}
+    </div>`;
 
   function understood(prefs) {
     const chips = [
@@ -250,10 +274,8 @@ function orderFacet(counts, key) {
     const notice = outcome.source !== 'openai' && outcome.notice
       ? `<p class="notice" role="status">${esc(outcome.notice)}</p>` : '';
 
-    results.innerHTML = `<div class="results-head">
-        <h2>${found.products.length} ${found.products.length === 1 ? 'piece' : 'pieces'} found</h2>
-        ${readback(outcome.preferences)}
-      </div>
+    const count = `${found.products.length} ${found.products.length === 1 ? 'piece' : 'pieces'} found`;
+    results.innerHTML = `${resultsHead(count, outcome.preferences)}
       ${notice}
       <div class="grid">${found.products.map(productCard).join('')}</div>`;
     bindImageFallback(results);
@@ -264,15 +286,18 @@ function orderFacet(counts, key) {
      so it is clear what was searched for, and the reason is stated plainly
      instead of being filled with placeholder products. */
   function renderNothing(found, outcome) {
-    const heading = found.state === 'empty' ? 'No matches found' : 'Product search unavailable';
-    const detail = found.state === 'empty'
-      ? 'Nothing came back that could be verified for this request. Try describing it a little differently, or ask for something broader.'
-      : 'This is a problem on our side, not with your request. Try again in a moment.';
+    const empty = found.state === 'empty';
+    /* the heading names the outcome, the panel names the next move, and
+       the reason is given once — no line on the page repeats another */
+    const heading = empty ? 'No matches found' : 'Product search unavailable';
+    const next = empty ? 'Try describing it a little differently' : 'Try again in a moment';
+    const detail = found.notice || (empty
+      ? 'Nothing came back that could be verified for this request.'
+      : 'This is a problem on our side, not with your request.');
 
-    results.innerHTML = `<div class="results-head"><h2>${heading}</h2>${readback(outcome.preferences)}</div>
-      ${found.notice ? `<p class="notice" role="status">${esc(found.notice)}</p>` : ''}
+    results.innerHTML = `${resultsHead(heading, outcome.preferences)}
       <div class="empty">
-        <h3>${heading}</h3>
+        <h3>${esc(next)}</h3>
         <p>${esc(detail)}</p>
       </div>`;
     announce(`${heading}. ${detail}`);
@@ -305,21 +330,19 @@ function orderFacet(counts, key) {
       ? `<p class="notice" role="status">${esc(outcome.notice)}</p>` : '';
 
     if (!scored.length) {
-      results.innerHTML = `<div class="results-head"><h2>No matches yet</h2>${readback(prefs)}</div>
+      results.innerHTML = `${resultsHead('No matches yet', prefs)}
         ${notice}
         ${sourceNotice}
         <div class="empty">
-          <h3>Nothing in the catalogue fits that request</h3>
-          <p>Try describing it a little differently, or ask for something broader.</p>
+          <h3>Try describing it a little differently</h3>
+          <p>Nothing in the catalogue fits that request. Asking for something broader usually helps.</p>
         </div>`;
       announce('No matches yet. Try describing it a little differently, or ask for something broader.');
       return;
     }
 
-    results.innerHTML = `<div class="results-head">
-        <h2>${scored.length} ${scored.length === 1 ? 'piece' : 'pieces'} picked for you</h2>
-        ${readback(prefs)}
-      </div>
+    const picked = `${scored.length} ${scored.length === 1 ? 'piece' : 'pieces'} picked for you`;
+    results.innerHTML = `${resultsHead(picked, prefs)}
       ${notice}
       ${sourceNotice}
       ${sampleNote(scored)}
@@ -338,8 +361,12 @@ function orderFacet(counts, key) {
     error.textContent = '';
     input.removeAttribute('aria-invalid');
     announce('Searching\u2026');
+    /* the sample row on the home page steps aside: once a real search is
+       running, the page has something better to put in that space */
+    if (preview) preview.hidden = true;
     results.hidden = false;
-    results.innerHTML = '<p class="thinking"><span class="dot"></span>Reading your request…</p>';
+    results.innerHTML = `<p class="thinking"><span class="dot"></span>Reading your request…</p>
+      <div class="grid">${SKELETON.repeat(4)}</div>`;
     results.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
     const outcome = await Interpreter.interpret(query, vocabulary());
@@ -385,6 +412,16 @@ function orderFacet(counts, key) {
     search(query, attachments ? attachments.manifest() : []);
   });
 
+  /* The box grows with the request up to a few lines, then scrolls, so a
+     long description stays readable while it is being typed and the card
+     never runs away down the page. */
+  const GROW_LIMIT = 168;
+  function grow() {
+    input.style.height = 'auto';
+    input.style.height = Math.min(input.scrollHeight, GROW_LIMIT) + 'px';
+  }
+  input.addEventListener('input', grow);
+
   /* Enter submits, Shift+Enter makes a new line */
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -407,12 +444,14 @@ function orderFacet(counts, key) {
       const button = e.target.closest('.example');
       if (!button) return;
       input.value = button.textContent.trim();
+      grow();
       search(input.value);
     });
   }
 
   reset.addEventListener('click', () => {
     input.value = '';
+    input.style.height = '';
     error.classList.remove('show');
     error.textContent = '';
     input.removeAttribute('aria-invalid');
@@ -422,8 +461,28 @@ function orderFacet(counts, key) {
     if (attachments) attachments.clear();
     results.hidden = true;
     results.innerHTML = '';
+    if (preview) preview.hidden = false;
     input.focus();
     form.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+})();
+
+/* ---------- what a result looks like ----------
+   The home page carries a short row of catalogue rows, so a first-time
+   visitor can see the shape of an answer — retailer, name, price, link —
+   before typing anything. It is never mistaken for the answer itself:
+   the rows are labelled exactly as they are anywhere else, and the whole
+   block steps aside the moment a real search runs. */
+(function preview() {
+  const grid = document.getElementById('preview-grid');
+  if (!grid || typeof Products === 'undefined') return;
+  const note = document.getElementById('preview-note');
+
+  Products.subscribe(() => {
+    const items = Products.all().slice(0, 4);
+    if (note) note.innerHTML = sampleNote(items);
+    grid.innerHTML = items.map(productCard).join('');
+    bindImageFallback(grid);
   });
 })();
 
