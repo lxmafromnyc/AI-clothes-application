@@ -5,16 +5,39 @@ back matching items. "I need a black shirt for school under $50" is a complete
 request — there is no form to fill in.
 
 The interface is deliberately plain: one typeface, three levels of neutral ink
-(black for primary text, one step down for body copy, muted for metadata), and no
-hue anywhere. `scripts/test-ui.js` holds the interface to that rule by walking the
-rendered document rather than a fixed list of selectors.
+(black for primary text, one step down for body copy, muted for metadata), and
+two brand hues used only where they are saying something.
 
 Hierarchy is carried by size, weight, space and surface. Every page opens on a
 lightly tinted band — the stage — holding the headline and the search card, and
-closes on one inverted black block that carries the call to action and the
-footer together. In between, the page is white. The search card is the only
-elevated layer and the primary button the only filled control, so the thing to
-do next is never in doubt.
+closes on one inverted block that carries the call to action and the footer
+together. In between, the page is white. The search card is the only elevated
+layer and the primary button the only filled control, so the thing to do next
+is never in doubt.
+
+## Colour
+
+Every colour in the interface is a token in the `:root` block of
+`assets/styles.css`, and no rule anywhere writes a raw value. The foundation —
+pages, cards, type, rules — is neutral; the hues have jobs:
+
+| Token | Job |
+| --- | --- |
+| `--color-primary` | Trust and action: the one filled control, the focus ring, the current page, links, the logo mark, and the retailer a product came from |
+| `--color-accent` | Discovery and energy: the example searches and the numbered steps — the places that invite a try |
+| `--color-success` | A live listing came back from a real product source |
+| `--color-warning` | A caveat: sample data, or a request that needs fixing before it can run |
+
+Each hue comes in weights — the solid for filled controls, an `-ink` dark enough
+to set type on white, and where it is needed a `-soft` tint and a `-line` edge.
+Every ink clears 4.5:1 both on the page and on its own tint.
+
+`scripts/test-ui.js` holds the interface to all of this by walking the rendered
+document rather than a fixed list of selectors: every piece of type must be set
+in one of the declared inks and must clear its contrast requirement on the
+ground it actually sits on, no rule may carry a raw colour value, no token may
+go unused, and the palette must still be wired to the CTA, the logo, the current
+page, the examples, the steps and the retailer labels.
 
 ## Pages
 
@@ -64,7 +87,7 @@ assets/products.js      data layer: normalises any source into one schema
 assets/catalog.js       demo product source, replaceable by a real feed
 assets/interpret.js     sends the request to the endpoint; local fallback
 assets/app.js           rendering and page behaviour
-assets/styles.css       design tokens and all shared components
+assets/styles.css       colour tokens, design tokens and all shared components
 ```
 
 ## Connecting the AI
