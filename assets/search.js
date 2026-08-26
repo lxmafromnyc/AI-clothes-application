@@ -53,7 +53,7 @@
      contents travel: nothing on the server can read one yet, and sending
      megabytes to be discarded would spend the shopper's bandwidth and
      put their photos somewhere for no purpose. */
-  async function find(intent, limit, attached) {
+  async function find(intent, limit, attached, query) {
     let response;
     try {
       const controller = new AbortController();
@@ -64,7 +64,10 @@
         body: JSON.stringify({
           intent: intent || {},
           limit: limit || 12,
-          attachments: Array.isArray(attached) ? attached : []
+          attachments: Array.isArray(attached) ? attached : [],
+          /* the shopper's own words, so the server can fall back to them
+             when the interpretation finds nothing */
+          query: typeof query === 'string' ? query : ''
         }),
         signal: controller.signal
       });
@@ -83,8 +86,13 @@
     if (response.status === 503 || response.status === 404) {
       return answer('not-configured', { notice: NOT_CONNECTED });
     }
+    /* The endpoint says what went wrong in words meant for a shopper. Use
+       them when they are there, so "the source is rate limiting us" does
+       not reach the page as "something went wrong". */
     if (!response.ok) {
-      return answer('unavailable', { notice: FAILED });
+      const told = await response.json().catch(() => null);
+      const notice = told && typeof told.error === 'string' ? told.error : FAILED;
+      return answer('unavailable', { notice, reason: told && told.reason ? String(told.reason) : null });
     }
 
     try {

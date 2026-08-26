@@ -802,18 +802,33 @@ function twoEndpointStub(searchPayload, offersByProductId) {
     assert.strictEqual(records[0].price, 54);
   });
 
-  await testAsync('surfaces an upstream failure instead of returning nothing quietly', async () => {
+  /* A fault is carried as a `kind` rather than spelled out in a message,
+     so /api/search can choose a status and a sentence for the shopper
+     without parsing prose, and no upstream text can travel with it. */
+  await testAsync('a rate limit is surfaced as one, not as an empty shelf', async () => {
     process.env.OPENWEBNINJA_API_KEY = 'test-key';
-    await assert.rejects(
-      withStubbedFetch(async () => ({ ok: false, status: 429, text: async () => 'rate limited' }),
-        () => provider.search(nikeIntent, { limit: 12 })),
-      /429/
-    );
+    const err = await withStubbedFetch(
+      async () => ({ ok: false, status: 429, text: async () => 'rate limited' }),
+      () => provider.search(nikeIntent, { limit: 12 }).then(() => null, (e) => e));
+    assert.ok(err, 'a refused search must not resolve to an empty list');
+    assert.strictEqual(err.kind, 'rate-limited');
+    assert.ok(!/rate limited/.test(err.message), 'the upstream body must not travel in the message');
+  });
+
+  await testAsync('an upstream error is surfaced, after the broader phrases are tried', async () => {
+    process.env.OPENWEBNINJA_API_KEY = 'test-key';
+    const err = await withStubbedFetch(
+      async () => ({ ok: false, status: 500, text: async () => 'boom' }),
+      () => provider.search(nikeIntent, { limit: 12 }).then(() => null, (e) => e));
+    assert.ok(err, 'a failed search must not resolve to an empty list');
+    assert.strictEqual(err.kind, 'upstream');
   });
 
   await testAsync('refuses to search without a key', async () => {
     delete process.env.OPENWEBNINJA_API_KEY;
-    await assert.rejects(() => provider.search(nikeIntent, { limit: 12 }), /OPENWEBNINJA_API_KEY/);
+    const err = await provider.search(nikeIntent, { limit: 12 }).then(() => null, (e) => e);
+    assert.ok(err, 'a search with no key must not resolve to an empty list');
+    assert.strictEqual(err.kind, 'not-configured');
   });
 
   /* -------------------------------------------------------
@@ -948,6 +963,16 @@ function twoEndpointStub(searchPayload, offersByProductId) {
     return lines;
   };
 
+  /* The one structured line every search records. It is what a deployment
+     is diagnosed from, so it is asserted on directly: it must be there,
+     it must carry the funnel, and it must carry nothing from a record. */
+  const captureSearchLine = async (fn) => {
+    const real = console.log; const lines = [];
+    console.log = (...args) => lines.push(args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' '));
+    try { await fn(); } finally { console.log = real; }
+    return lines.filter((l) => l.startsWith('search '));
+  };
+
   await testAsync('a 503 logs the configuration state, with no value in it', async () => {
     delete process.env.OPENWEBNINJA_API_KEY;
     delete process.env.PRODUCT_SOURCE;
@@ -961,14 +986,18 @@ function twoEndpointStub(searchPayload, offersByProductId) {
     delete process.env.OPENAI_API_KEY;
   });
 
-  await testAsync('a search that verifies something logs nothing at all', async () => {
+  await testAsync('a search that finds products still records its funnel', async () => {
     process.env.OPENWEBNINJA_API_KEY = 'test-key';
     delete process.env.PRODUCT_SOURCE;
     const handler = require('../api/search');
-    const lines = await captureWarnings(() => withStubbedFetch(
+    const lines = await captureSearchLine(() => withStubbedFetch(
       twoEndpointStub(envelope([productWithInlineOffer()])),
       () => handler({ method: 'POST', headers: {}, body: { intent: nikeIntent, limit: 3 }, on: () => {} }, fakeRes())));
-    assert.strictEqual(lines.length, 0, 'no request contents, no env state, nothing');
+    assert.strictEqual(lines.length, 1, 'exactly one line');
+    const d = JSON.parse(lines[0].slice('search '.length));
+    assert.strictEqual(d.verified, 1);
+    assert.ok(!lines[0].includes('Champion'), 'no product title in the log');
+    assert.ok(!lines[0].includes('nordstrom.com'), 'no URL from a record in the log');
   });
 
   await testAsync('a search that verifies nothing logs the funnel, with no record content', async () => {
@@ -976,7 +1005,7 @@ function twoEndpointStub(searchPayload, offersByProductId) {
     delete process.env.PRODUCT_SOURCE;
     const handler = require('../api/search');
     const res = fakeRes();
-    const lines = await captureWarnings(() => withStubbedFetch(
+    const lines = await captureSearchLine(() => withStubbedFetch(
       twoEndpointStub(envelope([product()]), {}),
       () => handler({ method: 'POST', headers: {}, body: { intent: nikeIntent, limit: 3 }, on: () => {} }, res)));
 

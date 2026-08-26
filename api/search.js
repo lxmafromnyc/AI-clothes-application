@@ -28,8 +28,26 @@ const { envReport } = require('./_env-report');
 
 const MAX_LIMIT = 24;
 const DEFAULT_LIMIT = 12;
+const MAX_QUERY = 400;
+
+/* What a shopper is told when a stage fails. Each one says what happened
+   and what to do about it; none of them repeats an upstream message, a
+   status line or anything else a provider put in a response body. */
+const MESSAGES = {
+  'rate-limited': 'Fynd is searching more than the product source allows right now. Wait a moment and try again.',
+  timeout: 'The product search took too long to answer. Try again in a moment.',
+  upstream: 'The product source is having trouble right now. Try again in a moment.',
+  unparseable: 'The product source returned something Fynd could not read. Try again in a moment.',
+  'not-configured': 'No product source is connected.',
+  failed: 'The product source is unavailable right now.'
+};
 
 const asArray = (v) => (Array.isArray(v) ? v.filter((x) => typeof x === 'string' && x.trim()).map((x) => x.trim()) : []);
+
+/* Queries are composed by Fynd from the shopper's request, so a log could
+   carry one safely — but it is a shopper's words either way, and a count
+   is enough to see whether broadening was the thing that worked. */
+const countTerms = (q) => String(q || '').split(/\s+/).filter(Boolean).length;
 
 function asNumber(v) {
   const n = typeof v === 'string' ? Number(v.replace(/[^0-9.]/g, '')) : v;
@@ -82,9 +100,19 @@ function readBody(req) {
   }
   return new Promise((resolve) => {
     let data = '';
-    req.on('data', (chunk) => { data += chunk; if (data.length > 20000) req.destroy(); });
-    req.on('end', () => { try { resolve(JSON.parse(data)); } catch (e) { resolve({}); } });
-    req.on('error', () => resolve({}));
+    let done = false;
+    /* every path answers exactly once. Destroying the stream on an
+       oversized body does not emit 'end', so a promise waiting only for
+       that would never settle and the function would sit there until the
+       platform killed it. */
+    const settle = (value) => { if (!done) { done = true; resolve(value); } };
+    req.on('data', (chunk) => {
+      data += chunk;
+      if (data.length > 20000) { req.destroy(); settle({}); }
+    });
+    req.on('end', () => { try { settle(JSON.parse(data)); } catch (e) { settle({}); } });
+    req.on('error', () => settle({}));
+    req.on('close', () => settle({}));
   });
 }
 
@@ -112,13 +140,26 @@ module.exports = async function handler(req, res) {
   const intent = shapeIntent(body.intent);
   const attachments = shapeAttachments(body.attachments);
   const limit = Math.min(Math.max(Number(body.limit) || DEFAULT_LIMIT, 1), MAX_LIMIT);
+  /* What the shopper typed, carried alongside the interpretation. It is
+     never trusted as intent — it is a last search phrase to fall back on
+     when the interpretation finds nothing, so an interpreter that read
+     the request wrongly cannot empty the page on its own. */
+  const query = typeof body.query === 'string' ? body.query.trim().slice(0, MAX_QUERY) : '';
 
+  const started = Date.now();
   let records;
   try {
-    records = await provider.search(intent, { limit });
+    records = await provider.search(intent, { limit, query });
   } catch (err) {
-    console.error('Product source failed', provider.name, err && err.message);
-    return res.status(502).json({ error: 'The product source is unavailable right now.', source: provider.name });
+    const kind = (err && err.kind) || 'failed';
+    /* the kind is ours and safe to send; the message never is */
+    console.error('Product source failed', provider.name, kind);
+    const status = kind === 'rate-limited' ? 429 : 502;
+    return res.status(status).json({
+      error: MESSAGES[kind] || MESSAGES.failed,
+      reason: kind,
+      source: provider.name
+    });
   }
 
   const { products, rejected } = verifyAll(records, { retailer: provider.defaultRetailer });
@@ -128,12 +169,38 @@ module.exports = async function handler(req, res) {
      had no stock, the records could not be parsed, the links could not be
      obtained, or the budget filter took them all. */
   const diagnostics = records && records.diagnostics
-    ? Object.assign({}, records.diagnostics, { reachedGate: records.length, verified: products.length, rejected })
+    ? Object.assign({}, records.diagnostics, {
+      reachedGate: records.length,
+      verified: products.length,
+      rejected,
+      elapsedMs: Date.now() - started
+    })
     : null;
 
-  if (!products.length && diagnostics) {
-    /* server log only; counts and key names, never a value from a record */
-    console.warn('Search verified nothing.', JSON.stringify(diagnostics));
+  /* One line per search, whatever the outcome, so a deployment can be
+     read from its logs rather than guessed at. Everything in it is a
+     count, a stage name or a query Fynd itself composed. No product
+     field, no response body, no credential, no attachment name — see
+     the rule in api/_env-report.js. */
+  if (diagnostics) {
+    console.log('search', JSON.stringify({
+      source: provider.name,
+      attempts: (diagnostics.attempts || []).map((a) => ({ terms: countTerms(a.q), returned: a.returned, error: a.error })),
+      broadened: diagnostics.broadened,
+      returnedByProvider: diagnostics.returnedByProvider,
+      normalized: diagnostics.normalized,
+      withInlineLink: diagnostics.withInlineLink,
+      offerLookups: diagnostics.offers ? diagnostics.offers.lookupsMade : 0,
+      offerFailures: diagnostics.offers ? diagnostics.offers.lookupsFailed : 0,
+      offerRateLimited: diagnostics.offers ? diagnostics.offers.rateLimited : 0,
+      offerTimeouts: diagnostics.offers ? diagnostics.offers.timedOut : 0,
+      withAnyLink: diagnostics.withAnyLink,
+      droppedOverBudget: diagnostics.droppedOverBudget,
+      reachedGate: diagnostics.reachedGate,
+      rejected,
+      verified: products.length,
+      elapsedMs: diagnostics.elapsedMs
+    }));
   }
 
   return res.status(200).json({

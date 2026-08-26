@@ -80,6 +80,23 @@
     genders: ['women', 'womens', "women's", 'men', 'mens', "men's", 'unisex', 'girls', 'boys']
   };
 
+  /* words that describe a budget rather than a garment */
+  const BUDGET_WORDS = new Set(['under', 'below', 'less', 'than', 'max', 'maximum', 'min',
+    'minimum', 'over', 'above', 'cheaper', 'cheap', 'budget', 'price', 'priced', 'cost',
+    'around', 'about', 'between', 'upto']);
+
+  /* The catalogue's own name for a garment word, for matching against the
+     demo catalogue. The interpreter keeps the shopper's word; this is
+     where it becomes a local category, which is the only place that
+     mapping belongs. */
+  function catalogueCategory(word) {
+    const w = String(word || '').toLowerCase();
+    for (const key of Object.keys(HINTS.categories)) {
+      if (key === w || HINTS.categories[key].includes(w)) return key;
+    }
+    return w;
+  }
+
   const has = (text, word) => new RegExp(`(^|[^a-z])${word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^a-z]|$)`, 'i').test(text);
 
   /* keeps only values the catalogue can actually match */
@@ -94,15 +111,22 @@
     const prefs = EMPTY();
     const vocab = vocabulary || {};
 
-    const collect = (group, target) => {
+    /* `literal` keeps the shopper's own word instead of the catalogue's
+       name for it. Colours, fits and occasions are closed sets a
+       catalogue can match on, so those take the catalogue's value. A
+       garment is not: "hoodie" is what the shopper wants and what a real
+       shop lists it as, so the garment word survives intact and the
+       mapping to a local catalogue happens at match time instead. */
+    const collect = (group, target, literal) => {
       Object.keys(group).forEach((value) => {
-        if (group[value].some((word) => has(text, word))) target.push(value);
+        const hit = group[value].find((word) => has(text, word));
+        if (hit) target.push(literal ? hit : value);
       });
     };
     collect(HINTS.fits, prefs.fits);
     collect(HINTS.occasions, prefs.occasions);
     collect(HINTS.colors, prefs.colors);
-    collect(HINTS.categories, prefs.categories);
+    collect(HINTS.categories, prefs.categories, true);
 
     /* budget: "under $50", "below 80", "$50", "less than 120" */
     const under = text.match(/(?:under|below|less than|max|up to|cheaper than)\s*\$?\s*(\d+(?:\.\d+)?)/);
@@ -124,10 +148,17 @@
     HINTS.seasons.forEach((s) => { if (has(text, s)) prefs.season = s; });
     HINTS.genders.forEach((g) => { if (has(text, g) && !prefs.gender) prefs.gender = g; });
 
+    /* Leftover words only. Everything the fields above already captured
+       is dropped, as is anything about price: a budget is sent to a
+       product source as a number, and "under" is not a garment. */
+    const claimed = new Set(
+      prefs.categories.concat(prefs.colors, prefs.fits, prefs.occasions)
+        .map((v) => String(v).toLowerCase())
+    );
     prefs.keywords = String(query).toLowerCase()
       .replace(/[^a-z0-9\s$-]/g, ' ')
       .split(/\s+/)
-      .filter((w) => w.length > 2);
+      .filter((w) => w.length > 2 && !claimed.has(w) && !BUDGET_WORDS.has(w) && !/^[$\d.,]+$/.test(w));
 
     prefs.colors = keepKnown(prefs.colors, vocab.colors);
     prefs.occasions = keepKnown(prefs.occasions, vocab.occasions);
@@ -203,5 +234,5 @@
     }
   }
 
-  global.Interpreter = { interpret, localInterpret, shape, EMPTY, endpoint, FALLBACK_REASON };
+  global.Interpreter = { interpret, localInterpret, shape, EMPTY, endpoint, FALLBACK_REASON, catalogueCategory };
 })(typeof window !== 'undefined' ? window : globalThis);

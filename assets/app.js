@@ -217,7 +217,11 @@ function orderFacet(counts, key) {
       if (matches.length) { earned += weight; hits[key] = matches[0]; }
     };
 
-    if (prefs.categories.length) take('category', weights.category, lower(prefs.categories).includes(String(item.category).toLowerCase()) ? [item.category] : []);
+    /* the shopper's garment word, mapped to whatever this catalogue calls
+       it — "hoodie" and "sweater" both being knits here */
+    const wantedCategories = prefs.categories.map((c) =>
+      (typeof Interpreter.catalogueCategory === 'function' ? Interpreter.catalogueCategory(c) : c));
+    if (wantedCategories.length) take('category', weights.category, lower(wantedCategories).includes(String(item.category).toLowerCase()) ? [item.category] : []);
     if (prefs.colors.length) take('color', weights.color, overlap(item.colors, prefs.colors));
     if (prefs.occasions.length) take('occasion', weights.occasion, overlap(item.occasions, prefs.occasions));
     if (prefs.fits.length) take('fit', weights.fit, overlap(item.fits, prefs.fits));
@@ -270,6 +274,7 @@ function orderFacet(counts, key) {
     </div>`;
 
   function understood(prefs) {
+    if (!prefs) return [];
     const chips = [
       ...prefs.categories, ...prefs.colors, ...prefs.fits, ...prefs.occasions,
       ...prefs.styles, ...prefs.brands
@@ -372,7 +377,26 @@ function orderFacet(counts, key) {
     if (status) status.textContent = text;
   }
 
+  /* Every search gets a number. A reply may only paint the page if it
+     belongs to the newest one — otherwise a slow first request can land
+     after a fast second and overwrite the results the shopper is
+     actually looking at. The button is held closed while a search runs,
+     so a double click is one search rather than two. */
+  let runId = 0;
+  let running = false;
+
+  function setBusy(state) {
+    running = state;
+    const submit = form.querySelector('button[type=submit]');
+    if (!submit) return;
+    submit.disabled = state;
+    submit.setAttribute('aria-busy', String(state));
+  }
+
   async function search(query, attached) {
+    const id = ++runId;
+    const current = () => id === runId;
+    setBusy(true);
     error.classList.remove('show');
     error.textContent = '';
     input.removeAttribute('aria-invalid');
@@ -385,20 +409,37 @@ function orderFacet(counts, key) {
       <div class="grid">${SKELETON.repeat(4)}</div>`;
     results.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
-    const outcome = await Interpreter.interpret(query, vocabulary());
+    try {
+      const outcome = await Interpreter.interpret(query, vocabulary());
+      if (!current()) return;
 
-    /* real products first; the sample catalogue only when no source answers */
-    const found = typeof ProductSearch === 'undefined'
-      ? { source: null, products: [], notice: null }
-      : await ProductSearch.find(outcome.preferences, undefined, attached);
+      /* real products first; the sample catalogue only when no source answers */
+      const found = typeof ProductSearch === 'undefined'
+        ? { source: null, products: [], notice: null }
+        : await ProductSearch.find(outcome.preferences, undefined, attached, query);
+      if (!current()) return;
 
-    if (found.products.length) renderProducts(found, outcome);
-    /* The sample catalogue stands in only when nothing is connected. Once
-       a product source IS configured, a failed or empty search says so —
-       a deployment that can sell things must never pad the page with demo
-       rows, however clearly they are labelled. */
-    else if (found.state === 'not-configured') render(outcome.preferences, outcome, found);
-    else renderNothing(found, outcome);
+      if (found.products.length) renderProducts(found, outcome);
+      /* The sample catalogue stands in only when nothing is connected. Once
+         a product source IS configured, a failed or empty search says so —
+         a deployment that can sell things must never pad the page with demo
+         rows, however clearly they are labelled. */
+      else if (found.state === 'not-configured') render(outcome.preferences, outcome, found);
+      else renderNothing(found, outcome);
+    } catch (err) {
+      /* Nothing above is expected to throw — both modules answer with a
+         state rather than rejecting. If one ever does, the shopper gets a
+         page that says so instead of a spinner that never stops. */
+      if (!current()) return;
+      results.innerHTML = `${resultsHead('Something went wrong', null)}
+        <div class="empty">
+          <h3>Try that again</h3>
+          <p>Fynd could not finish that search. Nothing was wrong with your request.</p>
+        </div>`;
+      announce('Something went wrong. Try that again.');
+    } finally {
+      if (current()) setBusy(false);
+    }
   }
 
   /* Files dropped on the card or chosen with the button. Held here
@@ -416,6 +457,9 @@ function orderFacet(counts, key) {
 
   form.addEventListener('submit', (e) => {
     e.preventDefault();
+    /* a second press while the first search is still running is the same
+       request arriving twice, not a new one */
+    if (running) return;
     const query = input.value.trim();
     if (!query) {
       error.textContent = 'Tell Fynd what you\u2019re looking for first.';
@@ -475,6 +519,9 @@ function orderFacet(counts, key) {
     /* starting over drops the attachments too, and hands back the
        object URLs their thumbnails were holding */
     if (attachments) attachments.clear();
+    /* whatever is in flight no longer owns the page */
+    runId += 1;
+    setBusy(false);
     results.hidden = true;
     results.innerHTML = '';
     if (preview) preview.hidden = false;

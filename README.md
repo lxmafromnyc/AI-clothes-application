@@ -81,6 +81,9 @@ scripts/verify-search.sh       checks a deployed search endpoint
 scripts/probe-openwebninja.js  prints the provider's live response fields
 scripts/test-pipeline.js       offline test of the whole server pipeline
 scripts/test-ui.js             browser test of the search interface
+scripts/test-e2e.js            the whole product, browser to gate, in a browser
+scripts/e2e-server.js          the real handlers and pages on a local port
+scripts/e2e-vendors.js         stand-ins for OpenAI and OpenWeb Ninja
 assets/attachments.js          drag-and-drop and file picker for the search box
 .env.example            template; the real .env is git-ignored
 assets/products.js      data layer: normalises any source into one schema
@@ -89,6 +92,59 @@ assets/interpret.js     sends the request to the endpoint; local fallback
 assets/app.js           rendering and page behaviour
 assets/styles.css       colour tokens, design tokens and all shared components
 ```
+
+## Testing
+
+Three suites, each covering a different thing:
+
+```sh
+node scripts/test-pipeline.js   # the server pipeline, offline
+node scripts/test-ui.js         # the interface: typography, attachments, colour
+node scripts/test-e2e.js        # the whole product, in a browser
+```
+
+`test-e2e.js` is the one that answers "does a search actually work". It
+serves the real pages and mounts the real `/api/interpret` and
+`/api/search` handlers on a local port, so the browser makes real HTTP
+requests and the provider adapter and verification gate are the ones
+that run in production. Only the two external vendors are stood in for,
+at the outermost boundary — `global fetch` for `api.openai.com` and
+`api.openwebninja.com`.
+
+The stand-ins are deliberately unhelpful. The product index ANDs its
+terms and returns only what matches, so an over-specific query returns
+nothing exactly as a real one would; the model obeys the prompt it is
+given, so what the prompt asks for is what comes back. A double that
+returned products regardless of the query would make any query look like
+it worked.
+
+What the suite cannot cover: whether the live vendors behave as their
+documentation says, and whether a given deployment has its keys set.
+Both need a key and network access to the real hosts.
+
+## Diagnostics
+
+Every interpretation and every search records exactly one structured
+line, whatever the outcome:
+
+```
+interpret {"outcome":"ok","queryChars":31,"model":"gpt-4o-mini","elapsedMs":412,
+           "fields":{"categories":1,"colors":1,"fits":1,"occasions":0,"keywords":2,"hasBudget":true}}
+search    {"source":"openwebninja","attempts":[{"terms":3,"returned":0},{"terms":2,"returned":8}],
+           "broadened":true,"returnedByProvider":8,"normalized":8,"withInlineLink":0,
+           "offerLookups":8,"offerFailures":1,"offerRateLimited":0,"offerTimeouts":0,
+           "withAnyLink":7,"droppedOverBudget":1,"reachedGate":6,
+           "rejected":{"missing-image-url":1},"verified":5,"elapsedMs":2840}
+```
+
+That is enough to tell apart every way a search can come back empty: the
+source returned nothing, the records could not be parsed, the links could
+not be obtained, the gate rejected them, or the budget filter took them.
+
+What is never logged: an API key, a token, an upstream response body, a
+product's title or URL, the shopper's own words, or anything about an
+attached file. `scripts/test-e2e.js` asserts each of those directly, and
+`api/_env-report.js` holds the rule.
 
 ## Connecting the AI
 

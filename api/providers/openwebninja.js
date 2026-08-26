@@ -111,8 +111,7 @@
 const API_ROOT = 'https://api.openwebninja.com/realtime-product-search/v2';
 const SEARCH_URL = `${API_ROOT}/search`;
 const OFFERS_URL = `${API_ROOT}/product-offers`;
-const REQUEST_TIMEOUT = 15000;
-const MAX_TERMS = 12;
+const REQUEST_TIMEOUT = 12000;
 
 /* The API caps `limit` at 120. We ask for a little more than the caller
    wants so the gate has slack to drop unusable records without emptying
@@ -137,14 +136,68 @@ const text = (v) => (v === undefined || v === null ? '' : String(v).trim());
 /* Ordered so the phrase reads the way a shopper would type it:
    "women black oversized nike hoodie". Colour and fit lead because they
    are the strongest visual filters, the garment kind anchors the phrase,
-   and leftover keywords trail behind.
+   and whatever else the shopper said trails behind.
 
-   Only terms the shopper's own request produced are used. Nothing is
-   added, and `season` is left out on purpose: it reads as a keyword to
-   the search engine ("fall hoodie") and narrows results on a word the
-   shopper used descriptively rather than as a product attribute. */
-const TERM_ORDER = ['gender', 'colors', 'fits', 'styles', 'brands', 'categories', 'occasions', 'keywords'];
+   What is deliberately NOT in the phrase:
 
+     occasions   "school", "everyday" and "work" are how the shopper
+                 explained themselves, not words a product listing
+                 contains. Sent to a product index they are ordinary
+                 search terms, and every one of them removes listings
+                 that are otherwise exactly right.
+     season      same reason: "fall hoodie" is a narrower search than
+                 "hoodie", on a word used descriptively.
+     price       "under", "$80" and "100" reach the query through
+                 `keywords`, because the shopper typed them. The budget
+                 is already being sent as min_price/max_price; as search
+                 terms these words do nothing but exclude.
+
+   A product search ANDs its terms. Every term that is not a property of
+   the garment is a term that can only lose results, so the phrase is
+   built from garment properties and capped short. */
+const TERM_ORDER = ['gender', 'colors', 'fits', 'styles', 'brands', 'categories', 'keywords'];
+
+/* Six terms is already a specific phrase. Beyond that each one is more
+   likely to exclude the right product than to find it. */
+const MAX_TERMS = 6;
+
+/* Words that carry a budget, a quantity or grammar rather than a product.
+   They arrive in `keywords` because they were in the sentence. */
+const NOT_PRODUCT_WORDS = new Set([
+  'under', 'below', 'less', 'than', 'max', 'maximum', 'minimum', 'min', 'over', 'above',
+  'cheaper', 'cheap', 'budget', 'price', 'priced', 'cost', 'costs', 'around', 'about',
+  'between', 'from', 'upto', 'up', 'to',
+  'the', 'and', 'for', 'with', 'without', 'that', 'this', 'some', 'any', 'all',
+  'want', 'wants', 'need', 'needs', 'looking', 'look', 'find', 'buy', 'get', 'show',
+  'something', 'anything', 'please', 'would', 'like', 'love', 'really', 'very',
+  'wear', 'wearing', 'worn', 'outfit', 'style', 'styles', 'piece', 'pieces', 'item', 'items',
+  'good', 'nice', 'great', 'best', 'new'
+]);
+
+/* A crude stem, used only to tell whether two terms are the same word —
+   never as a replacement. "sneakers" and "sneaker" must not both go into
+   the phrase, and the form the shopper's own request produced is the one
+   worth keeping. */
+function stemOf(word) {
+  if (word.length > 4 && word.endsWith('ies')) return word.slice(0, -3) + 'y';
+  if (word.length > 4 && word.endsWith('es') && !/(s|x|z|ch|sh)es$/.test(word)) return word.slice(0, -1);
+  if (word.length > 3 && word.endsWith('s') && !word.endsWith('ss')) return word.slice(0, -1);
+  return word;
+}
+
+/* True for a term worth sending to a product index. */
+function isProductTerm(term) {
+  if (term.length < 3) return false;
+  if (NOT_PRODUCT_WORDS.has(term)) return false;
+  /* a bare number is a price or a size the shopper typed, not a garment */
+  if (/^[$\d.,]+$/.test(term)) return false;
+  return true;
+}
+
+/* Builds the search phrase from the structured fields first, then from
+   whatever the shopper said that those fields did not already cover.
+   Returns '' when the intent says nothing usable, which search() treats
+   as a reason not to guess. */
 function queryFrom(intent) {
   const i = intent && typeof intent === 'object' ? intent : {};
   const parts = [];
@@ -158,12 +211,60 @@ function queryFrom(intent) {
   const terms = [];
   for (const part of parts) {
     const term = text(part).toLowerCase();
-    if (!term || term.length < 2 || seen.has(term)) continue;
-    seen.add(term);
+    if (!isProductTerm(term)) continue;
+    const stem = stemOf(term);
+    if (seen.has(stem)) continue;
+    seen.add(stem);
     terms.push(term);
     if (terms.length >= MAX_TERMS) break;
   }
   return terms.join(' ');
+}
+
+/* The same phrase, progressively shortened. A search that finds nothing
+   is retried with fewer terms before the shopper is told there is
+   nothing, because on an ANDing index "no results" usually means the
+   phrase was too specific rather than that the garment does not exist.
+
+   The garment kind and colour are the last things dropped: they are what
+   the shopper actually asked for. */
+function broadenedQueries(intent) {
+  const i = intent && typeof intent === 'object' ? intent : {};
+  const full = queryFrom(i);
+  const attempts = [full];
+
+  /* second attempt: the structured garment properties only, no leftover
+     words from the sentence */
+  const structuredOnly = queryFrom(Object.assign({}, i, { keywords: [], styles: [] }));
+  if (structuredOnly && structuredOnly !== full) attempts.push(structuredOnly);
+
+  /* third: colour and garment, the irreducible request */
+  const core = queryFrom({ colors: i.colors, categories: i.categories, keywords: [] })
+    || queryFrom({ categories: i.categories })
+    || queryFrom({ keywords: i.keywords });
+  if (core && !attempts.includes(core)) attempts.push(core);
+
+  /* Then: what the shopper actually typed, with the same words removed
+     that are removed from everything else. This attempt depends on no
+     interpretation at all, so it still finds the garment when the model
+     named the wrong one — an interpreter that maps "hoodie" onto some
+     other word cannot make the whole search fail. */
+  const raw = queryFrom({ keywords: String(i.rawQuery || '').toLowerCase().split(/\s+/) });
+  if (raw && !attempts.includes(raw)) attempts.push(raw);
+
+  /* Last: the front of the phrase. A request with no garment and no
+     colour in it — "something warm and woolly" — leaves the steps above
+     nothing to drop, and the terms that lead a phrase are the ones the
+     shopper led with. */
+  const longest = attempts.reduce((a, b) => (b.split(' ').length > a.split(' ').length ? b : a), '');
+  const words = longest.split(' ').filter(Boolean);
+  for (const keep of [3, 2, 1]) {
+    if (words.length <= keep) continue;
+    const shorter = words.slice(0, keep).join(' ');
+    if (!attempts.includes(shorter)) attempts.push(shorter);
+  }
+
+  return attempts.filter(Boolean);
 }
 
 /* -----------------------------------------------------------
@@ -392,45 +493,91 @@ function shapeOf(payload) {
   return `{${top}} data=${typeof data}`;
 }
 
+/* A fault, classified. The adapter and /api/search both need to tell a
+   rate limit from an outage from a timeout, and neither should be
+   parsing message strings to do it. */
+function fault(kind, message) {
+  const err = new Error(message);
+  err.kind = kind;
+  return err;
+}
+
+function faultKind(err) {
+  if (!err) return 'failed';
+  if (err.kind) return err.kind;
+  if (err.name === 'AbortError' || /abort/i.test(err.message || '')) return 'timeout';
+  return 'failed';
+}
+
+/* The adapter's whole wall-clock allowance. Kept below the platform's
+   own function limit so the invocation ends on our terms, with whatever
+   was found, instead of being killed mid-flight. */
+const DEFAULT_TOTAL_BUDGET_MS = 20000;
+const totalBudgetMs = () => Number(process.env.OPENWEBNINJA_TOTAL_BUDGET_MS) || DEFAULT_TOTAL_BUDGET_MS;
+
 /* One GET against the API. The key travels as a header, never in the
-   query string, and the response body is never surfaced to a browser. */
-async function apiGet(url, params) {
+   query string, and the response body is never surfaced to a browser.
+
+   The request never outlives the shared deadline: without that, a single
+   slow call could spend the whole function budget and the shopper would
+   get nothing rather than the products that had already been found. */
+async function apiGet(url, params, options) {
   const key = process.env.OPENWEBNINJA_API_KEY;
-  if (!key) throw new Error('OPENWEBNINJA_API_KEY is not set');
+  if (!key) throw fault('not-configured', 'OPENWEBNINJA_API_KEY is not set');
+
+  const deadline = options && options.deadline;
+  const remaining = deadline ? deadline - Date.now() : REQUEST_TIMEOUT;
+  if (remaining <= 0) throw fault('timeout', 'budget spent before request');
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
+  const timer = setTimeout(() => controller.abort(), Math.min(REQUEST_TIMEOUT, remaining));
   let response;
   try {
     response = await fetch(`${url}?${params.toString()}`, {
       headers: { 'x-api-key': key, Accept: 'application/json' },
       signal: controller.signal
     });
+  } catch (err) {
+    throw fault(faultKind(err), 'request failed');
   } finally {
     clearTimeout(timer);
   }
 
+  if (response.status === 429) {
+    /* the detail is read and discarded: it is logged as a count, never
+       returned, and never included in a message a browser could see */
+    await response.text().catch(() => '');
+    throw fault('rate-limited', 'OpenWeb Ninja rate limit reached');
+  }
   if (!response.ok) {
     const detail = await response.text().catch(() => '');
-    throw new Error(`OpenWeb Ninja responded ${response.status}: ${detail.slice(0, 200)}`);
+    throw fault(response.status >= 500 ? 'upstream' : 'failed',
+      `OpenWeb Ninja responded ${response.status}: ${detail.slice(0, 200)}`);
   }
-  return response.json();
+  try {
+    return await response.json();
+  } catch (err) {
+    throw fault('unparseable', 'OpenWeb Ninja returned a body that is not JSON');
+  }
 }
 
 /* The sellers for one product. A failure here is not fatal: that one
    product ends up without a link and the gate drops it, rather than the
    whole search failing because one lookup did. */
-async function offersFor(productId, region) {
+async function offersFor(productId, region, deadline) {
   const params = new URLSearchParams({ product_id: String(productId), country: region.country, language: region.language });
   try {
-    const payload = await apiGet(OFFERS_URL, params);
+    const payload = await apiGet(OFFERS_URL, params, { deadline });
     const offers = resultsFrom(payload);
     /* when nothing was found, the shape says whether the array is simply
        under a key resultsFrom does not read yet */
-    return { offers, failed: false, shape: offers.length ? null : shapeOf(payload) };
+    return { offers, failed: false, kind: null, shape: offers.length ? null : shapeOf(payload) };
   } catch (err) {
-    console.warn('Offer lookup failed for product', String(productId), err && err.message);
-    return { offers: [], failed: true, shape: null };
+    const kind = faultKind(err);
+    /* the product id is ours, not the shopper's, and no response body is
+       included — a count and a kind are enough to diagnose from */
+    console.warn('Offer lookup failed', kind);
+    return { offers: [], failed: true, kind, shape: null };
   }
 }
 
@@ -438,11 +585,13 @@ async function offersFor(productId, region) {
    parallel batches, stopping as soon as enough records have one or the
    budget expires. Mutates in place; a record left unresolved keeps no
    price, retailer or URL and is dropped by the gate. */
-async function resolveMissingOffers(records, wanted, region, stats) {
+async function resolveMissingOffers(records, wanted, region, stats, sharedDeadline) {
   const tally = stats || {};
   tally.neededOfferLookup = records.filter((r) => !r.productUrl).length;
   tally.lookupsMade = 0;
   tally.lookupsFailed = 0;
+  tally.rateLimited = 0;
+  tally.timedOut = 0;
   tally.lookupsEmpty = 0;
   tally.resolvedFromOffers = 0;
   /* offers came back, but not one carried a usable retailer link — the
@@ -455,7 +604,12 @@ async function resolveMissingOffers(records, wanted, region, stats) {
   if (!offersEnabled()) { tally.skipped = true; return tally; }
 
   const budget = Number(process.env.OPENWEBNINJA_OFFER_BUDGET_MS) || DEFAULT_OFFER_BUDGET_MS;
-  const deadline = Date.now() + budget;
+  /* whichever runs out first: this stage's own allowance, or what is
+     left of the adapter's. The deadline is passed all the way down to
+     each request, so a hung lookup cannot overrun it from inside a
+     batch — checking only between batches let one slow call spend the
+     whole budget and then some. */
+  const deadline = Math.min(Date.now() + budget, sharedDeadline || Infinity);
   const pending = records.filter((r) => !r.productUrl && r.sku);
   let resolved = records.filter((r) => r.productUrl).length;
 
@@ -466,8 +620,13 @@ async function resolveMissingOffers(records, wanted, region, stats) {
     const batch = pending.slice(i, i + OFFER_CONCURRENCY);
     const found = await Promise.all(batch.map(async (record) => {
       tally.lookupsMade += 1;
-      const result = await offersFor(record.sku, region);
-      if (result.failed) { tally.lookupsFailed += 1; return null; }
+      const result = await offersFor(record.sku, region, deadline);
+      if (result.failed) {
+        tally.lookupsFailed += 1;
+        if (result.kind === 'rate-limited') tally.rateLimited += 1;
+        if (result.kind === 'timeout') tally.timedOut += 1;
+        return null;
+      }
       if (!result.offers.length) {
         tally.lookupsEmpty += 1;
         /* one sample is enough to see whether parsing is the problem */
@@ -478,6 +637,11 @@ async function resolveMissingOffers(records, wanted, region, stats) {
       if (!commerce) tally.noDirectLinkInOffers += 1;
       return commerce;
     }));
+
+    /* one 429 means the next lookup is a 429 as well; the remaining
+       records keep whatever they already had rather than spending the
+       budget collecting the same refusal */
+    if (tally.rateLimited > 0) { tally.stoppedOnRateLimit = true; break; }
 
     found.forEach((commerce, n) => {
       if (!commerce) return;
@@ -495,35 +659,83 @@ async function resolveMissingOffers(records, wanted, region, stats) {
 }
 
 async function search(intent, options) {
-  const wanted = Math.min(Math.max(Number(options && options.limit) || 12, 1), 100);
+  const opts = options || {};
+  const wanted = Math.min(Math.max(Number(opts.limit) || 12, 1), 100);
   const region = {
     country: process.env.OPENWEBNINJA_COUNTRY || 'us',
     language: process.env.OPENWEBNINJA_LANGUAGE || 'en'
   };
 
-  const params = new URLSearchParams({
-    q: queryFrom(intent) || 'clothing',
-    country: region.country,
-    language: region.language,
-    limit: String(Math.min(wanted * OVERFETCH, API_LIMIT_MAX)),
-    sort_by: 'BEST_MATCH'
-  });
+  /* One wall-clock budget for the whole adapter, so retries and offer
+     lookups together can never outlast the function that called them.
+     A serverless platform kills the invocation at its own limit and the
+     shopper gets a blank 504; finishing early with fewer products is
+     always the better answer. */
+  const deadline = Date.now() + totalBudgetMs();
 
-  /* The shopper's stated budget is passed to the source so the filtering
-     happens where the catalogue is, not after the fact. */
-  if (intent && intent.minPrice) params.set('min_price', String(intent.minPrice));
-  if (intent && intent.maxPrice) params.set('max_price', String(intent.maxPrice));
-
-  const payload = await apiGet(SEARCH_URL, params);
-  const products = resultsFrom(payload);
-
-  /* Every stage a record can be lost at, counted. Without this a search
-     that returns nothing looks the same whether the source had no stock,
-     the offers could not be read, or the budget filter took them all. */
+  const attempts = broadenedQueries(Object.assign({}, intent, { rawQuery: opts.query || '' }));
   const diagnostics = {
-    returnedByProvider: products.length,
-    searchShape: products.length ? null : shapeOf(payload)
+    attempts: [],
+    returnedByProvider: 0,
+    searchShape: null,
+    rateLimited: 0,
+    timedOut: 0
   };
+
+  let products = [];
+  let usedQuery = '';
+
+  for (const attempt of attempts) {
+    if (Date.now() >= deadline) { diagnostics.budgetExpiredBeforeSearch = true; break; }
+
+    const params = new URLSearchParams({
+      q: attempt,
+      country: region.country,
+      language: region.language,
+      limit: String(Math.min(wanted * OVERFETCH, API_LIMIT_MAX)),
+      sort_by: 'BEST_MATCH'
+    });
+    /* the shopper's budget is applied where the catalogue is */
+    if (intent && intent.minPrice) params.set('min_price', String(intent.minPrice));
+    if (intent && intent.maxPrice) params.set('max_price', String(intent.maxPrice));
+
+    let payload;
+    try {
+      payload = await apiGet(SEARCH_URL, params, { deadline });
+    } catch (err) {
+      const kind = faultKind(err);
+      if (kind === 'rate-limited') diagnostics.rateLimited += 1;
+      if (kind === 'timeout') diagnostics.timedOut += 1;
+      diagnostics.attempts.push({ q: attempt, error: kind });
+      /* Remembered whatever it was. A search that never reached the
+         source has not discovered that there is nothing to sell, and
+         must not be allowed to end up looking like one. */
+      diagnostics.searchFailed = kind;
+      /* Some faults will not be cured by asking again a moment later:
+         a rate limit, a timeout, a key that is not there. Those stop the
+         attempts rather than spending the rest of the budget collecting
+         the same refusal. A one-off upstream error might not repeat, so
+         a broader phrase is still worth trying. */
+      if (kind === 'rate-limited' || kind === 'timeout' || kind === 'not-configured') break;
+      continue;
+    }
+
+    const found = resultsFrom(payload);
+    diagnostics.attempts.push({ q: attempt, returned: found.length });
+    if (!diagnostics.searchShape && !found.length) diagnostics.searchShape = shapeOf(payload);
+    if (found.length) { products = found; usedQuery = attempt; delete diagnostics.searchFailed; break; }
+  }
+
+  /* "the source refused" and "the source had nothing" are different
+     answers and the shopper is owed the right one. Falling through here
+     with an empty array would report a rate limit as an empty shelf. */
+  if (!products.length && diagnostics.searchFailed) {
+    throw Object.assign(fault(diagnostics.searchFailed, 'product search did not complete'), { diagnostics });
+  }
+
+  diagnostics.query = usedQuery;
+  diagnostics.broadened = diagnostics.attempts.length > 1;
+  diagnostics.returnedByProvider = products.length;
 
   const records = products.map((product) => {
     const record = toRecord(product);
@@ -539,7 +751,7 @@ async function search(intent, options) {
 
   /* the search endpoint returns Google's product view, so most records
      arrive without a retailer link; this fetches the sellers for them */
-  diagnostics.offers = await resolveMissingOffers(records, wanted, region, {});
+  diagnostics.offers = await resolveMissingOffers(records, wanted, region, {}, deadline);
 
   records.forEach((r) => { delete r.retailerHint; });
   diagnostics.withAnyLink = records.filter((r) => r.productUrl).length;
@@ -589,5 +801,8 @@ module.exports = {
   resultsFrom,
   withinBudget,
   shapeOf,
+  broadenedQueries,
+  faultKind,
+  totalBudgetMs,
   SEARCH_URL
 };

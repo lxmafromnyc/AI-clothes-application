@@ -47,10 +47,18 @@ Read the shopper's request and return ONLY a JSON object with these keys:
   keywords    array of any other meaningful words from the request
 
 Rules:
-- Where a vocabulary list is supplied for a field, choose only from that
-  list, picking the closest match. "loose" maps to a relaxed or oversized
-  fit; "school" maps to an everyday occasion; "grey" maps to the nearest
-  colour family present.
+- categories must be the garment the shopper actually named — "hoodie",
+  "jeans", "sneakers", "button-up shirt". Never substitute a different
+  garment for it. A vocabulary list, if one is supplied, describes one
+  local catalogue; the search runs against real shops, and a shopper who
+  asked for a hoodie must not be sent to look for a knit.
+- Where a vocabulary list is supplied for colors, occasions or fits,
+  choose the closest value from it. "loose" maps to a relaxed or
+  oversized fit; "school" maps to an everyday occasion; "grey" maps to
+  the nearest colour family present.
+- keywords is for meaningful words the other fields did not capture —
+  a fabric, a cut, a detail. Leave out words about price ("under",
+  "$80", "cheap"), and leave out anything already in another field.
 - Leave an array empty and a value null when the request does not say.
   Never guess a budget that was not stated.
 - "under $50" means maxPrice 50. "$50-$80" means minPrice 50, maxPrice 80.
@@ -95,9 +103,19 @@ function readBody(req) {
   }
   return new Promise((resolve) => {
     let data = '';
-    req.on('data', (chunk) => { data += chunk; if (data.length > 10000) req.destroy(); });
-    req.on('end', () => { try { resolve(JSON.parse(data)); } catch (e) { resolve({}); } });
-    req.on('error', () => resolve({}));
+    let done = false;
+    /* every path answers exactly once. Destroying the stream on an
+       oversized body does not emit 'end', so a promise waiting only for
+       that would never settle and the function would sit there until the
+       platform killed it. */
+    const settle = (value) => { if (!done) { done = true; resolve(value); } };
+    req.on('data', (chunk) => {
+      data += chunk;
+      if (data.length > 10000) { req.destroy(); settle({}); }
+    });
+    req.on('end', () => { try { settle(JSON.parse(data)); } catch (e) { settle({}); } });
+    req.on('error', () => settle({}));
+    req.on('close', () => settle({}));
   });
 }
 
@@ -121,6 +139,17 @@ module.exports = async function handler(req, res) {
   /* the catalogue tells the model which values it can actually match */
   const vocabulary = body.vocabulary && typeof body.vocabulary === 'object' ? body.vocabulary : {};
 
+  const started = Date.now();
+  /* One line per interpretation, so a deployment can be read from its
+     logs. Counts and outcomes only: never the key, never the shopper's
+     words, never the model's answer. */
+  const record = (outcome, extra) => console.log('interpret', JSON.stringify(Object.assign({
+    outcome,
+    queryChars: query.length,
+    model: process.env.OPENAI_MODEL || DEFAULT_MODEL,
+    elapsedMs: Date.now() - started
+  }, extra || {})));
+
   try {
     const response = await fetch(OPENAI_URL, {
       method: 'POST',
@@ -143,10 +172,18 @@ module.exports = async function handler(req, res) {
     });
 
     if (!response.ok) {
-      const detail = await response.text();
-      console.error('OpenAI request failed', response.status, detail.slice(0, 500));
-      /* never surface the upstream body: it can echo request details */
-      return res.status(502).json({ error: 'The interpreter is unavailable right now.' });
+      /* The body is read so the socket is not left open, and discarded:
+         it can echo request details, and it is never logged or returned.
+         The status alone says what happened, and 429 says it precisely —
+         a quota that has run out looks exactly like this. */
+      await response.text().catch(() => '');
+      record('upstream-error', { status: response.status });
+      return res.status(502).json({
+        error: response.status === 429
+          ? 'The interpreter has reached its rate limit. Fynd read your request itself instead.'
+          : 'The interpreter is unavailable right now.',
+        reason: response.status === 429 ? 'rate-limited' : 'upstream'
+      });
     }
 
     const payload = await response.json();
@@ -158,14 +195,29 @@ module.exports = async function handler(req, res) {
     try {
       parsed = JSON.parse(content);
     } catch (err) {
-      console.error('Model returned unparseable JSON');
-      return res.status(502).json({ error: 'The interpreter returned an unexpected answer.' });
+      record('unparseable-answer');
+      return res.status(502).json({ error: 'The interpreter returned an unexpected answer.', reason: 'unparseable' });
     }
 
-    return res.status(200).json({ source: 'openai', query, preferences: shapePreferences(parsed) });
+    const preferences = shapePreferences(parsed);
+    /* how much was actually understood, as counts — enough to see an
+       interpreter quietly returning nothing useful */
+    record('ok', {
+      fields: {
+        categories: preferences.categories.length,
+        colors: preferences.colors.length,
+        fits: preferences.fits.length,
+        occasions: preferences.occasions.length,
+        keywords: preferences.keywords.length,
+        hasBudget: Boolean(preferences.maxPrice || preferences.minPrice)
+      }
+    });
+    return res.status(200).json({ source: 'openai', query, preferences });
   } catch (err) {
-    console.error('Interpreter error', err && err.message);
-    return res.status(502).json({ error: 'The interpreter is unavailable right now.' });
+    /* a timeout, a DNS failure, a socket reset: the kind matters, the
+       message may carry a URL and does not travel */
+    record('unreachable', { kind: err && err.name === 'AbortError' ? 'timeout' : 'failed' });
+    return res.status(502).json({ error: 'The interpreter is unavailable right now.', reason: 'unreachable' });
   }
 };
 
