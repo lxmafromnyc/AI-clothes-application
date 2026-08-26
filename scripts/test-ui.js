@@ -103,16 +103,38 @@ const dragOverOnly = ({ selector }) => {
    of selectors, so this walks the rendered document instead of checking a
    fixed list: markup added later is covered the day it lands.
 
-   The rule the interface holds to: type is set in neutral ink and
-   nothing else. Primary text is black, supporting copy one step down,
-   metadata muted, and the single inverted surface (the primary button)
-   sets its label in white. Every one of those is a pure grey — equal
-   red, green and blue — so no hue can reach the type, and none of the
-   gradient-filled, clipped or glowing treatments the interface used to
-   carry may come back either. */
-const NEUTRALS = ['rgb(0, 0, 0)', 'rgb(43, 43, 43)', 'rgb(107, 107, 107)', 'rgb(255, 255, 255)'];
+   The rule the interface holds to: every piece of type is set in one of
+   the palette's declared inks, and every piece of type is legible on the
+   ground it actually sits on.
 
-const textStyleProblems = (page) => page.evaluate((allowed) => {
+   The inks are read from the stylesheet's own custom properties rather
+   than hard-coded here, so changing the palette changes what the test
+   allows — but a colour that was never named as an ink, or a hue applied
+   straight to a rule, still fails. None of the gradient-filled, clipped
+   or glowing treatments the interface used to carry may come back
+   either. */
+const INK_TOKENS = [
+  '--color-text', '--color-text-2', '--color-text-muted', '--color-text-invert',
+  '--color-text-on-primary', '--color-primary', '--color-primary-ink',
+  '--color-accent-ink', '--color-success-ink', '--color-warning-ink'
+];
+
+/* Resolves a token to the same rgb() string getComputedStyle reports, by
+   letting the browser do the conversion rather than parsing hex here. */
+const resolveInks = (page) => page.evaluate((tokens) => {
+  const probe = document.createElement('span');
+  probe.style.display = 'none';
+  document.body.appendChild(probe);
+  const out = {};
+  for (const token of tokens) {
+    probe.style.color = `var(${token})`;
+    out[getComputedStyle(probe).color] = token;
+  }
+  probe.remove();
+  return out;
+}, INK_TOKENS);
+
+const textStyleProblems = (page, inks) => page.evaluate((allowed) => {
   const SKIP = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE']);
   const problems = [];
 
@@ -123,10 +145,48 @@ const textStyleProblems = (page) => page.evaluate((allowed) => {
     return `${el.tagName.toLowerCase()}${id}${cls}`;
   };
 
-  /* a pure grey has equal channels; anything else carries a hue */
-  const grey = (value) => {
-    const m = /^rgba?\((\d+), (\d+), (\d+)/.exec(value || '');
-    return Boolean(m) && m[1] === m[2] && m[2] === m[3];
+  const channels = (value) => {
+    const m = /^rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(value || '');
+    return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+  };
+
+  const luminance = (rgb) => {
+    const [r, g, b] = rgb.map((v) => {
+      const c = v / 255;
+      return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+    });
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+
+  /* the nearest ancestor that actually paints something behind the text */
+  const groundOf = (el) => {
+    let node = el;
+    while (node && node !== document.documentElement) {
+      const cs = getComputedStyle(node);
+      const m = /^rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?/.exec(cs.backgroundColor);
+      if (m && (m[4] === undefined || Number(m[4]) > 0.5)) return channels(cs.backgroundColor);
+      node = node.parentElement;
+    }
+    return [255, 255, 255];
+  };
+
+  /* type drawn at less than full opacity composites onto its ground, and
+     the compositing happens in sRGB — mixing in linear light would report
+     a contrast the eye never gets */
+  const opacityOf = (el) => {
+    let value = 1;
+    let node = el;
+    while (node && node !== document.body) {
+      value *= Number(getComputedStyle(node).opacity);
+      node = node.parentElement;
+    }
+    return value;
+  };
+
+  const contrast = (fg, bg, opacity) => {
+    const front = opacity < 1 ? fg.map((v, i) => Math.round(v * opacity + bg[i] * (1 - opacity))) : fg;
+    const [hi, lo] = [luminance(front), luminance(bg)].sort((a, b) => b - a);
+    return (hi + 0.05) / (lo + 0.05);
   };
 
   for (const el of document.querySelectorAll('body *')) {
@@ -136,11 +196,11 @@ const textStyleProblems = (page) => page.evaluate((allowed) => {
     if (!rendersText) continue;
 
     const cs = getComputedStyle(el);
+    if (cs.display === 'none' || cs.visibility === 'hidden') continue;
     const where = `${label(el)} ("${el.textContent.trim().slice(0, 32)}")`;
 
-    if (!grey(cs.color)) problems.push(`${where} is ${cs.color}, which is not a neutral`);
-    else if (!allowed.includes(cs.color)) problems.push(`${where} is ${cs.color}, which is not one of the four inks`);
-    if (cs.webkitTextFillColor && !grey(cs.webkitTextFillColor)) {
+    if (!allowed[cs.color]) problems.push(`${where} is ${cs.color}, which is not one of the palette inks`);
+    if (cs.webkitTextFillColor && cs.webkitTextFillColor !== cs.color) {
       problems.push(`${where} fills its glyphs with ${cs.webkitTextFillColor}`);
     }
     if ((cs.webkitBackgroundClip || cs.backgroundClip) === 'text') {
@@ -148,9 +208,18 @@ const textStyleProblems = (page) => page.evaluate((allowed) => {
     }
     if (/gradient/.test(cs.backgroundImage)) problems.push(`${where} sits on a gradient`);
     if (cs.textShadow !== 'none') problems.push(`${where} has a text shadow: ${cs.textShadow}`);
+
+    const fg = channels(cs.color);
+    if (fg && el.getBoundingClientRect().width) {
+      const size = parseFloat(cs.fontSize);
+      const large = size >= 24 || (size >= 18.66 && Number(cs.fontWeight) >= 700);
+      const need = large ? 3 : 4.5;
+      const ratio = contrast(fg, groundOf(el), opacityOf(el));
+      if (ratio < need) problems.push(`${where} is ${ratio.toFixed(2)}:1 on its ground, under ${need}`);
+    }
   }
   return problems;
-}, NEUTRALS);
+}, inks);
 
 /* Placeholders are not text nodes, so they are checked on their own. */
 const placeholderColours = (page) => page.$$eval('[placeholder]', (ns) => ns.map((n) => {
@@ -435,9 +504,9 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
   };
 
   for (const file of PAGES) {
-    await test(`every piece of text on ${file} is set in neutral ink`, async () => {
+    await test(`every piece of text on ${file} is set in a palette ink, and is legible`, async () => {
       const page = await settled(file);
-      const problems = await textStyleProblems(page);
+      const problems = await textStyleProblems(page, await resolveInks(page));
       assert.deepStrictEqual(problems, [], `\n        ${problems.join('\n        ')}`);
       await page.close();
     });
@@ -471,17 +540,17 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     await page.close();
   });
 
-  await test('search results, badges and product text are set in neutral ink', async () => {
+  await test('search results, badges and product text are set in a palette ink', async () => {
     const page = await open();
     await page.fill('#ask', 'black oversized hoodie');
     await page.click('button[type=submit]');
     await page.waitForSelector('.item-card', { timeout: 10000 });
-    const problems = await textStyleProblems(page);
+    const problems = await textStyleProblems(page, await resolveInks(page));
     assert.deepStrictEqual(problems, [], `\n        ${problems.join('\n        ')}`);
     await page.close();
   });
 
-  await test('attachment chips, the drop cue and the error line are set in neutral ink', async () => {
+  await test('attachment chips, the drop cue and the error line are set in a palette ink', async () => {
     const page = await open();
     await page.evaluate(dropInPage, { selector: '#ask-form', files: [
       { name: 'inspo.png', type: 'image/png', size: 1024 },
@@ -494,18 +563,19 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     await page.evaluate(dragOverOnly, { selector: '#ask-form' });
     await page.waitForFunction(() => getComputedStyle(document.querySelector('.ask-dropveil')).display !== 'none');
 
-    const problems = await textStyleProblems(page);
+    const problems = await textStyleProblems(page, await resolveInks(page));
     assert.deepStrictEqual(problems, [], `\n        ${problems.join('\n        ')}`);
     await page.close();
   });
 
   /* a placeholder is an example, not the value, so it is set in the
-     muted ink — but still a neutral one */
-  await test('placeholder text is set in neutral ink', async () => {
+     muted ink — and, like every other piece of type, in a palette ink */
+  await test('placeholder text is set in a palette ink', async () => {
     for (const file of PAGES) {
       const page = await settled(file);
+      const inks = await resolveInks(page);
       (await placeholderColours(page)).forEach(({ selector, color }) => {
-        assert.ok(NEUTRALS.includes(color), `${file} ${selector} placeholder is ${color}`);
+        assert.ok(inks[color], `${file} ${selector} placeholder is ${color}`);
       });
       await page.close();
     }
@@ -515,14 +585,65 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     const css = fs.readFileSync(path.join(REPO, 'assets', 'styles.css'), 'utf8');
     assert.ok(!/background-clip:\s*text/.test(css), 'no rule may clip a background to its text');
     assert.ok(!/text-shadow/.test(css), 'no rule may glow');
-    /* the ink tokens every text rule resolves through: three levels of
-       grey and the one inverted label colour, all of them neutral */
-    const INKS = { '--ink': '#000000', '--ink-2': '#2b2b2b', '--muted': '#6b6b6b', '--on-dark': '#ffffff' };
-    Object.entries(INKS).forEach(([token, expected]) => {
+    assert.ok(!/linear-gradient|radial-gradient|conic-gradient/.test(css), 'no rule may paint a gradient');
+    /* the neutral foundation the palette is built on: black type, one
+       step down for prose, muted metadata, white on an inverted ground */
+    const FOUNDATION = {
+      '--color-text': '#000000', '--color-text-2': '#2b2b2b',
+      '--color-text-muted': '#6b6b6b', '--color-text-invert': '#ffffff'
+    };
+    Object.entries(FOUNDATION).forEach(([token, expected]) => {
       const m = new RegExp(`${token}:\\s*([^;]+);`).exec(css);
       assert.ok(m, `${token} should be defined`);
       assert.strictEqual(m[1].trim().toLowerCase(), expected, `${token} is ${m && m[1]}`);
     });
+  });
+
+  /* The palette is a system or it is nothing: a hex dropped into a rule
+     is a colour nobody can find later, and is how a design system turns
+     back into a pile of one-off values. */
+  await test('every colour in the stylesheet comes from a token', async () => {
+    const css = fs.readFileSync(path.join(REPO, 'assets', 'styles.css'), 'utf8');
+    const rules = css.slice(css.indexOf('*, *::before, *::after'));
+    const raw = rules.match(/#[0-9A-Fa-f]{3,8}\b|rgba?\([^)]*\)/g) || [];
+    assert.deepStrictEqual(raw, [], `raw colour values outside the token block: ${raw.join(', ')}`);
+
+    /* and nothing the other way either: a token nothing reads is a
+       colour that looks like part of the system but is not in it */
+    const declared = new Set([...css.matchAll(/(--color-[a-z0-9-]+):/g)].map((m) => m[1]));
+    const used = new Set([...css.matchAll(/var\((--color-[a-z0-9-]+)\)/g)].map((m) => m[1]));
+    const dead = [...declared].filter((t) => !used.has(t));
+    assert.deepStrictEqual(dead, [], `tokens nothing uses: ${dead.join(', ')}`);
+  });
+
+  /* Colour has to be doing a job. These are the jobs it was given; if a
+     rule stops using the token, the interface has quietly lost a signal
+     rather than merely changed shade. */
+  await test('the palette is actually wired to the interface', async () => {
+    const page = await settled('index.html');
+    const wired = await page.evaluate(() => {
+      const val = (token) => getComputedStyle(document.documentElement).getPropertyValue(token).trim();
+      const probe = document.createElement('span');
+      probe.style.display = 'none';
+      document.body.appendChild(probe);
+      const rgbOf = (token) => { probe.style.color = `var(${token})`; return getComputedStyle(probe).color; };
+      const primary = rgbOf('--color-primary');
+      const out = {
+        cta: getComputedStyle(document.querySelector('.btn-primary')).backgroundColor === primary,
+        mark: getComputedStyle(document.querySelector('.brand-mark')).backgroundColor === primary,
+        current: getComputedStyle(document.querySelector('.nav-links a[aria-current="page"]'), '::after').backgroundColor === primary,
+        example: getComputedStyle(document.querySelector('.example')).color === rgbOf('--color-accent-ink'),
+        step: getComputedStyle(document.querySelector('.step-num')).color === rgbOf('--color-accent-ink'),
+        retailer: getComputedStyle(document.querySelector('.item-retailer')).color === rgbOf('--color-primary-ink'),
+        defined: ['--color-bg', '--color-surface', '--color-text', '--color-text-muted', '--color-border',
+          '--color-primary', '--color-primary-hover', '--color-accent', '--color-success', '--color-warning']
+          .every((t) => val(t) !== '')
+      };
+      probe.remove();
+      return out;
+    });
+    Object.entries(wired).forEach(([what, ok]) => assert.ok(ok, `${what} does not use its token`));
+    await page.close();
   });
 
   await browser.close();

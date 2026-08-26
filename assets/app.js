@@ -245,12 +245,25 @@ function orderFacet(counts, key) {
     </div>`;
   }
 
-  /* Every result state opens the same way: a kicker, then the outcome in
-     one line, then what was understood beside it. The shopper always
-     reads the same shape whether eight things came back or none. */
-  const resultsHead = (heading, prefs) => `<div class="results-head">
+  /* Where the rows on screen came from, in one marker. Green is only
+     ever used for rows a product source actually returned; amber marks
+     the demo catalogue standing in. Anything else carries no marker at
+     all rather than a reassuring one it has not earned. */
+  const STATUS = {
+    live: '<span class="status status--live">Live listings</span>',
+    sample: '<span class="status status--sample">Sample data</span>'
+  };
+
+  /* Every result state opens the same way: a kicker and where the rows
+     came from, then the outcome in one line, then what was understood
+     beside it. The shopper reads the same shape whether eight things
+     came back or none. */
+  const resultsHead = (heading, prefs, status) => `<div class="results-head">
       <div>
-        <p class="eyebrow">Results</p>
+        <div class="results-head-line">
+          <p class="eyebrow">Results</p>
+          ${status || ''}
+        </div>
         <h2>${heading}</h2>
       </div>
       ${readback(prefs)}
@@ -275,7 +288,7 @@ function orderFacet(counts, key) {
       ? `<p class="notice" role="status">${esc(outcome.notice)}</p>` : '';
 
     const count = `${found.products.length} ${found.products.length === 1 ? 'piece' : 'pieces'} found`;
-    results.innerHTML = `${resultsHead(count, outcome.preferences)}
+    results.innerHTML = `${resultsHead(count, outcome.preferences, STATUS.live)}
       ${notice}
       <div class="grid">${found.products.map(productCard).join('')}</div>`;
     bindImageFallback(results);
@@ -342,7 +355,10 @@ function orderFacet(counts, key) {
     }
 
     const picked = `${scored.length} ${scored.length === 1 ? 'piece' : 'pieces'} picked for you`;
-    results.innerHTML = `${resultsHead(picked, prefs)}
+    /* these rows are the demo catalogue; it is only called sample data
+       when placeholder rows are actually among them */
+    const status = scored.some((item) => !item.productUrl) ? STATUS.sample : '';
+    results.innerHTML = `${resultsHead(picked, prefs, status)}
       ${notice}
       ${sourceNotice}
       ${sampleNote(scored)}
