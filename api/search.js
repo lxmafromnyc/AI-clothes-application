@@ -18,6 +18,14 @@
                       is connected.
      ALLOWED_ORIGIN   origins allowed to call this from a browser, beyond
                       the deployment's own. Comma-separated. See _cors.js.
+
+   Metering
+     A live search spends product-search quota, so each one is counted
+     against the caller's plan — 3 a day on Free, 75 a month on Pro, 400
+     on Max. The plan is read from the stored user record, which is
+     derived from a Stripe subscription; nothing in the request can
+     change it. A caller with none left gets a 429 saying when theirs
+     comes back. See api/_meter.js.
    ========================================================= */
 
 'use strict';
@@ -25,6 +33,8 @@
 const { getProvider, verifyAll } = require('./providers/product-source');
 const { handledPreflight } = require('./_cors');
 const { envReport } = require('./_env-report');
+const meter = require('./_meter');
+const { SEARCHES } = require('./_plans');
 
 const MAX_LIMIT = 24;
 const DEFAULT_LIMIT = 12;
@@ -108,6 +118,12 @@ module.exports = async function handler(req, res) {
     });
   }
 
+  /* Checked before the provider is called, so a shopper with nothing
+     left costs no quota. Counted after it answers, so a search that
+     failed upstream is not charged to them. */
+  const { identity, state, blocked } = await meter.guard(req, res, SEARCHES);
+  if (blocked) return meter.overLimit(res, state);
+
   const body = await readBody(req);
   const intent = shapeIntent(body.intent);
   const attachments = shapeAttachments(body.attachments);
@@ -120,6 +136,10 @@ module.exports = async function handler(req, res) {
     console.error('Product source failed', provider.name, err && err.message);
     return res.status(502).json({ error: 'The product source is unavailable right now.', source: provider.name });
   }
+
+  /* The provider answered, so this search happened whatever the gate
+     then makes of the records: the quota was spent either way. */
+  const after = await meter.spend(identity, SEARCHES, 1);
 
   const { products, rejected } = verifyAll(records, { retailer: provider.defaultRetailer });
 
@@ -146,7 +166,9 @@ module.exports = async function handler(req, res) {
     diagnostics,
     /* said out loud so an attachment is never mistaken for something
        that shaped these results. It did not. */
-    attachments: { received: attachments.length, used: 0, reason: attachments.length ? 'Attachments are not read yet.' : null }
+    attachments: { received: attachments.length, used: 0, reason: attachments.length ? 'Attachments are not read yet.' : null },
+    /* so the meter on screen moves without a second round trip */
+    usage: meter.report(after || state)
   });
 };
 

@@ -31,7 +31,13 @@
 
 /* The variables whose absence explains a 503, and nothing else. Adding a
    name here makes its STATE loggable; it never makes its value loggable. */
-const REPORTED = ['OPENAI_API_KEY', 'OPENWEBNINJA_API_KEY', 'ALLOWED_ORIGIN', 'VERCEL_ENV'];
+const REPORTED = [
+  'OPENAI_API_KEY', 'OPENWEBNINJA_API_KEY', 'ALLOWED_ORIGIN', 'VERCEL_ENV',
+  /* billing. A 503 from /api/checkout or /api/stripe-webhook has exactly
+     one of these behind it, and knowing which turns a guess into a fix. */
+  'STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET', 'STRIPE_PRICE_PRO', 'STRIPE_PRICE_MAX',
+  'AUTH_SECRET', 'KV_REST_API_URL', 'KV_REST_API_TOKEN'
+];
 
 function stateOf(name) {
   const value = process.env[name];

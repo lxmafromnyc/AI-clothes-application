@@ -34,9 +34,65 @@ try {
 /* the page, plus stub endpoints, on one origin so no CORS is involved */
 const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml' };
 const searchRequests = [];
+const billingRequests = [];
+
+/* What the stub /api/account answers with. Shaped exactly like the real
+   endpoint's reply, because the whole point of the billing interface is
+   that it renders what the server said and decides nothing itself — so
+   the test drives it the only way anything can: by changing the
+   server's answer. */
+const PLAN_LIMITS = {
+  free: { aiTokens: 20000, searches: 3 },
+  pro: { aiTokens: 1000000, searches: 75 },
+  max: { aiTokens: 5000000, searches: 400 }
+};
+
+const planCatalogue = () => [
+  { id: 'free', name: 'Free', amount: 0, interval: null, period: 'day', limits: PLAN_LIMITS.free, tagline: 'Try it out, every day.', features: [], purchasable: false },
+  { id: 'pro', name: 'Pro', amount: 14.99, interval: 'month', period: 'month', limits: PLAN_LIMITS.pro, tagline: 'For shopping properly.', features: [], purchasable: true },
+  { id: 'max', name: 'Max', amount: 79.99, interval: 'month', period: 'month', limits: PLAN_LIMITS.max, tagline: 'For searching all day.', features: [], purchasable: true }
+];
+
+const accountReply = (over) => {
+  const planId = (over && over.planId) || 'free';
+  const plan = planCatalogue().find((p) => p.id === planId);
+  const period = planId === 'free' ? 'day' : 'month';
+  const usageOf = (metric, used) => ({
+    metric, plan: planId, period,
+    limit: PLAN_LIMITS[planId][metric], used,
+    remaining: Math.max(0, PLAN_LIMITS[planId][metric] - used),
+    resetsAt: '2099-01-01T00:00:00.000Z'
+  });
+  return Object.assign({
+    signedIn: false,
+    user: null,
+    plan: Object.assign({}, plan, { limits: PLAN_LIMITS[planId] }),
+    plans: planCatalogue(),
+    subscription: null,
+    usage: { aiTokens: usageOf('aiTokens', 1200), searches: usageOf('searches', 1) },
+    billing: { enabled: true, testMode: true, webhookConfigured: true, portal: false },
+    accounts: { enabled: true },
+    storage: { durable: true }
+  }, (over && over.extra) || {});
+};
+
+let accountState = accountReply({});
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
+
+  if (['/api/account', '/api/auth', '/api/checkout', '/api/portal'].includes(url.pathname)) {
+    let body = '';
+    req.on('data', (d) => { body += d; });
+    return req.on('end', () => {
+      const parsed = (() => { try { return JSON.parse(body); } catch (e) { return {}; } })();
+      billingRequests.push({ path: url.pathname, body: parsed });
+      res.setHeader('Content-Type', 'application/json');
+      if (url.pathname === '/api/checkout') return res.end(JSON.stringify({ url: 'https://checkout.stripe.test/session', plan: parsed.plan }));
+      if (url.pathname === '/api/portal') return res.end(JSON.stringify({ url: 'https://billing.stripe.test/portal' }));
+      return res.end(JSON.stringify(accountState));
+    });
+  }
 
   if (url.pathname === '/api/interpret' || url.pathname === '/api/search') {
     let body = '';
@@ -489,16 +545,207 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     await page.close();
   });
 
+  console.log('\nthe billing interface');
+
+  /* Opens a billing page with the stub answering a particular account
+     state, and waits for the interface to have drawn it. */
+  const openBilling = async (file, state) => {
+    accountState = accountReply(state || {});
+    const page = await openPage(file);
+    await page.waitForSelector('.plan-banner:not([hidden]), .meter', { timeout: 10000 });
+    return page;
+  };
+
+  await test('the pricing page shows all three plans with their prices', async () => {
+    const page = await openBilling('pricing.html');
+    const cards = await page.$$eval('.plan-card', (ns) => ns.map((n) => ({
+      plan: n.dataset.plan,
+      name: n.querySelector('.plan-name').textContent.trim(),
+      amount: n.querySelector('.plan-amount').textContent.trim()
+    })));
+    assert.deepStrictEqual(cards.map((c) => c.plan), ['free', 'pro', 'max']);
+    assert.deepStrictEqual(cards.map((c) => c.amount), ['$0', '$14.99', '$79.99']);
+    await page.close();
+  });
+
+  await test('the plan the server named is the one marked current', async () => {
+    const page = await openBilling('pricing.html', { planId: 'pro', extra: { signedIn: true, user: { email: 'a@b.co' } } });
+    const current = await page.$$eval('.plan-card--current', (ns) => ns.map((n) => n.dataset.plan));
+    assert.deepStrictEqual(current, ['pro'], 'exactly the server-named plan is marked');
+    assert.strictEqual(await page.$eval('#banner-plan', (n) => n.textContent.trim()), 'Pro');
+    await page.close();
+  });
+
+  await test('a signed-out visitor is asked to sign in rather than sent to Stripe', async () => {
+    billingRequests.length = 0;
+    const page = await openBilling('pricing.html');
+    const label = await page.$eval('.plan-card[data-plan="pro"] [data-plan-action]', (n) => n.textContent.trim());
+    assert.strictEqual(label, 'Get Pro');
+    assert.strictEqual(await page.$eval('.plan-card[data-plan="pro"] [data-plan-action]', (n) => n.dataset.action), 'sign-in-first');
+    assert.ok(!billingRequests.some((r) => r.path === '/api/checkout'), 'no checkout may be started without an account');
+    await page.close();
+  });
+
+  await test('a signed-in shopper on Free gets Get Pro and Get Max, and clicking sends only the plan name', async () => {
+    billingRequests.length = 0;
+    const page = await openBilling('pricing.html', { extra: { signedIn: true, user: { email: 'a@b.co', hasBilling: false } } });
+    assert.strictEqual(await page.$eval('.plan-card[data-plan="pro"] [data-plan-action]', (n) => n.textContent.trim()), 'Get Pro');
+    assert.strictEqual(await page.$eval('.plan-card[data-plan="max"] [data-plan-action]', (n) => n.textContent.trim()), 'Get Max');
+
+    await page.click('.plan-card[data-plan="max"] [data-plan-action]');
+    await page.waitForTimeout(400);
+
+    const started = billingRequests.filter((r) => r.path === '/api/checkout');
+    assert.strictEqual(started.length, 1, 'one checkout, for one click');
+    assert.strictEqual(started[0].body.plan, 'max');
+    /* nothing that could re-price the checkout may be sent from a page */
+    const sent = JSON.stringify(started[0].body);
+    assert.ok(!/price|amount|currency|interval|14\.99|79\.99/i.test(sent), sent);
+    await page.close();
+  });
+
+  await test('somebody already subscribed is sent to the portal, never to a second checkout', async () => {
+    billingRequests.length = 0;
+    const page = await openBilling('pricing.html', {
+      planId: 'pro',
+      extra: {
+        signedIn: true,
+        user: { email: 'a@b.co', hasBilling: true },
+        subscription: { status: 'active', cancelAtPeriodEnd: false, currentPeriodEnd: '2099-01-01T00:00:00.000Z', latestInvoiceStatus: 'paid' },
+        billing: { enabled: true, testMode: true, webhookConfigured: true, portal: true }
+      }
+    });
+    assert.strictEqual(await page.$eval('.plan-card[data-plan="max"] [data-plan-action]', (n) => n.dataset.action), 'portal');
+    await page.click('.plan-card[data-plan="max"] [data-plan-action]');
+    await page.waitForTimeout(400);
+    assert.ok(billingRequests.some((r) => r.path === '/api/portal'), 'the portal is what changes an existing subscription');
+    assert.ok(!billingRequests.some((r) => r.path === '/api/checkout'), 'a second checkout would be a second monthly charge');
+    await page.close();
+  });
+
+  await test('Manage subscription appears once there is a Stripe customer, and opens the portal', async () => {
+    billingRequests.length = 0;
+    const page = await openBilling('account.html', {
+      planId: 'max',
+      extra: {
+        signedIn: true,
+        user: { email: 'a@b.co', hasBilling: true },
+        subscription: { status: 'active', cancelAtPeriodEnd: false, currentPeriodEnd: '2099-03-04T00:00:00.000Z', latestInvoiceStatus: 'paid' },
+        billing: { enabled: true, testMode: true, webhookConfigured: true, portal: true }
+      }
+    });
+    const button = await page.$('#banner-actions [data-action="portal"]');
+    assert.ok(button, 'a subscriber needs a way to manage the subscription');
+    assert.strictEqual((await button.textContent()).trim(), 'Manage subscription');
+    await button.click();
+    await page.waitForTimeout(400);
+    assert.ok(billingRequests.some((r) => r.path === '/api/portal'));
+    await page.close();
+  });
+
+  await test('the usage meters show the server’s counters, not the page’s own', async () => {
+    const page = await openBilling('account.html');
+    const meters = await page.$$eval('.meter', (ns) => ns.map((n) => ({
+      label: n.querySelector('.meter-label').textContent.trim(),
+      value: n.querySelector('.meter-value').textContent.trim()
+    })));
+    assert.strictEqual(meters.length, 2);
+    assert.deepStrictEqual(meters.map((m) => m.label), ['AI tokens', 'Live product searches']);
+    assert.strictEqual(meters[0].value, '1,200 of 20,000 used');
+    assert.strictEqual(meters[1].value, '1 of 3 used');
+    await page.close();
+  });
+
+  await test('the meters follow the plan: Pro shows the monthly allowance', async () => {
+    const page = await openBilling('account.html', { planId: 'pro', extra: { signedIn: true, user: { email: 'a@b.co' } } });
+    const values = await page.$$eval('.meter-value', (ns) => ns.map((n) => n.textContent.trim()));
+    assert.ok(values[0].endsWith('of 1,000,000 used'), values[0]);
+    assert.ok(values[1].endsWith('of 75 used'), values[1]);
+    await page.close();
+  });
+
+  await test('a failed payment is explained, not silently downgraded', async () => {
+    const page = await openBilling('account.html', {
+      planId: 'free',
+      extra: {
+        signedIn: true,
+        user: { email: 'a@b.co', hasBilling: true },
+        subscription: { status: 'past_due', cancelAtPeriodEnd: false, currentPeriodEnd: '2099-01-01T00:00:00.000Z', latestInvoiceStatus: 'payment_failed' },
+        billing: { enabled: true, testMode: true, webhookConfigured: true, portal: true }
+      }
+    });
+    assert.strictEqual(await page.$eval('#banner-plan', (n) => n.textContent.trim()), 'Free');
+    assert.ok(await page.$('#banner-actions [data-action="portal"]'), 'they need a way to fix the card');
+    await page.close();
+  });
+
+  await test('landing on ?checkout=success grants nothing on its own', async () => {
+    accountState = accountReply({});
+    const page = await openPage('pricing.html?checkout=success&session_id=cs_test_forged');
+    await page.waitForSelector('#checkout-note:not([hidden])', { timeout: 10000 });
+    /* the server still says Free, so the page still says Free */
+    assert.strictEqual(await page.$eval('#banner-plan', (n) => n.textContent.trim()), 'Free');
+    const current = await page.$$eval('.plan-card--current', (ns) => ns.map((n) => n.dataset.plan));
+    assert.deepStrictEqual(current, ['free'], 'a redirect is not a payment');
+    await page.close();
+  });
+
+  await test('a cancelled checkout says nothing was charged', async () => {
+    accountState = accountReply({});
+    const page = await openPage('pricing.html?checkout=cancelled');
+    await page.waitForSelector('#checkout-note:not([hidden])', { timeout: 10000 });
+    const text = await page.$eval('#checkout-note', (n) => n.textContent);
+    assert.ok(/nothing was charged/i.test(text), text);
+    assert.strictEqual(await page.$eval('#banner-plan', (n) => n.textContent.trim()), 'Free');
+    await page.close();
+  });
+
+  await test('a deployment running in Stripe test mode says so before anyone types a card', async () => {
+    const page = await openBilling('pricing.html');
+    const note = await page.$eval('#deployment-note', (n) => n.textContent);
+    assert.ok(/test mode/i.test(note), note);
+    assert.ok(/no real card is charged/i.test(note), note);
+    await page.close();
+  });
+
+  await test('the plan prices and limits on the pricing page match the server’s plan table', async () => {
+    const plans = require('../api/_plans');
+    const html = fs.readFileSync(path.join(REPO, 'pricing.html'), 'utf8');
+    Object.values(plans.PLANS).forEach((plan) => {
+      const money = plan.amount === 0 ? '$0' : `$${plan.amount.toFixed(2)}`;
+      assert.ok(html.includes(`<span class="plan-amount">${money}</span>`), `${plan.name} should be priced ${money}`);
+      plan.features.forEach((feature) => {
+        assert.ok(html.includes(`<li>${feature}</li>`), `${plan.name} should list "${feature}"`);
+      });
+    });
+  });
+
+  await test('no page ships a Stripe key, and no page collects a card', async () => {
+    const files = ['index.html', 'find-clothes.html', 'discover.html', 'about.html', 'pricing.html', 'account.html',
+      'assets/account.js', 'assets/billing-ui.js', 'assets/app.js', 'assets/search.js', 'assets/interpret.js'];
+    files.forEach((file) => {
+      const text = fs.readFileSync(path.join(REPO, file), 'utf8');
+      assert.ok(!/sk_live_|sk_test_|rk_live_|whsec_/.test(text), `${file} must not carry Stripe key material`);
+      assert.ok(!/autocomplete="cc-|name="cardnumber"|id="card-number"/i.test(text), `${file} must not collect card details`);
+    });
+  });
+
   console.log('\ntypography and text styling');
 
-  const PAGES = ['index.html', 'find-clothes.html', 'discover.html', 'about.html'];
+  const PAGES = ['index.html', 'find-clothes.html', 'discover.html', 'about.html', 'pricing.html', 'account.html'];
 
   /* each page is given a moment to render whatever it builds from the
      catalogue, so cards, badges and pills are audited too, not just the
      static shell */
   const settled = async (file) => {
     const page = await openPage(file);
-    const built = { 'discover.html': '.item-card' }[file];
+    const built = {
+      'discover.html': '.item-card',
+      /* both billing pages draw themselves from /api/account, so the
+         audit has to wait for the answer or it walks an empty shell */
+      'pricing.html': '.plan-banner:not([hidden])',
+      'account.html': '.meter'
+    }[file];
     if (built) await page.waitForSelector(built, { timeout: 10000 });
     return page;
   };

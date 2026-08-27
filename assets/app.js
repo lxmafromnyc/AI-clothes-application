@@ -295,23 +295,48 @@ function orderFacet(counts, key) {
     announce(`${found.products.length} ${found.products.length === 1 ? 'piece' : 'pieces'} found.`);
   }
 
-  /* A configured source that returned nothing. The request readback stays,
-     so it is clear what was searched for, and the reason is stated plainly
-     instead of being filled with placeholder products. */
+  /* When a plan's allowance is what ran out, the reset is the useful
+     part of the answer: "tomorrow" is a wait, "the 1st" is a decision.
+     Dates are written in the shopper's own locale; the server sends the
+     instant, not a rendered string. */
+  function resetsIn(usage) {
+    if (!usage || !usage.resetsAt) return '';
+    const when = new Date(usage.resetsAt);
+    if (Number.isNaN(when.getTime())) return '';
+    return usage.period === 'month'
+      ? ` Your allowance resets on ${when.toLocaleDateString(undefined, { month: 'long', day: 'numeric' })}.`
+      : ` Your allowance resets at ${when.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}.`;
+  }
+
+  /* A configured source that returned nothing, or a plan with nothing
+     left. The request readback stays, so it is clear what was searched
+     for, and the reason is stated plainly instead of being filled with
+     placeholder products. */
   function renderNothing(found, outcome) {
     const empty = found.state === 'empty';
+    const limited = found.state === 'limit';
+
     /* the heading names the outcome, the panel names the next move, and
        the reason is given once — no line on the page repeats another */
-    const heading = empty ? 'No matches found' : 'Product search unavailable';
-    const next = empty ? 'Try describing it a little differently' : 'Try again in a moment';
-    const detail = found.notice || (empty
+    const heading = limited ? 'No searches left' : empty ? 'No matches found' : 'Product search unavailable';
+    const next = limited
+      ? 'This is a limit on your plan, not a problem with your request'
+      : empty ? 'Try describing it a little differently' : 'Try again in a moment';
+    const detail = (found.notice || (empty
       ? 'Nothing came back that could be verified for this request.'
-      : 'This is a problem on our side, not with your request.');
+      : 'This is a problem on our side, not with your request.')) + (limited ? resetsIn(found.usage) : '');
+
+    /* offered only when a bigger plan would actually help — the server
+       says so; the page does not decide who should be sold to */
+    const action = limited && found.upgrade
+      ? '<p class="empty-action"><a class="btn btn-primary" href="pricing.html">See plans</a></p>'
+      : '';
 
     results.innerHTML = `${resultsHead(heading, outcome.preferences)}
       <div class="empty">
         <h3>${esc(next)}</h3>
         <p>${esc(detail)}</p>
+        ${action}
       </div>`;
     announce(`${heading}. ${detail}`);
   }

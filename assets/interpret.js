@@ -160,7 +160,11 @@
     'not-configured': 'The AI interpreter is deployed but has no OpenAI key set, so this request was read by a basic local keyword match instead.',
     unreachable: 'The AI interpreter could not be reached, so this request was read by a basic local keyword match instead.',
     'no-endpoint': 'No AI interpreter is connected to this site, so this request was read by a basic local keyword match instead.',
-    'bad-reply': 'The AI interpreter returned something unusable, so this request was read by a basic local keyword match instead.'
+    'bad-reply': 'The AI interpreter returned something unusable, so this request was read by a basic local keyword match instead.',
+    /* the endpoint answered 429: this request was inside the plan's
+       allowance yesterday and is outside it now. The page still returns
+       results, read locally, and says which of the two it was. */
+    'over-limit': 'You have used your AI allowance for now, so this request was read by a basic local keyword match instead.'
   };
 
   async function interpret(query, vocabulary) {
@@ -181,6 +185,11 @@
       response = await fetch(endpoint(), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        /* carries the session cookie, so the endpoint meters this
+           request against the plan the shopper actually has rather than
+           against an anonymous free allowance. Nothing about the plan
+           is sent from here — only the cookie, which the server reads. */
+        credentials: 'include',
         body: JSON.stringify({ query: text, vocabulary: vocabulary || {} }),
         signal: controller.signal
       });
@@ -192,12 +201,25 @@
 
     if (response.status === 404) return local('no-endpoint');
     if (response.status === 503) return local('not-configured');
+    if (response.status === 429) {
+      /* Out of AI allowance. The local parser is free, so the search
+         still runs — but it is reported as the local read it is, with
+         the usage the server sent so the page can say when it resets. */
+      const spent = await response.json().catch(() => ({}));
+      return Object.assign(local('over-limit'), { usage: spent.usage || null, upgrade: Boolean(spent.upgrade) });
+    }
     if (!response.ok) return local('unreachable');
 
     try {
       const data = await response.json();
       if (!data || !data.preferences) return local('bad-reply');
-      return { preferences: shape(data.preferences), source: 'openai', reason: null, notice: null };
+      return {
+        preferences: shape(data.preferences),
+        source: 'openai',
+        reason: null,
+        notice: null,
+        usage: data.usage || null
+      };
     } catch (err) {
       return local('bad-reply');
     }

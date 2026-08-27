@@ -46,6 +46,8 @@ page, the examples, the steps and the retailer labels.
 | Home | `index.html` | States the value proposition, carries the search itself directly under the headline, and shows what an answer looks like |
 | Find Clothes | `find-clothes.html` | The same search, with nothing else on the page |
 | Discover | `discover.html` | Browse the catalogue, filtered by style |
+| Pricing | `pricing.html` | The three plans, which one you are on, and the way to change it |
+| Account | `account.html` | Sign in, what you have used this period, and the billing portal |
 | About | `about.html` | What the site does and what it takes into account |
 
 Every product, wherever it appears, is drawn by one function in `assets/app.js`
@@ -66,6 +68,10 @@ endpoint below, requests are read by a small local parser instead of the AI. The
 page still returns results, and says on screen that the AI did not read the
 request — a keyword match is never presented as an AI reading.
 
+`pricing.html` lists the plans from its own markup, so it reads correctly with
+no server at all. Signing in, subscribing and the usage meters need the
+functions in `api/`, and the page says plainly when they are not reachable.
+
 ## Structure
 
 ```
@@ -73,15 +79,31 @@ index.html, find-clothes.html, discover.html, about.html
 api/interpret.js        serverless endpoint; calls OpenAI, holds the API key
 api/search.js           serverless endpoint; asks the product source for real listings
 api/providers/          product source adapters and the verification gate
+api/account.js          what plan the caller is on, and what they have used
+api/auth.js             sign up, sign in, sign out
+api/checkout.js         opens a Stripe Checkout Session for Pro or Max
+api/portal.js           opens Stripe's billing portal
+api/stripe-webhook.js   the ONLY thing that can change a plan
+api/_plans.js           Free, Pro and Max, and what each entitles you to
+api/_stripe.js          Stripe's REST API, and webhook signature verification
+api/_usage.js           the token and search counters
+api/_meter.js           what /api/interpret and /api/search ask before spending
+api/_auth.js            password hashing, session cookies, who a request is
+api/_users.js           user records, and the Stripe customer mapping
+api/_store.js           the key/value store: Vercel KV / Upstash, or memory
 api/providers/openwebninja.js  OpenWeb Ninja Real-Time Product Search adapter
 api/providers/etsy.js   Etsy Open API v3 adapter, kept as an alternative
 assets/search.js        sends interpreted intent to /api/search
 scripts/verify-api.sh          checks a deployed interpreter endpoint
 scripts/verify-search.sh       checks a deployed search endpoint
+scripts/verify-billing.sh      checks a deployed billing setup
 scripts/probe-openwebninja.js  prints the provider's live response fields
 scripts/test-pipeline.js       offline test of the whole server pipeline
+scripts/test-stripe.js         offline test of payments and subscriptions
 scripts/test-ui.js             browser test of the search interface
 assets/attachments.js          drag-and-drop and file picker for the search box
+assets/account.js       talks to the account and billing endpoints
+assets/billing-ui.js    draws the pricing page and the account page
 .env.example            template; the real .env is git-ignored
 assets/products.js      data layer: normalises any source into one schema
 assets/catalog.js       demo product source, replaceable by a real feed
@@ -171,6 +193,14 @@ and the function share an origin, `/api/interpret` resolves by default, and
 | `OPENWEBNINJA_API_KEY` | yes | The product source's key. Without it `/api/search` returns 503 and the frontend falls back to the sample catalogue, labelled as such. |
 | `PRODUCT_SOURCE` | no | Which adapter in `api/providers/` finds the products. Unset runs `openwebninja`, which is what this deployment uses. |
 | `ALLOWED_ORIGIN` | no | Extra browser origins allowed to call the endpoints, comma-separated. The deployment's own origin is always allowed without configuration, so this is only needed for a frontend hosted elsewhere — GitHub Pages calling functions on Vercel. See [Cross-origin access](#cross-origin-access). |
+| `STRIPE_SECRET_KEY` | for billing | Your Stripe key. `sk_test_…` until launch. Without it the paid plans cannot be bought and the pricing page says so. |
+| `STRIPE_WEBHOOK_SECRET` | for billing | The signing secret of the webhook endpoint (`whsec_…`). Without it every delivery is refused, so no plan ever changes. |
+| `STRIPE_PRICE_PRO` | for billing | The Stripe Price Pro is sold at — recurring, monthly, $14.99. |
+| `STRIPE_PRICE_MAX` | for billing | The Stripe Price Max is sold at — recurring, monthly, $79.99. |
+| `AUTH_SECRET` | for billing | Signs the session cookie; 16 characters or more. Without it nobody can sign in, so nobody can subscribe. |
+| `KV_REST_API_URL` / `KV_REST_API_TOKEN` | for billing | Where accounts, subscriptions and usage counters are kept. Vercel KV sets these when a database is attached; `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` are read too. Without either, state is held in memory and lost on restart. |
+
+See [Plans, payments and subscriptions](#plans-payments-and-subscriptions) for the whole billing setup.
 
 Both keys are server-side secrets. Set them in your host's dashboard or CLI
 (`npx vercel env add OPENAI_API_KEY`, `npx vercel env add
@@ -317,8 +347,15 @@ clearly they are labelled. No product is ever invented to fill the gap.
   reply cannot reach the matching code.
 - Upstream errors are logged server-side but never echoed to the browser, since
   they can quote the request.
-- There is no rate limiting. This endpoint spends your OpenAI credit, so put your
-  host's rate limiting or an auth check in front of it before making it public.
+- Every interpretation is metered. The tokens OpenAI reports for the call are
+  counted against the caller's plan — 20,000 a day on Free, a million a month on
+  Pro, five million on Max — and a caller with nothing left gets a 429 before the
+  model is called, so no credit is spent on a request that is over the limit. The
+  frontend then reads the request locally and says on screen that it did. See
+  [Plans, payments and subscriptions](#plans-payments-and-subscriptions).
+- The plan comes from the stored user record, which is derived from a Stripe
+  subscription. Nothing in the request reaches it: there is no header, cookie
+  value or body field that raises a limit.
 
 ## Product search
 
@@ -481,6 +518,14 @@ rules, and the JSON `/api/search` returns:
 node scripts/test-pipeline.js
 ```
 
+Payments and subscriptions are a separate offline suite, and the interface is
+driven in a real browser:
+
+```sh
+node scripts/test-stripe.js
+node scripts/test-ui.js
+```
+
 Against a live deployment, with the request the interpreter produces for
 "black oversized hoodie under $80":
 
@@ -570,6 +615,306 @@ named on the card. Fynd does not attach a match percentage to any result: it
 did not score the provider's records, and a made-up score would be inventing
 information about a real product. What the request was read as is said once,
 above the grid, rather than claimed again on every card.
+
+## Plans, payments and subscriptions
+
+Fynd has three plans. Free needs no account and no card; Pro and Max are
+monthly subscriptions bought through Stripe Checkout.
+
+| Plan | Price | AI tokens | Live product searches |
+| --- | --- | --- | --- |
+| Free | $0 | 20,000 per day | 3 per day |
+| Pro | $14.99 / month | 1,000,000 per month | 75 per month |
+| Max | $79.99 / month | 5,000,000 per month | 400 per month |
+
+Free counts by UTC day and the paid plans by UTC calendar month, because
+that is how each is written. The period is part of the counter's key, so
+upgrading starts the monthly allowance at zero rather than inheriting a
+day's use — somebody who upgrades is buying the month, not the remainder
+of an afternoon.
+
+Fynd never sees a card. The shopper types their card on Stripe's own
+pages, and changing a card, switching plan, downloading an invoice and
+cancelling all happen in Stripe's billing portal. There is no billing
+screen in this repository, on purpose: a second place to type a card is a
+second place for one to leak, and a second copy of a subscription's state
+is a second thing to be wrong.
+
+### The rule the whole design rests on
+
+**A plan is raised or lowered by a signed Stripe webhook, and by nothing
+else.**
+
+Not by the checkout endpoint, which only opens a session. Not by the page
+the shopper lands on afterwards. Not by any request a browser can make.
+
+`/api/account` is the only endpoint the interface reads a plan from, and
+it is `GET`-only — there is no write path to answer. The plan on a user
+record is not a field anything assigns: `api/_users.js` recomputes it from
+the stored subscription on every write, so even a call site that tried to
+set one would get back the plan the subscription actually justifies.
+
+That is what makes the success URL harmless. `?checkout=success` is worth
+one sentence on screen — "confirming your payment" — and the page then
+re-reads `/api/account` until the server changes its mind. Loading that
+URL by hand does the same thing and finds the same answer: the plan you
+actually have.
+
+Which Stripe statuses entitle anything is one list, in `api/_plans.js`:
+
+| Status | Plan |
+| --- | --- |
+| `active`, `trialing` | the plan the subscription's price maps to |
+| `past_due`, `unpaid`, `incomplete`, `incomplete_expired`, `paused`, `canceled` | Free |
+
+`past_due` being Free is deliberate: a card that stopped working stops the
+paid allowance rather than running it on credit. The status is kept and
+shown, so the account page says *why* — "your last payment failed, update
+your card" — instead of downgrading in silence. A subscription set to
+cancel at period end stays `active` until the period ends, which is what
+the shopper paid for; the plan drops when Stripe says `canceled`, not when
+they press the button.
+
+### Setting it up in Stripe
+
+All of this in **test mode** first. The deployment reports which mode it
+is in, and the pricing page says so on screen.
+
+**1. Two products, two prices.** In the Stripe dashboard, *Products → Add
+product*:
+
+| Product | Price | Billing period | Currency |
+| --- | --- | --- | --- |
+| Fynd Pro | 14.99 | Monthly, recurring | USD |
+| Fynd Max | 79.99 | Monthly, recurring | USD |
+
+Copy each price's id — it starts `price_`, not `prod_`. The **price** id
+is what Fynd needs; the product id is not used.
+
+**2. One webhook endpoint.** *Developers → Webhooks → Add endpoint*:
+
+```
+https://your-app.vercel.app/api/stripe-webhook
+```
+
+Subscribe it to exactly these six events:
+
+```
+checkout.session.completed
+customer.subscription.created
+customer.subscription.updated
+customer.subscription.deleted
+invoice.paid
+invoice.payment_failed
+```
+
+Then copy that endpoint's **signing secret** (`whsec_…`). It is on the
+endpoint's own page and is not the API key.
+
+**3. Turn on the billing portal.** *Settings → Billing → Customer portal*,
+and save it once. Until that is done, "Manage subscription" answers 502 —
+the endpoint says `portal-not-configured` when Stripe gives it that
+reason.
+
+**4. A database.** Accounts, subscriptions and usage counters have to
+outlive a request. Attach Vercel KV to the project (*Storage → Create →
+KV*) and Vercel sets `KV_REST_API_URL` and `KV_REST_API_TOKEN` itself; an
+Upstash Redis database works too, through
+`UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN`.
+
+Without one, the store falls back to memory. That is right for local
+development and for the tests, and wrong for anything else: a
+subscription somebody paid for would vanish when the function instance is
+recycled. `/api/account` reports `storage.durable: false` and both billing
+pages say so on screen.
+
+**5. The variables.**
+
+```sh
+vercel env add STRIPE_SECRET_KEY production      # sk_test_… for now
+vercel env add STRIPE_WEBHOOK_SECRET production  # whsec_…
+vercel env add STRIPE_PRICE_PRO production       # price_…
+vercel env add STRIPE_PRICE_MAX production       # price_…
+vercel env add AUTH_SECRET production            # 32 random bytes, hex
+vercel --prod                                    # redeploy so they take effect
+```
+
+Generate `AUTH_SECRET` rather than choosing it:
+
+```sh
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+Environment variables apply to the next build, not the running
+deployment, so the redeploy is not optional.
+
+**6. Check it from outside.**
+
+```sh
+./scripts/verify-billing.sh https://ai-clothes-application.vercel.app
+```
+
+It confirms an anonymous visitor is on Free with the right allowance,
+that all three plans are priced and purchasable, that the deployment is
+in test mode, that a webhook secret and a durable store are configured,
+that `/api/checkout` refuses a caller with no account, and that
+`/api/stripe-webhook` refuses both an unsigned delivery and a wrongly
+signed one. It creates nothing at Stripe and charges nothing.
+
+**7. Buy something, with a test card.** Sign up on `/account.html`, go to
+`/pricing.html`, press **Get Pro**, and pay with `4242 4242 4242 4242`,
+any future expiry, any CVC. You should land back on the pricing page,
+see "confirming your payment" for a second or two, and then see Pro.
+
+Stripe's CLI is the fastest way to watch the other half:
+
+```sh
+stripe listen --forward-to localhost:3000/api/stripe-webhook
+stripe trigger customer.subscription.deleted
+```
+
+### Where the money and the state actually move
+
+```
+  the shopper presses "Get Pro"
+        |
+        v
+  POST /api/checkout            plan: "pro" — a name, and nothing else.
+        |                       The price is looked up server-side from
+        |                       STRIPE_PRICE_PRO, so a page cannot
+        |                       re-price its own checkout.
+        v
+  Stripe Checkout               the card is typed here, on Stripe's
+        |                       domain. Fynd never receives it.
+        v
+  the shopper lands on /pricing.html?checkout=success
+        |                       ...which grants nothing. It re-reads
+        |                       /api/account and waits.
+        |
+  meanwhile, server to server:
+        |
+  POST /api/stripe-webhook      signature verified against the raw bytes
+        |                       with STRIPE_WEBHOOK_SECRET
+        v
+  the event id is claimed       an atomic set-if-absent. A duplicate
+        |                       delivery loses the claim and stops.
+        v
+  the price id decides the plan the account is on
+        |
+        v
+  /api/account now says Pro, and /api/search and /api/interpret meter
+  against 75 searches and 1,000,000 tokens a month
+```
+
+### Duplicate deliveries, and events that arrive out of order
+
+Stripe delivers at least once and retries anything it did not hear a 2xx
+for, so the same event arrives twice often enough to plan for. Three
+separate mechanisms, because they fail in different ways:
+
+- **The same event twice.** The event id is claimed with a set-if-absent —
+  an atomic write, not a read followed by a write, so two deliveries
+  landing at the same moment on two instances cannot both proceed. Ten
+  simultaneous copies of one delivery apply once; `scripts/test-stripe.js`
+  fires exactly that.
+- **A delivery that fails halfway.** The claim is released and a 500 is
+  returned, so Stripe's retry is a real attempt rather than one this
+  endpoint has already promised to have handled.
+- **An older event behind a newer one.** Deliveries are not ordered: a
+  `created` can land after the `deleted` that followed it. Every stored
+  subscription carries the timestamp of the event it came from, and an
+  older one is dropped. A late `created` cannot resurrect a cancelled
+  plan.
+
+### Accounts
+
+Fynd had no accounts before this, and the site's own copy says "no
+filters, no account". That is still true for searching. An account exists
+for one reason: a subscription has to belong to somebody a webhook can
+find later.
+
+- Anonymous visitors are on Free, metered per browser by an opaque device
+  cookie — and, for a client that ignores cookies, by a hash of its
+  address and user agent, so the allowance is not bypassed by ignoring
+  `Set-Cookie`. Neither is airtight and neither needs to be: metering the
+  free tier is about the API bill.
+- Signing in is `email` and `password`, hashed with scrypt from node's own
+  crypto, salted per password, compared in constant time. A wrong password
+  and an address with no account give the same answer in the same time.
+- The session is an HMAC-signed, `HttpOnly` cookie. No script on the page
+  can read it, so no script can leak one. Cross-site it is
+  `SameSite=None; Secure` — which is what the Pages-to-Vercel deployment
+  needs — and `SameSite=Lax` when the site and the functions share an
+  origin.
+
+The Stripe customer id is stored against the user **and** indexed back to
+it, because a webhook knows a customer and nothing about Fynd. The
+customer is created before the checkout starts, so no event can arrive
+naming a customer nothing can resolve, and a customer is never moved to a
+different account.
+
+### Why there is no `stripe` package
+
+This repository has no build step, no `package.json` and no
+`node_modules`: the site is files, and `node scripts/…` runs the tests
+with nothing installed. `api/_stripe.js` calls Stripe's REST API with the
+same `fetch` already used for OpenAI and the product source, and verifies
+webhook signatures with `node:crypto`.
+
+What that costs is that the request encoding and the signature scheme are
+written out rather than imported. Both are small and specified, and
+`scripts/test-stripe.js` covers them — signing its webhook payloads with
+`crypto` directly rather than with the module that verifies them, so a
+bug that made both sides agree on the wrong scheme would still fail.
+
+### Testing it
+
+```sh
+node scripts/test-stripe.js
+```
+
+Offline, with no key, no Stripe account and no network. It drives the
+real endpoints with Stripe's HTTP API stubbed at the `fetch` boundary:
+signature verification and its refusals, a Pro checkout, a Max checkout, a
+cancelled checkout, cancellation, cancel-at-period-end, a failed payment
+and its recovery, a plan change made in the portal, duplicate and
+concurrent and out-of-order deliveries, the customer mapping, the account
+endpoints, and every way a browser might try to grant itself a plan.
+
+`node scripts/test-ui.js` covers the pricing and account pages in a real
+browser, including that landing on `?checkout=success` with the server
+still saying Free leaves the page saying Free.
+
+### When something is not working
+
+| What you see | What it is |
+| --- | --- |
+| The pricing page says the paid plans cannot be bought here | `STRIPE_SECRET_KEY` is not set on the running deployment. Variables apply to the next build — redeploy. |
+| Checkout answers 503 with `no-price-id` | `STRIPE_PRICE_PRO` or `STRIPE_PRICE_MAX` is missing. A plan with no price is never sold at some other price. |
+| The checkout completes but the plan never changes | The webhook is not reaching Fynd, or is being refused. Check *Developers → Webhooks* in Stripe for the delivery and its response, then the function logs. |
+| The webhook answers 400 `Raw body unavailable` | Something parsed the body before the handler saw it, so the exact bytes Stripe signed are gone. `api/stripe-webhook.js` turns body parsing off with its `config` export; a host that ignores it needs its own equivalent. |
+| The webhook answers 400 `Signature verification failed` | `STRIPE_WEBHOOK_SECRET` does not match this endpoint. Test and live endpoints have separate secrets, and it is the endpoint's signing secret, not the API key. |
+| The webhook answers 503 | `STRIPE_WEBHOOK_SECRET` is not set at all. |
+| "Manage subscription" answers 502 `portal-not-configured` | The customer portal has not been saved once in the Stripe dashboard, per mode. |
+| A plan is right and then wrong again later | No durable store: state is in memory and the instance was recycled. `verify-billing.sh` reports this. |
+| Sign-in answers 503 `no-auth-secret` | `AUTH_SECRET` is missing or shorter than 16 characters. |
+| Everything answers 403 | The Origin is not allowed — set `ALLOWED_ORIGIN` for a frontend on another host. See [Cross-origin access](#cross-origin-access). |
+
+The function logs name which variables the running deployment can see —
+states only, never values. See `api/_env-report.js`.
+
+### Before taking real money
+
+- Swap `STRIPE_SECRET_KEY` for the live key, and `STRIPE_PRICE_PRO` /
+  `STRIPE_PRICE_MAX` for prices created in live mode. Test-mode price ids
+  do not exist in live mode.
+- Add a **live-mode** webhook endpoint and use *its* signing secret. Test
+  and live endpoints are separate objects with separate secrets.
+- Turn the customer portal on in live mode too; it is configured per mode.
+- Attach a durable store, if you have not. `verify-billing.sh` will tell
+  you.
+- Re-run `./scripts/verify-billing.sh` against production. It fails on a
+  live key, which is what you want right up until the moment you do not.
 
 ## The product catalogue
 

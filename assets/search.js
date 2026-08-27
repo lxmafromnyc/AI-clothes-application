@@ -17,6 +17,10 @@
      empty            the source answered and nothing passed the gate.
                       Also no samples — the honest answer is "nothing
                       matched", not a page of demo items.
+     limit            the plan's live searches for this period are used
+                      up. Nothing was searched, so there is nothing to
+                      show and nothing to stand in for it — the page
+                      says what ran out and when it comes back.
 
    Endpoint: derived from the interpreter endpoint, so one meta tag
    configures both. Override separately if needed:
@@ -46,6 +50,7 @@
   const UNAVAILABLE = 'The product search could not be reached, so no live results are available right now.';
   const FAILED = 'The product search failed, so no live results are available right now.';
   const NOTHING = 'The product search ran but returned nothing that could be verified for this request.';
+  const OVER_LIMIT = 'You have used the live product searches your plan allows for this period.';
 
   const answer = (state, extra) => Object.assign({ source: null, products: [], notice: null, state }, extra || {});
 
@@ -61,6 +66,10 @@
       response = await fetch(endpoint(), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        /* sends the session cookie so the search is counted against the
+           shopper's own plan. The plan itself is never sent from here:
+           the server reads it from the session. */
+        credentials: 'include',
         body: JSON.stringify({
           intent: intent || {},
           limit: limit || 12,
@@ -83,6 +92,17 @@
     if (response.status === 503 || response.status === 404) {
       return answer('not-configured', { notice: NOT_CONNECTED });
     }
+    /* Out of allowance. Distinct from an outage on purpose: this is
+       about the shopper's plan and has an answer — wait for the reset,
+       or move up a plan — where an outage has neither. */
+    if (response.status === 429) {
+      const detail = await response.json().catch(() => ({}));
+      return answer('limit', {
+        notice: OVER_LIMIT,
+        usage: detail.usage || null,
+        upgrade: Boolean(detail.upgrade)
+      });
+    }
     if (!response.ok) {
       return answer('unavailable', { notice: FAILED });
     }
@@ -92,9 +112,9 @@
       const products = Array.isArray(data.products) ? data.products : [];
       if (!products.length) {
         /* the source answered but had nothing verifiable for this request */
-        return answer('empty', { source: data.source || null, notice: NOTHING, rejected: data.rejected || null });
+        return answer('empty', { source: data.source || null, notice: NOTHING, rejected: data.rejected || null, usage: data.usage || null });
       }
-      return { source: data.source || 'provider', products, notice: null, state: 'ok' };
+      return { source: data.source || 'provider', products, notice: null, state: 'ok', usage: data.usage || null };
     } catch (err) {
       return answer('unavailable', { notice: FAILED });
     }
