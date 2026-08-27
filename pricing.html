@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Plans and pricing — Fynd</title>
+<meta name="description" content="Fynd is free to try every day. Pro and Max raise the AI and live-search allowances, billed monthly through Stripe.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%230F4C4C'/><text x='16' y='23' font-family='Helvetica,Arial,sans-serif' font-size='20' font-weight='700' fill='white' text-anchor='middle'>F</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/styles.css">
+<!-- The same endpoint the interpreter uses. /api/account, /api/checkout
+     and /api/portal are derived from it, so one tag configures them all.
+     No Stripe key is here, or anywhere else a browser can reach: the
+     secret key lives only in the deployment's environment. -->
+<meta name="findwear-api" content="https://ai-clothes-application.vercel.app/api/interpret">
+<script>document.documentElement.classList.add('js');</script>
+</head>
+<body data-page="pricing">
+
+<a class="skip-link" href="#plans">Skip to plans</a>
+
+<header class="site-header">
+  <div class="container">
+    <div class="nav">
+      <a class="brand" href="index.html" aria-label="Fynd — home">
+        <span class="brand-mark" aria-hidden="true">F</span>
+        <span class="brand-word">Fynd</span>
+      </a>
+      <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" aria-label="Open menu"><span></span></button>
+      <nav aria-label="Main">
+        <ul class="nav-links" id="site-nav">
+          <li><a href="index.html">Home</a></li>
+          <li><a href="find-clothes.html">Find Clothes</a></li>
+          <li><a href="discover.html">Discover</a></li>
+          <li><a href="pricing.html" aria-current="page">Pricing</a></li>
+          <li><a href="about.html">About</a></li>
+        </ul>
+      </nav>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+
+  <section class="stage">
+    <div class="container stage-inner">
+      <div class="hero">
+        <h1>Start free. <span class="hero-line">Pay when you outgrow it.</span></h1>
+        <p class="lead">Every plan searches the same retailers and returns the same real listings. What changes is how much you can ask for.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="plans">
+    <div class="container">
+
+      <!-- Written by assets/billing-ui.js from what /api/account returned.
+           Hidden until then: a plan named before the server has been asked
+           would be a guess, and the guess would be "Free" for somebody who
+           is paying. -->
+      <div class="plan-banner" id="plan-banner" hidden>
+        <div>
+          <p class="eyebrow">Your plan</p>
+          <h2 class="plan-banner-plan" id="banner-plan">Free</h2>
+          <p class="plan-banner-detail" id="banner-detail"></p>
+        </div>
+        <div class="plan-banner-actions" id="banner-actions"></div>
+      </div>
+
+      <!-- Three notes, each with one job, each empty until it has
+           something true to say. -->
+      <p class="billing-note" id="deployment-note" role="status" hidden></p>
+      <p class="billing-note" id="checkout-note" role="status" hidden></p>
+      <p class="billing-note" id="billing-note" role="alert" hidden></p>
+
+      <!-- The cards are here in the markup rather than built by script:
+           the plans are what this page is for, and they should be
+           readable before anything has loaded and on a deployment with no
+           API at all. The script marks which one you are on and wires the
+           buttons; it does not supply the words. -->
+      <div class="plan-grid">
+
+        <article class="plan-card" data-plan="free">
+          <div class="plan-head">
+            <h3 class="plan-name">Free</h3>
+            <p class="plan-current-tag" data-current-tag hidden>Current</p>
+          </div>
+          <p class="plan-price">
+            <span class="plan-amount">$0</span>
+          </p>
+          <p class="plan-tagline">Try it out, every day.</p>
+          <ul class="plan-features">
+            <li>20,000 AI tokens a day</li>
+            <li>3 live product searches a day</li>
+            <li>Real listings, prices and retailer links</li>
+            <li>No card, no account required</li>
+          </ul>
+          <p class="plan-action">
+            <button class="btn btn-secondary" type="button" data-plan-action disabled>Always free</button>
+          </p>
+        </article>
+
+        <article class="plan-card" data-plan="pro">
+          <div class="plan-head">
+            <h3 class="plan-name">Pro</h3>
+            <p class="plan-current-tag" data-current-tag hidden>Current</p>
+          </div>
+          <p class="plan-price">
+            <span class="plan-amount">$14.99</span>
+            <span class="plan-interval">per month</span>
+          </p>
+          <p class="plan-tagline">For shopping properly.</p>
+          <ul class="plan-features">
+            <li>1,000,000 AI tokens a month</li>
+            <li>75 live product searches a month</li>
+            <li>Everything in Free</li>
+            <li>Cancel any time from the billing portal</li>
+          </ul>
+          <p class="plan-action">
+            <button class="btn btn-primary" type="button" data-plan-action data-action="sign-in-first">Get Pro</button>
+          </p>
+        </article>
+
+        <article class="plan-card" data-plan="max">
+          <div class="plan-head">
+            <h3 class="plan-name">Max</h3>
+            <p class="plan-current-tag" data-current-tag hidden>Current</p>
+          </div>
+          <p class="plan-price">
+            <span class="plan-amount">$79.99</span>
+            <span class="plan-interval">per month</span>
+          </p>
+          <p class="plan-tagline">For searching all day.</p>
+          <ul class="plan-features">
+            <li>5,000,000 AI tokens a month</li>
+            <li>400 live product searches a month</li>
+            <li>Everything in Pro</li>
+            <li>Cancel any time from the billing portal</li>
+          </ul>
+          <p class="plan-action">
+            <button class="btn btn-primary" type="button" data-plan-action data-action="sign-in-first">Get Max</button>
+          </p>
+        </article>
+
+      </div>
+    </div>
+  </section>
+
+  <section class="section section--flush">
+    <div class="container narrow">
+      <div class="section-head">
+        <div>
+          <p class="eyebrow">The details</p>
+          <h2>What you are actually buying</h2>
+        </div>
+      </div>
+
+      <div class="faq-row">
+        <h3>What counts as a live product search?</h3>
+        <p>One request that reaches a real product source and comes back with listings. Browsing Discover, re-reading results you already have, and a search that finds nothing because nothing matched all cost you the one search that ran.</p>
+      </div>
+
+      <div class="faq-row">
+        <h3>What counts as an AI token?</h3>
+        <p>Reading your request into a set of constraints costs tokens, counted exactly as the model reports them. A typical request is a few hundred, so the free allowance is dozens of requests a day rather than a handful.</p>
+      </div>
+
+      <div class="faq-row">
+        <h3>Where do I type my card?</h3>
+        <p>On Stripe, not here. Fynd sends you to Stripe Checkout and never sees, handles or stores a card number. Changing a card, switching plan, downloading invoices and cancelling all happen in Stripe's billing portal, reached from your account page.</p>
+      </div>
+
+      <div class="faq-row">
+        <h3>What happens if a payment fails?</h3>
+        <p>Stripe retries it and tells Fynd. While the subscription is unpaid your allowance goes back to Free, and your account page says why and links to the portal to fix the card. Nothing is deleted; the plan comes back with the payment.</p>
+      </div>
+
+      <div class="faq-row">
+        <h3>What happens when I cancel?</h3>
+        <p>You keep the plan you paid for until the end of the period you paid for, and then go back to Free. Cancelling is a button in the billing portal.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="closing">
+    <div class="container">
+      <div class="closing-cta">
+        <p class="eyebrow">No decision needed yet</p>
+        <h2>Try it first</h2>
+        <p>The free allowance comes back every day, and nothing here asks for a card.</p>
+        <a class="btn btn-invert btn-lg" href="find-clothes.html">Find my clothes
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </a>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="container">
+    <div class="footer-inner">
+      <a class="brand" href="index.html" aria-label="Fynd — home">
+        <span class="brand-mark" aria-hidden="true">F</span>
+        <span class="brand-word">Fynd</span>
+      </a>
+      <nav aria-label="Footer">
+        <ul class="footer-links">
+          <li><a href="index.html">Home</a></li>
+          <li><a href="find-clothes.html">Find Clothes</a></li>
+          <li><a href="discover.html">Discover</a></li>
+          <li><a href="pricing.html">Pricing</a></li>
+          <li><a href="account.html">Account</a></li>
+          <li><a href="about.html">About</a></li>
+        </ul>
+      </nav>
+    </div>
+    <p class="footer-note">Fynd is a demo experience. Live results come from a connected product source; when none is connected, sample items are shown and labelled as such.</p>
+  </div>
+</footer>
+
+<script src="assets/account.js"></script>
+<script src="assets/billing-ui.js"></script>
+<script src="assets/app.js"></script>
+</body>
+</html>

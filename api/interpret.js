@@ -19,10 +19,21 @@
                       Comma-separated. Anything else is refused with 403,
                       because this endpoint spends your OpenAI credit.
                       See api/_cors.js.
+
+   Metering
+     Every interpretation spends OpenAI credit, so every one is counted
+     against the caller's plan — 20,000 tokens a day on Free, a million
+     a month on Pro, five million on Max. The count is the token usage
+     OpenAI reports for the call, not an estimate, and the plan comes
+     from the stored user record. A caller with nothing left gets a 429
+     and the frontend reads their request locally instead, saying so.
+     See api/_meter.js.
    ========================================================= */
 
 const { handledPreflight } = require('./_cors');
 const { envReport } = require('./_env-report');
+const meter = require('./_meter');
+const { AI_TOKENS } = require('./_plans');
 
 const OPENAI_URL = 'https://api.openai.com/v1/chat/completions';
 const DEFAULT_MODEL = 'gpt-4o-mini';
@@ -114,6 +125,13 @@ module.exports = async function handler(req, res) {
     return res.status(503).json({ error: 'Interpreter is not configured.' });
   }
 
+  /* Who is asking, and is there any allowance left. Done before the
+     body is read so a caller with nothing left is turned away without
+     the request being shaped, and before the model is called so no
+     credit is spent on it. */
+  const { identity, state, blocked } = await meter.guard(req, res, AI_TOKENS);
+  if (blocked) return meter.overLimit(res, state);
+
   const body = await readBody(req);
   const query = typeof body.query === 'string' ? body.query.trim().slice(0, MAX_QUERY) : '';
   if (!query) return res.status(400).json({ error: 'Say what you are looking for.' });
@@ -162,7 +180,18 @@ module.exports = async function handler(req, res) {
       return res.status(502).json({ error: 'The interpreter returned an unexpected answer.' });
     }
 
-    return res.status(200).json({ source: 'openai', query, preferences: shapePreferences(parsed) });
+    /* What it actually cost, from OpenAI's own accounting of the call.
+       A model that reports no usage is counted as nothing rather than
+       as a guess: an invented number in a meter is worse than a gap. */
+    const spent = payload.usage && Number(payload.usage.total_tokens);
+    const after = await meter.spend(identity, AI_TOKENS, Number.isFinite(spent) ? spent : 0);
+
+    return res.status(200).json({
+      source: 'openai',
+      query,
+      preferences: shapePreferences(parsed),
+      usage: meter.report(after || state)
+    });
   } catch (err) {
     console.error('Interpreter error', err && err.message);
     return res.status(502).json({ error: 'The interpreter is unavailable right now.' });

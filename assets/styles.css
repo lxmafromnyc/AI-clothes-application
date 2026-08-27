@@ -1044,6 +1044,197 @@ a.item-card:hover .item-name { text-decoration: underline; text-underline-offset
 .faq-row h3 { font-size: 16.5px; margin-bottom: 7px; }
 .faq-row p { color: var(--color-text-muted); font-size: 15.5px; line-height: 1.6; }
 
+/* ---------- plans and billing ----------
+   The pricing page is the same page as everything else: white paper,
+   black type, one filled control. A plan card is a product card with
+   words instead of a photo — same surface, same border, same radius —
+   so the shopper is not asked to learn a second layout to spend money.
+
+   Colour keeps its jobs. Primary marks the plan somebody is on, the
+   way it marks the current page in the navigation. Success says a
+   subscription is live; warning says something needs attention — a
+   card that failed, or a deployment running in Stripe's test mode.
+   Nothing here introduces a hue for decoration. */
+
+.plan-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(268px, 1fr));
+  gap: var(--gap);
+  align-items: start;
+}
+
+.plan-card {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 26px 24px 24px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--r-lg);
+  transition: border-color .2s var(--ease), box-shadow .2s var(--ease);
+}
+.plan-card:hover { border-color: var(--color-border-strong); }
+
+/* The plan the shopper is on, marked the way the current page is
+   marked in the navigation: the primary edge, and nothing else. */
+.plan-card--current {
+  border-color: var(--color-primary);
+  box-shadow: var(--ring);
+}
+.plan-card--current:hover { border-color: var(--color-primary); }
+
+.plan-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.plan-name { font-size: 19px; }
+.plan-current-tag {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--color-primary-ink);
+}
+
+.plan-price { display: flex; align-items: baseline; gap: 6px; margin: 14px 0 4px; }
+.plan-amount { font-size: 34px; font-weight: 600; letter-spacing: -.04em; }
+.plan-interval { font-size: 14px; color: var(--color-text-muted); }
+.plan-tagline { font-size: 14.5px; color: var(--color-text-muted); margin-bottom: 20px; }
+
+.plan-features { list-style: none; display: grid; gap: 10px; margin-bottom: 24px; }
+.plan-features li {
+  position: relative;
+  padding-left: 24px;
+  font-size: 14.5px;
+  line-height: 1.5;
+  color: var(--color-text-2);
+}
+/* a tick drawn as a border, so it needs no glyph and no icon file */
+.plan-features li::before {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 6px;
+  width: 5px; height: 9px;
+  border: solid var(--color-primary);
+  border-width: 0 1.5px 1.5px 0;
+  transform: rotate(45deg);
+}
+
+/* the action sits at the foot of every card, level across the row
+   however many lines of features are above it */
+.plan-action { margin-top: auto; }
+.plan-action .btn { width: 100%; }
+
+/* A plan that cannot be bought here — the one you are on, or one this
+   deployment has no price configured for. It stays legible rather than
+   being greyed into unreadability: it is information, not a control. */
+.plan-action .btn[disabled] {
+  background: var(--color-surface-2);
+  border-color: var(--color-border);
+  color: var(--color-text-2);
+  box-shadow: none;
+  cursor: default;
+}
+
+/* ---------- the banner that says where you stand ---------- */
+
+.plan-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px 24px;
+  padding: 20px 24px;
+  margin-bottom: 32px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--r-lg);
+}
+.plan-banner-plan { font-size: 20px; margin-top: 4px; }
+.plan-banner-detail { font-size: 14.5px; color: var(--color-text-muted); margin-top: 4px; }
+.plan-banner-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+
+/* ---------- usage meters ----------
+   What is left, at a glance. The bar carries no number of its own —
+   the figures are written beside it, because a bar can be misread and
+   "1 of 3 searches" cannot. */
+
+.meters { display: grid; gap: 18px; margin-top: 4px; }
+.meter-head { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+.meter-label { font-size: 14px; font-weight: 600; }
+.meter-value { font-size: 13.5px; color: var(--color-text-muted); }
+.meter-track {
+  height: 6px;
+  margin-top: 8px;
+  border-radius: var(--r-pill);
+  background: var(--color-surface-3);
+  overflow: hidden;
+}
+.meter-fill { height: 100%; background: var(--color-primary); border-radius: var(--r-pill); }
+/* nothing left is a caveat, and warning is the colour caveats use */
+.meter-fill--spent { background: var(--color-warning); }
+.meter-reset { font-size: 13px; color: var(--color-text-muted); margin-top: 7px; }
+
+/* ---------- account form ---------- */
+
+.auth-card {
+  max-width: 460px;
+  padding: 26px 24px 24px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-sm);
+}
+.auth-card h2 { font-size: 20px; }
+.auth-intro { font-size: 14.5px; color: var(--color-text-muted); margin: 8px 0 22px; }
+
+.field { display: block; margin-bottom: 16px; }
+.field span { display: block; font-size: 13.5px; font-weight: 600; margin-bottom: 7px; }
+.field input {
+  width: 100%;
+  height: 46px;
+  padding: 0 14px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--r);
+  outline: none;
+  font-size: 15.5px;
+  transition: border-color .16s var(--ease), box-shadow .16s var(--ease);
+}
+.field input:focus { border-color: var(--color-primary); box-shadow: var(--ring); }
+.field input::placeholder { color: var(--color-text-muted); }
+
+.auth-actions { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-top: 4px; }
+.auth-switch { font-size: 14px; color: var(--color-text-muted); margin-top: 18px; }
+
+/* ---------- notes that carry a state ----------
+   Three grounds, three meanings, and each one only ever says its own
+   thing: a caveat is never dressed as a success. */
+
+.billing-note {
+  margin: 0 0 22px;
+  padding: 13px 16px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--r);
+  background: var(--color-surface-2);
+  color: var(--color-text-2);
+  font-size: 14px;
+  line-height: 1.5;
+}
+.billing-note--warn {
+  background: var(--color-warning-soft);
+  border-color: var(--color-warning-line);
+  color: var(--color-warning-ink);
+}
+.billing-note--good {
+  background: var(--color-primary-soft);
+  border-color: var(--color-primary-line);
+  color: var(--color-primary-ink);
+}
+.billing-note[hidden] { display: none; }
+
+/* the upgrade offered from an exhausted search */
+.empty-action { margin-top: 20px; }
+.empty-action .btn { display: inline-flex; }
+
 /* ---------- responsive ---------- */
 
 @media (max-width: 1000px) {
@@ -1114,6 +1305,10 @@ a.item-card:hover .item-name { text-decoration: underline; text-underline-offset
   .closing { padding: 68px 0 60px; }
 
   .section-head { margin-bottom: 26px; }
+
+  .plan-grid { grid-template-columns: 1fr; }
+  .plan-banner { padding: 18px 18px; }
+  .plan-banner-actions .btn { width: 100%; }
 }
 
 @media (max-width: 420px) {

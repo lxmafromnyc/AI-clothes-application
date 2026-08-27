@@ -246,8 +246,16 @@ test('the report cannot reveal a value length', () => {
   assert.strictEqual(short, long, 'a short and a long key must be indistinguishable');
 });
 
-test('only the four named variables are ever reported', () => {
-  assert.deepStrictEqual(REPORTED, ['OPENAI_API_KEY', 'OPENWEBNINJA_API_KEY', 'ALLOWED_ORIGIN', 'VERCEL_ENV']);
+/* The list is pinned rather than merely non-empty. Every name on it is
+   a variable whose STATE this deployment is willing to put in a log, and
+   adding one should be a decision somebody made on purpose — so a name
+   arriving without this test being updated fails the build. */
+test('only the named variables are ever reported', () => {
+  assert.deepStrictEqual(REPORTED, [
+    'OPENAI_API_KEY', 'OPENWEBNINJA_API_KEY', 'ALLOWED_ORIGIN', 'VERCEL_ENV',
+    'STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET', 'STRIPE_PRICE_PRO', 'STRIPE_PRICE_MAX',
+    'AUTH_SECRET', 'KV_REST_API_URL', 'KV_REST_API_TOKEN'
+  ]);
 });
 
 console.log('\ncross-origin access control');

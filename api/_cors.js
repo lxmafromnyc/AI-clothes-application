@@ -128,7 +128,14 @@ function applyCors(req, res) {
   res.setHeader('Access-Control-Allow-Origin', origin);
   res.setHeader('Vary', 'Origin');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  /* The session cookie has to travel for /api/account and the billing
+     endpoints to know who is asking. This is only ever sent alongside a
+     single named origin from the list above — never a wildcard, which a
+     browser refuses to combine with credentials anyway — so it widens
+     nothing: an origin that may not call these endpoints still may not,
+     and one that may was always going to be answered. */
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
   /* Five minutes: long enough to save a preflight per search, short
      enough that a corrected configuration takes effect while someone is
      still looking at it. */
@@ -150,4 +157,35 @@ function handledPreflight(req, res) {
   return false;
 }
 
-module.exports = { applyCors, handledPreflight, configuredOrigins, isSameOrigin, isAllowed, SITE_ORIGINS };
+/* Where to send a shopper back to after Stripe.
+
+   A checkout's success and cancel URLs, and the billing portal's return
+   URL, are addresses Fynd hands to Stripe and Stripe redirects a
+   browser to. Taking one from the request body would make this endpoint
+   an open redirect with a payment page in front of it, so the origin is
+   never taken from the request: it is the caller's Origin only if the
+   list above already allows it, and the deployment's own host
+   otherwise.
+
+   A relative path may come from the caller, because the site is not
+   always at the root of its origin — the Pages copy lives under a
+   repository name. It is accepted only if it is genuinely relative: one
+   leading slash, no scheme, no authority. "//evil.example/x" is a
+   protocol-relative URL wearing a path's clothes, and is refused. */
+function siteOrigin(req) {
+  const origin = trimSlash((req.headers && req.headers.origin) || '');
+  if (origin && isAllowed(req, origin)) return origin;
+  const host = (req.headers && req.headers.host) || '';
+  if (!host) return '';
+  const scheme = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(host) ? 'http' : 'https';
+  return `${scheme}://${host}`;
+}
+
+function returnUrl(req, path, fallback) {
+  const origin = siteOrigin(req);
+  const wanted = String(path == null ? '' : path);
+  const safe = /^\/(?!\/)[A-Za-z0-9._~!$&'()*+,;=:@%/-]*$/.test(wanted) ? wanted : String(fallback || '/');
+  return `${origin}${safe}`;
+}
+
+module.exports = { applyCors, handledPreflight, configuredOrigins, isSameOrigin, isAllowed, siteOrigin, returnUrl, SITE_ORIGINS };

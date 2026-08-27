@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Your account — Fynd</title>
+<meta name="description" content="Your Fynd plan, what you have used this period, and the billing portal for changing or cancelling a subscription.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%230F4C4C'/><text x='16' y='23' font-family='Helvetica,Arial,sans-serif' font-size='20' font-weight='700' fill='white' text-anchor='middle'>F</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/styles.css">
+<meta name="findwear-api" content="https://ai-clothes-application.vercel.app/api/interpret">
+<script>document.documentElement.classList.add('js');</script>
+</head>
+<body data-page="account">
+
+<a class="skip-link" href="#account">Skip to your account</a>
+
+<header class="site-header">
+  <div class="container">
+    <div class="nav">
+      <a class="brand" href="index.html" aria-label="Fynd — home">
+        <span class="brand-mark" aria-hidden="true">F</span>
+        <span class="brand-word">Fynd</span>
+      </a>
+      <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" aria-label="Open menu"><span></span></button>
+      <nav aria-label="Main">
+        <ul class="nav-links" id="site-nav">
+          <li><a href="index.html">Home</a></li>
+          <li><a href="find-clothes.html">Find Clothes</a></li>
+          <li><a href="discover.html">Discover</a></li>
+          <li><a href="pricing.html">Pricing</a></li>
+          <li><a href="about.html">About</a></li>
+        </ul>
+      </nav>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+
+  <section class="stage">
+    <div class="container stage-inner">
+      <div class="hero">
+        <h1>Your account</h1>
+        <p class="lead">Your plan, what you have used, and where to change or cancel a subscription.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="account">
+    <div class="container narrow">
+
+      <p class="billing-note" id="deployment-note" role="status" hidden></p>
+      <p class="billing-note" id="checkout-note" role="status" hidden></p>
+      <p class="billing-note" id="billing-note" role="alert" hidden></p>
+
+      <div class="plan-banner" id="plan-banner" hidden>
+        <div>
+          <p class="eyebrow">Your plan</p>
+          <h2 class="plan-banner-plan" id="banner-plan">Free</h2>
+          <p class="plan-banner-detail" id="banner-detail"></p>
+        </div>
+        <div class="plan-banner-actions" id="banner-actions"></div>
+      </div>
+
+      <div class="section-head">
+        <div>
+          <p class="eyebrow">This period</p>
+          <h2>What you have used</h2>
+        </div>
+      </div>
+
+      <!-- Filled from /api/account. These are the server's own counters,
+           the same ones /api/search and /api/interpret check before they
+           spend anything — not a tally this page has been keeping. -->
+      <div class="meters" id="usage-meters"></div>
+
+      <!-- Shown only while signed out. Everything above works either way:
+           the Free allowance is metered per browser, and an account is
+           what a subscription attaches to. -->
+      <div id="auth-panel" hidden>
+        <div class="section-head section-head--spaced">
+          <div>
+            <p class="eyebrow">Sign in</p>
+            <h2>Accounts</h2>
+          </div>
+        </div>
+
+        <form class="auth-card" id="auth-form" novalidate>
+          <h3 id="auth-title">Sign in</h3>
+          <p class="auth-intro" id="auth-intro">An account is what a subscription belongs to. Searching does not need one.</p>
+
+          <label class="field">
+            <span>Email</span>
+            <input type="email" id="auth-email" name="email" autocomplete="email" placeholder="you@example.com" required>
+          </label>
+
+          <label class="field">
+            <span>Password</span>
+            <input type="password" id="auth-password" name="password" autocomplete="current-password" placeholder="Your password" required>
+          </label>
+
+          <!-- empty at load: an alert is announced when its text arrives,
+               so a message sitting in the markup is never read out -->
+          <p class="form-error" id="auth-error" role="alert"></p>
+
+          <div class="auth-actions">
+            <button class="btn btn-primary" type="submit" id="auth-submit">Sign in</button>
+          </div>
+
+          <p class="auth-switch">
+            <span id="auth-switch-text">No account yet?</span>
+            <button class="link-btn" type="button" id="auth-switch">Create one</button>
+          </p>
+        </form>
+      </div>
+
+    </div>
+  </section>
+
+  <section class="section section--flush">
+    <div class="container narrow">
+      <div class="section-head">
+        <div>
+          <p class="eyebrow">Billing</p>
+          <h2>Where your card lives</h2>
+        </div>
+      </div>
+
+      <div class="faq-row">
+        <h3>Fynd never sees your card</h3>
+        <p>Payment details are typed on Stripe's own pages and held by Stripe. Nothing on this site receives, handles or stores a card number, and no key that could charge one is ever sent to a browser.</p>
+      </div>
+
+      <div class="faq-row">
+        <h3>Manage subscription opens Stripe</h3>
+        <p>Changing a card, switching between Pro and Max, downloading invoices and cancelling all happen in Stripe's billing portal. Whatever you change there reaches Fynd as a webhook, and your plan here follows it.</p>
+      </div>
+
+      <div class="faq-row">
+        <h3>Your plan is decided on the server</h3>
+        <p>What you are entitled to is read from your subscription in Stripe, not from anything this page holds. That is why editing the page, or loading a success URL by hand, changes nothing about your allowance.</p>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="container">
+    <div class="footer-inner">
+      <a class="brand" href="index.html" aria-label="Fynd — home">
+        <span class="brand-mark" aria-hidden="true">F</span>
+        <span class="brand-word">Fynd</span>
+      </a>
+      <nav aria-label="Footer">
+        <ul class="footer-links">
+          <li><a href="index.html">Home</a></li>
+          <li><a href="find-clothes.html">Find Clothes</a></li>
+          <li><a href="discover.html">Discover</a></li>
+          <li><a href="pricing.html">Pricing</a></li>
+          <li><a href="account.html">Account</a></li>
+          <li><a href="about.html">About</a></li>
+        </ul>
+      </nav>
+    </div>
+    <p class="footer-note">Fynd is a demo experience. Live results come from a connected product source; when none is connected, sample items are shown and labelled as such.</p>
+  </div>
+</footer>
+
+<script src="assets/account.js"></script>
+<script src="assets/billing-ui.js"></script>
+<script src="assets/app.js"></script>
+</body>
+</html>
