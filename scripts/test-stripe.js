@@ -192,14 +192,24 @@ function cookiesFrom(res, existing) {
 
 const cookieHeader = (jar) => Object.entries(jar).map(([k, v]) => `${k}=${v}`).join('; ');
 
-async function callEndpoint(endpoint, { method, body, jar, headers }) {
+async function callEndpoint(endpoint, { method, body, jar, headers, omitCsrf }) {
   const res = makeRes();
+
+  /* A signed-in browser echoes the CSRF token /api/account handed it.
+     The harness derives the same value from the session cookie it is
+     holding, which is what a real page's script does with the token it
+     was given. `omitCsrf` is how a test plays the part of a page that
+     could not have obtained one. */
+  const session = jar && jar.fynd_session;
+  const csrf = session && !omitCsrf ? { 'x-fynd-csrf': auth.csrfTokenFor(session) } : {};
+
   const req = makeReq({
     method: method || 'POST',
     body,
     headers: Object.assign(
       { host: 'fynd.test' },
       jar && Object.keys(jar).length ? { cookie: cookieHeader(jar) } : {},
+      csrf,
       headers || {}
     )
   });
@@ -258,14 +268,26 @@ async function deliver(event, options) {
 const EMAIL = 'shopper@example.test';
 const PASSWORD = 'a-long-enough-password';
 
-/* Signs up, and returns the cookie jar plus the stored user. */
+/* Signs up and confirms the address, which is the state an account has
+   to be in before it can subscribe. Tests about verification itself
+   live in scripts/test-auth.js; here it is a precondition. */
 async function signedUpUser(email) {
+  const address = email || EMAIL;
   const { res, jar } = await callEndpoint(authEndpoint, {
-    body: { action: 'signup', email: email || EMAIL, password: PASSWORD }
+    body: {
+      action: 'signup',
+      name: 'Test Shopper',
+      email: address,
+      password: PASSWORD,
+      confirmPassword: PASSWORD
+    }
   });
   assert.strictEqual(res.statusCode, 200, JSON.stringify(res.payload));
-  const user = await users.byEmail(email || EMAIL);
-  return { jar, user };
+
+  /* Marked through the store rather than by following a link: this
+     suite is about billing, and the verification flow has its own. */
+  await users.markVerified(await users.byEmail(address));
+  return { jar, user: await users.byEmail(address) };
 }
 
 /* Everything a completed Pro checkout would leave behind, without
@@ -908,22 +930,29 @@ const planOf = async (userId) => (await users.byId(userId)).plan;
 
   await test('signing up with a plan in the body creates a Free account', async () => {
     const { res } = await callEndpoint(authEndpoint, {
-      body: { action: 'signup', email: 'sneaky@example.test', password: PASSWORD, plan: 'max', subscription: { status: 'active' } }
+      body: {
+        action: 'signup', name: 'Sneaky', email: 'sneaky@example.test',
+        password: PASSWORD, confirmPassword: PASSWORD,
+        plan: 'max', subscription: { status: 'active' }, emailVerified: true
+      }
     });
     assert.strictEqual(res.statusCode, 200);
     assert.strictEqual(res.payload.plan.id, 'free');
     const stored = await users.byEmail('sneaky@example.test');
     assert.strictEqual(stored.plan, 'free');
     assert.strictEqual(stored.subscription, null);
+    /* emailVerified: true in the body is not read either */
+    assert.strictEqual(stored.emailVerified, false, 'nobody may verify their own address by asking');
   });
 
   await test('a forged session cookie is not a session', async () => {
     const { user } = await signedUpUser();
     const forgeries = [
-      `${user.id}.${Math.floor(Date.now() / 1000)}.abc.notasignature`,
-      `${user.id}.${Math.floor(Date.now() / 1000)}.abc.`,
       user.id,
-      `usr_invented.${Math.floor(Date.now() / 1000)}.abc.${'0'.repeat(43)}`
+      'A'.repeat(43),                       /* right shape, no record */
+      'not-a-session',
+      `${user.id}.${Math.floor(Date.now() / 1000)}.abc`,  /* the old signed shape */
+      ''
     ];
     for (const token of forgeries) {
       const { res } = await callEndpoint(accountEndpoint, { method: 'GET', jar: { fynd_session: token } });
@@ -932,11 +961,16 @@ const planOf = async (userId) => (await users.byId(userId)).plan;
     }
   });
 
-  await test('a session signed with a different secret is refused', async () => {
+  await test('a session minted under a different secret is refused', async () => {
     const { user } = await signedUpUser();
     const was = process.env.AUTH_SECRET;
+
+    /* The session record is stored under a key derived from the secret,
+       so a token minted under another one resolves to nothing here —
+       there is no record to find, which is a stronger refusal than a
+       signature that fails to check out. */
     process.env.AUTH_SECRET = 'a-completely-different-secret-32ch';
-    const forged = auth.issueSession(user.id);
+    const forged = await auth.issueSession(user.id, { epoch: 0 });
     process.env.AUTH_SECRET = was;
 
     const { res } = await callEndpoint(accountEndpoint, { method: 'GET', jar: { fynd_session: forged } });
@@ -952,11 +986,12 @@ const planOf = async (userId) => (await users.byId(userId)).plan;
     assert.strictEqual(res.payload.signedIn, true);
     assert.strictEqual(res.payload.plan.id, 'pro');
 
-    /* the same cookie with the user id swapped for somebody else's */
-    const other = await signedUpUser('other@example.test');
-    const tampered = jar.fynd_session.replace(user.id, other.user.id);
+    /* There is no user id inside the cookie to edit: it is 32 random
+       bytes naming a record. Changing any of it names no record. */
+    assert.ok(!jar.fynd_session.includes(user.id), 'the cookie must not carry the account id');
+    const tampered = `${jar.fynd_session.slice(0, -1)}${jar.fynd_session.endsWith('A') ? 'B' : 'A'}`;
     const swapped = await callEndpoint(accountEndpoint, { method: 'GET', jar: { fynd_session: tampered } });
-    assert.strictEqual(swapped.res.payload.signedIn, false, 'editing the id breaks the signature');
+    assert.strictEqual(swapped.res.payload.signedIn, false, 'a changed token names no session');
   });
 
   await test('a plan written straight into the user record is recomputed from the subscription', async () => {
@@ -1022,7 +1057,7 @@ const planOf = async (userId) => (await users.byId(userId)).plan;
 
   await test('the session cookie is HttpOnly, so no script on the page can read it', async () => {
     const res = makeRes();
-    const req = makeReq({ body: { action: 'signup', email: 'cookie@example.test', password: PASSWORD } });
+    const req = makeReq({ body: { action: 'signup', name: 'Cookie', email: 'cookie@example.test', password: PASSWORD, confirmPassword: PASSWORD } });
     await authEndpoint(req, res);
     const set = [].concat(res.getHeader('Set-Cookie'));
     const session = set.find((line) => line.startsWith('fynd_session='));
@@ -1253,19 +1288,25 @@ const planOf = async (userId) => (await users.byId(userId)).plan;
 
   await test('an address cannot be signed up twice', async () => {
     await signedUpUser();
-    const { res } = await callEndpoint(authEndpoint, { body: { action: 'signup', email: EMAIL, password: PASSWORD } });
+    const { res } = await callEndpoint(authEndpoint, {
+      body: { action: 'signup', name: 'Again', email: EMAIL, password: PASSWORD, confirmPassword: PASSWORD }
+    });
     assert.strictEqual(res.statusCode, 409);
   });
 
   await test('two simultaneous sign-ups for one address make one account', async () => {
     const attempts = await Promise.all(Array.from({ length: 5 }, () =>
-      callEndpoint(authEndpoint, { body: { action: 'signup', email: 'race@example.test', password: PASSWORD } })));
+      callEndpoint(authEndpoint, {
+        body: { action: 'signup', name: 'Race', email: 'race@example.test', password: PASSWORD, confirmPassword: PASSWORD }
+      })));
     const created = attempts.filter((a) => a.res.statusCode === 200);
     assert.strictEqual(created.length, 1, `${created.length} accounts were created for one address`);
   });
 
   await test('a short password is refused', async () => {
-    const { res } = await callEndpoint(authEndpoint, { body: { action: 'signup', email: 'short@example.test', password: 'short' } });
+    const { res } = await callEndpoint(authEndpoint, {
+      body: { action: 'signup', name: 'Short', email: 'short@example.test', password: 'short', confirmPassword: 'short' }
+    });
     assert.strictEqual(res.statusCode, 400);
     assert.strictEqual(await users.byEmail('short@example.test'), null);
   });
@@ -1284,7 +1325,9 @@ const planOf = async (userId) => (await users.byId(userId)).plan;
     const was = process.env.AUTH_SECRET;
     process.env.AUTH_SECRET = '';
     try {
-      const { res } = await callEndpoint(authEndpoint, { body: { action: 'signup', email: 'x@example.test', password: PASSWORD } });
+      const { res } = await callEndpoint(authEndpoint, {
+        body: { action: 'signup', name: 'X', email: 'x@example.test', password: PASSWORD, confirmPassword: PASSWORD }
+      });
       assert.strictEqual(res.statusCode, 503);
       assert.strictEqual(res.payload.reason, 'no-auth-secret');
     } finally {

@@ -36,7 +36,11 @@ const REPORTED = [
   /* billing. A 503 from /api/checkout or /api/stripe-webhook has exactly
      one of these behind it, and knowing which turns a guess into a fix. */
   'STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET', 'STRIPE_PRICE_PRO', 'STRIPE_PRICE_MAX',
-  'AUTH_SECRET', 'KV_REST_API_URL', 'KV_REST_API_TOKEN'
+  'AUTH_SECRET', 'KV_REST_API_URL', 'KV_REST_API_TOKEN',
+  /* accounts. A sign-in that will not start, or a confirmation email
+     that never arrives, is one of these, and knowing which is the fix. */
+  'GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET',
+  'RESEND_API_KEY', 'POSTMARK_SERVER_TOKEN', 'EMAIL_FROM'
 ];
 
 function stateOf(name) {

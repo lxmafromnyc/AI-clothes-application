@@ -1235,6 +1235,82 @@ a.item-card:hover .item-name { text-decoration: underline; text-underline-offset
 .empty-action { margin-top: 20px; }
 .empty-action .btn { display: inline-flex; }
 
+/* ---------- signing in ----------
+   The account page asks one question with two answers, so the two
+   answers are the only filled shapes on it. Both are secondary
+   buttons rather than one primary and one not: neither way in is the
+   recommended one, and making Google louder than email would be a
+   recommendation nobody asked us to make.
+
+   Google's mark keeps Google's colours, inline in the markup, because
+   a monochrome version of somebody else's logo is not their logo. It
+   is the one thing on the page that is not from this palette, and it
+   sits in an icon slot rather than colouring any type. */
+
+.stage--tight { padding: 44px 0 36px; }
+.hero--compact { margin-bottom: 0; }
+.hero--compact h1 { font-size: clamp(30px, 3.4vw, 40px); }
+
+.auth-card--centred { margin-inline: auto; }
+.auth-heading { font-size: 21px; }
+
+.auth-choices { display: grid; gap: 12px; margin: 22px 0 18px; }
+
+.btn-provider {
+  width: 100%;
+  justify-content: flex-start;
+  gap: 14px;
+  height: 54px;
+  font-size: 15px;
+}
+.provider-mark { width: 18px; height: 18px; flex: none; }
+
+/* the second line under a control: what it does not do, which on this
+   page is the reassuring part */
+.auth-fineprint {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--color-text-muted);
+  margin-top: 12px;
+}
+
+.auth-back {
+  display: inline-block;
+  margin: 0 0 14px;
+  padding-left: 0;
+}
+.auth-row { margin-top: 14px; }
+
+/* ---------- the account itself ----------
+   A list of facts, one per row, label left and value right. No cards
+   inside cards and no icons: it is a small amount of information and
+   it should read like one. */
+
+.detail-card {
+  padding: 22px 24px 20px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--r-lg);
+  margin-bottom: 24px;
+}
+.detail-head { margin-bottom: 6px; }
+
+.detail-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px 20px;
+  padding: 13px 0;
+  border-top: 1px solid var(--color-border);
+}
+.detail-row:first-of-type { border-top: 0; }
+.detail-label { font-size: 14px; color: var(--color-text-muted); }
+.detail-value { font-size: 14.5px; font-weight: 500; text-align: right; }
+
+.detail-action { margin-top: 18px; }
+.detail-action--end { margin-top: 28px; text-align: right; }
+
 /* ---------- responsive ---------- */
 
 @media (max-width: 1000px) {
@@ -1309,6 +1385,13 @@ a.item-card:hover .item-name { text-decoration: underline; text-underline-offset
   .plan-grid { grid-template-columns: 1fr; }
   .plan-banner { padding: 18px 18px; }
   .plan-banner-actions .btn { width: 100%; }
+
+  .detail-card { padding: 18px 18px 16px; }
+  /* label above value once the row has to wrap, rather than two
+     fragments fighting for the same line */
+  .detail-row { flex-direction: column; align-items: flex-start; gap: 3px; }
+  .detail-value { text-align: left; }
+  .detail-action--end { text-align: left; }
 }
 
 @media (max-width: 420px) {

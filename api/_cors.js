@@ -181,6 +181,18 @@ function siteOrigin(req) {
   return `${scheme}://${host}`;
 }
 
+/* Where this function is actually running, which is not always where
+   the site is. The Pages copy of Fynd calls functions on Vercel, so a
+   link that has to be handled by a function — an email verification
+   link — must address the Vercel host, while the page it finally lands
+   the reader on is the site's. */
+function deploymentOrigin(req) {
+  const host = (req.headers && req.headers.host) || '';
+  if (!host) return '';
+  const scheme = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(host) ? 'http' : 'https';
+  return `${scheme}://${host}`;
+}
+
 function returnUrl(req, path, fallback) {
   const origin = siteOrigin(req);
   const wanted = String(path == null ? '' : path);
@@ -188,4 +200,4 @@ function returnUrl(req, path, fallback) {
   return `${origin}${safe}`;
 }
 
-module.exports = { applyCors, handledPreflight, configuredOrigins, isSameOrigin, isAllowed, siteOrigin, returnUrl, SITE_ORIGINS };
+module.exports = { applyCors, handledPreflight, configuredOrigins, isSameOrigin, isAllowed, siteOrigin, deploymentOrigin, returnUrl, SITE_ORIGINS };

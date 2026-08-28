@@ -27,6 +27,18 @@
    Requests are sent with credentials, because the session lives in an
    HttpOnly cookie this file cannot read — which is why it cannot leak
    one either.
+
+   ---------------------------------------------------------
+   Nothing is kept anywhere a page can be read from
+   ---------------------------------------------------------
+   No token, no session, no password is written to localStorage,
+   sessionStorage or a cookie this script can set. The session is the
+   HttpOnly cookie the browser holds and this file never sees. The only
+   credential-shaped thing here is the CSRF token, which /api/account
+   hands over deliberately and which is worthless without that cookie.
+
+   A password exists in this file for the length of one fetch, in the
+   argument to a function, and is never copied anywhere else.
    ========================================================= */
 
 (function (global) {
@@ -64,11 +76,20 @@
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
 
+    const headers = settings.body ? { 'Content-Type': 'application/json' } : undefined;
+
+    /* The CSRF token the server handed us, echoed on anything that
+       changes something. A page on another origin cannot obtain it: it
+       is derived from the HttpOnly session cookie, which that page
+       cannot read, and a cross-site form post cannot set a header at
+       all. */
+    if (headers && current && current.csrfToken) headers['X-Fynd-CSRF'] = current.csrfToken;
+
     let response;
     try {
       response = await fetch(endpoint(name), {
         method: settings.body ? 'POST' : 'GET',
-        headers: settings.body ? { 'Content-Type': 'application/json' } : undefined,
+        headers,
         credentials: 'include',
         body: settings.body ? JSON.stringify(settings.body) : undefined,
         signal: controller.signal
@@ -83,7 +104,18 @@
     clearTimeout(timer);
 
     const data = await response.json().catch(() => null);
-    return { ok: response.ok, unreachable: false, status: response.status, data };
+    const result = { ok: response.ok, unreachable: false, status: response.status, data };
+
+    /* A stale CSRF token means this page's copy of the session is out of
+       date — most often because another tab signed in or out and rotated
+       it. Re-reading /api/account gets the current one; one retry, so a
+       genuinely refused request still fails rather than looping. */
+    if (response.status === 403 && data && data.reason === 'csrf' && !settings.retried) {
+      await load();
+      return call(name, Object.assign({}, settings, { retried: true }));
+    }
+
+    return result;
   }
 
   /* The whole account picture, refreshed from the server. */
@@ -99,18 +131,37 @@
     return result;
   }
 
-  async function auth(action, email, password) {
-    const result = await call('auth', { body: { action, email, password } });
-    if (result.ok && result.data) {
+  /* One shape for every auth action. The fields each one reads are
+     decided by the server; sending a field an action does not use
+     changes nothing, which is the property worth having. */
+  async function auth(fields) {
+    const result = await call('auth', { body: fields });
+    if (result.ok && result.data && result.data.plan) {
       current = result.data;
       notify();
     }
     return result;
   }
 
-  const signup = (email, password) => auth('signup', email, password);
-  const login = (email, password) => auth('login', email, password);
-  const logout = () => auth('logout');
+  const signup = ({ name, email, password, confirmPassword }) =>
+    auth({ action: 'signup', name, email, password, confirmPassword });
+
+  const login = (email, password) => auth({ action: 'login', email, password });
+
+  const logout = () => auth({ action: 'logout' });
+
+  const resendVerification = () => auth({ action: 'resend-verification' });
+
+  const forgotPassword = (email) => auth({ action: 'forgot-password', email });
+
+  const resetPassword = ({ token, password, confirmPassword }) =>
+    auth({ action: 'reset-password', token, password, confirmPassword });
+
+  /* Where "Continue with Google" goes. A full-page navigation, not a
+     fetch: the browser has to leave for Google's own domain, which is
+     the whole point — Fynd never sees the password, and there is no
+     popup or iframe pretending to be Google. */
+  const googleStartUrl = () => endpoint('google-start');
 
   /* Asks the server to open a Checkout Session and hands back its URL.
 
@@ -150,6 +201,7 @@
 
   global.Account = {
     load, signup, login, logout, checkout, portal,
+    resendVerification, forgotPassword, resetPassword, googleStartUrl,
     awaitPlanChange, subscribe, endpoint, returnPath,
     state: () => current
   };
