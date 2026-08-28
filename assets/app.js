@@ -282,7 +282,7 @@ function orderFacet(counts, key) {
   }
 
   /* Verified records from the product source. Every field shown came from
-     the source and passed the gate in api/providers/product-source.js. */
+     the source and passed the gate in api/_providers/product-source.js. */
   function renderProducts(found, outcome) {
     const notice = outcome.source !== 'openai' && outcome.notice
       ? `<p class="notice" role="status">${esc(outcome.notice)}</p>` : '';

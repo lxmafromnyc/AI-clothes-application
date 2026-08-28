@@ -78,7 +78,7 @@ functions in `api/`, and the page says plainly when they are not reachable.
 index.html, find-clothes.html, discover.html, about.html
 api/interpret.js        serverless endpoint; calls OpenAI, holds the API key
 api/search.js           serverless endpoint; asks the product source for real listings
-api/providers/          product source adapters and the verification gate
+api/_providers/         product source adapters and the verification gate
 api/account.js          what plan the caller is on, and what they have used
 api/auth.js             sign up, sign in, sign out, verify, reset
 api/verify-email.js     spends a confirmation link, once
@@ -98,8 +98,8 @@ api/_meter.js           what /api/interpret and /api/search ask before spending
 api/_auth.js            password hashing, session cookies, who a request is
 api/_users.js           user records, and the Stripe customer mapping
 api/_store.js           the key/value store: Vercel KV / Upstash, or memory
-api/providers/openwebninja.js  OpenWeb Ninja Real-Time Product Search adapter
-api/providers/etsy.js   Etsy Open API v3 adapter, kept as an alternative
+api/_providers/openwebninja.js OpenWeb Ninja Real-Time Product Search adapter
+api/_providers/etsy.js  Etsy Open API v3 adapter, kept as an alternative
 assets/search.js        sends interpreted intent to /api/search
 scripts/verify-api.sh          checks a deployed interpreter endpoint
 scripts/verify-search.sh       checks a deployed search endpoint
@@ -121,6 +121,15 @@ assets/interpret.js     sends the request to the endpoint; local fallback
 assets/app.js           rendering and page behaviour
 assets/styles.css       colour tokens, design tokens and all shared components
 ```
+
+Everything under `api/` is deployed as its own Serverless Function, **except**
+paths carrying an underscore-prefixed segment. That is the whole reason for the
+naming: `api/_plans.js`, `api/_providers/` and the rest are helper modules, not
+endpoints, and an endpoint is exactly the set of files without a leading
+underscore. The distinction is not cosmetic — hosts cap how many functions a
+deployment may have, and a helper that gets routed is both a wasted slot and a
+URL that answers nothing useful. `scripts/test-pipeline.js` holds the line:
+every routed file must export a handler, and there must not be too many of them.
 
 ## Connecting the AI
 
@@ -201,7 +210,7 @@ and the function share an origin, `/api/interpret` resolves by default, and
 | `OPENAI_API_KEY` | yes | Your OpenAI key. Without it the endpoint returns 503 and the frontend falls back to local parsing. |
 | `OPENAI_MODEL` | no | Model to call. Defaults to `gpt-4o-mini`; set it to whatever your account has access to. |
 | `OPENWEBNINJA_API_KEY` | yes | The product source's key. Without it `/api/search` returns 503 and the frontend falls back to the sample catalogue, labelled as such. |
-| `PRODUCT_SOURCE` | no | Which adapter in `api/providers/` finds the products. Unset runs `openwebninja`, which is what this deployment uses. |
+| `PRODUCT_SOURCE` | no | Which adapter in `api/_providers/` finds the products. Unset runs `openwebninja`, which is what this deployment uses. |
 | `ALLOWED_ORIGIN` | no | Extra browser origins allowed to call the endpoints, comma-separated. The deployment's own origin is always allowed without configuration, so this is only needed for a frontend hosted elsewhere — GitHub Pages calling functions on Vercel. See [Cross-origin access](#cross-origin-access). |
 | `STRIPE_SECRET_KEY` | for billing | Your Stripe key. `sk_test_…` until launch. Without it the paid plans cannot be bought and the pricing page says so. |
 | `STRIPE_WEBHOOK_SECRET` | for billing | The signing secret of the webhook endpoint (`whsec_…`). Without it every delivery is refused, so no plan ever changes. |
@@ -386,7 +395,7 @@ The two halves of a search have separate jobs, and neither does the other's:
 Nothing in between invents anything. The model is never asked what a product
 costs or where to buy it, because it does not know — only the source does.
 
-No provider is hard-coded: the registry in `api/providers/product-source.js`
+No provider is hard-coded: the registry in `api/_providers/product-source.js`
 decides which adapter runs from `PRODUCT_SOURCE`. Unset, or naming an adapter
 whose credentials are missing, and the endpoint answers 503 and the interface
 says plainly that no product source is connected.
@@ -519,7 +528,7 @@ differs.
 
 ### Etsy (kept, unused)
 
-`api/providers/etsy.js` still works and is still registered, but production
+`api/_providers/etsy.js` still works and is still registered, but production
 never calls it: nothing selects Etsy unless `PRODUCT_SOURCE=etsy` names it
 explicitly, and an unset `PRODUCT_SOURCE` runs OpenWeb Ninja instead. Deleting
 one `require` and one registry line removes it entirely. It searches a single
@@ -575,7 +584,7 @@ What the reply tells you:
 
 ### Adding another provider
 
-1. Create `api/providers/<name>.js` exporting `{ name, configured, search }`:
+1. Create `api/_providers/<name>.js` exporting `{ name, configured, search }`:
 
 ```js
 module.exports = {

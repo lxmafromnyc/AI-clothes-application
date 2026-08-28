@@ -22,8 +22,8 @@
 
 'use strict';
 
-const provider = require('../api/providers/openwebninja');
-const { verifyAll } = require('../api/providers/product-source');
+const provider = require('../api/_providers/openwebninja');
+const { verifyAll } = require('../api/_providers/product-source');
 
 const keysOf = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? Object.keys(v) : []);
 
