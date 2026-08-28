@@ -253,7 +253,7 @@ function verifyAll(records, context) {
    not silently answered by a different provider than the one named.
 
    To add one:
-     1. create api/providers/<name>.js exporting { name, configured, search }
+     1. create api/_providers/<name>.js exporting { name, configured, search }
      2. require it below and add it to PROVIDERS
      3. set that provider's credentials in the Vercel environment, and
         PRODUCT_SOURCE=<name> unless it is the default

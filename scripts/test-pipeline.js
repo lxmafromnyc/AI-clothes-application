@@ -20,8 +20,8 @@
 'use strict';
 
 const assert = require('assert');
-const provider = require('../api/providers/openwebninja');
-const { verifyAll, linkFault } = require('../api/providers/product-source');
+const provider = require('../api/_providers/openwebninja');
+const { verifyAll, linkFault } = require('../api/_providers/product-source');
 
 let passed = 0;
 const failures = [];
@@ -254,8 +254,52 @@ test('only the named variables are ever reported', () => {
   assert.deepStrictEqual(REPORTED, [
     'OPENAI_API_KEY', 'OPENWEBNINJA_API_KEY', 'ALLOWED_ORIGIN', 'VERCEL_ENV',
     'STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET', 'STRIPE_PRICE_PRO', 'STRIPE_PRICE_MAX',
-    'AUTH_SECRET', 'KV_REST_API_URL', 'KV_REST_API_TOKEN'
+    'AUTH_SECRET', 'KV_REST_API_URL', 'KV_REST_API_TOKEN',
+    'GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET',
+    'RESEND_API_KEY', 'POSTMARK_SERVER_TOKEN', 'EMAIL_FROM'
   ]);
+});
+
+console.log('\nthe shape of the deployment');
+
+/* Vercel turns every file under api/ into its own Serverless Function,
+   except the ones whose path carries an underscore-prefixed segment —
+   and the Hobby plan will not deploy more than twelve of them.
+
+   That is why the product-source adapters live in api/_providers/. They
+   are helper modules, not endpoints: exporting an object rather than a
+   handler, they were three functions that could never answer a request,
+   and they took three of the twelve slots. A deployment failed on
+   exactly this once, at thirteen.
+
+   This test is here so the next helper file dropped into api/ fails
+   locally rather than at deploy time. */
+const VERCEL_FUNCTION_LIMIT = 12;
+
+const routedFunctions = () => {
+  const walk = (dir) => require('fs').readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    if (entry.name.startsWith('_')) return [];
+    const full = require('path').join(dir, entry.name);
+    if (entry.isDirectory()) return walk(full);
+    return entry.name.endsWith('.js') ? [full] : [];
+  });
+  return walk(require('path').join(__dirname, '..', 'api'));
+};
+
+test('every file api/ deploys as a function is actually an endpoint', () => {
+  routedFunctions().forEach((file) => {
+    const exported = require(file);
+    assert.strictEqual(typeof exported, 'function',
+      `${require('path').relative(process.cwd(), file)} is deployed as a Serverless Function but does not export a handler. ` +
+      'A helper module belongs in an underscore-prefixed path, where Vercel will not route it.');
+  });
+});
+
+test('the deployment stays inside the Serverless Function limit', () => {
+  const routed = routedFunctions();
+  assert.ok(routed.length <= VERCEL_FUNCTION_LIMIT,
+    `${routed.length} routed functions, and the limit is ${VERCEL_FUNCTION_LIMIT}:\n  ` +
+    routed.map((f) => require('path').relative(process.cwd(), f)).join('\n  '));
 });
 
 console.log('\ncross-origin access control');
@@ -393,7 +437,7 @@ test('a request with no Origin is left alone, so curl still works', () => {
 
 console.log('\nprovider selection');
 
-const { getProvider, DEFAULT_SOURCE } = require('../api/providers/product-source');
+const { getProvider, DEFAULT_SOURCE } = require('../api/_providers/product-source');
 
 const selectWith = (env) => {
   const saved = {};

@@ -210,122 +210,10 @@
       buttons.push('<a class="btn btn-primary" href="account.html">Sign in</a>');
     } else if (state && state.signedIn && page !== 'account') {
       buttons.push('<a class="btn btn-secondary" href="account.html">Your account</a>');
-    } else if (state && state.signedIn) {
-      buttons.push('<button class="btn btn-secondary" type="button" data-action="sign-out">Sign out</button>');
-    }
-    if (page === 'account' && state && state.plan.id === 'free') {
+    } else if (state && state.signedIn && state.plan.id === 'free') {
       buttons.push('<a class="btn btn-primary" href="pricing.html">See plans</a>');
     }
     actions.innerHTML = buttons.join('');
-  }
-
-  /* ---------- the sign-in form ----------
-     Only on the account page. Two modes in one form, because the two
-     are the same two fields and a shopper who picked the wrong one
-     should not have to go and find the other page. */
-
-  let mode = 'login';
-
-  const MODE = {
-    login: {
-      title: 'Sign in',
-      intro: 'An account is what a subscription belongs to. Searching does not need one.',
-      submit: 'Sign in',
-      switchText: 'No account yet?',
-      switchAction: 'Create one',
-      autocomplete: 'current-password',
-      placeholder: 'Your password'
-    },
-    signup: {
-      title: 'Create an account',
-      intro: 'Just an address and a password. Card details are only ever typed on Stripe.',
-      submit: 'Create account',
-      switchText: 'Already have one?',
-      switchAction: 'Sign in',
-      autocomplete: 'new-password',
-      placeholder: 'At least 10 characters'
-    }
-  };
-
-  function paintMode() {
-    const copy = MODE[mode];
-    const set = (id, text) => { const el = $(id); if (el) el.textContent = text; };
-    set('auth-title', copy.title);
-    set('auth-intro', copy.intro);
-    set('auth-submit', copy.submit);
-    set('auth-switch-text', copy.switchText);
-    set('auth-switch', copy.switchAction);
-    const password = $('auth-password');
-    if (password) {
-      password.setAttribute('autocomplete', copy.autocomplete);
-      password.setAttribute('placeholder', copy.placeholder);
-    }
-  }
-
-  function authError(message) {
-    const el = $('auth-error');
-    if (!el) return;
-    el.textContent = message || '';
-    el.classList.toggle('show', Boolean(message));
-  }
-
-  function authPanel(state) {
-    const panel = $('auth-panel');
-    if (!panel) return;
-    const signedIn = Boolean(state && state.signedIn);
-    panel.hidden = signedIn;
-
-    /* A deployment with no AUTH_SECRET cannot issue a session, so the
-       form would take a password and fail. Saying so is better than
-       offering a control that cannot work. */
-    const disabled = Boolean(state && state.accounts && !state.accounts.enabled);
-    const submit = $('auth-submit');
-    if (submit) submit.disabled = disabled;
-    if (disabled) authError('Accounts are not configured on this deployment yet.');
-  }
-
-  function wireAuth() {
-    const form = $('auth-form');
-    if (!form) return;
-    paintMode();
-
-    const toggle = $('auth-switch');
-    if (toggle) {
-      toggle.addEventListener('click', () => {
-        mode = mode === 'login' ? 'signup' : 'login';
-        authError('');
-        paintMode();
-      });
-    }
-
-    form.addEventListener('submit', async (event) => {
-      event.preventDefault();
-      authError('');
-
-      const email = ($('auth-email') || {}).value || '';
-      const password = ($('auth-password') || {}).value || '';
-      const submit = $('auth-submit');
-      if (submit) { submit.disabled = true; submit.textContent = 'One moment…'; }
-
-      const result = mode === 'signup'
-        ? await global.Account.signup(email, password)
-        : await global.Account.login(email, password);
-
-      if (submit) submit.disabled = false;
-      paintMode();
-
-      if (result.ok) {
-        const password2 = $('auth-password');
-        if (password2) password2.value = '';
-        /* somebody who came here from a plan button goes back to it */
-        const wanted = new URLSearchParams(global.location.search || '').get('plan');
-        if (wanted) global.location.href = `pricing.html?plan=${encodeURIComponent(wanted)}`;
-        return;
-      }
-
-      authError((result.data && result.data.error)
-        || (result.unreachable ? 'Could not reach the server. Try again in a moment.' : 'That did not work.'));
-    });
   }
 
   /* ---------- the meters ---------- */
@@ -456,7 +344,6 @@
     banner(state);
     planCards(state);
     meters(state);
-    authPanel(state);
   }
 
   async function start() {
@@ -467,14 +354,16 @@
     await handleReturn(global.Account.state());
   }
 
-  function boot() {
-    wireAuth();
-    start();
+  wireActions();
+
+  /* The account page decides its own shell first — signed in or not is
+     what determines whether any of this is even on screen there — so it
+     loads the state and calls draw() itself. Every other page starts
+     here. */
+  if (doc.body.dataset.page !== 'account') {
+    if (doc.readyState === 'loading') doc.addEventListener('DOMContentLoaded', start);
+    else start();
   }
 
-  wireActions();
-  if (doc.readyState === 'loading') doc.addEventListener('DOMContentLoaded', boot);
-  else boot();
-
-  global.BillingUI = { draw, note, resetWords, money, number, deploymentNote };
+  global.BillingUI = { draw, note, resetWords, money, number, deploymentNote, banner, meters, planCards, handleReturn, start };
 })(typeof window !== 'undefined' ? window : globalThis);

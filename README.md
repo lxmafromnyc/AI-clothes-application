@@ -47,7 +47,7 @@ page, the examples, the steps and the retailer labels.
 | Find Clothes | `find-clothes.html` | The same search, with nothing else on the page |
 | Discover | `discover.html` | Browse the catalogue, filtered by style |
 | Pricing | `pricing.html` | The three plans, which one you are on, and the way to change it |
-| Account | `account.html` | Sign in, what you have used this period, and the billing portal |
+| Account | `account.html` | Sign in with Google or email; your plan, usage and subscription |
 | About | `about.html` | What the site does and what it takes into account |
 
 Every product, wherever it appears, is drawn by one function in `assets/app.js`
@@ -78,9 +78,16 @@ functions in `api/`, and the page says plainly when they are not reachable.
 index.html, find-clothes.html, discover.html, about.html
 api/interpret.js        serverless endpoint; calls OpenAI, holds the API key
 api/search.js           serverless endpoint; asks the product source for real listings
-api/providers/          product source adapters and the verification gate
+api/_providers/         product source adapters and the verification gate
 api/account.js          what plan the caller is on, and what they have used
-api/auth.js             sign up, sign in, sign out
+api/auth.js             sign up, sign in, sign out, verify, reset
+api/verify-email.js     spends a confirmation link, once
+api/google-start.js     begins a Google sign-in
+api/google-callback.js  finishes one, and is the only thing that believes Google
+api/_google.js          OAuth with PKCE, and ID token verification
+api/_email.js           transactional email: Resend or Postmark
+api/_tokens.js          single-use, expiring, unguessable links
+api/_ratelimit.js       what stops guessing and mail-bombing
 api/checkout.js         opens a Stripe Checkout Session for Pro or Max
 api/portal.js           opens Stripe's billing portal
 api/stripe-webhook.js   the ONLY thing that can change a plan
@@ -91,8 +98,8 @@ api/_meter.js           what /api/interpret and /api/search ask before spending
 api/_auth.js            password hashing, session cookies, who a request is
 api/_users.js           user records, and the Stripe customer mapping
 api/_store.js           the key/value store: Vercel KV / Upstash, or memory
-api/providers/openwebninja.js  OpenWeb Ninja Real-Time Product Search adapter
-api/providers/etsy.js   Etsy Open API v3 adapter, kept as an alternative
+api/_providers/openwebninja.js OpenWeb Ninja Real-Time Product Search adapter
+api/_providers/etsy.js  Etsy Open API v3 adapter, kept as an alternative
 assets/search.js        sends interpreted intent to /api/search
 scripts/verify-api.sh          checks a deployed interpreter endpoint
 scripts/verify-search.sh       checks a deployed search endpoint
@@ -100,10 +107,13 @@ scripts/verify-billing.sh      checks a deployed billing setup
 scripts/probe-openwebninja.js  prints the provider's live response fields
 scripts/test-pipeline.js       offline test of the whole server pipeline
 scripts/test-stripe.js         offline test of payments and subscriptions
+scripts/test-auth.js           offline test of accounts, sessions and OAuth
+scripts/test-e2e.js            the whole sign-in flow in a real browser
 scripts/test-ui.js             browser test of the search interface
 assets/attachments.js          drag-and-drop and file picker for the search box
 assets/account.js       talks to the account and billing endpoints
-assets/billing-ui.js    draws the pricing page and the account page
+assets/billing-ui.js    draws the pricing page
+assets/account-ui.js    draws the account page and the sign-in flow
 .env.example            template; the real .env is git-ignored
 assets/products.js      data layer: normalises any source into one schema
 assets/catalog.js       demo product source, replaceable by a real feed
@@ -111,6 +121,15 @@ assets/interpret.js     sends the request to the endpoint; local fallback
 assets/app.js           rendering and page behaviour
 assets/styles.css       colour tokens, design tokens and all shared components
 ```
+
+Everything under `api/` is deployed as its own Serverless Function, **except**
+paths carrying an underscore-prefixed segment. That is the whole reason for the
+naming: `api/_plans.js`, `api/_providers/` and the rest are helper modules, not
+endpoints, and an endpoint is exactly the set of files without a leading
+underscore. The distinction is not cosmetic — hosts cap how many functions a
+deployment may have, and a helper that gets routed is both a wasted slot and a
+URL that answers nothing useful. `scripts/test-pipeline.js` holds the line:
+every routed file must export a handler, and there must not be too many of them.
 
 ## Connecting the AI
 
@@ -191,16 +210,22 @@ and the function share an origin, `/api/interpret` resolves by default, and
 | `OPENAI_API_KEY` | yes | Your OpenAI key. Without it the endpoint returns 503 and the frontend falls back to local parsing. |
 | `OPENAI_MODEL` | no | Model to call. Defaults to `gpt-4o-mini`; set it to whatever your account has access to. |
 | `OPENWEBNINJA_API_KEY` | yes | The product source's key. Without it `/api/search` returns 503 and the frontend falls back to the sample catalogue, labelled as such. |
-| `PRODUCT_SOURCE` | no | Which adapter in `api/providers/` finds the products. Unset runs `openwebninja`, which is what this deployment uses. |
+| `PRODUCT_SOURCE` | no | Which adapter in `api/_providers/` finds the products. Unset runs `openwebninja`, which is what this deployment uses. |
 | `ALLOWED_ORIGIN` | no | Extra browser origins allowed to call the endpoints, comma-separated. The deployment's own origin is always allowed without configuration, so this is only needed for a frontend hosted elsewhere — GitHub Pages calling functions on Vercel. See [Cross-origin access](#cross-origin-access). |
 | `STRIPE_SECRET_KEY` | for billing | Your Stripe key. `sk_test_…` until launch. Without it the paid plans cannot be bought and the pricing page says so. |
 | `STRIPE_WEBHOOK_SECRET` | for billing | The signing secret of the webhook endpoint (`whsec_…`). Without it every delivery is refused, so no plan ever changes. |
 | `STRIPE_PRICE_PRO` | for billing | The Stripe Price Pro is sold at — recurring, monthly, $14.99. |
 | `STRIPE_PRICE_MAX` | for billing | The Stripe Price Max is sold at — recurring, monthly, $79.99. |
-| `AUTH_SECRET` | for billing | Signs the session cookie; 16 characters or more. Without it nobody can sign in, so nobody can subscribe. |
+| `AUTH_SECRET` | for accounts | Keys the HMAC that sessions, verification links, reset links and OAuth state are stored under; 16 characters or more. Without it nobody can sign in, so nobody can subscribe. |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | for Google sign-in | An OAuth 2.0 Web application client. Without them the account page does not offer the Google button. |
+| `RESEND_API_KEY` *or* `POSTMARK_SERVER_TOKEN` | for verification | A transactional email provider. Without one, accounts are created unverified and cannot be confirmed — and therefore cannot subscribe. |
+| `EMAIL_FROM` | for verification | The sending address, on a domain the provider has verified. |
+| `EMAIL_PROVIDER`, `EMAIL_REPLY_TO`, `POSTMARK_MESSAGE_STREAM` | no | Pick a provider explicitly; set a reply-to; name a Postmark stream. |
 | `KV_REST_API_URL` / `KV_REST_API_TOKEN` | for billing | Where accounts, subscriptions and usage counters are kept. Vercel KV sets these when a database is attached; `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` are read too. Without either, state is held in memory and lost on restart. |
 
-See [Plans, payments and subscriptions](#plans-payments-and-subscriptions) for the whole billing setup.
+See [Accounts and signing in](#accounts-and-signing-in) and
+[Plans, payments and subscriptions](#plans-payments-and-subscriptions) for the
+whole setup.
 
 Both keys are server-side secrets. Set them in your host's dashboard or CLI
 (`npx vercel env add OPENAI_API_KEY`, `npx vercel env add
@@ -370,7 +395,7 @@ The two halves of a search have separate jobs, and neither does the other's:
 Nothing in between invents anything. The model is never asked what a product
 costs or where to buy it, because it does not know — only the source does.
 
-No provider is hard-coded: the registry in `api/providers/product-source.js`
+No provider is hard-coded: the registry in `api/_providers/product-source.js`
 decides which adapter runs from `PRODUCT_SOURCE`. Unset, or naming an adapter
 whose credentials are missing, and the endpoint answers 503 and the interface
 says plainly that no product source is connected.
@@ -503,7 +528,7 @@ differs.
 
 ### Etsy (kept, unused)
 
-`api/providers/etsy.js` still works and is still registered, but production
+`api/_providers/etsy.js` still works and is still registered, but production
 never calls it: nothing selects Etsy unless `PRODUCT_SOURCE=etsy` names it
 explicitly, and an unset `PRODUCT_SOURCE` runs OpenWeb Ninja instead. Deleting
 one `require` and one registry line removes it entirely. It searches a single
@@ -518,12 +543,13 @@ rules, and the JSON `/api/search` returns:
 node scripts/test-pipeline.js
 ```
 
-Payments and subscriptions are a separate offline suite, and the interface is
-driven in a real browser:
+The rest of the suites, all offline except the two that drive a browser:
 
 ```sh
-node scripts/test-stripe.js
-node scripts/test-ui.js
+node scripts/test-stripe.js    # payments and subscriptions
+node scripts/test-auth.js      # accounts, sessions, tokens, OAuth
+node scripts/test-ui.js        # the interface, its palette and its contrast
+node scripts/test-e2e.js       # the whole sign-in flow, in a real browser
 ```
 
 Against a live deployment, with the request the interpreter produces for
@@ -558,7 +584,7 @@ What the reply tells you:
 
 ### Adding another provider
 
-1. Create `api/providers/<name>.js` exporting `{ name, configured, search }`:
+1. Create `api/_providers/<name>.js` exporting `{ name, configured, search }`:
 
 ```js
 module.exports = {
@@ -615,6 +641,234 @@ named on the card. Fynd does not attach a match percentage to any result: it
 did not score the provider's records, and a made-up score would be inventing
 information about a real product. What the request was read as is said once,
 above the grid, rather than claimed again on every card.
+
+## Accounts and signing in
+
+Searching still needs no account. The Free allowance is metered per browser
+and the pages say what they always said. An account exists for one reason: a
+subscription has to belong to somebody, and a Stripe webhook arriving later has
+to be able to find them.
+
+Two ways in, offered as one question with two answers:
+
+| | |
+| --- | --- |
+| **Continue with Google** | A real OAuth 2.0 flow. Fynd never sees a Google password. |
+| **Continue with Email** | Name, email and a password, confirmed by a link sent to that address. |
+
+Both land on the same kind of account. Signing in with Google using an address
+that already has a password account signs you into **that** account and
+attaches Google to it — it does not create a second one, and it does not fork
+your subscription or your usage away from what you had.
+
+### The session
+
+`fynd_session` holds 32 random bytes and nothing else. It is not a signed claim
+about who you are; it is a lookup key for a record the server keeps. That is
+what makes four things possible that a stateless token cannot do:
+
+- **Logging out really ends it.** The record is deleted, so a copy of the
+  cookie kept by anybody is dead too. Clearing a cookie is not logging out.
+- **Authenticating rotates it.** The session the browser arrived with is
+  destroyed and a new one issued, so a session id an attacker planted before
+  sign-in is not the one used afterwards.
+- **Expiry is enforced on the server**, not on a number the holder of the token
+  also holds. Fourteen days, absolute — not extended on use, because a sliding
+  window keeps a stolen cookie alive for exactly as long as the thief keeps
+  using it.
+- **Every session can be dropped at once.** Each record carries the account's
+  `sessionEpoch`; raising it orphans all of them. A password reset does this,
+  so resetting signs out every device without needing a list of them.
+
+The store never holds the token: records live under `session:<HMAC(token)>`
+keyed by `AUTH_SECRET`. A dump of the database is not a set of usable cookies.
+
+The cookie is `HttpOnly` — no script on the page can read it, so no script can
+leak it — `Secure` everywhere but plain-http localhost, and `SameSite=Lax`
+same-origin or `SameSite=None` when the site and the functions are on different
+hosts, decided per request so neither deployment has a setting to get wrong.
+**Nothing is kept in `localStorage`.**
+
+### CSRF
+
+Two independent defences, because they fail differently.
+
+The first is already there: `api/_cors.js` refuses a request whose `Origin` is
+not on the allow-list, and it does that on the request itself rather than only
+on the preflight — so a "simple" cross-site POST, the one shape that reaches a
+server without a preflight, still gets a 403.
+
+The second is a token. `/api/account` returns a `csrfToken` derived from the
+session token, and state-changing authenticated requests must echo it in
+`X-Fynd-CSRF`. It works because of what each side can see: the session cookie is
+`HttpOnly`, so a page on another origin cannot read it and cannot compute the
+token; and a cross-site form post cannot set a header at all.
+
+### Email verification
+
+1. The account is created **unverified**.
+2. A link is sent to the address, carrying a token and nothing else.
+3. Following it marks the address verified. The token is spent in the same
+   store operation that reads it, so a link works exactly once — which matters,
+   because mail scanners follow links before people do.
+4. Until then the account is not treated as verified: `/api/checkout` refuses
+   it, with `email-unverified`, and the account page says why and offers to
+   send another.
+
+Tokens are 32 bytes from `crypto.randomBytes`, expire (a day for verification,
+an hour for a reset), and are stored as `token:<purpose>:<HMAC(token)>` — so
+the raw token exists only in the email and the URL the reader clicks. They are
+never logged, never returned in an API response, and never put in an error.
+
+Resending is rate limited on two axes: one every 60 seconds and five an hour,
+counted per account **and** per requesting address. One alone leaves the other
+open — per-account stops many machines flooding one mailbox, per-address stops
+one machine working through many mailboxes.
+
+**Why "unverified" has teeth.** The receipt, the renewal notice and the
+failed-payment warning all go to that address. An account that cannot receive
+them should not be able to start a subscription, so the check is a concrete
+refusal rather than a flag nothing acts on.
+
+### Passwords
+
+scrypt from node's own crypto — no dependency — with a per-password salt, the
+parameters stored alongside the hash so they can be raised later without
+invalidating anyone, and a constant-time comparison. Plaintext is never stored,
+never logged and never leaves the request it arrived in.
+
+Minimum ten characters, checked on the server. The page checks too, for a fast
+message, but the server is the one that decides.
+
+### What the endpoints will not tell you
+
+Whether an address has an account.
+
+- A wrong password and an unknown address give the same 401 with the same body,
+  in the same time — the password is hashed either way, against a decoy when
+  there is no user, so the two cannot be told apart by how long they took.
+- "Forgot password" always answers identically, whether or not anything was
+  sent, and an account with no password (a Google sign-in) is silently skipped
+  rather than told about.
+
+Sign-up is the one place that cannot hide it — the address either gets an
+account or it does not — so it says so plainly and points at signing in, rather
+than pretending to have worked and leaving somebody waiting for an email that
+was never coming.
+
+### Setting up Google sign-in
+
+1. In the [Google Cloud console](https://console.cloud.google.com/apis/credentials),
+   **Create credentials → OAuth client ID → Web application**.
+2. Under **Authorized redirect URIs**, add exactly, with no query string:
+
+   ```
+   https://<your-deployment>/api/google-callback
+   ```
+
+   Google matches it character for character. That is also why the callback
+   endpoint has no query string of its own.
+3. Configure the OAuth consent screen. While it is in *Testing*, only accounts
+   you list as test users can sign in; publishing it opens it to everyone. The
+   scopes needed are only `openid`, `email` and `profile`.
+4. Set the two variables and redeploy:
+
+   ```sh
+   vercel env add GOOGLE_CLIENT_ID production
+   vercel env add GOOGLE_CLIENT_SECRET production
+   vercel --prod
+   ```
+
+With them unset, the account page does not offer the button at all and
+`/api/google-start` declines rather than half-starting a flow.
+
+**What the flow actually does.** `/api/google-start` mints a PKCE verifier, a
+nonce and a state token, stores all three server-side, and redirects. The
+browser carries only the state. `/api/google-callback` then, in order: spends
+the state (single-use, so a replay finds nothing); checks the binding cookie, so
+the callback must reach the browser that started; exchanges the code with Google
+directly, server to server, with the client secret and the verifier that never
+left the server; and verifies the returned ID token — RS256 signature against
+Google's published keys, issuer, audience, `azp`, expiry and nonce — before
+reading a single claim from it.
+
+Nothing on that URL says who anybody is, and there is no branch that would read
+it if it did. Google's `email_verified` is honoured rather than assumed: where
+Google has not proved the address, Fynd does not treat it as proved, and it
+cannot be used to take over an existing account.
+
+### Setting up email
+
+Verification is not optional in the sense that matters — without it, nobody can
+confirm an address, and an unconfirmed account cannot subscribe. Pick one:
+
+**Resend** — create an API key and verify a sending domain:
+
+```sh
+vercel env add RESEND_API_KEY production
+vercel env add EMAIL_FROM production        # e.g. Fynd <hello@yourdomain.com>
+```
+
+**Postmark** — create a server and use its **server token**:
+
+```sh
+vercel env add POSTMARK_SERVER_TOKEN production
+vercel env add EMAIL_FROM production
+```
+
+`EMAIL_FROM` must be on a domain the provider has verified. Providers refuse
+anything else; that is the anti-spoofing rule working, not a setting to fight.
+
+**With no provider configured**, `/api/account` reports
+`accounts.email.configured: false`, sign-up returns
+`verification: { sent: false, reason: "no-provider" }`, and the account page
+says in those words that no confirmation link can be sent. Nothing claims an
+email went out, nothing prints the link to a log — that would publish a
+credential meant for one mailbox — and nobody becomes verified by the absence
+of a provider.
+
+### Storage is a hard dependency
+
+Accounts, sessions, verification tokens and usage counters all live in the
+store. Without `KV_REST_API_URL` / `KV_REST_API_TOKEN` (or the Upstash pair) it
+falls back to memory, which means signing up and signing back in a minute later
+can land on two different function instances and find no account.
+
+That fallback is right for `node scripts/…` and local development and wrong for
+everything else, so it is stated rather than hidden: `/api/account` reports
+`storage.durable: false` and both the account and pricing pages say so on
+screen.
+
+### Testing it
+
+```sh
+node scripts/test-auth.js    # offline: accounts, sessions, tokens, OAuth
+node scripts/test-e2e.js     # a real browser, driving the real handlers
+```
+
+`test-auth.js` runs with no key, no Google project and no mailbox. Google is
+stubbed at the `fetch` boundary, but the *verification* is not: an RSA key pair
+is generated in the test, its public half is served as a JWKS, and ID tokens are
+signed with the private half — so a token signed by the wrong key, with
+`alg: none`, for another audience, from another issuer, expired, or with a
+mismatched nonce is refused by the real production path.
+
+`test-e2e.js` drives Chromium against the real handlers over real HTTP: it
+clicks **Account** in the navigation, chooses email, signs up, reads the
+confirmation link out of the captured message and navigates to it, checks the
+session survives a reload and a new tab, logs out, logs back in, runs a whole
+Google sign-in through the redirect chain, and checks that a page which rewrites
+its own state does not change what the server says.
+
+### Before authentication is live
+
+- `AUTH_SECRET`, generated not chosen.
+- A durable store. Without one, accounts do not survive.
+- An email provider and a verified sending domain, or nobody can confirm an
+  address and therefore nobody can subscribe.
+- A Google OAuth client whose redirect URI matches the deployment exactly, and
+  a consent screen that is published if you want anyone beyond your test users.
+- Redeploy. Vercel applies variables to the next build, not the running one.
 
 ## Plans, payments and subscriptions
 

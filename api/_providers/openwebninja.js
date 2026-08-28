@@ -3,7 +3,7 @@
 
    Searches Google Shopping's cross-retailer index through OpenWeb Ninja's
    Real-Time Product Search API and returns records in the shape
-   api/providers/product-source.js verifies.
+   api/_providers/product-source.js verifies.
 
    This is the provider that gives FindWear broad coverage: one query
    reaches Amazon, Walmart, Target, Best Buy, eBay, Nordstrom and the long

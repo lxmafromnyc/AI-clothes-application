@@ -6,7 +6,16 @@
 
      user:<id>                the record
      user:email:<email>       -> id     a sign-in, by what was typed
+     user:google:<sub>        -> id     a Google sign-in, by Google's
+                                        immutable subject id
      user:customer:<cus_…>    -> id     a webhook, by who Stripe billed
+
+   One account, reachable four ways. Signing in with Google using the
+   address an email account already uses finds that account and attaches
+   Google to it — it does not make a second one. There is no separate
+   "Google user" anywhere in this system: a subscription, a usage
+   counter and a Stripe customer all hang off the same record however
+   its owner proved who they were.
 
    The second index is the whole of the customer/account mapping. A
    Stripe webhook knows a customer id and nothing about Fynd, so without
@@ -34,6 +43,7 @@ const { planFromSubscription, DEFAULT_PLAN } = require('./_plans');
 const userKey = (id) => `user:${id}`;
 const emailKey = (email) => `user:email:${normaliseEmail(email)}`;
 const customerKey = (customerId) => `user:customer:${String(customerId || '').trim()}`;
+const googleKey = (sub) => `user:google:${String(sub || '').trim()}`;
 
 /* Addresses are compared case-insensitively, so they are stored that
    way too. Nothing else is normalised: the local part of an address is
@@ -77,6 +87,21 @@ async function save(user) {
   const record = Object.assign({}, user);
   record.subscription = shapeSubscription(record.subscription);
   record.plan = planFromSubscription(record.subscription);
+
+  /* Normalised here rather than at each call site, so a record written
+     from the OAuth callback and one written from the sign-up form have
+     the same shape and the same defaults. */
+  record.name = typeof record.name === 'string' ? record.name.trim().slice(0, 80) : '';
+  record.emailVerified = Boolean(record.emailVerified);
+  record.emailVerifiedAt = record.emailVerifiedAt || null;
+  record.googleSub = record.googleSub ? String(record.googleSub) : null;
+  record.passwordHash = record.passwordHash || null;
+  /* Raised to invalidate every session this account has. Sessions store
+     the epoch they were issued under, and _auth.identify drops any that
+     no longer match — so a password reset logs out every device without
+     needing a list of them. */
+  record.sessionEpoch = Number.isFinite(Number(record.sessionEpoch)) ? Number(record.sessionEpoch) : 0;
+
   await store.set(userKey(record.id), record);
   return record;
 }
@@ -86,6 +111,12 @@ const byId = (id) => (id ? store.get(userKey(id)) : Promise.resolve(null));
 async function byEmail(email) {
   if (!normaliseEmail(email)) return null;
   const id = await store.get(emailKey(email));
+  return id ? byId(id) : null;
+}
+
+async function byGoogleSub(sub) {
+  if (!String(sub || '').trim()) return null;
+  const id = await store.get(googleKey(sub));
   return id ? byId(id) : null;
 }
 
@@ -101,7 +132,7 @@ async function byCustomerId(customerId) {
    written, so two simultaneous sign-ups for one address cannot both
    succeed — the loser is told the address is taken rather than
    overwriting the winner's account. */
-async function create({ email, passwordHash }) {
+async function create({ email, passwordHash, name, emailVerified, googleSub }) {
   const address = normaliseEmail(email);
   const id = newId();
 
@@ -111,14 +142,68 @@ async function create({ email, passwordHash }) {
   const user = await save({
     id,
     email: address,
-    passwordHash,
+    name: name || '',
+    passwordHash: passwordHash || null,
+    /* Only ever true when somebody else already proved the address: an
+       account created from the sign-up form is unverified until the
+       person follows a link sent to that address. */
+    emailVerified: Boolean(emailVerified),
+    emailVerifiedAt: emailVerified ? new Date().toISOString() : null,
+    googleSub: googleSub || null,
+    sessionEpoch: 0,
     createdAt: new Date().toISOString(),
     stripeCustomerId: null,
     subscription: null,
     plan: DEFAULT_PLAN
   });
 
+  if (googleSub) await store.set(googleKey(googleSub), id);
+
   return { user, reason: null };
+}
+
+/* Marks the address proved. Idempotent, so a link followed twice — or
+   followed after a Google sign-in already proved the same address —
+   is not an error. */
+async function markVerified(user) {
+  if (user.emailVerified) return user;
+  return save(Object.assign({}, user, {
+    emailVerified: true,
+    emailVerifiedAt: new Date().toISOString()
+  }));
+}
+
+/* Attaches a Google identity to an existing account, and refuses to
+   move one that is already attached to a different Google subject —
+   the same rule, and for the same reason, as linkCustomer below. */
+async function linkGoogle(user, sub, name) {
+  const subject = String(sub || '').trim();
+  if (!subject) return user;
+  if (user.googleSub && user.googleSub !== subject) {
+    console.warn('Refusing to relink a Google identity for a user that already has one.');
+    return user;
+  }
+  await store.set(googleKey(subject), user.id);
+  return save(Object.assign({}, user, {
+    googleSub: subject,
+    /* Google has proved the address, so an account that was waiting on
+       an email link no longer is. */
+    emailVerified: true,
+    emailVerifiedAt: user.emailVerifiedAt || new Date().toISOString(),
+    name: user.name || (name || '')
+  }));
+}
+
+/* Sets a new password and ends every existing session.
+
+   Raising the epoch is the point: whoever prompted the reset — the
+   owner, or somebody who had got into the account — is signed out
+   everywhere by the change, including on devices nobody has a list of. */
+async function setPassword(user, passwordHash) {
+  return save(Object.assign({}, user, {
+    passwordHash,
+    sessionEpoch: Number(user.sessionEpoch || 0) + 1
+  }));
 }
 
 /* Attaches a Stripe customer to a user, in both directions, and refuses
@@ -159,7 +244,16 @@ async function applySubscription(user, subscription) {
 const publicUser = (user) => (user ? {
   id: user.id,
   email: user.email,
+  name: user.name || '',
+  emailVerified: Boolean(user.emailVerified),
   createdAt: user.createdAt,
+  /* how this account can be signed into, so the page can say "you
+     signed up with Google" rather than offering a password reset for a
+     password that does not exist */
+  signInMethods: [
+    user.passwordHash ? 'password' : null,
+    user.googleSub ? 'google' : null
+  ].filter(Boolean),
   hasBilling: Boolean(user.stripeCustomerId)
 } : null);
 
@@ -170,12 +264,17 @@ module.exports = {
   save,
   byId,
   byEmail,
+  byGoogleSub,
   byCustomerId,
   create,
+  markVerified,
+  linkGoogle,
+  setPassword,
   linkCustomer,
   applySubscription,
   publicUser,
   userKey,
   emailKey,
+  googleKey,
   customerKey
 };

@@ -18,10 +18,30 @@
    ---------------------------------------------------------
    The session cookie
    ---------------------------------------------------------
-   `fynd_session` holds `<userId>.<issuedAt>.<nonce>` with an HMAC over
-   it, keyed by AUTH_SECRET. Nothing in the cookie is trusted until the
-   HMAC verifies, and the comparison is timing-safe, so a forged cookie
-   cannot be searched for one byte at a time.
+   `fynd_session` holds 32 random bytes and nothing else. It is not a
+   signed claim about who you are — it is a lookup key for a record the
+   server keeps, and everything about the session lives in that record.
+
+   That matters for four things a stateless token cannot do:
+
+     logging out      really ends the session, because the record is
+                      deleted. A cookie-clearing logout leaves a token
+                      that still works if anybody kept a copy.
+     rotation         a new token is issued the moment authentication
+                      succeeds, and the pre-login one is deleted, so a
+                      session id an attacker planted before sign-in is
+                      not the session id afterwards.
+     expiry           enforced on the record, not on a number the
+                      holder of the token also holds.
+     revocation       every session for a user can be dropped at once
+                      by bumping `sessionEpoch` on the account, which is
+                      what a password reset does.
+
+   The store never holds the token itself: the key is
+   `session:<HMAC(token)>` under AUTH_SECRET. A dump of the store is
+   therefore not a set of usable cookies. Lookups are constant work and
+   a token that does not resolve is simply absent — there is nothing to
+   compare byte by byte.
 
    HttpOnly, so no script on the page can read it — including a script
    that got onto the page by accident. Secure and SameSite=None when the
@@ -62,10 +82,20 @@
 
 const crypto = require('crypto');
 
+const store = require('./_store');
+const { b64url } = require('./_tokens');
+
 const SESSION_COOKIE = 'fynd_session';
 const DEVICE_COOKIE = 'fynd_device';
-const SESSION_MAX_AGE = 60 * 60 * 24 * 30;   /* 30 days */
+/* Fourteen days, absolute. Not extended on use: a sliding window means
+   a stolen cookie stays good for as long as the thief keeps using it,
+   which is exactly the case the expiry exists for. */
+const SESSION_MAX_AGE = 60 * 60 * 24 * 14;
 const DEVICE_MAX_AGE = 60 * 60 * 24 * 400;   /* long enough to outlive a period */
+
+/* Sent to the page and required back as a header on any authenticated
+   request that changes something. See csrfTokenFor() below. */
+const CSRF_HEADER = 'x-fynd-csrf';
 
 /* scrypt parameters. N=16384 keeps a sign-in comfortably under the
    time a serverless function has, and is far past what a stolen
@@ -133,14 +163,26 @@ function parseCookies(req) {
    calling the Vercel functions — needs SameSite=None, and a browser
    only accepts None together with Secure. Deciding per request means
    neither deployment has a setting to get wrong. */
-function cookieAttributes(req) {
+function cookieAttributes(req, options) {
   const origin = (req && req.headers && req.headers.origin) || '';
   const host = (req && req.headers && req.headers.host) || '';
-  const crossSite = Boolean(origin) && origin !== `https://${host}` && origin !== `http://${host}`;
   /* localhost over http cannot set a Secure cookie, and does not need
      to: nothing crosses a network there. */
   const local = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(host);
-  if (crossSite) return 'SameSite=None; Secure';
+
+  /* An OAuth callback is a top-level navigation from Google and carries
+     no Origin header, so the request itself cannot say whether the site
+     that will read this cookie is on another host. The caller knows —
+     it stored the origin the flow began at — and says so here. */
+  const forced = options && typeof options.crossSite === 'boolean' ? options.crossSite : null;
+  const crossSite = forced !== null
+    ? forced
+    : (Boolean(origin) && origin !== `https://${host}` && origin !== `http://${host}`);
+
+  /* A browser only accepts SameSite=None together with Secure, so on
+     plain-http localhost there is no cross-site cookie to be had; Lax
+     is the honest answer rather than one the browser will discard. */
+  if (crossSite && !local) return 'SameSite=None; Secure';
   return local ? 'SameSite=Lax' : 'SameSite=Lax; Secure';
 }
 
@@ -153,53 +195,129 @@ function appendCookie(res, value) {
   res.setHeader('Set-Cookie', list);
 }
 
-const setCookie = (req, res, name, value, maxAge) =>
-  appendCookie(res, `${name}=${encodeURIComponent(value)}; Path=/; Max-Age=${maxAge}; HttpOnly; ${cookieAttributes(req)}`);
+const setCookie = (req, res, name, value, maxAge, options) =>
+  appendCookie(res, `${name}=${encodeURIComponent(value)}; Path=/; Max-Age=${maxAge}; HttpOnly; ${cookieAttributes(req, options)}`);
 
-const clearCookie = (req, res, name) =>
-  appendCookie(res, `${name}=; Path=/; Max-Age=0; HttpOnly; ${cookieAttributes(req)}`);
+const clearCookie = (req, res, name, options) =>
+  appendCookie(res, `${name}=; Path=/; Max-Age=0; HttpOnly; ${cookieAttributes(req, options)}`);
 
 /* ---------------------------------------------------------
-   Session tokens
+   Sessions
    --------------------------------------------------------- */
 
-const b64url = (buf) => buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const sessionKey = (token) => `session:${crypto
+  .createHmac('sha256', secret()).update(`session:${token}`).digest('hex')}`;
 
-const sign = (payload) => b64url(crypto.createHmac('sha256', secret()).update(payload).digest());
+/* The CSRF token is derived from the session token rather than stored
+   beside it, so it cannot drift out of step with the session and is
+   invalidated by the same rotation.
 
-function issueSession(userId) {
+   It works because of what each side can see. The session cookie is
+   HttpOnly, so a page on another origin cannot read it and therefore
+   cannot compute this value; Fynd's own page is handed the value by
+   /api/account and echoes it in a header. A cross-site form post — the
+   one request shape that reaches a server without a preflight — cannot
+   set a header at all. */
+const csrfTokenFor = (sessionToken) => b64url(crypto
+  .createHmac('sha256', secret()).update(`csrf:${sessionToken}`).digest());
+
+/* Creates the record and returns the raw token for the cookie. */
+async function issueSession(userId, options) {
   if (!accountsEnabled()) return null;
-  const payload = `${userId}.${Math.floor(Date.now() / 1000)}.${crypto.randomBytes(9).toString('hex')}`;
-  return `${payload}.${sign(payload)}`;
+  const token = b64url(crypto.randomBytes(32));
+  const now = Date.now();
+
+  await store.set(sessionKey(token), {
+    userId,
+    /* the account's session epoch at the moment this was issued; a
+       password reset raises the account's and orphans every session
+       carrying the old one */
+    epoch: Number((options && options.epoch) || 0),
+    /* how the person proved who they were, so the interface can say
+       "signed in with Google" without guessing */
+    method: (options && options.method) || 'password',
+    issuedAt: now,
+    expiresAt: now + SESSION_MAX_AGE * 1000
+  }, { ttlSeconds: SESSION_MAX_AGE });
+
+  return token;
 }
 
-/* Returns the user id a token names, or null. Every reason to reject —
-   no secret, wrong shape, bad signature, expired — returns null: a
-   caller cannot tell them apart, and does not need to. */
-function readSession(token) {
+/* Resolves a cookie to a session record, or null.
+
+   Every reason to refuse returns null and deletes nothing a legitimate
+   holder would miss: no secret, a token that was never minted here, no
+   record, an expired record, or a record from before the account's
+   current epoch. A caller cannot tell them apart and does not need to. */
+async function readSession(token) {
   if (!accountsEnabled()) return null;
   const raw = String(token || '');
-  const cut = raw.lastIndexOf('.');
-  if (cut < 1) return null;
+  if (!/^[A-Za-z0-9_-]{43}$/.test(raw)) return null;
 
-  const payload = raw.slice(0, cut);
-  const provided = Buffer.from(raw.slice(cut + 1));
-  const expected = Buffer.from(sign(payload));
-  if (provided.length !== expected.length || !crypto.timingSafeEqual(provided, expected)) return null;
+  const record = await store.get(sessionKey(raw));
+  if (!record || !record.userId) return null;
 
-  const [userId, issued] = payload.split('.');
-  if (!userId || !issued) return null;
-  if (Math.floor(Date.now() / 1000) - Number(issued) > SESSION_MAX_AGE) return null;
-  return userId;
+  if (!record.expiresAt || record.expiresAt <= Date.now()) {
+    /* tidy up rather than leaving it to the TTL, so a store whose TTLs
+       were misconfigured still cannot serve an expired session twice */
+    await store.remove(sessionKey(raw));
+    return null;
+  }
+
+  return record;
 }
 
-const startSession = (req, res, userId) => {
-  const token = issueSession(userId);
-  if (token) setCookie(req, res, SESSION_COOKIE, token, SESSION_MAX_AGE);
-  return Boolean(token);
-};
+async function destroySession(token) {
+  if (!accountsEnabled()) return false;
+  const raw = String(token || '');
+  if (!/^[A-Za-z0-9_-]{43}$/.test(raw)) return false;
+  await store.remove(sessionKey(raw));
+  return true;
+}
 
-const endSession = (req, res) => clearCookie(req, res, SESSION_COOKIE);
+/* Signs somebody in, and rotates.
+
+   The cookie the request arrived with — whatever it was, whoever set it
+   — is destroyed before the new one is issued. That is the whole of
+   session fixation defence: an attacker who managed to plant a known
+   session id in somebody's browser does not hold the id that browser
+   uses once the person authenticates. */
+async function startSession(req, res, user, options) {
+  const previous = parseCookies(req)[SESSION_COOKIE];
+  if (previous) await destroySession(previous);
+
+  const token = await issueSession(user.id, Object.assign({
+    epoch: Number(user.sessionEpoch || 0)
+  }, options || {}));
+
+  if (!token) return null;
+  setCookie(req, res, SESSION_COOKIE, token, SESSION_MAX_AGE, options);
+  return token;
+}
+
+/* Ends it at both ends: the record is deleted so the token is dead
+   everywhere, and the cookie is cleared so the browser stops sending
+   one. Deleting only the cookie would leave a working session behind. */
+async function endSession(req, res, options) {
+  const token = parseCookies(req)[SESSION_COOKIE];
+  if (token) await destroySession(token);
+  clearCookie(req, res, SESSION_COOKIE, options);
+  return true;
+}
+
+/* Does this request carry the CSRF token for its own session?
+
+   Only asked of authenticated requests that change something. A request
+   with no session has no session to forge against, and is already held
+   to the Origin allow-list in _cors.js. */
+function csrfOk(req, sessionToken) {
+  if (!sessionToken) return true;
+  const provided = String((req.headers && req.headers[CSRF_HEADER]) || '');
+  const expected = csrfTokenFor(sessionToken);
+  const a = Buffer.from(provided);
+  const b = Buffer.from(expected);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
 
 /* ---------------------------------------------------------
    The anonymous subject
@@ -239,15 +357,36 @@ function deviceSubject(req, res) {
    anybody has to pay for. */
 async function identify(req, res, users) {
   const cookies = parseCookies(req);
-  const userId = readSession(cookies[SESSION_COOKIE]);
+  const token = cookies[SESSION_COOKIE];
+  const session = await readSession(token);
 
-  if (userId) {
-    const user = await users.byId(userId);
-    if (user) {
-      return { user, subject: `user:${user.id}`, plan: user.plan || 'free', anonymous: false };
+  if (session) {
+    const user = await users.byId(session.userId);
+
+    /* Two ways a resolvable session still names nobody: the account was
+       deleted, or its epoch has moved on because the password was
+       reset. Both end the session rather than half-honouring it. */
+    const stale = user && Number(user.sessionEpoch || 0) !== Number(session.epoch || 0);
+
+    if (user && !stale) {
+      return {
+        user,
+        session,
+        sessionToken: token,
+        csrfToken: csrfTokenFor(token),
+        subject: `user:${user.id}`,
+        plan: user.plan || 'free',
+        /* Verification is reported, never enforced here. What an
+           unverified account may and may not do is a decision each
+           endpoint makes out loud — see api/checkout.js — rather than
+           something this function quietly applies to all of them. */
+        emailVerified: Boolean(user.emailVerified),
+        method: session.method || 'password',
+        anonymous: false
+      };
     }
-    /* the cookie verified but names an account that is gone */
-    if (res) endSession(req, res);
+
+    if (res) await endSession(req, res);
   }
 
   /* No cookies at all means no Set-Cookie will be honoured either, so
@@ -256,13 +395,24 @@ async function identify(req, res, users) {
     ? deviceSubject(req, res)
     : addressSubject(req);
 
-  return { user: null, subject, plan: 'free', anonymous: true };
+  return {
+    user: null,
+    session: null,
+    sessionToken: null,
+    csrfToken: null,
+    subject,
+    plan: 'free',
+    emailVerified: false,
+    method: null,
+    anonymous: true
+  };
 }
 
 module.exports = {
   SESSION_COOKIE,
   DEVICE_COOKIE,
   SESSION_MAX_AGE,
+  CSRF_HEADER,
   MIN_PASSWORD,
   accountsEnabled,
   hashPassword,
@@ -273,8 +423,12 @@ module.exports = {
   clearCookie,
   issueSession,
   readSession,
+  destroySession,
   startSession,
   endSession,
+  csrfTokenFor,
+  csrfOk,
   identify,
-  addressSubject
+  addressSubject,
+  sessionKey
 };

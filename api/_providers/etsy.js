@@ -2,7 +2,7 @@
    FindWear — Etsy product source
 
    Searches active Etsy listings through the Open API v3 and returns them
-   in the shape api/providers/product-source.js verifies.
+   in the shape api/_providers/product-source.js verifies.
 
    ---------------------------------------------------------
    Field mapping, from the Open API v3 models

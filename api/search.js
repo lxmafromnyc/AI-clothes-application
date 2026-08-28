@@ -3,7 +3,7 @@
 
    Takes the structured intent produced by /api/interpret and asks the
    configured product source for real listings. Every record passes the
-   verification gate in providers/product-source.js before it is returned,
+   verification gate in _providers/product-source.js before it is returned,
    so a product missing its title, brand, price, image or exact product
    URL never reaches the browser.
 
@@ -30,7 +30,7 @@
 
 'use strict';
 
-const { getProvider, verifyAll } = require('./providers/product-source');
+const { getProvider, verifyAll } = require('./_providers/product-source');
 const { handledPreflight } = require('./_cors');
 const { envReport } = require('./_env-report');
 const meter = require('./_meter');

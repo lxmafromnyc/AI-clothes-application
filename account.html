@@ -4,7 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Your account — Fynd</title>
-<meta name="description" content="Your Fynd plan, what you have used this period, and the billing portal for changing or cancelling a subscription.">
+<meta name="description" content="Sign in to Fynd with Google or email. Your plan, what you have used this period, and your subscription.">
+<!-- A password reset link lands on this page carrying a token. Same-origin
+     referrers only, so the token cannot travel to the font CDN or anywhere
+     else the page happens to reach. The script also strips it out of the
+     URL the moment it has read it. -->
+<meta name="referrer" content="same-origin">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%230F4C4C'/><text x='16' y='23' font-family='Helvetica,Arial,sans-serif' font-size='20' font-weight='700' fill='white' text-anchor='middle'>F</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -32,6 +37,7 @@
           <li><a href="discover.html">Discover</a></li>
           <li><a href="pricing.html">Pricing</a></li>
           <li><a href="about.html">About</a></li>
+          <li><a href="account.html" aria-current="page">Account</a></li>
         </ul>
       </nav>
     </div>
@@ -40,11 +46,11 @@
 
 <main id="main">
 
-  <section class="stage">
+  <section class="stage stage--tight">
     <div class="container stage-inner">
-      <div class="hero">
+      <div class="hero hero--compact">
         <h1>Your account</h1>
-        <p class="lead">Your plan, what you have used, and where to change or cancel a subscription.</p>
+        <p class="lead">Sign in to subscribe, and to see what you have used.</p>
       </div>
     </div>
   </section>
@@ -52,45 +58,66 @@
   <section class="section" id="account">
     <div class="container narrow">
 
+      <!-- Each note has one job and stays empty until it has something
+           true to say. Announced when written, not on page load. -->
       <p class="billing-note" id="deployment-note" role="status" hidden></p>
+      <p class="billing-note" id="auth-note" role="status" hidden></p>
+      <p class="billing-note" id="account-note" role="status" hidden></p>
       <p class="billing-note" id="checkout-note" role="status" hidden></p>
       <p class="billing-note" id="billing-note" role="alert" hidden></p>
 
-      <div class="plan-banner" id="plan-banner" hidden>
-        <div>
-          <p class="eyebrow">Your plan</p>
-          <h2 class="plan-banner-plan" id="banner-plan">Free</h2>
-          <p class="plan-banner-detail" id="banner-detail"></p>
-        </div>
-        <div class="plan-banner-actions" id="banner-actions"></div>
-      </div>
+      <!-- ============================================================
+           Signed out: one question, two answers.
+           ============================================================ -->
+      <div id="panel-choose">
+        <div class="auth-card auth-card--centred">
+          <h2 class="auth-heading">Sign in to Fynd</h2>
+          <p class="auth-intro">Free searching needs no account. One is only needed to subscribe.</p>
 
-      <div class="section-head">
-        <div>
-          <p class="eyebrow">This period</p>
-          <h2>What you have used</h2>
-        </div>
-      </div>
+          <div class="auth-choices">
+            <button class="btn btn-secondary btn-provider" type="button" id="google-button">
+              <svg viewBox="0 0 18 18" aria-hidden="true" focusable="false" class="provider-mark">
+                <path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.7-1.57 2.68-3.88 2.68-6.62z"/>
+                <path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.8.54-1.84.86-3.04.86-2.34 0-4.32-1.58-5.02-3.7H.94v2.33A9 9 0 0 0 9 18z"/>
+                <path fill="#FBBC05" d="M3.98 10.72a5.4 5.4 0 0 1 0-3.44V4.95H.94a9 9 0 0 0 0 8.1l3.04-2.33z"/>
+                <path fill="#EA4335" d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.58C13.46.9 11.43 0 9 0A9 9 0 0 0 .94 4.95l3.04 2.33C4.68 5.16 6.66 3.58 9 3.58z"/>
+              </svg>
+              Continue with Google
+            </button>
 
-      <!-- Filled from /api/account. These are the server's own counters,
-           the same ones /api/search and /api/interpret check before they
-           spend anything — not a tally this page has been keeping. -->
-      <div class="meters" id="usage-meters"></div>
-
-      <!-- Shown only while signed out. Everything above works either way:
-           the Free allowance is metered per browser, and an account is
-           what a subscription attaches to. -->
-      <div id="auth-panel" hidden>
-        <div class="section-head section-head--spaced">
-          <div>
-            <p class="eyebrow">Sign in</p>
-            <h2>Accounts</h2>
+            <button class="btn btn-secondary btn-provider" type="button" id="email-button">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="provider-mark">
+                <rect x="2.5" y="4.5" width="19" height="15" rx="2.5"/>
+                <path d="m3 7 9 6 9-6"/>
+              </svg>
+              Continue with Email
+            </button>
           </div>
-        </div>
 
+          <p class="auth-fineprint" id="google-unavailable" hidden>
+            Google sign-in is not configured on this deployment yet, so email is the way in.
+          </p>
+          <p class="auth-fineprint">
+            Fynd never sees your Google password, and never sees your card — Stripe handles payment on its own pages.
+          </p>
+        </div>
+      </div>
+
+      <!-- ============================================================
+           Signed out: the email form. Two fields to sign in, four to
+           create an account — the same form, told which it is.
+           ============================================================ -->
+      <div id="panel-email" hidden>
         <form class="auth-card" id="auth-form" novalidate>
-          <h3 id="auth-title">Sign in</h3>
-          <p class="auth-intro" id="auth-intro">An account is what a subscription belongs to. Searching does not need one.</p>
+          <button class="link-btn auth-back" type="button" data-back>&larr; Other ways to sign in</button>
+
+          <h2 class="auth-heading" id="auth-title">Sign in</h2>
+          <p class="auth-intro" id="auth-intro">Welcome back.</p>
+
+          <label class="field" id="field-name" hidden>
+            <span>Name</span>
+            <input type="text" id="auth-name" name="name" autocomplete="name" placeholder="Ada Lovelace" maxlength="80">
+          </label>
 
           <label class="field">
             <span>Email</span>
@@ -102,19 +129,95 @@
             <input type="password" id="auth-password" name="password" autocomplete="current-password" placeholder="Your password" required>
           </label>
 
-          <!-- empty at load: an alert is announced when its text arrives,
-               so a message sitting in the markup is never read out -->
+          <label class="field" id="field-confirm" hidden>
+            <span>Confirm password</span>
+            <input type="password" id="auth-confirm" name="confirmPassword" autocomplete="new-password" placeholder="Type it again">
+          </label>
+
           <p class="form-error" id="auth-error" role="alert"></p>
 
           <div class="auth-actions">
             <button class="btn btn-primary" type="submit" id="auth-submit">Sign in</button>
           </div>
 
+          <p class="auth-row" id="forgot-row">
+            <button class="link-btn" type="button" id="forgot-button">Forgot password?</button>
+          </p>
+
           <p class="auth-switch">
-            <span id="auth-switch-text">No account yet?</span>
-            <button class="link-btn" type="button" id="auth-switch">Create one</button>
+            <span id="auth-switch-text">New to Fynd?</span>
+            <button class="link-btn" type="button" id="auth-switch">Create an account</button>
           </p>
         </form>
+      </div>
+
+      <!-- ============================================================
+           Arrived from a password reset link.
+           ============================================================ -->
+      <div id="panel-reset" hidden>
+        <form class="auth-card" id="reset-form" novalidate>
+          <h2 class="auth-heading">Choose a new password</h2>
+          <p class="auth-intro">Setting a new password signs you out everywhere else.</p>
+
+          <label class="field">
+            <span>New password</span>
+            <input type="password" id="reset-password" name="password" autocomplete="new-password" placeholder="At least 10 characters" required>
+          </label>
+
+          <label class="field">
+            <span>Confirm new password</span>
+            <input type="password" id="reset-confirm" name="confirmPassword" autocomplete="new-password" placeholder="Type it again" required>
+          </label>
+
+          <p class="form-error" id="reset-error" role="alert"></p>
+
+          <div class="auth-actions">
+            <button class="btn btn-primary" type="submit" id="reset-submit">Set new password</button>
+            <button class="link-btn" type="button" data-back>Cancel</button>
+          </div>
+        </form>
+      </div>
+
+      <!-- ============================================================
+           Signed in.
+           ============================================================ -->
+      <div id="panel-account" hidden>
+
+        <p class="billing-note" id="verify-note" role="status" hidden></p>
+
+        <div class="detail-card">
+          <div class="detail-head">
+            <p class="eyebrow">Your account</p>
+          </div>
+          <div id="account-identity"></div>
+          <p class="detail-action" id="resend-row" hidden>
+            <button class="btn btn-secondary" type="button" id="resend-button">Resend confirmation email</button>
+          </p>
+        </div>
+
+        <div class="plan-banner" id="plan-banner" hidden>
+          <div>
+            <p class="eyebrow">Your plan</p>
+            <h2 class="plan-banner-plan" id="banner-plan">Free</h2>
+            <p class="plan-banner-detail" id="banner-detail"></p>
+          </div>
+          <div class="plan-banner-actions" id="banner-actions"></div>
+        </div>
+
+        <div class="section-head section-head--spaced">
+          <div>
+            <p class="eyebrow">This period</p>
+            <h2>What you have used</h2>
+          </div>
+        </div>
+
+        <!-- The server's own counters — the same ones /api/search and
+             /api/interpret check before they spend anything. -->
+        <div class="meters" id="usage-meters"></div>
+
+        <p class="detail-action detail-action--end">
+          <button class="link-btn" type="button" id="signout-button">Log out</button>
+        </p>
       </div>
 
     </div>
@@ -124,24 +227,29 @@
     <div class="container narrow">
       <div class="section-head">
         <div>
-          <p class="eyebrow">Billing</p>
-          <h2>Where your card lives</h2>
+          <p class="eyebrow">How this works</p>
+          <h2>Your account, plainly</h2>
         </div>
       </div>
 
       <div class="faq-row">
-        <h3>Fynd never sees your card</h3>
-        <p>Payment details are typed on Stripe's own pages and held by Stripe. Nothing on this site receives, handles or stores a card number, and no key that could charge one is ever sent to a browser.</p>
+        <h3>Searching does not need an account</h3>
+        <p>The Free allowance is counted per browser and comes back every day. An account is what a subscription belongs to, and what your usage is counted against once you have one.</p>
       </div>
 
       <div class="faq-row">
-        <h3>Manage subscription opens Stripe</h3>
-        <p>Changing a card, switching between Pro and Max, downloading invoices and cancelling all happen in Stripe's billing portal. Whatever you change there reaches Fynd as a webhook, and your plan here follows it.</p>
+        <h3>Fynd never sees your Google password</h3>
+        <p>Continue with Google sends you to Google's own pages. Google tells Fynd your email address and nothing else — no password, ever, and no access to your Google account beyond knowing who you are.</p>
+      </div>
+
+      <div class="faq-row">
+        <h3>Why we confirm your email</h3>
+        <p>Receipts, renewal notices and failed-payment warnings all go to your address, so we check it works before you can subscribe. The confirmation link expires and works once.</p>
       </div>
 
       <div class="faq-row">
         <h3>Your plan is decided on the server</h3>
-        <p>What you are entitled to is read from your subscription in Stripe, not from anything this page holds. That is why editing the page, or loading a success URL by hand, changes nothing about your allowance.</p>
+        <p>What you are entitled to is read from your subscription in Stripe, not from anything this page holds. Editing the page changes what it draws and nothing about your account.</p>
       </div>
     </div>
   </section>
@@ -172,6 +280,7 @@
 
 <script src="assets/account.js"></script>
 <script src="assets/billing-ui.js"></script>
+<script src="assets/account-ui.js"></script>
 <script src="assets/app.js"></script>
 </body>
 </html>

@@ -37,7 +37,7 @@
 
 const { handledPreflight, returnUrl } = require('./_cors');
 const { readJson } = require('./_body');
-const { identify } = require('./_auth');
+const { identify, csrfOk } = require('./_auth');
 const users = require('./_users');
 const stripe = require('./_stripe');
 const { envReport } = require('./_env-report');
@@ -109,6 +109,25 @@ module.exports = async function handler(req, res) {
     /* A subscription has to belong to somebody a webhook can find
        later, so this is where an account stops being optional. */
     return res.status(401).json({ error: 'Sign in to subscribe.', reason: 'sign-in-required' });
+  }
+
+  /* A session-bearing state change, so it carries the CSRF token the
+     page was handed by /api/account. A cross-site page cannot read the
+     HttpOnly session cookie and so cannot compute this. */
+  if (identity.sessionToken && !csrfOk(req, identity.sessionToken)) {
+    return res.status(403).json({ error: 'Missing or invalid CSRF token.', reason: 'csrf' });
+  }
+
+  /* An unverified address is one nobody has proved they can read. It is
+     also where the receipt, the renewal notice and the failed-payment
+     warning are all going to be sent, so a subscription is not started
+     against one — this is the concrete difference between a verified
+     account and an unverified one, rather than a flag nothing acts on. */
+  if (!identity.user.emailVerified) {
+    return res.status(403).json({
+      error: 'Confirm your email address before subscribing.',
+      reason: 'email-unverified'
+    });
   }
 
   const existing = identity.user.subscription;

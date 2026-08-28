@@ -17,7 +17,7 @@
 
 const { handledPreflight, returnUrl } = require('./_cors');
 const { readJson } = require('./_body');
-const { identify } = require('./_auth');
+const { identify, csrfOk } = require('./_auth');
 const users = require('./_users');
 const stripe = require('./_stripe');
 
@@ -33,6 +33,10 @@ module.exports = async function handler(req, res) {
 
   const identity = await identify(req, res, users);
   if (!identity.user) return res.status(401).json({ error: 'Sign in first.', reason: 'sign-in-required' });
+
+  if (identity.sessionToken && !csrfOk(req, identity.sessionToken)) {
+    return res.status(403).json({ error: 'Missing or invalid CSRF token.', reason: 'csrf' });
+  }
 
   if (!identity.user.stripeCustomerId) {
     /* nothing has ever been bought on this account, so there is no

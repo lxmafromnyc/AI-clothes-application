@@ -17,6 +17,8 @@ const store = require('./_store');
 const usage = require('./_usage');
 const stripe = require('./_stripe');
 const auth = require('./_auth');
+const email = require('./_email');
+const google = require('./_google');
 const { publicPlans, AI_TOKENS, SEARCHES, DEFAULT_PLAN } = require('./_plans');
 const { publicUser } = require('./_users');
 
@@ -62,7 +64,24 @@ async function accountPayload(identity) {
       webhookConfigured: stripe.webhookConfigured(),
       portal: Boolean(user && user.stripeCustomerId)
     },
-    accounts: { enabled: auth.accountsEnabled() },
+    /* Everything the account page needs to draw itself honestly:
+       whether it can offer each way in, and whether the verification
+       link it is about to promise can actually be sent. A page that
+       offered "Continue with Google" on a deployment with no client id
+       would be a button that goes nowhere. */
+    accounts: {
+      enabled: auth.accountsEnabled(),
+      google: google.configured(),
+      email: email.state()
+    },
+    /* Verification is reported here and enforced at the endpoints that
+       care. The page shows the state; it does not decide it. */
+    emailVerified: Boolean(user && user.emailVerified),
+    signedInWith: identity.method || null,
+    /* Echoed back for the page to send on state-changing requests. Safe
+       to read from script — that is the point — and useless without the
+       HttpOnly session cookie it is derived from. */
+    csrfToken: identity.csrfToken || null,
     /* said plainly rather than discovered later: on the memory driver a
        subscription is forgotten when the function instance is recycled */
     storage: { durable: store.durable() }

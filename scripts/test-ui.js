@@ -552,7 +552,9 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
   const openBilling = async (file, state) => {
     accountState = accountReply(state || {});
     const page = await openPage(file);
-    await page.waitForSelector('.plan-banner:not([hidden]), .meter', { timeout: 10000 });
+    await page.waitForSelector(
+      file.startsWith('account.html') ? '#panel-account:not([hidden]), #panel-choose:not([hidden])' : '.plan-banner:not([hidden])',
+      { timeout: 10000 });
     return page;
   };
 
@@ -744,7 +746,10 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
       /* both billing pages draw themselves from /api/account, so the
          audit has to wait for the answer or it walks an empty shell */
       'pricing.html': '.plan-banner:not([hidden])',
-      'account.html': '.meter'
+      /* Signed out, the account page is the two choices; the dashboard
+         behind it is hidden, so this waits for the shell that is
+         actually on screen. The signed-in view is audited separately. */
+      'account.html': '#panel-choose:not([hidden])'
     }[file];
     if (built) await page.waitForSelector(built, { timeout: 10000 });
     return page;
@@ -758,6 +763,45 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
       await page.close();
     });
   }
+
+  await test('every piece of text on the signed-in account page is set in a palette ink, and is legible', async () => {
+    accountState = accountReply({
+      planId: 'pro',
+      extra: {
+        signedIn: true,
+        user: { id: 'usr_1', email: 'ada@example.test', name: 'Ada Lovelace', emailVerified: true, signInMethods: ['password'], hasBilling: true },
+        emailVerified: true,
+        subscription: { status: 'active', cancelAtPeriodEnd: false, currentPeriodEnd: '2099-03-04T00:00:00.000Z', latestInvoiceStatus: 'paid' },
+        billing: { enabled: true, testMode: true, webhookConfigured: true, portal: true }
+      }
+    });
+    const page = await openPage('account.html');
+    await page.waitForSelector('#panel-account:not([hidden])', { timeout: 10000 });
+    await page.waitForSelector('.meter');
+    const problems = await textStyleProblems(page, await resolveInks(page));
+    assert.deepStrictEqual(problems, [], `\n        ${problems.join('\n        ')}`);
+    await page.close();
+    accountState = accountReply({});
+  });
+
+  await test('the email form is set in a palette ink, in both of its modes', async () => {
+    accountState = accountReply({});
+    const page = await openPage('account.html');
+    await page.waitForSelector('#panel-choose:not([hidden])', { timeout: 10000 });
+    await page.click('#email-button');
+    await page.waitForSelector('#panel-email:not([hidden])');
+
+    for (const mode of ['sign in', 'create an account']) {
+      /* an error on screen puts the warning ink under audit too */
+      await page.click('#auth-submit');
+      await page.waitForTimeout(200);
+      const problems = await textStyleProblems(page, await resolveInks(page));
+      assert.deepStrictEqual(problems, [], `${mode}:\n        ${problems.join('\n        ')}`);
+      await page.click('#auth-switch');
+      await page.waitForTimeout(100);
+    }
+    await page.close();
+  });
 
   await test('the pages keep one clean sans-serif face', async () => {
     for (const file of PAGES) {

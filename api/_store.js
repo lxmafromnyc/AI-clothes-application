@@ -134,6 +134,29 @@ async function setIfAbsent(key, value, options) {
   return true;
 }
 
+/* Reads a key and deletes it in one step, returning what was there.
+
+   This is what makes a single-use token single-use. A read followed by
+   a delete is a race: two requests carrying the same verification link,
+   or one link clicked twice by an email scanner and then by the person,
+   can both read the token before either deletes it, and both would be
+   honoured. GETDEL is one round trip and one winner.
+
+   The memory driver is safe by construction — nothing else runs between
+   these two lines in a single-threaded process. */
+async function takeOnce(key) {
+  const config = redisConfig();
+  if (config) {
+    const raw = await redisCommand(config, ['GETDEL', key]);
+    if (raw === null || raw === undefined) return null;
+    try { return JSON.parse(raw); } catch (err) { return null; }
+  }
+  const row = memoryRead(key);
+  if (!row) return null;
+  memory.delete(key);
+  return JSON.parse(row.value);
+}
+
 async function remove(key) {
   const config = redisConfig();
   if (config) {
@@ -190,4 +213,4 @@ const driver = () => (redisConfig() ? 'redis' : 'memory');
 /* Tests own the memory driver's contents; nothing in api/ calls this. */
 const reset = () => memory.clear();
 
-module.exports = { get, set, setIfAbsent, remove, add, readNumber, durable, driver, reset };
+module.exports = { get, set, setIfAbsent, takeOnce, remove, add, readNumber, durable, driver, reset };
