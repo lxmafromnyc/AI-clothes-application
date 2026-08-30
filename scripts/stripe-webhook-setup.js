@@ -279,11 +279,15 @@ async function main() {
 
   /* --------------------------------------------------- update */
   console.log('\n  enabled_events will be replaced with exactly the handled six.');
-  console.log('  The endpoint keeps its id and its existing signing secret, so an');
-  console.log('  already-deployed STRIPE_WEBHOOK_SECRET stays valid.');
+  console.log('  Nothing else about the endpoint is touched: it keeps its id, its');
+  console.log('  signing secret, its name, its payload style and its API version.');
   if (dryRun) { console.log('\n  --dry-run: nothing was written.\n'); return; }
 
-  const updated = await updateEndpoint(match.id, { enabled_events: WANTED, description: DESCRIPTION });
+  /* enabled_events and nothing else. Not the url, not the api_version,
+     not the description — an endpoint that already exists was named and
+     configured by whoever made it, and the only thing wrong with it is
+     which events it is subscribed to. */
+  const updated = await updateEndpoint(match.id, { enabled_events: WANTED });
   const now = (updated.enabled_events || []).slice().sort();
 
   if (!same(now, WANTED)) {
