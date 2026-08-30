@@ -945,13 +945,7 @@ product*:
 Copy each price's id — it starts `price_`, not `prod_`. The **price** id
 is what Fynd needs; the product id is not used.
 
-**2. One webhook endpoint.** *Developers → Webhooks → Add endpoint*:
-
-```
-https://your-app.vercel.app/api/stripe-webhook
-```
-
-Subscribe it to exactly these six events:
+**2. One webhook endpoint**, subscribed to exactly these six events:
 
 ```
 checkout.session.completed
@@ -962,8 +956,44 @@ invoice.paid
 invoice.payment_failed
 ```
 
-Then copy that endpoint's **signing secret** (`whsec_…`). It is on the
-endpoint's own page and is not the API key.
+That list is the keys of `HANDLERS` in `api/stripe-webhook.js`. Every
+other event type is acknowledged and ignored, so subscribing to more
+than these six buys nothing and costs a store write per delivery, held
+for four days — see *Why not simply subscribe to everything* below.
+
+The reliable way to set it, and the way that cannot drift from the
+handlers:
+
+```
+STRIPE_SECRET_KEY=sk_test_… node scripts/stripe-webhook-setup.js \
+  --url https://your-app.vercel.app/api/stripe-webhook
+```
+
+It reads the six event names out of `api/stripe-webhook.js` itself and
+writes them to the endpoint's `enabled_events`. It creates the endpoint
+if there is none, corrects the subscription list if there is one, and
+does nothing at all if it is already right. Add `--dry-run` to see the
+plan first, `--list` to see every endpoint on the account. A `sk_live_`
+key needs `--allow-live` before it will write anything.
+
+On creation it prints the **signing secret** (`whsec_…`). Stripe returns
+that once and never again, so capture it then — it is
+`STRIPE_WEBHOOK_SECRET`, and it is not the API key. Correcting an
+existing endpoint leaves its secret alone, so a deployment that already
+has one keeps working; `--recreate` deletes and remakes the endpoint
+when the secret was lost, and changes it.
+
+The dashboard can do the same job — the script is writing the array its
+event picker writes. If the picker's categories do not offer one of the
+six, use the script rather than widening the selection to compensate.
+
+**Why not simply subscribe to everything.** An unhandled event is safe:
+`applyEvent` returns `ignored` and the endpoint answers 200. But the
+duplicate-delivery claim runs *before* the handler lookup, so every
+delivery — handled or not — writes a `stripe:event:…` key with a
+four-day TTL into the same store that holds accounts, subscriptions and
+usage counters. Subscribing to all of Stripe's event types fills a
+billing database with rows for events nothing reads.
 
 **3. Turn on the billing portal.** *Settings → Billing → Customer portal*,
 and save it once. Until that is done, "Manage subscription" answers 502 —

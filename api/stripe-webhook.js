@@ -317,3 +317,9 @@ module.exports.applyEvent = applyEvent;
 module.exports.priceOf = priceOf;
 module.exports.toFynd = toFynd;
 module.exports.seenKey = seenKey;
+
+/* The keys of HANDLERS, for scripts/stripe-webhook-setup.js. The
+   endpoint's subscription list is generated from the handlers rather
+   than written out a second time, so the two cannot drift: adding a
+   handler above is the only edit needed to subscribe to its event. */
+module.exports.HANDLED_EVENTS = Object.keys(HANDLERS);
