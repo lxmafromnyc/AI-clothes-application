@@ -180,6 +180,83 @@ function countResults(body) {
   return null;
 }
 
+/* Every leaf of the first result, as path + type + a short sample.
+
+   This is the answer to "what does this engine actually call the
+   merchant URL?", taken from the response itself rather than from
+   anyone's memory of the documentation. It prints automatically when
+   the provider returned results but the adapter mapped none of them —
+   which is exactly the moment the field names are the whole question.
+
+   Product data is not secret and is shown, truncated. It still goes
+   through scrub() on the way out, because a response that echoes the
+   request back (SerpApi's search_metadata does) would otherwise carry
+   the credential into this output. */
+const MAX_DUMP_DEPTH = 6;
+const MAX_DUMP_LINES = 120;
+
+function leaves(node, path, out, depth) {
+  if (out.length >= MAX_DUMP_LINES || depth > MAX_DUMP_DEPTH) return out;
+  if (node === null || typeof node !== 'object') {
+    out.push({ path, type: node === null ? 'null' : typeof node, value: node });
+    return out;
+  }
+  if (Array.isArray(node)) {
+    if (!node.length) out.push({ path, type: 'array[0]', value: '' });
+    for (let i = 0; i < node.length && out.length < MAX_DUMP_LINES; i += 1) {
+      leaves(node[i], `${path}[${i}]`, out, depth + 1);
+    }
+    return out;
+  }
+  const keys = Object.keys(node);
+  if (!keys.length) out.push({ path, type: 'object{}', value: '' });
+  for (const key of keys) {
+    if (out.length >= MAX_DUMP_LINES) break;
+    leaves(node[key], path ? `${path}.${key}` : key, out, depth + 1);
+  }
+  return out;
+}
+
+/* Marks the leaves that could be a destination, so the merchant URL is
+   findable by eye in a long inventory. */
+function urlNote(value) {
+  if (typeof value !== 'string' || !/^https?:\/\//i.test(value)) return '';
+  let url;
+  try { url = new URL(value); } catch (err) { return '   <- unparseable url'; }
+  if (/(^|\.)serpapi\.com$/i.test(url.hostname)) return '   <- SerpApi endpoint, not a retailer';
+  if (/(^|\.)(google\.[a-z.]+|googleusercontent\.com|gstatic\.com|googleadservices\.com)$/i.test(url.hostname)) {
+    return '   <- GOOGLE host, refused by the gate';
+  }
+  if (/\.(jpe?g|png|gif|webp|avif|svg)$/i.test(url.pathname)) return '   <- image';
+  return '   <- ** CANDIDATE MERCHANT URL **';
+}
+
+function dumpFirstResult(body) {
+  if (!body) return;
+  let payload;
+  try { payload = JSON.parse(body); } catch (err) { return; }
+  let list = payload && payload[spec.resultsKey];
+  if (!Array.isArray(list)) {
+    for (const key of ['shopping_results', 'inline_shopping_results', 'products', 'results', 'items']) {
+      if (Array.isArray(payload && payload[key])) { list = payload[key]; break; }
+    }
+  }
+  if (!Array.isArray(list) || !list.length) return;
+
+  console.log('');
+  say(`  FIRST RESULT — every field the provider actually returned`);
+  say(`  (${spec.resultsKey}[0]; product data shown, credentials scrubbed)`);
+  console.log('');
+  const rows = leaves(list[0], '', [], 0);
+  for (const r of rows) {
+    let sample = typeof r.value === 'string' ? r.value : JSON.stringify(r.value);
+    sample = String(sample === undefined ? '' : sample);
+    if (sample.length > 78) sample = sample.slice(0, 78) + '...';
+    say('    ' + r.path.slice(0, 38).padEnd(40) + r.type.padEnd(9) + sample + urlNote(r.value));
+  }
+  if (rows.length >= MAX_DUMP_LINES) say(`    ... truncated at ${MAX_DUMP_LINES} fields`);
+}
+
 /* The provider's own words for what went wrong, dug out of whichever
    field it uses. Truncated, and scrubbed by say() on the way out. */
 function errorMessage(body) {
@@ -274,6 +351,19 @@ async function main() {
     }
   }
 
+  /* The field inventory, printed exactly when it is the question: the
+     provider answered with results and the adapter mapped none of them. */
+  const returnedCount = cap.seen.reduce((a, r) => Math.max(a, countResults(r.body) || 0), 0);
+  const mapped = Array.isArray(records) ? records.length : 0;
+  if (returnedCount > 0 && mapped === 0) {
+    console.log('');
+    say(`  ${returnedCount} results came back and the adapter mapped 0 of them.`);
+    say('  The fields below are what it had to work with:');
+    for (const r of cap.seen) dumpFirstResult(r.body);
+  } else if (args.includes('--dump-first')) {
+    for (const r of cap.seen) dumpFirstResult(r.body);
+  }
+
   /* The real gate, so "verified" here means what it means in production. */
   let verified = 0;
   try {
@@ -300,7 +390,24 @@ async function main() {
     console.log('');
     process.exit(1);
   }
-  say('  RESULT: OK — provider answered 200 with results. Safe to run the benchmark.');
+  /* A 200 full of results that the adapter maps to nothing is NOT a
+     green light. Saying "safe to run the benchmark" here would send
+     twelve more queries at a mapping that is known to drop everything,
+     and would report the result as a provider finding. */
+  if (mapped === 0) {
+    say(`  RESULT: MAPPING FAILURE — the provider answered 200 with ${returnedCount} results and the`);
+    say('  adapter mapped 0 of them. The network and the credential are fine; the response');
+    say('  parsing is not. The field inventory above shows what the response actually holds.');
+    console.log('');
+    process.exit(1);
+  }
+  if (verified === 0) {
+    say(`  RESULT: the adapter mapped ${mapped} records but Fynd's gate verified none of them.`);
+    say('  The gate\'s rejection reasons are the next thing to read.');
+    console.log('');
+    process.exit(1);
+  }
+  say(`  RESULT: OK — 200, ${returnedCount} results, ${mapped} mapped, ${verified} verified. Safe to run the benchmark.`);
   console.log('');
   process.exit(0);
 }

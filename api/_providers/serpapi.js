@@ -266,11 +266,43 @@ function looksDirect(value) {
 
 /* The merchant link, if this result carries one at all.
 
-   ONLY `link` is considered. `product_link` is Google's item page and
-   `serpapi_product_api` is a SerpApi endpoint — neither is a retailer
-   URL, and reading either as one would put the wrong destination behind
-   a product card. */
+   NAMES FIRST, THEN STRUCTURE.
+
+   The previous version knew six key names and looked only at the TOP
+   LEVEL of a result. A live google_shopping_light run returned 40
+   results, matched none of those names, and every record was dropped —
+   leaving the adapter able to say only "no recognized link fields".
+   Guessing a seventh name would be the same mistake one layer down, and
+   would be a guess about a response this was not written in front of.
+
+   So the names below are a PREFERENCE ORDER, not the search space. When
+   none matches, every string in the result is walked — nested objects
+   and arrays included — and each one that parses as an http(s) URL is
+   put through the SAME gate. The path it was found at is reported, so a
+   run NAMES the field that carried the link instead of leaving it to be
+   guessed by the next person.
+
+   `product_link` is Google's item page and `serpapi_product_api` is a
+   SerpApi endpoint — neither is a retailer URL, and reading either as
+   one would put the wrong destination behind a product card. Both are
+   refused: the first by GOOGLE_HOST, the second by SERPAPI_HOST. */
 const LINK_KEYS = ['link', 'direct_link', 'merchant_link', 'seller_link', 'offer_link', 'product_page_url'];
+
+/* SerpApi's own hosts. `serpapi_thumbnail` and `serpapi_product_api`
+   are https URLs on a non-Google host, so nothing above would refuse
+   them — and a discovery pass that accepted one would put a SerpApi
+   endpoint behind a product card. Refused by name AND by host. */
+const SERPAPI_HOST = /(^|\.)serpapi\.com$/i;
+
+/* An image is not a product page. Without this, discovery would happily
+   accept a CDN photo as the destination of a product card. */
+const IMAGE_EXT = /\.(jpe?g|png|gif|webp|avif|svg|bmp|ico)$/i;
+
+/* Field names whose value is never a merchant product URL, whatever it
+   looks like: pictures, icons, and API endpoints. Skipped by discovery
+   rather than tested, because the name is the more reliable signal and
+   testing would let a plausible-looking image URL through. */
+const NON_LINK_KEY = /(thumbnail|image|photo|picture|icon|logo|avatar|sprite|_api$|api_url|endpoint|json|html)/i;
 
 /* Why a candidate link was refused, or null when it was accepted. The
    plain looksDirect() answer is a URL or nothing, which is all the
@@ -291,21 +323,105 @@ function linkVerdict(value) {
   return null;
 }
 
-/* Which of the candidate link fields this result actually carried, and
-   what became of each. An adapter that only reports "no link" cannot
-   tell a missing field from a refused one, and those call for opposite
-   fixes: a missing field means the wrong engine, a refused one means the
-   right engine and a link Fynd will not display. */
+/* Every string in one result, with the path it was found at.
+
+   Bounded in depth and in count: a provider response is untrusted input
+   and must not be able to turn one mapping pass into an unbounded walk
+   of a deeply nested or self-referential payload. */
+const MAX_WALK_DEPTH = 6;
+const MAX_WALK_STRINGS = 400;
+
+function collectStrings(node, path, out, depth) {
+  if (out.length >= MAX_WALK_STRINGS || depth > MAX_WALK_DEPTH) return out;
+  if (typeof node === 'string') {
+    if (node.trim()) out.push({ path, value: node });
+    return out;
+  }
+  if (Array.isArray(node)) {
+    for (let i = 0; i < node.length && out.length < MAX_WALK_STRINGS; i += 1) {
+      collectStrings(node[i], `${path}[${i}]`, out, depth + 1);
+    }
+    return out;
+  }
+  if (node && typeof node === 'object') {
+    for (const [key, value] of Object.entries(node)) {
+      if (out.length >= MAX_WALK_STRINGS) break;
+      /* an image or an API endpoint, whatever its value looks like */
+      if (NON_LINK_KEY.test(key)) continue;
+      collectStrings(value, path ? `${path}.${key}` : key, out, depth + 1);
+    }
+  }
+  return out;
+}
+
+/* Whether a string could be a retailer's product page at all. The gate
+   in product-source.js still has the final say — this only stops
+   discovery from PROPOSING something that plainly is not a destination,
+   which matters because discovery, unlike a named lookup, has no author
+   vouching for the field it read. */
+function couldBeProductUrl(value) {
+  const raw = text(value);
+  if (!/^https?:\/\//i.test(raw)) return false;
+  let url;
+  try { url = new URL(raw); } catch (err) { return false; }
+  if (SERPAPI_HOST.test(url.hostname)) return false;
+  if (IMAGE_EXT.test(url.pathname)) return false;
+  return true;
+}
+
+/* Which fields this result carried a link in, and what became of each.
+
+   An adapter that only reports "no link" cannot tell a MISSING field
+   from a REFUSED one, and those call for opposite fixes. This reports
+   both, and separates the documented names from the discovered paths so
+   a reader can see which of the two actually supplied the URL. */
 function linkReport(result) {
   const seen = {};
   let accepted = null;
+  let acceptedPath = null;
+
+  /* 1. the documented names, in preference order, at the top level */
   for (const key of LINK_KEYS) {
-    if (result[key] === undefined || result[key] === null || String(result[key]).trim() === '') continue;
-    const verdict = linkVerdict(result[key]);
+    const value = result[key];
+    if (value === undefined || value === null || String(value).trim() === '') continue;
+    if (!couldBeProductUrl(value)) { seen[key] = 'not-a-product-url'; continue; }
+    const verdict = linkVerdict(value);
     seen[key] = verdict || 'accepted';
-    if (!verdict && !accepted) accepted = new URL(text(result[key])).href;
+    if (!verdict && !accepted) { accepted = new URL(text(value)).href; acceptedPath = key; }
   }
-  return { seen, accepted, hadAnyLinkField: Object.keys(seen).length > 0 };
+  const hadNamedLinkField = Object.keys(seen).length > 0;
+
+  /* 2. anything else in the result that is a usable URL. Only reached
+        when the names above yielded nothing, so a documented field is
+        never overruled by a discovered one. */
+  const discovered = {};
+  if (!accepted) {
+    for (const { path, value } of collectStrings(result, '', [], 0)) {
+      if (LINK_KEYS.indexOf(path) !== -1) continue;   /* already judged above */
+      if (!couldBeProductUrl(value)) continue;
+      const verdict = linkVerdict(value);
+      discovered[path] = verdict || 'accepted';
+      if (!verdict && !accepted) { accepted = new URL(text(value)).href; acceptedPath = path; }
+    }
+  }
+
+  /* ONE verdict for the whole result, not one per candidate. A result
+     whose named field was refused and whose three discovered paths were
+     refused too is a SINGLE refusal; counting per candidate inflates the
+     tallies past the number of results, which reads as a bug in the
+     adapter rather than as a finding about the response. */
+  const candidates = Object.values(seen).concat(Object.values(discovered));
+  const outcome = accepted ? 'accepted' : (candidates.length ? candidates[0] : 'absent');
+
+  return {
+    seen,
+    discovered,
+    accepted,
+    acceptedPath,
+    outcome,
+    hadAnyLinkField: hadNamedLinkField || Object.keys(discovered).length > 0,
+    hadNamedLinkField
+  };
 }
 
 /* SerpApi supplies the retailer as `source`. `source_icon` is an image
@@ -458,17 +574,34 @@ async function search(intent, options) {
      RAW results, so a zero-product run says which field was missing
      rather than only that there were none. */
   const linkFields = {};
-  const linkVerdicts = { absent: 0, 'google-host': 0, redirector: 0, unparseable: 0, 'non-http': 0, accepted: 0 };
+  /* paths found by the structural walk rather than by name — this is
+     what NAMES the real field when the documented ones are absent */
+  const discoveredPaths = {};
+  /* where the URL that was actually used came from, per result */
+  const acceptedFrom = {};
+  /* key names that look like a handle for a follow-up offers call. Only
+     INVENTORIED — no second request is made, and none is invented. */
+  const tokenFields = {};
+  const linkVerdicts = {
+    absent: 0, 'google-host': 0, redirector: 0, unparseable: 0,
+    'non-http': 0, 'not-a-product-url': 0, accepted: 0
+  };
   const coverage = { title: 0, price: 0, image: 0, retailer: 0, anyLinkField: 0, immersiveTokenOnly: 0 };
 
   for (const result of results) {
     if (!result || typeof result !== 'object') continue;
     const report = linkReport(result);
-    for (const [key, verdict] of Object.entries(report.seen)) {
-      linkFields[key] = (linkFields[key] || 0) + 1;
-      if (linkVerdicts[verdict] !== undefined) linkVerdicts[verdict] += 1;
+    /* field inventories: per OCCURRENCE, because a result carrying the
+       URL in three places is three occurrences of three field names */
+    for (const key of Object.keys(report.seen)) linkFields[key] = (linkFields[key] || 0) + 1;
+    for (const path of Object.keys(report.discovered)) discoveredPaths[path] = (discoveredPaths[path] || 0) + 1;
+    /* verdicts: per RESULT, so the tallies sum to results.length */
+    if (linkVerdicts[report.outcome] !== undefined) linkVerdicts[report.outcome] += 1;
+    if (report.acceptedPath) acceptedFrom[report.acceptedPath] = (acceptedFrom[report.acceptedPath] || 0) + 1;
+    for (const key of Object.keys(result)) {
+      if (/token|product_id|offers?$|offer_id|_api$/i.test(key)) tokenFields[key] = (tokenFields[key] || 0) + 1;
     }
-    if (!report.hadAnyLinkField) linkVerdicts.absent += 1;
+
 
     if (text(firstOf(result, ['title', 'name', 'product_title']))) coverage.title += 1;
     if (toPrice(firstOf(result, ['extracted_price', 'price', 'current_price'])) !== null) coverage.price += 1;
@@ -484,9 +617,27 @@ async function search(intent, options) {
   let verdict = 'ok';
   if (!results.length) verdict = 'no-results-from-provider';
   else if (!withLink.length) {
-    verdict = coverage.anyLinkField === 0
-      ? `no result carried any of the link fields (${LINK_KEYS.join(', ')}) — likely the wrong engine`
-      : `every link was refused (${Object.entries(linkVerdicts).filter(([, n]) => n).map(([k, n]) => `${k}:${n}`).join(' ')})`;
+    const tally = Object.entries(linkVerdicts).filter(([, n]) => n).map(([k, n]) => `${k}:${n}`).join(' ');
+    if (coverage.immersiveTokenOnly === results.length) {
+      /* The signature of the full engine after Google's redesign: a
+         Google item page plus a token to buy the retailer URL with a
+         SECOND credit. This, not the absence of a field name, is what
+         actually identifies the wrong engine — discovery means a result
+         almost always carries SOME URL, so "no field at all" no longer
+         distinguishes the two. */
+      verdict = `no result carried a merchant URL — every one had a Google item page `
+        + `and an immersive token (${tally}) — likely the wrong engine`;
+    } else if (coverage.anyLinkField === 0) {
+      verdict = `no result carried a URL in ANY field, named or discovered `
+        + `(searched ${LINK_KEYS.join(', ')} plus every nested string) — likely the wrong engine`;
+    } else {
+      verdict = `every link was refused (${tally})`;
+    }
+  } else if (!Object.keys(linkFields).length && Object.keys(acceptedFrom).length) {
+    /* worth saying out loud: the documented names supplied nothing and
+       the walk is the only reason this run has links at all */
+    verdict = `ok — but via discovered path(s) ${Object.keys(acceptedFrom).join(', ')}, `
+      + `not any of the documented names (${LINK_KEYS.join(', ')})`;
   }
 
   /* Every stage a record can be lost at, counted the same way the
@@ -511,6 +662,10 @@ async function search(intent, options) {
     verdict,
     fieldCoverage: coverage,
     linkFieldsSeen: linkFields,
+    /* the answer to "what does this engine actually call the link?" */
+    discoveredLinkPaths: discoveredPaths,
+    acceptedLinkPaths: acceptedFrom,
+    tokenFieldsSeen: tokenFields,
     linkVerdicts,
     offers: { skipped: true, reason: 'single-request prototype: no follow-up call is made' }
   };

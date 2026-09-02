@@ -357,10 +357,18 @@ console.log('\nrequest shape');
     assert.strictEqual(records.length, 0);
     const d = records.diagnostics;
     assert.strictEqual(d.returnedByProvider, 40, 'the provider did answer');
-    assert.match(d.verdict, /no result carried any of the link fields/);
+    /* These three assertions changed when the link lookup stopped being
+       a fixed list of six top-level names and started walking the whole
+       result. `product_link` is now EXAMINED (and refused as a Google
+       host) rather than not looked at, so the honest tally is 40
+       google-host refusals, not 40 absences — and "wrong engine" is now
+       carried by the immersive-token signature, which is what actually
+       identifies it. The engine is still blamed, on better evidence. */
+    assert.match(d.verdict, /no result carried a merchant URL/);
     assert.match(d.verdict, /wrong engine/);
-    assert.strictEqual(d.linkVerdicts.absent, 40);
-    assert.strictEqual(d.fieldCoverage.anyLinkField, 0);
+    assert.strictEqual(d.linkVerdicts.absent, 0, 'a Google item page is a refusal, not an absence');
+    assert.strictEqual(d.linkVerdicts['google-host'], 40);
+    assert.strictEqual(d.fieldCoverage.anyLinkField, 40);
     assert.strictEqual(d.fieldCoverage.immersiveTokenOnly, 40,
       'and it names the second-request cost that would follow');
   });
@@ -381,6 +389,52 @@ console.log('\nrequest shape');
     assert.strictEqual(d.fieldCoverage.anyLinkField, 10,
       'the field WAS there — a different problem from it being missing');
     assert.ok(!/wrong engine/.test(d.verdict), 'and the engine must not be blamed for it');
+  });
+
+  await testAsync('a merchant link under an UNDOCUMENTED path is found and mapped', async () => {
+    process.env.SERPAPI_API_KEY = SECRET;
+    /* The live google_shopping_light failure: none of the six documented
+       names is present, and the merchant URL sits somewhere the previous
+       version never looked. The exact path here is invented FOR THE TEST
+       — the point is that the adapter no longer depends on knowing it. */
+    const nested = Array.from({ length: 6 }, (_, i) => {
+      const r = result({ product_id: `p${i}` });
+      delete r.link;
+      r.seller = { name: 'Nike', storefront: { destination: `https://www.nike.com/t/hoodie-${i}` } };
+      return r;
+    });
+    const records = await withStubbedFetch(
+      async () => okResponse(envelope(nested)),
+      () => serp.search(hoodieIntent, { limit: 12 })
+    );
+
+    assert.strictEqual(records.length, 6, 'every record should now carry a link');
+    assert.strictEqual(records[0].productUrl, 'https://www.nike.com/t/hoodie-0');
+    const d = records.diagnostics;
+    /* the whole point: the run NAMES the field it found the link at */
+    assert.ok(d.acceptedLinkPaths['seller.storefront.destination'],
+      'the accepted path is reported so nobody has to guess it again');
+    assert.match(d.verdict, /discovered path/);
+    assert.strictEqual(d.linkVerdicts.accepted, 6);
+  });
+
+  await testAsync('discovery never accepts an image, an icon or a SerpApi endpoint', async () => {
+    process.env.SERPAPI_API_KEY = SECRET;
+    const decoys = [result({ product_id: 'decoy' })];
+    delete decoys[0].link;
+    decoys[0].serpapi_product_api = 'https://serpapi.com/search.json?engine=google_product';
+    decoys[0].source_icon = 'https://cdn.example.com/icons/nike.png';
+    decoys[0].gallery = ['https://cdn.example.com/photos/hoodie.jpg'];
+
+    const records = await withStubbedFetch(
+      async () => okResponse(envelope(decoys)),
+      () => serp.search(hoodieIntent, { limit: 12 })
+    );
+
+    assert.strictEqual(records.length, 0,
+      'a SerpApi endpoint and two images are not merchant product pages');
+    const accepted = Object.keys(records.diagnostics.acceptedLinkPaths);
+    assert.deepStrictEqual(accepted, [], 'nothing should have been accepted');
   });
 
   await testAsync('field coverage counts each of the gate\'s five requirements', async () => {
