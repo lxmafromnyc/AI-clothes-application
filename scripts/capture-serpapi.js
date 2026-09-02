@@ -158,13 +158,29 @@ async function run(engineName) {
       '  ' + f.type.padEnd(9) + ' ' + (f.sample === null ? '—' : f.sample));
   }
 
-  console.log('\n  LINK FIELDS  (which of Fynd\'s candidates appeared, and their verdict)');
+  console.log('\n  LINK FIELDS  (which candidates appeared, and their verdict)');
   const seen = d.linkFieldsSeen || {};
-  if (!Object.keys(seen).length) {
-    console.log('    none of: ' + ['link', 'direct_link', 'merchant_link', 'seller_link', 'offer_link', 'product_page_url'].join(', '));
+  /* Named fields and discovered paths are reported SEPARATELY. Reading
+     only the named ones — as this did — announces "no merchant URL at
+     all" for exactly the response the walk was added to rescue, which
+     is the wrong conclusion in the one case that matters. */
+  const found = d.discoveredLinkPaths || {};
+  if (!Object.keys(seen).length && !Object.keys(found).length) {
+    console.log('    none of: ' + serp.LINK_KEYS.join(', '));
+    console.log('    ...and no other string in the result was a usable URL either');
     console.log('    -> this engine does not hand out a merchant URL at all');
   } else {
-    for (const [k, n] of Object.entries(seen)) console.log('    ' + k.padEnd(24) + String(n).padStart(5) + ' occurrences');
+    for (const [k, n] of Object.entries(seen)) {
+      console.log('    ' + k.slice(0, 33).padEnd(34) + String(n).padStart(5) + ' occurrences  (documented name)');
+    }
+    for (const [k, n] of Object.entries(found)) {
+      console.log('    ' + k.slice(0, 33).padEnd(34) + String(n).padStart(5) + ' occurrences  (DISCOVERED)');
+    }
+  }
+  const used = d.acceptedLinkPaths || {};
+  if (Object.keys(used).length) {
+    console.log('    the URL actually used came from: ' +
+      Object.entries(used).map(([k, n]) => `${k} (${n})`).join(', '));
   }
   console.log('    verdicts: ' + Object.entries(d.linkVerdicts || {}).filter(([, n]) => n).map(([k, n]) => `${k}=${n}`).join('  '));
 

@@ -312,16 +312,29 @@ async function runOne(adapter, query, stub, counterKey) {
   const wallMs = Date.now() - startedAt;
 
   const after = stub ? stub.calls[counterKey] + (counterKey === 'own' ? stub.calls.ownOffers : 0) : 0;
-  /* null means UNKNOWN — the adapter threw before it could report — and
-     is rendered as '-', never as 0. A zero here would claim the adapter
-     made no call, which is a far stronger statement than "it did not
-     finish", and usually a false one. */
+  /* HTTP calls this query actually made, measured here rather than
+     taken on trust. */
+  const attempted = attempts.n;
+
+  /* The request count, in order of preference:
+
+       1. what the adapter reported
+       2. what was MEASURED leaving this process
+       3. null — unknown, rendered as '-', never as 0
+
+     Step 2 matters more than it looks. The OpenWeb Ninja adapter's
+     diagnostics carry no `requests` field at all, so reading only step 1
+     reported 0.0 requests/search for it on a fully successful run — and
+     the cost table, whose entire purpose is to compare call counts,
+     was built on that zero. A measured count is not a fallback here;
+     for that provider it is the only number there is. */
+  const reported = records && records.diagnostics && typeof records.diagnostics.requests === 'number'
+    ? records.diagnostics.requests
+    : null;
   const requests = stub
     ? after - before
-    : (records && records.diagnostics && typeof records.diagnostics.requests === 'number'
-      ? records.diagnostics.requests
-      : null);
-  const attempted = attempts.n;
+    : (reported !== null ? reported : (attempted || null));
+  const requestsMeasured = !stub && reported === null && attempted > 0;
 
   const { products, rejected } = verifyAll(records, { retailer: adapter.defaultRetailer });
   const reachedGate = Array.isArray(records) ? records.length : 0;
@@ -338,6 +351,7 @@ async function runOne(adapter, query, stub, counterKey) {
     failed,
     requests,
     attempted,
+    requestsMeasured,
     wallMs,
     providerReturned,
     reachedGate,
@@ -622,7 +636,14 @@ async function main() {
   row('full 12-product page rate', pct(o.fullPageRate), pct(s.fullPageRate));
   row('duplicates collapsed', o.duplicates, s.duplicates);
   row('failures', o.failures, s.failures);
-  if (LIVE) row('HTTP requests attempted', o.attempted, s.attempted);
+  if (LIVE) {
+    row('HTTP requests attempted', o.attempted, s.attempted);
+    /* Say where the request count came from. An adapter that reports its
+       own count and one that is merely observed are different evidence,
+       and the cost table below leans entirely on this number. */
+    const source = (rows) => (rows.some((r) => r.requestsMeasured) ? 'measured here' : 'self-reported');
+    row('  request count is', source(ownRows), source(serpRows));
+  }
   if (!LIVE) {
     console.log('\n  fixture-derived — these are properties of the stub, NOT findings:');
     row('  distinct retailers / search', o.retailersPerSearch.toFixed(1), s.retailersPerSearch.toFixed(1));
@@ -639,7 +660,11 @@ async function main() {
     const verdicts = new Map();
     for (const r of rows) {
       const v = r.diagnostics && r.diagnostics.verdict;
-      if (v && v !== 'ok') verdicts.set(v, (verdicts.get(v) || 0) + 1);
+      /* startsWith, not !==: a successful run whose links came from a
+         DISCOVERED path reports 'ok — but via ...', and matching on
+         inequality filed that under "why nothing verified" — a false
+         alarm on a run that verified everything. */
+      if (v && !/^ok\b/.test(v)) verdicts.set(v, (verdicts.get(v) || 0) + 1);
     }
     if (verdicts.size) {
       console.log(`\n  ${label} — why nothing verified:`);
@@ -649,6 +674,23 @@ async function main() {
         console.log('    field coverage on the first query: ' +
           Object.entries(cov).map(([k, n]) => `${k}=${n}`).join(' '));
       }
+    }
+  }
+
+  /* Which field carried the link, across the whole run. On a live run
+     this is the line that answers "what does this engine call it?" */
+  const paths = serpRows.reduce((acc, r) => {
+    for (const [k, n] of Object.entries((r.diagnostics && r.diagnostics.acceptedLinkPaths) || {})) {
+      acc[k] = (acc[k] || 0) + n;
+    }
+    return acc;
+  }, {});
+  if (Object.keys(paths).length) {
+    console.log('\n  SerpApi — the field the merchant URL was read from');
+    for (const [k, n] of Object.entries(paths).sort((a, b) => b[1] - a[1])) {
+      const documented = serp.LINK_KEYS.indexOf(k) !== -1;
+      console.log('    ' + k.slice(0, 44).padEnd(46) + String(n).padStart(6) + ' results  ' +
+        (documented ? '(documented name)' : '(DISCOVERED — not a documented name)'));
     }
   }
 

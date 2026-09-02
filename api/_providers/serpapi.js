@@ -704,5 +704,11 @@ module.exports = {
   currencyFrom,
   SEARCH_URL,
   MAX_WANTED,
-  DEFAULT_PAGE
+  DEFAULT_PAGE,
+  /* exported so the scripts report the names the adapter ACTUALLY
+     consults. A hardcoded copy in a script drifts the moment this list
+     changes, and then reports a conclusion the adapter never reached. */
+  LINK_KEYS,
+  linkReport,
+  couldBeProductUrl
 };
