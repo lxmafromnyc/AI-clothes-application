@@ -413,6 +413,7 @@ than one shop's catalogue. Set these in the server environment:
 | `PRODUCT_SOURCE` | no | Which adapter to run. Left unset, the OpenWeb Ninja adapter is used when its key is present. Set it only to run a different one. |
 | `OPENWEBNINJA_COUNTRY` | no | Marketplace to search, ISO 3166-1 alpha-2. Defaults to `us` |
 | `OPENWEBNINJA_LANGUAGE` | no | Result language, ISO 639-1. Defaults to `en` |
+| `OPENWEBNINJA_OFFER_LOOKUP_CAP` | no | Hard ceiling on `/product-offers` requests per search. Defaults to `16`, which with the single `/search` makes **17 provider requests the worst case for one user search**. See [Where a direct retailer URL actually comes from](#where-a-direct-retailer-url-actually-comes-from). |
 
 Set them on the server only. The key is read inside the serverless function,
 sent as a request header rather than in the query string, and never included in
@@ -490,17 +491,48 @@ So the adapter:
 
 Nothing is inferred at any step.
 
-**This costs one extra request per product that needs a link.** A page of 12
-products is up to 13 requests rather than 1. On the $25/mo Pro plan that is
-roughly 770 shopper searches a month rather than 10,000. Two knobs bound it:
+**This costs one extra request per product that needs a link.** One user search
+is therefore one metered search but **up to 17 provider requests**: one
+`/search`, plus at most 16 `/product-offers` lookups.
 
-| Variable | Default | Effect |
+| Requests | When |
+| --- | --- |
+| 1 | best case — every record arrived carrying a usable retailer link |
+| 13 | lookups resolving at 90% or better |
+| **17** | typical (~80%), **and the hard ceiling at any resolve rate** |
+
+On the $25/mo Pro plan, 17 requests a search is roughly **590 shopper searches a
+month** out of 10,000. Four bounds keep it there:
+
+| Bound | Default | Effect |
 | --- | --- | --- |
+| `MAX_LIMIT` in `api/search.js` | 12 | clamps `limit` before any provider request is made |
+| `MAX_WANTED` in the adapter | 12 | clamps again, so a caller that does not come through `/api/search` is bounded too |
+| `OPENWEBNINJA_OFFER_LOOKUP_CAP` | 16 | hard ceiling on lookups per search — **this is what bounds the bill** |
+| `OPENWEBNINJA_OFFER_BUDGET_MS` | 6000 | wall-clock budget — this bounds the *wait*, which is not the same thing |
 | `OPENWEBNINJA_RESOLVE_OFFERS` | on | `off` skips the lookups entirely — cheaper, and almost everything is then dropped for having no retailer link |
-| `OPENWEBNINJA_OFFER_BUDGET_MS` | 6000 | total wall-clock budget for the lookups; whatever resolved by then is what shows |
 
 Lookups also stop early once enough records have a link, and only products
 that need one are looked up at all.
+
+`limit` is a **cost** control, not a display preference, which is why it is
+clamped server-side in two places rather than trusted from the browser. A direct
+HTTP `POST` asking for `limit: 24` gets 12 results and 17 provider requests, the
+same as the interface. Sizing the ceiling at 16 lookups leaves the typical search
+untouched — a resolve rate of 80% reaches twelve links inside it — and cuts off
+only the tail, where each extra request was buying less and less.
+
+Every search reports what it actually spent, so this can be watched rather than
+assumed:
+
+```
+diagnostics.offers.lookupsMade   requests actually made for this search
+diagnostics.offers.lookupCap     the ceiling it ran under
+diagnostics.offers.capReached    whether the ceiling is what stopped it
+```
+
+A rising `capReached` rate means the source's resolve rate has fallen and pages
+are thinning — the signal to look at the adapter, not to raise the cap.
 
 #### Response fields: what is verified, and what is not
 

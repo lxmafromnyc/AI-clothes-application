@@ -1099,6 +1099,203 @@ function twoEndpointStub(searchPayload, offersByProductId) {
     delete process.env.OPENWEBNINJA_OFFER_BUDGET_MS;
   });
 
+  /* -------------------------------------------------------
+     7. The cost ceiling
+
+     One user search is one metered search, but it is not one provider
+     request: the adapter buys a retailer link per product that needs
+     one. Two ceilings bound what that can cost — `limit` is clamped so
+     a caller cannot ask for a bigger search than a shopper gets, and
+     the offer lookups are capped however badly they resolve.
+
+     These are money tests. A regression here does not break a page; it
+     quietly multiplies the bill, which is why the numbers are asserted
+     against the constants the code actually runs on.
+     ------------------------------------------------------- */
+
+  console.log('\nthe cost ceiling');
+
+  /* A search payload of records that all need a lookup: the commerce
+     fields are there, but product_page_url is Google's, so the adapter
+     has to go and buy a real link for every one of them. */
+  const needLinks = (n) => envelope(Array.from({ length: n }, (_, i) => product({ product_id: `p${i}` })));
+
+  /* Counts what actually went to the provider, and answers offers with
+     whatever `resolvable` says — so a resolve rate can be dialled in. */
+  function countingStub(searchPayload, resolvable) {
+    const calls = [];
+    const impl = async (url) => {
+      calls.push(String(url));
+      if (String(url).includes('/product-offers')) {
+        const id = new URL(String(url)).searchParams.get('product_id');
+        return okResponse(offersPayload(
+          resolvable(id) ? [offer('nike.com', '$54.00', `https://www.nike.com/t/${id}`)] : []
+        ));
+      }
+      return okResponse(searchPayload);
+    };
+    impl.calls = calls;
+    impl.searchCalls = () => calls.filter((u) => !u.includes('/product-offers'));
+    impl.offerCalls = () => calls.filter((u) => u.includes('/product-offers'));
+    return impl;
+  }
+
+  const never = () => false;
+  const always = () => true;
+
+  /* The handler, called the way a direct HTTP request would — the body
+     is whatever the caller sent, not what the interface sends. */
+  const postSearch = async (body, stub) => {
+    const handler = require('../api/search');
+    const res = fakeRes();
+    await withStubbedFetch(stub, () => handler({ method: 'POST', body, on: () => {} }, res));
+    return res;
+  };
+
+  await testAsync('an oversized limit is clamped before a single provider request is made', async () => {
+    process.env.OPENWEBNINJA_API_KEY = 'test-key';
+    process.env.PRODUCT_SOURCE = 'openwebninja';
+    const stub = countingStub(needLinks(24), never);
+    await postSearch({ intent: nikeIntent, limit: 24 }, stub);
+
+    /* the FIRST outbound request already carries the clamped limit —
+       the clamp cannot be a filter applied to the results afterwards */
+    const first = stub.calls[0];
+    assert.ok(!first.includes('/product-offers'), 'the search must come first');
+    assert.strictEqual(
+      Number(new URL(first).searchParams.get('limit')), 24,
+      'limit 24 must be clamped to 12 wanted, so 24 records fetched — not 48'
+    );
+  });
+
+  await testAsync('an oversized limit cannot re-create the 49-request path', async () => {
+    process.env.OPENWEBNINJA_API_KEY = 'test-key';
+    /* 48 records offered, none resolvable: the shape that used to cost
+       48 lookups plus the search */
+    const stub = countingStub(needLinks(48), never);
+    const res = await postSearch({ intent: nikeIntent, limit: 24 }, stub);
+
+    assert.strictEqual(res.statusCode, 200);
+    assert.strictEqual(stub.offerCalls().length, provider.DEFAULT_OFFER_LOOKUP_CAP);
+    assert.strictEqual(
+      stub.calls.length, provider.DEFAULT_OFFER_LOOKUP_CAP + 1,
+      `one search plus the cap — never the old 49`
+    );
+  });
+
+  await testAsync('no limit a caller can send raises the ceiling', async () => {
+    process.env.OPENWEBNINJA_API_KEY = 'test-key';
+    for (const limit of [13, 24, 100, 9999, '24', Number.MAX_SAFE_INTEGER]) {
+      const stub = countingStub(needLinks(48), never);
+      await postSearch({ intent: nikeIntent, limit }, stub);
+      assert.strictEqual(
+        stub.calls.length, provider.DEFAULT_OFFER_LOOKUP_CAP + 1,
+        `limit ${limit} must not buy more than ${provider.DEFAULT_OFFER_LOOKUP_CAP + 1} provider requests`
+      );
+    }
+  });
+
+  await testAsync('the handler and the adapter each clamp on their own', async () => {
+    /* Defence in depth: a future caller that does not come through
+       /api/search must still be bounded, so the adapter is asked
+       directly for a search far bigger than the handler would allow. */
+    process.env.OPENWEBNINJA_API_KEY = 'test-key';
+    assert.strictEqual(require('../api/search').MAX_LIMIT, 12);
+    assert.strictEqual(provider.MAX_WANTED, 12);
+
+    const stub = countingStub(needLinks(48), never);
+    const records = await withStubbedFetch(stub, () => provider.search(nikeIntent, { limit: 9999 }));
+    assert.strictEqual(Number(new URL(stub.searchCalls()[0]).searchParams.get('limit')), 24);
+    assert.strictEqual(records.diagnostics.offers.lookupsMade, provider.DEFAULT_OFFER_LOOKUP_CAP);
+  });
+
+  await testAsync('offer lookups stop at the cap however badly they resolve', async () => {
+    process.env.OPENWEBNINJA_API_KEY = 'test-key';
+    const stub = countingStub(needLinks(24), never);
+    const records = await withStubbedFetch(stub, () => provider.search(nikeIntent, { limit: 12 }));
+
+    const offers = records.diagnostics.offers;
+    assert.strictEqual(offers.neededOfferLookup, 24, 'all 24 wanted a link');
+    assert.strictEqual(offers.lookupsMade, provider.DEFAULT_OFFER_LOOKUP_CAP, 'and only the cap were bought');
+    assert.strictEqual(offers.capReached, true, 'and the search says so');
+    assert.strictEqual(offers.budgetExpired, false, 'the cap stopped it, not the clock');
+  });
+
+  await testAsync('the cap does not touch a search that is resolving well', async () => {
+    process.env.OPENWEBNINJA_API_KEY = 'test-key';
+    const stub = countingStub(needLinks(24), always);
+    const records = await withStubbedFetch(stub, () => provider.search(nikeIntent, { limit: 12 }));
+
+    const offers = records.diagnostics.offers;
+    assert.strictEqual(offers.lookupsMade, 12, 'twelve links wanted, twelve bought');
+    assert.strictEqual(offers.capReached, false);
+    assert.ok(offers.lookupsMade < provider.DEFAULT_OFFER_LOOKUP_CAP, 'well under the cap');
+
+    /* and the shopper still gets a full page of verified products */
+    const { products } = verifyAll(records, { retailer: null });
+    assert.ok(products.length >= 12, `a full page must survive: got ${products.length}`);
+  });
+
+  await testAsync('a page still fills at the resolve rate the cap was sized for', async () => {
+    process.env.OPENWEBNINJA_API_KEY = 'test-key';
+    /* 80% of lookups yield a link: 16 lookups buys 12 links, which is
+       the whole point of the cap being 16 rather than 12 */
+    let seen = 0;
+    const stub = countingStub(needLinks(24), () => { seen += 1; return seen % 5 !== 0; });
+    const records = await withStubbedFetch(stub, () => provider.search(nikeIntent, { limit: 12 }));
+
+    assert.ok(records.diagnostics.offers.lookupsMade <= provider.DEFAULT_OFFER_LOOKUP_CAP);
+    const { products } = verifyAll(records, { retailer: null });
+    assert.ok(products.length >= 12, `a full page must survive an 80% resolve rate: got ${products.length}`);
+  });
+
+  await testAsync('the cap is configurable, and is trimmed to exactly', async () => {
+    process.env.OPENWEBNINJA_API_KEY = 'test-key';
+    /* 10 is not a multiple of the batch size, so this also proves the
+       last batch is trimmed rather than overshooting by three */
+    process.env.OPENWEBNINJA_OFFER_LOOKUP_CAP = '10';
+    try {
+      const stub = countingStub(needLinks(24), never);
+      const records = await withStubbedFetch(stub, () => provider.search(nikeIntent, { limit: 12 }));
+      assert.strictEqual(records.diagnostics.offers.lookupsMade, 10);
+      assert.strictEqual(records.diagnostics.offers.lookupCap, 10);
+      assert.strictEqual(stub.offerCalls().length, 10, 'the cap bounds requests made, not requests counted');
+    } finally {
+      delete process.env.OPENWEBNINJA_OFFER_LOOKUP_CAP;
+    }
+  });
+
+  await testAsync('a nonsensical cap cannot silently switch the lookups off', async () => {
+    for (const [value, expected] of [['0', 16], ['-5', 16], ['', 16], ['nonsense', 16], ['1', 4], ['2', 4]]) {
+      process.env.OPENWEBNINJA_OFFER_LOOKUP_CAP = value;
+      assert.strictEqual(provider.offerLookupCap(), expected, `cap "${value}" should read as ${expected}`);
+    }
+    delete process.env.OPENWEBNINJA_OFFER_LOOKUP_CAP;
+    assert.strictEqual(provider.offerLookupCap(), provider.DEFAULT_OFFER_LOOKUP_CAP);
+  });
+
+  await testAsync('what a search spent reaches the browser, so production can be watched', async () => {
+    process.env.OPENWEBNINJA_API_KEY = 'test-key';
+    const stub = countingStub(needLinks(24), never);
+    const res = await postSearch({ intent: nikeIntent, limit: 12 }, stub);
+
+    const offers = res.body.diagnostics.offers;
+    assert.strictEqual(typeof offers.lookupsMade, 'number', 'lookupsMade must survive to the response');
+    assert.strictEqual(offers.lookupsMade, stub.offerCalls().length, 'and must equal what was really spent');
+    assert.strictEqual(offers.lookupCap, provider.DEFAULT_OFFER_LOOKUP_CAP);
+    assert.strictEqual(offers.capReached, true);
+  });
+
+  await testAsync('one user search is still one metered search, whatever limit was asked for', async () => {
+    process.env.OPENWEBNINJA_API_KEY = 'test-key';
+    for (const limit of [12, 24, 9999]) {
+      const res = await postSearch({ intent: nikeIntent, limit }, countingStub(needLinks(24), always));
+      assert.strictEqual(res.statusCode, 200);
+      assert.strictEqual(res.body.usage.metric, 'searches');
+      assert.strictEqual(res.body.usage.used, 1, `limit ${limit} must still spend exactly one search`);
+    }
+  });
+
   console.log('\nclient search states');
 
   const loadClient = () => {

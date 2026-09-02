@@ -104,6 +104,25 @@
                             total wall-clock budget for the offer lookups,
                             default 6000. Whatever is resolved when it
                             expires is what gets shown.
+     OPENWEBNINJA_OFFER_LOOKUP_CAP
+                            hard ceiling on offer lookups per search,
+                            default 16. This is what bounds the bill; the
+                            budget above bounds the wait. Values below one
+                            batch are raised to it.
+
+   ---------------------------------------------------------
+   What one search costs upstream
+   ---------------------------------------------------------
+   One /search, plus at most OPENWEBNINJA_OFFER_LOOKUP_CAP lookups:
+
+     best case      1 request   every record arrived with a usable link
+     typical       17 requests  1 + 16, at a resolve rate around 80%
+     worst case    17 requests  1 + the cap, whatever the resolve rate
+
+   `limit` does not change that ceiling. It is clamped to MAX_WANTED
+   here and again in /api/search, so no caller can buy a bigger search
+   than the one a shopper gets. Every search reports what it actually
+   spent in diagnostics.offers.lookupsMade.
    ========================================================= */
 
 'use strict';
@@ -120,13 +139,38 @@ const MAX_TERMS = 12;
 const API_LIMIT_MAX = 120;
 const OVERFETCH = 2;
 
-/* Offer lookups cost one request each, so they are bounded three ways:
+/* Offer lookups cost one request each, so they are bounded four ways:
    only products that need one are looked up, only until enough records
-   have a link, and only until the wall-clock budget runs out. Whatever
-   resolved by then is what gets shown. */
+   have a link, only until the wall-clock budget runs out, and never
+   more than OFFER_LOOKUP_CAP of them however badly they are resolving.
+   Whatever resolved by then is what gets shown.
+
+   The cap is the one that bounds the BILL. The wall-clock budget bounds
+   how long a shopper waits, which is not the same thing: a source
+   answering quickly and uselessly spends the whole pending list inside
+   the budget. At 16 the typical search is unaffected — a resolve rate
+   of 80% or better reaches twelve links in 16 lookups or fewer — and
+   only the tail, where each extra request was buying less and less, is
+   cut off. */
 const OFFER_CONCURRENCY = 4;
 const DEFAULT_OFFER_BUDGET_MS = 6000;
+const DEFAULT_OFFER_LOOKUP_CAP = 16;
 const offersEnabled = () => text(process.env.OPENWEBNINJA_RESOLVE_OFFERS).toLowerCase() !== 'off';
+
+/* A caller cannot raise this by asking for more results: `wanted` is
+   clamped to it before anything is requested. /api/search clamps too,
+   and this is the second of the two — an adapter that trusted its
+   caller would leave the ceiling wherever the next caller put it. */
+const MAX_WANTED = 12;
+
+/* Reads the cap, floored at one batch so a nonsensical value cannot
+   turn the lookups off silently — OPENWEBNINJA_RESOLVE_OFFERS=off is
+   how you turn them off, and it says so in the diagnostics. */
+function offerLookupCap() {
+  const configured = Number(process.env.OPENWEBNINJA_OFFER_LOOKUP_CAP);
+  if (!Number.isFinite(configured) || configured < 1) return DEFAULT_OFFER_LOOKUP_CAP;
+  return Math.max(OFFER_CONCURRENCY, Math.floor(configured));
+}
 
 const text = (v) => (v === undefined || v === null ? '' : String(v).trim());
 
@@ -449,6 +493,10 @@ async function resolveMissingOffers(records, wanted, region, stats) {
      URL rule doing its job, told apart from finding no offers at all */
   tally.noDirectLinkInOffers = 0;
   tally.budgetExpired = false;
+  /* the ceiling this search ran under, and whether it was actually hit —
+     both reported so production can be watched rather than guessed at */
+  tally.lookupCap = offerLookupCap();
+  tally.capReached = false;
   tally.noProductId = records.filter((r) => !r.productUrl && !r.sku).length;
   tally.offersShape = null;
 
@@ -462,8 +510,15 @@ async function resolveMissingOffers(records, wanted, region, stats) {
   for (let i = 0; i < pending.length; i += OFFER_CONCURRENCY) {
     if (resolved >= wanted) break;
     if (Date.now() >= deadline) { tally.budgetExpired = true; break; }
+    /* Checked before the batch is even built, so the cap bounds requests
+       made rather than requests finished. */
+    if (tally.lookupsMade >= tally.lookupCap) { tally.capReached = true; break; }
 
-    const batch = pending.slice(i, i + OFFER_CONCURRENCY);
+    /* A batch is normally OFFER_CONCURRENCY wide, but never wider than
+       the cap has room for — otherwise a cap that is not a multiple of
+       the batch size would be overshot by up to three requests. */
+    const room = tally.lookupCap - tally.lookupsMade;
+    const batch = pending.slice(i, i + Math.min(OFFER_CONCURRENCY, room));
     const found = await Promise.all(batch.map(async (record) => {
       tally.lookupsMade += 1;
       const result = await offersFor(record.sku, region);
@@ -495,7 +550,11 @@ async function resolveMissingOffers(records, wanted, region, stats) {
 }
 
 async function search(intent, options) {
-  const wanted = Math.min(Math.max(Number(options && options.limit) || 12, 1), 100);
+  /* Clamped here as well as in /api/search, because `wanted` decides
+     both how many records are fetched and how many offer lookups may
+     follow — it is the multiplier on this search's provider bill, and
+     it must not be settable by whoever is calling. */
+  const wanted = Math.min(Math.max(Number(options && options.limit) || 12, 1), MAX_WANTED);
   const region = {
     country: process.env.OPENWEBNINJA_COUNTRY || 'us',
     language: process.env.OPENWEBNINJA_LANGUAGE || 'en'
@@ -589,5 +648,10 @@ module.exports = {
   resultsFrom,
   withinBudget,
   shapeOf,
-  SEARCH_URL
+  SEARCH_URL,
+  /* the two cost ceilings, exported so a test asserts against the value
+     the adapter actually runs on rather than a number copied beside it */
+  MAX_WANTED,
+  DEFAULT_OFFER_LOOKUP_CAP,
+  offerLookupCap
 };

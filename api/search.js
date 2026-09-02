@@ -36,7 +36,21 @@ const { envReport } = require('./_env-report');
 const meter = require('./_meter');
 const { SEARCHES } = require('./_plans');
 
-const MAX_LIMIT = 24;
+/* The ceiling on results, and therefore on what one metered search may
+   cost upstream.
+
+   This is a COST control, not a display preference, so it lives here
+   rather than in the browser. The adapter overfetches and then buys a
+   retailer link per product that needs one, so `limit` multiplies
+   provider requests: at 24 the worst case was 49 requests for a single
+   search — more than the search earns. The interface has only ever
+   asked for 12, so holding the ceiling there costs nothing on screen.
+
+   A request asking for more is clamped, not refused: the caller still
+   gets a good answer, just not one they can size themselves. The
+   adapter clamps again on its own (see MAX_WANTED there), so a future
+   caller that does not come through this handler is bounded too. */
+const MAX_LIMIT = 12;
 const DEFAULT_LIMIT = 12;
 
 const asArray = (v) => (Array.isArray(v) ? v.filter((x) => typeof x === 'string' && x.trim()).map((x) => x.trim()) : []);
@@ -174,3 +188,6 @@ module.exports = async function handler(req, res) {
 
 module.exports.shapeIntent = shapeIntent;
 module.exports.shapeAttachments = shapeAttachments;
+/* the clamp, exported so a test asserts the ceiling this handler runs
+   on rather than a copy of the number */
+module.exports.MAX_LIMIT = MAX_LIMIT;
