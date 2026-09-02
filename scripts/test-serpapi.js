@@ -316,6 +316,105 @@ console.log('\nrequest shape');
     assert.ok(!records.diagnostics.searchShape.includes('no results'), 'key names only, never a value');
   });
 
+  await testAsync('the engine is configurable and defaults to the light one', async () => {
+    process.env.SERPAPI_API_KEY = SECRET;
+    delete process.env.SERPAPI_ENGINE;
+    let seen = null;
+    await withStubbedFetch(
+      async (url) => { seen = new URL(String(url)).searchParams.get('engine'); return okResponse(envelope([result()])); },
+      () => serp.search(hoodieIntent, { limit: 12 })
+    );
+    assert.strictEqual(seen, 'google_shopping_light',
+      'the full engine returns no merchant link, so it must not be the default');
+
+    process.env.SERPAPI_ENGINE = 'google_shopping';
+    try {
+      await withStubbedFetch(
+        async (url) => { seen = new URL(String(url)).searchParams.get('engine'); return okResponse(envelope([result()])); },
+        () => serp.search(hoodieIntent, { limit: 12 })
+      );
+      assert.strictEqual(seen, 'google_shopping', 'so the two can be compared rather than argued about');
+    } finally {
+      delete process.env.SERPAPI_ENGINE;
+    }
+  });
+
+  await testAsync('a run where no result carries a link field says so, and blames the engine', async () => {
+    process.env.SERPAPI_API_KEY = SECRET;
+    /* exactly what engine=google_shopping returned live: everything but
+       a merchant URL, plus an immersive token */
+    const noLink = Array.from({ length: 40 }, (_, i) => {
+      const r = result({ product_id: `p${i}` });
+      delete r.link;
+      r.immersive_product_page_token = 'eyJ0b2tlbiI6';
+      return r;
+    });
+    const records = await withStubbedFetch(
+      async () => okResponse(envelope(noLink)),
+      () => serp.search(hoodieIntent, { limit: 12 })
+    );
+
+    assert.strictEqual(records.length, 0);
+    const d = records.diagnostics;
+    assert.strictEqual(d.returnedByProvider, 40, 'the provider did answer');
+    assert.match(d.verdict, /no result carried any of the link fields/);
+    assert.match(d.verdict, /wrong engine/);
+    assert.strictEqual(d.linkVerdicts.absent, 40);
+    assert.strictEqual(d.fieldCoverage.anyLinkField, 0);
+    assert.strictEqual(d.fieldCoverage.immersiveTokenOnly, 40,
+      'and it names the second-request cost that would follow');
+  });
+
+  await testAsync('a run whose links are all Google blames the links, not the engine', async () => {
+    process.env.SERPAPI_API_KEY = SECRET;
+    const googleLinks = Array.from({ length: 10 }, (_, i) =>
+      result({ product_id: `p${i}`, link: 'https://www.google.com/aclk?adurl=https://nike.com/p' }));
+    const records = await withStubbedFetch(
+      async () => okResponse(envelope(googleLinks)),
+      () => serp.search(hoodieIntent, { limit: 12 })
+    );
+
+    assert.strictEqual(records.length, 0);
+    const d = records.diagnostics;
+    assert.match(d.verdict, /every link was refused/);
+    assert.strictEqual(d.linkVerdicts.redirector + d.linkVerdicts['google-host'], 10);
+    assert.strictEqual(d.fieldCoverage.anyLinkField, 10,
+      'the field WAS there — a different problem from it being missing');
+    assert.ok(!/wrong engine/.test(d.verdict), 'and the engine must not be blamed for it');
+  });
+
+  await testAsync('field coverage counts each of the gate\'s five requirements', async () => {
+    process.env.SERPAPI_API_KEY = SECRET;
+    const mixed = [
+      result({ product_id: 'full' }),
+      result({ product_id: 'no-image', thumbnail: undefined }),
+      result({ product_id: 'no-price', price: undefined, extracted_price: undefined }),
+      result({ product_id: 'no-shop', source: undefined })
+    ];
+    const records = await withStubbedFetch(
+      async () => okResponse(envelope(mixed)),
+      () => serp.search({ categories: ['knit'] }, { limit: 12 })
+    );
+    const c = records.diagnostics.fieldCoverage;
+    assert.strictEqual(c.title, 4);
+    assert.strictEqual(c.price, 3);
+    assert.strictEqual(c.image, 3);
+    assert.strictEqual(c.retailer, 3);
+    assert.strictEqual(c.anyLinkField, 4);
+  });
+
+  await testAsync('a healthy run reports verdict ok', async () => {
+    process.env.SERPAPI_API_KEY = SECRET;
+    const records = await withStubbedFetch(
+      async () => okResponse(envelope(Array.from({ length: 20 }, (_, i) =>
+        result({ product_id: `p${i}`, link: `https://www.nike.com/t/hoodie-${i}` })))),
+      () => serp.search({ categories: ['knit'] }, { limit: 12 })
+    );
+    assert.strictEqual(records.diagnostics.verdict, 'ok');
+    assert.strictEqual(records.diagnostics.filledPageInOneRequest, true);
+    assert.strictEqual(records.diagnostics.inlineLinkRate, 1);
+  });
+
   await testAsync('it is NOT registered as a selectable production provider', async () => {
     const { getProvider } = require('../api/_providers/product-source');
     const before = process.env.PRODUCT_SOURCE;
@@ -330,6 +429,7 @@ console.log('\nrequest shape');
   });
 
   delete process.env.SERPAPI_API_KEY;
+  delete process.env.SERPAPI_ENGINE;
   console.log(`\n${passed} passed, ${failures.length} failed\n`);
   process.exit(failures.length ? 1 : 0);
 })();

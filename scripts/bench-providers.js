@@ -445,6 +445,7 @@ async function main() {
   row('requests / search (mean)', o.reqPerSearch.toFixed(1), s.reqPerSearch.toFixed(1));
   row('requests / search (max)', o.maxReq, s.maxReq);
   row('sequential round trips', '1 + up to 4 batches', '1');
+  row('engine', 'realtime-product-search', (serpRows[0].diagnostics && serpRows[0].diagnostics.engine) || 'n/a');
   row(`wall clock @${LATENCY}ms/call`, Math.round(o.wallMs) + ' ms', Math.round(s.wallMs) + ' ms');
   row('results returned by provider', o.returnedPerSearch.toFixed(1), s.returnedPerSearch.toFixed(1));
   row('verified products / search', o.verifiedPerSearch.toFixed(1), s.verifiedPerSearch.toFixed(1));
@@ -460,6 +461,26 @@ async function main() {
       pct(s.duplicates / Math.max(1, sum(serpRows, (r) => r.providerReturned))));
   } else {
     row('distinct retailers / search', o.retailersPerSearch.toFixed(1), s.retailersPerSearch.toFixed(1));
+  }
+
+  /* When a provider verified nothing, the reason is the whole result —
+     print it before anything else, and per distinct reason rather than
+     once per query. */
+  for (const [label, rows] of [['OpenWeb Ninja', ownRows], ['SerpApi', serpRows]]) {
+    const verdicts = new Map();
+    for (const r of rows) {
+      const v = r.diagnostics && r.diagnostics.verdict;
+      if (v && v !== 'ok') verdicts.set(v, (verdicts.get(v) || 0) + 1);
+    }
+    if (verdicts.size) {
+      console.log(`\n  ${label} — why nothing verified:`);
+      for (const [v, n] of verdicts) console.log(`    ${n}/${rows.length} queries: ${v}`);
+      const cov = rows[0].diagnostics && rows[0].diagnostics.fieldCoverage;
+      if (cov) {
+        console.log('    field coverage on the first query: ' +
+          Object.entries(cov).map(([k, n]) => `${k}=${n}`).join(' '));
+      }
+    }
   }
 
   console.log('\n  direct retailer link in FIRST response');

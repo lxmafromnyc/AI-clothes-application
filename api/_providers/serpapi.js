@@ -19,22 +19,34 @@
    carries a retailer link at all — every usable link has to be bought
    with a second request.
 
-   SerpApi's google_shopping engine is documented to return a `link` per
-   shopping result. IF that link is the merchant's own product page, one
-   request could replace seventeen. That "if" is the entire question this
-   adapter exists to answer, so the adapter is written to make exactly
-   one request and to COUNT what the response actually contained, rather
-   than to paper over a bad response with follow-up calls.
+   SerpApi returns a page of shopping results in ONE call. If those
+   results carry the merchant's own URL, one request replaces seventeen.
+   Whether they do turns entirely on which engine is asked, which a live
+   run settled the hard way — see below.
 
    ---------------------------------------------------------
-   The endpoint
+   The endpoint, and the engine that matters
    ---------------------------------------------------------
      GET https://serpapi.com/search.json
-       engine=google_shopping
+       engine=<SERPAPI_ENGINE, default google_shopping_light>
        q=<phrase>
        api_key=<SERPAPI_API_KEY>
        gl=<country>   hl=<language>
        num=<results>
+
+   A live run of 12 queries against engine=google_shopping returned 40
+   results each and verified ZERO products, because Google's Shopping
+   redesign removed the merchant link from that engine: its results carry
+   `product_link` (a Google item page, which this adapter refuses on
+   purpose) and `immersive_product_page_token`, and a retailer URL then
+   costs a SECOND request through the immersive product API. That run
+   also averaged 5.5s and peaked near 12s.
+
+   google_shopping_light is documented to return `link` — the merchant's
+   own URL — and to answer much faster. It is therefore the default. The
+   engine is configurable so the two can be compared rather than argued
+   about, and diagnostics.verdict says in one sentence which failure a
+   given run hit.
 
    ---------------------------------------------------------
    The credential travels in the QUERY STRING
@@ -52,15 +64,21 @@
    ---------------------------------------------------------
    What is confirmed, and what is not
    ---------------------------------------------------------
-   CONFIRMED from SerpApi's published field list for shopping_results:
-     title, product_link, source, price, extracted_price, thumbnail,
-     product_id, rating, reviews, delivery, extensions, old_price.
+   CONFIRMED by a live run against engine=google_shopping:
+     results arrive with title, source, price, extracted_price,
+     thumbnail, product_id and product_link — and NO usable merchant
+     link, on any of ~480 results across 12 queries.
 
-   NOT CONFIRMED against a live response from this environment, because
-   serpapi.com is unreachable from the sandbox this was written in:
-     - whether `link` is present on a given result, and whether it is the
-       merchant's own URL or a google.com/aclk tracking link
-     - what proportion of results carry one
+   NOT CONFIRMED, because serpapi.com is unreachable from the sandbox
+   this adapter was written in — every live figure quoted here was
+   produced by running scripts/bench-providers.js elsewhere:
+     - whether engine=google_shopping_light does return a merchant `link`
+     - what proportion of its results carry one
+     - whether it is materially faster in practice
+
+   scripts/capture-serpapi.js answers all three from one query, and
+   prints a redacted field inventory rather than requiring anyone to
+   read a raw response.
 
    Everything below therefore FAILS CLOSED in the same way the OpenWeb
    Ninja adapter does: a record whose link is absent, or is a Google or
@@ -77,8 +95,30 @@
 'use strict';
 
 const SEARCH_URL = 'https://serpapi.com/search.json';
-const REQUEST_TIMEOUT = 15000;
+const REQUEST_TIMEOUT = 20000;
 const MAX_TERMS = 12;
+
+/* Which SerpApi engine to ask.
+
+   This is the setting a live run showed to matter most, and it is the
+   first thing to change when nothing verifies:
+
+     google_shopping_light  DEFAULT. Documented to return `link` — the
+                            merchant's own URL — and to answer much
+                            faster than the full engine.
+     google_shopping        The full engine. Google's Shopping redesign
+                            removed the merchant link from it: results
+                            carry `product_link` (a Google item page) and
+                            `immersive_product_page_token`, and a
+                            retailer URL then costs a SECOND request
+                            through the immersive product API.
+
+   A run against the full engine returned 40 results per query and zero
+   usable retailer links, which is exactly what the field list above
+   predicts. The default is therefore the light engine; override with
+   SERPAPI_ENGINE to compare them. */
+const DEFAULT_ENGINE = 'google_shopping_light';
+const engine = () => text(process.env.SERPAPI_ENGINE) || DEFAULT_ENGINE;
 
 /* SerpApi returns a page of shopping results in one call. Asking for
    more costs nothing extra — it is one search credit either way — so the
@@ -230,7 +270,43 @@ function looksDirect(value) {
    `serpapi_product_api` is a SerpApi endpoint — neither is a retailer
    URL, and reading either as one would put the wrong destination behind
    a product card. */
-const LINK_KEYS = ['link', 'product_page_url', 'merchant_link', 'seller_link'];
+const LINK_KEYS = ['link', 'direct_link', 'merchant_link', 'seller_link', 'offer_link', 'product_page_url'];
+
+/* Why a candidate link was refused, or null when it was accepted. The
+   plain looksDirect() answer is a URL or nothing, which is all the
+   mapping needs — but when a whole run verifies nothing, "nothing" is
+   useless and the REASON is the entire finding. */
+function linkVerdict(value) {
+  const raw = text(value);
+  if (!raw) return 'absent';
+  let url;
+  try { url = new URL(raw); } catch (err) { return 'unparseable'; }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') return 'non-http';
+  if (GOOGLE_HOST.test(url.hostname)) return 'google-host';
+  const path = url.pathname.replace(/\/+$/, '');
+  if (REDIRECT_PATH.test(path)) return 'redirector';
+  for (const [key, v] of url.searchParams.entries()) {
+    if (REDIRECT_PARAM.test(key) && URL_VALUED.test(v)) return 'redirector';
+  }
+  return null;
+}
+
+/* Which of the candidate link fields this result actually carried, and
+   what became of each. An adapter that only reports "no link" cannot
+   tell a missing field from a refused one, and those call for opposite
+   fixes: a missing field means the wrong engine, a refused one means the
+   right engine and a link Fynd will not display. */
+function linkReport(result) {
+  const seen = {};
+  let accepted = null;
+  for (const key of LINK_KEYS) {
+    if (result[key] === undefined || result[key] === null || String(result[key]).trim() === '') continue;
+    const verdict = linkVerdict(result[key]);
+    seen[key] = verdict || 'accepted';
+    if (!verdict && !accepted) accepted = new URL(text(result[key])).href;
+  }
+  return { seen, accepted, hadAnyLinkField: Object.keys(seen).length > 0 };
+}
 
 /* SerpApi supplies the retailer as `source`. `source_icon` is an image
    of it, never its name. */
@@ -272,7 +348,7 @@ function availabilityFrom(result) {
 function toRecord(result) {
   if (!result || typeof result !== 'object') return null;
 
-  const productUrl = looksDirect(firstOf(result, LINK_KEYS));
+  const productUrl = linkReport(result).accepted;
   const priceSource = firstOf(result, ['extracted_price', 'price', 'current_price']);
 
   const record = {
@@ -354,7 +430,7 @@ async function search(intent, options) {
   const page = Math.min(Math.max(Number(options && options.page) || DEFAULT_PAGE, wanted), MAX_PAGE);
 
   const params = new URLSearchParams({
-    engine: 'google_shopping',
+    engine: engine(),
     q: queryFrom(intent) || 'clothing',
     gl: process.env.SERPAPI_COUNTRY || 'us',
     hl: process.env.SERPAPI_LANGUAGE || 'en',
@@ -373,10 +449,51 @@ async function search(intent, options) {
   const records = results.map(toRecord).filter(Boolean);
   const withLink = records.filter((r) => r.productUrl);
 
+  /* Why every record failed, when they do.
+
+     A run that verifies nothing is the case this adapter most has to
+     explain, and the earlier version could not: it filtered unusable
+     records out before the gate, so the gate had nothing to reject and
+     the tally came back empty. The counts below are gathered from the
+     RAW results, so a zero-product run says which field was missing
+     rather than only that there were none. */
+  const linkFields = {};
+  const linkVerdicts = { absent: 0, 'google-host': 0, redirector: 0, unparseable: 0, 'non-http': 0, accepted: 0 };
+  const coverage = { title: 0, price: 0, image: 0, retailer: 0, anyLinkField: 0, immersiveTokenOnly: 0 };
+
+  for (const result of results) {
+    if (!result || typeof result !== 'object') continue;
+    const report = linkReport(result);
+    for (const [key, verdict] of Object.entries(report.seen)) {
+      linkFields[key] = (linkFields[key] || 0) + 1;
+      if (linkVerdicts[verdict] !== undefined) linkVerdicts[verdict] += 1;
+    }
+    if (!report.hadAnyLinkField) linkVerdicts.absent += 1;
+
+    if (text(firstOf(result, ['title', 'name', 'product_title']))) coverage.title += 1;
+    if (toPrice(firstOf(result, ['extracted_price', 'price', 'current_price'])) !== null) coverage.price += 1;
+    if (text(firstOf(result, IMAGE_KEYS))) coverage.image += 1;
+    if (text(firstOf(result, STORE_KEYS))) coverage.retailer += 1;
+    if (report.hadAnyLinkField) coverage.anyLinkField += 1;
+    /* the tell-tale of the full engine after Google's redesign: a Google
+       item page plus a token, and no merchant URL anywhere */
+    if (!report.accepted && text(firstOf(result, ['immersive_product_page_token']))) coverage.immersiveTokenOnly += 1;
+  }
+
+  /* The single sentence a failing run should be readable from. */
+  let verdict = 'ok';
+  if (!results.length) verdict = 'no-results-from-provider';
+  else if (!withLink.length) {
+    verdict = coverage.anyLinkField === 0
+      ? `no result carried any of the link fields (${LINK_KEYS.join(', ')}) — likely the wrong engine`
+      : `every link was refused (${Object.entries(linkVerdicts).filter(([, n]) => n).map(([k, n]) => `${k}:${n}`).join(' ')})`;
+  }
+
   /* Every stage a record can be lost at, counted the same way the
      OpenWeb Ninja adapter counts them, so the two are comparable. */
   const diagnostics = {
     provider: 'serpapi',
+    engine: engine(),
     requests: 1,
     elapsedMs,
     returnedByProvider: results.length,
@@ -390,6 +507,11 @@ async function search(intent, options) {
     wouldNeedSecondRequest: records.filter((r) => !r.productUrl).length,
     /* whether one request was enough to fill the page Fynd asks for */
     filledPageInOneRequest: withLink.length >= wanted,
+    /* why, when the answer is none */
+    verdict,
+    fieldCoverage: coverage,
+    linkFieldsSeen: linkFields,
+    linkVerdicts,
     offers: { skipped: true, reason: 'single-request prototype: no follow-up call is made' }
   };
 
