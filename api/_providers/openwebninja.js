@@ -61,6 +61,12 @@
    link is dropped, never linked to Google and never linked to a URL
    assembled out of a store domain.
 
+   Because step 2 is where the requests go, it is spent carefully: only
+   on records the gate could actually show, only while the page is still
+   short of products that would BE shown — not merely of resolved links
+   — and never more than `wanted + LOOKUP_SLACK` times. See "Which
+   records are worth a lookup" below.
+
    ---------------------------------------------------------
    Why the image cannot be attached to the wrong product
    ---------------------------------------------------------
@@ -126,6 +132,27 @@ const OVERFETCH = 2;
    resolved by then is what gets shown. */
 const OFFER_CONCURRENCY = 4;
 const DEFAULT_OFFER_BUDGET_MS = 6000;
+
+/* How far past its target one search may keep looking for products it
+   can actually show. Aiming at shown products rather than at resolved
+   links means an unshowable answer no longer ends the search, so
+   without a ceiling a page of poor records would keep buying lookups
+   down the whole candidate list.
+
+   Measured over the scenarios in scripts/bench-offer-resolution.js, on
+   one seeded set of records, against the behaviour this replaced
+   (18.3 requests, 8.5 products shown, 2414ms):
+
+     slack  0   13.0 requests   6.8 shown   cheapest, and thinnest
+     slack  4   16.3 requests   8.5 shown   same page, fewer requests
+     slack  8   18.5 requests   9.8 shown   same requests, fuller page
+     slack 12   19.2 requests  10.3 shown   diminishing
+
+   Four is set because the object here is to spend less: it holds the
+   page where it was while cutting requests, latency and wasted
+   lookups. Eight is the value to raise it to if filling the grid
+   matters more than the request count. */
+const LOOKUP_SLACK = 4;
 const offersEnabled = () => text(process.env.OPENWEBNINJA_RESOLVE_OFFERS).toLowerCase() !== 'off';
 
 const text = (v) => (v === undefined || v === null ? '' : String(v).trim());
@@ -434,11 +461,92 @@ async function offersFor(productId, region) {
   }
 }
 
-/* Fills in the records that arrived without a retailer link, in small
-   parallel batches, stopping as soon as enough records have one or the
-   budget expires. Mutates in place; a record left unresolved keeps no
-   price, retailer or URL and is dropped by the gate. */
-async function resolveMissingOffers(records, wanted, region, stats) {
+/* -----------------------------------------------------------
+   Which records are worth a lookup
+   -----------------------------------------------------------
+
+   A lookup costs one request, so it is spent only on a record that
+   could actually end up on the page. The gate decides that, not a copy
+   of its rules here: a copy would drift from it, and then lookups would
+   be skipped for records the gate would have shown.
+
+   What is NOT used to skip a lookup is the record's own stated price,
+   though it is the obvious thing to try. It is not a bound on what the
+   sellers charge: the same record priced at $87.97 has been seen with
+   one seller offer at $54 and another at $240 — both cheaper and dearer
+   than the price the search returned. Skipping a record for being over
+   the shopper's ceiling would therefore drop products that come in
+   under it once the offer is read, so the budget is applied where it
+   can be applied honestly: to the offer's own price, after the lookup.
+
+   product-source.js requires this adapter, so requiring it back at
+   module load would hand over a half-built exports object. By the time
+   any of this runs the module is whole, so it is required on first use
+   and kept. */
+let gateModule = null;
+const gate = () => (gateModule || (gateModule = require('./product-source')));
+
+/* A stand-in offer, used only to ask the gate a question: given a
+   perfect price, retailer and link, would this record be shown? It is
+   never stored on a record and never displayed — the answer is about
+   the fields a lookup CANNOT supply, which is title and image. */
+const PERFECT_OFFER = { price: 1, retailer: 'x', productUrl: 'https://example.com/p/1' };
+
+/* The gate's own reason this record can never be shown, or null when a
+   lookup could still save it. */
+function unfitReason(record) {
+  const result = gate().toProduct(Object.assign({}, record, PERFECT_OFFER), {});
+  return result.ok ? null : result.reason;
+}
+
+/* How many products would actually be shown right now.
+
+   Counted through the gate rather than by counting links, because a
+   record can have a link and still not be displayable: the URL can be a
+   redirect, the offer can carry no price or no shop, the price can be
+   over budget, and two records can resolve to the same URL, which the
+   gate shows once. Counting links instead of products is what used to
+   stop the loop at twelve links and leave the page with nine cards. */
+function verifiedCount(records, intent) {
+  const urls = new Set();
+  for (const record of records) {
+    if (!record.productUrl) continue;
+    if (!withinBudget(record, intent)) continue;
+    if (gate().toProduct(record, {}).ok) urls.add(record.productUrl);
+  }
+  return urls.size;
+}
+
+/* One product's sellers, reduced to the offer worth showing, or null.
+   Every outcome is counted where it happens, so a search that resolves
+   nothing says whether the lookups failed, came back empty, or came
+   back carrying no link that could be shown. */
+async function lookupFor(record, region, tally) {
+  tally.lookupsMade += 1;
+  const result = await offersFor(record.sku, region);
+  if (result.failed) { tally.lookupsFailed += 1; return null; }
+  if (!result.offers.length) {
+    tally.lookupsEmpty += 1;
+    /* one sample is enough to see whether parsing is the problem */
+    if (!tally.offersShape) tally.offersShape = result.shape;
+    return null;
+  }
+  const commerce = pickOffer(result.offers, record.retailerHint);
+  if (!commerce) tally.noDirectLinkInOffers += 1;
+  return commerce;
+}
+
+/* Fills in the records that arrived without a retailer link, a few at
+   a time, stopping as soon as enough of them would actually be SHOWN or
+   the budget expires. Mutates in place; a record left
+   unresolved keeps no price, retailer or URL and is dropped by the gate.
+
+   Three things bound what this can spend, and none of them can be
+   exceeded: a lookup is only ever made for a candidate that could end
+   up on the page, no candidate is looked up twice, and the total is
+   capped at `wanted + LOOKUP_SLACK`. The wall-clock budget still cuts
+   it short before any of them. */
+async function resolveMissingOffers(records, wanted, region, stats, intent) {
   const tally = stats || {};
   tally.neededOfferLookup = records.filter((r) => !r.productUrl).length;
   tally.lookupsMade = 0;
@@ -451,46 +559,104 @@ async function resolveMissingOffers(records, wanted, region, stats) {
   tally.budgetExpired = false;
   tally.noProductId = records.filter((r) => !r.productUrl && !r.sku).length;
   tally.offersShape = null;
+  /* records a lookup could not have saved, by the gate's own reason for
+     each, so a skipped record is accounted for rather than silent */
+  tally.skippedUnfit = {};
 
   if (!offersEnabled()) { tally.skipped = true; return tally; }
 
   const budget = Number(process.env.OPENWEBNINJA_OFFER_BUDGET_MS) || DEFAULT_OFFER_BUDGET_MS;
   const deadline = Date.now() + budget;
-  const pending = records.filter((r) => !r.productUrl && r.sku);
-  let resolved = records.filter((r) => r.productUrl).length;
 
-  for (let i = 0; i < pending.length; i += OFFER_CONCURRENCY) {
-    if (resolved >= wanted) break;
-    if (Date.now() >= deadline) { tally.budgetExpired = true; break; }
-
-    const batch = pending.slice(i, i + OFFER_CONCURRENCY);
-    const found = await Promise.all(batch.map(async (record) => {
-      tally.lookupsMade += 1;
-      const result = await offersFor(record.sku, region);
-      if (result.failed) { tally.lookupsFailed += 1; return null; }
-      if (!result.offers.length) {
-        tally.lookupsEmpty += 1;
-        /* one sample is enough to see whether parsing is the problem */
-        if (!tally.offersShape) tally.offersShape = result.shape;
-        return null;
-      }
-      const commerce = pickOffer(result.offers, record.retailerHint);
-      if (!commerce) tally.noDirectLinkInOffers += 1;
-      return commerce;
-    }));
-
-    found.forEach((commerce, n) => {
-      if (!commerce) return;
-      const record = batch[n];
-      /* all three together, from the one offer they came from */
-      record.price = commerce.price;
-      record.currency = commerce.currency;
-      record.retailer = commerce.retailer;
-      record.productUrl = commerce.productUrl;
-      resolved += 1;
-      tally.resolvedFromOffers += 1;
-    });
+  /* The candidates, in the order the source ranked them. */
+  const pending = [];
+  for (const record of records) {
+    if (record.productUrl || !record.sku) continue;
+    const unfit = unfitReason(record);
+    if (unfit) {
+      tally.skippedUnfit[unfit] = (tally.skippedUnfit[unfit] || 0) + 1;
+      continue;
+    }
+    pending.push(record);
   }
+  tally.candidates = pending.length;
+
+  /* The hard cap on what one search may spend.
+
+     Aiming at products rather than links means a record that resolves
+     to something unshowable — a redirect, a priceless offer, a URL
+     another record already claimed, a price over the shopper's budget —
+     no longer stops the search, and on poor data it would keep buying
+     lookups down the whole candidate list. So a search spends at most
+     one lookup per product it wants, plus LOOKUP_SLACK. */
+  const ceiling = Math.min(pending.length, wanted + LOOKUP_SLACK);
+  tally.lookupCeiling = ceiling;
+  tally.ceilingReached = false;
+
+  let verified = verifiedCount(records, intent);
+
+  /* Four lookups in flight at a time, as before, but continuously
+     rather than in batches: a worker takes the next candidate the
+     moment it is free, so coming up one short costs one more round trip
+     instead of one more batch.
+
+     A worker starts a lookup only while the answers already outstanding
+     could still leave the page short — `verified + inFlight < wanted`.
+     That is what stops a search buying lookups it can have no use for,
+     the same guarantee a batch sized to the shortfall gives, without
+     waiting for a whole batch to come back. */
+  let inFlight = 0;
+  let next = 0;
+
+  const worthStarting = () => next < ceiling && verified + inFlight < wanted && Date.now() < deadline;
+
+  await new Promise((done) => {
+    let settled = false;
+
+    const pump = () => {
+      while (inFlight < OFFER_CONCURRENCY && worthStarting()) {
+        const record = pending[next];
+        next += 1;
+        inFlight += 1;
+
+        lookupFor(record, region, tally)
+          .then((commerce) => {
+            if (!commerce) return;
+            /* all three together, from the one offer they came from */
+            record.price = commerce.price;
+            record.currency = commerce.currency;
+            record.retailer = commerce.retailer;
+            record.productUrl = commerce.productUrl;
+            tally.resolvedFromOffers += 1;
+            /* asked again through the gate: a link that cannot be shown
+               has not filled a slot, so the search keeps going for one
+               that can */
+            verified = verifiedCount(records, intent);
+          })
+          /* lookupFor reports its own failures; nothing here may throw
+             and leave the pool with a worker it never gets back */
+          .catch(() => {})
+          .then(() => { inFlight -= 1; pump(); });
+      }
+
+      /* nothing running and nothing worth starting: done. The budget is
+         named as the reason only when candidates were actually left. */
+      if (inFlight === 0 && !settled) {
+        settled = true;
+        if (next < ceiling && verified < wanted && Date.now() >= deadline) tally.budgetExpired = true;
+        done();
+      }
+    };
+
+    pump();
+  });
+
+  tally.verified = verified;
+  tally.targetMet = verified >= wanted;
+  /* the page came up short because the cap stopped the search, not
+     because the candidates ran out — told apart so a page that is
+     habitually short is visible for what it is */
+  tally.ceilingReached = !tally.targetMet && tally.lookupsMade >= ceiling && pending.length > ceiling;
   return tally;
 }
 
@@ -538,8 +704,10 @@ async function search(intent, options) {
   diagnostics.withInlineLink = records.filter((r) => r.productUrl).length;
 
   /* the search endpoint returns Google's product view, so most records
-     arrive without a retailer link; this fetches the sellers for them */
-  diagnostics.offers = await resolveMissingOffers(records, wanted, region, {});
+     arrive without a retailer link; this fetches the sellers for them.
+     The intent goes with them so a record already over the shopper's
+     ceiling is not looked up only to be dropped for its price. */
+  diagnostics.offers = await resolveMissingOffers(records, wanted, region, {}, intent);
 
   records.forEach((r) => { delete r.retailerHint; });
   diagnostics.withAnyLink = records.filter((r) => r.productUrl).length;
@@ -580,6 +748,10 @@ module.exports = {
   pickOffer,
   offersFor,
   resolveMissingOffers,
+  unfitReason,
+  verifiedCount,
+  LOOKUP_SLACK,
+  OFFER_CONCURRENCY,
   OFFERS_URL,
   imageFrom,
   offerFrom,

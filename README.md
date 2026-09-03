@@ -499,6 +499,49 @@ roughly 770 shopper searches a month rather than 10,000. Two knobs bound it:
 | `OPENWEBNINJA_RESOLVE_OFFERS` | on | `off` skips the lookups entirely — cheaper, and almost everything is then dropped for having no retailer link |
 | `OPENWEBNINJA_OFFER_BUDGET_MS` | 6000 | total wall-clock budget for the lookups; whatever resolved by then is what shows |
 
+#### Which records are worth a lookup
+
+Since a lookup is a whole request, it is only spent on a record that could
+actually reach the page:
+
+* **A record the gate could never show is never looked up.** No offer can
+  supply a photo or a title, so a record missing one is passed over. The gate
+  itself is asked — the record is put to `toProduct()` with a stand-in offer —
+  rather than a copy of its rules being kept here, which would drift from it.
+  Each one is counted in `diagnostics.offers.skippedUnfit` under the gate's own
+  name for the fault.
+* **The search stops when twelve products would be SHOWN**, not when twelve
+  links have been resolved. A link can resolve and still not be displayable: it
+  can be a redirect, its offer can carry no price or no shop, its price can be
+  over the shopper's budget, or two records can resolve to the same URL, which
+  the gate shows once. Counting links is what used to stop the search at twelve
+  and leave the grid with nine cards in it.
+* **Only as many lookups as the page still needs are in flight.** Four at a
+  time as before, but a worker starts one only while the answers already
+  outstanding could still leave the page short, so finishing one product short
+  costs one lookup rather than four.
+* **A hard cap of `wanted + LOOKUP_SLACK` lookups per search**, so poor data
+  cannot run the request count down the whole candidate list. `LOOKUP_SLACK` is
+  4: it holds the page where it was while spending less. Raising it to 8 buys a
+  fuller grid at about the request count the adapter used to spend — the
+  measured trade is in the comment on the constant.
+
+A record's own stated price is deliberately **not** used to skip a lookup. It
+is not a bound on what the sellers charge: the same record priced at $87.97 has
+been seen with one seller offer at $54 and another at $240. The budget is
+applied to the offer's own price, after the lookup.
+
+Measure any of this offline, with no key and no network:
+
+```sh
+node scripts/bench-offer-resolution.js --out=before.json
+node scripts/bench-offer-resolution.js --compare=before.json
+```
+
+It runs six scenarios of varying data quality through the adapter and the gate
+with both endpoints stubbed, and reports requests, lookups, products shown,
+gate pass rate, modelled latency and wasted lookups.
+
 Lookups also stop early once enough records have a link, and only products
 that need one are looked up at all.
 
@@ -603,6 +646,7 @@ node scripts/test-pipeline.js
 The rest of the suites, all offline except the two that drive a browser:
 
 ```sh
+node scripts/bench-offer-resolution.js  # what one search costs the provider
 node scripts/test-serpapi.js   # the SerpApi adapter, its links and its costs
 node scripts/test-stripe.js    # payments and subscriptions
 node scripts/test-auth.js      # accounts, sessions, tokens, OAuth
