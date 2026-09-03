@@ -71,7 +71,11 @@ function classify(value) {
   try { host = new URL(raw).hostname; } catch (err) { return 'UNPARSEABLE'; }
 
   if (/(^|\.)serpapi\.com$/i.test(host)) return "SERPAPI'S OWN — an API endpoint, not a shop";
-  if (!provider.looksDirect(raw)) return "GOOGLE'S OWN — a comparison page, refused";
+  /* Google serves shopping thumbnails from its own CDN. That is fine for
+     an image — the gate only asks that the source supplied one — and is
+     not the same fault as a link pointing at Google. */
+  if (/(^|\.)(gstatic\.com|googleusercontent\.com)$/i.test(host)) return 'GOOGLE-HOSTED IMAGE — usable as an image, never as a link';
+  if (!provider.looksDirect(raw)) return "GOOGLE'S OWN — not a retailer page, refused as a link";
 
   const fault = linkFault(raw);
   if (fault) return `REFUSED BY THE GATE — ${fault}`;
@@ -145,7 +149,7 @@ async function main() {
     process.exit(1);
   }
 
-  console.log(`status   : 200`);
+  console.log('request  : succeeded');
   console.log(`\nenvelope keys: ${keysOf(payload).join(', ')}`);
   if (payload.search_metadata) {
     const m = payload.search_metadata;
