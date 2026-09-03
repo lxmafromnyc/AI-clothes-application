@@ -264,10 +264,15 @@ const openwebninja = require('./openwebninja');
    on. Nothing outside this file refers to it, so it can be dropped by
    deleting one require and one line below. */
 const etsy = require('./etsy');
+/* registered for evaluation, not in use. Nothing selects it unless
+   PRODUCT_SOURCE=serpapi names it, so registering it changes nothing
+   about what a deployment runs. */
+const serpapi = require('./serpapi');
 
 const PROVIDERS = {
   [openwebninja.name]: openwebninja,
   [etsy.name]: etsy,
+  [serpapi.name]: serpapi,
 
   /* Placeholder used when nothing is configured. It returns no products
      rather than inventing any, which is what makes /api/search answer

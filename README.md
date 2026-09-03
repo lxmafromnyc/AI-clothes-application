@@ -534,6 +534,63 @@ explicitly, and an unset `PRODUCT_SOURCE` runs OpenWeb Ninja instead. Deleting
 one `require` and one registry line removes it entirely. It searches a single
 catalogue, which is why it is no longer the default.
 
+### SerpApi (registered, not in use)
+
+`api/_providers/serpapi.js` reaches the same Google Shopping index through a
+different vendor. It is registered so the two can be measured against each
+other on the only question that matters here — how many records survive the
+gate with a link to the retailer's own product page — and nothing selects it
+unless `PRODUCT_SOURCE=serpapi` names it. Fynd still runs on OpenWeb Ninja.
+
+It searches `engine=google_shopping_light`, the cheaper and faster Google
+Shopping surface; `SERPAPI_ENGINE` switches it to the full `google_shopping`.
+
+Two differences from the OpenWeb Ninja adapter are worth knowing:
+
+* **The key travels in the query string.** SerpApi accepts no key header. The
+  adapter reads `SERPAPI_API_KEY` only inside the function, never returns it,
+  and puts every string it might log through `redact()` first, which replaces
+  the key with `***`.
+* **A shopping result's own links belong to Google.** `product_link` is
+  Google's comparison page and `serpapi_product_api` is an API endpoint, so
+  neither is ever shown as a product URL. Each candidate field goes through
+  `looksDirect()`, which refuses every Google and SerpApi host, and a record
+  left without a retailer URL is dropped by the gate rather than linked
+  somewhere it should not be. When a result carries no direct link, the
+  `google_product` sellers endpoint is asked for that product's sellers — one
+  extra request per product, counted in `diagnostics.requests`, which is what
+  the cost per search is computed from. `SERPAPI_RESOLVE_SELLERS=off` skips
+  that step.
+
+Which live field actually carries a merchant URL is answered against a real
+response rather than assumed:
+
+```sh
+SERPAPI_API_KEY=... node scripts/probe-serpapi.js "black oversized hoodie"
+```
+
+It prints the plan and the searches left on it (the account endpoint is free),
+every key on the first result with each URL classified — retailer page,
+Google's own, SerpApi's own, redirector or listing page — how many of the batch
+carry a usable link inline, the record the adapter maps, and the gate's verdict
+for the whole batch. Add `--sellers` to spend one more request on seeing what
+the sellers endpoint returns.
+
+Then measure it:
+
+```sh
+SERPAPI_API_KEY=... node scripts/bench-serpapi.js --queries=5 --max-requests=40
+```
+
+It runs realistic shopper searches through the adapter and the gate and reports
+usable products per search, products shown, full-page rate, direct retailer-link
+rate, latency, duplicates, retailer diversity, requests per search and cost per
+search — the last at the plan's own price per request, read from the account
+rather than assumed. A run spends real quota, so it states the worst case
+before it starts, refuses to start when that exceeds the searches left, and
+stops at `--max-requests` whatever happens. `--out=path.json` writes the whole
+result for comparing against another provider later.
+
 ### Testing the pipeline
 
 Offline, with no key and no network — intent, mapping, the gate's rejection
@@ -546,6 +603,7 @@ node scripts/test-pipeline.js
 The rest of the suites, all offline except the two that drive a browser:
 
 ```sh
+node scripts/test-serpapi.js   # the SerpApi adapter, its links and its costs
 node scripts/test-stripe.js    # payments and subscriptions
 node scripts/test-auth.js      # accounts, sessions, tokens, OAuth
 node scripts/test-ui.js        # the interface, its palette and its contrast
