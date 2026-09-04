@@ -86,9 +86,9 @@ PLANS="$(printf '%s' "$ACCOUNT" | node -e "
     } catch (e) { console.log(''); }
   });")"
 
-[ "$PLANS" = "free:0:false pro:14.99:true max:79.99:true" ] \
-  && ok "Free \$0, Pro \$14.99 and Max \$79.99 are all purchasable" \
-  || bad "Free \$0, Pro \$14.99 and Max \$79.99 are all purchasable" "got: $PLANS
+[ "$PLANS" = "free:0:false pro:14.99:true max:39.99:true" ] \
+  && ok "Free \$0, Pro \$14.99 and Max \$39.99 are all purchasable" \
+  || bad "Free \$0, Pro \$14.99 and Max \$39.99 are all purchasable" "got: $PLANS
         A plan with purchasable=false has no price id: set STRIPE_PRICE_PRO / STRIPE_PRICE_MAX and redeploy."
 
 [ "$(field billing.enabled)" = "true" ] \

@@ -854,6 +854,130 @@ function twoEndpointStub(searchPayload, offersByProductId) {
     assert.strictEqual(records[0].price, 54);
   });
 
+  /* -------------------------------------------------------
+     Which records are worth a lookup
+
+     A lookup is one request. These are the rules that decide whether
+     to spend one, and they are what keeps a search from paying for
+     answers it cannot use.
+     ------------------------------------------------------- */
+
+  const lookupsIn = (stub) => stub.calls.filter((u) => u.includes('/product-offers'));
+  const lookedUpIds = (stub) => lookupsIn(stub).map((u) => new URL(u).searchParams.get('product_id'));
+
+  await testAsync('spends no lookup on a record no offer could rescue', async () => {
+    process.env.OPENWEBNINJA_API_KEY = 'test-key';
+    const stub = twoEndpointStub(envelope([
+      product({ product_id: 'no-photo', product_photos: [] }),
+      product({ product_id: 'no-title', product_title: '' }),
+      product({ product_id: 'usable' })
+    ]), {
+      'no-photo': [offer('nordstrom.com', '$54.00', 'https://www.nordstrom.com/s/a/1')],
+      'no-title': [offer('nordstrom.com', '$54.00', 'https://www.nordstrom.com/s/b/2')],
+      usable: [offer('nordstrom.com', '$54.00', 'https://www.nordstrom.com/s/c/3')]
+    });
+    const records = await withStubbedFetch(stub, () => provider.search(nikeIntent, { limit: 12 }));
+
+    assert.deepStrictEqual(lookedUpIds(stub), ['usable'], 'only the record a link could actually save');
+    const skipped = records.diagnostics.offers.skippedUnfit;
+    assert.strictEqual(skipped['missing-image-url'], 1, 'and the reason is the gate\'s own');
+    assert.strictEqual(skipped['missing-title'], 1);
+  });
+
+  await testAsync('a record the gate would show is never skipped', async () => {
+    process.env.OPENWEBNINJA_API_KEY = 'test-key';
+    /* no brand, no category, no sizes: none of them is required, so a
+       lookup must still be spent on it */
+    const bare = product({ product_id: 'bare', product_attributes: {} });
+    const stub = twoEndpointStub(envelope([bare]), { bare: [offer('nordstrom.com', '$54.00', 'https://www.nordstrom.com/s/d/4')] });
+    const records = await withStubbedFetch(stub, () => provider.search(nikeIntent, { limit: 12 }));
+    assert.deepStrictEqual(lookedUpIds(stub), ['bare']);
+    assert.strictEqual(gate(records).products.length, 1);
+  });
+
+  await testAsync('asks for only as many lookups as the page still needs', async () => {
+    process.env.OPENWEBNINJA_API_KEY = 'test-key';
+    /* eleven products are already showable, so the page is one short */
+    const have = Array.from({ length: 11 }, (_, i) => productWithInlineOffer({
+      product_id: `have${i}`,
+      offer: { store_name: 'Nordstrom', price: '$40.00', offer_page_url: `https://www.nordstrom.com/s/have/${i}` }
+    }));
+    const need = Array.from({ length: 4 }, (_, i) => product({ product_id: `need${i}` }));
+    const offers = {};
+    need.forEach((_, i) => { offers[`need${i}`] = [offer('nordstrom.com', '$50.00', `https://www.nordstrom.com/s/need/${i}`)]; });
+
+    const stub = twoEndpointStub(envelope(have.concat(need)), offers);
+    const records = await withStubbedFetch(stub, () => provider.search(nikeIntent, { limit: 12 }));
+
+    assert.strictEqual(lookupsIn(stub).length, 1,
+      `one product short must cost one lookup, not a batch of ${provider.OFFER_CONCURRENCY}`);
+    assert.strictEqual(gate(records).products.length, 12);
+  });
+
+  await testAsync('fills the page with twelve shown, not twelve resolved links', async () => {
+    process.env.OPENWEBNINJA_API_KEY = 'test-key';
+    const many = Array.from({ length: 24 }, (_, i) => product({ product_id: `p${i}` }));
+    const offers = {};
+    many.forEach((_, i) => {
+      /* every fifth seller offers nothing but a Google link: the lookup
+         resolves, and the record still cannot be shown */
+      offers[`p${i}`] = i % 5 === 0
+        ? [offer('shop.com', '$50.00', 'https://www.google.com/shopping/product/x')]
+        : [offer('nordstrom.com', '$50.00', `https://www.nordstrom.com/s/p/${i}`)];
+    });
+    const stub = twoEndpointStub(envelope(many), offers);
+    const records = await withStubbedFetch(stub, () => provider.search(nikeIntent, { limit: 12 }));
+
+    assert.strictEqual(gate(records).products.length, 12, 'the grid fills when the records allow it');
+    assert.strictEqual(records.diagnostics.offers.targetMet, true);
+  });
+
+  await testAsync('two records resolving to one URL do not both fill a slot', async () => {
+    process.env.OPENWEBNINJA_API_KEY = 'test-key';
+    const pair = [product({ product_id: 'twin-a' }), product({ product_id: 'twin-b' }), product({ product_id: 'other' })];
+    const same = 'https://www.nordstrom.com/s/same/1';
+    const stub = twoEndpointStub(envelope(pair), {
+      'twin-a': [offer('nordstrom.com', '$50.00', same)],
+      'twin-b': [offer('nordstrom.com', '$50.00', same)],
+      other: [offer('nordstrom.com', '$50.00', 'https://www.nordstrom.com/s/other/2')]
+    });
+    const records = await withStubbedFetch(stub, () => provider.search(nikeIntent, { limit: 12 }));
+    assert.strictEqual(lookupsIn(stub).length, 3, 'the duplicate does not stop the search early');
+    assert.strictEqual(gate(records).products.length, 2, 'and it is shown once');
+  });
+
+  await testAsync('the lookup ceiling is authoritative however poor the data', async () => {
+    process.env.OPENWEBNINJA_API_KEY = 'test-key';
+    const many = Array.from({ length: 24 }, (_, i) => product({ product_id: `p${i}` }));
+    const offers = {};
+    /* every seller links to Google: no lookup can ever fill a slot */
+    many.forEach((_, i) => { offers[`p${i}`] = [offer('shop.com', '$50.00', 'https://www.google.com/shopping/product/x')]; });
+
+    const stub = twoEndpointStub(envelope(many), offers);
+    const records = await withStubbedFetch(stub, () => provider.search(nikeIntent, { limit: 12 }));
+
+    const spent = lookupsIn(stub).length;
+    assert.strictEqual(spent, 12 + provider.LOOKUP_SLACK, `the cap is the cap: ${spent} lookups made`);
+    assert.strictEqual(records.diagnostics.offers.lookupsMade, spent, 'and it is reported as spent');
+    assert.strictEqual(records.diagnostics.offers.ceilingReached, true, 'the short page is attributed to the cap');
+    assert.strictEqual(gate(records).products.length, 0, 'nothing unshowable is shown to fill it');
+  });
+
+  await testAsync('the time budget still stops a search before the ceiling', async () => {
+    process.env.OPENWEBNINJA_API_KEY = 'test-key';
+    process.env.OPENWEBNINJA_OFFER_BUDGET_MS = '1';
+    const many = Array.from({ length: 24 }, (_, i) => product({ product_id: `p${i}` }));
+    const base = twoEndpointStub(envelope(many), {});
+    const slow = async (url, init) => {
+      if (String(url).includes('/product-offers')) await new Promise((r) => setTimeout(r, 12));
+      return base(url, init);
+    };
+    const records = await withStubbedFetch(slow, () => provider.search(nikeIntent, { limit: 12 }));
+    assert.strictEqual(records.diagnostics.offers.budgetExpired, true);
+    assert.ok(base.calls.filter((u) => u.includes('/product-offers')).length <= 12 + provider.LOOKUP_SLACK);
+    delete process.env.OPENWEBNINJA_OFFER_BUDGET_MS;
+  });
+
   await testAsync('surfaces an upstream failure instead of returning nothing quietly', async () => {
     process.env.OPENWEBNINJA_API_KEY = 'test-key';
     await assert.rejects(
@@ -930,7 +1054,8 @@ function twoEndpointStub(searchPayload, offersByProductId) {
 
     const handler = require('../api/search');
     const res = fakeRes();
-    await withStubbedFetch(twoEndpointStub(payload, offers),
+    const stub = twoEndpointStub(payload, offers);
+    await withStubbedFetch(stub,
       () => handler({ method: 'POST', headers: {}, body: { intent: nikeIntent, limit: 12 }, on: () => {} }, res));
 
     assert.strictEqual(res.statusCode, 200);
@@ -938,7 +1063,16 @@ function twoEndpointStub(searchPayload, offersByProductId) {
 
     const products = res.body.products;
     assert.strictEqual(products.length, 2, `expected 2 verified products, got ${products.length}: ${JSON.stringify(res.body.rejected)}`);
-    assert.strictEqual(res.body.rejected['missing-image-url'], 1, 'the photoless record');
+
+    /* The photoless record is not looked up at all: no offer can supply
+       a photo, so the request would buy nothing. It still reaches the
+       gate and is still rejected — but now for having no price, since
+       no offer was fetched for it, and the reason it was passed over is
+       in the diagnostics with the gate's own name for the fault. */
+    const lookedUp = stub.calls.filter((u) => u.includes('/product-offers')).map((u) => new URL(u).searchParams.get('product_id'));
+    assert.ok(!lookedUp.includes('3'), 'no lookup may be spent on a record with no photo');
+    assert.strictEqual(res.body.diagnostics.offers.skippedUnfit['missing-image-url'], 1);
+    assert.strictEqual(res.body.rejected['missing-price'], 2, 'the photoless record and the one with no seller link');
 
     products.forEach((p) => {
       assert.ok(p.name, 'every card needs a title');
@@ -961,6 +1095,36 @@ function twoEndpointStub(searchPayload, offersByProductId) {
     const walmart = products.find((p) => p.retailer === 'walmart.com');
     assert.strictEqual(walmart.imageUrl, 'https://img.example-cdn.com/hanes-black.jpg');
     assert.ok(!('brand' in walmart), 'a brandless product still shows, without a brand');
+  });
+
+  await testAsync('one shopper search is one metered search, whatever it costs us', async () => {
+    process.env.OPENWEBNINJA_API_KEY = 'test-key';
+    process.env.PRODUCT_SOURCE = 'openwebninja';
+
+    const meter = require('../api/_meter');
+    const realSpend = meter.spend;
+    const spends = [];
+    meter.spend = async (identity, metric, amount) => { spends.push({ metric, amount }); return realSpend(identity, metric, amount); };
+
+    try {
+      const many = Array.from({ length: 24 }, (_, i) => product({ product_id: `m${i}` }));
+      const offers = {};
+      many.forEach((_, i) => { offers[`m${i}`] = [offer('nordstrom.com', '$50.00', `https://www.nordstrom.com/s/m/${i}`)]; });
+
+      const stub = twoEndpointStub(envelope(many), offers);
+      const res = fakeRes();
+      const handler = require('../api/search');
+      await withStubbedFetch(stub,
+        () => handler({ method: 'POST', headers: {}, body: { intent: nikeIntent, limit: 12 }, on: () => {} }, res));
+
+      assert.strictEqual(res.statusCode, 200);
+      assert.ok(stub.calls.filter((u) => u.includes('/product-offers')).length > 1,
+        'the search must really have made several provider requests');
+      assert.deepStrictEqual(spends, [{ metric: 'searches', amount: 1 }],
+        'the shopper is charged for their search, not for our lookups');
+    } finally {
+      meter.spend = realSpend;
+    }
   });
 
   await testAsync('an empty upstream answer returns no products rather than invented ones', async () => {

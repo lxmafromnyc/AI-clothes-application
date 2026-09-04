@@ -16,7 +16,7 @@
    live mode are a configuration change and not a code change:
 
      STRIPE_PRICE_PRO   price_… for Pro,  $14.99/month recurring
-     STRIPE_PRICE_MAX   price_… for Max,  $79.99/month recurring
+     STRIPE_PRICE_MAX   price_… for Max,  $39.99/month recurring
 
    A plan whose price id is not configured cannot be bought — checkout
    answers 503 and says which variable is missing — rather than falling
@@ -61,12 +61,12 @@ const PLANS = {
        reads as a trial of the product, where a monthly one reads as a
        wall you hit on the 3rd. */
     period: 'day',
-    limits: { [AI_TOKENS]: 20000, [SEARCHES]: 3 },
+    limits: { [AI_TOKENS]: 20000, [SEARCHES]: 1 },
     priceEnv: null,
     tagline: 'Try it out, every day.',
     features: [
       '20,000 AI tokens a day',
-      '3 live product searches a day',
+      '1 live product search a day',
       'Real listings, prices and retailer links',
       'No card, no account required'
     ]
@@ -77,12 +77,12 @@ const PLANS = {
     amount: 14.99,
     interval: 'month',
     period: 'month',
-    limits: { [AI_TOKENS]: 1000000, [SEARCHES]: 75 },
+    limits: { [AI_TOKENS]: 1000000, [SEARCHES]: 100 },
     priceEnv: 'STRIPE_PRICE_PRO',
     tagline: 'For shopping properly.',
     features: [
       '1,000,000 AI tokens a month',
-      '75 live product searches a month',
+      '100 live product searches a month',
       'Everything in Free',
       'Cancel any time from the billing portal'
     ]
@@ -90,15 +90,15 @@ const PLANS = {
   max: {
     id: 'max',
     name: 'Max',
-    amount: 79.99,
+    amount: 39.99,
     interval: 'month',
     period: 'month',
-    limits: { [AI_TOKENS]: 5000000, [SEARCHES]: 400 },
+    limits: { [AI_TOKENS]: 5000000, [SEARCHES]: 500 },
     priceEnv: 'STRIPE_PRICE_MAX',
     tagline: 'For searching all day.',
     features: [
       '5,000,000 AI tokens a month',
-      '400 live product searches a month',
+      '500 live product searches a month',
       'Everything in Pro',
       'Cancel any time from the billing portal'
     ]

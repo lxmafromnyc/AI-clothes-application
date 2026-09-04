@@ -1256,29 +1256,31 @@ await test('a Google account carries a subscription the same way', async () => {
 
   const { res } = await call(accountEndpoint, { method: 'GET', jar: signedIn.finished.jar });
   assert.strictEqual(res.payload.plan.id, 'max');
-  assert.strictEqual(res.payload.usage.searches.limit, 400);
+  assert.strictEqual(res.payload.usage.searches.limit, 500);
 });
 
 await test('usage is counted against the account, and follows it across sign-ins', async () => {
   const { user } = await verifiedUser();
-  await usage.record(`user:${user.id}`, 'free', plans.SEARCHES, 2);
+  const allowance = plans.limitFor('free', plans.SEARCHES);
+  await usage.record(`user:${user.id}`, 'free', plans.SEARCHES, allowance);
 
   const again = await login('ada@example.test', PASSWORD);
   const { res } = await call(accountEndpoint, { method: 'GET', jar: again.jar });
-  assert.strictEqual(res.payload.usage.searches.used, 2, 'a new session sees the same counter');
-  assert.strictEqual(res.payload.usage.searches.remaining, 1);
+  assert.strictEqual(res.payload.usage.searches.used, allowance, 'a new session sees the same counter');
+  assert.strictEqual(res.payload.usage.searches.remaining, 0);
 });
 
 await test('two accounts are metered separately', async () => {
   const a = await verifiedUser({ email: 'a@example.test' });
   const b = await verifiedUser({ email: 'b@example.test' });
 
-  await usage.record(`user:${a.user.id}`, 'free', plans.SEARCHES, 3);
+  const allowance = plans.limitFor('free', plans.SEARCHES);
+  await usage.record(`user:${a.user.id}`, 'free', plans.SEARCHES, allowance);
 
   const seenA = await call(accountEndpoint, { method: 'GET', jar: a.jar });
   const seenB = await call(accountEndpoint, { method: 'GET', jar: b.jar });
   assert.strictEqual(seenA.res.payload.usage.searches.remaining, 0);
-  assert.strictEqual(seenB.res.payload.usage.searches.remaining, 3);
+  assert.strictEqual(seenB.res.payload.usage.searches.remaining, allowance);
 
   const blocked = await call(searchEndpoint, { jar: a.jar, body: { intent: {} } });
   assert.strictEqual(blocked.res.statusCode, 429);
@@ -1288,7 +1290,7 @@ await test('two accounts are metered separately', async () => {
 
 await test('signing out drops back to the anonymous free allowance, not the account’s', async () => {
   const { jar, user } = await verifiedUser();
-  await usage.record(`user:${user.id}`, 'free', plans.SEARCHES, 3);
+  await usage.record(`user:${user.id}`, 'free', plans.SEARCHES, plans.limitFor('free', plans.SEARCHES));
 
   const out = await call(authEndpoint, { jar, body: { action: 'logout' } });
   const anonymous = await call(accountEndpoint, { method: 'GET', jar: out.jar });

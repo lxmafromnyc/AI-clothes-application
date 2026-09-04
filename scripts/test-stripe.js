@@ -307,14 +307,14 @@ const planOf = async (userId) => (await users.byId(userId)).plan;
   console.log('\nplans and entitlement');
 
   await test('the three plans carry the limits the pricing page promises', () => {
-    assert.deepStrictEqual(plans.planOf('free').limits, { aiTokens: 20000, searches: 3 });
-    assert.deepStrictEqual(plans.planOf('pro').limits, { aiTokens: 1000000, searches: 75 });
-    assert.deepStrictEqual(plans.planOf('max').limits, { aiTokens: 5000000, searches: 400 });
+    assert.deepStrictEqual(plans.planOf('free').limits, { aiTokens: 20000, searches: 1 });
+    assert.deepStrictEqual(plans.planOf('pro').limits, { aiTokens: 1000000, searches: 100 });
+    assert.deepStrictEqual(plans.planOf('max').limits, { aiTokens: 5000000, searches: 500 });
     assert.strictEqual(plans.planOf('free').period, 'day');
     assert.strictEqual(plans.planOf('pro').period, 'month');
     assert.strictEqual(plans.planOf('max').period, 'month');
     assert.strictEqual(plans.planOf('pro').amount, 14.99);
-    assert.strictEqual(plans.planOf('max').amount, 79.99);
+    assert.strictEqual(plans.planOf('max').amount, 39.99);
   });
 
   await test('a price id maps to exactly one plan, and an unknown one to none', () => {
@@ -543,7 +543,7 @@ const planOf = async (userId) => (await users.byId(userId)).plan;
     const { res } = await callEndpoint(accountEndpoint, { jar, method: 'GET' });
     assert.strictEqual(res.payload.plan.id, 'free');
     assert.strictEqual(res.payload.subscription, null);
-    assert.deepStrictEqual(res.payload.usage.searches.limit, 3);
+    assert.deepStrictEqual(res.payload.usage.searches.limit, 1);
   });
 
   /* =========================================================
@@ -606,14 +606,14 @@ const planOf = async (userId) => (await users.byId(userId)).plan;
     const { res } = await callEndpoint(accountEndpoint, { jar, method: 'GET' });
     assert.strictEqual(res.payload.plan.id, 'max');
     assert.strictEqual(res.payload.usage.aiTokens.limit, 5000000);
-    assert.strictEqual(res.payload.usage.searches.limit, 400);
+    assert.strictEqual(res.payload.usage.searches.limit, 500);
   });
 
   await test('the usage limits move to the plan the subscription bought', async () => {
     const { jar, user, completed, created } = await completeCheckout('pro');
 
     const before = await callEndpoint(accountEndpoint, { jar, method: 'GET' });
-    assert.strictEqual(before.res.payload.usage.searches.limit, 3);
+    assert.strictEqual(before.res.payload.usage.searches.limit, 1);
     assert.strictEqual(before.res.payload.usage.aiTokens.limit, 20000);
     assert.strictEqual(before.res.payload.usage.searches.period, 'day');
 
@@ -621,7 +621,7 @@ const planOf = async (userId) => (await users.byId(userId)).plan;
     await deliver(created);
 
     const after = await callEndpoint(accountEndpoint, { jar, method: 'GET' });
-    assert.strictEqual(after.res.payload.usage.searches.limit, 75);
+    assert.strictEqual(after.res.payload.usage.searches.limit, 100);
     assert.strictEqual(after.res.payload.usage.aiTokens.limit, 1000000);
     assert.strictEqual(after.res.payload.usage.searches.period, 'month');
     assert.strictEqual(await planOf(user.id), 'pro');
@@ -684,7 +684,7 @@ const planOf = async (userId) => (await users.byId(userId)).plan;
     const after = await usage.meter(subject, 'pro', plans.SEARCHES);
     assert.deepStrictEqual(after, before, 'replaying an event must not move a counter');
     assert.strictEqual(after.used, 5);
-    assert.strictEqual(after.remaining, 70);
+    assert.strictEqual(after.remaining, 95);
   });
 
   await test('ten simultaneous copies of one delivery are applied once', async () => {
@@ -811,7 +811,7 @@ const planOf = async (userId) => (await users.byId(userId)).plan;
     assert.strictEqual(res.payload.plan.id, 'free', 'a card that stopped working stops the allowance');
     assert.strictEqual(res.payload.subscription.status, 'past_due');
     assert.strictEqual(res.payload.subscription.latestInvoiceStatus, 'payment_failed');
-    assert.strictEqual(res.payload.usage.searches.limit, 3);
+    assert.strictEqual(res.payload.usage.searches.limit, 1);
   });
 
   await test('a past_due subscription that is paid restores the plan', async () => {
@@ -1072,11 +1072,12 @@ const planOf = async (userId) => (await users.byId(userId)).plan;
 
   console.log('\nusage limits follow the subscription');
 
-  await test('the free allowance is three searches a day, and the fourth is refused', async () => {
+  await test('the free allowance is one search a day, and the second is refused', async () => {
     const { jar, user } = await signedUpUser();
     const subject = `user:${user.id}`;
 
-    for (let i = 1; i <= 3; i += 1) {
+    const limit = plans.limitFor('free', plans.SEARCHES);
+    for (let i = 1; i <= limit; i += 1) {
       const state = await usage.check(subject, 'free', plans.SEARCHES);
       assert.strictEqual(state.allowed, true, `search ${i} should be allowed`);
       await usage.record(subject, 'free', plans.SEARCHES, 1);
@@ -1087,16 +1088,16 @@ const planOf = async (userId) => (await users.byId(userId)).plan;
     const { res } = await callEndpoint(searchEndpoint, { jar, body: { intent: { categories: ['hoodie'] } } });
     assert.strictEqual(res.statusCode, 429);
     assert.strictEqual(res.payload.reason, 'over-limit');
-    assert.strictEqual(res.payload.usage.limit, 3);
+    assert.strictEqual(res.payload.usage.limit, 1);
     assert.strictEqual(res.payload.upgrade, true);
   });
 
-  await test('the same account on Pro is not refused at three', async () => {
+  await test('the same account on Pro is not refused at the free allowance', async () => {
     const { jar, user, completed, created } = await completeCheckout('pro');
     const subject = `user:${user.id}`;
 
-    /* three searches spent while still on Free */
-    for (let i = 0; i < 3; i += 1) await usage.record(subject, 'free', plans.SEARCHES, 1);
+    /* the whole free allowance spent while still on Free */
+    for (let i = 0; i < plans.limitFor('free', plans.SEARCHES); i += 1) await usage.record(subject, 'free', plans.SEARCHES, 1);
     const blocked = await callEndpoint(searchEndpoint, { jar, body: { intent: {} } });
     assert.strictEqual(blocked.res.statusCode, 429);
 
@@ -1106,11 +1107,11 @@ const planOf = async (userId) => (await users.byId(userId)).plan;
     /* the subscription is what changed, and nothing else */
     const state = await usage.check(subject, 'pro', plans.SEARCHES);
     assert.strictEqual(state.allowed, true);
-    assert.strictEqual(state.limit, 75);
+    assert.strictEqual(state.limit, 100);
 
     const { res } = await callEndpoint(accountEndpoint, { jar, method: 'GET' });
-    assert.strictEqual(res.payload.usage.searches.limit, 75);
-    assert.strictEqual(res.payload.usage.searches.remaining, 75);
+    assert.strictEqual(res.payload.usage.searches.limit, 100);
+    assert.strictEqual(res.payload.usage.searches.remaining, 100);
   });
 
   await test('an exhausted Max account is not told to upgrade to anything', async () => {
@@ -1119,7 +1120,7 @@ const planOf = async (userId) => (await users.byId(userId)).plan;
     await deliver(created);
 
     const subject = `user:${user.id}`;
-    await usage.record(subject, 'max', plans.SEARCHES, 400);
+    await usage.record(subject, 'max', plans.SEARCHES, 500);
 
     const state = await usage.check(subject, 'max', plans.SEARCHES);
     assert.strictEqual(state.allowed, false);
@@ -1130,14 +1131,14 @@ const planOf = async (userId) => (await users.byId(userId)).plan;
     const { jar, user, subscription, completed, created } = await completeCheckout('pro');
     await deliver(completed);
     await deliver(created);
-    assert.strictEqual((await callEndpoint(accountEndpoint, { jar, method: 'GET' })).res.payload.usage.searches.limit, 75);
+    assert.strictEqual((await callEndpoint(accountEndpoint, { jar, method: 'GET' })).res.payload.usage.searches.limit, 100);
 
     await deliver(stripeEvent('customer.subscription.deleted',
       Object.assign({}, subscription, { status: 'canceled' }), { created: created.created + 10 }));
 
     const { res } = await callEndpoint(accountEndpoint, { jar, method: 'GET' });
     assert.strictEqual(res.payload.plan.id, 'free');
-    assert.strictEqual(res.payload.usage.searches.limit, 3);
+    assert.strictEqual(res.payload.usage.searches.limit, 1);
     assert.strictEqual(res.payload.usage.aiTokens.limit, 20000);
     assert.strictEqual(res.payload.usage.searches.period, 'day');
   });

@@ -664,17 +664,17 @@ const linkFromInbox = (pattern) => {
     })));
     assert.deepStrictEqual(meters.map((m) => m.label), ['AI tokens', 'Live product searches']);
     assert.strictEqual(meters[0].value, '0 of 20,000 used');
-    assert.strictEqual(meters[1].value, '0 of 3 used');
+    assert.strictEqual(meters[1].value, '0 of 1 used');
     assert.strictEqual((await page.textContent('#banner-plan')).trim(), 'Free');
 
     /* the server counts a search, and the page reflects it on reload */
     const user = await users.byEmail('ada@e2e.test');
-    await require('../api/_usage').record(`user:${user.id}`, 'free', 'searches', 2);
+    await require('../api/_usage').record(`user:${user.id}`, 'free', 'searches', 1);
 
     await page.reload({ waitUntil: 'domcontentloaded' });
     await page.waitForSelector('.meter');
     const after = await page.$$eval('.meter-value', (ns) => ns.map((n) => n.textContent.trim()));
-    assert.strictEqual(after[1], '2 of 3 used');
+    assert.strictEqual(after[1], '1 of 1 used');
     await context.close();
   });
 
@@ -709,8 +709,8 @@ const linkFromInbox = (pattern) => {
     /* the page's own copy of the state is rewritten to Max */
     await page.evaluate(() => {
       const state = window.Account.state();
-      state.plan = { id: 'max', name: 'Max', amount: 79.99, interval: 'month', period: 'month',
-        limits: { aiTokens: 5000000, searches: 400 }, tagline: '', features: [], purchasable: true };
+      state.plan = { id: 'max', name: 'Max', amount: 39.99, interval: 'month', period: 'month',
+        limits: { aiTokens: 5000000, searches: 500 }, tagline: '', features: [], purchasable: true };
       state.emailVerified = true;
       window.BillingUI.draw(state);
     });

@@ -215,7 +215,7 @@ and the function share an origin, `/api/interpret` resolves by default, and
 | `STRIPE_SECRET_KEY` | for billing | Your Stripe key. `sk_test_…` until launch. Without it the paid plans cannot be bought and the pricing page says so. |
 | `STRIPE_WEBHOOK_SECRET` | for billing | The signing secret of the webhook endpoint (`whsec_…`). Without it every delivery is refused, so no plan ever changes. |
 | `STRIPE_PRICE_PRO` | for billing | The Stripe Price Pro is sold at — recurring, monthly, $14.99. |
-| `STRIPE_PRICE_MAX` | for billing | The Stripe Price Max is sold at — recurring, monthly, $79.99. |
+| `STRIPE_PRICE_MAX` | for billing | The Stripe Price Max is sold at — recurring, monthly, $39.99. |
 | `AUTH_SECRET` | for accounts | Keys the HMAC that sessions, verification links, reset links and OAuth state are stored under; 16 characters or more. Without it nobody can sign in, so nobody can subscribe. |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | for Google sign-in | An OAuth 2.0 Web application client. Without them the account page does not offer the Google button. |
 | `RESEND_API_KEY` *or* `POSTMARK_SERVER_TOKEN` | for verification | A transactional email provider. Without one, accounts are created unverified and cannot be confirmed — and therefore cannot subscribe. |
@@ -499,6 +499,53 @@ roughly 770 shopper searches a month rather than 10,000. Two knobs bound it:
 | `OPENWEBNINJA_RESOLVE_OFFERS` | on | `off` skips the lookups entirely — cheaper, and almost everything is then dropped for having no retailer link |
 | `OPENWEBNINJA_OFFER_BUDGET_MS` | 6000 | total wall-clock budget for the lookups; whatever resolved by then is what shows |
 
+#### Which records are worth a lookup
+
+Since a lookup is a whole request, it is only spent on a record that could
+actually reach the page:
+
+* **A record the gate could never show is never looked up.** No offer can
+  supply a photo or a title, so a record missing one is passed over. The gate
+  itself is asked — the record is put to `toProduct()` with a stand-in offer —
+  rather than a copy of its rules being kept here, which would drift from it.
+  Each one is counted in `diagnostics.offers.skippedUnfit` under the gate's own
+  name for the fault.
+* **The search stops when twelve products would be SHOWN**, not when twelve
+  links have been resolved. A link can resolve and still not be displayable: it
+  can be a redirect, its offer can carry no price or no shop, its price can be
+  over the shopper's budget, or two records can resolve to the same URL, which
+  the gate shows once. Counting links is what used to stop the search at twelve
+  and leave the grid with nine cards in it.
+* **Only as many lookups as the page still needs are in flight.** Four at a
+  time as before, but a worker starts one only while the answers already
+  outstanding could still leave the page short, so finishing one product short
+  costs one lookup rather than four.
+* **A hard cap of `wanted + LOOKUP_SLACK` lookups per search**, so poor data
+  cannot run the request count down the whole candidate list. `LOOKUP_SLACK` is
+  8, making the ceiling 20 lookups for a page of 12. Measured over 140 seeded
+  searches, that costs what the uncapped behaviour cost — a tenth of a request
+  per search — for one and a half more products and twice as many full pages,
+  with a worst case of 21 requests where the old one could reach 25. Lower it
+  to 4 when provider quota rather than a thin page is the binding constraint:
+  1.9 requests a search cheaper, about one product thinner. The full table is
+  in the comment on the constant.
+
+A record's own stated price is deliberately **not** used to skip a lookup. It
+is not a bound on what the sellers charge: the same record priced at $87.97 has
+been seen with one seller offer at $54 and another at $240. The budget is
+applied to the offer's own price, after the lookup.
+
+Measure any of this offline, with no key and no network:
+
+```sh
+node scripts/bench-offer-resolution.js --out=before.json
+node scripts/bench-offer-resolution.js --compare=before.json
+```
+
+It runs six scenarios of varying data quality through the adapter and the gate
+with both endpoints stubbed, and reports requests, lookups, products shown,
+gate pass rate, modelled latency and wasted lookups.
+
 Lookups also stop early once enough records have a link, and only products
 that need one are looked up at all.
 
@@ -534,6 +581,63 @@ explicitly, and an unset `PRODUCT_SOURCE` runs OpenWeb Ninja instead. Deleting
 one `require` and one registry line removes it entirely. It searches a single
 catalogue, which is why it is no longer the default.
 
+### SerpApi (registered, not in use)
+
+`api/_providers/serpapi.js` reaches the same Google Shopping index through a
+different vendor. It is registered so the two can be measured against each
+other on the only question that matters here — how many records survive the
+gate with a link to the retailer's own product page — and nothing selects it
+unless `PRODUCT_SOURCE=serpapi` names it. Fynd still runs on OpenWeb Ninja.
+
+It searches `engine=google_shopping_light`, the cheaper and faster Google
+Shopping surface; `SERPAPI_ENGINE` switches it to the full `google_shopping`.
+
+Two differences from the OpenWeb Ninja adapter are worth knowing:
+
+* **The key travels in the query string.** SerpApi accepts no key header. The
+  adapter reads `SERPAPI_API_KEY` only inside the function, never returns it,
+  and puts every string it might log through `redact()` first, which replaces
+  the key with `***`.
+* **A shopping result's own links belong to Google.** `product_link` is
+  Google's comparison page and `serpapi_product_api` is an API endpoint, so
+  neither is ever shown as a product URL. Each candidate field goes through
+  `looksDirect()`, which refuses every Google and SerpApi host, and a record
+  left without a retailer URL is dropped by the gate rather than linked
+  somewhere it should not be. When a result carries no direct link, the
+  `google_product` sellers endpoint is asked for that product's sellers — one
+  extra request per product, counted in `diagnostics.requests`, which is what
+  the cost per search is computed from. `SERPAPI_RESOLVE_SELLERS=off` skips
+  that step.
+
+Which live field actually carries a merchant URL is answered against a real
+response rather than assumed:
+
+```sh
+SERPAPI_API_KEY=... node scripts/probe-serpapi.js "black oversized hoodie"
+```
+
+It prints the plan and the searches left on it (the account endpoint is free),
+every key on the first result with each URL classified — retailer page,
+Google's own, SerpApi's own, redirector or listing page — how many of the batch
+carry a usable link inline, the record the adapter maps, and the gate's verdict
+for the whole batch. Add `--sellers` to spend one more request on seeing what
+the sellers endpoint returns.
+
+Then measure it:
+
+```sh
+SERPAPI_API_KEY=... node scripts/bench-serpapi.js --queries=5 --max-requests=40
+```
+
+It runs realistic shopper searches through the adapter and the gate and reports
+usable products per search, products shown, full-page rate, direct retailer-link
+rate, latency, duplicates, retailer diversity, requests per search and cost per
+search — the last at the plan's own price per request, read from the account
+rather than assumed. A run spends real quota, so it states the worst case
+before it starts, refuses to start when that exceeds the searches left, and
+stops at `--max-requests` whatever happens. `--out=path.json` writes the whole
+result for comparing against another provider later.
+
 ### Testing the pipeline
 
 Offline, with no key and no network — intent, mapping, the gate's rejection
@@ -546,6 +650,8 @@ node scripts/test-pipeline.js
 The rest of the suites, all offline except the two that drive a browser:
 
 ```sh
+node scripts/bench-offer-resolution.js  # what one search costs the provider
+node scripts/test-serpapi.js   # the SerpApi adapter, its links and its costs
 node scripts/test-stripe.js    # payments and subscriptions
 node scripts/test-auth.js      # accounts, sessions, tokens, OAuth
 node scripts/test-ui.js        # the interface, its palette and its contrast
@@ -878,8 +984,8 @@ monthly subscriptions bought through Stripe Checkout.
 | Plan | Price | AI tokens | Live product searches |
 | --- | --- | --- | --- |
 | Free | $0 | 20,000 per day | 3 per day |
-| Pro | $14.99 / month | 1,000,000 per month | 75 per month |
-| Max | $79.99 / month | 5,000,000 per month | 400 per month |
+| Pro | $14.99 / month | 1,000,000 per month | 100 per month |
+| Max | $39.99 / month | 5,000,000 per month | 500 per month |
 
 Free counts by UTC day and the paid plans by UTC calendar month, because
 that is how each is written. The period is part of the counter's key, so
@@ -940,7 +1046,7 @@ product*:
 | Product | Price | Billing period | Currency |
 | --- | --- | --- | --- |
 | Fynd Pro | 14.99 | Monthly, recurring | USD |
-| Fynd Max | 79.99 | Monthly, recurring | USD |
+| Fynd Max | 39.99 | Monthly, recurring | USD |
 
 Copy each price's id — it starts `price_`, not `prod_`. The **price** id
 is what Fynd needs; the product id is not used.

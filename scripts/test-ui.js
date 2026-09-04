@@ -42,15 +42,15 @@ const billingRequests = [];
    the test drives it the only way anything can: by changing the
    server's answer. */
 const PLAN_LIMITS = {
-  free: { aiTokens: 20000, searches: 3 },
-  pro: { aiTokens: 1000000, searches: 75 },
-  max: { aiTokens: 5000000, searches: 400 }
+  free: { aiTokens: 20000, searches: 1 },
+  pro: { aiTokens: 1000000, searches: 100 },
+  max: { aiTokens: 5000000, searches: 500 }
 };
 
 const planCatalogue = () => [
   { id: 'free', name: 'Free', amount: 0, interval: null, period: 'day', limits: PLAN_LIMITS.free, tagline: 'Try it out, every day.', features: [], purchasable: false },
   { id: 'pro', name: 'Pro', amount: 14.99, interval: 'month', period: 'month', limits: PLAN_LIMITS.pro, tagline: 'For shopping properly.', features: [], purchasable: true },
-  { id: 'max', name: 'Max', amount: 79.99, interval: 'month', period: 'month', limits: PLAN_LIMITS.max, tagline: 'For searching all day.', features: [], purchasable: true }
+  { id: 'max', name: 'Max', amount: 39.99, interval: 'month', period: 'month', limits: PLAN_LIMITS.max, tagline: 'For searching all day.', features: [], purchasable: true }
 ];
 
 const accountReply = (over) => {
@@ -566,7 +566,7 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
       amount: n.querySelector('.plan-amount').textContent.trim()
     })));
     assert.deepStrictEqual(cards.map((c) => c.plan), ['free', 'pro', 'max']);
-    assert.deepStrictEqual(cards.map((c) => c.amount), ['$0', '$14.99', '$79.99']);
+    assert.deepStrictEqual(cards.map((c) => c.amount), ['$0', '$14.99', '$39.99']);
     await page.close();
   });
 
@@ -602,7 +602,7 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     assert.strictEqual(started[0].body.plan, 'max');
     /* nothing that could re-price the checkout may be sent from a page */
     const sent = JSON.stringify(started[0].body);
-    assert.ok(!/price|amount|currency|interval|14\.99|79\.99/i.test(sent), sent);
+    assert.ok(!/price|amount|currency|interval|14\.99|39\.99/i.test(sent), sent);
     await page.close();
   });
 
@@ -654,7 +654,7 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     assert.strictEqual(meters.length, 2);
     assert.deepStrictEqual(meters.map((m) => m.label), ['AI tokens', 'Live product searches']);
     assert.strictEqual(meters[0].value, '1,200 of 20,000 used');
-    assert.strictEqual(meters[1].value, '1 of 3 used');
+    assert.strictEqual(meters[1].value, '1 of 1 used');
     await page.close();
   });
 
@@ -662,7 +662,7 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     const page = await openBilling('account.html', { planId: 'pro', extra: { signedIn: true, user: { email: 'a@b.co' } } });
     const values = await page.$$eval('.meter-value', (ns) => ns.map((n) => n.textContent.trim()));
     assert.ok(values[0].endsWith('of 1,000,000 used'), values[0]);
-    assert.ok(values[1].endsWith('of 75 used'), values[1]);
+    assert.ok(values[1].endsWith('of 100 used'), values[1]);
     await page.close();
   });
 
