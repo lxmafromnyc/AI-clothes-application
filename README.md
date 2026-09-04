@@ -522,9 +522,13 @@ actually reach the page:
   costs one lookup rather than four.
 * **A hard cap of `wanted + LOOKUP_SLACK` lookups per search**, so poor data
   cannot run the request count down the whole candidate list. `LOOKUP_SLACK` is
-  4: it holds the page where it was while spending less. Raising it to 8 buys a
-  fuller grid at about the request count the adapter used to spend — the
-  measured trade is in the comment on the constant.
+  8, making the ceiling 20 lookups for a page of 12. Measured over 140 seeded
+  searches, that costs what the uncapped behaviour cost — a tenth of a request
+  per search — for one and a half more products and twice as many full pages,
+  with a worst case of 21 requests where the old one could reach 25. Lower it
+  to 4 when provider quota rather than a thin page is the binding constraint:
+  1.9 requests a search cheaper, about one product thinner. The full table is
+  in the comment on the constant.
 
 A record's own stated price is deliberately **not** used to skip a lookup. It
 is not a bound on what the sellers charge: the same record priced at $87.97 has

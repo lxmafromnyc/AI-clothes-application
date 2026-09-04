@@ -139,20 +139,31 @@ const DEFAULT_OFFER_BUDGET_MS = 6000;
    without a ceiling a page of poor records would keep buying lookups
    down the whole candidate list.
 
-   Measured over the scenarios in scripts/bench-offer-resolution.js, on
-   one seeded set of records, against the behaviour this replaced
-   (18.3 requests, 8.5 products shown, 2414ms):
+   Measured over the profiles in scripts/bench-offer-resolution.js,
+   widened to seven data-quality profiles across twenty seeds each:
+   140 searches per setting, every setting run on the same seeded
+   records. The row to read the others against is the behaviour this
+   replaced, which had no ceiling at all:
 
-     slack  0   13.0 requests   6.8 shown   cheapest, and thinnest
-     slack  4   16.3 requests   8.5 shown   same page, fewer requests
-     slack  8   18.5 requests   9.8 shown   same requests, fuller page
-     slack 12   19.2 requests  10.3 shown   diminishing
+     no ceiling   17.7 requests   8.96 shown   22.9% of pages full
+     slack  4     15.9 requests   9.41 shown   29.3% full
+     slack  8     17.8 requests  10.46 shown   47.1% full
+     slack 12     18.4 requests  10.79 shown   55.7% full
 
-   Four is set because the object here is to spend less: it holds the
-   page where it was while cutting requests, latency and wasted
-   lookups. Eight is the value to raise it to if filling the grid
-   matters more than the request count. */
-const LOOKUP_SLACK = 4;
+   Eight is set because it costs what the old behaviour cost — a tenth
+   of a request more per search — and returns one and a half more
+   products, twice as many full pages, and a worst case of 21 requests
+   where the old one could reach 25. The extra is not spent chasing
+   scraps: it goes only to searches that are short, since two in five
+   never touch it, and it converts at 1.76 requests per extra product
+   against 1.69 for the average product. A page with fewer than six
+   products, which is the result a shopper remembers, falls from one
+   search in thirteen to one in a hundred and forty.
+
+   Lower it to 4 when provider quota rather than a thin page is the
+   constraint that matters: that saves 1.9 requests a search and costs
+   about one product. */
+const LOOKUP_SLACK = 8;
 const offersEnabled = () => text(process.env.OPENWEBNINJA_RESOLVE_OFFERS).toLowerCase() !== 'off';
 
 const text = (v) => (v === undefined || v === null ? '' : String(v).trim());
