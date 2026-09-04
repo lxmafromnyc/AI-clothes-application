@@ -65,10 +65,10 @@ const PLANS = {
     priceEnv: null,
     tagline: 'Try it out, every day.',
     features: [
-      '1 live product search a day',
       '20,000 AI tokens a day',
+      '1 live product search a day',
       'Real listings, prices and retailer links',
-      'No card required'
+      'No card, no account required'
     ]
   },
   pro: {
@@ -81,10 +81,10 @@ const PLANS = {
     priceEnv: 'STRIPE_PRICE_PRO',
     tagline: 'For shopping properly.',
     features: [
-      '100 live product searches a month',
       '1,000,000 AI tokens a month',
+      '100 live product searches a month',
       'Everything in Free',
-      "Cancel any time in Stripe's billing portal"
+      'Cancel any time from the billing portal'
     ]
   },
   max: {
@@ -97,10 +97,10 @@ const PLANS = {
     priceEnv: 'STRIPE_PRICE_MAX',
     tagline: 'For searching all day.',
     features: [
-      '500 live product searches a month',
       '5,000,000 AI tokens a month',
+      '500 live product searches a month',
       'Everything in Pro',
-      "Cancel any time in Stripe's billing portal"
+      'Cancel any time from the billing portal'
     ]
   }
 };

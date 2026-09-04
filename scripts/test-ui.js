@@ -602,7 +602,7 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     assert.strictEqual(started[0].body.plan, 'max');
     /* nothing that could re-price the checkout may be sent from a page */
     const sent = JSON.stringify(started[0].body);
-    assert.ok(!/price|amount|currency|interval|14\.99|79\.99/i.test(sent), sent);
+    assert.ok(!/price|amount|currency|interval|14\.99|39\.99/i.test(sent), sent);
     await page.close();
   });
 
