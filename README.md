@@ -215,7 +215,7 @@ and the function share an origin, `/api/interpret` resolves by default, and
 | `STRIPE_SECRET_KEY` | for billing | Your Stripe key. `sk_test_…` until launch. Without it the paid plans cannot be bought and the pricing page says so. |
 | `STRIPE_WEBHOOK_SECRET` | for billing | The signing secret of the webhook endpoint (`whsec_…`). Without it every delivery is refused, so no plan ever changes. |
 | `STRIPE_PRICE_PRO` | for billing | The Stripe Price Pro is sold at — recurring, monthly, $14.99. |
-| `STRIPE_PRICE_MAX` | for billing | The Stripe Price Max is sold at — recurring, monthly, $79.99. |
+| `STRIPE_PRICE_MAX` | for billing | The Stripe Price Max is sold at — recurring, monthly, $39.99. |
 | `AUTH_SECRET` | for accounts | Keys the HMAC that sessions, verification links, reset links and OAuth state are stored under; 16 characters or more. Without it nobody can sign in, so nobody can subscribe. |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | for Google sign-in | An OAuth 2.0 Web application client. Without them the account page does not offer the Google button. |
 | `RESEND_API_KEY` *or* `POSTMARK_SERVER_TOKEN` | for verification | A transactional email provider. Without one, accounts are created unverified and cannot be confirmed — and therefore cannot subscribe. |
@@ -984,8 +984,8 @@ monthly subscriptions bought through Stripe Checkout.
 | Plan | Price | AI tokens | Live product searches |
 | --- | --- | --- | --- |
 | Free | $0 | 20,000 per day | 3 per day |
-| Pro | $14.99 / month | 1,000,000 per month | 75 per month |
-| Max | $79.99 / month | 5,000,000 per month | 400 per month |
+| Pro | $14.99 / month | 1,000,000 per month | 100 per month |
+| Max | $39.99 / month | 5,000,000 per month | 500 per month |
 
 Free counts by UTC day and the paid plans by UTC calendar month, because
 that is how each is written. The period is part of the counter's key, so
@@ -1046,7 +1046,7 @@ product*:
 | Product | Price | Billing period | Currency |
 | --- | --- | --- | --- |
 | Fynd Pro | 14.99 | Monthly, recurring | USD |
-| Fynd Max | 79.99 | Monthly, recurring | USD |
+| Fynd Max | 39.99 | Monthly, recurring | USD |
 
 Copy each price's id — it starts `price_`, not `prod_`. The **price** id
 is what Fynd needs; the product id is not used.
