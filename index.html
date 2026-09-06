@@ -193,16 +193,18 @@
                There are two because the demo is a recording of an
                interface, and an interface recorded in a 1280-wide
                window is unreadable at 390 — the type in it lands at
-               about six pixels. The frame is reshaped by the same line
-               that reshapes the video, so the two cannot disagree, and
-               it happens before first paint, so nothing jumps.
+               about six pixels. 860 is where the wide one stops being
+               readable rather than where the layout turns, and
+               assets/styles.css reshapes the frame at the same width,
+               so the two cannot disagree; it happens before first
+               paint, so nothing jumps.
 
                A media attribute on <source> would be the declarative
                way to do this, and browsers have never agreed on it:
                the one that ignores it hands a phone the wide file. -->
           <script>
             (function () {
-              var narrow = window.matchMedia && window.matchMedia('(max-width: 760px)').matches;
+              var narrow = window.matchMedia && window.matchMedia('(max-width: 860px)').matches;
               var name = narrow ? 'fynd-demo-mobile' : 'fynd-demo';
               var video = document.getElementById('demo-video');
               video.poster = 'assets/demo/' + name + '-poster.jpg';

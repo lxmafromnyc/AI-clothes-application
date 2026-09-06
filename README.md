@@ -1347,10 +1347,18 @@ recorded in a 1280-wide window is unreadable at 390 — the type in it lands at
 about six pixels. The narrow one is captured at two device pixels per CSS pixel
 so a phone is not shown an upscale.
 
+The two swap at 860px, which is the demo's own breakpoint and the only one on
+the site that is not the layout's. It is not about the layout: measured against
+the recording, the interface type in the wide one holds up to about two thirds
+scale, and a column stops giving that at around this width. Below it the
+phone-shaped recording is shown at about 460px — a little over the 400 it was
+recorded at, so a tablet held at arm's length reads it as easily as a phone held
+close.
+
 | File | | |
 | --- | --- | --- |
 | `fynd-demo.mp4` / `.webm` | 1280 × 800 | wide screens |
-| `fynd-demo-mobile.mp4` / `.webm` | 800 × 1440 | 760px and under |
+| `fynd-demo-mobile.mp4` / `.webm` | 800 × 1440 | 860px and under |
 | `fynd-demo{,-mobile}-poster.jpg` | | the still the section shows before playback |
 | `fynd-demo{,-mobile}.vtt` | | the captions, timed against the recording that made them |
 
@@ -1367,7 +1375,8 @@ of about 640 KB and one poster of about 75 KB.
 by when the decision has to be made.
 
 **Before the browser acts on the markup**, in the inline script: which of the two
-recordings this screen gets. A `poster` attribute is fetched the moment it is
+recordings this screen gets, at the same 860px the stylesheet reshapes the frame
+at. A `poster` attribute is fetched the moment it is
 parsed, and a `<source>` swapped after the player has chosen one is ignored, so
 neither can wait for a deferred file. The frame is reshaped by the same line, so
 the shape and the file cannot disagree and nothing jumps. (`media` on `<source>`

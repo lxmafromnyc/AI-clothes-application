@@ -1424,6 +1424,24 @@ a.item-card:hover .item-name { text-decoration: underline; text-underline-offset
   .section-head + .signal-list .signal:nth-child(2) { border-top: 1px solid var(--color-border); padding-top: 20px; }
 }
 
+/* The demo video's own breakpoint, and the only rule on the site that
+   does not turn at one of the layout's. It is not about the layout: it
+   is where the wide recording stops being readable. Measured against
+   the recording itself, the interface type in it holds up to about two
+   thirds scale, which a column stops giving at around this width — and
+   below it the phone-shaped recording, shown at close to the size it
+   was recorded at, is far easier to read than a shrunken wide one.
+
+   index.html chooses the file at the same width, in the script beside
+   the element, so the shape and the file cannot disagree. With no
+   script at all both stay landscape: small, but not broken. */
+@media (max-width: 860px) {
+  /* a little over the 400 it was recorded at, so a tablet held at
+     arm's length reads it as easily as a phone held close */
+  .demo-figure.is-portrait .demo-stage { max-width: 460px; margin-inline: auto; }
+  .demo-figure.is-portrait .demo-video { aspect-ratio: 5 / 9; }
+}
+
 @media (max-width: 760px) {
   .container, .narrow { width: min(1200px, 100% - 36px); }
 
@@ -1469,17 +1487,6 @@ a.item-card:hover .item-name { text-decoration: underline; text-underline-offset
 
   .results { padding: 44px 0 var(--section); }
   .results-head { margin-bottom: 22px; }
-
-  /* The phone gets the phone-shaped recording, so the frame it sits in
-     turns with it. demo-video.js sets the class at the same breakpoint
-     and from the same decision, so the shape and the file always agree;
-     without the script both stay landscape, which is small but true.
-
-     Capped so that on a wide phone or a small tablet the frame stays
-     the size of the thing it is a recording of, rather than growing
-     into a portrait block taller than the screen. */
-  .demo-figure.is-portrait .demo-stage { max-width: 400px; margin-inline: auto; }
-  .demo-figure.is-portrait .demo-video { aspect-ratio: 5 / 9; }
 
   /* the label goes short before the control does: a play button that
      wraps onto two lines over the poster reads as a mistake */
