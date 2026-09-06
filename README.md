@@ -218,7 +218,8 @@ and the function share an origin, `/api/interpret` resolves by default, and
 | `OPENAI_MODEL` | no | Model to call. Defaults to `gpt-4o-mini`; set it to whatever your account has access to. |
 | `AI_PROVIDER` | no | Which model reads a request. **Unset in production**, which is OpenAI. `gemini` runs the interpreter in `api/_interpreters/`. See [Trying another model](#trying-another-model). |
 | `GEMINI_API_KEY` | only for `AI_PROVIDER=gemini` | A Google AI Studio key. Production does not need it, and never sees it: it is read inside the function, sent as a header, and redacted out of anything logged. |
-| `GEMINI_MODEL` / `GEMINI_THINKING_BUDGET` | no | The model, default `gemini-2.5-flash`, and its thinking budget, default `0` (off). |
+| `GEMINI_MODEL` | no | Which model to call. Defaults to `gemini-3.6-flash`. |
+| `GEMINI_THINKING_LEVEL` / `GEMINI_THINKING_BUDGET` | no | How much thinking to allow: `thinkingLevel` (`minimal`, the default, through `high`) on a 3.x model, `thinkingBudget` (`0`, off, by default) on a 2.5 one. |
 | `OPENWEBNINJA_API_KEY` | yes | The product source's key. Without it `/api/search` returns 503 and the frontend falls back to the sample catalogue, labelled as such. |
 | `PRODUCT_SOURCE` | no | Which adapter in `api/_providers/` finds the products. Unset runs `openwebninja`, which is what this deployment uses. |
 | `ALLOWED_ORIGIN` | no | Extra browser origins allowed to call the endpoints, comma-separated. The deployment's own origin is always allowed without configuration, so this is only needed for a frontend hosted elsewhere — GitHub Pages calling functions on Vercel. See [Cross-origin access](#cross-origin-access). |
@@ -406,7 +407,7 @@ inch. That is what `api/_interpreters/` is.
 | --- | --- |
 | unset — **production** | the OpenAI path in `api/interpret.js`, unchanged |
 | `openai` | the same path, named explicitly |
-| `gemini` | `api/_interpreters/gemini.js`, on `gemini-2.5-flash` |
+| `gemini` | `api/_interpreters/gemini.js`, on `gemini-3.6-flash` |
 | anything else | nothing, so the endpoint answers 503 |
 
 That last row is deliberate, and is the rule `PRODUCT_SOURCE` already follows: a
@@ -446,7 +447,29 @@ node scripts/bench-interpreters.js --dry-run        # the plan, spending nothing
 node scripts/bench-interpreters.js --queries=5 --only=gemini
 node scripts/bench-interpreters.js --out=run.json   # every reading, for later
 node scripts/bench-interpreters.js --compare=run.json   # read it back, no calls
+node scripts/bench-interpreters.js --diagnose          # one call each, first
 ```
+
+**Run `--diagnose` before trusting a benchmark.** It makes exactly one call per
+provider and reports what came back: the HTTP status, the provider's own error
+code and message, whether the request reached the provider at all, whether
+authentication was accepted, and whether the reply was shaped the way the
+adapter expects. A 400 costs one further call, asking again without the one
+field most likely to have caused it — `response_format` for OpenAI,
+`generationConfig.thinkingConfig` for Gemini — so a request-shape mismatch is
+identified rather than guessed at. It exits non-zero unless both returned a
+usable Fynd intent.
+
+It exists because a whole run can fail for a reason that has nothing to do with
+either model. An egress allowlist or a corporate proxy answers a blocked host
+with a real HTTP response — a 403 with a `text/plain` body — which is a
+perfectly ordinary upstream error as far as any client is concerned, and a run
+of twenty of them looks exactly like a provider outage. So a failure now
+carries its status, its headers and the provider's own message all the way into
+the report and into `--out`, the error envelope is parsed from the whole body
+*before* the body is truncated for logging, and a non-2xx that did not arrive
+as JSON is named as what it is: something in the path answering on the
+provider's behalf. A benchmark over a broken path measures the path.
 
 It also reports, per query, where the two models actually disagree — on the
 budget, colour, category, fit, brand, occasion and style — naming the reading
@@ -460,10 +483,34 @@ It spends real credit on both accounts, and says how many calls it is about to
 make before it makes any. Prices move, so the per-1M unit prices it costs with
 are printed and overridable (`--gemini-out=2.50`). Neither key is ever printed.
 
-Gemini's thinking is off by default: this is a short extraction with a fixed
-output shape, and turning it off is what makes the comparison against
-`gpt-4o-mini` a comparison of like work. `GEMINI_THINKING_BUDGET` turns it on,
-and thinking tokens are billed as output, so the benchmark costs them as output.
+Gemini's thinking is turned down to `minimal` by default: this is a short
+extraction with a fixed output shape, and turning it down is what makes the
+comparison against `gpt-4o-mini` a comparison of like work.
+`GEMINI_THINKING_LEVEL` raises it, and thinking tokens are billed as output, so
+the benchmark costs them as output.
+
+**The Gemini 3 family changed two things this adapter sends**, so the request is
+built to match the model it is going to. `temperature` is ignored by Gemini 3
+and Google's guidance is to leave it out, so a 3.x request does not send it —
+while a 2.5 request still gets `temperature: 0`. And `thinkingBudget` is the 2.5
+field, deprecated in favour of `thinkingLevel`; sending both in one request is a
+400, so exactly one is ever sent. One consequence is worth knowing before
+reading a benchmark: `gpt-4o-mini` runs at temperature 0 and Gemini 3 runs at
+its own default, so Gemini's readings are not as repeatable. Use `--repeat` for
+a steadier number.
+
+`gemini-2.5-flash` is not a working default any more. Google answers a request
+for it with a 404 on an account that was not already using it, which is why
+`--diagnose` asks the API which models the key can actually use whenever a model
+404s.
+
+**Why not the Interactions API.** Google now recommends it for new work and
+calls `generateContent` legacy, but recommends is all it does: `generateContent`
+remains fully supported and `gemini-3.6-flash` is served on both. The adapter
+stays on `generateContent` because it is one stateless call in and one answer
+out, which is exactly what the OpenAI path does — so the benchmark compares two
+like things rather than a stateless call against a managed conversation. Moving
+to Interactions is a separate decision, and nothing here forecloses it.
 
 Neither model is given a response schema. Gemini has one available and OpenAI,
 as called here, does not — using it would make the malformed-output rate measure

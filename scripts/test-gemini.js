@@ -121,7 +121,7 @@ function withStubbedFetch(handler, run) {
    does runs inside this, so a failure cannot leak a key or a provider
    into the next test. */
 function withEnv(env, run) {
-  const keys = ['AI_PROVIDER', 'GEMINI_API_KEY', 'GEMINI_MODEL', 'GEMINI_THINKING_BUDGET', 'OPENAI_API_KEY', 'OPENAI_MODEL'];
+  const keys = ['AI_PROVIDER', 'GEMINI_API_KEY', 'GEMINI_MODEL', 'GEMINI_THINKING_BUDGET', 'GEMINI_THINKING_LEVEL', 'OPENAI_API_KEY', 'OPENAI_MODEL'];
   const saved = {};
   keys.forEach((k) => { saved[k] = process.env[k]; });
   keys.forEach((k) => { delete process.env[k]; });
@@ -161,12 +161,21 @@ const bodyOf = (call) => JSON.parse(call.options.body);
   console.log('\nrequest construction');
 
   await testAsync('the request goes to the current Gemini model, by POST', async () => {
-    await withEnv({ GEMINI_API_KEY: 'test-key-not-real' }, () => {
+    await withEnv({ GEMINI_API_KEY: FAKE_KEY }, () => {
       const { url, options } = gemini.buildRequest({ query: 'a black oversized hoodie under $80', vocabulary: VOCABULARY, systemPrompt: interpret.SYSTEM_PROMPT });
-      assert.strictEqual(url, 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent');
+      assert.strictEqual(url, 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent');
       assert.strictEqual(options.method, 'POST');
-      assert.strictEqual(gemini.DEFAULT_MODEL, 'gemini-2.5-flash');
+      /* gemini-2.5-flash answers a request for it with a 404: it is not
+         available to accounts that had not already been using it. */
+      assert.strictEqual(gemini.DEFAULT_MODEL, 'gemini-3.6-flash');
     });
+  });
+
+  test('the model name alone decides which family’s rules apply', () => {
+    ['gemini-3.6-flash', 'gemini-3.6-flash-preview', 'GEMINI-3.6-FLASH'].forEach((m) =>
+      assert.strictEqual(gemini.isGemini3(m), true, m));
+    ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-pro'].forEach((m) =>
+      assert.strictEqual(gemini.isGemini3(m), false, m));
   });
 
   await testAsync('GEMINI_MODEL overrides the model, and only the model', async () => {
@@ -197,18 +206,51 @@ const bodyOf = (call) => JSON.parse(call.options.body);
     });
   });
 
-  await testAsync('it asks for JSON at temperature 0, with thinking off by default', async () => {
-    await withEnv({ GEMINI_API_KEY: FAKE_KEY }, () => {
-      const body = JSON.parse(gemini.buildRequest({ query: 'a hoodie', vocabulary: {}, systemPrompt: 'x' }).options.body);
-      assert.strictEqual(body.generationConfig.temperature, 0);
-      assert.strictEqual(body.generationConfig.responseMimeType, 'application/json');
-      assert.strictEqual(body.generationConfig.thinkingConfig.thinkingBudget, 0);
-      assert.strictEqual(body.generationConfig.responseSchema, undefined,
-        'no schema is sent: it would flatter this provider in the benchmark');
-    });
+  const configOf = (env) => withEnv(Object.assign({ GEMINI_API_KEY: FAKE_KEY }, env), () =>
+    JSON.parse(gemini.buildRequest({ query: 'a hoodie', vocabulary: {}, systemPrompt: 'x' }).options.body).generationConfig);
+
+  await testAsync('a 3.x request asks for JSON at minimal thinking, and sends no temperature', async () => {
+    const config = await configOf({});
+    assert.strictEqual(config.responseMimeType, 'application/json');
+    assert.deepStrictEqual(config.thinkingConfig, { thinkingLevel: 'minimal' });
+    /* Gemini 3 ignores temperature, and Google's guidance is to leave it
+       out rather than send a value the model will discard */
+    assert.strictEqual(config.temperature, undefined, 'a 3.x request must not send temperature');
+    assert.strictEqual(config.responseSchema, undefined,
+      'no schema is sent: it would flatter this provider in the benchmark');
   });
 
-  await testAsync('GEMINI_THINKING_BUDGET turns thinking on, and nonsense does not', async () => {
+  await testAsync('a 2.5 request keeps the shape that model takes', async () => {
+    const config = await configOf({ GEMINI_MODEL: 'gemini-2.5-flash' });
+    assert.strictEqual(config.responseMimeType, 'application/json');
+    assert.strictEqual(config.temperature, 0, '2.5 honours temperature, and 0 made it repeatable');
+    assert.deepStrictEqual(config.thinkingConfig, { thinkingBudget: 0 });
+  });
+
+  await testAsync('the two thinking fields never travel together', async () => {
+    /* sending thinkingLevel and the legacy thinkingBudget in one request
+       is a 400, so exactly one is ever built */
+    for (const name of ['gemini-3.6-flash', 'gemini-2.5-flash']) {
+      const config = await configOf({ GEMINI_MODEL: name, GEMINI_THINKING_LEVEL: 'high', GEMINI_THINKING_BUDGET: '512' });
+      const fields = Object.keys(config.thinkingConfig);
+      assert.strictEqual(fields.length, 1, `${name} sent ${fields.join(' and ')}`);
+    }
+  });
+
+  await testAsync('GEMINI_THINKING_LEVEL is honoured, and a typo is not forwarded', async () => {
+    assert.deepStrictEqual(gemini.THINKING_LEVELS, ['minimal', 'low', 'medium', 'high']);
+    for (const level of gemini.THINKING_LEVELS) {
+      const config = await configOf({ GEMINI_THINKING_LEVEL: level });
+      assert.strictEqual(config.thinkingConfig.thinkingLevel, level);
+    }
+    const typo = await configOf({ GEMINI_THINKING_LEVEL: 'maximum' });
+    assert.strictEqual(typo.thinkingConfig.thinkingLevel, 'minimal',
+      'the field is an enum, so a typo must fall back rather than become a 400');
+    const cased = await configOf({ GEMINI_THINKING_LEVEL: 'HIGH' });
+    assert.strictEqual(cased.thinkingConfig.thinkingLevel, 'high');
+  });
+
+  await testAsync('GEMINI_THINKING_BUDGET still governs a 2.5 request, and nonsense does not', async () => {
     await withEnv({ GEMINI_API_KEY: FAKE_KEY, GEMINI_THINKING_BUDGET: '512' }, () => {
       assert.strictEqual(gemini.thinkingBudget(), 512);
     });
@@ -815,6 +857,298 @@ const bodyOf = (call) => JSON.parse(call.options.body);
     const labels = bench.DISAGREEMENT_FIELDS.map((f) => f.label);
     ['budget (max)', 'budget (min)', 'colour', 'category', 'fit', 'brand', 'occasion', 'style']
       .forEach((label) => assert.ok(labels.includes(label), `${label} is not compared`));
+  });
+
+  console.log('\nfailures say what they were');
+
+  /* The bodies these providers actually return, as they document them.
+     A failure the tooling cannot name is a failure nobody can fix. */
+  const OPENAI_401 = JSON.stringify({ error: { message: 'Incorrect API key provided: sk-abc***. You can find your API key at https://platform.openai.com/account/api-keys.', type: 'invalid_request_error', param: null, code: 'invalid_api_key' } });
+  const GEMINI_400_KEY = JSON.stringify({ error: { code: 400, message: 'API key not valid. Please pass a valid API key.', status: 'INVALID_ARGUMENT' } });
+  const GEMINI_400_FIELD = JSON.stringify({ error: { code: 400, message: 'Invalid JSON payload received. Unknown name "thinkingConfig" at \'generation_config\'.', status: 'INVALID_ARGUMENT' } });
+  const OPENAI_429 = JSON.stringify({ error: { message: 'Rate limit reached for gpt-4o-mini', type: 'requests', code: 'rate_limit_exceeded' } });
+  const PROXY_403 = '<!DOCTYPE html><html><head><title>403 Forbidden</title></head><body>Access denied by policy</body></html>';
+
+  test('a provider error envelope is read; anything else is not mistaken for one', () => {
+    const openai = bench.providerEnvelope(OPENAI_401);
+    assert.strictEqual(openai.code, 'invalid_api_key');
+    assert.strictEqual(openai.type, 'invalid_request_error');
+    assert.ok(openai.message.includes('Incorrect API key provided'));
+
+    const google = bench.providerEnvelope(GEMINI_400_KEY);
+    assert.strictEqual(google.code, 400);
+    assert.strictEqual(google.type, 'INVALID_ARGUMENT');
+
+    assert.strictEqual(bench.providerEnvelope(PROXY_403), null, 'HTML is not an envelope');
+    assert.strictEqual(bench.providerEnvelope('Bad Gateway'), null);
+    assert.strictEqual(bench.providerEnvelope('{"nope":1}'), null);
+    assert.strictEqual(bench.providerEnvelope(undefined), null);
+  });
+
+  test('an OpenAI 401 is named as the provider rejecting the key', () => {
+    const c = bench.classify({ ok: false, reason: 'upstream', status: 401, detail: OPENAI_401, headers: { 'content-type': 'application/json' } });
+    assert.strictEqual(c.reached, 'yes');
+    assert.strictEqual(c.authentication, 'rejected');
+    assert.strictEqual(c.envelope.code, 'invalid_api_key');
+  });
+
+  test('a Gemini bad key — a 400, not a 401 — is still named as a rejected key', () => {
+    /* the status alone would read as "the request got past auth", which
+       is exactly wrong, and is why the message is read too */
+    const c = bench.classify({ ok: false, reason: 'upstream', status: 400, detail: GEMINI_400_KEY, headers: {} });
+    assert.strictEqual(c.reached, 'yes');
+    assert.strictEqual(c.authentication, 'rejected');
+  });
+
+  test('a Gemini 400 about an unknown field is auth accepted, and a request-shape problem', () => {
+    const c = bench.classify({ ok: false, reason: 'upstream', status: 400, detail: GEMINI_400_FIELD, headers: {} });
+    assert.strictEqual(c.reached, 'yes');
+    assert.ok(c.authentication.startsWith('accepted'), c.authentication);
+    assert.ok(c.envelope.message.includes('thinkingConfig'));
+  });
+
+  test('a rate limit is the provider talking, past authentication', () => {
+    const c = bench.classify({ ok: false, reason: 'upstream', status: 429, detail: OPENAI_429, headers: {} });
+    assert.strictEqual(c.reached, 'yes');
+    assert.ok(c.authentication.startsWith('accepted'));
+  });
+
+  test('an HTML 403 is named as something that is not the provider', () => {
+    const c = bench.classify({ ok: false, reason: 'upstream', status: 403, detail: PROXY_403, headers: { 'content-type': 'text/html' } });
+    assert.strictEqual(c.reached, 'no');
+    assert.ok(/never do/.test(c.responder), c.responder);
+    assert.strictEqual(c.authentication, 'unknown', 'nothing here proves anything about our key');
+  });
+
+  test('a long error is still nameable — the envelope is parsed before truncation', () => {
+    /* Google pads an error with a `details` array that runs past any
+       sensible log line. Truncating first left a fragment that would not
+       parse, and a failure nobody could name. Found by running the
+       diagnostic against the live endpoint with an invalid key. */
+    const long = JSON.stringify({
+      error: {
+        code: 400,
+        message: 'API key not valid. Please pass a valid API key.',
+        status: 'INVALID_ARGUMENT',
+        details: [
+          { '@type': 'type.googleapis.com/google.rpc.ErrorInfo', reason: 'API_KEY_INVALID', domain: 'googleapis.com', metadata: { service: 'generativelanguage.googleapis.com', method: 'google.ai.generativelanguage.v1beta.GenerativeService.GenerateContent' } },
+          { '@type': 'type.googleapis.com/google.rpc.LocalizedMessage', locale: 'en-US', message: 'API key not valid. Please pass a valid API key.' },
+          { '@type': 'type.googleapis.com/google.rpc.Help', links: [{ description: 'Google developers console API key', url: 'https://console.developers.google.com/project/_/apiui/credential' }] }]
+      }
+    });
+    assert.ok(long.length > 500, 'the fixture must be longer than the log truncation');
+
+    const envelope = gemini.errorEnvelope(long);
+    assert.strictEqual(envelope.message, 'API key not valid. Please pass a valid API key.');
+    assert.strictEqual(envelope.type, 'INVALID_ARGUMENT');
+
+    /* and the classifier must use it rather than the truncated body */
+    const c = bench.classify({ ok: false, reason: 'upstream', status: 400, error: envelope, detail: long.slice(0, 500), headers: {} });
+    assert.strictEqual(c.reached, 'yes');
+    assert.strictEqual(c.authentication, 'rejected');
+  });
+
+  test('an egress allowlist answering for the provider is named as not the provider', () => {
+    /* Observed live, in exactly this shape: a 403 with a text/plain body
+       from a proxy. It is an HTTP response, so it classifies as
+       `upstream` — which is what makes a whole run of them look like a
+       provider problem when it is a network path problem. */
+    const c = bench.classify({
+      ok: false, reason: 'upstream', status: 403,
+      detail: 'Host not in allowlist: api.openai.com. Add this host to your network egress settings to allow access.',
+      headers: { 'content-type': 'text/plain' }
+    });
+    assert.strictEqual(c.reached, 'no');
+    assert.ok(/text\/plain/.test(c.responder), c.responder);
+    assert.strictEqual(c.authentication, 'unknown', 'nothing here proves anything about the key');
+  });
+
+  test('a 407 is named as a proxy in the way', () => {
+    const c = bench.classify({ ok: false, reason: 'upstream', status: 407, detail: 'Proxy Authentication Required', headers: {} });
+    assert.strictEqual(c.reached, 'no');
+    assert.ok(/proxy/i.test(c.responder));
+  });
+
+  test('a connection that never landed is not reported as an upstream error', () => {
+    const c = bench.classify({ ok: false, reason: 'unreachable', detail: 'fetch failed' });
+    assert.strictEqual(c.reached, 'no');
+    assert.strictEqual(c.status, null);
+  });
+
+  test('a success is the only thing that proves authentication worked', () => {
+    const c = bench.classify({ ok: true, status: 200, headers: {} });
+    assert.strictEqual(c.reached, 'yes');
+    assert.strictEqual(c.authentication, 'accepted');
+  });
+
+  test('a 200 that could not be read is a shape problem, not an API error', () => {
+    const v = bench.shapeVerdict({ ok: false, reason: 'unparseable', status: 200, detail: 'Sure! Here is the intent' });
+    assert.strictEqual(v.asExpected, false);
+    assert.ok(v.note.includes('could not be read'));
+    assert.strictEqual(bench.shapeVerdict({ ok: true }).asExpected, true);
+    assert.strictEqual(bench.shapeVerdict({ ok: false, reason: 'upstream', status: 500 }).asExpected, null);
+  });
+
+  test('a recorded failure keeps the status, the message and what it proved', () => {
+    const record = bench.recordFailure('a black hoodie',
+      { ok: false, reason: 'upstream', status: 401, detail: OPENAI_401, headers: { 'content-type': 'application/json' } }, 240);
+    assert.strictEqual(record.status, 401);
+    assert.ok(record.detail.includes('Incorrect API key'), 'the body must survive into the run record');
+    assert.strictEqual(record.reached, 'yes');
+    assert.strictEqual(record.authentication, 'rejected');
+    assert.ok(record.said.includes('Incorrect API key'));
+    assert.deepStrictEqual(record.headers, { 'content-type': 'application/json' });
+  });
+
+  test('a run of identical failures reads as one problem, with an example', () => {
+    const runs = Array.from({ length: 20 }, (_, i) =>
+      bench.recordFailure(`query ${i}`, { ok: false, reason: 'upstream', status: 401, detail: OPENAI_401, headers: {} }, 200));
+    const summary = bench.summarise('openai', runs);
+    assert.strictEqual(summary.errorRate, 1);
+    assert.strictEqual(summary.errorsByKind.length, 1);
+    assert.strictEqual(summary.errorsByKind[0].kind, 'upstream 401');
+    assert.strictEqual(summary.errorsByKind[0].count, 20);
+    assert.ok(summary.errorsByKind[0].example.includes('Incorrect API key'));
+    assert.ok(summary.errors[0].detail, 'the JSON must carry the detail, not just the count');
+    assert.strictEqual(summary.errors[0].authentication, 'rejected');
+  });
+
+  console.log('\nthe smoke test');
+
+  test('the retry drops exactly the field most likely to have caused a 400', () => {
+    assert.strictEqual(bench.RETRY_WITHOUT.openai.field, 'response_format');
+    assert.strictEqual(bench.RETRY_WITHOUT.gemini.field, 'generationConfig.thinkingConfig');
+
+    const normal = JSON.parse(bench.buildOpenAIRequest({ query: 'q', vocabulary: {} }).options.body);
+    assert.deepStrictEqual(normal.response_format, { type: 'json_object' }, 'the default must be untouched');
+    const retried = JSON.parse(bench.buildOpenAIRequest({ query: 'q', vocabulary: {}, jsonMode: false }).options.body);
+    assert.strictEqual(retried.response_format, undefined);
+    assert.deepStrictEqual(retried.messages, normal.messages, 'and nothing else may change');
+  });
+
+  await testAsync('omitting thinkingConfig omits only that, and is not the default', async () => {
+    await withEnv({ GEMINI_API_KEY: FAKE_KEY }, () => {
+      const normal = JSON.parse(gemini.buildRequest({ query: 'q', vocabulary: {}, systemPrompt: 'x' }).options.body);
+      assert.deepStrictEqual(normal.generationConfig.thinkingConfig, { thinkingLevel: 'minimal' });
+
+      const without = JSON.parse(gemini.buildRequest({ query: 'q', vocabulary: {}, systemPrompt: 'x', thinking: null }).options.body);
+      assert.strictEqual(without.generationConfig.thinkingConfig, undefined);
+      assert.strictEqual(without.generationConfig.responseMimeType, 'application/json', 'JSON mode still asked for');
+      assert.deepStrictEqual(Object.keys(without.generationConfig), ['responseMimeType'],
+        'nothing else may change when the field is dropped');
+    });
+  });
+
+  await testAsync('a smoke test is one call, and a 400 costs exactly one more', async () => {
+    const calls = await withEnv({ GEMINI_API_KEY: FAKE_KEY }, () => withStubbedFetch(
+      async () => jsonResponse(200, okReply()),
+      async (made) => {
+        const v = await bench.diagnoseOne('gemini', 'a black oversized hoodie under $80');
+        assert.strictEqual(v.reading.ok, true);
+        assert.strictEqual(v.retry, undefined, 'a success must not cost a second call');
+        return made;
+      }
+    ));
+    assert.strictEqual(calls.length, 1, 'exactly one call');
+
+    const retried = await withEnv({ GEMINI_API_KEY: FAKE_KEY }, () => withStubbedFetch(
+      async (url, options) => {
+        const sent = JSON.parse(options.body);
+        /* the second call is the one without thinkingConfig, and it works */
+        return sent.generationConfig.thinkingConfig
+          ? { ok: false, status: 400, text: async () => GEMINI_400_FIELD, headers: { get: () => null } }
+          : jsonResponse(200, okReply());
+      },
+      async (made) => {
+        const v = await bench.diagnoseOne('gemini', 'a black oversized hoodie under $80');
+        assert.strictEqual(v.reading.status, 400);
+        assert.strictEqual(v.retry.without, 'generationConfig.thinkingConfig');
+        assert.strictEqual(v.retry.reading.ok, true, 'the retry identifies the field as the cause');
+        return made;
+      }
+    ));
+    assert.strictEqual(retried.length, 2, 'one call, then one more to name the 400');
+  });
+
+  await testAsync('the diagnostic reports a 401 without ever printing the key', async () => {
+    const { value, lines } = await captureLogs(() => withEnv({ GEMINI_API_KEY: SECRET_KEY }, () => withStubbedFetch(
+      async () => ({
+        ok: false,
+        status: 401,
+        text: async () => `{"error":{"code":401,"message":"Invalid authentication for key ${SECRET_KEY}","status":"UNAUTHENTICATED"}}`,
+        headers: { get: (name) => (name === 'content-type' ? 'application/json' : null) }
+      }),
+      async () => bench.diagnoseOne('gemini', 'a black hoodie')
+    )));
+    assert.strictEqual(value.classified.authentication, 'rejected');
+    assert.strictEqual(value.classified.reached, 'yes');
+    assert.ok(!JSON.stringify(value).includes(SECRET_KEY), 'the key must not survive into the diagnosis');
+    assert.ok(!lines.join('\n').includes(SECRET_KEY), 'nor into anything printed');
+  });
+
+  console.log('\nwhich model is being called, and why');
+
+  /* A model name on its own cannot tell you whether the default moved,
+     an environment variable is overriding it, or the checkout is behind.
+     Reporting only the name sent a debugging session looking in the
+     wrong one of those three. */
+
+  const withArgv = (args, run) => {
+    const saved = process.argv;
+    process.argv = ['node', 'bench-interpreters.js', ...args];
+    try { return run(); } finally { process.argv = saved; }
+  };
+
+  await testAsync('with nothing overriding it, the model is the adapter default', async () => {
+    await withEnv({ GEMINI_API_KEY: FAKE_KEY }, () => withArgv([], () => {
+      const p = bench.modelProvenance('gemini');
+      assert.strictEqual(p.value, 'gemini-3.6-flash');
+      assert.strictEqual(p.overridden, false);
+      assert.ok(p.from.includes('api/_interpreters/gemini.js'), p.from);
+    }));
+  });
+
+  await testAsync('GEMINI_MODEL is named as the thing overriding the default', async () => {
+    await withEnv({ GEMINI_API_KEY: FAKE_KEY, GEMINI_MODEL: 'gemini-2.5-flash' }, () => withArgv([], () => {
+      const p = bench.modelProvenance('gemini');
+      assert.strictEqual(p.value, 'gemini-2.5-flash');
+      assert.strictEqual(p.overridden, true);
+      assert.ok(p.from.includes('GEMINI_MODEL'), p.from);
+    }));
+  });
+
+  await testAsync('--gemini-model= is named, and outranks the environment', async () => {
+    await withEnv({ GEMINI_API_KEY: FAKE_KEY, GEMINI_MODEL: 'gemini-2.5-flash' }, () =>
+      withArgv(['--gemini-model=gemini-3.6-flash-preview'], () => {
+        const p = bench.modelProvenance('gemini');
+        assert.strictEqual(p.value, 'gemini-3.6-flash-preview');
+        assert.strictEqual(p.overridden, true);
+        assert.ok(p.from.includes('--gemini-model='), p.from);
+      }));
+  });
+
+  await testAsync('the same question is answerable for OpenAI', async () => {
+    await withEnv({ OPENAI_API_KEY: 'sk-test' }, () => withArgv([], () => {
+      assert.strictEqual(bench.modelProvenance('openai').overridden, false);
+    }));
+    await withEnv({ OPENAI_API_KEY: 'sk-test', OPENAI_MODEL: 'gpt-4o' }, () => withArgv([], () => {
+      const p = bench.modelProvenance('openai');
+      assert.strictEqual(p.value, 'gpt-4o');
+      assert.ok(p.from.includes('OPENAI_MODEL'), p.from);
+    }));
+  });
+
+  test('a withdrawn model is one the tooling can name, with its replacement', () => {
+    assert.strictEqual(bench.RETIRED_MODELS['gemini-2.5-flash'], 'gemini-3.6-flash');
+    assert.strictEqual(bench.RETIRED_MODELS[gemini.DEFAULT_MODEL], undefined,
+      'the default must never be a model the provider has withdrawn');
+  });
+
+  test('the running commit is reported, or reported as unknown, never guessed', () => {
+    const state = bench.checkoutState();
+    if (state === null) return;   /* not a git checkout: saying nothing is correct */
+    assert.ok(/^[0-9a-f]{7,40}$/.test(state.commit), state.commit);
+    assert.strictEqual(typeof state.dirty, 'boolean');
   });
 
   console.log('\nthe experiment stays removable');

@@ -56,7 +56,7 @@
      --openai-model=    override the model (default: OPENAI_MODEL, else
                         the endpoint's own gpt-4o-mini)
      --gemini-model=    override the model (default: GEMINI_MODEL, else
-                        gemini-2.5-flash)
+                        the adapter's own default)
      --openai-in=0.15   $ per 1M input tokens, when the price has moved
      --openai-out=0.60  $ per 1M output tokens
      --gemini-in=0.30   $ per 1M input tokens
@@ -65,6 +65,16 @@
      --compare=path.json  re-render the whole report from a file --out
                         wrote. Calls nothing and spends nothing, so a
                         run made on one machine can be read on another
+     --diagnose         ONE call per provider, reporting exactly what
+                        came back: HTTP status, the provider's own error
+                        code and message, whether the request reached
+                        the provider at all, whether authentication was
+                        accepted, and whether the reply was shaped the
+                        way the adapter expects. A 400 costs one more
+                        call, asking again without the one field most
+                        likely to have caused it. Exits non-zero unless
+                        both returned a usable Fynd intent — run this
+                        before trusting a benchmark.
      --dry-run          print the plan and the request shapes, call
                         nothing, spend nothing
 
@@ -85,12 +95,15 @@ const gemini = require('../api/_interpreters/gemini');
    Flags
    --------------------------------------------------------- */
 
-const argv = process.argv.slice(2);
+/* Read at call time rather than snapshotted at load, so what the flags
+   say cannot depend on when this module happened to be required — and
+   so a test can set them. */
+const argv = () => process.argv.slice(2);
 const flag = (name, fallback) => {
-  const hit = argv.find((a) => a.startsWith(`--${name}=`));
+  const hit = argv().find((a) => a.startsWith(`--${name}=`));
   return hit === undefined ? fallback : hit.slice(name.length + 3);
 };
-const has = (name) => argv.includes(`--${name}`);
+const has = (name) => argv().includes(`--${name}`);
 const num = (name, fallback) => {
   const value = Number(flag(name, NaN));
   return Number.isFinite(value) ? value : fallback;
@@ -100,7 +113,10 @@ const num = (name, fallback) => {
    every one of them is overridable, and the run prints which it used. */
 const PRICES = {
   openai: { input: num('openai-in', 0.15), output: num('openai-out', 0.60) },
-  gemini: { input: num('gemini-in', 0.30), output: num('gemini-out', 2.50) }
+  /* gemini-3.6-flash introductory pricing, in effect to 31 Dec 2026;
+     $1.50/$7.50 applies from 1 Jan 2027. Both move — check the vendor's
+     page and pass --gemini-in / --gemini-out when they have. */
+  gemini: { input: num('gemini-in', 0.75), output: num('gemini-out', 3.75) }
 };
 
 /* ---------------------------------------------------------
@@ -231,7 +247,22 @@ function grade(preferences, expect) {
 
 const openaiModel = () => flag('openai-model', '') || interpret.OPENAI_MODEL();
 
-function buildOpenAIRequest({ query, vocabulary, model }) {
+function buildOpenAIRequest({ query, vocabulary, model, jsonMode }) {
+  const body = {
+    model: model || openaiModel(),
+    temperature: 0,
+    response_format: { type: 'json_object' },
+    messages: [
+      { role: 'system', content: interpret.SYSTEM_PROMPT },
+      { role: 'user', content: gemini.userPrompt(query, vocabulary) }
+    ]
+  };
+  /* jsonMode:false drops response_format. A model that does not support
+     it rejects the whole call with a 400, and asking again without it is
+     the only way to tell that apart from a 400 about something else.
+     Only --diagnose passes this, once. */
+  if (jsonMode === false) delete body.response_format;
+
   return {
     url: interpret.OPENAI_URL,
     options: {
@@ -240,15 +271,7 @@ function buildOpenAIRequest({ query, vocabulary, model }) {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${process.env.OPENAI_API_KEY || ''}`
       },
-      body: JSON.stringify({
-        model: model || openaiModel(),
-        temperature: 0,
-        response_format: { type: 'json_object' },
-        messages: [
-          { role: 'system', content: interpret.SYSTEM_PROMPT },
-          { role: 'user', content: gemini.userPrompt(query, vocabulary) }
-        ]
-      })
+      body: JSON.stringify(body)
     }
   };
 }
@@ -260,33 +283,77 @@ function redactOpenAI(value) {
   return key ? raw.split(key).join('***') : raw;
 }
 
-async function callOpenAI(query) {
-  const { url, options } = buildOpenAIRequest({ query, vocabulary: VOCABULARY });
+/* Response headers a failure may carry back, for one question only: did
+   this answer come from OpenAI, or from something in front of it. None
+   can hold our key, and each is redacted anyway. */
+const REPORTED_HEADERS = ['content-type', 'server', 'via', 'www-authenticate', 'x-request-id', 'openai-processing-ms'];
+
+function headersFrom(response) {
+  const out = {};
+  if (!response || !response.headers || typeof response.headers.get !== 'function') return out;
+  REPORTED_HEADERS.forEach((name) => {
+    const value = response.headers.get(name);
+    if (value) out[name] = redactOpenAI(value).slice(0, 200);
+  });
+  return out;
+}
+
+/* OpenAI's error envelope, read from the whole body before truncation.
+   Same rule, same reason, as the adapter's. */
+function openaiEnvelope(body) {
+  const parsed = providerEnvelope(body);
+  return parsed ? Object.assign({}, parsed, { message: redactOpenAI(parsed.message).slice(0, 300) }) : null;
+}
+
+async function callOpenAI(query, options) {
+  const { url, options: request } = buildOpenAIRequest({
+    query, vocabulary: VOCABULARY, jsonMode: options && options.jsonMode
+  });
   let response;
   try {
-    response = await fetch(url, options);
+    response = await fetch(url, request);
   } catch (err) {
     return { ok: false, reason: 'unreachable', detail: redactOpenAI(err && err.message) };
   }
   if (!response.ok) {
     let detail = '';
     try { detail = await response.text(); } catch (err) { detail = ''; }
-    return { ok: false, reason: 'upstream', status: response.status, detail: redactOpenAI(detail).slice(0, 300) };
+    /* the body is carried back, redacted: a 401 from OpenAI and a 403
+       from a proxy in the way are different problems, and a failure
+       nobody can name is a failure nobody can fix. The envelope is
+       parsed from the WHOLE body before the body is truncated — a long
+       error must not become an unnameable one. */
+    return {
+      ok: false,
+      reason: 'upstream',
+      status: response.status,
+      error: openaiEnvelope(detail),
+      detail: redactOpenAI(detail).slice(0, 500),
+      headers: headersFrom(response)
+    };
   }
 
   let payload;
-  try { payload = await response.json(); } catch (err) { return { ok: false, reason: 'unparseable' }; }
+  try { payload = await response.json(); } catch (err) {
+    return { ok: false, reason: 'unparseable', status: response.status, detail: 'the 200 body was not JSON', headers: headersFrom(response) };
+  }
 
   const content = payload.choices && payload.choices[0] && payload.choices[0].message
     ? payload.choices[0].message.content : '';
   let raw;
-  try { raw = JSON.parse(content); } catch (err) { return { ok: false, reason: 'unparseable' }; }
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { ok: false, reason: 'unparseable' };
+  try { raw = JSON.parse(content); } catch (err) {
+    return { ok: false, reason: 'unparseable', status: response.status, detail: redactOpenAI(content).slice(0, 300), headers: headersFrom(response) };
+  }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return { ok: false, reason: 'unparseable', status: response.status, detail: 'the reply parsed, but not into an object', headers: headersFrom(response) };
+  }
 
   const u = payload.usage || {};
   return {
     ok: true,
     raw,
+    status: response.status,
+    headers: headersFrom(response),
     usage: {
       input: Number(u.prompt_tokens) || 0,
       output: Number(u.completion_tokens) || 0,
@@ -296,12 +363,19 @@ async function callOpenAI(query) {
   };
 }
 
-async function callGemini(query) {
+async function callGemini(query, options) {
   const override = flag('gemini-model', '');
   const previous = process.env.GEMINI_MODEL;
   if (override) process.env.GEMINI_MODEL = override;
   try {
-    return await gemini.interpret({ query, vocabulary: VOCABULARY, systemPrompt: interpret.SYSTEM_PROMPT });
+    return await gemini.interpret({
+      query,
+      vocabulary: VOCABULARY,
+      systemPrompt: interpret.SYSTEM_PROMPT,
+      /* undefined keeps the configured budget; --diagnose passes null
+         once, to ask again without the field at all */
+      thinking: options && 'thinking' in options ? options.thinking : undefined
+    });
   } finally {
     if (override) {
       if (previous === undefined) delete process.env.GEMINI_MODEL; else process.env.GEMINI_MODEL = previous;
@@ -364,7 +438,18 @@ function summarise(name, runs) {
     validRate: runs.length ? valid.length / runs.length : 0,
     malformedRate: runs.length ? malformed.length / runs.length : 0,
     errorRate: runs.length ? errored.length / runs.length : 0,
-    errors: errored.map((r) => ({ query: r.query, reason: r.reason, status: r.status || null })),
+    errors: errored.map((r) => ({
+      query: r.query, reason: r.reason, status: r.status || null,
+      detail: r.detail || null, reached: r.reached || null, authentication: r.authentication || null
+    })),
+    /* every distinct failure, counted: 20 identical ones are a single
+       problem and should read as a single problem */
+    errorsByKind: Object.entries(errored.reduce((acc, r) => {
+      const key = `${r.reason}${r.status ? ` ${r.status}` : ''}`;
+      (acc[key] = acc[key] || { count: 0, example: null }).count += 1;
+      if (!acc[key].example && r.detail) acc[key].example = String(r.detail).slice(0, 200);
+      return acc;
+    }, {})).map(([kind, v]) => ({ kind, count: v.count, example: v.example })),
     fieldAccuracy: graded ? correct / graded : 0,
     fieldsGraded: graded,
     fieldsCorrect: correct,
@@ -392,7 +477,14 @@ function report(summary) {
   console.log(`\n${summary.label}  (${summary.model})`);
   console.log(`  valid structured output   ${pct(summary.validRate)}  (${summary.calls} calls)`);
   console.log(`  malformed output          ${pct(summary.malformedRate)}`);
-  if (summary.errorRate) console.log(`  API errors                ${pct(summary.errorRate)}`);
+  if (summary.errorRate) {
+    console.log(`  API errors                ${pct(summary.errorRate)}`);
+    (summary.errorsByKind || []).forEach(({ kind, count, example }) => {
+      console.log(`    ${pad(kind, 22)}${count}${example ? `  ${String(example).slice(0, 90)}` : ''}`);
+    });
+    const reached = summary.errors && summary.errors[0];
+    if (reached) console.log(`    ${pad('reached provider', 22)}${reached.reached}; authentication ${reached.authentication}`);
+  }
   console.log(`  field accuracy            ${pct(summary.fieldAccuracy)}  (${summary.fieldsCorrect}/${summary.fieldsGraded} graded fields)`);
   console.log(`  latency                   mean ${summary.latencyMs.mean}ms  p50 ${summary.latencyMs.p50}ms  p95 ${summary.latencyMs.p95}ms  max ${summary.latencyMs.max}ms`);
   if (summary.tokens) {
@@ -578,6 +670,340 @@ function renderSaved(path) {
   console.log('');
 }
 
+/* ---------------------------------------------------------
+   What actually came back
+   ---------------------------------------------------------
+   A run where every call fails with `upstream` says only that some
+   server answered with a non-2xx. It does not say WHICH server: a 403
+   carrying Google's own error envelope and a 403 from a proxy standing
+   in front of it are the same status and completely different problems.
+
+   These read the evidence a failure carries and say, in words that do
+   not overstate what the evidence supports, whether the request reached
+   the provider and whether it got past authentication. Where the
+   evidence does not settle it, the answer is "unknown" — which is a
+   finding, not a gap to be filled with a guess.
+   --------------------------------------------------------- */
+
+/* Both providers document the same error envelope shape:
+     OpenAI  { error: { message, type, code, param } }
+     Gemini  { error: { code, message, status } }
+   Something else answering an API endpoint almost never produces it. */
+function providerEnvelope(detail) {
+  if (typeof detail !== 'string' || !detail.trim().startsWith('{')) return null;
+  let body;
+  try { body = JSON.parse(detail); } catch (err) { return null; }
+  const error = body && body.error;
+  if (!error || typeof error !== 'object') return null;
+  if (typeof error.message !== 'string') return null;
+  return {
+    message: error.message,
+    code: error.code !== undefined ? error.code : null,
+    type: error.type || error.status || null
+  };
+}
+
+const looksLikeHtml = (detail) => typeof detail === 'string' && /^\s*<(!doctype|html)/i.test(detail);
+
+function classify(reading) {
+  const status = reading.status === undefined ? null : reading.status;
+  const headers = reading.headers || {};
+  /* the envelope parsed at the source, from the untruncated body, is
+     authoritative; parsing `detail` is only a fallback for a record
+     written before that existed */
+  const envelope = reading.error || providerEnvelope(reading.detail);
+  const contentType = headers['content-type'] || '';
+
+  /* did it get there */
+  let reached = 'unknown';
+  let responder = 'unidentified';
+  if (reading.ok || (status !== null && status >= 200 && status < 300)) {
+    reached = 'yes';
+    responder = 'the provider';
+  } else if (envelope) {
+    reached = 'yes';
+    responder = 'the provider (its own error envelope came back)';
+  } else if (status === 407) {
+    reached = 'no';
+    responder = 'a proxy demanding its own authentication';
+  } else if (reading.reason === 'unreachable') {
+    reached = 'no';
+    responder = 'nothing — the connection itself failed';
+  } else if (looksLikeHtml(reading.detail) || /text\/html/i.test(contentType)) {
+    reached = 'no';
+    responder = 'something answering HTML, which these APIs never do';
+  } else if (status !== null && contentType && !/json/i.test(contentType)) {
+    /* Both APIs answer an error with a JSON envelope, always. A non-2xx
+       arriving as text/plain is therefore something in the path
+       answering on the provider's behalf — an egress allowlist, a
+       corporate proxy, a gateway. Observed in exactly this form:
+       403 text/plain "Host not in allowlist: api.openai.com". */
+    reached = 'no';
+    responder = `something answering ${contentType.split(';')[0]}, which these APIs do not do for errors`;
+  }
+
+  /* Did authentication succeed. Only a 2xx PROVES it did; everything
+     else is read from what the provider said, and where nothing settles
+     it the answer is "unknown".
+
+     The status alone is not enough: OpenAI rejects a bad key with 401,
+     and Gemini rejects one with 400 INVALID_ARGUMENT — the same status
+     it uses for a malformed request. So the message is read too, which
+     is the only thing that tells those two 400s apart. */
+  const saidAuth = envelope && /api[ _-]?key not valid|invalid[ _-]?api[ _-]?key|api key expired|unauthenticated|permission denied|incorrect api key|invalid authentication/i
+    .test(`${envelope.message} ${envelope.type || ''}`);
+
+  let authentication = 'unknown';
+  if (reached === 'yes' && (reading.ok || (status >= 200 && status < 300))) authentication = 'accepted';
+  else if (saidAuth) authentication = 'rejected';
+  else if (status === 401) authentication = 'rejected';
+  else if (status === 403 && envelope) authentication = 'rejected';
+  else if (envelope && [400, 404, 422, 429].includes(status)) authentication = 'accepted (the request got past auth)';
+  else if (envelope && status >= 500) authentication = 'accepted (the request got past auth)';
+
+  return { status, reached, responder, authentication, envelope, headers };
+}
+
+/* What a failed call leaves behind.
+
+   `detail` and `headers` are carried, never dropped. A run in which
+   every call failed is otherwise indistinguishable from any other run
+   in which every call failed, and the whole point of recording a
+   failure is being able to say afterwards what it actually was. Both
+   fields were redacted by the caller that produced them. */
+function recordFailure(query, reading, ms) {
+  const failure = classify(reading);
+  return {
+    query,
+    ok: false,
+    reason: reading.reason,
+    status: reading.status === undefined ? null : reading.status,
+    detail: reading.detail || null,
+    headers: reading.headers || null,
+    reached: failure.reached,
+    authentication: failure.authentication,
+    said: failure.envelope ? failure.envelope.message : (reading.detail || null),
+    ms
+  };
+}
+
+/* Was the 200 shaped the way the adapter expects? Only answerable on a
+   success, and it is the difference between "the model said something
+   unusable" and "we are reading the wrong field of a fine reply". */
+function shapeVerdict(reading) {
+  if (reading.ok) return { asExpected: true, note: 'the documented fields were present and the content parsed as a JSON object' };
+  if (reading.reason !== 'unparseable') return { asExpected: null, note: 'not applicable: no 200 to read' };
+  return { asExpected: false, note: reading.detail ? `a 200 came back but could not be read as an intent: ${reading.detail}` : 'a 200 came back and could not be read as an intent' };
+}
+
+/* ---------------------------------------------------------
+   --diagnose: one call per provider, and what it proves
+   ---------------------------------------------------------
+   At most two calls per provider: the real request, and — only if that
+   returns a 400 — the same request once more without the one field most
+   likely to have caused it, so a request-shape mismatch is identified
+   rather than guessed at.
+   --------------------------------------------------------- */
+
+/* ---------------------------------------------------------
+   Where the model came from, and which code is running
+   ---------------------------------------------------------
+   A model name on its own cannot tell you whether the default changed,
+   an environment variable is overriding it, or the checkout is behind.
+   Those are three different fixes, and reporting only the name sends
+   you looking in the wrong one — which is exactly what happened when a
+   GEMINI_MODEL left over from an earlier run kept calling a retired
+   model out of code that no longer names it.
+   --------------------------------------------------------- */
+
+const MODEL_SOURCES = {
+  openai: { flag: 'openai-model', env: 'OPENAI_MODEL', fallback: 'the endpoint default in api/interpret.js' },
+  gemini: { flag: 'gemini-model', env: 'GEMINI_MODEL', fallback: 'the adapter default in api/_interpreters/gemini.js' }
+};
+
+function modelProvenance(name) {
+  const source = MODEL_SOURCES[name];
+  const fromFlag = flag(source.flag, '');
+  if (fromFlag) return { value: fromFlag, from: `--${source.flag}= on the command line`, overridden: true };
+
+  const fromEnv = String(process.env[source.env] || '').trim();
+  if (fromEnv) return { value: fromEnv, from: `the ${source.env} environment variable`, overridden: true };
+
+  return { value: PROVIDERS[name].model(), from: source.fallback, overridden: false };
+}
+
+/* Models the provider has withdrawn, and what it says to use instead.
+   Only ever reported — nothing here silently rewrites a request, because
+   quietly calling a model nobody asked for is its own bug. */
+const RETIRED_MODELS = {
+  'gemini-2.5-flash': 'gemini-3.6-flash'
+};
+
+/* Which commit is actually checked out, so "did I pull?" is answered in
+   the output rather than assumed. Best effort: not every copy of this
+   is a git checkout, and failing to know is not a reason to fail. */
+function checkoutState() {
+  const run = (cmd) => {
+    try {
+      return require('child_process').execSync(cmd, { cwd: __dirname, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+    } catch (err) { return ''; }
+  };
+  const commit = run('git rev-parse --short HEAD');
+  if (!commit) return null;
+  const dirty = run('git status --porcelain -- ../api/_interpreters ../scripts/bench-interpreters.js');
+  return { commit, subject: run('git log -1 --format=%s'), dirty: Boolean(dirty) };
+}
+
+const RETRY_WITHOUT = {
+  openai: { field: 'response_format', options: { jsonMode: false } },
+  gemini: { field: 'generationConfig.thinkingConfig', options: { thinking: null } }
+};
+
+async function diagnoseOne(name, query) {
+  const provider = PROVIDERS[name];
+  const started = Date.now();
+  const reading = await provider.call(query);
+  const ms = Date.now() - started;
+  const verdict = { name, label: provider.label, model: provider.model(), query, ms, reading, classified: classify(reading) };
+
+  /* a 400 is the one status worth a second question */
+  if (!reading.ok && reading.status === 400) {
+    const retry = RETRY_WITHOUT[name];
+    const second = await provider.call(query, retry.options);
+    verdict.retry = { without: retry.field, reading: second, classified: classify(second) };
+  }
+
+  /* A 404 says "not this model" and nothing about which model would
+     work. Gemini can be asked, for free, and the answer is specific to
+     the key — which is the whole point, because that is how a model
+     available to one account 404s for another. */
+  if (!reading.ok && reading.status === 404 && name === 'gemini') {
+    verdict.available = await gemini.listModels();
+  }
+  return verdict;
+}
+
+function reportDiagnosis(v) {
+  const r = v.reading;
+  const c = v.classified;
+  const line = (label, value) => console.log(`  ${pad(label, 26)}${value}`);
+
+  const provenance = modelProvenance(v.name);
+
+  console.log(`\n${v.label}  (${v.model})`);
+  console.log(`  request                   POST ${v.name === 'openai' ? interpret.OPENAI_URL : `${gemini.API_ROOT}/${v.model}:generateContent`}`);
+  line('model chosen by', provenance.from);
+
+  /* A retired model reached by an override is the one failure that looks
+     exactly like stale code, so it is named as what it is. */
+  const replacement = RETIRED_MODELS[String(v.model).toLowerCase()];
+  if (replacement) {
+    console.log(`  ${pad('', 26)}⚠ ${v.model} has been withdrawn; the provider names ${replacement}`);
+    if (provenance.overridden) {
+      console.log(`  ${pad('', 26)}  it is being requested by ${provenance.from},`);
+      console.log(`  ${pad('', 26)}  NOT by the code. Clear that and the default is used.`);
+    }
+  }
+  line('authenticated by', v.name === 'openai' ? 'Authorization: Bearer … (header, value never printed)' : 'x-goog-api-key: … (header, value never printed)');
+  line('query', JSON.stringify(v.query));
+  line('wall clock', `${v.ms}ms`);
+  line('HTTP status', c.status === null ? 'none — no response at all' : c.status);
+  line('reached the provider', c.reached === 'yes' ? 'yes' : (c.reached === 'no' ? `no — ${c.responder}` : `unknown — ${c.responder}`));
+  line('authentication', c.authentication);
+
+  if (Object.keys(c.headers).length) {
+    console.log(`  ${pad('response headers', 26)}`);
+    Object.entries(c.headers).forEach(([k, val]) => console.log(`    ${pad(k, 24)}${val}`));
+  } else {
+    line('response headers', 'none reported');
+  }
+
+  if (c.envelope) {
+    line('provider error code', c.envelope.code === null ? '—' : c.envelope.code);
+    line('provider error type', c.envelope.type || '—');
+    line('provider message', c.envelope.message);
+  } else if (!r.ok) {
+    line('provider message', r.detail ? `no error envelope. Body begins: ${String(r.detail).slice(0, 200)}` : 'nothing came back to read');
+  }
+
+  const shape = shapeVerdict(r);
+  line('response shape', shape.asExpected === null ? 'n/a' : (shape.asExpected ? 'as the adapter expects' : 'NOT as the adapter expects'));
+  if (shape.asExpected === false) console.log(`    ${shape.note}`);
+
+  if (v.retry) {
+    const rc = v.retry.classified;
+    console.log(`\n  asked again without ${v.retry.without}:`);
+    console.log(`    ${pad('HTTP status', 24)}${rc.status === null ? 'none' : rc.status}`);
+    if (v.retry.reading.ok) {
+      console.log(`    ${pad('result', 24)}it worked. ${v.retry.without} is what the first call was rejected for.`);
+    } else {
+      console.log(`    ${pad('result', 24)}still failing, so ${v.retry.without} is not the cause`);
+      if (rc.envelope) console.log(`    ${pad('provider message', 24)}${rc.envelope.message}`);
+    }
+  }
+
+  if (v.available) {
+    console.log('\n  models this key can actually use:');
+    if (!v.available.ok) {
+      console.log(`    could not be listed (${v.available.reason}${v.available.status ? ` ${v.available.status}` : ''})`);
+    } else {
+      const usable = v.available.models.filter((m) => !m.methods.length || m.methods.includes('generateContent'));
+      if (!usable.length) console.log('    none of them serve generateContent');
+      usable.slice(0, 25).forEach((m) => console.log(`    ${m.id}`));
+      if (usable.length > 25) console.log(`    …and ${usable.length - 25} more`);
+      console.log(`\n    set GEMINI_MODEL to one of these, or change DEFAULT_MODEL in`);
+      console.log('    api/_interpreters/gemini.js if the default itself is wrong.');
+    }
+  }
+
+  if (r.ok) {
+    const preferences = interpret.shapePreferences(r.raw);
+    line('tokens', `${r.usage.input} in, ${r.usage.output} out${r.usage.thoughts ? `, ${r.usage.thoughts} thinking` : ''}`);
+    console.log(`  ${pad('Fynd intent returned', 26)}`);
+    console.log(`    ${JSON.stringify(preferences)}`);
+    const usable = Object.keys(preferences).length === 11;
+    line('verdict', usable ? 'USABLE — a structured Fynd intent came back' : 'NOT usable — the intent is not the shape /api/search reads');
+    return usable;
+  }
+
+  line('verdict', `NOT usable — ${r.reason}${c.status ? ` ${c.status}` : ''}`);
+  if (c.reached === 'no') {
+    console.log('    This never got to the provider, so it says nothing about the');
+    console.log('    model, the key or the request. It is a network path problem:');
+    console.log(`    ${c.responder}.`);
+  }
+  return false;
+}
+
+async function diagnose(names) {
+  const query = QUERIES[0].query;
+  console.log('\nFynd — interpreter smoke test\n');
+  console.log(`  one request per provider (a 400 costs one more, to identify it)`);
+  console.log(`  providers      ${names.map((n) => `${PROVIDERS[n].label} (${PROVIDERS[n].model()})`).join(', ')}`);
+
+  /* so a run that is testing older code says so, rather than looking
+     like code that does not work */
+  const checkout = checkoutState();
+  if (checkout) {
+    console.log(`  running        ${checkout.commit}${checkout.dirty ? ' (working tree modified)' : ''}  ${checkout.subject}`);
+  }
+
+  const usable = [];
+  for (const name of names) {
+    usable.push(await diagnoseOne(name, query).then(reportDiagnosis));
+  }
+
+  const allUsable = usable.every(Boolean);
+  console.log(`\n${allUsable
+    ? '  Both returned a usable structured Fynd intent. The 20-query benchmark is worth running.'
+    : '  At least one provider did not return a usable intent. Fix that before running the benchmark:'}`);
+  if (!allUsable) {
+    console.log('  a benchmark over a broken path measures the path, not the models.');
+  }
+  console.log('');
+  return allUsable;
+}
+
 async function run() {
   const saved = flag('compare', '');
   if (saved) return renderSaved(saved);
@@ -594,10 +1020,12 @@ async function run() {
   const set = QUERIES.slice(0, count);
   const calls = set.length * repeat;
 
-  console.log(`\nFynd — interpreter benchmark\n`);
-  console.log(`  queries        ${set.length}${repeat > 1 ? ` x ${repeat} runs` : ''}`);
-  console.log(`  providers      ${names.map((n) => `${PROVIDERS[n].label} (${PROVIDERS[n].model()})`).join(', ')}`);
-  console.log(`  calls to make  ${calls * names.length} — this spends real credit on each account`);
+  if (!has('diagnose')) {
+    console.log(`\nFynd — interpreter benchmark\n`);
+    console.log(`  queries        ${set.length}${repeat > 1 ? ` x ${repeat} runs` : ''}`);
+    console.log(`  providers      ${names.map((n) => `${PROVIDERS[n].label} (${PROVIDERS[n].model()})`).join(', ')}`);
+  }
+  if (!has('diagnose')) console.log(`  calls to make  ${calls * names.length} — this spends real credit on each account`);
 
   if (has('dry-run')) {
     console.log('\n--dry-run: nothing will be called.\n');
@@ -618,6 +1046,11 @@ async function run() {
     process.exit(2);
   }
 
+  if (has('diagnose')) {
+    const usable = await diagnose(names);
+    process.exit(usable ? 0 : 1);
+  }
+
   const results = {};
   for (const name of names) {
     const provider = PROVIDERS[name];
@@ -631,8 +1064,10 @@ async function run() {
         const ms = Date.now() - started;
 
         if (!reading.ok) {
-          runs.push({ query: item.query, ok: false, reason: reading.reason, status: reading.status, ms });
-          console.log(`  ${pad(`${ms}ms`, 8)}${pad(reading.reason, 16)}${item.query}`);
+          const record = recordFailure(item.query, reading, ms);
+          runs.push(record);
+          console.log(`  ${pad(`${ms}ms`, 8)}${pad(`${reading.reason}${reading.status ? ` ${reading.status}` : ''}`, 16)}${item.query}`);
+          if (record.said) console.log(`            ${pad('', 6)}${String(record.said).slice(0, 140)}`);
           continue;
         }
 
@@ -687,4 +1122,6 @@ if (require.main === module) {
 }
 
 module.exports = { QUERIES, VOCABULARY, GRADED_FIELDS, DISAGREEMENT_FIELDS, PRICES,
-  buildOpenAIRequest, grade, fieldMatches, summarise, costPerThousand, percentile, disagreements };
+  buildOpenAIRequest, grade, fieldMatches, summarise, costPerThousand, percentile, disagreements,
+  classify, providerEnvelope, shapeVerdict, headersFrom, recordFailure, diagnoseOne, RETRY_WITHOUT,
+  modelProvenance, checkoutState, RETIRED_MODELS };
