@@ -817,6 +817,232 @@ const bodyOf = (call) => JSON.parse(call.options.body);
       .forEach((label) => assert.ok(labels.includes(label), `${label} is not compared`));
   });
 
+  console.log('\nfailures say what they were');
+
+  /* The bodies these providers actually return, as they document them.
+     A failure the tooling cannot name is a failure nobody can fix. */
+  const OPENAI_401 = JSON.stringify({ error: { message: 'Incorrect API key provided: sk-abc***. You can find your API key at https://platform.openai.com/account/api-keys.', type: 'invalid_request_error', param: null, code: 'invalid_api_key' } });
+  const GEMINI_400_KEY = JSON.stringify({ error: { code: 400, message: 'API key not valid. Please pass a valid API key.', status: 'INVALID_ARGUMENT' } });
+  const GEMINI_400_FIELD = JSON.stringify({ error: { code: 400, message: 'Invalid JSON payload received. Unknown name "thinkingConfig" at \'generation_config\'.', status: 'INVALID_ARGUMENT' } });
+  const OPENAI_429 = JSON.stringify({ error: { message: 'Rate limit reached for gpt-4o-mini', type: 'requests', code: 'rate_limit_exceeded' } });
+  const PROXY_403 = '<!DOCTYPE html><html><head><title>403 Forbidden</title></head><body>Access denied by policy</body></html>';
+
+  test('a provider error envelope is read; anything else is not mistaken for one', () => {
+    const openai = bench.providerEnvelope(OPENAI_401);
+    assert.strictEqual(openai.code, 'invalid_api_key');
+    assert.strictEqual(openai.type, 'invalid_request_error');
+    assert.ok(openai.message.includes('Incorrect API key provided'));
+
+    const google = bench.providerEnvelope(GEMINI_400_KEY);
+    assert.strictEqual(google.code, 400);
+    assert.strictEqual(google.type, 'INVALID_ARGUMENT');
+
+    assert.strictEqual(bench.providerEnvelope(PROXY_403), null, 'HTML is not an envelope');
+    assert.strictEqual(bench.providerEnvelope('Bad Gateway'), null);
+    assert.strictEqual(bench.providerEnvelope('{"nope":1}'), null);
+    assert.strictEqual(bench.providerEnvelope(undefined), null);
+  });
+
+  test('an OpenAI 401 is named as the provider rejecting the key', () => {
+    const c = bench.classify({ ok: false, reason: 'upstream', status: 401, detail: OPENAI_401, headers: { 'content-type': 'application/json' } });
+    assert.strictEqual(c.reached, 'yes');
+    assert.strictEqual(c.authentication, 'rejected');
+    assert.strictEqual(c.envelope.code, 'invalid_api_key');
+  });
+
+  test('a Gemini bad key — a 400, not a 401 — is still named as a rejected key', () => {
+    /* the status alone would read as "the request got past auth", which
+       is exactly wrong, and is why the message is read too */
+    const c = bench.classify({ ok: false, reason: 'upstream', status: 400, detail: GEMINI_400_KEY, headers: {} });
+    assert.strictEqual(c.reached, 'yes');
+    assert.strictEqual(c.authentication, 'rejected');
+  });
+
+  test('a Gemini 400 about an unknown field is auth accepted, and a request-shape problem', () => {
+    const c = bench.classify({ ok: false, reason: 'upstream', status: 400, detail: GEMINI_400_FIELD, headers: {} });
+    assert.strictEqual(c.reached, 'yes');
+    assert.ok(c.authentication.startsWith('accepted'), c.authentication);
+    assert.ok(c.envelope.message.includes('thinkingConfig'));
+  });
+
+  test('a rate limit is the provider talking, past authentication', () => {
+    const c = bench.classify({ ok: false, reason: 'upstream', status: 429, detail: OPENAI_429, headers: {} });
+    assert.strictEqual(c.reached, 'yes');
+    assert.ok(c.authentication.startsWith('accepted'));
+  });
+
+  test('an HTML 403 is named as something that is not the provider', () => {
+    const c = bench.classify({ ok: false, reason: 'upstream', status: 403, detail: PROXY_403, headers: { 'content-type': 'text/html' } });
+    assert.strictEqual(c.reached, 'no');
+    assert.ok(/never do/.test(c.responder), c.responder);
+    assert.strictEqual(c.authentication, 'unknown', 'nothing here proves anything about our key');
+  });
+
+  test('a long error is still nameable — the envelope is parsed before truncation', () => {
+    /* Google pads an error with a `details` array that runs past any
+       sensible log line. Truncating first left a fragment that would not
+       parse, and a failure nobody could name. Found by running the
+       diagnostic against the live endpoint with an invalid key. */
+    const long = JSON.stringify({
+      error: {
+        code: 400,
+        message: 'API key not valid. Please pass a valid API key.',
+        status: 'INVALID_ARGUMENT',
+        details: [
+          { '@type': 'type.googleapis.com/google.rpc.ErrorInfo', reason: 'API_KEY_INVALID', domain: 'googleapis.com', metadata: { service: 'generativelanguage.googleapis.com', method: 'google.ai.generativelanguage.v1beta.GenerativeService.GenerateContent' } },
+          { '@type': 'type.googleapis.com/google.rpc.LocalizedMessage', locale: 'en-US', message: 'API key not valid. Please pass a valid API key.' },
+          { '@type': 'type.googleapis.com/google.rpc.Help', links: [{ description: 'Google developers console API key', url: 'https://console.developers.google.com/project/_/apiui/credential' }] }]
+      }
+    });
+    assert.ok(long.length > 500, 'the fixture must be longer than the log truncation');
+
+    const envelope = gemini.errorEnvelope(long);
+    assert.strictEqual(envelope.message, 'API key not valid. Please pass a valid API key.');
+    assert.strictEqual(envelope.type, 'INVALID_ARGUMENT');
+
+    /* and the classifier must use it rather than the truncated body */
+    const c = bench.classify({ ok: false, reason: 'upstream', status: 400, error: envelope, detail: long.slice(0, 500), headers: {} });
+    assert.strictEqual(c.reached, 'yes');
+    assert.strictEqual(c.authentication, 'rejected');
+  });
+
+  test('an egress allowlist answering for the provider is named as not the provider', () => {
+    /* Observed live, in exactly this shape: a 403 with a text/plain body
+       from a proxy. It is an HTTP response, so it classifies as
+       `upstream` — which is what makes a whole run of them look like a
+       provider problem when it is a network path problem. */
+    const c = bench.classify({
+      ok: false, reason: 'upstream', status: 403,
+      detail: 'Host not in allowlist: api.openai.com. Add this host to your network egress settings to allow access.',
+      headers: { 'content-type': 'text/plain' }
+    });
+    assert.strictEqual(c.reached, 'no');
+    assert.ok(/text\/plain/.test(c.responder), c.responder);
+    assert.strictEqual(c.authentication, 'unknown', 'nothing here proves anything about the key');
+  });
+
+  test('a 407 is named as a proxy in the way', () => {
+    const c = bench.classify({ ok: false, reason: 'upstream', status: 407, detail: 'Proxy Authentication Required', headers: {} });
+    assert.strictEqual(c.reached, 'no');
+    assert.ok(/proxy/i.test(c.responder));
+  });
+
+  test('a connection that never landed is not reported as an upstream error', () => {
+    const c = bench.classify({ ok: false, reason: 'unreachable', detail: 'fetch failed' });
+    assert.strictEqual(c.reached, 'no');
+    assert.strictEqual(c.status, null);
+  });
+
+  test('a success is the only thing that proves authentication worked', () => {
+    const c = bench.classify({ ok: true, status: 200, headers: {} });
+    assert.strictEqual(c.reached, 'yes');
+    assert.strictEqual(c.authentication, 'accepted');
+  });
+
+  test('a 200 that could not be read is a shape problem, not an API error', () => {
+    const v = bench.shapeVerdict({ ok: false, reason: 'unparseable', status: 200, detail: 'Sure! Here is the intent' });
+    assert.strictEqual(v.asExpected, false);
+    assert.ok(v.note.includes('could not be read'));
+    assert.strictEqual(bench.shapeVerdict({ ok: true }).asExpected, true);
+    assert.strictEqual(bench.shapeVerdict({ ok: false, reason: 'upstream', status: 500 }).asExpected, null);
+  });
+
+  test('a recorded failure keeps the status, the message and what it proved', () => {
+    const record = bench.recordFailure('a black hoodie',
+      { ok: false, reason: 'upstream', status: 401, detail: OPENAI_401, headers: { 'content-type': 'application/json' } }, 240);
+    assert.strictEqual(record.status, 401);
+    assert.ok(record.detail.includes('Incorrect API key'), 'the body must survive into the run record');
+    assert.strictEqual(record.reached, 'yes');
+    assert.strictEqual(record.authentication, 'rejected');
+    assert.ok(record.said.includes('Incorrect API key'));
+    assert.deepStrictEqual(record.headers, { 'content-type': 'application/json' });
+  });
+
+  test('a run of identical failures reads as one problem, with an example', () => {
+    const runs = Array.from({ length: 20 }, (_, i) =>
+      bench.recordFailure(`query ${i}`, { ok: false, reason: 'upstream', status: 401, detail: OPENAI_401, headers: {} }, 200));
+    const summary = bench.summarise('openai', runs);
+    assert.strictEqual(summary.errorRate, 1);
+    assert.strictEqual(summary.errorsByKind.length, 1);
+    assert.strictEqual(summary.errorsByKind[0].kind, 'upstream 401');
+    assert.strictEqual(summary.errorsByKind[0].count, 20);
+    assert.ok(summary.errorsByKind[0].example.includes('Incorrect API key'));
+    assert.ok(summary.errors[0].detail, 'the JSON must carry the detail, not just the count');
+    assert.strictEqual(summary.errors[0].authentication, 'rejected');
+  });
+
+  console.log('\nthe smoke test');
+
+  test('the retry drops exactly the field most likely to have caused a 400', () => {
+    assert.strictEqual(bench.RETRY_WITHOUT.openai.field, 'response_format');
+    assert.strictEqual(bench.RETRY_WITHOUT.gemini.field, 'generationConfig.thinkingConfig');
+
+    const normal = JSON.parse(bench.buildOpenAIRequest({ query: 'q', vocabulary: {} }).options.body);
+    assert.deepStrictEqual(normal.response_format, { type: 'json_object' }, 'the default must be untouched');
+    const retried = JSON.parse(bench.buildOpenAIRequest({ query: 'q', vocabulary: {}, jsonMode: false }).options.body);
+    assert.strictEqual(retried.response_format, undefined);
+    assert.deepStrictEqual(retried.messages, normal.messages, 'and nothing else may change');
+  });
+
+  await testAsync('omitting thinkingConfig omits only that, and is not the default', async () => {
+    await withEnv({ GEMINI_API_KEY: FAKE_KEY }, () => {
+      const normal = JSON.parse(gemini.buildRequest({ query: 'q', vocabulary: {}, systemPrompt: 'x' }).options.body);
+      assert.deepStrictEqual(normal.generationConfig.thinkingConfig, { thinkingBudget: 0 });
+
+      const without = JSON.parse(gemini.buildRequest({ query: 'q', vocabulary: {}, systemPrompt: 'x', thinking: null }).options.body);
+      assert.strictEqual(without.generationConfig.thinkingConfig, undefined);
+      assert.strictEqual(without.generationConfig.responseMimeType, 'application/json', 'JSON mode still asked for');
+      assert.strictEqual(without.generationConfig.temperature, 0);
+    });
+  });
+
+  await testAsync('a smoke test is one call, and a 400 costs exactly one more', async () => {
+    const calls = await withEnv({ GEMINI_API_KEY: FAKE_KEY }, () => withStubbedFetch(
+      async () => jsonResponse(200, okReply()),
+      async (made) => {
+        const v = await bench.diagnoseOne('gemini', 'a black oversized hoodie under $80');
+        assert.strictEqual(v.reading.ok, true);
+        assert.strictEqual(v.retry, undefined, 'a success must not cost a second call');
+        return made;
+      }
+    ));
+    assert.strictEqual(calls.length, 1, 'exactly one call');
+
+    const retried = await withEnv({ GEMINI_API_KEY: FAKE_KEY }, () => withStubbedFetch(
+      async (url, options) => {
+        const sent = JSON.parse(options.body);
+        /* the second call is the one without thinkingConfig, and it works */
+        return sent.generationConfig.thinkingConfig
+          ? { ok: false, status: 400, text: async () => GEMINI_400_FIELD, headers: { get: () => null } }
+          : jsonResponse(200, okReply());
+      },
+      async (made) => {
+        const v = await bench.diagnoseOne('gemini', 'a black oversized hoodie under $80');
+        assert.strictEqual(v.reading.status, 400);
+        assert.strictEqual(v.retry.without, 'generationConfig.thinkingConfig');
+        assert.strictEqual(v.retry.reading.ok, true, 'the retry identifies the field as the cause');
+        return made;
+      }
+    ));
+    assert.strictEqual(retried.length, 2, 'one call, then one more to name the 400');
+  });
+
+  await testAsync('the diagnostic reports a 401 without ever printing the key', async () => {
+    const { value, lines } = await captureLogs(() => withEnv({ GEMINI_API_KEY: SECRET_KEY }, () => withStubbedFetch(
+      async () => ({
+        ok: false,
+        status: 401,
+        text: async () => `{"error":{"code":401,"message":"Invalid authentication for key ${SECRET_KEY}","status":"UNAUTHENTICATED"}}`,
+        headers: { get: (name) => (name === 'content-type' ? 'application/json' : null) }
+      }),
+      async () => bench.diagnoseOne('gemini', 'a black hoodie')
+    )));
+    assert.strictEqual(value.classified.authentication, 'rejected');
+    assert.strictEqual(value.classified.reached, 'yes');
+    assert.ok(!JSON.stringify(value).includes(SECRET_KEY), 'the key must not survive into the diagnosis');
+    assert.ok(!lines.join('\n').includes(SECRET_KEY), 'nor into anything printed');
+  });
+
   console.log('\nthe experiment stays removable');
 
   test('nothing in api/ refers to Gemini outside the marked block', () => {

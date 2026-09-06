@@ -446,7 +446,29 @@ node scripts/bench-interpreters.js --dry-run        # the plan, spending nothing
 node scripts/bench-interpreters.js --queries=5 --only=gemini
 node scripts/bench-interpreters.js --out=run.json   # every reading, for later
 node scripts/bench-interpreters.js --compare=run.json   # read it back, no calls
+node scripts/bench-interpreters.js --diagnose          # one call each, first
 ```
+
+**Run `--diagnose` before trusting a benchmark.** It makes exactly one call per
+provider and reports what came back: the HTTP status, the provider's own error
+code and message, whether the request reached the provider at all, whether
+authentication was accepted, and whether the reply was shaped the way the
+adapter expects. A 400 costs one further call, asking again without the one
+field most likely to have caused it — `response_format` for OpenAI,
+`generationConfig.thinkingConfig` for Gemini — so a request-shape mismatch is
+identified rather than guessed at. It exits non-zero unless both returned a
+usable Fynd intent.
+
+It exists because a whole run can fail for a reason that has nothing to do with
+either model. An egress allowlist or a corporate proxy answers a blocked host
+with a real HTTP response — a 403 with a `text/plain` body — which is a
+perfectly ordinary upstream error as far as any client is concerned, and a run
+of twenty of them looks exactly like a provider outage. So a failure now
+carries its status, its headers and the provider's own message all the way into
+the report and into `--out`, the error envelope is parsed from the whole body
+*before* the body is truncated for logging, and a non-2xx that did not arrive
+as JSON is named as what it is: something in the path answering on the
+provider's behalf. A benchmark over a broken path measures the path.
 
 It also reports, per query, where the two models actually disagree — on the
 budget, colour, category, fit, brand, occasion and style — naming the reading
