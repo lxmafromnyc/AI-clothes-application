@@ -127,6 +127,118 @@
     <div class="results" id="results" hidden></div>
   </div>
 
+  <!-- One search, end to end, in the space a visitor would otherwise
+       spend reading about one. It sits directly under the search card
+       because that is the first thing anybody scrolls past, and because
+       somebody who has not understood the product yet will not type
+       into it — they will look for what happens if they do.
+
+       The recording answers from a stand-in product source, so the
+       listings in it are samples rather than live stock. The video says
+       so on every frame and the note under it says so in words: the
+       same rule the interface holds to for a sample row. -->
+  <section class="section demo" id="demo" aria-labelledby="demo-title">
+    <div class="container">
+      <div class="section-head">
+        <div>
+          <p class="eyebrow">Watch it work</p>
+          <h2 id="demo-title">See Fynd in action</h2>
+          <p>A single request, typed in plain words &mdash; and everything that comes back.</p>
+        </div>
+        <a class="head-link" href="#search">Try it yourself <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
+      </div>
+
+      <figure class="demo-figure" id="demo-figure">
+        <div class="demo-stage">
+          <!-- The recording is of this same site, so without something
+               to divide them the page appears to have two headers. One
+               bar says which of the two is the recording. -->
+          <div class="demo-bar">
+            <span class="demo-dots" aria-hidden="true"></span>
+            <span class="demo-bar-label">Fynd &middot; screen recording</span>
+          </div>
+
+          <!-- preload="none": not one byte of video is fetched until
+               something asks for it, so nothing here is on the path to
+               first paint. The still frame is all the section needs
+               until then, and assets/demo-video.js decides when to stop
+               holding off.
+
+               The poster is named in data-poster rather than in poster,
+               because a poster attribute is fetched the moment it is
+               parsed — which is before any script could say which of
+               the two posters this screen wants. The script below is
+               what puts it on, in the same pass. -->
+          <video class="demo-video" id="demo-video"
+            width="1280" height="800"
+            data-poster="assets/demo/fynd-demo-poster.jpg"
+            preload="none" muted loop playsinline controls
+            aria-describedby="demo-note"
+            aria-label="Screen recording of Fynd: a request for a black oversized hoodie under fifty dollars is typed in, Fynd reads it, and hoodies come back with their prices, their retailers and links out to those retailers.">
+            <!-- WebM first: the browsers that can take VP9 get the
+                 smaller file, and a Chromium built without proprietary
+                 codecs — most Linux builds — gets one it can play at
+                 all. Safari falls through to the H.264. -->
+            <source id="demo-webm" src="assets/demo/fynd-demo.webm" type="video/webm">
+            <source id="demo-mp4" src="assets/demo/fynd-demo.mp4" type="video/mp4">
+            <track id="demo-track" kind="captions" src="assets/demo/fynd-demo.vtt" srclang="en" label="English">
+          </video>
+
+          <!-- Which of the two recordings, settled here rather than in a
+               deferred file, because both decisions have to be made
+               before the browser acts on the markup: a poster is
+               fetched as soon as it is set, and a source swapped after
+               the player has already chosen one is ignored.
+
+               There are two because the demo is a recording of an
+               interface, and an interface recorded in a 1280-wide
+               window is unreadable at 390 — the type in it lands at
+               about six pixels. 860 is where the wide one stops being
+               readable rather than where the layout turns, and
+               assets/styles.css reshapes the frame at the same width,
+               so the two cannot disagree; it happens before first
+               paint, so nothing jumps.
+
+               A media attribute on <source> would be the declarative
+               way to do this, and browsers have never agreed on it:
+               the one that ignores it hands a phone the wide file. -->
+          <script>
+            (function () {
+              var narrow = window.matchMedia && window.matchMedia('(max-width: 860px)').matches;
+              var name = narrow ? 'fynd-demo-mobile' : 'fynd-demo';
+              var video = document.getElementById('demo-video');
+              video.poster = 'assets/demo/' + name + '-poster.jpg';
+              if (narrow) {
+                document.getElementById('demo-webm').src = 'assets/demo/' + name + '.webm';
+                document.getElementById('demo-mp4').src = 'assets/demo/' + name + '.mp4';
+                document.getElementById('demo-track').src = 'assets/demo/' + name + '.vtt';
+                document.getElementById('demo-figure').classList.add('is-portrait');
+                video.width = 800;
+                video.height = 1440;
+              }
+            })();
+          </script>
+
+          <!-- The path for every browser that will not start a muted
+               video on its own, and for anyone who asked for less
+               motion. Hidden until the page finds out which that is;
+               with no script at all the player's own controls are
+               already there and already work. -->
+          <button class="btn btn-primary btn-lg demo-play" type="button" id="demo-play" hidden>
+            <svg viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true"><path d="M8 5.6v12.8a1 1 0 001.53.85l10-6.4a1 1 0 000-1.7l-10-6.4A1 1 0 008 5.6z"/></svg>
+            <span>Play the <span class="demo-play-label">25-second </span>demo</span>
+          </button>
+        </div>
+
+        <figcaption class="demo-note" id="demo-note">
+          <span class="demo-flag">Product demo</span> Recorded against a stand-in product source, so the
+          listings in it are samples rather than live stock. The interface, what Fynd takes from the
+          request, and the links out to the retailers are the real ones. Twenty-five seconds, no sound.
+        </figcaption>
+      </figure>
+    </div>
+  </section>
+
   <!-- What an answer looks like, shown rather than described. It steps
        aside as soon as a real search has something better to put here. -->
   <section class="section" id="preview">
@@ -215,5 +327,6 @@
 <script src="assets/attachments.js"></script>
 <script src="assets/catalog.js"></script>
 <script src="assets/app.js"></script>
+<script src="assets/demo-video.js" defer></script>
 </body>
 </html>

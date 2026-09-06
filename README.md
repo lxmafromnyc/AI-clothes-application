@@ -43,7 +43,7 @@ page, the examples, the steps and the retailer labels.
 
 | Page | File | What it does |
 | --- | --- | --- |
-| Home | `index.html` | States the value proposition, carries the search itself directly under the headline, and shows what an answer looks like |
+| Home | `index.html` | States the value proposition, carries the search itself directly under the headline, shows one search happening in the demo video, and shows what an answer looks like |
 | Find Clothes | `find-clothes.html` | The same search, with nothing else on the page |
 | Discover | `discover.html` | Browse the catalogue, filtered by style |
 | Pricing | `pricing.html` | The three plans, which one you are on, and the way to change it |
@@ -117,6 +117,9 @@ assets/account-ui.js    draws the account page and the sign-in flow
 .env.example            template; the real .env is git-ignored
 assets/products.js      data layer: normalises any source into one schema
 assets/catalog.js       demo product source, replaceable by a real feed
+assets/demo-video.js    lazy-loads the landing page demo, and decides autoplay
+assets/demo/            the demo recording: two shapes, two codecs, two posters
+scripts/record-demo.js  records and encodes the demo, end to end
 assets/interpret.js     sends the request to the endpoint; local fallback
 assets/app.js           rendering and page behaviour
 assets/styles.css       colour tokens, design tokens and all shared components
@@ -655,6 +658,7 @@ node scripts/test-serpapi.js   # the SerpApi adapter, its links and its costs
 node scripts/test-stripe.js    # payments and subscriptions
 node scripts/test-auth.js      # accounts, sessions, tokens, OAuth
 node scripts/test-ui.js        # the interface, its palette and its contrast
+node scripts/record-demo.js    # re-records the landing page demo video
 node scripts/test-e2e.js       # the whole sign-in flow, in a real browser
 ```
 
@@ -1302,9 +1306,106 @@ The interface subscribes to the store, so filter options, Discover pills and the
 matching vocabulary all rebuild from whatever arrives. Unfamiliar colours and
 garment categories fall back to neutral artwork rather than breaking.
 
+## The demo video
+
+The landing page carries a 25-second screen recording, directly under the search
+card, where a first-time visitor scrolls next. It exists because the product is
+easier to show than to describe: one request typed in plain words, Fynd reading
+it, listings arriving with prices and retailers, and a click going out to one of
+them.
+
+Nothing about it is a mock-up. `scripts/record-demo.js` serves this repository
+over HTTP, drives `index.html` in a real browser through the real search flow,
+and records what happens. The only thing standing in is the product source,
+which answers from a fixed set of records in the shape
+`api/_providers/product-source.js` hands to the page — so the cards on screen
+are built by the real rendering code, from fields in the real shape, at the real
+speed the interface waits at.
+
+Those records are not live stock, and the site's rule for anything a shopper
+cannot buy applies to a recording of it as much as to a row in a grid: the video
+carries a **Product demo · sample data** badge on every frame, and the note under
+the video on the page says the same thing in words. The retailer links in it are
+real, and the product names describe the garment rather than quoting a listing.
+
+```sh
+node scripts/record-demo.js          # record both shapes, then encode
+node scripts/record-demo.js --raw    # record only, keep the WebM as captured
+```
+
+It needs Chromium to record and ffmpeg to encode. Both are found from the
+environment — `CHROME_PATH`, `PLAYWRIGHT_PATH`, `FFMPEG_PATH` — and either one
+missing is reported and skipped rather than failing, because neither is a
+dependency of the site itself. Inter is fetched once and served back at the
+address the page already asks for, so the recording is set in the same face the
+site is.
+
+### What it writes
+
+Two shapes, because the demo is a recording of an interface and an interface
+recorded in a 1280-wide window is unreadable at 390 — the type in it lands at
+about six pixels. The narrow one is captured at two device pixels per CSS pixel
+so a phone is not shown an upscale.
+
+The two swap at 860px, which is the demo's own breakpoint and the only one on
+the site that is not the layout's. It is not about the layout: measured against
+the recording, the interface type in the wide one holds up to about two thirds
+scale, and a column stops giving that at around this width. Below it the
+phone-shaped recording is shown at about 460px — a little over the 400 it was
+recorded at, so a tablet held at arm's length reads it as easily as a phone held
+close.
+
+| File | | |
+| --- | --- | --- |
+| `fynd-demo.mp4` / `.webm` | 1280 × 800 | wide screens |
+| `fynd-demo-mobile.mp4` / `.webm` | 800 × 1440 | 860px and under |
+| `fynd-demo{,-mobile}-poster.jpg` | | the still the section shows before playback |
+| `fynd-demo{,-mobile}.vtt` | | the captions, timed against the recording that made them |
+
+Two codecs, because neither one alone reaches every browser: H.264 is the format
+nobody has to be asked about, except that a Chromium built without proprietary
+codecs — which is what most Linux distributions ship, and what this repository's
+own test browser is — cannot play it at all. VP9 covers those and is the smaller
+file, so the page lists the WebM first. Each visitor downloads exactly one video
+of about 640 KB and one poster of about 75 KB.
+
+### What the page does with it
+
+`assets/demo-video.js` and a short inline script in `index.html` divide the work
+by when the decision has to be made.
+
+**Before the browser acts on the markup**, in the inline script: which of the two
+recordings this screen gets, at the same 860px the stylesheet reshapes the frame
+at. A `poster` attribute is fetched the moment it is
+parsed, and a `<source>` swapped after the player has chosen one is ignored, so
+neither can wait for a deferred file. The frame is reshaped by the same line, so
+the shape and the file cannot disagree and nothing jumps. (`media` on `<source>`
+would be the declarative way to do this; browsers have never agreed on it, and
+the one that ignores it hands a phone the wide file.)
+
+**After the page has finished loading**, in `assets/demo-video.js`: whether to
+play. The markup says `preload="none"`, so not one byte of video is fetched until
+something asks for it; an IntersectionObserver, armed on the load event, is what
+asks. Waiting for the load event keeps the video behind the stylesheet, the font
+and the scripts the page needs to work at all — measured, `DOMContentLoaded` and
+the load event are unchanged by the video's presence, and the request for it
+starts after both.
+
+Autoplay is attempted muted, and refused autoplay is not something to predict:
+`play()` rejects, and the rejection is what puts the play button on screen. Two
+readings are taken before even trying — a reader who asked for less motion, and
+a connection asking for fewer bytes — and both mean the button instead. The
+player's own controls are always present, so the keyboard path and the screen
+reader path are the browser's, not a reimplementation. The video loops, and
+scrolling away pauses it; a pause the page did not ask for is the reader's, and
+after one the page does not touch the video again.
+
 ## Notes
 
 - Typeface is Inter, loaded from Google Fonts.
+- The demo video on the landing page is a recording of this site driving its own
+  search against a stand-in product source. It is labelled as a demo on every
+  frame and in the note under it; see **The demo video** above.
 - Products without an `imageUrl` — which is all of them today — render generated
   artwork built from CSS gradients and inline SVG. Set `imageUrl` on a product
   and it renders the photo; if that photo fails to load, the artwork returns.
