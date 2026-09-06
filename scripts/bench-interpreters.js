@@ -56,7 +56,7 @@
      --openai-model=    override the model (default: OPENAI_MODEL, else
                         the endpoint's own gpt-4o-mini)
      --gemini-model=    override the model (default: GEMINI_MODEL, else
-                        gemini-2.5-flash)
+                        the adapter's own default)
      --openai-in=0.15   $ per 1M input tokens, when the price has moved
      --openai-out=0.60  $ per 1M output tokens
      --gemini-in=0.30   $ per 1M input tokens
@@ -95,12 +95,15 @@ const gemini = require('../api/_interpreters/gemini');
    Flags
    --------------------------------------------------------- */
 
-const argv = process.argv.slice(2);
+/* Read at call time rather than snapshotted at load, so what the flags
+   say cannot depend on when this module happened to be required — and
+   so a test can set them. */
+const argv = () => process.argv.slice(2);
 const flag = (name, fallback) => {
-  const hit = argv.find((a) => a.startsWith(`--${name}=`));
+  const hit = argv().find((a) => a.startsWith(`--${name}=`));
   return hit === undefined ? fallback : hit.slice(name.length + 3);
 };
-const has = (name) => argv.includes(`--${name}`);
+const has = (name) => argv().includes(`--${name}`);
 const num = (name, fallback) => {
   const value = Number(flag(name, NaN));
   return Number.isFinite(value) ? value : fallback;
@@ -802,6 +805,55 @@ function shapeVerdict(reading) {
    rather than guessed at.
    --------------------------------------------------------- */
 
+/* ---------------------------------------------------------
+   Where the model came from, and which code is running
+   ---------------------------------------------------------
+   A model name on its own cannot tell you whether the default changed,
+   an environment variable is overriding it, or the checkout is behind.
+   Those are three different fixes, and reporting only the name sends
+   you looking in the wrong one — which is exactly what happened when a
+   GEMINI_MODEL left over from an earlier run kept calling a retired
+   model out of code that no longer names it.
+   --------------------------------------------------------- */
+
+const MODEL_SOURCES = {
+  openai: { flag: 'openai-model', env: 'OPENAI_MODEL', fallback: 'the endpoint default in api/interpret.js' },
+  gemini: { flag: 'gemini-model', env: 'GEMINI_MODEL', fallback: 'the adapter default in api/_interpreters/gemini.js' }
+};
+
+function modelProvenance(name) {
+  const source = MODEL_SOURCES[name];
+  const fromFlag = flag(source.flag, '');
+  if (fromFlag) return { value: fromFlag, from: `--${source.flag}= on the command line`, overridden: true };
+
+  const fromEnv = String(process.env[source.env] || '').trim();
+  if (fromEnv) return { value: fromEnv, from: `the ${source.env} environment variable`, overridden: true };
+
+  return { value: PROVIDERS[name].model(), from: source.fallback, overridden: false };
+}
+
+/* Models the provider has withdrawn, and what it says to use instead.
+   Only ever reported — nothing here silently rewrites a request, because
+   quietly calling a model nobody asked for is its own bug. */
+const RETIRED_MODELS = {
+  'gemini-2.5-flash': 'gemini-3.6-flash'
+};
+
+/* Which commit is actually checked out, so "did I pull?" is answered in
+   the output rather than assumed. Best effort: not every copy of this
+   is a git checkout, and failing to know is not a reason to fail. */
+function checkoutState() {
+  const run = (cmd) => {
+    try {
+      return require('child_process').execSync(cmd, { cwd: __dirname, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+    } catch (err) { return ''; }
+  };
+  const commit = run('git rev-parse --short HEAD');
+  if (!commit) return null;
+  const dirty = run('git status --porcelain -- ../api/_interpreters ../scripts/bench-interpreters.js');
+  return { commit, subject: run('git log -1 --format=%s'), dirty: Boolean(dirty) };
+}
+
 const RETRY_WITHOUT = {
   openai: { field: 'response_format', options: { jsonMode: false } },
   gemini: { field: 'generationConfig.thinkingConfig', options: { thinking: null } }
@@ -836,8 +888,22 @@ function reportDiagnosis(v) {
   const c = v.classified;
   const line = (label, value) => console.log(`  ${pad(label, 26)}${value}`);
 
+  const provenance = modelProvenance(v.name);
+
   console.log(`\n${v.label}  (${v.model})`);
   console.log(`  request                   POST ${v.name === 'openai' ? interpret.OPENAI_URL : `${gemini.API_ROOT}/${v.model}:generateContent`}`);
+  line('model chosen by', provenance.from);
+
+  /* A retired model reached by an override is the one failure that looks
+     exactly like stale code, so it is named as what it is. */
+  const replacement = RETIRED_MODELS[String(v.model).toLowerCase()];
+  if (replacement) {
+    console.log(`  ${pad('', 26)}⚠ ${v.model} has been withdrawn; the provider names ${replacement}`);
+    if (provenance.overridden) {
+      console.log(`  ${pad('', 26)}  it is being requested by ${provenance.from},`);
+      console.log(`  ${pad('', 26)}  NOT by the code. Clear that and the default is used.`);
+    }
+  }
   line('authenticated by', v.name === 'openai' ? 'Authorization: Bearer … (header, value never printed)' : 'x-goog-api-key: … (header, value never printed)');
   line('query', JSON.stringify(v.query));
   line('wall clock', `${v.ms}ms`);
@@ -914,6 +980,13 @@ async function diagnose(names) {
   console.log('\nFynd — interpreter smoke test\n');
   console.log(`  one request per provider (a 400 costs one more, to identify it)`);
   console.log(`  providers      ${names.map((n) => `${PROVIDERS[n].label} (${PROVIDERS[n].model()})`).join(', ')}`);
+
+  /* so a run that is testing older code says so, rather than looking
+     like code that does not work */
+  const checkout = checkoutState();
+  if (checkout) {
+    console.log(`  running        ${checkout.commit}${checkout.dirty ? ' (working tree modified)' : ''}  ${checkout.subject}`);
+  }
 
   const usable = [];
   for (const name of names) {
@@ -1050,4 +1123,5 @@ if (require.main === module) {
 
 module.exports = { QUERIES, VOCABULARY, GRADED_FIELDS, DISAGREEMENT_FIELDS, PRICES,
   buildOpenAIRequest, grade, fieldMatches, summarise, costPerThousand, percentile, disagreements,
-  classify, providerEnvelope, shapeVerdict, headersFrom, recordFailure, diagnoseOne, RETRY_WITHOUT };
+  classify, providerEnvelope, shapeVerdict, headersFrom, recordFailure, diagnoseOne, RETRY_WITHOUT,
+  modelProvenance, checkoutState, RETIRED_MODELS };

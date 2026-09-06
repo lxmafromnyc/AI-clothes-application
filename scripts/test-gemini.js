@@ -1086,6 +1086,71 @@ const bodyOf = (call) => JSON.parse(call.options.body);
     assert.ok(!lines.join('\n').includes(SECRET_KEY), 'nor into anything printed');
   });
 
+  console.log('\nwhich model is being called, and why');
+
+  /* A model name on its own cannot tell you whether the default moved,
+     an environment variable is overriding it, or the checkout is behind.
+     Reporting only the name sent a debugging session looking in the
+     wrong one of those three. */
+
+  const withArgv = (args, run) => {
+    const saved = process.argv;
+    process.argv = ['node', 'bench-interpreters.js', ...args];
+    try { return run(); } finally { process.argv = saved; }
+  };
+
+  await testAsync('with nothing overriding it, the model is the adapter default', async () => {
+    await withEnv({ GEMINI_API_KEY: FAKE_KEY }, () => withArgv([], () => {
+      const p = bench.modelProvenance('gemini');
+      assert.strictEqual(p.value, 'gemini-3.6-flash');
+      assert.strictEqual(p.overridden, false);
+      assert.ok(p.from.includes('api/_interpreters/gemini.js'), p.from);
+    }));
+  });
+
+  await testAsync('GEMINI_MODEL is named as the thing overriding the default', async () => {
+    await withEnv({ GEMINI_API_KEY: FAKE_KEY, GEMINI_MODEL: 'gemini-2.5-flash' }, () => withArgv([], () => {
+      const p = bench.modelProvenance('gemini');
+      assert.strictEqual(p.value, 'gemini-2.5-flash');
+      assert.strictEqual(p.overridden, true);
+      assert.ok(p.from.includes('GEMINI_MODEL'), p.from);
+    }));
+  });
+
+  await testAsync('--gemini-model= is named, and outranks the environment', async () => {
+    await withEnv({ GEMINI_API_KEY: FAKE_KEY, GEMINI_MODEL: 'gemini-2.5-flash' }, () =>
+      withArgv(['--gemini-model=gemini-3.6-flash-preview'], () => {
+        const p = bench.modelProvenance('gemini');
+        assert.strictEqual(p.value, 'gemini-3.6-flash-preview');
+        assert.strictEqual(p.overridden, true);
+        assert.ok(p.from.includes('--gemini-model='), p.from);
+      }));
+  });
+
+  await testAsync('the same question is answerable for OpenAI', async () => {
+    await withEnv({ OPENAI_API_KEY: 'sk-test' }, () => withArgv([], () => {
+      assert.strictEqual(bench.modelProvenance('openai').overridden, false);
+    }));
+    await withEnv({ OPENAI_API_KEY: 'sk-test', OPENAI_MODEL: 'gpt-4o' }, () => withArgv([], () => {
+      const p = bench.modelProvenance('openai');
+      assert.strictEqual(p.value, 'gpt-4o');
+      assert.ok(p.from.includes('OPENAI_MODEL'), p.from);
+    }));
+  });
+
+  test('a withdrawn model is one the tooling can name, with its replacement', () => {
+    assert.strictEqual(bench.RETIRED_MODELS['gemini-2.5-flash'], 'gemini-3.6-flash');
+    assert.strictEqual(bench.RETIRED_MODELS[gemini.DEFAULT_MODEL], undefined,
+      'the default must never be a model the provider has withdrawn');
+  });
+
+  test('the running commit is reported, or reported as unknown, never guessed', () => {
+    const state = bench.checkoutState();
+    if (state === null) return;   /* not a git checkout: saying nothing is correct */
+    assert.ok(/^[0-9a-f]{7,40}$/.test(state.commit), state.commit);
+    assert.strictEqual(typeof state.dirty, 'boolean');
+  });
+
   console.log('\nthe experiment stays removable');
 
   test('nothing in api/ refers to Gemini outside the marked block', () => {
