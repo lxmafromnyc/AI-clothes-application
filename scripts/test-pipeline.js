@@ -253,6 +253,10 @@ test('the report cannot reveal a value length', () => {
 test('only the named variables are ever reported', () => {
   assert.deepStrictEqual(REPORTED, [
     'OPENAI_API_KEY', 'OPENWEBNINJA_API_KEY', 'ALLOWED_ORIGIN', 'VERCEL_ENV',
+    /* added on purpose: a 503 from /api/interpret on a deployment that
+       is testing an alternative interpreter is one of these two, and
+       their states say which. Neither value can be printed. */
+    'AI_PROVIDER', 'GEMINI_API_KEY',
     'STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET', 'STRIPE_PRICE_PRO', 'STRIPE_PRICE_MAX',
     'AUTH_SECRET', 'KV_REST_API_URL', 'KV_REST_API_TOKEN',
     'GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET',

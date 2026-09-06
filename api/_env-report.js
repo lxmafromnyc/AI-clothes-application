@@ -33,6 +33,13 @@
    name here makes its STATE loggable; it never makes its value loggable. */
 const REPORTED = [
   'OPENAI_API_KEY', 'OPENWEBNINJA_API_KEY', 'ALLOWED_ORIGIN', 'VERCEL_ENV',
+  /* the interpreter a deployment is running, and the key the
+     alternative one needs. A 503 from /api/interpret on a deployment
+     that is testing Gemini is one of these two, and the state of both
+     says which. AI_PROVIDER is a provider name rather than a secret,
+     and it is reported here as a state like everything else — this
+     module can print no value, by construction. */
+  'AI_PROVIDER', 'GEMINI_API_KEY',
   /* billing. A 503 from /api/checkout or /api/stripe-webhook has exactly
      one of these behind it, and knowing which turns a guess into a fix. */
   'STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET', 'STRIPE_PRICE_PRO', 'STRIPE_PRICE_MAX',

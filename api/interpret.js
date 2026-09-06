@@ -14,6 +14,11 @@
                       the frontend falls back to its local interpreter.
      OPENAI_MODEL     optional, defaults below. Set it to whichever model
                       your account has access to.
+     AI_PROVIDER      optional, and unset in production. Names an
+                      alternative interpreter to run INSTEAD of OpenAI,
+                      for benchmarking one against the other. Unset, or
+                      "openai", is the OpenAI path below, unchanged. See
+                      api/_interpreters/index.js.
      ALLOWED_ORIGIN   origins allowed to call this from a browser, beyond
                       the deployment's own, which is always allowed.
                       Comma-separated. Anything else is refused with 403,
@@ -31,6 +36,11 @@
    ========================================================= */
 
 const { handledPreflight } = require('./_cors');
+/* Alternative interpreters, for benchmarking. Registers nothing that
+   runs unless AI_PROVIDER names it, so production is unaffected. The
+   whole experiment is this require, the block marked in the handler
+   below, and api/_interpreters/. */
+const interpreters = require('./_interpreters');
 const { envReport } = require('./_env-report');
 const meter = require('./_meter');
 const { AI_TOKENS } = require('./_plans');
@@ -117,8 +127,12 @@ module.exports = async function handler(req, res) {
   if (handledPreflight(req, res)) return;
   if (req.method !== 'POST') return res.status(405).json({ error: 'Use POST.' });
 
+  /* Which model reads this request. null — the production answer,
+     because AI_PROVIDER is unset — means OpenAI, below. */
+  const alternative = interpreters.getInterpreter();
+
   const key = process.env.OPENAI_API_KEY;
-  if (!key) {
+  if (alternative ? !alternative.configured() : !key) {
     /* the frontend treats this as "interpret it locally instead".
        States only — never values. See api/_env-report.js. */
     console.warn('Interpreter not configured. env:', envReport());
@@ -140,6 +154,37 @@ module.exports = async function handler(req, res) {
   const vocabulary = body.vocabulary && typeof body.vocabulary === 'object' ? body.vocabulary : {};
 
   try {
+    /* --- alternative interpreter, when one was explicitly named -------
+       Everything before this point — the origin check, the metering
+       guard, the query limit and the vocabulary — has already run, and
+       everything after it is shared: the reading is put through the same
+       shapePreferences() and metered on the same rule, so the reply
+       carries the same JSON whichever model produced it. Delete this
+       block and the require above to remove the experiment. */
+    if (alternative) {
+      const reading = await alternative.interpret({ query, vocabulary, systemPrompt: SYSTEM_PROMPT });
+
+      if (!reading.ok) {
+        /* `detail` is already redacted by the adapter, and is logged
+           rather than returned: an upstream body can echo the request */
+        console.error(`Interpreter (${alternative.name}) failed:`, reading.reason, reading.status || '', reading.detail || '');
+        return res.status(502).json({
+          error: reading.reason === 'unparseable'
+            ? 'The interpreter returned an unexpected answer.'
+            : 'The interpreter is unavailable right now.'
+        });
+      }
+
+      const alsoSpent = await meter.spend(identity, AI_TOKENS, Number.isFinite(reading.tokens) ? reading.tokens : 0);
+      return res.status(200).json({
+        source: alternative.name,
+        query,
+        preferences: shapePreferences(reading.raw),
+        usage: meter.report(alsoSpent || state)
+      });
+    }
+    /* --- end alternative interpreter ---------------------------------- */
+
     const response = await fetch(OPENAI_URL, {
       method: 'POST',
       headers: {
@@ -199,3 +244,9 @@ module.exports = async function handler(req, res) {
 };
 
 module.exports.shapePreferences = shapePreferences;
+/* the benchmark sends both providers this prompt, from here, so neither
+   is measured against a copy of it that has drifted */
+module.exports.SYSTEM_PROMPT = SYSTEM_PROMPT;
+module.exports.MAX_QUERY = MAX_QUERY;
+module.exports.OPENAI_URL = OPENAI_URL;
+module.exports.OPENAI_MODEL = () => process.env.OPENAI_MODEL || DEFAULT_MODEL;

@@ -100,11 +100,15 @@ api/_users.js           user records, and the Stripe customer mapping
 api/_store.js           the key/value store: Vercel KV / Upstash, or memory
 api/_providers/openwebninja.js OpenWeb Ninja Real-Time Product Search adapter
 api/_providers/etsy.js  Etsy Open API v3 adapter, kept as an alternative
+api/_interpreters/gemini.js    Gemini interpreter, registered for measurement
+api/_interpreters/index.js     which model reads a request; OpenAI unless told
 assets/search.js        sends interpreted intent to /api/search
 scripts/verify-api.sh          checks a deployed interpreter endpoint
 scripts/verify-search.sh       checks a deployed search endpoint
 scripts/verify-billing.sh      checks a deployed billing setup
 scripts/probe-openwebninja.js  prints the provider's live response fields
+scripts/bench-interpreters.js  OpenAI against Gemini, on twenty requests
+scripts/test-gemini.js         offline test of the Gemini interpreter
 scripts/test-pipeline.js       offline test of the whole server pipeline
 scripts/test-stripe.js         offline test of payments and subscriptions
 scripts/test-auth.js           offline test of accounts, sessions and OAuth
@@ -212,6 +216,9 @@ and the function share an origin, `/api/interpret` resolves by default, and
 | --- | --- | --- |
 | `OPENAI_API_KEY` | yes | Your OpenAI key. Without it the endpoint returns 503 and the frontend falls back to local parsing. |
 | `OPENAI_MODEL` | no | Model to call. Defaults to `gpt-4o-mini`; set it to whatever your account has access to. |
+| `AI_PROVIDER` | no | Which model reads a request. **Unset in production**, which is OpenAI. `gemini` runs the interpreter in `api/_interpreters/`. See [Trying another model](#trying-another-model). |
+| `GEMINI_API_KEY` | only for `AI_PROVIDER=gemini` | A Google AI Studio key. Production does not need it, and never sees it: it is read inside the function, sent as a header, and redacted out of anything logged. |
+| `GEMINI_MODEL` / `GEMINI_THINKING_BUDGET` | no | The model, default `gemini-2.5-flash`, and its thinking budget, default `0` (off). |
 | `OPENWEBNINJA_API_KEY` | yes | The product source's key. Without it `/api/search` returns 503 and the frontend falls back to the sample catalogue, labelled as such. |
 | `PRODUCT_SOURCE` | no | Which adapter in `api/_providers/` finds the products. Unset runs `openwebninja`, which is what this deployment uses. |
 | `ALLOWED_ORIGIN` | no | Extra browser origins allowed to call the endpoints, comma-separated. The deployment's own origin is always allowed without configuration, so this is only needed for a frontend hosted elsewhere — GitHub Pages calling functions on Vercel. See [Cross-origin access](#cross-origin-access). |
@@ -384,6 +391,93 @@ clearly they are labelled. No product is ever invented to fill the gap.
 - The plan comes from the stored user record, which is derived from a Stripe
   subscription. Nothing in the request reaches it: there is no header, cookie
   value or body field that raises a limit.
+
+### Trying another model
+
+Fynd runs on OpenAI. Whether it should is a question with an answer — how often
+each model returns usable structured output, how often the fields are right,
+what a search costs and how long a shopper waits — and answering it needs a
+second model wired up well enough to be measured, without production moving an
+inch. That is what `api/_interpreters/` is.
+
+`AI_PROVIDER` decides which model reads a request:
+
+| `AI_PROVIDER` | what runs |
+| --- | --- |
+| unset — **production** | the OpenAI path in `api/interpret.js`, unchanged |
+| `openai` | the same path, named explicitly |
+| `gemini` | `api/_interpreters/gemini.js`, on `gemini-2.5-flash` |
+| anything else | nothing, so the endpoint answers 503 |
+
+That last row is deliberate, and is the rule `PRODUCT_SOURCE` already follows: a
+typo should be visible as a 503 rather than quietly answered by a model you did
+not ask for.
+
+An alternative interpreter returns the same raw object the OpenAI path returns,
+and `/api/interpret` shapes it with its own `shapePreferences()`. So the JSON
+the browser and `/api/search` receive is identical whichever model produced it —
+same eleven fields, same validation, same 400-character cap, same metering on
+the tokens the provider itself reported. The only difference in the reply is
+`source`, which says `"gemini"` instead of `"openai"`. Nothing under `assets/`
+knows any of this, and there is nothing to change there.
+
+To try it on a preview deployment — never on production:
+
+```sh
+npx vercel env add GEMINI_API_KEY preview
+npx vercel env add AI_PROVIDER preview     # value: gemini
+```
+
+`GEMINI_API_KEY` is a server-side secret like every other key here. It is read
+only inside the function, sent as the `x-goog-api-key` **header** rather than as
+a query parameter — so it cannot end up in a URL that something logs — and
+redacted out of anything the adapter prints, including an upstream error body
+that quotes it back.
+
+**Measuring it.** `scripts/bench-interpreters.js` sends the same twenty
+clothing requests to both models, with the same system prompt, the same
+catalogue vocabulary and the same JSON mode, and reports valid structured
+output rate, field accuracy against a fixed rubric, malformed-output rate,
+latency, tokens in and out, and cost per 1,000 searches:
+
+```sh
+OPENAI_API_KEY=... GEMINI_API_KEY=... node scripts/bench-interpreters.js
+node scripts/bench-interpreters.js --dry-run        # the plan, spending nothing
+node scripts/bench-interpreters.js --queries=5 --only=gemini
+node scripts/bench-interpreters.js --out=run.json   # every reading, for later
+node scripts/bench-interpreters.js --compare=run.json   # read it back, no calls
+```
+
+It also reports, per query, where the two models actually disagree — on the
+budget, colour, category, fit, brand, occasion and style — naming the reading
+that matches the rubric where the rubric has an opinion, and saying so plainly
+where it does not. Two models can post the same accuracy and still be wrong in
+different places, which is the thing a rate cannot show you. `--compare` renders
+the whole report from a file `--out` wrote, so a run made on a machine that has
+both keys can be read on one that has neither.
+
+It spends real credit on both accounts, and says how many calls it is about to
+make before it makes any. Prices move, so the per-1M unit prices it costs with
+are printed and overridable (`--gemini-out=2.50`). Neither key is ever printed.
+
+Gemini's thinking is off by default: this is a short extraction with a fixed
+output shape, and turning it off is what makes the comparison against
+`gpt-4o-mini` a comparison of like work. `GEMINI_THINKING_BUDGET` turns it on,
+and thinking tokens are billed as output, so the benchmark costs them as output.
+
+Neither model is given a response schema. Gemini has one available and OpenAI,
+as called here, does not — using it would make the malformed-output rate measure
+the schema rather than the model. Both replies are parsed with a plain
+`JSON.parse`, and a fenced or chatty reply counts as malformed on both sides
+rather than being repaired.
+
+**Removing it** is a require and a marked block in `api/interpret.js`, plus the
+`api/_interpreters/` directory. `node scripts/test-gemini.js` covers the whole
+thing offline — the request, the parsing, every way a reply can be malformed, an
+API error, a missing key, the key never reaching a log or a response, the shaped
+output being the same object `/api/search` already reads — and holds the two
+promises that matter: production with `AI_PROVIDER` unset still calls OpenAI and
+nothing else, and nothing under `assets/` learns a second provider exists.
 
 ## Product search
 
@@ -654,6 +748,7 @@ The rest of the suites, all offline except the two that drive a browser:
 
 ```sh
 node scripts/bench-offer-resolution.js  # what one search costs the provider
+node scripts/test-gemini.js    # the Gemini interpreter, and what did not change
 node scripts/test-serpapi.js   # the SerpApi adapter, its links and its costs
 node scripts/test-stripe.js    # payments and subscriptions
 node scripts/test-auth.js      # accounts, sessions, tokens, OAuth
