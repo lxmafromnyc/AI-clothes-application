@@ -32,7 +32,11 @@ try {
 }
 
 /* the page, plus stub endpoints, on one origin so no CORS is involved */
-const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml' };
+const TYPES = {
+  '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml',
+  /* the landing page's demo video, its poster and its captions */
+  '.mp4': 'video/mp4', '.webm': 'video/webm', '.jpg': 'image/jpeg', '.vtt': 'text/vtt'
+};
 const searchRequests = [];
 const billingRequests = [];
 
