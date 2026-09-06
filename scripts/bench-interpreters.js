@@ -21,6 +21,11 @@
      tokens                    input and output per search, as reported
      cost per 1,000 searches   those tokens at the unit prices below
 
+   And, per query, where the two models actually disagree — on the
+   budget, colour, category, fit, brand, occasion and style — with the
+   reading that matches the rubric named, because two models can score
+   the same and still be wrong in different places.
+
    ---------------------------------------------------------
    Why this is a fair comparison
    ---------------------------------------------------------
@@ -57,6 +62,9 @@
      --gemini-in=0.30   $ per 1M input tokens
      --gemini-out=2.50  $ per 1M output tokens
      --out=path.json    write every reading and every number as JSON
+     --compare=path.json  re-render the whole report from a file --out
+                        wrote. Calls nothing and spends nothing, so a
+                        run made on one machine can be read on another
      --dry-run          print the plan and the request shapes, call
                         nothing, spend nothing
 
@@ -416,7 +424,164 @@ function compare(a, b) {
   console.log('  malformed rate first, then cost, then latency.');
 }
 
+/* ---------------------------------------------------------
+   Where the two models actually disagree
+   ---------------------------------------------------------
+   Two rates being close does not mean two models read a request the
+   same way — they can be wrong in different places and score the same.
+   This is the per-query difference, on the fields a shopper would
+   notice: the budget, and the six attributes the catalogue matches on.
+
+   Where the field is one the rubric grades, the reading that matches is
+   named, so a disagreement is not just a difference but a right and a
+   wrong answer. Where it is not graded, both are shown and neither is
+   called correct — the rubric does not have an opinion, and inventing
+   one here would be inventing a result.
+   --------------------------------------------------------- */
+
+const DISAGREEMENT_FIELDS = [
+  { field: 'maxPrice', label: 'budget (max)' },
+  { field: 'minPrice', label: 'budget (min)' },
+  { field: 'colors', label: 'colour' },
+  { field: 'categories', label: 'category' },
+  { field: 'fits', label: 'fit' },
+  { field: 'brands', label: 'brand' },
+  { field: 'occasions', label: 'occasion' },
+  { field: 'styles', label: 'style' }
+];
+
+const sameReading = (a, b) => (Array.isArray(a) || Array.isArray(b)
+  ? sameSet(Array.isArray(a) ? a : [], Array.isArray(b) ? b : [])
+  : a === b);
+
+/* the first reading of each query, so --repeat does not multiply the
+   report; a later pass differing from the first is a separate question */
+function firstByQuery(runs) {
+  const byQuery = new Map();
+  (runs || []).forEach((run) => { if (!byQuery.has(run.query)) byQuery.set(run.query, run); });
+  return byQuery;
+}
+
+function disagreements(leftName, leftRuns, rightName, rightRuns, queries) {
+  const left = firstByQuery(leftRuns);
+  const right = firstByQuery(rightRuns);
+  const expectations = new Map((queries || QUERIES).map((q) => [q.query, q.expect]));
+  const rows = [];
+
+  for (const query of left.keys()) {
+    const a = left.get(query);
+    const b = right.get(query);
+    if (!b) continue;
+
+    /* a side that returned nothing usable is a difference of a
+       different kind, and is reported as one rather than as a field */
+    if (!a.ok || !b.ok) {
+      rows.push({
+        query,
+        missing: [!a.ok ? { provider: leftName, reason: a.reason } : null,
+          !b.ok ? { provider: rightName, reason: b.reason } : null].filter(Boolean),
+        fields: []
+      });
+      continue;
+    }
+
+    const expect = expectations.get(query) || {};
+    const fields = DISAGREEMENT_FIELDS
+      .filter(({ field }) => !sameReading(a.preferences[field], b.preferences[field]))
+      .map(({ field, label }) => {
+        const want = expect[field];
+        const graded = want !== undefined;
+        return {
+          field,
+          label,
+          [leftName]: a.preferences[field],
+          [rightName]: b.preferences[field],
+          graded,
+          /* null where the rubric has no opinion, and where BOTH are
+             wrong: a disagreement is not automatically a winner */
+          matches: !graded ? null
+            : (fieldMatches(a.preferences[field], want) ? leftName
+              : (fieldMatches(b.preferences[field], want) ? rightName : null)),
+          expected: graded ? want : undefined
+        };
+      });
+
+    if (fields.length) rows.push({ query, missing: [], fields });
+  }
+  return rows;
+}
+
+function reportDisagreements(leftName, rightName, rows, labels) {
+  const name = (key) => labels[key] || key;
+  console.log('\nwhere they disagree\n');
+
+  if (!rows.length) {
+    console.log(`  On all of these requests ${name(leftName)} and ${name(rightName)} read every`);
+    console.log('  budget, colour, category, fit, brand, occasion and style the same.');
+    return;
+  }
+
+  const show = (v) => (v === null || v === undefined ? 'null' : JSON.stringify(v));
+
+  rows.forEach(({ query, fields, missing }) => {
+    console.log(`  ${query}`);
+    missing.forEach(({ provider, reason }) => console.log(`    ${pad('', 14)}${name(provider)} returned nothing usable (${reason})`));
+    fields.forEach((row) => {
+      const verdict = row.matches === null
+        ? (row.graded ? '  — neither matches the rubric' : '')
+        : `  — ${name(row.matches)} matches the rubric`;
+      console.log(`    ${pad(row.label, 14)}${pad(`${name(leftName)} ${show(row[leftName])}`, 30)}${pad(`${name(rightName)} ${show(row[rightName])}`, 30)}${verdict}`);
+    });
+    console.log('');
+  });
+
+  /* which field they disagree about most, and who is right when they do */
+  const tally = {};
+  rows.forEach(({ fields }) => fields.forEach((row) => {
+    const t = tally[row.label] || (tally[row.label] = { total: 0, [leftName]: 0, [rightName]: 0, neither: 0 });
+    t.total += 1;
+    if (row.matches === leftName) t[leftName] += 1;
+    else if (row.matches === rightName) t[rightName] += 1;
+    else if (row.graded) t.neither += 1;
+  }));
+
+  const ordered = Object.entries(tally).sort((a, b) => b[1].total - a[1].total);
+  if (ordered.length) {
+    console.log(`  ${pad('field', 16)}${pad('disagreements', 16)}${pad(`${name(leftName)} right`, 16)}${pad(`${name(rightName)} right`, 16)}neither`);
+    ordered.forEach(([label, t]) => {
+      console.log(`  ${pad(label, 16)}${pad(t.total, 16)}${pad(t[leftName], 16)}${pad(t[rightName], 16)}${t.neither}`);
+    });
+    console.log('\n  "neither" and ungraded rows are differences the rubric does not');
+    console.log('  settle. Read those queries above before trusting either column.');
+  }
+}
+
+/* Renders the whole report from a saved run, calling nothing and
+   spending nothing. --out writes the file this reads. */
+function renderSaved(path) {
+  const saved = JSON.parse(fs.readFileSync(path, 'utf8'));
+  const names = Object.keys(saved.providers || {});
+  if (!names.length) throw new Error(`${path} holds no provider results`);
+
+  console.log(`\nFynd — interpreter benchmark, from ${path}`);
+  console.log(`  run at         ${saved.ranAt}`);
+  console.log(`  queries        ${saved.queries}${saved.repeat > 1 ? ` x ${saved.repeat} runs` : ''}`);
+
+  names.forEach((name) => report(saved.providers[name].summary));
+  if (names.length === 2) {
+    const [a, b] = names;
+    compare(saved.providers[a].summary, saved.providers[b].summary);
+    reportDisagreements(a, b,
+      saved.disagreements || disagreements(a, saved.providers[a].runs, b, saved.providers[b].runs, saved.queriesAsked),
+      { [a]: saved.providers[a].summary.label, [b]: saved.providers[b].summary.label });
+  }
+  console.log('');
+}
+
 async function run() {
+  const saved = flag('compare', '');
+  if (saved) return renderSaved(saved);
+
   const only = flag('only', '');
   const names = only ? only.split(',').map((s) => s.trim()).filter((s) => PROVIDERS[s]) : Object.keys(PROVIDERS);
   if (!names.length) {
@@ -486,17 +651,27 @@ async function run() {
   }
 
   names.forEach((name) => report(results[name].summary));
-  if (names.length === 2) compare(results[names[0]].summary, results[names[1]].summary);
+
+  let differences = [];
+  if (names.length === 2) {
+    const [a, b] = names;
+    compare(results[a].summary, results[b].summary);
+    differences = disagreements(a, results[a].runs, b, results[b].runs, set);
+    reportDisagreements(a, b, differences,
+      { [a]: results[a].summary.label, [b]: results[b].summary.label });
+  }
 
   const out = flag('out', '');
   if (out) {
     const payload = {
       ranAt: new Date().toISOString(),
       queries: set.length,
+      queriesAsked: set,
       repeat,
       vocabulary: VOCABULARY,
       prices: PRICES,
-      providers: Object.fromEntries(names.map((n) => [n, results[n]]))
+      providers: Object.fromEntries(names.map((n) => [n, results[n]])),
+      disagreements: differences
     };
     fs.writeFileSync(out, JSON.stringify(payload, null, 2));
     console.log(`\n  written to ${out}`);
@@ -511,4 +686,5 @@ if (require.main === module) {
   });
 }
 
-module.exports = { QUERIES, VOCABULARY, GRADED_FIELDS, PRICES, buildOpenAIRequest, grade, fieldMatches, summarise, costPerThousand, percentile };
+module.exports = { QUERIES, VOCABULARY, GRADED_FIELDS, DISAGREEMENT_FIELDS, PRICES,
+  buildOpenAIRequest, grade, fieldMatches, summarise, costPerThousand, percentile, disagreements };

@@ -445,7 +445,16 @@ OPENAI_API_KEY=... GEMINI_API_KEY=... node scripts/bench-interpreters.js
 node scripts/bench-interpreters.js --dry-run        # the plan, spending nothing
 node scripts/bench-interpreters.js --queries=5 --only=gemini
 node scripts/bench-interpreters.js --out=run.json   # every reading, for later
+node scripts/bench-interpreters.js --compare=run.json   # read it back, no calls
 ```
+
+It also reports, per query, where the two models actually disagree — on the
+budget, colour, category, fit, brand, occasion and style — naming the reading
+that matches the rubric where the rubric has an opinion, and saying so plainly
+where it does not. Two models can post the same accuracy and still be wrong in
+different places, which is the thing a rate cannot show you. `--compare` renders
+the whole report from a file `--out` wrote, so a run made on a machine that has
+both keys can be read on one that has neither.
 
 It spends real credit on both accounts, and says how many calls it is about to
 make before it makes any. Prices move, so the per-1M unit prices it costs with

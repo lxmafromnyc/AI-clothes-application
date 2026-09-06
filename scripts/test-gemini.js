@@ -738,6 +738,85 @@ const bodyOf = (call) => JSON.parse(call.options.body);
     assert.strictEqual(s.latencyMs.max, 200);
   });
 
+  console.log('\nwhere the two models disagree');
+
+  const reading = (query, prefs, over) => Object.assign({
+    query, ok: true, ms: 100, usage: { input: 300, output: 40, thoughts: 0, total: 340 },
+    preferences: interpret.shapePreferences(prefs), grade: { graded: 0, correct: 0, wrong: [] }
+  }, over);
+
+  test('two identical readings produce no disagreement at all', () => {
+    const prefs = { colors: ['Black'], categories: ['tee'], maxPrice: 30 };
+    const rows = bench.disagreements(
+      'openai', [reading('cheap black tee', prefs)],
+      'gemini', [reading('cheap black tee', prefs)],
+      [{ query: 'cheap black tee', expect: { colors: ['Black'] } }]
+    );
+    assert.deepStrictEqual(rows, []);
+  });
+
+  test('a graded disagreement names the reading that matches the rubric', () => {
+    const rows = bench.disagreements(
+      'openai', [reading('cheap black tee', { colors: ['Black'], maxPrice: null })],
+      'gemini', [reading('cheap black tee', { colors: ['Black'], maxPrice: 25 })],
+      [{ query: 'cheap black tee', expect: { maxPrice: null } }]
+    );
+    assert.strictEqual(rows.length, 1);
+    assert.strictEqual(rows[0].fields.length, 1);
+    const budget = rows[0].fields[0];
+    assert.strictEqual(budget.field, 'maxPrice');
+    assert.strictEqual(budget.label, 'budget (max)');
+    assert.strictEqual(budget.openai, null);
+    assert.strictEqual(budget.gemini, 25);
+    assert.strictEqual(budget.matches, 'openai', 'the rubric forbids inventing a budget');
+  });
+
+  test('a disagreement where both are wrong crowns neither', () => {
+    const rows = bench.disagreements(
+      'openai', [reading('q', { colors: ['White'] })],
+      'gemini', [reading('q', { colors: ['Blue'] })],
+      [{ query: 'q', expect: { colors: ['Black'] } }]
+    );
+    assert.strictEqual(rows[0].fields[0].matches, null);
+    assert.strictEqual(rows[0].fields[0].graded, true);
+  });
+
+  test('a disagreement the rubric has no opinion on is shown, not scored', () => {
+    const rows = bench.disagreements(
+      'openai', [reading('q', { styles: ['Minimal'] })],
+      'gemini', [reading('q', { styles: ['Classic'] })],
+      [{ query: 'q', expect: { colors: ['Black'] } }]
+    );
+    assert.strictEqual(rows[0].fields[0].label, 'style');
+    assert.strictEqual(rows[0].fields[0].graded, false);
+    assert.strictEqual(rows[0].fields[0].matches, null, 'inventing a verdict here would invent a result');
+  });
+
+  test('a side that returned nothing usable is reported as that, not as a field', () => {
+    const rows = bench.disagreements(
+      'openai', [reading('q', { colors: ['Black'] })],
+      'gemini', [{ query: 'q', ok: false, reason: 'unparseable', ms: 90 }],
+      [{ query: 'q', expect: { colors: ['Black'] } }]
+    );
+    assert.deepStrictEqual(rows[0].missing, [{ provider: 'gemini', reason: 'unparseable' }]);
+    assert.deepStrictEqual(rows[0].fields, []);
+  });
+
+  test('the report reads the first pass only, so --repeat does not multiply it', () => {
+    const rows = bench.disagreements(
+      'openai', [reading('q', { colors: ['Black'] }), reading('q', { colors: ['White'] })],
+      'gemini', [reading('q', { colors: ['Black'] }), reading('q', { colors: ['Blue'] })],
+      [{ query: 'q', expect: { colors: ['Black'] } }]
+    );
+    assert.deepStrictEqual(rows, [], 'the first readings agreed, so there is nothing to report');
+  });
+
+  test('every field the request named is compared', () => {
+    const labels = bench.DISAGREEMENT_FIELDS.map((f) => f.label);
+    ['budget (max)', 'budget (min)', 'colour', 'category', 'fit', 'brand', 'occasion', 'style']
+      .forEach((label) => assert.ok(labels.includes(label), `${label} is not compared`));
+  });
+
   console.log('\nthe experiment stays removable');
 
   test('nothing in api/ refers to Gemini outside the marked block', () => {
