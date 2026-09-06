@@ -121,7 +121,7 @@ function withStubbedFetch(handler, run) {
    does runs inside this, so a failure cannot leak a key or a provider
    into the next test. */
 function withEnv(env, run) {
-  const keys = ['AI_PROVIDER', 'GEMINI_API_KEY', 'GEMINI_MODEL', 'GEMINI_THINKING_BUDGET', 'OPENAI_API_KEY', 'OPENAI_MODEL'];
+  const keys = ['AI_PROVIDER', 'GEMINI_API_KEY', 'GEMINI_MODEL', 'GEMINI_THINKING_BUDGET', 'GEMINI_THINKING_LEVEL', 'OPENAI_API_KEY', 'OPENAI_MODEL'];
   const saved = {};
   keys.forEach((k) => { saved[k] = process.env[k]; });
   keys.forEach((k) => { delete process.env[k]; });
@@ -161,12 +161,21 @@ const bodyOf = (call) => JSON.parse(call.options.body);
   console.log('\nrequest construction');
 
   await testAsync('the request goes to the current Gemini model, by POST', async () => {
-    await withEnv({ GEMINI_API_KEY: 'test-key-not-real' }, () => {
+    await withEnv({ GEMINI_API_KEY: FAKE_KEY }, () => {
       const { url, options } = gemini.buildRequest({ query: 'a black oversized hoodie under $80', vocabulary: VOCABULARY, systemPrompt: interpret.SYSTEM_PROMPT });
-      assert.strictEqual(url, 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent');
+      assert.strictEqual(url, 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent');
       assert.strictEqual(options.method, 'POST');
-      assert.strictEqual(gemini.DEFAULT_MODEL, 'gemini-2.5-flash');
+      /* gemini-2.5-flash answers a request for it with a 404: it is not
+         available to accounts that had not already been using it. */
+      assert.strictEqual(gemini.DEFAULT_MODEL, 'gemini-3.6-flash');
     });
+  });
+
+  test('the model name alone decides which family’s rules apply', () => {
+    ['gemini-3.6-flash', 'gemini-3.6-flash-preview', 'GEMINI-3.6-FLASH'].forEach((m) =>
+      assert.strictEqual(gemini.isGemini3(m), true, m));
+    ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-pro'].forEach((m) =>
+      assert.strictEqual(gemini.isGemini3(m), false, m));
   });
 
   await testAsync('GEMINI_MODEL overrides the model, and only the model', async () => {
@@ -197,18 +206,51 @@ const bodyOf = (call) => JSON.parse(call.options.body);
     });
   });
 
-  await testAsync('it asks for JSON at temperature 0, with thinking off by default', async () => {
-    await withEnv({ GEMINI_API_KEY: FAKE_KEY }, () => {
-      const body = JSON.parse(gemini.buildRequest({ query: 'a hoodie', vocabulary: {}, systemPrompt: 'x' }).options.body);
-      assert.strictEqual(body.generationConfig.temperature, 0);
-      assert.strictEqual(body.generationConfig.responseMimeType, 'application/json');
-      assert.strictEqual(body.generationConfig.thinkingConfig.thinkingBudget, 0);
-      assert.strictEqual(body.generationConfig.responseSchema, undefined,
-        'no schema is sent: it would flatter this provider in the benchmark');
-    });
+  const configOf = (env) => withEnv(Object.assign({ GEMINI_API_KEY: FAKE_KEY }, env), () =>
+    JSON.parse(gemini.buildRequest({ query: 'a hoodie', vocabulary: {}, systemPrompt: 'x' }).options.body).generationConfig);
+
+  await testAsync('a 3.x request asks for JSON at minimal thinking, and sends no temperature', async () => {
+    const config = await configOf({});
+    assert.strictEqual(config.responseMimeType, 'application/json');
+    assert.deepStrictEqual(config.thinkingConfig, { thinkingLevel: 'minimal' });
+    /* Gemini 3 ignores temperature, and Google's guidance is to leave it
+       out rather than send a value the model will discard */
+    assert.strictEqual(config.temperature, undefined, 'a 3.x request must not send temperature');
+    assert.strictEqual(config.responseSchema, undefined,
+      'no schema is sent: it would flatter this provider in the benchmark');
   });
 
-  await testAsync('GEMINI_THINKING_BUDGET turns thinking on, and nonsense does not', async () => {
+  await testAsync('a 2.5 request keeps the shape that model takes', async () => {
+    const config = await configOf({ GEMINI_MODEL: 'gemini-2.5-flash' });
+    assert.strictEqual(config.responseMimeType, 'application/json');
+    assert.strictEqual(config.temperature, 0, '2.5 honours temperature, and 0 made it repeatable');
+    assert.deepStrictEqual(config.thinkingConfig, { thinkingBudget: 0 });
+  });
+
+  await testAsync('the two thinking fields never travel together', async () => {
+    /* sending thinkingLevel and the legacy thinkingBudget in one request
+       is a 400, so exactly one is ever built */
+    for (const name of ['gemini-3.6-flash', 'gemini-2.5-flash']) {
+      const config = await configOf({ GEMINI_MODEL: name, GEMINI_THINKING_LEVEL: 'high', GEMINI_THINKING_BUDGET: '512' });
+      const fields = Object.keys(config.thinkingConfig);
+      assert.strictEqual(fields.length, 1, `${name} sent ${fields.join(' and ')}`);
+    }
+  });
+
+  await testAsync('GEMINI_THINKING_LEVEL is honoured, and a typo is not forwarded', async () => {
+    assert.deepStrictEqual(gemini.THINKING_LEVELS, ['minimal', 'low', 'medium', 'high']);
+    for (const level of gemini.THINKING_LEVELS) {
+      const config = await configOf({ GEMINI_THINKING_LEVEL: level });
+      assert.strictEqual(config.thinkingConfig.thinkingLevel, level);
+    }
+    const typo = await configOf({ GEMINI_THINKING_LEVEL: 'maximum' });
+    assert.strictEqual(typo.thinkingConfig.thinkingLevel, 'minimal',
+      'the field is an enum, so a typo must fall back rather than become a 400');
+    const cased = await configOf({ GEMINI_THINKING_LEVEL: 'HIGH' });
+    assert.strictEqual(cased.thinkingConfig.thinkingLevel, 'high');
+  });
+
+  await testAsync('GEMINI_THINKING_BUDGET still governs a 2.5 request, and nonsense does not', async () => {
     await withEnv({ GEMINI_API_KEY: FAKE_KEY, GEMINI_THINKING_BUDGET: '512' }, () => {
       assert.strictEqual(gemini.thinkingBudget(), 512);
     });
@@ -987,12 +1029,13 @@ const bodyOf = (call) => JSON.parse(call.options.body);
   await testAsync('omitting thinkingConfig omits only that, and is not the default', async () => {
     await withEnv({ GEMINI_API_KEY: FAKE_KEY }, () => {
       const normal = JSON.parse(gemini.buildRequest({ query: 'q', vocabulary: {}, systemPrompt: 'x' }).options.body);
-      assert.deepStrictEqual(normal.generationConfig.thinkingConfig, { thinkingBudget: 0 });
+      assert.deepStrictEqual(normal.generationConfig.thinkingConfig, { thinkingLevel: 'minimal' });
 
       const without = JSON.parse(gemini.buildRequest({ query: 'q', vocabulary: {}, systemPrompt: 'x', thinking: null }).options.body);
       assert.strictEqual(without.generationConfig.thinkingConfig, undefined);
       assert.strictEqual(without.generationConfig.responseMimeType, 'application/json', 'JSON mode still asked for');
-      assert.strictEqual(without.generationConfig.temperature, 0);
+      assert.deepStrictEqual(Object.keys(without.generationConfig), ['responseMimeType'],
+        'nothing else may change when the field is dropped');
     });
   });
 

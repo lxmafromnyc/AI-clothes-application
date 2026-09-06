@@ -110,7 +110,10 @@ const num = (name, fallback) => {
    every one of them is overridable, and the run prints which it used. */
 const PRICES = {
   openai: { input: num('openai-in', 0.15), output: num('openai-out', 0.60) },
-  gemini: { input: num('gemini-in', 0.30), output: num('gemini-out', 2.50) }
+  /* gemini-3.6-flash introductory pricing, in effect to 31 Dec 2026;
+     $1.50/$7.50 applies from 1 Jan 2027. Both move — check the vendor's
+     page and pass --gemini-in / --gemini-out when they have. */
+  gemini: { input: num('gemini-in', 0.75), output: num('gemini-out', 3.75) }
 };
 
 /* ---------------------------------------------------------
@@ -817,6 +820,14 @@ async function diagnoseOne(name, query) {
     const second = await provider.call(query, retry.options);
     verdict.retry = { without: retry.field, reading: second, classified: classify(second) };
   }
+
+  /* A 404 says "not this model" and nothing about which model would
+     work. Gemini can be asked, for free, and the answer is specific to
+     the key — which is the whole point, because that is how a model
+     available to one account 404s for another. */
+  if (!reading.ok && reading.status === 404 && name === 'gemini') {
+    verdict.available = await gemini.listModels();
+  }
   return verdict;
 }
 
@@ -862,6 +873,20 @@ function reportDiagnosis(v) {
     } else {
       console.log(`    ${pad('result', 24)}still failing, so ${v.retry.without} is not the cause`);
       if (rc.envelope) console.log(`    ${pad('provider message', 24)}${rc.envelope.message}`);
+    }
+  }
+
+  if (v.available) {
+    console.log('\n  models this key can actually use:');
+    if (!v.available.ok) {
+      console.log(`    could not be listed (${v.available.reason}${v.available.status ? ` ${v.available.status}` : ''})`);
+    } else {
+      const usable = v.available.models.filter((m) => !m.methods.length || m.methods.includes('generateContent'));
+      if (!usable.length) console.log('    none of them serve generateContent');
+      usable.slice(0, 25).forEach((m) => console.log(`    ${m.id}`));
+      if (usable.length > 25) console.log(`    …and ${usable.length - 25} more`);
+      console.log(`\n    set GEMINI_MODEL to one of these, or change DEFAULT_MODEL in`);
+      console.log('    api/_interpreters/gemini.js if the default itself is wrong.');
     }
   }
 
