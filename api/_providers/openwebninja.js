@@ -470,7 +470,24 @@ async function apiGet(url, params) {
 
   if (!response.ok) {
     const detail = await response.text().catch(() => '');
-    throw new Error(`OpenWeb Ninja responded ${response.status}: ${detail.slice(0, 200)}`);
+    /* The message is unchanged, so the log line and everything that
+       reads it still hold. What is added is structured: api/_diagnostic.js
+       names the fault from these rather than parsing prose, and the body
+       travels only as far as this Error object — which stays on the
+       server. Nothing here is echoed to a browser; see that file. */
+    const failure = new Error(`OpenWeb Ninja responded ${response.status}: ${detail.slice(0, 200)}`);
+    const header = (name) => (response.headers && typeof response.headers.get === 'function'
+      ? response.headers.get(name)
+      : null);
+    failure.upstream = {
+      provider: 'openwebninja',
+      status: response.status,
+      body: detail.slice(0, 500),
+      retryAfter: header('retry-after'),
+      remaining: header('x-ratelimit-remaining'),
+      reset: header('x-ratelimit-reset')
+    };
+    throw failure;
   }
   return response.json();
 }

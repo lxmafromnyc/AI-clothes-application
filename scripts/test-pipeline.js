@@ -1165,7 +1165,189 @@ function twoEndpointStub(searchPayload, offersByProductId) {
       () => handler({ method: 'POST', body: { intent: nikeIntent, limit: 12 }, on: () => {} }, res));
     assert.strictEqual(res.statusCode, 502);
     assert.ok(!JSON.stringify(res.body).includes('test-key'));
-    assert.ok(!JSON.stringify(res.body).includes('upstream detail'));
+    assert.ok(!JSON.stringify(res.body).includes('upstream detail'),
+      'the diagnostic names the fault; it never quotes the provider');
+  });
+
+  /* -------------------------------------------------------
+     6a. The temporary upstream diagnostic
+     -------------------------------------------------------
+     TEMPORARY, with api/_diagnostic.js. Delete this block when that
+     file goes. What it guards is the one property that makes putting
+     any of this in a public reply acceptable: every string in the
+     diagnostic is fixed text chosen by matching the provider's answer,
+     never text taken from it. */
+
+  console.log('\nupstream diagnostic (temporary)');
+
+  const SECRETS = { OPENWEBNINJA_API_KEY: 'owk_live_SECRETKEYVALUE123456' };
+  /* credential-shaped strings that appear only in the provider's answer,
+     never in this process's environment — the reply must carry no part
+     of a response body whether or not it matches something real */
+  const REDIS_URL = 'https://real-redis-12345.upstash.io';
+  const REDIS_TOKEN = 'AX9sASQgTOKENVALUE0987654321';
+
+  const failWith = async (status, body, headers) => {
+    Object.assign(process.env, SECRETS);
+    process.env.PRODUCT_SOURCE = 'openwebninja';
+    const res = fakeRes();
+    await withStubbedFetch(
+      async () => ({
+        ok: false,
+        status,
+        text: async () => body,
+        headers: headers ? { get: (n) => headers[n.toLowerCase()] || null } : undefined
+      }),
+      () => require('../api/search')({ method: 'POST', headers: {}, body: { intent: nikeIntent, limit: 12 }, on: () => {} }, res));
+    return res;
+  };
+
+  await testAsync('names 401, 403, 429 and 5xx as four different categories', async () => {
+    const cases = [
+      [401, '{"message":"Invalid API key"}', 'unauthorized'],
+      [403, '{"message":"Forbidden: your plan does not include this endpoint"}', 'forbidden'],
+      [429, '{"message":"You have exceeded the MONTHLY quota for Requests"}', 'rate-limited'],
+      [500, 'Internal Server Error', 'server-error'],
+      [503, 'Service Unavailable', 'server-error']
+    ];
+    for (const [status, body, category] of cases) {
+      const res = await failWith(status, body);
+      assert.strictEqual(res.statusCode, 502, `${status} must still answer 502`);
+      assert.strictEqual(res.body.diagnostic.status, status, `${status} must be reported as itself`);
+      assert.strictEqual(res.body.diagnostic.category, category);
+      assert.strictEqual(res.body.diagnostic.provider, 'openwebninja');
+      assert.ok(res.body.diagnostic.message.length > 10, 'and carries a sentence saying what to do about it');
+    }
+  });
+
+  await testAsync('tells a quota 429 from a slow-down 429, without quoting either', async () => {
+    const quota = await failWith(429, '{"message":"You have exceeded the MONTHLY quota for Requests on your plan"}');
+    assert.ok(quota.body.diagnostic.signals.includes('quota'), JSON.stringify(quota.body.diagnostic.signals));
+    assert.ok(quota.body.diagnostic.signals.includes('monthly-window'));
+    assert.ok(!JSON.stringify(quota.body).includes('You have exceeded'), 'the provider is never quoted');
+
+    const burst = await failWith(429, '{"message":"Rate limit exceeded, retry shortly"}', { 'retry-after': '30' });
+    assert.ok(burst.body.diagnostic.signals.includes('rate-limit'));
+    assert.ok(!burst.body.diagnostic.signals.includes('quota'));
+    assert.strictEqual(burst.body.diagnostic.retryAfterSeconds, 30);
+  });
+
+  await testAsync('an invalid key is named as one, and the key itself never appears', async () => {
+    const res = await failWith(401, `{"message":"Invalid API key: ${SECRETS.OPENWEBNINJA_API_KEY}"}`);
+    assert.strictEqual(res.body.diagnostic.category, 'unauthorized');
+    assert.ok(res.body.diagnostic.signals.includes('invalid-key'));
+    const raw = JSON.stringify(res.body);
+    assert.ok(!raw.includes(SECRETS.OPENWEBNINJA_API_KEY), 'the key must never reach a browser');
+    assert.ok(!raw.includes('owk_live'), 'nor any fragment of it');
+  });
+
+  await testAsync('no secret, cache key or Redis credential can reach the reply', async () => {
+    /* a hostile-looking body carrying every secret this deployment
+       holds, plus a cache key and a Redis URL */
+    const nasty = [
+      `key=${SECRETS.OPENWEBNINJA_API_KEY}`,
+      `redis=${REDIS_URL} token=${REDIS_TOKEN}`,
+      'cache=fynd:cache:v1:search:68e3cf3ecffb34430102618ca55aa999',
+      'x-api-key: leaked', 'set-cookie: fynd_session=abc'
+    ].join(' ');
+    const res = await failWith(403, nasty);
+    const raw = JSON.stringify(res.body);
+
+    for (const secret of [...Object.values(SECRETS), REDIS_URL, REDIS_TOKEN]) {
+      assert.ok(!raw.includes(secret), `a secret reached the reply: ${secret.slice(0, 8)}…`);
+    }
+    assert.ok(!raw.includes('fynd:cache'), 'no cache key');
+    assert.ok(!raw.includes('68e3cf3e'), 'no cache digest');
+    assert.ok(!raw.includes('upstash.io'), 'no Redis host');
+    assert.ok(!raw.includes('x-api-key'), 'no header names');
+    assert.ok(!raw.includes('fynd_session'), 'no cookie');
+    assert.ok(!raw.includes('leaked'), 'nothing from the body at all');
+  });
+
+  await testAsync('the reply carries no word the diagnostic did not choose itself', async () => {
+    /* the strongest form of the rule: every string in the diagnostic
+       block must come from the module's own fixed vocabulary */
+    const diagnostic = require('../api/_diagnostic');
+    const allowed = new Set([
+      ...Object.values(diagnostic.CATEGORY),
+      ...Object.values(diagnostic.MESSAGE),
+      ...diagnostic.SIGNALS.map(([token]) => token),
+      'openwebninja'
+    ]);
+
+    const res = await failWith(429, 'ARBITRARY-PROVIDER-PROSE quota monthly ' + SECRETS.OPENWEBNINJA_API_KEY);
+    const block = res.body.diagnostic;
+    const strings = [];
+    const walk = (v) => {
+      if (typeof v === 'string') strings.push(v);
+      else if (Array.isArray(v)) v.forEach(walk);
+      else if (v && typeof v === 'object') Object.values(v).forEach(walk);
+    };
+    walk(block);
+
+    strings.forEach((value) => {
+      /* `at` is a timestamp this module generated, not a provider string */
+      if (/^\d{4}-\d{2}-\d{2}T/.test(value)) return;
+      assert.ok(allowed.has(value), `"${value.slice(0, 60)}" is not in the module's own vocabulary`);
+    });
+    assert.ok(!JSON.stringify(res.body).includes('ARBITRARY'));
+  });
+
+  await testAsync('a timeout is named as a timeout rather than a status', async () => {
+    Object.assign(process.env, SECRETS);
+    process.env.PRODUCT_SOURCE = 'openwebninja';
+    const res = fakeRes();
+    await withStubbedFetch(async () => {
+      const err = new Error('The operation was aborted'); err.name = 'AbortError'; throw err;
+    }, () => require('../api/search')({ method: 'POST', headers: {}, body: { intent: nikeIntent, limit: 12 }, on: () => {} }, res));
+    assert.strictEqual(res.body.diagnostic.category, 'timeout');
+    assert.strictEqual(res.body.diagnostic.status, null);
+  });
+
+  await testAsync('the reply says which build answered', async () => {
+    process.env.VERCEL_GIT_COMMIT_SHA = '34b4c531366e5c1d0f9a543d5a611c1c627a43ff';
+    process.env.VERCEL_GIT_COMMIT_REF = 'main';
+    process.env.VERCEL_ENV = 'production';
+    try {
+      const res = await failWith(500, 'down');
+      assert.strictEqual(res.body.build.commit, '34b4c53', 'the deployed commit, short');
+      assert.strictEqual(res.body.build.ref, 'main');
+      assert.strictEqual(res.body.build.env, 'production');
+      assert.strictEqual(res.body.build.cacheVersion, 'v1', 'proves the cache build is live');
+      assert.ok(['redis', 'memory'].includes(res.body.build.storeDriver));
+      assert.ok(!JSON.stringify(res.body.build).includes('upstash.io'), 'the driver, never the URL');
+    } finally {
+      delete process.env.VERCEL_GIT_COMMIT_SHA;
+      delete process.env.VERCEL_GIT_COMMIT_REF;
+      delete process.env.VERCEL_ENV;
+    }
+  });
+
+  await testAsync('a successful search also says which build answered', async () => {
+    process.env.OPENWEBNINJA_API_KEY = 'test-key';
+    process.env.PRODUCT_SOURCE = 'openwebninja';
+    process.env.VERCEL_GIT_COMMIT_SHA = '34b4c531366e5c1d0f9a543d5a611c1c627a43ff';
+    try {
+      const res = fakeRes();
+      await withStubbedFetch(twoEndpointStub(envelope([productWithInlineOffer()])),
+        () => require('../api/search')({ method: 'POST', headers: {}, body: { intent: nikeIntent, limit: 12 }, on: () => {} }, res));
+      assert.strictEqual(res.statusCode, 200);
+      assert.strictEqual(res.body.build.commit, '34b4c53');
+      assert.ok(!('diagnostic' in res.body), 'the failure block appears only on a failure');
+    } finally {
+      delete process.env.VERCEL_GIT_COMMIT_SHA;
+    }
+  });
+
+  await testAsync('the diagnostic never turns a 502 into a 500', async () => {
+    /* it runs on the failure path, so it is handed the worst input the
+       failure path can produce and must still answer */
+    const diagnostic = require('../api/_diagnostic');
+    for (const bad of [null, undefined, {}, 'a string', 42, { message: null }, { upstream: null }]) {
+      const report = diagnostic.providerFailure('openwebninja', bad);
+      assert.ok(report && typeof report.category === 'string', `threw or returned nothing for ${JSON.stringify(bad)}`);
+    }
+    assert.ok(diagnostic.build().cacheVersion, 'build() must answer whatever the environment holds');
   });
 
   /* -------------------------------------------------------

@@ -48,6 +48,9 @@ const { handledPreflight } = require('./_cors');
 const { envReport } = require('./_env-report');
 const meter = require('./_meter');
 const cache = require('./_cache');
+/* TEMPORARY — remove with the two blocks that use it below, once the
+   production upstream status is known. See api/_diagnostic.js. */
+const diagnostic = require('./_diagnostic');
 const { SEARCHES } = require('./_plans');
 
 const MAX_LIMIT = 24;
@@ -217,7 +220,17 @@ module.exports = async function handler(req, res) {
     found = await findProducts(provider, intent, limit, cacheStats);
   } catch (err) {
     console.error('Product source failed', provider.name, err && err.message);
-    return res.status(502).json({ error: 'The product source is unavailable right now.', source: provider.name });
+    return res.status(502).json({
+      error: 'The product source is unavailable right now.',
+      source: provider.name,
+      /* TEMPORARY. The upstream status, named rather than quoted: every
+         string in here is fixed text from api/_diagnostic.js, chosen by
+         matching the provider's answer, never taken from it. The
+         provider's own words, its headers, the key, the cache keys and
+         the request body cannot reach this object. */
+      diagnostic: diagnostic.providerFailure(provider.name, err),
+      build: diagnostic.build()
+    });
   }
 
   /* The search happened — from the provider or from the cache — whatever
@@ -260,7 +273,10 @@ module.exports = async function handler(req, res) {
        that shaped these results. It did not. */
     attachments: { received: attachments.length, used: 0, reason: attachments.length ? 'Attachments are not read yet.' : null },
     /* so the meter on screen moves without a second round trip */
-    usage: meter.report(after || state)
+    usage: meter.report(after || state),
+    /* TEMPORARY, and on the success path too, so "which commit is
+       production running" stays answerable once search works again */
+    build: diagnostic.build()
   });
 };
 
