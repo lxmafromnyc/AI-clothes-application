@@ -704,8 +704,19 @@ rate limits — there is no second database and no new service.
 | Layer | Key | TTL | What is stored |
 | --- | --- | --- | --- |
 | Search results | the normalized intent, the provider, the page size and the marketplace | 30 minutes | The **records** the adapter produced, and its funnel |
-| Product offers | the product's own id and the marketplace | 2 hours | The one offer the adapter picked: price, currency, retailer, retailer URL |
+| Product offers | the product's own id, the marketplace, and the shop the search record named | 2 hours | The one offer the adapter picked: price, currency, retailer, retailer URL |
 | No usable offer | the same | 5 minutes | That this product had nothing showable |
+
+The shop is in the offer key because `pickOffer()` **prefers** the offer whose
+seller matches the shop the search result named, falling back to the first
+usable one. The same product id found by one search that named Nordstrom and
+another that named Nike resolves to two different retailer offers — both real,
+both correctly priced, and not interchangeable — so they are two entries. The
+rest of the intent is deliberately absent: colour and budget do not change
+which seller stocks an item, so two searches landing on the same product in the
+same shop are still one lookup. It over-keys negatives slightly, since "no
+seller had a usable link" does not depend on the preferred shop; one key shape
+for both outcomes is worth that, and the error is in the safe direction.
 
 Four rules hold the whole thing up:
 
@@ -723,6 +734,9 @@ Four rules hold the whole thing up:
 - **A cache hit is still the shopper's search.** It costs them exactly one
   metered search, the same as a cold one. What the cache changes is what it
   costs *us*.
+- **A warm answer is the cold answer.** Every field that decides which offer
+  comes back is in the key, so a hit shows the same shop, price and link a cold
+  search would have shown. The benchmark asserts it pass by pass.
 
 The key is a SHA-256 digest of the normalized intent plus everything else that
 changes an answer — provider, page size, country, language, whether offer

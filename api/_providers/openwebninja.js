@@ -556,7 +556,8 @@ function verifiedCount(records, intent) {
    The cache is asked first, and a hit ends the function: no request is
    made, and `lookupsMade` — which counts what this search cost the
    provider — does not move. What comes back is the same offer object a
-   live lookup would have produced, and it goes on to the same gate.
+   live lookup would have produced, from the same shop a live lookup
+   would have preferred, and it goes on to the same gate.
 
    What is written back is only ever something the provider actually
    answered. A failed lookup writes nothing: "we could not reach them"
@@ -567,7 +568,12 @@ async function lookupFor(record, region, tally, cacheStats) {
     provider: NAME,
     productId: record.sku,
     country: region.country,
-    language: region.language
+    language: region.language,
+    /* pickOffer() below prefers this shop's own offer, so it decides
+       which retailer comes back and belongs in the identity. Two
+       searches that found the same product under two different shop
+       names are two lookups, not one. */
+    store: record.retailerHint
   });
 
   const cached = await cache.readOffer(key, cacheStats);

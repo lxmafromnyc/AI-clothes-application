@@ -56,6 +56,8 @@ function fresh() {
   delete process.env.FYND_CACHE;
   delete process.env.PRODUCT_SOURCE;
   delete process.env.OPENWEBNINJA_OFFER_BUDGET_MS;
+  delete process.env.OPENWEBNINJA_COUNTRY;
+  delete process.env.OPENWEBNINJA_LANGUAGE;
   process.env.OPENWEBNINJA_API_KEY = 'test-key';
 }
 
@@ -223,6 +225,54 @@ test('the key carries none of what the shopper typed', () => {
   assert.ok(!key.includes('hoodie'));
 });
 
+console.log('\noffer keys');
+
+const offerKeyFor = (over) => cache.offerKey(Object.assign({
+  provider: 'openwebninja', productId: 'p1', country: 'us', language: 'en', store: 'nordstrom.com'
+}, over));
+
+test('the same product, in the same shop and marketplace, is one key', () => {
+  assert.strictEqual(offerKeyFor(), offerKeyFor({ store: 'Nordstrom.com' }),
+    'a shop name is not case-sensitive');
+});
+
+test('the shop the search named is part of an offer\'s identity', () => {
+  assert.notStrictEqual(offerKeyFor(), offerKeyFor({ store: 'nike.com' }),
+    'pickOffer prefers this shop, so it decides which offer comes back');
+  assert.notStrictEqual(offerKeyFor(), offerKeyFor({ store: '' }),
+    'and no shop named is not the same as one named');
+});
+
+test('the marketplace is part of an offer\'s identity', () => {
+  assert.notStrictEqual(offerKeyFor(), offerKeyFor({ country: 'gb' }));
+  assert.notStrictEqual(offerKeyFor(), offerKeyFor({ language: 'fr' }));
+});
+
+test('the product and the provider are part of an offer\'s identity', () => {
+  assert.notStrictEqual(offerKeyFor(), offerKeyFor({ productId: 'p2' }));
+  assert.notStrictEqual(offerKeyFor(), offerKeyFor({ provider: 'serpapi' }));
+});
+
+test('every field that picks an offer changes the key, and none collides', () => {
+  const base = offerKeyFor();
+  const seen = new Set([base]);
+  for (const [field, value] of Object.entries({
+    provider: 'serpapi', productId: 'p2', country: 'gb', language: 'fr', store: 'nike.com'
+  })) {
+    const key = offerKeyFor({ [field]: value });
+    assert.notStrictEqual(key, base, `${field} must change the key`);
+    assert.ok(!seen.has(key), `${field} must not collide with another field's key`);
+    seen.add(key);
+  }
+});
+
+test('an offer key carries no product id or shop name in readable form', () => {
+  const key = offerKeyFor({ productId: 'unmistakable-product-id' });
+  assert.ok(!key.includes('unmistakable'));
+  assert.ok(!key.includes('nordstrom'));
+  assert.ok(key.startsWith(`fynd:cache:${cache.CACHE_VERSION}:offer:`), key);
+});
+
 /* ---------------------------------------------------------
    2. The search-result cache
    --------------------------------------------------------- */
@@ -332,6 +382,97 @@ test('the key carries none of what the shopper typed', () => {
     assert.strictEqual(products.find((p) => p.retailer === 'Nordstrom').price, 68);
   });
 
+  await testAsync('two searches naming different shops do not share one offer', async () => {
+    /* The same item, found by two searches that ranked two different
+       sellers first. pickOffer prefers the shop the search named, so
+       cold these resolve to two different retailers — and the cache
+       must not flatten them into one. */
+    const bothOffers = [
+      offer('nordstrom.com', '$68.00', 'https://www.nordstrom.com/s/hoodie/p1'),
+      offer('nike.com', '$72.00', 'https://www.nike.com/t/hoodie/p1')
+    ];
+    const fromNordstrom = stubFor(envelope([product({ product_id: 'p1', store_name: 'nordstrom.com' })]), { p1: bothOffers });
+    const fromNike = stubFor(envelope([product({ product_id: 'p1', store_name: 'nike.com' })]), { p1: bothOffers });
+
+    const first = await withStubbedFetch(fromNordstrom, () => provider.search(intent, { limit: 12 }));
+    assert.strictEqual(first[0].productUrl, 'https://www.nordstrom.com/s/hoodie/p1');
+    assert.strictEqual(first[0].retailer, 'nordstrom.com');
+
+    const second = await withStubbedFetch(fromNike, () => provider.search(intent, { limit: 12 }));
+    assert.strictEqual(second.diagnostics.cache.offerCache.hit, 0,
+      'a different shop is a different offer, not a free hit');
+    assert.strictEqual(second.diagnostics.offers.lookupsMade, 1, 'so the lookup is really made');
+    assert.strictEqual(second[0].productUrl, 'https://www.nike.com/t/hoodie/p1',
+      'and the shop the second search named is the shop it shows');
+    assert.strictEqual(second[0].price, 72, 'with that shop\'s own price');
+
+    /* and neither one overwrote the other: the first is still itself */
+    const third = await withStubbedFetch(fromNordstrom, () => provider.search(intent, { limit: 12 }));
+    assert.strictEqual(third.diagnostics.cache.offerCache.hit, 1, 'the first entry survived');
+    assert.strictEqual(third[0].productUrl, 'https://www.nordstrom.com/s/hoodie/p1');
+  });
+
+  await testAsync('the same product in the same shop is still one lookup', async () => {
+    /* the other half of the rule above: narrowing the key must not have
+       turned every warm lookup back into a cold one */
+    const stub = stubFor(envelope([product({ product_id: 'p1', store_name: 'nordstrom.com' })]),
+      { p1: [offer('nordstrom.com', '$68.00', 'https://www.nordstrom.com/s/hoodie/p1')] });
+
+    await withStubbedFetch(stub, () => provider.search(intent, { limit: 12 }));
+    const second = await withStubbedFetch(stub, () => provider.search(intent, { limit: 12 }));
+    assert.strictEqual(stub.lookups(), 1, 'the second search buys nothing');
+    assert.strictEqual(second.diagnostics.cache.offerCache.hit, 1);
+  });
+
+  await testAsync('a record naming no shop does not answer one that names a shop', async () => {
+    const offers = { p1: [offer('nordstrom.com', '$68.00', 'https://www.nordstrom.com/s/hoodie/p1')] };
+    /* a search record with no store_name at all: pickOffer has no
+       preference to apply, which is a different question from "prefer
+       Nordstrom", so it must not be answered by the same entry */
+    const nameless = stubFor(envelope([{
+      product_id: 'p1',
+      product_title: 'Champion Reverse Weave Oversized Hoodie, Black',
+      price: '$68.00',
+      product_photos: ['https://img.example-cdn.com/champion-black.jpg'],
+      product_page_url: 'https://www.google.com/shopping/product/111'
+    }]), offers);
+    const named = stubFor(envelope([product({ product_id: 'p1', store_name: 'nordstrom.com' })]), offers);
+
+    await withStubbedFetch(nameless, () => provider.search(intent, { limit: 12 }));
+    const second = await withStubbedFetch(named, () => provider.search(intent, { limit: 12 }));
+    assert.strictEqual(second.diagnostics.cache.offerCache.hit, 0);
+    assert.strictEqual(second.diagnostics.offers.lookupsMade, 1);
+  });
+
+  await testAsync('two marketplaces do not share one offer', async () => {
+    const stub = stubFor(envelope([product({ product_id: 'p1', store_name: 'nordstrom.com' })]),
+      { p1: [offer('nordstrom.com', '$68.00', 'https://www.nordstrom.com/s/hoodie/p1')] });
+
+    await withStubbedFetch(stub, () => provider.search(intent, { limit: 12 }));
+    assert.strictEqual(stub.lookups(), 1);
+
+    process.env.OPENWEBNINJA_COUNTRY = 'gb';
+    const second = await withStubbedFetch(stub, () => provider.search(intent, { limit: 12 }));
+    assert.strictEqual(stub.lookups(), 2, 'a different marketplace is a different lookup');
+    assert.strictEqual(second.diagnostics.cache.offerCache.hit, 0);
+
+    process.env.OPENWEBNINJA_LANGUAGE = 'fr';
+    await withStubbedFetch(stub, () => provider.search(intent, { limit: 12 }));
+    assert.strictEqual(stub.lookups(), 3, 'and so is a different language');
+  });
+
+  await testAsync('a marketplace change does not let a cached SEARCH answer either', async () => {
+    const stub = oneGoodWorld();
+    await withStubbedFetch(stub, () => search());
+    const spent = stub.calls.length;
+
+    process.env.OPENWEBNINJA_COUNTRY = 'gb';
+    const stats = cache.counters();
+    await withStubbedFetch(stub, () => search(intent, stats));
+    assert.strictEqual(stats.searchCache.hit, 0, 'the marketplace is in the search key too');
+    assert.ok(stub.calls.length > spent, 'so the provider is really asked again');
+  });
+
   await testAsync('an offer is still good at 119 minutes and bought again at 121', async () => {
     const stub = twoNeedingLookups();
     await withStubbedFetch(stub, () => provider.search(intent, { limit: 12 }));
@@ -347,7 +488,11 @@ test('the key carries none of what the shopper typed', () => {
   });
 
   await testAsync('an expired offer is never served, whatever the store still holds', async () => {
-    const key = cache.offerKey({ provider: 'openwebninja', productId: 'a', country: 'us', language: 'en' });
+    /* the same identity the adapter writes under: the product, the
+       marketplace, and the shop its search record named */
+    const key = cache.offerKey({
+      provider: 'openwebninja', productId: 'a', country: 'us', language: 'en', store: 'nordstrom.com'
+    });
     const stub = twoNeedingLookups();
     await withStubbedFetch(stub, () => provider.search(intent, { limit: 12 }));
     assert.ok(await store.get(key), 'the offer was stored');

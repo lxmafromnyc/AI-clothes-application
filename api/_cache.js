@@ -187,17 +187,43 @@ function searchKey(parts) {
   return `${PREFIX}:search:${digest(stable(shape))}`;
 }
 
-/* A product's identity, as the offer lookup sees it: the provider's own
-   id for it, in the marketplace it was looked up in. Nothing about the
-   shopper or their search is in here — the same product found by two
-   different searches is one lookup. */
+/* A product's identity, as the offer lookup sees it. Four things, and
+   every one of them can change WHICH offer comes back:
+
+     provider    two adapters read two different offer feeds
+     productId   the provider's own id for the item
+     country     the marketplace decides which sellers answer at all
+     language    part of the same request, so part of the same identity
+     store       the shop the search record named
+
+   `store` is the one that is easy to leave out and wrong to. The
+   adapter's pickOffer() PREFERS the offer whose seller matches the shop
+   the search result named, and only falls back to the first usable one.
+   So the same product id, found by one search that named Nordstrom and
+   another that named Nike, resolves to two different retailer offers —
+   both real, both correctly priced, and not interchangeable. Leaving it
+   out would let a warm search show a different shop from the cold one
+   it is supposed to be standing in for.
+
+   Nothing about the shopper is in here, and nothing about the rest of
+   their intent: colour and budget do not change which seller stocks an
+   item, so two searches that land on the same product in the same shop
+   are still one lookup.
+
+   A negative entry — "no seller here had a usable link" — is keyed the
+   same way, though pickOffer returns null regardless of the store hint.
+   That over-keys negatives slightly: the same dead product reached
+   under two different shop names is looked up twice before both are
+   remembered. One key shape for both outcomes is worth that, and the
+   error is in the safe direction. */
 function offerKey(parts) {
   const p = parts && typeof parts === 'object' ? parts : {};
   const shape = {
     provider: text(p.provider).toLowerCase(),
     productId: text(p.productId),
     country: text(p.country).toLowerCase(),
-    language: text(p.language).toLowerCase()
+    language: text(p.language).toLowerCase(),
+    store: text(p.store).toLowerCase()
   };
   return `${PREFIX}:offer:${digest(stable(shape))}`;
 }
