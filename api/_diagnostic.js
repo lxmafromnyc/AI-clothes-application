@@ -11,6 +11,24 @@
    once that question is answered.
 
    ---------------------------------------------------------
+   Where it is allowed to appear
+   ---------------------------------------------------------
+   Everywhere but production, by default. A preview deployment exists to
+   be inspected, and now that the frontend calls its own origin (see
+   "Which host answers" in assets/interpret.js) a preview is where this
+   gets used. Production is a shopper's site: it has no reason to
+   publish which vendor answered what, and a temporary diagnostic left
+   switched on there is how temporary becomes permanent.
+
+     FYND_DIAGNOSTIC unset   on everywhere except VERCEL_ENV=production
+     FYND_DIAGNOSTIC=on      on, production included — for an incident,
+                             then unset it again
+     FYND_DIAGNOSTIC=off     off everywhere
+
+   /api/search omits both blocks entirely when this says no; it does not
+   send an empty one.
+
+   ---------------------------------------------------------
    The rule this module is built on
    ---------------------------------------------------------
    It cannot emit a string it was given. Every word it can produce is
@@ -49,6 +67,14 @@ const store = require('./_store');
 /* ---------------------------------------------------------
    Categories
    --------------------------------------------------------- */
+
+/* Whether a reply may carry any of this at all. */
+function exposed() {
+  const flag = String(process.env.FYND_DIAGNOSTIC || '').trim().toLowerCase();
+  if (flag === 'on') return true;
+  if (flag === 'off') return false;
+  return String(process.env.VERCEL_ENV || '').trim().toLowerCase() !== 'production';
+}
 
 const CATEGORY = {
   UNAUTHORIZED: 'unauthorized',
@@ -223,4 +249,4 @@ function build() {
   }
 }
 
-module.exports = { providerFailure, build, statusOf, categoryOf, signalsIn, CATEGORY, MESSAGE, SIGNALS };
+module.exports = { exposed, providerFailure, build, statusOf, categoryOf, signalsIn, CATEGORY, MESSAGE, SIGNALS };

@@ -220,17 +220,18 @@ module.exports = async function handler(req, res) {
     found = await findProducts(provider, intent, limit, cacheStats);
   } catch (err) {
     console.error('Product source failed', provider.name, err && err.message);
-    return res.status(502).json({
-      error: 'The product source is unavailable right now.',
-      source: provider.name,
-      /* TEMPORARY. The upstream status, named rather than quoted: every
-         string in here is fixed text from api/_diagnostic.js, chosen by
-         matching the provider's answer, never taken from it. The
-         provider's own words, its headers, the key, the cache keys and
-         the request body cannot reach this object. */
-      diagnostic: diagnostic.providerFailure(provider.name, err),
-      build: diagnostic.build()
-    });
+    const failure = { error: 'The product source is unavailable right now.', source: provider.name };
+    /* TEMPORARY, and off on production unless FYND_DIAGNOSTIC says
+       otherwise. The upstream status, named rather than quoted: every
+       string in here is fixed text from api/_diagnostic.js, chosen by
+       matching the provider's answer, never taken from it. The
+       provider's own words, its headers, the key, the cache keys and
+       the request body cannot reach this object. */
+    if (diagnostic.exposed()) {
+      failure.diagnostic = diagnostic.providerFailure(provider.name, err);
+      failure.build = diagnostic.build();
+    }
+    return res.status(502).json(failure);
   }
 
   /* The search happened — from the provider or from the cache — whatever
@@ -261,7 +262,7 @@ module.exports = async function handler(req, res) {
     console.warn('Search verified nothing.', JSON.stringify(diagnostics));
   }
 
-  return res.status(200).json({
+  const reply = {
     source: provider.name,
     products: products.slice(0, limit),
     /* how many the source returned that could not be verified, and why —
@@ -273,11 +274,15 @@ module.exports = async function handler(req, res) {
        that shaped these results. It did not. */
     attachments: { received: attachments.length, used: 0, reason: attachments.length ? 'Attachments are not read yet.' : null },
     /* so the meter on screen moves without a second round trip */
-    usage: meter.report(after || state),
-    /* TEMPORARY, and on the success path too, so "which commit is
-       production running" stays answerable once search works again */
-    build: diagnostic.build()
-  });
+    usage: meter.report(after || state)
+  };
+
+  /* TEMPORARY, on the success path too so "which commit is this
+     deployment running" is answerable once search works again. Absent
+     on production unless FYND_DIAGNOSTIC=on. */
+  if (diagnostic.exposed()) reply.build = diagnostic.build();
+
+  return res.status(200).json(reply);
 };
 
 module.exports.shapeIntent = shapeIntent;

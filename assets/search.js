@@ -26,6 +26,13 @@
    configures both. Override separately if needed:
 
      <meta name="findwear-search-api" content="https://host/api/search">
+
+   With the same rule assets/interpret.js applies, for the same reason:
+   a page served by a *.vercel.app deployment searches THAT deployment,
+   above any tag naming another host. Deriving from the interpreter
+   would inherit it anyway; it is stated here as well so that adding a
+   findwear-search-api tag later cannot quietly send a preview's
+   searches to production. See "Which host answers" in interpret.js.
    ========================================================= */
 
 (function (global) {
@@ -33,8 +40,22 @@
 
   const REQUEST_TIMEOUT = 15000;
 
+  const DEFAULT_ENDPOINT = '/api/search';
+
+  /* kept in step with assets/interpret.js */
+  const DEPLOYMENT_HOST = /(^|\.)vercel\.app$/i;
+
+  const servedByADeployment = () => Boolean(
+    global.location && DEPLOYMENT_HOST.test(String(global.location.hostname || ''))
+  );
+
   function endpoint() {
+    /* an explicit instruction from the page or a test */
     if (global.FINDWEAR_SEARCH_API) return String(global.FINDWEAR_SEARCH_API);
+
+    /* a deployment searches itself, whatever any tag says */
+    if (servedByADeployment()) return DEFAULT_ENDPOINT;
+
     const tag = global.document && global.document.querySelector('meta[name="findwear-search-api"]');
     const explicit = tag && tag.getAttribute('content');
     if (explicit) return explicit.trim();
@@ -120,5 +141,5 @@
     }
   }
 
-  global.ProductSearch = { find, endpoint };
+  global.ProductSearch = { find, endpoint, servedByADeployment };
 })(typeof window !== 'undefined' ? window : globalThis);

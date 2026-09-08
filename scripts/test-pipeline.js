@@ -1308,6 +1308,10 @@ function twoEndpointStub(searchPayload, offersByProductId) {
     process.env.VERCEL_GIT_COMMIT_SHA = '34b4c531366e5c1d0f9a543d5a611c1c627a43ff';
     process.env.VERCEL_GIT_COMMIT_REF = 'main';
     process.env.VERCEL_ENV = 'production';
+    /* production hides the diagnostic by default — the next test is
+       about that. Here it is switched on deliberately, which is how an
+       incident on production would be looked at. */
+    process.env.FYND_DIAGNOSTIC = 'on';
     try {
       const res = await failWith(500, 'down');
       assert.strictEqual(res.body.build.commit, '34b4c53', 'the deployed commit, short');
@@ -1320,6 +1324,47 @@ function twoEndpointStub(searchPayload, offersByProductId) {
       delete process.env.VERCEL_GIT_COMMIT_SHA;
       delete process.env.VERCEL_GIT_COMMIT_REF;
       delete process.env.VERCEL_ENV;
+      delete process.env.FYND_DIAGNOSTIC;
+    }
+  });
+
+  await testAsync('production carries no diagnostic at all unless it is switched on', async () => {
+    process.env.VERCEL_ENV = 'production';
+    try {
+      const hidden = await failWith(429, '{"message":"quota"}');
+      assert.strictEqual(hidden.statusCode, 502, 'the failure is still reported as a failure');
+      assert.strictEqual(hidden.body.error, 'The product source is unavailable right now.');
+      assert.ok(!('diagnostic' in hidden.body), 'no vendor status on a shopper\'s site');
+      assert.ok(!('build' in hidden.body), 'and no build metadata either');
+
+      process.env.FYND_DIAGNOSTIC = 'on';
+      const shown = await failWith(429, '{"message":"quota"}');
+      assert.strictEqual(shown.body.diagnostic.status, 429, 'switched on for an incident, it is there');
+    } finally {
+      delete process.env.VERCEL_ENV;
+      delete process.env.FYND_DIAGNOSTIC;
+    }
+  });
+
+  await testAsync('a preview deployment carries it without being asked', async () => {
+    process.env.VERCEL_ENV = 'preview';
+    try {
+      const res = await failWith(403, '{"message":"Forbidden"}');
+      assert.strictEqual(res.body.diagnostic.category, 'forbidden');
+      assert.ok(res.body.build, 'and says which build answered');
+    } finally {
+      delete process.env.VERCEL_ENV;
+    }
+  });
+
+  await testAsync('FYND_DIAGNOSTIC=off silences it everywhere', async () => {
+    process.env.FYND_DIAGNOSTIC = 'off';
+    try {
+      const res = await failWith(500, 'down');
+      assert.ok(!('diagnostic' in res.body));
+      assert.ok(!('build' in res.body));
+    } finally {
+      delete process.env.FYND_DIAGNOSTIC;
     }
   });
 
@@ -1464,6 +1509,130 @@ function twoEndpointStub(searchPayload, offersByProductId) {
     const records = await withStubbedFetch(slow, () => provider.search(nikeIntent, { limit: 12 }));
     assert.strictEqual(records.diagnostics.offers.budgetExpired, true);
     delete process.env.OPENWEBNINJA_OFFER_BUDGET_MS;
+  });
+
+  /* -------------------------------------------------------
+     Which host the browser calls
+     -------------------------------------------------------
+     The pages carry an absolute production URL in a meta tag, because
+     the GitHub Pages front door cannot run a function of its own. A
+     preview deployment that honoured that tag would send every request
+     to production — answering with production's data, spending
+     production's quota, and never once running the code being
+     previewed. These fix the rule that stops it. */
+
+  console.log('\napi origin resolution');
+
+  const PRODUCTION_META = 'https://ai-clothes-application.vercel.app/api/interpret';
+
+  /* Both asset files, loaded the way a browser would, on a page served
+     from `host` and carrying `meta` in its head. */
+  const loadPage = (host, meta, globals) => {
+    const read = (name) => require('fs').readFileSync(require('path').join(__dirname, '..', 'assets', name), 'utf8');
+    const g = Object.assign({
+      fetch: null, AbortController, setTimeout, clearTimeout,
+      location: { hostname: host, origin: `https://${host}` },
+      document: {
+        querySelector: (selector) => (selector.includes('findwear-search-api')
+          ? (meta && meta.search ? { getAttribute: () => meta.search } : null)
+          : (meta && meta.interpret ? { getAttribute: () => meta.interpret } : null))
+      }
+    }, globals || {});
+    new Function('window', 'globalThis', read('interpret.js')).call(g, g, g);
+    new Function('window', 'globalThis', read('search.js')).call(g, g, g);
+    return { interpret: g.Interpreter.endpoint(), search: g.ProductSearch.endpoint() };
+  };
+
+  const PAGE_META = { interpret: PRODUCTION_META };
+
+  await testAsync('a preview deployment calls its own origin, never production', async () => {
+    const preview = loadPage('ai-clothes-application-gi9cbn8t6-lxma.vercel.app', PAGE_META);
+    assert.strictEqual(preview.interpret, '/api/interpret');
+    assert.strictEqual(preview.search, '/api/search');
+    assert.ok(!preview.search.includes('ai-clothes-application.vercel.app'),
+      'a preview must never send a search to production');
+    assert.ok(!preview.interpret.includes('ai-clothes-application.vercel.app'));
+  });
+
+  await testAsync('every preview hostname shape resolves to itself', async () => {
+    const hosts = [
+      'ai-clothes-application-gi9cbn8t6-lxma.vercel.app',
+      'ai-clothes-application-git-claude-fynd-two-la-abc123-lxma.vercel.app',
+      'ai-clothes-application-lxma.vercel.app',
+      'anything.VERCEL.APP'
+    ];
+    hosts.forEach((host) => {
+      const page = loadPage(host, PAGE_META);
+      assert.strictEqual(page.search, '/api/search', host);
+      assert.strictEqual(page.interpret, '/api/interpret', host);
+    });
+  });
+
+  await testAsync('GitHub Pages still calls the configured Vercel origin', async () => {
+    const pages = loadPage('lxmafromnyc.github.io', PAGE_META);
+    assert.strictEqual(pages.interpret, PRODUCTION_META);
+    assert.strictEqual(pages.search, 'https://ai-clothes-application.vercel.app/api/search',
+      'the static front door has no functions of its own and must keep reaching Vercel');
+  });
+
+  await testAsync('production serves itself, and reaches no preview', async () => {
+    const production = loadPage('ai-clothes-application.vercel.app', PAGE_META);
+    assert.strictEqual(production.interpret, '/api/interpret');
+    assert.strictEqual(production.search, '/api/search');
+    /* relative, so it resolves against production's own origin — it
+       cannot name another deployment even by accident */
+    assert.ok(!/vercel\.app/.test(production.search), 'no absolute host at all');
+    assert.ok(!/gi9cbn8t6|git-claude|-lxma\./.test(production.search + production.interpret),
+      'production must never route to a preview');
+  });
+
+  await testAsync('a page with no meta tag falls back to its own origin', async () => {
+    const bare = loadPage('lxmafromnyc.github.io', null);
+    assert.strictEqual(bare.interpret, '/api/interpret');
+    assert.strictEqual(bare.search, '/api/search');
+  });
+
+  await testAsync('an explicit global still wins, on a deployment too', async () => {
+    const forced = loadPage('ai-clothes-application-gi9cbn8t6-lxma.vercel.app', PAGE_META, {
+      FINDWEAR_API: 'https://elsewhere.example/api/interpret',
+      FINDWEAR_SEARCH_API: 'https://elsewhere.example/api/search'
+    });
+    assert.strictEqual(forced.interpret, 'https://elsewhere.example/api/interpret');
+    assert.strictEqual(forced.search, 'https://elsewhere.example/api/search',
+      'a test harness and a deliberate page override must still be able to say where to go');
+  });
+
+  await testAsync('a findwear-search-api tag cannot send a preview to production', async () => {
+    /* no page carries this tag today; the rule holds if one ever does */
+    const preview = loadPage('ai-clothes-application-gi9cbn8t6-lxma.vercel.app', {
+      interpret: PRODUCTION_META,
+      search: 'https://ai-clothes-application.vercel.app/api/search'
+    });
+    assert.strictEqual(preview.search, '/api/search');
+
+    const pages = loadPage('lxmafromnyc.github.io', {
+      interpret: PRODUCTION_META,
+      search: 'https://ai-clothes-application.vercel.app/api/search'
+    });
+    assert.strictEqual(pages.search, 'https://ai-clothes-application.vercel.app/api/search',
+      'and the tag is still honoured where it is needed');
+  });
+
+  await testAsync('a localhost page keeps reaching the configured API', async () => {
+    /* unchanged behaviour: `python3 -m http.server` has no functions */
+    const local = loadPage('localhost', PAGE_META);
+    assert.strictEqual(local.interpret, PRODUCTION_META);
+    assert.strictEqual(local.search, 'https://ai-clothes-application.vercel.app/api/search');
+  });
+
+  await testAsync('the pages really do carry the absolute tag these rules are about', async () => {
+    /* if this ever stops being true the rules above are theatre */
+    const fs = require('fs');
+    ['index.html', 'find-clothes.html', 'pricing.html', 'account.html'].forEach((page) => {
+      const html = fs.readFileSync(require('path').join(__dirname, '..', page), 'utf8');
+      assert.ok(/<meta name="findwear-api" content="https:\/\/[^"]+\/api\/interpret">/.test(html),
+        `${page} must keep naming the API absolutely, for GitHub Pages`);
+    });
   });
 
   console.log('\nclient search states');

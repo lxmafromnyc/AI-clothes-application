@@ -11,12 +11,36 @@
    interface says so plainly. A keyword match is never passed off as an AI
    reading.
 
-   Endpoint location: same-origin /api/interpret by default. When the
-   static site and the function live on different hosts — GitHub Pages
-   cannot run a function — point at it with either:
+   ---------------------------------------------------------
+   Which host answers
+   ---------------------------------------------------------
+   Resolved in this order, and the order is the whole point:
 
-     <meta name="findwear-api" content="https://your-app.vercel.app/api/interpret">
-     window.FINDWEAR_API = 'https://your-app.vercel.app/api/interpret';
+     1. window.FINDWEAR_API, when a page or a test sets it. The explicit
+        instruction always wins.
+
+     2. Same origin, when this page is being served BY a deployment that
+        runs the functions — any *.vercel.app host. It does not matter
+        what the meta tag says: a deployment tests itself.
+
+     3. The meta tag, for a static front door that cannot run a function
+        of its own. GitHub Pages is the reason this exists:
+
+          <meta name="findwear-api" content="https://your-app.vercel.app/api/interpret">
+
+     4. Same-origin /api/interpret, when nothing says otherwise.
+
+   Step 2 is what stops a preview deployment calling production. The
+   pages carry an absolute production URL for the sake of step 3, and a
+   preview that honoured it would send every request to production —
+   answering with production's data, metering production's quota, and
+   never running the code being previewed. It also cannot work: the
+   preview's origin is not on production's CORS allowlist and never can
+   be, because a preview hostname carries a per-deployment hash. The
+   browser refuses the preflight and the page reports an outage.
+
+   On production this changes nothing. The meta tag names production,
+   and production serving itself is the same origin either way.
    ========================================================= */
 
 (function (global) {
@@ -25,8 +49,27 @@
   const DEFAULT_ENDPOINT = '/api/interpret';
   const REQUEST_TIMEOUT = 12000;
 
+  /* A host that serves this project's own functions alongside its pages.
+     Every Vercel deployment — production, branch and preview alike — is
+     reachable at a *.vercel.app hostname, and each one carries its own
+     copy of api/. A custom domain in front of one is not matched here:
+     it should point its meta tag at a relative /api/interpret, which
+     step 4 already handles. */
+  const DEPLOYMENT_HOST = /(^|\.)vercel\.app$/i;
+
+  const servedByADeployment = () => Boolean(
+    global.location && DEPLOYMENT_HOST.test(String(global.location.hostname || ''))
+  );
+
   function endpoint() {
+    /* an explicit instruction from the page or a test */
     if (global.FINDWEAR_API) return String(global.FINDWEAR_API);
+
+    /* a deployment answers for itself, whatever the meta tag says —
+       above the tag rather than below it, so this is a guarantee and
+       not a convention */
+    if (servedByADeployment()) return DEFAULT_ENDPOINT;
+
     const tag = global.document && global.document.querySelector('meta[name="findwear-api"]');
     const href = tag && tag.getAttribute('content');
     return href ? href.trim() : DEFAULT_ENDPOINT;
@@ -225,5 +268,5 @@
     }
   }
 
-  global.Interpreter = { interpret, localInterpret, shape, EMPTY, endpoint, FALLBACK_REASON };
+  global.Interpreter = { interpret, localInterpret, shape, EMPTY, endpoint, servedByADeployment, FALLBACK_REASON };
 })(typeof window !== 'undefined' ? window : globalThis);
