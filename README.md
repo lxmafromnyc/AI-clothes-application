@@ -693,6 +693,81 @@ gate pass rate, modelled latency and wasted lookups.
 Lookups also stop early once enough records have a link, and only products
 that need one are looked up at all.
 
+#### Caching, and what it is allowed to change
+
+Two shoppers asking for "black oversized hoodie under $80" ten minutes apart
+used to cost the same eighteen OpenWeb Ninja requests each. `api/_cache.js` is
+what stops that. It has two layers, both kept in the same Redis-over-HTTP store
+(`api/_store.js`) that already holds accounts, sessions, usage counters and
+rate limits — there is no second database and no new service.
+
+| Layer | Key | TTL | What is stored |
+| --- | --- | --- | --- |
+| Search results | the normalized intent, the provider, the page size and the marketplace | 30 minutes | The **records** the adapter produced, and its funnel |
+| Product offers | the product's own id and the marketplace | 2 hours | The one offer the adapter picked: price, currency, retailer, retailer URL |
+| No usable offer | the same | 5 minutes | That this product had nothing showable |
+
+Four rules hold the whole thing up:
+
+- **What is cached is records, never products.** A hit runs through the same
+  verification gate in `product-source.js` that a live answer does, at the
+  moment it is served. A record whose link would fail the rules today is
+  dropped today, whatever it was when it was stored.
+- **Only a verified answer is stored.** A search that reached the gate and came
+  back with nothing is not cached: it may be the provider having a bad minute,
+  and half an hour of that is not worth keeping.
+- **A failure is never an answer.** A 429, a 500, a timeout and a torn
+  connection all mean "we do not know". None of them is written down, as a
+  result or as a negative — so a provider that is briefly unwell does not
+  become five minutes of a product that is actually in stock being hidden.
+- **A cache hit is still the shopper's search.** It costs them exactly one
+  metered search, the same as a cold one. What the cache changes is what it
+  costs *us*.
+
+The key is a SHA-256 digest of the normalized intent plus everything else that
+changes an answer — provider, page size, country, language, whether offer
+resolution is on. Case and spacing are normalized away, so "Black" and " black "
+are one search; order within a field is **not**, because the adapter builds its
+query phrase in that order and `["black","white"]` asks the provider a
+different question from `["white","black"]`. Every intent field is in the key,
+so two budgets, two colours or two fits are never one entry. The prefix carries
+a version — `fynd:cache:v1:` — so bumping one constant invalidates everything
+without touching the store.
+
+Ten identical searches arriving at once would all miss and all call the
+provider, so the first one runs and the other nine wait on it, in process,
+bounded at 64 keys in flight. A distributed lock would add a second failure
+mode — a holder that dies, a lease that has to be renewed — to a problem that
+does not need one; losing coalescing across instances costs at most one
+duplicate search per instance.
+
+Every reply carries `diagnostics.cache`: hits, misses, negative hits, what was
+stored, and how many provider requests the hit saved. Counts only — no key, no
+digest, nothing a search was stored under.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `FYND_CACHE` | on | Set to `off` to disable both layers and the coalescing with it. The provider then behaves exactly as it did before any of this existed. |
+| `FYND_SEARCH_CACHE_TTL_SECONDS` | `1800` | How long a verified search answer is reused |
+| `FYND_OFFER_CACHE_TTL_SECONDS` | `7200` | How long a resolved offer is reused |
+| `FYND_OFFER_NEGATIVE_TTL_SECONDS` | `300` | How long "this product has no usable offer" is remembered |
+
+With no Redis configured the cache falls back to the same per-instance memory
+driver everything else falls back to, and a store that cannot be reached is
+simply a miss: the search goes to the provider and the shopper is answered.
+
+Measured on the seeded scenarios in `scripts/bench-offer-resolution.js`, which
+runs each of them cold, warm, and warm-offers-only:
+
+| Pass | Requests / search | Latency | Products shown | Cache hit rate |
+| --- | --- | --- | --- | --- |
+| Cold (and with `FYND_CACHE=off`) | 18.5 | 2200 ms | 9.83 | 0% |
+| Warm, inside the search TTL | 0 | 1 ms | 9.83 | 100% |
+| Search TTL expired, offers still warm | 5.5 | 909 ms | 9.83 | 71.8% |
+
+The products shown are identical in all three, in the same order — the
+benchmark asserts it rather than trusting it.
+
 #### Response fields: what is verified, and what is not
 
 The request parameters above are taken from the vendor's own OpenAPI-derived
@@ -795,6 +870,7 @@ The rest of the suites, all offline except the two that drive a browser:
 
 ```sh
 node scripts/bench-offer-resolution.js  # what one search costs the provider
+node scripts/test-cache.js     # the search and offer caches, and what they may not change
 node scripts/test-gemini.js    # the Gemini interpreter, and what did not change
 node scripts/test-serpapi.js   # the SerpApi adapter, its links and its costs
 node scripts/test-stripe.js    # payments and subscriptions

@@ -7,6 +7,17 @@
    and a change to the adapter can be measured against the run before
    it on exactly the same records.
 
+   Every scenario is run three times on the SAME seeded world, which is
+   what makes the cache's effect a measurement rather than a claim:
+
+     cold      an empty cache: what a search costs when nobody has
+               asked for it before
+     warm      the same search again, inside the search TTL: the
+               search-result cache answers, and nothing is bought
+     offers    the same search once the 30-minute search entry has
+               expired but the 2-hour offer entries have not: one
+               /search request, and no lookups behind it
+
    It reports, per scenario and averaged:
 
      requests        every call the adapter made
@@ -15,6 +26,11 @@
      gate pass rate  verified / records that reached the gate
      latency         wall clock, with a modelled cost per request
      wasted          lookups spent on records that were not shown
+     hit rate        cache reads answered, over cache reads made
+
+   The comparison the cache is meant to be judged on is cold against
+   the other two: the products shown must be identical, and the
+   requests must not be.
 
    Usage
      node scripts/bench-offer-resolution.js
@@ -30,6 +46,13 @@
 const fs = require('fs');
 const provider = require('../api/_providers/openwebninja');
 const { verifyAll } = require('../api/_providers/product-source');
+const cache = require('../api/_cache');
+const { findProducts } = require('../api/search');
+
+/* The benchmark owns the clock, so a 30-minute TTL can expire between
+   two passes without the run taking 30 minutes. */
+let clockOffset = 0;
+cache.setClock(() => Date.now() + clockOffset);
 
 const argv = process.argv.slice(2);
 const flag = (name, fallback) => {
@@ -142,22 +165,36 @@ const intent = {
 
 const LIMIT = 12;
 
-async function runScenario(scenario) {
-  const world = buildWorld(scenario);
+/* Reads answered over reads made, across both layers. A cold pass reads
+   and finds nothing, so its rate is 0 by construction; the number to
+   look at is the warm one. */
+function hitRate(stats) {
+  const hits = stats.searchCache.hit + stats.offerCache.hit + stats.offerCache.negativeHit;
+  const misses = stats.searchCache.miss + stats.offerCache.miss;
+  return hits + misses ? Math.round((hits / (hits + misses)) * 1000) / 10 : 0;
+}
+
+/* One pass over one world, through the same function /api/search calls,
+   so the search-result cache is part of what is being measured rather
+   than something the benchmark steps around. */
+async function runPass(world, label) {
   const counters = { searches: 0, lookups: 0, lookedUp: [] };
+  const stats = cache.counters();
   const real = global.fetch;
   global.fetch = stubFor(world, counters);
   process.env.OPENWEBNINJA_API_KEY = 'bench';
 
   const started = Date.now();
-  let records;
+  let found;
   try {
-    records = await provider.search(intent, { limit: LIMIT });
+    found = await findProducts(provider, intent, LIMIT, stats);
   } finally {
     global.fetch = real;
   }
-  const { products } = verifyAll(records, { retailer: provider.defaultRetailer });
   const latency = Date.now() - started;
+
+  const records = found.records;
+  const products = found.products;
   const shown = products.slice(0, LIMIT);
 
   /* a lookup is wasted when the record it was spent on is not on the
@@ -169,7 +206,7 @@ async function runScenario(scenario) {
   }).length + (counters.lookups - counters.lookedUp.length);
 
   return {
-    scenario: scenario.name,
+    pass: label,
     requests: counters.searches + counters.lookups,
     lookups: counters.lookups,
     shown: shown.length,
@@ -178,8 +215,41 @@ async function runScenario(scenario) {
     gatePassRate: records.length ? Math.round((products.length / records.length) * 1000) / 10 : 0,
     latency,
     wasted,
-    offers: records.diagnostics && records.diagnostics.offers ? records.diagnostics.offers : null
+    hitRate: hitRate(stats),
+    avoided: stats.providerRequestsAvoided,
+    servedFromCache: found.servedFromCache,
+    urls: shown.map((p) => p.productUrl),
+    offers: found.funnel && found.funnel.offers ? found.funnel.offers : null
   };
+}
+
+/* The three passes, on one world and one seeded set of records.
+
+   The cache starts empty for every scenario, so "cold" means cold. The
+   clock is what separates the second pass from the third: 31 minutes
+   past the search TTL and well inside the offer TTL, which is the state
+   a busy deployment spends most of its time in. */
+async function runScenario(scenario) {
+  const world = buildWorld(scenario);
+
+  cache.reset();
+  clockOffset = 0;
+
+  const cold = await runPass(world, 'cold');
+  const warm = await runPass(world, 'warm');
+
+  clockOffset += 31 * 60 * 1000;
+  const offersWarm = await runPass(world, 'offers');
+
+  clockOffset = 0;
+  cache.reset();
+
+  /* The whole point, asserted rather than assumed: a cache that changes
+     what a shopper sees is not a cache, it is a bug. */
+  const same = (a, b) => a.length === b.length && a.every((u, i) => u === b[i]);
+  const consistent = same(cold.urls, warm.urls) && same(cold.urls, offersWarm.urls);
+
+  return { scenario: scenario.name, cold, warm, offersWarm, consistent };
 }
 
 const pad = (s, n) => String(s).padEnd(n);
@@ -187,56 +257,134 @@ const padStart = (s, n) => String(s).padStart(n);
 const mean = (list) => (list.length ? list.reduce((a, b) => a + b, 0) / list.length : 0);
 const round = (n, p = 1) => Number(n.toFixed(p));
 
+/* One pass, averaged over the scenarios. This is the row a change to
+   the adapter or to the cache is judged on. */
+const summarise = (passes) => ({
+  requests: round(mean(passes.map((r) => r.requests)), 2),
+  lookups: round(mean(passes.map((r) => r.lookups)), 2),
+  shown: round(mean(passes.map((r) => r.shown)), 2),
+  gatePassRate: round(mean(passes.map((r) => r.gatePassRate)), 1),
+  latency: Math.round(mean(passes.map((r) => r.latency))),
+  wasted: round(mean(passes.map((r) => r.wasted)), 2),
+  hitRate: round(mean(passes.map((r) => r.hitRate)), 1),
+  avoided: round(mean(passes.map((r) => r.avoided)), 2),
+  fullPages: passes.filter((r) => r.shown >= LIMIT).length
+});
+
+const HEAD = `  ${pad('scenario', 20)}${padStart('requests', 9)}${padStart('lookups', 8)}${padStart('shown', 6)}${padStart('gate', 7)}${padStart('ms', 7)}${padStart('wasted', 8)}${padStart('hit%', 7)}${padStart('avoided', 9)}`;
+
+const line = (label, r) =>
+  `  ${pad(label, 20)}${padStart(r.requests, 9)}${padStart(r.lookups, 8)}${padStart(r.shown, 6)}` +
+  `${padStart(r.gatePassRate + '%', 7)}${padStart(r.latency, 7)}${padStart(r.wasted, 8)}` +
+  `${padStart(r.hitRate + '%', 7)}${padStart(r.avoided, 9)}`;
+
 (async () => {
   const rows = [];
   for (const scenario of SCENARIOS) rows.push(await runScenario(scenario));
 
-  console.log('\n=== offer resolution, one search of 12 products ===\n');
-  console.log(`  ${pad('scenario', 20)}${padStart('requests', 9)}${padStart('lookups', 8)}${padStart('shown', 6)}${padStart('gate', 7)}${padStart('ms', 7)}${padStart('wasted', 8)}`);
-  rows.forEach((r) => {
-    console.log(`  ${pad(r.scenario, 20)}${padStart(r.requests, 9)}${padStart(r.lookups, 8)}${padStart(r.shown, 6)}${padStart(r.gatePassRate + '%', 7)}${padStart(r.latency, 7)}${padStart(r.wasted, 8)}`);
-  });
-
-  const summary = {
-    requests: round(mean(rows.map((r) => r.requests)), 2),
-    lookups: round(mean(rows.map((r) => r.lookups)), 2),
-    shown: round(mean(rows.map((r) => r.shown)), 2),
-    gatePassRate: round(mean(rows.map((r) => r.gatePassRate)), 1),
-    latency: Math.round(mean(rows.map((r) => r.latency))),
-    wasted: round(mean(rows.map((r) => r.wasted)), 2),
-    fullPages: rows.filter((r) => r.shown >= LIMIT).length
+  const passes = {
+    cold: rows.map((r) => r.cold),
+    warm: rows.map((r) => r.warm),
+    offersWarm: rows.map((r) => r.offersWarm)
   };
 
-  console.log(`\n  ${pad('mean', 20)}${padStart(summary.requests, 9)}${padStart(summary.lookups, 8)}${padStart(summary.shown, 6)}${padStart(summary.gatePassRate + '%', 7)}${padStart(summary.latency, 7)}${padStart(summary.wasted, 8)}`);
-  console.log(`  full pages of ${LIMIT}: ${summary.fullPages} of ${rows.length}\n`);
+  const summary = {
+    cold: summarise(passes.cold),
+    warm: summarise(passes.warm),
+    offersWarm: summarise(passes.offersWarm)
+  };
 
+  for (const [label, title] of [
+    ['cold', 'cold cache — nobody has asked for this before'],
+    ['warm', 'warm cache — asked for again inside the 30-minute search TTL'],
+    ['offersWarm', 'search TTL expired, offers still warm — one /search, no lookups']
+  ]) {
+    console.log(`\n=== ${title} ===\n`);
+    console.log(HEAD);
+    rows.forEach((r) => console.log(line(r.scenario, r[label])));
+    console.log('');
+    console.log(line('mean', summary[label]));
+    console.log(`  full pages of ${LIMIT}: ${summary[label].fullPages} of ${rows.length}`);
+  }
+
+  /* The claim the whole thing rests on. A cache that changes what a
+     shopper sees has failed whatever it did to the request count. */
+  const inconsistent = rows.filter((r) => !r.consistent);
+  console.log('');
+  if (inconsistent.length) {
+    console.log(`  DIFFERENT PRODUCTS SHOWN in: ${inconsistent.map((r) => r.scenario).join(', ')}`);
+  } else {
+    console.log('  every pass showed exactly the same products, in the same order');
+  }
+
+  const delta = (after, prior, unit = '') => {
+    const diff = round(after - prior, 2);
+    const pct = prior ? ` (${diff > 0 ? '+' : ''}${round((diff / prior) * 100, 1)}%)` : '';
+    return `${prior}${unit} -> ${after}${unit}  ${diff > 0 ? '+' : ''}${diff}${unit}${pct}`;
+  };
+
+  console.log('\n=== cold against warm ===\n');
+  console.log(`  ${pad('requests / search', 24)}${delta(summary.warm.requests, summary.cold.requests)}`);
+  console.log(`  ${pad('offer lookups / search', 24)}${delta(summary.warm.lookups, summary.cold.lookups)}`);
+  console.log(`  ${pad('products shown', 24)}${delta(summary.warm.shown, summary.cold.shown)}`);
+  console.log(`  ${pad('latency', 24)}${delta(summary.warm.latency, summary.cold.latency, 'ms')}`);
+  console.log(`  ${pad('cache hit rate', 24)}${summary.cold.hitRate}% -> ${summary.warm.hitRate}%`);
+
+  console.log('\n=== cold against offers-warm ===\n');
+  console.log(`  ${pad('requests / search', 24)}${delta(summary.offersWarm.requests, summary.cold.requests)}`);
+  console.log(`  ${pad('offer lookups / search', 24)}${delta(summary.offersWarm.lookups, summary.cold.lookups)}`);
+  console.log(`  ${pad('products shown', 24)}${delta(summary.offersWarm.shown, summary.cold.shown)}`);
+  console.log(`  ${pad('latency', 24)}${delta(summary.offersWarm.latency, summary.cold.latency, 'ms')}`);
+  console.log(`  ${pad('cache hit rate', 24)}${summary.cold.hitRate}% -> ${summary.offersWarm.hitRate}%`);
+  console.log('');
+
+  /* A file written before the cache existed carries `summary.requests`
+     rather than `summary.cold.requests`; both are read, so an old
+     baseline is still comparable against this run's cold pass. */
   const compare = flag('compare', null);
   if (compare) {
     const before = JSON.parse(fs.readFileSync(compare, 'utf8'));
-    const delta = (after, prior, unit = '') => {
-      const diff = round(after - prior, 2);
-      const pct = prior ? ` (${diff > 0 ? '+' : ''}${round((diff / prior) * 100, 1)}%)` : '';
-      return `${prior}${unit} -> ${after}${unit}  ${diff > 0 ? '+' : ''}${diff}${unit}${pct}`;
-    };
-    console.log('=== against ' + compare + ' ===\n');
-    console.log(`  ${pad('requests / search', 22)}${delta(summary.requests, before.summary.requests)}`);
-    console.log(`  ${pad('offer lookups / search', 22)}${delta(summary.lookups, before.summary.lookups)}`);
-    console.log(`  ${pad('products shown', 22)}${delta(summary.shown, before.summary.shown)}`);
-    console.log(`  ${pad('gate pass rate', 22)}${delta(summary.gatePassRate, before.summary.gatePassRate, '%')}`);
-    console.log(`  ${pad('latency', 22)}${delta(summary.latency, before.summary.latency, 'ms')}`);
-    console.log(`  ${pad('wasted lookups', 22)}${delta(summary.wasted, before.summary.wasted)}`);
-    console.log(`  ${pad('full pages', 22)}${before.summary.fullPages} -> ${summary.fullPages} of ${rows.length}`);
+    const priorSummary = before.summary.cold || before.summary;
+    const priorRow = (i) => (before.rows[i] && before.rows[i].cold) || before.rows[i];
+
+    console.log('=== this run\'s cold pass against ' + compare + ' ===\n');
+    console.log(`  ${pad('requests / search', 24)}${delta(summary.cold.requests, priorSummary.requests)}`);
+    console.log(`  ${pad('offer lookups / search', 24)}${delta(summary.cold.lookups, priorSummary.lookups)}`);
+    console.log(`  ${pad('products shown', 24)}${delta(summary.cold.shown, priorSummary.shown)}`);
+    console.log(`  ${pad('gate pass rate', 24)}${delta(summary.cold.gatePassRate, priorSummary.gatePassRate, '%')}`);
+    console.log(`  ${pad('latency', 24)}${delta(summary.cold.latency, priorSummary.latency, 'ms')}`);
+    console.log(`  ${pad('wasted lookups', 24)}${delta(summary.cold.wasted, priorSummary.wasted)}`);
+    console.log(`  ${pad('full pages', 24)}${priorSummary.fullPages} -> ${summary.cold.fullPages} of ${rows.length}`);
     console.log('\n  per scenario, requests then shown:\n');
     rows.forEach((r, i) => {
-      const b = before.rows[i];
-      console.log(`  ${pad(r.scenario, 20)}${padStart(b.requests + ' -> ' + r.requests, 12)}${padStart(b.shown + ' -> ' + r.shown, 12)}`);
+      const b = priorRow(i);
+      console.log(`  ${pad(r.scenario, 20)}${padStart(b.requests + ' -> ' + r.cold.requests, 12)}${padStart(b.shown + ' -> ' + r.cold.shown, 12)}`);
     });
     console.log('');
   }
 
   const out = flag('out', null);
   if (out) {
-    fs.writeFileSync(out, JSON.stringify({ ranAt: new Date().toISOString(), limit: LIMIT, summary, rows }, null, 2));
+    /* the URLs are dropped: they are how a pass is checked against
+       another pass, not something a saved baseline needs to carry */
+    const strip = (r) => Object.assign({}, r, { urls: undefined });
+    fs.writeFileSync(out, JSON.stringify({
+      ranAt: new Date().toISOString(),
+      limit: LIMIT,
+      ttls: {
+        searchSeconds: cache.SEARCH_TTL_SECONDS(),
+        offerSeconds: cache.OFFER_TTL_SECONDS(),
+        negativeSeconds: cache.NEGATIVE_TTL_SECONDS()
+      },
+      summary,
+      rows: rows.map((r) => ({
+        scenario: r.scenario,
+        consistent: r.consistent,
+        cold: strip(r.cold),
+        warm: strip(r.warm),
+        offersWarm: strip(r.offersWarm)
+      }))
+    }, null, 2));
     console.log(`  written: ${out}\n`);
   }
 })();

@@ -67,6 +67,16 @@
    — and never more than `wanted + LOOKUP_SLACK` times. See "Which
    records are worth a lookup" below.
 
+   It is also spent once. Each product's resolved offer is kept in
+   api/_cache.js for two hours, keyed by that product's own id and the
+   marketplace, and "this product has nothing showable" for five
+   minutes; a hit on either skips the request entirely. Nothing about
+   the search changes for it — the same records are looked up in the
+   same order, under the same ceiling, the same concurrency and the same
+   wall-clock budget, and the offer that comes back out of the cache
+   goes through the same gate as one that came back off the wire. A
+   lookup that FAILED is never stored, in either form.
+
    ---------------------------------------------------------
    Why the image cannot be attached to the wrong product
    ---------------------------------------------------------
@@ -110,9 +120,15 @@
                             total wall-clock budget for the offer lookups,
                             default 6000. Whatever is resolved when it
                             expires is what gets shown.
+     FYND_CACHE             set to "off" to disable the offer cache, and
+                            the search cache with it. This adapter then
+                            behaves exactly as it did before either
+                            existed. See api/_cache.js.
    ========================================================= */
 
 'use strict';
+
+const cache = require('../_cache');
 
 const API_ROOT = 'https://api.openwebninja.com/realtime-product-search/v2';
 const SEARCH_URL = `${API_ROOT}/search`;
@@ -164,6 +180,10 @@ const DEFAULT_OFFER_BUDGET_MS = 6000;
    constraint that matters: that saves 1.9 requests a search and costs
    about one product. */
 const LOOKUP_SLACK = 8;
+
+/* named once, because the offer cache keys on it */
+const NAME = 'openwebninja';
+
 const offersEnabled = () => text(process.env.OPENWEBNINJA_RESOLVE_OFFERS).toLowerCase() !== 'off';
 
 const text = (v) => (v === undefined || v === null ? '' : String(v).trim());
@@ -531,8 +551,32 @@ function verifiedCount(records, intent) {
 /* One product's sellers, reduced to the offer worth showing, or null.
    Every outcome is counted where it happens, so a search that resolves
    nothing says whether the lookups failed, came back empty, or came
-   back carrying no link that could be shown. */
-async function lookupFor(record, region, tally) {
+   back carrying no link that could be shown.
+
+   The cache is asked first, and a hit ends the function: no request is
+   made, and `lookupsMade` — which counts what this search cost the
+   provider — does not move. What comes back is the same offer object a
+   live lookup would have produced, and it goes on to the same gate.
+
+   What is written back is only ever something the provider actually
+   answered. A failed lookup writes nothing: "we could not reach them"
+   is not "they have nothing", and five minutes of confusing the two
+   would drop products that are on sale right now. */
+async function lookupFor(record, region, tally, cacheStats) {
+  const key = cache.offerKey({
+    provider: NAME,
+    productId: record.sku,
+    country: region.country,
+    language: region.language
+  });
+
+  const cached = await cache.readOffer(key, cacheStats);
+  if (cached) {
+    if (cached.none) { tally.negativeCacheHits += 1; return null; }
+    tally.cacheHits += 1;
+    return cached.commerce;
+  }
+
   tally.lookupsMade += 1;
   const result = await offersFor(record.sku, region);
   if (result.failed) { tally.lookupsFailed += 1; return null; }
@@ -540,10 +584,16 @@ async function lookupFor(record, region, tally) {
     tally.lookupsEmpty += 1;
     /* one sample is enough to see whether parsing is the problem */
     if (!tally.offersShape) tally.offersShape = result.shape;
+    await cache.writeOfferMiss(key, 'no-offers', cacheStats);
     return null;
   }
   const commerce = pickOffer(result.offers, record.retailerHint);
-  if (!commerce) tally.noDirectLinkInOffers += 1;
+  if (!commerce) {
+    tally.noDirectLinkInOffers += 1;
+    await cache.writeOfferMiss(key, 'no-direct-link', cacheStats);
+    return null;
+  }
+  await cache.writeOffer(key, commerce, cacheStats);
   return commerce;
 }
 
@@ -557,8 +607,9 @@ async function lookupFor(record, region, tally) {
    up on the page, no candidate is looked up twice, and the total is
    capped at `wanted + LOOKUP_SLACK`. The wall-clock budget still cuts
    it short before any of them. */
-async function resolveMissingOffers(records, wanted, region, stats, intent) {
+async function resolveMissingOffers(records, wanted, region, stats, intent, cacheStats) {
   const tally = stats || {};
+  const cacheTally = cacheStats || cache.counters();
   tally.neededOfferLookup = records.filter((r) => !r.productUrl).length;
   tally.lookupsMade = 0;
   tally.lookupsFailed = 0;
@@ -568,6 +619,11 @@ async function resolveMissingOffers(records, wanted, region, stats, intent) {
      URL rule doing its job, told apart from finding no offers at all */
   tally.noDirectLinkInOffers = 0;
   tally.budgetExpired = false;
+  /* answered from the offer cache rather than bought: counted apart from
+     `lookupsMade` so "what did this search cost the provider" and "how
+     many links did it find" stay two different numbers */
+  tally.cacheHits = 0;
+  tally.negativeCacheHits = 0;
   tally.noProductId = records.filter((r) => !r.productUrl && !r.sku).length;
   tally.offersShape = null;
   /* records a lookup could not have saved, by the gate's own reason for
@@ -630,7 +686,7 @@ async function resolveMissingOffers(records, wanted, region, stats, intent) {
         next += 1;
         inFlight += 1;
 
-        lookupFor(record, region, tally)
+        lookupFor(record, region, tally, cacheTally)
           .then((commerce) => {
             if (!commerce) return;
             /* all three together, from the one offer they came from */
@@ -673,6 +729,9 @@ async function resolveMissingOffers(records, wanted, region, stats, intent) {
 
 async function search(intent, options) {
   const wanted = Math.min(Math.max(Number(options && options.limit) || 12, 1), 100);
+  /* what the offer cache saved this search, reported alongside the
+     funnel so a cheap search and an expensive one are told apart */
+  const cacheStats = cache.counters();
   const region = {
     country: process.env.OPENWEBNINJA_COUNTRY || 'us',
     language: process.env.OPENWEBNINJA_LANGUAGE || 'en'
@@ -699,7 +758,8 @@ async function search(intent, options) {
      the offers could not be read, or the budget filter took them all. */
   const diagnostics = {
     returnedByProvider: products.length,
-    searchShape: products.length ? null : shapeOf(payload)
+    searchShape: products.length ? null : shapeOf(payload),
+    cache: cacheStats
   };
 
   const records = products.map((product) => {
@@ -718,7 +778,7 @@ async function search(intent, options) {
      arrive without a retailer link; this fetches the sellers for them.
      The intent goes with them so a record already over the shopper's
      ceiling is not looked up only to be dropped for its price. */
-  diagnostics.offers = await resolveMissingOffers(records, wanted, region, {}, intent);
+  diagnostics.offers = await resolveMissingOffers(records, wanted, region, {}, intent, cacheStats);
 
   records.forEach((r) => { delete r.retailerHint; });
   diagnostics.withAnyLink = records.filter((r) => r.productUrl).length;
@@ -735,6 +795,22 @@ async function search(intent, options) {
   return Object.assign(withinLimits, { diagnostics });
 }
 
+/* Everything OUTSIDE the shopper's intent that changes what a search
+   returns, for whoever is keying a cache on it. The marketplace decides
+   which shops answer at all, and offer resolution being off is the
+   difference between a page of products and a page of nothing — so a
+   result found under one setting must never be served under another.
+
+   The budget and the concurrency are deliberately absent: they change
+   how long a search may spend, not what a record means. */
+function cacheContext() {
+  return {
+    country: process.env.OPENWEBNINJA_COUNTRY || 'us',
+    language: process.env.OPENWEBNINJA_LANGUAGE || 'en',
+    offers: offersEnabled() ? 'on' : 'off'
+  };
+}
+
 function withinBudget(record, intent) {
   if (!intent || typeof record.price !== 'number') return true;
   if (intent.maxPrice && record.price > intent.maxPrice) return false;
@@ -743,13 +819,15 @@ function withinBudget(record, intent) {
 }
 
 module.exports = {
-  name: 'openwebninja',
+  name: NAME,
   /* No default: the retailer must come from the offer itself. A provider
      spanning many stores has no single retailer to fall back on, and
      naming one would attribute a product to the wrong shop. */
   defaultRetailer: null,
   configured: () => Boolean(process.env.OPENWEBNINJA_API_KEY),
   search,
+  /* read by /api/search when it keys the search-result cache */
+  cacheContext,
   /* exported for tests and for scripts/probe-openwebninja.js */
   toRecord,
   queryFrom,

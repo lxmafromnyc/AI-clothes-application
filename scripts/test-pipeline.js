@@ -22,12 +22,24 @@
 const assert = require('assert');
 const provider = require('../api/_providers/openwebninja');
 const { verifyAll, linkFault } = require('../api/_providers/product-source');
+const cache = require('../api/_cache');
 
 let passed = 0;
 const failures = [];
 
+/* Every test starts on an empty cache.
+
+   Without this the suite would be testing itself: the fixtures reuse
+   product ids and reuse `nikeIntent`, so a second test asking for `p1`
+   would be answered by the first test's stub rather than its own, and a
+   search whose lookups this file is counting would make none at all.
+   What the cache does when it is warm is scripts/test-cache.js's
+   subject; here it must never be. */
+const fresh = () => cache.reset();
+
 function test(name, fn) {
   try {
+    fresh();
     fn();
     passed += 1;
     console.log(`  ok    ${name}`);
@@ -39,6 +51,7 @@ function test(name, fn) {
 
 async function testAsync(name, fn) {
   try {
+    fresh();
     await fn();
     passed += 1;
     console.log(`  ok    ${name}`);
@@ -657,35 +670,11 @@ test('price, retailer and link always come from one and the same offer', () => {
   assert.strictEqual(r.productUrl, 'https://www.rei.com/product/999/hoodie');
 });
 
-test('a resolved offer replaces price and retailer together with its link', async () => {
-  const record = provider.toRecord(product());
-  record.retailerHint = 'nike.com';
-  assert.strictEqual(record.productUrl, undefined);
-
-  const real = global.fetch;
-  global.fetch = async () => ({ ok: true, status: 200, text: async () => '{}',
-    json: async () => offersPayload([offer('nike.com', '$87.97', 'https://www.nike.com/t/air-force-1-07-shoe/CW2288-111')]) });
-  process.env.OPENWEBNINJA_API_KEY = 'test-key';
-  try {
-    await provider.resolveMissingOffers([record], 1, { country: 'us', language: 'en' });
-  } finally { global.fetch = real; }
-
-  assert.strictEqual(record.productUrl, 'https://www.nike.com/t/air-force-1-07-shoe/CW2288-111');
-  assert.strictEqual(record.retailer, 'nike.com');
-  assert.strictEqual(record.price, 87.97);
-  assert.strictEqual(record.imageUrl, 'https://img.example-cdn.com/nike/af1-white-1.jpg', 'the photo is still its own');
-});
-
-test('a failed offer lookup leaves the record linkless rather than failing the search', async () => {
-  const record = provider.toRecord(product());
-  const real = global.fetch;
-  global.fetch = async () => { throw new Error('offers endpoint down'); };
-  process.env.OPENWEBNINJA_API_KEY = 'test-key';
-  try {
-    await provider.resolveMissingOffers([record], 1, { country: 'us', language: 'en' });
-  } finally { global.fetch = real; }
-  assert.strictEqual(record.productUrl, undefined);
-});
+/* The two lookups below are asynchronous, so they run inside the async
+   block further down rather than here: `test()` cannot wait for a
+   promise, and an unawaited one would still be holding its fetch stub
+   when the next test installed its own. See "offer resolution
+   (asynchronous)" there. */
 
 /* ---------------------------------------------------------
    4. The verification gate
@@ -770,8 +759,6 @@ test('two products sharing a URL are counted once', () => {
    5. The adapter's request, and the budget
    --------------------------------------------------------- */
 
-console.log('\nadapter request');
-
 function withStubbedFetch(handler, run) {
   const real = global.fetch;
   global.fetch = handler;
@@ -798,6 +785,36 @@ function twoEndpointStub(searchPayload, offersByProductId) {
 }
 
 (async () => {
+  console.log('\noffer resolution (asynchronous)');
+
+  await testAsync('a resolved offer replaces price and retailer together with its link', async () => {
+    const record = provider.toRecord(product());
+    record.retailerHint = 'nike.com';
+    assert.strictEqual(record.productUrl, undefined);
+
+    process.env.OPENWEBNINJA_API_KEY = 'test-key';
+    await withStubbedFetch(
+      async () => ({ ok: true, status: 200, text: async () => '{}',
+        json: async () => offersPayload([offer('nike.com', '$87.97', 'https://www.nike.com/t/air-force-1-07-shoe/CW2288-111')]) }),
+      () => provider.resolveMissingOffers([record], 1, { country: 'us', language: 'en' }));
+
+    assert.strictEqual(record.productUrl, 'https://www.nike.com/t/air-force-1-07-shoe/CW2288-111');
+    assert.strictEqual(record.retailer, 'nike.com');
+    assert.strictEqual(record.price, 87.97);
+    assert.strictEqual(record.imageUrl, 'https://img.example-cdn.com/nike/af1-white-1.jpg', 'the photo is still its own');
+  });
+
+  await testAsync('a failed offer lookup leaves the record linkless rather than failing the search', async () => {
+    const record = provider.toRecord(product());
+    process.env.OPENWEBNINJA_API_KEY = 'test-key';
+    await withStubbedFetch(
+      async () => { throw new Error('offers endpoint down'); },
+      () => provider.resolveMissingOffers([record], 1, { country: 'us', language: 'en' }));
+    assert.strictEqual(record.productUrl, undefined);
+  });
+
+  console.log('\nadapter request');
+
   await testAsync('sends the query, the budget and the key as x-api-key', async () => {
     let seen = null;
     process.env.OPENWEBNINJA_API_KEY = 'test-key';
