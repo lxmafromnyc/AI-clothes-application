@@ -549,6 +549,120 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     await page.close();
   });
 
+  console.log('\nproduct photos');
+
+  /* Both URLs are on this origin, because the page under test aborts
+     every off-origin request: a photo has to really 404 or really load,
+     not be cut off by the harness. */
+  const DEAD_PHOTO = `http://127.0.0.1:${PORT}/assets/no-such-photo.jpg`;
+  const REAL_PHOTO = `http://127.0.0.1:${PORT}/assets/demo/fynd-demo-poster.jpg`;
+
+  /* Renders one card into a container of its own, so the assertions are
+     about that card and not about whatever else the page has drawn. */
+  const cardInPage = ({ id, product }) => {
+    const box = document.createElement('div');
+    box.id = id;
+    box.innerHTML = productCard(product);
+    document.body.appendChild(box);
+    bindImageFallback(box);
+  };
+
+  await test('a live product whose photo fails draws artwork, not a blank tile', async () => {
+    searchRequests.length = 0;
+    const page = await open();
+    await page.fill('#ask', 'black oversized hoodie');
+    await page.click('button[type=submit]');
+    await page.waitForSelector('.item-card', { timeout: 10000 });
+    /* the API's product is not in the catalogue store, and never will be:
+       that is exactly the case the fallback used to give up on */
+    assert.strictEqual(await page.evaluate(() => Products.byId('1')), null,
+      'a live result must not be in the store, or this proves nothing');
+    await page.waitForSelector('.item-media svg.silhouette', { timeout: 10000 });
+    assert.strictEqual(await page.$$eval('.item-media img', (n) => n.length), 0,
+      'the dead photo must be replaced, not left in place');
+    await page.close();
+  });
+
+  await test('a catalogue row whose photo fails still draws its own garment', async () => {
+    const page = await open();
+    /* the row goes into the store first, because that is what a catalogue
+       row is: something the store can still name once its photo is gone */
+    await page.evaluate(({ url }) => {
+      Products.set([{ id: 'demo-jacket', name: 'Wool Coat', brand: 'Fynd', category: 'jacket',
+        price: 120, imageUrl: url, productUrl: 'https://example.com/p/1' }]);
+      const box = document.createElement('div');
+      box.id = 'photo-demo';
+      box.innerHTML = productCard(Products.byId('demo-jacket'));
+      document.body.appendChild(box);
+      bindImageFallback(box);
+    }, { url: DEAD_PHOTO });
+    await page.waitForSelector('#photo-demo svg.silhouette', { timeout: 10000 });
+    /* both sides are read back out of the DOM, so the comparison is
+       between drawings rather than between two spellings of one */
+    const drawn = await page.evaluate(() => {
+      const draw = (category) => {
+        const box = document.createElement('div');
+        box.innerHTML = artSvg({ category });
+        return box.querySelector('svg').innerHTML;
+      };
+      return {
+        got: document.querySelector('#photo-demo svg.silhouette').innerHTML,
+        jacket: draw('jacket'),
+        fallback: draw('')
+      };
+    });
+    assert.strictEqual(drawn.got, drawn.jacket, 'a row the store knows keeps the garment its category names');
+    assert.notStrictEqual(drawn.got, drawn.fallback, 'it must not collapse to the category-less default');
+    await page.close();
+  });
+
+  await test('a photo that loads is left exactly as it was', async () => {
+    const page = await open();
+    await page.evaluate(cardInPage, {
+      id: 'photo-ok',
+      product: { id: 'live-ok', name: 'Champion Hoodie', retailer: 'Nordstrom', price: 68,
+        imageUrl: REAL_PHOTO, productUrl: 'https://www.nordstrom.com/s/hoodie/1' }
+    });
+    await page.waitForFunction(() => {
+      const img = document.querySelector('#photo-ok img');
+      return Boolean(img && img.complete && img.naturalWidth > 0);
+    }, { timeout: 10000 });
+    /* long enough that a late replacement would have happened */
+    await page.waitForTimeout(300);
+    const state = await page.evaluate(() => ({
+      photos: document.querySelectorAll('#photo-ok img').length,
+      artwork: document.querySelectorAll('#photo-ok svg.silhouette').length,
+      src: document.querySelector('#photo-ok img').getAttribute('src')
+    }));
+    assert.deepStrictEqual(state, { photos: 1, artwork: 0, src: REAL_PHOTO });
+    await page.close();
+  });
+
+  await test('the fallback changes the picture and nothing else', async () => {
+    searchRequests.length = 0;
+    const page = await open();
+    const before = await page.evaluate(() => Products.all().map((p) => p.id));
+    await page.fill('#ask', 'black oversized hoodie');
+    await page.click('button[type=submit]');
+    await page.waitForSelector('.item-media svg.silhouette', { timeout: 10000 });
+
+    assert.deepStrictEqual(await page.evaluate(() => Products.all().map((p) => p.id)), before,
+      'a failed photo writes nothing to the product store');
+    assert.strictEqual(searchRequests.length, 1, 'a failed photo does not re-run the search');
+    assert.deepStrictEqual(await page.evaluate(() => ({
+      retailer: document.querySelector('.item-retailer').textContent.trim(),
+      name: document.querySelector('.item-name').textContent.trim(),
+      price: document.querySelector('.item-price').textContent.trim(),
+      href: document.querySelector('a.item-card').getAttribute('href')
+    })), {
+      retailer: 'Nordstrom',
+      name: 'Champion Hoodie',
+      price: '$68',
+      href: 'https://www.nordstrom.com/s/hoodie/1'
+    }, 'the card still says what the search returned');
+    await page.close();
+  });
+
   console.log('\nthe billing interface');
 
   /* Opens a billing page with the stub answering a particular account

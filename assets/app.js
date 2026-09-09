@@ -49,12 +49,22 @@ function media(item, badge) {
 }
 
 /* a dead image URL leaves drawn artwork in its place rather than a broken
-   image icon, so a feed carrying stale photo links still renders */
+   image icon, so a feed carrying stale photo links still renders.
+
+   The store is asked for the item because a catalogue row knows its
+   category, and the category chooses the garment that gets drawn. It is
+   asked, not required: live search results are rendered straight from
+   the API reply and never enter the store, so byId finds nothing for
+   them. Standing on that lookup is what left a failed live photo as a
+   blank tile — every product the search returns has an image URL, the
+   gate drops the ones that do not, so this path only ever runs on live
+   results. Without a category the drawn garment is the default one,
+   which is the same artwork a category-less catalogue row would get. */
 function bindImageFallback(root) {
   root.querySelectorAll('img[data-fallback]').forEach((img) => {
     img.addEventListener('error', () => {
-      const item = Products.byId(img.dataset.fallback);
-      if (item) img.outerHTML = artSvg(item);
+      const item = Products.byId(img.dataset.fallback) || { category: '' };
+      img.outerHTML = artSvg(item);
     }, { once: true });
   });
 }
