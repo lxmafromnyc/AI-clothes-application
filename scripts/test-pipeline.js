@@ -680,6 +680,38 @@ test('an https photo further down the list saves a product an http first entry w
   assert.strictEqual(products[0].imageUrl, second);
 });
 
+/* The probe is what answers "does this URL actually return a picture",
+   so the parts of it that read a response are held to the same standard
+   as the pipeline: it must name a URL without quoting one. */
+const probe = require('./probe-openwebninja');
+
+test('the probe names a photo host and scheme, and never a query value', () => {
+  const seen = probe.describeUrl('https://cdn.example.com/p/1.jpg?X-Amz-Signature=deadbeef&X-Amz-Expires=300');
+  assert.ok(seen.safe.includes('https://cdn.example.com'), seen.safe);
+  assert.ok(seen.safe.includes('X-Amz-Signature'), 'the key NAME is useful');
+  assert.ok(!seen.safe.includes('deadbeef'), 'the key VALUE is a credential and must never be printed');
+  assert.ok(!seen.safe.includes('/p/1.jpg'), 'the path is measured, not quoted');
+});
+
+test('the probe flags a signed or expiring photo URL', () => {
+  assert.strictEqual(probe.describeUrl('https://cdn.example.com/p/1.jpg?sig=x&expires=1').signed, 'sig, expires');
+  assert.strictEqual(probe.describeUrl('https://encrypted-tbn0.gstatic.com/images?q=tbn:ABC').signed, null);
+});
+
+test('the probe reports an http photo as not https', () => {
+  assert.strictEqual(probe.describeUrl('http://cdn.example.com/p/1.jpg').https, false);
+  assert.strictEqual(probe.describeUrl('https://cdn.example.com/p/1.jpg').https, true);
+});
+
+test('the probe lists every photo field, in the order the adapter reads them', () => {
+  const found = probe.photoCandidates({
+    product_photos: ['https://a/1.jpg', { url: 'https://a/2.jpg' }],
+    thumbnail: 'https://a/3.jpg'
+  });
+  assert.deepStrictEqual(found.map((c) => c.field), ['product_photos[0]', 'product_photos[1].url', 'thumbnail']);
+  assert.deepStrictEqual(found.map((c) => c.url), ['https://a/1.jpg', 'https://a/2.jpg', 'https://a/3.jpg']);
+});
+
 test('no photo is invented for a product that has none', () => {
   const record = provider.toRecord(productWithInlineOffer({ product_photos: [] }));
   assert.ok(!('imageUrl' in record), 'the field must be absent, not filled in from anywhere');
