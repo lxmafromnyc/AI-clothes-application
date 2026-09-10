@@ -40,6 +40,14 @@ const TYPES = {
 const searchRequests = [];
 const billingRequests = [];
 
+/* The photo the stubbed /api/search hands back. Off-origin by default,
+   which the page under test aborts, so the tests that are about a photo
+   FAILING keep failing it. A test about a photo that loads points this
+   at a real file on this origin — the same way a live provider points
+   it at a real file on theirs. */
+const DEAD_PROVIDER_PHOTO = 'https://img.example/a.jpg';
+let searchPhoto = DEAD_PROVIDER_PHOTO;
+
 /* What the stub /api/account answers with. Shaped exactly like the real
    endpoint's reply, because the whole point of the billing interface is
    that it renders what the server said and decides nothing itself — so
@@ -112,7 +120,7 @@ const server = http.createServer((req, res) => {
       searchRequests.push(parsed);
       res.end(JSON.stringify({ source: 'openwebninja', products: [{
         id: '1', name: 'Champion Hoodie', price: 68, currency: 'USD',
-        imageUrl: 'https://img.example/a.jpg', productUrl: 'https://www.nordstrom.com/s/hoodie/1',
+        imageUrl: searchPhoto, productUrl: 'https://www.nordstrom.com/s/hoodie/1',
         retailer: 'Nordstrom', category: '', colors: [], sizes: []
       }], returned: 1, rejected: {}, attachments: { received: (parsed.attachments || []).length, used: 0 } }));
     });
@@ -636,6 +644,75 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     }));
     assert.deepStrictEqual(state, { photos: 1, artwork: 0, src: REAL_PHOTO });
     await page.close();
+  });
+
+  await test("a product's real photo reaches the card and is what renders", async () => {
+    /* the whole path a live result takes: /api/search hands back a photo
+       URL, the page builds the card, the browser fetches the picture and
+       paints it. Nothing about the picture is stubbed except where it
+       lives — naturalWidth is the browser saying it decoded real bytes. */
+    searchPhoto = REAL_PHOTO;
+    try {
+      const page = await open();
+      await page.fill('#ask', 'black oversized hoodie');
+      await page.click('button[type=submit]');
+      await page.waitForSelector('.item-card', { timeout: 10000 });
+      await page.waitForFunction(() => {
+        const img = document.querySelector('.item-media img');
+        return Boolean(img && img.complete && img.naturalWidth > 0);
+      }, { timeout: 10000 });
+
+      const card = await page.evaluate(() => {
+        const img = document.querySelector('.item-media img');
+        const box = img.getBoundingClientRect();
+        return {
+          src: img.getAttribute('src'),
+          alt: img.getAttribute('alt'),
+          referrerPolicy: img.getAttribute('referrerpolicy'),
+          painted: img.naturalWidth > 0 && img.naturalHeight > 0,
+          visible: box.width > 0 && box.height > 0 && getComputedStyle(img).visibility !== 'hidden',
+          artwork: document.querySelectorAll('.item-media svg.silhouette').length
+        };
+      });
+
+      assert.strictEqual(card.src, REAL_PHOTO, 'the card shows the URL the search returned, unchanged');
+      assert.strictEqual(card.alt, 'Champion Hoodie', 'the photo is labelled with the product it belongs to');
+      assert.strictEqual(card.painted, true, 'the browser decoded the image');
+      assert.strictEqual(card.visible, true, 'and it occupies the tile');
+      assert.strictEqual(card.artwork, 0, 'no artwork stands in for a photo that loaded');
+      await page.close();
+    } finally {
+      searchPhoto = DEAD_PROVIDER_PHOTO;
+    }
+  });
+
+  await test('a third-party photo is requested without a referrer', async () => {
+    /* a host that refuses foreign referrers answers with a 403 the page
+       cannot see, so the photo simply never arrives. This is the one
+       thing the card can do about that. */
+    searchPhoto = REAL_PHOTO;
+    try {
+      const page = await open();
+      const sent = [];
+      await page.route((url) => String(url).endsWith('fynd-demo-poster.jpg'), (route) => {
+        sent.push(route.request().headers().referer || null);
+        return route.continue();
+      });
+      await page.fill('#ask', 'black oversized hoodie');
+      await page.click('button[type=submit]');
+      await page.waitForSelector('.item-media img', { timeout: 10000 });
+      await page.waitForFunction(() => {
+        const img = document.querySelector('.item-media img');
+        return Boolean(img && img.complete);
+      }, { timeout: 10000 });
+
+      assert.strictEqual(await page.$eval('.item-media img', (n) => n.referrerPolicy), 'no-referrer');
+      assert.ok(sent.length, 'the photo must actually have been requested');
+      assert.deepStrictEqual(sent, sent.map(() => null), `no referrer may be sent, got ${JSON.stringify(sent)}`);
+      await page.close();
+    } finally {
+      searchPhoto = DEAD_PROVIDER_PHOTO;
+    }
   });
 
   await test('the fallback changes the picture and nothing else', async () => {
