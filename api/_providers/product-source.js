@@ -54,6 +54,17 @@
      * a redirector, meaning a path like /aclk or a query parameter whose
        value is itself another URL — where it lands cannot be verified
        from the link, so it cannot be presented as the product page
+
+   imageUrl must be an absolute HTTPS URL, and it is the source's own
+   photo for that product — product_photos[0] on OpenWeb Ninja, then the
+   other photo fields that adapter reads. A record whose only photo is
+   served over http is rejected the same way one with no photo is: the
+   pages are served over https, where a browser refuses an http image
+   before it makes a request, so such a photo can never appear. Neither
+   case is filled in from anywhere else. No image is taken from a search
+   engine's results and none is generated; a product with no photo of its
+   own is dropped, which is what the rest of this gate does with every
+   other missing field.
    ========================================================= */
 
 'use strict';
@@ -125,6 +136,31 @@ function toAbsoluteUrl(value) {
   }
 }
 
+/* The photo is held to a stricter rule than the link: https, always.
+
+   The two are not the same kind of thing. The link is somewhere a
+   shopper is SENT, and the browser is free to follow it wherever it
+   goes. The photo is something the page LOADS, on a page served over
+   https, and a browser refuses an http image there before a request is
+   ever made — no request, no status, just an empty tile and the drawn
+   artwork standing in for it. So an http photo is not a photo that
+   might fail. It is one that cannot work, and a record carrying only
+   that has no usable image.
+
+   It is not upgraded to https here. Rewriting a URL would be a guess
+   about a host nobody has asked, and every displayed field in this file
+   comes from the source rather than from us. A source that serves its
+   photos over https is the fix; inventing one is not. */
+function toHttpsUrl(value) {
+  const absolute = toAbsoluteUrl(value);
+  if (!absolute) return null;
+  try {
+    return new URL(absolute).protocol === 'https:' ? absolute : null;
+  } catch (err) {
+    return null;
+  }
+}
+
 /* Names what is wrong with a product link, or null when nothing is.
 
    These are guards against homepage, comparison and redirect links, not a
@@ -182,7 +218,7 @@ function toProduct(raw, context) {
 
   const title = text(pick('title'));
   const price = toPrice(pick('price'));
-  const imageUrl = toAbsoluteUrl(pick('imageUrl'));
+  const imageUrl = toHttpsUrl(pick('imageUrl'));
   const productUrl = toAbsoluteUrl(pick('productUrl'));
   const retailer = text(pick('retailer')) || text(context && context.retailer);
   /* optional: shown when the source has it, omitted when it does not */
@@ -191,7 +227,11 @@ function toProduct(raw, context) {
   /* every displayed field must have come from the source */
   if (!title) return { ok: false, reason: 'missing-title' };
   if (price === null) return { ok: false, reason: 'missing-price' };
-  if (!imageUrl) return { ok: false, reason: 'missing-image-url' };
+  /* Two different problems, told apart in the tally: a source that sends
+     no photo at all, and one that sends a photo no browser will load. */
+  if (!imageUrl) {
+    return { ok: false, reason: toAbsoluteUrl(pick('imageUrl')) ? 'image-url-not-https' : 'missing-image-url' };
+  }
   if (!productUrl) return { ok: false, reason: 'missing-product-url' };
   if (!retailer) return { ok: false, reason: 'missing-retailer' };
   if (!inStock(pick('availability'))) return { ok: false, reason: 'out-of-stock' };
@@ -308,6 +348,7 @@ module.exports = {
   DEFAULT_SOURCE,
   toPrice,
   toAbsoluteUrl,
+  toHttpsUrl,
   FIELD_ALIASES,
   PROVIDERS
 };

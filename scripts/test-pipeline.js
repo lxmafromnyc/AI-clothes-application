@@ -21,7 +21,7 @@
 
 const assert = require('assert');
 const provider = require('../api/_providers/openwebninja');
-const { verifyAll, linkFault } = require('../api/_providers/product-source');
+const { verifyAll, linkFault, toHttpsUrl } = require('../api/_providers/product-source');
 const cache = require('../api/_cache');
 
 let passed = 0;
@@ -596,6 +596,93 @@ test('parses live price strings', () => {
 test('takes the first usable photo, and none at all when there are none', () => {
   assert.strictEqual(provider.imageFrom({ product_photos: [] }), null);
   assert.strictEqual(provider.imageFrom({ product_photos: ['', 'https://a/b.jpg'] }), 'https://a/b.jpg');
+});
+
+console.log('\nproduct photos');
+
+/* The photo a shopper sees is the source's own, unchanged, and it is
+   held to one extra rule the link is not held to: https. The pages are
+   served over https, where a browser refuses an http image before it
+   makes a request, so an http photo is not a photo that might fail. */
+
+const PHOTO = 'https://img.example-cdn.com/nike/af1-white-1.jpg?w=800';
+
+/* the same gate the section below uses, named here because these tests
+   run as they are declared and that one is not defined yet */
+const photoGate = (records) => verifyAll(records, { retailer: provider.defaultRetailer });
+
+test("product_photos[0] is the photo, exactly as the source spelled it", () => {
+  const record = provider.toRecord(product({ product_photos: [PHOTO, 'https://img.example-cdn.com/nike/af1-white-2.jpg'] }));
+  assert.strictEqual(record.imageUrl, PHOTO, 'the adapter must not rewrite it');
+
+  const { products } = photoGate([provider.toRecord(productWithInlineOffer({ product_photos: [PHOTO] }))]);
+  assert.strictEqual(products.length, 1);
+  assert.strictEqual(products[0].imageUrl, PHOTO, 'and neither may the gate');
+});
+
+/* Every field the adapter is willing to read a photo out of, one at a
+   time, so a source using any of these shapes is not silently dropped. */
+[
+  ['product_photos', { product_photos: [PHOTO] }],
+  ['productPhotos', { productPhotos: [PHOTO] }],
+  ['photos', { photos: [PHOTO] }],
+  ['images', { images: [PHOTO] }],
+  ['product_images', { product_images: [PHOTO] }],
+  ['a list of objects', { product_photos: [{ url: PHOTO }] }],
+  ['a list of objects keyed link', { product_photos: [{ link: PHOTO }] }],
+  ['product_photo', { product_photo: PHOTO }],
+  ['productPhoto', { productPhoto: PHOTO }],
+  ['product_image', { product_image: PHOTO }],
+  ['thumbnail', { thumbnail: PHOTO }],
+  ['image', { image: PHOTO }],
+  ['image_url', { image_url: PHOTO }]
+].forEach(([label, shape]) => {
+  test(`reads the photo out of ${label}`, () => {
+    const raw = Object.assign({ product_photos: [] }, shape);
+    assert.strictEqual(provider.imageFrom(raw), PHOTO);
+  });
+});
+
+test('the list is preferred over the single field, in the source\'s own order', () => {
+  assert.strictEqual(provider.imageFrom({ product_photos: [PHOTO], thumbnail: 'https://other/x.jpg' }), PHOTO);
+});
+
+test('an http photo is refused, and an https one is kept', () => {
+  assert.strictEqual(toHttpsUrl('http://img.example-cdn.com/a.jpg'), null);
+  assert.strictEqual(toHttpsUrl(PHOTO), PHOTO);
+  assert.strictEqual(toHttpsUrl('//img.example-cdn.com/a.jpg'), null, 'protocol-relative is not absolute');
+  assert.strictEqual(toHttpsUrl('/photos/a.jpg'), null, 'a path is not a URL');
+  assert.strictEqual(toHttpsUrl('javascript:alert(1)'), null);
+  assert.strictEqual(toHttpsUrl(''), null);
+});
+
+test('a record whose only photo is http is rejected, and says so', () => {
+  const { products, rejected } = photoGate([provider.toRecord(productWithInlineOffer({
+    product_photos: ['http://img.example-cdn.com/champion/hoodie-black-1.jpg']
+  }))]);
+  assert.strictEqual(products.length, 0, 'a photo no browser will load is no photo');
+  assert.strictEqual(rejected['image-url-not-https'], 1, JSON.stringify(rejected));
+});
+
+test('a record with no photo at all is rejected as missing, not as insecure', () => {
+  const { products, rejected } = photoGate([provider.toRecord(productWithInlineOffer({ product_photos: [] }))]);
+  assert.strictEqual(products.length, 0);
+  assert.strictEqual(rejected['missing-image-url'], 1, JSON.stringify(rejected));
+});
+
+test('an https photo further down the list saves a product an http first entry would have lost', () => {
+  const second = 'https://img.example-cdn.com/champion/hoodie-black-2.jpg';
+  const { products, rejected } = photoGate([provider.toRecord(productWithInlineOffer({
+    product_photos: ['http://img.example-cdn.com/champion/hoodie-black-1.jpg', second]
+  }))]);
+  assert.deepStrictEqual(rejected, {});
+  assert.strictEqual(products.length, 1);
+  assert.strictEqual(products[0].imageUrl, second);
+});
+
+test('no photo is invented for a product that has none', () => {
+  const record = provider.toRecord(productWithInlineOffer({ product_photos: [] }));
+  assert.ok(!('imageUrl' in record), 'the field must be absent, not filled in from anywhere');
 });
 
 console.log('\noffer resolution');

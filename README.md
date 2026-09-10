@@ -602,7 +602,7 @@ level** of a search record, not only nested under `offer`. Both shapes are read.
 | Fynd | OpenWeb Ninja |
 | --- | --- |
 | `title` | `product_title` |
-| `imageUrl` | `product_photos[0]`, from that product's own photo list |
+| `imageUrl` | `product_photos[0]`, from that product's own photo list — the first entry that is an absolute **https** URL, since the pages are served over https and a browser refuses an http image before it requests it. A record whose photos are all unusable is rejected as `image-url-not-https`, one with no photos as `missing-image-url`. |
 | `price` | `price`, or the price of the resolved offer |
 | `retailer` | `store_name` — a domain, e.g. `nike.com` |
 | `productUrl` | the resolved offer's `offer_page_url` — **never** `product_page_url` |

@@ -88,7 +88,16 @@
    shop being linked to. There is no path that pairs one product's photo
    with another's link.
 
-   A product with no photos gets no image; none is substituted.
+   A product with no photos gets no image; none is substituted. Nor is
+   one borrowed from a search engine's image results, and none is
+   generated: the photo is the source's own or there is none, and a
+   record with none is dropped by the gate.
+
+   The photos are read in the order the source ranked them, and the
+   first one a browser could actually load is taken — https, absolute —
+   so product_photos[0] is the photo whenever it can be shown, and a
+   product whose usable photo sits second in the list is still shown
+   rather than dropped.
 
    ---------------------------------------------------------
    Response shape: what is confirmed
@@ -268,17 +277,33 @@ const PHOTO_LIST_KEYS = ['product_photos', 'productPhotos', 'photos', 'images', 
 const PHOTO_SINGLE_KEYS = ['product_photo', 'productPhoto', 'product_image', 'thumbnail', 'image', 'image_url'];
 
 function imageFrom(product) {
+  const candidates = [];
   for (const key of PHOTO_LIST_KEYS) {
     const list = product[key];
     if (!Array.isArray(list)) continue;
     for (const entry of list) {
       /* a photo entry is either a URL string or an object wrapping one */
       const url = typeof entry === 'string' ? entry : firstOf(entry, ['url', 'link', 'src', 'image_url']);
-      if (text(url)) return text(url);
+      if (text(url)) candidates.push(text(url));
     }
   }
   const single = firstOf(product, PHOTO_SINGLE_KEYS);
-  return text(single) || null;
+  if (text(single)) candidates.push(text(single));
+  if (!candidates.length) return null;
+
+  /* The source's own order is kept, so product_photos[0] is the photo
+     whenever it can be shown. It is passed the gate's own rule rather
+     than a copy of it: the first photo a browser could actually load
+     wins, and a product whose best photo is second in the list is a
+     product with a photo, not a product to drop. */
+  for (const candidate of candidates) {
+    if (gate().toHttpsUrl(candidate)) return candidate;
+  }
+
+  /* None of them can be shown. The first is still handed over, so the
+     gate rejects this record for the reason it really has — a photo no
+     browser will load — instead of reporting no photo at all. */
+  return candidates[0];
 }
 
 /* Google's own surfaces. `product_page_url` points at one of these by
