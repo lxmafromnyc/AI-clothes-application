@@ -1331,18 +1331,135 @@ function twoEndpointStub(searchPayload, offersByProductId) {
     assert.strictEqual(records.diagnostics.droppedOverBudget, 1, 'and was dropped for the price, not the link');
   });
 
+  /* ---------------------------------------------------------
+     Where /product-offers keeps its sellers
+
+     Confirmed against a live Pro response: 200, top level
+     { status, request_id, data }, and `data` is ONE PRODUCT — not a
+     list — whose sellers are under `offers`, alongside product_photos,
+     product_variants, videos and other arrays that are not offers.
+
+     Reading only products/results/items is what made every lookup come
+     back empty while the body held the sellers all along.
+     --------------------------------------------------------- */
+
+  /* the real envelope, key for key, as probed */
+  const productOffersPayload = (offers) => ({
+    status: 'OK',
+    request_id: 'req-offers',
+    data: {
+      product_id: 'p1',
+      product_title: "Nike Men's Air Force 1 '07 Sneakers",
+      product_description: 'A leather trainer.',
+      product_photos: ['https://img.example-cdn.com/nike/af1-white-1.jpg'],
+      product_videos: [],
+      product_attributes: { Brand: 'Nike' },
+      product_rating: 4.6,
+      product_num_reviews: 1200,
+      product_num_offers: offers.length,
+      typical_price_range: ['$70', '$110'],
+      current_product_variant_properties: {},
+      product_variants: [],
+      reviews_insights: {},
+      offers,
+      top_insights: {},
+      videos: [],
+      discussions_and_forums: []
+    }
+  });
+
+  test('data.offers is the array that is read', () => {
+    const rows = provider.resultsFrom({ status: 'OK', data: { offers: [offer('nike.com', '$70', 'https://www.nike.com/t/x/1')] } });
+    assert.strictEqual(rows.length, 1);
+    assert.strictEqual(rows[0].store_name, 'nike.com');
+  });
+
+  test('data.product_offers is read too', () => {
+    const rows = provider.resultsFrom({ status: 'OK', data: { product_offers: [offer('arket.com', '$70', 'https://www.arket.com/p/1')] } });
+    assert.strictEqual(rows.length, 1);
+    assert.strictEqual(rows[0].store_name, 'arket.com');
+  });
+
+  test('data.all_offers is read too', () => {
+    const rows = provider.resultsFrom({ status: 'OK', data: { all_offers: [offer('uniqlo.com', '$70', 'https://www.uniqlo.com/p/1')] } });
+    assert.strictEqual(rows.length, 1);
+    assert.strictEqual(rows[0].store_name, 'uniqlo.com');
+  });
+
+  test('products still wins when a payload carries both', () => {
+    const rows = provider.resultsFrom({
+      status: 'OK',
+      data: { products: [product()], offers: [offer('nike.com', '$70', 'https://www.nike.com/t/x/1')] }
+    });
+    assert.strictEqual(rows.length, 1);
+    assert.strictEqual(rows[0].product_title, product().product_title, 'the search path reads products, unchanged');
+  });
+
+  test('the offer array is picked out from the arrays beside it', () => {
+    /* data carries product_photos, product_variants, videos and
+       discussions_and_forums as arrays too — none of them is an offer */
+    const rows = provider.resultsFrom(productOffersPayload([offer('nike.com', '$70', 'https://www.nike.com/t/x/1')]));
+    assert.strictEqual(rows.length, 1);
+    assert.strictEqual(rows[0].offer_page_url, 'https://www.nike.com/t/x/1');
+  });
+
+  await testAsync('the real /product-offers shape resolves to price, retailer and a direct link', async () => {
+    process.env.OPENWEBNINJA_API_KEY = 'test-key';
+    const records = await withStubbedFetch(
+      async (url) => (String(url).includes('/product-offers')
+        ? okResponse(productOffersPayload([offer('Nordstrom', '$68.00', 'https://www.nordstrom.com/s/reverse-weave-hoodie/7654321')]))
+        : okResponse(envelope([product()]))),
+      () => provider.search(nikeIntent, { limit: 12 }));
+
+    const d = records.diagnostics;
+    assert.strictEqual(d.offers.lookupsEmpty, 0, 'the sellers were found');
+    assert.strictEqual(d.offers.resolvedFromOffers, 1);
+    assert.strictEqual(d.withAnyLink, 1);
+
+    const { products } = verifyAll(records, { retailer: provider.defaultRetailer });
+    assert.strictEqual(products.length, 1, 'and it passes the gate');
+    assert.strictEqual(products[0].price, 68);
+    assert.strictEqual(products[0].retailer, 'Nordstrom');
+    assert.strictEqual(products[0].productUrl, 'https://www.nordstrom.com/s/reverse-weave-hoodie/7654321');
+    assert.ok(/^https:\/\//.test(products[0].imageUrl), 'the photo is the source\u2019s own, over https');
+  });
+
+  await testAsync('a Google link inside data.offers is still refused', async () => {
+    process.env.OPENWEBNINJA_API_KEY = 'test-key';
+    const records = await withStubbedFetch(
+      async (url) => (String(url).includes('/product-offers')
+        ? okResponse(productOffersPayload([offer('Google Shopping', '$68.00', 'https://www.google.com/shopping/product/111')]))
+        : okResponse(envelope([product()]))),
+      () => provider.search(nikeIntent, { limit: 12 }));
+
+    const d = records.diagnostics;
+    assert.strictEqual(d.offers.lookupsEmpty, 0, 'the array was read');
+    assert.strictEqual(d.offers.noDirectLinkInOffers, 1, 'and the link rule then refused it');
+    assert.strictEqual(d.offers.resolvedFromOffers, 0);
+    assert.strictEqual(d.withAnyLink, 0, 'the record gained no link from it');
+
+    /* the record itself survives the adapter carrying no commerce at
+       all — price, retailer and URL travel together or not at all — and
+       it is the gate that refuses it. Reading more must never show
+       more. */
+    const { products, rejected } = verifyAll(records, { retailer: provider.defaultRetailer });
+    assert.strictEqual(products.length, 0, 'nothing shown');
+    assert.strictEqual(rejected['missing-price'], 1, 'dropped, with the reason named');
+  });
+
   await testAsync('reports an unreadable offers payload as a shape, not as silence', async () => {
     process.env.OPENWEBNINJA_API_KEY = 'test-key';
     const records = await withStubbedFetch(
       async (url) => String(url).includes('/product-offers')
-        /* the array under a key resultsFrom does not read */
-        ? okResponse({ status: 'OK', request_id: 'r', data: { offers: [offer('nike.com', '$70', 'https://www.nike.com/t/x/1')] } })
+        /* an array under a key resultsFrom still does not read: the
+           shape is reported rather than the key being guessed at */
+        ? okResponse({ status: 'OK', request_id: 'r', data: { seller_results: [offer('nike.com', '$70', 'https://www.nike.com/t/x/1')] } })
         : okResponse(envelope([product()])),
       () => provider.search(nikeIntent, { limit: 12 }));
 
     const d = records.diagnostics;
     assert.strictEqual(d.offers.lookupsEmpty, 1);
-    assert.ok(/data=\{.*offers.*\}/.test(d.offers.offersShape), `shape should name the key: ${d.offers.offersShape}`);
+    assert.ok(/data=\{.*seller_results.*\}/.test(d.offers.offersShape), `shape should name the key: ${d.offers.offersShape}`);
     assert.ok(!d.offers.offersShape.includes('nike.com'), 'shape carries key names only, never values');
   });
 

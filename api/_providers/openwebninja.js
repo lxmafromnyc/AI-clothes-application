@@ -467,14 +467,29 @@ function pickOffer(offers, preferredStore) {
    ----------------------------------------------------------- */
 
 /* The vendor documents the envelope as { status, request_id, data }.
-   Both a bare array and a products-wrapped object are accepted. */
+   Both a bare array and a wrapped object are accepted, and `data` is a
+   different shape at each endpoint:
+
+     /search          data is the list of products
+     /product-offers  data is ONE product — product_id, product_title,
+                      product_photos, product_variants and so on — with
+                      the sellers under `offers`
+
+   Confirmed against a live Pro response: /product-offers answers 200
+   with data as an object whose offer array is `data.offers`. Reading
+   only products/results/items is what made every lookup come back
+   empty while the body in fact held the sellers.
+
+   The product keys stay FIRST, so a /search payload that has products
+   is still read exactly as it was; the offer keys are only ever reached
+   when none of them is present. */
 function resultsFrom(payload) {
   if (Array.isArray(payload)) return payload;
   if (!payload || typeof payload !== 'object') return [];
   const data = payload.data !== undefined ? payload.data : payload;
   if (Array.isArray(data)) return data;
   if (data && typeof data === 'object') {
-    for (const key of ['products', 'results', 'items']) {
+    for (const key of ['products', 'results', 'items', 'offers', 'product_offers', 'all_offers']) {
       if (Array.isArray(data[key])) return data[key];
     }
   }
