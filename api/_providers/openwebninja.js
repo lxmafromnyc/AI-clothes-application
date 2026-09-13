@@ -128,7 +128,9 @@
      OPENWEBNINJA_OFFER_BUDGET_MS
                             total wall-clock budget for the offer lookups,
                             default 6000. Whatever is resolved when it
-                            expires is what gets shown.
+                            expires is what gets shown. Cut short when the
+                            whole request's deadline arrives first — see
+                            search({ deadline }) and api/search.js.
      FYND_CACHE             set to "off" to disable the offer cache, and
                             the search cache with it. This adapter then
                             behaves exactly as it did before either
@@ -157,6 +159,23 @@ const OVERFETCH = 2;
    resolved by then is what gets shown. */
 const OFFER_CONCURRENCY = 4;
 const DEFAULT_OFFER_BUDGET_MS = 6000;
+
+/* Held back from the initial search so the offer phase — which is what
+   buys the retailer links — is never left with no time at all.
+
+   Measured against the live API, same query, same request shape: 1.6s,
+   1.6s and 2.5s, then 8.4s and 11.3s. The median search is quick and
+   the tail is long, so keeping this much in reserve turns that tail
+   into a fast, honest failure rather than a page the browser has
+   already stopped waiting for. */
+const OFFER_RESERVE_MS = 2000;
+
+/* The least time a lookup is worth starting with. Below this it would
+   be aborted before any seller could answer, so it would cost the
+   provider a request and return nothing. The old code could start one
+   with a millisecond left; it had 15 seconds to answer in, so it
+   sometimes still did. Bounded to the deadline, it cannot. */
+const MIN_LOOKUP_WINDOW_MS = 250;
 
 /* How far past its target one search may keep looking for products it
    can actually show. Aiming at shown products rather than at resolved
@@ -448,14 +467,29 @@ function pickOffer(offers, preferredStore) {
    ----------------------------------------------------------- */
 
 /* The vendor documents the envelope as { status, request_id, data }.
-   Both a bare array and a products-wrapped object are accepted. */
+   Both a bare array and a wrapped object are accepted, and `data` is a
+   different shape at each endpoint:
+
+     /search          data is the list of products
+     /product-offers  data is ONE product — product_id, product_title,
+                      product_photos, product_variants and so on — with
+                      the sellers under `offers`
+
+   Confirmed against a live Pro response: /product-offers answers 200
+   with data as an object whose offer array is `data.offers`. Reading
+   only products/results/items is what made every lookup come back
+   empty while the body in fact held the sellers.
+
+   The product keys stay FIRST, so a /search payload that has products
+   is still read exactly as it was; the offer keys are only ever reached
+   when none of them is present. */
 function resultsFrom(payload) {
   if (Array.isArray(payload)) return payload;
   if (!payload || typeof payload !== 'object') return [];
   const data = payload.data !== undefined ? payload.data : payload;
   if (Array.isArray(data)) return data;
   if (data && typeof data === 'object') {
-    for (const key of ['products', 'results', 'items']) {
+    for (const key of ['products', 'results', 'items', 'offers', 'product_offers', 'all_offers']) {
       if (Array.isArray(data[key])) return data[key];
     }
   }
@@ -475,14 +509,40 @@ function shapeOf(payload) {
   return `{${top}} data=${typeof data}`;
 }
 
+/* How long one leg of a search may take.
+
+   Never past the request's deadline, never longer than a single call is
+   allowed on its own, and — when a reserve is asked for and there is
+   room for it — short of the deadline by that much, so whatever runs
+   next still has a window. Given no deadline this is what it always
+   was: one call with REQUEST_TIMEOUT to answer in.
+
+   Zero means there is no time left, and apiGet refuses rather than
+   opening a connection it would have to abort in the same breath. */
+function legTimeout(deadline, reserve) {
+  if (!deadline) return REQUEST_TIMEOUT;
+  const remaining = deadline - Date.now();
+  if (remaining <= 0) return 0;
+  const room = reserve && remaining > reserve ? remaining - reserve : remaining;
+  return Math.min(REQUEST_TIMEOUT, room);
+}
+
 /* One GET against the API. The key travels as a header, never in the
-   query string, and the response body is never surfaced to a browser. */
-async function apiGet(url, params) {
+   query string, and the response body is never surfaced to a browser.
+
+   `timeout` is all the time this one call may have. It is computed from
+   what is left of the request's budget, so a call started near the
+   deadline is aborted AT the deadline instead of running its own full
+   allowance well past it. */
+async function apiGet(url, params, timeout) {
   const key = process.env.OPENWEBNINJA_API_KEY;
   if (!key) throw new Error('OPENWEBNINJA_API_KEY is not set');
 
+  const ms = timeout === undefined ? REQUEST_TIMEOUT : timeout;
+  if (ms <= 0) throw new Error('The time budget for this search ran out before the request was made');
+
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
+  const timer = setTimeout(() => controller.abort(), ms);
   let response;
   try {
     response = await fetch(`${url}?${params.toString()}`, {
@@ -503,10 +563,10 @@ async function apiGet(url, params) {
 /* The sellers for one product. A failure here is not fatal: that one
    product ends up without a link and the gate drops it, rather than the
    whole search failing because one lookup did. */
-async function offersFor(productId, region) {
+async function offersFor(productId, region, timeout) {
   const params = new URLSearchParams({ product_id: String(productId), country: region.country, language: region.language });
   try {
-    const payload = await apiGet(OFFERS_URL, params);
+    const payload = await apiGet(OFFERS_URL, params, timeout);
     const offers = resultsFrom(payload);
     /* when nothing was found, the shape says whether the array is simply
        under a key resultsFrom does not read yet */
@@ -588,7 +648,7 @@ function verifiedCount(records, intent) {
    answered. A failed lookup writes nothing: "we could not reach them"
    is not "they have nothing", and five minutes of confusing the two
    would drop products that are on sale right now. */
-async function lookupFor(record, region, tally, cacheStats) {
+async function lookupFor(record, region, tally, cacheStats, timeout) {
   const key = cache.offerKey({
     provider: NAME,
     productId: record.sku,
@@ -609,7 +669,7 @@ async function lookupFor(record, region, tally, cacheStats) {
   }
 
   tally.lookupsMade += 1;
-  const result = await offersFor(record.sku, region);
+  const result = await offersFor(record.sku, region, timeout);
   if (result.failed) { tally.lookupsFailed += 1; return null; }
   if (!result.offers.length) {
     tally.lookupsEmpty += 1;
@@ -638,7 +698,7 @@ async function lookupFor(record, region, tally, cacheStats) {
    up on the page, no candidate is looked up twice, and the total is
    capped at `wanted + LOOKUP_SLACK`. The wall-clock budget still cuts
    it short before any of them. */
-async function resolveMissingOffers(records, wanted, region, stats, intent, cacheStats) {
+async function resolveMissingOffers(records, wanted, region, stats, intent, cacheStats, requestDeadline) {
   const tally = stats || {};
   const cacheTally = cacheStats || cache.counters();
   tally.neededOfferLookup = records.filter((r) => !r.productUrl).length;
@@ -664,7 +724,13 @@ async function resolveMissingOffers(records, wanted, region, stats, intent, cach
   if (!offersEnabled()) { tally.skipped = true; return tally; }
 
   const budget = Number(process.env.OPENWEBNINJA_OFFER_BUDGET_MS) || DEFAULT_OFFER_BUDGET_MS;
-  const deadline = Date.now() + budget;
+  /* Whichever comes first: this phase's own budget, or the deadline the
+     whole request has to answer by. The request's deadline wins when the
+     search leg has already spent most of it — which is exactly when a
+     full offer budget would push the answer past the moment the browser
+     stopped listening. */
+  const own = Date.now() + budget;
+  const deadline = requestDeadline ? Math.min(own, requestDeadline) : own;
 
   /* The candidates, in the order the source ranked them. */
   const pending = [];
@@ -706,7 +772,7 @@ async function resolveMissingOffers(records, wanted, region, stats, intent, cach
   let inFlight = 0;
   let next = 0;
 
-  const worthStarting = () => next < ceiling && verified + inFlight < wanted && Date.now() < deadline;
+  const worthStarting = () => next < ceiling && verified + inFlight < wanted && legTimeout(deadline) >= MIN_LOOKUP_WINDOW_MS;
 
   await new Promise((done) => {
     let settled = false;
@@ -717,7 +783,10 @@ async function resolveMissingOffers(records, wanted, region, stats, intent, cach
         next += 1;
         inFlight += 1;
 
-        lookupFor(record, region, tally, cacheTally)
+        /* aborted AT the deadline rather than after its own full
+           allowance: a lookup still in flight when the time runs out is
+           dropped, not waited for */
+        lookupFor(record, region, tally, cacheTally, legTimeout(deadline))
           .then((commerce) => {
             if (!commerce) return;
             /* all three together, from the one offer they came from */
@@ -741,7 +810,7 @@ async function resolveMissingOffers(records, wanted, region, stats, intent, cach
          named as the reason only when candidates were actually left. */
       if (inFlight === 0 && !settled) {
         settled = true;
-        if (next < ceiling && verified < wanted && Date.now() >= deadline) tally.budgetExpired = true;
+        if (next < ceiling && verified < wanted && legTimeout(deadline) < MIN_LOOKUP_WINDOW_MS) tally.budgetExpired = true;
         done();
       }
     };
@@ -760,6 +829,11 @@ async function resolveMissingOffers(records, wanted, region, stats, intent, cach
 
 async function search(intent, options) {
   const wanted = Math.min(Math.max(Number(options && options.limit) || 12, 1), 100);
+  /* When the caller sets a deadline, every request this search makes is
+     bounded by what is left of it. Without one nothing changes: each
+     call keeps its own full allowance, which is what the probes and
+     benchmarks run on. */
+  const deadline = options && options.deadline ? Number(options.deadline) : null;
   /* what the offer cache saved this search, reported alongside the
      funnel so a cheap search and an expensive one are told apart */
   const cacheStats = cache.counters();
@@ -781,7 +855,12 @@ async function search(intent, options) {
   if (intent && intent.minPrice) params.set('min_price', String(intent.minPrice));
   if (intent && intent.maxPrice) params.set('max_price', String(intent.maxPrice));
 
-  const payload = await apiGet(SEARCH_URL, params);
+  /* Capped so one slow search cannot spend the whole budget: the
+     reserve is the window the offer phase needs to turn records into
+     products that can actually be shown. */
+  const searchStartedAt = Date.now();
+  const payload = await apiGet(SEARCH_URL, params, legTimeout(deadline, OFFER_RESERVE_MS));
+  const searchMs = Date.now() - searchStartedAt;
   const products = resultsFrom(payload);
 
   /* Every stage a record can be lost at, counted. Without this a search
@@ -790,6 +869,7 @@ async function search(intent, options) {
   const diagnostics = {
     returnedByProvider: products.length,
     searchShape: products.length ? null : shapeOf(payload),
+    searchMs,
     cache: cacheStats
   };
 
@@ -809,7 +889,9 @@ async function search(intent, options) {
      arrive without a retailer link; this fetches the sellers for them.
      The intent goes with them so a record already over the shopper's
      ceiling is not looked up only to be dropped for its price. */
-  diagnostics.offers = await resolveMissingOffers(records, wanted, region, {}, intent, cacheStats);
+  const offersStartedAt = Date.now();
+  diagnostics.offers = await resolveMissingOffers(records, wanted, region, {}, intent, cacheStats, deadline);
+  diagnostics.offersMs = Date.now() - offersStartedAt;
 
   records.forEach((r) => { delete r.retailerHint; });
   diagnostics.withAnyLink = records.filter((r) => r.productUrl).length;
@@ -872,6 +954,9 @@ module.exports = {
   verifiedCount,
   LOOKUP_SLACK,
   OFFER_CONCURRENCY,
+  OFFER_RESERVE_MS,
+  MIN_LOOKUP_WINDOW_MS,
+  legTimeout,
   OFFERS_URL,
   imageFrom,
   offerFrom,

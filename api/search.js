@@ -31,6 +31,15 @@
      answered, so it costs them exactly what a cold search costs them:
      one. What the cache changes is what it costs US — see below.
 
+   Time
+     The request answers within REQUEST_BUDGET_MS below, whatever the
+     product source does. The search leg is capped short of that so the
+     offer lookups — which is where the retailer links come from — still
+     have a window, and a lookup still in flight when the deadline
+     arrives is aborted rather than waited for. What verified inside the
+     budget is what comes back: a short page of real products, not an
+     error. See api/_providers/openwebninja.js.
+
    Caching
      Both halves of a search are cached in api/_cache.js: the records a
      search produced, for 30 minutes, and each product's offer, for two
@@ -52,6 +61,17 @@ const { SEARCHES } = require('./_plans');
 
 const MAX_LIMIT = 24;
 const DEFAULT_LIMIT = 12;
+
+/* How long the whole request has before it answers with whatever it has
+   got. The browser stops listening at 15s (assets/search.js), so
+   answering inside nine leaves room for a cold start, TLS and the trip
+   back — and means a slow product source produces a short page rather
+   than an error the shopper waited fifteen seconds to be told.
+
+   Every provider call is bounded by what remains of this, so no single
+   upstream request can spend the browser's whole window on its own. */
+const DEFAULT_REQUEST_BUDGET_MS = 9000;
+const requestBudget = () => Number(process.env.FYND_REQUEST_BUDGET_MS) || DEFAULT_REQUEST_BUDGET_MS;
 
 const asArray = (v) => (Array.isArray(v) ? v.filter((x) => typeof x === 'string' && x.trim()).map((x) => x.trim()) : []);
 
@@ -129,7 +149,7 @@ function readBody(req) {
 
    Throws whatever the provider throws, so the handler can answer 502 —
    and so nothing about a failure reaches the cache. */
-async function findProducts(provider, intent, limit, stats) {
+async function findProducts(provider, intent, limit, stats, deadline) {
   /* whatever this adapter says changes its results beyond the intent */
   const context = typeof provider.cacheContext === 'function' ? provider.cacheContext() : {};
   const key = cache.searchKey({ provider: provider.name, intent, limit, context });
@@ -140,7 +160,7 @@ async function findProducts(provider, intent, limit, stats) {
 
   if (!payload) {
     const run = await cache.coalesce(key, async () => {
-      const records = await provider.search(intent, { limit });
+      const records = await provider.search(intent, { limit, deadline });
       /* the adapter carries its funnel on the array itself; a cache
          entry and a coalesced follower both need it as a plain field */
       return { records: Array.from(records || []), diagnostics: (records && records.diagnostics) || null };
@@ -184,6 +204,14 @@ module.exports = async function handler(req, res) {
   if (handledPreflight(req, res)) return;
   if (req.method !== 'POST') return res.status(405).json({ error: 'Use POST.' });
 
+  /* The clock this whole request answers by. Started here so everything
+     it does — reading the plan, the search, the offer lookups — runs
+     inside one budget, rather than each step holding a timeout of its
+     own that nothing adds up. */
+  const startedAt = Date.now();
+  const budgetMs = requestBudget();
+  const deadline = startedAt + budgetMs;
+
   const provider = getProvider();
   if (!provider.configured()) {
     /* No real source is connected. Saying so is the whole point: the
@@ -214,9 +242,15 @@ module.exports = async function handler(req, res) {
 
   let found;
   try {
-    found = await findProducts(provider, intent, limit, cacheStats);
+    found = await findProducts(provider, intent, limit, cacheStats, deadline);
   } catch (err) {
-    console.error('Product source failed', provider.name, err && err.message);
+    /* Only the search itself can reach here. An offer lookup that fails
+       or runs out of time leaves its own record without a link, and the
+       gate drops that one record — never the search. So a 502 means the
+       search produced nothing usable at all, and a search that came back
+       with something and then ran short of time is answered below with
+       what it did verify. */
+    console.error('Product source failed', provider.name, `${Date.now() - startedAt}ms`, err && err.message);
     return res.status(502).json({ error: 'The product source is unavailable right now.', source: provider.name });
   }
 
@@ -240,7 +274,15 @@ module.exports = async function handler(req, res) {
     reachedGate: records.length,
     verified: products.length,
     rejected,
-    cache: cache.report(cacheStats, { servedFromCache: found.servedFromCache })
+    cache: cache.report(cacheStats, { servedFromCache: found.servedFromCache }),
+    /* where the time went, so "the page is short" and "the source was
+       slow" are never the same question. Milliseconds and nothing else:
+       no key, no term, nothing out of a record. */
+    timing: {
+      budgetMs,
+      totalMs: Date.now() - startedAt,
+      deadlineExpired: Date.now() >= deadline
+    }
   });
 
   if (!products.length) {
