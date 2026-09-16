@@ -75,7 +75,7 @@ const DEMO_PRODUCTS = [
     brand: 'L.L.Bean',
     price: null,
     productUrl: 'https://www.llbean.com/llb/shop/129244',
-    imageUrl: null,
+    imageUrl: 'https://cdni.llbean.net/is/image/wim/521659_32573_41?hei=1095&wid=950&resMode=sharp2&defaultImage=llbprod/129244_0_44',
     category: 'trousers',
     style: ['Minimal', 'Classic'],
     occasion: ['Work', 'Everyday'],
