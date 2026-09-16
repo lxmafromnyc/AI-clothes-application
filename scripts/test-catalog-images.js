@@ -224,13 +224,24 @@ function imageHost() {
     assert.strictEqual(next.split('imageUrl:').length, source.split('imageUrl:').length, 'no field is added or lost');
   });
 
+  /* the neighbour is checked against what it held BEFORE the write, not
+     against null: rows get photos as they are verified, and a test that
+     hard-codes today's empty ones fails the day one is filled in */
   test('a photo is written into the row that owns it, and no other', () => {
+    const untouched = rows
+      .filter((r) => r.id !== 'zara-oxford-shirt')
+      .map((r) => [r.id, r.imageUrl]);
+
     const next = extractor.writeInto(source, 'zara-oxford-shirt', 'https://static.zara.net/photos/shirt.jpg');
     const rows2 = new vmLessRead(next).rows;
+
     const zara = rows2.find((r) => r.id === 'zara-oxford-shirt');
-    const uniqlo = rows2.find((r) => r.id === 'uniqlo-merino-crew');
     assert.strictEqual(zara.imageUrl, 'https://static.zara.net/photos/shirt.jpg');
-    assert.strictEqual(uniqlo.imageUrl, null, 'the row above it keeps its null');
+
+    for (const [id, before] of untouched) {
+      const after = rows2.find((r) => r.id === id).imageUrl;
+      assert.strictEqual(after, before, `${id} must keep the photo it had`);
+    }
   });
 
   test('every row still normalises after a write, so the page can render it', () => {
@@ -239,6 +250,23 @@ function imageHost() {
     assert.strictEqual(rows2.length, rows.length, 'no row is lost');
     const levis = rows2.find((r) => r.id === 'levis-xx-chino-taper');
     assert.strictEqual(levis.productUrl, rows.find((r) => r.id === 'levis-xx-chino-taper').productUrl);
+  });
+
+  /* the gates are worth nothing if a URL can reach the file around them,
+     so the shipped catalogue is held to them too: whatever rows carry
+     today, a photo on it has to be one the linked retailer could serve */
+  test('every photo in the shipped catalogue comes from its own listing', () => {
+    for (const row of rows.filter((r) => r.imageUrl)) {
+      assert.ok(row.productUrl, `${row.id} carries a photo but links to no listing`);
+      const verdict = extractor.soundness(row.imageUrl, row.productUrl);
+      assert.strictEqual(verdict, null, `${row.id}: ${verdict}`);
+    }
+  });
+
+  test('a row with no verified photo carries null, not a placeholder', () => {
+    for (const row of rows.filter((r) => !r.imageUrl)) {
+      assert.strictEqual(row.imageUrl, null, `${row.id} holds ${JSON.stringify(row.imageUrl)} instead of null`);
+    }
   });
 
   test('a URL carrying a quote is refused rather than breaking the file', () => {

@@ -1639,12 +1639,16 @@ after one the page does not touch the video again.
 - The demo video on the landing page is a recording of this site driving its own
   search against a stand-in product source. It is labelled as a demo on every
   frame and in the note under it; see **The demo video** above.
-- Products without an `imageUrl` — which is all of them today — render generated
-  artwork built from CSS gradients and inline SVG. Set `imageUrl` on a product
-  and it renders the photo; if that photo fails to load, the artwork returns.
-- `price` and `imageUrl` are `null` throughout the demo catalogue because no
-  retailer domain was reachable from the environment this was built in, so no
-  value could be verified. They are ordinary data fields.
+- Products without an `imageUrl` — every row but the UNIQLO one — render
+  generated artwork built from CSS gradients and inline SVG. Set `imageUrl` on a
+  product and it renders the photo; if that photo fails to load, the artwork
+  returns.
+- `price` is `null` throughout the demo catalogue, and `imageUrl` on every row
+  but one, because no retailer domain was reachable from the environment this
+  was built in, so no value could be verified there. They are ordinary data
+  fields. The UNIQLO row carries the photo its own listing publishes, read by
+  the extractor below from a connection that can reach the retailer; the Zara
+  and Levi's rows stay `null` because nothing was verified for them.
 - `node scripts/fetch-catalog-images.js` fills the `imageUrl` of every row that
   carries a `productUrl`, by reading the photo off the listing the row already
   links to. It reports by default and writes only with `--write`, and it writes
