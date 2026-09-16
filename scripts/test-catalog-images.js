@@ -9,24 +9,32 @@
 
    So this offers it the wrong things. A Google Shopping thumbnail, a
    stock library, an http URL, a tracking pixel, an image the host serves
-   plainly and refuses to our Referer — each is put in front of a gate
-   that must turn it down. Then the right thing is offered, and the file
-   it writes is checked for having changed nothing but the one field.
+   plainly and refuses to our Referer, and — the one that matters most
+   once a browser is involved — a perfectly good photo of a DIFFERENT
+   garment on the right retailer's own CDN. Each is put in front of a
+   gate that must turn it down. Then the right thing is offered, and the
+   file it writes is checked for having changed nothing but the one
+   field.
 
-   No retailer is contacted. The markup is a fixture and the image host
-   is a local server, so this runs anywhere, including behind a proxy
-   that refuses every host on the internet.
+   The browser path is exercised for real: a local server plays a
+   retailer that refuses plain HTTP and builds its gallery in JavaScript,
+   and Chromium is sent at it exactly as the extractor would. No retailer
+   is contacted, so this runs anywhere, including behind a proxy that
+   refuses every host on the internet.
 
    Usage: node scripts/test-catalog-images.js
+   Skips the browser section with a clear message if Playwright is absent.
    ========================================================= */
 
 'use strict';
 
 const assert = require('assert');
 const http = require('http');
+const vm = require('vm');
 const extractor = require('./fetch-catalog-images');
 
 let passed = 0;
+let skipped = 0;
 const failures = [];
 
 function test(name, fn) {
@@ -51,31 +59,34 @@ async function testAsync(name, fn) {
   }
 }
 
-const PAGE = 'https://www.uniqlo.com/us/en/products/E429066-000/00';
+const UNIQLO = 'https://www.uniqlo.com/us/en/products/E429066-000/00';
+const ZARA = 'https://www.zara.com/us/en/oxford-shirt-p06887613.html';
+const LEVIS = 'https://www.levi.com/US/en_US/chino-pants/levis-chino-pants-for-men/levis-xx-chino-standard-taper-fit-mens-pants/p/171960005';
+
+const urls = (list) => list.map((c) => c.url);
 
 /* ---------------------------------------------------------
    Fixtures, in the shapes retailers actually publish
    --------------------------------------------------------- */
 
 const withJsonLd = `<!doctype html><html><head>
-<meta property="og:image" content="https://image.uniqlo.com/og-card.jpg">
+<link rel="canonical" href="${UNIQLO}">
+<meta property="og:image" content="https://image.uniqlo.com/og-429066.jpg">
 <script type="application/ld+json">
 {"@context":"https://schema.org","@graph":[
   {"@type":"BreadcrumbList","itemListElement":[]},
-  {"@type":"Product","name":"Merino Crew","image":["https://image.uniqlo.com/goods/44/item/main.jpg"]}
+  {"@type":"Product","sku":"E429066-000","name":"Merino Crew","image":["https://image.uniqlo.com/goods/429066/item/main.jpg"]}
 ]}
 </script></head><body></body></html>`;
 
 const ogOnly = `<!doctype html><html><head>
-<meta content="https://static.zara.net/photos/shirt.jpg?ts=1&amp;w=1200" property="og:image">
+<meta content="https://static.zara.net/photos/6887613250_1_1_1.jpg?ts=1&amp;w=1200" property="og:image">
 </head><body></body></html>`;
 
 const preloadOnly = `<!doctype html><html><head>
-<link rel="preload" as="image" imagesrcset="https://lsco.scene7.com/s/small.jpg 400w, https://lsco.scene7.com/s/large.jpg 1600w">
+<link rel="preload" as="image" imagesrcset="https://lsco.scene7.com/is/image/levis/171960005-small.jpg 400w, https://lsco.scene7.com/is/image/levis/171960005-large.jpg 1600w">
 </head><body></body></html>`;
 
-/* what a page looks like when the only picture on it belongs to a
-   comparison service rather than to the shop */
 const aggregatorOnly = `<!doctype html><html><head>
 <meta property="og:image" content="https://encrypted-tbn0.gstatic.com/shopping?q=tbn:merino">
 </head><body></body></html>`;
@@ -112,25 +123,100 @@ function imageHost() {
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server)));
 }
 
+/* ---------------------------------------------------------
+   A local retailer that refuses plain HTTP and needs a browser
+
+   It answers 403 to anything without a browser's Accept header, and its
+   product markup does not exist until its script runs — which is exactly
+   the shape that defeats the plain path and needs Chromium.
+   --------------------------------------------------------- */
+
+const PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFElEQVR42mP8z8BQz0AEYBxVSF+FABJADveWkH6oAAAAAElFTkSuQmCC',
+  'base64'
+);
+
+function stubbornRetailer() {
+  let plainHits = 0;
+  const server = http.createServer((req, res) => {
+    const url = req.url.split('?')[0];
+
+    if (url.endsWith('.png')) {
+      res.writeHead(200, { 'content-type': 'image/png' });
+      return res.end(PNG);
+    }
+
+    /* The bot check. Node's own fetch sends sec-fetch-mode: cors, so the
+       discriminator has to be what only a real navigation sends: a
+       browser opening a page asks for a document. */
+    if (req.headers['sec-fetch-mode'] !== 'navigate' || req.headers['sec-fetch-dest'] !== 'document') {
+      plainHits += 1;
+      res.writeHead(403, { 'content-type': 'text/html' });
+      return res.end('<html><body>Access denied</body></html>');
+    }
+
+    res.writeHead(200, { 'content-type': 'text/html' });
+    res.end(`<!doctype html><html><head>
+      <link rel="canonical" href="http://127.0.0.1:${server.address().port}/p/171960005">
+      <title>Stubborn</title></head>
+      <body><div id="gallery"></div>
+      <script>
+        /* the gallery, and the product record, only exist after this runs */
+        const ld = document.createElement('script');
+        ld.type = 'application/ld+json';
+        ld.textContent = JSON.stringify({'@type':'Product',sku:'171960005',image:['/img/171960005-hero.png']});
+        document.head.appendChild(ld);
+
+        const meta = document.createElement('meta');
+        meta.setAttribute('property','og:image');
+        meta.setAttribute('content','/img/171960005-share.png');
+        document.head.appendChild(meta);
+
+        /* main and detail appear ONLY in the gallery, so the order the
+           gallery is read in is observable; hero is also in the JSON-LD
+           above and is deduped into that higher-priority slot, and the
+           swatch is too small to be offered at all */
+        const g = document.getElementById('gallery');
+        g.className = 'product-gallery';
+        for (const [name, size] of [['swatch', 40], ['detail', 300], ['hero', 600], ['main', 700]]) {
+          const img = document.createElement('img');
+          img.src = '/img/171960005-' + name + '.png';
+          img.alt = name;
+          img.style.width = size + 'px';
+          img.style.height = size + 'px';
+          g.appendChild(img);
+        }
+      </script></body></html>`);
+  });
+  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({ server, plain: () => plainHits })));
+}
+
 (async () => {
   console.log('\nCatalogue image extractor\n');
 
   /* ---------- what the page offers ---------- */
+  console.log('  — the served markup\n');
 
   test('a Product in @graph is preferred to the sharing card', () => {
-    const found = extractor.candidatesFrom(withJsonLd, PAGE);
-    assert.strictEqual(found[0], 'https://image.uniqlo.com/goods/44/item/main.jpg');
-    assert.ok(found.includes('https://image.uniqlo.com/og-card.jpg'), 'the og:image stays as a fallback');
+    const found = extractor.candidatesFrom(withJsonLd, UNIQLO);
+    assert.strictEqual(found[0].url, 'https://image.uniqlo.com/goods/429066/item/main.jpg');
+    assert.ok(urls(found).includes('https://image.uniqlo.com/og-429066.jpg'), 'the og:image stays as a fallback');
+  });
+
+  test('the JSON-LD candidate keeps the record that supplied it', () => {
+    const [first] = extractor.candidatesFrom(withJsonLd, UNIQLO);
+    assert.strictEqual(first.from, 'json-ld');
+    assert.strictEqual(first.node.sku, 'E429066-000', 'the sku must travel with the image');
   });
 
   test('an og:image is read whichever order its attributes are in', () => {
-    const found = extractor.candidatesFrom(ogOnly, PAGE);
-    assert.strictEqual(found[0], 'https://static.zara.net/photos/shirt.jpg?ts=1&w=1200');
+    const found = extractor.candidatesFrom(ogOnly, ZARA);
+    assert.strictEqual(found[0].url, 'https://static.zara.net/photos/6887613250_1_1_1.jpg?ts=1&w=1200');
   });
 
   test('a preloaded srcset gives up its widest image, not its smallest', () => {
-    const found = extractor.candidatesFrom(preloadOnly, PAGE);
-    assert.strictEqual(found[0], 'https://lsco.scene7.com/s/large.jpg');
+    const found = extractor.candidatesFrom(preloadOnly, LEVIS);
+    assert.strictEqual(found[0].url, 'https://lsco.scene7.com/is/image/levis/171960005-large.jpg');
   });
 
   test('widths order the srcset even when the markup does not', () => {
@@ -139,36 +225,114 @@ function imageHost() {
   });
 
   test('a page with no product image in it offers nothing to write', () => {
-    assert.deepStrictEqual(extractor.candidatesFrom('<html><body><img src="/logo.svg"></body></html>', PAGE), []);
+    assert.deepStrictEqual(extractor.candidatesFrom('<html><body><img src="/logo.svg"></body></html>', UNIQLO), []);
+  });
+
+  test('the canonical link is carried alongside each candidate', () => {
+    const [first] = extractor.candidatesFrom(withJsonLd, UNIQLO);
+    assert.strictEqual(first.canonical, UNIQLO);
   });
 
   /* ---------- which hosts are allowed to supply it ---------- */
+  console.log('\n  — the host gate\n');
 
   test('a Google Shopping thumbnail is refused by name', () => {
-    const [url] = extractor.candidatesFrom(aggregatorOnly, PAGE);
-    assert.match(extractor.soundness(url, PAGE), /aggregator or stock host/);
+    const [candidate] = extractor.candidatesFrom(aggregatorOnly, UNIQLO);
+    assert.match(extractor.soundness(candidate, UNIQLO), /aggregator or stock host/);
   });
 
   test('stock libraries are refused', () => {
     for (const host of ['images.unsplash.com', 'www.shutterstock.com', 'media.gettyimages.com', 'via.placeholder.com']) {
-      const verdict = extractor.soundness(`https://${host}/x.jpg`, PAGE);
+      const verdict = extractor.soundness(`https://${host}/x.jpg`, UNIQLO);
       assert.match(String(verdict), /aggregator or stock host/, `${host} must be refused`);
     }
   });
 
   test('an http image is refused before it is ever requested', () => {
-    assert.match(extractor.soundness('http://image.uniqlo.com/main.jpg', PAGE), /cannot load on an https page/);
+    assert.match(extractor.soundness('http://image.uniqlo.com/main.jpg', UNIQLO), /cannot load on an https page/);
   });
 
   test("the retailer's own image host is allowed", () => {
-    assert.strictEqual(extractor.soundness('https://image.uniqlo.com/goods/44/item/main.jpg', PAGE), null);
+    assert.strictEqual(extractor.soundness('https://image.uniqlo.com/goods/429066/item/main.jpg', UNIQLO), null);
   });
 
   test('a CDN the retailer publishes through is allowed', () => {
-    assert.strictEqual(extractor.soundness('https://lsco.scene7.com/is/image/levis/171960005-front.jpg', PAGE), null);
+    assert.strictEqual(extractor.soundness('https://lsco.scene7.com/is/image/levis/171960005.jpg', LEVIS), null);
+  });
+
+  /* ---------- is it THIS product? ----------
+
+     The gate that matters once a browser is rendering whole pages full
+     of related-product strips, recommendation carousels and "complete
+     the look" tiles, every one of them a real photo on the real CDN. */
+  console.log('\n  — the product-identity gate\n');
+
+  test('the listing URL gives up its product code', () => {
+    assert.ok(extractor.identifiersFrom(UNIQLO).includes('429066'), 'UNIQLO: 429066');
+    assert.ok(extractor.identifiersFrom(ZARA).includes('6887613'), 'ZARA: 6887613 (zeros stripped)');
+    assert.ok(extractor.identifiersFrom(LEVIS).includes('171960005'), "LEVI'S: 171960005");
+  });
+
+  test('an image whose URL carries the listing code is this product', () => {
+    const verdict = extractor.identityEvidence(
+      { url: 'https://image.uniqlo.com/UQ/ST3/.../429066/item/goods_03_429066_3x4.jpg', from: 'og:image' }, UNIQLO);
+    assert.strictEqual(verdict.ok, true);
+    assert.match(verdict.how, /429066/);
+  });
+
+  test('a code split across CDN path segments still matches', () => {
+    const verdict = extractor.identityEvidence(
+      { url: 'https://static.zara.net/photos///2025/V/0/1/p/6887/613/250/2/w/750/6887613250_1_1_1.jpg', from: 'og:image' }, ZARA);
+    assert.strictEqual(verdict.ok, true);
+  });
+
+  test('a JSON-LD record naming the sku vouches for its own image', () => {
+    const verdict = extractor.identityEvidence(
+      { url: 'https://lsco.scene7.com/is/image/levis/hero-shot-front.jpg', from: 'json-ld', node: { sku: '171960005' } }, LEVIS);
+    assert.strictEqual(verdict.ok, true);
+    assert.match(verdict.how, /sku 171960005/);
+  });
+
+  test('the canonical page vouches for its own og:image', () => {
+    const verdict = extractor.identityEvidence(
+      { url: 'https://static.zara.net/photos/opaque-hash-with-no-code.jpg', from: 'og:image', canonical: ZARA }, ZARA);
+    assert.strictEqual(verdict.ok, true);
+    assert.match(verdict.how, /canonical/);
+  });
+
+  test('a canonical pointing at a DIFFERENT product does not vouch', () => {
+    const verdict = extractor.identityEvidence(
+      { url: 'https://static.zara.net/photos/opaque.jpg', from: 'og:image', canonical: 'https://www.zara.com/us/en/linen-shirt-p09999999.html' }, ZARA);
+    assert.strictEqual(verdict.ok, false);
+  });
+
+  /* the whole point: a real photo, real CDN, wrong garment */
+  test("a similar product's photo on the right CDN is refused", () => {
+    const verdict = extractor.identityEvidence(
+      { url: 'https://static.zara.net/photos///2025/V/0/1/p/1234/567/250/2/w/750/1234567250_1_1_1.jpg', from: 'gallery image' }, ZARA);
+    assert.strictEqual(verdict.ok, false, 'a neighbouring product got through the identity gate');
+    assert.match(verdict.why, /nothing ties it to this product/);
+  });
+
+  test('a recommendation-strip image with no code is refused', () => {
+    const verdict = extractor.identityEvidence(
+      { url: 'https://image.uniqlo.com/UQ/ST3/recommendations/you-may-also-like.jpg', from: 'rendered image' }, UNIQLO);
+    assert.strictEqual(verdict.ok, false);
+  });
+
+  test('a gallery image cannot lean on the canonical the way og:image can', () => {
+    const verdict = extractor.identityEvidence(
+      { url: 'https://static.zara.net/photos/opaque.jpg', from: 'gallery image', canonical: ZARA }, ZARA);
+    assert.strictEqual(verdict.ok, false, 'only the page-level declarations may vouch');
+  });
+
+  test('the same product page is recognised through www and a trailing slash', () => {
+    assert.strictEqual(extractor.samePage('https://zara.com/us/en/oxford-shirt-p06887613.html/', ZARA), true);
+    assert.strictEqual(extractor.samePage('https://www.zara.com/us/en/linen-p1.html', ZARA), false);
   });
 
   /* ---------- whether the browser could actually load it ---------- */
+  console.log('\n  — the loadable gate\n');
 
   const server = await imageHost();
   const origin = `http://127.0.0.1:${server.address().port}`;
@@ -205,7 +369,131 @@ function imageHost() {
 
   server.close();
 
+  /* ---------- the order the gates run in ---------- */
+  console.log('\n  — the gates together\n');
+
+  await testAsync('an aggregator is refused before it is ever requested', async () => {
+    const row = { id: 'x', productUrl: UNIQLO };
+    let asked = false;
+    const fetcher = async () => { asked = true; return { ok: false, why: 'should not have been asked' }; };
+    const result = await extractor.firstVerifiable(
+      [{ url: 'https://encrypted-tbn0.gstatic.com/shopping?q=tbn:429066', from: 'og:image' }], row, fetcher);
+    assert.ok(!result.url, 'it must not verify');
+    assert.strictEqual(asked, false, 'the aggregator was fetched anyway');
+  });
+
+  await testAsync('a wrong-product image is refused before it is ever requested', async () => {
+    const row = { id: 'x', productUrl: ZARA };
+    let asked = false;
+    const fetcher = async () => { asked = true; return { ok: false, why: 'should not have been asked' }; };
+    const result = await extractor.firstVerifiable(
+      [{ url: 'https://static.zara.net/photos/1234567250_1_1_1.jpg', from: 'gallery image' }], row, fetcher);
+    assert.ok(!result.url);
+    assert.strictEqual(asked, false, 'a wrong-product image was fetched anyway');
+  });
+
+  await testAsync('the first candidate that clears every gate is the one taken', async () => {
+    const row = { id: 'x', productUrl: UNIQLO };
+    const fetcher = async (url) => ({
+      ok: true,
+      response: {
+        status: 200,
+        headers: { get: () => 'image/jpeg' },
+        arrayBuffer: async () => ({ byteLength: 50000 }),
+        body: null
+      }
+    });
+    const result = await extractor.firstVerifiable([
+      { url: 'https://encrypted-tbn0.gstatic.com/shopping?q=1', from: 'og:image' },
+      { url: 'https://image.uniqlo.com/no-code-here.jpg', from: 'gallery image' },
+      { url: 'https://image.uniqlo.com/goods/429066/main.jpg', from: 'json-ld' }
+    ], row, fetcher);
+    assert.strictEqual(result.url, 'https://image.uniqlo.com/goods/429066/main.jpg');
+  });
+
+  /* ---------- the browser path ---------- */
+  console.log('\n  — the browser path\n');
+
+  const retailer = await stubbornRetailer();
+  const retailerOrigin = `http://127.0.0.1:${retailer.server.address().port}`;
+  const productUrl = `${retailerOrigin}/p/171960005`;
+
+  const probe = await extractor.renderPage(productUrl);
+
+  if (probe.failed && probe.noBrowser) {
+    console.log(`  skip  the browser path — ${probe.failed}`);
+    skipped += 1;
+  } else {
+    await testAsync('a page that refuses plain HTTP is opened in a real browser', async () => {
+      assert.ok(!probe.failed, `the browser could not open it: ${probe.failed}`);
+      assert.ok(probe.seen, 'nothing came back from the page');
+    });
+
+    await testAsync('metadata the page wrote with JavaScript is read', async () => {
+      assert.ok(probe.seen.metas['og:image'], 'the script-added og:image was missed');
+      assert.ok((probe.seen.jsonld || []).length, 'the script-added JSON-LD was missed');
+      assert.match(String(probe.seen.canonical), /171960005/, 'the canonical was missed');
+    });
+
+    await testAsync('the gallery it built is read, with each image\'s drawn size', async () => {
+      const hero = probe.seen.imgs.find((i) => i.alt === 'hero');
+      const swatch = probe.seen.imgs.find((i) => i.alt === 'swatch');
+      assert.ok(hero && swatch, 'the gallery images were missed');
+      assert.ok(hero.width > swatch.width, 'the drawn sizes did not come back');
+      assert.strictEqual(hero.inGallery, true, 'the gallery container was not recognised');
+    });
+
+    await testAsync('the images the page actually loaded are recorded', async () => {
+      assert.ok((probe.loaded || []).some((u) => u.includes('171960005-hero')), 'the loaded hero was missed');
+    });
+
+    test('the rendered candidates put the record and the card first', () => {
+      const found = extractor.candidatesFromRendered(probe.seen, probe.loaded, productUrl);
+      assert.match(found[0].from, /json-ld/, `first candidate came from ${found[0].from}`);
+      assert.ok(urls(found).some((u) => u.includes('171960005-hero')), 'the hero never became a candidate');
+    });
+
+    test('the drawn gallery is ordered biggest first', () => {
+      const found = extractor.candidatesFromRendered(probe.seen, probe.loaded, productUrl);
+      const gallery = found.filter((c) => /gallery image/.test(c.from));
+      const mainAt = gallery.findIndex((c) => c.url.includes('-main'));
+      const detailAt = gallery.findIndex((c) => c.url.includes('-detail'));
+      assert.ok(mainAt !== -1 && detailAt !== -1, `gallery candidates were ${urls(gallery).join(', ')}`);
+      assert.ok(mainAt < detailAt, 'the 300px detail shot was offered before the 700px main one');
+    });
+
+    test('an image already named by the record is not offered twice', () => {
+      const found = extractor.candidatesFromRendered(probe.seen, probe.loaded, productUrl);
+      const hero = found.filter((c) => c.url.includes('-hero'));
+      assert.strictEqual(hero.length, 1, 'the hero appeared as both a record image and a gallery image');
+      assert.match(hero[0].from, /json-ld/, 'the higher-priority source did not win the dedupe');
+    });
+
+    test('images too small to be a hero are not offered at all', () => {
+      const found = extractor.candidatesFromRendered(probe.seen, probe.loaded, productUrl);
+      const fromGallery = found.filter((c) => /gallery image|rendered image/.test(c.from));
+      assert.ok(!fromGallery.some((c) => c.url.includes('-swatch')), 'a 40px swatch was offered as a product photo');
+    });
+
+    await testAsync('the whole row escalates from plain HTTP to the browser by itself', async () => {
+      const row = { id: 'stubborn', brand: 'Stubborn', name: 'Test', productUrl };
+      const result = await extractor.resolveRow(row);
+      const notes = (result.notes || []).join(' | ');
+      assert.match(notes, /plain HTTP: the page answered 403/, `notes were: ${notes}`);
+      assert.match(notes, /browser: \d+ candidate/, `notes were: ${notes}`);
+      assert.ok(retailer.plain() > 0, 'plain HTTP was never tried first');
+      /* every candidate is http on localhost, so the host gate refuses
+         them all — which is the correct answer, and proves the gates
+         still run on whatever the browser found */
+      assert.strictEqual(result.verdict, 'NO IMAGE FOUND');
+      assert.strictEqual(result.url, null);
+    });
+  }
+
+  retailer.server.close();
+
   /* ---------- what the file looks like afterwards ---------- */
+  console.log('\n  — the catalogue itself\n');
 
   const { source, rows } = extractor.readCatalog();
 
@@ -217,9 +505,9 @@ function imageHost() {
   });
 
   test('writing a photo fills one field and leaves the rest of the row alone', () => {
-    const next = extractor.writeInto(source, 'uniqlo-merino-crew', 'https://image.uniqlo.com/goods/44/item/main.jpg');
-    assert.ok(next.includes("imageUrl: 'https://image.uniqlo.com/goods/44/item/main.jpg'"), 'the URL is written');
-    assert.ok(next.includes("productUrl: 'https://www.uniqlo.com/us/en/products/E429066-000/00'"), 'the listing is untouched');
+    const next = extractor.writeInto(source, 'uniqlo-merino-crew', 'https://image.uniqlo.com/goods/429066/item/main.jpg');
+    assert.ok(next.includes("imageUrl: 'https://image.uniqlo.com/goods/429066/item/main.jpg'"), 'the URL is written');
+    assert.ok(next.includes(`productUrl: '${UNIQLO}'`), 'the listing is untouched');
     assert.ok(next.includes("id: 'uniqlo-merino-crew'"), 'the identity is untouched');
     assert.strictEqual(next.split('imageUrl:').length, source.split('imageUrl:').length, 'no field is added or lost');
   });
@@ -232,11 +520,11 @@ function imageHost() {
       .filter((r) => r.id !== 'zara-oxford-shirt')
       .map((r) => [r.id, r.imageUrl]);
 
-    const next = extractor.writeInto(source, 'zara-oxford-shirt', 'https://static.zara.net/photos/shirt.jpg');
-    const rows2 = new vmLessRead(next).rows;
+    const next = extractor.writeInto(source, 'zara-oxford-shirt', 'https://static.zara.net/photos/6887613250_1_1_1.jpg');
+    const rows2 = evaluate(next);
 
     const zara = rows2.find((r) => r.id === 'zara-oxford-shirt');
-    assert.strictEqual(zara.imageUrl, 'https://static.zara.net/photos/shirt.jpg');
+    assert.strictEqual(zara.imageUrl, 'https://static.zara.net/photos/6887613250_1_1_1.jpg');
 
     for (const [id, before] of untouched) {
       const after = rows2.find((r) => r.id === id).imageUrl;
@@ -246,7 +534,7 @@ function imageHost() {
 
   test('every row still normalises after a write, so the page can render it', () => {
     const next = extractor.writeInto(source, 'levis-xx-chino-taper', 'https://lsco.scene7.com/is/image/levis/171960005-front.jpg');
-    const rows2 = new vmLessRead(next).rows;
+    const rows2 = evaluate(next);
     assert.strictEqual(rows2.length, rows.length, 'no row is lost');
     const levis = rows2.find((r) => r.id === 'levis-xx-chino-taper');
     assert.strictEqual(levis.productUrl, rows.find((r) => r.id === 'levis-xx-chino-taper').productUrl);
@@ -254,12 +542,15 @@ function imageHost() {
 
   /* the gates are worth nothing if a URL can reach the file around them,
      so the shipped catalogue is held to them too: whatever rows carry
-     today, a photo on it has to be one the linked retailer could serve */
+     today, a photo on it has to be one the linked retailer could serve
+     for that exact product */
   test('every photo in the shipped catalogue comes from its own listing', () => {
     for (const row of rows.filter((r) => r.imageUrl)) {
       assert.ok(row.productUrl, `${row.id} carries a photo but links to no listing`);
-      const verdict = extractor.soundness(row.imageUrl, row.productUrl);
-      assert.strictEqual(verdict, null, `${row.id}: ${verdict}`);
+      const host = extractor.soundness(row.imageUrl, row.productUrl);
+      assert.strictEqual(host, null, `${row.id}: ${host}`);
+      const identity = extractor.identityEvidence({ url: row.imageUrl, from: 'catalogue' }, row.productUrl);
+      assert.strictEqual(identity.ok, true, `${row.id}: ${identity.why}`);
     }
   });
 
@@ -276,17 +567,16 @@ function imageHost() {
     );
   });
 
-  console.log(`\n${passed} passed, ${failures.length} failed\n`);
+  console.log(`\n${passed} passed, ${failures.length} failed${skipped ? `, ${skipped} skipped` : ''}\n`);
   process.exit(failures.length ? 1 : 0);
 })();
 
 /* evaluates an edited catalogue the way the extractor reads the real
    one, so a write is judged by what the rows become, not by string
    matching on the file */
-function vmLessRead(source) {
-  const vm = require('vm');
+function evaluate(source) {
   const sandbox = {};
   vm.createContext(sandbox);
   new vm.Script(source + ';this.__rows = DEMO_PRODUCTS;').runInContext(sandbox, { timeout: 5000 });
-  this.rows = sandbox.__rows;
+  return sandbox.__rows;
 }
