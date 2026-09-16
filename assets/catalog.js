@@ -10,11 +10,18 @@
      Products.load('/api/products.json')   a URL returning JSON
      Products.load(() => queryDb())        a function or promise
 
-   price and imageUrl are null on every row because no retailer domain or
-   image host is reachable from the build environment, so neither could be
-   read from the source. Both are ordinary fields: fill them in and the
-   interface renders them, with no local image files involved. A product
-   whose imageUrl is missing or fails to load keeps the drawn artwork.
+   price is null on every row, and imageUrl on every row but one, because
+   no retailer domain or image host is reachable from the environment this
+   is built in, so no value could be read from the source there. Both are
+   ordinary fields: fill them in and the interface renders them, with no
+   local image files involved. A product whose imageUrl is missing or
+   fails to load keeps the drawn artwork.
+
+   The UNIQLO row's photo is the exception. It was read off that listing
+   by scripts/fetch-catalog-images.js, run from a connection that can
+   reach the retailer, and it is the URL uniqlo.com's own page publishes.
+   The Zara and Levi's rows stay null: nothing was verified for them, and
+   a guessed URL is worse than the artwork it would replace.
 
    The three rows carrying a productUrl are real listings. The rest are
    sample rows that exist to give the demo a catalogue to search.
@@ -27,7 +34,7 @@ const DEMO_PRODUCTS = [
     brand: 'UNIQLO',
     price: null,
     productUrl: 'https://www.uniqlo.com/us/en/products/E429066-000/00',
-    imageUrl: null,
+    imageUrl: 'https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/429066/item/goods_03_429066_3x4.jpg',
     category: 'knit',
     style: ['Minimal', 'Classic'],
     occasion: ['Work', 'Everyday'],
