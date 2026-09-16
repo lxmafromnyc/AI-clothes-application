@@ -1672,6 +1672,13 @@ after one the page does not touch the video again.
   configured or submitted) and walks the page down so a gallery that loads on
   scroll actually loads before it is read.
 
+  When a retailer cannot be read at all, the row's product has to change
+  rather than its photo. `--candidate <productUrl> --as <row-id>` tries a
+  replacement listing through the same four gates and prints the row it would
+  become — name, brand, `productUrl` and `imageUrl`, every field taken off that
+  page rather than typed in — and `--write` then swaps all four together, so a
+  row can never point at one product and picture another.
+
   It reports `VERIFIED` / `NO IMAGE FOUND` / `UNREACHABLE` per row and writes
   only with `--write`. A row that fails lists every candidate it found with the
   gate that stopped it, so a failure says what to fix rather than just that

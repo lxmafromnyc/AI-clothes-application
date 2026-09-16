@@ -318,6 +318,25 @@ function walledRetailer() {
     assert.ok(extractor.identifiersFrom(LEVIS).includes('171960005'), "LEVI'S: 171960005");
   });
 
+  /* a run of four digits is not the only shape a product code comes in:
+     J.Crew names products AU763, and a rule that only saw digits would
+     refuse every photo on the site */
+  test('a letters-and-digits product code is recognised', () => {
+    const ids = extractor.identifiersFrom('https://www.jcrew.com/p/mens/categories/clothing/shirts/broken-in-oxford/broken-in-organic-cotton-oxford-shirt/AU763');
+    assert.ok(ids.includes('au763'), `AU763 was not read as a code, got ${ids.join(', ')}`);
+  });
+
+  test('a short code matches at a boundary, not inside a hash', () => {
+    const page = 'https://www.jcrew.com/p/mens/shirt/AU763';
+    const real = extractor.identityEvidence(
+      { url: 'https://www.jcrew.com/s7-img-facade/AU763_WT0002?fmt=jpeg', from: 'og:image' }, page);
+    assert.strictEqual(real.ok, true, `the real one was refused: ${real.why}`);
+
+    const collision = extractor.identityEvidence(
+      { url: 'https://www.jcrew.com/img/9f3beau763ac1d2e4b8f.jpg', from: 'gallery image' }, page);
+    assert.strictEqual(collision.ok, false, 'a hash containing au763 matched as the product code');
+  });
+
   test('an image whose URL carries the listing code is this product', () => {
     const verdict = extractor.identityEvidence(
       { url: 'https://image.uniqlo.com/UQ/ST3/.../429066/item/goods_03_429066_3x4.jpg', from: 'og:image' }, UNIQLO);
@@ -652,6 +671,62 @@ function walledRetailer() {
     for (const row of rows.filter((r) => !r.imageUrl)) {
       assert.strictEqual(row.imageUrl, null, `${row.id} holds ${JSON.stringify(row.imageUrl)} instead of null`);
     }
+  });
+
+  /* ---------- swapping a row's product ---------- */
+
+  test('a replacement moves listing, photo, name and brand together', () => {
+    const next = extractor.replaceRow(source, 'zara-oxford-shirt', {
+      productUrl: 'https://www.example-shop.com/p/AU763',
+      imageUrl: 'https://img.example-shop.com/AU763_WHITE.jpg',
+      name: 'Broken-in Organic Cotton Oxford Shirt',
+      brand: 'J.Crew'
+    });
+    const row = evaluate(next).find((r) => r.id === 'zara-oxford-shirt');
+    assert.strictEqual(row.productUrl, 'https://www.example-shop.com/p/AU763');
+    assert.strictEqual(row.imageUrl, 'https://img.example-shop.com/AU763_WHITE.jpg');
+    assert.strictEqual(row.name, 'Broken-in Organic Cotton Oxford Shirt');
+    assert.strictEqual(row.brand, 'J.Crew');
+  });
+
+  test('a replacement leaves every other row exactly as it was', () => {
+    const before = rows.filter((r) => r.id !== 'zara-oxford-shirt')
+      .map((r) => [r.id, r.productUrl, r.imageUrl, r.name, r.brand]);
+    const next = extractor.replaceRow(source, 'zara-oxford-shirt', {
+      productUrl: 'https://www.example-shop.com/p/AU763',
+      imageUrl: 'https://img.example-shop.com/AU763_WHITE.jpg',
+      name: 'Oxford Shirt', brand: 'Example'
+    });
+    const after = evaluate(next);
+    for (const [id, productUrl, imageUrl, name, brand] of before) {
+      const row = after.find((r) => r.id === id);
+      assert.deepStrictEqual(
+        [row.productUrl, row.imageUrl, row.name, row.brand],
+        [productUrl, imageUrl, name, brand],
+        `${id} was disturbed by a replacement of another row`
+      );
+    }
+  });
+
+  test('a name carrying an apostrophe is quoted, not broken', () => {
+    const next = extractor.replaceRow(source, 'zara-oxford-shirt', {
+      productUrl: 'https://www.example-shop.com/p/1',
+      imageUrl: 'https://img.example-shop.com/1.jpg',
+      name: "Men's Oxford Shirt", brand: 'Example'
+    });
+    const row = evaluate(next).find((r) => r.id === 'zara-oxford-shirt');
+    assert.strictEqual(row.name, "Men's Oxford Shirt");
+  });
+
+  test('the swapped row still passes the identity gate against its new listing', () => {
+    const next = extractor.replaceRow(source, 'zara-oxford-shirt', {
+      productUrl: 'https://www.example-shop.com/p/AU763',
+      imageUrl: 'https://img.example-shop.com/AU763_WHITE.jpg',
+      name: 'Oxford', brand: 'Example'
+    });
+    const row = evaluate(next).find((r) => r.id === 'zara-oxford-shirt');
+    const identity = extractor.identityEvidence({ url: row.imageUrl, from: 'catalogue' }, row.productUrl);
+    assert.strictEqual(identity.ok, true, identity.why);
   });
 
   test('a URL carrying a quote is refused rather than breaking the file', () => {

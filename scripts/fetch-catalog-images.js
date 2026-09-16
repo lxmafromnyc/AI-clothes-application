@@ -276,6 +276,9 @@ function identifiersFrom(productUrl) {
   try { url = new URL(productUrl); } catch (err) { return []; }
   const text = decodeURIComponent(url.pathname) + ' ' + decodeURIComponent(url.search);
   const ids = new Set();
+
+  /* a long run of digits, with and without its leading zeros: Levi's
+     171960005, Zara's 06887613, UNIQLO's 429066 */
   for (const token of text.match(/[A-Za-z]{0,3}\d{4,}[A-Za-z0-9]*/g) || []) {
     ids.add(token.toLowerCase());
     const digits = token.replace(/\D/g, '');
@@ -285,6 +288,15 @@ function identifiersFrom(productUrl) {
       if (trimmed.length >= 4) ids.add(trimmed);
     }
   }
+
+  /* a letters-and-digits style code, which a run of four digits misses
+     entirely: J.Crew names products AU763, BD640, MP919. Four characters
+     is the floor, and a code this short is matched at a boundary rather
+     than anywhere inside a hash, so it cannot collide its way in. */
+  for (const token of text.match(/\b[A-Za-z]{1,4}\d{2,}[A-Za-z]?\b/g) || []) {
+    if (token.length >= 4) ids.add(token.toLowerCase());
+  }
+
   return [...ids];
 }
 
@@ -315,10 +327,17 @@ function identityEvidence(candidate, productUrl) {
   const ids = identifiersFrom(productUrl);
   if (!ids.length) return { ok: false, why: 'the listing URL carries no product code to match against' };
 
-  /* the code, as it appears anywhere in the image URL */
+  /* The code, as it appears in the image URL. A long code may sit
+     anywhere; a short one such as J.Crew's AU763 has to sit at a
+     boundary, so it cannot match its way in from the middle of a hash. */
   const image = candidate.url.toLowerCase();
   for (const id of ids) {
-    if (image.includes(id)) return { ok: true, how: `its URL carries the listing's code ${id}` };
+    if (id.length >= 6) {
+      if (image.includes(id)) return { ok: true, how: `its URL carries the listing's code ${id}` };
+      continue;
+    }
+    const bounded = new RegExp(`(^|[^a-z0-9])${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^a-z0-9]|$)`);
+    if (bounded.test(image)) return { ok: true, how: `its URL carries the listing's code ${id}` };
   }
 
   /* the code, with the separators a CDN path puts through it — Zara
@@ -676,6 +695,43 @@ function candidatesFromRendered(seen, loaded, pageUrl) {
   return dedupe(raw, pageUrl, seen.canonical);
 }
 
+/* ---------- what the page says the product IS ----------
+
+   Replacing a row means replacing its identity, not just its photo, and
+   the name and brand have to come from the same page the image did —
+   typed in by hand they are one more thing nobody checked. */
+function factsFrom(nodes, metas) {
+  const facts = { name: null, brand: null };
+  for (const node of nodes) {
+    if (!/product/i.test(String(node['@type'] || ''))) continue;
+    if (!facts.name && typeof node.name === 'string') facts.name = node.name.trim();
+    if (!facts.brand) {
+      const brand = node.brand;
+      if (typeof brand === 'string') facts.brand = brand.trim();
+      else if (brand && typeof brand === 'object' && typeof brand.name === 'string') facts.brand = brand.name.trim();
+    }
+  }
+  const meta = metas || {};
+  if (!facts.name && meta['og:title']) facts.name = String(meta['og:title']).trim();
+  if (!facts.brand && meta['og:site_name']) facts.brand = String(meta['og:site_name']).trim();
+  return facts;
+}
+
+function factsFromHtml(html) {
+  const metas = {};
+  for (const key of ['og:title', 'og:site_name']) {
+    const value = metaContent(html, key);
+    if (value) metas[key] = decode(value);
+  }
+  return factsFrom(jsonLdNodes(html), metas);
+}
+
+function factsFromRendered(seen) {
+  const nodes = [];
+  for (const block of seen.jsonld || []) nodes.push(...parseLdBlock(block));
+  return factsFrom(nodes, seen.metas || {});
+}
+
 /* ---------- one row ---------- */
 
 /* Walks candidates in order and returns the first that clears every
@@ -706,17 +762,19 @@ async function firstVerifiable(candidates, row, fetcher) {
 
 async function resolveRow(row) {
   const notes = [];
+  let facts = { name: null, brand: null };
 
   /* ---- plain HTTP ---- */
   const page = await fetchPage(row.productUrl);
   let served = null;
 
   if (page.html) {
+    facts = factsFromHtml(page.html);
     const candidates = candidatesFrom(page.html, row.productUrl);
     notes.push(`plain HTTP: ${candidates.length} candidate${candidates.length === 1 ? '' : 's'}`);
     if (candidates.length) {
       served = await firstVerifiable(candidates, row);
-      if (served.url) return { id: row.id, verdict: 'VERIFIED', why: served.why, url: served.url, from: served.from, notes };
+      if (served.url) return { id: row.id, verdict: 'VERIFIED', why: served.why, url: served.url, from: served.from, facts, notes };
     }
   } else if (page.blocked) {
     /* the sandbox, not the retailer: a browser here would be refused the
@@ -754,6 +812,7 @@ async function resolveRow(row) {
     };
   }
 
+  facts = factsFromRendered(rendered.seen) ;
   const candidates = candidatesFromRendered(rendered.seen, rendered.loaded, row.productUrl);
   notes.push(`browser: ${candidates.length} candidate${candidates.length === 1 ? '' : 's'}`);
   if (!candidates.length) {
@@ -761,7 +820,7 @@ async function resolveRow(row) {
   }
 
   const found = await firstVerifiable(candidates, row, rendered.verify);
-  if (found.url) return { id: row.id, verdict: 'VERIFIED', why: found.why, url: found.url, from: found.from, notes };
+  if (found.url) return { id: row.id, verdict: 'VERIFIED', why: found.why, url: found.url, from: found.from, facts, notes };
 
   const all = [...(served && served.refusals ? served.refusals : []), ...found.refusals];
   return {
@@ -770,6 +829,7 @@ async function resolveRow(row) {
     why: `${all.length} candidate${all.length === 1 ? '' : 's'} found, none cleared every gate`,
     url: null,
     refusals: all,
+    facts,
     notes
   };
 }
@@ -795,6 +855,72 @@ function writeInto(source, id, url) {
   return source.slice(0, at) + m[1] + `'${url}'` + source.slice(at + m[0].length);
 }
 
+/* ---------- trying a replacement product ----------
+
+   When a retailer will not be read at all, the row's product has to
+   change rather than its photo. That is a bigger edit — productUrl, name
+   and brand move together with imageUrl — so it gets its own mode: point
+   it at a candidate listing and it reports what the catalogue WOULD say,
+   every field taken off the page rather than typed in, and writes
+   nothing until it is told to.
+
+   The gates are the same ones. A replacement that cannot be verified is
+   not a replacement; it is a different row that also has no photo. */
+async function inspectCandidate(productUrl, forId) {
+  const row = { id: forId || 'candidate', brand: '—', name: productUrl, productUrl };
+  const result = await resolveRow(row);
+  const facts = result.facts || {};
+
+  console.log(`\n  ${result.verdict.padEnd(15)} ${productUrl}`);
+  for (const note of result.notes || []) console.log(`  ${''.padEnd(15)} · ${note}`);
+
+  if (result.verdict !== 'VERIFIED') {
+    console.log(`  ${''.padEnd(15)} ${result.why}`);
+    for (const refusal of (result.refusals || []).slice(0, 12)) {
+      console.log(`  ${''.padEnd(15)}   [${refusal.gate}] ${short(refusal.url)}`);
+      console.log(`  ${''.padEnd(15)}     from ${refusal.from} — ${refusal.why}`);
+    }
+    console.log('\n  Not usable as a replacement.\n');
+    return null;
+  }
+
+  console.log(`  ${''.padEnd(15)} ${result.why}${result.from ? ` [${result.from}]` : ''}`);
+  console.log('\n  The row this would become:\n');
+  console.log(`    name:       ${facts.name || '(the page named none — set it by hand)'}`);
+  console.log(`    brand:      ${facts.brand || '(the page named none — set it by hand)'}`);
+  console.log(`    productUrl: ${productUrl}`);
+  console.log(`    imageUrl:   ${result.url}`);
+  console.log(`\n  Every field above came off that page. Nothing was typed in.\n`);
+  return { productUrl, imageUrl: result.url, name: facts.name, brand: facts.brand };
+}
+
+/* Swaps a row's product for a verified candidate: the listing, the
+   photo, the name and the brand move together, because half a swap is a
+   row that points at one product and pictures another. */
+function replaceRow(source, id, next) {
+  let out = source;
+  const set = (field, value) => {
+    if (value == null) return;
+    const idAt = out.indexOf(`id: '${id}'`);
+    if (idAt === -1) throw new Error(`could not find the row for ${id}`);
+    const re = new RegExp(`(\\n\\s*${field}:\\s*)(null|'(?:[^'\\\\]|\\\\.)*'|"(?:[^"\\\\]|\\\\.)*")`);
+    const rest = out.slice(idAt);
+    const m = rest.match(re);
+    if (!m) throw new Error(`could not find ${field} for ${id}`);
+    const quoted = value.includes("'")
+      ? `"${value.replace(/"/g, '\\"')}"`
+      : `'${value}'`;
+    if (/[\r\n]/.test(value)) throw new Error(`refusing to write a multi-line ${field} for ${id}`);
+    const at = idAt + m.index;
+    out = out.slice(0, at) + m[1] + quoted + out.slice(at + m[0].length);
+  };
+  set('name', next.name);
+  set('brand', next.brand);
+  set('productUrl', next.productUrl);
+  set('imageUrl', next.imageUrl);
+  return out;
+}
+
 /* a URL kept readable in a report column without losing which image it
    names: the middle of a long CDN path is what goes */
 function short(url, width = 96) {
@@ -806,6 +932,28 @@ function short(url, width = 96) {
 
 /* ---------- report ---------- */
 async function main() {
+  /* --candidate <url> [--as <row-id>] : try a replacement product */
+  const candidate = flag('--candidate');
+  if (candidate) {
+    const forId = flag('--as');
+    console.log(`\nTrying ${candidate} as a replacement${forId ? ` for ${forId}` : ''}.`);
+    const proposal = await inspectCandidate(candidate, forId);
+    if (!proposal || !forId) {
+      if (proposal && !forId) console.log('  Pass --as <row-id> to see it written into a row.\n');
+      return;
+    }
+    if (!writing) {
+      console.log(`  Re-run with --write to put it into ${forId}.\n`);
+      return;
+    }
+    const { source: current, rows: currentRows } = readCatalog();
+    const target = currentRows.find((r) => r.id === forId);
+    if (!target) throw new Error(`no catalogue row has the id ${forId}`);
+    fs.writeFileSync(CATALOG, replaceRow(current, forId, proposal));
+    console.log(`  Replaced ${forId} — listing, photo, name and brand together.\n`);
+    return;
+  }
+
   const { source, rows } = readCatalog();
 
   let targets = rows.filter((r) => r && r.productUrl);
@@ -909,6 +1057,7 @@ if (require.main === module) {
   module.exports = {
     candidatesFrom, candidatesFromRendered, soundness, writeInto, verifyImage,
     largestFromSrcset, readCatalog, identifiersFrom, identityEvidence, samePage,
-    gatherInPage, renderPage, resolveRow, firstVerifiable
+    gatherInPage, renderPage, resolveRow, firstVerifiable,
+    replaceRow, factsFromHtml, factsFromRendered, inspectCandidate
   };
 }
