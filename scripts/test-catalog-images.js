@@ -191,6 +191,51 @@ function stubbornRetailer() {
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({ server, plain: () => plainHits })));
 }
 
+/* ---------------------------------------------------------
+   A retailer behind a cookie wall, whose gallery loads lazily
+
+   Two things that keep a real product photo off a rendered page even
+   when Chromium opened it: an overlay that covers the gallery until it
+   is answered, and images that only get a src once they scroll into
+   view. Neither is exotic; both are what a shopper's browser handles
+   without being asked.
+   --------------------------------------------------------- */
+function walledRetailer() {
+  const server = http.createServer((req, res) => {
+    const url = req.url.split('?')[0];
+    if (url.endsWith('.png')) {
+      res.writeHead(200, { 'content-type': 'image/png' });
+      return res.end(PNG);
+    }
+    res.writeHead(200, { 'content-type': 'text/html' });
+    res.end(`<!doctype html><html><head><title>Walled</title></head>
+      <body style="margin:0">
+      <div id="wall" style="position:fixed;inset:0;background:#fff;z-index:9">
+        <button id="onetrust-accept-btn-handler">Accept All Cookies</button>
+      </div>
+      <div style="height:1200px"></div>
+      <div class="product-gallery" id="gallery">
+        <img id="hero" data-src="/img/6887613-hero.png" alt="hero" style="width:600px;height:600px">
+      </div>
+      <script>
+        /* the gallery image gets its src only after the wall is gone AND
+           it has been scrolled to — the two conditions together */
+        let accepted = false;
+        document.getElementById('onetrust-accept-btn-handler').addEventListener('click', () => {
+          accepted = true;
+          document.getElementById('wall').remove();
+        });
+        const hero = document.getElementById('hero');
+        new IntersectionObserver((entries) => {
+          for (const e of entries) {
+            if (e.isIntersecting && accepted && !hero.src) hero.src = hero.dataset.src;
+          }
+        }).observe(hero);
+      </script></body></html>`);
+  });
+  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server)));
+}
+
 (async () => {
   console.log('\nCatalogue image extractor\n');
 
@@ -411,6 +456,31 @@ function stubbornRetailer() {
     assert.strictEqual(result.url, 'https://image.uniqlo.com/goods/429066/main.jpg');
   });
 
+  await testAsync('a failure says which gate stopped which candidate', async () => {
+    const row = { id: 'x', productUrl: ZARA };
+    const fetcher = async () => ({
+      ok: true,
+      response: {
+        status: 404,
+        headers: { get: () => 'text/html' },
+        arrayBuffer: async () => ({ byteLength: 0 }),
+        body: null
+      }
+    });
+    const result = await extractor.firstVerifiable([
+      { url: 'https://encrypted-tbn0.gstatic.com/shopping?q=1', from: 'og:image' },
+      { url: 'https://static.zara.net/photos/9999999250_1_1_1.jpg', from: 'gallery image' },
+      { url: 'https://static.zara.net/photos/6887613250_1_1_1.jpg', from: 'json-ld' }
+    ], row, fetcher);
+
+    assert.ok(!result.url, 'nothing should have verified');
+    const gates = result.refusals.map((r) => r.gate);
+    assert.deepStrictEqual(gates, ['host', 'identity', 'loadable'],
+      `each candidate must name its own gate, got ${gates.join(', ')}`);
+    assert.ok(result.refusals.every((r) => r.url && r.from && r.why),
+      'a refusal must carry the URL, where it came from, and why');
+  });
+
   /* ---------- the browser path ---------- */
   console.log('\n  — the browser path\n');
 
@@ -491,6 +561,30 @@ function stubbornRetailer() {
   }
 
   retailer.server.close();
+
+  /* ---------- the cookie wall and the lazy gallery ---------- */
+  if (!(probe.failed && probe.noBrowser)) {
+    console.log('\n  — a consent wall over a lazy gallery\n');
+
+    const walled = await walledRetailer();
+    const walledUrl = `http://127.0.0.1:${walled.address().port}/p/06887613`;
+    const seen = await extractor.renderPage(walledUrl);
+
+    await testAsync('the consent wall is accepted and the gallery behind it read', async () => {
+      assert.ok(!seen.failed, `the browser path failed: ${seen.failed}`);
+      const hero = (seen.seen.imgs || []).find((i) => i.alt === 'hero');
+      assert.ok(hero, 'the gallery image was never found');
+      assert.ok(hero.url && hero.url.includes('6887613-hero'),
+        `the lazy image never got a src (${hero.url || 'empty'}) — the wall or the scroll was not handled`);
+    });
+
+    await testAsync('the image the page lazily loaded is recorded', async () => {
+      assert.ok((seen.loaded || []).some((u) => u.includes('6887613-hero')),
+        'the hero was never actually fetched by the page');
+    });
+
+    walled.close();
+  }
 
   /* ---------- what the file looks like afterwards ---------- */
   console.log('\n  — the catalogue itself\n');

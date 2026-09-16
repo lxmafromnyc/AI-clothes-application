@@ -1668,8 +1668,14 @@ after one the page does not touch the video again.
   fails the third gate and is refused. Anything that fails any gate leaves the
   row `null` and keeps its artwork.
 
+  In the browser it answers a cookie wall (accept only — nothing is rejected,
+  configured or submitted) and walks the page down so a gallery that loads on
+  scroll actually loads before it is read.
+
   It reports `VERIFIED` / `NO IMAGE FOUND` / `UNREACHABLE` per row and writes
-  only with `--write`. A row that already carries a photo is left alone unless
+  only with `--write`. A row that fails lists every candidate it found with the
+  gate that stopped it, so a failure says what to fix rather than just that
+  nothing worked. A row that already carries a photo is left alone unless
   `--refresh` is passed, so a working URL is never churned; `--no-browser`
   keeps it to plain HTTP. Run it from an ordinary connection — where retailer
   hosts are refused every row reports `UNREACHABLE` and nothing is written.

@@ -541,6 +541,17 @@ async function renderPage(url) {
     await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
     await page.waitForTimeout(1200);
 
+    /* A consent wall sits over the gallery and, on some retailers, stops
+       its images loading at all until it is answered. Accepting it is
+       what a shopper does to see the page, and it is the only thing
+       clicked here — nothing is submitted, bought or logged into. */
+    const consent = await dismissConsent(page);
+    if (consent) await page.waitForTimeout(800);
+
+    /* a gallery that loads as it is scrolled shows nothing to a browser
+       that never scrolls, so the page is walked down before it is read */
+    await coaxLazyImages(page);
+
     const seen = await page.evaluate(gatherInPage);
     const verify = imageFetcherFor(page);
     await browser.close();
@@ -553,6 +564,57 @@ async function renderPage(url) {
     await browser.close().catch(() => {});
     return { failed: `the browser path failed (${err && err.message ? String(err.message).split('\n')[0] : 'unknown'})` };
   }
+}
+
+/* The buttons a cookie wall puts its acceptance behind. Matched on the
+   accessible name rather than on a retailer's class names, so this is
+   one list rather than one rule per shop. Anything that reads like
+   rejecting, managing or configuring is left alone: the goal is to get
+   the overlay out of the way, not to make choices on someone's behalf. */
+const CONSENT = [
+  '#onetrust-accept-btn-handler',
+  '#truste-consent-button',
+  'button[id*="accept" i]',
+  'button[class*="accept" i]',
+  '[data-testid*="accept" i]',
+  'button:has-text("Accept all")',
+  'button:has-text("Accept All Cookies")',
+  'button:has-text("Accept")',
+  'button:has-text("Agree")',
+  'button:has-text("I agree")',
+  'button:has-text("Got it")'
+];
+
+async function dismissConsent(page) {
+  for (const selector of CONSENT) {
+    try {
+      const button = page.locator(selector).first();
+      if (!(await button.isVisible({ timeout: 400 }).catch(() => false))) continue;
+      await button.click({ timeout: 2000 });
+      return selector;
+    } catch (err) { /* the next one, or none at all */ }
+  }
+  return null;
+}
+
+/* Walks the page down in screenfuls so an image that only loads when it
+   scrolls into view actually loads, then returns to the top so the
+   gallery is measured where the page puts it. */
+async function coaxLazyImages(page) {
+  try {
+    await page.evaluate(async () => {
+      const step = Math.round(window.innerHeight * 0.8);
+      const end = Math.min(document.body.scrollHeight, step * 6);
+      for (let y = 0; y <= end; y += step) {
+        window.scrollTo(0, y);
+        await new Promise((r) => setTimeout(r, 250));
+      }
+      window.scrollTo(0, 0);
+      await new Promise((r) => setTimeout(r, 200));
+    });
+    /* whatever that started, give it a moment to arrive */
+    await page.waitForLoadState('networkidle', { timeout: 8000 }).catch(() => {});
+  } catch (err) { /* a page that will not scroll is read as it stands */ }
 }
 
 /* An image check that goes through the browser's own context, so a CDN
@@ -620,18 +682,24 @@ function candidatesFromRendered(seen, loaded, pageUrl) {
    gate, or the reasons they all failed. */
 async function firstVerifiable(candidates, row, fetcher) {
   const refusals = [];
+  /* each refusal keeps the URL and the gate that turned it down, because
+     "none of them worked" is not a diagnosis — which gate stopped which
+     candidate is what says whether the page was read wrong, the wrong
+     product was offered, or the host refused to serve us */
+  const note = (candidate, gate, why) => refusals.push({ url: candidate.url, from: candidate.from, gate, why });
+
   for (const candidate of candidates) {
     const unsound = soundness(candidate, row.productUrl);
-    if (unsound) { refusals.push(unsound); continue; }
+    if (unsound) { note(candidate, 'host', unsound); continue; }
 
     const identity = identityEvidence(candidate, row.productUrl);
-    if (!identity.ok) { refusals.push(identity.why); continue; }
+    if (!identity.ok) { note(candidate, 'identity', identity.why); continue; }
 
     const check = await verifyImage(candidate.url, fetcher);
     if (check.ok) {
       return { url: candidate.url, why: `${check.why} — ${identity.how}`, from: candidate.from };
     }
-    refusals.push(check.why);
+    note(candidate, 'loadable', check.why);
   }
   return { refusals };
 }
@@ -699,8 +767,9 @@ async function resolveRow(row) {
   return {
     id: row.id,
     verdict: 'NO IMAGE FOUND',
-    why: `${candidates.length} candidates, none tied to this product and loadable — ${all[0] || 'no reason recorded'}`,
+    why: `${all.length} candidate${all.length === 1 ? '' : 's'} found, none cleared every gate`,
     url: null,
+    refusals: all,
     notes
   };
 }
@@ -724,6 +793,15 @@ function writeInto(source, id, url) {
 
   const at = idAt + m.index;
   return source.slice(0, at) + m[1] + `'${url}'` + source.slice(at + m[0].length);
+}
+
+/* a URL kept readable in a report column without losing which image it
+   names: the middle of a long CDN path is what goes */
+function short(url, width = 96) {
+  const text = String(url || '');
+  if (text.length <= width) return text;
+  const head = Math.ceil((width - 3) * 0.6);
+  return `${text.slice(0, head)}...${text.slice(-(width - 3 - head))}`;
 }
 
 /* ---------- report ---------- */
@@ -766,6 +844,14 @@ async function main() {
       console.log(`  ${''.padEnd(15)} ${result.why}${result.from ? ` [${result.from}]` : ''}`);
     } else {
       console.log(`  ${''.padEnd(15)} ${result.why}`);
+      /* every candidate and the gate that stopped it: without this a
+         failure is unactionable, and the next step is guesswork */
+      for (const refusal of (result.refusals || []).slice(0, 12)) {
+        console.log(`  ${''.padEnd(15)}   [${refusal.gate}] ${short(refusal.url)}`);
+        console.log(`  ${''.padEnd(15)}     from ${refusal.from} — ${refusal.why}`);
+      }
+      const extra = (result.refusals || []).length - 12;
+      if (extra > 0) console.log(`  ${''.padEnd(15)}   …and ${extra} more`);
     }
   }
 
