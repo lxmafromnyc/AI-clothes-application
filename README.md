@@ -1651,12 +1651,36 @@ after one the page does not touch the video again.
   and Levi's rows stay `null` because nothing was verified for them.
 - `node scripts/fetch-catalog-images.js` fills the `imageUrl` of every row that
   carries a `productUrl`, by reading the photo off the listing the row already
-  links to. It reports by default and writes only with `--write`, and it writes
-  only a URL that came out of that page's own markup, sits on a host that is not
-  an aggregator or a stock library, and answered `200` as an image both plainly
-  and under the site's own `Referer`. Anything else leaves the row `null` and
-  keeps its artwork. Run it from an ordinary connection: where retailer hosts
-  are refused it reports `BLOCKED HERE` and changes nothing.
-  `node scripts/test-catalog-images.js` covers those gates without a network.
+  links to. It tries plain HTTP first; a page that gives up nothing — no
+  candidates, or a `403` from its bot check — is then opened in a real Chromium
+  through Playwright, which runs the page's scripts and reports its rendered
+  metadata, JSON-LD, preload links, gallery images and the photos the page
+  actually loaded. A retailer that refuses a bare client gets a real browser,
+  never a guessed CDN URL.
+
+  Four gates decide what may be written: the URL came out of that page
+  (**found**), its host is the retailer's rather than an aggregator or a stock
+  library (**sound**), it can be tied to *this* product — the listing's code
+  appears in the image URL, or the JSON-LD record supplying it names a matching
+  sku, or the page declares itself canonical for the listing (**this**) — and it
+  answers `200` as an image both plainly and under the deployed site's `Referer`
+  (**loadable**). A photo of a similar garment on the right retailer's own CDN
+  fails the third gate and is refused. Anything that fails any gate leaves the
+  row `null` and keeps its artwork.
+
+  In the browser it answers a cookie wall (accept only — nothing is rejected,
+  configured or submitted) and walks the page down so a gallery that loads on
+  scroll actually loads before it is read.
+
+  It reports `VERIFIED` / `NO IMAGE FOUND` / `UNREACHABLE` per row and writes
+  only with `--write`. A row that fails lists every candidate it found with the
+  gate that stopped it, so a failure says what to fix rather than just that
+  nothing worked. A row that already carries a photo is left alone unless
+  `--refresh` is passed, so a working URL is never churned; `--no-browser`
+  keeps it to plain HTTP. Run it from an ordinary connection — where retailer
+  hosts are refused every row reports `UNREACHABLE` and nothing is written.
+  `node scripts/test-catalog-images.js` covers all four gates without a
+  network, driving the browser path against a local server that refuses plain
+  HTTP and builds its gallery in JavaScript.
 - The catalogue is a small sample set plus three real listings; it is not real
   inventory.
