@@ -10,21 +10,34 @@
      Products.load('/api/products.json')   a URL returning JSON
      Products.load(() => queryDb())        a function or promise
 
-   price is null on every row, and imageUrl on every row but one, because
-   no retailer domain or image host is reachable from the environment this
-   is built in, so no value could be read from the source there. Both are
-   ordinary fields: fill them in and the interface renders them, with no
-   local image files involved. A product whose imageUrl is missing or
-   fails to load keeps the drawn artwork.
+   price is null on every row, because no retailer domain was reachable
+   from the environment this is built in, so no price could be read from
+   the source. It is an ordinary field: fill it in and the interface
+   renders it.
 
-   The UNIQLO row's photo is the exception. It was read off that listing
-   by scripts/fetch-catalog-images.js, run from a connection that can
-   reach the retailer, and it is the URL uniqlo.com's own page publishes.
-   The Zara and Levi's rows stay null: nothing was verified for them, and
-   a guessed URL is worse than the artwork it would replace.
+   imageUrl carries a photo on the rows where one was verified, and null
+   everywhere else. A photo gets here one way only: read off the listing
+   the row links to by scripts/fetch-catalog-images.js, run from a
+   connection that can reach the retailer, and tied to that exact product
+   before it is written. A product whose imageUrl is null, or whose photo
+   fails to load, keeps the drawn artwork, and that is the honest state
+   rather than a placeholder.
+
+     UNIQLO    verified — image.uniqlo.com carries the listing's code
+     J.Crew    verified — the s7 facade carries the listing's code AU763
+     L.L.Bean  null — the URL read from its page requests an asset
+               (521659_32573_41) that nothing ties to product 129244;
+               the code appears only in Scene7's defaultImage fallback
+               parameter, which names the stand-in image rather than the
+               one being requested. Re-running the extractor against
+               that listing can fill it in properly.
 
    The three rows carrying a productUrl are real listings. The rest are
    sample rows that exist to give the demo a catalogue to search.
+
+   colors is empty on a row whose colour nothing established, the same
+   way sizes is empty on every real listing: an unknown is left unsaid
+   rather than guessed from whatever the row used to hold.
    ========================================================= */
 
 const DEMO_PRODUCTS = [
@@ -43,7 +56,7 @@ const DEMO_PRODUCTS = [
     sizes: []
   },
   {
-    id: 'zara-oxford-shirt',
+    id: 'jcrew-broken-in-oxford',
     name: 'Broken-in organic cotton oxford shirt',
     brand: 'J.Crew',
     price: null,
@@ -57,17 +70,17 @@ const DEMO_PRODUCTS = [
     sizes: []
   },
   {
-    id: 'levis-xx-chino-taper',
+    id: 'llbean-venturestretch-chino',
     name: "Men's VentureStretch Commuter Chinos",
     brand: 'L.L.Bean',
     price: null,
     productUrl: 'https://www.llbean.com/llb/shop/129244',
-    imageUrl: 'https://cdni.llbean.net/is/image/wim/521659_32573_41?hei=1095&wid=950&resMode=sharp2&defaultImage=llbprod/129244_0_44',
+    imageUrl: null,
     category: 'trousers',
     style: ['Minimal', 'Classic'],
     occasion: ['Work', 'Everyday'],
     fit: ['Slim', 'Regular'],
-    colors: ['Black'],
+    colors: [],
     sizes: []
   },
   {
@@ -411,6 +424,6 @@ const DEMO_PRODUCTS = [
 /* The homepage demo panel: product ids and the match score shown. */
 const HERO_PICKS = [
   { id: 'uniqlo-merino-crew', score: 96 },
-  { id: 'zara-oxford-shirt', score: 93 },
-  { id: 'levis-xx-chino-taper', score: 91 }
+  { id: 'jcrew-broken-in-oxford', score: 93 },
+  { id: 'llbean-venturestretch-chino', score: 91 }
 ];

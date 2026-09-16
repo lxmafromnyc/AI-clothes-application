@@ -337,6 +337,38 @@ function walledRetailer() {
     assert.strictEqual(collision.ok, false, 'a hash containing au763 matched as the product code');
   });
 
+  /* Scene7 serves defaultImage when the asset actually asked for is
+     missing, so a product code sitting there describes the stand-in, not
+     the picture that will render. Counting it would let a row point at
+     one asset while being vouched for by another. */
+  test('a code in a defaultImage fallback parameter does not vouch for the asset', () => {
+    const verdict = extractor.identityEvidence({
+      url: 'https://cdni.llbean.net/is/image/wim/521659_32573_41?hei=1095&defaultImage=llbprod/129244_0_44',
+      from: 'og:image'
+    }, 'https://www.llbean.com/llb/shop/129244');
+    assert.strictEqual(verdict.ok, false, 'the fallback parameter was accepted as proof');
+    assert.match(verdict.why, /defaultImage parameter/);
+    assert.match(verdict.why, /521659_32573_41/, 'the refusal should name the asset actually requested');
+  });
+
+  test('the same code in the asset path does vouch for it', () => {
+    const verdict = extractor.identityEvidence({
+      url: 'https://cdni.llbean.net/is/image/llbprod/129244_0_44?wid=950',
+      from: 'og:image'
+    }, 'https://www.llbean.com/llb/shop/129244');
+    assert.strictEqual(verdict.ok, true, verdict.why);
+    assert.match(verdict.how, /URL path/);
+  });
+
+  test('an ordinary query parameter may still carry the code', () => {
+    const verdict = extractor.identityEvidence({
+      url: 'https://img.example.com/render?sku=129244&wid=950',
+      from: 'og:image'
+    }, 'https://www.llbean.com/llb/shop/129244');
+    assert.strictEqual(verdict.ok, true, verdict.why);
+    assert.match(verdict.how, /sku parameter/);
+  });
+
   test('an image whose URL carries the listing code is this product', () => {
     const verdict = extractor.identityEvidence(
       { url: 'https://image.uniqlo.com/UQ/ST3/.../429066/item/goods_03_429066_3x4.jpg', from: 'og:image' }, UNIQLO);
@@ -630,13 +662,13 @@ function walledRetailer() {
      hard-codes today's empty ones fails the day one is filled in */
   test('a photo is written into the row that owns it, and no other', () => {
     const untouched = rows
-      .filter((r) => r.id !== 'zara-oxford-shirt')
+      .filter((r) => r.id !== 'jcrew-broken-in-oxford')
       .map((r) => [r.id, r.imageUrl]);
 
-    const next = extractor.writeInto(source, 'zara-oxford-shirt', 'https://static.zara.net/photos/6887613250_1_1_1.jpg');
+    const next = extractor.writeInto(source, 'jcrew-broken-in-oxford', 'https://static.zara.net/photos/6887613250_1_1_1.jpg');
     const rows2 = evaluate(next);
 
-    const zara = rows2.find((r) => r.id === 'zara-oxford-shirt');
+    const zara = rows2.find((r) => r.id === 'jcrew-broken-in-oxford');
     assert.strictEqual(zara.imageUrl, 'https://static.zara.net/photos/6887613250_1_1_1.jpg');
 
     for (const [id, before] of untouched) {
@@ -646,11 +678,11 @@ function walledRetailer() {
   });
 
   test('every row still normalises after a write, so the page can render it', () => {
-    const next = extractor.writeInto(source, 'levis-xx-chino-taper', 'https://lsco.scene7.com/is/image/levis/171960005-front.jpg');
+    const next = extractor.writeInto(source, 'llbean-venturestretch-chino', 'https://lsco.scene7.com/is/image/levis/171960005-front.jpg');
     const rows2 = evaluate(next);
     assert.strictEqual(rows2.length, rows.length, 'no row is lost');
-    const levis = rows2.find((r) => r.id === 'levis-xx-chino-taper');
-    assert.strictEqual(levis.productUrl, rows.find((r) => r.id === 'levis-xx-chino-taper').productUrl);
+    const levis = rows2.find((r) => r.id === 'llbean-venturestretch-chino');
+    assert.strictEqual(levis.productUrl, rows.find((r) => r.id === 'llbean-venturestretch-chino').productUrl);
   });
 
   /* the gates are worth nothing if a URL can reach the file around them,
@@ -676,13 +708,13 @@ function walledRetailer() {
   /* ---------- swapping a row's product ---------- */
 
   test('a replacement moves listing, photo, name and brand together', () => {
-    const next = extractor.replaceRow(source, 'zara-oxford-shirt', {
+    const next = extractor.replaceRow(source, 'jcrew-broken-in-oxford', {
       productUrl: 'https://www.example-shop.com/p/AU763',
       imageUrl: 'https://img.example-shop.com/AU763_WHITE.jpg',
       name: 'Broken-in Organic Cotton Oxford Shirt',
       brand: 'J.Crew'
     });
-    const row = evaluate(next).find((r) => r.id === 'zara-oxford-shirt');
+    const row = evaluate(next).find((r) => r.id === 'jcrew-broken-in-oxford');
     assert.strictEqual(row.productUrl, 'https://www.example-shop.com/p/AU763');
     assert.strictEqual(row.imageUrl, 'https://img.example-shop.com/AU763_WHITE.jpg');
     assert.strictEqual(row.name, 'Broken-in Organic Cotton Oxford Shirt');
@@ -690,9 +722,9 @@ function walledRetailer() {
   });
 
   test('a replacement leaves every other row exactly as it was', () => {
-    const before = rows.filter((r) => r.id !== 'zara-oxford-shirt')
+    const before = rows.filter((r) => r.id !== 'jcrew-broken-in-oxford')
       .map((r) => [r.id, r.productUrl, r.imageUrl, r.name, r.brand]);
-    const next = extractor.replaceRow(source, 'zara-oxford-shirt', {
+    const next = extractor.replaceRow(source, 'jcrew-broken-in-oxford', {
       productUrl: 'https://www.example-shop.com/p/AU763',
       imageUrl: 'https://img.example-shop.com/AU763_WHITE.jpg',
       name: 'Oxford Shirt', brand: 'Example'
@@ -709,22 +741,22 @@ function walledRetailer() {
   });
 
   test('a name carrying an apostrophe is quoted, not broken', () => {
-    const next = extractor.replaceRow(source, 'zara-oxford-shirt', {
+    const next = extractor.replaceRow(source, 'jcrew-broken-in-oxford', {
       productUrl: 'https://www.example-shop.com/p/1',
       imageUrl: 'https://img.example-shop.com/1.jpg',
       name: "Men's Oxford Shirt", brand: 'Example'
     });
-    const row = evaluate(next).find((r) => r.id === 'zara-oxford-shirt');
+    const row = evaluate(next).find((r) => r.id === 'jcrew-broken-in-oxford');
     assert.strictEqual(row.name, "Men's Oxford Shirt");
   });
 
   test('the swapped row still passes the identity gate against its new listing', () => {
-    const next = extractor.replaceRow(source, 'zara-oxford-shirt', {
+    const next = extractor.replaceRow(source, 'jcrew-broken-in-oxford', {
       productUrl: 'https://www.example-shop.com/p/AU763',
       imageUrl: 'https://img.example-shop.com/AU763_WHITE.jpg',
       name: 'Oxford', brand: 'Example'
     });
-    const row = evaluate(next).find((r) => r.id === 'zara-oxford-shirt');
+    const row = evaluate(next).find((r) => r.id === 'jcrew-broken-in-oxford');
     const identity = extractor.identityEvidence({ url: row.imageUrl, from: 'catalogue' }, row.productUrl);
     assert.strictEqual(identity.ok, true, identity.why);
   });

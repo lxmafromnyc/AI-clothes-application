@@ -50,7 +50,7 @@
    Usage
      node scripts/fetch-catalog-images.js
      node scripts/fetch-catalog-images.js --write
-     node scripts/fetch-catalog-images.js --only zara-oxford-shirt
+     node scripts/fetch-catalog-images.js --only jcrew-broken-in-oxford
      node scripts/fetch-catalog-images.js --refresh        re-read rows that have one
      node scripts/fetch-catalog-images.js --no-browser     plain HTTP only
      node scripts/fetch-catalog-images.js --site https://example.github.io
@@ -327,26 +327,31 @@ function identityEvidence(candidate, productUrl) {
   const ids = identifiersFrom(productUrl);
   if (!ids.length) return { ok: false, why: 'the listing URL carries no product code to match against' };
 
-  /* The code, as it appears in the image URL. A long code may sit
-     anywhere; a short one such as J.Crew's AU763 has to sit at a
-     boundary, so it cannot match its way in from the middle of a hash. */
-  const image = candidate.url.toLowerCase();
+  const where = identityHaystacks(candidate.url);
+  if (where.unparseable) return { ok: false, why: 'not a URL' };
+
+  /* The code, as it appears in the image URL — but only where it says
+     something about the asset being requested. A long code may sit
+     anywhere in those parts; a short one such as J.Crew's AU763 has to
+     sit at a boundary, so it cannot match its way in from the middle of
+     a hash. */
   for (const id of ids) {
-    if (id.length >= 6) {
-      if (image.includes(id)) return { ok: true, how: `its URL carries the listing's code ${id}` };
-      continue;
+    for (const place of where.meaningful) {
+      if (containsCode(place.text, id)) {
+        return { ok: true, how: `the ${place.label} carries the listing's code ${id}` };
+      }
     }
-    const bounded = new RegExp(`(^|[^a-z0-9])${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^a-z0-9]|$)`);
-    if (bounded.test(image)) return { ok: true, how: `its URL carries the listing's code ${id}` };
   }
 
   /* the code, with the separators a CDN path puts through it — Zara
      splits 6887613 across /6887/613/. Only long codes are matched this
      way, because a short run of digits collides by accident. */
-  const digitsOnly = image.replace(/\D/g, '');
   for (const id of ids) {
-    if (/^\d{6,}$/.test(id) && digitsOnly.includes(id)) {
-      return { ok: true, how: `its URL path carries the listing's code ${id}, split across segments` };
+    if (!/^\d{6,}$/.test(id)) continue;
+    for (const place of where.meaningful) {
+      if (place.text.replace(/\D/g, '').includes(id)) {
+        return { ok: true, how: `the ${place.label} carries the listing's code ${id}, split across segments` };
+      }
     }
   }
 
@@ -368,10 +373,55 @@ function identityEvidence(candidate, productUrl) {
     return { ok: true, how: `the page declares itself the canonical page for this listing, and this is its ${candidate.from}` };
   }
 
+  if (where.onlyInFallback.length) {
+    return {
+      ok: false,
+      why: `the code appears only in the ${where.onlyInFallback.join(' and ')} parameter, which names the stand-in image, not the one requested (${where.assetLabel})`
+    };
+  }
+
   return {
     ok: false,
     why: `nothing ties it to this product (looked for ${ids.slice(0, 3).join(', ')})`
   };
+}
+
+/* Parameters that name a picture to serve INSTEAD of the one asked for.
+   Scene7's defaultImage is the common one: it is what the CDN falls back
+   to when the requested asset is missing, so a product code sitting
+   there says what would be shown if this image did not exist — the
+   opposite of proof that this image is the product's. */
+const FALLBACK_PARAMS = ['defaultimage', 'default', 'fallback', 'placeholder', 'errorimage', 'missingimage'];
+
+/* The parts of an image URL that say something about the asset being
+   requested, kept apart from the parts that do not. */
+function identityHaystacks(rawUrl) {
+  let url;
+  try { url = new URL(String(rawUrl)); } catch (err) { return { unparseable: true, meaningful: [], onlyInFallback: [] }; }
+
+  const meaningful = [{ label: 'URL path', text: decodeURIComponent(url.pathname).toLowerCase() }];
+  const onlyInFallback = [];
+
+  for (const [key, value] of url.searchParams) {
+    const name = key.toLowerCase();
+    const text = decodeURIComponent(String(value)).toLowerCase();
+    if (FALLBACK_PARAMS.includes(name)) onlyInFallback.push(key);
+    else meaningful.push({ label: `${key} parameter`, text });
+  }
+
+  return {
+    meaningful,
+    /* only worth naming in a refusal if nothing meaningful matched */
+    onlyInFallback,
+    assetLabel: decodeURIComponent(url.pathname).split('/').filter(Boolean).pop() || url.pathname
+  };
+}
+
+/* a long code may sit anywhere; a short one has to sit at a boundary */
+function containsCode(text, id) {
+  if (id.length >= 6) return text.includes(id);
+  const escaped = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`).test(text);
 }
 
 /* ---------- the gates ---------- */

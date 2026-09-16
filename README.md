@@ -1643,12 +1643,16 @@ after one the page does not touch the video again.
   generated artwork built from CSS gradients and inline SVG. Set `imageUrl` on a
   product and it renders the photo; if that photo fails to load, the artwork
   returns.
-- `price` is `null` throughout the demo catalogue, and `imageUrl` on every row
-  but one, because no retailer domain was reachable from the environment this
-  was built in, so no value could be verified there. They are ordinary data
-  fields. The UNIQLO row carries the photo its own listing publishes, read by
-  the extractor below from a connection that can reach the retailer; the Zara
-  and Levi's rows stay `null` because nothing was verified for them.
+- `price` is `null` throughout the demo catalogue because no retailer domain was
+  reachable from the environment this was built in, so no price could be
+  verified there. It is an ordinary data field.
+- `imageUrl` carries a photo only where one was verified against that exact
+  listing. The UNIQLO and J.Crew rows do; the L.L.Bean row is `null` because the
+  URL read from its page requests a Scene7 asset that nothing ties to product
+  `129244` — the code appears only in the `defaultImage` fallback parameter,
+  which names the stand-in image rather than the one requested. Re-running the
+  extractor against that listing can fill it in properly. A row left `null`
+  keeps its drawn artwork, which is the honest state rather than a placeholder.
 - `node scripts/fetch-catalog-images.js` fills the `imageUrl` of every row that
   carries a `productUrl`, by reading the photo off the listing the row already
   links to. It tries plain HTTP first; a page that gives up nothing — no
