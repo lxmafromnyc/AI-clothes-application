@@ -889,6 +889,7 @@ node scripts/test-gemini.js    # the Gemini interpreter, and what did not change
 node scripts/test-serpapi.js   # the SerpApi adapter, its links and its costs
 node scripts/test-stripe.js    # payments and subscriptions
 node scripts/test-auth.js      # accounts, sessions, tokens, OAuth
+node scripts/test-catalog-images.js  # the catalogue image extractor's gates
 node scripts/test-ui.js        # the interface, its palette and its contrast
 node scripts/record-demo.js    # re-records the landing page demo video
 node scripts/test-e2e.js       # the whole sign-in flow, in a real browser
@@ -1644,5 +1645,14 @@ after one the page does not touch the video again.
 - `price` and `imageUrl` are `null` throughout the demo catalogue because no
   retailer domain was reachable from the environment this was built in, so no
   value could be verified. They are ordinary data fields.
+- `node scripts/fetch-catalog-images.js` fills the `imageUrl` of every row that
+  carries a `productUrl`, by reading the photo off the listing the row already
+  links to. It reports by default and writes only with `--write`, and it writes
+  only a URL that came out of that page's own markup, sits on a host that is not
+  an aggregator or a stock library, and answered `200` as an image both plainly
+  and under the site's own `Referer`. Anything else leaves the row `null` and
+  keeps its artwork. Run it from an ordinary connection: where retailer hosts
+  are refused it reports `BLOCKED HERE` and changes nothing.
+  `node scripts/test-catalog-images.js` covers those gates without a network.
 - The catalogue is a small sample set plus three real listings; it is not real
   inventory.
