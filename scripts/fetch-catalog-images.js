@@ -338,7 +338,7 @@ function identityEvidence(candidate, productUrl) {
   for (const id of ids) {
     for (const place of where.meaningful) {
       if (containsCode(place.text, id)) {
-        return { ok: true, how: `the ${place.label} carries the listing's code ${id}` };
+        return { ok: true, via: 'image-url', code: id, how: `the ${place.label} carries the listing's code ${id}` };
       }
     }
   }
@@ -350,7 +350,7 @@ function identityEvidence(candidate, productUrl) {
     if (!/^\d{6,}$/.test(id)) continue;
     for (const place of where.meaningful) {
       if (place.text.replace(/\D/g, '').includes(id)) {
-        return { ok: true, how: `the ${place.label} carries the listing's code ${id}, split across segments` };
+        return { ok: true, via: 'image-url', code: id, how: `the ${place.label} carries the listing's code ${id}, split across segments` };
       }
     }
   }
@@ -361,7 +361,7 @@ function identityEvidence(candidate, productUrl) {
     const bare = sku.replace(/[^a-z0-9]/g, '');
     for (const id of ids) {
       if (bare.includes(id) || id.includes(bare)) {
-        return { ok: true, how: `the JSON-LD product it came from names sku ${sku}` };
+        return { ok: true, via: 'json-ld-sku', sku, how: `the JSON-LD product it came from names sku ${sku}` };
       }
     }
   }
@@ -370,7 +370,12 @@ function identityEvidence(candidate, productUrl) {
      listing, and the image is the one it publishes as the product's */
   const vouches = candidate.from === 'json-ld' || String(candidate.from).startsWith('og:');
   if (vouches && candidate.canonical && samePage(candidate.canonical, productUrl)) {
-    return { ok: true, how: `the page declares itself the canonical page for this listing, and this is its ${candidate.from}` };
+    return {
+      ok: true,
+      via: 'canonical',
+      canonical: candidate.canonical,
+      how: `the page declares itself the canonical page for this listing, and this is its ${candidate.from}`
+    };
   }
 
   if (where.onlyInFallback.length) {
@@ -422,6 +427,56 @@ function containsCode(text, id) {
   if (id.length >= 6) return text.includes(id);
   const escaped = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   return new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`).test(text);
+}
+
+/* ---------- is a SHIPPED row's photo still accounted for? ----------
+
+   A row in the catalogue is a URL with no page attached, and some
+   retailers name their assets in a way that says nothing about the
+   product: L.L.Bean requests 521659_32573_41 for product 129244. The
+   extractor could tie that image to the listing because it was reading
+   the page, where the JSON-LD product record named the sku. The file
+   cannot re-read the page, so the row records how the tie was made.
+
+   That record is re-proved here, never taken on faith. A recorded sku
+   has to match a code in the row's own productUrl, and a recorded
+   canonical has to be that same listing, so a made-up evidence block
+   fails exactly as a made-up URL does. What the row buys is the fact
+   that verification happened, not permission to skip it. */
+function catalogRowIdentity(row) {
+  if (!row || !row.imageUrl) return { ok: true, how: 'no photo to account for' };
+  if (!row.productUrl) return { ok: false, why: 'carries a photo but links to no listing' };
+
+  /* the URL says it itself — UNIQLO and J.Crew */
+  const direct = identityEvidence({ url: row.imageUrl, from: 'catalogue' }, row.productUrl);
+  if (direct.ok) return direct;
+
+  const evidence = row.imageEvidence;
+  if (!evidence || typeof evidence !== 'object') {
+    return { ok: false, why: `${direct.why}, and the row records no verification evidence` };
+  }
+
+  const ids = identifiersFrom(row.productUrl);
+
+  if (evidence.via === 'json-ld-sku') {
+    const sku = String(evidence.sku || '').toLowerCase();
+    const bare = sku.replace(/[^a-z0-9]/g, '');
+    if (!bare) return { ok: false, why: 'the recorded evidence names no sku' };
+    const matched = ids.find((id) => bare.includes(id) || id.includes(bare));
+    if (!matched) {
+      return { ok: false, why: `the recorded sku ${evidence.sku} is not a code in this row's own listing URL` };
+    }
+    return { ok: true, via: 'json-ld-sku', how: `its listing's JSON-LD product names sku ${evidence.sku}` };
+  }
+
+  if (evidence.via === 'canonical') {
+    if (!samePage(evidence.canonical, row.productUrl)) {
+      return { ok: false, why: `the recorded canonical ${evidence.canonical} is not this row's listing` };
+    }
+    return { ok: true, via: 'canonical', how: 'its listing declared itself canonical for this product' };
+  }
+
+  return { ok: false, why: `the recorded evidence names no recognised kind (${evidence.via || 'none'})` };
 }
 
 /* ---------- the gates ---------- */
@@ -803,7 +858,7 @@ async function firstVerifiable(candidates, row, fetcher) {
 
     const check = await verifyImage(candidate.url, fetcher);
     if (check.ok) {
-      return { url: candidate.url, why: `${check.why} — ${identity.how}`, from: candidate.from };
+      return { url: candidate.url, why: `${check.why} — ${identity.how}`, from: candidate.from, identity };
     }
     note(candidate, 'loadable', check.why);
   }
@@ -824,7 +879,7 @@ async function resolveRow(row) {
     notes.push(`plain HTTP: ${candidates.length} candidate${candidates.length === 1 ? '' : 's'}`);
     if (candidates.length) {
       served = await firstVerifiable(candidates, row);
-      if (served.url) return { id: row.id, verdict: 'VERIFIED', why: served.why, url: served.url, from: served.from, facts, notes };
+      if (served.url) return { id: row.id, verdict: 'VERIFIED', why: served.why, url: served.url, from: served.from, identity: served.identity, facts, notes };
     }
   } else if (page.blocked) {
     /* the sandbox, not the retailer: a browser here would be refused the
@@ -870,7 +925,7 @@ async function resolveRow(row) {
   }
 
   const found = await firstVerifiable(candidates, row, rendered.verify);
-  if (found.url) return { id: row.id, verdict: 'VERIFIED', why: found.why, url: found.url, from: found.from, facts, notes };
+  if (found.url) return { id: row.id, verdict: 'VERIFIED', why: found.why, url: found.url, from: found.from, identity: found.identity, facts, notes };
 
   const all = [...(served && served.refusals ? served.refusals : []), ...found.refusals];
   return {
@@ -890,7 +945,7 @@ async function resolveRow(row) {
    its spacing and its row order, and only the imageUrl belonging to the
    row being filled is touched. The row is located by its id, and the
    first imageUrl after that id is the one it owns. */
-function writeInto(source, id, url) {
+function writeInto(source, id, url, evidence) {
   const idAt = source.indexOf(`id: '${id}'`);
   if (idAt === -1) throw new Error(`could not find the row for ${id}`);
 
@@ -902,7 +957,61 @@ function writeInto(source, id, url) {
   if (url.includes("'") || /[\r\n]/.test(url)) throw new Error(`refusing to write an unquotable URL for ${id}`);
 
   const at = idAt + m.index;
-  return source.slice(0, at) + m[1] + `'${url}'` + source.slice(at + m[0].length);
+  const indent = m[1].replace(/\n/, '').replace(/imageUrl:\s*$/, '');
+  let out = source.slice(0, at) + m[1] + `'${url}'` + source.slice(at + m[0].length);
+
+  /* A photo whose URL does not carry the product's code is only
+     accountable later if the row says how it was tied to the listing, so
+     that is recorded beside it rather than left to memory. A URL that
+     speaks for itself needs no note and does not get one. */
+  const note = evidenceNote(evidence);
+  out = setEvidence(out, id, note, indent);
+  return out;
+}
+
+/* where the row that starts at idAt stops: the next row's id, or the end
+   of the file. Every row carries exactly one id, so this needs no
+   brace counting. */
+function rowEndsAt(source, idAt) {
+  const next = source.indexOf("id: '", idAt + 1);
+  return next === -1 ? source.length : next;
+}
+
+/* the evidence worth keeping: the kinds a shipped row can be re-proved
+   against without the page in front of it */
+function evidenceNote(evidence) {
+  if (!evidence || !evidence.ok) return null;
+  if (evidence.via === 'json-ld-sku' && evidence.sku) {
+    return `{ via: 'json-ld-sku', sku: '${String(evidence.sku).replace(/'/g, "")}' }`;
+  }
+  if (evidence.via === 'canonical' && evidence.canonical) {
+    return `{ via: 'canonical', canonical: '${String(evidence.canonical).replace(/'/g, "")}' }`;
+  }
+  return null; // via: 'image-url' — the URL is its own evidence
+}
+
+/* writes, replaces or removes the row's imageEvidence, keeping the file's
+   shape: the note sits directly under the imageUrl it explains */
+function setEvidence(source, id, note, indent) {
+  const idAt = source.indexOf(`id: '${id}'`);
+  /* bounded to THIS row. imageUrl exists on every row so the first one
+     after the id is always the right one, but imageEvidence does not:
+     searched to the end of the file, a row with no note would find the
+     next row's and rewrite that one instead. */
+  const rest = source.slice(idAt, rowEndsAt(source, idAt));
+  const existing = rest.match(/\n\s*imageEvidence:\s*(\{[^}]*\}|null),?/);
+
+  if (existing) {
+    const at = idAt + existing.index;
+    const replacement = note ? `\n${indent}imageEvidence: ${note},` : '';
+    return source.slice(0, at) + replacement + source.slice(at + existing[0].length);
+  }
+  if (!note) return source;
+
+  const after = rest.match(/(\n\s*imageUrl:\s*(?:null|'[^']*'|"[^"]*"),)/);
+  if (!after) return source;
+  const at = idAt + after.index + after[0].length;
+  return source.slice(0, at) + `\n${indent}imageEvidence: ${note},` + source.slice(at);
 }
 
 /* ---------- trying a replacement product ----------
@@ -1092,7 +1201,7 @@ async function main() {
   }
 
   let next = source;
-  for (const r of fresh) next = writeInto(next, r.id, r.url);
+  for (const r of fresh) next = writeInto(next, r.id, r.url, r.identity);
   fs.writeFileSync(CATALOG, next);
   console.log(`\n  Wrote ${fresh.length} image URL${fresh.length === 1 ? '' : 's'} into assets/catalog.js.\n`);
 }
@@ -1108,6 +1217,7 @@ if (require.main === module) {
     candidatesFrom, candidatesFromRendered, soundness, writeInto, verifyImage,
     largestFromSrcset, readCatalog, identifiersFrom, identityEvidence, samePage,
     gatherInPage, renderPage, resolveRow, firstVerifiable,
-    replaceRow, factsFromHtml, factsFromRendered, inspectCandidate
+    replaceRow, factsFromHtml, factsFromRendered, inspectCandidate,
+    catalogRowIdentity, evidenceNote
   };
 }

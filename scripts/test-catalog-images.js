@@ -691,12 +691,158 @@ function walledRetailer() {
      for that exact product */
   test('every photo in the shipped catalogue comes from its own listing', () => {
     for (const row of rows.filter((r) => r.imageUrl)) {
-      assert.ok(row.productUrl, `${row.id} carries a photo but links to no listing`);
       const host = extractor.soundness(row.imageUrl, row.productUrl);
       assert.strictEqual(host, null, `${row.id}: ${host}`);
-      const identity = extractor.identityEvidence({ url: row.imageUrl, from: 'catalogue' }, row.productUrl);
+      const identity = extractor.catalogRowIdentity(row);
       assert.strictEqual(identity.ok, true, `${row.id}: ${identity.why}`);
     }
+  });
+
+  /* ---------- the evidence a shipped row carries ----------
+
+     Some retailers name their assets in a way that says nothing about
+     the product, so a row records how the extractor tied its photo to
+     the listing. That record is re-proved against the row's own
+     productUrl, never taken at its word — otherwise it would just be a
+     way of writing "trust me" into the catalogue. */
+
+  test('a row whose URL carries the code needs no recorded evidence', () => {
+    const verdict = extractor.catalogRowIdentity({
+      id: 'x', productUrl: UNIQLO,
+      imageUrl: 'https://image.uniqlo.com/goods/429066/item/main.jpg'
+    });
+    assert.strictEqual(verdict.ok, true);
+    assert.strictEqual(verdict.via, 'image-url');
+  });
+
+  test('a row whose URL cannot vouch is refused when it records nothing', () => {
+    const verdict = extractor.catalogRowIdentity({
+      id: 'x', productUrl: 'https://www.llbean.com/llb/shop/129244',
+      imageUrl: 'https://cdni.llbean.net/is/image/wim/521659_32573_41?defaultImage=llbprod/129244_0_44'
+    });
+    assert.strictEqual(verdict.ok, false);
+    assert.match(verdict.why, /records no verification evidence/);
+  });
+
+  test('a recorded JSON-LD sku matching the listing accounts for the photo', () => {
+    const verdict = extractor.catalogRowIdentity({
+      id: 'x', productUrl: 'https://www.llbean.com/llb/shop/129244',
+      imageUrl: 'https://cdni.llbean.net/is/image/wim/521659_32573_41?defaultImage=llbprod/129244_0_44',
+      imageEvidence: { via: 'json-ld-sku', sku: '129244' }
+    });
+    assert.strictEqual(verdict.ok, true, verdict.why);
+    assert.match(verdict.how, /sku 129244/);
+  });
+
+  /* the whole point of re-proving it */
+  test('a recorded sku that is not this listing\'s is refused', () => {
+    const verdict = extractor.catalogRowIdentity({
+      id: 'x', productUrl: 'https://www.llbean.com/llb/shop/129244',
+      imageUrl: 'https://cdni.llbean.net/is/image/wim/999999_1_1.jpg',
+      imageEvidence: { via: 'json-ld-sku', sku: '888888' }
+    });
+    assert.strictEqual(verdict.ok, false, 'a sku belonging to another product was accepted');
+    assert.match(verdict.why, /not a code in this row's own listing URL/);
+  });
+
+  test('an evidence block naming no sku is refused', () => {
+    const verdict = extractor.catalogRowIdentity({
+      id: 'x', productUrl: 'https://www.llbean.com/llb/shop/129244',
+      imageUrl: 'https://cdni.llbean.net/is/image/wim/521659_32573_41',
+      imageEvidence: { via: 'json-ld-sku' }
+    });
+    assert.strictEqual(verdict.ok, false);
+    assert.match(verdict.why, /names no sku/);
+  });
+
+  test('an evidence block of an unrecognised kind is refused', () => {
+    const verdict = extractor.catalogRowIdentity({
+      id: 'x', productUrl: 'https://www.llbean.com/llb/shop/129244',
+      imageUrl: 'https://cdni.llbean.net/is/image/wim/521659_32573_41',
+      imageEvidence: { via: 'i-checked-by-hand' }
+    });
+    assert.strictEqual(verdict.ok, false);
+    assert.match(verdict.why, /no recognised kind/);
+  });
+
+  test('a recorded canonical must be this row\'s own listing', () => {
+    const mine = extractor.catalogRowIdentity({
+      id: 'x', productUrl: 'https://www.llbean.com/llb/shop/129244',
+      imageUrl: 'https://cdni.llbean.net/is/image/wim/521659_32573_41',
+      imageEvidence: { via: 'canonical', canonical: 'https://www.llbean.com/llb/shop/129244' }
+    });
+    assert.strictEqual(mine.ok, true, mine.why);
+
+    const other = extractor.catalogRowIdentity({
+      id: 'x', productUrl: 'https://www.llbean.com/llb/shop/129244',
+      imageUrl: 'https://cdni.llbean.net/is/image/wim/521659_32573_41',
+      imageEvidence: { via: 'canonical', canonical: 'https://www.llbean.com/llb/shop/555555' }
+    });
+    assert.strictEqual(other.ok, false, "another product's canonical was accepted");
+  });
+
+  test('evidence cannot rescue a photo from an aggregator host', () => {
+    /* the host gate runs separately and first; this only records that
+       evidence is not a way around it */
+    const host = extractor.soundness(
+      'https://encrypted-tbn0.gstatic.com/shopping?q=129244',
+      'https://www.llbean.com/llb/shop/129244');
+    assert.match(String(host), /aggregator or stock host/);
+  });
+
+  /* ---------- writing that evidence down ---------- */
+
+  test('a photo whose URL speaks for itself gets no evidence note', () => {
+    const next = extractor.writeInto(source, 'uniqlo-merino-crew',
+      'https://image.uniqlo.com/goods/429066/item/main.jpg',
+      { ok: true, via: 'image-url', code: '429066' });
+    const row = evaluate(next).find((r) => r.id === 'uniqlo-merino-crew');
+    assert.strictEqual(row.imageEvidence, undefined, 'a redundant note was written');
+  });
+
+  test('a photo verified by sku records that sku beside it', () => {
+    const next = extractor.writeInto(source, 'jcrew-broken-in-oxford',
+      'https://www.jcrew.com/opaque-asset.jpg',
+      { ok: true, via: 'json-ld-sku', sku: 'AU763' });
+    const row = evaluate(next).find((r) => r.id === 'jcrew-broken-in-oxford');
+    assert.deepStrictEqual(plain(row.imageEvidence), { via: 'json-ld-sku', sku: 'AU763' });
+    assert.strictEqual(extractor.catalogRowIdentity(row).ok, true);
+  });
+
+  test('re-verifying by a URL that speaks for itself clears a stale note', () => {
+    const withNote = extractor.writeInto(source, 'jcrew-broken-in-oxford',
+      'https://www.jcrew.com/opaque-asset.jpg', { ok: true, via: 'json-ld-sku', sku: 'AU763' });
+    const cleared = extractor.writeInto(withNote, 'jcrew-broken-in-oxford',
+      'https://www.jcrew.com/s7-img-facade/AU763_WT0002', { ok: true, via: 'image-url', code: 'au763' });
+    const row = evaluate(cleared).find((r) => r.id === 'jcrew-broken-in-oxford');
+    assert.strictEqual(row.imageEvidence, undefined, 'the old note outlived the URL it explained');
+  });
+
+  test('the evidence note never lands on a neighbouring row', () => {
+    const next = extractor.writeInto(source, 'llbean-venturestretch-chino',
+      'https://cdni.llbean.net/is/image/wim/521659_32573_41',
+      { ok: true, via: 'json-ld-sku', sku: '129244' });
+    const after = evaluate(next);
+    for (const row of after.filter((r) => r.id !== 'llbean-venturestretch-chino')) {
+      const before = rows.find((r) => r.id === row.id);
+      assert.deepStrictEqual(plain(row.imageEvidence), plain(before.imageEvidence), `${row.id} gained or lost a note`);
+    }
+  });
+
+  test('the evidence field never reaches a rendered product', () => {
+    /* products.js builds an explicit record, so an extra catalogue field
+       is dropped before anything draws — the note is bookkeeping, not
+       something the interface has to know about. The real data layer is
+       loaded to answer this, rather than the claim being asserted. */
+    const Products = loadProductsLayer();
+    const normalised = Products.normalizeProduct({
+      id: 'x', name: 'A thing', brand: 'B',
+      imageUrl: 'https://h/i.jpg', productUrl: 'https://h/p',
+      imageEvidence: { via: 'json-ld-sku', sku: '1' }
+    });
+    assert.ok(normalised, 'the record did not normalise at all');
+    assert.strictEqual('imageEvidence' in normalised, false, 'the note leaked into the rendered record');
+    assert.strictEqual(normalised.imageUrl, 'https://h/i.jpg', 'the photo itself must survive');
   });
 
   test('a row with no verified photo carries null, not a placeholder', () => {
@@ -775,6 +921,31 @@ function walledRetailer() {
 /* evaluates an edited catalogue the way the extractor reads the real
    one, so a write is judged by what the rows become, not by string
    matching on the file */
+/* the real assets/products.js, run the way a page runs it, so what the
+   interface does with a catalogue row is answered by the interface's own
+   code rather than by this test's idea of it */
+function loadProductsLayer() {
+  const fs = require('fs');
+  const path = require('path');
+  const code = fs.readFileSync(path.join(__dirname, '..', 'assets', 'products.js'), 'utf8');
+  /* a vm context starts without URL, and products.js uses it to decide
+     whether a link is usable — without it every URL would read as
+     unusable and this test would be measuring the sandbox */
+  const sandbox = { URL, console };
+  sandbox.globalThis = sandbox;
+  vm.createContext(sandbox);
+  new vm.Script(code).runInContext(sandbox, { timeout: 5000 });
+  return sandbox.Products;
+}
+
+/* A catalogue row comes back from a vm context, so its objects carry
+   that realm's prototype and deepStrictEqual refuses them however
+   identical the contents. Copied into this realm they compare on what
+   they actually hold. */
+function plain(value) {
+  return value == null ? value : Object.assign({}, value);
+}
+
 function evaluate(source) {
   const sandbox = {};
   vm.createContext(sandbox);

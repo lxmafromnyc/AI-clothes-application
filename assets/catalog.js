@@ -23,14 +23,20 @@
    fails to load, keeps the drawn artwork, and that is the honest state
    rather than a placeholder.
 
-     UNIQLO    verified — image.uniqlo.com carries the listing's code
-     J.Crew    verified — the s7 facade carries the listing's code AU763
-     L.L.Bean  null — the URL read from its page requests an asset
-               (521659_32573_41) that nothing ties to product 129244;
-               the code appears only in Scene7's defaultImage fallback
-               parameter, which names the stand-in image rather than the
-               one being requested. Re-running the extractor against
-               that listing can fill it in properly.
+   imageEvidence records HOW a photo was tied to its product, and only
+   where the URL cannot say so itself. UNIQLO and J.Crew carry their
+   listing's code in the image URL, so the URL is its own evidence and no
+   note is written. L.L.Bean requests 521659_32573_41 for product 129244
+   — an asset name that says nothing about the product — and the tie was
+   made by the JSON-LD product record on that listing naming sku 129244,
+   so the row says so. The code also appears in that URL's defaultImage
+   parameter, but that names Scene7's stand-in image rather than the one
+   requested, and it is NOT what vouches for the photo.
+
+   The note is re-proved, not trusted: a recorded sku has to match a code
+   in the row's own productUrl, so a made-up note fails exactly as a
+   made-up URL does. It is bookkeeping only — assets/products.js builds
+   an explicit record, so this field never reaches the interface.
 
    The three rows carrying a productUrl are real listings. The rest are
    sample rows that exist to give the demo a catalogue to search.
@@ -76,6 +82,7 @@ const DEMO_PRODUCTS = [
     price: null,
     productUrl: 'https://www.llbean.com/llb/shop/129244',
     imageUrl: 'https://cdni.llbean.net/is/image/wim/521659_32573_41?hei=1095&wid=950&resMode=sharp2&defaultImage=llbprod/129244_0_44',
+    imageEvidence: { via: 'json-ld-sku', sku: '129244' },
     category: 'trousers',
     style: ['Minimal', 'Classic'],
     occasion: ['Work', 'Everyday'],

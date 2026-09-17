@@ -1647,12 +1647,18 @@ after one the page does not touch the video again.
   reachable from the environment this was built in, so no price could be
   verified there. It is an ordinary data field.
 - `imageUrl` carries a photo only where one was verified against that exact
-  listing. The UNIQLO and J.Crew rows do; the L.L.Bean row is `null` because the
-  URL read from its page requests a Scene7 asset that nothing ties to product
-  `129244` — the code appears only in the `defaultImage` fallback parameter,
-  which names the stand-in image rather than the one requested. Re-running the
-  extractor against that listing can fill it in properly. A row left `null`
-  keeps its drawn artwork, which is the honest state rather than a placeholder.
+  listing; a row left `null` keeps its drawn artwork, which is the honest state
+  rather than a placeholder.
+- `imageEvidence` records *how* a photo was tied to its product, and only where
+  the URL cannot say so itself. UNIQLO and J.Crew carry their listing's code in
+  the image URL, so no note is written. L.L.Bean requests a Scene7 asset
+  (`521659_32573_41`) whose name says nothing about product `129244`; the tie
+  was made by that listing's JSON-LD product record naming sku `129244`, so the
+  row records it. The `defaultImage` parameter in that URL also contains the
+  code, but it names Scene7's stand-in image rather than the one requested and
+  is explicitly not what vouches for the photo. The note is re-proved rather
+  than trusted — a recorded sku must match a code in the row's own `productUrl`
+  — and `assets/products.js` drops the field before anything renders.
 - `node scripts/fetch-catalog-images.js` fills the `imageUrl` of every row that
   carries a `productUrl`, by reading the photo off the listing the row already
   links to. It tries plain HTTP first; a page that gives up nothing — no
