@@ -887,26 +887,18 @@ function priceFromMetas(metas) {
   return out;
 }
 
-/* itemprop="price", the same claim written the older way. Read only from
-   a content attribute: an itemprop wrapped around visible text is the
-   heading-block case, and that path has its own gate. */
-function priceFromMicrodata(html) {
-  const out = [];
-  const re = /<(?:meta|span|div|data)[^>]+itemprop=["']price["'][^>]*>/gi;
-  let m;
-  while ((m = re.exec(html))) {
-    const content = m[0].match(/content=["']([^"']+)["']/i) || m[0].match(/value=["']([^"']+)["']/i);
-    if (content) out.push({ amount: content[1], currency: microdataCurrency(html), from: 'microdata' });
-  }
-  return out;
-}
+/* itemprop="price" is deliberately NOT read out of served markup.
 
-function microdataCurrency(html) {
-  const tag = html.match(/<[^>]+itemprop=["']priceCurrency["'][^>]*>/i);
-  if (!tag) return null;
-  const content = tag[0].match(/content=["']([^"']+)["']/i);
-  return content ? content[1] : null;
-}
+   A regex over raw HTML finds every price microdata on the page and can
+   say nothing about which itemscope each one sits in — and "which
+   itemscope" is the entire question, because a carousel tile's price is
+   marked up exactly like the product's. A figure read this way could
+   only ever be vouched for by the page's canonical URL, which is the
+   reasoning that put a $7.90 pair of socks on a $49.90 sweater.
+
+   So microdata is read in the browser or not at all, where the scope it
+   sits in is a fact rather than a guess. A listing whose only price is
+   microdata escalates to Chromium, which is what that path is for. */
 
 /* The figures in a run of text that are written AS money: a number with
    a currency symbol or code against it. The heading block is read with
@@ -983,7 +975,8 @@ function priceFromHeadingBlock(prices, hint) {
           amounts.set(key, {
             amount: found.amount, currency: money.currency, text: found.shown,
             currencyFromHint: Boolean(money.viaHint),
-            source: { path: entry.path, html: entry.html, struck: entry.struck, marked: entry.marked }
+            tie: entry.tie || null,
+            source: { path: entry.path, html: entry.html, struck: entry.struck, marked: entry.marked, tie: entry.tie || null }
           });
         }
       }
@@ -993,7 +986,7 @@ function priceFromHeadingBlock(prices, hint) {
 
   const offer = (found, from) => ({
     amount: found.amount, currency: found.currency, from, shown: found.text,
-    currencyFromHint: found.currencyFromHint, source: found.source
+    currencyFromHint: found.currencyFromHint, tie: found.tie, source: found.source
   });
 
   const all = distinct(live);
@@ -1038,7 +1031,8 @@ function priceFromRenderedMicrodata(prices, hint) {
     if (!amounts.has(key)) {
       amounts.set(key, {
         amount: entry.content, currency: entry.currency, shown: String(entry.content),
-        source: { path: entry.path, html: entry.html, struck: entry.struck }
+        tie: entry.tie || null,
+        source: { path: entry.path, html: entry.html, struck: entry.struck, tie: entry.tie || null }
       });
     }
   }
@@ -1054,7 +1048,10 @@ function priceFromRenderedMicrodata(prices, hint) {
   }
 
   const only = [...amounts.values()][0];
-  return [{ amount: only.amount, currency: only.currency, from: 'microdata (rendered)', shown: only.shown, source: only.source }];
+  return [{
+    amount: only.amount, currency: only.currency, from: 'microdata (rendered)',
+    shown: only.shown, tie: only.tie, source: only.source
+  }];
 }
 
 /* every price the served markup offers, in the order above */
@@ -1073,8 +1070,7 @@ function priceCandidatesFrom(html, pageUrl) {
 
   return [
     ...priceFromJsonLd(nodes),
-    ...priceFromMetas(metas),
-    ...priceFromMicrodata(html)
+    ...priceFromMetas(metas)
   ].map((c) => Object.assign({ canonical, hint: found.currency, hintVia: found.via, pageUrl }, c));
 }
 
@@ -1136,32 +1132,118 @@ function priceSoundness(candidate) {
    the same two ways of answering it: the record carrying the figure
    names a sku belonging to this listing, or the page carrying it
    declares itself this listing's canonical page. */
+/* What the page PUBLISHES about itself, as opposed to what can be read
+   off it. An offer in its structured data and the price in its sharing
+   metadata are the page speaking: they are statements the retailer
+   makes about the product this page is for. A figure scraped out of the
+   document is not — it is one of the many numbers the document happens
+   to contain. */
+const PAGE_PUBLISHES = /^(json-ld-offer|product:price:amount|og:price:amount|product:sale_price:amount)/;
+
+/* How far above the product's own heading a block may sit and still be
+   that product's price block. A price sits beside the title it belongs
+   to; something further up is a region of the page. */
+const MAX_BLOCK_STEPS = 4;
+
+/* Is this THIS product's price?
+
+   The photo answers this two ways and so does the price, but the second
+   way is narrower than it looks, and getting that wrong put a $7.90
+   pair of socks on a $49.90 sweater.
+
+   A canonical link says the PAGE is this listing's page. That vouches
+   for what the page publishes AS the product's price — its offer, its
+   price meta — because those are the retailer's own statement about the
+   product this page is for. It cannot vouch for a figure scraped out of
+   the document, because every carousel tile, cross-sell and bundle
+   price on a product page is also on that same canonical page. Being on
+   the right page is not evidence about an arbitrary number printed on
+   it.
+
+   So a scraped figure needs a STRUCTURAL tie instead: it has to sit
+   inside the markup that belongs to this product — its own itemscope,
+   or the block holding its own heading and nothing else's. The
+   canonical link is still required on top of that, because the right
+   block on the wrong page is still the wrong price. */
 function priceIdentity(candidate, productUrl) {
   const ids = identifiersFrom(productUrl);
+  const onThisPage = Boolean(candidate.canonical && samePage(candidate.canonical, productUrl));
+  const matches = (value) => {
+    const bare = String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    return bare ? ids.find((id) => bare.includes(id) || id.includes(bare)) : null;
+  };
 
+  /* the strongest tie: the record carrying the figure names this product */
   const skus = skuOf(candidate.node);
   for (const sku of skus) {
-    const bare = sku.replace(/[^a-z0-9]/g, '');
-    for (const id of ids) {
-      if (bare.includes(id) || id.includes(bare)) {
-        return { ok: true, via: 'json-ld-offer', sku, how: `the JSON-LD product it is an offer on names sku ${sku}` };
-      }
+    if (matches(sku)) {
+      return { ok: true, via: 'json-ld-offer', sku, how: `the JSON-LD product it is an offer on names sku ${sku}` };
     }
   }
 
-  if (candidate.canonical && samePage(candidate.canonical, productUrl)) {
+  const scraped = !PAGE_PUBLISHES.test(String(candidate.from || ''));
+
+  if (scraped) {
+    const tie = candidate.tie;
+    if (!tie) {
+      return { ok: false, why: 'it was read out of the page with nothing tying it to this product' };
+    }
+
+    /* an itemscope naming this product's sku needs no page at all */
+    if (tie.kind === 'itemscope' && tie.sku && matches(tie.sku)) {
+      return {
+        ok: true, via: 'microdata', sku: tie.sku,
+        how: `it sits in the product's own markup, which names sku ${tie.sku}`
+      };
+    }
+
+    if (!onThisPage) {
+      return { ok: false, why: `it was read out of the page's markup, and the page claims no canonical for this listing` };
+    }
+
+    if (tie.kind === 'itemscope') {
+      return {
+        ok: true, via: 'canonical', canonical: candidate.canonical,
+        how: "it sits inside the product's own itemscope on this listing's canonical page"
+      };
+    }
+
+    /* the block holding this product's heading — but only if it is
+       actually that, rather than a region that swallowed the rest of
+       the page on the way up */
+    if (tie.siblingProducts) {
+      return {
+        ok: false,
+        why: `the block it sits in also holds ${tie.siblingProducts} other product${tie.siblingProducts === 1 ? '' : 's'}, so it is a region of the page rather than this product's price block`
+      };
+    }
+    if (tie.steps === null || tie.steps === undefined || tie.steps > MAX_BLOCK_STEPS) {
+      return {
+        ok: false,
+        why: `it sits ${tie.steps === null || tie.steps === undefined ? 'an unknown number of' : tie.steps} levels above the product's own heading, too far to be that product's price block`
+      };
+    }
+
+    return {
+      ok: true, via: 'canonical', canonical: candidate.canonical,
+      how: `it sits ${tie.steps} level${tie.steps === 1 ? '' : 's'} from the product's own heading, in a block holding no other product, on this listing's canonical page`
+    };
+  }
+
+  /* what the page publishes as its own price */
+  if (onThisPage) {
     return {
       ok: true,
       via: candidate.from === 'json-ld-offer' ? 'json-ld-offer' : 'canonical',
       canonical: candidate.canonical,
-      how: `the page declares itself the canonical page for this listing, and this is its ${candidate.from}`
+      how: `the page declares itself the canonical page for this listing, and publishes this as its ${candidate.from}`
     };
   }
 
   if (skus.length) {
     return { ok: false, why: `it is an offer on sku ${skus[0]}, which is not this listing (looked for ${ids.slice(0, 3).join(', ')})` };
   }
-  return { ok: false, why: `nothing ties it to this product — no sku on the record, and the page claims no canonical for this listing` };
+  return { ok: false, why: 'nothing ties it to this product — no sku on the record, and the page claims no canonical for this listing' };
 }
 
 /* Walks the price candidates in order and returns the first that clears
@@ -1171,19 +1253,19 @@ function firstVerifiablePrice(candidates, productUrl) {
   const refusals = [];
   for (const candidate of candidates) {
     if (candidate.ambiguous) {
-      refusals.push({ amount: '—', from: candidate.from, gate: 'current', why: candidate.why });
+      refusals.push({ amount: '—', from: candidate.from, gate: 'current', why: candidate.why, sources: candidate.sources || null });
       continue;
     }
 
     const sound = priceSoundness(candidate);
     if (!sound.ok) {
-      refusals.push({ amount: String(candidate.amount), from: candidate.from, gate: 'sound', why: sound.why });
+      refusals.push({ amount: String(candidate.amount), from: candidate.from, gate: 'sound', why: sound.why, source: candidate.source || null });
       continue;
     }
 
     const identity = priceIdentity(candidate, productUrl);
     if (!identity.ok) {
-      refusals.push({ amount: String(candidate.amount), from: candidate.from, gate: 'identity', why: identity.why });
+      refusals.push({ amount: String(candidate.amount), from: candidate.from, gate: 'identity', why: identity.why, source: candidate.source || null });
       continue;
     }
 
@@ -1521,6 +1603,52 @@ function gatherInPage() {
 
   const scope = typedScope || headingBlock;
 
+  /* ---- what ties a scraped figure to THIS product ----
+
+     A canonical link says the PAGE is this listing's. It cannot say
+     that a number scraped out of that page is this product's, because
+     a product page is full of other products' numbers and every one of
+     them is on the same canonical page. So each figure carries how it
+     was tied structurally, and the strength of that tie is what the
+     identity gate weighs — never the page's URL on its own. */
+  const typedSku = (() => {
+    if (!typedScope) return null;
+    for (const key of ['sku', 'productID', 'mpn', 'gtin13']) {
+      const el = typedScope.querySelector(`[itemprop="${key}"]`);
+      if (!el) continue;
+      const value = (el.getAttribute('content') || el.textContent || '').trim();
+      if (value) return value;
+    }
+    return null;
+  })();
+
+  /* how far above the product's heading the block sits. A price block
+     is next to the title a shopper reads with it; something five or six
+     levels up is a region of the page, not this product's price. */
+  const headingSteps = (() => {
+    if (!h1 || !headingBlock) return null;
+    let steps = 0;
+    for (let node = h1.parentElement; node; node = node.parentElement, steps += 1) {
+      if (node === headingBlock) return steps + 1;
+    }
+    return null;
+  })();
+
+  /* other products inside the block: another product's itemscope, or a
+     lower heading with a figure under it, which is what a carousel tile
+     and a "complete the look" row both look like */
+  const siblingProducts = (() => {
+    if (!headingBlock) return 0;
+    let count = 0;
+    for (const node of headingBlock.querySelectorAll('[itemtype]')) {
+      if (/product/i.test(node.getAttribute('itemtype') || '') && node !== typedScope) count += 1;
+    }
+    for (const node of headingBlock.querySelectorAll('h2, h3, h4')) {
+      if (moneyIn(node.parentElement || node).length) count += 1;
+    }
+    return count;
+  })();
+
   /* ---- what the product's own block says in machine-readable form ---- */
   const microdata = !scope ? [] : [...scope.querySelectorAll('[itemprop="price"]')].map((el) => ({
     content: el.getAttribute('content') || el.getAttribute('value') || el.textContent.trim(),
@@ -1531,7 +1659,10 @@ function gatherInPage() {
     })(),
     struck: looksStruck(el),
     path: pathOf(el),
-    html: snippetOf(el)
+    html: snippetOf(el),
+    tie: typedScope && typedScope.contains(el)
+      ? { kind: 'itemscope', sku: typedSku }
+      : { kind: 'heading-block', steps: headingSteps, siblingProducts }
   })).filter((e) => e.content);
 
   /* ---- and what it draws ----
@@ -1555,7 +1686,10 @@ function gatherInPage() {
         hidden,
         used: !noise && !hidden,
         path: pathOf(el),
-        html: snippetOf(el)
+        html: snippetOf(el),
+        tie: typedScope && typedScope.contains(el)
+          ? { kind: 'itemscope', sku: typedSku }
+          : { kind: 'heading-block', steps: headingSteps, siblingProducts }
       });
     }
   }
@@ -1575,6 +1709,9 @@ function gatherInPage() {
       dropped: heading.filter((h) => !h.used),
       scope: scope ? (typedScope ? 'the product\'s own itemscope' : 'the block holding the product\'s heading') : null,
       scopePath: scope ? pathOf(scope) : null,
+      scopeSku: typedSku,
+      headingSteps,
+      siblingProducts,
       scopeHtml: scope ? snippetOf(scope) : null,
       headings: allHeadings.map((h) => ({ text: h.text, path: h.path, shared: h.shared, chosen: h.el === h1 })),
       productName
@@ -2466,6 +2603,13 @@ function reportRefusals(refusals, limit) {
     const what = refusal.url ? short(refusal.url) : refusal.amount;
     console.log(`  ${gutter}  [${refusal.gate}] ${what}`);
     console.log(`  ${gutter}    from ${refusal.from} — ${refusal.why}`);
+    /* the element it came from, so a refusal on a real page can be
+       acted on without a second run to go and look */
+    for (const source of [refusal.source, ...(refusal.sources || [])].filter(Boolean)) {
+      const label = source.shown ? `${source.shown}  ` : '';
+      console.log(`  ${gutter}      ${label}${source.path || ''}`);
+      if (source.html) console.log(`  ${gutter}      ${short(source.html, 96)}`);
+    }
   }
   const extra = list.length - limit;
   if (extra > 0) console.log(`  ${gutter}  …and ${extra} more`);
@@ -2840,7 +2984,7 @@ if (require.main === module) {
     parseAmount, gradeAmount, currencyOf, offersOf, priceCandidatesFrom,
     priceCandidatesFromRendered, priceSoundness, priceIdentity,
     firstVerifiablePrice, catalogRowPrice, priceEvidenceNote, writePriceInto,
-    priceFromHeadingBlock, priceFromRenderedMicrodata, amountsIn,
+    priceFromHeadingBlock, priceFromRenderedMicrodata, amountsIn, parseLdBlock,
     writeRow, formatAmount, accountedFor,
 
     /* giving a row a listing */

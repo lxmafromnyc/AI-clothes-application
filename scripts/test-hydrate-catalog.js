@@ -491,6 +491,30 @@ function pricedRetailer() {
         </main></body></html>`);
     }
 
+    /* ---- the shape that VERIFIED $7.90 ----
+
+       The product's own heading is found here, so choosing the right
+       h1 does not save it: the block above that heading is the whole
+       product region, and it holds a cross-sell tile. The figure is on
+       the listing's canonical page, which is exactly why canonical is
+       not allowed to vouch for it. */
+    if (code === '11111111') {
+      res.writeHead(200, { 'content-type': 'text/html' });
+      return res.end(`<!doctype html><html lang="en-US"><head>
+        <link rel="canonical" href="http://127.0.0.1:${port}/p/${code}">
+        <meta property="og:title" content="Extra Fine Merino Crew Neck Long-Sleeve Sweater">
+        <title>Extra Fine Merino Crew Neck Long-Sleeve Sweater</title></head>
+        <body><main><div class="pdp">
+          <div class="gallery"></div>
+          <div class="info">
+            <h1 class="product-title">Extra Fine Merino Crew Neck Long-Sleeve Sweater</h1>
+          </div>
+          <section class="cross-sell">
+            <h3>Socks 3-Pack</h3><span class="price">$7.90</span>
+          </section>
+        </div></main></body></html>`);
+    }
+
     const ambiguous = code === '06887614';
     const silentAboutCurrency = code === '06887615';
 
@@ -603,9 +627,14 @@ function pricedRetailer() {
     assert.match(got.from, /product:price:amount/);
   });
 
-  test('microdata states the same claim and is read the same way', () => {
-    const got = priceOf(pricedMicrodata, UNIQLO);
-    assert.strictEqual(got.amount, 49.9, got.refusals && JSON.stringify(got.refusals));
+  test('microdata in served markup is not read at all, because its scope cannot be known', () => {
+    /* a regex over raw HTML cannot tell the product's itemprop="price"
+       from a carousel tile's, and which one it is IS the question. So
+       the served path offers nothing here and the row escalates to the
+       browser, where the scope is a fact. */
+    const candidates = extractor.priceCandidatesFrom(pricedMicrodata, UNIQLO);
+    assert.strictEqual(candidates.length, 0,
+      `served markup offered ${candidates.length} untied microdata candidate(s): ${JSON.stringify(candidates)}`);
   });
 
   test('a page with no product record offers no price to read', () => {
@@ -1242,6 +1271,68 @@ function pricedRetailer() {
       const candidates = extractor.priceCandidatesFromRendered(page.seen.seen, page.url);
       assert.match(String(candidates[0].from), /json-ld-offer/,
         `the first candidate was ${candidates[0].from}, so the drawn figures were tried first`);
+    });
+
+    /* ---------- what a canonical link may and may not vouch for ----------
+
+       The rule that put $7.90 on a $49.90 sweater, stated directly:
+       being on the right page is not evidence about an arbitrary
+       number printed on it. */
+
+    test('the canonical page cannot vouch for a figure scraped out of it', () => {
+      const scraped = extractor.priceIdentity({
+        amount: 7.9, currency: 'USD', from: 'rendered price', canonical: UNIQLO,
+        tie: { kind: 'heading-block', steps: 6, siblingProducts: 3 }
+      }, UNIQLO);
+      assert.strictEqual(scraped.ok, false, 'a canonical page vouched for a scraped figure');
+      assert.match(scraped.why, /other product/);
+
+      const untied = extractor.priceIdentity({
+        amount: 7.9, currency: 'USD', from: 'rendered price', canonical: UNIQLO
+      }, UNIQLO);
+      assert.strictEqual(untied.ok, false, 'an untied scraped figure was accepted');
+      assert.match(untied.why, /nothing tying it to this product/);
+    });
+
+    test('a canonical link still vouches for what the page publishes as its price', () => {
+      const published = extractor.priceIdentity({
+        amount: '49.90', currency: 'USD', from: 'og:price:amount', canonical: UNIQLO
+      }, UNIQLO);
+      assert.strictEqual(published.ok, true, published.why);
+      assert.strictEqual(published.via, 'canonical');
+    });
+
+    test("a figure in the product's own itemscope keeps its canonical evidence", () => {
+      const scoped = extractor.priceIdentity({
+        amount: '49.90', currency: 'USD', from: 'microdata (rendered)', canonical: UNIQLO,
+        tie: { kind: 'itemscope', sku: null }
+      }, UNIQLO);
+      assert.strictEqual(scoped.ok, true, scoped.why);
+      assert.match(scoped.how, /itemscope/);
+    });
+
+    test('an itemscope naming this product needs no canonical at all', () => {
+      const bySku = extractor.priceIdentity({
+        amount: '49.90', currency: 'USD', from: 'microdata (rendered)', canonical: null,
+        tie: { kind: 'itemscope', sku: 'E429066-000' }
+      }, UNIQLO);
+      assert.strictEqual(bySku.ok, true, bySku.why);
+      assert.strictEqual(bySku.via, 'microdata');
+    });
+
+    await testAsync('a cross-sell inside the product region is refused, not verified', async () => {
+      const page = await pageOf('11111111');
+      const got = extractor.firstVerifiablePrice(
+        extractor.priceCandidatesFromRendered(page.seen.seen, page.url), page.url);
+
+      assert.ok(got.amount === undefined, `it verified $${got.amount} from a cross-sell tile`);
+      const refusal = got.refusals.find((r) => r.gate === 'identity');
+      assert.ok(refusal, `no identity refusal: ${JSON.stringify(got.refusals)}`);
+      assert.match(refusal.why, /other product/);
+      /* and the refusal says which element, so a live failure is
+         actionable without going and looking */
+      assert.ok(refusal.source && refusal.source.path, 'the refusal named no source element');
+      assert.match(refusal.source.path, /cross-sell|price/);
     });
 
     shop.close();
