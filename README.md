@@ -1643,12 +1643,22 @@ after one the page does not touch the video again.
   generated artwork built from CSS gradients and inline SVG. Set `imageUrl` on a
   product and it renders the photo; if that photo fails to load, the artwork
   returns.
-- `price` is `null` throughout the demo catalogue, and `imageUrl` on every row
-  but one, because no retailer domain was reachable from the environment this
-  was built in, so no value could be verified there. They are ordinary data
-  fields. The UNIQLO row carries the photo its own listing publishes, read by
-  the extractor below from a connection that can reach the retailer; the Zara
-  and Levi's rows stay `null` because nothing was verified for them.
+- `price` is `null` throughout the demo catalogue because no retailer domain was
+  reachable from the environment this was built in, so no price could be
+  verified there. It is an ordinary data field.
+- `imageUrl` carries a photo only where one was verified against that exact
+  listing; a row left `null` keeps its drawn artwork, which is the honest state
+  rather than a placeholder.
+- `imageEvidence` records *how* a photo was tied to its product, and only where
+  the URL cannot say so itself. UNIQLO and J.Crew carry their listing's code in
+  the image URL, so no note is written. L.L.Bean requests a Scene7 asset
+  (`521659_32573_41`) whose name says nothing about product `129244`; the tie
+  was made by that listing's JSON-LD product record naming sku `129244`, so the
+  row records it. The `defaultImage` parameter in that URL also contains the
+  code, but it names Scene7's stand-in image rather than the one requested and
+  is explicitly not what vouches for the photo. The note is re-proved rather
+  than trusted — a recorded sku must match a code in the row's own `productUrl`
+  — and `assets/products.js` drops the field before anything renders.
 - `node scripts/fetch-catalog-images.js` fills the `imageUrl` of every row that
   carries a `productUrl`, by reading the photo off the listing the row already
   links to. It tries plain HTTP first; a page that gives up nothing — no
@@ -1671,6 +1681,13 @@ after one the page does not touch the video again.
   In the browser it answers a cookie wall (accept only — nothing is rejected,
   configured or submitted) and walks the page down so a gallery that loads on
   scroll actually loads before it is read.
+
+  When a retailer cannot be read at all, the row's product has to change
+  rather than its photo. `--candidate <productUrl> --as <row-id>` tries a
+  replacement listing through the same four gates and prints the row it would
+  become — name, brand, `productUrl` and `imageUrl`, every field taken off that
+  page rather than typed in — and `--write` then swaps all four together, so a
+  row can never point at one product and picture another.
 
   It reports `VERIFIED` / `NO IMAGE FOUND` / `UNREACHABLE` per row and writes
   only with `--write`. A row that fails lists every candidate it found with the

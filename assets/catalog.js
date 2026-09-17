@@ -10,21 +10,40 @@
      Products.load('/api/products.json')   a URL returning JSON
      Products.load(() => queryDb())        a function or promise
 
-   price is null on every row, and imageUrl on every row but one, because
-   no retailer domain or image host is reachable from the environment this
-   is built in, so no value could be read from the source there. Both are
-   ordinary fields: fill them in and the interface renders them, with no
-   local image files involved. A product whose imageUrl is missing or
-   fails to load keeps the drawn artwork.
+   price is null on every row, because no retailer domain was reachable
+   from the environment this is built in, so no price could be read from
+   the source. It is an ordinary field: fill it in and the interface
+   renders it.
 
-   The UNIQLO row's photo is the exception. It was read off that listing
-   by scripts/fetch-catalog-images.js, run from a connection that can
-   reach the retailer, and it is the URL uniqlo.com's own page publishes.
-   The Zara and Levi's rows stay null: nothing was verified for them, and
-   a guessed URL is worse than the artwork it would replace.
+   imageUrl carries a photo on the rows where one was verified, and null
+   everywhere else. A photo gets here one way only: read off the listing
+   the row links to by scripts/fetch-catalog-images.js, run from a
+   connection that can reach the retailer, and tied to that exact product
+   before it is written. A product whose imageUrl is null, or whose photo
+   fails to load, keeps the drawn artwork, and that is the honest state
+   rather than a placeholder.
+
+   imageEvidence records HOW a photo was tied to its product, and only
+   where the URL cannot say so itself. UNIQLO and J.Crew carry their
+   listing's code in the image URL, so the URL is its own evidence and no
+   note is written. L.L.Bean requests 521659_32573_41 for product 129244
+   — an asset name that says nothing about the product — and the tie was
+   made by the JSON-LD product record on that listing naming sku 129244,
+   so the row says so. The code also appears in that URL's defaultImage
+   parameter, but that names Scene7's stand-in image rather than the one
+   requested, and it is NOT what vouches for the photo.
+
+   The note is re-proved, not trusted: a recorded sku has to match a code
+   in the row's own productUrl, so a made-up note fails exactly as a
+   made-up URL does. It is bookkeeping only — assets/products.js builds
+   an explicit record, so this field never reaches the interface.
 
    The three rows carrying a productUrl are real listings. The rest are
    sample rows that exist to give the demo a catalogue to search.
+
+   colors is empty on a row whose colour nothing established, the same
+   way sizes is empty on every real listing: an unknown is left unsaid
+   rather than guessed from whatever the row used to hold.
    ========================================================= */
 
 const DEMO_PRODUCTS = [
@@ -43,12 +62,12 @@ const DEMO_PRODUCTS = [
     sizes: []
   },
   {
-    id: 'zara-oxford-shirt',
-    name: 'Oxford Shirt — White',
-    brand: 'ZARA',
+    id: 'jcrew-broken-in-oxford',
+    name: 'Broken-in organic cotton oxford shirt',
+    brand: 'J.Crew',
     price: null,
-    productUrl: 'https://www.zara.com/us/en/oxford-shirt-p06887613.html',
-    imageUrl: null,
+    productUrl: 'https://www.jcrew.com/p/mens/categories/clothing/shirts/broken-in-oxford/broken-in-organic-cotton-oxford-shirt/AU763',
+    imageUrl: 'https://www.jcrew.com/s7-img-facade/AU763_WT0002',
     category: 'shirt',
     style: ['Classic', 'Minimal'],
     occasion: ['Work', 'Everyday'],
@@ -57,17 +76,18 @@ const DEMO_PRODUCTS = [
     sizes: []
   },
   {
-    id: 'levis-xx-chino-taper',
-    name: "XX Chino Standard Taper Fit Men's Pants — Black",
-    brand: "LEVI'S",
+    id: 'llbean-venturestretch-chino',
+    name: "Men's VentureStretch Commuter Chinos",
+    brand: 'L.L.Bean',
     price: null,
-    productUrl: 'https://www.levi.com/US/en_US/chino-pants/levis-chino-pants-for-men/levis-xx-chino-standard-taper-fit-mens-pants/p/171960005',
-    imageUrl: null,
+    productUrl: 'https://www.llbean.com/llb/shop/129244',
+    imageUrl: 'https://cdni.llbean.net/is/image/wim/521659_32573_41?hei=1095&wid=950&resMode=sharp2&defaultImage=llbprod/129244_0_44',
+    imageEvidence: { via: 'json-ld-sku', sku: '129244' },
     category: 'trousers',
     style: ['Minimal', 'Classic'],
     occasion: ['Work', 'Everyday'],
     fit: ['Slim', 'Regular'],
-    colors: ['Black'],
+    colors: [],
     sizes: []
   },
   {
@@ -411,6 +431,6 @@ const DEMO_PRODUCTS = [
 /* The homepage demo panel: product ids and the match score shown. */
 const HERO_PICKS = [
   { id: 'uniqlo-merino-crew', score: 96 },
-  { id: 'zara-oxford-shirt', score: 93 },
-  { id: 'levis-xx-chino-taper', score: 91 }
+  { id: 'jcrew-broken-in-oxford', score: 93 },
+  { id: 'llbean-venturestretch-chino', score: 91 }
 ];

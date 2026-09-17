@@ -50,7 +50,7 @@
    Usage
      node scripts/fetch-catalog-images.js
      node scripts/fetch-catalog-images.js --write
-     node scripts/fetch-catalog-images.js --only zara-oxford-shirt
+     node scripts/fetch-catalog-images.js --only jcrew-broken-in-oxford
      node scripts/fetch-catalog-images.js --refresh        re-read rows that have one
      node scripts/fetch-catalog-images.js --no-browser     plain HTTP only
      node scripts/fetch-catalog-images.js --site https://example.github.io
@@ -276,6 +276,9 @@ function identifiersFrom(productUrl) {
   try { url = new URL(productUrl); } catch (err) { return []; }
   const text = decodeURIComponent(url.pathname) + ' ' + decodeURIComponent(url.search);
   const ids = new Set();
+
+  /* a long run of digits, with and without its leading zeros: Levi's
+     171960005, Zara's 06887613, UNIQLO's 429066 */
   for (const token of text.match(/[A-Za-z]{0,3}\d{4,}[A-Za-z0-9]*/g) || []) {
     ids.add(token.toLowerCase());
     const digits = token.replace(/\D/g, '');
@@ -285,6 +288,15 @@ function identifiersFrom(productUrl) {
       if (trimmed.length >= 4) ids.add(trimmed);
     }
   }
+
+  /* a letters-and-digits style code, which a run of four digits misses
+     entirely: J.Crew names products AU763, BD640, MP919. Four characters
+     is the floor, and a code this short is matched at a boundary rather
+     than anywhere inside a hash, so it cannot collide its way in. */
+  for (const token of text.match(/\b[A-Za-z]{1,4}\d{2,}[A-Za-z]?\b/g) || []) {
+    if (token.length >= 4) ids.add(token.toLowerCase());
+  }
+
   return [...ids];
 }
 
@@ -315,19 +327,31 @@ function identityEvidence(candidate, productUrl) {
   const ids = identifiersFrom(productUrl);
   if (!ids.length) return { ok: false, why: 'the listing URL carries no product code to match against' };
 
-  /* the code, as it appears anywhere in the image URL */
-  const image = candidate.url.toLowerCase();
+  const where = identityHaystacks(candidate.url);
+  if (where.unparseable) return { ok: false, why: 'not a URL' };
+
+  /* The code, as it appears in the image URL — but only where it says
+     something about the asset being requested. A long code may sit
+     anywhere in those parts; a short one such as J.Crew's AU763 has to
+     sit at a boundary, so it cannot match its way in from the middle of
+     a hash. */
   for (const id of ids) {
-    if (image.includes(id)) return { ok: true, how: `its URL carries the listing's code ${id}` };
+    for (const place of where.meaningful) {
+      if (containsCode(place.text, id)) {
+        return { ok: true, via: 'image-url', code: id, how: `the ${place.label} carries the listing's code ${id}` };
+      }
+    }
   }
 
   /* the code, with the separators a CDN path puts through it — Zara
      splits 6887613 across /6887/613/. Only long codes are matched this
      way, because a short run of digits collides by accident. */
-  const digitsOnly = image.replace(/\D/g, '');
   for (const id of ids) {
-    if (/^\d{6,}$/.test(id) && digitsOnly.includes(id)) {
-      return { ok: true, how: `its URL path carries the listing's code ${id}, split across segments` };
+    if (!/^\d{6,}$/.test(id)) continue;
+    for (const place of where.meaningful) {
+      if (place.text.replace(/\D/g, '').includes(id)) {
+        return { ok: true, via: 'image-url', code: id, how: `the ${place.label} carries the listing's code ${id}, split across segments` };
+      }
     }
   }
 
@@ -337,7 +361,7 @@ function identityEvidence(candidate, productUrl) {
     const bare = sku.replace(/[^a-z0-9]/g, '');
     for (const id of ids) {
       if (bare.includes(id) || id.includes(bare)) {
-        return { ok: true, how: `the JSON-LD product it came from names sku ${sku}` };
+        return { ok: true, via: 'json-ld-sku', sku, how: `the JSON-LD product it came from names sku ${sku}` };
       }
     }
   }
@@ -346,13 +370,113 @@ function identityEvidence(candidate, productUrl) {
      listing, and the image is the one it publishes as the product's */
   const vouches = candidate.from === 'json-ld' || String(candidate.from).startsWith('og:');
   if (vouches && candidate.canonical && samePage(candidate.canonical, productUrl)) {
-    return { ok: true, how: `the page declares itself the canonical page for this listing, and this is its ${candidate.from}` };
+    return {
+      ok: true,
+      via: 'canonical',
+      canonical: candidate.canonical,
+      how: `the page declares itself the canonical page for this listing, and this is its ${candidate.from}`
+    };
+  }
+
+  if (where.onlyInFallback.length) {
+    return {
+      ok: false,
+      why: `the code appears only in the ${where.onlyInFallback.join(' and ')} parameter, which names the stand-in image, not the one requested (${where.assetLabel})`
+    };
   }
 
   return {
     ok: false,
     why: `nothing ties it to this product (looked for ${ids.slice(0, 3).join(', ')})`
   };
+}
+
+/* Parameters that name a picture to serve INSTEAD of the one asked for.
+   Scene7's defaultImage is the common one: it is what the CDN falls back
+   to when the requested asset is missing, so a product code sitting
+   there says what would be shown if this image did not exist — the
+   opposite of proof that this image is the product's. */
+const FALLBACK_PARAMS = ['defaultimage', 'default', 'fallback', 'placeholder', 'errorimage', 'missingimage'];
+
+/* The parts of an image URL that say something about the asset being
+   requested, kept apart from the parts that do not. */
+function identityHaystacks(rawUrl) {
+  let url;
+  try { url = new URL(String(rawUrl)); } catch (err) { return { unparseable: true, meaningful: [], onlyInFallback: [] }; }
+
+  const meaningful = [{ label: 'URL path', text: decodeURIComponent(url.pathname).toLowerCase() }];
+  const onlyInFallback = [];
+
+  for (const [key, value] of url.searchParams) {
+    const name = key.toLowerCase();
+    const text = decodeURIComponent(String(value)).toLowerCase();
+    if (FALLBACK_PARAMS.includes(name)) onlyInFallback.push(key);
+    else meaningful.push({ label: `${key} parameter`, text });
+  }
+
+  return {
+    meaningful,
+    /* only worth naming in a refusal if nothing meaningful matched */
+    onlyInFallback,
+    assetLabel: decodeURIComponent(url.pathname).split('/').filter(Boolean).pop() || url.pathname
+  };
+}
+
+/* a long code may sit anywhere; a short one has to sit at a boundary */
+function containsCode(text, id) {
+  if (id.length >= 6) return text.includes(id);
+  const escaped = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`).test(text);
+}
+
+/* ---------- is a SHIPPED row's photo still accounted for? ----------
+
+   A row in the catalogue is a URL with no page attached, and some
+   retailers name their assets in a way that says nothing about the
+   product: L.L.Bean requests 521659_32573_41 for product 129244. The
+   extractor could tie that image to the listing because it was reading
+   the page, where the JSON-LD product record named the sku. The file
+   cannot re-read the page, so the row records how the tie was made.
+
+   That record is re-proved here, never taken on faith. A recorded sku
+   has to match a code in the row's own productUrl, and a recorded
+   canonical has to be that same listing, so a made-up evidence block
+   fails exactly as a made-up URL does. What the row buys is the fact
+   that verification happened, not permission to skip it. */
+function catalogRowIdentity(row) {
+  if (!row || !row.imageUrl) return { ok: true, how: 'no photo to account for' };
+  if (!row.productUrl) return { ok: false, why: 'carries a photo but links to no listing' };
+
+  /* the URL says it itself — UNIQLO and J.Crew */
+  const direct = identityEvidence({ url: row.imageUrl, from: 'catalogue' }, row.productUrl);
+  if (direct.ok) return direct;
+
+  const evidence = row.imageEvidence;
+  if (!evidence || typeof evidence !== 'object') {
+    return { ok: false, why: `${direct.why}, and the row records no verification evidence` };
+  }
+
+  const ids = identifiersFrom(row.productUrl);
+
+  if (evidence.via === 'json-ld-sku') {
+    const sku = String(evidence.sku || '').toLowerCase();
+    const bare = sku.replace(/[^a-z0-9]/g, '');
+    if (!bare) return { ok: false, why: 'the recorded evidence names no sku' };
+    const matched = ids.find((id) => bare.includes(id) || id.includes(bare));
+    if (!matched) {
+      return { ok: false, why: `the recorded sku ${evidence.sku} is not a code in this row's own listing URL` };
+    }
+    return { ok: true, via: 'json-ld-sku', how: `its listing's JSON-LD product names sku ${evidence.sku}` };
+  }
+
+  if (evidence.via === 'canonical') {
+    if (!samePage(evidence.canonical, row.productUrl)) {
+      return { ok: false, why: `the recorded canonical ${evidence.canonical} is not this row's listing` };
+    }
+    return { ok: true, via: 'canonical', how: 'its listing declared itself canonical for this product' };
+  }
+
+  return { ok: false, why: `the recorded evidence names no recognised kind (${evidence.via || 'none'})` };
 }
 
 /* ---------- the gates ---------- */
@@ -676,6 +800,43 @@ function candidatesFromRendered(seen, loaded, pageUrl) {
   return dedupe(raw, pageUrl, seen.canonical);
 }
 
+/* ---------- what the page says the product IS ----------
+
+   Replacing a row means replacing its identity, not just its photo, and
+   the name and brand have to come from the same page the image did —
+   typed in by hand they are one more thing nobody checked. */
+function factsFrom(nodes, metas) {
+  const facts = { name: null, brand: null };
+  for (const node of nodes) {
+    if (!/product/i.test(String(node['@type'] || ''))) continue;
+    if (!facts.name && typeof node.name === 'string') facts.name = node.name.trim();
+    if (!facts.brand) {
+      const brand = node.brand;
+      if (typeof brand === 'string') facts.brand = brand.trim();
+      else if (brand && typeof brand === 'object' && typeof brand.name === 'string') facts.brand = brand.name.trim();
+    }
+  }
+  const meta = metas || {};
+  if (!facts.name && meta['og:title']) facts.name = String(meta['og:title']).trim();
+  if (!facts.brand && meta['og:site_name']) facts.brand = String(meta['og:site_name']).trim();
+  return facts;
+}
+
+function factsFromHtml(html) {
+  const metas = {};
+  for (const key of ['og:title', 'og:site_name']) {
+    const value = metaContent(html, key);
+    if (value) metas[key] = decode(value);
+  }
+  return factsFrom(jsonLdNodes(html), metas);
+}
+
+function factsFromRendered(seen) {
+  const nodes = [];
+  for (const block of seen.jsonld || []) nodes.push(...parseLdBlock(block));
+  return factsFrom(nodes, seen.metas || {});
+}
+
 /* ---------- one row ---------- */
 
 /* Walks candidates in order and returns the first that clears every
@@ -697,7 +858,7 @@ async function firstVerifiable(candidates, row, fetcher) {
 
     const check = await verifyImage(candidate.url, fetcher);
     if (check.ok) {
-      return { url: candidate.url, why: `${check.why} — ${identity.how}`, from: candidate.from };
+      return { url: candidate.url, why: `${check.why} — ${identity.how}`, from: candidate.from, identity };
     }
     note(candidate, 'loadable', check.why);
   }
@@ -706,17 +867,19 @@ async function firstVerifiable(candidates, row, fetcher) {
 
 async function resolveRow(row) {
   const notes = [];
+  let facts = { name: null, brand: null };
 
   /* ---- plain HTTP ---- */
   const page = await fetchPage(row.productUrl);
   let served = null;
 
   if (page.html) {
+    facts = factsFromHtml(page.html);
     const candidates = candidatesFrom(page.html, row.productUrl);
     notes.push(`plain HTTP: ${candidates.length} candidate${candidates.length === 1 ? '' : 's'}`);
     if (candidates.length) {
       served = await firstVerifiable(candidates, row);
-      if (served.url) return { id: row.id, verdict: 'VERIFIED', why: served.why, url: served.url, from: served.from, notes };
+      if (served.url) return { id: row.id, verdict: 'VERIFIED', why: served.why, url: served.url, from: served.from, identity: served.identity, facts, notes };
     }
   } else if (page.blocked) {
     /* the sandbox, not the retailer: a browser here would be refused the
@@ -754,6 +917,7 @@ async function resolveRow(row) {
     };
   }
 
+  facts = factsFromRendered(rendered.seen) ;
   const candidates = candidatesFromRendered(rendered.seen, rendered.loaded, row.productUrl);
   notes.push(`browser: ${candidates.length} candidate${candidates.length === 1 ? '' : 's'}`);
   if (!candidates.length) {
@@ -761,7 +925,7 @@ async function resolveRow(row) {
   }
 
   const found = await firstVerifiable(candidates, row, rendered.verify);
-  if (found.url) return { id: row.id, verdict: 'VERIFIED', why: found.why, url: found.url, from: found.from, notes };
+  if (found.url) return { id: row.id, verdict: 'VERIFIED', why: found.why, url: found.url, from: found.from, identity: found.identity, facts, notes };
 
   const all = [...(served && served.refusals ? served.refusals : []), ...found.refusals];
   return {
@@ -770,6 +934,7 @@ async function resolveRow(row) {
     why: `${all.length} candidate${all.length === 1 ? '' : 's'} found, none cleared every gate`,
     url: null,
     refusals: all,
+    facts,
     notes
   };
 }
@@ -780,7 +945,7 @@ async function resolveRow(row) {
    its spacing and its row order, and only the imageUrl belonging to the
    row being filled is touched. The row is located by its id, and the
    first imageUrl after that id is the one it owns. */
-function writeInto(source, id, url) {
+function writeInto(source, id, url, evidence) {
   const idAt = source.indexOf(`id: '${id}'`);
   if (idAt === -1) throw new Error(`could not find the row for ${id}`);
 
@@ -792,7 +957,127 @@ function writeInto(source, id, url) {
   if (url.includes("'") || /[\r\n]/.test(url)) throw new Error(`refusing to write an unquotable URL for ${id}`);
 
   const at = idAt + m.index;
-  return source.slice(0, at) + m[1] + `'${url}'` + source.slice(at + m[0].length);
+  const indent = m[1].replace(/\n/, '').replace(/imageUrl:\s*$/, '');
+  let out = source.slice(0, at) + m[1] + `'${url}'` + source.slice(at + m[0].length);
+
+  /* A photo whose URL does not carry the product's code is only
+     accountable later if the row says how it was tied to the listing, so
+     that is recorded beside it rather than left to memory. A URL that
+     speaks for itself needs no note and does not get one. */
+  const note = evidenceNote(evidence);
+  out = setEvidence(out, id, note, indent);
+  return out;
+}
+
+/* where the row that starts at idAt stops: the next row's id, or the end
+   of the file. Every row carries exactly one id, so this needs no
+   brace counting. */
+function rowEndsAt(source, idAt) {
+  const next = source.indexOf("id: '", idAt + 1);
+  return next === -1 ? source.length : next;
+}
+
+/* the evidence worth keeping: the kinds a shipped row can be re-proved
+   against without the page in front of it */
+function evidenceNote(evidence) {
+  if (!evidence || !evidence.ok) return null;
+  if (evidence.via === 'json-ld-sku' && evidence.sku) {
+    return `{ via: 'json-ld-sku', sku: '${String(evidence.sku).replace(/'/g, "")}' }`;
+  }
+  if (evidence.via === 'canonical' && evidence.canonical) {
+    return `{ via: 'canonical', canonical: '${String(evidence.canonical).replace(/'/g, "")}' }`;
+  }
+  return null; // via: 'image-url' — the URL is its own evidence
+}
+
+/* writes, replaces or removes the row's imageEvidence, keeping the file's
+   shape: the note sits directly under the imageUrl it explains */
+function setEvidence(source, id, note, indent) {
+  const idAt = source.indexOf(`id: '${id}'`);
+  /* bounded to THIS row. imageUrl exists on every row so the first one
+     after the id is always the right one, but imageEvidence does not:
+     searched to the end of the file, a row with no note would find the
+     next row's and rewrite that one instead. */
+  const rest = source.slice(idAt, rowEndsAt(source, idAt));
+  const existing = rest.match(/\n\s*imageEvidence:\s*(\{[^}]*\}|null),?/);
+
+  if (existing) {
+    const at = idAt + existing.index;
+    const replacement = note ? `\n${indent}imageEvidence: ${note},` : '';
+    return source.slice(0, at) + replacement + source.slice(at + existing[0].length);
+  }
+  if (!note) return source;
+
+  const after = rest.match(/(\n\s*imageUrl:\s*(?:null|'[^']*'|"[^"]*"),)/);
+  if (!after) return source;
+  const at = idAt + after.index + after[0].length;
+  return source.slice(0, at) + `\n${indent}imageEvidence: ${note},` + source.slice(at);
+}
+
+/* ---------- trying a replacement product ----------
+
+   When a retailer will not be read at all, the row's product has to
+   change rather than its photo. That is a bigger edit — productUrl, name
+   and brand move together with imageUrl — so it gets its own mode: point
+   it at a candidate listing and it reports what the catalogue WOULD say,
+   every field taken off the page rather than typed in, and writes
+   nothing until it is told to.
+
+   The gates are the same ones. A replacement that cannot be verified is
+   not a replacement; it is a different row that also has no photo. */
+async function inspectCandidate(productUrl, forId) {
+  const row = { id: forId || 'candidate', brand: '—', name: productUrl, productUrl };
+  const result = await resolveRow(row);
+  const facts = result.facts || {};
+
+  console.log(`\n  ${result.verdict.padEnd(15)} ${productUrl}`);
+  for (const note of result.notes || []) console.log(`  ${''.padEnd(15)} · ${note}`);
+
+  if (result.verdict !== 'VERIFIED') {
+    console.log(`  ${''.padEnd(15)} ${result.why}`);
+    for (const refusal of (result.refusals || []).slice(0, 12)) {
+      console.log(`  ${''.padEnd(15)}   [${refusal.gate}] ${short(refusal.url)}`);
+      console.log(`  ${''.padEnd(15)}     from ${refusal.from} — ${refusal.why}`);
+    }
+    console.log('\n  Not usable as a replacement.\n');
+    return null;
+  }
+
+  console.log(`  ${''.padEnd(15)} ${result.why}${result.from ? ` [${result.from}]` : ''}`);
+  console.log('\n  The row this would become:\n');
+  console.log(`    name:       ${facts.name || '(the page named none — set it by hand)'}`);
+  console.log(`    brand:      ${facts.brand || '(the page named none — set it by hand)'}`);
+  console.log(`    productUrl: ${productUrl}`);
+  console.log(`    imageUrl:   ${result.url}`);
+  console.log(`\n  Every field above came off that page. Nothing was typed in.\n`);
+  return { productUrl, imageUrl: result.url, name: facts.name, brand: facts.brand };
+}
+
+/* Swaps a row's product for a verified candidate: the listing, the
+   photo, the name and the brand move together, because half a swap is a
+   row that points at one product and pictures another. */
+function replaceRow(source, id, next) {
+  let out = source;
+  const set = (field, value) => {
+    if (value == null) return;
+    const idAt = out.indexOf(`id: '${id}'`);
+    if (idAt === -1) throw new Error(`could not find the row for ${id}`);
+    const re = new RegExp(`(\\n\\s*${field}:\\s*)(null|'(?:[^'\\\\]|\\\\.)*'|"(?:[^"\\\\]|\\\\.)*")`);
+    const rest = out.slice(idAt);
+    const m = rest.match(re);
+    if (!m) throw new Error(`could not find ${field} for ${id}`);
+    const quoted = value.includes("'")
+      ? `"${value.replace(/"/g, '\\"')}"`
+      : `'${value}'`;
+    if (/[\r\n]/.test(value)) throw new Error(`refusing to write a multi-line ${field} for ${id}`);
+    const at = idAt + m.index;
+    out = out.slice(0, at) + m[1] + quoted + out.slice(at + m[0].length);
+  };
+  set('name', next.name);
+  set('brand', next.brand);
+  set('productUrl', next.productUrl);
+  set('imageUrl', next.imageUrl);
+  return out;
 }
 
 /* a URL kept readable in a report column without losing which image it
@@ -806,6 +1091,28 @@ function short(url, width = 96) {
 
 /* ---------- report ---------- */
 async function main() {
+  /* --candidate <url> [--as <row-id>] : try a replacement product */
+  const candidate = flag('--candidate');
+  if (candidate) {
+    const forId = flag('--as');
+    console.log(`\nTrying ${candidate} as a replacement${forId ? ` for ${forId}` : ''}.`);
+    const proposal = await inspectCandidate(candidate, forId);
+    if (!proposal || !forId) {
+      if (proposal && !forId) console.log('  Pass --as <row-id> to see it written into a row.\n');
+      return;
+    }
+    if (!writing) {
+      console.log(`  Re-run with --write to put it into ${forId}.\n`);
+      return;
+    }
+    const { source: current, rows: currentRows } = readCatalog();
+    const target = currentRows.find((r) => r.id === forId);
+    if (!target) throw new Error(`no catalogue row has the id ${forId}`);
+    fs.writeFileSync(CATALOG, replaceRow(current, forId, proposal));
+    console.log(`  Replaced ${forId} — listing, photo, name and brand together.\n`);
+    return;
+  }
+
   const { source, rows } = readCatalog();
 
   let targets = rows.filter((r) => r && r.productUrl);
@@ -894,7 +1201,7 @@ async function main() {
   }
 
   let next = source;
-  for (const r of fresh) next = writeInto(next, r.id, r.url);
+  for (const r of fresh) next = writeInto(next, r.id, r.url, r.identity);
   fs.writeFileSync(CATALOG, next);
   console.log(`\n  Wrote ${fresh.length} image URL${fresh.length === 1 ? '' : 's'} into assets/catalog.js.\n`);
 }
@@ -909,6 +1216,8 @@ if (require.main === module) {
   module.exports = {
     candidatesFrom, candidatesFromRendered, soundness, writeInto, verifyImage,
     largestFromSrcset, readCatalog, identifiersFrom, identityEvidence, samePage,
-    gatherInPage, renderPage, resolveRow, firstVerifiable
+    gatherInPage, renderPage, resolveRow, firstVerifiable,
+    replaceRow, factsFromHtml, factsFromRendered, inspectCandidate,
+    catalogRowIdentity, evidenceNote
   };
 }
