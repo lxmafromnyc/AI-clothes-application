@@ -114,6 +114,8 @@ scripts/test-stripe.js         offline test of payments and subscriptions
 scripts/test-auth.js           offline test of accounts, sessions and OAuth
 scripts/test-e2e.js            the whole sign-in flow in a real browser
 scripts/test-ui.js             browser test of the search interface
+scripts/hydrate-catalog.js     reads each row's photo and price off its listing
+scripts/test-hydrate-catalog.js the hydrator's gates, driven without a network
 assets/attachments.js          drag-and-drop and file picker for the search box
 assets/account.js       talks to the account and billing endpoints
 assets/billing-ui.js    draws the pricing page
@@ -889,7 +891,7 @@ node scripts/test-gemini.js    # the Gemini interpreter, and what did not change
 node scripts/test-serpapi.js   # the SerpApi adapter, its links and its costs
 node scripts/test-stripe.js    # payments and subscriptions
 node scripts/test-auth.js      # accounts, sessions, tokens, OAuth
-node scripts/test-catalog-images.js  # the catalogue image extractor's gates
+node scripts/test-hydrate-catalog.js # the catalogue hydrator's photo and price gates
 node scripts/test-ui.js        # the interface, its palette and its contrast
 node scripts/record-demo.js    # re-records the landing page demo video
 node scripts/test-e2e.js       # the whole sign-in flow, in a real browser
@@ -1659,45 +1661,88 @@ after one the page does not touch the video again.
   is explicitly not what vouches for the photo. The note is re-proved rather
   than trusted — a recorded sku must match a code in the row's own `productUrl`
   — and `assets/products.js` drops the field before anything renders.
-- `node scripts/fetch-catalog-images.js` fills the `imageUrl` of every row that
-  carries a `productUrl`, by reading the photo off the listing the row already
-  links to. It tries plain HTTP first; a page that gives up nothing — no
-  candidates, or a `403` from its bot check — is then opened in a real Chromium
-  through Playwright, which runs the page's scripts and reports its rendered
-  metadata, JSON-LD, preload links, gallery images and the photos the page
-  actually loaded. A retailer that refuses a bare client gets a real browser,
-  never a guessed CDN URL.
+- `priceEvidence` is the same idea for the price, and it is never optional. A
+  photo's URL can vouch for itself by carrying the listing's code; a price
+  cannot, because `89` is `89` whatever product it belongs to, whichever day it
+  was true and whichever currency it was quoted in. So a priced row records how
+  the figure was obtained (`json-ld-offer`, `canonical`, `microdata`,
+  `rendered price`), the sku or canonical page tying it to this listing, the
+  currency, **the amount that was read**, and the day it was read.
 
-  Four gates decide what may be written: the URL came out of that page
+  Recording the amount is what makes the note worth having: a price typed in by
+  hand fails for carrying no note, and a price edited afterwards fails because
+  the note still names the number that came off the page. The hydrator treats a
+  field that no longer re-proves as absent and reads it again rather than
+  trusting the file.
+- `node scripts/hydrate-catalog.js` fills the `imageUrl` and the `price` of
+  every row that carries a `productUrl`, by reading both off the listing the row
+  already links to — out of the **same load of the same page**, which is what
+  makes them the same product's. It tries plain HTTP first; a page that gives up
+  nothing — no candidates, or a `403` from its bot check — is then opened in a
+  real Chromium through Playwright, which runs the page's scripts and reports
+  its rendered metadata, JSON-LD, preload links, gallery images, the photos the
+  page actually loaded and the figures its heading block draws. A retailer that
+  refuses a bare client gets a real browser, never a guessed CDN URL and never a
+  guessed price.
+
+  Four gates decide what photo may be written: the URL came out of that page
   (**found**), its host is the retailer's rather than an aggregator or a stock
   library (**sound**), it can be tied to *this* product — the listing's code
   appears in the image URL, or the JSON-LD record supplying it names a matching
   sku, or the page declares itself canonical for the listing (**this**) — and it
   answers `200` as an image both plainly and under the deployed site's `Referer`
   (**loadable**). A photo of a similar garment on the right retailer's own CDN
-  fails the third gate and is refused. Anything that fails any gate leaves the
-  row `null` and keeps its artwork.
+  fails the third gate and is refused.
+
+  Four more decide the price: it came out of the page's own record of the
+  product (**found**) — a JSON-LD offer, a price meta, microdata, or the one
+  live figure in the block holding the product's `<h1>`, never a search-result
+  snippet; it parses to a positive amount in USD (**sound**), because a card
+  renders `$` with no currency beside it and a figure quoted in euros would be
+  shown as dollars it is not; the record carrying it names a matching sku or the
+  page is canonical for the listing (**this**); and it is what the page charges
+  today rather than a struck-through was-price, a compare-at or an instalment
+  line (**current**). Where a listing shows two live figures and nothing says
+  which is being charged, the ambiguity is reported rather than resolved by
+  picking one.
+
+  A row takes its photo and its price together or takes neither. Anything that
+  fails any gate leaves the row as it was — `null` `imageUrl` keeps its artwork,
+  `null` `price` renders "Price at retailer".
 
   In the browser it answers a cookie wall (accept only — nothing is rejected,
   configured or submitted) and walks the page down so a gallery that loads on
   scroll actually loads before it is read.
 
-  When a retailer cannot be read at all, the row's product has to change
-  rather than its photo. `--candidate <productUrl> --as <row-id>` tries a
-  replacement listing through the same four gates and prints the row it would
-  become — name, brand, `productUrl` and `imageUrl`, every field taken off that
-  page rather than typed in — and `--write` then swaps all four together, so a
-  row can never point at one product and picture another.
+  `--discover` gives a row that links nowhere a listing. Candidate URLs come
+  from `--candidates <file.json>` (`{ "<row id>": ["<url>", …] }`) or from a
+  configured product search source, and a candidate supplies **one thing: a
+  URL**. The name, brand, photo and price are then read off the page it opens,
+  through every gate above, plus two of its own: the link has to be a retailer's
+  product page rather than a comparison page, a redirector or a category listing,
+  and what the page is selling has to be the garment the row was describing — so
+  a search source ranking socks beside a tee cannot quietly swap one for the
+  other. A sample row is replaced only when the listing, name, brand, photo and
+  price all verify together. `--candidate <url> --as <row-id>` does the same for
+  one row and prints what it would become.
 
-  It reports `VERIFIED` / `NO IMAGE FOUND` / `UNREACHABLE` per row and writes
-  only with `--write`. A row that fails lists every candidate it found with the
-  gate that stopped it, so a failure says what to fix rather than just that
-  nothing worked. A row that already carries a photo is left alone unless
-  `--refresh` is passed, so a working URL is never churned; `--no-browser`
-  keeps it to plain HTTP. Run it from an ordinary connection — where retailer
-  hosts are refused every row reports `UNREACHABLE` and nothing is written.
-  `node scripts/test-catalog-images.js` covers all four gates without a
-  network, driving the browser path against a local server that refuses plain
-  HTTP and builds its gallery in JavaScript.
+  It reports `VERIFIED` / `SKIPPED` / `FAILED` for **every** row, showing the
+  product URL, image URL and price on each verified one, and writes only with
+  `--write`. A row that fails lists every candidate it found with the gate that
+  stopped it, so a failure says what to fix rather than just that nothing worked.
+  A row that already accounts for itself is left alone unless `--refresh` is
+  passed, so working data is never churned; `--no-browser` keeps it to plain
+  HTTP. One command hydrates the whole catalogue:
+
+  ```bash
+  node scripts/hydrate-catalog.js --discover --write
+  ```
+
+  Run it from an ordinary connection — where retailer hosts are refused every
+  linked row reports `FAILED` naming the network, and nothing is written.
+  `node scripts/test-hydrate-catalog.js` covers every gate without a network,
+  driving the browser path against local servers that refuse plain HTTP, hide a
+  gallery behind a cookie wall, and quote a price only in the pixels beside a
+  struck-through was-price, an instalment line and a recommendation strip.
 - The catalogue is a small sample set plus three real listings; it is not real
   inventory.

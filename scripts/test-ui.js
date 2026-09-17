@@ -663,6 +663,159 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     await page.close();
   });
 
+  console.log('\nthe Discover catalogue');
+
+  /* Every card in the grid, read back out of the DOM the way a visitor
+     sees it: what picture is actually on it, what it says it costs, and
+     where it goes. */
+  const discoverCards = (page) => page.$$eval('.item-card', (nodes) => nodes.map((card) => {
+    const img = card.querySelector('.item-media img');
+    return {
+      name: card.querySelector('.item-name').textContent.trim(),
+      retailer: card.querySelector('.item-retailer').textContent.trim(),
+      price: card.querySelector('.item-price').textContent.trim(),
+      href: card.getAttribute('href'),
+      photo: img ? { src: img.getAttribute('src'), painted: img.complete && img.naturalWidth > 0 } : null,
+      artwork: Boolean(card.querySelector('.item-media svg.silhouette')),
+      sample: Boolean(card.querySelector('.item-badge'))
+    };
+  }));
+
+  /* A photo either loads or it does not, and either way the tile has to
+     end up with something in it. This waits for that to have settled, so
+     the assertions are about the finished grid rather than a moment
+     partway through drawing it. */
+  const settledGrid = async (page) => {
+    await page.waitForSelector('.item-card', { timeout: 10000 });
+    /* Cards are drawn with loading="lazy", so a photo below the fold is
+       never requested until it is scrolled to — and a grid measured
+       without scrolling would report most of its tiles as still loading
+       forever. The page is walked down the way a visitor walks it. */
+    await page.evaluate(async () => {
+      /* each tile is brought into view by name rather than by scrolling
+         to a computed height: the grid's height depends on how many
+         cards a filter left, and a walk that stops short reports the
+         tiles it never reached as loading forever */
+      for (const img of document.querySelectorAll('.item-media img')) {
+        /* instant, because the site sets scroll-behavior: smooth — a
+           default scrollIntoView here animates, and the next call
+           interrupts the animation before it arrives, so the walk never
+           reaches the bottom of the grid */
+        img.scrollIntoView({ behavior: 'instant', block: 'center' });
+        await new Promise((r) => setTimeout(r, 30));
+      }
+      window.scrollTo(0, 0);
+    });
+    await page.waitForFunction(
+      () => [...document.querySelectorAll('.item-media img')].every((i) => i.complete),
+      null, { timeout: 20000 });
+    /* long enough that a fallback swap would have happened */
+    await page.waitForTimeout(250);
+  };
+
+  await test('every Discover card carries a picture — its photo, or the artwork standing in', async () => {
+    const page = await openPage('discover.html');
+    await settledGrid(page);
+    const cards = await discoverCards(page);
+    assert.ok(cards.length >= 10, `the grid drew only ${cards.length} cards`);
+    for (const card of cards) {
+      assert.ok((card.photo && card.photo.painted) || card.artwork,
+        `${card.name} has neither a photo that loaded nor artwork in its place`);
+      assert.ok(!(card.photo && !card.photo.painted),
+        `${card.name} left a photo that did not load in place instead of falling back`);
+    }
+    await page.close();
+  });
+
+  await test('every Discover card names a price, or says where its price is', async () => {
+    const page = await openPage('discover.html');
+    await settledGrid(page);
+    const cards = await discoverCards(page);
+    /* the store is the truth the card is drawn from, so the comparison
+       is against what the catalogue actually holds rather than against
+       a list written down here that would go stale on the next run */
+    const held = await page.evaluate(() => Products.all().map((p) => ({ name: p.name, price: p.price })));
+
+    assert.strictEqual(cards.length, held.length, 'every row in the store should have drawn a card');
+    cards.forEach((card, i) => {
+      const want = held[i];
+      assert.strictEqual(card.name, want.name, `card ${i} is not the row it was drawn from`);
+      if (want.price == null) {
+        assert.strictEqual(card.price, 'Price at retailer',
+          `${card.name} carries no price, so it must say where to find one`);
+      } else {
+        const money = Number.isInteger(want.price) ? `$${want.price}` : `$${want.price.toFixed(2)}`;
+        assert.strictEqual(card.price, money, `${card.name} should read ${money}`);
+      }
+    });
+    await page.close();
+  });
+
+  /* What the page looks like once scripts/hydrate-catalog.js has been run
+     from a connection that can reach the retailers: every row carrying a
+     photo, a price and a direct listing. The photos are served from this
+     origin so the browser really paints them, and each row is given a
+     DISTINCT photo and price — that is what makes the last assertion
+     mean something, because a card that paired one product's picture
+     with another's price would still pass an every-card-has-a-photo
+     check and fail this one. */
+  await test('a hydrated catalogue draws every card with its own photo, price and link', async () => {
+    const page = await openPage('discover.html');
+    await page.waitForSelector('.item-card', { timeout: 10000 });
+
+    const rows = await page.evaluate(({ photo }) => {
+      const hydrated = Products.all().map((p, i) => Object.assign({}, p, {
+        imageUrl: `${photo}?row=${i}`,
+        price: 40 + i,
+        productUrl: `https://retailer.example/p/${i}`
+      }));
+      Products.set(hydrated);
+      return hydrated.map((p) => ({ name: p.name, imageUrl: p.imageUrl, price: p.price, productUrl: p.productUrl }));
+    }, { photo: REAL_PHOTO });
+
+    await settledGrid(page);
+    const cards = await discoverCards(page);
+    assert.strictEqual(cards.length, rows.length, 'every hydrated row should have drawn a card');
+
+    cards.forEach((card, i) => {
+      const want = rows[i];
+      assert.ok(card.photo, `${card.name} drew no photo at all`);
+      assert.strictEqual(card.photo.painted, true, `${card.name} did not paint its photo`);
+      assert.strictEqual(card.artwork, false, `${card.name} fell back to artwork over a photo that loaded`);
+
+      /* the three claims a card makes, each checked against the ONE row
+         it was drawn from */
+      assert.strictEqual(card.photo.src, want.imageUrl, `${card.name} is showing another row's photo`);
+      assert.strictEqual(card.price, `$${want.price}`, `${card.name} is showing another row's price`);
+      assert.strictEqual(card.href, want.productUrl, `${card.name} is linking to another row's listing`);
+
+      assert.strictEqual(card.sample, false, 'a row with a real listing must not be badged Sample');
+    });
+
+    assert.strictEqual(await page.$eval('#discover-note', (n) => n.textContent.trim()), '',
+      'a fully hydrated grid has no sample rows left to warn about');
+    await page.close();
+  });
+
+  await test('a hydrated card whose photo dies still shows its price and its link', async () => {
+    const page = await openPage('discover.html');
+    await page.waitForSelector('.item-card', { timeout: 10000 });
+    await page.evaluate(({ dead }) => {
+      Products.set([{
+        id: 'hydrated-gone', name: 'Wool Coat', brand: 'Halden', category: 'coat',
+        price: 298, imageUrl: dead, productUrl: 'https://retailer.example/p/coat'
+      }]);
+    }, { dead: DEAD_PHOTO });
+    await settledGrid(page);
+
+    const [card] = await discoverCards(page);
+    assert.strictEqual(card.photo, null, 'the dead photo was left in place');
+    assert.strictEqual(card.artwork, true, 'the artwork did not stand in for it');
+    assert.strictEqual(card.price, '$298', 'the price went with the picture');
+    assert.strictEqual(card.href, 'https://retailer.example/p/coat', 'the link went with the picture');
+    await page.close();
+  });
+
   console.log('\nthe billing interface');
 
   /* Opens a billing page with the stub answering a particular account

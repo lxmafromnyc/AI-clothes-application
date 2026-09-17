@@ -10,19 +10,32 @@
      Products.load('/api/products.json')   a URL returning JSON
      Products.load(() => queryDb())        a function or promise
 
-   price is null on every row, because no retailer domain was reachable
-   from the environment this is built in, so no price could be read from
-   the source. It is an ordinary field: fill it in and the interface
-   renders it.
+   ---------------------------------------------------------
+   How a row gets its photo and its price
+   ---------------------------------------------------------
+   One way only: scripts/hydrate-catalog.js reads them off the listing
+   the row links to, from a connection that can reach the retailer, and
+   ties both to that exact product before either is written. The photo
+   and the price come out of the SAME load of that page, which is what
+   makes them the same product's.
+
+   A row takes both or neither. A card showing a real photo beside a
+   price read from somewhere else would be a worse lie than an empty
+   tile, because it looks finished.
 
    imageUrl carries a photo on the rows where one was verified, and null
-   everywhere else. A photo gets here one way only: read off the listing
-   the row links to by scripts/fetch-catalog-images.js, run from a
-   connection that can reach the retailer, and tied to that exact product
-   before it is written. A product whose imageUrl is null, or whose photo
+   everywhere else. A product whose imageUrl is null, or whose photo
    fails to load, keeps the drawn artwork, and that is the honest state
    rather than a placeholder.
 
+   price is null on every row that links to a listing, because no
+   retailer domain was reachable from the environment this was built in,
+   so no price could be read off one. It is an ordinary field: run the
+   hydrator from an ordinary connection and it fills in.
+
+   ---------------------------------------------------------
+   Provenance
+   ---------------------------------------------------------
    imageEvidence records HOW a photo was tied to its product, and only
    where the URL cannot say so itself. UNIQLO and J.Crew carry their
    listing's code in the image URL, so the URL is its own evidence and no
@@ -33,13 +46,37 @@
    parameter, but that names Scene7's stand-in image rather than the one
    requested, and it is NOT what vouches for the photo.
 
-   The note is re-proved, not trusted: a recorded sku has to match a code
-   in the row's own productUrl, so a made-up note fails exactly as a
-   made-up URL does. It is bookkeeping only — assets/products.js builds
-   an explicit record, so this field never reaches the interface.
+   priceEvidence is the same idea, and it is never optional. A price is a
+   bare number: 89 is 89 whatever product it belongs to, which day it was
+   true and whichever currency it was quoted in. So a priced row records
+   how the figure was obtained, the sku or canonical page that ties it to
+   this listing, the currency it was quoted in, the amount that was read,
+   and the day it was read.
 
-   The three rows carrying a productUrl are real listings. The rest are
-   sample rows that exist to give the demo a catalogue to search.
+   Both notes are re-proved, not trusted. A recorded sku has to match a
+   code in the row's own productUrl, a recorded canonical has to be that
+   same listing, and a recorded amount has to equal the price the row
+   actually carries — so a price typed in by hand fails for having no
+   note, and a price edited afterwards fails because the note still names
+   the number that came off the page. A made-up note fails exactly as a
+   made-up URL does.
+
+   Both are bookkeeping only — assets/products.js builds an explicit
+   record, so neither field ever reaches the interface.
+
+   ---------------------------------------------------------
+   The sample rows
+   ---------------------------------------------------------
+   The rows carrying a productUrl are real listings. The rest are sample
+   rows that exist to give the demo a catalogue to search, and their
+   prices are demo data: a figure for a garment nobody sells. They carry
+   no priceEvidence and never may, because there is no page they came
+   off — that absence is what keeps "sample" and "verified" from blurring
+   together, and the interface badges them Sample on the card itself.
+
+   scripts/hydrate-catalog.js --discover replaces a sample row with a
+   real product, but only when the listing, the name, the brand, the
+   photo and the price all verify together.
 
    colors is empty on a row whose colour nothing established, the same
    way sizes is empty on every real listing: an unknown is left unsaid
