@@ -1726,6 +1726,14 @@ after one the page does not touch the video again.
   price all verify together. `--candidate <url> --as <row-id>` does the same for
   one row and prints what it would become.
 
+  `--explain <url>` reads one listing and prints what it published, what became
+  a candidate, and which gate judged each one — the JSON-LD offers and their
+  skus, the price metas, the product block's microdata, and every figure the
+  heading block draws tagged `[struck]` or `[marked current]`. It writes
+  nothing. `--json` prints the same as a record. This is what to run when a
+  real page yields a price that looks wrong: the report says a figure was
+  refused, this says why.
+
   It reports `VERIFIED` / `SKIPPED` / `FAILED` for **every** row, showing the
   product URL, image URL and price on each verified one, and writes only with
   `--write`. A row that fails lists every candidate it found with the gate that

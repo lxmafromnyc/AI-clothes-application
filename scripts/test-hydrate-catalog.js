@@ -355,6 +355,81 @@ function pricedRetailer() {
 
     const port = server.address().port;
     const code = url.split('/').pop();
+
+    /* ---- the shape that put a $7.90 pair of socks on a $49.90 sweater ----
+
+       A product page carrying microdata for its own product AND for
+       every tile in its recommendation carousel. Both sit on a page
+       that is canonically this listing's, so being on the right page
+       cannot be what vouches for a figure — only being inside the
+       product's own block can. */
+    if (code === '07777777' || code === '07777779') {
+      /* 07777777 is the faithful one: the product's own price exists
+         only as drawn text, exactly as a script-rendered storefront
+         leaves it, while the carousel below publishes microdata. So the
+         ONLY microdata on the page belongs to other products, and an
+         unscoped read has nothing else to find.
+         07777779 is the same page with the product marked up too, which
+         exercises the tighter itemscope path. */
+      const typed = code === '07777779';
+      res.writeHead(200, { 'content-type': 'text/html' });
+      return res.end(`<!doctype html><html><head>
+        <link rel="canonical" href="http://127.0.0.1:${port}/p/${code}">
+        <meta property="product:price:currency" content="USD">
+        <title>Merino Crew</title></head>
+        <body><main>
+          <div class="product-info"${typed ? ' itemscope itemtype="https://schema.org/Product"' : ''}>
+            <h1>Extra Fine Merino Crew Neck Sweater</h1>
+            ${typed ? '<meta itemprop="price" content="49.90"><meta itemprop="priceCurrency" content="USD">' : ''}
+            <div class="prices"><span class="now">$49.90</span></div>
+          </div>
+          <section class="recommendations">
+            <div class="rec" itemscope itemtype="https://schema.org/Product">
+              <h3>Ribbed Socks</h3>
+              <meta itemprop="price" content="7.90">
+              <meta itemprop="priceCurrency" content="USD">
+              <span class="price">$7.90</span>
+            </div>
+            <div class="rec" itemscope itemtype="https://schema.org/Product">
+              <h3>Leather Belt</h3>
+              <meta itemprop="price" content="39.90">
+              <meta itemprop="priceCurrency" content="USD">
+              <span class="price">$39.90</span>
+            </div>
+          </section>
+        </main></body></html>`);
+    }
+
+    /* ---- the shape that offered five live figures at once ----
+
+       One heading block holding a was-price, a members' price, four
+       colourway prices and the price actually being charged. The page
+       labels the last one, and that label is the only thing that may
+       settle it. /p/08888889 is the same page with the label removed,
+       which must stay unanswerable. */
+    if (code === '08888888' || code === '08888889') {
+      const marked = code === '08888888' ? 'sale-price' : 'colour-e';
+      res.writeHead(200, { 'content-type': 'text/html' });
+      return res.end(`<!doctype html><html><head>
+        <link rel="canonical" href="http://127.0.0.1:${port}/p/${code}">
+        <meta property="product:price:currency" content="USD">
+        <title>Oxford Shirt</title></head>
+        <body><main>
+          <div class="product-info">
+            <h1>Broken-in Organic Cotton Oxford Shirt</h1>
+            <div class="price-group">
+              <span class="was-price"><s>$89.50</s></span>
+              <span class="${marked}">$49.50</span>
+              <span class="price-note">Members $44.50</span>
+              <span class="colour-a">$59.50</span>
+              <span class="colour-b">$64.50</span>
+              <span class="colour-c">$69.50</span>
+              <span class="colour-d">$74.50</span>
+            </div>
+          </div>
+        </main></body></html>`);
+    }
+
     const ambiguous = code === '06887614';
     const silentAboutCurrency = code === '06887615';
 
@@ -981,6 +1056,73 @@ function pricedRetailer() {
         extractor.priceCandidatesFromRendered(page.seen.seen, page.url), page.url);
       assert.ok(got.amount === undefined, `an undeclared dollar was accepted as ${got.amount}`);
       assert.match(got.refusals[0].why, /bare \$/);
+    });
+
+    /* ---------- the two shapes that got a price wrong in the wild ----------
+
+       Both were found by running the hydrator against real listings, and
+       both are reproduced here as the MECHANISM that defeated it rather
+       than as a copy of the page: a recommendation carousel publishing
+       its own microdata, and a heading block quoting several live
+       figures with one of them labelled. */
+
+    await testAsync("a recommendation carousel's microdata is not this product's price", async () => {
+      const page = await pageOf('07777777');
+      const candidates = extractor.priceCandidatesFromRendered(page.seen.seen, page.url);
+      const got = extractor.firstVerifiablePrice(candidates, page.url);
+
+      assert.strictEqual(got.amount, 49.9,
+        `read ${got.amount} — refusals: ${JSON.stringify(got.refusals || [])}`);
+      /* the specific wrong answer this page used to produce */
+      assert.notStrictEqual(got.amount, 7.9, "a recommended pair of socks was read as the sweater's price");
+      /* and it must never even have been offered: the page is canonical
+         for this listing, so a socks price that became a candidate would
+         have sailed through the identity gate on the page's authority */
+      assert.ok(!candidates.some((c) => String(c.amount) === '7.90' || c.amount === 7.9),
+        `the carousel's price became a candidate: ${JSON.stringify(candidates.map((c) => c.amount))}`);
+    });
+
+    await testAsync('the product block is what scopes a scraped figure, not the page', async () => {
+      /* the page publishes microdata for two products, and neither is
+         this one — so the correct number of microdata candidates is
+         zero, and the price has to come from what the block draws */
+      const loose = (await pageOf('07777777')).seen.seen.prices;
+      assert.strictEqual(loose.scope, "the block holding the product's heading", `the scope was ${loose.scope}`);
+      assert.deepStrictEqual(loose.microdata, [],
+        `microdata was read from outside the product block: ${JSON.stringify(loose.microdata)}`);
+
+      /* and where the product IS marked up, the tighter scope is used
+         and finds its own figure rather than the carousel's */
+      const typed = (await pageOf('07777779')).seen.seen.prices;
+      assert.strictEqual(typed.scope, "the product's own itemscope", `the scope was ${typed.scope}`);
+      assert.deepStrictEqual(typed.microdata.map((m) => m.content), ['49.90'],
+        'the carousel\'s microdata was read as the product\'s');
+    });
+
+    await testAsync('a labelled sale price settles a block quoting several figures', async () => {
+      const page = await pageOf('08888888');
+      const got = extractor.firstVerifiablePrice(
+        extractor.priceCandidatesFromRendered(page.seen.seen, page.url), page.url);
+      assert.strictEqual(got.amount, 49.5,
+        `read ${got.amount} — refusals: ${JSON.stringify(got.refusals || [])}`);
+      assert.match(got.from, /marks it current/);
+    });
+
+    await testAsync('without that label the same five figures stay unanswerable', async () => {
+      const page = await pageOf('08888889');
+      const got = extractor.firstVerifiablePrice(
+        extractor.priceCandidatesFromRendered(page.seen.seen, page.url), page.url);
+      assert.ok(got.amount === undefined, `it picked ${got.amount} out of five unlabelled figures`);
+      const ambiguity = got.refusals.find((r) => r.gate === 'current');
+      assert.ok(ambiguity, `no ambiguity was reported: ${JSON.stringify(got.refusals)}`);
+      assert.match(ambiguity.why, /none is marked as the one being charged/);
+    });
+
+    await testAsync("a members' price is not read as the price either", async () => {
+      const page = await pageOf('08888888');
+      const heading = page.seen.seen.prices.heading;
+      assert.ok(!heading.some((e) => e.text.includes('44.50')),
+        `"Members $44.50" reached the price candidates: ${JSON.stringify(heading)}`);
     });
 
     shop.close();

@@ -112,6 +112,15 @@
      node scripts/hydrate-catalog.js --candidates urls.json
      node scripts/hydrate-catalog.js --no-browser       plain HTTP only
      node scripts/hydrate-catalog.js --site https://example.github.io
+     node scripts/hydrate-catalog.js --explain <url>    show every candidate
+     node scripts/hydrate-catalog.js --explain <url> --json
+
+   --explain reads one listing and prints what it published, what became
+   a candidate and which gate judged each one. It writes nothing, and it
+   is the thing to run when a real page produces a price that looks
+   wrong: the report's one line per row says THAT a figure was refused,
+   this says why. --json prints the same as a record, which is the form
+   to hand to somebody who cannot open the page themselves.
 
    One command for the whole catalogue:
 
@@ -899,26 +908,72 @@ function priceFromHeadingBlock(prices, hint) {
     return [{ ambiguous: true, from: 'rendered price', why: 'every figure in the heading block is struck through or labelled a was-price' }];
   }
 
+  const distinct = (entries) => {
+    const amounts = new Map();
+    for (const entry of entries) {
+      for (const found of amountsIn(entry.text)) {
+        const money = currencyOf(null, found.mark, hint);
+        const key = `${found.amount} ${money.currency || '?'}`;
+        if (!amounts.has(key)) amounts.set(key, { amount: found.amount, currency: money.currency, text: found.shown });
+      }
+    }
+    return [...amounts.values()];
+  };
+
+  const offer = (found, from) => ({ amount: found.amount, currency: found.currency, from, shown: found.text });
+
+  const all = distinct(live);
+  if (!all.length) return [];
+  if (all.length === 1) return [offer(all[0], 'rendered price')];
+
+  /* More than one live figure. That is not automatically a dead end:
+     a page showing a was-price beside a sale price usually LABELS the
+     sale price, and a label is the page telling us which figure it
+     means rather than this guessing. Only the labelled ones are
+     considered, and only if they agree on one amount. */
+  const marked = distinct(live.filter((entry) => entry.marked));
+  if (marked.length === 1) return [offer(marked[0], 'rendered price (the page marks it current)')];
+
+  const shown = all.map((a) => a.text).slice(0, 5).join(', ');
+  return [{
+    ambiguous: true,
+    from: 'rendered price',
+    why: marked.length
+      ? `the heading block shows ${all.length} live figures (${shown}) and marks ${marked.length} of them as current, so nothing singles one out`
+      : `the heading block shows ${all.length} different live figures (${shown}) and none is marked as the one being charged`
+  }];
+}
+
+/* The product block's own microdata, read the same way: struck figures
+   dropped, and a disagreement reported rather than resolved.
+
+   Hidden is deliberately NOT disqualifying here — a <meta itemprop>
+   has no box at all, and that is the commonest shape this arrives in. */
+function priceFromRenderedMicrodata(prices, hint) {
+  const seen = prices && Array.isArray(prices.microdata) ? prices.microdata : [];
+  const live = seen.filter((entry) => !entry.struck);
+  if (!live.length) return [];
+
   const amounts = new Map();
   for (const entry of live) {
-    for (const found of amountsIn(entry.text)) {
-      const money = currencyOf(null, found.mark, hint);
-      const key = `${found.amount} ${money.currency || '?'}`;
-      if (!amounts.has(key)) amounts.set(key, { amount: found.amount, currency: money.currency, text: found.shown });
-    }
+    const parsed = parseAmount(entry.content);
+    if (parsed.amount === undefined) continue;
+    const money = currencyOf(entry.currency, String(entry.content), hint);
+    const key = `${parsed.amount} ${money.currency || '?'}`;
+    if (!amounts.has(key)) amounts.set(key, { amount: entry.content, currency: entry.currency, shown: String(entry.content) });
   }
 
   if (!amounts.size) return [];
   if (amounts.size > 1) {
     return [{
       ambiguous: true,
-      from: 'rendered price',
-      why: `the heading block shows ${amounts.size} different live figures (${[...amounts.values()].map((a) => a.text).slice(0, 4).join(', ')}) and nothing says which is being charged`
+      from: 'microdata (rendered)',
+      why: `the product block carries ${amounts.size} different microdata prices (${[...amounts.values()].map((a) => a.shown).slice(0, 4).join(', ')}) and names none of them as the product's`
     }];
   }
 
   const only = [...amounts.values()][0];
-  return [{ amount: only.amount, currency: only.currency, from: 'rendered price', shown: only.text }];
+  return [{ amount: only.amount, currency: only.currency, from: 'microdata (rendered)', shown: only.shown }];
 }
 
 /* every price the served markup offers, in the order above */
@@ -949,13 +1004,10 @@ function priceCandidatesFromRendered(seen, pageUrl) {
   const hint = currencyHintFrom(nodes, metas);
   const canonical = seen.canonical || null;
 
-  const microdata = (seen.prices && Array.isArray(seen.prices.microdata) ? seen.prices.microdata : [])
-    .map((entry) => ({ amount: entry.content, currency: entry.currency || null, from: 'microdata (rendered)' }));
-
   return [
     ...priceFromJsonLd(nodes),
     ...priceFromMetas(metas),
-    ...microdata,
+    ...priceFromRenderedMicrodata(seen.prices, hint),
     ...priceFromHeadingBlock(seen.prices, hint)
   ].map((c) => Object.assign({ canonical, hint, pageUrl }, c));
 }
@@ -1253,14 +1305,12 @@ function gatherInPage() {
   /* markings that say a figure is the old one, not the live one */
   const STRUCK = /strike|struck|through|\bwas\b|compare|original|list-?price|old-?price|regular-?price|slash|previous/i;
 
-  const microdata = [...document.querySelectorAll('[itemprop="price"]')].map((el) => ({
-    content: el.getAttribute('content') || el.getAttribute('value') || el.textContent.trim(),
-    currency: (() => {
-      const scope = el.closest('[itemtype]') || document;
-      const cur = scope.querySelector('[itemprop="priceCurrency"]');
-      return cur ? (cur.getAttribute('content') || cur.textContent.trim()) : null;
-    })()
-  })).filter((e) => e.content);
+  /* Markings that say a figure IS the one being charged, rather than
+     merely not being struck through. A page that labels its sale price
+     is telling us which of its figures it means, and that is evidence
+     rather than a guess — it is what separates "one of these five" from
+     "this one". */
+  const MARKED = /\b(sale|current|now|final|reduced|discounted|special|selling)[-_ ]?price\b|\bprice[-_ ]?(now|current|sale|final)\b|\b(saleprice|currentprice|nowprice)\b/i;
 
   const drawnOut = (el) => {
     const style = window.getComputedStyle(el);
@@ -1269,14 +1319,26 @@ function gatherInPage() {
     return rect.width === 0 && rect.height === 0;
   };
 
+  const marksOf = (node) => `${typeof node.className === 'string' ? node.className : ''} ${node.getAttribute('data-testid') || ''} ${node.getAttribute('aria-label') || ''} ${node.getAttribute('itemprop') || ''}`;
+
   const looksStruck = (el) => {
     for (let node = el; node && node !== document.body; node = node.parentElement) {
       const tag = node.tagName;
       if (tag === 'S' || tag === 'DEL' || tag === 'STRIKE') return true;
-      const marks = `${typeof node.className === 'string' ? node.className : ''} ${node.getAttribute('data-testid') || ''} ${node.getAttribute('aria-label') || ''}`;
-      if (STRUCK.test(marks)) return true;
+      if (STRUCK.test(marksOf(node))) return true;
       const line = window.getComputedStyle(node).textDecorationLine || window.getComputedStyle(node).textDecoration || '';
       if (String(line).includes('line-through')) return true;
+    }
+    return false;
+  };
+
+  /* is this figure labelled as the one being charged? Only asked within
+     the product's own block, so a recommendation tile's "sale price"
+     cannot answer it. */
+  const looksMarked = (el, within) => {
+    for (let node = el; node && node !== within.parentElement; node = node.parentElement) {
+      if (node.getAttribute && node.getAttribute('itemprop') === 'price') return true;
+      if (node.getAttribute && MARKED.test(marksOf(node))) return true;
     }
     return false;
   };
@@ -1292,24 +1354,66 @@ function gatherInPage() {
     return true;
   });
 
-  /* Walk out from the product's own heading until a block containing it
-     also contains a figure. The closest such block is the heading block:
-     the title and the price a shopper reads as one. Anything further out
-     starts taking in the rest of the page. */
-  const heading = [];
+  /* ---- the product's own block ----
+
+     Everything below is read from inside it, and that scoping is the
+     whole defence. A product page is full of other products' prices —
+     a recommendation carousel, "complete the look", a bundle widget,
+     recently viewed — and every one of them sits on a page that is
+     canonically THIS listing's. So being on the right page proves
+     nothing about a figure scraped out of it; being inside the block
+     that holds this product's own heading is what does.
+
+     Two ways to find it. A page that marks up its product with
+     microdata names it outright, and that scope is used as long as it
+     is one product rather than a wrapper around many. Failing that, it
+     is the smallest block containing the page's <h1> and a figure. */
   const h1 = document.querySelector('h1');
-  if (h1) {
+
+  const typedScope = (() => {
+    if (!h1) return null;
+    for (let node = h1; node && node !== document.documentElement; node = node.parentElement) {
+      const type = node.getAttribute && node.getAttribute('itemtype');
+      if (!type || !/product/i.test(type)) continue;
+      /* an itemscope containing other product itemscopes is a listing
+         of products, not one product */
+      const nested = [...node.querySelectorAll('[itemtype]')].filter((n) => /product/i.test(n.getAttribute('itemtype') || ''));
+      return nested.length ? null : node;
+    }
+    return null;
+  })();
+
+  const headingBlock = (() => {
+    if (!h1) return null;
     for (let block = h1.parentElement; block && block !== document.documentElement; block = block.parentElement) {
-      const found = moneyIn(block);
-      if (!found.length) continue;
-      for (const el of found) {
-        const own = (el.textContent || '').trim();
-        const context = `${own} ${el.getAttribute('aria-label') || ''}`;
-        if (NOISE.test(context)) continue;
-        if (drawnOut(el)) continue;
-        heading.push({ text: own, struck: looksStruck(el) });
-      }
-      break;
+      if (moneyIn(block).length) return block;
+    }
+    return null;
+  })();
+
+  const scope = typedScope || headingBlock;
+
+  /* ---- what the product's own block says in machine-readable form ---- */
+  const microdata = !scope ? [] : [...scope.querySelectorAll('[itemprop="price"]')].map((el) => ({
+    content: el.getAttribute('content') || el.getAttribute('value') || el.textContent.trim(),
+    currency: (() => {
+      const from = el.closest('[itemtype]') || scope;
+      const cur = from.querySelector('[itemprop="priceCurrency"]');
+      return cur ? (cur.getAttribute('content') || cur.textContent.trim()) : null;
+    })(),
+    struck: looksStruck(el),
+    hidden: drawnOut(el)
+  })).filter((e) => e.content);
+
+  /* ---- and what it draws ---- */
+  const heading = [];
+  if (headingBlock) {
+    for (const el of moneyIn(headingBlock)) {
+      const own = (el.textContent || '').trim();
+      const context = `${own} ${el.getAttribute('aria-label') || ''}`;
+      if (NOISE.test(context)) continue;
+      if (drawnOut(el)) continue;
+      heading.push({ text: own, struck: looksStruck(el), marked: looksMarked(el, headingBlock) });
     }
   }
 
@@ -1319,7 +1423,13 @@ function gatherInPage() {
     jsonld,
     preload,
     imgs,
-    prices: { microdata, heading }
+    prices: {
+      microdata,
+      heading,
+      /* how the block was found, so a report can say why a page gave up
+         nothing rather than just that it did */
+      scope: scope ? (typedScope ? 'the product\'s own itemscope' : 'the block holding the product\'s heading') : null
+    }
   };
 }
 
@@ -1577,11 +1687,16 @@ async function firstVerifiable(candidates, row, fetcher) {
 async function readServed(url) {
   const page = await fetchPage(url);
   if (!page.html) return { failed: page.failed, blocked: page.blocked, refused: page.refused };
+  const nodes = jsonLdNodes(page.html);
   return {
     how: 'plain HTTP',
     facts: factsFromHtml(page.html),
     images: candidatesFrom(page.html, url),
     prices: priceCandidatesFrom(page.html, url),
+    /* kept for --explain, which has to show what the page published as
+       well as what survived */
+    products: nodes.filter((n) => /product/i.test(String(n['@type'] || ''))),
+    raw: { canonical: canonicalOf(page.html), prices: { microdata: [], heading: [], scope: null } },
     verify: null
   };
 }
@@ -1589,11 +1704,15 @@ async function readServed(url) {
 async function readRendered(url) {
   const rendered = await renderPage(url);
   if (rendered.failed) return { failed: rendered.failed, noBrowser: rendered.noBrowser };
+  const nodes = [];
+  for (const block of rendered.seen.jsonld || []) nodes.push(...parseLdBlock(block));
   return {
     how: 'a real browser',
     facts: factsFromRendered(rendered.seen),
     images: candidatesFromRendered(rendered.seen, rendered.loaded, url),
     prices: priceCandidatesFromRendered(rendered.seen, url),
+    products: nodes.filter((n) => /product/i.test(String(n['@type'] || ''))),
+    raw: rendered.seen,
     verify: rendered.verify
   };
 }
@@ -1984,11 +2103,21 @@ async function searchListings(row) {
     return { urls: [], why: `the ${provider.name} search source failed (${err && err.message ? String(err.message).split('\n')[0] : 'unknown'})` };
   }
 
+  /* An adapter returns records in its upstream's own shape — OpenWeb
+     Ninja spells the link one way, Etsy another — and the product layer
+     already keeps the list of spellings it accepts. Reading
+     `record.productUrl` alone would silently find nothing on the very
+     provider that is configured by default. */
+  const spellings = (source.FIELD_ALIASES && source.FIELD_ALIASES.productUrl) || ['productUrl', 'url', 'link'];
   const urls = [];
   for (const record of records || []) {
-    const href = record && (record.productUrl || record.url || record.link);
-    if (!href) continue;
-    urls.push(String(href));
+    if (!record || typeof record !== 'object') continue;
+    for (const key of spellings) {
+      const href = record[key];
+      if (href === undefined || href === null || String(href).trim() === '') continue;
+      urls.push(String(href).trim());
+      break;
+    }
   }
   return { urls, source: provider.name };
 }
@@ -2279,7 +2408,117 @@ async function hydrateRow(row, supplied) {
   return Object.assign({}, result, { notes: notes.concat(result.notes || []) });
 }
 
+/* ---------- showing the work on one listing ----------
+
+   When a real page gives an answer that looks wrong, the report's one
+   line per row is not enough to say why: the question is what the page
+   published, what became a candidate, and which gate turned each one
+   down. This prints exactly that, and changes nothing.
+
+   --json prints the same thing as a record, which is the form to send
+   to somebody who cannot open the page themselves. */
+async function explain(url, asJson) {
+  const served = await readServed(url);
+  const read = (!served.failed && (served.images.length || served.prices.length))
+    ? served
+    : (useBrowser ? await readRendered(url) : served);
+
+  if (read.failed) {
+    if (asJson) console.log(JSON.stringify({ url, failed: read.failed }, null, 2));
+    else console.log(`\n  ${url}\n  could not be read: ${read.failed}\n`);
+    return;
+  }
+
+  const seen = read.rendered || null;
+  const gates = (candidate) => {
+    const sound = priceSoundness(candidate);
+    if (!sound.ok) return { gate: 'sound', why: sound.why };
+    const identity = priceIdentity(candidate, url);
+    if (!identity.ok) return { gate: 'identity', why: identity.why };
+    return { gate: null, amount: sound.amount, currency: sound.currency, how: identity.how };
+  };
+
+  const prices = read.prices.map((c) => Object.assign(
+    { from: c.from, amount: c.ambiguous ? null : c.amount, currency: c.currency || null },
+    c.ambiguous ? { gate: 'current', why: c.why } : gates(c)
+  ));
+
+  const photos = read.images.map((c) => {
+    const unsound = soundness(c, url);
+    if (unsound) return { from: c.from, url: c.url, gate: 'host', why: unsound };
+    const identity = identityEvidence(c, url);
+    if (!identity.ok) return { from: c.from, url: c.url, gate: 'identity', why: identity.why };
+    return { from: c.from, url: c.url, gate: null, how: identity.how };
+  });
+
+  const record = {
+    url,
+    readThrough: read.how,
+    canonical: (read.raw && read.raw.canonical) || null,
+    productScope: (read.raw && read.raw.prices && read.raw.prices.scope) || null,
+    facts: read.facts,
+    published: {
+      jsonLdProducts: (read.products || []).map((n) => ({
+        sku: skuOf(n),
+        name: typeof n.name === 'string' ? n.name : null,
+        offers: offersOf(n).map((o) => ({ type: String(o['@type'] || 'Offer'), named: amountOf(o) }))
+      })),
+      priceMetas: read.priceMetas || {},
+      microdata: (read.raw && read.raw.prices && read.raw.prices.microdata) || [],
+      headingFigures: (read.raw && read.raw.prices && read.raw.prices.heading) || []
+    },
+    priceCandidates: prices,
+    photoCandidates: photos
+  };
+
+  if (asJson) { console.log(JSON.stringify(record, null, 2)); return; }
+
+  const line = (label, value) => console.log(`  ${String(label).padEnd(18)}${value}`);
+  console.log(`\n  ${url}\n`);
+  line('read through', record.readThrough);
+  line('canonical', record.canonical || '(the page declares none)');
+  line('product scope', record.productScope || '(none found — no <h1> with a figure near it)');
+  line('name / brand', `${record.facts.name || '(none)'} / ${record.facts.brand || '(none)'}`);
+
+  console.log('\n  what the page publishes about its price\n');
+  for (const product of record.published.jsonLdProducts) {
+    console.log(`    JSON-LD Product  sku ${product.sku.join(', ') || '(none)'} — ${product.name || '(unnamed)'}`);
+    for (const offer of product.offers) {
+      console.log(`      ${offer.type}: ${offer.named ? `${offer.named.field} = ${offer.named.raw} ${offer.named.currency || ''}` : '(no amount)'}`);
+    }
+  }
+  if (!record.published.jsonLdProducts.length) console.log('    JSON-LD Product  (none)');
+  for (const [key, value] of Object.entries(record.published.priceMetas)) console.log(`    meta ${key} = ${value}`);
+  for (const entry of record.published.microdata) {
+    console.log(`    microdata        ${entry.content}${entry.currency ? ` ${entry.currency}` : ''}${entry.struck ? '  [struck]' : ''}`);
+  }
+  for (const entry of record.published.headingFigures) {
+    const tags = [entry.struck ? 'struck' : null, entry.marked ? 'marked current' : null].filter(Boolean).join(', ');
+    console.log(`    drawn figure     ${JSON.stringify(entry.text)}${tags ? `  [${tags}]` : ''}`);
+  }
+
+  console.log('\n  price candidates, in the order they were tried\n');
+  for (const candidate of prices) {
+    const verdict = candidate.gate ? `[${candidate.gate}] ${candidate.why}` : `ACCEPTED — ${candidate.how}`;
+    console.log(`    ${String(candidate.amount === null ? '—' : candidate.amount).padEnd(10)} ${String(candidate.from).padEnd(32)} ${verdict}`);
+  }
+  if (!prices.length) console.log('    (none — the page published no price this can read)');
+
+  console.log('\n  photo candidates, in the order they were tried\n');
+  for (const candidate of photos.slice(0, 12)) {
+    const verdict = candidate.gate ? `[${candidate.gate}] ${candidate.why}` : 'ACCEPTED (before the load check)';
+    console.log(`    ${short(candidate.url, 64)}`);
+    console.log(`      ${String(candidate.from).padEnd(30)} ${verdict}`);
+  }
+  if (!photos.length) console.log('    (none)');
+  console.log('');
+}
+
 async function main() {
+  /* --explain <url> : show every candidate and the gate that judged it */
+  const explaining = flag('--explain');
+  if (explaining) return explain(explaining, has('--json'));
+
   const supplied = readCandidatesFile();
 
   /* --candidate <url> [--as <row-id>] : try one listing against one row */
@@ -2391,9 +2630,11 @@ if (require.main === module) {
     parseAmount, gradeAmount, currencyOf, offersOf, priceCandidatesFrom,
     priceCandidatesFromRendered, priceSoundness, priceIdentity,
     firstVerifiablePrice, catalogRowPrice, priceEvidenceNote, writePriceInto,
+    priceFromHeadingBlock, priceFromRenderedMicrodata, amountsIn,
     writeRow, formatAmount, accountedFor,
 
     /* giving a row a listing */
-    relevance, listingFault, inspectListing, discoverListing, readCandidatesFile
+    relevance, listingFault, inspectListing, discoverListing, readCandidatesFile,
+    explain, readServed, readRendered
   };
 }
