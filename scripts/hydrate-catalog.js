@@ -221,10 +221,27 @@ function jsonLdNodes(html) {
   return out;
 }
 
+/* A <script type="application/ld+json"> block reaches this decoded when
+   it comes from a rendered page — textContent is what the browser
+   already resolved — and encoded when it comes from served markup.
+
+   Decoding unconditionally corrupts the first kind. A JSON string
+   holding the six characters &quot; becomes one holding a bare ", which
+   ends the string early and makes the whole block unparseable; the
+   catch then drops it without a word, and a listing that publishes a
+   perfectly good offer looks like a listing that publishes none. So the
+   text is tried as it arrived first, and decoding is only the fallback
+   for the markup that actually needs it. */
 function parseLdBlock(text) {
   const out = [];
+  const raw = String(text == null ? '' : text).trim();
   let parsed;
-  try { parsed = JSON.parse(decode(text).trim()); } catch (err) { return out; }
+  let read = false;
+  for (const attempt of [raw, decode(raw).trim()]) {
+    if (!attempt) continue;
+    try { parsed = JSON.parse(attempt); read = true; break; } catch (err) { /* try the other reading */ }
+  }
+  if (!read) return out;
   const stack = [parsed];
   while (stack.length) {
     const node = stack.pop();
@@ -692,7 +709,7 @@ function currencyOf(declared, text, hint) {
   }
 
   if (body.includes('$')) {
-    if (hint === 'USD') return { currency: 'USD', how: 'a $ amount on a page that prices in USD' };
+    if (hint === 'USD') return { currency: 'USD', how: 'a $ amount on a page that prices in USD', viaHint: true };
     return { currency: null, why: 'it is written with a bare $, and nothing on the page says which dollar' };
   }
 
@@ -702,19 +719,67 @@ function currencyOf(declared, text, hint) {
 /* What the page says it prices in, taken from whichever record mentions
    a currency at all. This is what lets a bare "$" in the heading block
    be read as USD, and only that. */
-function currencyHintFrom(nodes, metas) {
+function currencyHintFrom(nodes, metas, pageUrl, lang) {
+  const iso = (value) => {
+    const named = String(value == null ? '' : value).trim().toUpperCase();
+    return /^[A-Z]{3}$/.test(named) ? named : null;
+  };
+
+  /* 1. the offer's own declaration — the page saying it outright */
   for (const node of nodes || []) {
     for (const offer of offersOf(node)) {
-      const named = String(offer.priceCurrency || (offer.priceSpecification || {}).priceCurrency || '').toUpperCase();
-      if (/^[A-Z]{3}$/.test(named)) return named;
+      const named = iso(offer.priceCurrency || (offer.priceSpecification || {}).priceCurrency);
+      if (named) return { currency: named, via: 'an offer on the page names it' };
     }
   }
+
+  /* 2. anywhere else in the page's structured data. A listing whose
+     price lives only in drawn text often still carries a currency in a
+     record about something else — a shipping rate, a loyalty offer —
+     and that is the page stating the currency it trades in. */
+  const stack = [...(nodes || [])];
+  let guard = 0;
+  while (stack.length && guard++ < 5000) {
+    const node = stack.pop();
+    if (!node || typeof node !== 'object') continue;
+    if (Array.isArray(node)) { stack.push(...node); continue; }
+    for (const [key, value] of Object.entries(node)) {
+      if (/currency/i.test(key)) {
+        const named = iso(value);
+        if (named) return { currency: named, via: `the page's structured data names ${key}` };
+      }
+      if (value && typeof value === 'object') stack.push(value);
+    }
+  }
+
+  /* 3. a currency meta */
   const meta = metas || {};
   for (const key of ['product:price:currency', 'og:price:currency', 'twitter:data2']) {
-    const named = String(meta[key] || '').trim().toUpperCase();
-    if (/^[A-Z]{3}$/.test(named)) return named;
+    const named = iso(meta[key]);
+    if (named) return { currency: named, via: `the ${key} meta names it` };
   }
-  return null;
+
+  /* 4. the storefront saying which country it serves.
+
+     Weaker than the three above and deliberately last, but it is still
+     the RETAILER declaring something rather than this inferring one: a
+     page that says it is the en-US storefront, or sits under the
+     retailer's own /us/ path, is quoting US dollars when it draws a $.
+     Which tier answered is recorded in the row's provenance, so a price
+     resting on this one can be told apart later from a price the page
+     stated outright. */
+  const locale = `${lang || ''} ${meta['og:locale'] || ''}`;
+  if (/\ben[-_]US\b/i.test(locale)) {
+    return { currency: 'USD', via: 'the page declares the en-US locale' };
+  }
+  try {
+    const url = new URL(pageUrl);
+    if (/(^|\/)(us|en-us|en_us)(\/|$)/i.test(decodeURIComponent(url.pathname))) {
+      return { currency: 'USD', via: "the listing sits on the retailer's US storefront path" };
+    }
+  } catch (err) { /* an unparseable page URL says nothing */ }
+
+  return { currency: null, via: null };
 }
 
 /* Every offer hanging off a Product node, however it is nested: a single
@@ -914,13 +979,22 @@ function priceFromHeadingBlock(prices, hint) {
       for (const found of amountsIn(entry.text)) {
         const money = currencyOf(null, found.mark, hint);
         const key = `${found.amount} ${money.currency || '?'}`;
-        if (!amounts.has(key)) amounts.set(key, { amount: found.amount, currency: money.currency, text: found.shown });
+        if (!amounts.has(key)) {
+          amounts.set(key, {
+            amount: found.amount, currency: money.currency, text: found.shown,
+            currencyFromHint: Boolean(money.viaHint),
+            source: { path: entry.path, html: entry.html, struck: entry.struck, marked: entry.marked }
+          });
+        }
       }
     }
     return [...amounts.values()];
   };
 
-  const offer = (found, from) => ({ amount: found.amount, currency: found.currency, from, shown: found.text });
+  const offer = (found, from) => ({
+    amount: found.amount, currency: found.currency, from, shown: found.text,
+    currencyFromHint: found.currencyFromHint, source: found.source
+  });
 
   const all = distinct(live);
   if (!all.length) return [];
@@ -938,6 +1012,7 @@ function priceFromHeadingBlock(prices, hint) {
   return [{
     ambiguous: true,
     from: 'rendered price',
+    sources: all.map((a) => Object.assign({ amount: a.amount, shown: a.text }, a.source)),
     why: marked.length
       ? `the heading block shows ${all.length} live figures (${shown}) and marks ${marked.length} of them as current, so nothing singles one out`
       : `the heading block shows ${all.length} different live figures (${shown}) and none is marked as the one being charged`
@@ -960,7 +1035,12 @@ function priceFromRenderedMicrodata(prices, hint) {
     if (parsed.amount === undefined) continue;
     const money = currencyOf(entry.currency, String(entry.content), hint);
     const key = `${parsed.amount} ${money.currency || '?'}`;
-    if (!amounts.has(key)) amounts.set(key, { amount: entry.content, currency: entry.currency, shown: String(entry.content) });
+    if (!amounts.has(key)) {
+      amounts.set(key, {
+        amount: entry.content, currency: entry.currency, shown: String(entry.content),
+        source: { path: entry.path, html: entry.html, struck: entry.struck }
+      });
+    }
   }
 
   if (!amounts.size) return [];
@@ -968,12 +1048,13 @@ function priceFromRenderedMicrodata(prices, hint) {
     return [{
       ambiguous: true,
       from: 'microdata (rendered)',
+      sources: [...amounts.values()].map((a) => Object.assign({ amount: a.amount, shown: a.shown }, a.source)),
       why: `the product block carries ${amounts.size} different microdata prices (${[...amounts.values()].map((a) => a.shown).slice(0, 4).join(', ')}) and names none of them as the product's`
     }];
   }
 
   const only = [...amounts.values()][0];
-  return [{ amount: only.amount, currency: only.currency, from: 'microdata (rendered)', shown: only.shown }];
+  return [{ amount: only.amount, currency: only.currency, from: 'microdata (rendered)', shown: only.shown, source: only.source }];
 }
 
 /* every price the served markup offers, in the order above */
@@ -986,14 +1067,15 @@ function priceCandidatesFrom(html, pageUrl) {
     const currency = metaContent(html, currencyKey);
     if (currency) metas[currencyKey] = decode(currency);
   }
-  const hint = currencyHintFrom(nodes, metas);
+  const langTag = html.match(/<html[^>]*\slang=["']([^"']+)["']/i);
+  const found = currencyHintFrom(nodes, metas, pageUrl, langTag ? langTag[1] : null);
   const canonical = canonicalOf(html);
 
   return [
     ...priceFromJsonLd(nodes),
     ...priceFromMetas(metas),
     ...priceFromMicrodata(html)
-  ].map((c) => Object.assign({ canonical, hint, pageUrl }, c));
+  ].map((c) => Object.assign({ canonical, hint: found.currency, hintVia: found.via, pageUrl }, c));
 }
 
 /* the same, from a page a real browser rendered */
@@ -1001,7 +1083,8 @@ function priceCandidatesFromRendered(seen, pageUrl) {
   const nodes = [];
   for (const block of seen.jsonld || []) nodes.push(...parseLdBlock(block));
   const metas = seen.metas || {};
-  const hint = currencyHintFrom(nodes, metas);
+  const found = currencyHintFrom(nodes, metas, pageUrl, seen.lang);
+  const hint = found.currency;
   const canonical = seen.canonical || null;
 
   return [
@@ -1009,7 +1092,7 @@ function priceCandidatesFromRendered(seen, pageUrl) {
     ...priceFromMetas(metas),
     ...priceFromRenderedMicrodata(seen.prices, hint),
     ...priceFromHeadingBlock(seen.prices, hint)
-  ].map((c) => Object.assign({ canonical, hint, pageUrl }, c));
+  ].map((c) => Object.assign({ canonical, hint, hintVia: found.via, pageUrl }, c));
 }
 
 /* ---------- the price gates ---------- */
@@ -1029,12 +1112,24 @@ function priceSoundness(candidate) {
      bare number instead would lose the one mark the page gave us. */
   const written = candidate.shown != null ? candidate.shown : candidate.amount;
   const money = currencyOf(candidate.currency, String(written), candidate.hint);
-  if (!money.currency) return { ok: false, why: money.why };
+  if (!money.currency) {
+    return { ok: false, why: `${money.why} (nothing on the page declares a currency)` };
+  }
   if (money.currency !== RENDERS_AS) {
     return { ok: false, why: `the page prices it in ${money.currency}, and a card renders $ with no currency beside it` };
   }
 
-  return { ok: true, amount: parsed.amount, currency: money.currency, how: money.how };
+  return {
+    ok: true,
+    amount: parsed.amount,
+    currency: money.currency,
+    how: money.how,
+    /* which tier settled the currency, kept so a price resting on the
+       storefront's locale can be told from one the page stated */
+    currencyVia: (candidate.currencyFromHint || money.viaHint)
+      ? (candidate.hintVia || money.how)
+      : money.how
+  };
 }
 
 /* Is this THIS product's price? The same question the photo answers, and
@@ -1097,7 +1192,9 @@ function firstVerifiablePrice(candidates, productUrl) {
       currency: sound.currency,
       from: candidate.from,
       why: `${sound.currency} ${sound.amount} — ${identity.how}`,
-      identity: Object.assign({}, identity, { amount: sound.amount, currency: sound.currency, from: candidate.from })
+      identity: Object.assign({}, identity, {
+        amount: sound.amount, currency: sound.currency, from: candidate.from, currencyVia: sound.currencyVia
+      })
     };
   }
   return { refusals };
@@ -1354,9 +1451,23 @@ function gatherInPage() {
     return true;
   });
 
+  /* ---- where a figure was found, in terms a person can check ---- */
+  const pathOf = (el) => {
+    const bits = [];
+    for (let n = el; n && n.nodeType === 1 && bits.length < 7; n = n.parentElement) {
+      let step = n.tagName.toLowerCase();
+      if (n.id) step += `#${n.id}`;
+      const cls = typeof n.className === 'string' ? n.className.trim().split(/\s+/).filter(Boolean).slice(0, 2).join('.') : '';
+      if (cls) step += `.${cls}`;
+      bits.unshift(step);
+    }
+    return bits.join(' > ');
+  };
+  const snippetOf = (el) => String(el.outerHTML || '').replace(/\s+/g, ' ').slice(0, 220);
+
   /* ---- the product's own block ----
 
-     Everything below is read from inside it, and that scoping is the
+     Everything scraped is read from inside it, and that scoping is the
      whole defence. A product page is full of other products' prices —
      a recommendation carousel, "complete the look", a bundle widget,
      recently viewed — and every one of them sits on a page that is
@@ -1364,11 +1475,28 @@ function gatherInPage() {
      nothing about a figure scraped out of it; being inside the block
      that holds this product's own heading is what does.
 
-     Two ways to find it. A page that marks up its product with
-     microdata names it outright, and that scope is used as long as it
-     is one product rather than a wrapper around many. Failing that, it
-     is the smallest block containing the page's <h1> and a figure. */
-  const h1 = document.querySelector('h1');
+     Which makes finding that heading the whole game, and "the first
+     <h1> in the document" is not good enough: a storefront's first h1
+     is routinely a hidden brand heading, a promo hero or a carousel
+     title, and anchoring on one of those walks straight into a block
+     advertising something else. So the h1 is CHOSEN — the one whose
+     text is the product the page says it is selling. */
+  const productName = String(metas['og:title'] || document.title || '');
+  const wordsOf = (t) => String(t || '').toLowerCase().match(/[a-z0-9]+/g) || [];
+  const wanted = new Set(wordsOf(productName).filter((w) => w.length >= 3));
+
+  const allHeadings = [...document.querySelectorAll('h1')].map((el) => {
+    const text = (el.textContent || '').trim().slice(0, 120);
+    const mine = wordsOf(text).filter((w) => w.length >= 3);
+    const shared = mine.filter((w) => wanted.has(w)).length;
+    return { el, text, path: pathOf(el), score: wanted.size ? shared / Math.max(wanted.size, 1) : 0, shared };
+  });
+
+  /* best overlap wins; nothing overlapping falls back to the first, which
+     is the old behaviour and still better than giving up */
+  const ranked = allHeadings.slice().sort((a, b) => b.score - a.score);
+  const picked = (ranked[0] && ranked[0].shared > 0) ? ranked[0] : allHeadings[0] || null;
+  const h1 = picked ? picked.el : null;
 
   const typedScope = (() => {
     if (!h1) return null;
@@ -1402,33 +1530,54 @@ function gatherInPage() {
       return cur ? (cur.getAttribute('content') || cur.textContent.trim()) : null;
     })(),
     struck: looksStruck(el),
-    hidden: drawnOut(el)
+    path: pathOf(el),
+    html: snippetOf(el)
   })).filter((e) => e.content);
 
-  /* ---- and what it draws ---- */
+  /* ---- and what it draws ----
+
+     Every figure the block holds is reported, including the ones that
+     are dropped, because "there was one candidate and it was wrong" and
+     "there were nine and eight were filtered" need telling apart from
+     the outside. `used` says whether it reached the candidates. */
   const heading = [];
   if (headingBlock) {
     for (const el of moneyIn(headingBlock)) {
       const own = (el.textContent || '').trim();
       const context = `${own} ${el.getAttribute('aria-label') || ''}`;
-      if (NOISE.test(context)) continue;
-      if (drawnOut(el)) continue;
-      heading.push({ text: own, struck: looksStruck(el), marked: looksMarked(el, headingBlock) });
+      const noise = NOISE.test(context);
+      const hidden = drawnOut(el);
+      heading.push({
+        text: own,
+        struck: looksStruck(el),
+        marked: looksMarked(el, headingBlock),
+        noise,
+        hidden,
+        used: !noise && !hidden,
+        path: pathOf(el),
+        html: snippetOf(el)
+      });
     }
   }
 
   return {
     canonical: text('link[rel="canonical"]', 'href') || metas['og:url'] || null,
+    lang: document.documentElement.getAttribute('lang') || null,
     metas,
     jsonld,
     preload,
     imgs,
     prices: {
       microdata,
-      heading,
-      /* how the block was found, so a report can say why a page gave up
-         nothing rather than just that it did */
-      scope: scope ? (typedScope ? 'the product\'s own itemscope' : 'the block holding the product\'s heading') : null
+      /* the dropped ones are kept out of the candidate list but stay
+         visible to --explain */
+      heading: heading.filter((h) => h.used),
+      dropped: heading.filter((h) => !h.used),
+      scope: scope ? (typedScope ? 'the product\'s own itemscope' : 'the block holding the product\'s heading') : null,
+      scopePath: scope ? pathOf(scope) : null,
+      scopeHtml: scope ? snippetOf(scope) : null,
+      headings: allHeadings.map((h) => ({ text: h.text, path: h.path, shared: h.shared, chosen: h.el === h1 })),
+      productName
     }
   };
 }
@@ -1937,6 +2086,7 @@ function priceEvidenceNote(evidence) {
   else return null; // nothing to re-prove it against
   parts.push(`amount: ${formatAmount(graded.amount)}`);
   parts.push(`currency: '${RENDERS_AS}'`);
+  if (evidence.currencyVia) parts.push(`currencyVia: '${quotable(evidence.currencyVia)}'`);
   parts.push(`asOf: '${quotable(evidence.asOf || TODAY)}'`);
   return `{ ${parts.join(', ')} }`;
 }
@@ -2411,12 +2561,17 @@ async function hydrateRow(row, supplied) {
 /* ---------- showing the work on one listing ----------
 
    When a real page gives an answer that looks wrong, the report's one
-   line per row is not enough to say why: the question is what the page
-   published, what became a candidate, and which gate turned each one
-   down. This prints exactly that, and changes nothing.
+   line per row cannot say why: the question is which element or which
+   record the figure came from, and which gate turned it down. This
+   prints that and changes nothing.
 
-   --json prints the same thing as a record, which is the form to send
-   to somebody who cannot open the page themselves. */
+   It shows the rejected ones too, and the ones that were filtered
+   before they ever became candidates — "there was one candidate and it
+   was wrong" and "there were nine and eight were dropped" are different
+   diagnoses, and from outside the browser they look identical.
+
+   --json prints the same as a record, which is the form to hand to
+   somebody who cannot open the page themselves. */
 async function explain(url, asJson) {
   const served = await readServed(url);
   const read = (!served.failed && (served.images.length || served.prices.length))
@@ -2429,19 +2584,27 @@ async function explain(url, asJson) {
     return;
   }
 
-  const seen = read.rendered || null;
-  const gates = (candidate) => {
+  const raw = read.raw || {};
+  const seenPrices = raw.prices || {};
+
+  const judge = (candidate) => {
+    if (candidate.ambiguous) return { gate: 'current', why: candidate.why };
     const sound = priceSoundness(candidate);
     if (!sound.ok) return { gate: 'sound', why: sound.why };
     const identity = priceIdentity(candidate, url);
     if (!identity.ok) return { gate: 'identity', why: identity.why };
-    return { gate: null, amount: sound.amount, currency: sound.currency, how: identity.how };
+    return { gate: null, amount: sound.amount, currency: sound.currency, how: identity.how, currencyVia: sound.currencyVia };
   };
 
-  const prices = read.prices.map((c) => Object.assign(
-    { from: c.from, amount: c.ambiguous ? null : c.amount, currency: c.currency || null },
-    c.ambiguous ? { gate: 'current', why: c.why } : gates(c)
-  ));
+  const prices = read.prices.map((c) => Object.assign({
+    from: c.from,
+    amount: c.ambiguous ? null : c.amount,
+    currency: c.currency || null,
+    /* where it came from: the element, or the record */
+    source: c.source || null,
+    sources: c.sources || null,
+    jsonLd: c.node || null
+  }, judge(c)));
 
   const photos = read.images.map((c) => {
     const unsound = soundness(c, url);
@@ -2454,18 +2617,27 @@ async function explain(url, asJson) {
   const record = {
     url,
     readThrough: read.how,
-    canonical: (read.raw && read.raw.canonical) || null,
-    productScope: (read.raw && read.raw.prices && read.raw.prices.scope) || null,
+    canonical: raw.canonical || null,
+    lang: raw.lang || null,
     facts: read.facts,
+    productBlock: {
+      productName: seenPrices.productName || null,
+      scope: seenPrices.scope || null,
+      scopePath: seenPrices.scopePath || null,
+      scopeHtml: seenPrices.scopeHtml || null,
+      headings: seenPrices.headings || []
+    },
     published: {
       jsonLdProducts: (read.products || []).map((n) => ({
         sku: skuOf(n),
         name: typeof n.name === 'string' ? n.name : null,
-        offers: offersOf(n).map((o) => ({ type: String(o['@type'] || 'Offer'), named: amountOf(o) }))
+        offers: offersOf(n).map((o) => ({ type: String(o['@type'] || 'Offer'), named: amountOf(o) })),
+        node: n
       })),
       priceMetas: read.priceMetas || {},
-      microdata: (read.raw && read.raw.prices && read.raw.prices.microdata) || [],
-      headingFigures: (read.raw && read.raw.prices && read.raw.prices.heading) || []
+      microdata: seenPrices.microdata || [],
+      headingFigures: seenPrices.heading || [],
+      figuresDropped: seenPrices.dropped || []
     },
     priceCandidates: prices,
     photoCandidates: photos
@@ -2473,12 +2645,30 @@ async function explain(url, asJson) {
 
   if (asJson) { console.log(JSON.stringify(record, null, 2)); return; }
 
-  const line = (label, value) => console.log(`  ${String(label).padEnd(18)}${value}`);
+  const line = (label, value) => console.log(`  ${String(label).padEnd(16)}${value}`);
   console.log(`\n  ${url}\n`);
   line('read through', record.readThrough);
   line('canonical', record.canonical || '(the page declares none)');
-  line('product scope', record.productScope || '(none found — no <h1> with a figure near it)');
+  line('html lang', record.lang || '(none)');
+  line('page calls it', record.productBlock.productName || '(nothing)');
   line('name / brand', `${record.facts.name || '(none)'} / ${record.facts.brand || '(none)'}`);
+
+  /* the heading the block was anchored on, and the ones it passed over.
+     This is the first thing to check when a page yields a figure that
+     belongs to something else entirely. */
+  console.log('\n  headings on the page, and which one anchored the product block\n');
+  for (const heading of record.productBlock.headings) {
+    console.log(`    ${heading.chosen ? '->' : '  '} ${JSON.stringify(heading.text)}  (${heading.shared} words shared with the product name)`);
+    console.log(`         ${heading.path}`);
+  }
+  if (!record.productBlock.headings.length) console.log('    (the page has no <h1> at all)');
+
+  console.log('');
+  line('block', record.productBlock.scope || '(none found)');
+  if (record.productBlock.scopePath) {
+    line('', record.productBlock.scopePath);
+    line('', record.productBlock.scopeHtml);
+  }
 
   console.log('\n  what the page publishes about its price\n');
   for (const product of record.published.jsonLdProducts) {
@@ -2486,30 +2676,50 @@ async function explain(url, asJson) {
     for (const offer of product.offers) {
       console.log(`      ${offer.type}: ${offer.named ? `${offer.named.field} = ${offer.named.raw} ${offer.named.currency || ''}` : '(no amount)'}`);
     }
+    if (!product.offers.length) console.log('      (the record carries no offers)');
   }
   if (!record.published.jsonLdProducts.length) console.log('    JSON-LD Product  (none)');
   for (const [key, value] of Object.entries(record.published.priceMetas)) console.log(`    meta ${key} = ${value}`);
   for (const entry of record.published.microdata) {
     console.log(`    microdata        ${entry.content}${entry.currency ? ` ${entry.currency}` : ''}${entry.struck ? '  [struck]' : ''}`);
+    console.log(`                     ${entry.path}`);
   }
   for (const entry of record.published.headingFigures) {
     const tags = [entry.struck ? 'struck' : null, entry.marked ? 'marked current' : null].filter(Boolean).join(', ');
     console.log(`    drawn figure     ${JSON.stringify(entry.text)}${tags ? `  [${tags}]` : ''}`);
+    console.log(`                     ${entry.path}`);
+    console.log(`                     ${entry.html}`);
+  }
+  for (const entry of record.published.figuresDropped) {
+    console.log(`    dropped figure   ${JSON.stringify(entry.text)}  [${entry.noise ? 'reads as something other than the price' : 'not drawn on screen'}]`);
+    console.log(`                     ${entry.path}`);
   }
 
   console.log('\n  price candidates, in the order they were tried\n');
   for (const candidate of prices) {
     const verdict = candidate.gate ? `[${candidate.gate}] ${candidate.why}` : `ACCEPTED — ${candidate.how}`;
-    console.log(`    ${String(candidate.amount === null ? '—' : candidate.amount).padEnd(10)} ${String(candidate.from).padEnd(32)} ${verdict}`);
+    console.log(`    ${String(candidate.amount === null ? '—' : candidate.amount).padEnd(10)} ${String(candidate.from).padEnd(34)} ${verdict}`);
+    if (candidate.source) {
+      console.log(`      from element   ${candidate.source.path}`);
+      console.log(`                     ${candidate.source.html}`);
+    }
+    for (const source of candidate.sources || []) {
+      console.log(`      ${String(source.shown).padEnd(12)} ${source.path}`);
+      console.log(`                     ${source.html}`);
+    }
+    if (candidate.jsonLd) {
+      console.log(`      from record    ${JSON.stringify(candidate.jsonLd).slice(0, 300)}`);
+    }
   }
   if (!prices.length) console.log('    (none — the page published no price this can read)');
 
   console.log('\n  photo candidates, in the order they were tried\n');
-  for (const candidate of photos.slice(0, 12)) {
+  for (const candidate of photos.slice(0, 10)) {
     const verdict = candidate.gate ? `[${candidate.gate}] ${candidate.why}` : 'ACCEPTED (before the load check)';
     console.log(`    ${short(candidate.url, 64)}`);
     console.log(`      ${String(candidate.from).padEnd(30)} ${verdict}`);
   }
+  if (photos.length > 10) console.log(`    …and ${photos.length - 10} more`);
   if (!photos.length) console.log('    (none)');
   console.log('');
 }

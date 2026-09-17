@@ -430,6 +430,67 @@ function pricedRetailer() {
         </main></body></html>`);
     }
 
+    /* ---- the shape the real UNIQLO page actually has ----
+
+       Reported from a live run: 1 price candidate, $7.9, refused for a
+       bare $. That is not a carousel's microdata — it is the heading
+       walk anchoring on the WRONG <h1>. The first h1 in this document
+       is the storefront's own, and the nearest block around it that
+       holds a figure is a promo strip advertising socks. The product's
+       real h1, and its real price, are further down and never reached.
+
+       The page also declares no currency anywhere except its locale,
+       which is why even the right figure would have been refused. */
+    if (code === '09999999') {
+      res.writeHead(200, { 'content-type': 'text/html' });
+      return res.end(`<!doctype html><html lang="en-US"><head>
+        <link rel="canonical" href="http://127.0.0.1:${port}/p/${code}">
+        <meta property="og:title" content="Extra Fine Merino Crew Neck Long-Sleeve Sweater">
+        <title>Extra Fine Merino Crew Neck Long-Sleeve Sweater | UNIQLO US</title></head>
+        <body>
+          <header class="site-header">
+            <div class="promo-strip">
+              <h1 class="sr-only">UNIQLO</h1>
+              <p class="promo">Socks 3-pack now $7.90</p>
+            </div>
+          </header>
+          <main>
+            <div class="product-info">
+              <h1 class="product-title">Extra Fine Merino Crew Neck Long-Sleeve Sweater</h1>
+              <div class="prices"><span class="now">$49.90</span></div>
+            </div>
+          </main>
+        </body></html>`);
+    }
+
+    /* ---- the shape the real J.Crew page actually has ----
+
+       Reported from a live run: 1 price candidate, and a heading block
+       drawing $98, $128, $118, $58.50 with none of them labelled. The
+       listing DOES publish an offer — but its JSON-LD carries the
+       characters &quot; inside a string, and decoding a block that
+       arrived already decoded turns that into a bare quote, ends the
+       string early, and throws the record away without a word. */
+    if (code === 'AU763') {
+      res.writeHead(200, { 'content-type': 'text/html' });
+      return res.end(`<!doctype html><html lang="en-US"><head>
+        <link rel="canonical" href="http://127.0.0.1:${port}/p/${code}">
+        <meta property="og:title" content="Broken-in organic cotton oxford shirt">
+        <title>Broken-in organic cotton oxford shirt</title>
+        <script type="application/ld+json">
+        {"@type":"Product","sku":"AU763","name":"The &quot;Broken-in&quot; organic cotton oxford shirt","offers":{"@type":"Offer","price":"58.50","priceCurrency":"USD"}}
+        </script></head>
+        <body><main>
+          <div class="product-info">
+            <h1>Broken-in organic cotton oxford shirt</h1>
+            <div class="prices">
+              <span class="a">$98</span><span class="b">$128</span>
+              <span class="c">$118</span><span class="d">$58.50</span>
+            </div>
+          </div>
+        </main></body></html>`);
+    }
+
     const ambiguous = code === '06887614';
     const silentAboutCurrency = code === '06887615';
 
@@ -1123,6 +1184,64 @@ function pricedRetailer() {
       const heading = page.seen.seen.prices.heading;
       assert.ok(!heading.some((e) => e.text.includes('44.50')),
         `"Members $44.50" reached the price candidates: ${JSON.stringify(heading)}`);
+    });
+
+    /* ---------- the two real listings, as they actually behaved ----------
+
+       Both of these reproduce a symptom observed on a live run, down to
+       the number that came out: $7.9 refused for a bare $, and four
+       unlabelled figures with no offer to settle them. */
+
+    await testAsync('the product\'s own heading anchors the block, not the first one on the page', async () => {
+      const page = await pageOf('09999999');
+      const seen = page.seen.seen.prices;
+
+      const chosen = seen.headings.find((h) => h.chosen);
+      assert.ok(chosen, 'no heading was chosen at all');
+      assert.match(chosen.text, /Merino Crew Neck/,
+        `the block anchored on ${JSON.stringify(chosen.text)} — the storefront's heading, not the product's`);
+      assert.strictEqual(seen.headings.length, 2, 'both headings should be reported');
+
+      const got = extractor.firstVerifiablePrice(
+        extractor.priceCandidatesFromRendered(page.seen.seen, page.url), page.url);
+      assert.strictEqual(got.amount, 49.9,
+        `read ${got.amount} — refusals: ${JSON.stringify(got.refusals || [])}`);
+      assert.notStrictEqual(got.amount, 7.9, "the promo strip's socks were read as the sweater's price");
+    });
+
+    await testAsync('a storefront that names its locale settles a bare $', async () => {
+      const page = await pageOf('09999999');
+      const got = extractor.firstVerifiablePrice(
+        extractor.priceCandidatesFromRendered(page.seen.seen, page.url), page.url);
+      assert.strictEqual(got.currency, 'USD');
+      /* and it is recorded, so a price resting on the locale can be told
+         apart later from one the page stated outright */
+      assert.match(String(got.identity.currencyVia), /en-US locale/);
+    });
+
+    await testAsync('an offer record survives the characters &quot; inside it', async () => {
+      const page = await pageOf('AU763');
+      const got = extractor.firstVerifiablePrice(
+        extractor.priceCandidatesFromRendered(page.seen.seen, page.url), page.url);
+
+      assert.strictEqual(got.amount, 58.5,
+        `read ${got.amount} — refusals: ${JSON.stringify(got.refusals || [])}`);
+      assert.match(got.from, /json-ld-offer/,
+        'the price came from somewhere other than the listing\'s own offer record');
+      assert.match(got.why.toLowerCase(), /sku au763/);
+    });
+
+    await testAsync('the offer beats the four unlabelled figures drawn beside it', async () => {
+      const page = await pageOf('AU763');
+      const drawn = page.seen.seen.prices.heading.map((h) => h.text);
+      /* the page really does draw all four — the offer is what settles
+         them, not a filter that made them go away */
+      for (const figure of ['$98', '$128', '$118', '$58.50']) {
+        assert.ok(drawn.some((t) => t.includes(figure)), `${figure} was not drawn at all: ${JSON.stringify(drawn)}`);
+      }
+      const candidates = extractor.priceCandidatesFromRendered(page.seen.seen, page.url);
+      assert.match(String(candidates[0].from), /json-ld-offer/,
+        `the first candidate was ${candidates[0].from}, so the drawn figures were tried first`);
     });
 
     shop.close();
