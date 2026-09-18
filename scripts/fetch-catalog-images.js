@@ -1218,6 +1218,11 @@ if (require.main === module) {
     largestFromSrcset, readCatalog, identifiersFrom, identityEvidence, samePage,
     gatherInPage, renderPage, resolveRow, firstVerifiable,
     replaceRow, factsFromHtml, factsFromRendered, inspectCandidate,
-    catalogRowIdentity, evidenceNote
+    catalogRowIdentity, evidenceNote,
+    /* the parts that are about reading a retailer's page rather than
+       about images, so the price reader shares one definition of a
+       listing's code, one cookie-wall list and one way in */
+    BROWSER, fetchPage, jsonLdNodes, parseLdBlock, metaContent, skuOf,
+    loadPlaywright, dismissConsent, coaxLazyImages, rowEndsAt
   };
 }
