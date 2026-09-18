@@ -10,10 +10,31 @@
      Products.load('/api/products.json')   a URL returning JSON
      Products.load(() => queryDb())        a function or promise
 
-   price is null on every row, because no retailer domain was reachable
-   from the environment this is built in, so no price could be read from
-   the source. It is an ordinary field: fill it in and the interface
-   renders it.
+   price carries an amount on a linked row only where one was read off
+   the retailer's own page by scripts/fetch-catalog-prices.js: tied to
+   that exact product, and proved to be the amount charged rather than
+   the one it is discounted from. A row whose price is null renders no
+   price, which is the honest state rather than a plausible figure.
+
+   UNIQLO and J.Crew are null on purpose. UNIQLO serves no price at all
+   and renders one figure that sits in no product's own price block —
+   the page is this listing's canonical page, but that vouches for the
+   page, not for which of its figures is the price. J.Crew publishes
+   ProductGroup AU763 with offers: [] and renders $98, $128, $118,
+   $58.50 and $148, four of them marked as the current price; nothing on
+   the page says which one is charged, so the reader fails closed rather
+   than picking one.
+
+   priceEvidence records HOW a price was tied to its product, and unlike
+   imageEvidence it is written for every price with no exception: an
+   image URL can carry the product's code and speak for itself, while
+   84.95 carries nothing. L.L.Bean's came from the offer on the JSON-LD
+   product record naming sku 129244. It is re-proved rather than
+   trusted, the same way imageEvidence is — the recorded sku has to
+   match a code in the row's own productUrl.
+
+   The sample rows' prices are the demo's own. They link to nothing, so
+   nothing claims they were read from a retailer.
 
    imageUrl carries a photo on the rows where one was verified, and null
    everywhere else. A photo gets here one way only: read off the listing
@@ -79,7 +100,8 @@ const DEMO_PRODUCTS = [
     id: 'llbean-venturestretch-chino',
     name: "Men's VentureStretch Commuter Chinos",
     brand: 'L.L.Bean',
-    price: null,
+    price: 84.95,
+    priceEvidence: { via: 'json-ld-offer', sku: '129244' },
     productUrl: 'https://www.llbean.com/llb/shop/129244',
     imageUrl: 'https://cdni.llbean.net/is/image/wim/521659_32573_41?hei=1095&wid=950&resMode=sharp2&defaultImage=llbprod/129244_0_44',
     imageEvidence: { via: 'json-ld-sku', sku: '129244' },

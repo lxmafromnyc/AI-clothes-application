@@ -890,6 +890,7 @@ node scripts/test-serpapi.js   # the SerpApi adapter, its links and its costs
 node scripts/test-stripe.js    # payments and subscriptions
 node scripts/test-auth.js      # accounts, sessions, tokens, OAuth
 node scripts/test-catalog-images.js  # the catalogue image extractor's gates
+node scripts/test-catalog-prices.js  # the catalogue price extractor's gates
 node scripts/test-ui.js        # the interface, its palette and its contrast
 node scripts/record-demo.js    # re-records the landing page demo video
 node scripts/test-e2e.js       # the whole sign-in flow, in a real browser
@@ -1643,9 +1644,12 @@ after one the page does not touch the video again.
   generated artwork built from CSS gradients and inline SVG. Set `imageUrl` on a
   product and it renders the photo; if that photo fails to load, the artwork
   returns.
-- `price` is `null` throughout the demo catalogue because no retailer domain was
-  reachable from the environment this was built in, so no price could be
-  verified there. It is an ordinary data field.
+- `price` carries an amount on a linked row only where one was read off the
+  retailer's own page and tied to that exact product. L.L.Bean is `84.95`;
+  UNIQLO and J.Crew are `null` on purpose, and a row with no price renders
+  none. `scripts/fetch-catalog-prices.js` below says what each of those pages
+  does and does not publish. The sample rows carry the demo's own prices and
+  link to nothing, so nothing claims they were read from a retailer.
 - `imageUrl` carries a photo only where one was verified against that exact
   listing; a row left `null` keeps its drawn artwork, which is the honest state
   rather than a placeholder.
@@ -1659,6 +1663,13 @@ after one the page does not touch the video again.
   is explicitly not what vouches for the photo. The note is re-proved rather
   than trusted — a recorded sku must match a code in the row's own `productUrl`
   — and `assets/products.js` drops the field before anything renders.
+- `priceEvidence` records *how* a price was tied to its product, and unlike
+  `imageEvidence` it is written for every price with no exception: an image URL
+  can carry the product's code and speak for itself, while `84.95` carries
+  nothing. L.L.Bean's names the offer on that listing's JSON-LD product record
+  for sku `129244`. It is re-proved rather than trusted the same way — the
+  recorded sku must match a code in the row's own `productUrl` — and it never
+  reaches the interface either.
 - `node scripts/fetch-catalog-images.js` fills the `imageUrl` of every row that
   carries a `productUrl`, by reading the photo off the listing the row already
   links to. It tries plain HTTP first; a page that gives up nothing — no
@@ -1699,5 +1710,37 @@ after one the page does not touch the video again.
   `node scripts/test-catalog-images.js` covers all four gates without a
   network, driving the browser path against a local server that refuses plain
   HTTP and builds its gallery in JavaScript.
+- `node scripts/fetch-catalog-prices.js` fills the `price` of every row that
+  carries a `productUrl`, by reading what the listing charges off the same page
+  the photo came from. Plain HTTP first, then a real Chromium for a page that
+  only prices itself after its scripts run.
+
+  Four gates decide what may be written: the figure appeared on that page
+  (**found**), it reads as an amount in a currency the page itself names
+  (**money**), its own DOM or its own structured record ties it to *this*
+  product (**this**), and something on the page says it is the amount charged
+  rather than the one it is discounted from (**charged**). The third gate is
+  the one worth stating plainly: a page that declares itself canonical for the
+  listing has vouched for the *page*, and a product page renders many figures,
+  so canonical says nothing about which of them is the price — it is not
+  provenance here the way it is for an `og:image`. What counts is a
+  `data-product-id` or an `itemprop` sku on the block the figure sits in, or an
+  offer on a JSON-LD product record naming a matching sku.
+
+  Then one rule over all four: if more than one distinct amount clears every
+  gate, the run fails closed. A struck-through list price, a "4 payments of", a
+  free-shipping threshold and a neighbouring product's price are each refused
+  by name — but two figures that both survive mean the page has not said which
+  one a shopper pays, and that is not a tie to be broken by picking the lowest.
+
+  It reports `VERIFIED` / `AMBIGUOUS` / `NO PRICE FOUND` / `UNREACHABLE` per
+  row and writes only with `--write`, always with a `priceEvidence` note.
+  `--explain` prints every figure with the DOM that justified or condemned it,
+  and `--explain --json` emits the same as a capture file. `--refresh` re-reads
+  a row that already carries a price; `--no-browser` keeps it to plain HTTP.
+  `node scripts/test-catalog-prices.js` covers the gates without a network,
+  including both live shapes: UNIQLO's single hydrated figure sitting in no
+  product's block, and J.Crew's `ProductGroup AU763` publishing `offers: []`
+  behind five rendered figures, four of them marked as the current price.
 - The catalogue is a small sample set plus three real listings; it is not real
   inventory.
