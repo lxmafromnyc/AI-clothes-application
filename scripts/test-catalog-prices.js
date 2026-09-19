@@ -1275,6 +1275,141 @@ test('the borrowed currency is tied by identity, not by proximity', () => {
 });
 
 /* ---------------------------------------------------------
+   The UNIQLO variant chain, as the live page establishes it
+
+     product E429066-000 / l1 438783, colour 03 GRAY
+     l2Id 05437392, communicationCode E429066-03-003-000
+     commerce API 7.9 -> dataLayer item 7.9 -> USD -> $7.90 on screen
+
+   The product prices its variants differently, so this is the price of
+   the variant the page had selected — and the row records which one.
+   --------------------------------------------------------- */
+
+console.log('\nThe UNIQLO variant chain\n');
+
+const CHAIN_L2S = { status: 'ok', result: {
+  l2s: [
+    { l2Id: '05437392', productId: 'E429066-000', communicationCode: 'E429066-03-003-000', color: { displayCode: '03 GRAY' }, size: { code: '003' } },
+    { l2Id: '05437400', productId: 'E429066-000', communicationCode: 'E429066-09-004-000', color: { displayCode: '09 NAVY' }, size: { code: '004' } }
+  ],
+  prices: { '05437392': { base: { value: 7.9 } }, '05437400': { base: { value: 49.9 } } }
+} };
+
+const CHAIN_EVENT = [{ event: 'view_item', ecommerce: { currency: 'USD', value: 7.9, items: [
+  { item_id: '05437392', item_product_id: 'E429066-000', item_l1_id: '438783', item_name: 'Extra Fine Merino Crew Neck Long-Sleeve Sweater', price: 7.9 }
+] } }];
+
+const chainData = (event, extra) => Object.assign({
+  responses: [{ url: 'https://www.uniqlo.com/us/api/commerce/v5/en/products/E429066-000/price-groups/00/l2s', mentions: ['429066'], text: JSON.stringify(CHAIN_L2S) }],
+  state: [{ key: 'dataLayer', mentions: ['429066'], text: JSON.stringify(event || CHAIN_EVENT) }]
+}, extra || {});
+
+test('the chain resolves, and records every link of itself', () => {
+  const verdict = prices.decide(prices.dataCandidates(chainData(), UNIQLO), UNIQLO);
+
+  assert.strictEqual(verdict.price, 7.9);
+  assert.strictEqual(verdict.identity.via, 'datalayer-variant-price');
+  assert.strictEqual(verdict.identity.productId, 'E429066-000');
+  assert.strictEqual(verdict.identity.l1Id, '438783');
+  assert.strictEqual(verdict.identity.l2Id, '05437392');
+  assert.strictEqual(verdict.identity.communicationCode, 'E429066-03-003-000');
+  assert.strictEqual(verdict.identity.currency, 'USD');
+  assert.match(verdict.identity.how, /prices 05437392/);
+  assert.match(verdict.identity.how, /same amount in USD/);
+});
+
+test('the written note is the chain, and a shipped row re-proves it', () => {
+  const verdict = prices.decide(prices.dataCandidates(chainData(), UNIQLO), UNIQLO);
+  const note = prices.priceEvidenceNote(verdict.identity);
+
+  assert.strictEqual(note, "{ via: 'datalayer-variant-price', productId: 'E429066-000', l1Id: '438783', l2Id: '05437392', communicationCode: 'E429066-03-003-000', currency: 'USD' }");
+
+  const row = {
+    id: 'uniqlo-merino-crew',
+    price: 7.9,
+    productUrl: UNIQLO,
+    priceEvidence: { via: 'datalayer-variant-price', productId: 'E429066-000', l1Id: '438783', l2Id: '05437392', communicationCode: 'E429066-03-003-000', currency: 'USD' }
+  };
+  assert.strictEqual(prices.catalogRowPrice(row).ok, true, 'the product code is what the listing URL carries');
+
+  const foreign = Object.assign({}, row, { priceEvidence: Object.assign({}, row.priceEvidence, { productId: 'E465185-000' }) });
+  assert.strictEqual(prices.catalogRowPrice(foreign).ok, false, 'a chain naming another product proves nothing here');
+});
+
+test('a variant belonging to another product contributes nothing', () => {
+  const stranger = [{ event: 'view_item', ecommerce: { currency: 'USD', items: [
+    { item_id: '05437392', item_product_id: 'E465185-000', item_l1_id: '999999', price: 7.9 }
+  ] } }];
+
+  const verdict = prices.decide(prices.dataCandidates(chainData(stranger), UNIQLO), UNIQLO);
+  assert.strictEqual(verdict.price, undefined, 'the event names a different product, so there is no chain');
+  assert.ok(verdict.refusals.some((refusal) => /names no currency/.test(refusal.why)),
+    'and the amount is back to having no units');
+});
+
+test('an event sharing the currency but not the amount cannot complete the chain', () => {
+  const silent = [{ event: 'view_item', ecommerce: { currency: 'USD', items: [
+    { item_id: '05437392', item_product_id: 'E429066-000', item_l1_id: '438783' }
+  ] } }];
+
+  const verdict = prices.decide(prices.dataCandidates(chainData(silent), UNIQLO), UNIQLO);
+  assert.strictEqual(verdict.price, undefined);
+  assert.match(becauseGate(verdict.refusals, 7.9, 'charged'), /not that this is one of them/);
+});
+
+test('the $49.90 variant is never selected on this evidence', () => {
+  const candidates = prices.dataCandidates(chainData(), UNIQLO);
+  const dear = candidates.find((candidate) => candidate.amount === 49.9);
+  assert.ok(dear, 'the other colour is priced in the same response');
+  assert.strictEqual(dear.currency, null, 'and no event names it, so it has no units');
+
+  const charged = prices.chargedEvidence(dear);
+  assert.strictEqual(charged.ok, false);
+  assert.match(charged.why, /names no currency/);
+
+  const verdict = prices.decide(candidates, UNIQLO);
+  assert.strictEqual(verdict.price, 7.9, 'the selected variant is what resolves');
+  assert.strictEqual(verdict.identity.l2Id, '05437392');
+});
+
+test('two variants both fully evidenced still fail closed', () => {
+  /* if the page ever named two variants with two amounts and units for
+     both, that is not a tie to break by picking one */
+  const both = [{ event: 'view_item', ecommerce: { currency: 'USD', items: [
+    { item_id: '05437392', item_product_id: 'E429066-000', price: 7.9 },
+    { item_id: '05437400', item_product_id: 'E429066-000', price: 49.9 }
+  ] } }];
+
+  const verdict = prices.decide(prices.dataCandidates(chainData(both), UNIQLO), UNIQLO);
+  assert.strictEqual(verdict.price, undefined);
+  assert.deepStrictEqual(verdict.ambiguous, [7.9, 49.9]);
+});
+
+test('JSON-LD alone cannot write, and corroborating does not become the evidence', () => {
+  const markup = { scripts: [{ type: 'application/ld+json', mentions: ['429066'], text: JSON.stringify({
+    '@context': 'https://schema.org', '@type': 'ProductGroup', productGroupID: 'E429066-000',
+    hasVariant: [{ sku: 'E429066-000', offers: { price: 7.9, priceCurrency: 'USD' } }]
+  }) }] };
+
+  const alone = prices.decide(prices.dataCandidates(markup, UNIQLO), UNIQLO);
+  assert.strictEqual(alone.price, undefined, 'the markup says 7.90 and may not write it');
+  assert.ok(alone.refusals.some((refusal) => refusal.gate === 'corroboration'));
+
+  const together = prices.decide(prices.dataCandidates(chainData(CHAIN_EVENT, markup), UNIQLO), UNIQLO);
+  assert.strictEqual(together.price, 7.9);
+  assert.strictEqual(together.identity.via, 'datalayer-variant-price', 'the chain is what is recorded');
+  assert.strictEqual(together.identity.l2Id, '05437392');
+});
+
+test('the amount must come from the shop, not from the event alone', () => {
+  const eventOnly = { state: [{ key: 'dataLayer', mentions: ['429066'], text: JSON.stringify(CHAIN_EVENT) }] };
+  const verdict = prices.decide(prices.dataCandidates(eventOnly, UNIQLO), UNIQLO);
+
+  assert.strictEqual(verdict.price, undefined, 'an analytics event cannot corroborate itself into a price');
+  assert.match(becauseGate(verdict.refusals, 7.9, 'authority'), /only in the page's own payloads/);
+});
+
+/* ---------------------------------------------------------
    The command line itself
 
    --inspect-api=<url> was invisible to a scan for an exact string, so
@@ -2070,6 +2205,12 @@ function hydratingRetailer() {
 
       /* and what the gates make of it, said out loud */
       assert.strictEqual(report.verdict.price, 7.9);
+      assert.strictEqual(report.verdict.identity.via, 'datalayer-variant-price',
+        'the chain is what a live page of this shape resolves on');
+      assert.strictEqual(report.verdict.identity.l2Id, '05437392');
+      assert.strictEqual(report.verdict.identity.productId, 'E429066-000');
+      assert.strictEqual(report.verdict.identity.currency, 'USD');
+
       const judged = report.candidates.find((entry) => /l2s/.test(entry.from) && entry.amount === 7.9);
       assert.strictEqual(judged.currencyFrom.via, 'amount-and-identity');
     });

@@ -34,6 +34,14 @@
                struck through. A list price and a "4 payments of" are
                refused here by name.
 
+   A row records the price of the variant the page had SELECTED. A
+   product with variant-dependent pricing — UNIQLO prices colours of
+   one sweater at 7.90 and 49.90 — has no single price, and the one
+   worth recording is the one a shopper is being offered when the
+   listing is opened. The evidence written beside it names which
+   variant, so the row can never be mistaken for the product's only
+   price.
+
    And then one rule over all of them: if more than one distinct amount
    clears every gate, the run FAILS CLOSED. Two figures both claiming to
    be the charged price is not a tie to be broken by picking the lowest,
@@ -570,6 +578,60 @@ function matchingCode(values, ids) {
   return null;
 }
 
+/* ---------- the variant chain ----------
+
+   A commerce response prices ONE variant and says nothing about units.
+   An analytics event names that same variant, the product it belongs
+   to, and the currency — and carries the same amount. Each link is
+   something the page said; the chain is what makes them one statement
+   rather than four loose numbers.
+
+   Every link is required. The event must name THIS product, and the
+   variant it names must be the one the amount was filed under, and it
+   must carry that amount, and the amount must come from the shop's own
+   commerce data rather than from the event itself — otherwise the event
+   would be corroborating itself. A variant belonging to another
+   product contributes nothing, and neither does an event that shares a
+   currency but not an amount. */
+function variantChain(record, ids) {
+  const from = record && record.currencyFrom;
+  if (!from || from.via !== 'amount-and-identity' || !from.analytics) return null;
+  if (record.authority !== 'commerce-api') return null;
+
+  const fields = from.fields || [];
+  const product = fields.find((field) => matchingCode([field.value], ids));
+  if (!product) return null;
+
+  const owner = record.mappedFrom || null;
+  const l2Id = record.code || (owner && owner.variant) || null;
+  if (!l2Id) return null;
+
+  /* the variant has to be a variant: a chain whose "variant" is the
+     product code again says nothing about which one was priced */
+  if (String(l2Id).toLowerCase() === String(product.value).toLowerCase()) return null;
+  if (!fields.some((field) => String(field.value).toLowerCase() === String(l2Id).toLowerCase())) return null;
+
+  const pick = (list, pattern) => (list || []).find((field) => pattern.test(field.key));
+  const l1 = pick(fields, /l1/i) || (owner && pick(owner.fields, /l1/i));
+  const communication = (owner && pick(owner.fields, /communication/i)) || pick(fields, /communication/i);
+
+  const chain = {
+    ok: true,
+    via: 'datalayer-variant-price',
+    productId: product.value,
+    l2Id: String(l2Id),
+    currency: record.currency,
+    /* what a shipped row is re-proved against: the product code, which
+       is the one identifier in the chain that the listing URL carries */
+    code: product.value,
+    how: `${record.source} prices ${l2Id} at ${record.path}, and ${from.source} names that same variant (${product.key}=${product.value}`
+      + `${l1 ? `, ${l1.key}=${l1.value}` : ''}) with the same amount in ${record.currency}`
+  };
+  if (l1) chain.l1Id = l1.value;
+  if (communication) chain.communicationCode = communication.value;
+  return chain;
+}
+
 function priceIdentity(candidate, productUrl) {
   const ids = identifiersFrom(productUrl);
   if (!ids.length) return { ok: false, why: 'the listing URL carries no product code to match against' };
@@ -595,6 +657,10 @@ function priceIdentity(candidate, productUrl) {
   /* ---- a record out of the page's own data ---- */
   if (candidate.record) {
     const record = candidate.record;
+
+    /* the strongest thing a page can say about a variant's price */
+    const chained = variantChain(record, ids);
+    if (chained) return chained;
 
     if (record.mappedFrom) {
       const owner = record.mappedFrom;
@@ -930,7 +996,21 @@ function decide(candidates, productUrl) {
     };
   }
 
-  const best = inPlay[0];
+  /* Which survivor gets RECORDED, when several agree on the amount.
+     This does not choose an amount — that was settled above, and a
+     disagreement still fails closed. It chooses which evidence the row
+     will carry, and a chain that names the variant, the product and the
+     currency is worth more on a shipped row than a record that merely
+     held the number. */
+  const STRENGTH = [
+    'datalayer-variant-price', 'dom-variant-scope', 'microdata-offer',
+    'json-ld-offer', 'data-variant-mapping', 'data-product-record', 'dom-product-scope'
+  ];
+  const strength = (survivor) => {
+    const at = STRENGTH.indexOf(survivor.identity.via);
+    return at < 0 ? STRENGTH.length : at;
+  };
+  const best = [...inPlay].sort((left, right) => strength(left) - strength(right))[0];
   return {
     refusals,
     price: best.candidate.amount,
@@ -1283,7 +1363,8 @@ function variantPriceRecords(payloads, ids) {
           listing: named.value,
           listingKey: named.key,
           variant: variant.value,
-          variantKey: variant.key
+          variantKey: variant.key,
+          fields: idFieldsOf(node)
         });
       }
     });
@@ -1394,6 +1475,20 @@ function identitiesOf(record) {
   return [...new Set(out)];
 }
 
+/* the identifiers one record carries, which is what a chain is made of */
+function idFieldsOf(node) {
+  const out = [];
+  if (!node || typeof node !== 'object' || Array.isArray(node)) return out;
+  for (const key of Object.keys(node)) {
+    const raw = node[key];
+    if ((typeof raw === 'string' || typeof raw === 'number') && isIdKey(key)) {
+      const value = String(raw).trim();
+      if (value && value.length <= 64) out.push({ key, value });
+    }
+  }
+  return out;
+}
+
 function currencyByIdentity(record, payloads, options) {
   const wanted = identitiesOf(record);
   if (!wanted.length) return null;
@@ -1421,7 +1516,16 @@ function currencyByIdentity(record, payloads, options) {
         const filed = path.length ? String(path[path.length - 1]) : '';
         const byKey = !named && wanted.some((code) => namesCode(filed, code));
 
-        if (named || byKey) {
+        /* A lender that says this variant belongs to a DIFFERENT
+           product is not a second opinion about units, it is a
+           contradiction about identity. It lends nothing. */
+        const fields = idFieldsOf(node);
+        const productish = fields.filter((field) => /product/i.test(field.key));
+        const listing = (options && options.ids) || [];
+        const contradicts = listing.length && productish.length
+          && !productish.some((field) => matchingCode([field.value], listing));
+
+        if ((named || byKey) && !contradicts) {
           let currency = null;
           for (let up = here.length - 1; up >= 0; up -= 1) {
             const carried = currencyNear(here[up].node);
@@ -1439,7 +1543,12 @@ function currencyByIdentity(record, payloads, options) {
               currencyAt: currency.at,
               onRecord: currency.own,
               identity: named ? `${named.key}=${named.value}` : `(map key) ${filed}`,
-              amounts: pricesUnder(node).map((price) => price.amount)
+              amounts: pricesUnder(node).map((price) => price.amount),
+              /* what this record calls the thing it is about, and whether
+                 it is an analytics event — the one place a page names the
+                 variant, the product and the currency together */
+              fields,
+              analytics: /datalayer/i.test(payload.source)
             };
 
             if (mine.amounts.some((carried) => Math.abs(carried - amount) < 1e-9)) {
@@ -1478,7 +1587,7 @@ function dataCandidates(data, pageUrl) {
 
   const withCurrency = (hit) => {
     if (hit.currency) return hit;
-    const borrowed = currencyByIdentity(hit, payloads);
+    const borrowed = currencyByIdentity(hit, payloads, { ids });
     if (!borrowed) return hit;
     if (borrowed.onlyWeak) {
       hit.currencyHint = borrowed; // reported, never used
@@ -2186,6 +2295,14 @@ function priceEvidenceNote(evidence) {
   if (evidence.via === 'dom-product-scope' && evidence.code) {
     return `{ via: 'dom-product-scope', code: '${safe(evidence.code)}' }`;
   }
+  if (evidence.via === 'datalayer-variant-price' && evidence.productId && evidence.l2Id) {
+    const parts = [`via: 'datalayer-variant-price'`, `productId: '${safe(evidence.productId)}'`];
+    if (evidence.l1Id) parts.push(`l1Id: '${safe(evidence.l1Id)}'`);
+    parts.push(`l2Id: '${safe(evidence.l2Id)}'`);
+    if (evidence.communicationCode) parts.push(`communicationCode: '${safe(evidence.communicationCode)}'`);
+    if (evidence.currency) parts.push(`currency: '${safe(evidence.currency)}'`);
+    return `{ ${parts.join(', ')} }`;
+  }
   if (evidence.via === 'data-variant-mapping' && evidence.code && evidence.variant) {
     return `{ via: 'data-variant-mapping', code: '${safe(evidence.code)}', variant: '${safe(evidence.variant)}' }`;
   }
@@ -2244,8 +2361,11 @@ function catalogRowPrice(row) {
   }
 
   const ids = identifiersFrom(row.productUrl);
-  const claimed = String(evidence.sku || evidence.code || '').toLowerCase();
+  const claimed = String(evidence.sku || evidence.code || evidence.productId || '').toLowerCase();
   if (!claimed) return { ok: false, why: 'the recorded evidence names no sku or product code' };
+  /* a variant chain is re-proved by the product it names, because that
+     is the identifier the listing URL carries; the variant codes beside
+     it are what the row records about WHICH price this is */
 
   const bare = claimed.replace(/[^a-z0-9]/g, '');
   const matched = ids.find((id) => bare.includes(id) || id.includes(bare) || namesCode(claimed, id));
@@ -2253,7 +2373,7 @@ function catalogRowPrice(row) {
     return { ok: false, why: `the recorded ${evidence.sku ? 'sku' : 'code'} ${evidence.sku || evidence.code} is not a code in this row's own listing URL` };
   }
 
-  const kinds = ['json-ld-offer', 'microdata-offer', 'dom-product-scope', 'dom-variant-scope', 'data-product-record', 'data-variant-mapping'];
+  const kinds = ['json-ld-offer', 'microdata-offer', 'dom-product-scope', 'dom-variant-scope', 'data-product-record', 'data-variant-mapping', 'datalayer-variant-price'];
   if (!kinds.includes(evidence.via)) {
     return { ok: false, why: `the recorded evidence names no recognised kind (${evidence.via || 'none'})` };
   }
@@ -3744,7 +3864,7 @@ if (require.main === module) {
     decide, gatherPricesInPage, renderedCandidates, renderPage, resolveRow,
     inspectUrl, inspectData, selectedAmong, elsewhereIn, isIdKey, isPriceKey, keyWords,
     sourceAuthority, relatedIdentifiers, markupAudit, looksLikeSchemaOrg,
-    currencyByIdentity, identitiesOf,
+    currencyByIdentity, identitiesOf, variantChain, idFieldsOf,
     inspectEndpoint, allAmounts, colourFields, variantTable,
     huntPage, huntIn, huntInText, needleForms, scalarMatches, printHunt,
     inspectDataLayer, ecommerceEvents, pricedVariants, priceChains,

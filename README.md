@@ -1827,6 +1827,28 @@ after one the page does not touch the video again.
   verifier and priced a row off the page's markup. Each diagnostic now
   announces itself (`API INSPECTION — one endpoint…`), and `--help` lists them.
 
+  **A written price is the selected variant's.** A product with
+  variant-dependent pricing has no single price — UNIQLO prices colours of one
+  sweater at `7.90` and `49.90` — so the row records what the listing offers
+  when it is opened, and the evidence beside it names which variant that was.
+  The strongest form of that evidence is a chain, written as
+  `via: 'datalayer-variant-price'`: the shop's commerce response prices one
+  variant, the page's analytics event names that same variant with the same
+  amount, the product and legacy ids it belongs to, and the currency, and the
+  figure on screen is that amount. The note keeps every link —
+  `{ via, productId, l1Id, l2Id, communicationCode, currency }` — and a shipped
+  row is re-proved against the `productId`, which is the one identifier the
+  listing URL itself carries.
+
+  Every link is required, and each missing one is a refusal with a name: an
+  event that names a different product contradicts the commerce record rather
+  than corroborating it and lends nothing, not even its currency; an event
+  sharing the currency but not the amount says what units this item's prices are
+  in, not that this is one of them; another variant's price is not selected
+  because nothing names its units; and an analytics event cannot corroborate
+  itself into a price, since the amount has to come from the shop's own commerce
+  data. Schema.org may agree with the chain and never constitutes it.
+
   `--datalayer <productUrl>` dumps the page's `dataLayer` ecommerce events in
   full, lists every variant its data prices — so one cheap colour among dear
   ones is visible rather than inferred — and walks the chain link by link: the
