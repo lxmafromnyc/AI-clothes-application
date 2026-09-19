@@ -89,23 +89,147 @@ const BROWSER_TIMEOUT = 45000;
 const MAX_PRICE = 100000;   // above this it is an account number, not a price
 const MIN_PRICE = 0.5;      // below it, a unit price or a shipping rounding
 
-const args = process.argv.slice(2);
-const has = (name) => args.includes(name);
-const flag = (name) => {
-  const at = args.indexOf(name);
-  return at >= 0 && args[at + 1] && !args[at + 1].startsWith('--') ? args[at + 1] : null;
+/* ---------- the command line ----------
+
+   Read once, into a shape the rest of the file asks questions of. It
+   was a scan of process.argv for an exact string, and that is how
+   --inspect-api=<url> became a catalogue verification: the equals form
+   is invisible to an includes() test, so the flag was not there, so the
+   run fell through to the ordinary path and priced a row from the
+   page's markup. Every option is therefore accepted in both spellings
+   and in any case, and anything not recognised STOPS the run rather
+   than being ignored — an ignored option is a different command than
+   the one that was typed. */
+const OPTIONS = {
+  '--help': 'boolean',
+  '--write': 'boolean',
+  '--refresh': 'boolean',
+  '--no-browser': 'boolean',
+  '--explain': 'boolean',
+  '--json': 'boolean',
+  '--only': 'value',
+  '--inspect': 'value',
+  '--inspect-data': 'value',
+  '--inspect-api': 'value',
+  '--for': 'value',
+  '--codes': 'value'
 };
 
-/* undefined when the flag was not passed, null when it was passed with
-   nothing usable after it. The difference matters: a flag whose value
-   the shell swallowed must stop the run, not quietly turn it into a
-   different command. */
-const valueOf = (name) => {
-  const at = args.indexOf(name);
-  if (at < 0) return undefined;
-  const next = args[at + 1];
-  return next && !next.startsWith('--') ? next : null;
-};
+function parseArgs(argv) {
+  const flags = {};
+  const errors = [];
+
+  for (let at = 0; at < argv.length; at += 1) {
+    const token = String(argv[at]);
+    if (!token.startsWith('--')) {
+      errors.push(`stray argument "${token}" — options are written --like-this`);
+      continue;
+    }
+
+    const equals = token.indexOf('=');
+    const name = (equals >= 0 ? token.slice(0, equals) : token).toLowerCase();
+    let value = equals >= 0 ? token.slice(equals + 1) : undefined;
+
+    const kind = OPTIONS[name];
+    if (!kind) {
+      errors.push(`unknown option "${name}"`);
+      continue;
+    }
+    if (kind === 'boolean') {
+      if (value !== undefined) errors.push(`${name} takes no value`);
+      flags[name] = true;
+      continue;
+    }
+    if (value === undefined) {
+      const next = argv[at + 1];
+      if (next !== undefined && !String(next).startsWith('--')) {
+        value = String(next);
+        at += 1;
+      }
+    }
+    flags[name] = value === undefined || value === '' ? null : value;
+  }
+
+  return { flags, errors };
+}
+
+/* Which command was typed. One function, so the answer is the same
+   whether a person, a test or the dispatcher is asking. */
+function chooseMode(parsed) {
+  const flags = (parsed && parsed.flags) || {};
+  const named = (name) => Object.prototype.hasOwnProperty.call(flags, name);
+  const stop = ' Nothing was inspected, and the catalogue was not read.';
+
+  if (named('--help')) return { mode: 'help' };
+
+  if (named('--inspect-api')) {
+    const endpoint = flags['--inspect-api'];
+    if (!endpoint) {
+      return { mode: 'inspect-api', error: '--inspect-api needs the API URL to read: --inspect-api "<url>" --for "<productUrl>".' + stop };
+    }
+    if (!/^https?:\/\//i.test(endpoint)) {
+      return { mode: 'inspect-api', error: `--inspect-api needs an http(s) URL, and got "${endpoint}".` + stop };
+    }
+    if (named('--for') && !flags['--for']) {
+      return { mode: 'inspect-api', error: '--for needs the product URL the endpoint belongs to.' + stop };
+    }
+    return {
+      mode: 'inspect-api',
+      endpoint,
+      forUrl: flags['--for'] || null,
+      codes: String(flags['--codes'] || '').split(',').map((code) => code.trim()).filter(Boolean)
+    };
+  }
+
+  if (named('--inspect-data')) {
+    const url = flags['--inspect-data'];
+    return url ? { mode: 'inspect-data', url } : { mode: 'inspect-data', error: '--inspect-data needs the product URL to read.' + stop };
+  }
+
+  if (named('--inspect')) {
+    const url = flags['--inspect'];
+    return url ? { mode: 'inspect', url } : { mode: 'inspect', error: '--inspect needs the product URL to read.' + stop };
+  }
+
+  return { mode: 'verify' };
+}
+
+const USAGE = `
+  Fynd — read each catalogue row's price off the retailer's own page
+
+  Verifying the catalogue
+    --only <row-id>      just this row
+    --refresh            re-read rows that already carry a price
+    --no-browser         plain HTTP only, no Chromium
+    --write              write what verified into assets/catalog.js
+    --explain            every candidate, with the DOM behind it
+    --json               emit the run as a capture
+
+  Diagnostics — these read ONE page or ONE response. They never touch
+  the catalogue and never write anything.
+    --inspect <productUrl>          every figure the page renders, its
+                                    ancestry, and what each gate says
+    --inspect-data <productUrl>     the scripts, window state and JSON
+                                    the page carries, and which records
+                                    hold the listing's code AND a price
+    --inspect-api <apiUrl> --for <productUrl>
+                                    one API response, fetched from
+                                    inside the opened product page.
+                                    Answers from that response alone —
+                                    never from the page's DOM or its
+                                    JSON-LD. Add --codes a,b,c to search
+                                    for identities beyond the URL's own.
+    --help                          this
+
+  Options may be written --flag value or --flag=value. An unrecognised
+  option stops the run: being ignored would silently make it a
+  different command.
+`;
+
+const args = process.argv.slice(2);
+const parsedArgs = parseArgs(args);
+const has = (name) => Object.prototype.hasOwnProperty.call(parsedArgs.flags, name);
+const flag = (name) => (has(name) ? parsedArgs.flags[name] : null);
 
 const only = flag('--only');
 const writing = has('--write');
@@ -618,6 +742,33 @@ function decide(candidates, productUrl) {
       });
     }
     survivors = kept;
+  }
+
+  /* ---- and a record alone is still not the shop ----
+
+     What is left may be nothing but payloads. A hydration blob is built
+     from the same source as the markup beside it and inherits its
+     staleness — UNIQLO's page carries 7.90 in both, and charges neither
+     — so one agreeing with the other is one source speaking twice. A
+     row is written from data only where the shop's own commerce data
+     says the amount, or where the page draws it somewhere a shopper can
+     see and it is tied to this product. */
+  const drawn = survivors.filter((s) => !s.candidate.record);
+  if (!drawn.length && survivors.length) {
+    const commerce = survivors.filter((s) => s.candidate.record.authority === 'commerce-api');
+    if (!commerce.length) {
+      for (const survivor of survivors) {
+        refusals.push({
+          amount: survivor.candidate.amount,
+          currency: survivor.candidate.currency,
+          text: survivor.candidate.text,
+          from: survivor.candidate.from,
+          gate: 'authority',
+          why: `it is only in the page's own payloads (${survivor.candidate.record.authority}) — no commerce API response carries it, and the page draws no figure tied to this product that does either`
+        });
+      }
+      survivors = [];
+    }
   }
 
   if (!survivors.length) return { refusals };
@@ -2568,50 +2719,48 @@ function explainCandidate(pad, entry) {
 }
 
 async function main() {
-  /* --inspect <url> : one page's rendered figures, and what each gate
-     says about them. Reads nothing from the catalogue and writes
-     nothing to it. */
-  /* --inspect-api <endpoint> [--for <productUrl>] [--codes a,b,c]
+  /* One dispatch, and every command leaves through it. The mode is
+     decided before anything is read, so a diagnostic can never become a
+     catalogue verification on its way through. */
+  if (parsedArgs.errors.length) {
+    for (const problem of parsedArgs.errors) console.error(`  ${problem}`);
+    console.error(USAGE);
+    throw new Error('nothing was run: the command line was not understood');
+  }
 
-     A dedicated command. Once the flag is present this function returns
-     through this branch whatever happens: a missing URL stops the run
-     rather than quietly becoming a catalogue verification, and a
-     failure to read the endpoint is reported as that failure rather
-     than answered from somewhere else. */
-  if (has('--inspect-api')) {
-    const endpoint = valueOf('--inspect-api');
-    if (!endpoint) {
-      throw new Error('--inspect-api needs the API URL to read: --inspect-api "<url>" --for "<productUrl>".'
-        + ' Nothing was inspected, and the catalogue was not read.');
-    }
-    if (!/^https?:\/\//i.test(endpoint)) {
-      throw new Error(`--inspect-api needs an http(s) URL, and got ${endpoint}. Nothing was inspected, and the catalogue was not read.`);
-    }
-    const forUrl = valueOf('--for');
-    if (forUrl === null) {
-      throw new Error('--for needs the product URL the endpoint belongs to. Nothing was inspected, and the catalogue was not read.');
-    }
+  const chosen = chooseMode(parsedArgs);
+  if (chosen.error) {
+    console.error(`  ${chosen.error}`);
+    console.error(USAGE);
+    throw new Error(`--${chosen.mode} was given nothing usable to read`);
+  }
 
-    const report = await inspectEndpoint(endpoint, {
-      forUrl: forUrl || null,
-      codes: (flag('--codes') || '').split(',').map((code) => code.trim()).filter(Boolean)
-    });
+  if (chosen.mode === 'help') {
+    console.log(USAGE);
+    return;
+  }
+
+  if (chosen.mode === 'inspect-api') {
+    say('\n  API INSPECTION — one endpoint, fetched from inside the product page.');
+    say('  The catalogue is not read, the page\'s DOM and JSON-LD are not read,');
+    say('  and nothing is written.');
+    const report = await inspectEndpoint(chosen.endpoint, { forUrl: chosen.forUrl, codes: chosen.codes });
     if (asJson) console.log(JSON.stringify(report, null, 2));
     else printEndpointInspection(report);
     return;
   }
 
-  const inspectingData = flag('--inspect-data');
-  if (inspectingData) {
-    const report = await inspectData(inspectingData);
+  if (chosen.mode === 'inspect-data') {
+    say('\n  PAGE DATA INSPECTION — the payloads one page carries. Nothing is written.');
+    const report = await inspectData(chosen.url);
     if (asJson) console.log(JSON.stringify(report, null, 2));
     else printDataInspection(report);
     return;
   }
 
-  const inspecting = flag('--inspect');
-  if (inspecting) {
-    const report = await inspectUrl(inspecting);
+  if (chosen.mode === 'inspect') {
+    say('\n  PAGE INSPECTION — the figures one page renders. Nothing is written.');
+    const report = await inspectUrl(chosen.url);
     if (asJson) console.log(JSON.stringify(report, null, 2));
     else printInspection(report);
     return;
@@ -2756,6 +2905,7 @@ if (require.main === module) {
     inspectUrl, inspectData, selectedAmong, elsewhereIn, isIdKey, isPriceKey, keyWords,
     sourceAuthority, relatedIdentifiers, markupAudit, looksLikeSchemaOrg,
     inspectEndpoint, allAmounts, colourFields, variantTable,
+    parseArgs, chooseMode, OPTIONS, USAGE,
     productRecords, dataPayloads, dataCandidates, variantPriceRecords,
     parseLoosely, gatherDataInPage, walkData, namesListing, pricesUnder,
     writePrice, priceEvidenceNote, setPriceEvidence, catalogRowPrice, readCatalog

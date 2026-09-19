@@ -712,7 +712,7 @@ test('a list field is read as a list field, and the base price wins', () => {
     base: { value: 49.9, currency: 'USD' },
     listPrice: { value: 59.9, currency: 'USD' }
   } } };
-  const candidates = prices.dataCandidates({ scripts: [{ id: 'x', type: 'application/json', text: JSON.stringify(payload), mentions: UNIQLO_IDS }] }, UNIQLO);
+  const candidates = prices.dataCandidates({ responses: [{ url: 'https://www.uniqlo.com/us/api/commerce/v5/products', text: JSON.stringify(payload), mentions: UNIQLO_IDS }] }, UNIQLO);
   assert.deepStrictEqual(amounts(candidates).sort((a, b) => a - b), [49.9, 59.9]);
 
   const verdict = prices.decide(candidates, UNIQLO);
@@ -770,10 +770,11 @@ test('a colour code nobody tied to this listing prices nothing', () => {
 });
 
 test('the data route does not rescue the $7.90 figure', () => {
-  /* the live page, with a payload added: the figure is still refused on
-     its own DOM, and what resolves is the record, not the rendering */
+  /* the live page, with the endpoint it prices from added: the figure
+     is still refused on its own DOM, and what resolves is the shop's
+     own commerce record, not the rendering */
   const seen = seenOf(UNIQLO, [figure({ text: '$7.90', own: 'fr-ec-price-text', near: 'fr-ec-price', codes: [] })]);
-  seen.data = { scripts: [{ id: '__NEXT_DATA__', type: 'application/json', mentions: UNIQLO_IDS, text: JSON.stringify({
+  seen.data = { responses: [{ url: 'https://www.uniqlo.com/us/api/commerce/v5/products', mentions: UNIQLO_IDS, text: JSON.stringify({
     product: { productId: 'E429066-000', prices: { base: { value: 49.9, currency: 'USD' } } }
   }) }] };
 
@@ -785,10 +786,37 @@ test('the data route does not rescue the $7.90 figure', () => {
   assert.match(because(verdict.refusals, 7.9), /nothing in its own DOM ties it to this product/);
 });
 
-test('two records that disagree still fail closed', () => {
-  const data = { scripts: [
-    { text: JSON.stringify({ product: { productId: 'E429066-000', prices: { base: { value: 49.9, currency: 'USD' } } } }) },
-    { text: JSON.stringify({ product: { productId: 'E429066-000', prices: { base: { value: 39.9, currency: 'USD' } } } }) }
+test('a hydration payload alone is not the shop', () => {
+  /* the danger the ordinary path still carried: markup and the blob
+     beside it are built from the same source, so one agreeing with the
+     other is one source speaking twice */
+  const seen = seenOf(UNIQLO, [figure({ text: '$7.90', own: 'fr-ec-price-text', codes: [] })]);
+  seen.data = { scripts: [{ id: '__NEXT_DATA__', type: 'application/json', mentions: UNIQLO_IDS, text: JSON.stringify({
+    product: { productId: 'E429066-000', prices: { base: { value: 7.9, currency: 'USD' } } }
+  }) }] };
+
+  const verdict = prices.decide(prices.renderedCandidates(seen, UNIQLO).candidates, UNIQLO);
+  assert.strictEqual(verdict.price, undefined, 'app-state alone may not write a row');
+  assert.match(becauseGate(verdict.refusals, 7.9, 'authority'), /only in the page's own payloads \(app-state\)/);
+  assert.match(becauseGate(verdict.refusals, 7.9, 'authority'), /no commerce API response carries it/);
+});
+
+test('a payload the page also draws, tied to the product, does resolve', () => {
+  /* the same payload, on a page that renders the amount inside this
+     product's own block: now a shopper can see it */
+  const seen = seenOf(UNIQLO, [figure({ text: '$49.90', own: 'price-current', near: 'fr-ec-price', codes: ['E429066-000'], codeLabel: 'div#product-E429066-000' })]);
+  seen.data = { scripts: [{ id: '__NEXT_DATA__', type: 'application/json', mentions: UNIQLO_IDS, text: JSON.stringify({
+    product: { productId: 'E429066-000', prices: { base: { value: 49.9, currency: 'USD' } } }
+  }) }] };
+
+  const verdict = prices.decide(prices.renderedCandidates(seen, UNIQLO).candidates, UNIQLO);
+  assert.strictEqual(verdict.price, 49.9);
+});
+
+test('two commerce records that disagree still fail closed', () => {
+  const data = { responses: [
+    { url: 'https://www.uniqlo.com/us/api/commerce/v5/a', text: JSON.stringify({ product: { productId: 'E429066-000', prices: { base: { value: 49.9, currency: 'USD' } } } }) },
+    { url: 'https://www.uniqlo.com/us/api/commerce/v5/b', text: JSON.stringify({ product: { productId: 'E429066-000', prices: { base: { value: 39.9, currency: 'USD' } } } }) }
   ] };
   const verdict = prices.decide(prices.dataCandidates(data, UNIQLO), UNIQLO);
   assert.strictEqual(verdict.price, undefined);
@@ -1032,6 +1060,71 @@ test('the l2s array and the price map are joined on the variant identity', () =>
 });
 
 /* ---------------------------------------------------------
+   The command line itself
+
+   --inspect-api=<url> was invisible to a scan for an exact string, so
+   the flag was not there, so the run fell through to the ordinary
+   verifier and priced a row off the page's markup. The routing is now
+   one function, and this is what asks it.
+   --------------------------------------------------------- */
+
+console.log('\nWhich command was typed\n');
+
+const API = 'https://www.uniqlo.com/us/api/commerce/v5/en/products/E429066-000/price-groups/00/l2s?withPrices=true';
+
+test('--inspect-api routes to the API inspection in every spelling', () => {
+  for (const argv of [
+    ['--inspect-api', API, '--for', UNIQLO],
+    ['--inspect-api=' + API, '--for=' + UNIQLO],
+    ['--INSPECT-API=' + API, '--FOR=' + UNIQLO],
+    ['--inspect-api=' + API]
+  ]) {
+    const parsed = prices.parseArgs(argv);
+    assert.deepStrictEqual(parsed.errors, [], `${argv[0]} parsed without complaint`);
+
+    const chosen = prices.chooseMode(parsed);
+    assert.strictEqual(chosen.mode, 'inspect-api', `${argv[0]} must reach the API inspection`);
+    assert.strictEqual(chosen.error, undefined);
+    assert.strictEqual(chosen.endpoint, API, 'with the endpoint it was given');
+  }
+});
+
+test('the equals form is not a catalogue verification', () => {
+  /* the live bug, at the routing level */
+  const chosen = prices.chooseMode(prices.parseArgs(['--inspect-api=' + API, '--for=' + UNIQLO]));
+  assert.notStrictEqual(chosen.mode, 'verify');
+  assert.strictEqual(chosen.mode, 'inspect-api');
+});
+
+test('a value the shell swallowed stops the run', () => {
+  const chosen = prices.chooseMode(prices.parseArgs(['--inspect-api', '--for', UNIQLO]));
+  assert.strictEqual(chosen.mode, 'inspect-api', 'it stays the command that was typed');
+  assert.match(chosen.error, /needs the API URL/);
+  assert.match(chosen.error, /the catalogue was not read/);
+});
+
+test('an option nobody recognises stops the run rather than being ignored', () => {
+  const parsed = prices.parseArgs(['--inspect-apo', API]);
+  assert.match(parsed.errors.join(' '), /unknown option "--inspect-apo"/);
+  assert.match(parsed.errors.join(' '), /stray argument/);
+});
+
+test('the other modes route too, and plain arguments verify', () => {
+  assert.strictEqual(prices.chooseMode(prices.parseArgs(['--inspect', UNIQLO])).mode, 'inspect');
+  assert.strictEqual(prices.chooseMode(prices.parseArgs(['--inspect-data=' + UNIQLO])).mode, 'inspect-data');
+  assert.strictEqual(prices.chooseMode(prices.parseArgs(['--refresh', '--write'])).mode, 'verify');
+  assert.strictEqual(prices.chooseMode(prices.parseArgs(['--help'])).mode, 'help');
+});
+
+test('--help lists the diagnostics by name', () => {
+  assert.match(prices.USAGE, /--inspect-api <apiUrl> --for <productUrl>/);
+  assert.match(prices.USAGE, /--inspect-data <productUrl>/);
+  assert.match(prices.USAGE, /--inspect <productUrl>/);
+  assert.match(prices.USAGE, /never from the page's DOM or its\s+JSON-LD/);
+  assert.match(prices.USAGE, /--flag value or --flag=value/);
+});
+
+/* ---------------------------------------------------------
    What gets written, and what a written row has to keep proving
    --------------------------------------------------------- */
 
@@ -1270,13 +1363,29 @@ function hydratingRetailer() {
 }
 
 (async () => {
+  console.log('\nThe command, as a person runs it\n');
+
+  await testAsync('--help prints the options and reads nothing', async () => {
+    const result = await run(['--help']);
+    assert.strictEqual(result.code, 0);
+    assert.match(result.stdout, /--inspect-api <apiUrl> --for <productUrl>/);
+    assert.doesNotMatch(result.stdout, /Reading \d+ linked product page/);
+  });
+
+  await testAsync('an unknown option stops the run before anything is read', async () => {
+    const result = await run(['--inspect-apo', 'https://example.com/x']);
+    assert.notStrictEqual(result.code, 0);
+    assert.match(result.stderr, /unknown option "--inspect-apo"/);
+    assert.doesNotMatch(result.stdout, /Reading \d+ linked product page/);
+  });
+
   console.log('\nThrough a real browser\n');
 
   let chromium = null;
   try { chromium = require('playwright').chromium; } catch (err) { chromium = null; }
 
   if (!chromium) {
-    skipped += 21;
+    skipped += 23;
     console.log('  skip  the browser section — Playwright is not installed here');
     console.log('        npm install, then re-run, to exercise the hydration path');
   } else {
@@ -1467,6 +1576,30 @@ function hydratingRetailer() {
       assert.match(result.stdout, /does not fall back to the page, its DOM or its JSON-LD/);
       assert.doesNotMatch(result.stdout, /WOULD WRITE/, 'nothing may be written from a page');
       assert.doesNotMatch(result.stdout, /7\.9/, "and the page's markup price must not appear as the endpoint's answer");
+      assert.doesNotMatch(result.stdout, /Reading \d+ linked product page/);
+    });
+
+    await testAsync('--inspect-api=<url> reaches the API inspection, not the verifier', async () => {
+      /* the exact spelling that fell through: one token, with = */
+      const result = await run([
+        '--inspect-api=' + listing('/api/commerce/v5/en/products/E429066-000/price-groups/00/l2s?withPrices=true'),
+        '--for=' + listing('/l2s/products/E429066-000/00')
+      ]);
+
+      assert.strictEqual(result.code, 0, result.stderr);
+      assert.match(result.stdout, /API INSPECTION — one endpoint/, 'the API inspection announces itself');
+      assert.doesNotMatch(result.stdout, /Reading \d+ linked product page/, 'and the verifier never ran');
+      assert.doesNotMatch(result.stdout, /KEPT\s+J\.Crew/, 'no catalogue row was read');
+      assert.match(result.stdout, /joined on l2Id = 438783-COL09-004/);
+    });
+
+    await testAsync('the flag is recognised whatever case it is typed in', async () => {
+      const result = await run([
+        '--INSPECT-API=' + listing('/api/commerce/v5/en/products/E429066-000/price-groups/00/l2s?withPrices=true'),
+        '--FOR=' + listing('/l2s/products/E429066-000/00')
+      ]);
+      assert.strictEqual(result.code, 0, result.stderr);
+      assert.match(result.stdout, /API INSPECTION/);
       assert.doesNotMatch(result.stdout, /Reading \d+ linked product page/);
     });
 

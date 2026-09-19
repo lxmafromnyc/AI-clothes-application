@@ -1795,6 +1795,13 @@ after one the page does not touch the video again.
   'data-variant-mapping'` — judged by the same `decide()` as every DOM figure,
   so a record that disagrees with the rendered page still fails closed.
 
+  **A payload is never the shop.** A row is written from data only where the
+  shop's own commerce response carries the amount, or where the page draws it
+  somewhere a shopper can see, tied to this product. A hydration blob is built
+  from the same source as the schema.org beside it and inherits its staleness,
+  so one agreeing with the other is one source speaking twice — UNIQLO's page
+  carries `7.90` in both and charges neither.
+
   **Carrying the product's id is what lets a record be considered, not what
   makes it true.** Payload sources are tiered by what they are: a `commerce-api`
   response the page fetched to price itself, `app-state` it hydrated from, and
@@ -1806,6 +1813,14 @@ after one the page does not touch the video again.
   that record is perfectly well-formed — which is exactly why the id being in
   it cannot be the test. Two authoritative sources that disagree still fail
   closed.
+
+  Options are read once into a parsed shape, in both spellings (`--flag value`
+  and `--flag=value`) and any case, and an unrecognised option stops the run —
+  being ignored would silently make it a different command. That is not
+  hypothetical: `--inspect-api=<url>` was invisible to a scan for an exact
+  string, so the flag was not there, so the run fell through to the ordinary
+  verifier and priced a row off the page's markup. Each diagnostic now
+  announces itself (`API INSPECTION — one endpoint…`), and `--help` lists them.
 
   `--inspect-api <endpoint> --for <productUrl> [--codes a,b,c]` reads one API
   response the way the page reads it: fetched from inside the opened page, so
