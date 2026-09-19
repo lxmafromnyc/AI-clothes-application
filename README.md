@@ -1809,7 +1809,17 @@ after one the page does not touch the video again.
 
   `--inspect-api <endpoint> --for <productUrl> [--codes a,b,c]` reads one API
   response the way the page reads it: fetched from inside the opened page, so
-  it carries the session, cookies and origin the retailer expects. It reports
+  it carries the session, cookies and origin the retailer expects. It is a
+  command of its own and answers from that one response — it never falls back
+  to the page, its DOM or its JSON-LD. A missing or non-http URL stops the run
+  with a non-zero exit rather than quietly becoming a catalogue verification, an
+  endpoint that answers with a page (a bot wall, a redirect, a 404) is reported
+  as exactly that and inspected no further, and a response that is itself
+  schema.org is refused rather than reported as an endpoint's answer — markup
+  cannot borrow a commerce API's authority by being served through its URL.
+  It joins the variant records and the price map a commerce endpoint answers
+  with (`result.l2s[*]` against `result.prices[...]`), showing which identity
+  joined them. It reports
   every record carrying one of the listing's codes together with an amount, the
   other identities those records name (a legacy id in the URL is often not the
   id the API keys by), the colour and display fields, every amount-looking field

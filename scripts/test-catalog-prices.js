@@ -46,7 +46,22 @@ const fs = require('fs');
 const http = require('http');
 const path = require('path');
 const vm = require('vm');
+const { promisify } = require('util');
+const execFile = promisify(require('child_process').execFile);
 const prices = require('./fetch-catalog-prices');
+
+const SCRIPT = path.join(__dirname, 'fetch-catalog-prices.js');
+
+/* the command as a person runs it, so what is asserted is the command
+   rather than the function behind it */
+async function run(args) {
+  try {
+    const { stdout, stderr } = await execFile(process.execPath, [SCRIPT, ...args], { env: process.env, timeout: 120000 });
+    return { code: 0, stdout, stderr };
+  } catch (err) {
+    return { code: err.code === undefined ? 1 : err.code, stdout: err.stdout || '', stderr: err.stderr || String(err.message) };
+  }
+}
 
 let passed = 0;
 let skipped = 0;
@@ -966,6 +981,57 @@ test('the corroboration rule leaves the structured offer route alone', () => {
 });
 
 /* ---------------------------------------------------------
+   --inspect-api is a command of its own
+
+   It answers from ONE response. The ways it could quietly stop doing
+   that — a URL the shell swallowed, an endpoint that hands back a page
+   — are the ways a page's schema.org 7.90 ends up reported as a
+   commerce API's answer, wearing an authority it never had.
+   --------------------------------------------------------- */
+
+console.log('\nThe endpoint command, and what it refuses to become\n');
+
+test('markup is never a payload, however it arrives', () => {
+  const page = '<!doctype html><html><head><script type="application/ld+json">'
+    + JSON.stringify(UNIQLO_GRAPH)
+    + '</scr' + 'ipt></head><body><div id="app"></div></body></html>';
+
+  assert.strictEqual(prices.parseLoosely(page), null,
+    "an endpoint that answers with a page must not have its page's JSON-LD carved out and read as its response");
+  assert.deepStrictEqual(prices.parseLoosely('{"a":1}'), { a: 1 }, 'real JSON still parses');
+});
+
+test('schema.org served from an API URL is still schema.org', () => {
+  assert.strictEqual(prices.looksLikeSchemaOrg(UNIQLO_GRAPH), true);
+  assert.strictEqual(prices.looksLikeSchemaOrg(L2S), false);
+
+  const served = prices.dataCandidates({
+    responses: [{ url: L2S_URL, text: JSON.stringify(UNIQLO_GRAPH), mentions: ['e429066'] }]
+  }, UNIQLO);
+  assert.deepStrictEqual(served.map((c) => c.record.authority), ['markup'],
+    'the URL it came through cannot lend it authority');
+
+  const verdict = prices.decide(served, UNIQLO);
+  assert.strictEqual(verdict.price, undefined, 'so it still cannot answer alone');
+  assert.match(becauseGate(verdict.refusals, 7.9, 'corroboration'), /schema.org markup/);
+});
+
+test('the l2s array and the price map are joined on the variant identity', () => {
+  const table = prices.variantTable(L2S);
+  assert.strictEqual(table.rows.length, 1, 'result.l2s[*] is read as variant records');
+  assert.strictEqual(table.maps.length, 1, 'result.prices[...] is read as a price map');
+  assert.strictEqual(table.joined.length, 1);
+
+  const join = table.joined[0];
+  assert.strictEqual(join.on.key, 'l2Id');
+  assert.strictEqual(join.on.value, '438783-COL09-004');
+  assert.deepStrictEqual(join.map.amounts.map((a) => a.amount), [49.9]);
+  assert.ok(join.variant.ids.some((id) => id.key === 'productId' && id.value === 'E429066-000'),
+    'and the record naming the product is what ties the price to it');
+  assert.ok(join.variant.describe.some((d) => /09 GRAY/.test(d.value)), 'with the colour it belongs to');
+});
+
+/* ---------------------------------------------------------
    What gets written, and what a written row has to keep proving
    --------------------------------------------------------- */
 
@@ -1210,7 +1276,7 @@ function hydratingRetailer() {
   try { chromium = require('playwright').chromium; } catch (err) { chromium = null; }
 
   if (!chromium) {
-    skipped += 16;
+    skipped += 21;
     console.log('  skip  the browser section — Playwright is not installed here');
     console.log('        npm install, then re-run, to exercise the hydration path');
   } else {
@@ -1378,6 +1444,62 @@ function hydratingRetailer() {
       assert.strictEqual(verdict.identity.variant, '438783-COL09-004');
       assert.match(becauseGate(verdict.refusals, 7.9, 'corroboration'), /schema.org markup/);
       assert.match(becauseGate(verdict.refusals, 7.9, 'this'), /nothing in its own DOM ties it/);
+    });
+
+    await testAsync('--inspect-api with no URL stops, and reads no catalogue', async () => {
+      const result = await run(['--inspect-api', '--for', listing('/l2s/products/E429066-000/00')]);
+
+      assert.notStrictEqual(result.code, 0, 'a swallowed URL has to stop the run');
+      assert.match(result.stderr, /--inspect-api needs the API URL/);
+      assert.match(result.stderr, /the catalogue was not read/);
+      assert.doesNotMatch(result.stdout, /Reading \d+ linked product page/,
+        'it must never quietly become a catalogue verification');
+      assert.doesNotMatch(result.stdout, /7\.9/);
+    });
+
+    await testAsync('--inspect-api on an endpoint that answers a page reports THAT', async () => {
+      /* the live symptom: the URL answers HTML, and the page it answers
+         with carries the 7.90 markup */
+      const result = await run(['--inspect-api', listing('/stale/products/E429066-000/00'), '--for', listing('/stale/products/E429066-000/00')]);
+
+      assert.match(result.stdout, /NOT INSPECTED/);
+      assert.match(result.stdout, /this is a page, not an API response/);
+      assert.match(result.stdout, /does not fall back to the page, its DOM or its JSON-LD/);
+      assert.doesNotMatch(result.stdout, /WOULD WRITE/, 'nothing may be written from a page');
+      assert.doesNotMatch(result.stdout, /7\.9/, "and the page's markup price must not appear as the endpoint's answer");
+      assert.doesNotMatch(result.stdout, /Reading \d+ linked product page/);
+    });
+
+    await testAsync('--inspect-api on the real endpoint reports the chain', async () => {
+      const result = await run([
+        '--inspect-api', listing('/api/commerce/v5/en/products/E429066-000/price-groups/00/l2s?withPrices=true'),
+        '--for', listing('/l2s/products/E429066-000/00')
+      ]);
+
+      assert.strictEqual(result.code, 0, result.stderr);
+      assert.match(result.stdout, /joined on l2Id = 438783-COL09-004/);
+      assert.match(result.stdout, /E429066-000: \$49\.9 USD/);
+      assert.match(result.stdout, /THIS ENDPOINT ALONE WOULD WRITE \$49\.9/);
+      assert.doesNotMatch(result.stdout, /Reading \d+ linked product page/);
+    });
+
+    await testAsync('the endpoint command reads that response and nothing else', async () => {
+      const report = await prices.inspectEndpoint(
+        listing('/api/commerce/v5/en/products/E429066-000/price-groups/00/l2s?withPrices=true'),
+        { forUrl: listing('/l2s/products/E429066-000/00') }
+      );
+      assert.strictEqual(report.foreign, 0, 'nothing from outside this response was even offered');
+      assert.deepStrictEqual(report.sources, [`network ${listing('/api/commerce/v5/en/products/E429066-000/price-groups/00/l2s?withPrices=true')}`]);
+    });
+
+    await testAsync('an endpoint that answers a page is refused, with the page named', async () => {
+      const report = await prices.inspectEndpoint(listing('/stale/products/E429066-000/00'), {
+        forUrl: listing('/stale/products/E429066-000/00')
+      });
+      assert.strictEqual(report.notJson, true);
+      assert.match(report.failed, /page, not an API response/);
+      assert.strictEqual(report.verdict, undefined, 'a refused read has no verdict at all');
+      assert.strictEqual(report.hits, undefined);
     });
 
     await testAsync('--inspect-api reads one endpoint the way the page reads it', async () => {

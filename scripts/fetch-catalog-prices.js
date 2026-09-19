@@ -96,6 +96,17 @@ const flag = (name) => {
   return at >= 0 && args[at + 1] && !args[at + 1].startsWith('--') ? args[at + 1] : null;
 };
 
+/* undefined when the flag was not passed, null when it was passed with
+   nothing usable after it. The difference matters: a flag whose value
+   the shell swallowed must stop the run, not quietly turn it into a
+   different command. */
+const valueOf = (name) => {
+  const at = args.indexOf(name);
+  if (at < 0) return undefined;
+  const next = args[at + 1];
+  return next && !next.startsWith('--') ? next : null;
+};
+
 const only = flag('--only');
 const writing = has('--write');
 const refreshing = has('--refresh');
@@ -927,18 +938,35 @@ function sourceAuthority(source) {
 function parseLoosely(text) {
   const raw = String(text || '').trim();
   if (!raw) return null;
+
+  /* Markup is not a payload. An endpoint that answers with a page — a
+     bot wall, a redirect to the listing, a 404 — hands back HTML whose
+     only braces may be its JSON-LD block, and carving that out would
+     report the PAGE's schema.org as the ENDPOINT's answer. That is how
+     a 7.90 written for crawlers ends up wearing a commerce API's
+     authority. Anything that starts as markup is refused here. */
+  if (raw[0] === '<') return null;
+
   try { return JSON.parse(raw); } catch (err) { /* not a bare document */ }
 
-  const assigned = raw.match(/=\s*(\{[\s\S]*\})\s*;?\s*$/);
+  /* an assignment — window.__STATE__ = {...}; — and nothing looser.
+     A document is parsed whole or not at all. */
+  const assigned = raw.match(/^[^{<]{0,200}=\s*(\{[\s\S]*\})\s*;?\s*$/);
   if (assigned) {
     try { return JSON.parse(assigned[1]); } catch (err) { /* not JSON either */ }
   }
-  const first = raw.indexOf('{');
-  const last = raw.lastIndexOf('}');
-  if (first >= 0 && last > first) {
-    try { return JSON.parse(raw.slice(first, last + 1)); } catch (err) { /* nothing parseable */ }
-  }
   return null;
+}
+
+/* schema.org is schema.org wherever it is served from. A page's JSON-LD
+   reached through a URL that looks like an API is still markup, and
+   must not inherit the authority of the endpoint that returned it. */
+function looksLikeSchemaOrg(value) {
+  if (!value || typeof value !== 'object') return false;
+  const context = String(value['@context'] || '');
+  if (/schema\.org/i.test(context)) return true;
+  if (Array.isArray(value['@graph'])) return true;
+  return typeof value['@type'] === 'string' && Boolean(value['@context']);
 }
 
 /* the payloads a rendered page carried, each with a name that says
@@ -956,7 +984,7 @@ function dataPayloads(data) {
   }
   for (const response of data.responses || []) {
     const value = parseLoosely(response.text);
-    if (value) out.push({ source: `network ${response.url}`, value });
+    if (value) out.push({ source: `network ${response.url}`, value, markup: looksLikeSchemaOrg(value) });
   }
   return out;
 }
@@ -1076,6 +1104,7 @@ function dataCandidates(data, pageUrl) {
   for (const payload of payloads) {
     for (const hit of productRecords(payload.value, ids, payload.source)) {
       if (hit.elsewhere) continue; // seen, set aside, never a candidate
+      if (payload.markup) hit.authority = 'markup';
       out.push({
         amount: hit.amount,
         currency: hit.currency,
@@ -2205,6 +2234,77 @@ function colourFields(value) {
   return out;
 }
 
+/* ---------- the variant table a commerce endpoint answers with ----
+
+   UNIQLO's l2s response is two structures that mean nothing apart: an
+   array of variant records (result.l2s[*], each naming an l2Id, the
+   productId it belongs to, a colour and a size) and a map of amounts
+   keyed by those same l2Ids (result.prices[...]). Joining them is what
+   turns "there is a 49.90 in this file" into "this product's colour 09
+   in size M costs 49.90". */
+const VARIANT_ARRAY_KEY = /^(l2s|l1s|items|variants|skus|goods|products|entries)$/i;
+const PRICE_MAP_KEY = /^(prices|price|pricemap|priceinfo|amounts)$/i;
+
+function variantTable(value) {
+  const rows = [];
+  const maps = [];
+
+  walkData(value, (node, path) => {
+    const key = path.length ? String(path[path.length - 1]) : '';
+
+    if (Array.isArray(node) && VARIANT_ARRAY_KEY.test(key)) {
+      node.slice(0, 40).forEach((entry, at) => {
+        if (!entry || typeof entry !== 'object') return;
+        const ids = [];
+        const describe = [];
+        for (const field of Object.keys(entry)) {
+          const raw = entry[field];
+          if (typeof raw === 'string' || typeof raw === 'number') {
+            const text = String(raw).trim();
+            if (isIdKey(field) && text && text.length <= 64) ids.push({ key: field, value: text });
+            else if (/colou?r|size|name|display/i.test(field) && text) describe.push({ key: field, value: text.slice(0, 40) });
+          } else if (raw && typeof raw === 'object') {
+            for (const inner of Object.keys(raw)) {
+              const deep = raw[inner];
+              if (typeof deep !== 'string' && typeof deep !== 'number') continue;
+              if (/colou?r|size|display|name/i.test(field)) describe.push({ key: `${field}.${inner}`, value: String(deep).slice(0, 40) });
+              else if (isIdKey(inner)) ids.push({ key: `${field}.${inner}`, value: String(deep).slice(0, 64) });
+            }
+          }
+        }
+        if (ids.length) rows.push({ at: path.concat(`[${at}]`).join('.'), ids, describe });
+      });
+      return;
+    }
+
+    if (!Array.isArray(node) && PRICE_MAP_KEY.test(key)) {
+      for (const mapKey of Object.keys(node).slice(0, 60)) {
+        const entry = node[mapKey];
+        if (!entry || typeof entry !== 'object') continue;
+        const amounts = pricesUnder(entry).map((price) => ({
+          field: price.field,
+          amount: price.amount,
+          currency: price.currency,
+          kind: price.kind,
+          at: path.concat(mapKey, price.path).join('.')
+        }));
+        if (amounts.length) maps.push({ key: mapKey, at: path.concat(mapKey).join('.'), amounts });
+      }
+    }
+  });
+
+  /* join them on the identity the variant record carries */
+  const joined = [];
+  for (const row of rows) {
+    for (const map of maps) {
+      const matched = row.ids.find((id) => id.value.toLowerCase() === map.key.toLowerCase());
+      if (!matched) continue;
+      joined.push({ variant: row, map, on: matched });
+    }
+  }
+  return { rows, maps, joined };
+}
+
 async function inspectEndpoint(endpoint, options) {
   const settings = options || {};
   const chromium = loadPlaywright();
@@ -2252,16 +2352,58 @@ async function inspectEndpoint(endpoint, options) {
     ...identifiersFrom(endpoint)
   ].filter(Boolean))];
 
-  const value = parseLoosely(fetched.text);
+  /* What came back has to BE an API response. An endpoint that answers
+     with a page — a bot wall, a redirect to the listing, a 404 — hands
+     back markup, and reading a product page's JSON-LD out of it would
+     report the page's schema.org as the endpoint's answer, wearing a
+     commerce API's authority. That is refused here, by name. */
+  const body = String(fetched.text || '');
+  const trimmed = body.trim();
+  const preview = trimmed.slice(0, 200).replace(/\s+/g, ' ');
+  const declared = String(fetched.type || '');
+  const looksJson = trimmed.startsWith('{') || trimmed.startsWith('[');
+
+  if (!looksJson) {
+    return {
+      endpoint,
+      openedFrom: opened,
+      status: fetched.status,
+      type: declared,
+      bytes: fetched.bytes,
+      codes,
+      notJson: true,
+      preview,
+      failed: `the endpoint answered ${declared.split(';')[0] || 'no content-type'} that does not begin as JSON`
+        + (trimmed.startsWith('<') ? ' — this is a page, not an API response (a bot wall, a redirect or a 404)' : '')
+    };
+  }
+
+  const value = parseLoosely(body);
   if (!value) {
-    return { endpoint, openedFrom: opened, status: fetched.status, type: fetched.type, bytes: fetched.bytes, codes, failed: 'the response did not parse as JSON' };
+    return {
+      endpoint, openedFrom: opened, status: fetched.status, type: declared, bytes: fetched.bytes,
+      codes, notJson: true, preview, failed: 'the response did not parse as JSON'
+    };
+  }
+  if (looksLikeSchemaOrg(value)) {
+    return {
+      endpoint, openedFrom: opened, status: fetched.status, type: declared, bytes: fetched.bytes,
+      codes, notJson: true, preview,
+      failed: 'the response is schema.org markup, not commerce data — it is written for crawlers, and this command will not report it as an endpoint\'s answer'
+    };
   }
 
   const source = `network ${endpoint}`;
   const payloads = [{ source, value }];
   const hits = productRecords(value, codes, source);
   const forUrl = settings.forUrl || endpoint;
-  const candidates = dataCandidates({ responses: [{ url: endpoint, text: fetched.text, mentions: codes }] }, forUrl);
+  const built = dataCandidates({ responses: [{ url: endpoint, text: body, mentions: codes }] }, forUrl);
+
+  /* Nothing but this response may reach the verdict. The DOM is not
+     read here, the page's JSON-LD is not read here, and a candidate
+     from anywhere else would be a bug rather than a finding. */
+  const candidates = built.filter((candidate) => candidate.record && candidate.record.source === source);
+  const foreign = built.length - candidates.length;
 
   /* "Does this endpoint price the product" is a question about each
      identity the product answers to, and it has to count the amounts
@@ -2298,8 +2440,11 @@ async function inspectEndpoint(endpoint, options) {
     byCode: Object.values(byCode),
     related: relatedIdentifiers(payloads, codes),
     variants: variantPriceRecords(payloads, codes),
+    table: variantTable(value),
     colours: colourFields(value),
     amounts: allAmounts(value),
+    sources: [...new Set(candidates.map((candidate) => candidate.record.source))],
+    foreign,
     verdict: decide(candidates, forUrl)
   };
 }
@@ -2308,7 +2453,11 @@ function printEndpointInspection(report) {
   console.log(`\n  ${short(report.endpoint, 140)}`);
   if (report.openedFrom) console.log(`  fetched from  ${short(report.openedFrom, 120)}`);
   if (report.failed) {
-    console.log(`  could not be read: ${report.failed}\n`);
+    if (report.status) console.log(`  answered      ${report.status} ${String(report.type || '').split(';')[0]}, ${size(report.bytes || 0)}`);
+    console.log(`  NOT INSPECTED: ${report.failed}`);
+    if (report.preview) console.log(`  it begins     ${short(report.preview, 140)}`);
+    console.log('  No price can come from this. Nothing else was read — this command');
+    console.log('  does not fall back to the page, its DOM or its JSON-LD.\n');
     return;
   }
 
@@ -2350,6 +2499,27 @@ function printEndpointInspection(report) {
     console.log(`     ${short(amount.path, 90)} = ${amount.amount}${amount.currency ? ' ' + amount.currency : ''}${amount.kind === 'list' ? ' [list]' : ''}`);
   }
 
+  const table = report.table || { rows: [], maps: [], joined: [] };
+  if (table.rows.length || table.maps.length) {
+    console.log(`\n  variant records and the price map (${table.rows.length} record${table.rows.length === 1 ? '' : 's'}, ${table.maps.length} priced key${table.maps.length === 1 ? '' : 's'}):`);
+    for (const join of table.joined.slice(0, 12)) {
+      const ids = join.variant.ids.map((id) => `${id.key}=${id.value}`).join(' · ');
+      const described = join.variant.describe.map((d) => `${d.key}=${d.value}`).join(' · ');
+      console.log(`     ${short(ids, 130)}`);
+      if (described) console.log(`       ${short(described, 130)}`);
+      for (const amount of join.map.amounts.slice(0, 4)) {
+        console.log(`       $${amount.amount}${amount.currency ? ' ' + amount.currency : ''}${amount.kind === 'list' ? ' [list]' : ''}  ${short(amount.at, 90)}`);
+      }
+      console.log(`       joined on ${join.on.key} = ${join.on.value}`);
+    }
+    if (!table.joined.length) {
+      console.log('     no variant record\'s identity matches a key in the price map — the two');
+      console.log('     structures are here but nothing joins them');
+      for (const row of table.rows.slice(0, 4)) console.log(`       record ${short(row.ids.map((id) => id.key + '=' + id.value).join(' · '), 110)}`);
+      for (const map of table.maps.slice(0, 4)) console.log(`       priced ${map.key} -> ${map.amounts.map((a) => '$' + a.amount).slice(0, 3).join(', ')}`);
+    }
+  }
+
   console.log('\n  does this endpoint carry a selling price for the product?');
   if (!report.byCode.length) {
     console.log('     NO — no record here carries one of those codes together with an amount.');
@@ -2367,6 +2537,9 @@ function printEndpointInspection(report) {
       console.log(`     ${entry.code}: ${distinct.length} different amounts (${distinct.map((n) => '$' + n).join(', ')}) — nothing here says which is charged`);
     }
   }
+
+  console.log(`\n  read from ${report.sources.length ? report.sources.map((source) => short(source, 100)).join(', ') : 'this response alone'}`);
+  if (report.foreign) console.log(`  ${report.foreign} candidate(s) from anywhere else were dropped — this command reads one response`);
 
   const verdict = report.verdict;
   console.log(verdict.price
@@ -2398,11 +2571,29 @@ async function main() {
   /* --inspect <url> : one page's rendered figures, and what each gate
      says about them. Reads nothing from the catalogue and writes
      nothing to it. */
-  /* --inspect-api <endpoint> [--for <productUrl>] [--codes a,b,c] */
-  const endpoint = flag('--inspect-api');
-  if (endpoint) {
+  /* --inspect-api <endpoint> [--for <productUrl>] [--codes a,b,c]
+
+     A dedicated command. Once the flag is present this function returns
+     through this branch whatever happens: a missing URL stops the run
+     rather than quietly becoming a catalogue verification, and a
+     failure to read the endpoint is reported as that failure rather
+     than answered from somewhere else. */
+  if (has('--inspect-api')) {
+    const endpoint = valueOf('--inspect-api');
+    if (!endpoint) {
+      throw new Error('--inspect-api needs the API URL to read: --inspect-api "<url>" --for "<productUrl>".'
+        + ' Nothing was inspected, and the catalogue was not read.');
+    }
+    if (!/^https?:\/\//i.test(endpoint)) {
+      throw new Error(`--inspect-api needs an http(s) URL, and got ${endpoint}. Nothing was inspected, and the catalogue was not read.`);
+    }
+    const forUrl = valueOf('--for');
+    if (forUrl === null) {
+      throw new Error('--for needs the product URL the endpoint belongs to. Nothing was inspected, and the catalogue was not read.');
+    }
+
     const report = await inspectEndpoint(endpoint, {
-      forUrl: flag('--for'),
+      forUrl: forUrl || null,
       codes: (flag('--codes') || '').split(',').map((code) => code.trim()).filter(Boolean)
     });
     if (asJson) console.log(JSON.stringify(report, null, 2));
@@ -2563,8 +2754,8 @@ if (require.main === module) {
     metaCandidates, pricesFromHtml, namesCode, priceIdentity, chargedEvidence,
     decide, gatherPricesInPage, renderedCandidates, renderPage, resolveRow,
     inspectUrl, inspectData, selectedAmong, elsewhereIn, isIdKey, isPriceKey, keyWords,
-    sourceAuthority, relatedIdentifiers, markupAudit,
-    inspectEndpoint, allAmounts, colourFields,
+    sourceAuthority, relatedIdentifiers, markupAudit, looksLikeSchemaOrg,
+    inspectEndpoint, allAmounts, colourFields, variantTable,
     productRecords, dataPayloads, dataCandidates, variantPriceRecords,
     parseLoosely, gatherDataInPage, walkData, namesListing, pricesUnder,
     writePrice, priceEvidenceNote, setPriceEvidence, catalogRowPrice, readCatalog
