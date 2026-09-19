@@ -305,12 +305,21 @@ function namesCode(text, id) {
    as much as the selection does: AU763_WT0002 is the selected
    AU763-WT0002, while the group code AU763 is not — it names the group
    the selection belongs to, which every colour on the page also names. */
+/* The same consent shapes the gatherer refuses to collect, refused
+   again here. The gate does not get to assume the page was read by a
+   gatherer that filtered them: a capture made by an older run, or by
+   hand, can carry ot-group-id-C0004 in its selected codes, and a cookie
+   category must not promote a figure to "the selected variant" wherever
+   it came from. */
+const CONSENT_CODE = /^(ot-|c000\d$|optanon)/i;
+
 function selectedAmong(values, selected) {
   const bare = (value) => String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
   for (const value of values || []) {
     const code = bare(value);
     if (!code) continue;
     for (const pick of selected || []) {
+      if (CONSENT_CODE.test(String(pick).trim())) continue;
       const chosen = bare(pick);
       if (chosen && code.includes(chosen)) return String(value);
     }
@@ -752,31 +761,54 @@ function gatherPricesInPage(wanted) {
      shopper is looking at. The selection is read off the page's own
      state (a checked input, an aria-selected swatch) and off the URL
      the page was opened with, never guessed from position. */
-  const selected = { codes: [], from: [] };
+  const selected = { codes: [], from: [], ignored: [] };
   const SELECTED_BY = [
     '[aria-selected="true"]', '[aria-checked="true"]', '[aria-current="true"]',
     '[aria-current="page"]', '[data-selected="true"]', '[class*="is-selected" i]',
     'input:checked', 'option:checked'
   ];
-  const remember = (code, where) => {
-    if (!looksLikeCode(String(code || '').trim())) return;
-    selected.codes.push(String(code).trim());
+
+  /* A cookie wall is full of checked boxes, and every one of them has an
+     id. OneTrust's are ot-group-id-C0004 and friends — checked, code
+     shaped, and about advertising cookies rather than about a jumper.
+     Read as a selected variant they are worse than noise: they are a
+     code that could upgrade some unrelated figure to "the variant the
+     page has selected". So the consent widget is not a place where a
+     variant can be chosen, and anything found there is recorded as
+     ignored rather than silently dropped. */
+  const CONSENT_SCOPE = '#onetrust-consent-sdk, #onetrust-banner-sdk, #ot-sdk-container,'
+    + ' [class*="onetrust" i], [class*="ot-sdk" i], [id*="cookie" i], [class*="cookie" i],'
+    + ' [id*="consent" i], [class*="consent" i], [id*="privacy" i], [class*="privacy" i],'
+    + ' [id*="gdpr" i], [class*="gdpr" i]';
+  const CONSENT_CODE = /^(ot-|c000\d$|optanon)/i;
+
+  const remember = (code, where, el) => {
+    const value = String(code || '').trim();
+    if (!looksLikeCode(value)) return;
+    const consentish = CONSENT_CODE.test(value)
+      || (el && (el.closest(CONSENT_SCOPE) || (el.id || '').toLowerCase().indexOf('ot-') === 0));
+    if (consentish) {
+      selected.ignored.push({ code: value, why: 'it belongs to the cookie consent widget, not to a product' });
+      return;
+    }
+    selected.codes.push(value);
     selected.from.push(where);
   };
   for (const selector of SELECTED_BY) {
     for (const el of Array.from(document.querySelectorAll(selector)).slice(0, 20)) {
-      for (const code of codesOn(el)) remember(code, selector);
-      remember(el.getAttribute('value'), selector + ' [value]');
-      remember(el.getAttribute('data-value'), selector + ' [data-value]');
-      remember(el.getAttribute('data-code'), selector + ' [data-code]');
+      for (const code of codesOn(el)) remember(code, selector, el);
+      remember(el.getAttribute('value'), selector + ' [value]', el);
+      remember(el.getAttribute('data-value'), selector + ' [data-value]', el);
+      remember(el.getAttribute('data-code'), selector + ' [data-code]', el);
     }
   }
   try {
     for (const [key, value] of new URLSearchParams(location.search)) {
-      if (/colou?r|variant|sku|product|style|item/i.test(key)) remember(value, 'url:' + key);
+      if (/colou?r|variant|sku|product|style|item/i.test(key)) remember(value, 'url:' + key, null);
     }
   } catch (err) { /* a URL with no query is not a problem */ }
   selected.codes = Array.from(new Set(selected.codes));
+  selected.ignored = selected.ignored.filter((entry, at, all) => all.findIndex((e) => e.code === entry.code) === at);
 
   return {
     canonical: (document.querySelector('link[rel="canonical"]') || {}).href || metas['og:url'] || null,
@@ -1228,6 +1260,9 @@ function printInspection(report) {
   console.log(`  listing code${report.listingCodes.length === 1 ? ' ' : 's'} ${report.listingCodes.slice(0, 6).join(', ') || 'none'}`);
   console.log(`  selected    ${report.selected.codes.length ? report.selected.codes.join(', ') : 'the page names no selected variant'}`);
   if (report.selected.codes.length) console.log(`              via ${[...new Set(report.selected.from)].slice(0, 4).join(', ')}`);
+  for (const ignored of (report.selected.ignored || []).slice(0, 6)) {
+    console.log(`              ignored ${ignored.code} — ${ignored.why}`);
+  }
   for (const empty of report.empties) console.log(`  structured  ${empty.type} — ${empty.why}`);
 
   /* the question a refused page always raises next: does this DOM name

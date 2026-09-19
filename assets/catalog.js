@@ -16,14 +16,23 @@
    the one it is discounted from. A row whose price is null renders no
    price, which is the honest state rather than a plausible figure.
 
-   UNIQLO and J.Crew are null on purpose. UNIQLO serves no price at all
-   and renders one figure that sits in no product's own price block —
-   the page is this listing's canonical page, but that vouches for the
-   page, not for which of its figures is the price. J.Crew publishes
-   ProductGroup AU763 with offers: [] and renders $98, $128, $118,
-   $58.50 and $148, four of them marked as the current price; nothing on
-   the page says which one is charged, so the reader fails closed rather
-   than picking one.
+   UNIQLO is null on purpose. It serves no price at all, and the figure
+   its rendered page draws sits in no product's own price block — the
+   page is this listing's canonical page, but that vouches for the page,
+   not for which of its figures is the price. Its code does appear in 17
+   elements of the rendered DOM, all of them images and preload links,
+   and none of them contains a figure. Until a price element on that
+   page can be tied to E429066-000 or to the variant the page has
+   selected, the row stays unpriced.
+
+   J.Crew publishes ProductGroup AU763 with offers: [], so its price
+   came off the rendered page instead: the figure in
+   div#productPriceSelectColors-CX449NA6434, which is the colour the
+   page had selected, marked as the sale price, under this listing's
+   AU763. The other figures it renders — a struck-through 128 and the
+   prices in its recommendation strips — are refused, and had that
+   selected-colour block not existed the row would have stayed null
+   rather than choosing among them.
 
    priceEvidence records HOW a price was tied to its product, and unlike
    imageEvidence it is written for every price with no exception: an
@@ -86,7 +95,8 @@ const DEMO_PRODUCTS = [
     id: 'jcrew-broken-in-oxford',
     name: 'Broken-in organic cotton oxford shirt',
     brand: 'J.Crew',
-    price: null,
+    price: 98,
+    priceEvidence: { via: 'dom-variant-scope', code: 'AU763', variant: 'productPriceSelectColors-CX449NA6434' },
     productUrl: 'https://www.jcrew.com/p/mens/categories/clothing/shirts/broken-in-oxford/broken-in-organic-cotton-oxford-shirt/AU763',
     imageUrl: 'https://www.jcrew.com/s7-img-facade/AU763_WT0002',
     category: 'shirt',

@@ -240,6 +240,23 @@ test('E465185-000 is refused for being another product, not for being unmarked',
     'and its block says nothing about being charged either — two reasons, not one');
 });
 
+test('a cookie-consent id is not a selected variant', () => {
+  /* the live inspection reported ot-group-id-C0004 and C0004 as the
+     page's "selected" state. Those are OneTrust cookie categories. A
+     figure must not become variant-scoped by sitting near one. */
+  const withConsent = seenOf(UNIQLO, [
+    figure({ text: '$7.90', own: 'fr-ec-price-text', near: 'fr-ec-price', codes: [] }),
+    figure({ text: '$59.90', own: 'price-current', near: 'fr-ec-price', codes: ['E429066-000', 'C0004'] })
+  ]);
+  withConsent.selected = { codes: ['ot-group-id-C0004', 'C0004'], from: ['input:checked'], ignored: [] };
+
+  const verdict = prices.decide(prices.renderedCandidates(withConsent, UNIQLO).candidates, UNIQLO);
+  assert.strictEqual(verdict.price, 59.9, 'the figure naming the product still wins on the product code');
+  assert.strictEqual(verdict.identity.via, 'dom-product-scope',
+    'but NOT on a consent id: C0004 says which cookies were accepted, not which jumper is on screen');
+  assert.match(because(verdict.refusals, 7.9), /nothing in its own DOM ties it to this product/);
+});
+
 test('E429066-000 is what a UNIQLO price would have to name', () => {
   const tied = seenOf(UNIQLO, [
     figure({ text: '$49.90', own: 'price-current', near: 'fr-ec-price', codes: ['E429066-000'], codeLabel: 'div#product-E429066-000' })
@@ -436,6 +453,45 @@ test('the live page: the selected colour block resolves J.Crew to $98', () => {
   assert.match(because(verdict.refusals, 128), /struck through/);
 });
 
+test('the live J.Crew element resolves whether the sale class is on it or above it', () => {
+  /* the live inspection: div#productPriceSelectColors-CX449NA6434, DOM
+     codes CX449 and AU763, marked tile__detail--price--sale, with the
+     page's selected variant CX449NA6434. Whether that class sits on the
+     figure or on the block around it is a detail of J.Crew's markup, so
+     both readings have to reach the same answer. */
+  const codes = ['productPriceSelectColors-CX449NA6434', 'CX449', 'AU763'];
+  const label = 'div#productPriceSelectColors-CX449NA6434';
+
+  for (const marking of [
+    { own: 'tile__detail--price--sale', near: 'productPriceSelectColors', via: 'dom-role' },
+    { own: 'tile__detail--price--value', near: 'tile__detail--price--sale', via: 'dom-role-block' }
+  ]) {
+    const live = seenOf(JCREW, [
+      figure({ text: '$98', selector: 'span.tile__detail--price', own: marking.own, near: marking.near, codes, codeLabel: label })
+    ]);
+    live.selected = { codes: ['CX449NA6434'], from: ['[aria-checked="true"] [data-code]'], ignored: [] };
+
+    const verdict = prices.decide(prices.renderedCandidates(live, JCREW).candidates, JCREW);
+    assert.strictEqual(verdict.price, 98, `${marking.via}: the selected colour's figure is the answer`);
+    assert.strictEqual(verdict.identity.via, 'dom-variant-scope');
+    assert.strictEqual(verdict.identity.code, 'AU763');
+    assert.strictEqual(verdict.identity.variant, 'productPriceSelectColors-CX449NA6434');
+    assert.strictEqual(verdict.charged.via, marking.via);
+    assert.match(verdict.charged.how, /sale/);
+  }
+});
+
+test('the shipped J.Crew row carries that exact evidence, and re-proves it', () => {
+  const row = evaluate(catalogSource).find((r) => r.id === 'jcrew-broken-in-oxford');
+  assert.strictEqual(row.price, 98);
+  assert.deepStrictEqual(plain(row.priceEvidence), {
+    via: 'dom-variant-scope',
+    code: 'AU763',
+    variant: 'productPriceSelectColors-CX449NA6434'
+  });
+  assert.strictEqual(prices.catalogRowPrice(row).ok, true);
+});
+
 test('that evidence is writable, and a written row re-proves it', () => {
   const evidence = { ok: true, via: 'dom-variant-scope', code: 'AU763', variant: 'productPriceSelectColors-CX449NA6434' };
   const note = prices.priceEvidenceNote(evidence);
@@ -614,7 +670,8 @@ test('a verified price lands on the right row, with its provenance', () => {
     assert.strictEqual(is.name, was.name);
     if (is.id !== 'llbean-venturestretch-chino') {
       assert.strictEqual(is.price, was.price, `${was.id} kept its price`);
-      assert.strictEqual(is.priceEvidence, undefined, `${was.id} got no note it did not earn`);
+      assert.deepStrictEqual(plain(is.priceEvidence), plain(was.priceEvidence),
+        `${was.id} kept exactly the note it had, and gained none it did not earn`);
     }
   }
 });
@@ -702,7 +759,15 @@ function hydratingRetailer() {
     const here = `http://127.0.0.1:${port}${url}`;
 
     /* the figure the page renders, and the block it renders it in */
-    const block = url.startsWith('/scoped')
+    const block = url.startsWith('/consent')
+      ? `<div id="onetrust-consent-sdk" style="position:fixed;bottom:0">
+           <label><input type="checkbox" id="ot-group-id-C0004" checked> Targeting Cookies</label>
+           <button id="ot-noop">Save</button>
+         </div>
+         <img src="/img/goods_03_429066_3x4.jpg" alt="sweater" style="width:300px;height:300px">
+         <link-ish data-preload="/img/429066_hero.jpg"></link-ish>
+         <div class="fr-ec-price"><span class="fr-ec-price-text">$7.90</span></div>`
+      : url.startsWith('/scoped')
       ? `<div class="product-main" data-product-id="E429066-000">
            <span class="current-price">$49.90</span>
          </div>`
@@ -754,7 +819,7 @@ function hydratingRetailer() {
   try { chromium = require('playwright').chromium; } catch (err) { chromium = null; }
 
   if (!chromium) {
-    skipped += 8;
+    skipped += 10;
     console.log('  skip  the browser section — Playwright is not installed here');
     console.log('        npm install, then re-run, to exercise the hydration path');
   } else {
@@ -850,6 +915,29 @@ function hydratingRetailer() {
       assert.strictEqual(seven.identity.ok, false);
       assert.match(seven.identity.why, /vouches for the page/);
       assert.ok(report.verdict.price === undefined, 'and the inspection would write nothing');
+    });
+
+    await testAsync('a checked cookie category is not reported as a selected variant', async () => {
+      /* the live UNIQLO reading: ot-group-id-C0004 and C0004 arrived as
+         the page's "selected" state, and they are OneTrust categories */
+      const report = await prices.inspectUrl(listing('/consent/products/E429066-000/00'));
+
+      assert.deepStrictEqual(report.selected.codes, [],
+        'a cookie category is not a colour, and must not reach the gates as one');
+      assert.ok(report.selected.ignored.some((i) => /ot-group-id-C0004/i.test(i.code)),
+        'and the inspection names what it ignored, so nobody reads C0004 as a variant');
+    });
+
+    await testAsync('the product code in image URLs is found, and named as having no figure', async () => {
+      /* the other live UNIQLO finding: the code appears in the DOM, but
+         only where the pictures are — never around a price */
+      const report = await prices.inspectUrl(listing('/consent/products/E429066-000/00'));
+
+      assert.ok(report.codeSites.length, 'the code does appear in this DOM');
+      assert.ok(report.codeSites.every((site) => site.money.length === 0),
+        'but nothing carrying it contains a figure, which is why no price can be tied');
+      assert.ok(report.codeSites.some((site) => /goods_03_429066/.test(site.attrs)), 'the image is one of them');
+      assert.strictEqual(report.verdict.price, undefined);
     });
 
     await testAsync('the inspection says when the listing\'s code is nowhere in the DOM', async () => {

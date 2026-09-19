@@ -1645,11 +1645,14 @@ after one the page does not touch the video again.
   product and it renders the photo; if that photo fails to load, the artwork
   returns.
 - `price` carries an amount on a linked row only where one was read off the
-  retailer's own page and tied to that exact product. L.L.Bean is `84.95`;
-  UNIQLO and J.Crew are `null` on purpose, and a row with no price renders
-  none. `scripts/fetch-catalog-prices.js` below says what each of those pages
-  does and does not publish. The sample rows carry the demo's own prices and
-  link to nothing, so nothing claims they were read from a retailer.
+  retailer's own page and tied to that exact product. L.L.Bean is `84.95`, from
+  the offer on its JSON-LD product record; J.Crew is `98`, read off the figure
+  in `div#productPriceSelectColors-CX449NA6434` — the colour that listing had
+  selected — marked as its sale price under `AU763`. UNIQLO is `null` on
+  purpose and renders none: its code appears in 17 elements of the rendered
+  page, all images and preload links, and no figure on it can be tied to the
+  product. The sample rows carry the demo's own prices and link to nothing, so
+  nothing claims they were read from a retailer.
 - `imageUrl` carries a photo only where one was verified against that exact
   listing; a row left `null` keeps its drawn artwork, which is the honest state
   rather than a placeholder.
@@ -1741,7 +1744,11 @@ after one the page does not touch the video again.
   One thing does break a tie, and only one: a group page prices every colour it
   contains, so a figure tied to the variant the page has **selected** — read off
   a checked input, an `aria-selected` swatch or the URL's own variant parameter
-  — outranks one tied only to the group all of those colours belong to. That is
+  — outranks one tied only to the group all of those colours belong to. A cookie
+  wall is full of checked boxes with code-shaped ids, so the consent widget is
+  not a place a variant can be chosen: OneTrust's `ot-group-id-C0004` is refused
+  both where the page is read and again at the gate, and the inspection prints
+  what it ignored rather than letting a cookie category read as a colour. That is
   specificity about *which product*, not a preference about which amount; two
   figures at the same rank that disagree still fail closed, and a structured
   offer that disagrees with the rendered page does too.
