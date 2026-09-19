@@ -1733,11 +1733,36 @@ after one the page does not touch the video again.
   by name — but two figures that both survive mean the page has not said which
   one a shopper pays, and that is not a tie to be broken by picking the lowest.
 
+  One thing does break a tie, and only one: a group page prices every colour it
+  contains, so a figure tied to the variant the page has **selected** — read off
+  a checked input, an `aria-selected` swatch or the URL's own variant parameter
+  — outranks one tied only to the group all of those colours belong to. That is
+  specificity about *which product*, not a preference about which amount; two
+  figures at the same rank that disagree still fail closed, and a structured
+  offer that disagrees with the rendered page does too.
+
   It reports `VERIFIED` / `AMBIGUOUS` / `NO PRICE FOUND` / `UNREACHABLE` per
   row and writes only with `--write`, always with a `priceEvidence` note.
   `--explain` prints every figure with the DOM that justified or condemned it,
   and `--explain --json` emits the same as a capture file. `--refresh` re-reads
   a row that already carries a price; `--no-browser` keeps it to plain HTTP.
+
+  Every capture names the layer it was read through. Each row carries
+  `readThrough: "plain HTTP" | "browser" | "nothing"`, each row's `trail.browser`
+  is either the rendered read or the reason there wasn't one, and the capture as
+  a whole carries `complete` and an `incomplete` sentence. A file that never
+  reached a browser reads exactly like a page that renders no price, and those
+  are opposite findings — so the capture says which it is rather than leaving it
+  to be inferred from an absence.
+
+  `--inspect <productUrl>` answers the question a capture cannot: it opens one
+  page in Chromium and prints every figure on it with the ancestor chain above
+  it, what the element is marked as, whether it is struck through or off-screen,
+  which product codes its ancestry carries, whether it sits in a
+  "you-may-also-like" block, and what each gate says about it — then what the
+  run would write, which for a page that has not said is nothing. It reads no
+  catalogue row and changes no file. `--inspect <url> --json` gives the same
+  untruncated.
   `node scripts/test-catalog-prices.js` covers the gates without a network,
   including both live shapes: UNIQLO's single hydrated figure sitting in no
   product's block, and J.Crew's `ProductGroup AU763` publishing `offers: []`

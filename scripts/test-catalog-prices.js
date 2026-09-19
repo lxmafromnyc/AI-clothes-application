@@ -318,6 +318,47 @@ test('a record that disagrees with the display still fails closed', () => {
   assert.ok(verdict.survivors.some((s) => /rendered/.test(s.from)), 'and the screen is another');
 });
 
+test('a figure tied to the SELECTED variant outranks the group-level ones', () => {
+  /* the same five figures, on a page that says which colour is being
+     looked at. One of them is tied to that colour; the rest are tied
+     only to the group every colour belongs to. */
+  const selected = { codes: ['AU763_WT0002'], from: ['[aria-checked="true"]'] };
+  const picked = Object.assign({}, jcrewRendered, {
+    selected,
+    prices: jcrewRendered.prices.map((p) => (p.text === '$98'
+      ? Object.assign({}, p, { codes: ['AU763_WT0002', 'AU763'], codeLabel: 'div.variant#AU763_WT0002' })
+      : p))
+  });
+
+  const verdict = prices.decide(prices.renderedCandidates(picked, JCREW).candidates, JCREW);
+  assert.strictEqual(verdict.price, 98);
+  assert.strictEqual(verdict.identity.via, 'dom-variant-scope');
+  assert.match(verdict.identity.how, /the variant the page has selected/);
+  for (const amount of [118, 58.5, 148]) {
+    assert.match(because(verdict.refusals, amount), /tied only to the product group/);
+  }
+});
+
+test('two figures tied to the SAME selected variant still fail closed', () => {
+  const selected = { codes: ['AU763_WT0002'], from: ['url:colorProductCode'] };
+  const both = seenOf(JCREW, [
+    figure({ text: '$98', own: 'is-price--current', codes: ['AU763_WT0002'] }),
+    figure({ text: '$58.50', own: 'is-price--sale', codes: ['AU763_WT0002'] })
+  ]);
+  both.selected = selected;
+  const verdict = prices.decide(prices.renderedCandidates(both, JCREW).candidates, JCREW);
+  assert.strictEqual(verdict.price, undefined);
+  assert.deepStrictEqual(verdict.ambiguous, [58.5, 98], 'specificity breaks a tie between scopes, never between amounts');
+});
+
+test('the group code is not the selected variant', () => {
+  assert.strictEqual(prices.selectedAmong(['AU763'], ['AU763_WT0002']), null,
+    'every colour on the page names the group, so the group cannot identify one of them');
+  assert.strictEqual(prices.selectedAmong(['AU763_WT0002'], ['AU763-WT0002']), 'AU763_WT0002',
+    'the separator a retailer writes it with is not part of the code');
+  assert.strictEqual(prices.selectedAmong(['AU763_BL0001'], ['AU763_WT0002']), null);
+});
+
 test('an aggregate offer is a range, and a range is not a price', () => {
   const grouped = `<!doctype html><html><head><script type="application/ld+json">
   {"@type":"ProductGroup","sku":"AU763-WT0002","offers":{"@type":"AggregateOffer","lowPrice":"58.50","highPrice":"148.00","priceCurrency":"USD"}}
@@ -410,6 +451,15 @@ test('a figure in the product block that claims nothing is refused', () => {
   const verdict = prices.decide(prices.renderedCandidates(seen, UNIQLO).candidates, UNIQLO);
   assert.strictEqual(verdict.price, undefined);
   assert.match(because(verdict.refusals, 39.9), /nothing on the element or its block says this is the amount charged/);
+});
+
+test('a figure sitting in a recommendation block is named as one', () => {
+  assert.strictEqual(
+    prices.elsewhereIn({ own: 'current-price', near: 'you-may-also-like', chain: [{ cls: 'you-may-also-like carousel' }] }),
+    'you-may-also-like'
+  );
+  assert.strictEqual(prices.elsewhereIn({ own: 'is-price--current', near: 'product-price', chain: [] }), null,
+    "the product's own price block is not somewhere else");
 });
 
 test('a number with no currency on it is not money', () => {
@@ -557,6 +607,15 @@ function hydratingRetailer() {
       ? `<div class="product-main" data-product-id="E429066-000">
            <span class="current-price">$49.90</span>
          </div>`
+      : url.startsWith('/variant/p/AU763')
+        ? `<div class="product-details" data-product-id="AU763">
+             <div class="swatches">
+               <button aria-checked="false" data-variant-id="AU763_BL0001">Blue</button>
+               <button aria-checked="true" data-variant-id="AU763_WT0002">White</button>
+             </div>
+             <div data-variant-id="AU763_BL0001"><span class="is-price--current">$118</span></div>
+             <div data-variant-id="AU763_WT0002"><span class="is-price--current">$98</span></div>
+           </div>`
       : url.startsWith('/p/AU763')
         ? `<div class="product-details" data-product-id="AU763">
              <span class="is-price--list" style="text-decoration: line-through">$128</span>
@@ -596,7 +655,7 @@ function hydratingRetailer() {
   try { chromium = require('playwright').chromium; } catch (err) { chromium = null; }
 
   if (!chromium) {
-    skipped += 3;
+    skipped += 6;
     console.log('  skip  the browser section — Playwright is not installed here');
     console.log('        npm install, then re-run, to exercise the hydration path');
   } else {
@@ -654,6 +713,44 @@ function hydratingRetailer() {
       assert.strictEqual(verdict.price, undefined);
       assert.deepStrictEqual(verdict.ambiguous, [58.5, 98, 118, 148]);
       assert.ok(!verdict.ambiguous.includes(79.5), "the neighbouring product's price never entered the tie");
+    });
+
+    await testAsync('the selected colour is read off the page, and settles the group', async () => {
+      const url = listing('/variant/p/AU763');
+      const rendered = await prices.renderPage(url);
+      assert.ok(!rendered.failed, rendered.failed);
+      assert.ok(rendered.seen.selected.codes.includes('AU763_WT0002'),
+        'the checked swatch says which colour the page is showing');
+
+      const verdict = prices.decide(prices.renderedCandidates(rendered.seen, url).candidates, url);
+      assert.strictEqual(verdict.price, 98);
+      assert.strictEqual(verdict.identity.via, 'dom-variant-scope');
+      assert.match(because(verdict.refusals, 118), /tied only to the product group/);
+    });
+
+    await testAsync('a row read through the browser says so in its trail', async () => {
+      const row = { id: 'local', brand: 'Local', name: 'Hydrating', price: null, productUrl: listing('/products/E429066-000/00') };
+      const result = await prices.resolveRow(row);
+
+      assert.strictEqual(result.trail.readThrough, 'browser', 'a capture has to name the layer it was read through');
+      assert.strictEqual(result.trail.browser.ran, true);
+      assert.ok(result.trail.browser.candidates.length, 'and carry what the rendered page offered');
+      assert.strictEqual(result.verdict, 'NO PRICE FOUND');
+      assert.strictEqual(result.incomplete, undefined, 'this run DID read the rendered page');
+    });
+
+    await testAsync('--inspect prints the element chain behind a figure', async () => {
+      const url = listing('/products/E429066-000/00');
+      const report = await prices.inspectUrl(url);
+
+      const seven = report.figures.find((f) => f.amount === 7.9);
+      assert.ok(seven, 'the hydrated figure is in the inspection');
+      assert.ok(seven.dom.chain.length, 'with the ancestry above it');
+      assert.ok(seven.dom.chain.some((link) => link.cls && link.cls.includes('fr-ec-price')),
+        'naming the block it actually sits in');
+      assert.strictEqual(seven.identity.ok, false);
+      assert.match(seven.identity.why, /vouches for the page/);
+      assert.ok(report.verdict.price === undefined, 'and the inspection would write nothing');
     });
 
     server.close();

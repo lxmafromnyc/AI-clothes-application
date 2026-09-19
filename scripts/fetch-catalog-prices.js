@@ -62,6 +62,8 @@
      node scripts/fetch-catalog-prices.js --no-browser     plain HTTP only
      node scripts/fetch-catalog-prices.js --explain        every candidate and its DOM
      node scripts/fetch-catalog-prices.js --explain --json  the same, as a capture
+     node scripts/fetch-catalog-prices.js --inspect <url>   one page's rendered
+                                                            figures and their ancestry
    ========================================================= */
 
 'use strict';
@@ -299,6 +301,23 @@ function namesCode(text, id) {
   return boundary(before) && boundary(after);
 }
 
+/* The figure's own code IS the selected variant when it says at least
+   as much as the selection does: AU763_WT0002 is the selected
+   AU763-WT0002, while the group code AU763 is not — it names the group
+   the selection belongs to, which every colour on the page also names. */
+function selectedAmong(values, selected) {
+  const bare = (value) => String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  for (const value of values || []) {
+    const code = bare(value);
+    if (!code) continue;
+    for (const pick of selected || []) {
+      const chosen = bare(pick);
+      if (chosen && code.includes(chosen)) return String(value);
+    }
+  }
+  return null;
+}
+
 function matchingCode(values, ids) {
   for (const value of values || []) {
     for (const id of ids) {
@@ -335,6 +354,18 @@ function priceIdentity(candidate, productUrl) {
   if (dom) {
     const hit = matchingCode(dom.codes, ids);
     if (hit) {
+      /* a group page prices every colour at once, so the figure tied to
+         the variant the page has SELECTED says more than one tied only
+         to the group all of them belong to */
+      const chosen = selectedAmong(dom.codes, (candidate.selected && candidate.selected.codes) || []);
+      if (chosen) {
+        return {
+          ok: true,
+          via: 'dom-variant-scope',
+          code: chosen,
+          how: `the ${dom.codeLabel || 'price block'} it sits in names ${chosen}, the variant the page has selected`
+        };
+      }
       return {
         ok: true,
         via: 'dom-product-scope',
@@ -480,13 +511,46 @@ function decide(candidates, productUrl) {
 
   if (!survivors.length) return { refusals };
 
-  const distinct = [...new Set(survivors.map((s) => s.candidate.amount))];
+  /* Ranking, and the only ranking there is: WITHIN the rendered page, a
+     figure tied to a named sku or to the variant the page has selected
+     says which product's price it is, while one tied only to the group
+     says which GROUP's — and a group prices every colour it contains.
+     So the specific ones answer and the group-level ones step aside.
+
+     A structured offer is deliberately NOT in this list. It is the
+     retailer's own statement, but it comes from a different layer, and
+     a record saying 98 while the screen says 58.50 is a disagreement
+     about what a shopper pays rather than a tie to break in the
+     record's favour. Two survivors that disagree, at the same rank or
+     across layers, still fail closed. */
+  const SPECIFIC = ['microdata-offer', 'dom-variant-scope'];
+  const specific = survivors.filter((s) => SPECIFIC.includes(s.identity.via));
+  let inPlay = survivors;
+
+  if (specific.length && specific.length < survivors.length) {
+    const better = specific[0].identity.how;
+    for (const stepped of survivors) {
+      if (SPECIFIC.includes(stepped.identity.via)) continue;
+      refusals.push({
+        amount: stepped.candidate.amount,
+        currency: stepped.candidate.currency,
+        text: stepped.candidate.text,
+        from: stepped.candidate.from,
+        gate: 'this',
+        why: `tied only to the product group, while another figure is tied more exactly — ${better}`,
+        dom: explaining && stepped.candidate.dom ? stepped.candidate.dom : undefined
+      });
+    }
+    inPlay = specific;
+  }
+
+  const distinct = [...new Set(inPlay.map((s) => s.candidate.amount))];
   if (distinct.length > 1) {
     return {
       refusals,
       ambiguous: distinct.sort((a, b) => a - b),
       why: `${distinct.length} different amounts each carry evidence of being the charged price (${distinct.sort((a, b) => a - b).map((n) => '$' + n).join(', ')}), and nothing on the page says which one is`,
-      survivors: survivors.map((s) => ({
+      survivors: inPlay.map((s) => ({
         amount: s.candidate.amount,
         from: s.candidate.from,
         text: s.candidate.text,
@@ -497,7 +561,7 @@ function decide(candidates, productUrl) {
     };
   }
 
-  const best = survivors[0];
+  const best = inPlay[0];
   return {
     refusals,
     price: best.candidate.amount,
@@ -506,7 +570,7 @@ function decide(candidates, productUrl) {
     identity: best.identity,
     charged: best.charged,
     why: `${best.identity.how}, and ${best.charged.how}`,
-    agreed: survivors.length
+    agreed: inPlay.length
   };
 }
 
@@ -523,7 +587,7 @@ function decide(candidates, productUrl) {
    one figure, and each of its four children is reported on its own. */
 function gatherPricesInPage() {
   const MONEY = /(?:US\s*\$|\$|USD|£|€)\s*[0-9][0-9,]*(?:\.[0-9]{1,2})?/i;
-  const CODE_ATTR = /(product|prod|sku|pid|style|item|code|group|listing)/i;
+  const CODE_ATTR = /(product|prod|sku|pid|style|item|code|group|listing|variant|colou?r|option|article)/i;
 
   const marks = (el) => [
     el.id || '',
@@ -590,7 +654,7 @@ function gatherPricesInPage() {
     let near = '';
 
     let node = el.parentElement;
-    for (let depth = 0; node && node !== document.body && depth < 8; depth += 1) {
+    for (let depth = 0; node && node !== document.body && depth < 12; depth += 1) {
       const itemtype = node.getAttribute('itemtype') || '';
       if (/offer/i.test(itemtype)) offerScope = true;
       if (/product/i.test(itemtype)) {
@@ -609,6 +673,9 @@ function gatherPricesInPage() {
         tag: node.tagName.toLowerCase(),
         id: node.id || null,
         cls: node.getAttribute('class') || null,
+        testid: node.getAttribute('data-testid') || null,
+        role: node.getAttribute('role') || null,
+        aria: node.getAttribute('aria-label') || null,
         itemprop: node.getAttribute('itemprop') || null,
         itemtype: itemtype || null,
         codes: found.length ? found : undefined
@@ -641,9 +708,42 @@ function gatherPricesInPage() {
     if (key) metas[key.toLowerCase()] = el.getAttribute('content');
   }
 
+  /* What the page has SELECTED. A group page prices several variants at
+     once — J.Crew's AU763 renders a figure per colour — and only the
+     selected variant's figure is the price being offered for what the
+     shopper is looking at. The selection is read off the page's own
+     state (a checked input, an aria-selected swatch) and off the URL
+     the page was opened with, never guessed from position. */
+  const selected = { codes: [], from: [] };
+  const SELECTED_BY = [
+    '[aria-selected="true"]', '[aria-checked="true"]', '[aria-current="true"]',
+    '[aria-current="page"]', '[data-selected="true"]', '[class*="is-selected" i]',
+    'input:checked', 'option:checked'
+  ];
+  const remember = (code, where) => {
+    if (!looksLikeCode(String(code || '').trim())) return;
+    selected.codes.push(String(code).trim());
+    selected.from.push(where);
+  };
+  for (const selector of SELECTED_BY) {
+    for (const el of Array.from(document.querySelectorAll(selector)).slice(0, 20)) {
+      for (const code of codesOn(el)) remember(code, selector);
+      remember(el.getAttribute('value'), selector + ' [value]');
+      remember(el.getAttribute('data-value'), selector + ' [data-value]');
+      remember(el.getAttribute('data-code'), selector + ' [data-code]');
+    }
+  }
+  try {
+    for (const [key, value] of new URLSearchParams(location.search)) {
+      if (/colou?r|variant|sku|product|style|item/i.test(key)) remember(value, 'url:' + key);
+    }
+  } catch (err) { /* a URL with no query is not a problem */ }
+  selected.codes = Array.from(new Set(selected.codes));
+
   return {
     canonical: (document.querySelector('link[rel="canonical"]') || {}).href || metas['og:url'] || null,
     metas,
+    selected,
     jsonld: Array.from(document.querySelectorAll('script[type="application/ld+json"]')).map((s) => s.textContent),
     prices: out
   };
@@ -671,6 +771,7 @@ function renderedCandidates(seen, pageUrl) {
       from: `rendered ${hit.selector}`,
       kind: 'rendered',
       dom: hit,
+      selected: seen.selected || null,
       canonical: seen.canonical || null
     });
   }
@@ -731,7 +832,19 @@ async function renderPage(url) {
 /* ---------- one row ---------- */
 async function resolveRow(row) {
   const notes = [];
-  const trail = { id: row.id, productUrl: row.productUrl, plain: null, browser: null };
+  const trail = { id: row.id, productUrl: row.productUrl, readThrough: null, plain: null, browser: null };
+
+  /* Every capture says which layer answered it, and one that never
+     reached the browser says so IN THE CAPTURE. A file holding only the
+     served markup reads exactly like a page that renders no price, and
+     those are not the same finding: the first is a run that stopped
+     early, the second is evidence. Nothing about the rendered page may
+     be concluded from a capture whose browser never ran. */
+  const finish = (result, readThrough, browserSkipped) => {
+    trail.readThrough = readThrough;
+    if (!trail.browser) trail.browser = { ran: false, why: browserSkipped || 'it was not reached' };
+    return Object.assign({ id: row.id, notes, trail }, result);
+  };
 
   /* ---- plain HTTP ---- */
   const page = await fetchPage(row.productUrl);
@@ -754,12 +867,20 @@ async function resolveRow(row) {
     if (read.candidates.length) {
       served = decide(read.candidates, row.productUrl);
       if (served.price) {
-        return { id: row.id, verdict: 'VERIFIED', why: served.why, price: served.price, currency: served.currency, from: served.from, identity: served.identity, notes, trail };
+        return finish(
+          { verdict: 'VERIFIED', why: served.why, price: served.price, currency: served.currency, from: served.from, identity: served.identity },
+          'plain HTTP',
+          'not needed — the served markup already answered'
+        );
       }
     }
   } else if (page.blocked) {
     trail.plain = { reachable: false, failed: page.failed, blocked: true };
-    return { id: row.id, verdict: 'UNREACHABLE', why: page.failed, price: null, blocked: true, notes, trail };
+    return finish(
+      { verdict: 'UNREACHABLE', why: page.failed, price: null, blocked: true },
+      'nothing',
+      'the network refused the host, and a real browser is refused the same way'
+    );
   } else {
     trail.plain = { reachable: false, failed: page.failed };
     notes.push(`plain HTTP: ${page.failed}`);
@@ -767,36 +888,40 @@ async function resolveRow(row) {
 
   /* ---- a real browser ---- */
   if (!useBrowser) {
-    return {
-      id: row.id,
-      verdict: page.html ? 'NO PRICE FOUND' : 'UNREACHABLE',
-      why: `${page.html ? 'nothing usable in the served markup' : page.failed} (browser path off)`,
-      price: null,
-      refusals: served ? served.refusals : [],
-      notes,
-      trail
-    };
+    return finish(
+      {
+        verdict: page.html ? 'NO PRICE FOUND' : 'UNREACHABLE',
+        why: `${page.html ? 'nothing usable in the served markup' : page.failed} (browser path off)`,
+        price: null,
+        refusals: served ? served.refusals : [],
+        incomplete: 'the rendered page was never read, so this run says nothing about the figures it draws'
+      },
+      page.html ? 'plain HTTP' : 'nothing',
+      'off (--no-browser)'
+    );
   }
 
   const rendered = await renderPage(row.productUrl);
   if (rendered.failed) {
-    trail.browser = { ran: false, failed: rendered.failed };
+    trail.browser = { ran: false, why: rendered.failed };
     notes.push(`browser: ${rendered.failed}`);
-    return {
-      id: row.id,
-      verdict: page.html ? 'NO PRICE FOUND' : 'UNREACHABLE',
-      why: rendered.noBrowser && page.html ? `nothing usable in the served markup, and ${rendered.failed}` : rendered.failed,
-      price: null,
-      refusals: served ? served.refusals : [],
-      notes,
-      trail
-    };
+    return finish(
+      {
+        verdict: page.html ? 'NO PRICE FOUND' : 'UNREACHABLE',
+        why: rendered.noBrowser && page.html ? `nothing usable in the served markup, and ${rendered.failed}` : rendered.failed,
+        price: null,
+        refusals: served ? served.refusals : [],
+        incomplete: 'the rendered page was never read, so this run says nothing about the figures it draws'
+      },
+      page.html ? 'plain HTTP' : 'nothing'
+    );
   }
 
   const read = renderedCandidates(rendered.seen, row.productUrl);
   trail.browser = {
     ran: true,
     canonical: rendered.seen.canonical || null,
+    selected: rendered.seen.selected || null,
     candidates: read.candidates.map(reportable),
     empties: read.empties,
     /* the DOM behind every figure, which is what a price disagreement
@@ -804,44 +929,41 @@ async function resolveRow(row) {
     prices: explaining ? rendered.seen.prices : undefined
   };
   notes.push(`browser: ${read.candidates.length} price candidate${read.candidates.length === 1 ? '' : 's'}`);
+  if (rendered.seen.selected && rendered.seen.selected.codes.length) {
+    notes.push(`browser: the page has ${rendered.seen.selected.codes.slice(0, 3).join(', ')} selected`);
+  }
   for (const empty of read.empties) {
     notes.push(`browser: ${empty.type}${empty.skus.length ? ` ${empty.skus[0]}` : ''} — ${empty.why}`);
   }
 
   if (!read.candidates.length) {
-    return { id: row.id, verdict: 'NO PRICE FOUND', why: 'the rendered page published no figure that reads as a price either', price: null, refusals: served ? served.refusals : [], notes, trail };
+    return finish(
+      { verdict: 'NO PRICE FOUND', why: 'the rendered page published no figure that reads as a price either', price: null, refusals: served ? served.refusals : [] },
+      'browser'
+    );
   }
 
   const found = decide(read.candidates, row.productUrl);
   if (found.price) {
-    return { id: row.id, verdict: 'VERIFIED', why: found.why, price: found.price, currency: found.currency, from: found.from, identity: found.identity, notes, trail };
+    return finish(
+      { verdict: 'VERIFIED', why: found.why, price: found.price, currency: found.currency, from: found.from, identity: found.identity },
+      'browser'
+    );
   }
 
   const refusals = [...(served && served.refusals ? served.refusals : []), ...found.refusals];
 
   if (found.ambiguous) {
-    return {
-      id: row.id,
-      verdict: 'AMBIGUOUS',
-      why: found.why,
-      price: null,
-      ambiguous: found.ambiguous,
-      survivors: found.survivors,
-      refusals,
-      notes,
-      trail
-    };
+    return finish(
+      { verdict: 'AMBIGUOUS', why: found.why, price: null, ambiguous: found.ambiguous, survivors: found.survivors, refusals },
+      'browser'
+    );
   }
 
-  return {
-    id: row.id,
-    verdict: 'NO PRICE FOUND',
-    why: `${refusals.length} figure${refusals.length === 1 ? '' : 's'} found, none cleared every gate`,
-    price: null,
-    refusals,
-    notes,
-    trail
-  };
+  return finish(
+    { verdict: 'NO PRICE FOUND', why: `${refusals.length} figure${refusals.length === 1 ? '' : 's'} found, none cleared every gate`, price: null, refusals },
+    'browser'
+  );
 }
 
 /* a candidate as a capture records it: the amount, where it came from,
@@ -972,6 +1094,117 @@ function catalogRowPrice(row) {
   return { ok: true, via: evidence.via, how: `its listing ties ${evidence.sku || evidence.code} to this price by ${evidence.via}` };
 }
 
+/* ---------- inspecting one page's rendered prices ----------
+
+   The captures answer for the served markup. They cannot answer for the
+   figures a page draws after its scripts run, and a question about
+   THOSE — which element produces this amount, does it belong to the
+   product or to a recommendation, is any of them tied to the variant
+   the page has selected — is a question about a DOM that only exists
+   inside a browser.
+
+   So this opens the page and prints every figure on it with the
+   ancestry above it and what each gate says about it, against a listing
+   URL rather than against a catalogue row. It writes nothing. */
+async function inspectUrl(url) {
+  const rendered = await renderPage(url);
+  if (rendered.failed) return { url, failed: rendered.failed };
+
+  const seen = rendered.seen;
+  const read = renderedCandidates(seen, url);
+  const figures = read.candidates.map((candidate) => {
+    const identity = priceIdentity(candidate, url);
+    const charged = identity.ok ? chargedEvidence(candidate) : null;
+    return {
+      amount: candidate.amount,
+      currency: candidate.currency,
+      text: candidate.text,
+      from: candidate.from,
+      identity,
+      charged,
+      elsewhere: elsewhereIn(candidate.dom),
+      dom: candidate.dom || null
+    };
+  });
+
+  return {
+    url,
+    canonical: seen.canonical || null,
+    selected: seen.selected || { codes: [], from: [] },
+    listingCodes: identifiersFrom(url),
+    empties: read.empties,
+    figures,
+    verdict: decide(read.candidates, url)
+  };
+}
+
+/* The containers a retailer puts OTHER products in. Naming one is not a
+   gate — a tile that names this listing's code is still this listing's
+   price — but "which block is this figure in" is the first thing a
+   person asks of a rendered price, so the inspection answers it. */
+const ELSEWHERE = /(you-?may-?also-?like|complete-the-look|recently-?viewed|bought-?together|recommend\w*|also-?like|related|similar|carousel|cross-?sell|up-?sell)/i;
+
+function elsewhereIn(dom) {
+  if (!dom) return null;
+  const hay = [dom.own, dom.near, ...(dom.chain || []).map((l) => [l.id, l.cls, l.testid].filter(Boolean).join(' '))].join(' ');
+  const hit = hay.match(ELSEWHERE);
+  return hit ? hit[0] : null;
+}
+
+function chainOf(dom) {
+  if (!dom || !dom.chain) return '';
+  return [dom.selector, ...dom.chain.map((link) => {
+    const cls = (link.cls || '').trim().split(/\s+/).filter(Boolean).slice(0, 2).join('.');
+    return link.tag + (link.id ? '#' + link.id : '') + (cls ? '.' + cls : '') +
+      (link.testid ? `[testid=${link.testid}]` : '') +
+      (link.itemtype ? `[itemtype=${String(link.itemtype).split('/').pop()}]` : '') +
+      (link.codes ? `{${link.codes.slice(0, 2).join(',')}}` : '');
+  })].join(' < ');
+}
+
+function printInspection(report) {
+  if (report.failed) {
+    console.log(`\n  ${report.url}`);
+    console.log(`  could not be read: ${report.failed}\n`);
+    return;
+  }
+
+  console.log(`\n  ${report.url}`);
+  console.log(`  canonical   ${report.canonical || 'none'}`);
+  console.log(`  listing code${report.listingCodes.length === 1 ? ' ' : 's'} ${report.listingCodes.slice(0, 6).join(', ') || 'none'}`);
+  console.log(`  selected    ${report.selected.codes.length ? report.selected.codes.join(', ') : 'the page names no selected variant'}`);
+  if (report.selected.codes.length) console.log(`              via ${[...new Set(report.selected.from)].slice(0, 4).join(', ')}`);
+  for (const empty of report.empties) console.log(`  structured  ${empty.type} — ${empty.why}`);
+  console.log(`  ${report.figures.length} figure${report.figures.length === 1 ? '' : 's'} that read as money:\n`);
+
+  for (const figure of report.figures) {
+    const dom = figure.dom;
+    console.log(`  $${figure.amount} "${short(figure.text, 40)}" — ${figure.from}`);
+    if (dom) {
+      console.log(`     chain   ${short(chainOf(dom), 220)}`);
+      console.log(`     marks   own="${dom.own || ''}" near="${short(dom.near || '', 50)}"${dom.aria ? ` aria="${dom.aria}"` : ''}`);
+      console.log(`     state   ${dom.lineThrough ? 'struck through' : 'not struck'}, ${dom.hidden ? 'not visible' : `${dom.area}px2 on screen`}${dom.itemprop ? `, itemprop=${dom.itemprop}` : ''}${dom.offerScope ? ', inside an Offer scope' : ''}`);
+      console.log(`     codes   ${(dom.codes || []).length ? dom.codes.slice(0, 4).join(', ') : 'none in its ancestry'}`);
+      const elsewhere = elsewhereIn(dom);
+      if (elsewhere) console.log(`     note    it sits inside a "${elsewhere}" block — another product's, unless the codes above say otherwise`);
+    }
+    console.log(`     this    ${figure.identity.ok ? `OK via ${figure.identity.via} — ${figure.identity.how}` : `REFUSED — ${figure.identity.why}`}`);
+    if (figure.charged) {
+      console.log(`     charged ${figure.charged.ok ? `OK — ${figure.charged.how}` : `REFUSED — ${figure.charged.why}`}`);
+    }
+    console.log('');
+  }
+
+  const verdict = report.verdict;
+  if (verdict.price) {
+    console.log(`  WOULD WRITE $${verdict.price} — ${verdict.why}\n`);
+  } else if (verdict.ambiguous) {
+    console.log(`  WOULD FAIL CLOSED — ${verdict.why}\n`);
+  } else {
+    console.log('  WOULD FAIL CLOSED — no figure on this page cleared every gate\n');
+  }
+}
+
 /* ---------- report ---------- */
 const say = (...line) => { if (!asJson) console.log(...line); };
 
@@ -993,6 +1226,17 @@ function explainCandidate(pad, entry) {
 }
 
 async function main() {
+  /* --inspect <url> : one page's rendered figures, and what each gate
+     says about them. Reads nothing from the catalogue and writes
+     nothing to it. */
+  const inspecting = flag('--inspect');
+  if (inspecting) {
+    const report = await inspectUrl(inspecting);
+    if (asJson) console.log(JSON.stringify(report, null, 2));
+    else printInspection(report);
+    return;
+  }
+
   const { source, rows } = readCatalog();
 
   let targets = rows.filter((r) => r && r.productUrl);
@@ -1034,7 +1278,11 @@ async function main() {
     results.push(result);
 
     say(`  ${result.verdict.padEnd(15)} ${row.brand} — ${String(row.name).slice(0, 44)}`);
+    say(`  ${''.padEnd(15)} · read through ${result.trail.readThrough}`);
     for (const note of result.notes || []) say(`  ${''.padEnd(15)} · ${note}`);
+    /* a run that never opened the page cannot be read as evidence about
+       what the page draws, and says so where the verdict is */
+    if (result.incomplete) say(`  ${''.padEnd(15)} ! ${result.incomplete} (browser: ${result.trail.browser.why})`);
     if (result.price) {
       say(`  ${''.padEnd(15)} $${result.price} ${result.currency || ''}`);
       say(`  ${''.padEnd(15)} ${result.why}${result.from ? ` [${result.from}]` : ''}`);
@@ -1064,15 +1312,25 @@ async function main() {
   }
 
   if (asJson) {
+    const rendered = results.filter((r) => r.trail && r.trail.browser && r.trail.browser.ran);
     console.log(JSON.stringify({
       ran: new Date().toISOString(),
       command: `fetch-catalog-prices ${args.join(' ')}`.trim(),
+      /* What this capture can be used to argue. A run that never
+         reached a browser holds no evidence about the figures a page
+         renders, and saying so here means a reader never has to infer
+         it from an absence. */
+      readThrough: [...new Set(results.map((r) => (r.trail ? r.trail.readThrough : 'nothing')))],
+      complete: results.length > 0 && rendered.length === results.length,
+      incomplete: rendered.length === results.length ? null
+        : `${results.length - rendered.length} of ${results.length} rows were never opened in a browser, so this capture says nothing about the figures those pages render`,
       kept: already.map((row) => ({ id: row.id, price: row.price, accounted: catalogRowPrice(row) })),
       rows: results.map((r) => ({
         id: r.id,
         brand: r.brand,
         productUrl: r.productUrl,
         verdict: r.verdict,
+        readThrough: r.trail ? r.trail.readThrough : null,
         why: r.why,
         price: r.price === undefined ? null : r.price,
         currency: r.currency || null,
@@ -1115,6 +1373,7 @@ if (require.main === module) {
     toAmount, currencyIn, moneyInText, offerAmounts, structuredCandidates,
     metaCandidates, pricesFromHtml, namesCode, priceIdentity, chargedEvidence,
     decide, gatherPricesInPage, renderedCandidates, renderPage, resolveRow,
+    inspectUrl, selectedAmong, elsewhereIn,
     writePrice, priceEvidenceNote, setPriceEvidence, catalogRowPrice, readCatalog
   };
 }
