@@ -66,6 +66,9 @@
                                                             figures and their ancestry
      node scripts/fetch-catalog-prices.js --inspect-data <url>  the scripts, state
                                                             and JSON the page carries
+     node scripts/fetch-catalog-prices.js --inspect-api <endpoint> --for <productUrl>
+                                                            one API response, read
+                                                            from inside the page
    ========================================================= */
 
 'use strict';
@@ -553,7 +556,7 @@ function chargedEvidence(candidate) {
    not an invitation to choose. */
 function decide(candidates, productUrl) {
   const refusals = [];
-  const survivors = [];
+  let survivors = [];
 
   for (const candidate of candidates) {
     const note = (gate, why) => refusals.push({
@@ -573,6 +576,37 @@ function decide(candidates, productUrl) {
     if (!charged.ok) { note('charged', charged.why); continue; }
 
     survivors.push({ candidate, identity, charged });
+  }
+
+  /* ---- corroboration, before anything is ranked ----
+
+     A record from the page's schema.org markup may confirm an amount
+     that something the page actually prices from also carries. On its
+     own it answers nothing: UNIQLO's @graph ProductGroup names
+     E429066-000 and offers 7.90, the page charges something else, and
+     "the id and the amount are in one record" was true the whole time.
+     Carrying the product's id is what lets a record be considered, not
+     what makes it true. */
+  const authoritative = survivors.filter((s) => !s.candidate.record || s.candidate.record.authority !== 'markup');
+  if (authoritative.length < survivors.length) {
+    const backed = new Set(authoritative.map((s) => s.candidate.amount));
+    const kept = [];
+    for (const survivor of survivors) {
+      const record = survivor.candidate.record;
+      if (!record || record.authority !== 'markup' || backed.has(survivor.candidate.amount)) {
+        kept.push(survivor);
+        continue;
+      }
+      refusals.push({
+        amount: survivor.candidate.amount,
+        currency: survivor.candidate.currency,
+        text: survivor.candidate.text,
+        from: survivor.candidate.from,
+        gate: 'corroboration',
+        why: `only the page's schema.org markup says so (${record.source} at ${record.path}), and nothing the page prices from — no commerce API record, no hydrated state, no figure on the page — carries ${survivor.candidate.amount}`
+      });
+    }
+    survivors = kept;
   }
 
   if (!survivors.length) return { refusals };
@@ -669,6 +703,15 @@ function keyWords(key) {
 
 const ID_WORD = /^(id|ids|code|codes|sku|skus|mpn|gtin|number|style|styles|l1|l2|communication|pid|product|item|key)$/;
 const PRICE_WORD = /^(price|prices|amount|amounts)$/;
+
+/* Words that turn a price-shaped key into something else entirely.
+   priceValidUntil is the one that matters: "2024-03-31" parses as 2024,
+   and an expiry date read as an amount is both a wrong price and a
+   wrong reason to distrust the page. */
+const NOT_PRICE_WORD = /^(valid|until|expire[sd]?|expiry|date|datetime|time|timestamp|updated|created|start|ends?|version|count|quantity|qty|stock|rating|score|reviews?|weight|length|width|height|percent|percentage|rate|ratio|index|position|type|label|text|display|format)$/;
+
+/* a date is not an amount, whatever the key is called */
+const DATEISH = /^\d{4}-\d{2}(-\d{2})?([T ]|$)|^\d{2}\/\d{2}\/\d{4}/;
 const PRICE_KEY = /^(price|baseprice|base|current|currentprice|sale|saleprice|selling|sellingprice|promo|promoprice|amount|value|unitprice|min|max)$/i;
 
 function isIdKey(key) {
@@ -676,13 +719,15 @@ function isIdKey(key) {
 }
 
 function isPriceKey(key) {
+  const words = keyWords(key);
+  if (words.some((word) => NOT_PRICE_WORD.test(word))) return false;
   if (PRICE_KEY.test(key)) return true;
-  return keyWords(key).some((word) => PRICE_WORD.test(word));
+  return words.some((word) => PRICE_WORD.test(word));
 }
 const LIST_KEY = /(list|was|original|orig|msrp|compare|strike|regular|standard|previous|before|max)/i;
 const ELSEWHERE_KEY = /(recommend|related|carousel|also|similar|crosssell|cross_sell|upsell|up_sell|viewed|bundle|outfit|complete|youmay|coordinate)/i;
 const CURRENCY_KEY = /currenc/i;
-const VARIANT_KEY = /(variant|colou?r|communication|sku|size|choice)/i;
+const VARIANT_KEY = /(variant|colou?r|communication|sku|size|choice|l1|l2)/i;
 
 /* every object in a structure, with the path that reached it. Bounded,
    because a hydration blob can be enormous and a diagnostic that hangs
@@ -758,20 +803,34 @@ function pricesUnder(node, inherited) {
   const step = (value, path, depth, currency) => {
     if (!value || typeof value !== 'object' || depth > 3) return;
     const here = currencyNear(value) || currency;
+    const label = (key) => (Array.isArray(value) ? `[${key}]` : key);
     for (const key of Object.keys(value)) {
       if (ELSEWHERE_KEY.test(key)) continue;
       const child = value[key];
-      if (child && typeof child === 'object') { step(child, path.concat(key), depth + 1, here); continue; }
+      if (child && typeof child === 'object') { step(child, path.concat(label(key)), depth + 1, here); continue; }
       if (!isPriceKey(key)) continue;
+      if (typeof child === 'string' && DATEISH.test(child.trim())) continue;
       const amount = toAmount(child);
       if (amount === null) continue;
-      const at = path.concat(key);
+      const at = path.concat(label(key));
+      /* what the object holding the amount says ABOUT the amount: an
+         offer that expired last spring, or one marked out of stock, is
+         still a number in a record naming the product */
+      const context = {};
+      for (const sibling of Object.keys(value)) {
+        const raw = value[sibling];
+        if (typeof raw !== 'string' && typeof raw !== 'number') continue;
+        if (/valid|until|expire/i.test(sibling)) context.validUntil = String(raw).slice(0, 40);
+        else if (/availab|stock/i.test(sibling)) context.availability = String(raw).slice(0, 60);
+      }
+
       out.push({
         path: at,
         field: at.join('.'),
         amount,
         currency: here || null,
-        kind: at.some((segment) => LIST_KEY.test(segment)) ? 'list' : 'price'
+        kind: at.some((segment) => LIST_KEY.test(segment)) ? 'list' : 'price',
+        context
       });
     }
   };
@@ -785,17 +844,38 @@ function pricesUnder(node, inherited) {
    seen and set aside, never offered as a candidate. */
 function productRecords(value, ids, source) {
   const hits = [];
+  const already = new Set();
   if (!ids || !ids.length) return hits;
 
   walkData(value, (node, path) => {
     if (Array.isArray(node)) return;
-    const named = namesListing(node, ids);
+
+    /* A record is identified by its fields — or by the key it is filed
+       under. UNIQLO's l2s response keeps prices in a map whose keys ARE
+       the variant ids: result.prices["438783-COL09-004"].base.value.
+       The key is the identity there, and reading only fields would miss
+       every price the endpoint publishes. */
+    let named = namesListing(node, ids);
+    if (!named && path.length) {
+      const key = String(path[path.length - 1]);
+      for (const id of ids) {
+        if (namesCode(key, id)) { named = { key: '(map key)', value: key, id }; break; }
+      }
+    }
     if (!named) return;
     const elsewhere = path.find((segment) => ELSEWHERE_KEY.test(segment)) || null;
 
     for (const price of pricesUnder(node)) {
+      /* a group record and the variant inside it reach the same field;
+         it is one amount in one place, so it is reported once */
+      const at = [...path, ...price.path].join('.');
+      const once = `${at}|${price.amount}`;
+      if (already.has(once)) continue;
+      already.add(once);
+
       hits.push({
         source: source || 'data',
+        authority: sourceAuthority(source),
         recordPath: path.join('.') || '(root)',
         path: [...path, ...price.path].join('.'),
         code: named.value,
@@ -804,12 +884,41 @@ function productRecords(value, ids, source) {
         amount: price.amount,
         currency: price.currency,
         kind: price.kind,
+        context: price.context || {},
         variants: variantsIn(node).map((v) => v.value).slice(0, 6),
         elsewhere
       });
     }
   });
   return hits;
+}
+
+/* ---------- how much a payload's word is worth ----------
+
+   Not every record is the page's own answer about what it charges.
+
+     commerce-api   JSON the page fetched to build itself — the request
+                    a shopper's browser makes to find out the price
+     app-state      the payload the page hydrated from: __NEXT_DATA__,
+                    a blob on window. The page renders from this.
+     markup         schema.org in a <script type="application/ld+json">.
+                    It is there for crawlers. Nothing on the page reads
+                    it, nothing breaks when it goes stale, and a
+                    ProductGroup whose hasVariant[].offers.price says
+                    7.90 on a page that charges something else is the
+                    ordinary condition of SEO metadata rather than a bug
+                    in the reader.
+
+   The tier is not a preference between amounts. It decides which
+   sources may ANSWER and which may only agree: see decide(). */
+function sourceAuthority(source) {
+  const text = String(source || '');
+  if (/^network /i.test(text)) {
+    return /\/api\/|graphql|\/commerce\/|price|l2s|sku|inventory|product/i.test(text) ? 'commerce-api' : 'app-state';
+  }
+  if (/^window\./i.test(text)) return 'app-state';
+  if (/ld\+json/i.test(text)) return 'markup';
+  return 'app-state';
 }
 
 /* JSON as a page actually ships it: a bare document, or an assignment
@@ -899,6 +1008,64 @@ function variantPriceRecords(payloads, ids) {
     }
   }
   return { variants: [...wanted], owners, priced };
+}
+
+/* The other identifiers a page gives this same product. UNIQLO's page
+   calls the sweater 438783 and 429066 both — a legacy code in the URL
+   and a current one in the data — and knowing that is what lets an API
+   response be searched for the identity the API actually uses. */
+function relatedIdentifiers(payloads, ids) {
+  const found = new Map();
+  for (const payload of payloads) {
+    walkData(payload.value, (node, path) => {
+      if (Array.isArray(node)) return;
+      if (!namesListing(node, ids)) return;
+      if (path.some((segment) => ELSEWHERE_KEY.test(segment))) return;
+      for (const key of Object.keys(node)) {
+        if (!isIdKey(key)) continue;
+        const raw = node[key];
+        for (const value of Array.isArray(raw) ? raw : [raw]) {
+          if (typeof value !== 'string' && typeof value !== 'number') continue;
+          const text = String(value).trim();
+          if (!text || text.length > 64 || !/\d/.test(text)) continue;
+          if (ids.some((id) => namesCode(text, id))) continue;
+          if (!found.has(text)) found.set(text, []);
+          const where = found.get(text);
+          if (where.length < 3) where.push({ source: payload.source, path: path.join('.') || '(root)', key });
+        }
+      }
+    });
+  }
+  return [...found.entries()].map(([code, where]) => ({ code, where }));
+}
+
+/* Why a markup offer should or should not be believed, in the terms the
+   markup itself provides. */
+function markupAudit(hits, corroborated, now) {
+  const when = Number.isFinite(now) ? now : Date.now();
+  return hits.filter((hit) => hit.authority === 'markup').map((hit) => {
+    const notes = [];
+    const context = hit.context || {};
+
+    if (context.validUntil) {
+      const until = Date.parse(context.validUntil);
+      notes.push(Number.isFinite(until) && until < when
+        ? `priceValidUntil ${context.validUntil} is in the past — this offer has expired`
+        : `priceValidUntil ${context.validUntil}`);
+    }
+    if (context.availability && /outofstock|discontinued|soldout|backorder/i.test(context.availability)) {
+      notes.push(`availability says ${context.availability}`);
+    }
+    if (!hit.currency) notes.push('no currency is named beside the amount');
+    if (/hasvariant/i.test(hit.path)) {
+      notes.push('the amount sits on a variant inside the group, not on the group record itself');
+    }
+    notes.push(corroborated.has(hit.amount)
+      ? 'corroborated: something the page prices from carries the same amount'
+      : 'NOT corroborated: nothing the page prices from carries this amount');
+
+    return { amount: hit.amount, currency: hit.currency, source: hit.source, path: hit.path, notes };
+  });
 }
 
 function dataCandidates(data, pageUrl) {
@@ -1838,10 +2005,24 @@ async function inspectData(url) {
   }
 
   const mapped = variantPriceRecords(payloads, ids);
+  const related = relatedIdentifiers(payloads, ids);
 
   /* and what the parser would make of all of it, through the same gates
      as everything else — no separate path, no relaxed rule */
   const candidates = dataCandidates(data, url);
+
+  /* what a markup offer is worth here, judged against what the page
+     actually prices from */
+  const domCandidates = renderedCandidates(rendered.seen, url).candidates
+    .filter((candidate) => candidate.dom)
+    .filter((candidate) => priceIdentity(candidate, url).ok && chargedEvidence(candidate).ok);
+  const corroborated = new Set([
+    ...hits.filter((hit) => hit.authority !== 'markup').map((hit) => hit.amount),
+    /* a figure the page draws corroborates only if it cleared its own
+       gates — the refused $7.90 confirms nothing, least of all itself */
+    ...domCandidates.map((candidate) => candidate.amount)
+  ]);
+  const audit = markupAudit(hits, corroborated, Date.now());
   const judged = candidates.map((candidate) => ({
     amount: candidate.amount,
     currency: candidate.currency,
@@ -1859,6 +2040,8 @@ async function inspectData(url) {
     mentions,
     hits,
     setAside,
+    related,
+    audit,
     variants: mapped,
     candidates: judged,
     verdict: decide(candidates, url),
@@ -1895,6 +2078,15 @@ function printDataInspection(report) {
     console.log(`     ${short(mention.where, 110)}  ${size(mention.bytes)}  ${mention.parsed ? 'parsed' : 'NOT PARSEABLE as JSON'}`);
   }
 
+  if (report.related.length) {
+    console.log(`\n  other identifiers this page gives the same product (${report.related.length}):`);
+    for (const other of report.related.slice(0, 8)) {
+      console.log(`     ${other.code}  (${other.where[0].key} in ${short(other.where[0].source, 60)} at ${short(other.where[0].path, 50)})`);
+    }
+    console.log('     -> the listing URL\'s code is not the only identity this product has;');
+    console.log('        an API response may key its price by one of these instead.');
+  }
+
   console.log(`\n  records holding the code AND an amount (${report.hits.length}):`);
   if (!report.hits.length) console.log('     none — no payload carries this listing\'s code and a price in one record');
   for (const hit of report.hits.slice(0, 12)) {
@@ -1910,6 +2102,17 @@ function printDataInspection(report) {
     for (const hit of report.setAside.slice(0, 6)) {
       console.log(`     $${hit.amount} under "${hit.elsewhere}" — ${short(hit.recordPath, 90)}`);
     }
+  }
+
+  if (report.audit.length) {
+    console.log(`\n  what the page's schema.org markup offers (${report.audit.length}):`);
+    for (const entry of report.audit.slice(0, 8)) {
+      console.log(`     $${entry.amount}${entry.currency ? ' ' + entry.currency : ''} at ${short(entry.path, 90)}`);
+      for (const note of entry.notes) console.log(`       ${note}`);
+    }
+    console.log('     -> markup may CONFIRM an amount the page prices from. On its own it');
+    console.log('        answers nothing: it is written for crawlers, and nothing on the');
+    console.log('        page breaks when it goes stale.');
   }
 
   console.log(`\n  variant mapping:`);
@@ -1950,6 +2153,227 @@ function printDataInspection(report) {
   }
 }
 
+/* ---------- one endpoint, read the way the page reads it ----------
+
+   --inspect-api. The page inspection says which requests a product page
+   makes; this one opens a single response and asks the question those
+   requests exist to answer: is there a record here carrying a product
+   or variant identity AND the amount a shopper is charged.
+
+   It is fetched from inside the page rather than from Node, so the
+   request carries the session, the cookies and the origin the retailer
+   expects — an API that answers a browser and refuses a bare client is
+   read the way the browser reads it. */
+function allAmounts(value) {
+  const out = [];
+  walkData(value, (node, path) => {
+    if (Array.isArray(node) || out.length >= 60) return;
+    const inherited = currencyNear(node);
+    for (const key of Object.keys(node)) {
+      const child = node[key];
+      if (child && typeof child === 'object') continue;
+      if (!isPriceKey(key)) continue;
+      if (typeof child === 'string' && DATEISH.test(child.trim())) continue;
+      const amount = toAmount(child);
+      if (amount === null || out.length >= 60) continue;
+      const at = path.concat(key);
+      out.push({
+        path: at.join('.'),
+        amount,
+        currency: inherited,
+        kind: at.some((segment) => LIST_KEY.test(segment)) ? 'list' : 'price'
+      });
+    }
+  });
+  return out;
+}
+
+function colourFields(value) {
+  const out = [];
+  walkData(value, (node, path) => {
+    if (Array.isArray(node) || out.length >= 30) return;
+    for (const key of Object.keys(node)) {
+      const child = node[key];
+      if (typeof child !== 'string' && typeof child !== 'number') continue;
+      if (!/(colou?r|display|selected|representative|main)/i.test(key)) continue;
+      const text = String(child).trim();
+      if (!text || text.length > 64) continue;
+      out.push({ path: path.concat(key).join('.'), key, value: text });
+      if (out.length >= 30) return;
+    }
+  });
+  return out;
+}
+
+async function inspectEndpoint(endpoint, options) {
+  const settings = options || {};
+  const chromium = loadPlaywright();
+  if (!chromium) return { endpoint, failed: 'Playwright is not installed here, so the endpoint cannot be read the way the page reads it' };
+
+  const launch = { args: ['--disable-blink-features=AutomationControlled'] };
+  if (process.env.CHROME_PATH) launch.executablePath = process.env.CHROME_PATH;
+
+  let browser;
+  try {
+    browser = await chromium.launch(launch);
+  } catch (err) {
+    return { endpoint, failed: `Chromium would not start (${err && err.message ? err.message.split('\n')[0] : 'unknown'})` };
+  }
+
+  let fetched;
+  const opened = settings.forUrl || (() => { try { return new URL(endpoint).origin; } catch (err) { return null; } })();
+  try {
+    const context = await browser.newContext({ userAgent: BROWSER['User-Agent'], locale: 'en-US', viewport: { width: 1400, height: 1000 } });
+    const page = await context.newPage();
+    if (opened) {
+      await page.goto(opened, { waitUntil: 'domcontentloaded', timeout: BROWSER_TIMEOUT }).catch(() => {});
+      await dismissConsent(page).catch(() => null);
+    }
+    fetched = await page.evaluate(async (target) => {
+      try {
+        const response = await fetch(target, { credentials: 'include', headers: { accept: 'application/json' } });
+        const text = await response.text();
+        return { status: response.status, type: response.headers.get('content-type') || '', text: text.slice(0, 2000000), bytes: text.length };
+      } catch (err) {
+        return { error: String((err && err.message) || err) };
+      }
+    }, endpoint);
+    await browser.close();
+  } catch (err) {
+    await browser.close().catch(() => {});
+    return { endpoint, failed: `the browser path failed (${err && err.message ? String(err.message).split('\n')[0] : 'unknown'})` };
+  }
+
+  if (!fetched || fetched.error) return { endpoint, openedFrom: opened, failed: fetched ? fetched.error : 'no response' };
+
+  const codes = [...new Set([
+    ...(settings.codes || []),
+    ...identifiersFrom(settings.forUrl || ''),
+    ...identifiersFrom(endpoint)
+  ].filter(Boolean))];
+
+  const value = parseLoosely(fetched.text);
+  if (!value) {
+    return { endpoint, openedFrom: opened, status: fetched.status, type: fetched.type, bytes: fetched.bytes, codes, failed: 'the response did not parse as JSON' };
+  }
+
+  const source = `network ${endpoint}`;
+  const payloads = [{ source, value }];
+  const hits = productRecords(value, codes, source);
+  const forUrl = settings.forUrl || endpoint;
+  const candidates = dataCandidates({ responses: [{ url: endpoint, text: fetched.text, mentions: codes }] }, forUrl);
+
+  /* "Does this endpoint price the product" is a question about each
+     identity the product answers to, and it has to count the amounts
+     kept under a variant code as well as the ones on the record itself
+     — UNIQLO's endpoint keeps every price in a map keyed by variant. So
+     this is built from the candidates the parser would build, not from
+     the direct hits alone. */
+  const byCode = {};
+  for (const candidate of candidates) {
+    const identity = priceIdentity(candidate, forUrl);
+    const charged = chargedEvidence(candidate);
+    const key = identity.code || candidate.record.code;
+    byCode[key] = byCode[key] || { code: key, priced: [], refused: [] };
+    const entry = {
+      amount: candidate.amount,
+      currency: candidate.currency,
+      field: candidate.record.field,
+      at: candidate.record.path,
+      variant: identity.variant || null,
+      via: identity.via || null,
+      why: identity.ok ? charged.why : identity.why
+    };
+    (identity.ok && charged.ok ? byCode[key].priced : byCode[key].refused).push(entry);
+  }
+
+  return {
+    endpoint,
+    openedFrom: opened,
+    status: fetched.status,
+    type: fetched.type,
+    bytes: fetched.bytes,
+    codes,
+    hits,
+    byCode: Object.values(byCode),
+    related: relatedIdentifiers(payloads, codes),
+    variants: variantPriceRecords(payloads, codes),
+    colours: colourFields(value),
+    amounts: allAmounts(value),
+    verdict: decide(candidates, forUrl)
+  };
+}
+
+function printEndpointInspection(report) {
+  console.log(`\n  ${short(report.endpoint, 140)}`);
+  if (report.openedFrom) console.log(`  fetched from  ${short(report.openedFrom, 120)}`);
+  if (report.failed) {
+    console.log(`  could not be read: ${report.failed}\n`);
+    return;
+  }
+
+  console.log(`  answered      ${report.status} ${report.type.split(';')[0]}, ${size(report.bytes)}`);
+  console.log(`  looking for   ${report.codes.slice(0, 8).join(', ')}`);
+
+  console.log(`\n  records carrying one of those codes AND an amount (${report.hits.length}):`);
+  if (!report.hits.length) {
+    console.log(report.variants.priced.length
+      ? '     none directly — this endpoint keeps its amounts under variant codes, below'
+      : '     none');
+  }
+  for (const hit of report.hits.slice(0, 15)) {
+    console.log(`     $${hit.amount}${hit.currency ? ' ' + hit.currency : ' (no currency named)'}${hit.kind === 'list' ? '  [list field]' : ''}${hit.elsewhere ? `  [under "${hit.elsewhere}"]` : ''}`);
+    console.log(`       record ${short(hit.recordPath, 100)}  (${hit.codeKey}: ${hit.code})`);
+    console.log(`       field  ${short(hit.field, 100)}`);
+    if (hit.context && hit.context.availability) console.log(`       stock  ${hit.context.availability}`);
+  }
+
+  if (report.related.length) {
+    console.log(`\n  other identities in the same records (${report.related.length}):`);
+    for (const other of report.related.slice(0, 10)) console.log(`     ${other.code}  (${other.where[0].key})`);
+  }
+
+  if (report.colours.length) {
+    console.log(`\n  colour and display fields (${report.colours.length}):`);
+    for (const colour of report.colours.slice(0, 10)) console.log(`     ${short(colour.path, 80)} = ${colour.value}`);
+  }
+
+  if (report.variants.priced.length) {
+    console.log(`\n  prices kept under a variant code (${report.variants.priced.length}):`);
+    for (const hit of report.variants.priced.slice(0, 10)) {
+      console.log(`     $${hit.amount}${hit.currency ? ' ' + hit.currency : ''} for ${hit.code} at ${short(hit.field, 70)}`);
+    }
+  }
+
+  console.log(`\n  every amount-looking field in the response (${report.amounts.length}${report.amounts.length === 60 ? '+' : ''}):`);
+  for (const amount of report.amounts.slice(0, 20)) {
+    console.log(`     ${short(amount.path, 90)} = ${amount.amount}${amount.currency ? ' ' + amount.currency : ''}${amount.kind === 'list' ? ' [list]' : ''}`);
+  }
+
+  console.log('\n  does this endpoint carry a selling price for the product?');
+  if (!report.byCode.length) {
+    console.log('     NO — no record here carries one of those codes together with an amount.');
+  }
+  for (const entry of report.byCode) {
+    const distinct = [...new Set(entry.priced.map((hit) => hit.amount))];
+    if (!distinct.length) {
+      console.log(`     ${entry.code}: no charged amount — ${entry.refused.length} record${entry.refused.length === 1 ? '' : 's'} refused`);
+      for (const refused of entry.refused.slice(0, 3)) console.log(`       $${refused.amount} at ${short(refused.at, 70)} — ${refused.why}`);
+    } else if (distinct.length === 1) {
+      const first = entry.priced[0];
+      console.log(`     ${entry.code}: $${distinct[0]}${first.currency ? ' ' + first.currency : ''} — ${short(first.at, 80)}`);
+      if (first.variant) console.log(`       kept under variant ${first.variant}, tied by ${first.via}`);
+    } else {
+      console.log(`     ${entry.code}: ${distinct.length} different amounts (${distinct.map((n) => '$' + n).join(', ')}) — nothing here says which is charged`);
+    }
+  }
+
+  const verdict = report.verdict;
+  console.log(verdict.price
+    ? `\n  THIS ENDPOINT ALONE WOULD WRITE $${verdict.price} — ${verdict.why}\n`
+    : `\n  THIS ENDPOINT ALONE WOULD FAIL CLOSED — ${verdict.why || 'no record cleared every gate'}\n`);
+}
+
 /* ---------- report ---------- */
 const say = (...line) => { if (!asJson) console.log(...line); };
 
@@ -1974,6 +2398,18 @@ async function main() {
   /* --inspect <url> : one page's rendered figures, and what each gate
      says about them. Reads nothing from the catalogue and writes
      nothing to it. */
+  /* --inspect-api <endpoint> [--for <productUrl>] [--codes a,b,c] */
+  const endpoint = flag('--inspect-api');
+  if (endpoint) {
+    const report = await inspectEndpoint(endpoint, {
+      forUrl: flag('--for'),
+      codes: (flag('--codes') || '').split(',').map((code) => code.trim()).filter(Boolean)
+    });
+    if (asJson) console.log(JSON.stringify(report, null, 2));
+    else printEndpointInspection(report);
+    return;
+  }
+
   const inspectingData = flag('--inspect-data');
   if (inspectingData) {
     const report = await inspectData(inspectingData);
@@ -2127,6 +2563,8 @@ if (require.main === module) {
     metaCandidates, pricesFromHtml, namesCode, priceIdentity, chargedEvidence,
     decide, gatherPricesInPage, renderedCandidates, renderPage, resolveRow,
     inspectUrl, inspectData, selectedAmong, elsewhereIn, isIdKey, isPriceKey, keyWords,
+    sourceAuthority, relatedIdentifiers, markupAudit,
+    inspectEndpoint, allAmounts, colourFields,
     productRecords, dataPayloads, dataCandidates, variantPriceRecords,
     parseLoosely, gatherDataInPage, walkData, namesListing, pricesUnder,
     writePrice, priceEvidenceNote, setPriceEvidence, catalogRowPrice, readCatalog

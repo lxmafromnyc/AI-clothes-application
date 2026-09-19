@@ -1795,6 +1795,31 @@ after one the page does not touch the video again.
   'data-variant-mapping'` — judged by the same `decide()` as every DOM figure,
   so a record that disagrees with the rendered page still fails closed.
 
+  **Carrying the product's id is what lets a record be considered, not what
+  makes it true.** Payload sources are tiered by what they are: a `commerce-api`
+  response the page fetched to price itself, `app-state` it hydrated from, and
+  `markup` — schema.org in a `<script type="application/ld+json">`, written for
+  crawlers, which nothing on the page reads and nothing breaks when it goes
+  stale. Markup may *confirm* an amount that a source the page prices from also
+  carries; on its own it answers nothing. UNIQLO's `@graph` ProductGroup names
+  `E429066-000` and offers `7.90` on a page that charges something else, and
+  that record is perfectly well-formed — which is exactly why the id being in
+  it cannot be the test. Two authoritative sources that disagree still fail
+  closed.
+
+  `--inspect-api <endpoint> --for <productUrl> [--codes a,b,c]` reads one API
+  response the way the page reads it: fetched from inside the opened page, so
+  it carries the session, cookies and origin the retailer expects. It reports
+  every record carrying one of the listing's codes together with an amount, the
+  other identities those records name (a legacy id in the URL is often not the
+  id the API keys by), the colour and display fields, every amount-looking field
+  with its path, and whether the endpoint carries a selling price for each
+  identity — counting amounts kept in a map keyed by variant id, which is where
+  a commerce API usually puts them. `--inspect-data` additionally audits each
+  markup offer: an expired `priceValidUntil`, an out-of-stock `availability`, an
+  amount on a variant rather than the group, and whether anything the page
+  prices from corroborates it.
+
   `--inspect` also searches the rendered DOM for the listing's own code and
   reports every element carrying it, with the figures inside each — because when no
   price can be tied to the product, the next question is always whether the

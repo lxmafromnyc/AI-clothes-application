@@ -85,6 +85,8 @@ const catalogSource = fs.readFileSync(path.join(__dirname, '..', 'assets', 'cata
 const amounts = (list) => list.map((c) => c.amount);
 const gates = (refusals) => refusals.map((r) => r.gate);
 const because = (refusals, amount) => (refusals.find((r) => r.amount === amount) || {}).why || '';
+const becauseGate = (refusals, amount, gate) =>
+  (refusals.find((r) => r.amount === amount && r.gate === gate) || {}).why || '';
 
 /* a rendered figure in the shape gatherPricesInPage reports one, so a
    fixture says only what it means to say and inherits the rest */
@@ -795,6 +797,175 @@ test('a payload is parsed however the page shipped it', () => {
 });
 
 /* ---------------------------------------------------------
+   The live UNIQLO case: markup that says $7.90 on a page that
+   charges something else
+   --------------------------------------------------------- */
+
+console.log('\nWhat a payload is worth, and what it is not\n');
+
+/* the shape the live inspection found: a ProductGroup in the page's
+   @graph naming E429066-000, with the amount on a variant's offer */
+const UNIQLO_GRAPH = {
+  '@context': 'https://schema.org',
+  '@graph': [
+    { '@type': 'BreadcrumbList', itemListElement: [] },
+    { '@type': 'WebPage', url: UNIQLO },
+    {
+      '@type': 'ProductGroup',
+      productGroupID: 'E429066-000',
+      name: 'Extra Fine Merino Crew Neck Long-Sleeve Sweater',
+      hasVariant: [{
+        '@type': 'Product',
+        sku: 'E429066-000-COL09-004',
+        offers: { '@type': 'Offer', price: 7.9, priceCurrency: 'USD', priceValidUntil: '2024-03-31', availability: 'https://schema.org/InStock' }
+      }]
+    }
+  ]
+};
+
+/* and the endpoint the live page actually asks for its price, in the
+   shape UNIQLO answers with: the variants in one array, the amounts in
+   a map keyed by the variant id */
+const L2S_URL = 'https://www.uniqlo.com/us/api/commerce/v5/en/products/E429066-000/price-groups/00/l2s?withPrices=true';
+const L2S = { status: 'ok', result: {
+  l2s: [{ l2Id: '438783-COL09-004', productId: 'E429066-000', communicationCode: 'COL09', color: { code: '09', displayCode: '09 GRAY' }, size: { code: '004' } }],
+  prices: { '438783-COL09-004': { base: { value: 49.9, currency: 'USD' }, promo: null } }
+} };
+
+const markupOnly = () => ({
+  scripts: [{ id: null, type: 'application/ld+json', mentions: ['e429066'], text: JSON.stringify(UNIQLO_GRAPH) }]
+});
+
+test('schema.org markup alone does NOT write a price', () => {
+  /* the live failure this rule exists for: the record really does carry
+     E429066-000 and 7.9 together, and it is still not what the page
+     charges */
+  const seen = seenOf(UNIQLO, [figure({ text: '$7.90', own: 'fr-ec-price-text', near: 'fr-ec-price', codes: [] })]);
+  seen.data = markupOnly();
+
+  const verdict = prices.decide(prices.renderedCandidates(seen, UNIQLO).candidates, UNIQLO);
+  assert.strictEqual(verdict.price, undefined, '$7.90 must not be written');
+  assert.ok(verdict.refusals.some((r) => r.gate === 'corroboration'), 'and the reason is its lack of corroboration');
+  assert.match(becauseGate(verdict.refusals, 7.9, 'corroboration'), /only the page's schema.org markup says so/);
+  assert.match(becauseGate(verdict.refusals, 7.9, 'corroboration'), /nothing the page prices from/);
+  assert.match(becauseGate(verdict.refusals, 7.9, 'this'), /nothing in its own DOM ties it/,
+    'the rendered figure is refused on its own terms, as it was before');
+});
+
+test('containing the product id is what lets a record be considered, not what makes it true', () => {
+  const hits = prices.productRecords(UNIQLO_GRAPH, ['e429066', '429066'], 'script [application/ld+json]');
+  assert.ok(hits.length, 'the record is found — the analyzer is not what refuses it');
+  assert.ok(hits.every((hit) => hit.authority === 'markup'));
+  assert.strictEqual(hits[0].code, 'E429066-000');
+});
+
+test('the commerce API answers, and the markup then only agrees or steps aside', () => {
+  const seen = seenOf(UNIQLO, [figure({ text: '$7.90', own: 'fr-ec-price-text', codes: [] })]);
+  seen.data = Object.assign(markupOnly(), {
+    responses: [{ url: L2S_URL, text: JSON.stringify(L2S), mentions: ['e429066'] }]
+  });
+
+  const verdict = prices.decide(prices.renderedCandidates(seen, UNIQLO).candidates, UNIQLO);
+  assert.strictEqual(verdict.price, 49.9, "the endpoint the page prices from is what answers");
+  assert.strictEqual(verdict.identity.via, 'data-variant-mapping');
+  assert.strictEqual(verdict.identity.code, 'E429066-000');
+  assert.strictEqual(verdict.identity.variant, '438783-COL09-004');
+  assert.match(becauseGate(verdict.refusals, 7.9, 'corroboration'), /only the page's schema.org markup says so/);
+});
+
+test('a date is not a price', () => {
+  /* priceValidUntil "2024-03-31" parses as 2024 to anything that reads
+     a price-shaped key without looking at the value */
+  const offer = { product: { productId: 'E429066-000', offers: { price: 7.9, priceCurrency: 'USD', priceValidUntil: '2024-03-31' } } };
+  const hits = prices.productRecords(offer, ['e429066'], 'script [application/ld+json]');
+  assert.deepStrictEqual(hits.map((h) => h.amount), [7.9], 'the expiry date is not among the amounts');
+  assert.strictEqual(prices.isPriceKey('priceValidUntil'), false);
+  assert.strictEqual(prices.isPriceKey('basePrice'), true);
+  assert.strictEqual(prices.isPriceKey('discountRate'), false, 'a rate is not an amount');
+});
+
+test('a price map keyed by the variant id is read through its key', () => {
+  /* result.prices["438783-COL09-004"].base.value — the key IS the
+     identity, and reading only fields would miss every amount UNIQLO's
+     endpoint publishes */
+  const hits = prices.productRecords(L2S, ['438783-COL09-004'], 'network ' + L2S_URL);
+  const mapped = hits.find((hit) => hit.codeKey === '(map key)');
+  assert.ok(mapped, 'the map key identifies the record');
+  assert.strictEqual(mapped.amount, 49.9);
+  assert.strictEqual(mapped.currency, 'USD');
+  assert.strictEqual(mapped.field, 'base.value');
+});
+
+test('markup that agrees with the endpoint is kept, not refused', () => {
+  const agreeing = JSON.parse(JSON.stringify(UNIQLO_GRAPH));
+  agreeing['@graph'][2].hasVariant[0].offers.price = 49.9;
+
+  const seen = seenOf(UNIQLO, []);
+  seen.data = {
+    scripts: [{ type: 'application/ld+json', mentions: ['e429066'], text: JSON.stringify(agreeing) }],
+    responses: [{ url: L2S_URL, text: JSON.stringify(L2S), mentions: ['e429066'] }]
+  };
+
+  const verdict = prices.decide(prices.renderedCandidates(seen, UNIQLO).candidates, UNIQLO);
+  assert.strictEqual(verdict.price, 49.9);
+  assert.ok(!verdict.refusals.some((r) => r.gate === 'corroboration'), 'agreement is not a refusal');
+});
+
+test('two authoritative sources that disagree fail closed', () => {
+  const seen = seenOf(UNIQLO, []);
+  seen.data = {
+    responses: [{ url: L2S_URL, text: JSON.stringify(L2S), mentions: ['e429066'] }],
+    state: [{ key: '__NEXT_DATA__', mentions: ['e429066'], text: JSON.stringify({
+      product: { productId: 'E429066-000', prices: { base: { value: 39.9, currency: 'USD' } } }
+    }) }]
+  };
+  const verdict = prices.decide(prices.renderedCandidates(seen, UNIQLO).candidates, UNIQLO);
+  assert.strictEqual(verdict.price, undefined);
+  assert.deepStrictEqual(verdict.ambiguous, [39.9, 49.9]);
+});
+
+test('sources are ranked by what they are, not by what they say', () => {
+  assert.strictEqual(prices.sourceAuthority('script [application/ld+json]'), 'markup');
+  assert.strictEqual(prices.sourceAuthority('script#__NEXT_DATA__ [application/json]'), 'app-state');
+  assert.strictEqual(prices.sourceAuthority('window.__UNIQLO_STATE__'), 'app-state');
+  assert.strictEqual(prices.sourceAuthority('network ' + L2S_URL), 'commerce-api');
+});
+
+test('the markup audit says why an offer should not be believed', () => {
+  const hits = prices.productRecords(UNIQLO_GRAPH, ['e429066'], 'script [application/ld+json]');
+  const audit = prices.markupAudit(hits, new Set(), Date.parse('2026-09-19'));
+  assert.strictEqual(audit.length, hits.length);
+
+  const notes = audit[0].notes.join(' | ');
+  assert.match(notes, /priceValidUntil 2024-03-31 is in the past/);
+  assert.match(notes, /variant inside the group/);
+  assert.match(notes, /NOT corroborated/);
+
+  const confirmed = prices.markupAudit(hits, new Set([7.9]), Date.parse('2026-09-19'));
+  assert.match(confirmed[0].notes.join(' | '), /corroborated: something the page prices from/);
+});
+
+test('the other identity the page gives the product is reported', () => {
+  const payloads = [{ source: 'window.__STATE__', value: {
+    product: { productId: 'E429066-000', l1Id: '429066', representativeProductId: '438783' }
+  } }];
+  const related = prices.relatedIdentifiers(payloads, ['e429066', '429066']);
+  assert.ok(related.some((entry) => entry.code === '438783'),
+    'the listing URL\'s code is not the only identity this product answers to');
+  assert.ok(!related.some((entry) => entry.code === '429066'), 'the listing\'s own code is not "other"');
+});
+
+test('the corroboration rule leaves the structured offer route alone', () => {
+  /* L.L.Bean is read through json-ld-offer on the product record, which
+     is a different route with its own sku gate — it carries no data
+     record, so the markup rule never touches it */
+  const verdict = prices.decide(prices.pricesFromHtml(llbeanServed).candidates, LLBEAN);
+  assert.strictEqual(verdict.price, 84.95);
+  assert.strictEqual(verdict.identity.via, 'json-ld-offer');
+  assert.ok(!verdict.refusals.some((r) => r.gate === 'corroboration'));
+});
+
+/* ---------------------------------------------------------
    What gets written, and what a written row has to keep proving
    --------------------------------------------------------- */
 
@@ -936,9 +1107,28 @@ function hydratingRetailer() {
     const here = `http://127.0.0.1:${port}${url}`;
 
     /* the commerce API the page fetches while it builds itself */
+    if (url.startsWith('/api/commerce')) {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify(L2S));
+    }
     if (url.startsWith('/api/')) {
       res.writeHead(200, { 'content-type': 'application/json' });
       return res.end(JSON.stringify(url.startsWith('/api/wrong') ? API_WRONG : API_PAYLOAD));
+    }
+
+    /* the live UNIQLO shape: schema.org markup offering 7.90 on a page
+       that prices itself from an endpoint, and one untied figure drawn
+       in the DOM */
+    if (url.startsWith('/stale') || url.startsWith('/l2s')) {
+      const asks = url.startsWith('/l2s');
+      res.writeHead(200, { 'content-type': 'text/html' });
+      return res.end(`<!doctype html><html><head>
+        <link rel="canonical" href="${here}">
+        <script type="application/ld+json">${JSON.stringify(UNIQLO_GRAPH)}</script>
+        <title>Markup says 7.90</title></head>
+        <body><div id="app"><div class="fr-ec-price"><span class="fr-ec-price-text">$7.90</span></div></div>
+        ${asks ? `<script>fetch('/api/commerce/v5/en/products/E429066-000/price-groups/00/l2s?withPrices=true').then(function (r) { return r.json(); }).then(function (j) { window.__L2S__ = j; });</script>` : ''}
+        </body></html>`);
     }
 
     /* the figure the page renders, and the block it renders it in */
@@ -1020,7 +1210,7 @@ function hydratingRetailer() {
   try { chromium = require('playwright').chromium; } catch (err) { chromium = null; }
 
   if (!chromium) {
-    skipped += 13;
+    skipped += 16;
     console.log('  skip  the browser section — Playwright is not installed here');
     console.log('        npm install, then re-run, to exercise the hydration path');
   } else {
@@ -1159,6 +1349,62 @@ function hydratingRetailer() {
       assert.match(site.attrs, /data-product-id="E429066-000"/);
       assert.deepStrictEqual(site.money, ['$49.90'], 'and the figure inside it is reported with it');
       assert.strictEqual(report.verdict.price, 49.9);
+    });
+
+    await testAsync('the live shape: markup offers 7.90 and the run fails closed', async () => {
+      const report = await prices.inspectData(listing('/stale/products/E429066-000/00'));
+
+      const markup = report.hits.find((hit) => hit.amount === 7.9);
+      assert.ok(markup, 'the markup record is found');
+      assert.strictEqual(markup.authority, 'markup');
+
+      const audited = report.audit.find((entry) => entry.amount === 7.9);
+      assert.ok(audited, 'and audited');
+      assert.match(audited.notes.join(' | '), /NOT corroborated/);
+      assert.match(audited.notes.join(' | '), /priceValidUntil 2024-03-31 is in the past/);
+
+      assert.strictEqual(report.verdict.price, undefined, '$7.90 is not written');
+      assert.ok(report.verdict.refusals.some((r) => r.gate === 'corroboration'));
+    });
+
+    await testAsync('the live shape: the endpoint the page asks answers instead', async () => {
+      const url = listing('/l2s/products/E429066-000/00');
+      const rendered = await prices.renderPage(url, undefined, { data: true });
+      assert.ok(!rendered.failed, rendered.failed);
+
+      const verdict = prices.decide(prices.renderedCandidates(rendered.seen, url).candidates, url);
+      assert.strictEqual(verdict.price, 49.9);
+      assert.strictEqual(verdict.identity.via, 'data-variant-mapping');
+      assert.strictEqual(verdict.identity.variant, '438783-COL09-004');
+      assert.match(becauseGate(verdict.refusals, 7.9, 'corroboration'), /schema.org markup/);
+      assert.match(becauseGate(verdict.refusals, 7.9, 'this'), /nothing in its own DOM ties it/);
+    });
+
+    await testAsync('--inspect-api reads one endpoint the way the page reads it', async () => {
+      const report = await prices.inspectEndpoint(
+        listing('/api/commerce/v5/en/products/E429066-000/price-groups/00/l2s?withPrices=true'),
+        { forUrl: listing('/l2s/products/E429066-000/00') }
+      );
+
+      assert.ok(!report.failed, report.failed);
+      assert.strictEqual(report.status, 200);
+      assert.ok(report.codes.includes('e429066'), 'it looks for the codes the listing answers to');
+
+      /* the amounts live in a map keyed by variant, so the endpoint
+         prices the product through that key rather than on the record */
+      const mapped = report.variants.priced.find((hit) => hit.amount === 49.9);
+      assert.ok(mapped, 'the endpoint carries the amount under the variant id');
+      assert.strictEqual(mapped.currency, 'USD');
+      assert.strictEqual(mapped.codeKey, '(map key)');
+
+      const answer = report.byCode.find((entry) => /E429066-000/i.test(entry.code));
+      assert.ok(answer, 'and the answer is reported against the listing, not the map key');
+      assert.deepStrictEqual(answer.priced.map((p) => p.amount), [49.9]);
+      assert.strictEqual(answer.priced[0].variant, '438783-COL09-004');
+
+      assert.ok(report.related.some((entry) => /438783/.test(entry.code)), 'the identity it keys by is reported');
+      assert.ok(report.colours.length, 'and the colour fields it carries');
+      assert.strictEqual(report.verdict.price, 49.9, 'this endpoint alone would answer');
     });
 
     await testAsync('--inspect-data finds the record the page was built from', async () => {
