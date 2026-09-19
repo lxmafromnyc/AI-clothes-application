@@ -64,6 +64,8 @@
      node scripts/fetch-catalog-prices.js --explain --json  the same, as a capture
      node scripts/fetch-catalog-prices.js --inspect <url>   one page's rendered
                                                             figures and their ancestry
+     node scripts/fetch-catalog-prices.js --inspect-data <url>  the scripts, state
+                                                            and JSON the page carries
    ========================================================= */
 
 'use strict';
@@ -358,6 +360,41 @@ function priceIdentity(candidate, productUrl) {
     };
   }
 
+  /* ---- a record out of the page's own data ---- */
+  if (candidate.record) {
+    const record = candidate.record;
+
+    if (record.mappedFrom) {
+      const owner = record.mappedFrom;
+      if (!matchingCode([owner.listing], ids)) {
+        return { ok: false, why: `the record pricing ${record.code} is tied to ${owner.listing}, which is not this listing` };
+      }
+      return {
+        ok: true,
+        via: 'data-variant-mapping',
+        code: owner.listing,
+        variant: record.code,
+        at: record.recordPath,
+        how: `${owner.source} names ${owner.listing} with ${owner.variantKey} ${record.code}, and ${record.source} prices ${record.code} at ${record.path}`
+      };
+    }
+
+    const named = matchingCode([record.code], ids);
+    if (!named) {
+      return { ok: false, why: `the data record names ${record.code}, which is not this listing (${ids.slice(0, 3).join(', ')})` };
+    }
+    if (record.elsewhere) {
+      return { ok: false, why: `it sits under "${record.elsewhere}", which holds other products` };
+    }
+    return {
+      ok: true,
+      via: 'data-product-record',
+      code: record.code,
+      at: record.recordPath,
+      how: `${record.source} carries ${record.code} and this amount as fields of one record (${record.path})`
+    };
+  }
+
   /* ---- a rendered figure, judged on its own ancestry ---- */
   const dom = candidate.dom;
   if (dom) {
@@ -442,6 +479,19 @@ const INSTALMENT = /(instal|installment|afterpay|klarna|affirm|sezzle|zip-?pay|m
 const NOT_THE_PRODUCT = /(shipping|delivery|threshold|free over|coupon|promo|voucher|gift card|subtotal|total|reward|points|tax|fee)/i;
 
 function chargedEvidence(candidate) {
+  /* a record states its price rather than displaying it, so what has to
+     be ruled out is a list field and an amount with no currency on it */
+  if (candidate.record) {
+    const record = candidate.record;
+    if (record.kind === 'list') {
+      return { ok: false, why: `${record.field} is a list or comparison field, not what the record says is charged` };
+    }
+    if (!record.currency) {
+      return { ok: false, why: `the record names no currency beside ${record.field}, so ${record.amount} could be any` };
+    }
+    return { ok: true, via: 'data-record-price', how: `${record.field} states it, in ${record.currency}` };
+  }
+
   const dom = candidate.dom;
 
   /* a structured offer says it by being an offer: schema.org's price IS
@@ -588,6 +638,309 @@ function decide(candidates, productUrl) {
     why: `${best.identity.how}, and ${best.charged.how}`,
     agreed: inPlay.length
   };
+}
+
+/* ---------- product records in a page's data ----------
+
+   A product page ships its facts twice: once as the DOM a shopper
+   reads, and once as the payload the page was built from — a
+   __NEXT_DATA__ script, a hydration blob on window, an XHR to a
+   commerce API. UNIQLO renders no figure that can be tied to E429066,
+   so if it publishes a price at all, that second copy is where it is.
+
+   The rule for reading it is the rule the DOM gates already use, and it
+   is the only thing keeping this honest: the amount and the listing's
+   own code have to be fields of the SAME product record. A document
+   that mentions 429066 somewhere and 49.90 somewhere else says nothing
+   — a catalogue response holds fifty products, and "both strings are in
+   this file" is how the wrong one gets written. */
+
+/* Keys arrive camelCased, snake_cased and dotted — productId, l1_id,
+   communicationCode, basePrice. Matching a substring would take
+   "candidate" for a code and "brandValue" for an amount, so a key is
+   split into its words first and the words are what get matched. */
+function keyWords(key) {
+  return String(key)
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .split(/[^A-Za-z0-9]+/)
+    .filter(Boolean)
+    .map((word) => word.toLowerCase());
+}
+
+const ID_WORD = /^(id|ids|code|codes|sku|skus|mpn|gtin|number|style|styles|l1|l2|communication|pid|product|item|key)$/;
+const PRICE_WORD = /^(price|prices|amount|amounts)$/;
+const PRICE_KEY = /^(price|baseprice|base|current|currentprice|sale|saleprice|selling|sellingprice|promo|promoprice|amount|value|unitprice|min|max)$/i;
+
+function isIdKey(key) {
+  return keyWords(key).some((word) => ID_WORD.test(word));
+}
+
+function isPriceKey(key) {
+  if (PRICE_KEY.test(key)) return true;
+  return keyWords(key).some((word) => PRICE_WORD.test(word));
+}
+const LIST_KEY = /(list|was|original|orig|msrp|compare|strike|regular|standard|previous|before|max)/i;
+const ELSEWHERE_KEY = /(recommend|related|carousel|also|similar|crosssell|cross_sell|upsell|up_sell|viewed|bundle|outfit|complete|youmay|coordinate)/i;
+const CURRENCY_KEY = /currenc/i;
+const VARIANT_KEY = /(variant|colou?r|communication|sku|size|choice)/i;
+
+/* every object in a structure, with the path that reached it. Bounded,
+   because a hydration blob can be enormous and a diagnostic that hangs
+   is not a diagnostic. */
+function walkData(value, visit) {
+  const seen = new Set();
+  const budget = { left: 40000 };
+  const step = (node, path) => {
+    if (!node || typeof node !== 'object' || budget.left <= 0 || seen.has(node)) return;
+    seen.add(node);
+    budget.left -= 1;
+    visit(node, path);
+    if (Array.isArray(node)) {
+      for (let at = 0; at < node.length; at += 1) step(node[at], path.concat(`[${at}]`));
+    } else {
+      for (const key of Object.keys(node)) step(node[key], path.concat(key));
+    }
+  };
+  step(value, []);
+  return budget.left <= 0;
+}
+
+/* the values in THIS object that look like identifiers, and whether one
+   of them is the listing's own code */
+function namesListing(node, ids) {
+  if (!node || typeof node !== 'object' || Array.isArray(node)) return null;
+  for (const key of Object.keys(node)) {
+    if (!isIdKey(key)) continue;
+    const raw = node[key];
+    const values = Array.isArray(raw) ? raw : [raw];
+    for (const value of values) {
+      if (typeof value !== 'string' && typeof value !== 'number') continue;
+      const text = String(value);
+      if (text.length > 64) continue;
+      for (const id of ids) {
+        if (namesCode(text, id)) return { key, value: text, id };
+      }
+    }
+  }
+  return null;
+}
+
+function currencyNear(node) {
+  if (!node || typeof node !== 'object') return null;
+  for (const key of Object.keys(node)) {
+    if (!CURRENCY_KEY.test(key)) continue;
+    const found = currencyIn(node[key]);
+    if (found) return found;
+  }
+  return null;
+}
+
+function variantsIn(node) {
+  const out = [];
+  if (!node || typeof node !== 'object' || Array.isArray(node)) return out;
+  for (const key of Object.keys(node)) {
+    if (!VARIANT_KEY.test(key)) continue;
+    const raw = node[key];
+    for (const value of Array.isArray(raw) ? raw : [raw]) {
+      if (typeof value !== 'string' && typeof value !== 'number') continue;
+      const text = String(value).trim();
+      if (text.length >= 3 && text.length <= 64 && /\d/.test(text)) out.push({ key, value: text });
+    }
+  }
+  return out;
+}
+
+/* the amounts inside ONE record, shallow, and never through a key that
+   holds other products — a "recommended" array under a product record
+   is a different product's price sitting in this one's subtree */
+function pricesUnder(node, inherited) {
+  const out = [];
+  const step = (value, path, depth, currency) => {
+    if (!value || typeof value !== 'object' || depth > 3) return;
+    const here = currencyNear(value) || currency;
+    for (const key of Object.keys(value)) {
+      if (ELSEWHERE_KEY.test(key)) continue;
+      const child = value[key];
+      if (child && typeof child === 'object') { step(child, path.concat(key), depth + 1, here); continue; }
+      if (!isPriceKey(key)) continue;
+      const amount = toAmount(child);
+      if (amount === null) continue;
+      const at = path.concat(key);
+      out.push({
+        path: at,
+        field: at.join('.'),
+        amount,
+        currency: here || null,
+        kind: at.some((segment) => LIST_KEY.test(segment)) ? 'list' : 'price'
+      });
+    }
+  };
+  step(node, [], 0, inherited || currencyNear(node));
+  return out;
+}
+
+/* Every place in one payload where this listing's code and an amount
+   are fields of the same record. `elsewhere` marks a hit that was found
+   under a recommendation key — kept so the diagnostic can show it was
+   seen and set aside, never offered as a candidate. */
+function productRecords(value, ids, source) {
+  const hits = [];
+  if (!ids || !ids.length) return hits;
+
+  walkData(value, (node, path) => {
+    if (Array.isArray(node)) return;
+    const named = namesListing(node, ids);
+    if (!named) return;
+    const elsewhere = path.find((segment) => ELSEWHERE_KEY.test(segment)) || null;
+
+    for (const price of pricesUnder(node)) {
+      hits.push({
+        source: source || 'data',
+        recordPath: path.join('.') || '(root)',
+        path: [...path, ...price.path].join('.'),
+        code: named.value,
+        codeKey: named.key,
+        field: price.field,
+        amount: price.amount,
+        currency: price.currency,
+        kind: price.kind,
+        variants: variantsIn(node).map((v) => v.value).slice(0, 6),
+        elsewhere
+      });
+    }
+  });
+  return hits;
+}
+
+/* JSON as a page actually ships it: a bare document, or an assignment
+   with something around it. Anything that will not parse is left alone
+   rather than guessed at. */
+function parseLoosely(text) {
+  const raw = String(text || '').trim();
+  if (!raw) return null;
+  try { return JSON.parse(raw); } catch (err) { /* not a bare document */ }
+
+  const assigned = raw.match(/=\s*(\{[\s\S]*\})\s*;?\s*$/);
+  if (assigned) {
+    try { return JSON.parse(assigned[1]); } catch (err) { /* not JSON either */ }
+  }
+  const first = raw.indexOf('{');
+  const last = raw.lastIndexOf('}');
+  if (first >= 0 && last > first) {
+    try { return JSON.parse(raw.slice(first, last + 1)); } catch (err) { /* nothing parseable */ }
+  }
+  return null;
+}
+
+/* the payloads a rendered page carried, each with a name that says
+   where it came from */
+function dataPayloads(data) {
+  const out = [];
+  if (!data) return out;
+  for (const script of data.scripts || []) {
+    const value = parseLoosely(script.text);
+    if (value) out.push({ source: `script${script.id ? '#' + script.id : ''}${script.type ? ` [${script.type}]` : ''}`, value });
+  }
+  for (const entry of data.state || []) {
+    const value = parseLoosely(entry.text);
+    if (value) out.push({ source: `window.${entry.key}`, value });
+  }
+  for (const response of data.responses || []) {
+    const value = parseLoosely(response.text);
+    if (value) out.push({ source: `network ${response.url}`, value });
+  }
+  return out;
+}
+
+/* ---------- the colour a price is actually kept under ----------
+
+   A retailer that prices by colour keeps the amount on the variant, not
+   on the product: the product record names E429066-000 and lists its
+   colour codes, and a second record prices one of those colours. Read
+   separately, neither one says what this listing costs. Read as the
+   chain they are — product names variant, variant carries price — they
+   do, and the chain is what gets recorded so a row can be re-proved.
+
+   The first link has to be a record naming THIS listing. A colour code
+   picked up anywhere else would tie a price to nothing. */
+function variantPriceRecords(payloads, ids) {
+  const owners = [];
+  const wanted = new Set();
+
+  for (const payload of payloads) {
+    walkData(payload.value, (node, path) => {
+      if (Array.isArray(node)) return;
+      const named = namesListing(node, ids);
+      if (!named) return;
+      if (path.some((segment) => ELSEWHERE_KEY.test(segment))) return;
+      for (const variant of variantsIn(node)) {
+        if (ids.some((id) => namesCode(variant.value, id))) continue; // that is the listing itself
+        wanted.add(variant.value);
+        owners.push({
+          source: payload.source,
+          path: path.join('.') || '(root)',
+          listing: named.value,
+          listingKey: named.key,
+          variant: variant.value,
+          variantKey: variant.key
+        });
+      }
+    });
+  }
+
+  const priced = [];
+  if (wanted.size) {
+    const codes = [...wanted];
+    for (const payload of payloads) {
+      for (const hit of productRecords(payload.value, codes, payload.source)) {
+        if (ids.some((id) => namesCode(hit.code, id))) continue; // already a direct hit
+        priced.push(hit);
+      }
+    }
+  }
+  return { variants: [...wanted], owners, priced };
+}
+
+function dataCandidates(data, pageUrl) {
+  const ids = identifiersFrom(pageUrl);
+  const payloads = dataPayloads(data);
+  const out = [];
+
+  for (const payload of payloads) {
+    for (const hit of productRecords(payload.value, ids, payload.source)) {
+      if (hit.elsewhere) continue; // seen, set aside, never a candidate
+      out.push({
+        amount: hit.amount,
+        currency: hit.currency,
+        text: `${hit.field} = ${hit.amount}`,
+        from: `data ${hit.source}`,
+        kind: 'data',
+        record: hit
+      });
+    }
+  }
+
+  const mapped = variantPriceRecords(payloads, ids);
+  const already = new Set(out.map((candidate) => `${candidate.record.source}|${candidate.record.path}`));
+  for (const hit of mapped.priced) {
+    if (hit.elsewhere) continue;
+    /* a record that names both the listing and its own colour code is
+       already a direct hit; reaching it again through the mapping would
+       report one amount as two findings */
+    if (already.has(`${hit.source}|${hit.path}`)) continue;
+    const owner = mapped.owners.find((entry) => entry.variant === hit.code);
+    if (!owner) continue;
+    out.push({
+      amount: hit.amount,
+      currency: hit.currency,
+      text: `${hit.field} = ${hit.amount}`,
+      from: `data ${hit.source} via variant ${hit.code}`,
+      kind: 'data',
+      record: Object.assign({}, hit, { mappedFrom: owner })
+    });
+  }
+
+  return out;
 }
 
 /* ---------- what the rendered page says about its prices ----------
@@ -820,6 +1173,69 @@ function gatherPricesInPage(wanted) {
   };
 }
 
+/* What the page carries BESIDES its DOM: the scripts it shipped, the
+   application state it left on window, and the resources it fetched.
+   Runs inside the page, like the price gatherer, and caps everything it
+   returns — a hydration blob can be megabytes, and a diagnostic that
+   cannot be printed is not much use. */
+function gatherDataInPage(wanted) {
+  const codes = (wanted || []).map((code) => String(code).toLowerCase());
+  const CAP = 400000;
+  const mentions = (text) => codes.filter((code) => text.toLowerCase().indexOf(code) >= 0);
+
+  const scripts = [];
+  for (const el of Array.from(document.querySelectorAll('script')).slice(0, 120)) {
+    const text = el.textContent || '';
+    if (!text && !el.getAttribute('src')) continue;
+    scripts.push({
+      id: el.id || null,
+      type: el.getAttribute('type') || null,
+      src: el.getAttribute('src') || null,
+      length: text.length,
+      mentions: mentions(text),
+      text: text.length <= CAP ? text : text.slice(0, CAP)
+    });
+  }
+
+  /* application state, where it can be read at all. Some of these are
+     getters that throw, some are the window itself, and some are large
+     enough to be worth refusing. */
+  const SKIP = ['window', 'self', 'top', 'parent', 'frames', 'document', 'location', 'navigator'];
+  const INTERESTING = /(^__|^_?initial|state|store|data|props|apollo|redux|nuxt|next|preload|context|product|commerce)/i;
+  const state = [];
+  for (const key of Object.getOwnPropertyNames(window)) {
+    if (SKIP.indexOf(key) >= 0 || !INTERESTING.test(key)) continue;
+    let value;
+    try { value = window[key]; } catch (err) { continue; }
+    if (!value || typeof value !== 'object') continue;
+
+    let text = null;
+    try {
+      const marked = new WeakSet();
+      text = JSON.stringify(value, function (k, v) {
+        if (typeof v === 'function') return undefined;
+        if (v && typeof v === 'object') {
+          if (marked.has(v)) return '[circular]';
+          marked.add(v);
+        }
+        return v;
+      });
+    } catch (err) { continue; }
+    if (!text || text.length < 8) continue;
+    state.push({ key, length: text.length, mentions: mentions(text), text: text.slice(0, CAP) });
+    if (state.length >= 25) break;
+  }
+
+  const resources = performance.getEntriesByType('resource').slice(0, 300).map((entry) => ({
+    name: entry.name,
+    kind: entry.initiatorType,
+    bytes: Math.round(entry.transferSize || 0),
+    ms: Math.round(entry.duration)
+  }));
+
+  return { scripts, state, resources };
+}
+
 /* the rendered page's candidates: its hydrated structured record first,
    because a record that names a sku beats a figure that has to be placed
    by its ancestry, then the figures themselves */
@@ -832,6 +1248,10 @@ function renderedCandidates(seen, pageUrl) {
   for (const candidate of structured.candidates) {
     out.push(Object.assign({}, candidate, { from: `${candidate.from} (rendered)`, canonical: seen.canonical || null }));
   }
+  /* the payload the page was built from, where it carried one: a record
+     naming this listing AND an amount, in the same record */
+  for (const candidate of dataCandidates(seen.data, pageUrl)) out.push(candidate);
+
   for (const hit of seen.prices || []) {
     const money = moneyInText(hit.text);
     if (!money) continue;
@@ -850,7 +1270,7 @@ function renderedCandidates(seen, pageUrl) {
 }
 
 /* One page, in a real browser, reported the way fetchPage reports. */
-async function renderPage(url, wanted) {
+async function renderPage(url, wanted, options) {
   const chromium = loadPlaywright();
   if (!chromium) return { failed: 'Playwright is not installed here, so the browser path is unavailable', noBrowser: true };
 
@@ -872,6 +1292,28 @@ async function renderPage(url, wanted) {
     });
     const page = await context.newPage();
 
+    /* The JSON the page fetches while it builds itself. Bodies are read
+       later, together, because reading one inside the handler blocks
+       the response it is reading. */
+    const pending = [];
+    if (!options || options.data !== false) {
+      page.on('response', (response) => {
+        try {
+          if (pending.length >= 80 || response.status() !== 200) return;
+          const type = response.headers()['content-type'] || '';
+          const at = response.url();
+          const jsonish = /json/i.test(type) || /\.json(\?|$)|\/api\/|graphql/i.test(at);
+          if (!jsonish) return;
+          pending.push({
+            url: at,
+            type: type.split(';')[0],
+            kind: response.request().resourceType(),
+            body: response.text().catch(() => null)
+          });
+        } catch (err) { /* a response that cannot be described is skipped */ }
+      });
+    }
+
     let status = null;
     try {
       const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: BROWSER_TIMEOUT });
@@ -889,7 +1331,27 @@ async function renderPage(url, wanted) {
     if (consent) await page.waitForTimeout(800);
     await coaxLazyImages(page);
 
-    const seen = await page.evaluate(gatherPricesInPage, wanted || identifiersFrom(url));
+    const codes = wanted || identifiersFrom(url);
+    const seen = await page.evaluate(gatherPricesInPage, codes);
+
+    if (!options || options.data !== false) {
+      const responses = [];
+      for (const entry of pending) {
+        const text = await entry.body;
+        if (!text || text.length > 2000000) continue;
+        responses.push({
+          url: entry.url,
+          type: entry.type,
+          kind: entry.kind,
+          length: text.length,
+          mentions: codes.filter((code) => text.toLowerCase().indexOf(String(code).toLowerCase()) >= 0),
+          text
+        });
+      }
+      const carried = await page.evaluate(gatherDataInPage, codes);
+      seen.data = Object.assign({ responses }, carried);
+    }
+
     await browser.close();
 
     if (status && status >= 400) return { failed: `the page answered ${status} to a real browser too` };
@@ -1113,6 +1575,14 @@ function priceEvidenceNote(evidence) {
   if (evidence.via === 'dom-product-scope' && evidence.code) {
     return `{ via: 'dom-product-scope', code: '${safe(evidence.code)}' }`;
   }
+  if (evidence.via === 'data-variant-mapping' && evidence.code && evidence.variant) {
+    return `{ via: 'data-variant-mapping', code: '${safe(evidence.code)}', variant: '${safe(evidence.variant)}' }`;
+  }
+  if (evidence.via === 'data-product-record' && evidence.code) {
+    return evidence.at
+      ? `{ via: 'data-product-record', code: '${safe(evidence.code)}', at: '${safe(String(evidence.at).slice(0, 80))}' }`
+      : `{ via: 'data-product-record', code: '${safe(evidence.code)}' }`;
+  }
   if (evidence.via === 'dom-variant-scope' && evidence.code) {
     return evidence.variant
       ? `{ via: 'dom-variant-scope', code: '${safe(evidence.code)}', variant: '${safe(evidence.variant)}' }`
@@ -1172,7 +1642,7 @@ function catalogRowPrice(row) {
     return { ok: false, why: `the recorded ${evidence.sku ? 'sku' : 'code'} ${evidence.sku || evidence.code} is not a code in this row's own listing URL` };
   }
 
-  const kinds = ['json-ld-offer', 'microdata-offer', 'dom-product-scope', 'dom-variant-scope'];
+  const kinds = ['json-ld-offer', 'microdata-offer', 'dom-product-scope', 'dom-variant-scope', 'data-product-record', 'data-variant-mapping'];
   if (!kinds.includes(evidence.via)) {
     return { ok: false, why: `the recorded evidence names no recognised kind (${evidence.via || 'none'})` };
   }
@@ -1319,6 +1789,167 @@ function printInspection(report) {
   }
 }
 
+/* ---------- where a page actually publishes its price ----------
+
+   --inspect-data. The DOM inspection answers "which element is this
+   figure?"; this one answers the question that follows when no element
+   can be tied to the product: does the page carry the price anywhere
+   ELSE — in a script it shipped, in state it left on window, in JSON it
+   fetched — and is it in the same record as the listing's own code.
+
+   It writes nothing and decides nothing. It reports what is there,
+   including what it deliberately set aside. */
+async function inspectData(url) {
+  const ids = identifiersFrom(url);
+  const rendered = await renderPage(url, ids, { data: true });
+  if (rendered.failed) return { url, ids, failed: rendered.failed };
+
+  const data = rendered.seen.data || {};
+  const payloads = dataPayloads(data);
+
+  const searched = [];
+  const hits = [];
+  const setAside = [];
+
+  for (const payload of payloads) {
+    const found = productRecords(payload.value, ids, payload.source);
+    searched.push({ source: payload.source, records: found.length });
+    for (const hit of found) (hit.elsewhere ? setAside : hits).push(hit);
+  }
+
+  /* everything that MENTIONS the code, parseable or not — a payload
+     that names the product but yields no record is the next place to
+     look by hand, and silence about it would hide that */
+  const mentions = [];
+  for (const script of data.scripts || []) {
+    if (script.mentions && script.mentions.length) {
+      mentions.push({ where: `script${script.id ? '#' + script.id : ''}${script.type ? ` [${script.type}]` : ''}`, bytes: script.length, parsed: Boolean(parseLoosely(script.text)) });
+    }
+  }
+  for (const entry of data.state || []) {
+    if (entry.mentions && entry.mentions.length) {
+      mentions.push({ where: `window.${entry.key}`, bytes: entry.length, parsed: Boolean(parseLoosely(entry.text)) });
+    }
+  }
+  for (const response of data.responses || []) {
+    if (response.mentions && response.mentions.length) {
+      mentions.push({ where: `network ${response.url}`, bytes: response.length, parsed: Boolean(parseLoosely(response.text)) });
+    }
+  }
+
+  const mapped = variantPriceRecords(payloads, ids);
+
+  /* and what the parser would make of all of it, through the same gates
+     as everything else — no separate path, no relaxed rule */
+  const candidates = dataCandidates(data, url);
+  const judged = candidates.map((candidate) => ({
+    amount: candidate.amount,
+    currency: candidate.currency,
+    from: candidate.from,
+    at: candidate.record.path,
+    identity: priceIdentity(candidate, url),
+    charged: chargedEvidence(candidate)
+  }));
+
+  return {
+    url,
+    ids,
+    selected: rendered.seen.selected || { codes: [], from: [], ignored: [] },
+    searched,
+    mentions,
+    hits,
+    setAside,
+    variants: mapped,
+    candidates: judged,
+    verdict: decide(candidates, url),
+    resources: (data.resources || []).filter((entry) => /\/api\/|graphql|\.json/i.test(entry.name)).slice(0, 40),
+    counts: {
+      scripts: (data.scripts || []).length,
+      state: (data.state || []).length,
+      responses: (data.responses || []).length,
+      resources: (data.resources || []).length
+    }
+  };
+}
+
+const size = (bytes) => (bytes < 1024 ? `${bytes}B` : `${Math.round(bytes / 1024)}KB`);
+
+function printDataInspection(report) {
+  if (report.failed) {
+    console.log(`\n  ${report.url}`);
+    console.log(`  could not be read: ${report.failed}\n`);
+    return;
+  }
+
+  console.log(`\n  ${report.url}`);
+  console.log(`  looking for   ${report.ids.slice(0, 6).join(', ')}`);
+  console.log(`  read          ${report.counts.scripts} scripts, ${report.counts.state} state objects, ${report.counts.responses} JSON responses, ${report.counts.resources} resources`);
+  console.log(`  selected      ${report.selected.codes.length ? report.selected.codes.join(', ') : 'no selected variant named by the page'}`);
+  for (const ignored of (report.selected.ignored || []).slice(0, 4)) {
+    console.log(`                ignored ${ignored.code} — ${ignored.why}`);
+  }
+
+  console.log(`\n  payloads naming this product (${report.mentions.length}):`);
+  if (!report.mentions.length) console.log('     none — the code does not appear in any script, state object or JSON response');
+  for (const mention of report.mentions.slice(0, 15)) {
+    console.log(`     ${short(mention.where, 110)}  ${size(mention.bytes)}  ${mention.parsed ? 'parsed' : 'NOT PARSEABLE as JSON'}`);
+  }
+
+  console.log(`\n  records holding the code AND an amount (${report.hits.length}):`);
+  if (!report.hits.length) console.log('     none — no payload carries this listing\'s code and a price in one record');
+  for (const hit of report.hits.slice(0, 12)) {
+    console.log(`     $${hit.amount}${hit.currency ? ' ' + hit.currency : ' (no currency named)'}  ${hit.kind === 'list' ? '[list field]' : ''}`);
+    console.log(`       source  ${short(hit.source, 120)}`);
+    console.log(`       record  ${short(hit.recordPath, 110)}  (${hit.codeKey}: ${hit.code})`);
+    console.log(`       field   ${short(hit.field, 110)}`);
+    if (hit.variants.length) console.log(`       variants ${hit.variants.slice(0, 5).join(', ')}`);
+  }
+
+  if (report.setAside.length) {
+    console.log(`\n  set aside as another product's (${report.setAside.length}):`);
+    for (const hit of report.setAside.slice(0, 6)) {
+      console.log(`     $${hit.amount} under "${hit.elsewhere}" — ${short(hit.recordPath, 90)}`);
+    }
+  }
+
+  console.log(`\n  variant mapping:`);
+  if (!report.variants.variants.length) {
+    console.log('     no record naming this listing carries variant or colour codes');
+  } else {
+    console.log(`     this listing names ${report.variants.variants.slice(0, 8).join(', ')}`);
+    for (const owner of report.variants.owners.slice(0, 4)) {
+      console.log(`       from ${short(owner.source, 70)} at ${short(owner.path, 60)} (${owner.variantKey})`);
+    }
+    if (!report.variants.priced.length) console.log('     and no record prices any of those codes');
+    for (const hit of report.variants.priced.slice(0, 6)) {
+      console.log(`     $${hit.amount}${hit.currency ? ' ' + hit.currency : ''} for ${hit.code} — ${short(hit.source, 80)} at ${short(hit.field, 60)}`);
+    }
+  }
+
+  if (report.resources.length) {
+    console.log(`\n  API-ish requests the page made (${report.resources.length}):`);
+    for (const entry of report.resources.slice(0, 12)) {
+      console.log(`     ${short(entry.name, 120)}  ${entry.kind} ${size(entry.bytes)}`);
+    }
+  }
+
+  console.log(`\n  through the gates (${report.candidates.length} candidate${report.candidates.length === 1 ? '' : 's'}):`);
+  for (const judged of report.candidates.slice(0, 12)) {
+    console.log(`     $${judged.amount} — ${short(judged.from, 100)}`);
+    console.log(`       this    ${judged.identity.ok ? `OK via ${judged.identity.via} — ${judged.identity.how}` : `REFUSED — ${judged.identity.why}`}`);
+    console.log(`       charged ${judged.charged.ok ? `OK — ${judged.charged.how}` : `REFUSED — ${judged.charged.why}`}`);
+  }
+
+  const verdict = report.verdict;
+  if (verdict.price) {
+    console.log(`\n  WOULD WRITE $${verdict.price} — ${verdict.why}\n`);
+  } else if (verdict.ambiguous) {
+    console.log(`\n  WOULD FAIL CLOSED — ${verdict.why}\n`);
+  } else {
+    console.log('\n  WOULD FAIL CLOSED — no record cleared every gate\n');
+  }
+}
+
 /* ---------- report ---------- */
 const say = (...line) => { if (!asJson) console.log(...line); };
 
@@ -1343,6 +1974,14 @@ async function main() {
   /* --inspect <url> : one page's rendered figures, and what each gate
      says about them. Reads nothing from the catalogue and writes
      nothing to it. */
+  const inspectingData = flag('--inspect-data');
+  if (inspectingData) {
+    const report = await inspectData(inspectingData);
+    if (asJson) console.log(JSON.stringify(report, null, 2));
+    else printDataInspection(report);
+    return;
+  }
+
   const inspecting = flag('--inspect');
   if (inspecting) {
     const report = await inspectUrl(inspecting);
@@ -1487,7 +2126,9 @@ if (require.main === module) {
     toAmount, currencyIn, moneyInText, offerAmounts, structuredCandidates,
     metaCandidates, pricesFromHtml, namesCode, priceIdentity, chargedEvidence,
     decide, gatherPricesInPage, renderedCandidates, renderPage, resolveRow,
-    inspectUrl, selectedAmong, elsewhereIn,
+    inspectUrl, inspectData, selectedAmong, elsewhereIn, isIdKey, isPriceKey, keyWords,
+    productRecords, dataPayloads, dataCandidates, variantPriceRecords,
+    parseLoosely, gatherDataInPage, walkData, namesListing, pricesUnder,
     writePrice, priceEvidenceNote, setPriceEvidence, catalogRowPrice, readCatalog
   };
 }

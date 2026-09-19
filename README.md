@@ -1776,8 +1776,27 @@ after one the page does not touch the video again.
   catalogue row and changes no file. `--inspect <url> --json` gives the same
   untruncated.
 
-  It also searches the rendered DOM for the listing's own code and reports
-  every element carrying it, with the figures inside each — because when no
+  `--inspect-data <productUrl>` answers the question after that one: when no
+  element on the page can be tied to the product, does the page carry the price
+  anywhere else? It opens the page, then reads the scripts it shipped, the
+  application state left on `window`, the JSON it fetched while building itself
+  and `performance.getEntriesByType("resource")`, and reports every place where
+  this listing's code and an amount are fields of the **same record** — with the
+  source, the record's path, the field, the currency and the product or variant
+  code that tied it. One rule makes it worth anything: a document that mentions
+  `429066` somewhere and `49.90` somewhere else is not evidence, because a
+  catalogue response holds fifty products. It also reports what it set aside
+  (anything under a `recommend`/`related`/`carousel` key), whether the listing's
+  record names colour codes and whether a second record prices one of them, and
+  what the normal gates would make of all of it. It writes nothing.
+
+  A record that clears those gates becomes an ordinary candidate, `via:
+  'data-product-record'` or, through the colour chain, `via:
+  'data-variant-mapping'` — judged by the same `decide()` as every DOM figure,
+  so a record that disagrees with the rendered page still fails closed.
+
+  `--inspect` also searches the rendered DOM for the listing's own code and
+  reports every element carrying it, with the figures inside each — because when no
   price can be tied to the product, the next question is always whether the
   page names that product anywhere. An element carrying `E429066-000` whose
   subtree holds a figure *is* the price block; the code appearing nowhere in

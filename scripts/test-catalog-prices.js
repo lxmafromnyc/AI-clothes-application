@@ -636,6 +636,165 @@ test('a listing URL with no code in it can never clear the identity gate', () =>
 });
 
 /* ---------------------------------------------------------
+   What a page carries besides its DOM
+
+   UNIQLO renders no figure that can be tied to E429066, so the question
+   is whether it publishes the price anywhere else — and the answer is
+   only usable if the amount and the code are in the SAME record.
+   --------------------------------------------------------- */
+
+console.log('\nThe payloads a page ships\n');
+
+const UNIQLO_IDS = ['e429066', '429066'];
+
+test('a record holding the code AND the amount is found, with its path', () => {
+  const payload = { result: { items: [{
+    productId: 'E429066-000',
+    l1Id: '429066',
+    name: 'Extra Fine Merino Crew Neck Long-Sleeve Sweater',
+    prices: { base: { value: 49.9, currency: 'USD' } }
+  }] } };
+
+  const hits = prices.productRecords(payload, UNIQLO_IDS, 'script#__NEXT_DATA__');
+  assert.strictEqual(hits.length, 1);
+  assert.strictEqual(hits[0].amount, 49.9);
+  assert.strictEqual(hits[0].currency, 'USD');
+  assert.strictEqual(hits[0].code, 'E429066-000');
+  assert.strictEqual(hits[0].codeKey, 'productId');
+  assert.strictEqual(hits[0].field, 'prices.base.value');
+  assert.strictEqual(hits[0].recordPath, 'result.items.[0]');
+});
+
+test('the code in one record and a price in another is NOT evidence', () => {
+  /* the whole point. A catalogue response holds fifty products; "both
+     strings are somewhere in this file" is how the wrong one gets
+     written. */
+  const payload = { items: [
+    { productId: 'E429066-000', name: 'the sweater' },
+    { productId: 'E465185-000', name: 'something else', prices: { base: { value: 19.9, currency: 'USD' } } }
+  ] };
+  assert.deepStrictEqual(prices.productRecords(payload, UNIQLO_IDS, 'network /api/products'), []);
+});
+
+test('a price under a recommendation key is set aside, never offered', () => {
+  const payload = {
+    product: { productId: 'E429066-000', prices: { base: { value: 49.9, currency: 'USD' } } },
+    recommendations: { items: [{ productId: 'E429066-000', prices: { base: { value: 9.9, currency: 'USD' } } }] }
+  };
+  const hits = prices.productRecords(payload, UNIQLO_IDS, 'window.__STATE__');
+  assert.strictEqual(hits.length, 2);
+  assert.strictEqual(hits.find((h) => h.amount === 9.9).elsewhere, 'recommendations');
+  assert.strictEqual(hits.find((h) => h.amount === 49.9).elsewhere, null);
+
+  const offered = prices.dataCandidates({ state: [{ key: '__STATE__', text: JSON.stringify(payload), mentions: UNIQLO_IDS }] }, UNIQLO);
+  assert.deepStrictEqual(amounts(offered), [49.9], 'the recommendation price is not a candidate at all');
+});
+
+test('a list field is read as a list field, and the base price wins', () => {
+  const payload = { product: { productId: 'E429066-000', prices: {
+    base: { value: 49.9, currency: 'USD' },
+    listPrice: { value: 59.9, currency: 'USD' }
+  } } };
+  const candidates = prices.dataCandidates({ scripts: [{ id: 'x', type: 'application/json', text: JSON.stringify(payload), mentions: UNIQLO_IDS }] }, UNIQLO);
+  assert.deepStrictEqual(amounts(candidates).sort((a, b) => a - b), [49.9, 59.9]);
+
+  const verdict = prices.decide(candidates, UNIQLO);
+  assert.strictEqual(verdict.price, 49.9);
+  assert.strictEqual(verdict.identity.via, 'data-product-record');
+  assert.match(because(verdict.refusals, 59.9), /list or comparison field/);
+});
+
+test('an amount with no currency beside it is refused', () => {
+  const payload = { product: { productId: 'E429066-000', prices: { base: { value: 49.9 } } } };
+  const candidates = prices.dataCandidates({ scripts: [{ text: JSON.stringify(payload), mentions: UNIQLO_IDS }] }, UNIQLO);
+  const verdict = prices.decide(candidates, UNIQLO);
+  assert.strictEqual(verdict.price, undefined);
+  assert.match(because(verdict.refusals, 49.9), /names no currency/);
+});
+
+test('another product\'s record is refused by the same gate as a DOM figure', () => {
+  const payload = { product: { productId: 'E465185-000', prices: { base: { value: 19.9, currency: 'USD' } } } };
+  const candidates = prices.dataCandidates({ scripts: [{ text: JSON.stringify(payload) }] }, UNIQLO);
+  assert.deepStrictEqual(candidates, [], 'it never even becomes a candidate for this listing');
+});
+
+test('a price kept under the colour code is tied through the mapping', () => {
+  /* product record names the listing and its colour codes; a second
+     payload prices one of those colours */
+  const data = {
+    scripts: [{ id: '__NEXT_DATA__', type: 'application/json', mentions: UNIQLO_IDS, text: JSON.stringify({
+      product: { productId: 'E429066-000', communicationCodes: ['COL09X'] }
+    }) }],
+    responses: [{ url: 'https://www.uniqlo.com/us/en/api/commerce/v3/en/prices', mentions: [], length: 90, text: JSON.stringify({
+      prices: [{ communicationCode: 'COL09X', base: { value: 49.9, currency: 'USD' } }]
+    }) }]
+  };
+
+  const candidates = prices.dataCandidates(data, UNIQLO);
+  assert.deepStrictEqual(amounts(candidates), [49.9]);
+
+  const verdict = prices.decide(candidates, UNIQLO);
+  assert.strictEqual(verdict.price, 49.9);
+  assert.strictEqual(verdict.identity.via, 'data-variant-mapping');
+  assert.strictEqual(verdict.identity.code, 'E429066-000');
+  assert.strictEqual(verdict.identity.variant, 'COL09X');
+  assert.match(verdict.identity.how, /names E429066-000 with communicationCodes COL09X/);
+
+  const note = prices.priceEvidenceNote(verdict.identity);
+  assert.strictEqual(note, "{ via: 'data-variant-mapping', code: 'E429066-000', variant: 'COL09X' }");
+});
+
+test('a colour code nobody tied to this listing prices nothing', () => {
+  const data = {
+    responses: [{ url: '/api/prices', text: JSON.stringify({ prices: [{ communicationCode: 'COL09X', base: { value: 49.9, currency: 'USD' } }] }) }]
+  };
+  assert.deepStrictEqual(prices.dataCandidates(data, UNIQLO), [],
+    'without a record naming E429066-000, COL09X is a code from nowhere');
+});
+
+test('the data route does not rescue the $7.90 figure', () => {
+  /* the live page, with a payload added: the figure is still refused on
+     its own DOM, and what resolves is the record, not the rendering */
+  const seen = seenOf(UNIQLO, [figure({ text: '$7.90', own: 'fr-ec-price-text', near: 'fr-ec-price', codes: [] })]);
+  seen.data = { scripts: [{ id: '__NEXT_DATA__', type: 'application/json', mentions: UNIQLO_IDS, text: JSON.stringify({
+    product: { productId: 'E429066-000', prices: { base: { value: 49.9, currency: 'USD' } } }
+  }) }] };
+
+  const read = prices.renderedCandidates(seen, UNIQLO);
+  assert.deepStrictEqual(amounts(read.candidates), [49.9, 7.9]);
+
+  const verdict = prices.decide(read.candidates, UNIQLO);
+  assert.strictEqual(verdict.price, 49.9);
+  assert.match(because(verdict.refusals, 7.9), /nothing in its own DOM ties it to this product/);
+});
+
+test('two records that disagree still fail closed', () => {
+  const data = { scripts: [
+    { text: JSON.stringify({ product: { productId: 'E429066-000', prices: { base: { value: 49.9, currency: 'USD' } } } }) },
+    { text: JSON.stringify({ product: { productId: 'E429066-000', prices: { base: { value: 39.9, currency: 'USD' } } } }) }
+  ] };
+  const verdict = prices.decide(prices.dataCandidates(data, UNIQLO), UNIQLO);
+  assert.strictEqual(verdict.price, undefined);
+  assert.deepStrictEqual(verdict.ambiguous, [39.9, 49.9]);
+});
+
+test('keys are matched by their words, not by substring', () => {
+  assert.strictEqual(prices.isIdKey('productId'), true);
+  assert.strictEqual(prices.isIdKey('l1_id'), true);
+  assert.strictEqual(prices.isIdKey('communicationCode'), true);
+  assert.strictEqual(prices.isIdKey('candidate'), false, '"candidate" contains no id word');
+  assert.strictEqual(prices.isPriceKey('basePrice'), true);
+  assert.strictEqual(prices.isPriceKey('priceValue'), true);
+  assert.strictEqual(prices.isPriceKey('brandValue'), false, '"brandValue" is not an amount');
+});
+
+test('a payload is parsed however the page shipped it', () => {
+  assert.deepStrictEqual(prices.parseLoosely('{"a":1}'), { a: 1 });
+  assert.deepStrictEqual(prices.parseLoosely('window.__STATE__ = {"a":1};'), { a: 1 });
+  assert.deepStrictEqual(prices.parseLoosely('var x = 3'), null, 'nothing parseable is left alone rather than guessed at');
+});
+
+/* ---------------------------------------------------------
    What gets written, and what a written row has to keep proving
    --------------------------------------------------------- */
 
@@ -752,13 +911,55 @@ test('every row the catalogue ships today accounts for its price', () => {
    same gates as the captures above.
    --------------------------------------------------------- */
 
+const NEXT_DATA = {
+  props: { pageProps: { product: {
+    productId: 'E429066-000',
+    l1Id: '429066',
+    name: 'Extra Fine Merino Crew Neck Long-Sleeve Sweater',
+    prices: { base: { value: 49.9, currency: 'USD' }, listPrice: { value: 59.9, currency: 'USD' } }
+  } } }
+};
+
+const API_PAYLOAD = {
+  result: {
+    items: [{ productId: 'E429066-000', prices: { base: { value: 49.9, currency: 'USD' } } }],
+    recommendations: [{ productId: 'E465185-000', prices: { base: { value: 19.9, currency: 'USD' } } }]
+  }
+};
+
+const API_WRONG = { result: { items: [{ productId: 'E465185-000', prices: { base: { value: 19.9, currency: 'USD' } } }] } };
+
 function hydratingRetailer() {
   const server = http.createServer((req, res) => {
     const url = req.url.split('?')[0];
     const port = server.address().port;
     const here = `http://127.0.0.1:${port}${url}`;
 
+    /* the commerce API the page fetches while it builds itself */
+    if (url.startsWith('/api/')) {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify(url.startsWith('/api/wrong') ? API_WRONG : API_PAYLOAD));
+    }
+
     /* the figure the page renders, and the block it renders it in */
+    /* a page that publishes its price only in the payload it was built
+       from — the UNIQLO shape — while rendering one untied figure */
+    if (url.startsWith('/data')) {
+      const wrong = url.startsWith('/data-wrong');
+      res.writeHead(200, { 'content-type': 'text/html' });
+      return res.end(`<!doctype html><html><head>
+        <link rel="canonical" href="${here}">
+        <script id="__NEXT_DATA__" type="application/json">${wrong ? JSON.stringify(API_WRONG) : JSON.stringify(NEXT_DATA)}</script>
+        <title>Hydrating data</title></head>
+        <body><div id="app"><div class="fr-ec-price"><span class="fr-ec-price-text">$7.90</span></div></div>
+        <script>
+          window.__UNIQLO_STATE__ = { loaded: true };
+          fetch('${wrong ? '/api/wrong/products' : '/api/products'}?productIds=E429066-000')
+            .then(function (r) { return r.json(); })
+            .then(function (json) { window.__UNIQLO_STATE__.products = json; });
+        </script></body></html>`);
+    }
+
     const block = url.startsWith('/consent')
       ? `<div id="onetrust-consent-sdk" style="position:fixed;bottom:0">
            <label><input type="checkbox" id="ot-group-id-C0004" checked> Targeting Cookies</label>
@@ -819,7 +1020,7 @@ function hydratingRetailer() {
   try { chromium = require('playwright').chromium; } catch (err) { chromium = null; }
 
   if (!chromium) {
-    skipped += 10;
+    skipped += 13;
     console.log('  skip  the browser section — Playwright is not installed here');
     console.log('        npm install, then re-run, to exercise the hydration path');
   } else {
@@ -958,6 +1159,43 @@ function hydratingRetailer() {
       assert.match(site.attrs, /data-product-id="E429066-000"/);
       assert.deepStrictEqual(site.money, ['$49.90'], 'and the figure inside it is reported with it');
       assert.strictEqual(report.verdict.price, 49.9);
+    });
+
+    await testAsync('--inspect-data finds the record the page was built from', async () => {
+      const report = await prices.inspectData(listing('/data/products/E429066-000/00'));
+
+      assert.ok(report.mentions.some((m) => /__NEXT_DATA__/.test(m.where)), 'the script that names the product is reported');
+      assert.ok(report.mentions.some((m) => /network .*\/api\/products/.test(m.where)), 'so is the JSON the page fetched');
+
+      const record = report.hits.find((h) => h.amount === 49.9);
+      assert.ok(record, 'the record holding the code and the amount is found');
+      assert.strictEqual(record.currency, 'USD');
+      assert.strictEqual(record.code, 'E429066-000');
+      assert.match(record.field, /prices\.base\.value/);
+
+      assert.ok(report.hits.every((h) => h.amount !== 19.9), "the recommendation's price is not among the hits");
+      assert.strictEqual(report.verdict.price, 49.9);
+      assert.ok(report.candidates.some((c) => c.identity.via === 'data-product-record'));
+    });
+
+    await testAsync('the page\'s own untied figure is still refused in that same run', async () => {
+      const url = listing('/data/products/E429066-000/00');
+      const rendered = await prices.renderPage(url, undefined, { data: true });
+      assert.ok(!rendered.failed, rendered.failed);
+
+      const read = prices.renderedCandidates(rendered.seen, url);
+      assert.ok(amounts(read.candidates).includes(7.9), 'the $7.90 figure is still read');
+
+      const verdict = prices.decide(read.candidates, url);
+      assert.strictEqual(verdict.price, 49.9, 'the record answers');
+      assert.match(because(verdict.refusals, 7.9), /nothing in its own DOM ties it to this product/);
+      assert.match(because(verdict.refusals, 59.9), /list or comparison field/);
+    });
+
+    await testAsync('a payload naming another product resolves nothing', async () => {
+      const report = await prices.inspectData(listing('/data-wrong/products/E429066-000/00'));
+      assert.deepStrictEqual(report.hits, [], 'no record names this listing');
+      assert.strictEqual(report.verdict.price, undefined, 'and the run fails closed');
     });
 
     server.close();
