@@ -1814,6 +1814,11 @@ after one the page does not touch the video again.
   it cannot be the test. Two authoritative sources that disagree still fail
   closed.
 
+  `--version` says what a build is: a sha256 fingerprint of the file itself, the
+  commit it came from, and every mode and option it has. A mode missing from
+  that list is missing from that build, which is a faster answer than reading
+  the source or the commit log.
+
   Options are read once into a parsed shape, in both spellings (`--flag value`
   and `--flag=value`) and any case, and an unrecognised option stops the run —
   being ignored would silently make it a different command. That is not

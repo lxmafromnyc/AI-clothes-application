@@ -1177,6 +1177,70 @@ test('an option nobody recognises stops the run rather than being ignored', () =
   assert.match(parsed.errors.join(' '), /stray argument/);
 });
 
+test('--hunt routes to the hunt in every spelling', () => {
+  for (const argv of [
+    ['--hunt', UNIQLO, '--find', '49.90,49.9'],
+    ['--hunt=' + UNIQLO, '--find=49.90,49.9'],
+    ['--HUNT=' + UNIQLO, '--FIND=49.90'],
+    ['--hunt', UNIQLO]
+  ]) {
+    const parsed = prices.parseArgs(argv);
+    assert.deepStrictEqual(parsed.errors, [], `${argv[0]} parsed without complaint`);
+
+    const chosen = prices.chooseMode(parsed);
+    assert.strictEqual(chosen.mode, 'hunt', `${argv[0]} must reach the hunt`);
+    assert.strictEqual(chosen.error, undefined);
+    assert.strictEqual(chosen.url, UNIQLO);
+  }
+
+  const asked = prices.chooseMode(prices.parseArgs(['--hunt=' + UNIQLO, '--find=49.90,49.9']));
+  assert.deepStrictEqual(asked.find, ['49.90', '49.9'], 'the amounts come from --find, not from the tool');
+});
+
+test('--hunt with no URL stops rather than verifying a catalogue', () => {
+  const chosen = prices.chooseMode(prices.parseArgs(['--hunt', '--find', '49.90']));
+  assert.strictEqual(chosen.mode, 'hunt');
+  assert.match(chosen.error, /needs the product URL/);
+  assert.match(chosen.error, /the catalogue was not read/);
+});
+
+test('--hunt and --find are options this build accepts', () => {
+  assert.ok(Object.prototype.hasOwnProperty.call(prices.OPTIONS, '--hunt'));
+  assert.ok(Object.prototype.hasOwnProperty.call(prices.OPTIONS, '--find'));
+  assert.match(prices.USAGE, /--hunt <productUrl> --find/);
+});
+
+test('every mode the dispatcher can return is a mode this build claims', () => {
+  const produced = new Set([
+    prices.chooseMode(prices.parseArgs([])).mode,
+    prices.chooseMode(prices.parseArgs(['--help'])).mode,
+    prices.chooseMode(prices.parseArgs(['--version'])).mode,
+    prices.chooseMode(prices.parseArgs(['--inspect', UNIQLO])).mode,
+    prices.chooseMode(prices.parseArgs(['--inspect-data', UNIQLO])).mode,
+    prices.chooseMode(prices.parseArgs(['--inspect-api', 'https://x/y'])).mode,
+    prices.chooseMode(prices.parseArgs(['--hunt', UNIQLO])).mode
+  ]);
+  for (const mode of produced) {
+    assert.ok(prices.MODES.includes(mode), `${mode} is reachable but not listed in MODES`);
+  }
+  for (const mode of prices.MODES) {
+    assert.ok(produced.has(mode), `${mode} is claimed but nothing produces it`);
+  }
+});
+
+test('--version fingerprints the file it is actually running', () => {
+  const crypto = require('crypto');
+  const stamp = prices.buildStamp();
+  const digest = crypto.createHash('sha256')
+    .update(fs.readFileSync(path.join(__dirname, 'fetch-catalog-prices.js')))
+    .digest('hex').slice(0, 12);
+
+  assert.strictEqual(stamp.digest, digest, 'the stamp is of this file, not of an idea of it');
+  assert.deepStrictEqual(stamp.options, Object.keys(prices.OPTIONS).sort());
+  assert.deepStrictEqual(stamp.modes, prices.MODES);
+  assert.ok(stamp.options.includes('--hunt'), 'so a missing mode is visible without git');
+});
+
 test('the other modes route too, and plain arguments verify', () => {
   assert.strictEqual(prices.chooseMode(prices.parseArgs(['--inspect', UNIQLO])).mode, 'inspect');
   assert.strictEqual(prices.chooseMode(prices.parseArgs(['--inspect-data=' + UNIQLO])).mode, 'inspect-data');
@@ -1473,6 +1537,21 @@ function hydratingRetailer() {
     assert.doesNotMatch(result.stdout, /Reading \d+ linked product page/);
   });
 
+  await testAsync('--version says what this build has', async () => {
+    const result = await run(['--version']);
+    assert.strictEqual(result.code, 0);
+    assert.match(result.stdout, /modes\s+verify, inspect, inspect-data, inspect-api, hunt/);
+    assert.match(result.stdout, /--hunt/);
+    assert.match(result.stdout, /A mode missing from this list is missing from this build/);
+    assert.doesNotMatch(result.stdout, /Reading \d+ linked product page/);
+  });
+
+  await testAsync('--help lists the hunt', async () => {
+    const result = await run(['--help']);
+    assert.strictEqual(result.code, 0);
+    assert.match(result.stdout, /--hunt <productUrl> --find/);
+  });
+
   await testAsync('an unknown option stops the run before anything is read', async () => {
     const result = await run(['--inspect-apo', 'https://example.com/x']);
     assert.notStrictEqual(result.code, 0);
@@ -1486,7 +1565,7 @@ function hydratingRetailer() {
   try { chromium = require('playwright').chromium; } catch (err) { chromium = null; }
 
   if (!chromium) {
-    skipped += 26;
+    skipped += 27;
     console.log('  skip  the browser section — Playwright is not installed here');
     console.log('        npm install, then re-run, to exercise the hydration path');
   } else {
@@ -1805,6 +1884,19 @@ function hydratingRetailer() {
 
       assert.ok(report.drawn.some((figure) => Math.abs(figure.amount - 49.9) < 1e-9), 'and the page does draw it');
       assert.ok(report.related.length === 0 || report.related.every((code) => typeof code === 'string'));
+    });
+
+    await testAsync('--hunt=<url> reaches the hunt, not the verifier', async () => {
+      const result = await run([
+        '--hunt=' + listing('/hunt/products/E429066-000/00'),
+        '--find=49.90,49.9'
+      ]);
+
+      assert.strictEqual(result.code, 0, result.stderr);
+      assert.match(result.stdout, /HUNT — every payload one page loaded/, 'the hunt announces itself');
+      assert.doesNotMatch(result.stdout, /Reading \d+ linked product page/, 'and the verifier never ran');
+      assert.doesNotMatch(result.stdout, /KEPT\s+J\.Crew/);
+      assert.match(result.stdout, /in cents/, 'and it did the work');
     });
 
     await testAsync('a hunt prints, decides nothing and writes nothing', async () => {

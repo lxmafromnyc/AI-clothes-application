@@ -102,6 +102,7 @@ const MIN_PRICE = 0.5;      // below it, a unit price or a shipping rounding
    the one that was typed. */
 const OPTIONS = {
   '--help': 'boolean',
+  '--version': 'boolean',
   '--write': 'boolean',
   '--refresh': 'boolean',
   '--no-browser': 'boolean',
@@ -162,6 +163,7 @@ function chooseMode(parsed) {
   const named = (name) => Object.prototype.hasOwnProperty.call(flags, name);
   const stop = ' Nothing was inspected, and the catalogue was not read.';
 
+  if (named('--version')) return { mode: 'version' };
   if (named('--help')) return { mode: 'help' };
 
   if (named('--inspect-api')) {
@@ -206,6 +208,56 @@ function chooseMode(parsed) {
   return { mode: 'verify' };
 }
 
+/* Every command this file can run. Kept beside the dispatcher rather
+   than in a comment, so --version can list what a build actually does
+   and a test can hold the list to what chooseMode will produce. */
+const MODES = ['verify', 'inspect', 'inspect-data', 'inspect-api', 'hunt', 'help', 'version'];
+
+/* What build is this? The question has now been asked three times in
+   the shape "the feature you describe is not in my copy", and answering
+   it should not need git: the file fingerprints itself and lists the
+   commands it has. If a mode is missing from this output it is missing
+   from this build, whatever anyone says about it. */
+function buildStamp() {
+  const crypto = require('crypto');
+  const stamp = { file: __filename, digest: null, bytes: null, commit: null, modes: MODES, options: Object.keys(OPTIONS).sort() };
+
+  try {
+    const body = fs.readFileSync(__filename);
+    stamp.bytes = body.length;
+    stamp.digest = crypto.createHash('sha256').update(body).digest('hex').slice(0, 12);
+  } catch (err) { /* a build that cannot read itself still reports what it can */ }
+
+  try {
+    const gitDir = path.join(__dirname, '..', '.git');
+    const head = fs.readFileSync(path.join(gitDir, 'HEAD'), 'utf8').trim();
+    if (head.startsWith('ref: ')) {
+      const ref = head.slice(5).trim();
+      try {
+        stamp.commit = fs.readFileSync(path.join(gitDir, ref), 'utf8').trim().slice(0, 12);
+      } catch (err) {
+        const packed = fs.readFileSync(path.join(gitDir, 'packed-refs'), 'utf8');
+        const line = packed.split('\n').find((entry) => entry.endsWith(' ' + ref));
+        if (line) stamp.commit = line.split(' ')[0].slice(0, 12);
+      }
+      stamp.branch = ref.replace('refs/heads/', '');
+    } else {
+      stamp.commit = head.slice(0, 12);
+    }
+  } catch (err) { /* outside a checkout, the digest is the identity */ }
+
+  return stamp;
+}
+
+function printBuild(stamp) {
+  console.log('\n  fetch-catalog-prices');
+  console.log(`  build     sha256:${stamp.digest || 'unreadable'}${stamp.bytes ? `, ${size(stamp.bytes)}` : ''}`);
+  console.log(`  commit    ${stamp.commit || 'unknown'}${stamp.branch ? ` on ${stamp.branch}` : ''}`);
+  console.log(`  modes     ${stamp.modes.join(', ')}`);
+  console.log(`  options   ${stamp.options.join(' ')}`);
+  console.log('\n  A mode missing from this list is missing from this build.\n');
+}
+
 const USAGE = `
   Fynd — read each catalogue row's price off the retailer's own page
 
@@ -245,6 +297,9 @@ const USAGE = `
                                     displayed price that is nowhere to be
                                     found turns up. Hunts decide nothing.
     --help                          this
+    --version                       what this build is: a fingerprint of
+                                    the file, the commit it came from,
+                                    and every mode and option it has
 
   Options may be written --flag value or --flag=value. An unrecognised
   option stops the run: being ignored would silently make it a
@@ -3098,6 +3153,11 @@ async function main() {
     throw new Error(`--${chosen.mode} was given nothing usable to read`);
   }
 
+  if (chosen.mode === 'version') {
+    printBuild(buildStamp());
+    return;
+  }
+
   if (chosen.mode === 'help') {
     console.log(USAGE);
     return;
@@ -3278,7 +3338,7 @@ if (require.main === module) {
     sourceAuthority, relatedIdentifiers, markupAudit, looksLikeSchemaOrg,
     inspectEndpoint, allAmounts, colourFields, variantTable,
     huntPage, huntIn, huntInText, needleForms, scalarMatches, printHunt,
-    parseArgs, chooseMode, OPTIONS, USAGE,
+    parseArgs, chooseMode, OPTIONS, USAGE, MODES, buildStamp,
     productRecords, dataPayloads, dataCandidates, variantPriceRecords,
     parseLoosely, gatherDataInPage, walkData, namesListing, pricesUnder,
     writePrice, priceEvidenceNote, setPriceEvidence, catalogRowPrice, readCatalog
