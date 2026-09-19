@@ -1822,6 +1822,23 @@ after one the page does not touch the video again.
   verifier and priced a row off the page's markup. Each diagnostic now
   announces itself (`API INSPECTION — one endpoint…`), and `--help` lists them.
 
+  `--hunt <productUrl> --find 49.90,49.9` searches everything the page loaded —
+  every response it fetched, every script it shipped, every state object on
+  `window` — for the amounts named and for the listing's identities, including
+  the other codes the page's own records tie to them. Each hit is reported with
+  its exact JSON path, the record around it, the identity fields that record
+  carries, whether that identity is this listing's, and the nearest currency
+  field with its path. An amount is hunted in the shapes an API may carry it
+  in, so `49.90` is also looked for as `4990` in cents — which is how a
+  displayed price that appears in no payload turns up. Payloads that will not
+  parse are read as text, with enough context to see what surrounds the number.
+  It ends by answering four questions directly: does another response carry the
+  amount tied to this product, is there currency metadata elsewhere in a
+  payload that has it, does page state or a shipped script hold it, and does it
+  appear only in another unit. Amounts come from `--find` — nothing about what
+  a product costs is built into the tool — and a hunt decides nothing, prices
+  nothing and writes nothing.
+
   `--inspect-api <endpoint> --for <productUrl> [--codes a,b,c]` reads one API
   response the way the page reads it: fetched from inside the opened page, so
   it carries the session, cookies and origin the retailer expects. It is a

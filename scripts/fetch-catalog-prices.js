@@ -111,6 +111,8 @@ const OPTIONS = {
   '--inspect': 'value',
   '--inspect-data': 'value',
   '--inspect-api': 'value',
+  '--hunt': 'value',
+  '--find': 'value',
   '--for': 'value',
   '--codes': 'value'
 };
@@ -181,6 +183,16 @@ function chooseMode(parsed) {
     };
   }
 
+  if (named('--hunt')) {
+    const url = flags['--hunt'];
+    if (!url) return { mode: 'hunt', error: '--hunt needs the product URL to load.' + stop };
+    return {
+      mode: 'hunt',
+      url,
+      find: String(flags['--find'] || '').split(',').map((needle) => needle.trim()).filter(Boolean)
+    };
+  }
+
   if (named('--inspect-data')) {
     const url = flags['--inspect-data'];
     return url ? { mode: 'inspect-data', url } : { mode: 'inspect-data', error: '--inspect-data needs the product URL to read.' + stop };
@@ -219,6 +231,19 @@ const USAGE = `
                                     never from the page's DOM or its
                                     JSON-LD. Add --codes a,b,c to search
                                     for identities beyond the URL's own.
+    --hunt <productUrl> --find 49.90,49.9
+                                    every response, script and state
+                                    object the page loaded, searched for
+                                    those amounts and for this listing's
+                                    identities. Each hit is reported with
+                                    its JSON path, the record around it,
+                                    whether that record is tied to the
+                                    product, and the nearest currency.
+                                    An amount is also hunted in the other
+                                    shapes an API may carry it in — 49.90
+                                    as 4990 in cents — which is how a
+                                    displayed price that is nowhere to be
+                                    found turns up. Hunts decide nothing.
     --help                          this
 
   Options may be written --flag value or --flag=value. An unrecognised
@@ -1646,11 +1671,16 @@ async function renderPage(url, wanted, options) {
     if (!options || options.data !== false) {
       page.on('response', (response) => {
         try {
-          if (pending.length >= 80 || response.status() !== 200) return;
+          const wide = options && options.capture === 'all';
+          if (pending.length >= (wide ? 150 : 80) || response.status() !== 200) return;
           const type = response.headers()['content-type'] || '';
           const at = response.url();
           const jsonish = /json/i.test(type) || /\.json(\?|$)|\/api\/|graphql/i.test(at);
-          if (!jsonish) return;
+          /* a hunt reads everything text-shaped, because an amount can
+             be sitting in a bundle or an HTML fragment rather than in
+             the tidy JSON an ordinary read looks for */
+          const textish = wide && /json|javascript|text|xml/i.test(type);
+          if (!jsonish && !textish) return;
           pending.push({
             url: at,
             type: type.split(';')[0],
@@ -1685,7 +1715,7 @@ async function renderPage(url, wanted, options) {
       const responses = [];
       for (const entry of pending) {
         const text = await entry.body;
-        if (!text || text.length > 2000000) continue;
+        if (!text || text.length > 3000000) continue;
         responses.push({
           url: entry.url,
           type: entry.type,
@@ -2333,6 +2363,339 @@ function printDataInspection(report) {
   }
 }
 
+/* ---------- hunting an amount through everything a page loaded ----
+
+   The question this answers is not "what does the reader accept" but
+   "where does the number a shopper sees actually come from". UNIQLO's
+   l2s endpoint returns 7.9 with no currency beside it, the page shows
+   49.90, and both facts can be true: the displayed amount may come from
+   another response, from state the page holds, or from a field in a
+   different unit — 4990 in cents is the same number wearing a
+   different shape.
+
+   So nothing is assumed about what to look for. The amounts hunted are
+   the ones passed in with --find, expanded mechanically into the forms
+   an API might carry them in; the identities are the listing's own
+   codes plus whatever other identifiers the page's records tie to
+   them. Nothing here decides anything, and no amount is ever written
+   from a hunt. */
+const HUNT_TOKENS = ['usd', 'currency', 'price', 'amount'];
+
+/* 49.90 as an API might carry it: as written, to two decimals, or as an
+   integer number of cents. This is an expansion of what was typed, not
+   a guess about what the price is. */
+function needleForms(needle) {
+  const text = String(needle == null ? '' : needle).trim();
+  if (!text) return [];
+
+  const forms = new Map();
+  const add = (form, kind, numeric) => {
+    const key = String(form).toLowerCase();
+    if (form !== '' && !forms.has(key)) forms.set(key, { form: String(form), kind, numeric: numeric === undefined ? null : numeric });
+  };
+
+  if (!/^\d+(\.\d+)?$/.test(text)) {
+    add(text, 'as written');
+    return [...forms.values()];
+  }
+
+  const n = Number(text);
+  add(text, 'as written', n);
+  add(n.toFixed(2), 'to two decimals', n);
+  add(String(n), 'as a number', n);
+  const cents = Math.round(n * 100);
+  if (Math.abs(n * 100 - cents) < 1e-9) add(String(cents), 'in cents', cents);
+  return [...forms.values()];
+}
+
+/* does this key/value pair answer to one of the forms? */
+function scalarMatches(key, value, entry) {
+  const name = String(key).toLowerCase();
+  const text = String(value == null ? '' : value).trim();
+  const bare = text.replace(/[$£€,\s]/g, '').toLowerCase();
+
+  for (const form of entry.forms) {
+    if (form.numeric !== null) {
+      if (typeof value === 'number' && value === form.numeric) return { form, where: 'value' };
+      if (bare && bare === form.form.toLowerCase()) return { form, where: 'value' };
+      continue;
+    }
+    const needle = form.form.toLowerCase();
+    if (name.includes(needle)) return { form, where: 'key' };
+    if (bare.includes(needle)) return { form, where: 'value' };
+  }
+  return null;
+}
+
+/* every place in one payload where a needle turns up, with the record
+   around it: what identifies it, whether that identity is this
+   listing's, and where the nearest currency is */
+function huntIn(value, needles, ids, limit) {
+  const wanted = needles.map((needle) => ({ needle: String(needle), forms: needleForms(needle) })).filter((e) => e.forms.length);
+  const out = [];
+  const cap = limit || 60;
+
+  const visit = (node, path, ancestors) => {
+    if (out.length >= cap || !node || typeof node !== 'object') return;
+    const here = ancestors.concat([{ node, path }]);
+    const keys = Array.isArray(node) ? node.map((ignored, at) => at) : Object.keys(node);
+
+    for (const key of keys) {
+      if (out.length >= cap) return;
+      const child = node[key];
+      const at = path.concat(Array.isArray(node) ? `[${key}]` : key);
+      if (child && typeof child === 'object') { visit(child, at, here); continue; }
+
+      for (const entry of wanted) {
+        const hit = scalarMatches(key, child, entry);
+        if (!hit) continue;
+
+        /* the nearest record that names something, and whether what it
+           names is this listing */
+        let identity = null;
+        let currency = null;
+        for (let up = here.length - 1; up >= 0; up -= 1) {
+          const step = here[up];
+          if (!identity) {
+            const named = namesListing(step.node, ids);
+            if (named) {
+              identity = { key: named.key, value: named.value, at: step.path.join('.') || '(root)', tied: true };
+            } else if (step.path.length) {
+              /* a price map keyed by the variant id: the key is the
+                 identity, the same way productRecords reads it */
+              const filed = String(step.path[step.path.length - 1]);
+              for (const id of ids) {
+                if (namesCode(filed, id)) {
+                  identity = { key: '(map key)', value: filed, at: step.path.join('.'), tied: true };
+                  break;
+                }
+              }
+            }
+          }
+          if (!currency) {
+            const found = currencyNear(step.node);
+            if (found) currency = { value: found, at: step.path.join('.') || '(root)' };
+          }
+          if (identity && currency) break;
+        }
+
+        const record = here[here.length - 1].node;
+        const fields = [];
+        if (record && !Array.isArray(record)) {
+          for (const field of Object.keys(record)) {
+            const raw = record[field];
+            if ((typeof raw === 'string' || typeof raw === 'number') && isIdKey(field)) {
+              fields.push({ key: field, value: String(raw).slice(0, 64) });
+            }
+          }
+        }
+
+        out.push({
+          needle: entry.needle,
+          form: hit.form.form,
+          kind: hit.form.kind,
+          where: hit.where,
+          path: at.join('.'),
+          key: String(key),
+          value: typeof child === 'string' ? child.slice(0, 80) : child,
+          record: here[here.length - 1].path.join('.') || '(root)',
+          idFields: fields.slice(0, 6),
+          identity,
+          currency,
+          tied: Boolean(identity),
+          elsewhere: at.find((segment) => ELSEWHERE_KEY.test(String(segment))) || null
+        });
+        break;
+      }
+    }
+  };
+
+  visit(value, [], []);
+  return out;
+}
+
+/* a payload that will not parse still gets read, as text, because a
+   bundle can carry the number the page prints */
+function huntInText(text, needles, limit) {
+  const body = String(text || '');
+  const out = [];
+  const cap = limit || 6;
+
+  for (const needle of needles) {
+    for (const form of needleForms(needle)) {
+      if (form.numeric === null && HUNT_TOKENS.includes(form.form.toLowerCase())) continue; // too common to be useful in a bundle
+      let at = body.indexOf(form.form);
+      let seen = 0;
+      while (at >= 0 && seen < 2 && out.length < cap) {
+        /* 49.90 and 49.9 are the same sighting when they start at the
+           same place; reporting it twice is noise */
+        if (out.some((found) => found.offset === at)) { at = body.indexOf(form.form, at + 1); continue; }
+        out.push({
+          needle: String(needle),
+          form: form.form,
+          kind: form.kind,
+          offset: at,
+          context: body.slice(Math.max(0, at - 60), at + form.form.length + 60).replace(/\s+/g, ' ')
+        });
+        seen += 1;
+        at = body.indexOf(form.form, at + form.form.length);
+      }
+    }
+  }
+  return out;
+}
+
+async function huntPage(url, options) {
+  const settings = options || {};
+  const ids = identifiersFrom(url);
+  const rendered = await renderPage(url, ids, { data: true, capture: 'all' });
+  if (rendered.failed) return { url, ids, failed: rendered.failed };
+
+  const data = rendered.seen.data || {};
+  const parsedPayloads = dataPayloads(data);
+
+  /* the identities to look for: the listing's own, plus the other codes
+     its records tie to it — 438783 arrives this way rather than by
+     being typed in */
+  const related = relatedIdentifiers(parsedPayloads, ids).map((entry) => entry.code);
+  const asked = (settings.find || []).map((needle) => String(needle).trim()).filter(Boolean);
+  const needles = [...new Set([...asked, ...ids, ...related, ...HUNT_TOKENS])];
+  const numeric = asked.filter((needle) => /^\d+(\.\d+)?$/.test(needle)).map(Number);
+
+  const sources = [];
+
+  const consider = (where, kind, text, extra) => {
+    const body = String(text || '');
+    const value = parseLoosely(body);
+    const entry = Object.assign({
+      where,
+      kind,
+      bytes: body.length,
+      parsed: Boolean(value),
+      matches: value ? huntIn(value, needles, ids, 40) : [],
+      textMatches: value ? [] : huntInText(body, asked.length ? asked : ids, 6)
+    }, extra || {});
+    if (entry.matches.length || entry.textMatches.length) sources.push(entry);
+  };
+
+  for (const response of data.responses || []) consider(`network ${response.url}`, 'network', response.text, { url: response.url, type: response.type });
+  for (const script of data.scripts || []) {
+    consider(`script${script.id ? '#' + script.id : ''}${script.type ? ` [${script.type}]` : ''}`, 'script', script.text, { src: script.src || null });
+  }
+  for (const state of data.state || []) consider(`window.${state.key}`, 'window', state.text, { key: state.key });
+
+  /* and what the page actually draws, because "the number is on screen
+     but in no payload" is itself the finding */
+  const drawn = (rendered.seen.prices || []).map((figure) => {
+    const money = moneyInText(figure.text);
+    return money ? { amount: money.amount, text: figure.text, selector: figure.selector, codes: figure.codes, own: figure.own, near: figure.near } : null;
+  }).filter(Boolean).filter((figure) => !numeric.length || numeric.some((want) => Math.abs(want - figure.amount) < 1e-9));
+
+  /* the four questions, answered from what was found */
+  const numericMatches = sources.flatMap((source) => source.matches
+    .filter((match) => numeric.some((want) => {
+      const forms = needleForms(String(want)).map((form) => form.form.toLowerCase());
+      return forms.includes(String(match.form).toLowerCase());
+    }))
+    /* the source's kind and the form's kind are different questions,
+       and merging them under one name made every match look like it
+       came from nowhere */
+    .map((match) => Object.assign({ source: source.where, sourceKind: source.kind }, match)));
+
+  const answers = {
+    anotherApi: numericMatches.filter((match) => match.sourceKind === 'network' && match.tied),
+    currencyElsewhere: sources.map((source) => ({
+      where: source.where,
+      currencies: source.matches.filter((match) => /currenc/i.test(match.key) || match.needle === 'currency').slice(0, 6)
+    })).filter((entry) => entry.currencies.length),
+    pageState: numericMatches.filter((match) => match.sourceKind === 'window' || match.sourceKind === 'script'),
+    /* the same number wearing a different shape: 4990 in cents is the
+       answer to "where does the rendered 49.90 come from" as much as a
+       field literally holding 49.90 would be */
+    transformed: numericMatches.filter((match) => match.kind !== 'as written' && match.kind !== 'as a number'),
+    drawn
+  };
+
+  return {
+    url,
+    ids,
+    related,
+    needles,
+    numeric,
+    counts: {
+      responses: (data.responses || []).length,
+      scripts: (data.scripts || []).length,
+      state: (data.state || []).length
+    },
+    sources,
+    drawn,
+    answers
+  };
+}
+
+function printHunt(report) {
+  if (report.failed) {
+    console.log(`\n  ${report.url}`);
+    console.log(`  could not be read: ${report.failed}\n`);
+    return;
+  }
+
+  console.log(`\n  ${short(report.url, 130)}`);
+  console.log(`  read          ${report.counts.responses} responses, ${report.counts.scripts} scripts, ${report.counts.state} state objects`);
+  console.log(`  listing codes ${report.ids.slice(0, 6).join(', ')}`);
+  if (report.related.length) console.log(`  also tied to  ${report.related.slice(0, 8).join(', ')}`);
+  console.log(`  hunting for   ${report.needles.slice(0, 12).join(', ')}`);
+  if (report.numeric.length) {
+    const forms = report.numeric.flatMap((n) => needleForms(String(n)).map((f) => `${f.form} (${f.kind})`));
+    console.log(`  amount forms  ${[...new Set(forms)].join(', ')}`);
+  }
+
+  console.log(`\n  sources carrying something (${report.sources.length}):`);
+  if (!report.sources.length) console.log('     none — nothing the page loaded carries any of those');
+
+  for (const source of report.sources.slice(0, 20)) {
+    console.log(`\n     ${short(source.where, 120)}`);
+    console.log(`       ${size(source.bytes)}${source.type ? ', ' + String(source.type).split(';')[0] : ''}${source.parsed ? '' : ', NOT PARSEABLE as JSON'}`);
+    for (const match of source.matches.slice(0, 10)) {
+      console.log(`       ${match.path} = ${typeof match.value === 'string' ? '"' + short(match.value, 40) + '"' : match.value}  [${match.needle} ${match.kind}, in the ${match.where}]`);
+      console.log(`         record ${short(match.record, 90)}${match.elsewhere ? `  (under "${match.elsewhere}")` : ''}`);
+      console.log(`         identity ${match.identity ? `${match.identity.key}=${match.identity.value} at ${short(match.identity.at, 60)} — TIED to this listing` : 'none — no record around it names this listing'}`);
+      if (match.idFields.length) console.log(`         fields ${match.idFields.map((f) => f.key + '=' + f.value).join(' · ')}`);
+      console.log(`         currency ${match.currency ? `${match.currency.value} at ${short(match.currency.at, 60)}` : 'none anywhere above it in this payload'}`);
+    }
+    const more = source.matches.length - 10;
+    if (more > 0) console.log(`       …and ${more} more`);
+    for (const match of source.textMatches.slice(0, 4)) {
+      console.log(`       text at ${match.offset}: …${short(match.context, 110)}…  [${match.needle} ${match.kind}]`);
+    }
+  }
+
+  console.log('\n  what the page draws:');
+  if (!report.drawn.length) console.log('     no rendered figure matches the amounts hunted');
+  for (const figure of report.drawn.slice(0, 8)) {
+    console.log(`     ${figure.text} — ${figure.selector}  codes: ${(figure.codes || []).slice(0, 3).join(', ') || 'none in its ancestry'}`);
+  }
+
+  console.log('\n  the questions:');
+  console.log(`     1. another response carries it, tied to this product: ${report.answers.anotherApi.length
+    ? report.answers.anotherApi.slice(0, 4).map((m) => `${short(m.source, 70)} at ${m.path}`).join('; ')
+    : 'no'}`);
+  console.log(`     2. currency metadata elsewhere in a payload that has the amount: ${report.answers.currencyElsewhere.length
+    ? report.answers.currencyElsewhere.slice(0, 3).map((e) => `${short(e.where, 60)} (${e.currencies.map((c) => c.path).slice(0, 3).join(', ')})`).join('; ')
+    : 'none found'}`);
+  console.log(`     3. page state or a shipped script carries it: ${report.answers.pageState.length
+    ? report.answers.pageState.slice(0, 4).map((m) => `${short(m.source, 60)} at ${m.path}`).join('; ')
+    : 'no'}`);
+  console.log(`     4. it appears in another unit or shape: ${report.answers.transformed.length
+    ? report.answers.transformed.slice(0, 4).map((m) => `${m.form} (${m.kind}) at ${short(m.source, 50)} ${m.path}`).join('; ')
+    : 'no'}`);
+  if (report.drawn.length && !report.answers.anotherApi.length && !report.answers.pageState.length && !report.answers.transformed.length) {
+    console.log('     -> the page draws it and no payload it loaded carries it in any form,');
+    console.log('        so it is computed in the browser or fetched after this read.');
+  }
+  console.log('\n  A hunt decides nothing and writes nothing.\n');
+}
+
 /* ---------- one endpoint, read the way the page reads it ----------
 
    --inspect-api. The page inspection says which requests a product page
@@ -2750,6 +3113,15 @@ async function main() {
     return;
   }
 
+  if (chosen.mode === 'hunt') {
+    say('\n  HUNT — every payload one page loaded, searched for what you named.');
+    say('  It decides nothing, prices nothing and writes nothing.');
+    const report = await huntPage(chosen.url, { find: chosen.find });
+    if (asJson) console.log(JSON.stringify(report, null, 2));
+    else printHunt(report);
+    return;
+  }
+
   if (chosen.mode === 'inspect-data') {
     say('\n  PAGE DATA INSPECTION — the payloads one page carries. Nothing is written.');
     const report = await inspectData(chosen.url);
@@ -2905,6 +3277,7 @@ if (require.main === module) {
     inspectUrl, inspectData, selectedAmong, elsewhereIn, isIdKey, isPriceKey, keyWords,
     sourceAuthority, relatedIdentifiers, markupAudit, looksLikeSchemaOrg,
     inspectEndpoint, allAmounts, colourFields, variantTable,
+    huntPage, huntIn, huntInText, needleForms, scalarMatches, printHunt,
     parseArgs, chooseMode, OPTIONS, USAGE,
     productRecords, dataPayloads, dataCandidates, variantPriceRecords,
     parseLoosely, gatherDataInPage, walkData, namesListing, pricesUnder,

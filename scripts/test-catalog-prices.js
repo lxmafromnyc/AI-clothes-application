@@ -1061,6 +1061,73 @@ test('the l2s array and the price map are joined on the variant identity', () =>
 });
 
 /* ---------------------------------------------------------
+   Hunting an amount through everything a page loaded
+
+   The live endpoint returns 7.9 with no currency beside it and the page
+   shows something else. Both can be true, and the hunt is what says
+   where the displayed number actually comes from.
+   --------------------------------------------------------- */
+
+console.log('\nHunting an amount\n');
+
+test('an amount is hunted in the shapes an API might carry it in', () => {
+  const forms = prices.needleForms('49.90').map((form) => `${form.form}/${form.kind}`);
+  assert.ok(forms.includes('49.90/as written'));
+  assert.ok(forms.includes('4990/in cents'), '4990 is the same number in a different unit');
+  assert.ok(forms.some((form) => /^49\.9\//.test(form)));
+
+  assert.deepStrictEqual(prices.needleForms('USD').map((f) => f.kind), ['as written'],
+    'a word is looked for as itself, not expanded');
+  assert.deepStrictEqual(prices.needleForms(''), []);
+});
+
+test('a match is recognised by value, by unit and by key', () => {
+  const amount = { needle: '49.90', forms: prices.needleForms('49.90') };
+  assert.ok(prices.scalarMatches('value', 4990, amount), 'cents');
+  assert.ok(prices.scalarMatches('price', '$49.90', amount), 'a formatted string');
+  assert.ok(prices.scalarMatches('base', 49.9, amount), 'a number');
+  assert.strictEqual(prices.scalarMatches('value', 7.9, amount), null);
+
+  const word = { needle: 'currency', forms: prices.needleForms('currency') };
+  assert.strictEqual(prices.scalarMatches('priceCurrency', 'USD', word).where, 'key');
+  assert.strictEqual(prices.scalarMatches('brandValue', 'Uniqlo', word), null);
+});
+
+test('a hit reports its record, its identity and the nearest currency', () => {
+  const payload = { result: {
+    l2s: [{ l2Id: '438783-COL09-004', productId: 'E429066-000', communicationCode: 'COL09' }],
+    prices: { '438783-COL09-004': { base: { value: 4990 } } },
+    currency: 'USD'
+  } };
+
+  const hits = prices.huntIn(payload, ['49.90'], ['e429066', '429066', '438783-col09-004'], 20);
+  assert.strictEqual(hits.length, 1);
+
+  const hit = hits[0];
+  assert.strictEqual(hit.path, 'result.prices.438783-COL09-004.base.value');
+  assert.strictEqual(hit.form, '4990');
+  assert.strictEqual(hit.kind, 'in cents');
+  assert.strictEqual(hit.tied, true, 'the map key is the identity');
+  assert.strictEqual(hit.identity.key, '(map key)');
+  assert.strictEqual(hit.currency.value, 'USD');
+  assert.strictEqual(hit.currency.at, 'result', 'and it says where the currency actually is');
+});
+
+test('a hit under a recommendation key says so', () => {
+  const payload = { recommendations: [{ productId: 'E429066-000', price: 49.9 }] };
+  const hits = prices.huntIn(payload, ['49.90'], ['e429066'], 20);
+  assert.strictEqual(hits.length, 1);
+  assert.strictEqual(hits[0].elsewhere, 'recommendations');
+});
+
+test('an unparseable bundle is read as text', () => {
+  const bundle = 'var a=1;window.__price={base:4990,cur:"USD"};function x(){}';
+  const found = prices.huntInText(bundle, ['49.90'], 6);
+  assert.ok(found.some((match) => match.form === '4990' && /base:4990/.test(match.context)),
+    'the number is found with enough around it to read');
+});
+
+/* ---------------------------------------------------------
    The command line itself
 
    --inspect-api=<url> was invisible to a scan for an exact string, so
@@ -1275,6 +1342,13 @@ function hydratingRetailer() {
     const port = server.address().port;
     const here = `http://127.0.0.1:${port}${url}`;
 
+    /* a second API, pricing the same product in cents with its
+       currency beside it — the shape a displayed price often comes from */
+    if (url.startsWith('/api/display')) {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ items: [{ productId: 'E429066-000', displayPrice: 4990, currencyCode: 'USD' }] }));
+    }
+
     /* the commerce API the page fetches while it builds itself */
     if (url.startsWith('/api/commerce')) {
       res.writeHead(200, { 'content-type': 'application/json' });
@@ -1283,6 +1357,23 @@ function hydratingRetailer() {
     if (url.startsWith('/api/')) {
       res.writeHead(200, { 'content-type': 'application/json' });
       return res.end(JSON.stringify(url.startsWith('/api/wrong') ? API_WRONG : API_PAYLOAD));
+    }
+
+    /* a page whose displayed amount is in none of its payloads as
+       written: the l2s endpoint says 7.9 with no currency, a second API
+       says 4990 with one, state holds the formatted string, and the DOM
+       shows $49.90 */
+    if (url.startsWith('/hunt')) {
+      res.writeHead(200, { 'content-type': 'text/html' });
+      return res.end(`<!doctype html><html><head>
+        <link rel="canonical" href="${here}">
+        <title>Where does it come from</title></head>
+        <body><div id="app"><div class="fr-ec-price"><span class="fr-ec-price-text">$49.90</span></div></div>
+        <script>
+          window.__DISPLAY__ = { formatted: '$49.90', productId: 'E429066-000' };
+          fetch('/api/commerce/v5/en/products/E429066-000/price-groups/00/l2s?withPrices=true');
+          fetch('/api/display/prices?productIds=E429066-000');
+        </script></body></html>`);
     }
 
     /* the live UNIQLO shape: schema.org markup offering 7.90 on a page
@@ -1395,7 +1486,7 @@ function hydratingRetailer() {
   try { chromium = require('playwright').chromium; } catch (err) { chromium = null; }
 
   if (!chromium) {
-    skipped += 24;
+    skipped += 26;
     console.log('  skip  the browser section — Playwright is not installed here');
     console.log('        npm install, then re-run, to exercise the hydration path');
   } else {
@@ -1689,6 +1780,44 @@ function hydratingRetailer() {
       assert.ok(report.related.some((entry) => /438783/.test(entry.code)), 'the identity it keys by is reported');
       assert.ok(report.colours.length, 'and the colour fields it carries');
       assert.strictEqual(report.verdict.price, 49.9, 'this endpoint alone would answer');
+    });
+
+    await testAsync('a hunt says where a displayed amount actually comes from', async () => {
+      const report = await prices.huntPage(listing('/hunt/products/E429066-000/00'), { find: ['49.90'] });
+      assert.ok(!report.failed, report.failed);
+
+      /* 1. another response carries it, tied to the product */
+      assert.ok(report.answers.anotherApi.length, 'the second API is found');
+      assert.ok(report.answers.anotherApi.some((match) => /display/.test(match.source)));
+      assert.ok(report.answers.anotherApi.some((match) => match.tied), 'and its record names the product');
+
+      /* 2. the currency it has, which the l2s response did not */
+      const display = report.sources.find((source) => /display/.test(source.where));
+      assert.ok(display.matches.some((match) => match.currency && match.currency.value === 'USD'),
+        'the amount that has a currency beside it is reported as having one');
+
+      /* 3. the page's own state */
+      assert.ok(report.answers.pageState.some((match) => /__DISPLAY__/.test(match.source)));
+
+      /* 4. and the shape it was carried in */
+      assert.ok(report.answers.transformed.some((match) => match.form === '4990' && match.kind === 'in cents'),
+        'an amount in cents is the same amount, and saying so is the point');
+
+      assert.ok(report.drawn.some((figure) => Math.abs(figure.amount - 49.9) < 1e-9), 'and the page does draw it');
+      assert.ok(report.related.length === 0 || report.related.every((code) => typeof code === 'string'));
+    });
+
+    await testAsync('a hunt prints, decides nothing and writes nothing', async () => {
+      const before = fs.readFileSync(CATALOG);
+      const result = await run(['--hunt', listing('/hunt/products/E429066-000/00'), '--find', '49.90', '--write']);
+      const after = fs.readFileSync(CATALOG);
+
+      assert.strictEqual(result.code, 0, result.stderr);
+      assert.match(result.stdout, /HUNT — every payload one page loaded/);
+      assert.match(result.stdout, /in cents/);
+      assert.ok(before.equals(after), 'the catalogue is byte-for-byte what it was');
+      assert.doesNotMatch(result.stdout, /Reading \d+ linked product page/);
+      assert.doesNotMatch(result.stdout, /WOULD WRITE|Wrote \d+ price/);
     });
 
     await testAsync('--inspect-data finds the record the page was built from', async () => {
