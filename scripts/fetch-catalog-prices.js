@@ -113,6 +113,7 @@ const OPTIONS = {
   '--inspect-data': 'value',
   '--inspect-api': 'value',
   '--hunt': 'value',
+  '--datalayer': 'value',
   '--find': 'value',
   '--for': 'value',
   '--codes': 'value'
@@ -185,6 +186,11 @@ function chooseMode(parsed) {
     };
   }
 
+  if (named('--datalayer')) {
+    const url = flags['--datalayer'];
+    return url ? { mode: 'datalayer', url } : { mode: 'datalayer', error: '--datalayer needs the product URL to load.' + stop };
+  }
+
   if (named('--hunt')) {
     const url = flags['--hunt'];
     if (!url) return { mode: 'hunt', error: '--hunt needs the product URL to load.' + stop };
@@ -211,7 +217,7 @@ function chooseMode(parsed) {
 /* Every command this file can run. Kept beside the dispatcher rather
    than in a comment, so --version can list what a build actually does
    and a test can hold the list to what chooseMode will produce. */
-const MODES = ['verify', 'inspect', 'inspect-data', 'inspect-api', 'hunt', 'help', 'version'];
+const MODES = ['verify', 'inspect', 'inspect-data', 'inspect-api', 'hunt', 'datalayer', 'help', 'version'];
 
 /* What build is this? The question has now been asked three times in
    the shape "the feature you describe is not in my copy", and answering
@@ -296,6 +302,14 @@ const USAGE = `
                                     as 4990 in cents — which is how a
                                     displayed price that is nowhere to be
                                     found turns up. Hunts decide nothing.
+    --datalayer <productUrl>        the page's dataLayer ecommerce
+                                    events in full, every variant its
+                                    data prices, and the chain link by
+                                    link: selected variant -> the API's
+                                    amount -> the event's currency and
+                                    product ids -> the figure on screen.
+                                    Says what the ordinary gates make of
+                                    it, and writes nothing.
     --help                          this
     --version                       what this build is: a fingerprint of
                                     the file, the commit it came from,
@@ -705,7 +719,20 @@ function chargedEvidence(candidate) {
       return { ok: false, why: `${record.field} is a list or comparison field, not what the record says is charged` };
     }
     if (!record.currency) {
-      return { ok: false, why: `the record names no currency beside ${record.field}, so ${record.amount} could be any` };
+      const hint = record.currencyHint;
+      return {
+        ok: false,
+        why: hint
+          ? `the record names no currency beside ${record.field}. ${hint.source} names ${hint.currency} for the same item (${hint.identity} at ${hint.at}) but does not carry ${record.amount}, so it says what units this item's prices are in, not that this is one of them`
+          : `the record names no currency beside ${record.field}, so ${record.amount} could be any`
+      };
+    }
+    if (record.currencyFrom) {
+      return {
+        ok: true,
+        via: 'data-record-price',
+        how: `${record.field} states it, and ${record.currencyFrom.source} carries the same amount for the same item (${record.currencyFrom.identity} at ${record.currencyFrom.at}) in ${record.currency}`
+      };
     }
     return { ok: true, via: 'data-record-price', how: `${record.field} states it, in ${record.currency}` };
   }
@@ -957,7 +984,13 @@ const DATEISH = /^\d{4}-\d{2}(-\d{2})?([T ]|$)|^\d{2}\/\d{2}\/\d{4}/;
 const PRICE_KEY = /^(price|baseprice|base|current|currentprice|sale|saleprice|selling|sellingprice|promo|promoprice|amount|value|unitprice|min|max)$/i;
 
 function isIdKey(key) {
-  return keyWords(key).some((word) => ID_WORD.test(word));
+  const words = keyWords(key);
+  if (!words.length) return false;
+  /* the last word decides. item_id and item_product_id are
+     identifiers; item_name is a name that happens to start with the
+     same word, and counting it made every analytics item look like it
+     carried four ids. */
+  return ID_WORD.test(words[words.length - 1]);
 }
 
 function isPriceKey(key) {
@@ -1327,15 +1360,140 @@ function markupAudit(hits, corroborated, now) {
   });
 }
 
+/* ---------- a currency kept in a different record ----------
+
+   An amount with no currency beside it is refused, and it should be:
+   7.9 could be anything. But a page often keeps the currency one
+   record away — a commerce API prices a variant and says nothing about
+   units, while the analytics event for that same variant names USD.
+
+   That is evidence, not an assumption, PROVIDED the other record is
+   about the same thing. So the tie is by identity, and it comes in two
+   strengths, which are reported separately because they are not worth
+   the same:
+
+     amount-and-identity   the other record names this item AND carries
+                           this same amount, with a currency. It is the
+                           same price, said twice, once with units.
+     identity              the other record names this item and a
+                           currency, but not this amount. It says what
+                           units this item's prices are in, without
+                           saying this is one of them.
+
+   Only the first is allowed to fill in a missing currency. The second
+   is reported so a person can see it and decide, and the gate stays
+   closed. Markup is never a source of either: it is not what the page
+   prices from. */
+function identitiesOf(record) {
+  const out = [];
+  if (!record) return out;
+  for (const value of [record.code, record.variant, record.mappedFrom && record.mappedFrom.variant]) {
+    const text = String(value || '').trim();
+    if (text) out.push(text);
+  }
+  return [...new Set(out)];
+}
+
+function currencyByIdentity(record, payloads, options) {
+  const wanted = identitiesOf(record);
+  if (!wanted.length) return null;
+
+  const amount = record.amount;
+  let weaker = null;
+
+  const codes = wanted.map((code) => code.toLowerCase());
+
+  for (const payload of payloads || []) {
+    if (payload.markup) continue; // markup does not get to name the units either
+    let found = null;
+
+    /* walked with the ancestors in hand, because an analytics event
+       keeps the currency one level above the item it applies to:
+       ecommerce.currency covers ecommerce.items[]. A currency on the
+       record itself is preferred; the nearest one above it counts, and
+       the report says which it was. */
+    const step = (node, path, above) => {
+      if (found || !node || typeof node !== 'object') return;
+      const here = above.concat([{ node, path }]);
+
+      if (!Array.isArray(node) && !path.some((segment) => ELSEWHERE_KEY.test(String(segment)))) {
+        const named = namesListing(node, codes);
+        const filed = path.length ? String(path[path.length - 1]) : '';
+        const byKey = !named && wanted.some((code) => namesCode(filed, code));
+
+        if (named || byKey) {
+          let currency = null;
+          for (let up = here.length - 1; up >= 0; up -= 1) {
+            const carried = currencyNear(here[up].node);
+            if (carried) {
+              currency = { value: carried, at: here[up].path.join('.') || '(root)', own: up === here.length - 1 };
+              break;
+            }
+          }
+
+          if (currency) {
+            const mine = {
+              currency: currency.value,
+              source: payload.source,
+              at: path.join('.') || '(root)',
+              currencyAt: currency.at,
+              onRecord: currency.own,
+              identity: named ? `${named.key}=${named.value}` : `(map key) ${filed}`,
+              amounts: pricesUnder(node).map((price) => price.amount)
+            };
+
+            if (mine.amounts.some((carried) => Math.abs(carried - amount) < 1e-9)) {
+              mine.via = 'amount-and-identity';
+              found = mine;
+              return;
+            }
+            if (!weaker) {
+              mine.via = 'identity';
+              weaker = mine;
+            }
+          }
+        }
+      }
+
+      const keys = Array.isArray(node) ? node.map((ignored, at) => at) : Object.keys(node);
+      for (const key of keys) {
+        const child = node[key];
+        if (child && typeof child === 'object') step(child, path.concat(Array.isArray(node) ? `[${key}]` : key), here);
+        if (found) return;
+      }
+    };
+
+    step(payload.value, [], []);
+    if (found) return found;
+  }
+
+  if (weaker && options && options.weak) return weaker;
+  return weaker ? Object.assign({}, weaker, { onlyWeak: true }) : null;
+}
+
 function dataCandidates(data, pageUrl) {
   const ids = identifiersFrom(pageUrl);
   const payloads = dataPayloads(data);
   const out = [];
 
+  const withCurrency = (hit) => {
+    if (hit.currency) return hit;
+    const borrowed = currencyByIdentity(hit, payloads);
+    if (!borrowed) return hit;
+    if (borrowed.onlyWeak) {
+      hit.currencyHint = borrowed; // reported, never used
+      return hit;
+    }
+    hit.currency = borrowed.currency;
+    hit.currencyFrom = borrowed;
+    return hit;
+  };
+
   for (const payload of payloads) {
     for (const hit of productRecords(payload.value, ids, payload.source)) {
       if (hit.elsewhere) continue; // seen, set aside, never a candidate
       if (payload.markup) hit.authority = 'markup';
+      withCurrency(hit);
       out.push({
         amount: hit.amount,
         currency: hit.currency,
@@ -1357,6 +1515,7 @@ function dataCandidates(data, pageUrl) {
     if (already.has(`${hit.source}|${hit.path}`)) continue;
     const owner = mapped.owners.find((entry) => entry.variant === hit.code);
     if (!owner) continue;
+    withCurrency(hit);
     out.push({
       amount: hit.amount,
       currency: hit.currency,
@@ -1651,6 +1810,26 @@ function gatherDataInPage(wanted) {
     if (!text || text.length < 8) continue;
     state.push({ key, length: text.length, mentions: mentions(text), text: text.slice(0, CAP) });
     if (state.length >= 25) break;
+  }
+
+  /* dataLayer explicitly, because an analytics event is often the only
+     place a page says what currency its prices are in */
+  if (!state.some((entry) => /datalayer/i.test(entry.key))) {
+    try {
+      const layer = window.dataLayer;
+      if (Array.isArray(layer)) {
+        const marked = new WeakSet();
+        const text = JSON.stringify(layer, function (k, v) {
+          if (typeof v === 'function') return undefined;
+          if (v && typeof v === 'object') {
+            if (marked.has(v)) return '[circular]';
+            marked.add(v);
+          }
+          return v;
+        });
+        if (text) state.push({ key: 'dataLayer', length: text.length, mentions: mentions(text), text: text.slice(0, CAP) });
+      }
+    } catch (err) { /* a page without one is the common case */ }
   }
 
   const resources = performance.getEntriesByType('resource').slice(0, 300).map((entry) => ({
@@ -2418,6 +2597,226 @@ function printDataInspection(report) {
   }
 }
 
+/* ---------- the analytics event, and what it ties together ----------
+
+   A commerce API prices a variant and says nothing about units. The
+   analytics event for that same variant names the currency, the
+   product, the legacy id and often the amount — it is the one place a
+   page says all of it at once, because that is what analytics is for.
+
+   This dumps it whole and then walks the chain link by link: which
+   variant the page has selected, what the API charges for it, what the
+   event calls it and in what currency, and whether the figure on the
+   screen is that amount. It decides nothing; it reports each link and
+   what the ordinary gates make of the result. */
+function ecommerceEvents(data) {
+  const out = [];
+  for (const state of (data && data.state) || []) {
+    if (!/datalayer/i.test(state.key)) continue;
+    const value = parseLoosely(state.text);
+    if (!Array.isArray(value)) continue;
+
+    value.forEach((entry, at) => {
+      if (!entry || typeof entry !== 'object' || !entry.ecommerce || typeof entry.ecommerce !== 'object') return;
+      const ecommerce = entry.ecommerce;
+      const items = Array.isArray(ecommerce.items) ? ecommerce.items : [];
+
+      out.push({
+        at,
+        key: state.key,
+        event: typeof entry.event === 'string' ? entry.event : null,
+        currency: currencyIn(ecommerce.currency) || null,
+        value: toAmount(ecommerce.value),
+        items: items.slice(0, 25).map((item, index) => {
+          const ids = [];
+          if (item && typeof item === 'object') {
+            for (const key of Object.keys(item)) {
+              const raw = item[key];
+              if ((typeof raw === 'string' || typeof raw === 'number') && isIdKey(key)) {
+                ids.push({ key, value: String(raw).slice(0, 64) });
+              }
+            }
+          }
+          return {
+            index,
+            ids,
+            price: item ? toAmount(item.price) : null,
+            currency: item ? currencyIn(item.currency) || null : null,
+            name: item && typeof item.item_name === 'string' ? item.item_name : null
+          };
+        }),
+        text: (function () { try { return JSON.stringify(entry, null, 2); } catch (err) { return null; } })()
+      });
+    });
+  }
+  return out;
+}
+
+/* every variant this page's data prices, so one cheap colour among
+   expensive ones is visible rather than inferred */
+function pricedVariants(payloads) {
+  const out = [];
+  for (const payload of payloads || []) {
+    const table = variantTable(payload.value);
+    for (const map of table.maps) {
+      const joined = table.joined.find((join) => join.map.key === map.key);
+      out.push({
+        source: payload.source,
+        key: map.key,
+        amounts: map.amounts,
+        variant: joined ? joined.variant.ids.map((id) => `${id.key}=${id.value}`).join(' · ') : null,
+        describe: joined ? joined.variant.describe.map((d) => `${d.key}=${d.value}`).join(' · ') : null
+      });
+    }
+  }
+  return out;
+}
+
+function priceChains(url, seen, payloads, events) {
+  const ids = identifiersFrom(url);
+  const priced = pricedVariants(payloads);
+  const drawn = (seen.prices || []).map((figure) => {
+    const money = moneyInText(figure.text);
+    return money ? { amount: money.amount, text: figure.text, selector: figure.selector, codes: figure.codes || [] } : null;
+  }).filter(Boolean);
+
+  const chains = [];
+  for (const event of events) {
+    for (const item of event.items) {
+      for (const id of item.ids) {
+        const match = priced.find((entry) => String(entry.key).toLowerCase() === String(id.value).toLowerCase());
+        if (!match) continue;
+
+        const charged = match.amounts.filter((amount) => amount.kind !== 'list');
+        const product = item.ids.find((other) => ids.some((code) => namesCode(other.value, code))) || null;
+
+        chains.push({
+          variant: id.value,
+          variantKey: id.key,
+          event: { at: event.at, event: event.event, currency: event.currency, itemPrice: item.price, itemCurrency: item.currency },
+          product,
+          otherIds: item.ids.filter((other) => other !== id),
+          amounts: charged.map((amount) => ({ amount: amount.amount, at: amount.at, currency: amount.currency })),
+          source: match.source,
+          describe: match.describe,
+          rendered: charged.length
+            ? drawn.filter((figure) => charged.some((amount) => Math.abs(amount.amount - figure.amount) < 1e-9))
+            : []
+        });
+      }
+    }
+  }
+  return { chains, priced, drawn };
+}
+
+async function inspectDataLayer(url) {
+  const ids = identifiersFrom(url);
+  const rendered = await renderPage(url, ids, { data: true, capture: 'all' });
+  if (rendered.failed) return { url, ids, failed: rendered.failed };
+
+  const seen = rendered.seen;
+  const data = seen.data || {};
+  const payloads = dataPayloads(data);
+  const events = ecommerceEvents(data);
+  const walked = priceChains(url, seen, payloads, events);
+
+  /* and what the ordinary gates make of it — the same functions the
+     verifier uses, so this cannot describe a different program */
+  const candidates = dataCandidates(data, url);
+  const judged = candidates.map((candidate) => ({
+    amount: candidate.amount,
+    currency: candidate.currency,
+    from: candidate.from,
+    at: candidate.record.path,
+    currencyFrom: candidate.record.currencyFrom || null,
+    currencyHint: candidate.record.currencyHint || null,
+    identity: priceIdentity(candidate, url),
+    charged: chargedEvidence(candidate)
+  }));
+
+  return {
+    url,
+    ids,
+    selected: seen.selected || { codes: [], from: [], ignored: [] },
+    events,
+    chains: walked.chains,
+    priced: walked.priced,
+    drawn: walked.drawn,
+    candidates: judged,
+    verdict: decide(candidates, url)
+  };
+}
+
+function printDataLayer(report) {
+  if (report.failed) {
+    console.log(`\n  ${report.url}`);
+    console.log(`  could not be read: ${report.failed}\n`);
+    return;
+  }
+
+  console.log(`\n  ${short(report.url, 130)}`);
+  console.log(`  listing codes ${report.ids.slice(0, 6).join(', ')}`);
+  console.log(`  selected      ${report.selected.codes.length ? report.selected.codes.join(', ') : 'the page names no selected variant'}`);
+
+  console.log(`\n  dataLayer ecommerce events (${report.events.length}):`);
+  if (!report.events.length) console.log('     none — this page pushes no ecommerce event, or none was captured');
+  for (const event of report.events.slice(0, 6)) {
+    console.log(`\n     dataLayer[${event.at}]${event.event ? ` event=${event.event}` : ''}`);
+    console.log(`       currency ${event.currency || 'not named'}${event.value !== null ? `, value ${event.value}` : ''}`);
+    for (const item of event.items.slice(0, 8)) {
+      console.log(`       items[${item.index}] ${item.ids.map((id) => `${id.key}=${id.value}`).join(' · ') || 'no id fields'}`);
+      console.log(`         price ${item.price === null ? 'not carried on the item' : item.price}${item.currency ? ` ${item.currency}` : ''}${item.name ? ` — ${short(item.name, 40)}` : ''}`);
+    }
+    if (event.text) {
+      console.log('       the object in full:');
+      for (const line of String(event.text).split('\n').slice(0, 60)) console.log(`         ${short(line, 120)}`);
+    }
+  }
+
+  console.log(`\n  every variant this page's data prices (${report.priced.length}):`);
+  for (const entry of report.priced.slice(0, 20)) {
+    const amounts = entry.amounts.map((amount) => `$${amount.amount}${amount.currency ? ' ' + amount.currency : ''}${amount.kind === 'list' ? ' [list]' : ''}`).join(', ');
+    console.log(`     ${entry.key}  ${amounts}`);
+    if (entry.variant) console.log(`       ${short(entry.variant, 110)}`);
+    if (entry.describe) console.log(`       ${short(entry.describe, 110)}`);
+  }
+  const spread = [...new Set(report.priced.flatMap((entry) => entry.amounts.filter((a) => a.kind !== 'list').map((a) => a.amount)))];
+  if (spread.length > 1) {
+    console.log(`     -> this page prices its variants at ${spread.sort((a, b) => a - b).map((n) => '$' + n).join(', ')};`);
+    console.log('        which one a shopper sees depends on the variant selected.');
+  }
+
+  console.log(`\n  the chain, link by link (${report.chains.length}):`);
+  if (!report.chains.length) console.log('     no dataLayer item id matches a key in any price map this page loaded');
+  for (const chain of report.chains.slice(0, 6)) {
+    console.log(`\n     variant   ${chain.variant}   (${chain.variantKey}, and the key of a price map)`);
+    console.log(`     product   ${chain.product ? `${chain.product.key}=${chain.product.value} — MATCHES this listing` : 'no id on this item matches the listing'}`);
+    if (chain.otherIds.length) console.log(`     also      ${chain.otherIds.map((id) => `${id.key}=${id.value}`).join(' · ')}`);
+    for (const amount of chain.amounts) {
+      console.log(`     amount    ${amount.amount} at ${short(amount.at, 80)}`);
+      console.log(`               ${amount.currency ? `currency ${amount.currency} in that record` : 'NO currency in that record'}`);
+    }
+    console.log(`     currency  ${chain.event.currency || 'not named by the event'} (dataLayer[${chain.event.at}].ecommerce.currency)`);
+    console.log(`     the event ${chain.event.itemPrice === null ? 'does NOT carry this item\'s price' : `carries price ${chain.event.itemPrice} on the item`}`);
+    console.log(`     rendered  ${chain.rendered.length ? chain.rendered.map((figure) => `${figure.text} (${figure.selector})`).join(', ') : 'no figure on the page draws this amount'}`);
+  }
+
+  console.log(`\n  what the gates make of it (${report.candidates.length} candidate${report.candidates.length === 1 ? '' : 's'}):`);
+  for (const judged of report.candidates.slice(0, 10)) {
+    console.log(`     $${judged.amount}${judged.currency ? ' ' + judged.currency : ' (no currency)'} — ${short(judged.from, 90)}`);
+    console.log(`       this    ${judged.identity.ok ? `OK via ${judged.identity.via}` : `REFUSED — ${judged.identity.why}`}`);
+    console.log(`       charged ${judged.charged.ok ? `OK — ${judged.charged.how}` : `REFUSED — ${judged.charged.why}`}`);
+    if (judged.currencyFrom) console.log(`       currency borrowed from ${short(judged.currencyFrom.source, 60)} (${judged.currencyFrom.identity}, ${judged.currencyFrom.via})`);
+    if (judged.currencyHint) console.log(`       currency NOT borrowed: ${short(judged.currencyHint.source, 60)} names ${judged.currencyHint.currency} for ${judged.currencyHint.identity} but not this amount`);
+  }
+
+  const verdict = report.verdict;
+  console.log(verdict.price
+    ? `\n  THE GATES WOULD WRITE $${verdict.price} — ${verdict.why}`
+    : `\n  THE GATES FAIL CLOSED — ${verdict.why || 'nothing cleared them'}`);
+  console.log('  This command writes nothing.\n');
+}
+
 /* ---------- hunting an amount through everything a page loaded ----
 
    The question this answers is not "what does the reader accept" but
@@ -3173,6 +3572,15 @@ async function main() {
     return;
   }
 
+  if (chosen.mode === 'datalayer') {
+    say('\n  DATALAYER — the page\'s analytics events, its variant prices and the');
+    say('  chain between them. It decides nothing and writes nothing.');
+    const report = await inspectDataLayer(chosen.url);
+    if (asJson) console.log(JSON.stringify(report, null, 2));
+    else printDataLayer(report);
+    return;
+  }
+
   if (chosen.mode === 'hunt') {
     say('\n  HUNT — every payload one page loaded, searched for what you named.');
     say('  It decides nothing, prices nothing and writes nothing.');
@@ -3336,8 +3744,10 @@ if (require.main === module) {
     decide, gatherPricesInPage, renderedCandidates, renderPage, resolveRow,
     inspectUrl, inspectData, selectedAmong, elsewhereIn, isIdKey, isPriceKey, keyWords,
     sourceAuthority, relatedIdentifiers, markupAudit, looksLikeSchemaOrg,
+    currencyByIdentity, identitiesOf,
     inspectEndpoint, allAmounts, colourFields, variantTable,
     huntPage, huntIn, huntInText, needleForms, scalarMatches, printHunt,
+    inspectDataLayer, ecommerceEvents, pricedVariants, priceChains,
     parseArgs, chooseMode, OPTIONS, USAGE, MODES, buildStamp,
     productRecords, dataPayloads, dataCandidates, variantPriceRecords,
     parseLoosely, gatherDataInPage, walkData, namesListing, pricesUnder,

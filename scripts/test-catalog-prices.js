@@ -1128,6 +1128,153 @@ test('an unparseable bundle is read as text', () => {
 });
 
 /* ---------------------------------------------------------
+   The analytics event, and a currency kept one record away
+
+   The live page prices variant 05437392 at 7.9 in a commerce response
+   that names no units, and its dataLayer event names USD for that same
+   variant. Whether that is enough depends on what the event actually
+   carries, and the difference is the point.
+   --------------------------------------------------------- */
+
+console.log('\nThe chain between an amount and its currency\n');
+
+const L2S_PRICES = { status: 'ok', result: {
+  l2s: [
+    { l2Id: '05437392', productId: 'E429066-000', communicationCode: '429066-03-003-000', color: { displayCode: '03 GRAY' }, size: { code: '003' } },
+    { l2Id: '05437393', productId: 'E429066-000', communicationCode: '429066-09-004-000', color: { displayCode: '09 NAVY' }, size: { code: '004' } }
+  ],
+  prices: {
+    '05437392': { base: { value: 7.9 } },
+    '05437393': { base: { value: 49.9 } }
+  }
+} };
+
+const DATALAYER = [
+  { event: 'page_view' },
+  { event: 'view_item', ecommerce: {
+    currency: 'USD',
+    value: 7.9,
+    items: [{ item_id: '05437392', item_product_id: 'E429066-000', item_l1_id: '438783', item_name: 'Extra Fine Merino Crew Neck Sweater', price: 7.9 }]
+  } }
+];
+
+const DATALAYER_NO_PRICE = [
+  { event: 'view_item', ecommerce: {
+    currency: 'USD',
+    items: [{ item_id: '05437392', item_product_id: 'E429066-000', item_l1_id: '438783' }]
+  } }
+];
+
+const stateOf = (layer) => ({ key: 'dataLayer', mentions: ['429066'], text: JSON.stringify(layer) });
+const l2sResponse = () => ({ url: 'https://www.uniqlo.com/us/api/commerce/v5/en/products/E429066-000/price-groups/00/l2s', mentions: ['429066'], text: JSON.stringify(L2S_PRICES) });
+
+test('the ecommerce event is read whole, with its ids and its currency', () => {
+  const events = prices.ecommerceEvents({ state: [stateOf(DATALAYER)] });
+  assert.strictEqual(events.length, 1, 'only the entries carrying ecommerce');
+  assert.strictEqual(events[0].event, 'view_item');
+  assert.strictEqual(events[0].currency, 'USD');
+  assert.strictEqual(events[0].value, 7.9);
+
+  const item = events[0].items[0];
+  assert.strictEqual(item.price, 7.9);
+  assert.deepStrictEqual(item.ids.map((id) => id.key).sort(), ['item_id', 'item_l1_id', 'item_product_id']);
+  assert.ok(events[0].text.includes('item_product_id'), 'and the object is kept in full for dumping');
+});
+
+test('every variant the page prices is listed, so one cheap colour is visible', () => {
+  const listed = prices.pricedVariants([{ source: 'network l2s', value: L2S_PRICES }]);
+  assert.deepStrictEqual(listed.map((entry) => entry.key).sort(), ['05437392', '05437393']);
+
+  const cheap = listed.find((entry) => entry.key === '05437392');
+  assert.deepStrictEqual(cheap.amounts.map((a) => a.amount), [7.9]);
+  assert.match(cheap.variant, /l2Id=05437392/);
+  assert.match(cheap.describe, /03 GRAY/);
+
+  const dear = listed.find((entry) => entry.key === '05437393');
+  assert.deepStrictEqual(dear.amounts.map((a) => a.amount), [49.9]);
+});
+
+test('the chain links the event item to the price map and to the screen', () => {
+  const seen = seenOf(UNIQLO, [figure({ text: '$7.90', own: 'fr-ec-price-text', codes: [] })]);
+  const walked = prices.priceChains(UNIQLO, seen, [{ source: 'network l2s', value: L2S_PRICES }], prices.ecommerceEvents({ state: [stateOf(DATALAYER)] }));
+
+  assert.strictEqual(walked.chains.length, 1);
+  const chain = walked.chains[0];
+  assert.strictEqual(chain.variant, '05437392');
+  assert.strictEqual(chain.variantKey, 'item_id');
+  assert.strictEqual(chain.product.value, 'E429066-000', 'the event ties the variant to this listing');
+  assert.deepStrictEqual(chain.amounts.map((a) => a.amount), [7.9]);
+  assert.strictEqual(chain.amounts[0].currency, null, 'and the API record names no currency');
+  assert.strictEqual(chain.event.currency, 'USD');
+  assert.strictEqual(chain.event.itemPrice, 7.9);
+  assert.ok(chain.rendered.some((figure) => figure.text === '$7.90'), 'and the page draws that amount');
+});
+
+test('a currency is borrowed only from a record carrying the same amount', () => {
+  const data = { responses: [l2sResponse()], state: [stateOf(DATALAYER)] };
+  const candidates = prices.dataCandidates(data, UNIQLO);
+
+  const seven = candidates.find((candidate) => candidate.amount === 7.9 && /l2s/.test(candidate.from));
+  assert.ok(seven, 'the API amount is a candidate');
+  assert.strictEqual(seven.currency, 'USD', 'the event carries the same amount for the same item, with units');
+  assert.strictEqual(seven.record.currencyFrom.via, 'amount-and-identity');
+  assert.match(seven.record.currencyFrom.identity, /item_id=05437392/);
+  assert.strictEqual(seven.record.currencyFrom.currencyAt, '[1].ecommerce',
+    'the currency sits on the event, one level above the item it applies to');
+  assert.strictEqual(seven.record.currencyFrom.onRecord, false, 'and the report says it was inherited, not carried');
+
+  const charged = prices.chargedEvidence(seven);
+  assert.strictEqual(charged.ok, true);
+  assert.match(charged.how, /carries the same amount for the same item/);
+
+  /* the event is itself a record naming the product, so it stands as a
+     candidate of its own — app-state, beside the commerce response */
+  const fromEvent = candidates.find((candidate) => /dataLayer/.test(candidate.from));
+  assert.ok(fromEvent, 'the event is read as a record too');
+  assert.strictEqual(fromEvent.record.authority, 'app-state');
+});
+
+test('an event that names the currency but not the amount does NOT fill it in', () => {
+  const data = { responses: [l2sResponse()], state: [stateOf(DATALAYER_NO_PRICE)] };
+  const candidates = prices.dataCandidates(data, UNIQLO);
+
+  const seven = candidates.find((candidate) => candidate.amount === 7.9);
+  assert.strictEqual(seven.currency, null, 'identity alone does not say this amount is in those units');
+  assert.ok(seven.record.currencyHint, 'but the near miss is recorded');
+  assert.strictEqual(seven.record.currencyHint.currency, 'USD');
+
+  const charged = prices.chargedEvidence(seven);
+  assert.strictEqual(charged.ok, false);
+  assert.match(charged.why, /does not carry 7\.9/);
+  assert.match(charged.why, /not that this is one of them/);
+
+  assert.strictEqual(prices.decide(candidates, UNIQLO).price, undefined, 'and the run still fails closed');
+});
+
+test('markup may not supply the currency either', () => {
+  const data = {
+    responses: [l2sResponse()],
+    scripts: [{ type: 'application/ld+json', mentions: ['429066'], text: JSON.stringify({
+      '@context': 'https://schema.org', '@type': 'Product', sku: '05437392',
+      offers: { price: 7.9, priceCurrency: 'USD' }
+    }) }]
+  };
+  const candidates = prices.dataCandidates(data, UNIQLO);
+  const fromApi = candidates.find((candidate) => /l2s/.test(candidate.from) && candidate.amount === 7.9);
+  assert.ok(fromApi);
+  assert.strictEqual(fromApi.currency, null, 'schema.org is not what the page prices from, units included');
+});
+
+test('the borrowed currency is tied by identity, not by proximity', () => {
+  /* the same event, for a different variant: it must not lend its
+     currency to this one */
+  const elsewhere = [{ event: 'view_item', ecommerce: { currency: 'USD', items: [{ item_id: '99999999', price: 7.9 }] } }];
+  const data = { responses: [l2sResponse()], state: [stateOf(elsewhere)] };
+  const seven = prices.dataCandidates(data, UNIQLO).find((candidate) => candidate.amount === 7.9);
+  assert.strictEqual(seven.currency, null, 'another item carrying the same number is not this item');
+});
+
+/* ---------------------------------------------------------
    The command line itself
 
    --inspect-api=<url> was invisible to a scan for an exact string, so
@@ -1204,6 +1351,19 @@ test('--hunt with no URL stops rather than verifying a catalogue', () => {
   assert.match(chosen.error, /the catalogue was not read/);
 });
 
+test('--datalayer routes to the chain inspection in every spelling', () => {
+  for (const argv of [['--datalayer', UNIQLO], ['--datalayer=' + UNIQLO], ['--DATALAYER=' + UNIQLO]]) {
+    const parsed = prices.parseArgs(argv);
+    assert.deepStrictEqual(parsed.errors, []);
+    const chosen = prices.chooseMode(parsed);
+    assert.strictEqual(chosen.mode, 'datalayer');
+    assert.strictEqual(chosen.url, UNIQLO);
+  }
+  const empty = prices.chooseMode(prices.parseArgs(['--datalayer']));
+  assert.match(empty.error, /needs the product URL/);
+  assert.match(prices.USAGE, /--datalayer <productUrl>/);
+});
+
 test('--hunt and --find are options this build accepts', () => {
   assert.ok(Object.prototype.hasOwnProperty.call(prices.OPTIONS, '--hunt'));
   assert.ok(Object.prototype.hasOwnProperty.call(prices.OPTIONS, '--find'));
@@ -1218,7 +1378,8 @@ test('every mode the dispatcher can return is a mode this build claims', () => {
     prices.chooseMode(prices.parseArgs(['--inspect', UNIQLO])).mode,
     prices.chooseMode(prices.parseArgs(['--inspect-data', UNIQLO])).mode,
     prices.chooseMode(prices.parseArgs(['--inspect-api', 'https://x/y'])).mode,
-    prices.chooseMode(prices.parseArgs(['--hunt', UNIQLO])).mode
+    prices.chooseMode(prices.parseArgs(['--hunt', UNIQLO])).mode,
+    prices.chooseMode(prices.parseArgs(['--datalayer', UNIQLO])).mode
   ]);
   for (const mode of produced) {
     assert.ok(prices.MODES.includes(mode), `${mode} is reachable but not listed in MODES`);
@@ -1406,6 +1567,13 @@ function hydratingRetailer() {
     const port = server.address().port;
     const here = `http://127.0.0.1:${port}${url}`;
 
+    /* the live UNIQLO shape: two colours at different prices, and no
+       currency anywhere in the response */
+    if (url.startsWith('/api/chain')) {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify(L2S_PRICES));
+    }
+
     /* a second API, pricing the same product in cents with its
        currency beside it — the shape a displayed price often comes from */
     if (url.startsWith('/api/display')) {
@@ -1421,6 +1589,20 @@ function hydratingRetailer() {
     if (url.startsWith('/api/')) {
       res.writeHead(200, { 'content-type': 'application/json' });
       return res.end(JSON.stringify(url.startsWith('/api/wrong') ? API_WRONG : API_PAYLOAD));
+    }
+
+    /* a page that prices two colours differently, names its currency
+       only in an analytics event, and draws the cheaper one */
+    if (url.startsWith('/chain')) {
+      res.writeHead(200, { 'content-type': 'text/html' });
+      return res.end(`<!doctype html><html><head>
+        <link rel="canonical" href="${here}">
+        <title>Chain</title></head>
+        <body><div id="app"><div class="fr-ec-price"><span class="fr-ec-price-text">$7.90</span></div></div>
+        <script>
+          window.dataLayer = ${JSON.stringify(DATALAYER)};
+          fetch('/api/chain/v5/en/products/E429066-000/price-groups/00/l2s?withPrices=true');
+        </script></body></html>`);
     }
 
     /* a page whose displayed amount is in none of its payloads as
@@ -1565,7 +1747,7 @@ function hydratingRetailer() {
   try { chromium = require('playwright').chromium; } catch (err) { chromium = null; }
 
   if (!chromium) {
-    skipped += 27;
+    skipped += 29;
     console.log('  skip  the browser section — Playwright is not installed here');
     console.log('        npm install, then re-run, to exercise the hydration path');
   } else {
@@ -1859,6 +2041,52 @@ function hydratingRetailer() {
       assert.ok(report.related.some((entry) => /438783/.test(entry.code)), 'the identity it keys by is reported');
       assert.ok(report.colours.length, 'and the colour fields it carries');
       assert.strictEqual(report.verdict.price, 49.9, 'this endpoint alone would answer');
+    });
+
+    await testAsync('--datalayer walks the chain the live page carries', async () => {
+      const report = await prices.inspectDataLayer(listing('/chain/products/E429066-000/00'));
+      assert.ok(!report.failed, report.failed);
+
+      /* the event, whole */
+      const event = report.events.find((entry) => entry.event === 'view_item');
+      assert.ok(event, 'the ecommerce event is found');
+      assert.strictEqual(event.currency, 'USD');
+      assert.ok(event.items[0].ids.some((id) => id.key === 'item_id' && id.value === '05437392'));
+      assert.ok(event.items[0].ids.some((id) => id.key === 'item_product_id' && id.value === 'E429066-000'));
+      assert.ok(event.items[0].ids.some((id) => id.key === 'item_l1_id' && id.value === '438783'));
+
+      /* both colours, so a cheap one among dear ones is visible */
+      const amounts = report.priced.flatMap((entry) => entry.amounts.map((a) => a.amount)).sort((a, b) => a - b);
+      assert.deepStrictEqual(amounts, [7.9, 49.9], 'this page prices two variants differently');
+
+      /* the chain */
+      const chain = report.chains.find((entry) => entry.variant === '05437392');
+      assert.ok(chain, 'the event item is joined to the price map by its id');
+      assert.strictEqual(chain.product.value, 'E429066-000');
+      assert.deepStrictEqual(chain.amounts.map((a) => a.amount), [7.9]);
+      assert.strictEqual(chain.amounts[0].currency, null, 'the commerce record names no currency');
+      assert.strictEqual(chain.event.currency, 'USD', 'the event does');
+      assert.ok(chain.rendered.some((figure) => /7\.90/.test(figure.text)), 'and the page draws 7.90, not 49.90');
+
+      /* and what the gates make of it, said out loud */
+      assert.strictEqual(report.verdict.price, 7.9);
+      const judged = report.candidates.find((entry) => /l2s/.test(entry.from) && entry.amount === 7.9);
+      assert.strictEqual(judged.currencyFrom.via, 'amount-and-identity');
+    });
+
+    await testAsync('--datalayer prints the chain and writes nothing', async () => {
+      const before = fs.readFileSync(CATALOG);
+      const result = await run(['--datalayer=' + listing('/chain/products/E429066-000/00'), '--write']);
+      const after = fs.readFileSync(CATALOG);
+
+      assert.strictEqual(result.code, 0, result.stderr);
+      assert.match(result.stdout, /DATALAYER — the page's analytics events/);
+      assert.match(result.stdout, /item_product_id=E429066-000/);
+      assert.match(result.stdout, /\$7\.9/);
+      assert.match(result.stdout, /\$49\.9/, 'the dearer colour is shown too');
+      assert.match(result.stdout, /which one a shopper sees depends on the variant selected/);
+      assert.ok(before.equals(after), 'the catalogue is byte-for-byte what it was');
+      assert.doesNotMatch(result.stdout, /Reading \d+ linked product page/);
     });
 
     await testAsync('a hunt says where a displayed amount actually comes from', async () => {

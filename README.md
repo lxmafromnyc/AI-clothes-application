@@ -1827,6 +1827,26 @@ after one the page does not touch the video again.
   verifier and priced a row off the page's markup. Each diagnostic now
   announces itself (`API INSPECTION — one endpoint…`), and `--help` lists them.
 
+  `--datalayer <productUrl>` dumps the page's `dataLayer` ecommerce events in
+  full, lists every variant its data prices — so one cheap colour among dear
+  ones is visible rather than inferred — and walks the chain link by link: the
+  variant the event names, the amount the commerce response carries for that
+  same key, whether that record names a currency, what the event calls the
+  product, and whether the figure on screen is that amount. It ends with what
+  the ordinary gates make of it, using the same functions the verifier uses, and
+  writes nothing.
+
+  That chain is how a missing currency can be supplied without assuming one. A
+  record carrying an amount and no units may borrow a currency from another
+  record **that names the same item and carries the same amount** — an analytics
+  event for variant `05437392` saying `7.9` and `USD` is the same price said
+  twice, once with units. A record that names the item and a currency but not
+  that amount is reported and refused: it says what units this item's prices are
+  in, not that this is one of them. Markup may supply neither. The currency may
+  sit one level above the record it applies to (`ecommerce.currency` covers
+  `ecommerce.items[]`), and the report says where it was found and whether it
+  was carried or inherited.
+
   `--hunt <productUrl> --find 49.90,49.9` searches everything the page loaded —
   every response it fetched, every script it shipped, every state object on
   `window` — for the amounts named and for the listing's identities, including
