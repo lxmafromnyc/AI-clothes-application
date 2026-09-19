@@ -51,6 +51,7 @@ const execFile = promisify(require('child_process').execFile);
 const prices = require('./fetch-catalog-prices');
 
 const SCRIPT = path.join(__dirname, 'fetch-catalog-prices.js');
+const CATALOG = path.join(__dirname, '..', 'assets', 'catalog.js');
 
 /* the command as a person runs it, so what is asserted is the command
    rather than the function behind it */
@@ -1116,6 +1117,15 @@ test('the other modes route too, and plain arguments verify', () => {
   assert.strictEqual(prices.chooseMode(prices.parseArgs(['--help'])).mode, 'help');
 });
 
+test('every option the program accepts is in --help', () => {
+  /* the drift that sends someone looking for a flag that is there, or
+     trusting one that is not: help and the parser are checked against
+     each other rather than maintained in parallel */
+  for (const option of Object.keys(prices.OPTIONS)) {
+    assert.ok(prices.USAGE.includes(option), `--help says nothing about ${option}`);
+  }
+});
+
 test('--help lists the diagnostics by name', () => {
   assert.match(prices.USAGE, /--inspect-api <apiUrl> --for <productUrl>/);
   assert.match(prices.USAGE, /--inspect-data <productUrl>/);
@@ -1385,7 +1395,7 @@ function hydratingRetailer() {
   try { chromium = require('playwright').chromium; } catch (err) { chromium = null; }
 
   if (!chromium) {
-    skipped += 23;
+    skipped += 24;
     console.log('  skip  the browser section — Playwright is not installed here');
     console.log('        npm install, then re-run, to exercise the hydration path');
   } else {
@@ -1591,6 +1601,25 @@ function hydratingRetailer() {
       assert.doesNotMatch(result.stdout, /Reading \d+ linked product page/, 'and the verifier never ran');
       assert.doesNotMatch(result.stdout, /KEPT\s+J\.Crew/, 'no catalogue row was read');
       assert.match(result.stdout, /joined on l2Id = 438783-COL09-004/);
+    });
+
+    await testAsync('the API inspection writes nothing, even asked to write', async () => {
+      /* the strongest form: the endpoint resolves an amount, the report
+         says what it would write, and the catalogue is not touched —
+         with --write passed alongside, which is the nastiest case */
+      const before = fs.readFileSync(CATALOG);
+      const result = await run([
+        '--inspect-api', listing('/api/commerce/v5/en/products/E429066-000/price-groups/00/l2s?withPrices=true'),
+        '--for', listing('/l2s/products/E429066-000/00'),
+        '--write'
+      ]);
+      const after = fs.readFileSync(CATALOG);
+
+      assert.strictEqual(result.code, 0, result.stderr);
+      assert.match(result.stdout, /THIS ENDPOINT ALONE WOULD WRITE \$49\.9/, 'it found an amount');
+      assert.ok(before.equals(after), 'and assets/catalog.js is byte-for-byte what it was');
+      assert.doesNotMatch(result.stdout, /Wrote \d+ price/);
+      assert.doesNotMatch(result.stdout, /Reading \d+ linked product page/);
     });
 
     await testAsync('the flag is recognised whatever case it is typed in', async () => {
