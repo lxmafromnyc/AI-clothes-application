@@ -78,6 +78,10 @@ const UNIQLO = 'https://www.uniqlo.com/us/en/products/E429066-000/00';
 const JCREW = 'https://www.jcrew.com/p/mens/categories/clothing/shirts/broken-in-oxford/broken-in-organic-cotton-oxford-shirt/AU763';
 const LLBEAN = 'https://www.llbean.com/llb/shop/129244';
 
+/* the shipped catalogue, read once: several tests write into a copy of
+   it and check what the rows become */
+const catalogSource = fs.readFileSync(path.join(__dirname, '..', 'assets', 'catalog.js'), 'utf8');
+
 const amounts = (list) => list.map((c) => c.amount);
 const gates = (refusals) => refusals.map((r) => r.gate);
 const because = (refusals, amount) => (refusals.find((r) => r.amount === amount) || {}).why || '';
@@ -203,6 +207,46 @@ test('a price block naming ANOTHER product is refused by name', () => {
   const verdict = prices.decide(prices.renderedCandidates(strip, UNIQLO).candidates, UNIQLO);
   assert.strictEqual(verdict.price, undefined);
   assert.match(because(verdict.refusals, 19.9), /not this listing/);
+});
+
+/* The real inspection of the live page, filtered to what it established:
+   the $7.90 figure carries no product code in its ancestry at all, and
+   the page's other figures are each tied to a DIFFERENT product. */
+const uniqloInspected = seenOf(UNIQLO, [
+  figure({ text: '$7.90', selector: 'span.fr-ec-price-text', own: 'fr-ec-price-text', near: 'fr-ec-price', codes: [] }),
+  figure({ text: '$19.90', own: 'fr-ec-price-text', near: 'fr-ec-product-tile', codes: ['E465185-000'], codeLabel: 'div#product-E465185-000' }),
+  figure({ text: '$39.90', own: 'fr-ec-price-text', near: 'fr-ec-product-tile', codes: ['E471809-000'], codeLabel: 'div#product-E471809-000' })
+]);
+
+test('the live page: $7.90 has no code of its own, and the rest belong to other products', () => {
+  const verdict = prices.decide(prices.renderedCandidates(uniqloInspected, UNIQLO).candidates, UNIQLO);
+
+  assert.strictEqual(verdict.price, undefined, 'nothing on this page may be written');
+  assert.strictEqual(verdict.ambiguous, undefined, 'and it is not an ambiguity either — none of them qualified');
+  assert.deepStrictEqual(gates(verdict.refusals), ['this', 'this', 'this']);
+
+  assert.match(because(verdict.refusals, 7.9), /nothing in its own DOM ties it to this product/);
+  assert.match(because(verdict.refusals, 19.9), /names E465185-000, not this listing/);
+  assert.match(because(verdict.refusals, 39.9), /names E471809-000, not this listing/);
+});
+
+test('E465185-000 is refused for being another product, not for being unmarked', () => {
+  /* it clears every other gate: it is money, it is on the retailer's own
+     page, it is marked as a price. Only WHOSE price stops it. */
+  const other = prices.renderedCandidates(uniqloInspected, UNIQLO).candidates
+    .find((c) => c.amount === 19.9);
+  assert.strictEqual(prices.priceIdentity(other, UNIQLO).ok, false);
+  assert.strictEqual(prices.chargedEvidence(other).ok, false,
+    'and its block says nothing about being charged either — two reasons, not one');
+});
+
+test('E429066-000 is what a UNIQLO price would have to name', () => {
+  const tied = seenOf(UNIQLO, [
+    figure({ text: '$49.90', own: 'price-current', near: 'fr-ec-price', codes: ['E429066-000'], codeLabel: 'div#product-E429066-000' })
+  ]);
+  const verdict = prices.decide(prices.renderedCandidates(tied, UNIQLO).candidates, UNIQLO);
+  assert.strictEqual(verdict.price, 49.9, 'the gate is not impossible — it is unmet on the live page');
+  assert.strictEqual(verdict.identity.via, 'dom-product-scope');
 });
 
 /* ---------------------------------------------------------
@@ -359,6 +403,62 @@ test('the group code is not the selected variant', () => {
   assert.strictEqual(prices.selectedAmong(['AU763_BL0001'], ['AU763_WT0002']), null);
 });
 
+test('the live page: the selected colour block resolves J.Crew to $98', () => {
+  /* the shape the real inspection reported: the figure sits in
+     div#productPriceSelectColors-CX449NA6434, that id names the colour
+     the page has selected, the block around it is marked sale, and the
+     listing's own AU763 is above it. */
+  const live = seenOf(JCREW, [
+    figure({
+      text: '$98',
+      selector: 'span.price-value',
+      own: 'price-value',
+      near: 'product-price-sale is-price',
+      codes: ['productPriceSelectColors-CX449NA6434', 'AU763'],
+      codeLabel: 'div#productPriceSelectColors-CX449NA6434'
+    }),
+    figure({ text: '$128', own: 'price-list', near: 'product-price', codes: ['AU763'], lineThrough: true }),
+    figure({ text: '$79.50', own: 'price-value', near: 'you-may-also-like is-price--sale', codes: ['BD640'] }),
+    figure({ text: '$148', own: 'price-value', near: 'recently-viewed is-price--sale', codes: ['CV102'] })
+  ]);
+  live.selected = { codes: ['CX449NA6434'], from: ['[aria-checked="true"] [data-code]'] };
+
+  const verdict = prices.decide(prices.renderedCandidates(live, JCREW).candidates, JCREW);
+  assert.strictEqual(verdict.price, 98);
+  assert.strictEqual(verdict.identity.via, 'dom-variant-scope');
+  assert.strictEqual(verdict.identity.variant, 'productPriceSelectColors-CX449NA6434');
+  assert.strictEqual(verdict.identity.code, 'AU763', 'the listing code is kept, because that is what a row re-proves against');
+  assert.match(verdict.charged.how, /marked sale/);
+
+  /* and the recommendations were never in the running */
+  assert.match(because(verdict.refusals, 79.5), /not this listing/);
+  assert.match(because(verdict.refusals, 148), /not this listing/);
+  assert.match(because(verdict.refusals, 128), /struck through/);
+});
+
+test('that evidence is writable, and a written row re-proves it', () => {
+  const evidence = { ok: true, via: 'dom-variant-scope', code: 'AU763', variant: 'productPriceSelectColors-CX449NA6434' };
+  const note = prices.priceEvidenceNote(evidence);
+  assert.strictEqual(note, "{ via: 'dom-variant-scope', code: 'AU763', variant: 'productPriceSelectColors-CX449NA6434' }");
+
+  const next = prices.writePrice(catalogSource, 'jcrew-broken-in-oxford', 98, evidence);
+  const row = evaluate(next).find((r) => r.id === 'jcrew-broken-in-oxford');
+  assert.strictEqual(row.price, 98);
+  assert.strictEqual(prices.catalogRowPrice(row).ok, true, 'a variant note has to survive the re-proof a shipped row gets');
+
+  /* the variant alone could not: CX449NA6434 is nowhere in the listing URL */
+  const variantOnly = Object.assign({}, row, { priceEvidence: { via: 'dom-variant-scope', code: 'CX449NA6434' } });
+  assert.strictEqual(prices.catalogRowPrice(variantOnly).ok, false);
+});
+
+test('a price whose evidence cannot be recorded is not writable at all', () => {
+  assert.throws(
+    () => prices.writePrice(catalogSource, 'jcrew-broken-in-oxford', 98, { ok: true, via: 'canonical' }),
+    /no provenance to record/,
+    'a verified run must never ship a figure the catalogue cannot re-prove'
+  );
+});
+
 test('an aggregate offer is a range, and a range is not a price', () => {
   const grouped = `<!doctype html><html><head><script type="application/ld+json">
   {"@type":"ProductGroup","sku":"AU763-WT0002","offers":{"@type":"AggregateOffer","lowPrice":"58.50","highPrice":"148.00","priceCurrency":"USD"}}
@@ -485,7 +585,6 @@ test('a listing URL with no code in it can never clear the identity gate', () =>
 
 console.log('\nWriting it back\n');
 
-const catalogSource = fs.readFileSync(path.join(__dirname, '..', 'assets', 'catalog.js'), 'utf8');
 
 /* the same catalogue with L.L.Bean's price taken back out, so the write
    is exercised on a real row that has none — which is the state every
@@ -655,7 +754,7 @@ function hydratingRetailer() {
   try { chromium = require('playwright').chromium; } catch (err) { chromium = null; }
 
   if (!chromium) {
-    skipped += 6;
+    skipped += 8;
     console.log('  skip  the browser section — Playwright is not installed here');
     console.log('        npm install, then re-run, to exercise the hydration path');
   } else {
@@ -751,6 +850,26 @@ function hydratingRetailer() {
       assert.strictEqual(seven.identity.ok, false);
       assert.match(seven.identity.why, /vouches for the page/);
       assert.ok(report.verdict.price === undefined, 'and the inspection would write nothing');
+    });
+
+    await testAsync('the inspection says when the listing\'s code is nowhere in the DOM', async () => {
+      /* the live UNIQLO finding, end to end: a figure with no code in
+         its ancestry, on a page whose body never names the product */
+      const report = await prices.inspectUrl(listing('/products/E429066-000/00'));
+      assert.deepStrictEqual(report.codeSites, [],
+        'nothing in the body carries the listing code, and the inspection has to say so rather than leave it inferred');
+      assert.ok(report.listingCodes.includes('e429066'), 'while knowing exactly what it looked for');
+      assert.strictEqual(report.verdict.price, undefined);
+    });
+
+    await testAsync('and points at the block when the code IS in the DOM', async () => {
+      const report = await prices.inspectUrl(listing('/scoped/products/E429066-000/00'));
+      assert.ok(report.codeSites.length, 'the block naming the product is found');
+
+      const site = report.codeSites[0];
+      assert.match(site.attrs, /data-product-id="E429066-000"/);
+      assert.deepStrictEqual(site.money, ['$49.90'], 'and the figure inside it is reported with it');
+      assert.strictEqual(report.verdict.price, 49.9);
     });
 
     server.close();

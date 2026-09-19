@@ -362,8 +362,15 @@ function priceIdentity(candidate, productUrl) {
         return {
           ok: true,
           via: 'dom-variant-scope',
-          code: chosen,
-          how: `the ${dom.codeLabel || 'price block'} it sits in names ${chosen}, the variant the page has selected`
+          /* both, and for different jobs: the listing's own code is what
+             a shipped row can be re-proved against later, while the
+             variant names WHICH colour of that listing was on screen
+             when the amount was read. A note carrying only the variant
+             could never be re-proved, because a variant code such as
+             CX449NA6434 does not appear in the listing URL. */
+          code: hit.value,
+          variant: chosen,
+          how: `the ${dom.codeLabel || 'price block'} it sits in names ${chosen}, the variant the page has selected, under this listing's ${hit.value}`
         };
       }
       return {
@@ -585,7 +592,7 @@ function decide(candidates, productUrl) {
    The innermost element wins: only text nodes belonging to the element
    itself are read, so a wrapper holding four prices is not reported as
    one figure, and each of its four children is reported on its own. */
-function gatherPricesInPage() {
+function gatherPricesInPage(wanted) {
   const MONEY = /(?:US\s*\$|\$|USD|£|€)\s*[0-9][0-9,]*(?:\.[0-9]{1,2})?/i;
   const CODE_ATTR = /(product|prod|sku|pid|style|item|code|group|listing|variant|colou?r|option|article)/i;
 
@@ -702,6 +709,37 @@ function gatherPricesInPage() {
     });
   }
 
+  /* Where this listing's own code appears in the DOM AT ALL.
+
+     When no figure can be tied to the product, the next question is
+     always the same one: does the page name this product anywhere, and
+     is there money inside the thing that names it? An element carrying
+     E429066-000 whose subtree holds a figure IS the product's price
+     block; no such element anywhere means no figure on this page can be
+     tied by ancestry, and the answer has to come from somewhere else.
+     Answering that takes a search the gates never do, so it is done
+     here, where the DOM is. */
+  const codeSites = [];
+  const looking = Array.isArray(wanted) ? wanted.map((code) => String(code).toLowerCase()) : [];
+  if (looking.length) {
+    for (const el of document.querySelectorAll('body *')) {
+      const attrs = Array.from(el.attributes || [])
+        .map((a) => a.name + '="' + a.value + '"').join(' ');
+      const flat = attrs.toLowerCase();
+      const hit = looking.find((code) => flat.indexOf(code) >= 0);
+      if (!hit) continue;
+      const inside = (el.textContent || '').match(new RegExp(MONEY.source, 'ig')) || [];
+      codeSites.push({
+        selector: shortSelector(el),
+        code: hit,
+        attrs: attrs.slice(0, 240),
+        money: inside.slice(0, 8),
+        depth: (function () { let d = 0, n = el; while (n && n !== document.body) { d += 1; n = n.parentElement; } return d; })()
+      });
+      if (codeSites.length >= 30) break;
+    }
+  }
+
   const metas = {};
   for (const el of document.querySelectorAll('meta[property], meta[name]')) {
     const key = el.getAttribute('property') || el.getAttribute('name');
@@ -744,6 +782,7 @@ function gatherPricesInPage() {
     canonical: (document.querySelector('link[rel="canonical"]') || {}).href || metas['og:url'] || null,
     metas,
     selected,
+    codeSites,
     jsonld: Array.from(document.querySelectorAll('script[type="application/ld+json"]')).map((s) => s.textContent),
     prices: out
   };
@@ -779,7 +818,7 @@ function renderedCandidates(seen, pageUrl) {
 }
 
 /* One page, in a real browser, reported the way fetchPage reports. */
-async function renderPage(url) {
+async function renderPage(url, wanted) {
   const chromium = loadPlaywright();
   if (!chromium) return { failed: 'Playwright is not installed here, so the browser path is unavailable', noBrowser: true };
 
@@ -818,7 +857,7 @@ async function renderPage(url) {
     if (consent) await page.waitForTimeout(800);
     await coaxLazyImages(page);
 
-    const seen = await page.evaluate(gatherPricesInPage);
+    const seen = await page.evaluate(gatherPricesInPage, wanted || identifiersFrom(url));
     await browser.close();
 
     if (status && status >= 400) return { failed: `the page answered ${status} to a real browser too` };
@@ -922,6 +961,7 @@ async function resolveRow(row) {
     ran: true,
     canonical: rendered.seen.canonical || null,
     selected: rendered.seen.selected || null,
+    codeSites: explaining ? rendered.seen.codeSites : undefined,
     candidates: read.candidates.map(reportable),
     empties: read.empties,
     /* the DOM behind every figure, which is what a price disagreement
@@ -1015,10 +1055,18 @@ function writePrice(source, id, amount, evidence) {
   const m = rest.match(field);
   if (!m) throw new Error(`could not find a price for ${id}`);
 
+  /* A number carries no provenance of its own, so a price whose
+     evidence cannot be written as a note is not writable at all —
+     otherwise a verified run could ship a figure that the catalogue
+     could never re-prove, which is the state this whole file exists to
+     prevent. */
+  const note = priceEvidenceNote(evidence);
+  if (!note) throw new Error(`refusing to write a price for ${id} with no provenance to record`);
+
   const at = idAt + m.index;
   const indent = m[1].replace(/\n/, '').replace(/price:\s*$/, '');
   const out = source.slice(0, at) + m[1] + String(amount) + source.slice(at + m[0].length);
-  return setPriceEvidence(out, id, priceEvidenceNote(evidence), indent);
+  return setPriceEvidence(out, id, note, indent);
 }
 
 function priceEvidenceNote(evidence) {
@@ -1032,6 +1080,11 @@ function priceEvidenceNote(evidence) {
   }
   if (evidence.via === 'dom-product-scope' && evidence.code) {
     return `{ via: 'dom-product-scope', code: '${safe(evidence.code)}' }`;
+  }
+  if (evidence.via === 'dom-variant-scope' && evidence.code) {
+    return evidence.variant
+      ? `{ via: 'dom-variant-scope', code: '${safe(evidence.code)}', variant: '${safe(evidence.variant)}' }`
+      : `{ via: 'dom-variant-scope', code: '${safe(evidence.code)}' }`;
   }
   return null;
 }
@@ -1087,7 +1140,7 @@ function catalogRowPrice(row) {
     return { ok: false, why: `the recorded ${evidence.sku ? 'sku' : 'code'} ${evidence.sku || evidence.code} is not a code in this row's own listing URL` };
   }
 
-  const kinds = ['json-ld-offer', 'microdata-offer', 'dom-product-scope'];
+  const kinds = ['json-ld-offer', 'microdata-offer', 'dom-product-scope', 'dom-variant-scope'];
   if (!kinds.includes(evidence.via)) {
     return { ok: false, why: `the recorded evidence names no recognised kind (${evidence.via || 'none'})` };
   }
@@ -1132,6 +1185,7 @@ async function inspectUrl(url) {
     canonical: seen.canonical || null,
     selected: seen.selected || { codes: [], from: [] },
     listingCodes: identifiersFrom(url),
+    codeSites: seen.codeSites || [],
     empties: read.empties,
     figures,
     verdict: decide(read.candidates, url)
@@ -1175,7 +1229,32 @@ function printInspection(report) {
   console.log(`  selected    ${report.selected.codes.length ? report.selected.codes.join(', ') : 'the page names no selected variant'}`);
   if (report.selected.codes.length) console.log(`              via ${[...new Set(report.selected.from)].slice(0, 4).join(', ')}`);
   for (const empty of report.empties) console.log(`  structured  ${empty.type} — ${empty.why}`);
-  console.log(`  ${report.figures.length} figure${report.figures.length === 1 ? '' : 's'} that read as money:\n`);
+
+  /* the question a refused page always raises next: does this DOM name
+     the product anywhere, and is there money inside the thing that
+     names it? */
+  const sites = report.codeSites || [];
+  if (sites.length) {
+    console.log(`\n  where this listing's code appears in the DOM (${sites.length}${sites.length === 30 ? '+' : ''}):`);
+    for (const site of sites.slice(0, 12)) {
+      console.log(`     ${site.selector}  depth ${site.depth}  ${site.money.length ? `money inside: ${site.money.slice(0, 4).join(' ')}` : 'no money inside'}`);
+      console.log(`       ${short(site.attrs, 150)}`);
+    }
+    if (sites.some((site) => site.money.length)) {
+      console.log('     -> a figure inside one of the blocks above is this product\'s, and');
+      console.log('        that is exactly what the "this" gate reads.');
+    } else {
+      console.log('     -> the page names the product, but no block that names it contains');
+      console.log('        a figure, so its price is not published inside its own block.');
+    }
+  } else {
+    console.log(`\n  this listing's code (${report.listingCodes.slice(0, 4).join(', ')}) appears in NO element's`);
+    console.log('  attributes on this page. No figure here can be tied to the product by');
+    console.log('  ancestry, so a price can only come from the page\'s structured record,');
+    console.log('  from a variant the page marks as selected, or stay unread.');
+  }
+
+  console.log(`\n  ${report.figures.length} figure${report.figures.length === 1 ? '' : 's'} that read as money:\n`);
 
   for (const figure of report.figures) {
     const dom = figure.dom;

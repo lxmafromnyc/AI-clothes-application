@@ -1669,7 +1669,12 @@ after one the page does not touch the video again.
   nothing. L.L.Bean's names the offer on that listing's JSON-LD product record
   for sku `129244`. It is re-proved rather than trusted the same way — the
   recorded sku must match a code in the row's own `productUrl` — and it never
-  reaches the interface either.
+  reaches the interface either. A price read off a selected variant records
+  both halves, `{ via: 'dom-variant-scope', code: 'AU763', variant: '…' }`: the
+  listing's code is what a shipped row is re-proved against, while the variant
+  names which colour was on screen when the amount was read. A price whose
+  evidence cannot be written as a note is refused by `writePrice` rather than
+  written without one.
 - `node scripts/fetch-catalog-images.js` fills the `imageUrl` of every row that
   carries a `productUrl`, by reading the photo off the listing the row already
   links to. It tries plain HTTP first; a page that gives up nothing — no
@@ -1763,6 +1768,14 @@ after one the page does not touch the video again.
   run would write, which for a page that has not said is nothing. It reads no
   catalogue row and changes no file. `--inspect <url> --json` gives the same
   untruncated.
+
+  It also searches the rendered DOM for the listing's own code and reports
+  every element carrying it, with the figures inside each — because when no
+  price can be tied to the product, the next question is always whether the
+  page names that product anywhere. An element carrying `E429066-000` whose
+  subtree holds a figure *is* the price block; the code appearing nowhere in
+  the body means no figure on that page can be tied by ancestry at all, and the
+  inspection says which of those two it found.
   `node scripts/test-catalog-prices.js` covers the gates without a network,
   including both live shapes: UNIQLO's single hydrated figure sitting in no
   product's block, and J.Crew's `ProductGroup AU763` publishing `offers: []`
