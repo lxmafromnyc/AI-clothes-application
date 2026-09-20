@@ -1568,14 +1568,62 @@ test('--help lists the diagnostics by name', () => {
 console.log('\nWriting it back\n');
 
 
-/* the same catalogue with L.L.Bean's price taken back out, so the write
-   is exercised on a real row that has none — which is the state every
+/* ---- fixtures that state what they are ----
+
+   These used to be carved out of the shipped catalogue by matching the
+   figure that happened to be in it — "price: 84.95, priceEvidence: {…}"
+   — which made every fixture here a hostage to the data. The catalogue
+   is verified against live retailers and its prices legitimately move,
+   and the day L.L.Bean's did, a fixture stopped matching and the suite
+   failed for the one reason that is not a fault.
+
+   So a fixture says what it wants instead of looking for it. withRow
+   rewrites one row's price, provenance, listing, photo and photo
+   evidence to exactly the values a test needs, whatever the row holds
+   today, and every other row and every other field is left alone. */
+function withRow(source, id, fields) {
+  const idAt = source.indexOf(`id: '${id}'`);
+  assert.ok(idAt !== -1, `the catalogue has no row ${id}`);
+  const next = source.indexOf("id: '", idAt + 1);
+  const end = next === -1 ? source.length : next;
+
+  let block = source.slice(idAt, end);
+  const indent = (block.match(/\n(\s*)(?:price|productUrl|category):/) || [null, '    '])[1];
+
+  /* out with whatever is there, in the catalogue's own field order */
+  const ORDER = ['price', 'priceEvidence', 'productUrl', 'imageUrl', 'imageEvidence'];
+  for (const field of ORDER) {
+    block = block.replace(new RegExp(`\\n\\s*${field}:\\s*(?:\\{[^}]*\\}|null|-?[\\d.]+|'[^']*'|"[^"]*"),`), '');
+  }
+
+  const written = ORDER
+    .filter((field) => Object.prototype.hasOwnProperty.call(fields, field))
+    .map((field) => `\n${indent}${field}: ${fields[field]},`)
+    .join('');
+
+  /* anchored to the brand line, which no price or discovery run edits */
+  const anchored = block.replace(/(\n\s*brand:\s*(?:'[^']*'|"[^"]*"),)/, `$1${written}`);
+  assert.ok(anchored !== block || !written, `could not place fields on ${id}`);
+  return source.slice(0, idAt) + anchored + source.slice(end);
+}
+
+const LLBEAN_LISTING = "'https://www.llbean.com/llb/shop/129244'";
+const LLBEAN_PHOTO = "'https://cdni.llbean.net/is/image/wim/521659_32573_41'";
+const LLBEAN_PHOTO_EVIDENCE = "{ via: 'json-ld-sku', sku: '129244' }";
+
+/* a linked, photographed row carrying no price at all — the state every
    row is in before a run reads one */
-const unpriced = catalogSource.replace(
-  /(\n\s*)price: 84\.95,\n\s*priceEvidence: \{[^}]*\},/,
-  '$1price: null,'
-);
-assert.ok(/price: null,\n\s*productUrl: 'https:\/\/www\.llbean\.com/.test(unpriced), 'the fixture has to start unpriced');
+const unpriced = withRow(catalogSource, 'llbean-venturestretch-chino', {
+  price: 'null',
+  productUrl: LLBEAN_LISTING,
+  imageUrl: LLBEAN_PHOTO,
+  imageEvidence: LLBEAN_PHOTO_EVIDENCE
+});
+assert.ok(/price: null,\n\s*productUrl: 'https:\/\/www\.llbean\.com/.test(unpriced),
+  'the fixture has to start linked and unpriced');
+assert.strictEqual(
+  evaluate(unpriced).find((r) => r.id === 'llbean-venturestretch-chino').priceEvidence, undefined,
+  'and with no provenance to inherit');
 
 test('a verified price lands on the right row, with its provenance', () => {
   const next = prices.writePrice(unpriced, 'llbean-venturestretch-chino', 84.95, { ok: true, via: 'json-ld-offer', sku: '129244' });
@@ -1653,18 +1701,29 @@ test('a price that is not an amount is refused before it reaches the file', () =
 
 /* A linked row carrying an invented price and no provenance — exactly
    the state discovery leaves a sample row in, and exactly what the live
-   run's NO PRICE FOUND row was left holding. Built from L.L.Bean's row
-   because it is linked, photographed and carries imageEvidence, none of
-   which the price writer may touch; a sample row's own link changes
-   with every discovery run and would make this fixture drift. */
-const demoPriced = catalogSource.replace(
-  /(\n\s*)price: 84\.95,\n\s*priceEvidence: \{[^}]*\},/,
-  '$1price: 58,'
-);
+   run's NO PRICE FOUND row was left holding. Stated outright rather
+   than carved out of the shipped catalogue, because the catalogue's
+   prices are verified against live retailers and legitimately move. */
+const demoPriced = withRow(catalogSource, 'llbean-venturestretch-chino', {
+  price: '58',
+  productUrl: LLBEAN_LISTING,
+  imageUrl: LLBEAN_PHOTO,
+  imageEvidence: LLBEAN_PHOTO_EVIDENCE
+});
 assert.ok(/price: 58,\n\s*productUrl: 'https:\/\/www\.llbean\.com/.test(demoPriced),
   'the fixture has to start linked, with an invented price and no provenance');
 assert.ok(evaluate(demoPriced).find((r) => r.id === 'llbean-venturestretch-chino').imageEvidence,
   'and carrying the photo evidence the price writer must leave alone');
+
+/* the same row once a run HAS priced it: a figure and the note that
+   explains it, which is the state --refresh lands in */
+const verifiedPriced = withRow(catalogSource, 'llbean-venturestretch-chino', {
+  price: '84.95',
+  priceEvidence: "{ via: 'json-ld-offer', sku: '129244' }",
+  productUrl: LLBEAN_LISTING,
+  imageUrl: LLBEAN_PHOTO,
+  imageEvidence: LLBEAN_PHOTO_EVIDENCE
+});
 
 test('a verified price replaces the demo price and records its provenance', () => {
   const next = prices.writePrice(demoPriced, 'llbean-venturestretch-chino', 84.95,
@@ -1691,10 +1750,10 @@ test('no verified price takes any stale note with it', () => {
   /* --refresh over a row that WAS priced and now is not: the old note
      explains a figure the row no longer carries, which reads as
      provenance for a price that is not there */
-  assert.ok(evaluate(catalogSource).find((r) => r.id === 'llbean-venturestretch-chino').priceEvidence,
+  assert.ok(evaluate(verifiedPriced).find((r) => r.id === 'llbean-venturestretch-chino').priceEvidence,
     'the fixture has to start with a note to lose');
 
-  const row = evaluate(prices.clearPrice(catalogSource, 'llbean-venturestretch-chino'))
+  const row = evaluate(prices.clearPrice(verifiedPriced, 'llbean-venturestretch-chino'))
     .find((r) => r.id === 'llbean-venturestretch-chino');
 
   assert.strictEqual(row.price, null);
@@ -1702,8 +1761,8 @@ test('no verified price takes any stale note with it', () => {
 });
 
 test('clearing a price leaves the listing, the photo and its evidence alone', () => {
-  const before = evaluate(catalogSource);
-  const after = evaluate(prices.clearPrice(catalogSource, 'llbean-venturestretch-chino'));
+  const before = evaluate(verifiedPriced);
+  const after = evaluate(prices.clearPrice(verifiedPriced, 'llbean-venturestretch-chino'));
 
   const was = before.find((r) => r.id === 'llbean-venturestretch-chino');
   const is = after.find((r) => r.id === 'llbean-venturestretch-chino');
@@ -1735,12 +1794,16 @@ test('clearing a price leaves the listing, the photo and its evidence alone', ()
 });
 
 test('clearing is idempotent, and clears only what it must', () => {
-  const once = prices.clearPrice(catalogSource, 'llbean-venturestretch-chino');
+  const once = prices.clearPrice(verifiedPriced, 'llbean-venturestretch-chino');
   assert.strictEqual(prices.clearPrice(once, 'llbean-venturestretch-chino'), once,
     'a second clear must not drift the file');
   assert.ok(once.includes('Fynd \u2014 demo product source'), 'the header comment survived');
-  assert.strictEqual(once.split('\n').length, catalogSource.split('\n').length - 1,
+  assert.strictEqual(once.split('\n').length, verifiedPriced.split('\n').length - 1,
     'exactly one line went: the note explaining a price that is gone');
+
+  /* and a row that carries no note to begin with loses no line */
+  const bare = prices.clearPrice(demoPriced, 'llbean-venturestretch-chino');
+  assert.strictEqual(bare.split('\n').length, demoPriced.split('\n').length);
 });
 
 test('a row whose price has no provenance is reported UNACCOUNTED', () => {
