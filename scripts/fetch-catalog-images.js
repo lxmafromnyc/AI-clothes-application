@@ -90,12 +90,88 @@ const NOT_THE_RETAILER = [
   'doubleclick.net', 'scorecardresearch.com', 'google-analytics.com'
 ];
 
-const args = process.argv.slice(2);
-const has = (name) => args.includes(name);
-const flag = (name) => {
-  const i = args.indexOf(name);
-  return i === -1 ? null : args[i + 1];
+/* ---------- the command line ----------
+
+   Read once, in both spellings and any case, and an option nobody
+   recognises STOPS the run. An ignored option is a different command
+   than the one that was typed, and a flag that swallows the next token
+   whatever it is turns --only --write into a row id. */
+const OPTIONS = {
+  '--help': 'boolean',
+  '--write': 'boolean',
+  '--refresh': 'boolean',
+  '--no-browser': 'boolean',
+  '--discover': 'boolean',
+  '--coverage': 'boolean',
+  '--only': 'value',
+  '--site': 'value',
+  '--candidate': 'value',
+  '--as': 'value',
+  '--limit': 'value'
 };
+
+function parseArgs(argv) {
+  const flags = {};
+  const errors = [];
+
+  for (let at = 0; at < argv.length; at += 1) {
+    const token = String(argv[at]);
+    if (!token.startsWith('--')) {
+      errors.push(`stray argument "${token}" — options are written --like-this`);
+      continue;
+    }
+    const equals = token.indexOf('=');
+    const name = (equals >= 0 ? token.slice(0, equals) : token).toLowerCase();
+    let value = equals >= 0 ? token.slice(equals + 1) : undefined;
+
+    const kind = OPTIONS[name];
+    if (!kind) { errors.push(`unknown option "${name}"`); continue; }
+    if (kind === 'boolean') {
+      if (value !== undefined) errors.push(`${name} takes no value`);
+      flags[name] = true;
+      continue;
+    }
+    if (value === undefined) {
+      const next = argv[at + 1];
+      if (next !== undefined && !String(next).startsWith('--')) { value = String(next); at += 1; }
+    }
+    flags[name] = value === undefined || value === '' ? null : value;
+  }
+  return { flags, errors };
+}
+
+const USAGE = `
+  Fynd — read each catalogue row's photo off the retailer's own page
+
+    --only <row-id>      just this row
+    --refresh            re-read rows that already carry a photo
+    --no-browser         plain HTTP only, no Chromium
+    --write              write what verified into assets/catalog.js
+    --site <origin>      the origin an image is hotlink-tested for
+
+    --candidate <productUrl> --as <row-id>
+                         try one replacement listing through the gates
+
+    --discover           for rows carrying no photo, ask the configured
+                         product source for real listings and put each
+                         through the same four gates. A row that already
+                         carries a photo is never touched. Needs
+                         PRODUCT_SOURCE and its key; --limit <n> sets how
+                         many listings to try per row (default 8).
+
+    --coverage           how many rows carry a verified photo, and
+                         whether each still accounts for itself. Reads
+                         nothing but the catalogue.
+
+    --help               this
+
+  Options may be written --flag value or --flag=value.
+`;
+
+const args = process.argv.slice(2);
+const parsedArgs = parseArgs(args);
+const has = (name) => Object.prototype.hasOwnProperty.call(parsedArgs.flags, name);
+const flag = (name) => (has(name) ? parsedArgs.flags[name] : null);
 
 const site = flag('--site') || DEFAULT_SITE;
 const only = flag('--only');
@@ -485,11 +561,20 @@ function registrable(host) {
   return bits.length <= 2 ? bits.join('.') : bits.slice(-2).join('.');
 }
 
+/* A loopback origin is a fixture, never a retailer. The https rule is
+   about what a shipped page can load, and nothing shipped ever points
+   at 127.0.0.1 — so http is allowed there and nowhere else, which is
+   what lets the whole path be tested end to end against a local
+   server rather than only in pieces. */
+const LOOPBACK = /^(127\.0\.0\.1|\[::1\]|localhost)$/i;
+
 function soundness(candidate, pageUrl) {
   const raw = typeof candidate === 'string' ? candidate : candidate.url;
   let url;
   try { url = new URL(raw); } catch (err) { return 'not a URL'; }
-  if (url.protocol !== 'https:') return `${url.protocol}// cannot load on an https page`;
+  if (url.protocol !== 'https:' && !LOOPBACK.test(url.hostname)) {
+    return `${url.protocol}// cannot load on an https page`;
+  }
 
   const host = url.hostname.toLowerCase();
   if (NOT_THE_RETAILER.some((bad) => host === bad || host.endsWith('.' + bad))) {
@@ -1089,8 +1174,278 @@ function short(url, width = 96) {
   return `${text.slice(0, head)}...${text.slice(-(width - 3 - head))}`;
 }
 
+/* ---------- finding a real product for a row that has none ----------
+
+   Most of the catalogue is sample rows: names invented to give the demo
+   something to search. A sample row cannot be photographed, because
+   there is nothing to photograph — so it has to become a real listing
+   first, and that listing has to be found rather than typed in.
+
+   The finding is done by the product source the app already uses, which
+   is the same thing that answers /api/search: it returns real listings
+   on retailers' own sites, and its own gate has already refused
+   aggregators, search pages, category pages and redirectors. Each
+   listing it offers is then put through the four gates any other row
+   goes through, and the first that clears them all becomes the row —
+   listing, photo, name and brand together, every field off that page.
+
+   Nothing here is hardcoded. Run it again and it re-derives what it
+   wrote; run it without --write and it writes nothing at all. */
+function intentFor(row) {
+  const list = (value) => (Array.isArray(value) ? value.filter(Boolean) : []);
+  /* a sample row's brand is invented, so it is not asked for — the
+     others are real names worth keeping in the query */
+  const invented = /^sample-/.test(String(row.id || ''));
+  return {
+    keywords: [row.name].filter(Boolean),
+    brands: !invented && row.brand ? [row.brand] : [],
+    categories: row.category ? [row.category] : [],
+    colors: list(row.colors),
+    occasions: list(row.occasion),
+    fits: list(row.fit),
+    styles: list(row.style),
+    maxPrice: null,
+    minPrice: null,
+    season: null,
+    gender: null
+  };
+}
+
+function productSource() {
+  try {
+    return require(path.join(__dirname, '..', 'api', '_providers', 'product-source.js'));
+  } catch (err) {
+    return null;
+  }
+}
+
+async function listingsFor(row, limit) {
+  const source = productSource();
+  if (!source) return { failed: 'the product source adapter could not be loaded' };
+
+  const provider = source.getProvider();
+  if (!provider || provider.name === 'none') {
+    return { failed: 'no product source is configured — set PRODUCT_SOURCE and its key (see .env.example)' };
+  }
+  if (typeof provider.configured === 'function' && !provider.configured()) {
+    return { failed: `the ${provider.name} product source has no key configured (see .env.example)` };
+  }
+
+  let raw = [];
+  try {
+    raw = await provider.search(intentFor(row), { limit: limit || 8 });
+  } catch (err) {
+    return { failed: `the ${provider.name} product source failed (${err && err.message ? err.message.split('\n')[0] : 'unknown'})` };
+  }
+
+  /* The display gate is not the right gate here. It exists to decide
+     what may be SHOWN, so it insists on a price and a photo from the
+     feed — and discovery wants neither: the photo is read off the
+     page, and a listing with no price in the feed is still a page
+     worth photographing. What does apply is the link rule, which is
+     what refuses aggregators, search and category pages, and
+     redirectors, so that is used on its own. */
+  const URL_FIELDS = ['productUrl', 'product_url', 'url', 'link', 'product_link', 'offer_link', 'product_page_url'];
+  const TITLE_FIELDS = ['title', 'name', 'product_title'];
+  const BRAND_FIELDS = ['brand', 'brand_name', 'manufacturer'];
+
+  const pick = (record, fields) => {
+    for (const field of fields) {
+      const value = record && record[field];
+      if (typeof value === 'string' && value.trim()) return value.trim();
+    }
+    return null;
+  };
+
+  const products = [];
+  const rejected = {};
+  const seen = new Set();
+
+  for (const record of Array.isArray(raw) ? raw : []) {
+    const url = pick(record, URL_FIELDS);
+    if (!url) { rejected['no-product-url'] = (rejected['no-product-url'] || 0) + 1; continue; }
+
+    const fault = source.linkFault(url);
+    if (fault) { rejected[fault] = (rejected[fault] || 0) + 1; continue; }
+    if (seen.has(url)) continue;
+    seen.add(url);
+
+    products.push({ productUrl: url, title: pick(record, TITLE_FIELDS), brand: pick(record, BRAND_FIELDS) });
+  }
+
+  return { provider: provider.name, products, rejected };
+}
+
+/* One row, from "a name with nothing behind it" to a verified listing.
+   `taken` maps an already-used photo to the row using it, because two
+   rows wearing the same picture is the catalogue telling a lie about
+   one of them. */
+async function discoverRow(row, taken, limit) {
+  const found = await listingsFor(row, limit);
+  if (found.failed) return { id: row.id, verdict: 'NO SOURCE', why: found.failed, tried: [] };
+
+  const tried = [];
+  for (const product of found.products) {
+    const result = await resolveRow({
+      id: row.id,
+      brand: product.brand || '—',
+      name: product.title || row.name,
+      productUrl: product.productUrl
+    });
+
+    if (result.verdict !== 'VERIFIED') {
+      tried.push({ url: product.productUrl, why: result.why });
+      continue;
+    }
+    if (taken.has(result.url)) {
+      tried.push({ url: product.productUrl, why: `its photo is already on ${taken.get(result.url)}` });
+      continue;
+    }
+
+    const facts = result.facts || {};
+    return {
+      id: row.id,
+      verdict: 'VERIFIED',
+      why: result.why,
+      tried,
+      proposal: {
+        productUrl: product.productUrl,
+        imageUrl: result.url,
+        name: facts.name || product.title || null,
+        brand: facts.brand || product.brand || null
+      },
+      identity: result.identity
+    };
+  }
+
+  return {
+    id: row.id,
+    verdict: 'NO PRODUCT FOUND',
+    why: found.products.length
+      ? `${found.products.length} listing${found.products.length === 1 ? '' : 's'} offered, none cleared every gate`
+      : `the ${found.provider} source offered no listing that is a product page`,
+    tried
+  };
+}
+
+/* ---------- what the catalogue looks like right now ---------- */
+function coverage(rows) {
+  const linked = rows.filter((row) => row && row.productUrl);
+  const withPhoto = rows.filter((row) => row && row.imageUrl);
+  const accounted = [];
+  const unaccounted = [];
+
+  for (const row of rows) {
+    const checked = catalogRowIdentity(row);
+    (checked.ok ? accounted : unaccounted).push({ id: row.id, why: checked.why || checked.how });
+  }
+
+  return {
+    rows: rows.length,
+    linked: linked.length,
+    withPhoto: withPhoto.length,
+    missing: rows.filter((row) => row && !row.imageUrl).map((row) => row.id),
+    accounted: accounted.length,
+    unaccounted
+  };
+}
+
+function printCoverage(report) {
+  console.log(`\n  ${report.withPhoto} of ${report.rows} rows carry a photo, and ${report.linked} link to a listing.`);
+  console.log(`  ${report.accounted} of ${report.rows} account for what they carry.`);
+  if (report.unaccounted.length) {
+    console.log('\n  UNACCOUNTED:');
+    for (const row of report.unaccounted) console.log(`     ${row.id} — ${row.why}`);
+  }
+  if (report.missing.length) {
+    console.log(`\n  ${report.missing.length} row${report.missing.length === 1 ? '' : 's'} carry no photo:`);
+    for (const id of report.missing.slice(0, 40)) console.log(`     ${id}`);
+    console.log('\n  --discover asks the configured product source for a real listing for each,');
+    console.log('  and puts every one it offers through the same four gates.');
+  }
+  console.log('');
+}
+
 /* ---------- report ---------- */
 async function main() {
+  if (parsedArgs.errors.length) {
+    for (const problem of parsedArgs.errors) console.error(`  ${problem}`);
+    console.error(USAGE);
+    throw new Error('nothing was run: the command line was not understood');
+  }
+
+  if (has('--help')) {
+    console.log(USAGE);
+    return;
+  }
+
+  /* --coverage : what the catalogue carries, without reading anything */
+  if (has('--coverage')) {
+    printCoverage(coverage(readCatalog().rows));
+    return;
+  }
+
+  /* --discover : find a real listing for every row that has no photo.
+     A row that already carries one is never touched here — that is what
+     keeps a verified photo verified. */
+  if (has('--discover')) {
+    const { source, rows } = readCatalog();
+    let targets = rows.filter((row) => row && !row.imageUrl);
+    if (only) targets = targets.filter((row) => row.id === only);
+
+    const kept = rows.filter((row) => row && row.imageUrl);
+    const limit = Number(flag('--limit')) > 0 ? Number(flag('--limit')) : 8;
+
+    console.log(`\nLooking for a real listing for ${targets.length} row${targets.length === 1 ? '' : 's'} that carry no photo.`);
+    console.log(`${kept.length} row${kept.length === 1 ? '' : 's'} already carry one and are not touched.`);
+    console.log(`Up to ${limit} listings are tried per row, each through all four gates.\n`);
+
+    /* every photo already in use, so no two rows end up wearing the
+       same picture */
+    const taken = new Map();
+    for (const row of kept) taken.set(row.imageUrl, row.id);
+
+    const found = [];
+    for (const row of targets) {
+      const result = await discoverRow(row, taken, limit);
+      console.log(`  ${result.verdict.padEnd(17)} ${row.id}`);
+      if (result.proposal) {
+        taken.set(result.proposal.imageUrl, row.id);
+        found.push(result);
+        console.log(`  ${''.padEnd(17)} ${result.proposal.brand || '(no brand named)'} — ${String(result.proposal.name || '').slice(0, 52)}`);
+        console.log(`  ${''.padEnd(17)} ${short(result.proposal.productUrl)}`);
+        console.log(`  ${''.padEnd(17)} ${short(result.proposal.imageUrl)}`);
+        console.log(`  ${''.padEnd(17)} ${result.why}`);
+      } else {
+        console.log(`  ${''.padEnd(17)} ${result.why}`);
+        for (const attempt of (result.tried || []).slice(0, 4)) {
+          console.log(`  ${''.padEnd(17)}   ${short(attempt.url, 70)}`);
+          console.log(`  ${''.padEnd(17)}     ${attempt.why}`);
+        }
+      }
+    }
+
+    console.log(`\n  ${found.length} of ${targets.length} row${targets.length === 1 ? '' : 's'} found a listing that cleared every gate.`);
+
+    if (!writing) {
+      console.log(found.length
+        ? `  Re-run with --write to put ${found.length} of them into assets/catalog.js.\n`
+        : '  Nothing verified, so there is nothing to write.\n');
+      return;
+    }
+    if (!found.length) {
+      console.log('  Nothing verified — assets/catalog.js is left exactly as it was.\n');
+      return;
+    }
+
+    let next = source;
+    for (const result of found) next = replaceRow(next, result.id, result.proposal);
+    fs.writeFileSync(CATALOG, next);
+    console.log(`  Wrote ${found.length} row${found.length === 1 ? '' : 's'} into assets/catalog.js.\n`);
+    printCoverage(coverage(readCatalog().rows));
+    return;
+  }
+
   /* --candidate <url> [--as <row-id>] : try a replacement product */
   const candidate = flag('--candidate');
   if (candidate) {
@@ -1219,6 +1574,7 @@ if (require.main === module) {
     gatherInPage, renderPage, resolveRow, firstVerifiable,
     replaceRow, factsFromHtml, factsFromRendered, inspectCandidate,
     catalogRowIdentity, evidenceNote,
+    parseArgs, OPTIONS, USAGE, intentFor, listingsFor, discoverRow, coverage,
     /* the parts that are about reading a retailer's page rather than
        about images, so the price reader shares one definition of a
        listing's code, one cookie-wall list and one way in */

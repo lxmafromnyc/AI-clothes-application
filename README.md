@@ -1701,6 +1701,25 @@ after one the page does not touch the video again.
   configured or submitted) and walks the page down so a gallery that loads on
   scroll actually loads before it is read.
 
+  `--discover` is how a row with nothing behind it becomes photographable. Most
+  of the catalogue is sample rows — names invented to give the demo something to
+  search — and a sample row cannot be photographed, because there is nothing to
+  photograph. So the listing is **found** rather than typed in: the product
+  source the app already uses (the same one that answers `/api/search`, set by
+  `PRODUCT_SOURCE` and its key) is asked for real listings matching the row's
+  name and category, its link rule refuses aggregators, search pages, category
+  pages and redirectors, and every listing that survives is put through the same
+  four gates as any other row. The first that clears them all becomes the row —
+  listing, photo, name and brand together, every field off that page. A row that
+  already carries a photo is never a target, which is what keeps a verified
+  photo verified, and a photo another row already wears is refused, because two
+  rows in one picture is the catalogue telling a lie about one of them. Nothing
+  is written without `--write`, and a re-run re-derives what it wrote.
+
+  `--coverage` answers the question that work is aimed at: how many rows carry a
+  photo, how many link to a listing, and whether each still accounts for what it
+  carries. It reads the catalogue and nothing else.
+
   When a retailer cannot be read at all, the row's product has to change
   rather than its photo. `--candidate <productUrl> --as <row-id>` tries a
   replacement listing through the same four gates and prints the row it would

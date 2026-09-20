@@ -29,9 +29,28 @@
 'use strict';
 
 const assert = require('assert');
+const fs = require('fs');
 const http = require('http');
+const path = require('path');
 const vm = require('vm');
+const { promisify } = require('util');
+const execFile = promisify(require('child_process').execFile);
 const extractor = require('./fetch-catalog-images');
+/* named for what it is, because the async section below already
+   binds `source` to the catalogue file's text */
+const productSource = require('../api/_providers/product-source');
+
+const SCRIPT = path.join(__dirname, 'fetch-catalog-images.js');
+const CATALOG = path.join(__dirname, '..', 'assets', 'catalog.js');
+
+async function run(argv) {
+  try {
+    const { stdout, stderr } = await execFile(process.execPath, [SCRIPT, ...argv], { env: process.env, timeout: 120000 });
+    return { code: 0, stdout, stderr };
+  } catch (err) {
+    return { code: err.code === undefined ? 1 : err.code, stdout: err.stdout || '', stderr: err.stderr || String(err.message) };
+  }
+}
 
 let passed = 0;
 let skipped = 0;
@@ -135,6 +154,34 @@ const PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFElEQVR42mP8z8BQz0AEYBxVSF+FABJADveWkH6oAAAAAElFTkSuQmCC',
   'base64'
 );
+
+/* A retailer that publishes everything a product page should: a
+   canonical link, a JSON-LD product record naming its sku, and a photo
+   whose URL carries the same code. Used by the discovery tests, where
+   what is being exercised is finding the listing rather than prising a
+   photo out of a difficult page. */
+function simpleRetailer() {
+  const server = http.createServer((req, res) => {
+    const url = req.url.split('?')[0];
+    if (url.endsWith('.jpg')) {
+      res.writeHead(200, { 'content-type': 'image/jpeg' });
+      return res.end(JPEG);
+    }
+    const code = (url.match(/\d{6,}/) || ['000000'])[0];
+    const here = `http://127.0.0.1:${server.address().port}${url}`;
+    res.writeHead(200, { 'content-type': 'text/html' });
+    res.end(`<!doctype html><html><head>
+      <link rel="canonical" href="${here}">
+      <meta property="og:title" content="Boxy Cotton Tee">
+      <meta property="og:site_name" content="Northfold">
+      <script type="application/ld+json">
+      {"@type":"Product","sku":"${code}","name":"Boxy Cotton Tee",
+       "brand":{"@type":"Brand","name":"Northfold"},
+       "image":["/img/${code}-hero.jpg"]}
+      </script></head><body></body></html>`);
+  });
+  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server)));
+}
 
 function stubbornRetailer() {
   let plainHits = 0;
@@ -912,6 +959,169 @@ function walledRetailer() {
       () => extractor.writeInto(source, 'uniqlo-merino-crew', "https://image.uniqlo.com/a'b.jpg"),
       /unquotable/
     );
+  });
+
+  /* ---------------------------------------------------------
+     Finding a listing for a row that has none
+
+     Most of the catalogue is sample rows: names invented to give the
+     demo something to search. A sample row cannot be photographed,
+     because there is nothing to photograph — it has to become a real
+     listing first, and that listing has to be FOUND rather than typed
+     in. What is tested here is that the finding goes through the same
+     four gates as everything else, and that a row which already has a
+     verified photo is never in the running.
+     --------------------------------------------------------- */
+  console.log('\n  — finding a listing for a row that has none\n');
+
+  const listing = (port, code) => `http://127.0.0.1:${port}/p/${code}`;
+  const record = (port, code, title) => ({
+    title: title || 'Boxy Cotton Tee',
+    price: 42,
+    imageUrl: `http://127.0.0.1:${port}/img/${code}-hero.jpg`,
+    productUrl: listing(port, code),
+    retailer: 'Northfold'
+  });
+
+  test('http is still refused anywhere but a loopback fixture', () => {
+    assert.strictEqual(
+      extractor.soundness({ url: 'http://www.uniqlo.com/goods/429066.jpg' }, 'https://www.uniqlo.com/p'),
+      'http:// cannot load on an https page'
+    );
+    assert.strictEqual(extractor.soundness({ url: 'http://127.0.0.1:8080/img/1.jpg' }, 'http://127.0.0.1:8080/p'), null,
+      'a loopback origin is a fixture, never a retailer');
+    assert.strictEqual(extractor.soundness({ url: 'https://www.uniqlo.com/goods/429066.jpg' }, 'https://www.uniqlo.com/p'), null);
+  });
+
+  test('a sample row asks for what it is, without its invented brand', () => {
+    const sample = extractor.intentFor({ id: 'sample-northfold-boxy-cotton-tee', name: 'Boxy Cotton Tee', brand: 'Northfold', category: 'tee', colors: ['Neutral'] });
+    assert.deepStrictEqual(sample.keywords, ['Boxy Cotton Tee']);
+    assert.deepStrictEqual(sample.brands, [], 'a made-up brand would only narrow the search to nothing');
+    assert.deepStrictEqual(sample.categories, ['tee']);
+
+    const real = extractor.intentFor({ id: 'uniqlo-merino-crew', name: 'Merino Crew', brand: 'UNIQLO', category: 'knit' });
+    assert.deepStrictEqual(real.brands, ['UNIQLO'], 'a real brand is worth asking for');
+  });
+
+  test('the catalogue says how much of itself is photographed', () => {
+    const rows = extractor.readCatalog().rows;
+    const report = extractor.coverage(rows);
+
+    assert.strictEqual(report.rows, rows.length);
+    assert.strictEqual(report.withPhoto, rows.filter((row) => row.imageUrl).length);
+    assert.strictEqual(report.accounted, rows.length, 'every row accounts for what it carries');
+    assert.deepStrictEqual(report.unaccounted, []);
+    assert.strictEqual(report.missing.length, rows.length - report.withPhoto);
+  });
+
+  await testAsync('a found listing becomes the row, every field off its page', async () => {
+    const retailer = await simpleRetailer();
+    const port = retailer.address().port;
+
+    productSource.registerProvider({
+      name: 'fake-source',
+      configured: () => true,
+      search: async () => [record(port, '553311')]
+    });
+    process.env.PRODUCT_SOURCE = 'fake-source';
+
+    const result = await extractor.discoverRow(
+      { id: 'sample-northfold-boxy-cotton-tee', name: 'Boxy Cotton Tee', brand: 'Northfold', category: 'tee' },
+      new Map(),
+      4
+    );
+
+    assert.strictEqual(result.verdict, 'VERIFIED', result.why);
+    assert.strictEqual(result.proposal.productUrl, listing(port, '553311'));
+    assert.match(result.proposal.imageUrl, /553311-hero\.jpg$/);
+    assert.strictEqual(result.proposal.name, 'Boxy Cotton Tee', 'the name came off the page');
+    assert.strictEqual(result.proposal.brand, 'Northfold', 'and so did the brand');
+    assert.match(result.why, /553311/, 'and the photo is tied to that listing by its code');
+
+    retailer.close();
+  });
+
+  await testAsync('a photo another row already wears is refused', async () => {
+    const retailer = await simpleRetailer();
+    const port = retailer.address().port;
+
+    productSource.registerProvider({
+      name: 'fake-source',
+      configured: () => true,
+      search: async () => [record(port, '553311')]
+    });
+    process.env.PRODUCT_SOURCE = 'fake-source';
+
+    const taken = new Map([[`http://127.0.0.1:${port}/img/553311-hero.jpg`, 'sample-halden-merino-crew-knit']]);
+    const result = await extractor.discoverRow(
+      { id: 'sample-northfold-boxy-cotton-tee', name: 'Boxy Cotton Tee', category: 'tee' },
+      taken,
+      4
+    );
+
+    assert.strictEqual(result.verdict, 'NO PRODUCT FOUND', 'two rows wearing one picture is a lie about one of them');
+    assert.match(result.tried[0].why, /already on sample-halden-merino-crew-knit/);
+
+    retailer.close();
+  });
+
+  await testAsync('an aggregator listing never reaches the gates at all', async () => {
+    productSource.registerProvider({
+      name: 'fake-source',
+      configured: () => true,
+      search: async () => [
+        { title: 'Boxy Cotton Tee', price: 42, retailer: 'Google', imageUrl: 'https://encrypted-tbn0.gstatic.com/x.jpg', productUrl: 'https://www.google.com/shopping/product/123' },
+        { title: 'Boxy Cotton Tee', price: 42, retailer: 'Somewhere', imageUrl: 'https://cdn.example.com/x.jpg', productUrl: 'https://example.com/search?q=tee' }
+      ]
+    });
+    process.env.PRODUCT_SOURCE = 'fake-source';
+
+    const offered = await extractor.listingsFor({ id: 'sample-x', name: 'Boxy Cotton Tee' }, 4);
+    assert.deepStrictEqual(offered.products, [], 'a comparison page and a search page are not product pages');
+    assert.ok(Object.keys(offered.rejected).length, 'and the source says why it dropped them');
+  });
+
+  await testAsync('with no source configured, discovery says so and writes nothing', async () => {
+    const before = fs.readFileSync(CATALOG);
+    const result = await run(['--discover', '--only', 'sample-northfold-boxy-cotton-tee', '--write']);
+    const after = fs.readFileSync(CATALOG);
+
+    assert.strictEqual(result.code, 0, result.stderr);
+    assert.match(result.stdout, /no product source is configured/);
+    assert.match(result.stdout, /rows already carry one and are not touched/);
+    assert.ok(before.equals(after), 'assets/catalog.js is byte-for-byte what it was');
+  });
+
+  await testAsync('discovery leaves the verified rows out of its list entirely', async () => {
+    const result = await run(['--discover']);
+    assert.strictEqual(result.code, 0, result.stderr);
+
+    for (const id of ['uniqlo-merino-crew', 'jcrew-broken-in-oxford', 'llbean-venturestretch-chino']) {
+      assert.doesNotMatch(result.stdout, new RegExp(id), `${id} already carries a verified photo and is not a target`);
+    }
+    assert.match(result.stdout, /3 rows already carry one and are not touched/);
+  });
+
+  await testAsync('--coverage reports without reading anything, and --help lists the modes', async () => {
+    const report = await run(['--coverage']);
+    assert.strictEqual(report.code, 0);
+    assert.match(report.stdout, /of 27 rows carry a photo/);
+    assert.match(report.stdout, /27 of 27 account for what they carry/);
+    assert.doesNotMatch(report.stdout, /Reading \d+ linked product page/);
+
+    const help = await run(['--help']);
+    assert.match(help.stdout, /--discover/);
+    assert.match(help.stdout, /--coverage/);
+    for (const option of Object.keys(extractor.OPTIONS)) {
+      assert.ok(extractor.USAGE.includes(option), `--help says nothing about ${option}`);
+    }
+  });
+
+  await testAsync('an option nobody recognises stops the run', async () => {
+    const result = await run(['--discovar']);
+    assert.notStrictEqual(result.code, 0);
+    assert.match(result.stderr, /unknown option "--discovar"/);
+    assert.doesNotMatch(result.stdout, /Reading \d+ linked product page/);
   });
 
   console.log(`\n${passed} passed, ${failures.length} failed${skipped ? `, ${skipped} skipped` : ''}\n`);
