@@ -40,10 +40,20 @@ const artSvg = (item) =>
 
 /* photo when the product has one, drawn artwork otherwise. The tile is
    the same neutral either way, so replacing a failed photo with artwork
-   needs no style changes. */
+   needs no style changes.
+
+   referrerpolicy="no-referrer" because these photos are hosted by
+   somebody else. A browser sends this site's origin with an image
+   request by default, and a host that refuses foreign referrers answers
+   that with a 403 the page cannot see — the photo simply never
+   arrives. Sending no referrer removes the only thing such a host could
+   object to, gains us nothing to lose, and tells a third-party CDN
+   nothing about who is looking. It applies to the photo only: the
+   card's LINK still carries a referrer, because that is a retailer we
+   are sending a shopper to. */
 function media(item, badge) {
   const inner = item.imageUrl
-    ? `<img src="${esc(item.imageUrl)}" alt="${esc(item.name)}" loading="lazy" decoding="async" data-fallback="${esc(item.id)}">`
+    ? `<img src="${esc(item.imageUrl)}" alt="${esc(item.name)}" loading="lazy" decoding="async" referrerpolicy="no-referrer" data-fallback="${esc(item.id)}">`
     : artSvg(item);
   return `<div class="item-media">${inner}${badge || ''}</div>`;
 }

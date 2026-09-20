@@ -16,8 +16,14 @@
      2. every key on the first product, and on that product's offer
      3. the record the adapter maps out of it
      4. the verdict the verification gate reaches, for the whole batch
+     5. the PHOTOS: which field each one came from, whether the URL
+        answers with an actual image, whether it answers differently
+        when a referrer is sent, whether it is signed or expiring, and
+        how many of the batch have a photo that can be shown at all
 
-   Nothing is written anywhere and no key is printed.
+   Nothing is written anywhere. No API key is printed, and no photo URL
+   is printed whole: a signed URL carries its signature in the query, so
+   only the scheme, the host and the NAMES of the query keys are shown.
    ========================================================= */
 
 'use strict';
@@ -47,13 +53,160 @@ function dump(label, obj) {
   for (const key of Object.keys(obj)) console.log(`  ${key.padEnd(26)} ${preview(obj[key])}`);
 }
 
+/* ---------------------------------------------------------
+   Photos
+   ---------------------------------------------------------
+   The card shows the source's own photo or it shows drawn artwork.
+   Which of those a shopper gets is decided by whether this URL answers
+   with an image when a browser asks for it, and that is a question only
+   a real call can settle.
+   --------------------------------------------------------- */
+
+/* Query keys that mean a URL is signed, and therefore stops working on
+   its own schedule. Their VALUES are never printed. */
+const SIGNING_KEY = /^(sig|signature|token|expires?|exp|hmac|policy|x-amz-|x-goog-|key-pair-id)/i;
+
+const PHOTO_TIMEOUT = 10000;
+
+/* Everything that can be said about a URL without quoting it. */
+function describeUrl(raw) {
+  let url;
+  try { url = new URL(raw); } catch (err) { return { safe: '(not a URL)', https: false, signed: null }; }
+  const keys = [...url.searchParams.keys()];
+  const signed = keys.filter((k) => SIGNING_KEY.test(k));
+  return {
+    safe: `${url.protocol}//${url.host}  path ${url.pathname.length} chars, `
+      + (keys.length ? `query keys: ${keys.join(', ')}` : 'no query'),
+    https: url.protocol === 'https:',
+    signed: signed.length ? signed.join(', ') : null
+  };
+}
+
+/* One request for the picture. `referer` null is how the card asks for
+   it — the img carries referrerpolicy="no-referrer" — so the plain call
+   is the one that matches what a shopper's browser actually does. */
+async function askForPhoto(url, referer) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), PHOTO_TIMEOUT);
+  try {
+    const response = await fetch(url, {
+      redirect: 'follow',
+      signal: controller.signal,
+      headers: referer ? { Referer: referer } : {}
+    });
+    const type = (response.headers.get('content-type') || '').split(';')[0];
+    let bytes = 0;
+    try { bytes = (await response.arrayBuffer()).byteLength; } catch (err) { bytes = 0; }
+    return { status: response.status, type, bytes, image: /^image\//i.test(type) && bytes > 0 };
+  } catch (err) {
+    return { status: null, type: '', bytes: 0, image: false, failed: (err && err.name === 'AbortError') ? 'timed out' : 'unreachable' };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/* Every photo URL a product carries, labelled with the field it came
+   from, in the order the adapter reads them. */
+function photoCandidates(product) {
+  const out = [];
+  const add = (field, value) => {
+    const url = typeof value === 'string' ? value.trim() : '';
+    if (url && !out.some((c) => c.url === url)) out.push({ field, url });
+  };
+  for (const key of provider.PHOTO_LIST_KEYS) {
+    const list = product[key];
+    if (!Array.isArray(list)) continue;
+    list.forEach((entry, i) => {
+      if (typeof entry === 'string') return add(`${key}[${i}]`, entry);
+      if (entry && typeof entry === 'object') {
+        for (const inner of ['url', 'link', 'src', 'image_url']) add(`${key}[${i}].${inner}`, entry[inner]);
+      }
+    });
+  }
+  for (const key of provider.PHOTO_SINGLE_KEYS) add(key, product[key]);
+  return out;
+}
+
+async function reportPhotos(results, site) {
+  console.log('\n\n=========================================================');
+  console.log('  PHOTOS');
+  console.log('=========================================================');
+  console.log(`  referrer used for the second request: ${site}`);
+
+  const sample = results.slice(0, 5);
+  const fieldCount = {};
+  let productsWithAPhoto = 0;
+  let productsWithAShowablePhoto = 0;
+  let chosenWorked = 0;
+  let anotherFieldWouldHave = 0;
+
+  for (const [i, product] of sample.entries()) {
+    const candidates = photoCandidates(product);
+    const chosen = provider.imageFrom(product);
+    candidates.forEach((c) => { fieldCount[c.field.replace(/\[\d+\]/, '[n]')] = (fieldCount[c.field.replace(/\[\d+\]/, '[n]')] || 0) + 1; });
+
+    console.log(`\n--- product[${i}] — ${String(product.product_title || '').slice(0, 48)} ---`);
+    if (!candidates.length) {
+      console.log('  NO PHOTO FIELD AT ALL. This record is dropped by the gate as missing-image-url.');
+      continue;
+    }
+    productsWithAPhoto += 1;
+    console.log(`  photo fields present : ${candidates.map((c) => c.field).join(', ')}`);
+    console.log(`  the adapter takes    : ${candidates.find((c) => c.url === chosen) ? candidates.find((c) => c.url === chosen).field : '(none)'}`);
+
+    let showable = false;
+    let first = true;
+    for (const candidate of candidates) {
+      const shape = describeUrl(candidate.url);
+      const plain = await askForPhoto(candidate.url, null);
+      const withRef = await askForPhoto(candidate.url, site);
+
+      console.log(`\n  ${candidate.field}`);
+      console.log(`    ${shape.safe}`);
+      console.log(`    https              : ${shape.https ? 'yes' : 'NO — the gate rejects this as image-url-not-https'}`);
+      console.log(`    signed / expiring  : ${shape.signed ? `YES (${shape.signed}) — this URL stops working on its own` : 'no signing keys in the query'}`);
+      console.log(`    as the card asks   : ${plain.failed || `${plain.status} ${plain.type || '(no type)'} ${plain.bytes} bytes`}${plain.image ? '  <- an image' : ''}`);
+      console.log(`    with a referrer    : ${withRef.failed || `${withRef.status} ${withRef.type || '(no type)'} ${withRef.bytes} bytes`}`);
+      if (plain.image && !withRef.image) console.log('    HOTLINK PROTECTED  : served plainly, refused with our referrer.');
+      if (!plain.image && withRef.image) console.log('    WANTS A REFERRER   : refused plainly, served with one.');
+
+      const usable = shape.https && plain.image;
+      if (usable && !showable) {
+        showable = true;
+        if (candidate.url === chosen) chosenWorked += 1;
+        else { anotherFieldWouldHave += 1; console.log(`    BETTER THAN THE CHOSEN FIELD: this one works and the chosen one did not.`); }
+      }
+      first = false;
+    }
+    if (showable) productsWithAShowablePhoto += 1;
+    else console.log('\n  Nothing this product carries can be shown. Artwork is the honest answer for it.');
+  }
+
+  console.log('\n--- across the sample ---');
+  console.log(`  products checked                 : ${sample.length}`);
+  console.log(`  carrying at least one photo field: ${productsWithAPhoto}`);
+  console.log(`  with a photo that really loads   : ${productsWithAShowablePhoto}`
+    + (sample.length ? `  (${Math.round((productsWithAShowablePhoto / sample.length) * 100)}%)` : ''));
+  console.log(`  where the adapter's choice worked: ${chosenWorked}`);
+  console.log(`  where another field was better   : ${anotherFieldWouldHave}`);
+  console.log('\n  Field frequency in the sample:');
+  for (const [field, n] of Object.entries(fieldCount).sort((a, b) => b[1] - a[1])) {
+    console.log(`    ${field.padEnd(26)} ${n}`);
+  }
+  console.log('');
+}
+
 async function main() {
   if (!process.env.OPENWEBNINJA_API_KEY) {
     console.error('OPENWEBNINJA_API_KEY is not set. Export it and run again.');
     process.exit(2);
   }
 
-  const query = process.argv.slice(2).join(' ') || 'black oversized hoodie';
+  /* flags are not search words: --site takes a value, and neither it nor
+     its value belongs in the query the provider is asked */
+  const argv = process.argv.slice(2);
+  const words = argv.filter((a, i) => !a.startsWith('--') && !(argv[i - 1] === '--site'));
+  const query = words.join(' ') || 'black oversized hoodie';
   /* a probe stands in for the interpreter: the words are treated as
      keywords so the adapter builds its query exactly as it would live */
   const intent = { categories: [], colors: [], fits: [], styles: [], brands: [], occasions: [], keywords: query.split(/\s+/) };
@@ -141,6 +294,18 @@ async function main() {
     console.log('unusable field for each record — compare them with product[0] to see');
     console.log('which alias the adapter is missing.');
   }
+
+  /* the question the gate cannot answer: not whether a URL is there,
+     but whether it answers with a picture */
+  const site = (process.argv.includes('--site') ? process.argv[process.argv.indexOf('--site') + 1] : '')
+    || 'https://ai-clothes-application.vercel.app';
+  await reportPhotos(results, site);
 }
 
-main().catch((err) => { console.error(err && err.message); process.exit(1); });
+/* Run as a script; required as a module by scripts/test-pipeline.js, so
+   the parts that read a response can be tested without a live call. */
+if (require.main === module) {
+  main().catch((err) => { console.error(err && err.message); process.exit(1); });
+}
+
+module.exports = { describeUrl, photoCandidates, SIGNING_KEY };

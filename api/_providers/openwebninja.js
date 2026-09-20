@@ -959,6 +959,11 @@ module.exports = {
   legTimeout,
   OFFERS_URL,
   imageFrom,
+  /* the photo fields this adapter reads, in the order it reads them —
+     exported so scripts/probe-openwebninja.js can report on each one
+     rather than keeping a second copy of the list that could drift */
+  PHOTO_LIST_KEYS,
+  PHOTO_SINGLE_KEYS,
   offerFrom,
   brandFrom,
   toPrice,
