@@ -15,7 +15,7 @@
      --engine=google_shopping   probe a different engine
      --num=10                   how many results to ask for
      --sellers                  also spend ONE request on the
-                                google_product sellers endpoint for the
+                                google_immersive_product endpoint for the
                                 first result that has no inline link
      --json                     print the raw first result as JSON too
 
@@ -107,7 +107,7 @@ function candidateReport(record) {
   }
   console.log(any
     ? '\n  At least one field yields a retailer URL: no seller lookup is needed for this record.'
-    : '\n  No field yields a retailer URL: this record needs the google_product sellers lookup.');
+    : '\n  No field yields a retailer URL: this record needs the google_immersive_product lookup.');
 }
 
 async function main() {

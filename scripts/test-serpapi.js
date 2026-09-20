@@ -61,7 +61,8 @@ const googleOnly = (over) => Object.assign({
   title: 'Champion Reverse Weave Oversized Hoodie, Black',
   product_link: 'https://www.google.com/shopping/product/1234567890',
   product_id: '1234567890',
-  serpapi_product_api: 'https://serpapi.com/search.json?engine=google_product&product_id=1234567890',
+  immersive_product_page_token: 'tok-1234567890',
+  serpapi_immersive_product_api: 'https://serpapi.com/search.json?engine=google_immersive_product&page_token=tok-1234567890',
   source: 'Nordstrom',
   price: '$68.00',
   extracted_price: 68,
@@ -78,7 +79,7 @@ const withDirectLink = (over) => googleOnly(Object.assign({
   direct_link: 'https://www.nike.com/t/sportswear-club-fleece-hoodie/CZ7857-010'
 }, over));
 
-/* One seller object as the google_product offers endpoint returns them. */
+/* One store object as the Immersive Product API returns them. */
 const seller = (over) => Object.assign({
   position: 1,
   name: 'Nordstrom',
@@ -88,7 +89,11 @@ const seller = (over) => Object.assign({
   total_price: '$68.00'
 }, over);
 
-const sellersPayload = (sellers) => ({ sellers_results: { online_sellers: sellers } });
+/* The Immersive Product API calls them stores and files them under
+   product_results; the older shape is kept for the test that proves a
+   payload still arriving in it is read rather than dropped. */
+const sellersPayload = (sellers) => ({ product_results: { stores: sellers } });
+const legacySellersPayload = (sellers) => ({ sellers_results: { online_sellers: sellers } });
 const searchPayload = (results) => ({
   search_metadata: { status: 'Success', total_time_taken: 1.2 },
   search_parameters: { engine: 'google_shopping_light' },
@@ -119,15 +124,24 @@ function withStubbedFetch(handler, run) {
   return Promise.resolve(run(calls)).finally(() => { global.fetch = original; });
 }
 
-function twoEndpointStub(search, sellersById) {
+function twoEndpointStub(search, sellersByToken, options) {
+  const shape = (options && options.payload) || sellersPayload;
   return (url) => {
     const params = new URL(url).searchParams;
-    if (params.get('engine') === 'google_product') {
-      const id = params.get('product_id');
-      const found = sellersById[id];
-      if (found === undefined) return jsonResponse(200, sellersPayload([]));
+    if (params.get('engine') === 'google_immersive_product') {
+      const token = params.get('page_token');
+      const found = sellersByToken[token];
+      if (found === undefined) return jsonResponse(200, shape([]));
       if (found === 'fail') return jsonResponse(500, { error: 'boom' });
-      return jsonResponse(200, sellersPayload(found));
+      if (found === 'retired') {
+        return jsonResponse(400, { error: 'The Google Product service is no longer offered by Google.' });
+      }
+      return jsonResponse(200, shape(found));
+    }
+    if (params.get('engine') === 'google_product') {
+      /* the retired service, answered the way SerpApi answers it — no
+         test may reach this without failing */
+      return jsonResponse(400, { error: 'The Google Product service is no longer offered by Google.' });
     }
     return jsonResponse(200, search);
   };
@@ -257,7 +271,7 @@ const intentFor = (words, over) => Object.assign({
   console.log('\nthe sellers lookup\n');
 
   await testAsync('a seller supplies the link, price and shop together', async () => {
-    await withStubbedFetch(twoEndpointStub(searchPayload([googleOnly()]), { '1234567890': [seller()] }), async () => {
+    await withStubbedFetch(twoEndpointStub(searchPayload([googleOnly()]), { 'tok-1234567890': [seller()] }), async () => {
       const records = await provider.search(intentFor('black hoodie'), { limit: 4 });
       assert.strictEqual(records.length, 1);
       assert.strictEqual(records[0].productUrl, 'https://www.nordstrom.com/s/reverse-weave-hoodie/7654321');
@@ -270,7 +284,7 @@ const intentFor = (words, over) => Object.assign({
 
   await testAsync('the shop the search named is preferred over the first seller listed', async () => {
     const sellers = [seller({ name: 'Some Marketplace', direct_link: 'https://www.marketplace.example/p/999' }), seller()];
-    await withStubbedFetch(twoEndpointStub(searchPayload([googleOnly()]), { '1234567890': sellers }), async () => {
+    await withStubbedFetch(twoEndpointStub(searchPayload([googleOnly()]), { 'tok-1234567890': sellers }), async () => {
       const records = await provider.search(intentFor('black hoodie'), { limit: 4 });
       assert.strictEqual(records[0].retailer, 'Nordstrom', 'the card should show the shop the search found');
     });
@@ -278,7 +292,7 @@ const intentFor = (words, over) => Object.assign({
 
   await testAsync('a seller with only a redirect link resolves nothing, and the record is dropped', async () => {
     const redirectOnly = [{ name: 'Nordstrom', link: 'https://www.google.com/url?q=https://www.nordstrom.com/s/hoodie/1', base_price: '$68.00' }];
-    await withStubbedFetch(twoEndpointStub(searchPayload([googleOnly()]), { '1234567890': redirectOnly }), async () => {
+    await withStubbedFetch(twoEndpointStub(searchPayload([googleOnly()]), { 'tok-1234567890': redirectOnly }), async () => {
       const records = await provider.search(intentFor('black hoodie'), { limit: 4 });
       assert.strictEqual(records[0].productUrl, undefined);
       assert.strictEqual(records.diagnostics.sellers.noDirectLinkInSellers, 1);
@@ -289,7 +303,7 @@ const intentFor = (words, over) => Object.assign({
 
   await testAsync('a failed lookup drops one record rather than failing the search', async () => {
     const search = searchPayload([googleOnly(), withDirectLink()]);
-    await withStubbedFetch(twoEndpointStub(search, { '1234567890': 'fail' }), async () => {
+    await withStubbedFetch(twoEndpointStub(search, { 'tok-1234567890': 'fail' }), async () => {
       const records = await provider.search(intentFor('hoodie'), { limit: 4 });
       assert.strictEqual(records.diagnostics.sellers.lookupsFailed, 1);
       const { products } = verifyAll(records, { retailer: null });
@@ -300,7 +314,7 @@ const intentFor = (words, over) => Object.assign({
   await testAsync('an unrecognised sellers shape yields nothing, and says what it saw', async () => {
     const stub = (url) => {
       const params = new URL(url).searchParams;
-      if (params.get('engine') === 'google_product') return jsonResponse(200, { unexpected_key: { sellers: [] } });
+      if (params.get('engine') === 'google_immersive_product') return jsonResponse(200, { unexpected_key: { sellers: [] } });
       return jsonResponse(200, searchPayload([googleOnly()]));
     };
     await withStubbedFetch(stub, async () => {
@@ -313,7 +327,7 @@ const intentFor = (words, over) => Object.assign({
 
   await testAsync('the lookup is skipped entirely when it is switched off', async () => {
     process.env.SERPAPI_RESOLVE_SELLERS = 'off';
-    await withStubbedFetch(twoEndpointStub(searchPayload([googleOnly()]), { '1234567890': [seller()] }), async (calls) => {
+    await withStubbedFetch(twoEndpointStub(searchPayload([googleOnly()]), { 'tok-1234567890': [seller()] }), async (calls) => {
       const records = await provider.search(intentFor('hoodie'), { limit: 4 });
       assert.strictEqual(records.diagnostics.sellers.skipped, true);
       assert.strictEqual(calls.length, 1, 'only the search request should have been made');
@@ -335,10 +349,103 @@ const intentFor = (words, over) => Object.assign({
     });
   });
 
+  await testAsync('the lookup goes to the Immersive Product API, by page token', async () => {
+    /* Google retired the Product service; a call to it now answers with
+       a 400 and a sentence saying so. No path may reach it. */
+    await withStubbedFetch(twoEndpointStub(searchPayload([googleOnly()]), { 'tok-1234567890': [seller()] }), async (calls) => {
+      await provider.search(intentFor('black hoodie'), { limit: 4 });
+
+      const lookups = calls.filter((url) => url.includes('engine=google_immersive_product'));
+      assert.strictEqual(lookups.length, 1, 'one lookup, on the current engine');
+      assert.match(lookups[0], /page_token=tok-1234567890/, 'addressed by the token the result carried');
+      assert.ok(!calls.some((url) => url.includes('engine=google_product')), 'and never the retired service');
+    });
+  });
+
+  await testAsync("the token is read out of the result's own SerpApi URL when that is all there is", async () => {
+    const result = googleOnly({
+      immersive_product_page_token: undefined,
+      serpapi_immersive_product_api: 'https://serpapi.com/search.json?engine=google_immersive_product&page_token=tok-from-url'
+    });
+    delete result.immersive_product_page_token;
+
+    assert.strictEqual(provider.pageTokenFor(result), 'tok-from-url');
+
+    await withStubbedFetch(twoEndpointStub(searchPayload([result]), { 'tok-from-url': [seller()] }), async (calls) => {
+      const records = await provider.search(intentFor('black hoodie'), { limit: 4 });
+      assert.strictEqual(records[0].productUrl, 'https://www.nordstrom.com/s/reverse-weave-hoodie/7654321');
+      assert.ok(calls.some((url) => url.includes('page_token=tok-from-url')), 'the token was used, not the embedded URL');
+      assert.ok(!calls.some((url) => url.includes('serpapi_immersive_product_api')), 'the payload\'s own URL is never fetched as-is');
+    });
+  });
+
+  await testAsync('the stores the Immersive Product API returns are read', async () => {
+    const payload = { product_results: { stores: [seller()] } };
+    assert.strictEqual(provider.sellersFrom(payload).length, 1, 'product_results.stores is where they are now');
+
+    /* and a payload still arriving in the older shape is read rather
+       than dropped */
+    assert.strictEqual(provider.sellersFrom(legacySellersPayload([seller()])).length, 1);
+  });
+
+  await testAsync('a store whose only link is a Google one resolves nothing', async () => {
+    const googleOnlyStore = [{ name: 'Nordstrom', link: 'https://www.google.com/shopping/product/1234567890', base_price: '$68.00' }];
+    await withStubbedFetch(twoEndpointStub(searchPayload([googleOnly()]), { 'tok-1234567890': googleOnlyStore }), async () => {
+      const records = await provider.search(intentFor('black hoodie'), { limit: 4 });
+      const { products } = verifyAll(records, { retailer: null });
+      assert.strictEqual(products.length, 0, 'a comparison page is not a retailer listing, wherever it is offered from');
+    });
+  });
+
+  await testAsync('the retired service stops the lookups instead of being asked again', async () => {
+    /* eight records needing a link, and an endpoint that will answer
+       every one of them the same way */
+    const results = Array.from({ length: 8 }, (_, i) => googleOnly({ product_id: `p${i}`, immersive_product_page_token: `tok-p${i}` }));
+    const retired = Object.fromEntries(results.map((r, i) => [`tok-p${i}`, 'retired']));
+
+    await withStubbedFetch(twoEndpointStub(searchPayload(results), retired), async (calls) => {
+      const records = await provider.search(intentFor('hoodie'), { limit: 8 });
+      const lookups = calls.filter((url) => url.includes('engine=google_immersive_product'));
+
+      assert.ok(lookups.length <= 4, `one batch and then stop, not one refusal per record — made ${lookups.length}`);
+      assert.match(records.diagnostics.sellers.halted, /no longer offered by Google/,
+        'and the run says why it stopped, once');
+      assert.ok(records.every((record) => !record.productUrl), 'no record got a link out of it');
+      assert.strictEqual(verifyAll(records, { retailer: null }).products.length, 0,
+        'and the gate offers none of them');
+    });
+  });
+
+  await testAsync('a transient failure is not treated as a retired service', async () => {
+    const results = Array.from({ length: 8 }, (_, i) => googleOnly({ product_id: `p${i}`, immersive_product_page_token: `tok-p${i}` }));
+    const flaky = Object.fromEntries(results.map((r, i) => [`tok-p${i}`, 'fail']));
+
+    await withStubbedFetch(twoEndpointStub(searchPayload(results), flaky), async (calls) => {
+      const records = await provider.search(intentFor('hoodie'), { limit: 8 });
+      const lookups = calls.filter((url) => url.includes('engine=google_immersive_product'));
+
+      assert.ok(lookups.length > 4, 'a 500 is this product\'s bad luck, and the next is still worth trying');
+      assert.strictEqual(records.diagnostics.sellers.halted, undefined);
+    });
+  });
+
+  await testAsync('a result carrying no token is counted rather than looked up', async () => {
+    const result = googleOnly();
+    delete result.immersive_product_page_token;
+    delete result.serpapi_immersive_product_api;
+
+    await withStubbedFetch(twoEndpointStub(searchPayload([result]), {}), async (calls) => {
+      const records = await provider.search(intentFor('hoodie'), { limit: 4 });
+      assert.strictEqual(records.diagnostics.sellers.noPageToken, 1);
+      assert.strictEqual(records.diagnostics.sellers.lookupsMade, 0, 'there is nothing to address a lookup with');
+      assert.ok(!calls.some((url) => url.includes('engine=google_immersive_product')));
+    });
+  });
+
   await testAsync('lookups stop once enough records have a link', async () => {
-    const results = Array.from({ length: 8 }, (_, i) => googleOnly({ product_id: `p${i}` }));
-    const sellersById = Object.fromEntries(results.map((r, i) => [`p${i}`, [seller({ direct_link: `https://www.nordstrom.com/s/x/${i}` })]]));
-    await withStubbedFetch(twoEndpointStub(searchPayload(results), sellersById), async () => {
+    const results = Array.from({ length: 8 }, (_, i) => googleOnly({ product_id: `p${i}`, immersive_product_page_token: `tok-p${i}` }));
+    const sellersByToken = Object.fromEntries(results.map((r, i) => [`tok-p${i}`, [seller({ direct_link: `https://www.nordstrom.com/s/x/${i}` })]]));
+    await withStubbedFetch(twoEndpointStub(searchPayload(results), sellersByToken), async () => {
       const records = await provider.search(intentFor('hoodie'), { limit: 2 });
       assert.ok(records.diagnostics.requests.sellers <= 4, `wanted at most one batch, made ${records.diagnostics.requests.sellers}`);
     });

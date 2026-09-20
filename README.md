@@ -832,12 +832,18 @@ Two differences from the OpenWeb Ninja adapter are worth knowing:
   and puts every string it might log through `redact()` first, which replaces
   the key with `***`.
 * **A shopping result's own links belong to Google.** `product_link` is
-  Google's comparison page and `serpapi_product_api` is an API endpoint, so
+  Google's comparison page and `serpapi_immersive_product_api` is an API
+  endpoint, so
   neither is ever shown as a product URL. Each candidate field goes through
   `looksDirect()`, which refuses every Google and SerpApi host, and a record
   left without a retailer URL is dropped by the gate rather than linked
   somewhere it should not be. When a result carries no direct link, the
-  `google_product` sellers endpoint is asked for that product's sellers — one
+  `google_immersive_product` endpoint is asked for that product's stores, by
+  the page token the result carries — Google retired the Product service, and
+  a call to it now answers "The Google Product service is no longer offered by
+  Google." A failure that will repeat, a retired service or any 4xx, stops the
+  lookups for the whole search and is reported once as
+  `diagnostics.sellers.halted` rather than made once per record. One
   extra request per product, counted in `diagnostics.requests`, which is what
   the cost per search is computed from. `SERPAPI_RESOLVE_SELLERS=off` skips
   that step.
@@ -1710,7 +1716,24 @@ after one the page does not touch the video again.
   name and category, its link rule refuses aggregators, search pages, category
   pages and redirectors, and every listing that survives is put through the same
   four gates as any other row. The first that clears them all becomes the row —
-  listing, photo, name and brand together, every field off that page. A row that
+  listing, photo, name and brand together, every field off that page.
+
+  Ahead of those four sits the gate they cannot be: whether the listing is the
+  **garment the row means**. A photo can be provably this listing's own and
+  still be the wrong answer — asked for Kinfield's "Fleece Sweatpant" the source
+  offered Aerie's "Street Trouser", which cleared every identity gate and was
+  still the wrong trousers. So each candidate's title is read as a garment
+  before its page is ever fetched — type from the head noun (a "ribbed knit
+  skirt" is a skirt, not a knit), family, audience, fibre, and the descriptors
+  that exclude one another — and compared with the row's own reading. Only
+  contradiction refuses: a blazer listing that never says "double breasted"
+  still answers a double-breasted blazer, because silence is not disagreement,
+  while a mini answers no midi and a girls' skirt answers no adult-sized row.
+  Brand is deliberately not compared — Kinfield, Northfold and Rue Nine were
+  invented for the demo, and demanding the brand back would refuse every
+  correct answer there is. Every candidate's verdict is printed with its
+  reason, pass or refusal, because a gate whose reasoning is invisible cannot
+  be corrected. A row that
   already carries a photo is never a target, which is what keeps a verified
   photo verified, and a photo another row already wears is refused, because two
   rows in one picture is the catalogue telling a lie about one of them. Nothing
@@ -1734,9 +1757,12 @@ after one the page does not touch the video again.
   `--refresh` is passed, so a working URL is never churned; `--no-browser`
   keeps it to plain HTTP. Run it from an ordinary connection — where retailer
   hosts are refused every row reports `UNREACHABLE` and nothing is written.
-  `node scripts/test-catalog-images.js` covers all four gates without a
-  network, driving the browser path against a local server that refuses plain
-  HTTP and builds its gallery in JavaScript.
+  `node scripts/test-catalog-images.js` covers all four gates and the semantic
+  one without a network, driving the browser path against a local server that
+  refuses plain HTTP and builds its gallery in JavaScript, and offering the
+  semantic gate the wrong garments on purpose — a trouser for a sweatpant, a
+  dress for a skirt, a jacket for a hoodie, a tote for a sneaker — as well as
+  the awkward right ones it must not refuse.
 - `node scripts/fetch-catalog-prices.js` fills the `price` of every row that
   carries a `productUrl`, by reading what the listing charges off the same page
   the photo came from. Plain HTTP first, then a real Chromium for a page that
