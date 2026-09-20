@@ -245,6 +245,31 @@ function describingRetailer(products) {
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server)));
 }
 
+/* a page that publishes someone else's garment as its og:image, and its
+   own product's photo further down. This is the shape that wrote a linen
+   shirt into a sweater polo's row. */
+function mismatchedRetailer() {
+  const server = http.createServer((req, res) => {
+    const url = req.url.split('?')[0];
+    if (url.endsWith('.jpg')) {
+      res.writeHead(200, { 'content-type': 'image/jpeg' });
+      return res.end(JPEG);
+    }
+    const here = `http://127.0.0.1:${server.address().port}${url}`;
+    res.writeHead(200, { 'content-type': 'text/html' });
+    res.end(`<!doctype html><html><head>
+      <link rel="canonical" href="${here}">
+      <meta property="og:title" content="Linen Camp Shirt">
+      <link rel="preload" as="image" href="/img/441122-hero.jpg">
+      <script type="application/ld+json">
+      {"@type":"Product","name":"Linen Camp Shirt",
+       "image":["/img/todd-snyder-cotton-cashmere-sweater-polo.jpg"]}
+      </script>
+      </head><body></body></html>`);
+  });
+  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server)));
+}
+
 function stubbornRetailer() {
   let plainHits = 0;
   const server = http.createServer((req, res) => {
@@ -1924,6 +1949,163 @@ function walledRetailer() {
     assert.match(result.stdout, /row[s]? found a listing that cleared every gate/,
       'the run reached its own summary');
     assert.doesNotMatch(result.stderr, /Cannot read properties of undefined/);
+  });
+
+  /* ---------------------------------------------------------
+     Canonical evidence has to name the same product
+
+     `via: 'canonical'` says: this page declares itself the canonical
+     page for the listing, and this is the image it publishes as its
+     product's. The first half was checked and the second half was
+     assumed, which makes it circular — virtually every product page is
+     canonical for its own URL, so the page was vouching for the page
+     and nothing was ever tied to the PRODUCT.
+
+     A live run wrote a linen shirt's photo under a cotton-cashmere
+     sweater polo's listing, with a canonical that matched the listing
+     exactly. Both halves of the note were true and the row was wrong.
+     --------------------------------------------------------- */
+  console.log('\n  — canonical evidence has to name the same product\n');
+
+  const LYST = 'https://www.lyst.com/clothing/todd-snyder-cotton-cashmere-sweater-polo-441122/';
+
+  test('a canonical page whose photo is a different garment is refused', () => {
+    /* the exact row the live run produced */
+    const verdict = extractor.identityEvidence({
+      url: 'https://cdn.lyst.com/photos/todd-snyder-sea-soft-irish-linen-shirt.jpg',
+      from: 'og:image',
+      canonical: LYST
+    }, LYST);
+
+    assert.strictEqual(verdict.ok, false, 'a polo listing accepted a linen shirt');
+    assert.match(verdict.why, /different garment/);
+    assert.match(verdict.why, /polo against shirt/);
+  });
+
+  test('the same listing, photographed, still proves itself', () => {
+    /* the rule refuses a disagreement it can SEE. It must not refuse
+       agreement, or every canonical row in the catalogue goes with it. */
+    const verdict = extractor.identityEvidence({
+      url: 'https://cdn.lyst.com/photos/todd-snyder-cotton-cashmere-sweater-polo.jpg',
+      from: 'og:image',
+      canonical: LYST
+    }, LYST);
+    assert.strictEqual(verdict.ok, true, verdict.why);
+    assert.strictEqual(verdict.via, 'canonical');
+  });
+
+  test('an opaque photo filename leaves the rule exactly where it was', () => {
+    /* silence is not disagreement here either: a CDN that names its
+       assets with a hash says nothing about the garment, and canonical
+       evidence stands or falls on what it always did */
+    const verdict = extractor.identityEvidence({
+      url: 'https://cdn.lyst.com/photos/8f2a91c4e7b3.jpg',
+      from: 'og:image',
+      canonical: LYST
+    }, LYST);
+    assert.strictEqual(verdict.ok, true, verdict.why);
+    assert.strictEqual(verdict.via, 'canonical');
+  });
+
+  test('the photo’s alt text and product record are read too', () => {
+    /* an opaque filename is not the only thing a candidate knows about
+       what it is a picture of */
+    const byAlt = extractor.identityEvidence({
+      url: 'https://cdn.lyst.com/photos/8f2a91c4e7b3.jpg',
+      from: 'og:image',
+      alt: 'Todd Snyder Sea Soft Irish Linen Shirt',
+      canonical: LYST
+    }, LYST);
+    assert.strictEqual(byAlt.ok, false, 'the alt text said shirt and the listing says polo');
+
+    const byRecord = extractor.identityEvidence({
+      url: 'https://cdn.lyst.com/photos/8f2a91c4e7b3.jpg',
+      from: 'json-ld',
+      node: { name: 'Sea Soft Irish Linen Shirt' },
+      canonical: LYST
+    }, LYST);
+    assert.strictEqual(byRecord.ok, false, 'the product record named a different garment');
+  });
+
+  test('a fabric the listing rules out is refused as well as a garment', () => {
+    const wool = 'https://www.example.com/clothing/merino-wool-crew-sweater-551133/';
+    const verdict = extractor.identityEvidence({
+      url: 'https://cdn.example.com/photos/organic-cotton-crew-sweater.jpg',
+      from: 'og:image',
+      canonical: wool
+    }, wool);
+    assert.strictEqual(verdict.ok, false);
+    assert.match(verdict.why, /wool against cotton/);
+  });
+
+  test('a code from a tracking parameter is not a product code', () => {
+    /* what let the live case reach the canonical rule at all: the only
+       digits in that URL came off an ad network's click id */
+    assert.deepStrictEqual(
+      extractor.identifiersFrom('https://www.lyst.com/clothing/todd-snyder-sweater-polo/?atc_medium=cpc&gclid=99887766554'),
+      [], 'a click id is not a product');
+
+    /* a parameter that really does name the product still counts */
+    assert.deepStrictEqual(
+      extractor.identifiersFrom('https://shop.example.com/p?productId=1234567'), ['1234567']);
+
+    /* and the shipped rows are untouched */
+    assert.ok(extractor.identifiersFrom('https://www.uniqlo.com/us/en/products/E429066-000/00').includes('429066'));
+    assert.ok(extractor.identifiersFrom('https://www.jcrew.com/p/AU763').includes('au763'));
+  });
+
+  test('a recorded canonical note is re-proved, not trusted', () => {
+    /* --coverage has to catch a row like the live one, whether this
+       rule existed when it was written or not */
+    const wrong = {
+      id: 'x',
+      productUrl: LYST,
+      imageUrl: 'https://cdn.lyst.com/photos/todd-snyder-sea-soft-irish-linen-shirt.jpg',
+      imageEvidence: { via: 'canonical', canonical: LYST }
+    };
+    const checked = extractor.catalogRowIdentity(wrong);
+    assert.strictEqual(checked.ok, false, 'a row carrying this note reports as accounted for');
+    assert.match(checked.why, /different garment/);
+
+    const right = Object.assign({}, wrong, {
+      imageUrl: 'https://cdn.lyst.com/photos/todd-snyder-cotton-cashmere-sweater-polo.jpg'
+    });
+    assert.strictEqual(extractor.catalogRowIdentity(right).ok, true);
+  });
+
+  test('the shipped catalogue still accounts for every row', () => {
+    /* the rule is a tightening, and a tightening that unseats a
+       verified row is a bug in the rule */
+    const report = extractor.coverage(extractor.readCatalog().rows);
+    assert.deepStrictEqual(report.unaccounted, []);
+    assert.strictEqual(report.accounted, report.rows);
+  });
+
+  await testAsync('a refused canonical falls back to a photo that proves itself', async () => {
+    /* the page offers its og:image first — a different garment — and a
+       gallery image second that carries the listing's own code. The
+       first is refused and the second is taken, which is the whole
+       point of refusing rather than accepting. */
+    const retailer = await mismatchedRetailer();
+    const port = retailer.address().port;
+    const productUrl = `http://127.0.0.1:${port}/clothing/terrace-linen-camp-shirt-441122/`;
+
+    const result = await extractor.resolveRow({
+      id: 'sample-terrace-linen-camp-shirt',
+      brand: 'Terrace',
+      name: 'Linen Camp Shirt',
+      productUrl
+    });
+
+    assert.strictEqual(result.verdict, 'VERIFIED', result.why);
+    assert.match(result.url, /441122-hero\.jpg$/, 'it took the photo that carries the code');
+    assert.doesNotMatch(result.url, /sweater-polo/, 'and not the one the canonical would have waved through');
+    assert.strictEqual(result.identity.via, 'image-url', 'proved by the code, not by the page vouching for itself');
+
+    /* and the row that results accounts for itself with no note at all */
+    assert.strictEqual(extractor.evidenceNote(result.identity), null);
+
+    retailer.close();
   });
 
   /* ---------------------------------------------------------

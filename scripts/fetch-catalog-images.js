@@ -377,10 +377,22 @@ function dedupe(raw, pageUrl, canonical) {
    Nothing else counts. A photo that cannot be tied back to the listing
    is refused even when it is plainly a photo of clothing on the right
    retailer's CDN — that is how a similar product gets in. */
+/* Parameters an ad network or an analytics tag puts on a link. Their
+   values are long digit runs that look exactly like product codes, and
+   a click id is not a product: a listing whose ONLY "code" came from
+   one of these carries no code at all. */
+const TRACKING_PARAMS = /^(utm_|atc_|gclid|gbraid|wbraid|fbclid|msclkid|srsltid|gad_|irclickid|ranmid|ranei|ransiteid|cjevent|epik|ttclid|twclid|yclid|mc_|_gl|sessionid|sid|ref|referrer|source|campaign|affiliate|aff_|clickid|subid)/i;
+
 function identifiersFrom(productUrl) {
   let url;
   try { url = new URL(productUrl); } catch (err) { return []; }
-  const text = decodeURIComponent(url.pathname) + ' ' + decodeURIComponent(url.search);
+
+  const kept = [];
+  for (const [key, value] of url.searchParams) {
+    if (TRACKING_PARAMS.test(key)) continue;
+    kept.push(`${key}=${value}`);
+  }
+  const text = decodeURIComponent(url.pathname) + ' ' + decodeURIComponent(kept.join('&'));
   const ids = new Set();
 
   /* a long run of digits, with and without its leading zeros: Levi's
@@ -427,6 +439,117 @@ function skuOf(node) {
     if (typeof value === 'string' || typeof value === 'number') out.push(String(value).toLowerCase());
   }
   return out;
+}
+
+/* ---------- canonical evidence has to name the same product ----------
+
+   `via: 'canonical'` says: this page declares itself the canonical page
+   for the listing, and this is the image it publishes as its product's.
+   The first half is checked; the second half was assumed. That makes it
+   circular, because virtually every product page declares itself
+   canonical for its own URL — the page is vouching for the page, and
+   nothing in it was ever tied to the PRODUCT.
+
+   A live run wrote this:
+
+     productUrl    .../todd-snyder-cotton-cashmere-sweater-polo-4/
+     imageUrl      ...todd-snyder-sea-soft-irish-linen-shirt...
+     imageEvidence { via: 'canonical', canonical: .../sweater-polo-4/ }
+
+   The canonical matched the listing exactly, and the picture was of a
+   different garment. A cotton cashmere sweater polo is not a Sea Soft
+   Irish Linen Shirt, and the evidence said nothing either way because
+   it was never looking at the garment.
+
+   So it looks now. The listing URL's own path describes a garment; so
+   do the image's filename, its alt text and the product record that
+   supplied it. Both sides are read with the same reader the semantic
+   gate uses, and canonical evidence is refused when they name different
+   garments. Silence still proves nothing either way — an opaque CDN
+   filename and a coded path leave the rule exactly where it was — so
+   this only ever REFUSES a disagreement it can see, and a refusal sends
+   the candidate back for the next image, which may carry the code and
+   prove itself outright. */
+
+/* the descriptive part of a URL path: the words, without the segments
+   that name a shop's shelving rather than its garment */
+const SHELVING = /^(p|dp|pd|prod|product|products|item|items|clothing|clothes|shop|store|buy|en|us|uk|ca|au|gb|www|catalog|category|c|g|men|mens|women|womens|sale|new|collection|collections)$/i;
+
+function wordsInPath(url) {
+  let parsed;
+  try { parsed = new URL(url); } catch (err) { return ''; }
+  return decodeURIComponent(parsed.pathname)
+    .split('/')
+    .filter(Boolean)
+    .filter((segment) => !SHELVING.test(segment))
+    .join(' ')
+    .replace(/\.[a-z0-9]{2,5}$/i, '')
+    .replace(/[^A-Za-z0-9]+/g, ' ')
+    .trim();
+}
+
+/* Everything this candidate says about what it is a picture OF, kept
+   APART. Run together into one string they mask each other — the head
+   noun of "sweater-polo.jpg" + "Linen Camp Shirt" is shirt, and the
+   filename's disagreement disappears into the join. Each description
+   answers for itself. */
+function wordsAboutImage(candidate) {
+  const said = [];
+  const file = wordsInPath(candidate && candidate.url);
+  if (file) said.push({ where: 'its filename', text: file });
+  const alt = candidate && candidate.alt;
+  if (typeof alt === 'string' && alt.trim()) said.push({ where: 'its alt text', text: alt.trim() });
+  const node = candidate && candidate.node;
+  if (node && typeof node.name === 'string' && node.name.trim()) {
+    said.push({ where: 'the product record it came from', text: node.name.trim() });
+  }
+  return said;
+}
+
+/* The same test the semantic gate applies to a title, applied here to
+   two descriptions of one product. It refuses only what it can see: a
+   side that names no garment agrees with everything.
+
+   It weighs the garment and the fibre and stops there, deliberately.
+   Length and cut words are as likely to be an image transform as a
+   fact about the garment — a CDN path carrying "crop", "zoom" or
+   "detail" says nothing about whether the coat is cropped — while the
+   garment type and an exclusive fibre are what make one product a
+   different product from another. */
+function garmentsAgree(left, right) {
+  const a = readGarment(left, {});
+  const b = readGarment(right, {});
+  if (!a.type || !b.type) return { agree: true, why: 'one side names no garment, so there is nothing to disagree with' };
+
+  if (a.family !== b.family) {
+    return { agree: false, why: `${a.type} (${a.family}) against ${b.type} (${b.family})` };
+  }
+  if (a.type !== b.type && !a.generic && !b.generic) {
+    return { agree: false, why: `${a.type} against ${b.type}` };
+  }
+
+  const ours = [...a.fibres].filter(exclusiveFibre);
+  const theirs = [...b.fibres].filter(exclusiveFibre);
+  if (ours.length && theirs.length) {
+    const shared = ours.filter((fibre) => theirs.includes(fibre));
+    const blendable = ours.some((one) => theirs.some((two) => fibresBlend(one, two)));
+    if (!shared.length && !blendable) {
+      return { agree: false, why: `${ours.join('/')} against ${theirs.join('/')}` };
+    }
+  }
+  return { agree: true, why: `both read as a ${b.type}` };
+}
+
+/* Whether a page's canonical claim may stand for THIS image. Every
+   description the candidate carries has to agree; one that names a
+   different garment refuses it, whatever the others say. */
+function canonicalCorroborated(productUrl, candidate) {
+  const listing = wordsInPath(productUrl);
+  for (const said of wordsAboutImage(candidate)) {
+    const verdict = garmentsAgree(listing, said.text);
+    if (!verdict.agree) return { agree: false, why: `${said.where} says ${verdict.why}` };
+  }
+  return { agree: true, why: 'nothing it says about itself names a different garment' };
 }
 
 function identityEvidence(candidate, productUrl) {
@@ -476,11 +599,21 @@ function identityEvidence(candidate, productUrl) {
      listing, and the image is the one it publishes as the product's */
   const vouches = candidate.from === 'json-ld' || String(candidate.from).startsWith('og:');
   if (vouches && candidate.canonical && samePage(candidate.canonical, productUrl)) {
+    /* the page vouching for the page is not the picture vouching for
+       the product: a canonical that matches the listing exactly is
+       still worthless when the image is of a different garment */
+    const corroborated = canonicalCorroborated(productUrl, candidate);
+    if (!corroborated.agree) {
+      return {
+        ok: false,
+        why: `the page is canonical for this listing, but its ${candidate.from} is a different garment — ${corroborated.why}`
+      };
+    }
     return {
       ok: true,
       via: 'canonical',
       canonical: candidate.canonical,
-      how: `the page declares itself the canonical page for this listing, and this is its ${candidate.from}`
+      how: `the page declares itself the canonical page for this listing, and this is its ${candidate.from} (${corroborated.why})`
     };
   }
 
@@ -578,6 +711,15 @@ function catalogRowIdentity(row) {
   if (evidence.via === 'canonical') {
     if (!samePage(evidence.canonical, row.productUrl)) {
       return { ok: false, why: `the recorded canonical ${evidence.canonical} is not this row's listing` };
+    }
+    /* re-proved, not trusted: a note recorded before this rule existed,
+       or written by hand, has to survive the same test */
+    const corroborated = canonicalCorroborated(row.productUrl, { url: row.imageUrl });
+    if (!corroborated.agree) {
+      return {
+        ok: false,
+        why: `the recorded canonical is this row's listing, but the photo is of a different garment — ${corroborated.why}`
+      };
     }
     return { ok: true, via: 'canonical', how: 'its listing declared itself canonical for this product' };
   }
@@ -2826,6 +2968,7 @@ if (require.main === module) {
     gatherInPage, renderPage, resolveRow, firstVerifiable,
     replaceRow, linkRow, setField, indentOf, factsFromHtml, factsFromRendered, inspectCandidate,
     catalogRowIdentity, evidenceNote,
+    garmentsAgree, canonicalCorroborated, wordsInPath, wordsAboutImage, TRACKING_PARAMS,
     parseArgs, OPTIONS, USAGE, intentFor, queryForms, listingsFor, discoverRow, coverage,
     /* the semantic gate: what the listing SELLS, asked before any page
        is fetched, and decidable with no retailer at all */
