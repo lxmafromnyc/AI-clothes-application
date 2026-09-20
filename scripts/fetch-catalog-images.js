@@ -45,10 +45,16 @@
    Trouser". So a candidate is read as a garment — type, family,
    audience, material, and the descriptors that exclude one another —
    and refused before its page is ever fetched when the reading
-   contradicts the row's, or when it never establishes a word the row's
-   own name states: a jogger that never claims to be fleece does not
-   answer a Fleece Sweatpant. Brand is deliberately not compared: the
-   sample brands were invented.
+   contradicts the row's. Brand is deliberately not compared: the sample
+   brands were invented.
+
+   A word the row states that the title merely does not say is a
+   different matter, and it is settled in two stages. The title stage
+   marks it pending; the page stage looks for it in the product's own
+   record, description, attributes and material fields, and the
+   candidate passes only once every one of them is established. Nothing
+   waives that. A title is a headline — "Real Soft Jogger" is a fleece
+   jogger or it is not, and only its page will say.
 
    Two ways in, in this order. Plain HTTP first, because it is cheap and
    most pages publish everything needed in their served markup. When that
@@ -123,7 +129,6 @@ const OPTIONS = {
   '--refresh': 'boolean',
   '--no-browser': 'boolean',
   '--discover': 'boolean',
-  '--allow-unproven': 'boolean',
   '--coverage': 'boolean',
   '--only': 'value',
   '--site': 'value',
@@ -183,12 +188,6 @@ const USAGE = `
                          never touched. Needs
                          PRODUCT_SOURCE and its key; --limit <n> sets how
                          many listings to try per row (default 8).
-
-    --allow-unproven     let a listing through that contradicts nothing
-                         but never establishes a word the row's own name
-                         states — fleece, midi, tailored, tencel. Off by
-                         default: a listing that cannot be shown to be
-                         the garment is not the garment.
 
     --coverage           how many rows carry a verified photo, and
                          whether each still accounts for itself. Reads
@@ -708,6 +707,19 @@ function gatherInPage() {
     if (key) metas[key.toLowerCase()] = el.getAttribute('content');
   }
   const jsonld = [...document.querySelectorAll('script[type="application/ld+json"]')].map((s) => s.textContent);
+
+  /* the text the page itself marks as THIS product's description,
+     details, specification or composition — and never a block sitting
+     inside a recommendation strip, a carousel or the chrome, which
+     describe other products entirely */
+  const AWAY = 'nav, header, footer, [class*="recommend" i], [class*="related" i], [class*="also-like" i], [class*="carousel" i], [class*="cross-sell" i], [class*="upsell" i], [class*="similar" i], [class*="breadcrumb" i], [class*="review" i]';
+  const detail = [...document.querySelectorAll(
+    '[itemprop="description"], [class*="product-description" i], [class*="product-detail" i], [class*="product-info" i], [class*="description" i], [class*="composition" i], [class*="material" i], [class*="fabric" i], [class*="specification" i]'
+  )]
+    .filter((el) => !el.closest(AWAY))
+    .map((el) => (el.innerText || el.textContent || '').trim())
+    .filter(Boolean)
+    .slice(0, 20);
   const preload = [...document.querySelectorAll('link[rel="preload"][as="image"]')]
     .map((l) => ({ href: l.getAttribute('href'), srcset: l.getAttribute('imagesrcset') }));
 
@@ -729,6 +741,7 @@ function gatherInPage() {
     canonical: text('link[rel="canonical"]', 'href') || metas['og:url'] || null,
     metas,
     jsonld,
+    detail,
     preload,
     imgs
   };
@@ -989,13 +1002,18 @@ async function resolveRow(row) {
   const page = await fetchPage(row.productUrl);
   let served = null;
 
+  let evidence = [];
+
   if (page.html) {
     facts = factsFromHtml(page.html);
+    /* what this page says about its own product, kept whether or not a
+       photo comes out of it: the semantic gate asks for it afterwards */
+    evidence = evidenceFromHtml(page.html);
     const candidates = candidatesFrom(page.html, row.productUrl);
     notes.push(`plain HTTP: ${candidates.length} candidate${candidates.length === 1 ? '' : 's'}`);
     if (candidates.length) {
       served = await firstVerifiable(candidates, row);
-      if (served.url) return { id: row.id, verdict: 'VERIFIED', why: served.why, url: served.url, from: served.from, identity: served.identity, facts, notes };
+      if (served.url) return { id: row.id, verdict: 'VERIFIED', why: served.why, url: served.url, from: served.from, identity: served.identity, facts, evidence, notes };
     }
   } else if (page.blocked) {
     /* the sandbox, not the retailer: a browser here would be refused the
@@ -1033,7 +1051,10 @@ async function resolveRow(row) {
     };
   }
 
-  facts = factsFromRendered(rendered.seen) ;
+  facts = factsFromRendered(rendered.seen);
+  /* the rendered page knows which text belongs to the product, because
+     it can ask the DOM rather than guess from markup */
+  evidence = evidenceFromRendered(rendered.seen).concat(evidence);
   const candidates = candidatesFromRendered(rendered.seen, rendered.loaded, row.productUrl);
   notes.push(`browser: ${candidates.length} candidate${candidates.length === 1 ? '' : 's'}`);
   if (!candidates.length) {
@@ -1041,7 +1062,7 @@ async function resolveRow(row) {
   }
 
   const found = await firstVerifiable(candidates, row, rendered.verify);
-  if (found.url) return { id: row.id, verdict: 'VERIFIED', why: found.why, url: found.url, from: found.from, identity: found.identity, facts, notes };
+  if (found.url) return { id: row.id, verdict: 'VERIFIED', why: found.why, url: found.url, from: found.from, identity: found.identity, facts, evidence, notes };
 
   const all = [...(served && served.refusals ? served.refusals : []), ...found.refusals];
   return {
@@ -1051,6 +1072,7 @@ async function resolveRow(row) {
     url: null,
     refusals: all,
     facts,
+    evidence,
     notes
   };
 }
@@ -1378,7 +1400,7 @@ const GARMENT_TYPES = [
    sides had in common. */
 const DESCRIPTORS = [
   { group: 'length', value: 'mini', terms: ['mini', 'micro mini'] },
-  { group: 'length', value: 'midi', terms: ['midi', 'tea length'] },
+  { group: 'length', value: 'midi', terms: ['midi', 'midlength', 'mid length', 'tea length'] },
   { group: 'length', value: 'maxi', terms: ['maxi', 'floor length'] },
   { group: 'length', value: 'knee', terms: ['knee length', 'above the knee', 'below the knee'] },
   { group: 'length', value: 'cropped', terms: ['cropped', 'crop', 'shrunken'] },
@@ -1475,17 +1497,26 @@ const FIBRES_THAT_BLEND = [['cotton', 'linen']];
    not work the other way. Narrower establishes broader, never the
    reverse — which is why "cotton shirt" does not answer a poplin row. */
 const FIBRE_WITHIN = {
+  /* wool by definition */
   merino: ['wool'], cashmere: ['wool'], lambswool: ['wool'], shetland: ['wool'],
   alpaca: ['wool'], mohair: ['wool'], tweed: ['wool'],
-  denim: ['cotton'], poplin: ['cotton'], corduroy: ['cotton'], twill: ['cotton'],
-  canvas: ['cotton'], chambray: ['cotton'], terry: ['cotton'], seersucker: ['cotton'],
-  flannel: ['cotton'], jersey: ['cotton'], 'french terry': ['cotton', 'terry'],
-  satin: ['silk'], charmeuse: ['silk'], chiffon: ['silk'],
+  /* cotton by definition. Twill, canvas, jersey and flannel are NOT
+     here: each names a weave or a knit that is made in wool and in
+     polyester just as readily, so none of them establishes cotton. */
+  denim: ['cotton'], poplin: ['cotton'], corduroy: ['cotton'],
+  chambray: ['cotton'], terry: ['cotton'], seersucker: ['cotton'],
+  'french terry': ['cotton', 'terry'],
+  /* leather by definition. Satin, charmeuse and chiffon are NOT under
+     silk for the same reason as twill: they are weaves, and most of
+     them on sale are polyester. */
   suede: ['leather'], shearling: ['leather'], nubuck: ['leather'],
-  ramie: ['linen'], sherpa: ['fleece'],
-  /* the same fibre under two names */
-  tencel: ['lyocell'], lyocell: ['tencel'],
+  sherpa: ['fleece'],
+  /* Tencel IS lyocell, so it establishes a lyocell row. Generic lyocell
+     is NOT Tencel — that is one manufacturer's — so it does not
+     establish a Tencel row, and the arrow only points one way. */
+  tencel: ['lyocell'],
   modal: ['viscose'], rayon: ['viscose'],
+  /* elastane and spandex are two names for one fibre */
   spandex: ['elastane'], elastane: ['spandex']
 };
 
@@ -1700,8 +1731,7 @@ function listOf(set) {
 /* `row` is a catalogue row; `listing` is what the source offered, or the
    page's own name once it has been read. Returns a decision and the
    sentence explaining it, which is printed either way. */
-function semanticMatch(row, listing, options) {
-  const allowUnproven = Boolean(options && options.allowUnproven);
+function semanticMatch(row, listing) {
   const title = String((listing && listing.title) || '').trim();
   const hints = [];
   for (const field of ['fit', 'style']) {
@@ -1791,8 +1821,11 @@ function semanticMatch(row, listing, options) {
     }
     /* nothing shared and nothing contradicting: either the row's word
        has to be established, or its absence is only worth a note */
-    if (mustBeEstablished(group, values)) unproven.push(listOf(ours));
-    else if (!soft) unstated.push(`${listOf(ours)} unstated`);
+    if (mustBeEstablished(group, values)) {
+      unproven.push({ kind: 'descriptor', group, values: new Set(values), words: listOf(ours) });
+    } else if (!soft) {
+      unstated.push(`${listOf(ours)} unstated`);
+    }
   }
 
   /* the fabric the row names has to be named back, in the listing's own
@@ -1801,7 +1834,7 @@ function semanticMatch(row, listing, options) {
      and a wrap top that never claims to be tencel. */
   for (const term of wanted.materialTerms) {
     if (![...offered.materialTerms].some((theirs) => theirs === term || (FIBRE_WITHIN[theirs] || []).includes(term))) {
-      unproven.push(term);
+      unproven.push({ kind: 'material', term, words: term });
     } else if (offered.materialTerms.has(term)) {
       agreed.push(`${term} on both`);
     } else {
@@ -1809,11 +1842,23 @@ function semanticMatch(row, listing, options) {
     }
   }
 
-  if (unproven.length && !allowUnproven) {
-    return refuse(
-      `"${title}" never establishes ${unproven.join(', ')} — the row's own name does, and nothing in the listing says it`,
-      'unproven'
-    );
+  /* A word the title never says is PENDING, not refused. The title is a
+     headline; the page is the specification, and asking it is what the
+     product-page stage is for. A candidate only fails on this once the
+     page has been read and still does not say it. */
+  if (unproven.length) {
+    return {
+      ok: true,
+      kind: 'pending',
+      pending: unproven,
+      why: [
+        [...new Set(agreed)].join('; ') || `${offered.type} matches ${wanted.type}`,
+        `nothing contradicts, but "${title}" never says ${unproven.map(nameOfPending).join(', ')}`,
+        'which the row does — its page has to establish it'
+      ].filter(Boolean).join('; '),
+      wanted,
+      offered
+    };
   }
 
   /* the row's own fit and style fields, reported and never decisive:
@@ -1833,10 +1878,9 @@ function semanticMatch(row, listing, options) {
   const why = [
     [...new Set(agreed)].join('; '),
     unstated.length ? `nothing contradicts (${unstated.join(', ')})` : 'nothing contradicts',
-    ...(unproven.length ? [`UNPROVEN, allowed by --allow-unproven: ${unproven.join(', ')}`] : []),
     ...cautions.map((note) => `worth a look: ${note}`)
   ].join('; ');
-  return { ok: true, kind: unproven.length ? 'unproven-allowed' : 'match', why, wanted, offered, cautions, unproven };
+  return { ok: true, kind: 'match', why, pending: [], wanted, offered, cautions };
 }
 
 /* a descriptor group whose words the listing has to say back */
@@ -1851,6 +1895,216 @@ function exclusiveFibre(fibre) {
 
 function fibresBlend(one, two) {
   return FIBRES_THAT_BLEND.some((pair) => pair.includes(one) && pair.includes(two));
+}
+
+/* ---------- proving a descriptor off the product page ----------
+
+   A shopping result's title is a headline, not a specification. "Aerie
+   Real Soft Jogger" is a fleece jogger or it is not, and the title will
+   not say either way — so refusing it at the title stage throws away a
+   candidate that the PAGE would have settled in one line of its own
+   product record.
+
+   So the title stage no longer has the last word on a missing
+   descriptor. A contradiction still ends a candidate there and then,
+   because a trouser will not become a sweatpant further down the page.
+   A descriptor that is merely ABSENT is carried forward as pending, and
+   the page is asked.
+
+   What the page is allowed to answer with is the question this turns
+   on, because a page says far more than it sells. "You may also like:
+   midi skirts" would prove `midi` about the wrong garment entirely. So
+   evidence is taken from the places that describe THIS product and
+   nowhere else:
+
+     json-ld     the product's own record — name, description, material,
+                 pattern, colour, size and its additionalProperty pairs,
+                 which is where a retailer puts "Fabric: 100% cotton"
+     meta        og:title, og:description and the page description,
+                 which are written about the page's own product
+     detail      text inside an element the page itself marks as the
+                 product's description, details, specification,
+                 composition or materials
+
+   And nowhere near the places that describe other products:
+   recommendation strips, "you may also like", carousels, cross-sells,
+   breadcrumbs, navigation, headers and footers are cut out before
+   anything is read, and a detail block that mentions one is dropped
+   whole rather than trusted in part.
+
+   Evidence can only ever ESTABLISH a pending descriptor. It is never
+   read for contradictions: a size chart naming every length there is
+   would otherwise refuse a skirt for being available in mini. The
+   contradiction check stays where it can be trusted — the title, and
+   the product's own name on the page. */
+
+/* the places on a page that are about something else */
+const NOT_THIS_PRODUCT = /(recommend|related|you[-_ ]?may|also[-_ ]?like|also[-_ ]?bought|complete[-_ ]?the|carousel|slider|cross[-_ ]?sell|upsell|similar|recently[-_ ]?viewed|breadcrumb|\bnav\b|navigation|menu|header|footer|newsletter|cookie|review)/i;
+
+/* the places a retailer puts what this product is made of and is */
+const ABOUT_THIS_PRODUCT = /(product[-_ ]?(description|detail|info|spec|attribute|feature)|description|composition|material|fabric|specification|details)/i;
+
+const EVIDENCE_KEYS = ['name', 'description', 'material', 'pattern', 'color', 'colour', 'size', 'keywords'];
+const PART_LIMIT = 4000;
+/* A markup slice starts at an opening tag and has no reliable end: the
+   block's own </div> is indistinguishable from any other. So it is cut
+   short instead — a product description that needs more than this is
+   one the rendered path reads exactly, with real element boundaries. */
+const MARKUP_LIMIT = 1200;
+const PARTS_LIMIT = 40;
+
+function cleanText(value) {
+  return String(value == null ? '' : value)
+    .replace(/<[^>]*>/g, ' ')
+    /* a slice cut mid-tag leaves an opener with no '>' to match */
+    .replace(/<[^>]*$/, ' ')
+    .replace(/&[a-z]+;|&#\d+;/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, PART_LIMIT);
+}
+
+/* the product's own structured record, flattened into readable parts */
+function evidenceFromNodes(nodes) {
+  const parts = [];
+  for (const node of nodes || []) {
+    if (!node || typeof node !== 'object') continue;
+    if (!/product/i.test(String(node['@type'] || ''))) continue;
+
+    for (const key of EVIDENCE_KEYS) {
+      const value = node[key];
+      if (typeof value === 'string' || typeof value === 'number') {
+        const text = cleanText(value);
+        if (text) parts.push({ where: `json-ld ${key}`, text });
+      } else if (Array.isArray(value)) {
+        const text = cleanText(value.filter((one) => typeof one === 'string' || typeof one === 'number').join(', '));
+        if (text) parts.push({ where: `json-ld ${key}`, text });
+      }
+    }
+
+    /* "Fabric: 100% recycled polyester fleece" lives here on most
+       retailers that publish structured data at all */
+    const extra = Array.isArray(node.additionalProperty) ? node.additionalProperty : [];
+    for (const property of extra) {
+      if (!property || typeof property !== 'object') continue;
+      const text = cleanText([property.name, property.value].filter(Boolean).join(': '));
+      if (text) parts.push({ where: 'json-ld additionalProperty', text });
+    }
+  }
+  return parts;
+}
+
+function evidenceFromMetas(metas) {
+  const parts = [];
+  for (const key of ['og:title', 'og:description', 'description', 'twitter:description']) {
+    const text = cleanText((metas || {})[key]);
+    if (text) parts.push({ where: `meta ${key}`, text });
+  }
+  return parts;
+}
+
+/* The served markup, with everything that is about another product cut
+   out first. This is the least trustworthy tier and the most bounded:
+   only blocks the page itself labels as this product's description,
+   details, specification or composition, and only when nothing inside
+   them names a recommendation strip. */
+function evidenceFromMarkup(html) {
+  const parts = [];
+  if (typeof html !== 'string' || !html) return parts;
+
+  /* scripts and styles are not product text, and a <script> holding a
+     whole catalogue would otherwise prove anything about anything */
+  const body = html
+    .replace(/<script\b[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style\b[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<nav\b[\s\S]*?<\/nav>/gi, ' ')
+    .replace(/<header\b[\s\S]*?<\/header>/gi, ' ')
+    .replace(/<footer\b[\s\S]*?<\/footer>/gi, ' ');
+
+  const opening = /<(div|section|ul|ol|dl|table|p|span)\b([^>]*)>/gi;
+  let match;
+  while ((match = opening.exec(body)) !== null && parts.length < PARTS_LIMIT) {
+    const attributes = match[2] || '';
+    const labelled = attributes.match(/(?:class|id|itemprop|data-testid)\s*=\s*(?:"([^"]*)"|'([^']*)')/i);
+    const label = labelled ? (labelled[1] || labelled[2] || '') : '';
+    if (!ABOUT_THIS_PRODUCT.test(label)) continue;
+    if (NOT_THIS_PRODUCT.test(label)) continue;
+
+    const from = match.index + match[0].length;
+    let slice = body.slice(from, from + MARKUP_LIMIT);
+    /* an opening tag says where a block starts but not where it ends,
+       so the slice is cut at the first thing inside it that belongs to
+       another product. Reading up to a recommendation strip is safe;
+       reading past one is how "you may also like" proves something. */
+    const strip = slice.search(NOT_THIS_PRODUCT);
+    if (strip >= 0) slice = slice.slice(0, strip);
+    const text = cleanText(slice);
+    if (text) parts.push({ where: `page ${label.trim().slice(0, 40) || 'detail'}`, text });
+  }
+  return parts;
+}
+
+function evidenceFromHtml(html) {
+  return [
+    ...evidenceFromNodes(jsonLdNodes(html)),
+    ...evidenceFromMetas(metasFromHtml(html)),
+    ...evidenceFromMarkup(html)
+  ].slice(0, PARTS_LIMIT);
+}
+
+function evidenceFromRendered(seen) {
+  const nodes = [];
+  for (const block of (seen && seen.jsonld) || []) nodes.push(...parseLdBlock(block));
+  return [
+    ...evidenceFromNodes(nodes),
+    ...evidenceFromMetas((seen && seen.metas) || {}),
+    ...(((seen && seen.detail) || []).map((text) => ({ where: 'page detail', text: cleanText(text) })).filter((part) => part.text))
+  ].slice(0, PARTS_LIMIT);
+}
+
+/* the metas the evidence reader wants, which is more of them than the
+   name-and-brand reader needs */
+function metasFromHtml(html) {
+  const metas = {};
+  for (const key of ['og:title', 'og:description', 'description', 'twitter:description']) {
+    const value = metaContent(html, key);
+    if (value) metas[key] = decode(value);
+  }
+  return metas;
+}
+
+/* ---- settling what the title left pending ----
+
+   Each pending item is put to each piece of evidence through the SAME
+   reading the title got, so "mid-length" proves midi exactly where it
+   would have in a title, and "100% merino" proves wool exactly where it
+   would have. Nothing is matched as a bare string. */
+function proveOnPage(pending, evidence) {
+  const proved = [];
+  const missing = [];
+  const readings = (evidence || []).map((part) => ({ part, reading: readGarment(part.text, {}) }));
+
+  for (const item of pending || []) {
+    let found = null;
+    for (const { part, reading } of readings) {
+      if (item.kind === 'material') {
+        const has = [...reading.materialTerms].some((theirs) =>
+          theirs === item.term || (FIBRE_WITHIN[theirs] || []).includes(item.term));
+        if (has) { found = part; break; }
+      } else {
+        const theirs = reading.descriptors.get(item.group);
+        if (theirs && [...item.values].some((value) => theirs.has(value))) { found = part; break; }
+      }
+    }
+    if (found) proved.push({ item, where: found.where, quote: found.text.slice(0, 90) });
+    else missing.push(item);
+  }
+  return { proved, missing };
+}
+
+/* what a pending item is called in a sentence */
+function nameOfPending(item) {
+  return item.kind === 'material' ? item.term : item.words;
 }
 
 /* ---------- finding a real product for a row that has none ----------
@@ -1899,6 +2153,70 @@ function productSource() {
   }
 }
 
+/* ---------- asking the source more than one way ----------
+
+   intentFor packs everything the row knows into one intent, and the
+   adapter turns that into a query by concatenating it: colour, fit,
+   style, category, occasion and only then the name. "Boxy Cotton Tee"
+   goes out as
+
+     white relaxed oversized minimal sporty tee everyday weekend boxy cotton tee
+
+   which is not a query anyone would type, and a shopping API answers it
+   with nothing — or with an error, which is what NO SOURCE was on most
+   rows. The row's NAME is the query. The rest is metadata that belongs
+   in the gates, not in the search box.
+
+   So the source is asked in several forms, cheapest and most exact
+   first, stopping as soon as enough product pages are in hand:
+
+     1  the row's name                     "Fleece Sweatpant"
+     2  the same, pluralised               "Fleece Sweatpants"
+     3  the name and its category          "Cropped Puffer jacket"
+     4  the name with one word dropped     "Pleated Skirt", "Midi Skirt"
+     5  everything the row knows           the old behaviour, last
+
+   Form 4 deliberately WIDENS the search, which would once have been
+   reckless. It is safe now because the semantic gate no longer takes a
+   title's word for anything: a candidate found by "Pleated Skirt" still
+   has to establish `midi`, on its title or on its own page, before it
+   can be written. Casting wider costs nothing when the gate downstream
+   is strict.
+
+   A form that throws does not end the row — the next one is tried, and
+   only a row where every form failed reports the source as failing. */
+function queryForms(row) {
+  const name = String(row.name || '').trim();
+  const forms = [];
+  const add = (how, keywords, extra) => {
+    const query = String(keywords || '').trim();
+    if (!query) return;
+    if (forms.some((form) => form.query.toLowerCase() === query.toLowerCase())) return;
+    forms.push({ how, query, intent: Object.assign({
+      keywords: [query], brands: [], categories: [], colors: [], occasions: [],
+      fits: [], styles: [], maxPrice: null, minPrice: null, season: null, gender: null
+    }, extra || {}) });
+  };
+
+  add('its name', name);
+
+  const words = name.split(/\s+/).filter(Boolean);
+  const head = words[words.length - 1] || '';
+  if (head && !/s$/i.test(head)) add('its name, pluralised', [...words.slice(0, -1), `${head}s`].join(' '));
+
+  const category = String(row.category || '').trim();
+  if (category && !name.toLowerCase().includes(category.toLowerCase().replace(/s$/, ''))) {
+    add('its name and category', `${name} ${category}`);
+  }
+
+  /* one word at a time, widening: the gate downstream still has to see
+     the dropped word established before anything is written */
+  for (const word of words.slice(0, -1)) add(`"${word} ${head}"`, `${word} ${head}`);
+
+  if (name) forms.push({ how: 'everything the row knows', query: null, intent: intentFor(row) });
+  return forms;
+}
+
 async function listingsFor(row, limit) {
   const source = productSource();
   if (!source) return { failed: 'the product source adapter could not be loaded' };
@@ -1911,11 +2229,45 @@ async function listingsFor(row, limit) {
     return { failed: `the ${provider.name} product source has no key configured (see .env.example)` };
   }
 
-  let raw = [];
-  try {
-    raw = await provider.search(intentFor(row), { limit: limit || 8 });
-  } catch (err) {
-    return { failed: `the ${provider.name} product source failed (${err && err.message ? err.message.split('\n')[0] : 'unknown'})` };
+  const wanted = limit || 8;
+  const forms = queryForms(row);
+  const attempts = [];
+  const raw = [];
+  const seenRaw = new Set();
+  let failures = 0;
+
+  for (const form of forms) {
+    /* A search costs money, so the ladder is climbed only as far as it
+       has to be: it keeps going while nothing has been found, and stops
+       once something has, after one more form to pad the shortlist. A
+       row whose name works answers in two searches, not five. */
+    if (raw.length >= wanted) break;
+    if (raw.length > 0 && attempts.length >= 2) break;
+    let batch = [];
+    try {
+      batch = await provider.search(form.intent, { limit: wanted });
+    } catch (err) {
+      failures += 1;
+      attempts.push({ how: form.how, query: form.query, failed: err && err.message ? err.message.split('\n')[0] : 'unknown' });
+      continue;
+    }
+    const offered = Array.isArray(batch) ? batch : [];
+    attempts.push({ how: form.how, query: form.query, offered: offered.length });
+    for (const record of offered) {
+      const key = JSON.stringify([record && record.productUrl, record && record.title]);
+      if (seenRaw.has(key)) continue;
+      seenRaw.add(key);
+      raw.push(record);
+    }
+  }
+
+  if (failures === forms.length) {
+    const first = attempts.find((attempt) => attempt.failed);
+    return {
+      failed: `the ${provider.name} product source failed on all ${forms.length} query forms (${first ? first.failed : 'unknown'})`,
+      attempts,
+      sourceFailed: true
+    };
   }
 
   /* The display gate is not the right gate here. It exists to decide
@@ -1953,7 +2305,7 @@ async function listingsFor(row, limit) {
     products.push({ productUrl: url, title: pick(record, TITLE_FIELDS), brand: pick(record, BRAND_FIELDS) });
   }
 
-  return { provider: provider.name, products, rejected };
+  return { provider: provider.name, products, rejected, attempts, searches: attempts.length };
 }
 
 /* One row, from "a name with nothing behind it" to a verified listing.
@@ -1969,13 +2321,24 @@ async function listingsFor(row, limit) {
    winner. */
 async function discoverRow(row, taken, limit, options) {
   const found = await listingsFor(row, limit);
-  if (found.failed) return { id: row.id, verdict: 'NO SOURCE', why: found.failed, tried: [] };
+  if (found.failed) {
+    /* an unconfigured source and a source that answered with an error
+       are different problems with different fixes, and calling both
+       NO SOURCE is what made a run of them unreadable */
+    return {
+      id: row.id,
+      verdict: found.sourceFailed ? 'SOURCE FAILED' : 'NO SOURCE',
+      why: found.failed,
+      attempts: found.attempts || [],
+      tried: []
+    };
+  }
 
   const tried = found.products.map((product) => ({
     url: product.productUrl,
     title: product.title,
     brand: product.brand,
-    semantic: semanticMatch(row, { title: product.title }, options),
+    semantic: semanticMatch(row, { title: product.title }),
     why: null
   }));
 
@@ -1983,6 +2346,9 @@ async function discoverRow(row, taken, limit, options) {
     const attempt = tried[at];
     const product = found.products[at];
 
+    /* stage one, on the title alone: a contradiction ends it here and
+       costs no request. A title that merely does not SAY something goes
+       on to the page, which is where a specification lives. */
     if (!attempt.semantic.ok) {
       attempt.why = `the semantic gate refused it: ${attempt.semantic.why}`;
       continue;
@@ -2007,12 +2373,33 @@ async function discoverRow(row, taken, limit, options) {
     const facts = result.facts || {};
     let onPage = null;
     if (facts.name && facts.name.trim() && facts.name.trim() !== String(product.title || '').trim()) {
-      onPage = semanticMatch(row, { title: facts.name.trim() }, options);
+      onPage = semanticMatch(row, { title: facts.name.trim() });
       attempt.onPage = onPage;
       if (!onPage.ok) {
         attempt.why = `its own page calls it "${facts.name.trim()}" — ${onPage.why}`;
         continue;
       }
+    }
+
+    /* stage two: whatever the title left pending has to be established
+       by the page itself. The page's own name may have settled some of
+       it already, so the shorter of the two lists is what is still
+       owed. Nothing waives this — a descriptor the row states and
+       neither the title nor the page establishes is a candidate that
+       was never shown to be the garment. */
+    const pending = onPage && onPage.ok && (onPage.pending || []).length <= (attempt.semantic.pending || []).length
+      ? onPage.pending || []
+      : attempt.semantic.pending || [];
+
+    if (pending.length) {
+      const proof = proveOnPage(pending, result.evidence);
+      attempt.proof = proof;
+      if (proof.missing.length) {
+        attempt.why = `its page never establishes ${proof.missing.map(nameOfPending).join(', ')} either` +
+          `${proof.proved.length ? `, though it does establish ${proof.proved.map((one) => nameOfPending(one.item)).join(', ')}` : ''}`;
+        continue;
+      }
+      attempt.provedOnPage = proof.proved;
     }
 
     if (taken.has(result.url)) {
@@ -2029,6 +2416,7 @@ async function discoverRow(row, taken, limit, options) {
       tried,
       semantic: attempt.semantic,
       onPage,
+      provedOnPage: attempt.provedOnPage || [],
       proposal: {
         productUrl: product.productUrl,
         imageUrl: result.url,
@@ -2045,17 +2433,19 @@ async function discoverRow(row, taken, limit, options) {
     };
   }
 
+  const searched = found.attempts || [];
   const refused = tried.filter((attempt) => !attempt.semantic.ok).length;
-  const unproven = tried.filter((attempt) => attempt.semantic.kind === 'unproven').length;
+  const unproven = tried.filter((attempt) => attempt.proof && attempt.proof.missing.length).length;
   return {
     id: row.id,
     verdict: 'NO PRODUCT FOUND',
     why: found.products.length
-      ? `${found.products.length} listing${found.products.length === 1 ? '' : 's'} offered, ` +
-        `${refused} refused as the wrong garment` +
-        `${unproven ? ` (${unproven} of them unproven rather than contradicted)` : ''}` +
+      ? `${found.products.length} listing${found.products.length === 1 ? '' : 's'} offered over ${searched.length} quer${searched.length === 1 ? 'y' : 'ies'}, ` +
+        `${refused} refused on the title as the wrong garment` +
+        `${unproven ? `, ${unproven} read to the page and still unproven` : ''}` +
         `, none cleared every gate`
-      : `the ${found.provider} source offered no listing that is a product page`,
+      : `the ${found.provider} source offered no listing that is a product page, over ${searched.length} quer${searched.length === 1 ? 'y' : 'ies'}`,
+    attempts: searched,
     tried
   };
 }
@@ -2133,9 +2523,8 @@ async function main() {
     console.log(`${kept.length} row${kept.length === 1 ? '' : 's'} already carry one and are not touched.`);
     console.log(`Up to ${limit} listings are offered per row. Each is read as a garment first`);
     console.log('and only a listing that is the garment the row means has its page fetched.');
-    console.log(has('--allow-unproven')
-      ? 'A word the row states but the listing never does is ALLOWED (--allow-unproven).\n'
-      : 'A word the row states that the listing never establishes is refused as unproven.\n');
+    console.log('A word the row states that the title does not is looked for on the page,');
+    console.log('and a candidate passes only once every one of them is established.\n');
     console.log('A written row keeps its own id, name, brand, price and metadata.');
     console.log('Discovery fills productUrl, imageUrl and imageEvidence, and nothing else.\n');
 
@@ -2146,19 +2535,35 @@ async function main() {
 
     const found = [];
     for (const row of targets) {
-      const result = await discoverRow(row, taken, limit, { allowUnproven: has('--allow-unproven') });
+      const result = await discoverRow(row, taken, limit);
       console.log(`  ${result.verdict.padEnd(17)} ${row.id} — wants "${row.name}"`);
+
+      /* which ways the source was asked, and what each one came back
+         with: a row that found nothing should say whether it was the
+         query or the shops */
+      for (const attempt of result.attempts || []) {
+        const asked = attempt.query === null ? 'everything the row knows' : `"${attempt.query}"`;
+        console.log(`  ${''.padEnd(17)}   asked ${asked} — ${attempt.failed ? `FAILED: ${attempt.failed}` : `${attempt.offered} offered`}`);
+      }
 
       /* every candidate, with the semantic gate's verdict on it, because
          a gate whose reasoning is invisible cannot be corrected */
       for (const attempt of result.tried || []) {
         const stamp = attempt.semantic.ok
-          ? `semantic PASSED ${attempt.semantic.kind === 'unproven-allowed' ? '(unproven)' : ''}`.trim()
-          : `semantic REFUSED (${attempt.semantic.kind === 'unproven' ? 'unproven' : attempt.semantic.kind === 'unreadable' ? 'unreadable' : 'wrong garment'})`;
+          ? `title  PASSED${attempt.semantic.kind === 'pending' ? ' (pending on the page)' : ''}`
+          : `title  REFUSED (${attempt.semantic.kind === 'unreadable' ? 'unreadable' : 'wrong garment'})`;
         console.log(`  ${''.padEnd(17)}   "${String(attempt.title || '(untitled)').slice(0, 64)}"`);
         console.log(`  ${''.padEnd(17)}     ${stamp} — ${attempt.semantic.why}`);
         if (attempt.onPage) {
-          console.log(`  ${''.padEnd(17)}     on its page — ${attempt.onPage.ok ? 'PASSED' : 'REFUSED'}: ${attempt.onPage.why}`);
+          console.log(`  ${''.padEnd(17)}     page name — ${attempt.onPage.ok ? 'PASSED' : 'REFUSED'}: ${attempt.onPage.why}`);
+        }
+        if (attempt.proof) {
+          for (const one of attempt.proof.proved) {
+            console.log(`  ${''.padEnd(17)}     page   PROVED ${nameOfPending(one.item)} — ${one.where}: "${one.quote}"`);
+          }
+          for (const one of attempt.proof.missing) {
+            console.log(`  ${''.padEnd(17)}     page   UNPROVEN ${nameOfPending(one.item)} — nothing on the page says it`);
+          }
         }
         if (attempt.semantic.ok) {
           console.log(`  ${''.padEnd(17)}     ${short(attempt.url, 70)}`);
@@ -2175,6 +2580,9 @@ async function main() {
         console.log(`  ${''.padEnd(17)} productUrl    ${short(result.proposal.productUrl)}`);
         console.log(`  ${''.padEnd(17)} imageUrl      ${short(result.proposal.imageUrl)}`);
         console.log(`  ${''.padEnd(17)} imageEvidence ${note || '(none needed — the URL carries the listing\'s code)'}`);
+        for (const one of result.provedOnPage || []) {
+          console.log(`  ${''.padEnd(17)} proved on the page: ${nameOfPending(one.item)} — ${one.where}`);
+        }
         console.log(`  ${''.padEnd(17)} ${result.why}`);
       } else {
         console.log(`  ${''.padEnd(17)} ${result.why}`);
@@ -2331,10 +2739,13 @@ if (require.main === module) {
     gatherInPage, renderPage, resolveRow, firstVerifiable,
     replaceRow, linkRow, setField, indentOf, factsFromHtml, factsFromRendered, inspectCandidate,
     catalogRowIdentity, evidenceNote,
-    parseArgs, OPTIONS, USAGE, intentFor, listingsFor, discoverRow, coverage,
+    parseArgs, OPTIONS, USAGE, intentFor, queryForms, listingsFor, discoverRow, coverage,
     /* the semantic gate: what the listing SELLS, asked before any page
        is fetched, and decidable with no retailer at all */
     semanticMatch, readGarment, adultSizing, GARMENT_TYPES, DESCRIPTORS, MATERIALS,
+    /* the product-page stage: what a page may be read for, and what it
+       settles of whatever the title left pending */
+    evidenceFromHtml, evidenceFromRendered, proveOnPage, nameOfPending, FIBRE_WITHIN,
     /* the parts that are about reading a retailer's page rather than
        about images, so the price reader shares one definition of a
        listing's code, one cookie-wall list and one way in */

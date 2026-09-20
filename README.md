@@ -1712,10 +1712,23 @@ after one the page does not touch the video again.
   search — and a sample row cannot be photographed, because there is nothing to
   photograph. So the listing is **found** rather than typed in: the product
   source the app already uses (the same one that answers `/api/search`, set by
-  `PRODUCT_SOURCE` and its key) is asked for real listings matching the row's
-  name and category, its link rule refuses aggregators, search pages, category
-  pages and redirectors, and every listing that survives is put through the same
-  four gates as any other row.
+  `PRODUCT_SOURCE` and its key) is asked for real listings, its link rule
+  refuses aggregators, search pages, category pages and redirectors, and every
+  listing that survives is put through the same four gates as any other row.
+
+  It is asked **more than one way**. Packing everything a row knows into one
+  query sends `"white relaxed oversized minimal sporty tee everyday weekend boxy
+  cotton tee"`, which is not a query anyone would type and which a shopping API
+  answers with nothing — or with an error, which is what most rows reported as
+  `NO SOURCE`. The row's *name* is the query, so the source is asked for that
+  first, then its plural, then the name with its category, then the name with
+  one word dropped (`"Midi Skirt"`, `"Pleated Skirt"`), and only last for
+  everything the row knows. Widening like that is safe because the gate
+  downstream takes no title's word for anything: a candidate found by `"Pleated
+  Skirt"` still has to establish `midi`. A form that throws no longer ends the
+  row — the next one is tried, and a row where every form failed reports
+  `SOURCE FAILED` with the error, which an unconfigured source (`NO SOURCE`)
+  never was. Searches cost money, so the ladder stops once something is found.
 
   The first that clears them all **fills three fields of the row and no others**:
   `productUrl`, `imageUrl`, and the `imageEvidence` that ties the second to the
@@ -1737,16 +1750,37 @@ after one the page does not touch the video again.
   before its page is ever fetched — type from the head noun (a "ribbed knit
   skirt" is a skirt, not a knit), family, audience, fibre, and the descriptors
   that exclude one another — and compared with the row's own reading. A
-  contradiction refuses — a mini answers no midi, a girls' skirt answers no
-  adult-sized row — and so does silence about a word the row's own name states.
-  The row's name is its specification: a listing that never establishes
-  `fleece`, `midi`, `tailored` or `tencel` is refused as **unproven**, which is
-  a different finding from the wrong garment and is reported as one. The listing
-  may say it in its own words, because the check is on meaning rather than
-  spelling: "slim" establishes a tailored row and "merino" a wool one, while
-  "cotton" does not establish a poplin one. Sleeve, neckline and rise are
-  exempt, being words a title omits without it meaning anything, and
-  `--allow-unproven` waives the requirement for a run.
+  contradiction refuses on the title and costs no request — a mini answers no
+  midi, a girls' skirt answers no adult-sized row, a trouser will not become a
+  sweatpant further down the page.
+
+  A word the row states that the title merely **does not say** is a different
+  matter, and is settled in two stages. A shopping title is a headline, not a
+  specification: "Aerie Real Soft Jogger" is a fleece jogger or it is not, and
+  the title will never say. So the title stage marks `fleece` **pending**, the
+  page is fetched, and the product's own JSON-LD record, description,
+  attributes and material fields are read for it. The candidate passes only
+  once **every** descriptor the sample row names is established, by the title or
+  by the page — nothing waives that.
+
+  What the page may answer with is the whole question, because a page says far
+  more than it sells: a "you may also like: wool midi skirts" strip would prove
+  `midi` about a garment that is not for sale there. Evidence is taken only from
+  the product's own structured record, the page's own meta description, and
+  blocks the page itself marks as this product's description, details,
+  specification or composition — and recommendation strips, carousels,
+  cross-sells, breadcrumbs, navigation, headers and footers are cut out first. A
+  detail block that runs into one is read up to it and no further. Evidence can
+  only ever *establish* a pending descriptor; it is never read for
+  contradictions, since a size chart naming every length there is would refuse a
+  skirt for being available in mini.
+
+  The check is on meaning rather than spelling: `mid-length` establishes `midi`,
+  "slim" establishes a tailored row, "merino" a wool one. It stays
+  one-directional where the words are not guaranteed equivalents — `cotton` does
+  not establish `poplin`, and generic `lyocell` does not establish `Tencel`,
+  which is one manufacturer's. Sleeve, neckline and rise are exempt throughout,
+  being words a title omits without it meaning anything.
   Brand is deliberately not compared — Kinfield, Northfold and Rue Nine were
   invented for the demo, and demanding the brand back would refuse every
   correct answer there is. Every candidate's verdict is printed with its

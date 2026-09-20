@@ -213,6 +213,38 @@ function namedRetailer(names) {
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server)));
 }
 
+/* a retailer that publishes a description and a material for each of
+   its products, so the product-page stage has something to read */
+function describingRetailer(products) {
+  const hits = [];
+  const server = http.createServer((req, res) => {
+    const url = req.url.split('?')[0];
+    hits.push(url);
+    if (url.endsWith('.jpg')) {
+      res.writeHead(200, { 'content-type': 'image/jpeg' });
+      return res.end(JPEG);
+    }
+    const code = (url.match(/\d{6,}/) || ['000000'])[0];
+    const here = `http://127.0.0.1:${server.address().port}${url}`;
+    const product = products[code] || products[Number(code)] || { name: 'Unnamed' };
+    res.writeHead(200, { 'content-type': 'text/html' });
+    res.end(`<!doctype html><html><head>
+      <link rel="canonical" href="${here}">
+      <meta property="og:title" content="${product.name}">
+      <script type="application/ld+json">
+      {"@type":"Product","sku":"${code}","name":"${product.name}",
+       "material":"${product.material || ''}",
+       "description":"${product.description || ''}",
+       "brand":{"@type":"Brand","name":"Fixture"},
+       "image":["/img/${code}-hero.jpg"]}
+      </script></head><body>
+      <div class="you-may-also-like">Fleece sweatpants, tailored wool coats, pleated midi skirts</div>
+      </body></html>`);
+  });
+  server.hits = hits;
+  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server)));
+}
+
 function stubbornRetailer() {
   let plainHits = 0;
   const server = http.createServer((req, res) => {
@@ -1186,12 +1218,14 @@ function walledRetailer() {
     }
 
     /* the one the live run let through: a jogger is a sweatpant, and
-       nothing in it contradicts the row — but nothing in it establishes
-       fleece either, and the row's own name does */
+       nothing in it contradicts the row — but nothing in the TITLE
+       establishes fleece either. That is not a refusal any more: it is
+       a question the page gets to answer. */
     const jumbie = judge('sample-kinfield-fleece-sweatpant', 'Jumbie Art Earth Unisex Joggers');
-    assert.strictEqual(jumbie.ok, false, 'uncontradicted is not the same as established');
-    assert.strictEqual(jumbie.kind, 'unproven', 'and it is unproven, not the wrong garment');
-    assert.match(jumbie.why, /never establishes fleece/);
+    assert.strictEqual(jumbie.ok, true, 'a title is a headline, not a specification');
+    assert.strictEqual(jumbie.kind, 'pending', 'it is pending on the page, not settled');
+    assert.deepStrictEqual(jumbie.pending.map(extractor.nameOfPending), ['fleece']);
+    assert.match(jumbie.why, /never says fleece/);
   });
 
   test('a pleated midi skirt is answered by a pleated skirt, and by nothing shorter', () => {
@@ -1199,25 +1233,25 @@ function walledRetailer() {
     assert.strictEqual(plain.ok, true, plain.why);
     assert.match(plain.why, /pleated on both/);
 
-    /* a listing that says nothing about length does not establish midi,
-       and the row's own name does. This is the live run's "Mid Length
-       Pleated Skirt": nothing contradicted the row, nothing proved it. */
-    for (const title of ['Uniqlo Pleated Skirt', 'French Toast Adjustable Waist Mid Length Pleated Skirt']) {
-      const quiet = judge('sample-kinfield-pleated-midi-skirt', title);
-      assert.strictEqual(quiet.ok, false, `${title}: ${quiet.why}`);
-      assert.strictEqual(quiet.kind, 'unproven');
-      assert.match(quiet.why, /never establishes midi/);
+    /* "mid-length" IS midi, however a shop spells it, so the live run's
+       French Toast title settles the row's length on its own */
+    for (const title of [
+      'French Toast Adjustable Waist Mid Length Pleated Skirt',
+      'Boden Mid-Length Pleated Skirt',
+      'Arket Midlength Pleated Skirt'
+    ]) {
+      const spelled = judge('sample-kinfield-pleated-midi-skirt', title);
+      assert.strictEqual(spelled.ok, true, `${title}: ${spelled.why}`);
+      assert.strictEqual(spelled.kind, 'match', `${title} left something pending: ${spelled.why}`);
+      assert.match(spelled.why, /midi — the listing says mid ?length/);
     }
 
-    /* and --allow-unproven is the only thing that lets it through, so
-       the default cannot be reached by accident */
-    const waived = extractor.semanticMatch(
-      catalogueRow('sample-kinfield-pleated-midi-skirt'),
-      { title: 'Uniqlo Pleated Skirt' },
-      { allowUnproven: true }
-    );
-    assert.strictEqual(waived.ok, true, waived.why);
-    assert.match(waived.why, /UNPROVEN, allowed by --allow-unproven: midi/);
+    /* a title that says nothing at all about length leaves midi pending
+       for the page to settle — not refused, and not waved through */
+    const quiet = judge('sample-kinfield-pleated-midi-skirt', 'Uniqlo Pleated Skirt');
+    assert.strictEqual(quiet.ok, true, quiet.why);
+    assert.strictEqual(quiet.kind, 'pending');
+    assert.deepStrictEqual(quiet.pending.map(extractor.nameOfPending), ['midi']);
 
     /* one that says a different length is wrong */
     const mini = judge('sample-kinfield-pleated-midi-skirt', 'Zara Pleated Mini Skirt');
@@ -1240,13 +1274,13 @@ function walledRetailer() {
     assert.match(named.why, /blazer matches blazer/);
     assert.match(named.why, /double breasted on both/);
 
-    /* the live run's candidate is the right GARMENT and an unproven
-       match: a blazer, nothing contradicting, and no evidence that it is
-       the double-breasted one the row asked for */
+    /* the live run's candidate is the right GARMENT with the defining
+       word left open: a blazer, nothing contradicting, and nothing in
+       the title saying it is the double-breasted one. Its page decides. */
     const cinq = judge('sample-halden-double-breasted-blazer', 'CINQ A SEPT Crepe Khloe Blazer');
-    assert.strictEqual(cinq.ok, false, 'silence about the defining word is not proof of it');
-    assert.strictEqual(cinq.kind, 'unproven');
-    assert.match(cinq.why, /never establishes double breasted/);
+    assert.strictEqual(cinq.ok, true, 'a title that is silent is not a title that disagrees');
+    assert.strictEqual(cinq.kind, 'pending');
+    assert.deepStrictEqual(cinq.pending.map(extractor.nameOfPending), ['double breasted']);
 
     /* and one that says the opposite is refused as the wrong garment,
        which is a different finding and says so */
@@ -1271,16 +1305,24 @@ function walledRetailer() {
 
     /* merino IS wool, so it establishes a wool row; the reverse does not
        hold, which is what keeps a poplin row off a plain cotton shirt */
-    assert.strictEqual(judge('sample-halden-tailored-wool-coat', 'Uniqlo Tailored Merino Coat').ok, true);
-    assert.strictEqual(judge('sample-kinfield-poplin-shirt', 'Uniqlo Cotton Shirt').ok, false,
+    assert.strictEqual(judge('sample-halden-tailored-wool-coat', 'Uniqlo Tailored Merino Coat').kind, 'match');
+    assert.strictEqual(judge('sample-kinfield-poplin-shirt', 'Uniqlo Cotton Shirt').kind, 'pending',
       'cotton is broader than poplin and does not establish it');
 
+    /* Tencel IS lyocell and establishes a lyocell row. Generic lyocell
+       is one manufacturer's short of Tencel and establishes nothing, so
+       the arrow points one way only. */
+    assert.strictEqual(judge('sample-rue-nine-tencel-wrap-top', 'Quince Tencel Wrap Top').kind, 'match');
+    const generic = judge('sample-rue-nine-tencel-wrap-top', 'Organic Basics Lyocell Wrap Top');
+    assert.strictEqual(generic.kind, 'pending', 'generic lyocell is not Tencel');
+    assert.deepStrictEqual(generic.pending.map(extractor.nameOfPending), ['tencel']);
+
     /* the live run's candidate: a wool coat, nothing contradicting, and
-       nothing establishing the tailored cut the row asked for */
+       the tailored cut left for its page to establish */
     const mango = judge('sample-halden-tailored-wool-coat', 'MANGO Double-breasted wool coat');
-    assert.strictEqual(mango.ok, false);
-    assert.strictEqual(mango.kind, 'unproven');
-    assert.match(mango.why, /never establishes tailored/);
+    assert.strictEqual(mango.ok, true);
+    assert.strictEqual(mango.kind, 'pending');
+    assert.deepStrictEqual(mango.pending.map(extractor.nameOfPending), ['tailored']);
 
     const cotton = judge('sample-halden-tailored-wool-coat', 'Everlane Tailored Organic Cotton Coat');
     assert.strictEqual(cotton.ok, false, 'wool is not cotton');
@@ -1435,6 +1477,245 @@ function walledRetailer() {
     assert.strictEqual(result.tried[1].semantic.ok, true);
 
     retailer.close();
+  });
+
+  /* ---------------------------------------------------------
+     The product-page stage
+
+     A shopping result's title is a headline. "Aerie Real Soft Jogger"
+     is a fleece jogger or it is not, and the title will never say —
+     so refusing it there throws away a candidate the PAGE settles in
+     one line of its own product record.
+
+     What the page is allowed to answer with is the whole question,
+     because a page says far more than it sells. A "you may also like:
+     wool midi skirts" strip would prove `midi` about a garment that is
+     not for sale on that page at all. So the wrong things are put on
+     the page here on purpose — the right words, in the wrong places —
+     and the gate has to refuse to read them.
+     --------------------------------------------------------- */
+  console.log('\n  — the product-page stage\n');
+
+  const pageSaying = (parts) => `<!doctype html><html><head>${parts.head || ''}</head><body>${parts.body || ''}</body></html>`;
+
+  test('a descriptor missing from the title is proved by the page', () => {
+    const row = catalogueRow('sample-kinfield-fleece-sweatpant');
+    const stage1 = extractor.semanticMatch(row, { title: 'Aerie Real Soft Jogger' });
+    assert.strictEqual(stage1.kind, 'pending', 'the title never says fleece');
+    assert.deepStrictEqual(stage1.pending.map(extractor.nameOfPending), ['fleece']);
+
+    /* the product's own structured record settles it */
+    const evidence = extractor.evidenceFromHtml(pageSaying({
+      head: `<script type="application/ld+json">{"@type":"Product","name":"Real Soft Jogger",
+             "material":"Recycled polyester fleece"}</script>`
+    }));
+    const proof = extractor.proveOnPage(stage1.pending, evidence);
+    assert.deepStrictEqual(proof.missing, [], 'the page says fleece and the gate did not see it');
+    assert.strictEqual(proof.proved.length, 1);
+    assert.strictEqual(proof.proved[0].where, 'json-ld material');
+
+    /* and so does an attribute pair, which is where most shops put it */
+    const attributes = extractor.evidenceFromHtml(pageSaying({
+      head: `<script type="application/ld+json">{"@type":"Product","name":"Real Soft Jogger",
+             "additionalProperty":[{"name":"Fabric","value":"100% brushed fleece"}]}</script>`
+    }));
+    assert.deepStrictEqual(extractor.proveOnPage(stage1.pending, attributes).missing, []);
+
+    /* and the page's own description */
+    const described = extractor.evidenceFromHtml(pageSaying({
+      head: '<meta name="description" content="Cut from a soft brushed fleece.">'
+    }));
+    assert.deepStrictEqual(extractor.proveOnPage(stage1.pending, described).missing, []);
+  });
+
+  test('a descriptor in neither the title nor the page is refused', () => {
+    const row = catalogueRow('sample-kinfield-fleece-sweatpant');
+    const stage1 = extractor.semanticMatch(row, { title: 'Jumbie Art Earth Unisex Joggers' });
+
+    const evidence = extractor.evidenceFromHtml(pageSaying({
+      head: `<script type="application/ld+json">{"@type":"Product","name":"Earth Unisex Joggers",
+             "material":"Organic cotton","description":"Relaxed joggers with a drawcord waist."}</script>`
+    }));
+    const proof = extractor.proveOnPage(stage1.pending, evidence);
+    assert.strictEqual(proof.proved.length, 0);
+    assert.deepStrictEqual(proof.missing.map(extractor.nameOfPending), ['fleece'],
+      'nothing on that page says fleece, so nothing establishes it');
+  });
+
+  test('a page proves nothing with another product’s words', () => {
+    /* the failure mode that makes page evidence dangerous: the right
+       word, about the wrong garment */
+    const row = catalogueRow('sample-halden-tailored-wool-coat');
+    const stage1 = extractor.semanticMatch(row, { title: 'MANGO Double-breasted wool coat' });
+    assert.deepStrictEqual(stage1.pending.map(extractor.nameOfPending), ['tailored']);
+
+    for (const body of [
+      '<div class="you-may-also-like">Tailored coats and blazers</div>',
+      '<div class="product-recommendations"><p>Tailored wool coat</p></div>',
+      '<nav><a href="/tailored">Tailored</a></nav>',
+      '<footer>Tailored fits guide</footer>',
+      '<div class="related-products carousel">Tailored</div>'
+    ]) {
+      const evidence = extractor.evidenceFromHtml(pageSaying({ body }));
+      const proof = extractor.proveOnPage(stage1.pending, evidence);
+      assert.strictEqual(proof.proved.length, 0,
+        `a strip about other products proved "tailored": ${body}`);
+    }
+
+    /* a product-detail block that RUNS INTO a recommendation strip is
+       read up to it and no further */
+    const spliced = extractor.evidenceFromHtml(pageSaying({
+      body: '<div class="product-description">A wool coat.<div class="you-may-also-like">Tailored coats</div></div>'
+    }));
+    assert.strictEqual(extractor.proveOnPage(stage1.pending, spliced).proved.length, 0,
+      'the gate read past the strip it was supposed to stop at');
+
+    /* and the same word inside the product's own description does prove it */
+    const proper = extractor.evidenceFromHtml(pageSaying({
+      body: '<div class="product-description">A tailored wool coat, cut close through the body.</div>'
+    }));
+    assert.deepStrictEqual(extractor.proveOnPage(stage1.pending, proper).missing, []);
+  });
+
+  await testAsync('discovery reads the page for what the title left pending', async () => {
+    /* end to end: a title that never says fleece, a page that does */
+    const retailer = await describingRetailer({
+      445500: { name: 'Real Soft Jogger', material: 'Recycled polyester fleece' },
+      445600: { name: 'Earth Unisex Jogger', material: 'Organic cotton' }
+    });
+    const port = retailer.address().port;
+
+    productSource.registerProvider({
+      name: 'fake-source',
+      configured: () => true,
+      search: async () => [
+        { title: 'Jumbie Art Earth Unisex Joggers', productUrl: listing(port, '445600'), retailer: 'Jumbie' },
+        { title: 'Aerie Real Soft Jogger', productUrl: listing(port, '445500'), retailer: 'Aerie' }
+      ]
+    });
+    process.env.PRODUCT_SOURCE = 'fake-source';
+
+    const result = await extractor.discoverRow(catalogueRow('sample-kinfield-fleece-sweatpant'), new Map(), 4);
+
+    /* the cotton jogger read all the way to its page and still failed */
+    assert.strictEqual(result.tried[0].semantic.kind, 'pending', 'its title left fleece open');
+    assert.ok(result.tried[0].proof, 'so its page was read');
+    assert.deepStrictEqual(result.tried[0].proof.missing.map(extractor.nameOfPending), ['fleece']);
+    assert.match(result.tried[0].why, /its page never establishes fleece either/);
+
+    /* the fleece one was proved by its page and written */
+    assert.strictEqual(result.verdict, 'VERIFIED', result.why);
+    assert.match(result.proposal.productUrl, /445500/);
+    assert.strictEqual(result.provedOnPage.length, 1);
+    assert.strictEqual(extractor.nameOfPending(result.provedOnPage[0].item), 'fleece');
+    assert.match(result.provedOnPage[0].where, /material/);
+
+    retailer.close();
+  });
+
+  await testAsync('a contradiction still ends a candidate on its title, unread', async () => {
+    const retailer = await describingRetailer({
+      446600: { name: 'Street Trouser', material: 'Brushed fleece' }
+    });
+    const port = retailer.address().port;
+
+    productSource.registerProvider({
+      name: 'fake-source',
+      configured: () => true,
+      search: async () => [{ title: 'Aerie Street Trouser', productUrl: listing(port, '446600'), retailer: 'Aerie' }]
+    });
+    process.env.PRODUCT_SOURCE = 'fake-source';
+
+    const result = await extractor.discoverRow(catalogueRow('sample-kinfield-fleece-sweatpant'), new Map(), 4);
+
+    assert.strictEqual(result.verdict, 'NO PRODUCT FOUND');
+    assert.strictEqual(result.tried[0].semantic.kind, 'contradiction');
+    assert.match(result.tried[0].semantic.why, /sweatpant/);
+
+    /* a page saying "fleece" in every field cannot rescue a trouser:
+       the contradiction was settled before anything was fetched */
+    assert.ok(!retailer.hits.some((url) => url.includes('446600')),
+      `the trouser's page was fetched anyway: ${retailer.hits.join(', ')}`);
+
+    retailer.close();
+  });
+
+  /* ---------------------------------------------------------
+     Asking the source in more than one way
+     --------------------------------------------------------- */
+  console.log('\n  — asking the source in more than one way\n');
+
+  test('the row’s own name is the first thing asked, not the last', () => {
+    const forms = extractor.queryForms(catalogueRow('sample-kinfield-pleated-midi-skirt'));
+    assert.strictEqual(forms[0].query, 'Pleated Midi Skirt', 'the name is the query');
+    assert.ok(forms.some((form) => form.query === 'Pleated Midi Skirts'), 'and its plural');
+    assert.ok(forms.some((form) => form.query === 'Midi Skirt'), 'and a widened form');
+    assert.strictEqual(forms[forms.length - 1].query, null, 'the everything-query is the last resort');
+
+    /* the old behaviour put eight words of metadata in front of the
+       name, which is what a shopping API answered with nothing */
+    const everything = forms[forms.length - 1].intent;
+    /* spread, because a catalogue row's arrays come out of a vm realm
+       and deepStrictEqual refuses them however identical they are */
+    assert.deepStrictEqual([...everything.colors], ['Pastel'], 'the full intent is still there, last');
+    assert.deepStrictEqual([...forms[0].intent.colors], [], 'and the first form carries none of it');
+  });
+
+  await testAsync('a query form that comes back empty is followed by another', async () => {
+    const asked = [];
+    productSource.registerProvider({
+      name: 'fake-source',
+      configured: () => true,
+      search: async (intent) => {
+        asked.push((intent.keywords || [])[0] || '(full intent)');
+        /* only the widened form finds anything, which is the case the
+           ladder exists for */
+        return (intent.keywords || [])[0] === 'Midi Skirt'
+          ? [{ title: 'COS Pleated Midi Skirt', productUrl: 'https://www.cos.com/p/123456', retailer: 'COS' }]
+          : [];
+      }
+    });
+    process.env.PRODUCT_SOURCE = 'fake-source';
+
+    const offered = await extractor.listingsFor(catalogueRow('sample-kinfield-pleated-midi-skirt'), 8);
+    assert.strictEqual(offered.products.length, 1, 'the widened form found it');
+    assert.ok(asked.length > 1, 'and the empty forms did not end the row');
+    assert.strictEqual(asked[0], 'Pleated Midi Skirt');
+  });
+
+  await testAsync('a source that throws on one form is asked the next, not written off', async () => {
+    let calls = 0;
+    productSource.registerProvider({
+      name: 'fake-source',
+      configured: () => true,
+      search: async (intent) => {
+        calls += 1;
+        if (calls === 1) throw new Error('The Google Product service is no longer offered by Google.');
+        return [{ title: 'COS Pleated Midi Skirt', productUrl: 'https://www.cos.com/p/123456', retailer: 'COS' }];
+      }
+    });
+    process.env.PRODUCT_SOURCE = 'fake-source';
+
+    const offered = await extractor.listingsFor(catalogueRow('sample-kinfield-pleated-midi-skirt'), 8);
+    assert.ok(!offered.failed, `one failing query form ended the row: ${offered.failed}`);
+    assert.strictEqual(offered.products.length, 1);
+    assert.ok(offered.attempts.some((attempt) => attempt.failed), 'and the failure is still reported');
+  });
+
+  await testAsync('a source that throws on every form says so, and says NO SOURCE did not', async () => {
+    productSource.registerProvider({
+      name: 'fake-source',
+      configured: () => true,
+      search: async () => { throw new Error('The Google Product service is no longer offered by Google.'); }
+    });
+    process.env.PRODUCT_SOURCE = 'fake-source';
+
+    const result = await extractor.discoverRow(catalogueRow('sample-kinfield-pleated-midi-skirt'), new Map(), 4);
+    assert.strictEqual(result.verdict, 'SOURCE FAILED',
+      'a source that answered with an error is not a source that was never configured');
+    assert.match(result.why, /failed on all \d+ query forms/);
+    assert.match(result.why, /no longer offered by Google/, 'and the error it gave is carried through');
+    assert.ok((result.attempts || []).length > 1, 'and every form it tried is listed');
   });
 
   /* ---------------------------------------------------------
