@@ -183,6 +183,36 @@ function simpleRetailer() {
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server)));
 }
 
+/* simpleRetailer always sells the same tee. This one sells whatever its
+   code is registered as, and remembers every path it was asked for, so a
+   test can prove a page was never fetched at all. */
+function namedRetailer(names) {
+  const hits = [];
+  const server = http.createServer((req, res) => {
+    const url = req.url.split('?')[0];
+    hits.push(url);
+    if (url.endsWith('.jpg')) {
+      res.writeHead(200, { 'content-type': 'image/jpeg' });
+      return res.end(JPEG);
+    }
+    const code = (url.match(/\d{6,}/) || ['000000'])[0];
+    const here = `http://127.0.0.1:${server.address().port}${url}`;
+    const name = names[code] || names[Number(code)] || 'Unnamed';
+    res.writeHead(200, { 'content-type': 'text/html' });
+    res.end(`<!doctype html><html><head>
+      <link rel="canonical" href="${here}">
+      <meta property="og:title" content="${name}">
+      <meta property="og:site_name" content="Fixture">
+      <script type="application/ld+json">
+      {"@type":"Product","sku":"${code}","name":"${name}",
+       "brand":{"@type":"Brand","name":"Fixture"},
+       "image":["/img/${code}-hero.jpg"]}
+      </script></head><body></body></html>`);
+  });
+  server.hits = hits;
+  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server)));
+}
+
 function stubbornRetailer() {
   let plainHits = 0;
   const server = http.createServer((req, res) => {
@@ -1100,6 +1130,257 @@ function walledRetailer() {
       assert.doesNotMatch(result.stdout, new RegExp(id), `${id} already carries a verified photo and is not a target`);
     }
     assert.match(result.stdout, /3 rows already carry one and are not touched/);
+  });
+
+  /* ---------------------------------------------------------
+     The semantic gate: is this listing the garment the row MEANS
+
+     Every other gate in here asks whether a photo belongs to a
+     listing. None of them can ask whether the listing is the right
+     garment, and that is how Aerie's "Street Trouser" came back as
+     Kinfield's "Fleece Sweatpant": a real listing, a real photo, its
+     own retailer's CDN, every identity gate cleared, and the wrong
+     trousers.
+
+     So the wrong garments are offered here on purpose — a trouser for
+     a sweatpant, a dress for a skirt, a jacket for a hoodie, a tote
+     for a sneaker — and each has to be turned down. Then the right
+     ones are offered, including the awkward right ones: a blazer
+     listing that never says "double breasted", a wool coat that never
+     says "tailored". Those have to pass, because silence is not
+     contradiction and a gate that demands every word back refuses
+     every correct answer there is.
+     --------------------------------------------------------- */
+  console.log('\n  — the semantic gate: the garment, not just the page\n');
+
+  const catalogueRow = (id) => {
+    const row = extractor.readCatalog().rows.find((r) => r.id === id);
+    assert.ok(row, `no catalogue row has the id ${id}`);
+    return row;
+  };
+  const judge = (id, title) => extractor.semanticMatch(catalogueRow(id), { title });
+
+  test('a fleece sweatpant is not answered with a trouser', () => {
+    /* the one that started this: everything about it verified except
+       what it was */
+    const aerie = judge('sample-kinfield-fleece-sweatpant', 'Aerie Street Trouser');
+    assert.strictEqual(aerie.ok, false, 'a trouser is not a sweatpant');
+    assert.match(aerie.why, /sweatpant/);
+    assert.match(aerie.why, /trouser/);
+
+    assert.strictEqual(judge('sample-kinfield-fleece-sweatpant', 'Old Navy Straight Leg Chino Pants').ok, false,
+      'a chino is a trouser however the title ends');
+
+    /* and the sweatpants a sweatpant row is actually for */
+    for (const title of ['Nike Sportswear Club Fleece Joggers', 'Champion Powerblend Fleece Sweatpants', 'Uniqlo Sweat Pants']) {
+      const verdict = judge('sample-kinfield-fleece-sweatpant', title);
+      assert.strictEqual(verdict.ok, true, `${title}: ${verdict.why}`);
+    }
+  });
+
+  test('a pleated midi skirt is answered by a pleated skirt, and by nothing shorter', () => {
+    const plain = judge('sample-kinfield-pleated-midi-skirt', 'COS Pleated Twill Midi Skirt');
+    assert.strictEqual(plain.ok, true, plain.why);
+    assert.match(plain.why, /pleated on both/);
+
+    /* a listing that says nothing about length is silent, not wrong */
+    const quiet = judge('sample-kinfield-pleated-midi-skirt', 'Uniqlo Pleated Skirt');
+    assert.strictEqual(quiet.ok, true, quiet.why);
+    assert.match(quiet.why, /midi unstated/);
+
+    /* one that says a different length is wrong */
+    const mini = judge('sample-kinfield-pleated-midi-skirt', 'Zara Pleated Mini Skirt');
+    assert.strictEqual(mini.ok, false, 'a mini is not a midi');
+    assert.match(mini.why, /midi/);
+    assert.match(mini.why, /mini/);
+
+    /* and the one the source actually offered: a girls' uniform skirt
+       for a row whose sizes are XS to XL */
+    const kids = judge('sample-kinfield-pleated-midi-skirt', "French Toast Girls' Adjustable Waist Pleated Skirt");
+    assert.strictEqual(kids.ok, false, 'a kids’ listing is a different product, not a less-described one');
+    assert.match(kids.why, /kids/);
+    assert.match(kids.why, /sizes/, 'and it says what made the row adult');
+  });
+
+  test('a double breasted blazer is answered by a blazer that never says double breasted', () => {
+    const verdict = judge('sample-halden-double-breasted-blazer', 'CINQ A SEPT Crepe Khloe Blazer');
+    assert.strictEqual(verdict.ok, true, verdict.why);
+    assert.match(verdict.why, /blazer matches blazer/);
+    assert.match(verdict.why, /double breasted unstated/, 'what it did not say is reported, not held against it');
+
+    /* crepe is a weave that turns up in silk and in polyester alike, so
+       it contradicts nothing the row said */
+    assert.doesNotMatch(verdict.why, /crepe/);
+
+    /* a blazer that says the opposite is refused */
+    const single = judge('sample-halden-double-breasted-blazer', 'Reiss Single Breasted Wool Blazer');
+    assert.strictEqual(single.ok, false);
+    assert.match(single.why, /single breasted/);
+  });
+
+  test('a tailored wool coat is answered by a wool coat, and not by a cotton one', () => {
+    const mango = judge('sample-halden-tailored-wool-coat', 'MANGO Double-breasted wool coat');
+    assert.strictEqual(mango.ok, true, mango.why);
+    assert.match(mango.why, /coat matches coat/);
+    assert.match(mango.why, /wool on both/);
+    assert.match(mango.why, /tailored unstated/);
+
+    /* the listing is MORE specific than the row, which is precision,
+       not disagreement */
+    assert.strictEqual(judge('sample-halden-tailored-wool-coat', 'COS Belted Wool Coat').ok, true);
+
+    const cotton = judge('sample-halden-tailored-wool-coat', 'Everlane Organic Cotton Coat');
+    assert.strictEqual(cotton.ok, false, 'wool is not cotton');
+    assert.match(cotton.why, /wool/);
+    assert.match(cotton.why, /cotton/);
+  });
+
+  test('an unrelated garment is refused whatever else is right about it', () => {
+    const wrong = [
+      ['sample-solstice-ribbed-knit-skirt', 'Reformation Ribbed Knit Midi Dress', /bottom against dress/],
+      ['sample-atlas-supply-oversized-hoodie', "Levi's Oversized Trucker Jacket", /top against outerwear/],
+      ['sample-northfold-court-sneaker', 'Everlane The Court Day Tote', /footwear against accessory/],
+      ['sample-rue-nine-silk-column-dress', 'Vince Silk Column Trousers', /dress against bottom/],
+      ['sample-northfold-boxy-cotton-tee', 'Nike Everyday Cotton Crew Socks', /top against accessory/]
+    ];
+    for (const [id, title, family] of wrong) {
+      const verdict = extractor.semanticMatch(catalogueRow(id), { title });
+      assert.strictEqual(verdict.ok, false, `${title} answered ${id}: ${verdict.why}`);
+      assert.match(verdict.why, family);
+    }
+
+    /* a title that names no garment at all cannot be checked, and an
+       uncheckable listing is refused rather than waved through */
+    const unreadable = judge('sample-northfold-boxy-cotton-tee', 'Aerie Real Good Something 3-Pack');
+    assert.strictEqual(unreadable.ok, false);
+    assert.match(unreadable.why, /names no garment/);
+  });
+
+  test('the brand is never compared, because these brands do not exist', () => {
+    /* Kinfield, Northfold and Rue Nine were invented for the demo. A
+       gate that wanted the brand back would refuse every real listing
+       there is. */
+    for (const [id, title] of [
+      ['sample-rue-nine-tencel-wrap-top', 'Organic Basics Everyday Wrap Top'],
+      ['sample-northfold-boxy-cotton-tee', 'Everlane The Organic Cotton Box-Cut Tee'],
+      ['sample-terrace-linen-camp-shirt', 'Banana Republic Linen Camp Collar Shirt']
+    ]) {
+      const verdict = judge(id, title);
+      assert.strictEqual(verdict.ok, true, `${title}: ${verdict.why}`);
+      assert.doesNotMatch(verdict.why, /brand/i);
+    }
+  });
+
+  test('the head noun decides, because English puts it last', () => {
+    const reading = (text) => extractor.readGarment(text, {});
+    assert.strictEqual(reading('Ribbed Knit Skirt').type, 'skirt', 'a knit skirt is a skirt');
+    assert.strictEqual(reading('Pleated Dress Pants').type, 'trouser', 'a dress pant is a trouser');
+    assert.strictEqual(reading('Short Sleeve Pocket Tee').type, 'tee', 'a short sleeve is a sleeve');
+    assert.strictEqual(reading('Cropped Track Jacket').type, 'jacket');
+    assert.strictEqual(reading('Aerie Street Trouser Pants').type, 'trouser',
+      'a generic head defers to the specific word beside it');
+    assert.strictEqual(reading('Nike Fleece Jogger Pants').type, 'sweatpant');
+  });
+
+  test('the row tells the gate who it is for', () => {
+    assert.strictEqual(extractor.adultSizing(['XS', 'S', 'M', 'L', 'XL']), true);
+    assert.strictEqual(extractor.adultSizing(['4T', '5', '6X']), false);
+    assert.strictEqual(extractor.adultSizing([]), false, 'no sizes is not evidence of anything');
+  });
+
+  test('every catalogue row names a garment the gate can read', () => {
+    /* a row the gate cannot read is a row discovery can never fill, so
+       this is the vocabulary's own coverage test */
+    for (const row of extractor.readCatalog().rows) {
+      const reading = extractor.readGarment(row.name, { sizes: row.sizes, fallback: row.category });
+      assert.ok(reading.type, `${row.id} — "${row.name}" reads as no garment`);
+      assert.ok(reading.family, `${row.id} — "${row.name}" reads as no family`);
+    }
+  });
+
+  await testAsync('a listing that sells the wrong garment never has its page fetched', async () => {
+    const retailer = await namedRetailer({ 771100: 'Street Trouser', 771200: 'Fleece Sweatpant' });
+    const port = retailer.address().port;
+
+    productSource.registerProvider({
+      name: 'fake-source',
+      configured: () => true,
+      search: async () => [
+        { title: 'Aerie Street Trouser', productUrl: listing(port, '771100'), retailer: 'Aerie' },
+        { title: 'Kinfield Fleece Sweatpants', productUrl: listing(port, '771200'), retailer: 'Somewhere' }
+      ]
+    });
+    process.env.PRODUCT_SOURCE = 'fake-source';
+
+    const result = await extractor.discoverRow(catalogueRow('sample-kinfield-fleece-sweatpant'), new Map(), 4);
+
+    assert.strictEqual(result.verdict, 'VERIFIED', result.why);
+    assert.match(result.proposal.productUrl, /771200/, 'the sweatpant, not the trouser');
+
+    /* every candidate carries its own decision, so the report can say
+       why each one passed or failed rather than only naming a winner */
+    assert.strictEqual(result.tried.length, 2);
+    assert.strictEqual(result.tried[0].semantic.ok, false);
+    assert.match(result.tried[0].semantic.why, /sweatpant.*trouser|trouser.*sweatpant/);
+    assert.strictEqual(result.tried[1].semantic.ok, true);
+
+    /* and the refused one cost no request at all: the gate reads a
+       title, which is free, before anything reads a page */
+    assert.ok(!retailer.hits.some((url) => url.includes('771100')),
+      `the trouser's page was fetched anyway: ${retailer.hits.join(', ')}`);
+    assert.ok(retailer.hits.some((url) => url.includes('771200')), 'the sweatpant’s page was read');
+
+    retailer.close();
+  });
+
+  await testAsync('a feed title that flatters the listing is caught on the page itself', async () => {
+    /* the feed says sweatpant, the page says trouser. The page is what
+       is for sale. */
+    const retailer = await namedRetailer({ 881100: 'Street Trouser' });
+    const port = retailer.address().port;
+
+    productSource.registerProvider({
+      name: 'fake-source',
+      configured: () => true,
+      search: async () => [{ title: 'Fleece Sweatpant', productUrl: listing(port, '881100'), retailer: 'Aerie' }]
+    });
+    process.env.PRODUCT_SOURCE = 'fake-source';
+
+    const result = await extractor.discoverRow(catalogueRow('sample-kinfield-fleece-sweatpant'), new Map(), 4);
+
+    assert.strictEqual(result.verdict, 'NO PRODUCT FOUND');
+    assert.strictEqual(result.tried[0].semantic.ok, true, 'the title passed');
+    assert.strictEqual(result.tried[0].onPage.ok, false, 'and the page did not');
+    assert.match(result.tried[0].why, /its own page calls it "Street Trouser"/);
+    assert.match(result.why, /1 refused as the wrong garment|none cleared every gate/);
+
+    retailer.close();
+  });
+
+  await testAsync('the report says why the gate passed or failed on every candidate', async () => {
+    const retailer = await namedRetailer({ 991100: 'Slip Midi Dress', 991200: 'Pleated Midi Skirt' });
+    const port = retailer.address().port;
+
+    productSource.registerProvider({
+      name: 'fake-source',
+      configured: () => true,
+      search: async () => [
+        { title: 'Reformation Slip Midi Dress', productUrl: listing(port, '991100'), retailer: 'Reformation' },
+        { title: 'COS Pleated Twill Midi Skirt', productUrl: listing(port, '991200'), retailer: 'COS' }
+      ]
+    });
+    process.env.PRODUCT_SOURCE = 'fake-source';
+
+    const result = await extractor.discoverRow(catalogueRow('sample-kinfield-pleated-midi-skirt'), new Map(), 4);
+
+    for (const attempt of result.tried) {
+      assert.ok(attempt.semantic, 'every candidate carries a decision');
+      assert.ok(attempt.semantic.why && attempt.semantic.why.length > 10, 'and a reason worth printing');
+    }
+    assert.strictEqual(result.tried[0].semantic.ok, false, 'a dress is not a skirt');
+    assert.strictEqual(result.tried[1].semantic.ok, true);
+
+    retailer.close();
   });
 
   await testAsync('--coverage reports without reading anything, and --help lists the modes', async () => {

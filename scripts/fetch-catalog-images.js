@@ -29,6 +29,16 @@
    artwork. That is the honest outcome, and it is never overwritten with
    something that merely looks plausible.
 
+   --discover adds one more gate, ahead of those four, because those
+   four cannot ask it: whether the listing is the GARMENT the row means.
+   A photo can be provably this listing's own and still be the wrong
+   answer, which is how "Fleece Sweatpant" came back as Aerie's "Street
+   Trouser". So a candidate is read as a garment — type, family,
+   audience, material, and the descriptors that exclude one another —
+   and refused before its page is ever fetched when the reading
+   contradicts the row's. Brand is deliberately not compared: the sample
+   brands were invented.
+
    Two ways in, in this order. Plain HTTP first, because it is cheap and
    most pages publish everything needed in their served markup. When that
    comes back with nothing usable — no candidates, or a 403 from the
@@ -153,9 +163,12 @@ const USAGE = `
                          try one replacement listing through the gates
 
     --discover           for rows carrying no photo, ask the configured
-                         product source for real listings and put each
-                         through the same four gates. A row that already
-                         carries a photo is never touched. Needs
+                         product source for real listings. Each is read
+                         as a garment first, and only one that is the
+                         garment the row means goes on to the same four
+                         gates. Every candidate's semantic verdict is
+                         printed. A row that already carries a photo is
+                         never touched. Needs
                          PRODUCT_SOURCE and its key; --limit <n> sets how
                          many listings to try per row (default 8).
 
@@ -1174,6 +1187,490 @@ function short(url, width = 96) {
   return `${text.slice(0, head)}...${text.slice(-(width - 3 - head))}`;
 }
 
+/* ---------- the semantic gate: is this listing the garment the row means? ----------
+
+   The four gates above all ask one question about a picture: does this
+   image belong to THIS listing. None of them can ask the question that
+   comes before it — whether the listing is the GARMENT the row asked
+   for. A photo can be provably the hero image of a real product page, on
+   the retailer's own CDN, carrying that listing's own code, and still be
+   the wrong answer, because the product on that page is not what the row
+   means.
+
+   That is not hypothetical. Asked for Kinfield's "Fleece Sweatpant" the
+   source offered Aerie's "Street Trouser": a real listing, a real photo,
+   every identity gate cleared — and a trouser, which is not a sweatpant.
+   The picture was right about the page and wrong about the catalogue.
+
+   So a listing is read as a garment before its page is ever fetched, and
+   that reading is compared with the row's own:
+
+     type         sweatpant, trouser, skirt, blazer, sneaker… taken from
+                  the head noun, because English puts it last: a "ribbed
+                  knit skirt" is a skirt, not a knit
+     family       bottom, top, outerwear, dress, footwear. Two garments in
+                  different families are never the same garment, which is
+                  what refuses a hoodie for a jacket and a sneaker for
+                  anything that is not a shoe
+     audience     an adult-sized row is not answered with a girls' listing
+     gender       compared where both sides say
+     material     compared where both sides say, and only across the fibre
+                  families that genuinely exclude each other: wool is not
+                  cotton, leather is not cloth. A fibre that blends with
+                  anything contradicts nothing
+     descriptors  midi, cropped, pleated, wrap, double-breasted, wide leg,
+                  printed, heavyweight… grouped so that only CONTRADICTION
+                  refuses. A listing silent about length is not refused
+                  for a midi row; a listing that says mini is
+
+   Brand is deliberately NOT compared. Most of these rows are samples
+   whose brands were invented — Kinfield, Northfold, Rue Nine and the
+   rest exist nowhere — so demanding the brand would refuse every correct
+   answer there is. What is compared is the garment the listing describes.
+
+   Silence is not contradiction, and that asymmetry is the whole design:
+   "Crepe Khloe Blazer" answers "Double Breasted Blazer" because nothing
+   in it says the blazer is anything else. Audience is the one exception,
+   because a girls' skirt is a different product rather than an
+   under-described one.
+
+   Every decision it makes is printed, pass or refusal, with the reason —
+   a gate whose refusals are invisible cannot be argued with, and this one
+   is meant to be argued with. */
+
+/* Garment types. `terms` are matched as whole words over the singularised
+   tokens of a name, longest first, so "sweatpant" is never read as "pant"
+   and "dress pant" is never read as "dress". A `generic` type names a
+   family without choosing within it: "pant" and "top" are generic, while
+   "trouser" and "tee" are specific claims about what the garment is. */
+const GARMENT_TYPES = [
+  /* footwear */
+  { type: 'sneaker', family: 'footwear', terms: ['sneaker', 'trainer', 'running shoe', 'tennis shoe'] },
+  { type: 'boot', family: 'footwear', terms: ['boot', 'bootie', 'chelsea boot'] },
+  { type: 'sandal', family: 'footwear', terms: ['sandal', 'slide', 'flip flop', 'espadrille'] },
+  { type: 'loafer', family: 'footwear', terms: ['loafer', 'moccasin', 'mule'] },
+  { type: 'heel', family: 'footwear', terms: ['heel', 'pump', 'stiletto'] },
+  { type: 'shoe', family: 'footwear', generic: true, terms: ['shoe', 'footwear'] },
+
+  /* outerwear */
+  { type: 'coat', family: 'outerwear', terms: ['coat', 'overcoat', 'topcoat', 'peacoat', 'pea coat', 'trench', 'trench coat', 'raincoat', 'rain coat', 'duster'] },
+  { type: 'parka', family: 'outerwear', terms: ['parka', 'anorak'] },
+  { type: 'puffer', family: 'outerwear', terms: ['puffer', 'down jacket', 'quilted jacket'] },
+  { type: 'blazer', family: 'outerwear', terms: ['blazer', 'sport coat', 'sports coat', 'suit jacket', 'dinner jacket'] },
+  { type: 'vest', family: 'outerwear', terms: ['vest', 'gilet', 'waistcoat'] },
+  { type: 'jacket', family: 'outerwear', terms: ['jacket', 'bomber', 'windbreaker', 'shacket', 'track jacket', 'denim jacket', 'trucker jacket'] },
+
+  /* tops */
+  { type: 'hoodie', family: 'top', terms: ['hoodie', 'hoody', 'hooded sweatshirt'] },
+  { type: 'sweatshirt', family: 'top', terms: ['sweatshirt'] },
+  { type: 'sweater', family: 'top', terms: ['sweater', 'knit', 'jumper', 'pullover', 'crew', 'turtleneck sweater'] },
+  { type: 'cardigan', family: 'top', terms: ['cardigan'] },
+  { type: 'tee', family: 'top', terms: ['tee', 't shirt', 'tshirt', 'tee shirt'] },
+  { type: 'shirt', family: 'top', terms: ['shirt', 'blouse', 'button down', 'button up', 'oxford', 'oxford shirt', 'camp shirt', 'overshirt'] },
+  { type: 'tank', family: 'top', terms: ['tank', 'tank top', 'camisole', 'cami'] },
+  { type: 'polo', family: 'top', terms: ['polo'] },
+  { type: 'bodysuit', family: 'top', terms: ['bodysuit', 'leotard'] },
+  { type: 'top', family: 'top', generic: true, terms: ['top'] },
+
+  /* bottoms */
+  { type: 'sweatpant', family: 'bottom', terms: ['sweatpant', 'sweat pant', 'jogger', 'track pant'] },
+  { type: 'trouser', family: 'bottom', terms: ['trouser', 'chino', 'slack', 'dress pant', 'suit pant'] },
+  { type: 'jean', family: 'bottom', terms: ['jean', 'denim pant'] },
+  { type: 'legging', family: 'bottom', terms: ['legging', 'tight'] },
+  { type: 'short', family: 'bottom', terms: ['short'] },
+  { type: 'skirt', family: 'bottom', terms: ['skirt', 'skort'] },
+  { type: 'pant', family: 'bottom', generic: true, terms: ['pant', 'bottom'] },
+
+  /* one-piece and the rest */
+  { type: 'dress', family: 'dress', terms: ['dress', 'gown', 'sundress'] },
+  { type: 'jumpsuit', family: 'onepiece', terms: ['jumpsuit', 'romper', 'playsuit', 'overall', 'coverall'] },
+  { type: 'swim', family: 'swim', terms: ['swimsuit', 'bikini', 'swim short', 'swim trunk', 'trunk'] },
+  { type: 'underwear', family: 'underwear', terms: ['brief', 'boxer', 'bra', 'thong', 'underwear', 'panty'] },
+  { type: 'sock', family: 'accessory', terms: ['sock'] },
+  { type: 'hat', family: 'accessory', terms: ['hat', 'cap', 'beanie', 'visor'] },
+  { type: 'bag', family: 'accessory', terms: ['bag', 'backpack', 'tote', 'purse', 'handbag'] },
+  { type: 'accessory', family: 'accessory', terms: ['scarf', 'glove', 'mitten', 'belt', 'wallet'] }
+];
+
+/* A descriptor group holds values that EXCLUDE one another: a skirt is
+   midi or mini, not both. Two sides contradict when both name a value in
+   the same group and they share none. A `soft` group never refuses — a
+   cargo pant may also be a utility pant — and only reports what the two
+   sides had in common. */
+const DESCRIPTORS = [
+  { group: 'length', value: 'mini', terms: ['mini', 'micro mini'] },
+  { group: 'length', value: 'midi', terms: ['midi', 'tea length'] },
+  { group: 'length', value: 'maxi', terms: ['maxi', 'floor length'] },
+  { group: 'length', value: 'knee', terms: ['knee length', 'above the knee', 'below the knee'] },
+  { group: 'length', value: 'cropped', terms: ['cropped', 'crop', 'shrunken'] },
+  { group: 'length', value: 'longline', terms: ['longline', 'long line', 'ankle length', 'full length'] },
+
+  { group: 'cut', value: 'narrow', terms: ['slim', 'skinny', 'fitted', 'tapered', 'tailored', 'bodycon', 'compression'] },
+  { group: 'cut', value: 'straight', terms: ['straight', 'straight leg', 'straight fit'] },
+  { group: 'cut', value: 'wide', terms: ['wide', 'wide leg', 'relaxed', 'oversized', 'baggy', 'loose', 'boxy', 'slouchy', 'flowy'] },
+
+  { group: 'silhouette', value: 'slip', terms: ['slip'] },
+  { group: 'silhouette', value: 'column', terms: ['column', 'sheath'] },
+  { group: 'silhouette', value: 'shift', terms: ['shift'] },
+  { group: 'silhouette', value: 'a line', terms: ['a line', 'aline'] },
+  { group: 'silhouette', value: 'flare', terms: ['flare', 'flared', 'fit and flare'] },
+
+  { group: 'closure', value: 'double breasted', terms: ['double breasted'] },
+  { group: 'closure', value: 'single breasted', terms: ['single breasted'] },
+  { group: 'closure', value: 'wrap', terms: ['wrap', 'surplice', 'faux wrap'] },
+  { group: 'closure', value: 'zip', terms: ['zip', 'zip up', 'full zip', 'half zip', 'quarter zip'] },
+  { group: 'closure', value: 'pullover', terms: ['pullover', 'popover'] },
+  { group: 'closure', value: 'button', terms: ['button front', 'button up', 'button down', 'buttoned'] },
+
+  { group: 'pattern', value: 'printed', terms: ['print', 'printed', 'graphic'] },
+  { group: 'pattern', value: 'solid', terms: ['solid'] },
+  { group: 'pattern', value: 'striped', terms: ['stripe', 'striped'] },
+  { group: 'pattern', value: 'floral', terms: ['floral'] },
+  { group: 'pattern', value: 'colour block', terms: ['colour block', 'color block', 'colourblock', 'colorblock'] },
+  { group: 'pattern', value: 'check', terms: ['plaid', 'check', 'checked', 'gingham', 'tartan', 'windowpane', 'houndstooth'] },
+  { group: 'pattern', value: 'camo', terms: ['camo', 'camouflage'] },
+  { group: 'pattern', value: 'animal', terms: ['leopard', 'zebra', 'animal print'] },
+
+  { group: 'texture', value: 'ribbed', terms: ['ribbed', 'rib knit'] },
+  { group: 'texture', value: 'cable', terms: ['cable', 'cable knit'] },
+  { group: 'texture', value: 'quilted', terms: ['quilted'] },
+  { group: 'texture', value: 'pleated', terms: ['pleat', 'pleated', 'accordion pleat'] },
+  { group: 'texture', value: 'waffle', terms: ['waffle'] },
+  { group: 'texture', value: 'smocked', terms: ['smocked', 'shirred'] },
+  { group: 'texture', value: 'washed', terms: ['washed', 'acid wash', 'stone wash', 'distressed'] },
+
+  { group: 'sleeve', value: 'short', terms: ['short sleeve'] },
+  { group: 'sleeve', value: 'long', terms: ['long sleeve'] },
+  { group: 'sleeve', value: 'sleeveless', terms: ['sleeveless'] },
+  { group: 'sleeve', value: 'cap', terms: ['cap sleeve'] },
+  { group: 'sleeve', value: 'puff', terms: ['puff sleeve', 'puffed sleeve'] },
+
+  { group: 'neckline', value: 'crew', terms: ['crewneck', 'crew neck'] },
+  { group: 'neckline', value: 'v', terms: ['v neck', 'vneck'] },
+  { group: 'neckline', value: 'scoop', terms: ['scoop neck'] },
+  { group: 'neckline', value: 'turtle', terms: ['turtleneck', 'turtle neck', 'mock neck'] },
+  { group: 'neckline', value: 'collared', terms: ['camp collar', 'spread collar', 'point collar'] },
+  { group: 'neckline', value: 'halter', terms: ['halter'] },
+  { group: 'neckline', value: 'strapless', terms: ['strapless', 'tube'] },
+
+  { group: 'rise', value: 'high', terms: ['high rise', 'high waist', 'high waisted'] },
+  { group: 'rise', value: 'mid', terms: ['mid rise'] },
+  { group: 'rise', value: 'low', terms: ['low rise'] },
+
+  { group: 'weight', value: 'heavy', terms: ['heavyweight', 'heavy weight'] },
+  { group: 'weight', value: 'light', terms: ['lightweight', 'light weight'] },
+
+  /* named because they are worth reporting as agreement, not because
+     they exclude one another */
+  { group: 'detail', value: 'cargo', soft: true, terms: ['cargo'] },
+  { group: 'detail', value: 'utility', soft: true, terms: ['utility'] },
+  { group: 'detail', value: 'performance', soft: true, terms: ['performance'] },
+  { group: 'detail', value: 'track', soft: true, terms: ['track'] },
+  { group: 'detail', value: 'camp', soft: true, terms: ['camp'] },
+  { group: 'detail', value: 'court', soft: true, terms: ['court'] },
+  { group: 'detail', value: 'pocket', soft: true, terms: ['pocket'] },
+  { group: 'detail', value: 'hooded', soft: true, terms: ['hooded', 'hood'] },
+  { group: 'detail', value: 'lined', soft: true, terms: ['lined', 'insulated'] },
+  { group: 'detail', value: 'pleat front', soft: true, terms: ['pleat front', 'flat front'] }
+];
+
+/* Fibres, grouped by what they actually are. Only EXCLUSIVE fibres can
+   contradict: wool is not cotton and leather is not cloth, but a fibre
+   in `blend` — tencel, polyester, fleece, crepe, jersey — turns up mixed
+   with anything and so says nothing that could contradict. */
+const MATERIALS = [
+  { fibre: 'wool', exclusive: true, terms: ['wool', 'merino', 'cashmere', 'alpaca', 'mohair', 'tweed', 'lambswool', 'shetland'] },
+  { fibre: 'cotton', exclusive: true, terms: ['cotton', 'denim', 'poplin', 'corduroy', 'twill', 'canvas', 'chambray', 'terry', 'french terry', 'seersucker', 'flannel'] },
+  { fibre: 'linen', exclusive: true, terms: ['linen', 'ramie'] },
+  { fibre: 'silk', exclusive: true, terms: ['silk', 'satin', 'charmeuse', 'chiffon'] },
+  { fibre: 'leather', exclusive: true, terms: ['leather', 'suede', 'shearling', 'nubuck'] },
+  { fibre: 'blend', terms: ['polyester', 'nylon', 'acrylic', 'spandex', 'elastane', 'tencel', 'lyocell', 'modal', 'viscose', 'rayon', 'cupro', 'bamboo', 'fleece', 'crepe', 'velvet', 'jersey', 'ponte', 'scuba', 'mesh', 'ripstop', 'sherpa'] }
+];
+
+/* the pairs that coexist often enough that naming one is no argument
+   against the other */
+const FIBRES_THAT_BLEND = [['cotton', 'linen']];
+
+/* who the garment is for. A kids' listing answering an adult-sized row
+   is the one place silence on the row's side is not neutral: the sizes
+   say adult even when the name does not. */
+const AUDIENCES = [
+  { audience: 'kids', terms: ['kid', 'girl', 'boy', 'toddler', 'infant', 'baby', 'newborn', 'youth', 'junior', 'child', 'children', 'teen', 'tween', 'big kid', 'preschool', 'grade school'] },
+  { audience: 'pet', terms: ['dog', 'cat', 'pet', 'doll', 'puppy'] },
+  { audience: 'adult', terms: ['men', 'man', 'women', 'woman', 'lady', 'adult', 'unisex', 'misses'] }
+];
+
+const GENDERS = [
+  { gender: 'men', terms: ['men', 'man', 'male', 'boy'] },
+  { gender: 'women', terms: ['women', 'woman', 'female', 'lady', 'girl', 'misses'] }
+];
+
+/* ---- reading a name as a garment ---- */
+
+/* Plurals only, and conservatively: a retailer writes "Sweatpants" where
+   the catalogue writes "Sweatpant", and nothing should turn on which. */
+function singular(word) {
+  if (word.length <= 3) return word;
+  if (/ies$/.test(word)) return `${word.slice(0, -3)}y`;
+  if (/(ss|sh|ch|x|z)es$/.test(word)) return word.slice(0, -2);
+  if (/ss$/.test(word)) return word;
+  if (/s$/.test(word)) return word.slice(0, -1);
+  return word;
+}
+
+function tokenise(text) {
+  return String(text || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map(singular);
+}
+
+/* a term is a sequence of tokens, so "wide leg" matches "wide-leg" and
+   "Wide Leg" and nothing inside a longer word */
+function vocabulary(entries) {
+  const index = new Map();
+  for (const entry of entries) {
+    for (const term of entry.terms) {
+      const tokens = tokenise(term);
+      if (!tokens.length) continue;
+      index.set(tokens.join(' '), { ...entry, term });
+    }
+  }
+  return index;
+}
+
+const TYPE_INDEX = vocabulary(GARMENT_TYPES);
+const DESCRIPTOR_INDEX = vocabulary(DESCRIPTORS);
+const MATERIAL_INDEX = vocabulary(MATERIALS);
+const AUDIENCE_INDEX = vocabulary(AUDIENCES);
+const GENDER_INDEX = vocabulary(GENDERS);
+
+/* the groups that report agreement but never refuse */
+const SOFT_GROUPS = new Set(DESCRIPTORS.filter((entry) => entry.soft).map((entry) => entry.group));
+
+const LONGEST_TERM = 4;
+
+/* every place a vocabulary matches, with the shorter match inside a
+   longer one dropped: "dress pant" is a trouser, not a dress */
+function spansIn(tokens, index) {
+  const spans = [];
+  for (let start = 0; start < tokens.length; start += 1) {
+    for (let length = Math.min(LONGEST_TERM, tokens.length - start); length >= 1; length -= 1) {
+      const hit = index.get(tokens.slice(start, start + length).join(' '));
+      if (hit) spans.push({ start, end: start + length, length, hit });
+    }
+  }
+  return spans.filter((span) => !spans.some((other) =>
+    other !== span && other.start <= span.start && other.end >= span.end && other.length > span.length));
+}
+
+function readGarment(text, extra) {
+  const options = extra || {};
+  const tokens = tokenise(text);
+  const descriptorSpans = spansIn(tokens, DESCRIPTOR_INDEX);
+  const materialSpans = spansIn(tokens, MATERIAL_INDEX);
+
+  /* "short sleeve" is a sleeve, not a pair of shorts: a type term buried
+     inside a longer descriptor is not a claim about the garment */
+  const covered = [...descriptorSpans, ...materialSpans];
+  const typeSpans = spansIn(tokens, TYPE_INDEX).filter((span) => !covered.some((other) =>
+    other.start <= span.start && other.end >= span.end && other.length > span.length));
+
+  /* the head noun: English puts it last, so a "ribbed knit skirt" is a
+     skirt. A generic head — "pants", "top" — defers to the specific type
+     beside it in the same family, which is what keeps "trouser pants"
+     a trouser. */
+  let head = typeSpans.length ? typeSpans[typeSpans.length - 1] : null;
+  if (head && head.hit.generic) {
+    const specific = typeSpans.filter((span) => !span.hit.generic && span.hit.family === head.hit.family);
+    if (specific.length) head = specific[specific.length - 1];
+  }
+
+  /* a row that names no garment can still say one in its category */
+  let via = head ? 'name' : null;
+  if (!head && options.fallback) {
+    const fallbackSpans = spansIn(tokenise(options.fallback), TYPE_INDEX);
+    if (fallbackSpans.length) { head = fallbackSpans[fallbackSpans.length - 1]; via = 'category'; }
+  }
+
+  const descriptors = new Map();
+  /* the words the name actually used, so a refusal can quote the row
+     rather than the vocabulary's name for what it meant */
+  const said = new Map();
+  for (const span of descriptorSpans) {
+    if (!descriptors.has(span.hit.group)) descriptors.set(span.hit.group, new Set());
+    descriptors.get(span.hit.group).add(span.hit.value);
+    if (!said.has(span.hit.group)) said.set(span.hit.group, new Set());
+    said.get(span.hit.group).add(tokens.slice(span.start, span.end).join(' '));
+  }
+
+  const fibres = new Set(materialSpans.map((span) => span.hit.fibre));
+
+  /* what the row asks for in its own fields rather than in its name.
+     These are a permissive set — a row that lists Regular AND Slim is
+     naming what would suit it, not what it IS — so they are reported,
+     never used to refuse. */
+  const hints = new Map();
+  for (const span of spansIn(tokenise((options.hints || []).join(' ')), DESCRIPTOR_INDEX)) {
+    if (!hints.has(span.hit.group)) hints.set(span.hit.group, new Set());
+    hints.get(span.hit.group).add(span.hit.value);
+  }
+
+  const audiences = new Set(spansIn(tokens, AUDIENCE_INDEX).map((span) => span.hit.audience));
+  const genders = new Set(spansIn(tokens, GENDER_INDEX).map((span) => span.hit.gender));
+
+  let audience = audiences.has('kids') ? 'kids' : audiences.has('pet') ? 'pet' : audiences.has('adult') ? 'adult' : null;
+  let audienceFrom = audience ? 'its name' : null;
+  if (!audience && adultSizing(options.sizes)) { audience = 'adult'; audienceFrom = 'its sizes'; }
+
+  return {
+    text: String(text || ''),
+    tokens,
+    type: head ? head.hit.type : null,
+    family: head ? head.hit.family : null,
+    generic: head ? Boolean(head.hit.generic) : false,
+    typeVia: via,
+    types: typeSpans.map((span) => span.hit.type),
+    descriptors,
+    said,
+    fibres,
+    hints,
+    audience,
+    audienceFrom,
+    gender: genders.size === 1 ? [...genders][0] : null
+  };
+}
+
+/* XS through XL is adult sizing; 4T, 5, 6X and the rest are not. It is
+   evidence rather than an assumption, which is why the refusal it
+   produces can name it. */
+function adultSizing(sizes) {
+  const list = (Array.isArray(sizes) ? sizes : []).map((size) => String(size).trim().toUpperCase());
+  if (!list.length) return false;
+  return list.every((size) => /^(XXXS|XXS|XS|S|M|L|XL|XXL|XXXL|[2-6]XL|ONE SIZE|OS)$/.test(size));
+}
+
+function listOf(set) {
+  return [...set].join('/');
+}
+
+/* ---- the gate itself ---- */
+
+/* `row` is a catalogue row; `listing` is what the source offered, or the
+   page's own name once it has been read. Returns a decision and the
+   sentence explaining it, which is printed either way. */
+function semanticMatch(row, listing) {
+  const title = String((listing && listing.title) || '').trim();
+  const hints = [];
+  for (const field of ['fit', 'style']) {
+    const value = row && row[field];
+    if (Array.isArray(value)) hints.push(...value.filter(Boolean).map(String));
+  }
+  const wanted = readGarment(row && row.name, {
+    sizes: row && row.sizes,
+    fallback: row && row.category,
+    hints
+  });
+  const offered = readGarment(title, {});
+  const refuse = (why) => ({ ok: false, why, wanted, offered });
+  const agreed = [];
+
+  if (!title) return refuse('the listing carries no title to read, so what it sells cannot be checked');
+  if (!wanted.type) return refuse(`the row's own name — "${wanted.text}" — names no garment this can read, so nothing can be checked against it`);
+  if (!offered.type) return refuse(`"${title}" names no garment this can read`);
+
+  /* family, then type. A different family is a different kind of thing;
+     inside one family, a specific type is a claim that has to agree. */
+  if (wanted.family !== offered.family) {
+    return refuse(`the row means a ${wanted.type} and "${title}" is a ${offered.type} — ${wanted.family} against ${offered.family}`);
+  }
+  if (wanted.type !== offered.type && !wanted.generic && !offered.generic) {
+    return refuse(`the row means a ${wanted.type} and "${title}" is a ${offered.type}`);
+  }
+  agreed.push(wanted.type === offered.type
+    ? `${offered.type} matches ${wanted.type}`
+    : wanted.generic
+      ? `a ${offered.type} is one of the ${wanted.type}s the row asks for`
+      : `"${title}" says ${offered.type}, which the row's ${wanted.type} is one of`);
+
+  /* audience: the one asymmetric check, because a kids' or a pet's
+     garment is a different product rather than a less-described one */
+  if (offered.audience && offered.audience !== 'adult' && wanted.audience === 'adult') {
+    return refuse(`the row is for adults (${wanted.audienceFrom} say so) and "${title}" is ${offered.audience === 'pet' ? 'not for people' : `a ${offered.audience}' listing`}`);
+  }
+  if (wanted.audience && offered.audience && wanted.audience !== offered.audience) {
+    return refuse(`the row is a ${wanted.audience} garment and "${title}" is a ${offered.audience} one`);
+  }
+  if (wanted.audience && offered.audience) agreed.push(`both ${offered.audience}`);
+
+  /* gender, where both say */
+  if (wanted.gender && offered.gender && wanted.gender !== offered.gender) {
+    return refuse(`the row is ${wanted.gender}'s and "${title}" is ${offered.gender}'s`);
+  }
+  if (wanted.gender && offered.gender) agreed.push(`both ${offered.gender}'s`);
+
+  /* material, where both say, and only across fibres that exclude */
+  const wantedFibres = new Set([...wanted.fibres].filter((fibre) => exclusiveFibre(fibre)));
+  const offeredFibres = new Set([...offered.fibres].filter((fibre) => exclusiveFibre(fibre)));
+  if (wantedFibres.size && offeredFibres.size) {
+    const shared = [...wantedFibres].filter((fibre) => offeredFibres.has(fibre));
+    const blendable = [...wantedFibres].some((one) => [...offeredFibres].some((two) => fibresBlend(one, two)));
+    if (!shared.length && !blendable) {
+      return refuse(`the row is ${listOf(wantedFibres)} and "${title}" is ${listOf(offeredFibres)}`);
+    }
+    agreed.push(shared.length ? `${shared.join('/')} on both` : `${listOf(wantedFibres)} and ${listOf(offeredFibres)} blend`);
+  }
+
+  /* descriptors: only contradiction refuses. Silence on the listing's
+     side is silence, not disagreement. */
+  const unstated = [];
+  for (const [group, values] of wanted.descriptors) {
+    const theirs = offered.descriptors.get(group);
+    const soft = SOFT_GROUPS.has(group);
+    const ours = wanted.said.get(group) || values;
+    if (!theirs || !theirs.size) {
+      if (!soft) unstated.push(`${listOf(ours)} unstated`);
+      continue;
+    }
+    const shared = [...values].filter((value) => theirs.has(value));
+    if (shared.length) { agreed.push(`${shared.join('/')} on both`); continue; }
+    if (soft) continue;
+    return refuse(`the row is ${listOf(ours)} and "${title}" is ${listOf(offered.said.get(group) || theirs)}`);
+  }
+
+  /* the row's own fit and style fields, reported and never decisive:
+     they name what would suit the row, not what it is */
+  const cautions = [];
+  for (const [group, values] of wanted.hints) {
+    if (wanted.descriptors.has(group)) continue;
+    const theirs = offered.descriptors.get(group);
+    if (!theirs || !theirs.size) continue;
+    const shared = [...values].filter((value) => theirs.has(value));
+    if (shared.length) agreed.push(`${shared.join('/')} as the row asks`);
+    else cautions.push(`the row asks for ${listOf(values)} and "${title}" says ${listOf(offered.said.get(group) || theirs)}`);
+  }
+
+  /* descriptors the listing names that the row's group does not mention
+     are extra precision, not disagreement, and are not reported */
+  const why = [
+    agreed.join('; '),
+    unstated.length ? `nothing contradicts (${unstated.join(', ')})` : 'nothing contradicts',
+    ...cautions.map((note) => `worth a look: ${note}`)
+  ].join('; ');
+  return { ok: true, why, wanted, offered, cautions };
+}
+
+function exclusiveFibre(fibre) {
+  return MATERIALS.some((entry) => entry.fibre === fibre && entry.exclusive);
+}
+
+function fibresBlend(one, two) {
+  return FIBRES_THAT_BLEND.some((pair) => pair.includes(one) && pair.includes(two));
+}
+
 /* ---------- finding a real product for a row that has none ----------
 
    Most of the catalogue is sample rows: names invented to give the demo
@@ -1185,9 +1682,10 @@ function short(url, width = 96) {
    is the same thing that answers /api/search: it returns real listings
    on retailers' own sites, and its own gate has already refused
    aggregators, search pages, category pages and redirectors. Each
-   listing it offers is then put through the four gates any other row
-   goes through, and the first that clears them all becomes the row —
-   listing, photo, name and brand together, every field off that page.
+   listing it offers is then read as a garment and put through the four
+   gates any other row goes through, and the first that clears them all
+   becomes the row — listing, photo, name and brand together, every
+   field off that page.
 
    Nothing here is hardcoded. Run it again and it re-derives what it
    wrote; run it without --write and it writes nothing at all. */
@@ -1279,13 +1777,35 @@ async function listingsFor(row, limit) {
 /* One row, from "a name with nothing behind it" to a verified listing.
    `taken` maps an already-used photo to the row using it, because two
    rows wearing the same picture is the catalogue telling a lie about
-   one of them. */
+   one of them.
+
+   The semantic gate runs FIRST and for every candidate, before a single
+   page is fetched: reading a title costs nothing, and a listing that
+   sells the wrong garment is not made right by having a verifiable
+   photo. Every candidate keeps its decision either way, so the report
+   can say why each one passed or failed rather than only naming the
+   winner. */
 async function discoverRow(row, taken, limit) {
   const found = await listingsFor(row, limit);
   if (found.failed) return { id: row.id, verdict: 'NO SOURCE', why: found.failed, tried: [] };
 
-  const tried = [];
-  for (const product of found.products) {
+  const tried = found.products.map((product) => ({
+    url: product.productUrl,
+    title: product.title,
+    brand: product.brand,
+    semantic: semanticMatch(row, { title: product.title }),
+    why: null
+  }));
+
+  for (let at = 0; at < tried.length; at += 1) {
+    const attempt = tried[at];
+    const product = found.products[at];
+
+    if (!attempt.semantic.ok) {
+      attempt.why = `the semantic gate refused it: ${attempt.semantic.why}`;
+      continue;
+    }
+
     const result = await resolveRow({
       id: row.id,
       brand: product.brand || '—',
@@ -1294,20 +1814,39 @@ async function discoverRow(row, taken, limit) {
     });
 
     if (result.verdict !== 'VERIFIED') {
-      tried.push({ url: product.productUrl, why: result.why });
-      continue;
-    }
-    if (taken.has(result.url)) {
-      tried.push({ url: product.productUrl, why: `its photo is already on ${taken.get(result.url)}` });
+      attempt.why = result.why;
       continue;
     }
 
+    /* the page's own name is the better description of what is for sale
+       than the feed's title, so the gate is put to it again where the
+       two differ. A feed that undersells a mismatch does not get to
+       smuggle one in. */
     const facts = result.facts || {};
+    let onPage = null;
+    if (facts.name && facts.name.trim() && facts.name.trim() !== String(product.title || '').trim()) {
+      onPage = semanticMatch(row, { title: facts.name.trim() });
+      attempt.onPage = onPage;
+      if (!onPage.ok) {
+        attempt.why = `its own page calls it "${facts.name.trim()}" — ${onPage.why}`;
+        continue;
+      }
+    }
+
+    if (taken.has(result.url)) {
+      attempt.why = `its photo is already on ${taken.get(result.url)}`;
+      continue;
+    }
+
+    attempt.why = result.why;
+    attempt.verified = true;
     return {
       id: row.id,
       verdict: 'VERIFIED',
       why: result.why,
       tried,
+      semantic: attempt.semantic,
+      onPage,
       proposal: {
         productUrl: product.productUrl,
         imageUrl: result.url,
@@ -1318,11 +1857,13 @@ async function discoverRow(row, taken, limit) {
     };
   }
 
+  const refused = tried.filter((attempt) => !attempt.semantic.ok).length;
   return {
     id: row.id,
     verdict: 'NO PRODUCT FOUND',
     why: found.products.length
-      ? `${found.products.length} listing${found.products.length === 1 ? '' : 's'} offered, none cleared every gate`
+      ? `${found.products.length} listing${found.products.length === 1 ? '' : 's'} offered, ` +
+        `${refused} refused as the wrong garment, none cleared every gate`
       : `the ${found.provider} source offered no listing that is a product page`,
     tried
   };
@@ -1361,7 +1902,8 @@ function printCoverage(report) {
     console.log(`\n  ${report.missing.length} row${report.missing.length === 1 ? '' : 's'} carry no photo:`);
     for (const id of report.missing.slice(0, 40)) console.log(`     ${id}`);
     console.log('\n  --discover asks the configured product source for a real listing for each,');
-    console.log('  and puts every one it offers through the same four gates.');
+    console.log('  reads every one it offers as a garment, and puts what survives that');
+    console.log('  through the same four gates.');
   }
   console.log('');
 }
@@ -1396,9 +1938,10 @@ async function main() {
     const kept = rows.filter((row) => row && row.imageUrl);
     const limit = Number(flag('--limit')) > 0 ? Number(flag('--limit')) : 8;
 
-    console.log(`\nLooking for a real listing for ${targets.length} row${targets.length === 1 ? '' : 's'} that carry no photo.`);
+    console.log(`\nLooking for a real listing for ${targets.length} row${targets.length === 1 ? ' that carries' : 's that carry'} no photo.`);
     console.log(`${kept.length} row${kept.length === 1 ? '' : 's'} already carry one and are not touched.`);
-    console.log(`Up to ${limit} listings are tried per row, each through all four gates.\n`);
+    console.log(`Up to ${limit} listings are offered per row. Each is read as a garment first`);
+    console.log('and only a listing that is the garment the row means has its page fetched.\n');
 
     /* every photo already in use, so no two rows end up wearing the
        same picture */
@@ -1408,7 +1951,23 @@ async function main() {
     const found = [];
     for (const row of targets) {
       const result = await discoverRow(row, taken, limit);
-      console.log(`  ${result.verdict.padEnd(17)} ${row.id}`);
+      console.log(`  ${result.verdict.padEnd(17)} ${row.id} — wants "${row.name}"`);
+
+      /* every candidate, with the semantic gate's verdict on it, because
+         a gate whose reasoning is invisible cannot be corrected */
+      for (const attempt of result.tried || []) {
+        const stamp = attempt.semantic.ok ? 'semantic PASSED ' : 'semantic REFUSED';
+        console.log(`  ${''.padEnd(17)}   "${String(attempt.title || '(untitled)').slice(0, 64)}"`);
+        console.log(`  ${''.padEnd(17)}     ${stamp} — ${attempt.semantic.why}`);
+        if (attempt.onPage) {
+          console.log(`  ${''.padEnd(17)}     on its page — ${attempt.onPage.ok ? 'PASSED' : 'REFUSED'}: ${attempt.onPage.why}`);
+        }
+        if (attempt.semantic.ok) {
+          console.log(`  ${''.padEnd(17)}     ${short(attempt.url, 70)}`);
+          console.log(`  ${''.padEnd(17)}     ${attempt.verified ? 'photo verified' : 'no photo'} — ${attempt.why}`);
+        }
+      }
+
       if (result.proposal) {
         taken.set(result.proposal.imageUrl, row.id);
         found.push(result);
@@ -1418,14 +1977,11 @@ async function main() {
         console.log(`  ${''.padEnd(17)} ${result.why}`);
       } else {
         console.log(`  ${''.padEnd(17)} ${result.why}`);
-        for (const attempt of (result.tried || []).slice(0, 4)) {
-          console.log(`  ${''.padEnd(17)}   ${short(attempt.url, 70)}`);
-          console.log(`  ${''.padEnd(17)}     ${attempt.why}`);
-        }
       }
+      console.log('');
     }
 
-    console.log(`\n  ${found.length} of ${targets.length} row${targets.length === 1 ? '' : 's'} found a listing that cleared every gate.`);
+    console.log(`  ${found.length} of ${targets.length} row${targets.length === 1 ? '' : 's'} found a listing that cleared every gate.`);
 
     if (!writing) {
       console.log(found.length
@@ -1575,6 +2131,9 @@ if (require.main === module) {
     replaceRow, factsFromHtml, factsFromRendered, inspectCandidate,
     catalogRowIdentity, evidenceNote,
     parseArgs, OPTIONS, USAGE, intentFor, listingsFor, discoverRow, coverage,
+    /* the semantic gate: what the listing SELLS, asked before any page
+       is fetched, and decidable with no retailer at all */
+    semanticMatch, readGarment, adultSizing, GARMENT_TYPES, DESCRIPTORS, MATERIALS,
     /* the parts that are about reading a retailer's page rather than
        about images, so the price reader shares one definition of a
        listing's code, one cookie-wall list and one way in */
