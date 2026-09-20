@@ -1632,6 +1632,117 @@ test('a price that is not an amount is refused before it reaches the file', () =
   }
 });
 
+/* ---------------------------------------------------------
+   A linked row that could not be priced
+
+   A sample row's price is the demo's own invention, and the catalogue
+   says so in as many words: "The sample rows' prices are the demo's
+   own. They link to nothing, so nothing claims they were read from a
+   retailer."
+
+   The moment discovery gives that row a productUrl the sentence stops
+   being true. $58 beside a link to a real shop is a claim about what
+   that shop charges, and nobody checked it. A live run found exactly
+   this: four of five linked rows priced, and the fifth — NO PRICE
+   FOUND — correctly wrote nothing and so kept its invented $58 next to
+   a real listing.
+
+   So a page that is read and gives up no price it can tie to the
+   product now takes the figure with it.
+   --------------------------------------------------------- */
+
+/* A linked row carrying an invented price and no provenance — exactly
+   the state discovery leaves a sample row in, and exactly what the live
+   run's NO PRICE FOUND row was left holding. Built from L.L.Bean's row
+   because it is linked, photographed and carries imageEvidence, none of
+   which the price writer may touch; a sample row's own link changes
+   with every discovery run and would make this fixture drift. */
+const demoPriced = catalogSource.replace(
+  /(\n\s*)price: 84\.95,\n\s*priceEvidence: \{[^}]*\},/,
+  '$1price: 58,'
+);
+assert.ok(/price: 58,\n\s*productUrl: 'https:\/\/www\.llbean\.com/.test(demoPriced),
+  'the fixture has to start linked, with an invented price and no provenance');
+assert.ok(evaluate(demoPriced).find((r) => r.id === 'llbean-venturestretch-chino').imageEvidence,
+  'and carrying the photo evidence the price writer must leave alone');
+
+test('a verified price replaces the demo price and records its provenance', () => {
+  const next = prices.writePrice(demoPriced, 'llbean-venturestretch-chino', 84.95,
+    { ok: true, via: 'json-ld-offer', sku: '129244' });
+  const row = evaluate(next).find((r) => r.id === 'llbean-venturestretch-chino');
+
+  assert.strictEqual(row.price, 84.95, 'the invented 58 is gone');
+  assert.deepStrictEqual(plain(row.priceEvidence), { via: 'json-ld-offer', sku: '129244' });
+  assert.strictEqual(prices.catalogRowPrice(row).ok, true, 'and the row accounts for what it charges');
+});
+
+test('no verified price turns the demo price into null', () => {
+  /* the live run's rue-nine case: the page was read, nothing could be
+     tied to the product, and an invented figure beside a real listing
+     is a claim about that shop nobody checked */
+  const row = evaluate(prices.clearPrice(demoPriced, 'llbean-venturestretch-chino'))
+    .find((r) => r.id === 'llbean-venturestretch-chino');
+
+  assert.strictEqual(row.price, null, 'a linked row kept an invented price');
+  assert.strictEqual(prices.catalogRowPrice(row).ok, true, 'no price is a state the row can account for');
+});
+
+test('no verified price takes any stale note with it', () => {
+  /* --refresh over a row that WAS priced and now is not: the old note
+     explains a figure the row no longer carries, which reads as
+     provenance for a price that is not there */
+  assert.ok(evaluate(catalogSource).find((r) => r.id === 'llbean-venturestretch-chino').priceEvidence,
+    'the fixture has to start with a note to lose');
+
+  const row = evaluate(prices.clearPrice(catalogSource, 'llbean-venturestretch-chino'))
+    .find((r) => r.id === 'llbean-venturestretch-chino');
+
+  assert.strictEqual(row.price, null);
+  assert.strictEqual(row.priceEvidence, undefined, 'a note outlived the price it explained');
+});
+
+test('clearing a price leaves the listing, the photo and its evidence alone', () => {
+  const before = evaluate(catalogSource);
+  const after = evaluate(prices.clearPrice(catalogSource, 'llbean-venturestretch-chino'));
+
+  const was = before.find((r) => r.id === 'llbean-venturestretch-chino');
+  const is = after.find((r) => r.id === 'llbean-venturestretch-chino');
+
+  /* the three fields discovery owns, which the price writer has no
+     business touching */
+  assert.strictEqual(is.productUrl, was.productUrl, 'the listing moved');
+  assert.strictEqual(is.imageUrl, was.imageUrl, 'the photo moved');
+  assert.deepStrictEqual(plain(is.imageEvidence), plain(was.imageEvidence), 'the photo\u2019s evidence moved');
+  assert.ok(is.imageEvidence, 'and it is still there to have been left alone');
+
+  for (const field of ['id', 'name', 'brand', 'category']) {
+    assert.deepStrictEqual(is[field], was[field], `${field} moved`);
+  }
+  for (const field of ['style', 'occasion', 'fit', 'colors', 'sizes']) {
+    assert.deepStrictEqual([...(is[field] || [])], [...(was[field] || [])], `${field} moved`);
+  }
+
+  /* and every other row, untouched */
+  assert.strictEqual(after.length, before.length, 'a row appeared or vanished');
+  for (let at = 0; at < before.length; at += 1) {
+    if (before[at].id === 'llbean-venturestretch-chino') continue;
+    assert.strictEqual(after[at].id, before[at].id);
+    assert.strictEqual(after[at].price, before[at].price, `${before[at].id} lost its price`);
+    assert.deepStrictEqual(plain(after[at].priceEvidence), plain(before[at].priceEvidence),
+      `${before[at].id} lost its note`);
+    assert.strictEqual(after[at].imageUrl, before[at].imageUrl, `${before[at].id} lost its photo`);
+  }
+});
+
+test('clearing is idempotent, and clears only what it must', () => {
+  const once = prices.clearPrice(catalogSource, 'llbean-venturestretch-chino');
+  assert.strictEqual(prices.clearPrice(once, 'llbean-venturestretch-chino'), once,
+    'a second clear must not drift the file');
+  assert.ok(once.includes('Fynd \u2014 demo product source'), 'the header comment survived');
+  assert.strictEqual(once.split('\n').length, catalogSource.split('\n').length - 1,
+    'exactly one line went: the note explaining a price that is gone');
+});
+
 test('a row whose price has no provenance is reported UNACCOUNTED', () => {
   const orphan = { id: 'x', price: 84.95, productUrl: LLBEAN };
   const checked = prices.catalogRowPrice(orphan);

@@ -2283,6 +2283,46 @@ function writePrice(source, id, amount, evidence) {
   return setPriceEvidence(out, id, note, indent);
 }
 
+/* ---------- a linked row that could not be priced ----------
+
+   The other half of writePrice, and the half that was missing. A sample
+   row's price is the demo's own invention and says so, because the row
+   links to nothing: "The sample rows' prices are the demo's own. They
+   link to nothing, so nothing claims they were read from a retailer."
+
+   The moment discovery gives that row a productUrl, the sentence stops
+   being true. $58 beside a link to a real shop is a claim about what
+   that shop charges, and nobody checked it. So when a linked row is
+   read and no price can be tied to its product, the invented figure
+   does not get to stay: the row goes back to price: null, which renders
+   no price at all, and any note explaining a price it no longer carries
+   goes with it.
+
+   What this does NOT do is clear a row it could not read. UNREACHABLE
+   is a fact about this machine, not about the price — a run behind a
+   proxy that refuses retailers would otherwise wipe every verified
+   price in the catalogue. Only a page that was read and gave up no
+   usable price clears one.
+
+   productUrl, imageUrl and imageEvidence are another script's business
+   and are not touched here, nor is any other field of the row. */
+function clearPrice(source, id) {
+  const idAt = source.indexOf(`id: '${id}'`);
+  if (idAt === -1) throw new Error(`could not find the row for ${id}`);
+
+  const field = /(\n\s*price:\s*)(null|-?[\d.]+)/;
+  const rest = source.slice(idAt);
+  const m = rest.match(field);
+  if (!m) throw new Error(`could not find a price for ${id}`);
+
+  const at = idAt + m.index;
+  const indent = m[1].replace(/\n/, '').replace(/price:\s*$/, '');
+  const out = source.slice(0, at) + m[1] + 'null' + source.slice(at + m[0].length);
+  /* a note explaining a price the row no longer carries is worse than
+     no note: it reads as provenance for a figure that is not there */
+  return setPriceEvidence(out, id, null, indent);
+}
+
 function priceEvidenceNote(evidence) {
   if (!evidence || !evidence.ok) return null;
   const safe = (value) => String(value).replace(/'/g, '');
@@ -3833,22 +3873,49 @@ async function main() {
     }, null, 2));
   }
 
+  /* A row that was READ and gave up no price it could tie to the
+     product, and that still carries a figure or a note: the figure is
+     unaccounted for and has to go. UNREACHABLE is excluded on purpose
+     — that row was never read, so nothing was learned about its
+     price. */
+  const readAndUnpriced = new Set(['NO PRICE FOUND', 'AMBIGUOUS']);
+  const stale = results.filter((r) => {
+    if (!readAndUnpriced.has(r.verdict)) return false;
+    const row = rows.find((one) => one.id === r.id);
+    return Boolean(row && (row.price !== null && row.price !== undefined || row.priceEvidence));
+  });
+
   if (!writing) {
     say(verified.length
-      ? `\n  Re-run with --write to put ${verified.length} verified price${verified.length === 1 ? '' : 's'} into assets/catalog.js.\n`
-      : '\n  Nothing verified, so there is nothing to write. A row keeps price: null\n  rather than a figure the page did not vouch for.\n');
+      ? `\n  Re-run with --write to put ${verified.length} verified price${verified.length === 1 ? '' : 's'} into assets/catalog.js.`
+      : '\n  Nothing verified, so there is no price to write.');
+    say(stale.length
+      ? `  ${stale.length} linked row${stale.length === 1 ? '' : 's'} carr${stale.length === 1 ? 'ies' : 'y'} a price its page does not vouch for; --write clears ${stale.length === 1 ? 'it' : 'them'} to null:\n` +
+        stale.map((r) => `     ${r.id}`).join('\n') + '\n'
+      : '  A row keeps price: null rather than a figure the page did not vouch for.\n');
     return;
   }
 
-  if (!verified.length) {
-    say('\n  Nothing verified — assets/catalog.js is left exactly as it was.\n');
+  if (!verified.length && !stale.length) {
+    say('\n  Nothing verified and nothing stale — assets/catalog.js is left exactly as it was.\n');
     return;
   }
 
   let next = source;
   for (const r of verified) next = writePrice(next, r.id, r.price, r.identity);
+  /* cleared after the writes, so a row can never be both */
+  for (const r of stale) next = clearPrice(next, r.id);
   fs.writeFileSync(CATALOG, next);
-  say(`\n  Wrote ${verified.length} price${verified.length === 1 ? '' : 's'} into assets/catalog.js.\n`);
+
+  const wrote = verified.length
+    ? `Wrote ${verified.length} price${verified.length === 1 ? '' : 's'}`
+    : 'Wrote no price';
+  const cleared = stale.length
+    ? `, and cleared ${stale.length} that ${stale.length === 1 ? 'a page would not vouch for' : 'no page would vouch for'}`
+    : '';
+  say(`\n  ${wrote}${cleared} in assets/catalog.js.`);
+  for (const r of stale) say(`     ${r.id} — price: null, and any stale priceEvidence removed`);
+  say('');
 }
 
 /* The gates are the part worth testing, and they are decidable without a
@@ -3871,6 +3938,6 @@ if (require.main === module) {
     parseArgs, chooseMode, OPTIONS, USAGE, MODES, buildStamp,
     productRecords, dataPayloads, dataCandidates, variantPriceRecords,
     parseLoosely, gatherDataInPage, walkData, namesListing, pricesUnder,
-    writePrice, priceEvidenceNote, setPriceEvidence, catalogRowPrice, readCatalog
+    writePrice, clearPrice, priceEvidenceNote, setPriceEvidence, catalogRowPrice, readCatalog
   };
 }
