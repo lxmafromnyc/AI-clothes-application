@@ -1190,10 +1190,18 @@ function walledRetailer() {
     const result = await run(['--discover']);
     assert.strictEqual(result.code, 0, result.stderr);
 
-    for (const id of ['uniqlo-merino-crew', 'jcrew-broken-in-oxford', 'llbean-venturestretch-chino']) {
-      assert.doesNotMatch(result.stdout, new RegExp(id), `${id} already carries a verified photo and is not a target`);
+    /* counted off the catalogue rather than written in: every run of
+       --write moves this number, and a test that hardcodes it fails
+       for the one reason that is not a fault */
+    const photographed = extractor.readCatalog().rows.filter((row) => row && row.imageUrl);
+    assert.ok(photographed.length, 'the catalogue carries no verified photo to leave alone');
+
+    for (const row of photographed) {
+      assert.doesNotMatch(result.stdout, new RegExp(row.id),
+        `${row.id} already carries a verified photo and is not a target`);
     }
-    assert.match(result.stdout, /3 rows already carry one and are not touched/);
+    assert.match(result.stdout, new RegExp(
+      `${photographed.length} rows? already carry one and are not touched`));
   });
 
   /* ---------------------------------------------------------
