@@ -2117,6 +2117,277 @@ function walledRetailer() {
   });
 
   /* ---------------------------------------------------------
+     Falling back to Serper when the allowance runs out
+
+     SerpApi sells a monthly allowance and a catalogue run is the thing
+     most likely to spend it. When it goes, every remaining row gets the
+     same 429 and a run that was working stops working for a reason
+     that has nothing to do with the catalogue.
+
+     So discovery carries a second source. What is tested here is that
+     it changes nothing except who answers the question: the fallback is
+     reached ONLY on a quota refusal, it is never reached when no key is
+     set, and a listing that arrives through it is put through exactly
+     the same gates in exactly the same order. A candidate from Serper
+     that is the wrong garment is refused as the wrong garment. A
+     candidate from Serper whose page proves nothing is refused as
+     unproven. Where it came from is not evidence about the garment.
+     --------------------------------------------------------- */
+  console.log('\n  — falling back when the allowance runs out\n');
+
+  const QUOTA = 'SerpApi responded 429 (SerpApi search allowance exhausted): out of searches';
+
+  /* the fallback is only in the chain when its key is set, so every
+     test here says which world it is in rather than inheriting one */
+  function withSerperKey(key, run) {
+    const had = process.env.SERPER_API_KEY;
+    if (key === null) delete process.env.SERPER_API_KEY;
+    else process.env.SERPER_API_KEY = key;
+    return Promise.resolve(run()).finally(() => {
+      if (had === undefined) delete process.env.SERPER_API_KEY;
+      else process.env.SERPER_API_KEY = had;
+    });
+  }
+
+  test('what counts as running out of searches, and what does not', () => {
+    for (const said of [
+      QUOTA,
+      'SerpApi responded 429: too many requests',
+      'Serper responded 429 (Serper search allowance exhausted)',
+      'Your account has run out of searches',
+      'quota exceeded for this project',
+      'rate limit reached'
+    ]) {
+      assert.strictEqual(extractor.outOfSearches(new Error(said)), true, `${said} is the allowance`);
+    }
+
+    /* everything else is a fault to report, not a reason to ask
+       somebody else the same question */
+    for (const said of [
+      'SerpApi responded 500: boom',
+      'The Google Product service is no longer offered by Google.',
+      'fetch failed',
+      'SERPAPI_API_KEY is not set'
+    ]) {
+      assert.strictEqual(extractor.outOfSearches(new Error(said)), false, `${said} is not the allowance`);
+    }
+  });
+
+  await testAsync('with no SERPER_API_KEY there is no fallback to reach for', async () => {
+    await withSerperKey(null, async () => {
+      const chain = extractor.providerChain(productSource);
+      assert.strictEqual(chain.length, 1, 'an unconfigured fallback is not in the chain');
+
+      /* and a quota refusal is simply a failure, as it always was */
+      productSource.registerProvider({
+        name: 'fake-source', configured: () => true,
+        search: async () => { throw new Error(QUOTA); }
+      });
+      process.env.PRODUCT_SOURCE = 'fake-source';
+
+      const result = await extractor.discoverRow(
+        catalogueRow('sample-kinfield-pleated-midi-skirt'), new Map(), 4);
+      assert.strictEqual(result.verdict, 'SOURCE FAILED');
+      assert.match(result.why, /allowance exhausted/);
+    });
+  });
+
+  await testAsync('the primary is asked first, and stays primary', async () => {
+    await withSerperKey('test-key-000000000000000000000000', async () => {
+      const asked = [];
+      productSource.registerProvider({
+        name: 'fake-source', configured: () => true,
+        search: async () => {
+          asked.push('primary');
+          return [{ title: 'COS Pleated Twill Midi Skirt', productUrl: 'https://www.cos.com/p/123456', retailer: 'COS' }];
+        }
+      });
+      process.env.PRODUCT_SOURCE = 'fake-source';
+
+      const chain = extractor.providerChain(productSource);
+      assert.strictEqual(chain[0].name, 'fake-source', 'the configured source leads');
+      assert.strictEqual(chain[1].name, 'serper', 'and the fallback only follows');
+
+      const offered = await extractor.listingsFor(catalogueRow('sample-kinfield-pleated-midi-skirt'), 8);
+      assert.strictEqual(offered.provider, 'fake-source', 'a source that answers is never replaced');
+      assert.strictEqual(offered.switched, null, 'and nothing was switched');
+      assert.ok(asked.every((one) => one === 'primary'));
+    });
+  });
+
+  await testAsync('a quota refusal moves the run to Serper, mid-row', async () => {
+    await withSerperKey('test-key-000000000000000000000000', async () => {
+      const serper = require('../api/_providers/serper');
+      const asked = { primary: 0, serper: 0 };
+
+      productSource.registerProvider({
+        name: 'fake-source', configured: () => true,
+        search: async () => { asked.primary += 1; throw new Error(QUOTA); }
+      });
+      process.env.PRODUCT_SOURCE = 'fake-source';
+
+      const real = serper.search;
+      serper.search = async () => {
+        asked.serper += 1;
+        return [{ title: 'COS Pleated Twill Midi Skirt', productUrl: 'https://www.cos.com/p/123456', retailer: 'COS' }];
+      };
+      try {
+        const offered = await extractor.listingsFor(catalogueRow('sample-kinfield-pleated-midi-skirt'), 8);
+
+        assert.strictEqual(asked.primary, 1, 'the primary was asked once and refused once');
+        assert.ok(asked.serper >= 1, 'and the fallback answered');
+        assert.strictEqual(offered.provider, 'serper');
+        assert.strictEqual(offered.primary, 'fake-source', 'the primary is still named as the primary');
+        assert.ok(offered.switched, 'the switch is recorded rather than silent');
+        assert.strictEqual(offered.switched.from, 'fake-source');
+        assert.strictEqual(offered.switched.to, 'serper');
+        assert.match(offered.switched.why, /allowance exhausted/);
+        assert.strictEqual(offered.products.length, 1);
+
+        /* the run says where each query went, so a report can be read */
+        assert.ok(offered.attempts.some((one) => one.fellBackTo === 'serper'));
+        assert.ok(offered.attempts.some((one) => one.provider === 'serper' && one.offered === 1));
+      } finally {
+        serper.search = real;
+      }
+    });
+  });
+
+  await testAsync('a failure that is not a quota refusal never reaches for the fallback', async () => {
+    await withSerperKey('test-key-000000000000000000000000', async () => {
+      const serper = require('../api/_providers/serper');
+      let serperAsked = 0;
+
+      productSource.registerProvider({
+        name: 'fake-source', configured: () => true,
+        search: async () => { throw new Error('SerpApi responded 500: boom'); }
+      });
+      process.env.PRODUCT_SOURCE = 'fake-source';
+
+      const real = serper.search;
+      serper.search = async () => { serperAsked += 1; return []; };
+      try {
+        const result = await extractor.discoverRow(
+          catalogueRow('sample-kinfield-pleated-midi-skirt'), new Map(), 4);
+        assert.strictEqual(result.verdict, 'SOURCE FAILED');
+        assert.strictEqual(serperAsked, 0, 'a 500 is a fault to report, not a source to replace');
+      } finally {
+        serper.search = real;
+      }
+    });
+  });
+
+  await testAsync('a Serper candidate faces every gate a SerpApi candidate faces', async () => {
+    /* the property the whole fallback stands on. Serper offers three
+       listings for a fleece sweatpant: a trouser, a jogger whose page
+       says nothing about fleece, and a fleece jogger. The first two are
+       refused exactly as they would be from the primary. */
+    await withSerperKey('test-key-000000000000000000000000', async () => {
+      const serper = require('../api/_providers/serper');
+      const retailer = await describingRetailer({
+        551100: { name: 'Street Trouser', material: 'Brushed fleece' },
+        551200: { name: 'Earth Jogger', material: 'Organic cotton' },
+        551300: { name: 'Club Jogger', material: 'Recycled polyester fleece' }
+      });
+      const port = retailer.address().port;
+
+      productSource.registerProvider({
+        name: 'fake-source', configured: () => true,
+        search: async () => { throw new Error(QUOTA); }
+      });
+      process.env.PRODUCT_SOURCE = 'fake-source';
+
+      const real = serper.search;
+      serper.search = async () => [
+        { title: 'Aerie Street Trouser', productUrl: listing(port, '551100'), retailer: 'Aerie' },
+        { title: 'Jumbie Art Earth Joggers', productUrl: listing(port, '551200'), retailer: 'Jumbie' },
+        /* its title never says fleece — its page does, and the page
+           stage has to be what settles it, from Serper as from anywhere */
+        { title: 'Nike Club Joggers', productUrl: listing(port, '551300'), retailer: 'Nike' }
+      ];
+      try {
+        const result = await extractor.discoverRow(
+          catalogueRow('sample-kinfield-fleece-sweatpant'), new Map(), 8);
+
+        /* the semantic gate, unchanged */
+        assert.strictEqual(result.tried[0].semantic.kind, 'contradiction', 'a trouser is still a trouser');
+        assert.match(result.tried[0].semantic.why, /sweatpant/);
+        assert.ok(!retailer.hits.some((url) => url.includes('551100')),
+          'and it still costs no request');
+
+        /* the page-evidence gate, unchanged */
+        assert.strictEqual(result.tried[1].semantic.kind, 'pending');
+        assert.ok(result.tried[1].proof, 'its page was read');
+        assert.deepStrictEqual(result.tried[1].proof.missing.map(extractor.nameOfPending), ['fleece']);
+
+        /* and the one that earns it is written on the same evidence */
+        assert.strictEqual(result.verdict, 'VERIFIED', result.why);
+        assert.match(result.proposal.productUrl, /551300/);
+        assert.strictEqual(result.tried[2].semantic.kind, 'pending', 'its title left fleece open');
+        assert.strictEqual(result.provedOnPage.length, 1, 'and its page closed it');
+        assert.strictEqual(extractor.nameOfPending(result.provedOnPage[0].item), 'fleece');
+        assert.match(result.provedOnPage[0].where, /material/);
+
+        /* the proposal still offers the same three fields and no others:
+           where a candidate came from is not something a row records */
+        assert.strictEqual(result.proposal.name, undefined);
+        assert.strictEqual(result.proposal.brand, undefined);
+        assert.ok(result.proposal.identity, 'and the image gate still had to prove it');
+        assert.strictEqual(
+          extractor.evidenceNote(result.proposal.identity),
+          extractor.evidenceNote(result.proposal.identity),
+          'the note is the gate’s, not the source’s'
+        );
+      } finally {
+        serper.search = real;
+        retailer.close();
+      }
+    });
+  });
+
+  await testAsync('a row written from a Serper listing keeps its own identity', async () => {
+    /* the writer contract does not know which source found the listing,
+       and must not start knowing */
+    await withSerperKey('test-key-000000000000000000000000', async () => {
+      const serper = require('../api/_providers/serper');
+      const retailer = await describingRetailer({
+        552200: { name: 'Club Fleece Jogger', material: 'Recycled polyester fleece' }
+      });
+      const port = retailer.address().port;
+
+      productSource.registerProvider({
+        name: 'fake-source', configured: () => true,
+        search: async () => { throw new Error(QUOTA); }
+      });
+      process.env.PRODUCT_SOURCE = 'fake-source';
+
+      const real = serper.search;
+      serper.search = async () => [
+        { title: 'Nike Club Fleece Joggers', productUrl: listing(port, '552200'), retailer: 'Nike' }
+      ];
+      try {
+        const before = extractor.readCatalog();
+        const was = before.rows.find((r) => r.id === 'sample-kinfield-fleece-sweatpant');
+        const found = await extractor.discoverRow(was, new Map(), 8);
+        assert.strictEqual(found.verdict, 'VERIFIED', found.why);
+
+        const now = evaluate(extractor.linkRow(before.source, was.id, found.proposal))
+          .find((r) => r.id === was.id);
+
+        assert.strictEqual(now.name, 'Fleece Sweatpant', 'the row was renamed');
+        assert.strictEqual(now.brand, 'Kinfield', 'the row lost its brand');
+        assert.strictEqual(now.price, was.price, 'the row lost its price');
+        assert.strictEqual(now.category, was.category);
+        assert.match(now.productUrl, /552200/);
+        assert.ok(now.imageUrl);
+      } finally {
+        serper.search = real;
+        retailer.close();
+      }
+    });
+  });
+
+  /* ---------------------------------------------------------
      What discovery is allowed to write
 
      A sample row's identity is the demo's own. "Tailored Wool Coat" by

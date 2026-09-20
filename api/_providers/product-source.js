@@ -308,11 +308,17 @@ const etsy = require('./etsy');
    PRODUCT_SOURCE=serpapi names it, so registering it changes nothing
    about what a deployment runs. */
 const serpapi = require('./serpapi');
+const serper = require('./serper');
 
 const PROVIDERS = {
   [openwebninja.name]: openwebninja,
   [etsy.name]: etsy,
   [serpapi.name]: serpapi,
+  /* Selectable like any other, and the one discovery falls back to when
+     SerpApi's allowance runs out. Adding it changes no default:
+     DEFAULT_SOURCE is untouched and nothing reaches it unless
+     PRODUCT_SOURCE names it or a caller asks for it by name. */
+  [serper.name]: serper,
 
   /* Placeholder used when nothing is configured. It returns no products
      rather than inventing any, which is what makes /api/search answer

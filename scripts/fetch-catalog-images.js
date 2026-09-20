@@ -180,7 +180,11 @@ const USAGE = `
                          try one replacement listing through the gates
 
     --discover           for rows carrying no photo, ask the configured
-                         product source for real listings. Each is read
+                         product source for real listings. When that
+                         source reports its search allowance exhausted
+                         and SERPER_API_KEY is set, Serper is asked for
+                         the rest of the run — through every one of the
+                         same gates, with nothing relaxed. Each is read
                          as a garment first, and only one that is the
                          garment the row means goes on to the same four
                          gates. Every candidate's semantic verdict is
@@ -2366,6 +2370,49 @@ function queryForms(row) {
   return forms;
 }
 
+/* ---------- when the primary source runs out of searches ----------
+
+   SerpApi sells a monthly allowance, and a catalogue run is the thing
+   most likely to spend it. When it goes, every remaining row gets the
+   same 429 and a run that was working stops working for a reason that
+   has nothing to do with the catalogue.
+
+   So discovery carries a second source. SerpApi stays primary and is
+   asked first for every row; Serper is asked only after SerpApi says it
+   has no searches left, and only if SERPER_API_KEY is set. Nothing else
+   promotes it — an ordinary failure, a timeout, a form that returns
+   nothing, none of them reach for it, because none of them are fixed by
+   asking somebody else the same question.
+
+   A listing that arrives this way is not privileged in any direction.
+   It goes through the link rule, the semantic gate on its title, the
+   semantic gate on its page, and the four image gates, in that order,
+   exactly as a SerpApi listing does. Where a candidate came from is not
+   evidence about the garment, and it is never recorded as though it
+   were: the row that gets written carries productUrl, imageUrl and
+   imageEvidence, the same three fields, proved the same way. */
+const QUOTA_EXHAUSTED = /\b429\b|allowance exhausted|run out of searches|quota|rate.?limit|too many requests/i;
+
+function outOfSearches(err) {
+  return QUOTA_EXHAUSTED.test(err && err.message ? err.message : String(err));
+}
+
+/* the sources discovery may ask, primary first. The fallback is only
+   ever appended — it never displaces what PRODUCT_SOURCE chose. */
+function providerChain(source) {
+  const primary = source.getProvider();
+  const chain = [primary];
+  try {
+    const serper = require(path.join(__dirname, '..', 'api', '_providers', 'serper.js'));
+    if (serper && serper.name !== primary.name && typeof serper.configured === 'function' && serper.configured()) {
+      chain.push(serper);
+    }
+  } catch (err) {
+    /* no fallback available is not an error: the primary still answers */
+  }
+  return chain;
+}
+
 async function listingsFor(row, limit) {
   const source = productSource();
   if (!source) return { failed: 'the product source adapter could not be loaded' };
@@ -2380,10 +2427,13 @@ async function listingsFor(row, limit) {
 
   const wanted = limit || 8;
   const forms = queryForms(row);
+  const chain = providerChain(source);
   const attempts = [];
   const raw = [];
   const seenRaw = new Set();
   let failures = 0;
+  let using = 0;
+  let switched = null;
 
   for (const form of forms) {
     /* A search costs money, so the ladder is climbed only as far as it
@@ -2392,16 +2442,43 @@ async function listingsFor(row, limit) {
        row whose name works answers in two searches, not five. */
     if (raw.length >= wanted) break;
     if (raw.length > 0 && attempts.length >= 2) break;
-    let batch = [];
-    try {
-      batch = await provider.search(form.intent, { limit: wanted });
-    } catch (err) {
+
+    /* one form, asked of the source in use, and asked again of the next
+       source only when this one says it has no searches left */
+    let batch = null;
+    let failed = null;
+    while (using < chain.length) {
+      try {
+        batch = await chain[using].search(form.intent, { limit: wanted });
+        failed = null;
+        break;
+      } catch (err) {
+        const said = err && err.message ? String(err.message).split('\n')[0] : String(err);
+        if (outOfSearches(err) && using + 1 < chain.length) {
+          switched = { from: chain[using].name, to: chain[using + 1].name, why: said };
+          attempts.push({
+            how: form.how,
+            query: form.query,
+            provider: chain[using].name,
+            failed: said,
+            fellBackTo: chain[using + 1].name
+          });
+          using += 1;
+          continue;
+        }
+        failed = said;
+        break;
+      }
+    }
+
+    if (failed !== null) {
       failures += 1;
-      attempts.push({ how: form.how, query: form.query, failed: err && err.message ? err.message.split('\n')[0] : 'unknown' });
+      attempts.push({ how: form.how, query: form.query, provider: chain[using].name, failed });
       continue;
     }
+
     const offered = Array.isArray(batch) ? batch : [];
-    attempts.push({ how: form.how, query: form.query, offered: offered.length });
+    attempts.push({ how: form.how, query: form.query, provider: chain[using].name, offered: offered.length });
     for (const record of offered) {
       let key;
       try {
@@ -2421,8 +2498,9 @@ async function listingsFor(row, limit) {
 
   if (failures === forms.length) {
     const first = attempts.find((attempt) => attempt.failed);
+    const asked = [...new Set(chain.slice(0, using + 1).map((one) => one.name))].join(' then ');
     return {
-      failed: `the ${provider.name} product source failed on all ${forms.length} query forms (${first ? first.failed : 'unknown'})`,
+      failed: `the ${asked} product source${using ? 's' : ''} failed on all ${forms.length} query forms (${first ? first.failed : 'unknown'})`,
       attempts,
       sourceFailed: true
     };
@@ -2470,7 +2548,15 @@ async function listingsFor(row, limit) {
     }
   }
 
-  return { provider: provider.name, products, rejected, attempts, searches: attempts.length };
+  return {
+    provider: chain[using].name,
+    primary: provider.name,
+    switched,
+    products,
+    rejected,
+    attempts,
+    searches: attempts.length
+  };
 }
 
 /* The title stage, which cannot be allowed to throw: a candidate whose
@@ -2507,6 +2593,7 @@ async function discoverRow(row, taken, limit, options) {
       verdict: found.sourceFailed ? 'SOURCE FAILED' : 'NO SOURCE',
       why: found.failed,
       attempts: found.attempts || [],
+      switched: found.switched || null,
       tried: []
     };
   }
@@ -2523,6 +2610,13 @@ async function discoverRow(row, taken, limit, options) {
     semantic: readTitleSafely(row, product),
     why: null
   }));
+
+  /* declared before the loop because the VERIFIED return inside it
+     carries them out, and a reference into the temporal dead zone would
+     be caught by the per-candidate guard below and reported as a
+     candidate that could not be read */
+  const searched = found.attempts || [];
+  const switched = found.switched || null;
 
   for (let at = 0; at < tried.length; at += 1) {
     const attempt = tried[at];
@@ -2605,6 +2699,8 @@ async function discoverRow(row, taken, limit, options) {
       verdict: 'VERIFIED',
       why: result.why,
       tried,
+      attempts: searched,
+      switched,
       semantic: attempt.semantic,
       onPage,
       provedOnPage: attempt.provedOnPage || [],
@@ -2630,7 +2726,6 @@ async function discoverRow(row, taken, limit, options) {
     }
   }
 
-  const searched = found.attempts || [];
   const refused = tried.filter((attempt) => !attempt.semantic.ok).length;
   const unproven = tried.filter((attempt) => attempt.proof && attempt.proof.missing.length).length;
   const broke = tried.filter((attempt) => attempt.failed).length;
@@ -2645,6 +2740,7 @@ async function discoverRow(row, taken, limit, options) {
         `, none cleared every gate`
       : `the ${found.provider} source offered no listing that is a product page, over ${searched.length} quer${searched.length === 1 ? 'y' : 'ies'}`,
     attempts: searched,
+    switched,
     tried
   };
 }
@@ -2760,7 +2856,11 @@ async function main() {
          query or the shops */
       for (const attempt of result.attempts || []) {
         const asked = attempt.query === null ? 'everything the row knows' : `"${attempt.query}"`;
-        console.log(`  ${''.padEnd(17)}   asked ${asked} — ${attempt.failed ? `FAILED: ${attempt.failed}` : `${attempt.offered} offered`}`);
+        const who = attempt.provider ? ` [${attempt.provider}]` : '';
+        console.log(`  ${''.padEnd(17)}   asked ${asked}${who} — ${attempt.failed ? `FAILED: ${attempt.failed}` : `${attempt.offered} offered`}`);
+        if (attempt.fellBackTo) {
+          console.log(`  ${''.padEnd(17)}     out of searches — falling back to ${attempt.fellBackTo}, same gates, nothing relaxed`);
+        }
       }
 
       /* every candidate, with the semantic gate's verdict on it, because
@@ -2970,6 +3070,7 @@ if (require.main === module) {
     catalogRowIdentity, evidenceNote,
     garmentsAgree, canonicalCorroborated, wordsInPath, wordsAboutImage, TRACKING_PARAMS,
     parseArgs, OPTIONS, USAGE, intentFor, queryForms, listingsFor, discoverRow, coverage,
+    providerChain, outOfSearches,
     /* the semantic gate: what the listing SELLS, asked before any page
        is fetched, and decidable with no retailer at all */
     semanticMatch, readGarment, adultSizing, GARMENT_TYPES, DESCRIPTORS, MATERIALS,
