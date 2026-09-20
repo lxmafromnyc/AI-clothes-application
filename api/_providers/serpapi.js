@@ -35,9 +35,10 @@
    A Google Shopping result is Google's record of an item, so most of its
    URLs point back at Google:
 
-     product_link          Google's product page for the item
-     serpapi_product_api   SerpApi's own endpoint for the item
-     thumbnail             a Google-hosted image
+     product_link                    Google's product page for the item
+     serpapi_immersive_product_api   SerpApi's own endpoint for it
+     thumbnail                       a Google-hosted image
+     source                          the shop's NAME, not a link
 
    None of those is a retailer product page and none is used as one. A
    direct merchant URL, when the result has one at all, arrives under a
@@ -56,12 +57,28 @@
    When the search result carries no direct link, the sellers for that
    product are fetched:
 
-     GET https://serpapi.com/search.json?engine=google_product
-         &product_id=...&offers=1
+     GET https://serpapi.com/search.json?engine=google_immersive_product
+         &page_token=...
 
-   which costs one extra SerpApi request per product. Every record that
-   needs one is counted in diagnostics.requests, because requests per
-   search is the number the cost per search is computed from.
+   Google retired the Product service, and SerpApi answers a call to it
+   with "The Google Product service is no longer offered by Google."
+   The Immersive Product API replaces it, and is addressed by the page
+   token a shopping result carries — immersive_product_page_token, or
+   the page_token inside serpapi_immersive_product_api. The token is
+   used rather than the ready-made URL, so the request carries this
+   adapter's own key, timeout and redaction rather than whatever a
+   payload happened to embed.
+
+   A record with no token cannot be looked up, and is counted rather
+   than guessed at.
+
+   Each lookup costs one extra SerpApi request, counted in
+   diagnostics.requests, because requests per search is the number the
+   cost per search is computed from. A failure that will repeat — a
+   retired service, or any 4xx — stops the lookups for the whole search
+   and is reported once as diagnostics.sellers.halted, because making
+   the same refused request once per record buys nothing and fills the
+   log with it.
 
    ---------------------------------------------------------
    Why the image cannot be attached to the wrong product
@@ -95,7 +112,14 @@
 const SEARCH_URL = 'https://serpapi.com/search.json';
 const ACCOUNT_URL = 'https://serpapi.com/account';
 const DEFAULT_ENGINE = 'google_shopping_light';
-const PRODUCT_ENGINE = 'google_product';
+
+/* Google retired the Product service, and SerpApi answers a call to it
+   with "The Google Product service is no longer offered by Google."
+   Its replacement for the same question — who actually sells this, and
+   at what link — is the Immersive Product API, which is addressed by a
+   page token the shopping result carries rather than by a product id. */
+const IMMERSIVE_ENGINE = 'google_immersive_product';
+const RETIRED_SERVICE = /no longer offered|no longer available|has been (retired|deprecated|discontinued)|not supported/i;
 const REQUEST_TIMEOUT = 15000;
 const MAX_TERMS = 12;
 
@@ -224,7 +248,8 @@ function imageFrom(result) {
 
 /* Hosts that are never a retailer's product page. Google's own surfaces
    are here because `product_link` points at one by design, and SerpApi's
-   are here because `serpapi_product_api` is an API endpoint, not a shop. */
+   are here because `serpapi_immersive_product_api` is an API endpoint,
+   not a shop. */
 const NOT_A_SHOP_HOST = /(^|\.)(google\.[a-z]{2,3}(\.[a-z]{2})?|googleadservices\.com|googleusercontent\.com|gstatic\.com|googlesyndication\.com|serpapi\.com)$/i;
 
 /* Returns an absolute retailer URL, or null. Null for anything on a
@@ -307,6 +332,27 @@ function brandFrom(result) {
   return null;
 }
 
+/* The handle for the Immersive Product API. A current Google Shopping
+   result carries it as a token, and also as a ready-made SerpApi URL.
+   The token is what gets used: the URL is rebuilt here so the request
+   carries this adapter's own key, timeout and redaction rather than
+   whatever a payload happened to embed. */
+function pageTokenFor(result) {
+  const direct = text(firstOf(result, [
+    'immersive_product_page_token', 'page_token', 'immersive_page_token'
+  ]));
+  if (direct) return direct;
+
+  const api = text(firstOf(result, ['serpapi_immersive_product_api', 'serpapi_immersive_product_link']));
+  if (!api) return null;
+  try {
+    const token = new URL(api).searchParams.get('page_token');
+    return text(token) || null;
+  } catch (err) {
+    return null;
+  }
+}
+
 /* Google marks used and refurbished listings. A shopper asking for a
    hoodie is not asking for a second-hand one, but nothing here invents
    a condition: only an explicit second-hand marking is acted on, and it
@@ -330,6 +376,9 @@ function toRecord(result) {
     imageUrl: imageFrom(result),
     brand: brandFrom(result),
     sku: text(firstOf(result, ['product_id', 'productId', 'id'])) || undefined,
+    /* not displayed and never part of a URL shown to anyone: the handle
+       the seller lookup needs, deleted before the records are returned */
+    pageToken: pageTokenFor(result) || undefined,
 
     /* all three from the same object, or none of them */
     price: commerce ? commerce.price : undefined,
@@ -392,11 +441,15 @@ function sellersFrom(payload) {
   const containers = [
     payload.sellers_results,
     payload.product_results,
+    payload.immersive_product_results,
     payload
   ];
+  /* `stores` is what the Immersive Product API calls them; the rest are
+     the names the older shapes used, kept so a payload that still
+     arrives in one of them is read rather than dropped */
   for (const container of containers) {
     if (!container || typeof container !== 'object') continue;
-    for (const key of ['online_sellers', 'sellers', 'offers', 'stores']) {
+    for (const key of ['stores', 'online_sellers', 'sellers', 'offers', 'product_offers']) {
       if (Array.isArray(container[key])) return container[key];
     }
   }
@@ -468,20 +521,27 @@ async function apiGet(params, tally, kind) {
 /* A failure here is not fatal: that one product ends up without a link
    and the gate drops it, rather than the whole search failing because
    one lookup did. */
-async function sellersFor(productId, region, tally) {
+async function sellersFor(pageToken, region, tally) {
   try {
     const payload = await apiGet({
-      engine: PRODUCT_ENGINE,
-      product_id: String(productId),
-      offers: '1',
+      engine: IMMERSIVE_ENGINE,
+      page_token: String(pageToken),
       gl: region.country,
       hl: region.language
     }, tally, 'sellers');
     const sellers = sellersFrom(payload);
-    return { sellers, failed: false, shape: sellers.length ? null : shapeOf(payload) };
+    return { sellers, failed: false, fatal: false, shape: sellers.length ? null : shapeOf(payload) };
   } catch (err) {
-    console.warn('Seller lookup failed for product', String(productId), redact(err && err.message));
-    return { sellers: [], failed: true, shape: null };
+    const why = redact(err && err.message ? err.message : String(err));
+
+    /* Told apart because they call for different answers. A retired
+       service, or any 4xx, will answer the next product exactly as it
+       answered this one — so the run stops asking rather than making
+       the same refused request once per record and filling the log with
+       it. Anything else is this product's bad luck and the next one is
+       still worth trying. */
+    const fatal = RETIRED_SERVICE.test(why) || /responded 4\d\d/.test(why);
+    return { sellers: [], failed: true, fatal, why, shape: null };
   }
 }
 
@@ -507,7 +567,10 @@ async function resolveMissingSellers(records, wanted, region, stats, tally) {
 
   const budget = Number(process.env.SERPAPI_SELLER_BUDGET_MS) || DEFAULT_SELLER_BUDGET_MS;
   const deadline = Date.now() + budget;
-  const pending = records.filter((r) => !r.productUrl && r.sku);
+  /* the Immersive Product API is addressed by a page token, so a record
+     without one cannot be looked up at all */
+  const pending = records.filter((r) => !r.productUrl && r.pageToken);
+  t.noPageToken = records.filter((r) => !r.productUrl && !r.pageToken).length;
   let resolved = records.filter((r) => r.productUrl).length;
 
   for (let i = 0; i < pending.length; i += SELLER_CONCURRENCY) {
@@ -517,8 +580,12 @@ async function resolveMissingSellers(records, wanted, region, stats, tally) {
     const batch = pending.slice(i, i + SELLER_CONCURRENCY);
     const found = await Promise.all(batch.map(async (record) => {
       t.lookupsMade += 1;
-      const result = await sellersFor(record.sku, region, tally);
-      if (result.failed) { t.lookupsFailed += 1; return null; }
+      const result = await sellersFor(record.pageToken, region, tally);
+      if (result.failed) {
+        t.lookupsFailed += 1;
+        if (result.fatal && !t.halted) t.halted = result.why;
+        return null;
+      }
       if (!result.sellers.length) {
         t.lookupsEmpty += 1;
         /* one sample is enough to see whether parsing is the problem */
@@ -541,6 +608,12 @@ async function resolveMissingSellers(records, wanted, region, stats, tally) {
       resolved += 1;
       t.resolvedFromSellers += 1;
     });
+
+    /* said once, with the reason, instead of once per record */
+    if (t.halted) {
+      console.warn('Seller lookups stopped:', t.halted);
+      break;
+    }
   }
   return t;
 }
@@ -601,7 +674,7 @@ async function search(intent, options) {
 
   diagnostics.sellers = await resolveMissingSellers(records, wanted, region, {}, tally);
 
-  records.forEach((r) => { delete r.retailerHint; });
+  records.forEach((r) => { delete r.retailerHint; delete r.pageToken; });
   diagnostics.withAnyLink = records.filter((r) => r.productUrl).length;
 
   const withinLimits = records.filter((r) => withinBudget(r, intent));
@@ -660,5 +733,9 @@ module.exports = {
   SEARCH_URL,
   ACCOUNT_URL,
   DEFAULT_ENGINE,
-  PRODUCT_ENGINE
+  IMMERSIVE_ENGINE,
+  RETIRED_SERVICE,
+  pageTokenFor,
+  sellersFor,
+  sellersFrom
 };

@@ -832,12 +832,18 @@ Two differences from the OpenWeb Ninja adapter are worth knowing:
   and puts every string it might log through `redact()` first, which replaces
   the key with `***`.
 * **A shopping result's own links belong to Google.** `product_link` is
-  Google's comparison page and `serpapi_product_api` is an API endpoint, so
+  Google's comparison page and `serpapi_immersive_product_api` is an API
+  endpoint, so
   neither is ever shown as a product URL. Each candidate field goes through
   `looksDirect()`, which refuses every Google and SerpApi host, and a record
   left without a retailer URL is dropped by the gate rather than linked
   somewhere it should not be. When a result carries no direct link, the
-  `google_product` sellers endpoint is asked for that product's sellers — one
+  `google_immersive_product` endpoint is asked for that product's stores, by
+  the page token the result carries — Google retired the Product service, and
+  a call to it now answers "The Google Product service is no longer offered by
+  Google." A failure that will repeat, a retired service or any 4xx, stops the
+  lookups for the whole search and is reported once as
+  `diagnostics.sellers.halted` rather than made once per record. One
   extra request per product, counted in `diagnostics.requests`, which is what
   the cost per search is computed from. `SERPAPI_RESOLVE_SELLERS=off` skips
   that step.
