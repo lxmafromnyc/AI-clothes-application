@@ -1719,6 +1719,214 @@ function walledRetailer() {
   });
 
   /* ---------------------------------------------------------
+     One bad candidate is one bad candidate
+
+     A live run verified two rows and then died on the third with
+     "Cannot read properties of undefined (reading 'kind')". Nothing
+     was wrong with the gate: proveOnPage returns `proved` as
+     {item, where, quote} wrappers and `missing` as the pending items
+     THEMSELVES, and the report read .item off both. So the first
+     candidate that reached the page and failed to prove something took
+     the whole run with it — twenty-two rows that had nothing wrong with
+     them, lost to a console.log.
+
+     Two things are tested here. That the exact shape is handled, and
+     that it could not have aborted the run even if it had not been:
+     a candidate that throws is a failed candidate, a row that throws is
+     a failed row, and everything behind them still runs.
+     --------------------------------------------------------- */
+  console.log('\n  — one bad candidate is one bad candidate\n');
+
+  test('the shape that crashed a run: missing entries are items, not wrappers', () => {
+    const row = catalogueRow('sample-atlas-supply-cropped-track-jacket');
+    const stage1 = extractor.semanticMatch(row, { title: 'Nike Windrunner Jacket' });
+    assert.strictEqual(stage1.kind, 'pending');
+
+    /* a page that establishes neither word, which is what produces a
+       non-empty `missing` */
+    const evidence = extractor.evidenceFromHtml(
+      '<html><head><script type="application/ld+json">{"@type":"Product","name":"Windrunner Jacket",' +
+      '"description":"A lightweight jacket."}</script></head><body></body></html>'
+    );
+    const proof = extractor.proveOnPage(stage1.pending, evidence);
+    assert.ok(proof.missing.length, 'the page proves neither cropped nor track');
+
+    /* the two collections are deliberately different shapes, and the
+       report has to know which is which */
+    for (const one of proof.missing) {
+      assert.strictEqual(one.item, undefined, 'a missing entry IS the item');
+      assert.ok(one.kind, 'and carries its kind directly');
+      assert.match(extractor.nameOfPending(one), /cropped|track/);
+    }
+    for (const one of proof.proved) {
+      assert.ok(one.item, 'a proved entry WRAPS the item');
+    }
+
+    /* and the namer survives being handed the wrong thing anyway,
+       because a report is never worth a run */
+    for (const wrong of [undefined, null, {}, 'a string', 42]) {
+      assert.strictEqual(typeof extractor.nameOfPending(wrong), 'string',
+        `nameOfPending(${JSON.stringify(wrong)}) threw or returned nothing`);
+    }
+  });
+
+  await testAsync('the run that crashed now reports its unproven words instead', async () => {
+    /* the exact live scenario: a jacket listing whose title leaves
+       cropped and track pending, and a page that establishes neither.
+       The gate never threw — the REPORT did, so the report is what is
+       exercised here. */
+    const retailer = await describingRetailer({
+      300001: { name: 'Windrunner Jacket', description: 'A lightweight jacket.' }
+    });
+    const port = retailer.address().port;
+
+    productSource.registerProvider({
+      name: 'fake-source',
+      configured: () => true,
+      search: async () => [{ title: 'Nike Windrunner Jacket', productUrl: listing(port, '300001'), retailer: 'Nike' }]
+    });
+    process.env.PRODUCT_SOURCE = 'fake-source';
+
+    const result = await extractor.discoverRow(
+      catalogueRow('sample-atlas-supply-cropped-track-jacket'), new Map(), 4);
+
+    assert.strictEqual(result.verdict, 'NO PRODUCT FOUND');
+    const attempt = result.tried[0];
+    assert.ok(attempt.proof, 'the page was read');
+    assert.ok(attempt.proof.missing.length, 'and proved neither word');
+
+    /* printed exactly as the report prints it. Before the fix this line
+       read .item off a missing entry and threw. */
+    const printed = [
+      ...attempt.proof.proved.map((one) => extractor.nameOfPending(one.item)),
+      ...attempt.proof.missing.map((one) => extractor.nameOfPending(one))
+    ];
+    assert.deepStrictEqual(printed.sort(), ['cropped', 'track']);
+    for (const name of printed) {
+      assert.ok(name && !/unnamed/.test(name), `the report could not name a pending word: ${name}`);
+    }
+
+    retailer.close();
+  });
+
+  await testAsync('a candidate that throws is a failed candidate, and the next one still runs', async () => {
+    const retailer = await describingRetailer({
+      310001: { name: 'Cropped Track Jacket', description: 'A cropped track jacket.' }
+    });
+    const port = retailer.address().port;
+
+    /* the first candidate's URL is a shape that breaks the page reader
+       outright; the second is a perfectly good listing behind it */
+    productSource.registerProvider({
+      name: 'fake-source',
+      configured: () => true,
+      search: async () => [
+        { title: 'Cropped Track Jacket', productUrl: 'http://127.0.0.1:1/p/999999', retailer: 'Broken' },
+        { title: 'Cropped Track Jacket', productUrl: listing(port, '310001'), retailer: 'Fine' }
+      ]
+    });
+    process.env.PRODUCT_SOURCE = 'fake-source';
+
+    const result = await extractor.discoverRow(
+      catalogueRow('sample-atlas-supply-cropped-track-jacket'), new Map(), 4);
+
+    assert.strictEqual(result.verdict, 'VERIFIED',
+      `the second candidate was never reached: ${result.why}`);
+    assert.match(result.proposal.productUrl, /310001/);
+    assert.ok(result.tried[0].why, 'and the first one still says what went wrong with it');
+
+    retailer.close();
+  });
+
+  await testAsync('a candidate whose title cannot be read at all is refused, not thrown', async () => {
+    /* every tried entry carries a verdict with a kind, whatever the
+       source handed over — a tried entry without one is a report that
+       throws, which is the class of bug that lost a run */
+    productSource.registerProvider({
+      name: 'fake-source',
+      configured: () => true,
+      search: async () => [
+        { title: { not: 'a string' }, productUrl: 'https://www.example.com/p/1' },
+        { title: null, productUrl: 'https://www.example.com/p/2' },
+        { productUrl: 'https://www.example.com/p/3' }
+      ]
+    });
+    process.env.PRODUCT_SOURCE = 'fake-source';
+
+    const result = await extractor.discoverRow(
+      catalogueRow('sample-atlas-supply-cropped-track-jacket'), new Map(), 4);
+
+    assert.ok(result.tried.length, 'the candidates were still listed');
+    for (const attempt of result.tried) {
+      assert.ok(attempt.semantic, 'every candidate carries a verdict');
+      assert.ok(attempt.semantic.kind, 'and every verdict carries a kind the report can read');
+      assert.strictEqual(typeof attempt.semantic.why, 'string');
+    }
+  });
+
+  await testAsync('a record that throws when read is dropped, not propagated', async () => {
+    /* the source is not obliged to hand over well-behaved objects. One
+       that throws on being read is one record gone. */
+    const hostile = { get productUrl() { throw new Error('this record bites'); } };
+    productSource.registerProvider({
+      name: 'fake-source',
+      configured: () => true,
+      search: async () => [hostile, { title: 'Cropped Track Jacket', productUrl: 'https://www.example.com/p/778899' }]
+    });
+    process.env.PRODUCT_SOURCE = 'fake-source';
+
+    const offered = await extractor.listingsFor(catalogueRow('sample-atlas-supply-cropped-track-jacket'), 8);
+    assert.ok(!offered.failed, `one hostile record ended the row: ${offered.failed}`);
+    assert.strictEqual(offered.products.length, 1, 'the good record came through');
+    assert.ok(offered.rejected['unreadable-record'], 'and the bad one is counted rather than hidden');
+  });
+
+  await testAsync('a row that fails does not stop the rows behind it', async () => {
+    /* the run-level promise: whatever one row does, the queue survives
+       it. The provider throws for one row's queries and answers for the
+       next, which is the shape a blocked retailer takes. */
+    const retailer = await describingRetailer({
+      320001: { name: 'Pleated Midi Skirt', description: 'A pleated midi skirt.' }
+    });
+    const port = retailer.address().port;
+
+    productSource.registerProvider({
+      name: 'fake-source',
+      configured: () => true,
+      search: async (intent) => {
+        const asked = String((intent.keywords || [])[0] || '');
+        /* every form of the jacket row's query, widened ones included */
+        if (/Jacket/i.test(asked)) throw new Error('the retailer blocked this query');
+        return [{ title: 'COS Pleated Midi Skirt', productUrl: listing(port, '320001'), retailer: 'COS' }];
+      }
+    });
+    process.env.PRODUCT_SOURCE = 'fake-source';
+
+    const failing = await extractor.discoverRow(
+      catalogueRow('sample-atlas-supply-cropped-track-jacket'), new Map(), 4);
+    assert.strictEqual(failing.verdict, 'SOURCE FAILED', 'the blocked row reports its own failure');
+
+    /* and the very next row is unaffected */
+    const following = await extractor.discoverRow(
+      catalogueRow('sample-kinfield-pleated-midi-skirt'), new Map(), 4);
+    assert.strictEqual(following.verdict, 'VERIFIED',
+      `a row behind a failing one was affected by it: ${following.why}`);
+
+    retailer.close();
+  });
+
+  await testAsync('a whole --discover run survives a row that throws', async () => {
+    /* the outermost promise, through the real CLI: a source that throws
+       on everything cannot take the process down, and the run still
+       reports and still exits 0 */
+    const result = await run(['--discover', '--no-browser']);
+    assert.strictEqual(result.code, 0, `the run exited ${result.code}: ${result.stderr}`);
+    assert.match(result.stdout, /row[s]? found a listing that cleared every gate/,
+      'the run reached its own summary');
+    assert.doesNotMatch(result.stderr, /Cannot read properties of undefined/);
+  });
+
+  /* ---------------------------------------------------------
      What discovery is allowed to write
 
      A sample row's identity is the demo's own. "Tailored Wool Coat" by

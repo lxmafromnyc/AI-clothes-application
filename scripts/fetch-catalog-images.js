@@ -2084,7 +2084,10 @@ function proveOnPage(pending, evidence) {
   const missing = [];
   const readings = (evidence || []).map((part) => ({ part, reading: readGarment(part.text, {}) }));
 
-  for (const item of pending || []) {
+  for (const item of Array.isArray(pending) ? pending : []) {
+    /* an item that is not an item cannot be established by anything, so
+       it counts as missing rather than as a crash */
+    if (!item || typeof item !== 'object') { missing.push(item); continue; }
     let found = null;
     for (const { part, reading } of readings) {
       if (item.kind === 'material') {
@@ -2102,9 +2105,13 @@ function proveOnPage(pending, evidence) {
   return { proved, missing };
 }
 
-/* what a pending item is called in a sentence */
+/* What a pending item is called in a sentence. It is called on every
+   reporting path, and a report that throws takes the whole run with it,
+   so it never assumes it was handed one. */
 function nameOfPending(item) {
-  return item.kind === 'material' ? item.term : item.words;
+  if (!item || typeof item !== 'object') return '(an unnamed requirement)';
+  if (item.kind === 'material') return item.term || '(an unnamed fabric)';
+  return item.words || item.term || '(an unnamed descriptor)';
 }
 
 /* ---------- finding a real product for a row that has none ----------
@@ -2254,7 +2261,16 @@ async function listingsFor(row, limit) {
     const offered = Array.isArray(batch) ? batch : [];
     attempts.push({ how: form.how, query: form.query, offered: offered.length });
     for (const record of offered) {
-      const key = JSON.stringify([record && record.productUrl, record && record.title]);
+      let key;
+      try {
+        key = JSON.stringify([record && record.productUrl, record && record.title]);
+      } catch (err) {
+        /* a record that cannot even be keyed is kept rather than
+           dropped: the gates downstream are what decide it, and they
+           are guarded */
+        raw.push(record);
+        continue;
+      }
       if (seenRaw.has(key)) continue;
       seenRaw.add(key);
       raw.push(record);
@@ -2294,18 +2310,37 @@ async function listingsFor(row, limit) {
   const seen = new Set();
 
   for (const record of Array.isArray(raw) ? raw : []) {
-    const url = pick(record, URL_FIELDS);
-    if (!url) { rejected['no-product-url'] = (rejected['no-product-url'] || 0) + 1; continue; }
+    /* a record is whatever the source handed over, which is not
+       necessarily an object that answers questions politely. One that
+       throws on being read is one record dropped, not a run lost. */
+    try {
+      const url = pick(record, URL_FIELDS);
+      if (!url) { rejected['no-product-url'] = (rejected['no-product-url'] || 0) + 1; continue; }
 
-    const fault = source.linkFault(url);
-    if (fault) { rejected[fault] = (rejected[fault] || 0) + 1; continue; }
-    if (seen.has(url)) continue;
-    seen.add(url);
+      const fault = source.linkFault(url);
+      if (fault) { rejected[fault] = (rejected[fault] || 0) + 1; continue; }
+      if (seen.has(url)) continue;
+      seen.add(url);
 
-    products.push({ productUrl: url, title: pick(record, TITLE_FIELDS), brand: pick(record, BRAND_FIELDS) });
+      products.push({ productUrl: url, title: pick(record, TITLE_FIELDS), brand: pick(record, BRAND_FIELDS) });
+    } catch (err) {
+      rejected['unreadable-record'] = (rejected['unreadable-record'] || 0) + 1;
+    }
   }
 
   return { provider: provider.name, products, rejected, attempts, searches: attempts.length };
+}
+
+/* The title stage, which cannot be allowed to throw: a candidate whose
+   title breaks the reader is a candidate that failed, not a run that
+   failed. */
+function readTitleSafely(row, product) {
+  try {
+    return semanticMatch(row, { title: product && product.title });
+  } catch (err) {
+    const said = err && err.message ? String(err.message).split('\n')[0] : String(err);
+    return { ok: false, kind: 'error', why: `its title could not be read (${said})`, pending: [] };
+  }
 }
 
 /* One row, from "a name with nothing behind it" to a verified listing.
@@ -2334,17 +2369,31 @@ async function discoverRow(row, taken, limit, options) {
     };
   }
 
+  /* Every candidate carries a verdict from here on, including one whose
+     title could not be read at all. A tried entry without a `semantic`
+     is a report that throws, and a report that throws takes the run
+     with it — so the shape is guaranteed at the point it is built
+     rather than hoped for at the point it is printed. */
   const tried = found.products.map((product) => ({
-    url: product.productUrl,
-    title: product.title,
-    brand: product.brand,
-    semantic: semanticMatch(row, { title: product.title }),
+    url: product && product.productUrl,
+    title: product && product.title,
+    brand: product && product.brand,
+    semantic: readTitleSafely(row, product),
     why: null
   }));
 
   for (let at = 0; at < tried.length; at += 1) {
     const attempt = tried[at];
-    const product = found.products[at];
+    const product = found.products[at] || {};
+
+    /* One candidate is one candidate. A retailer that serves malformed
+       markup, a page that blocks halfway through, a record in a shape
+       nothing here expected — each is a fact about that listing, not a
+       reason to abandon the other candidates for this row, let alone
+       the twenty rows queued behind it. So the whole of a candidate's
+       handling sits inside this try, and a throw becomes a failed
+       candidate the report can show. */
+    try {
 
     /* stage one, on the title alone: a contradiction ends it here and
        costs no request. A title that merely does not SAY something goes
@@ -2431,11 +2480,18 @@ async function discoverRow(row, taken, limit, options) {
       },
       identity: result.identity
     };
+
+    } catch (err) {
+      const said = err && err.message ? String(err.message).split('\n')[0] : String(err);
+      attempt.failed = said;
+      attempt.why = `this candidate could not be read: ${said}`;
+    }
   }
 
   const searched = found.attempts || [];
   const refused = tried.filter((attempt) => !attempt.semantic.ok).length;
   const unproven = tried.filter((attempt) => attempt.proof && attempt.proof.missing.length).length;
+  const broke = tried.filter((attempt) => attempt.failed).length;
   return {
     id: row.id,
     verdict: 'NO PRODUCT FOUND',
@@ -2443,6 +2499,7 @@ async function discoverRow(row, taken, limit, options) {
       ? `${found.products.length} listing${found.products.length === 1 ? '' : 's'} offered over ${searched.length} quer${searched.length === 1 ? 'y' : 'ies'}, ` +
         `${refused} refused on the title as the wrong garment` +
         `${unproven ? `, ${unproven} read to the page and still unproven` : ''}` +
+        `${broke ? `, ${broke} could not be read at all` : ''}` +
         `, none cleared every gate`
       : `the ${found.provider} source offered no listing that is a product page, over ${searched.length} quer${searched.length === 1 ? 'y' : 'ies'}`,
     attempts: searched,
@@ -2534,7 +2591,25 @@ async function main() {
     for (const row of kept) taken.set(row.imageUrl, row.id);
 
     const found = [];
+    const broken = [];
     for (const row of targets) {
+      /* The same rule one level up. discoverRow already contains a
+         candidate's failure; this contains a row's — including a
+         failure in the REPORTING, which is what a run was lost to once:
+         a line of console.log reading a field off the wrong shape
+         killed twenty-two rows that had nothing wrong with them. */
+      try {
+        await discoverOneRow(row);
+      } catch (err) {
+        const said = err && err.message ? String(err.message).split('\n')[0] : String(err);
+        broken.push({ id: row.id, why: said });
+        console.log(`  ${'ROW FAILED'.padEnd(17)} ${row.id} — ${said}`);
+        console.log(`  ${''.padEnd(17)} the other rows are unaffected and the run continues`);
+        console.log('');
+      }
+    }
+
+    async function discoverOneRow(row) {
       const result = await discoverRow(row, taken, limit);
       console.log(`  ${result.verdict.padEnd(17)} ${row.id} — wants "${row.name}"`);
 
@@ -2549,11 +2624,16 @@ async function main() {
       /* every candidate, with the semantic gate's verdict on it, because
          a gate whose reasoning is invisible cannot be corrected */
       for (const attempt of result.tried || []) {
-        const stamp = attempt.semantic.ok
-          ? `title  PASSED${attempt.semantic.kind === 'pending' ? ' (pending on the page)' : ''}`
-          : `title  REFUSED (${attempt.semantic.kind === 'unreadable' ? 'unreadable' : 'wrong garment'})`;
+        const verdict = attempt.semantic || { ok: false, kind: 'error', why: 'no verdict was recorded for this candidate' };
+        const stamp = verdict.ok
+          ? `title  PASSED${verdict.kind === 'pending' ? ' (pending on the page)' : ''}`
+          : `title  REFUSED (${verdict.kind === 'unreadable' ? 'unreadable' : verdict.kind === 'error' ? 'could not be read' : 'wrong garment'})`;
         console.log(`  ${''.padEnd(17)}   "${String(attempt.title || '(untitled)').slice(0, 64)}"`);
-        console.log(`  ${''.padEnd(17)}     ${stamp} — ${attempt.semantic.why}`);
+        console.log(`  ${''.padEnd(17)}     ${stamp} — ${verdict.why}`);
+        if (attempt.failed) {
+          console.log(`  ${''.padEnd(17)}     CANDIDATE FAILED — ${attempt.failed}`);
+          console.log(`  ${''.padEnd(17)}     the remaining candidates for this row were still tried`);
+        }
         if (attempt.onPage) {
           console.log(`  ${''.padEnd(17)}     page name — ${attempt.onPage.ok ? 'PASSED' : 'REFUSED'}: ${attempt.onPage.why}`);
         }
@@ -2561,11 +2641,14 @@ async function main() {
           for (const one of attempt.proof.proved) {
             console.log(`  ${''.padEnd(17)}     page   PROVED ${nameOfPending(one.item)} — ${one.where}: "${one.quote}"`);
           }
+          /* proved entries are {item, where, quote}; missing entries are
+             the pending items themselves. Reading .item off one of
+             those is what aborted a whole run mid-report. */
           for (const one of attempt.proof.missing) {
-            console.log(`  ${''.padEnd(17)}     page   UNPROVEN ${nameOfPending(one.item)} — nothing on the page says it`);
+            console.log(`  ${''.padEnd(17)}     page   UNPROVEN ${nameOfPending(one)} — nothing on the page says it`);
           }
         }
-        if (attempt.semantic.ok) {
+        if (verdict.ok) {
           console.log(`  ${''.padEnd(17)}     ${short(attempt.url, 70)}`);
           console.log(`  ${''.padEnd(17)}     ${attempt.verified ? 'photo verified' : 'no photo'} — ${attempt.why}`);
         }
@@ -2591,6 +2674,10 @@ async function main() {
     }
 
     console.log(`  ${found.length} of ${targets.length} row${targets.length === 1 ? '' : 's'} found a listing that cleared every gate.`);
+    if (broken.length) {
+      console.log(`  ${broken.length} row${broken.length === 1 ? '' : 's'} could not be read at all, and did not stop the rest:`);
+      for (const one of broken) console.log(`     ${one.id} — ${one.why}`);
+    }
 
     if (!writing) {
       console.log(found.length
