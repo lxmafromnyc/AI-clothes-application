@@ -29,6 +29,15 @@
    artwork. That is the honest outcome, and it is never overwritten with
    something that merely looks plausible.
 
+   --discover fills three fields and no others: productUrl, imageUrl and
+   the imageEvidence that ties the second to the first. A sample row's
+   id, name, brand, price, category, style, occasion, fit, colours and
+   sizes are the demo's own and are never renamed after whichever shop
+   happened to stock a match. The evidence is not optional — a photo
+   whose URL does not carry the listing's code cannot be re-proved
+   without it, and a row that cannot be re-proved is one --coverage
+   reports as unaccounted.
+
    --discover adds one more gate, ahead of those four, because those
    four cannot ask it: whether the listing is the GARMENT the row means.
    A photo can be provably this listing's own and still be the wrong
@@ -36,8 +45,10 @@
    Trouser". So a candidate is read as a garment — type, family,
    audience, material, and the descriptors that exclude one another —
    and refused before its page is ever fetched when the reading
-   contradicts the row's. Brand is deliberately not compared: the sample
-   brands were invented.
+   contradicts the row's, or when it never establishes a word the row's
+   own name states: a jogger that never claims to be fleece does not
+   answer a Fleece Sweatpant. Brand is deliberately not compared: the
+   sample brands were invented.
 
    Two ways in, in this order. Plain HTTP first, because it is cheap and
    most pages publish everything needed in their served markup. When that
@@ -112,6 +123,7 @@ const OPTIONS = {
   '--refresh': 'boolean',
   '--no-browser': 'boolean',
   '--discover': 'boolean',
+  '--allow-unproven': 'boolean',
   '--coverage': 'boolean',
   '--only': 'value',
   '--site': 'value',
@@ -171,6 +183,12 @@ const USAGE = `
                          never touched. Needs
                          PRODUCT_SOURCE and its key; --limit <n> sets how
                          many listings to try per row (default 8).
+
+    --allow-unproven     let a listing through that contradicts nothing
+                         but never establishes a word the row's own name
+                         states — fleece, midi, tailored, tencel. Off by
+                         default: a listing that cannot be shown to be
+                         the garment is not the garment.
 
     --coverage           how many rows carry a verified photo, and
                          whether each still accounts for itself. Reads
@@ -1148,33 +1166,94 @@ async function inspectCandidate(productUrl, forId) {
   console.log(`    productUrl: ${productUrl}`);
   console.log(`    imageUrl:   ${result.url}`);
   console.log(`\n  Every field above came off that page. Nothing was typed in.\n`);
-  return { productUrl, imageUrl: result.url, name: facts.name, brand: facts.brand };
+  return { productUrl, imageUrl: result.url, name: facts.name, brand: facts.brand, identity: result.identity };
+}
+
+/* One string field of one row, replaced in place. The row is found by
+   its id and the field by the first match after it, so nothing outside
+   the row it names can move. */
+function setField(source, id, field, value) {
+  if (value == null) return source;
+  const idAt = source.indexOf(`id: '${id}'`);
+  if (idAt === -1) throw new Error(`could not find the row for ${id}`);
+  const re = new RegExp(`(\\n\\s*${field}:\\s*)(null|'(?:[^'\\\\]|\\\\.)*'|"(?:[^"\\\\]|\\\\.)*")`);
+  const rest = source.slice(idAt);
+  const m = rest.match(re);
+  if (!m) throw new Error(`could not find ${field} for ${id}`);
+  if (/[\r\n]/.test(value)) throw new Error(`refusing to write a multi-line ${field} for ${id}`);
+  const quoted = value.includes("'")
+    ? `"${value.replace(/"/g, '\\"')}"`
+    : `'${value}'`;
+  const at = idAt + m.index;
+  return source.slice(0, at) + m[1] + quoted + source.slice(at + m[0].length);
+}
+
+/* the indent the row is written at, read off its own imageUrl line, so
+   an evidence note lands in the file's own shape */
+function indentOf(source, id) {
+  const idAt = source.indexOf(`id: '${id}'`);
+  if (idAt === -1) throw new Error(`could not find the row for ${id}`);
+  const m = source.slice(idAt).match(/(\n\s*)imageUrl:/);
+  return m ? m[1].replace(/\n/, '') : '    ';
+}
+
+/* ---------- what discovery is allowed to write ----------
+
+   A sample row's identity is the demo's own. "Tailored Wool Coat" by
+   Halden is what the catalogue means by that row, and discovery's job is
+   to find a real garment that REPRESENTS it — not to rename the row
+   after whatever shop happened to stock one. A row renamed to "MANGO
+   Double-breasted wool coat" is no longer the row the demo was built
+   around, and its price, category, style, occasion and fit now describe
+   a product nobody chose.
+
+   So discovery fills exactly three fields and touches nothing else:
+   productUrl, imageUrl, and the imageEvidence that ties the second to
+   the first. id, name, brand, price, category, style, occasion, fit,
+   colors and sizes are left exactly as they were.
+
+   The evidence is not optional. A photo whose URL does not carry the
+   listing's own code cannot be re-proved later without it, and a row
+   that cannot be re-proved is one --coverage reports as unaccounted.
+   Whatever the image gate established is what gets recorded, so a
+   written row accounts for itself the moment it is written. */
+function linkRow(source, id, proposal) {
+  if (!proposal || !proposal.productUrl || !proposal.imageUrl) {
+    throw new Error(`refusing to link ${id} without both a listing and a photo`);
+  }
+  const indent = indentOf(source, id);
+  let out = setField(source, id, 'productUrl', proposal.productUrl);
+  out = setField(out, id, 'imageUrl', proposal.imageUrl);
+
+  /* the gate's own finding, recorded verbatim. A URL that carries the
+     code speaks for itself and is given no note; anything else records
+     how it was tied, and a tie the gate could not make is a row this
+     should never have been called for. */
+  const note = evidenceNote(proposal.identity);
+  if (!note && !identityEvidence({ url: proposal.imageUrl, from: 'catalogue' }, proposal.productUrl).ok) {
+    throw new Error(
+      `refusing to write ${id}: its photo does not carry the listing's code and the gate recorded no evidence to stand in for it`
+    );
+  }
+  return setEvidence(out, id, note, indent);
 }
 
 /* Swaps a row's product for a verified candidate: the listing, the
    photo, the name and the brand move together, because half a swap is a
-   row that points at one product and pictures another. */
+   row that points at one product and pictures another. This is the
+   deliberate, hand-driven replacement (--candidate --as); discovery uses
+   linkRow above, which leaves a row's identity alone. */
 function replaceRow(source, id, next) {
+  const indent = indentOf(source, id);
   let out = source;
-  const set = (field, value) => {
-    if (value == null) return;
-    const idAt = out.indexOf(`id: '${id}'`);
-    if (idAt === -1) throw new Error(`could not find the row for ${id}`);
-    const re = new RegExp(`(\\n\\s*${field}:\\s*)(null|'(?:[^'\\\\]|\\\\.)*'|"(?:[^"\\\\]|\\\\.)*")`);
-    const rest = out.slice(idAt);
-    const m = rest.match(re);
-    if (!m) throw new Error(`could not find ${field} for ${id}`);
-    const quoted = value.includes("'")
-      ? `"${value.replace(/"/g, '\\"')}"`
-      : `'${value}'`;
-    if (/[\r\n]/.test(value)) throw new Error(`refusing to write a multi-line ${field} for ${id}`);
-    const at = idAt + m.index;
-    out = out.slice(0, at) + m[1] + quoted + out.slice(at + m[0].length);
-  };
-  set('name', next.name);
-  set('brand', next.brand);
-  set('productUrl', next.productUrl);
-  set('imageUrl', next.imageUrl);
+  for (const field of ['name', 'brand', 'productUrl', 'imageUrl']) {
+    out = setField(out, id, field, next[field]);
+  }
+  /* the same evidence rule: a swapped row has to account for its new
+     photo too, or --coverage will call it unaccounted */
+  if (next.productUrl && next.imageUrl) {
+    out = setEvidence(out, id, evidenceNote(next.identity), indent);
+  }
   return out;
 }
 
@@ -1391,6 +1470,52 @@ const MATERIALS = [
    against the other */
 const FIBRES_THAT_BLEND = [['cotton', 'linen']];
 
+/* What a fibre also counts as. Merino IS wool, so a merino listing
+   establishes a row that asked for wool; wool is not merino, so it does
+   not work the other way. Narrower establishes broader, never the
+   reverse — which is why "cotton shirt" does not answer a poplin row. */
+const FIBRE_WITHIN = {
+  merino: ['wool'], cashmere: ['wool'], lambswool: ['wool'], shetland: ['wool'],
+  alpaca: ['wool'], mohair: ['wool'], tweed: ['wool'],
+  denim: ['cotton'], poplin: ['cotton'], corduroy: ['cotton'], twill: ['cotton'],
+  canvas: ['cotton'], chambray: ['cotton'], terry: ['cotton'], seersucker: ['cotton'],
+  flannel: ['cotton'], jersey: ['cotton'], 'french terry': ['cotton', 'terry'],
+  satin: ['silk'], charmeuse: ['silk'], chiffon: ['silk'],
+  suede: ['leather'], shearling: ['leather'], nubuck: ['leather'],
+  ramie: ['linen'], sherpa: ['fleece'],
+  /* the same fibre under two names */
+  tencel: ['lyocell'], lyocell: ['tencel'],
+  modal: ['viscose'], rayon: ['viscose'],
+  spandex: ['elastane'], elastane: ['spandex']
+};
+
+/* ---- what has to be PROVED, not merely left uncontradicted ----
+
+   Silence is not contradiction — that asymmetry is what lets a blazer
+   listing answer a blazer row without repeating every word. But it also
+   let "Jumbie Art Earth Unisex Joggers" answer a FLEECE sweatpant and
+   "Mid Length Pleated Skirt" answer a MIDI one: nothing in either
+   contradicted the row, and nothing in either established what the row
+   actually asked for.
+
+   So a descriptor the row's own name STATES has to be established by the
+   listing. The row's name is its specification, and a word in it is a
+   requirement rather than a hope. What is exempt is what titles
+   routinely omit without it meaning anything: sleeve, neckline and rise
+   are almost never in a product title, so demanding them would refuse
+   correct answers rather than wrong ones.
+
+   The listing may say it in its own words — "slim" establishes a
+   tailored row, "relaxed" a wide one, "merino" a wool one — because the
+   check is on what the words MEAN, not on matching strings. */
+const DEFINING_GROUPS = new Set(['length', 'cut', 'silhouette', 'closure', 'pattern', 'texture', 'weight']);
+
+/* inside the soft detail group, the words that name construction rather
+   than marketing or a collar. "Cargo" is a pocket arrangement;
+   "performance" is an adjective a shop chose, and "camp" is a collar a
+   listing is as likely to call a camp collar. */
+const DEFINING_DETAILS = new Set(['cargo', 'track', 'pocket']);
+
 /* who the garment is for. A kids' listing answering an adult-sized row
    is the one place silence on the row's side is not neutral: the sizes
    say adult even when the name does not. */
@@ -1507,7 +1632,19 @@ function readGarment(text, extra) {
     said.get(span.hit.group).add(tokens.slice(span.start, span.end).join(' '));
   }
 
-  const fibres = new Set(materialSpans.map((span) => span.hit.fibre));
+  /* A head noun that is also a fabric word is naming the GARMENT, not
+     its cloth: "Colour Block Knit" is a knit, and demanding that a
+     listing repeat the word "knit" would refuse every sweater. In
+     "Ribbed Knit Skirt" the same word sits beside the head and does
+     describe the cloth, so it is kept. */
+  const fabricSpans = head && via === 'name'
+    ? materialSpans.filter((span) => !(span.start === head.start && span.end === head.end))
+    : materialSpans;
+
+  const fibres = new Set(fabricSpans.map((span) => span.hit.fibre));
+  /* the fabric words as the name actually said them, which is what the
+     positive-evidence check compares */
+  const materialTerms = new Set(fabricSpans.map((span) => tokens.slice(span.start, span.end).join(' ')));
 
   /* what the row asks for in its own fields rather than in its name.
      These are a permissive set — a row that lists Regular AND Slim is
@@ -1537,6 +1674,7 @@ function readGarment(text, extra) {
     descriptors,
     said,
     fibres,
+    materialTerms,
     hints,
     audience,
     audienceFrom,
@@ -1562,7 +1700,8 @@ function listOf(set) {
 /* `row` is a catalogue row; `listing` is what the source offered, or the
    page's own name once it has been read. Returns a decision and the
    sentence explaining it, which is printed either way. */
-function semanticMatch(row, listing) {
+function semanticMatch(row, listing, options) {
+  const allowUnproven = Boolean(options && options.allowUnproven);
   const title = String((listing && listing.title) || '').trim();
   const hints = [];
   for (const field of ['fit', 'style']) {
@@ -1575,12 +1714,16 @@ function semanticMatch(row, listing) {
     hints
   });
   const offered = readGarment(title, {});
-  const refuse = (why) => ({ ok: false, why, wanted, offered });
+  /* 'contradiction' is the listing saying something else; 'unproven' is
+     the listing never saying what the row asked for. Both refuse, and
+     the difference is printed, because they call for different fixes:
+     one means look elsewhere, the other means look harder. */
+  const refuse = (why, kind) => ({ ok: false, kind: kind || 'contradiction', why, wanted, offered });
   const agreed = [];
 
-  if (!title) return refuse('the listing carries no title to read, so what it sells cannot be checked');
-  if (!wanted.type) return refuse(`the row's own name — "${wanted.text}" — names no garment this can read, so nothing can be checked against it`);
-  if (!offered.type) return refuse(`"${title}" names no garment this can read`);
+  if (!title) return refuse('the listing carries no title to read, so what it sells cannot be checked', 'unreadable');
+  if (!wanted.type) return refuse(`the row's own name — "${wanted.text}" — names no garment this can read, so nothing can be checked against it`, 'unreadable');
+  if (!offered.type) return refuse(`"${title}" names no garment this can read`, 'unreadable');
 
   /* family, then type. A different family is a different kind of thing;
      inside one family, a specific type is a claim that has to agree. */
@@ -1627,18 +1770,50 @@ function semanticMatch(row, listing) {
   /* descriptors: only contradiction refuses. Silence on the listing's
      side is silence, not disagreement. */
   const unstated = [];
+  const unproven = [];
   for (const [group, values] of wanted.descriptors) {
     const theirs = offered.descriptors.get(group);
     const soft = SOFT_GROUPS.has(group);
     const ours = wanted.said.get(group) || values;
-    if (!theirs || !theirs.size) {
-      if (!soft) unstated.push(`${listOf(ours)} unstated`);
+    const shared = theirs ? [...values].filter((value) => theirs.has(value)) : [];
+
+    if (shared.length) {
+      /* the check is on what the words mean, so say both when they
+         differ: "tailored — the listing says slim" is honest where
+         "tailored on both" would not be */
+      const ourWords = listOf(wanted.said.get(group) || new Set(shared));
+      const theirWords = listOf(offered.said.get(group) || new Set(shared));
+      agreed.push(ourWords === theirWords ? `${ourWords} on both` : `${ourWords} — the listing says ${theirWords}`);
       continue;
     }
-    const shared = [...values].filter((value) => theirs.has(value));
-    if (shared.length) { agreed.push(`${shared.join('/')} on both`); continue; }
-    if (soft) continue;
-    return refuse(`the row is ${listOf(ours)} and "${title}" is ${listOf(offered.said.get(group) || theirs)}`);
+    if (theirs && theirs.size && !soft) {
+      return refuse(`the row is ${listOf(ours)} and "${title}" is ${listOf(offered.said.get(group) || theirs)}`);
+    }
+    /* nothing shared and nothing contradicting: either the row's word
+       has to be established, or its absence is only worth a note */
+    if (mustBeEstablished(group, values)) unproven.push(listOf(ours));
+    else if (!soft) unstated.push(`${listOf(ours)} unstated`);
+  }
+
+  /* the fabric the row names has to be named back, in the listing's own
+     words or a narrower one: fleece by fleece or sherpa, wool by wool or
+     merino. This is what refuses a jogger that never claims to be fleece
+     and a wrap top that never claims to be tencel. */
+  for (const term of wanted.materialTerms) {
+    if (![...offered.materialTerms].some((theirs) => theirs === term || (FIBRE_WITHIN[theirs] || []).includes(term))) {
+      unproven.push(term);
+    } else if (offered.materialTerms.has(term)) {
+      agreed.push(`${term} on both`);
+    } else {
+      agreed.push(`${[...offered.materialTerms].find((theirs) => (FIBRE_WITHIN[theirs] || []).includes(term))} is ${term}`);
+    }
+  }
+
+  if (unproven.length && !allowUnproven) {
+    return refuse(
+      `"${title}" never establishes ${unproven.join(', ')} — the row's own name does, and nothing in the listing says it`,
+      'unproven'
+    );
   }
 
   /* the row's own fit and style fields, reported and never decisive:
@@ -1656,11 +1831,18 @@ function semanticMatch(row, listing) {
   /* descriptors the listing names that the row's group does not mention
      are extra precision, not disagreement, and are not reported */
   const why = [
-    agreed.join('; '),
+    [...new Set(agreed)].join('; '),
     unstated.length ? `nothing contradicts (${unstated.join(', ')})` : 'nothing contradicts',
+    ...(unproven.length ? [`UNPROVEN, allowed by --allow-unproven: ${unproven.join(', ')}`] : []),
     ...cautions.map((note) => `worth a look: ${note}`)
   ].join('; ');
-  return { ok: true, why, wanted, offered, cautions };
+  return { ok: true, kind: unproven.length ? 'unproven-allowed' : 'match', why, wanted, offered, cautions, unproven };
+}
+
+/* a descriptor group whose words the listing has to say back */
+function mustBeEstablished(group, values) {
+  if (DEFINING_GROUPS.has(group)) return true;
+  return [...values].some((value) => DEFINING_DETAILS.has(value));
 }
 
 function exclusiveFibre(fibre) {
@@ -1785,7 +1967,7 @@ async function listingsFor(row, limit) {
    photo. Every candidate keeps its decision either way, so the report
    can say why each one passed or failed rather than only naming the
    winner. */
-async function discoverRow(row, taken, limit) {
+async function discoverRow(row, taken, limit, options) {
   const found = await listingsFor(row, limit);
   if (found.failed) return { id: row.id, verdict: 'NO SOURCE', why: found.failed, tried: [] };
 
@@ -1793,7 +1975,7 @@ async function discoverRow(row, taken, limit) {
     url: product.productUrl,
     title: product.title,
     brand: product.brand,
-    semantic: semanticMatch(row, { title: product.title }),
+    semantic: semanticMatch(row, { title: product.title }, options),
     why: null
   }));
 
@@ -1825,7 +2007,7 @@ async function discoverRow(row, taken, limit) {
     const facts = result.facts || {};
     let onPage = null;
     if (facts.name && facts.name.trim() && facts.name.trim() !== String(product.title || '').trim()) {
-      onPage = semanticMatch(row, { title: facts.name.trim() });
+      onPage = semanticMatch(row, { title: facts.name.trim() }, options);
       attempt.onPage = onPage;
       if (!onPage.ok) {
         attempt.why = `its own page calls it "${facts.name.trim()}" — ${onPage.why}`;
@@ -1850,20 +2032,29 @@ async function discoverRow(row, taken, limit) {
       proposal: {
         productUrl: product.productUrl,
         imageUrl: result.url,
-        name: facts.name || product.title || null,
-        brand: facts.brand || product.brand || null
+        /* what the gate established, carried through to the file so the
+           written row accounts for its own photo */
+        identity: result.identity,
+        /* named listingName/listingBrand and NOT name/brand on purpose:
+           they are what the shop calls it, reported so a run can be read,
+           and the row keeps its own name and brand */
+        listingName: facts.name || product.title || null,
+        listingBrand: facts.brand || product.brand || null
       },
       identity: result.identity
     };
   }
 
   const refused = tried.filter((attempt) => !attempt.semantic.ok).length;
+  const unproven = tried.filter((attempt) => attempt.semantic.kind === 'unproven').length;
   return {
     id: row.id,
     verdict: 'NO PRODUCT FOUND',
     why: found.products.length
       ? `${found.products.length} listing${found.products.length === 1 ? '' : 's'} offered, ` +
-        `${refused} refused as the wrong garment, none cleared every gate`
+        `${refused} refused as the wrong garment` +
+        `${unproven ? ` (${unproven} of them unproven rather than contradicted)` : ''}` +
+        `, none cleared every gate`
       : `the ${found.provider} source offered no listing that is a product page`,
     tried
   };
@@ -1941,7 +2132,12 @@ async function main() {
     console.log(`\nLooking for a real listing for ${targets.length} row${targets.length === 1 ? ' that carries' : 's that carry'} no photo.`);
     console.log(`${kept.length} row${kept.length === 1 ? '' : 's'} already carry one and are not touched.`);
     console.log(`Up to ${limit} listings are offered per row. Each is read as a garment first`);
-    console.log('and only a listing that is the garment the row means has its page fetched.\n');
+    console.log('and only a listing that is the garment the row means has its page fetched.');
+    console.log(has('--allow-unproven')
+      ? 'A word the row states but the listing never does is ALLOWED (--allow-unproven).\n'
+      : 'A word the row states that the listing never establishes is refused as unproven.\n');
+    console.log('A written row keeps its own id, name, brand, price and metadata.');
+    console.log('Discovery fills productUrl, imageUrl and imageEvidence, and nothing else.\n');
 
     /* every photo already in use, so no two rows end up wearing the
        same picture */
@@ -1950,13 +2146,15 @@ async function main() {
 
     const found = [];
     for (const row of targets) {
-      const result = await discoverRow(row, taken, limit);
+      const result = await discoverRow(row, taken, limit, { allowUnproven: has('--allow-unproven') });
       console.log(`  ${result.verdict.padEnd(17)} ${row.id} — wants "${row.name}"`);
 
       /* every candidate, with the semantic gate's verdict on it, because
          a gate whose reasoning is invisible cannot be corrected */
       for (const attempt of result.tried || []) {
-        const stamp = attempt.semantic.ok ? 'semantic PASSED ' : 'semantic REFUSED';
+        const stamp = attempt.semantic.ok
+          ? `semantic PASSED ${attempt.semantic.kind === 'unproven-allowed' ? '(unproven)' : ''}`.trim()
+          : `semantic REFUSED (${attempt.semantic.kind === 'unproven' ? 'unproven' : attempt.semantic.kind === 'unreadable' ? 'unreadable' : 'wrong garment'})`;
         console.log(`  ${''.padEnd(17)}   "${String(attempt.title || '(untitled)').slice(0, 64)}"`);
         console.log(`  ${''.padEnd(17)}     ${stamp} — ${attempt.semantic.why}`);
         if (attempt.onPage) {
@@ -1971,9 +2169,12 @@ async function main() {
       if (result.proposal) {
         taken.set(result.proposal.imageUrl, row.id);
         found.push(result);
-        console.log(`  ${''.padEnd(17)} ${result.proposal.brand || '(no brand named)'} — ${String(result.proposal.name || '').slice(0, 52)}`);
-        console.log(`  ${''.padEnd(17)} ${short(result.proposal.productUrl)}`);
-        console.log(`  ${''.padEnd(17)} ${short(result.proposal.imageUrl)}`);
+        const note = evidenceNote(result.proposal.identity);
+        console.log(`  ${''.padEnd(17)} the shop calls it ${result.proposal.listingBrand || '(no brand named)'} — ${String(result.proposal.listingName || '').slice(0, 52)}`);
+        console.log(`  ${''.padEnd(17)} the row keeps its own: ${row.brand} — ${row.name}`);
+        console.log(`  ${''.padEnd(17)} productUrl    ${short(result.proposal.productUrl)}`);
+        console.log(`  ${''.padEnd(17)} imageUrl      ${short(result.proposal.imageUrl)}`);
+        console.log(`  ${''.padEnd(17)} imageEvidence ${note || '(none needed — the URL carries the listing\'s code)'}`);
         console.log(`  ${''.padEnd(17)} ${result.why}`);
       } else {
         console.log(`  ${''.padEnd(17)} ${result.why}`);
@@ -1995,7 +2196,7 @@ async function main() {
     }
 
     let next = source;
-    for (const result of found) next = replaceRow(next, result.id, result.proposal);
+    for (const result of found) next = linkRow(next, result.id, result.proposal);
     fs.writeFileSync(CATALOG, next);
     console.log(`  Wrote ${found.length} row${found.length === 1 ? '' : 's'} into assets/catalog.js.\n`);
     printCoverage(coverage(readCatalog().rows));
@@ -2128,7 +2329,7 @@ if (require.main === module) {
     candidatesFrom, candidatesFromRendered, soundness, writeInto, verifyImage,
     largestFromSrcset, readCatalog, identifiersFrom, identityEvidence, samePage,
     gatherInPage, renderPage, resolveRow, firstVerifiable,
-    replaceRow, factsFromHtml, factsFromRendered, inspectCandidate,
+    replaceRow, linkRow, setField, indentOf, factsFromHtml, factsFromRendered, inspectCandidate,
     catalogRowIdentity, evidenceNote,
     parseArgs, OPTIONS, USAGE, intentFor, listingsFor, discoverRow, coverage,
     /* the semantic gate: what the listing SELLS, asked before any page

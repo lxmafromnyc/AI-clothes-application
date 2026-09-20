@@ -1715,8 +1715,19 @@ after one the page does not touch the video again.
   `PRODUCT_SOURCE` and its key) is asked for real listings matching the row's
   name and category, its link rule refuses aggregators, search pages, category
   pages and redirectors, and every listing that survives is put through the same
-  four gates as any other row. The first that clears them all becomes the row —
-  listing, photo, name and brand together, every field off that page.
+  four gates as any other row.
+
+  The first that clears them all **fills three fields of the row and no others**:
+  `productUrl`, `imageUrl`, and the `imageEvidence` that ties the second to the
+  first. A sample row's `id`, `name`, `brand`, `price`, `category`, `style`,
+  `occasion`, `fit`, `colors` and `sizes` are the demo's own — "Tailored Wool
+  Coat" by Halden is what that row means, and a row renamed after whichever shop
+  stocked a match is no longer the row the demo was built around, with a price
+  and a category now describing a product nobody chose. The evidence is not
+  optional: a photo whose URL does not carry its listing's code cannot be
+  re-proved without it, so a write that has neither is refused rather than
+  shipped as a row `--coverage` will call unaccounted. (`--candidate --as` is the
+  other mode, a deliberate hand-driven swap where the name and brand *do* move.)
 
   Ahead of those four sits the gate they cannot be: whether the listing is the
   **garment the row means**. A photo can be provably this listing's own and
@@ -1725,10 +1736,17 @@ after one the page does not touch the video again.
   still the wrong trousers. So each candidate's title is read as a garment
   before its page is ever fetched — type from the head noun (a "ribbed knit
   skirt" is a skirt, not a knit), family, audience, fibre, and the descriptors
-  that exclude one another — and compared with the row's own reading. Only
-  contradiction refuses: a blazer listing that never says "double breasted"
-  still answers a double-breasted blazer, because silence is not disagreement,
-  while a mini answers no midi and a girls' skirt answers no adult-sized row.
+  that exclude one another — and compared with the row's own reading. A
+  contradiction refuses — a mini answers no midi, a girls' skirt answers no
+  adult-sized row — and so does silence about a word the row's own name states.
+  The row's name is its specification: a listing that never establishes
+  `fleece`, `midi`, `tailored` or `tencel` is refused as **unproven**, which is
+  a different finding from the wrong garment and is reported as one. The listing
+  may say it in its own words, because the check is on meaning rather than
+  spelling: "slim" establishes a tailored row and "merino" a wool one, while
+  "cotton" does not establish a poplin one. Sleeve, neckline and rise are
+  exempt, being words a title omits without it meaning anything, and
+  `--allow-unproven` waives the requirement for a run.
   Brand is deliberately not compared — Kinfield, Northfold and Rue Nine were
   invented for the demo, and demanding the brand back would refuse every
   correct answer there is. Every candidate's verdict is printed with its

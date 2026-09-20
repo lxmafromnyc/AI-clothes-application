@@ -1044,7 +1044,7 @@ function walledRetailer() {
     assert.strictEqual(report.missing.length, rows.length - report.withPhoto);
   });
 
-  await testAsync('a found listing becomes the row, every field off its page', async () => {
+  await testAsync('a found listing fills the row\u2019s link and photo, and nothing else', async () => {
     const retailer = await simpleRetailer();
     const port = retailer.address().port;
 
@@ -1064,9 +1064,16 @@ function walledRetailer() {
     assert.strictEqual(result.verdict, 'VERIFIED', result.why);
     assert.strictEqual(result.proposal.productUrl, listing(port, '553311'));
     assert.match(result.proposal.imageUrl, /553311-hero\.jpg$/);
-    assert.strictEqual(result.proposal.name, 'Boxy Cotton Tee', 'the name came off the page');
-    assert.strictEqual(result.proposal.brand, 'Northfold', 'and so did the brand');
     assert.match(result.why, /553311/, 'and the photo is tied to that listing by its code');
+
+    /* what the shop calls it is REPORTED, under names that cannot be
+       mistaken for fields to write. A proposal carrying `name` or
+       `brand` is one a writer could put into the row. */
+    assert.strictEqual(result.proposal.listingName, 'Boxy Cotton Tee');
+    assert.strictEqual(result.proposal.listingBrand, 'Northfold');
+    assert.strictEqual(result.proposal.name, undefined, 'the proposal offers no name to write');
+    assert.strictEqual(result.proposal.brand, undefined, 'nor a brand');
+    assert.ok(result.proposal.identity, 'and it carries what the image gate established');
 
     retailer.close();
   });
@@ -1171,11 +1178,20 @@ function walledRetailer() {
     assert.strictEqual(judge('sample-kinfield-fleece-sweatpant', 'Old Navy Straight Leg Chino Pants').ok, false,
       'a chino is a trouser however the title ends');
 
-    /* and the sweatpants a sweatpant row is actually for */
-    for (const title of ['Nike Sportswear Club Fleece Joggers', 'Champion Powerblend Fleece Sweatpants', 'Uniqlo Sweat Pants']) {
+    /* and the sweatpants a sweatpant row is actually for — which have
+       to be fleece ones, because the row's own name says fleece */
+    for (const title of ['Nike Sportswear Club Fleece Joggers', 'Champion Powerblend Fleece Sweatpants', 'Uniqlo Sherpa Fleece Sweat Pants']) {
       const verdict = judge('sample-kinfield-fleece-sweatpant', title);
       assert.strictEqual(verdict.ok, true, `${title}: ${verdict.why}`);
     }
+
+    /* the one the live run let through: a jogger is a sweatpant, and
+       nothing in it contradicts the row — but nothing in it establishes
+       fleece either, and the row's own name does */
+    const jumbie = judge('sample-kinfield-fleece-sweatpant', 'Jumbie Art Earth Unisex Joggers');
+    assert.strictEqual(jumbie.ok, false, 'uncontradicted is not the same as established');
+    assert.strictEqual(jumbie.kind, 'unproven', 'and it is unproven, not the wrong garment');
+    assert.match(jumbie.why, /never establishes fleece/);
   });
 
   test('a pleated midi skirt is answered by a pleated skirt, and by nothing shorter', () => {
@@ -1183,10 +1199,25 @@ function walledRetailer() {
     assert.strictEqual(plain.ok, true, plain.why);
     assert.match(plain.why, /pleated on both/);
 
-    /* a listing that says nothing about length is silent, not wrong */
-    const quiet = judge('sample-kinfield-pleated-midi-skirt', 'Uniqlo Pleated Skirt');
-    assert.strictEqual(quiet.ok, true, quiet.why);
-    assert.match(quiet.why, /midi unstated/);
+    /* a listing that says nothing about length does not establish midi,
+       and the row's own name does. This is the live run's "Mid Length
+       Pleated Skirt": nothing contradicted the row, nothing proved it. */
+    for (const title of ['Uniqlo Pleated Skirt', 'French Toast Adjustable Waist Mid Length Pleated Skirt']) {
+      const quiet = judge('sample-kinfield-pleated-midi-skirt', title);
+      assert.strictEqual(quiet.ok, false, `${title}: ${quiet.why}`);
+      assert.strictEqual(quiet.kind, 'unproven');
+      assert.match(quiet.why, /never establishes midi/);
+    }
+
+    /* and --allow-unproven is the only thing that lets it through, so
+       the default cannot be reached by accident */
+    const waived = extractor.semanticMatch(
+      catalogueRow('sample-kinfield-pleated-midi-skirt'),
+      { title: 'Uniqlo Pleated Skirt' },
+      { allowUnproven: true }
+    );
+    assert.strictEqual(waived.ok, true, waived.why);
+    assert.match(waived.why, /UNPROVEN, allowed by --allow-unproven: midi/);
 
     /* one that says a different length is wrong */
     const mini = judge('sample-kinfield-pleated-midi-skirt', 'Zara Pleated Mini Skirt');
@@ -1202,35 +1233,58 @@ function walledRetailer() {
     assert.match(kids.why, /sizes/, 'and it says what made the row adult');
   });
 
-  test('a double breasted blazer is answered by a blazer that never says double breasted', () => {
-    const verdict = judge('sample-halden-double-breasted-blazer', 'CINQ A SEPT Crepe Khloe Blazer');
-    assert.strictEqual(verdict.ok, true, verdict.why);
-    assert.match(verdict.why, /blazer matches blazer/);
-    assert.match(verdict.why, /double breasted unstated/, 'what it did not say is reported, not held against it');
+  test('a double breasted blazer is answered only by a blazer that says so', () => {
+    /* the right answer says it */
+    const named = judge('sample-halden-double-breasted-blazer', 'Reiss Double Breasted Crepe Blazer');
+    assert.strictEqual(named.ok, true, named.why);
+    assert.match(named.why, /blazer matches blazer/);
+    assert.match(named.why, /double breasted on both/);
 
-    /* crepe is a weave that turns up in silk and in polyester alike, so
-       it contradicts nothing the row said */
-    assert.doesNotMatch(verdict.why, /crepe/);
+    /* the live run's candidate is the right GARMENT and an unproven
+       match: a blazer, nothing contradicting, and no evidence that it is
+       the double-breasted one the row asked for */
+    const cinq = judge('sample-halden-double-breasted-blazer', 'CINQ A SEPT Crepe Khloe Blazer');
+    assert.strictEqual(cinq.ok, false, 'silence about the defining word is not proof of it');
+    assert.strictEqual(cinq.kind, 'unproven');
+    assert.match(cinq.why, /never establishes double breasted/);
 
-    /* a blazer that says the opposite is refused */
+    /* and one that says the opposite is refused as the wrong garment,
+       which is a different finding and says so */
     const single = judge('sample-halden-double-breasted-blazer', 'Reiss Single Breasted Wool Blazer');
     assert.strictEqual(single.ok, false);
+    assert.strictEqual(single.kind, 'contradiction');
     assert.match(single.why, /single breasted/);
   });
 
-  test('a tailored wool coat is answered by a wool coat, and not by a cotton one', () => {
+  test('a tailored wool coat is answered by a tailored wool coat', () => {
+    const theory = judge('sample-halden-tailored-wool-coat', 'Theory Tailored Merino Wool Coat');
+    assert.strictEqual(theory.ok, true, theory.why);
+    assert.match(theory.why, /coat matches coat/);
+    assert.match(theory.why, /wool on both/);
+    assert.match(theory.why, /tailored on both/);
+
+    /* the listing may say it in its own words: the check is on what they
+       mean, so "slim" establishes the row's "tailored" */
+    const slim = judge('sample-halden-tailored-wool-coat', 'COS Slim Wool Coat');
+    assert.strictEqual(slim.ok, true, slim.why);
+    assert.match(slim.why, /tailored — the listing says slim/);
+
+    /* merino IS wool, so it establishes a wool row; the reverse does not
+       hold, which is what keeps a poplin row off a plain cotton shirt */
+    assert.strictEqual(judge('sample-halden-tailored-wool-coat', 'Uniqlo Tailored Merino Coat').ok, true);
+    assert.strictEqual(judge('sample-kinfield-poplin-shirt', 'Uniqlo Cotton Shirt').ok, false,
+      'cotton is broader than poplin and does not establish it');
+
+    /* the live run's candidate: a wool coat, nothing contradicting, and
+       nothing establishing the tailored cut the row asked for */
     const mango = judge('sample-halden-tailored-wool-coat', 'MANGO Double-breasted wool coat');
-    assert.strictEqual(mango.ok, true, mango.why);
-    assert.match(mango.why, /coat matches coat/);
-    assert.match(mango.why, /wool on both/);
-    assert.match(mango.why, /tailored unstated/);
+    assert.strictEqual(mango.ok, false);
+    assert.strictEqual(mango.kind, 'unproven');
+    assert.match(mango.why, /never establishes tailored/);
 
-    /* the listing is MORE specific than the row, which is precision,
-       not disagreement */
-    assert.strictEqual(judge('sample-halden-tailored-wool-coat', 'COS Belted Wool Coat').ok, true);
-
-    const cotton = judge('sample-halden-tailored-wool-coat', 'Everlane Organic Cotton Coat');
+    const cotton = judge('sample-halden-tailored-wool-coat', 'Everlane Tailored Organic Cotton Coat');
     assert.strictEqual(cotton.ok, false, 'wool is not cotton');
+    assert.strictEqual(cotton.kind, 'contradiction');
     assert.match(cotton.why, /wool/);
     assert.match(cotton.why, /cotton/);
   });
@@ -1261,8 +1315,8 @@ function walledRetailer() {
        gate that wanted the brand back would refuse every real listing
        there is. */
     for (const [id, title] of [
-      ['sample-rue-nine-tencel-wrap-top', 'Organic Basics Everyday Wrap Top'],
-      ['sample-northfold-boxy-cotton-tee', 'Everlane The Organic Cotton Box-Cut Tee'],
+      ['sample-rue-nine-tencel-wrap-top', 'Quince Tencel Jersey Wrap Top'],
+      ['sample-northfold-boxy-cotton-tee', 'Everlane The Organic Cotton Boxy Tee'],
       ['sample-terrace-linen-camp-shirt', 'Banana Republic Linen Camp Collar Shirt']
     ]) {
       const verdict = judge(id, title);
@@ -1381,6 +1435,175 @@ function walledRetailer() {
     assert.strictEqual(result.tried[1].semantic.ok, true);
 
     retailer.close();
+  });
+
+  /* ---------------------------------------------------------
+     What discovery is allowed to write
+
+     A sample row's identity is the demo's own. "Tailored Wool Coat" by
+     Halden is what that row MEANS, and discovery's job is to find a
+     real garment that represents it — not to rename the row after
+     whichever shop happened to stock one. A row renamed to "MANGO
+     Double-breasted wool coat" is no longer the row the demo was built
+     around, and its price, category, style and occasion now describe a
+     product nobody chose.
+
+     And a photo whose URL does not carry its listing's code cannot be
+     re-proved later without a note saying how it was tied. A written
+     row with no imageEvidence is one --coverage reports as unaccounted,
+     which is how three written rows came back unaccounted for.
+
+     So: three fields filled, everything else left alone, and the
+     evidence recorded every time it is needed.
+     --------------------------------------------------------- */
+  console.log('\n  — what discovery is allowed to write\n');
+
+  /* a retailer whose photo filename says nothing about the product, so
+     the row can only account for itself by recording the sku the page
+     declared. This is the shape the three unaccounted rows had. */
+  function opaqueRetailer() {
+    const server = http.createServer((req, res) => {
+      const url = req.url.split('?')[0];
+      if (url.endsWith('.jpg')) {
+        res.writeHead(200, { 'content-type': 'image/jpeg' });
+        return res.end(JPEG);
+      }
+      const code = (url.match(/\d{6,}/) || ['000000'])[0];
+      const here = `http://127.0.0.1:${server.address().port}${url}`;
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end(`<!doctype html><html><head>
+        <link rel="canonical" href="${here}">
+        <meta property="og:title" content="Tailored Merino Wool Coat">
+        <meta property="og:site_name" content="Theory">
+        <script type="application/ld+json">
+        {"@type":"Product","sku":"${code}","name":"Tailored Merino Wool Coat",
+         "brand":{"@type":"Brand","name":"Theory"},
+         "image":["/img/anonymous-asset.jpg"]}
+        </script></head><body></body></html>`);
+    });
+    return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server)));
+  }
+
+  await testAsync('discovery keeps the sample row and fills only its link, photo and evidence', async () => {
+    const retailer = await opaqueRetailer();
+    const port = retailer.address().port;
+
+    productSource.registerProvider({
+      name: 'fake-source',
+      configured: () => true,
+      search: async () => [{
+        title: 'Theory Tailored Merino Wool Coat',
+        productUrl: listing(port, '664422'),
+        retailer: 'Theory'
+      }]
+    });
+    process.env.PRODUCT_SOURCE = 'fake-source';
+
+    const before = extractor.readCatalog();
+    const was = before.rows.find((r) => r.id === 'sample-halden-tailored-wool-coat');
+
+    const found = await extractor.discoverRow(was, new Map(), 4);
+    assert.strictEqual(found.verdict, 'VERIFIED', found.why);
+
+    /* the writer, on the catalogue's own source. Nothing is written to
+       disk: what is checked is what the row BECOMES. */
+    const next = extractor.linkRow(before.source, 'sample-halden-tailored-wool-coat', found.proposal);
+    const rows = evaluate(next);
+    const now = rows.find((r) => r.id === 'sample-halden-tailored-wool-coat');
+
+    /* 1 — the sample name is not replaced */
+    assert.strictEqual(now.name, 'Tailored Wool Coat',
+      `the row was renamed to ${JSON.stringify(now.name)} after the shop's listing`);
+
+    /* 2 — nor the sample brand */
+    assert.strictEqual(now.brand, 'Halden',
+      `the row's brand was replaced with ${JSON.stringify(now.brand)}`);
+
+    /* 3 — the evidence the image gate established is persisted */
+    assert.ok(now.imageEvidence, 'the row records no evidence for a photo whose URL cannot vouch for it');
+    assert.deepStrictEqual(plain(now.imageEvidence), { via: 'json-ld-sku', sku: '664422' });
+    assert.strictEqual(extractor.catalogRowIdentity(now).ok, true,
+      'and so the row accounts for itself, which is what --coverage counts');
+
+    /* 4 — the link and the photo are persisted */
+    assert.strictEqual(now.productUrl, listing(port, '664422'));
+    assert.match(now.imageUrl, /anonymous-asset\.jpg$/);
+
+    /* every other field of the row is untouched */
+    for (const field of ['id', 'price', 'category']) {
+      assert.deepStrictEqual(now[field], was[field], `${field} moved`);
+    }
+    for (const field of ['style', 'occasion', 'fit', 'colors', 'sizes']) {
+      assert.deepStrictEqual([...(now[field] || [])], [...(was[field] || [])], `${field} moved`);
+    }
+
+    /* 5 — the rows that already carry a verified photo are untouched,
+       byte for byte and field for field */
+    for (const id of ['uniqlo-merino-crew', 'jcrew-broken-in-oxford', 'llbean-venturestretch-chino']) {
+      const kept = rows.find((r) => r.id === id);
+      const original = before.rows.find((r) => r.id === id);
+      for (const field of ['name', 'brand', 'price', 'productUrl', 'imageUrl', 'category']) {
+        assert.deepStrictEqual(kept[field], original[field], `${id}.${field} moved`);
+      }
+      assert.deepStrictEqual(plain(kept.imageEvidence), plain(original.imageEvidence), `${id}.imageEvidence moved`);
+    }
+
+    /* and no line of the file moved that was not one of the three.
+       Compared as a multiset of lines, because adding an evidence note
+       shifts every line after it without changing any of them. */
+    const tally = (text) => text.split('\n').reduce((seen, line) => seen.set(line, (seen.get(line) || 0) + 1), new Map());
+    const linesBefore = tally(before.source);
+    const linesAfter = tally(next);
+    const moved = [];
+    for (const [line, count] of linesAfter) if (count > (linesBefore.get(line) || 0)) moved.push(line);
+    for (const [line, count] of linesBefore) if (count > (linesAfter.get(line) || 0)) moved.push(line);
+    assert.ok(moved.length, 'the writer changed nothing at all');
+    for (const line of moved) {
+      assert.match(line, /productUrl|imageUrl|imageEvidence/,
+        `discovery rewrote a line it had no business touching: ${line.trim()}`);
+    }
+
+    retailer.close();
+  });
+
+  test('a photo that cannot account for itself is refused rather than written bare', () => {
+    /* the bug this closes: a row written with no evidence for a photo
+       whose URL carries no code is a row --coverage calls unaccounted.
+       Better to refuse the write than to ship one. */
+    assert.throws(() => extractor.linkRow(source, 'sample-kinfield-fleece-sweatpant', {
+      productUrl: 'https://www.example.com/p/998877',
+      imageUrl: 'https://cdn.example.com/media/anonymous.jpg',
+      identity: { ok: false }
+    }), /recorded no evidence/);
+
+    /* a URL that carries the listing's own code needs no note and is
+       written without one */
+    const fine = extractor.linkRow(source, 'sample-kinfield-fleece-sweatpant', {
+      productUrl: 'https://www.example.com/p/998877',
+      imageUrl: 'https://cdn.example.com/media/998877-hero.jpg',
+      identity: { ok: true, via: 'image-url', code: '998877' }
+    });
+    const row = evaluate(fine).find((r) => r.id === 'sample-kinfield-fleece-sweatpant');
+    assert.strictEqual(row.imageEvidence, undefined, 'a URL that speaks for itself gets no note');
+    assert.strictEqual(row.name, 'Fleece Sweatpant');
+    assert.strictEqual(row.brand, 'Kinfield');
+    assert.strictEqual(extractor.catalogRowIdentity(row).ok, true);
+  });
+
+  test('a swapped row records evidence for its new photo too', () => {
+    /* --candidate --as is the deliberate replacement, where the name and
+       brand SHOULD move; it still has to account for the photo */
+    const next = extractor.replaceRow(source, 'jcrew-broken-in-oxford', {
+      name: 'Slim Oxford Shirt',
+      brand: 'Uniqlo',
+      productUrl: 'https://www.uniqlo.com/us/en/products/E455000-000/00',
+      imageUrl: 'https://image.uniqlo.com/opaque-asset.jpg',
+      identity: { ok: true, via: 'json-ld-sku', sku: 'E455000' }
+    });
+    const row = evaluate(next).find((r) => r.id === 'jcrew-broken-in-oxford');
+    assert.strictEqual(row.name, 'Slim Oxford Shirt', 'a hand-driven swap does move the name');
+    assert.deepStrictEqual(plain(row.imageEvidence), { via: 'json-ld-sku', sku: 'E455000' });
+    assert.strictEqual(extractor.catalogRowIdentity(row).ok, true);
   });
 
   await testAsync('--coverage reports without reading anything, and --help lists the modes', async () => {
