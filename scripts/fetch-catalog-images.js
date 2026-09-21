@@ -2435,6 +2435,18 @@ async function listingsFor(row, limit) {
   let using = 0;
   let switched = null;
 
+  /* A source whose product surface has already come back with no
+     retailer link for THIS row. A live probe settled why that happens
+     with Serper — its /shopping results are Google's own Shopping
+     cards, forty of them, with no retailer URL anywhere in the
+     response — and once a row has seen that, asking the same endpoint
+     for the row's four other phrasings buys four more empty answers at
+     four more requests. So the rest of the row goes straight to the
+     endpoint that does carry a link. Per row, and per source: nothing
+     is remembered across rows, so a surface that starts working is
+     asked again on the next one. */
+  const noLinksFrom = new Set();
+
   for (const form of forms) {
     /* A search costs money, so the ladder is climbed only as far as it
        has to be: it keeps going while nothing has been found, and stops
@@ -2447,9 +2459,17 @@ async function listingsFor(row, limit) {
        source only when this one says it has no searches left */
     let batch = null;
     let failed = null;
+    let askedOrganic = false;
     while (using < chain.length) {
+      const source = chain[using];
+      /* only a source that HAS a discovery endpoint of its own, and
+         only after its product surface came back linkless for this row */
+      const organicOnly = noLinksFrom.has(source.name) && typeof source.searchOrganic === 'function';
       try {
-        batch = await chain[using].search(form.intent, { limit: wanted });
+        batch = organicOnly
+          ? await source.searchOrganic(form.intent, { limit: wanted })
+          : await source.search(form.intent, { limit: wanted });
+        askedOrganic = organicOnly;
         failed = null;
         break;
       } catch (err) {
@@ -2486,14 +2506,70 @@ async function listingsFor(row, limit) {
        adapter read the wrong field or the source sent no link at all.
        It is carried through and printed rather than acted on. */
     const said = batch && typeof batch === 'object' ? batch.diagnostics : null;
+
+    /* ---- when the product surface carries no retailer URL ----
+
+       Serper's /shopping answers with Google's own Shopping cards, so
+       every record it maps arrives with no productUrl and the link rule
+       drops all of them. Its /search endpoint answers the same question
+       with ordinary web results, whose link IS the shop's own page.
+
+       So: one more request, the same query, asked only when the batch
+       just received carried no link at all. What comes back is a title
+       and a URL and nothing else — no price, no photo, no retailer,
+       because the endpoint supplies none of those and inventing them is
+       the thing every gate here exists to prevent. Those candidates go
+       through the link rule, the semantic gate, the page stage and the
+       four image gates exactly as any other candidate does: the photo
+       is read off the retailer's own page and proved to belong to the
+       product, and the row keeps its own name, brand and price.
+
+       Nothing else in the chain has a searchOrganic, so nothing else
+       changes: SerpApi is asked the way it was always asked. */
+    const source = chain[using];
+    /* read through a guard: a source is not obliged to hand over
+       well-behaved objects, and a record that throws on being read is
+       one record, not a run. It counts as carrying no link. */
+    const carriesLink = (record) => {
+      try { return Boolean(record && typeof record === 'object' && record.productUrl); } catch (err) { return false; }
+    };
+    const linked = offered.some(carriesLink);
+    let organic = [];
+    let organicSaid = null;
+    let organicFailed = null;
+    let organicAsked = false;
+
+    if (!askedOrganic && !linked && typeof source.searchOrganic === 'function') {
+      noLinksFrom.add(source.name);
+      organicAsked = true;
+      try {
+        const more = await source.searchOrganic(form.intent, { limit: wanted });
+        organic = Array.isArray(more) ? more : [];
+        organicSaid = more && typeof more === 'object' && more.diagnostics ? more.diagnostics : null;
+      } catch (err) {
+        /* a failed escalation is one query form that found nothing, not
+           a run that failed: the next form is still asked */
+        organicFailed = err && err.message ? String(err.message).split('\n')[0] : String(err);
+      }
+    }
+
     attempts.push({
       how: form.how,
       query: form.query,
-      provider: chain[using].name,
-      offered: offered.length,
-      diagnostics: said && typeof said === 'object' ? said : null
+      provider: source.name,
+      offered: offered.length + organic.length,
+      diagnostics: said && typeof said === 'object' ? said : null,
+      /* the second endpoint, named rather than hidden inside a total */
+      escalated: askedOrganic
+        ? { endpoint: 'organic', asked: 'directly', offered: offered.length, failed: null, diagnostics: null }
+        /* recorded whenever it was ASKED, including when it came back
+           with nothing: a request that bought nothing is the thing a
+           cost report most needs to see */
+        : organicAsked
+          ? { endpoint: 'organic', asked: 'after a linkless batch', offered: organic.length, failed: organicFailed, diagnostics: organicSaid }
+          : null
     });
-    for (const record of offered) {
+    for (const record of organic.length ? offered.concat(organic) : offered) {
       let key;
       try {
         key = JSON.stringify([record && record.productUrl, record && record.title]);
@@ -2889,6 +2965,15 @@ async function main() {
           if (counted) console.log(`  ${''.padEnd(17)}     ${counted}`);
           if (Array.isArray(d.urlFieldsSeen)) {
             console.log(`  ${''.padEnd(17)}     urls arrived under: ${d.urlFieldsSeen.join(', ') || '(no url-valued field at all)'}`);
+          }
+        }
+        /* the second endpoint, when the first carried no retailer link */
+        if (attempt.escalated) {
+          const e = attempt.escalated;
+          console.log(`  ${''.padEnd(17)}     ${e.asked === 'directly' ? 'asked the organic endpoint directly' : 'no retailer link in that batch — asked the organic endpoint'}`
+            + ` — ${e.failed ? `FAILED: ${e.failed}` : `${e.offered} offered`}`);
+          if (e.diagnostics && Array.isArray(e.diagnostics.urlFieldsSeen)) {
+            console.log(`  ${''.padEnd(17)}       organic urls under: ${e.diagnostics.urlFieldsSeen.join(', ') || '(none)'}`);
           }
         }
         if (attempt.fellBackTo) {

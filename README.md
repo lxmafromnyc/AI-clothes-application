@@ -904,6 +904,43 @@ whether ANOTHER Serper result type carries a merchant URL is the question a
 is written and the key is stripped by value out of every line, so a product URL
 is printed whole rather than mangled by a redaction pattern.
 
+#### What the probe found, and what discovery does about it
+
+Run against a live key for one catalogue row: `/shopping` returned **40 results,
+every one of them carrying a single url-valued field — `link` — and every one of
+those a google.com Shopping URL**. No retailer URL anywhere in the response: not
+under another key, not nested, not embedded in a forwarder. The shopping
+endpoint cannot answer the question discovery asks, and reading it differently
+will not change that.
+
+The same query put to the web endpoint returned 9 organic results, all 9 of them
+retailer URLs that pass the link rule. So discovery escalates:
+
+1. Serper's `/shopping` is asked first, as before.
+2. When that batch comes back with no retailer URL at all, `/search` is asked
+   once for the same phrase, built by the same `queryFrom()`.
+3. The rest of that row's phrasings go straight to `/search`, so a row pays for
+   the linkless surface once rather than once per phrasing. Nothing is
+   remembered across rows.
+
+An organic record carries **a title and a link, and nothing else** — no price,
+no photo, no retailer, because the endpoint supplies none of them and a
+hostname is not a shop's name. That has two consequences, both deliberate:
+
+* it can never reach `/api/search`, whose gate wants five fields from the
+  source and would refuse a record with two. `searchOrganic` is not part of
+  the provider contract either: `name`, `configured` and `search` are what
+  `/api/search` runs on, and they are unchanged.
+* it can feed catalogue discovery, which wants a page to read. The candidate
+  goes through the link rule, the semantic gate on its title, the page stage
+  and the four image gates in exactly the order a SerpApi listing does. The
+  photo is read off the retailer's own page and proved to belong to that
+  product, and the row keeps its own name, brand and price — discovery writes
+  `productUrl`, `imageUrl` and `imageEvidence`, the same three fields as ever.
+
+If nothing clears every gate, nothing is written. A fallback that cannot prove
+a photo writes no row, which is the same rule the rest of discovery runs on.
+
 ### Testing the pipeline
 
 Offline, with no key and no network — intent, mapping, the gate's rejection
