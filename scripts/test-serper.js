@@ -380,6 +380,80 @@ function withStubbedFetch(handler, run) {
   });
 
   /* ---------------------------------------------------------
+     The probe
+
+     scripts/probe-serper.js is what answers "does /shopping carry a
+     retailer URL at all" against a LIVE response, so its reading has to
+     be trustworthy offline: it must find every URL wherever it sits,
+     classify each one by the gate's own rule, and never print the key.
+     Required as a module it runs nothing and makes no request.
+     --------------------------------------------------------- */
+
+  const probe = require('./probe-serper.js');
+
+  test('the probe finds every url-valued path, however deep it sits', () => {
+    const result = {
+      title: 'Boxy Cotton Tee',
+      source: 'Madewell',
+      link: 'https://www.google.com/search?ibp=oshop_%3A%3Apid%3D1',
+      price: '$34.50',
+      imageUrl: 'https://encrypted-tbn0.gstatic.com/shopping?q=tbn',
+      offers: [{ source: 'Madewell', link: 'https://www.madewell.com/boxy-cotton-tee-NK123.html' }],
+      seller: { name: 'Madewell', url: 'https://www.madewell.com/p/NK123.html' },
+      productId: '149545234219632133'
+    };
+
+    const paths = probe.urlPaths(result, '', []).map((one) => one.path);
+    assert.deepStrictEqual(paths, ['link', 'imageUrl', 'offers[0].link', 'seller.url'],
+      'every URL, named by the exact path it arrived at');
+
+    /* a result with no URL at all reports none rather than throwing */
+    assert.deepStrictEqual(probe.urlPaths({ title: 'x', price: '$1' }, '', []), []);
+    for (const junk of [null, undefined, 42, 'not a url']) {
+      assert.deepStrictEqual(probe.urlPaths(junk, '', []), []);
+    }
+  });
+
+  test('the probe classifies a URL by the gate\'s rule, not its own', () => {
+    assert.match(probe.classify('https://www.madewell.com/boxy-cotton-tee-NK123.html'), /RETAILER PRODUCT PAGE/);
+    assert.match(probe.classify(GOOGLE_CARD), /GOOGLE'S OWN/);
+    assert.match(probe.classify('https://www.google.com/shopping/product/123'), /GOOGLE'S OWN/);
+    assert.match(probe.classify('https://encrypted-tbn0.gstatic.com/shopping?q=tbn'), /GOOGLE-HOSTED IMAGE/);
+    assert.match(probe.classify('https://shop.example.com/search'), /REFUSED BY THE GATE — product-url-not-a-product-page/);
+    assert.match(
+      probe.classify('https://www.google.com/url?q=https%3A%2F%2Fwww.madewell.com%2Fp%2FNK123.html'),
+      /FORWARDER -> https:\/\/www\.madewell\.com\/p\/NK123\.html {2}\(and that destination is usable\)/
+    );
+    assert.strictEqual(probe.classify('mailto:someone@example.com'), null, 'not a URL, no verdict');
+  });
+
+  test('the probe and the adapter cannot disagree about a result', () => {
+    /* the probe reads through the adapter's own reader, so a result the
+       probe calls linkless is exactly one the adapter maps with no
+       productUrl — which is what makes the probe's verdict evidence */
+    const carded = cardedResult(1);
+    assert.strictEqual(provider.productUrlFrom(carded, 0), null);
+    assert.ok(probe.urlPaths(carded, '', []).every((one) => !/RETAILER PRODUCT PAGE/.test(probe.classify(one.url))));
+    assert.strictEqual(provider.toRecord(carded).productUrl, undefined);
+
+    const linked = { ...carded, offers: [{ link: 'https://www.madewell.com/p/NK123.html' }] };
+    assert.strictEqual(provider.productUrlFrom(linked, 0), 'https://www.madewell.com/p/NK123.html');
+    assert.ok(probe.urlPaths(linked, '', []).some((one) => /RETAILER PRODUCT PAGE/.test(probe.classify(one.url))));
+  });
+
+  test('the probe strips the key by value, and leaves a URL whole', () => {
+    const key = process.env.SERPER_API_KEY;
+    assert.strictEqual(probe.safely(`bad key ${key} here`), 'bad key *** here');
+    assert.ok(!probe.safely(`{"error":"${key}"}`).includes(key), 'the key never survives a printed line');
+
+    /* the reason it strips by value: a pattern that matches long tokens
+       also matches the path segments of a real product URL, and a
+       mangled URL is the one thing this probe cannot afford */
+    const url = 'https://www.madewell.com/boxy-cotton-crewneck-tee-NK1234567890ABCDEFGHIJ.html';
+    assert.strictEqual(probe.safely(url), url);
+  });
+
+  /* ---------------------------------------------------------
      Quota and errors
      --------------------------------------------------------- */
 
