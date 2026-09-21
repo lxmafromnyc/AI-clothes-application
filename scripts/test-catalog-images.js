@@ -2387,6 +2387,73 @@ function walledRetailer() {
     });
   });
 
+  await testAsync('a run that gets only Google cards says so, instead of saying nothing', async () => {
+    /* The report a live run produced — "[serper] — 40 offered" and then
+       "offered no listing that is a product page" — named a symptom and
+       hid the cause: whether the adapter read the wrong field, or the
+       source sent no retailer URL at all. Those have opposite fixes.
+       The tally and the adapter's own account of the search both
+       already existed; this is them reaching the report. */
+    await withSerperKey('test-key-000000000000000000000000', async () => {
+      const serper = require('../api/_providers/serper');
+      const card = (i) => ({
+        title: `Boxy Cotton Tee ${i}`,
+        source: 'Madewell',
+        link: `https://www.google.com/search?ibp=oshop_%3A%3Apid%3D149545234219632133${i}`,
+        price: '$34.50',
+        imageUrl: 'https://encrypted-tbn0.gstatic.com/shopping?q=tbn',
+        productId: `pid-${i}`,
+        position: i
+      });
+
+      productSource.registerProvider({
+        name: 'fake-source', configured: () => true,
+        search: async () => { throw new Error(QUOTA); }
+      });
+      process.env.PRODUCT_SOURCE = 'fake-source';
+
+      const real = serper.search;
+      /* mapped by the real adapter, and carrying the real diagnostics,
+         so this is the live path rather than a hand-written stand-in */
+      serper.search = async () => {
+        const results = [card(1), card(2), card(3)];
+        const records = results.map(serper.toRecord).filter(Boolean);
+        records.diagnostics = {
+          engine: 'serper-shopping',
+          returnedByProvider: results.length,
+          normalized: records.length,
+          withInlineLink: 0,
+          googleLinkedOnly: results.length,
+          unlinked: 0,
+          urlFieldsSeen: ['link']
+        };
+        return records;
+      };
+      try {
+        const row = catalogueRow('sample-kinfield-fleece-sweatpant');
+        const offered = await extractor.listingsFor(row, 8);
+
+        assert.strictEqual(offered.provider, 'serper');
+        assert.strictEqual(offered.products.length, 0, 'a Google card is not a product page');
+        assert.ok(offered.rejected['no-product-url'], 'and the reason is counted, not lost');
+
+        /* the adapter's own account of the search survives the trip */
+        const asked = offered.attempts.filter((one) => one.provider === 'serper' && one.diagnostics);
+        assert.ok(asked.length, 'the adapter\'s diagnostics reach the attempt');
+        assert.strictEqual(asked[0].diagnostics.googleLinkedOnly, 3);
+        assert.deepStrictEqual(asked[0].diagnostics.urlFieldsSeen, ['link']);
+
+        /* and the row's own verdict names the fault rather than only
+           reporting that nothing was found */
+        const found = await extractor.discoverRow(row, new Map(), 8);
+        assert.strictEqual(found.verdict, 'NO PRODUCT FOUND');
+        assert.match(found.why, /no-product-url/, 'the report names why the listings were dropped');
+      } finally {
+        serper.search = real;
+      }
+    });
+  });
+
   /* ---------------------------------------------------------
      What discovery is allowed to write
 

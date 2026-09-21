@@ -2478,7 +2478,21 @@ async function listingsFor(row, limit) {
     }
 
     const offered = Array.isArray(batch) ? batch : [];
-    attempts.push({ how: form.how, query: form.query, provider: chain[using].name, offered: offered.length });
+    /* An adapter may attach its own account of the search to the batch
+       it returns — how many results the source sent, how many of them
+       named a shop, which keys a URL arrived under. It was being
+       dropped on the floor here, which is how a run could report "40
+       offered" and then nothing, and leave no way to tell whether the
+       adapter read the wrong field or the source sent no link at all.
+       It is carried through and printed rather than acted on. */
+    const said = batch && typeof batch === 'object' ? batch.diagnostics : null;
+    attempts.push({
+      how: form.how,
+      query: form.query,
+      provider: chain[using].name,
+      offered: offered.length,
+      diagnostics: said && typeof said === 'object' ? said : null
+    });
     for (const record of offered) {
       let key;
       try {
@@ -2738,7 +2752,13 @@ async function discoverRow(row, taken, limit, options) {
         `${unproven ? `, ${unproven} read to the page and still unproven` : ''}` +
         `${broke ? `, ${broke} could not be read at all` : ''}` +
         `, none cleared every gate`
-      : `the ${found.provider} source offered no listing that is a product page, over ${searched.length} quer${searched.length === 1 ? 'y' : 'ies'}`,
+      /* which link fault dropped them is the whole diagnosis when a
+         source offers listings and none survives, so it is named here
+         rather than left in a tally nothing prints */
+      : `the ${found.provider} source offered no listing that is a product page, over ${searched.length} quer${searched.length === 1 ? 'y' : 'ies'}`
+        + (Object.keys(found.rejected || {}).length
+          ? ` — ${Object.entries(found.rejected).map(([why, n]) => `${n} ${why}`).join(', ')}`
+          : ''),
     attempts: searched,
     switched,
     tried
@@ -2858,6 +2878,19 @@ async function main() {
         const asked = attempt.query === null ? 'everything the row knows' : `"${attempt.query}"`;
         const who = attempt.provider ? ` [${attempt.provider}]` : '';
         console.log(`  ${''.padEnd(17)}   asked ${asked}${who} — ${attempt.failed ? `FAILED: ${attempt.failed}` : `${attempt.offered} offered`}`);
+        /* what the source actually sent, in the adapter's own words:
+           "40 offered" and nothing shown is not a diagnosis */
+        if (attempt.diagnostics) {
+          const d = attempt.diagnostics;
+          const counted = ['withInlineLink', 'googleLinkedOnly', 'unlinked']
+            .filter((key) => typeof d[key] === 'number')
+            .map((key) => `${d[key]} ${key}`)
+            .join(', ');
+          if (counted) console.log(`  ${''.padEnd(17)}     ${counted}`);
+          if (Array.isArray(d.urlFieldsSeen)) {
+            console.log(`  ${''.padEnd(17)}     urls arrived under: ${d.urlFieldsSeen.join(', ') || '(no url-valued field at all)'}`);
+          }
+        }
         if (attempt.fellBackTo) {
           console.log(`  ${''.padEnd(17)}     out of searches — falling back to ${attempt.fellBackTo}, same gates, nothing relaxed`);
         }

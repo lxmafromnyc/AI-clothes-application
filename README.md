@@ -877,6 +877,33 @@ before it starts, refuses to start when that exceeds the searches left, and
 stops at `--max-requests` whatever happens. `--out=path.json` writes the whole
 result for comparing against another provider later.
 
+#### The Serper fallback, and what its response actually carries
+
+Serper (`api/_providers/serper.js`) is the source discovery falls back to when
+SerpApi reports its search allowance gone. It answers `POST /shopping`, and the
+open question about it is the same one the SerpApi probe exists for: whether a
+result carries the retailer's own product URL anywhere, and under which key.
+
+```sh
+SERPER_API_KEY=... node scripts/probe-serper.js "Boxy Cotton Tee"
+```
+
+One live request. It prints the envelope's keys, `shopping[0]` raw and entire,
+then **every** url-valued path anywhere in that result — nested objects and
+arrays included, named by the exact path (`offers[0].link`, not "somewhere in
+offers") — each classified by the gate's own rule: a retailer product page,
+Google's own, a Google-hosted image, a forwarder and where it forwards to, or a
+URL the gate refuses and why. Then the same question across the batch, the
+record the adapter maps, and the gate's verdict.
+
+If no result carries a retailer URL, it spends one more request on the web
+`/search` endpoint and classifies the organic links the same way, because
+whether ANOTHER Serper result type carries a merchant URL is the question a
+`/shopping` response with none leaves behind. `--no-search` suppresses that,
+`--search` forces it, `--all` walks every result rather than the first. Nothing
+is written and the key is stripped by value out of every line, so a product URL
+is printed whole rather than mangled by a redaction pattern.
+
 ### Testing the pipeline
 
 Offline, with no key and no network — intent, mapping, the gate's rejection
