@@ -2413,6 +2413,10 @@ function walledRetailer() {
       process.env.PRODUCT_SOURCE = 'fake-source';
 
       const real = serper.search;
+      const realOrganic = serper.searchOrganic;
+      /* the escalation is stubbed to find nothing, so this test stays
+         about the report: a row that ends with nothing has to say why */
+      serper.searchOrganic = async () => [];
       /* mapped by the real adapter, and carrying the real diagnostics,
          so this is the live path rather than a hand-written stand-in */
       serper.search = async () => {
@@ -2448,8 +2452,190 @@ function walledRetailer() {
         const found = await extractor.discoverRow(row, new Map(), 8);
         assert.strictEqual(found.verdict, 'NO PRODUCT FOUND');
         assert.match(found.why, /no-product-url/, 'the report names why the listings were dropped');
+
+        /* and the escalation is recorded rather than silent */
+        assert.ok(offered.attempts.some((one) => one.escalated && one.escalated.endpoint === 'organic'),
+          'the organic endpoint was asked once the batch came back linkless');
       } finally {
         serper.search = real;
+        serper.searchOrganic = realOrganic;
+      }
+    });
+  });
+
+  await testAsync('an organic result enters the same pipeline, and clears the same gates', async () => {
+    /* what the fallback is for: /shopping carries Google's cards and no
+       retailer URL, /search carries the shop's own page. The page is
+       then read, the photo proved and the row written by exactly the
+       path a SerpApi listing takes. */
+    await withSerperKey('test-key-000000000000000000000000', async () => {
+      const serper = require('../api/_providers/serper');
+      const retailer = await describingRetailer({
+        552200: { name: 'Club Fleece Jogger', material: 'Recycled polyester fleece' }
+      });
+      const port = retailer.address().port;
+
+      productSource.registerProvider({
+        name: 'fake-source', configured: () => true,
+        search: async () => { throw new Error(QUOTA); }
+      });
+      process.env.PRODUCT_SOURCE = 'fake-source';
+
+      const real = serper.search;
+      const realOrganic = serper.searchOrganic;
+      const asked = { shopping: 0, organic: 0 };
+
+      /* Google's cards, mapped by the real adapter: no productUrl */
+      serper.search = async () => {
+        asked.shopping += 1;
+        const records = [serper.toRecord({
+          title: 'Nike Club Fleece Jogger',
+          source: 'Nike',
+          link: 'https://www.google.com/search?ibp=oshop_%3A%3Apid%3D14954523421963213331',
+          price: '$62.97',
+          imageUrl: 'https://encrypted-tbn0.gstatic.com/shopping?q=tbn'
+        })].filter(Boolean);
+        records.diagnostics = { engine: 'serper-shopping', withInlineLink: 0, googleLinkedOnly: 1, unlinked: 0, urlFieldsSeen: ['link'] };
+        return records;
+      };
+      /* the organic answer, mapped by the real adapter: a title and a
+         link, and nothing the endpoint did not supply */
+      serper.searchOrganic = async () => {
+        asked.organic += 1;
+        const records = [serper.toOrganicRecord({
+          title: 'Nike Club Fleece Joggers | Nike.com',
+          link: listing(port, '552200')
+        })].filter(Boolean);
+        records.diagnostics = { engine: 'serper-search', withInlineLink: 1, googleLinkedOnly: 0, unlinked: 0, urlFieldsSeen: ['link'] };
+        return records;
+      };
+
+      try {
+        const before = extractor.readCatalog();
+        const was = before.rows.find((r) => r.id === 'sample-kinfield-fleece-sweatpant');
+        const found = await extractor.discoverRow(was, new Map(), 8);
+
+        assert.strictEqual(found.verdict, 'VERIFIED', found.why);
+        assert.strictEqual(asked.shopping, 1, 'the product surface is asked first, once');
+        assert.ok(asked.organic >= 1, 'and the organic endpoint only after it came back linkless');
+
+        /* the candidate went through the gates, not around them */
+        const cleared = found.tried.find((one) => one.semantic && one.semantic.ok);
+        assert.ok(cleared, 'the semantic gate judged it');
+        assert.ok(found.proposal.imageUrl, 'and the photo came off the retailer page');
+        assert.ok(found.proposal.identity, 'tied to this product by recorded evidence');
+        assert.ok(retailer.hits.some((url) => url.includes('552200')), 'the page really was read');
+
+        /* and only the three permitted fields are written */
+        const now = evaluate(extractor.linkRow(before.source, was.id, found.proposal)).find((r) => r.id === was.id);
+        assert.strictEqual(now.productUrl, found.proposal.productUrl);
+        assert.ok(now.imageUrl);
+        /* the row accounts for its photo: either the URL carries the
+           listing's own code, or a note says how it was tied */
+        assert.ok(/552200/.test(now.imageUrl) || now.imageEvidence,
+          'the written row cannot account for its own photo');
+
+        /* every other field, unchanged. Objects are compared through
+           plain() because a row read out of the file and a row
+           evaluated out of it do not share a prototype. */
+        for (const field of Object.keys(was)) {
+          if (field === 'productUrl' || field === 'imageUrl' || field === 'imageEvidence') continue;
+          const mine = was[field] && typeof was[field] === 'object' ? plain(was[field]) : was[field];
+          const theirs = now[field] && typeof now[field] === 'object' ? plain(now[field]) : now[field];
+          assert.deepStrictEqual(theirs, mine, `${field} was changed and must not be`);
+        }
+        assert.strictEqual(now.name, 'Fleece Sweatpant', 'the row keeps its own name');
+        assert.strictEqual(now.brand, 'Kinfield');
+        assert.strictEqual(now.price, was.price, 'and its own price — nothing from Serper');
+      } finally {
+        serper.search = real;
+        serper.searchOrganic = realOrganic;
+        retailer.close();
+      }
+    });
+  });
+
+  await testAsync('the gates refuse an organic candidate exactly as they refuse any other', async () => {
+    /* an organic link is a candidate, not a pass. The title stage and
+       the page stage both still get their say, and a row that clears
+       neither is written nothing at all. */
+    await withSerperKey('test-key-000000000000000000000000', async () => {
+      const serper = require('../api/_providers/serper');
+      const retailer = await namedRetailer({ 881100: 'Street Trouser', 881200: 'Linen Camp Shirt' });
+      const port = retailer.address().port;
+
+      productSource.registerProvider({
+        name: 'fake-source', configured: () => true,
+        search: async () => { throw new Error(QUOTA); }
+      });
+      process.env.PRODUCT_SOURCE = 'fake-source';
+
+      const real = serper.search;
+      const realOrganic = serper.searchOrganic;
+      serper.search = async () => [];
+      serper.searchOrganic = async () => [
+        /* the wrong garment on its face: refused before a page is read */
+        { title: 'Linen Camp Shirt', productUrl: listing(port, '881200') },
+        /* and one whose title passes and whose PAGE gives it away */
+        { title: 'Fleece Sweatpant', productUrl: listing(port, '881100') }
+      ];
+
+      try {
+        const found = await extractor.discoverRow(
+          catalogueRow('sample-kinfield-fleece-sweatpant'), new Map(), 4);
+
+        assert.strictEqual(found.verdict, 'NO PRODUCT FOUND');
+        assert.strictEqual(found.proposal, undefined, 'nothing is proposed, so nothing would be written');
+
+        const onTitle = found.tried.find((one) => one.semantic && !one.semantic.ok);
+        assert.ok(onTitle, 'the title stage refused the wrong garment');
+        const onPage = found.tried.find((one) => one.semantic && one.semantic.ok && one.onPage && !one.onPage.ok);
+        assert.ok(onPage, 'and the page stage refused the flattering title');
+        assert.match(onPage.why, /its own page calls it "Street Trouser"/);
+      } finally {
+        serper.search = real;
+        serper.searchOrganic = realOrganic;
+        retailer.close();
+      }
+    });
+  });
+
+  await testAsync('the organic endpoint is asked once per row, not once per phrasing', async () => {
+    /* the cost rule. A row is asked five ways; paying for the linkless
+       product surface five times to learn the same thing five times is
+       four wasted requests, so the rest of the row goes straight to the
+       endpoint that carries a link. */
+    await withSerperKey('test-key-000000000000000000000000', async () => {
+      const serper = require('../api/_providers/serper');
+      const asked = { shopping: 0, organic: 0 };
+
+      productSource.registerProvider({
+        name: 'fake-source', configured: () => true,
+        search: async () => { throw new Error(QUOTA); }
+      });
+      process.env.PRODUCT_SOURCE = 'fake-source';
+
+      const real = serper.search;
+      const realOrganic = serper.searchOrganic;
+      serper.search = async () => { asked.shopping += 1; return []; };
+      serper.searchOrganic = async () => { asked.organic += 1; return []; };
+
+      try {
+        const offered = await extractor.listingsFor(catalogueRow('sample-kinfield-fleece-sweatpant'), 8);
+
+        assert.strictEqual(asked.shopping, 1, 'the linkless surface is paid for once per row');
+        assert.ok(asked.organic >= 2, 'and the other phrasings go straight to the organic endpoint');
+
+        /* one request per query form, plus the one escalation that
+           taught the row this surface carries no link */
+        const serperForms = offered.attempts.filter((one) => one.provider === 'serper').length;
+        assert.strictEqual(asked.shopping + asked.organic, serperForms + 1);
+        assert.strictEqual(offered.attempts.filter((one) => one.escalated).length, serperForms,
+          'every serper attempt says which endpoint answered it');
+        assert.strictEqual(offered.products.length, 0, 'and nothing found is still nothing written');
+      } finally {
+        serper.search = real;
+        serper.searchOrganic = realOrganic;
       }
     });
   });

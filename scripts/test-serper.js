@@ -380,6 +380,127 @@ function withStubbedFetch(handler, run) {
   });
 
   /* ---------------------------------------------------------
+     The organic path — discovery only
+
+     A live probe settled what /shopping carries: forty results for one
+     row, every link a Google Shopping card, no retailer URL anywhere.
+     The web endpoint answers the same query with ordinary web results,
+     whose link IS the shop's page — and with no price, no photo and no
+     seller, which is exactly why it can only feed catalogue discovery
+     and can never reach /api/search.
+     --------------------------------------------------------- */
+
+  const ORGANIC = {
+    searchParameters: { q: 'boxy cotton tee', gl: 'us', hl: 'en', type: 'search' },
+    organic: [
+      { title: 'Boxy Cotton Tee | Madewell', link: 'https://www.madewell.com/boxy-cotton-tee-NK1234.html', snippet: 'A boxy tee.', position: 1 },
+      /* Google's own: refused here, as everywhere */
+      { title: 'boxy cotton tee - Google Shopping', link: 'https://www.google.com/search?tbm=shop&q=boxy+cotton+tee', position: 2 },
+      /* a forwarder, unwrapped to the destination it already carries */
+      { title: 'Uniqlo Boxy Tee', link: 'https://www.google.com/url?q=https%3A%2F%2Fwww.uniqlo.com%2Fus%2Fen%2Fproducts%2FE460318-000', position: 3 },
+      /* no title: mapped to nothing rather than to a bare URL */
+      { link: 'https://www.gap.com/browse/product.do?pid=502587002', position: 4 },
+      /* a shop's front door: mapped, and refused by the gate, not here */
+      { title: 'Tees | J.Crew', link: 'https://www.jcrew.com/', position: 5 }
+    ]
+  };
+
+  await testAsync('the organic endpoint is asked the same question, at the other URL', async () => {
+    await withStubbedFetch(() => jsonResponse(200, ORGANIC), async (calls) => {
+      const intent = { keywords: ['Boxy Cotton Tee'] };
+      const records = await provider.searchOrganic(intent, { limit: 8 });
+
+      assert.strictEqual(calls.length, 1, 'one request');
+      assert.strictEqual(calls[0].url, provider.WEB_SEARCH_URL, 'the web endpoint, not the shopping one');
+      assert.notStrictEqual(provider.WEB_SEARCH_URL, provider.SEARCH_URL);
+      assert.strictEqual(calls[0].options.headers['X-API-KEY'], process.env.SERPER_API_KEY);
+
+      /* the same phrase the shopping search is given, built by the same
+         function: one normalisation, not two */
+      assert.strictEqual(JSON.parse(calls[0].options.body).q, provider.queryFrom(intent));
+
+      assert.deepStrictEqual(records.map((r) => r.productUrl), [
+        'https://www.madewell.com/boxy-cotton-tee-NK1234.html',
+        'https://www.uniqlo.com/us/en/products/E460318-000',
+        'https://www.jcrew.com/'
+      ], 'Google refused, the forwarder unwrapped, the titleless one dropped');
+
+      assert.strictEqual(records.diagnostics.engine, 'serper-search');
+      assert.strictEqual(records.diagnostics.returnedByProvider, 5);
+      assert.strictEqual(records.diagnostics.normalized, 3);
+    });
+  });
+
+  await testAsync('an organic record carries a title and a link, and nothing it was not given', async () => {
+    await withStubbedFetch(() => jsonResponse(200, ORGANIC), async () => {
+      const records = await provider.searchOrganic({ keywords: ['Boxy Cotton Tee'] }, { limit: 8 });
+
+      for (const record of records) {
+        assert.deepStrictEqual(Object.keys(record).sort(), ['productUrl', 'title'],
+          'no price, no photo, no retailer: the endpoint supplies none of them');
+      }
+
+      /* which is why this can never reach /api/search: its gate wants
+         five fields from the source and these carry two */
+      const { products, rejected } = verifyAll(records, { retailer: null });
+      assert.strictEqual(products.length, 0, 'an organic record is not a displayable product');
+      assert.strictEqual(rejected['missing-price'], 3);
+    });
+  });
+
+  test('the gate, not the adapter, still decides an organic link', () => {
+    assert.strictEqual(linkFault('https://www.madewell.com/boxy-cotton-tee-NK1234.html'), null);
+    assert.strictEqual(linkFault('https://www.jcrew.com/'), 'product-url-not-a-product-page',
+      'a shop\'s front door is mapped and then refused, exactly as before');
+
+    /* and a Google link never becomes an organic candidate at all */
+    assert.strictEqual(provider.toOrganicRecord({ title: 'x', link: GOOGLE_CARD }), null);
+    assert.strictEqual(provider.toOrganicRecord({ title: 'x', link: 'https://www.google.com/search?q=tee' }), null);
+    assert.strictEqual(provider.toOrganicRecord({ link: 'https://www.madewell.com/p/1' }), null, 'a title is required');
+    for (const junk of [null, undefined, 42, 'x', {}]) {
+      assert.strictEqual(provider.toOrganicRecord(junk), null);
+    }
+  });
+
+  test('an organic payload that is not one reads as no results', () => {
+    for (const payload of [null, undefined, {}, { organic: null }, { shopping: [] }, 'nope']) {
+      assert.deepStrictEqual(provider.organicFrom(payload), []);
+    }
+    assert.strictEqual(provider.organicFrom({ organicResults: [{ title: 'x' }] }).length, 1);
+  });
+
+  await testAsync('the organic endpoint reports its own failures the same way', async () => {
+    await withStubbedFetch(() => jsonResponse(429, { message: 'Not enough credits' }), async () => {
+      await assert.rejects(
+        () => provider.searchOrganic({ keywords: ['x'] }, { limit: 4 }),
+        /429.*allowance exhausted/i
+      );
+    });
+    const key = process.env.SERPER_API_KEY;
+    delete process.env.SERPER_API_KEY;
+    await withStubbedFetch(() => jsonResponse(200, ORGANIC), async (calls) => {
+      await assert.rejects(() => provider.searchOrganic({ keywords: ['x'] }, { limit: 4 }), /SERPER_API_KEY is not set/);
+      assert.strictEqual(calls.length, 0, 'no key, no request');
+    });
+    process.env.SERPER_API_KEY = key;
+  });
+
+  test('searchOrganic is not part of the contract /api/search runs on', () => {
+    /* api/search.js asks a provider for name, configured and search.
+       The organic path is asked for BY NAME by catalogue discovery, so
+       adding it cannot change what a shopper's search does. */
+    const contract = require('../api/_providers/product-source');
+    const registered = contract.PROVIDERS.serper;
+    assert.strictEqual(registered, provider, 'the registry holds this adapter');
+    assert.strictEqual(typeof registered.search, 'function');
+    assert.strictEqual(typeof registered.searchOrganic, 'function');
+    for (const other of ['openwebninja', 'serpapi', 'etsy', 'none']) {
+      assert.strictEqual(typeof contract.PROVIDERS[other].searchOrganic, 'undefined',
+        `${other} has no organic path, so nothing about it changes`);
+    }
+  });
+
+  /* ---------------------------------------------------------
      The probe
 
      scripts/probe-serper.js is what answers "does /shopping carry a

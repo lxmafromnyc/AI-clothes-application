@@ -77,11 +77,33 @@
    http(s) URL in, and `googleLinkedOnly` counts the results whose only
    URLs were Google's — so a surface that moves the link to a new field
    shows up as a named field rather than as a silent empty run.
+
+   ---------------------------------------------------------
+   What a live response actually said
+   ---------------------------------------------------------
+   scripts/probe-serper.js was run against a live key, for one
+   catalogue row's query. /shopping returned 40 results. Every one of
+   them carried exactly one url-valued field, `link`, and every one of
+   those was a google.com Shopping URL. There was no retailer URL
+   anywhere in the response — not in another field, not nested, not
+   embedded in a forwarder.
+
+   So the shopping endpoint cannot answer the question discovery asks,
+   and no amount of reading it differently will change that. What it
+   can still do is what it does above: map a result, and come back
+   with no productUrl rather than with Google's page.
+
+   The same query put to the web endpoint returned 9 organic results,
+   all 9 of them retailer URLs that pass the link rule. That is the
+   fallback, and it is deliberately NOT part of search(): see
+   searchOrganic() below for what it may and may not be used for.
    ========================================================= */
 
 'use strict';
 
 const SEARCH_URL = 'https://google.serper.dev/shopping';
+/* The web endpoint. Not a second product source: see searchOrganic(). */
+const WEB_SEARCH_URL = 'https://google.serper.dev/search';
 const REQUEST_TIMEOUT = 15000;
 const API_LIMIT_MAX = 100;
 const OVERFETCH = 2;
@@ -309,7 +331,7 @@ function resultsFrom(payload) {
    account's allowance, which is worth saying out loud for the same
    reason it is worth saying about SerpApi: it is the one failure that
    is not a bug in this adapter. */
-async function apiPost(body) {
+async function apiPost(url, body) {
   const key = text(process.env.SERPER_API_KEY);
   if (!key) throw new Error('SERPER_API_KEY is not set');
 
@@ -317,7 +339,7 @@ async function apiPost(body) {
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
   let response;
   try {
-    response = await fetch(SEARCH_URL, {
+    response = await fetch(url, {
       method: 'POST',
       headers: { 'X-API-KEY': key, 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify(body),
@@ -343,7 +365,7 @@ async function apiPost(body) {
 async function search(intent, options) {
   const wanted = Math.min(Math.max(Number(options && options.limit) || 12, 1), 100);
 
-  const payload = await apiPost({
+  const payload = await apiPost(SEARCH_URL, {
     q: queryFrom(intent) || 'clothing',
     gl: text(process.env.SERPER_COUNTRY) || 'us',
     hl: text(process.env.SERPER_LANGUAGE) || 'en',
@@ -352,13 +374,15 @@ async function search(intent, options) {
 
   const results = resultsFrom(payload);
   const records = results.map(toRecord).filter(Boolean);
+  records.diagnostics = accountFor('serper-shopping', results, records);
+  return records;
+}
 
-  /* the same counted account of what was lost and where, so a search
-     that returns nothing says whether the source had nothing or the
-     records could not be read — and, since the link is the thing this
-     source most often cannot supply, which of those two it was:
-     `googleLinkedOnly` is a result that pointed only at Google, and
-     `urlFieldsSeen` names the fields a URL arrived in at all. */
+/* The counted account of what a search returned and what was lost, so a
+   search that comes back with nothing says which of the two happened:
+   the source had nothing, or the records carried no link. Shared by
+   both endpoints, because the question is the same either way. */
+function accountFor(engine, results, records) {
   const urlFields = new Set();
   let googleLinkedOnly = 0;
   let unlinked = 0;
@@ -370,8 +394,8 @@ async function search(intent, options) {
     else unlinked += 1;
   }
 
-  records.diagnostics = {
-    engine: 'serper-shopping',
+  return {
+    engine,
     returnedByProvider: results.length,
     normalized: records.length,
     /* the records that named a shop: what the gate can act on at all */
@@ -380,6 +404,77 @@ async function search(intent, options) {
     unlinked,
     urlFieldsSeen: [...urlFields].sort()
   };
+}
+
+/* -----------------------------------------------------------
+   The organic path — DISCOVERY ONLY
+   -----------------------------------------------------------
+
+   A live probe settled what /shopping carries: forty results for one
+   catalogue row, every `link` a google.com Shopping card, and not one
+   retailer URL anywhere in the response. There is no field to read and
+   nothing to repair, so the shopping endpoint cannot answer the
+   question discovery is asking.
+
+   The web endpoint can. An organic result is an ordinary web result,
+   so its `link` is the page itself — the shop's own product page, not
+   a card about it. What an organic result does NOT carry is a price or
+   a photo, and that is not a gap to fill in:
+
+     * it CANNOT feed /api/search. That gate requires a title, price,
+       photo, link and retailer from the source, and a record from here
+       has two of the five. It is refused there, by the same gate that
+       refuses everything else that is short — which is checked in
+       scripts/test-serper.js rather than asserted here.
+     * it CAN feed catalogue discovery, which wants a page to read. The
+       photo comes off the retailer's own page, through the same four
+       image gates, and the price in the catalogue is the row's own and
+       is never touched.
+
+   No retailer name is read off a hostname either: "shop.madewell.com"
+   is a domain, not a shop's name, and inventing one is the fabricated
+   attribution the record contract exists to prevent. So a record from
+   here carries a title and a link, and nothing it did not receive.
+
+   This is a separate call rather than part of search(), so the provider
+   contract /api/search runs on is exactly what it was. */
+function organicFrom(payload) {
+  if (!payload || typeof payload !== 'object') return [];
+  if (Array.isArray(payload.organic)) return payload.organic;
+  if (Array.isArray(payload.organicResults)) return payload.organicResults;
+  return [];
+}
+
+/* One organic result, mapped. A result whose link is not a shop's own
+   URL maps to nothing at all — there is no second field to fall back
+   to, and Google's own URL is not a product page however it arrived. */
+function toOrganicRecord(result) {
+  if (!result || typeof result !== 'object') return null;
+
+  const productUrl = retailerUrl(result.link, 0);
+  const title = text(result.title);
+  if (!productUrl || !title) return null;
+
+  /* title and link, and nothing else: no price, no photo, no retailer,
+     because the source supplied none of them */
+  return { title, productUrl };
+}
+
+async function searchOrganic(intent, options) {
+  const wanted = Math.min(Math.max(Number(options && options.limit) || 12, 1), 100);
+
+  /* the same phrase the shopping search is given, built by the same
+     function, so the two endpoints are asked the same question */
+  const payload = await apiPost(WEB_SEARCH_URL, {
+    q: queryFrom(intent) || 'clothing',
+    gl: text(process.env.SERPER_COUNTRY) || 'us',
+    hl: text(process.env.SERPER_LANGUAGE) || 'en',
+    num: Math.min(wanted * OVERFETCH, API_LIMIT_MAX)
+  });
+
+  const results = organicFrom(payload);
+  const records = results.map(toOrganicRecord).filter(Boolean);
+  records.diagnostics = accountFor('serper-search', results, records);
   return records;
 }
 
@@ -387,7 +482,13 @@ module.exports = {
   name: 'serper',
   configured,
   search,
-  /* exported for scripts/test-serper.js */
-  toRecord, queryFrom, toPrice, currencyFrom, resultsFrom, redact, SEARCH_URL,
+  /* NOT part of the provider contract /api/search runs on, which is
+     name + configured + search. Catalogue discovery asks for this by
+     name when the shopping endpoint hands back no retailer URL; every
+     other caller never sees it. */
+  searchOrganic,
+  /* exported for scripts/test-serper.js and scripts/probe-serper.js */
+  toRecord, toOrganicRecord, queryFrom, toPrice, currencyFrom, resultsFrom, organicFrom,
+  redact, SEARCH_URL, WEB_SEARCH_URL,
   retailerUrl, productUrlFrom, urlFieldsOf
 };
