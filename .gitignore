@@ -9,3 +9,8 @@
 # Node
 node_modules/
 npm-debug.log*
+
+# The hand-off between a --discover run and the --write that keeps it.
+# Temporary by definition: it records what one run proved, and is spent
+# the moment those rows are in assets/catalog.js.
+.catalog-discovery.tmp.json

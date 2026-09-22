@@ -31,6 +31,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const http = require('http');
+const os = require('os');
 const path = require('path');
 const vm = require('vm');
 const { promisify } = require('util');
@@ -42,6 +43,12 @@ const productSource = require('../api/_providers/product-source');
 
 const SCRIPT = path.join(__dirname, 'fetch-catalog-images.js');
 const CATALOG = path.join(__dirname, '..', 'assets', 'catalog.js');
+
+/* Every discovery report these tests write lives here, and --report
+   points the script at it. Nothing touches the default path beside the
+   catalogue, so a run of this suite cannot pick up — or leave behind —
+   a report belonging to a real --discover run. */
+const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'fynd-catalog-images-'));
 
 async function run(argv) {
   try {
@@ -1177,7 +1184,13 @@ function walledRetailer() {
 
   await testAsync('with no source configured, discovery says so and writes nothing', async () => {
     const before = fs.readFileSync(CATALOG);
-    const result = await run(['--discover', '--only', 'sample-northfold-boxy-cotton-tee', '--write']);
+    const result = await run([
+      '--discover', '--only', 'sample-northfold-boxy-cotton-tee', '--write',
+      /* a report path with nothing at it, so this stays a test of what
+         happens with no source rather than of what was left lying
+         beside the catalogue by an earlier run */
+      '--report', path.join(TMP, 'no-source.json')
+    ]);
     const after = fs.readFileSync(CATALOG);
 
     assert.strictEqual(result.code, 0, result.stderr);
@@ -2554,6 +2567,451 @@ function walledRetailer() {
     assert.strictEqual(row.name, 'Slim Oxford Shirt', 'a hand-driven swap does move the name');
     assert.deepStrictEqual(plain(row.imageEvidence), { via: 'json-ld-sku', sku: 'E455000' });
     assert.strictEqual(extractor.catalogRowIdentity(row).ok, true);
+  });
+
+  /* ---------------------------------------------------------
+     The hand-off: what a run proved, and a write that costs nothing
+
+     Discovery is the expensive half — a live search per row, a page per
+     candidate, a browser for the pages that refuse a bare client. It
+     used to be paid for twice, because --discover and --discover --write
+     were the same command run twice, and the second run re-derived from
+     nothing what the first had already proved.
+
+     So a run writes down what cleared every gate, and the write reads it
+     back. What is tested here is that the saving records only verified
+     rows, that the write contacts nobody, that it still moves only the
+     three fields discovery is allowed to fill, and — the part that
+     matters most — that the file is believed about nothing. Every gate
+     that can be decided without a retailer is decided again on the way
+     in, so a report edited by hand fails exactly as a catalogue row
+     edited by hand fails.
+     --------------------------------------------------------- */
+  console.log('\n  — the discovery report, and a write that searches nothing\n');
+
+  /* the catalogue is written to for real by these tests, because what is
+     under test is the command rather than a string it might have
+     produced. It goes back byte for byte afterwards, whatever happens. */
+  async function withCatalogRestored(fn) {
+    const before = fs.readFileSync(CATALOG);
+    try {
+      return await fn(before);
+    } finally {
+      fs.writeFileSync(CATALOG, before);
+    }
+  }
+
+  const reportWith = (entries, extra) => Object.assign({
+    version: extractor.REPORT_VERSION,
+    createdAt: new Date().toISOString(),
+    catalog: 'assets/catalog.js',
+    options: {},
+    appliedAt: null,
+    applied: [],
+    entries
+  }, extra || {});
+
+  /* a row's fields as the report records them, so an entry can be built
+     against the catalogue as it actually is */
+  const snapshot = (id) => {
+    const row = catalogueRow(id);
+    return { name: row.name, brand: row.brand, category: row.category };
+  };
+
+  /* rows come back from a vm context wearing that realm's prototypes,
+     which deepStrictEqual refuses however identical the contents */
+  const same = (value) => (value === undefined ? undefined : JSON.parse(JSON.stringify(value)));
+
+  /* filled by the first test and used by the rest: one genuinely
+     discovered row, proved against a fixture retailer through every
+     gate, which is the only kind of thing that may be written */
+  let verified = null;
+
+  await testAsync('a run writes down what cleared every gate, and nothing else', async () => {
+    const retailer = await opaqueRetailer();
+    const port = retailer.address().port;
+
+    productSource.registerProvider({
+      name: 'fake-source',
+      configured: () => true,
+      search: async () => [{
+        title: 'Theory Tailored Merino Wool Coat',
+        productUrl: listing(port, '664422'),
+        retailer: 'Theory'
+      }]
+    });
+    process.env.PRODUCT_SOURCE = 'fake-source';
+
+    const { rows } = extractor.readCatalog();
+    const was = rows.find((r) => r.id === 'sample-halden-tailored-wool-coat');
+    const found = await extractor.discoverRow(was, new Map(), 4);
+    assert.strictEqual(found.verdict, 'VERIFIED', found.why);
+
+    /* a row that found nothing is in the run's printed output and
+       nowhere else: the report is what may be written, not a list of
+       everything that was looked at */
+    const report = extractor.reportFrom(
+      [found, { id: 'sample-halden-merino-crew-knit', verdict: 'NO PRODUCT FOUND', why: 'nothing cleared' }],
+      rows,
+      { limit: 4 }
+    );
+
+    assert.strictEqual(report.entries.length, 1, 'a row that cleared nothing was written down anyway');
+    const entry = report.entries[0];
+    assert.strictEqual(entry.id, 'sample-halden-tailored-wool-coat');
+    assert.strictEqual(entry.verified, true);
+
+    /* the three fields, exactly as the run produced them */
+    assert.strictEqual(entry.productUrl, found.proposal.productUrl);
+    assert.strictEqual(entry.imageUrl, found.proposal.imageUrl);
+    assert.strictEqual(entry.imageEvidence, "{ via: 'json-ld-sku', sku: '664422' }",
+      'the note recorded is the one that will be written into the file');
+
+    /* and what it takes to re-decide the gates without a retailer */
+    assert.strictEqual(entry.listingName, 'Tailored Merino Wool Coat');
+    assert.deepStrictEqual(entry.row, { name: 'Tailored Wool Coat', brand: 'Halden', category: 'coat' },
+      'the row as it was when this listing was held against it');
+    assert.strictEqual(entry.appliedAt, undefined);
+    assert.strictEqual(report.appliedAt, null, 'nothing is applied by being written down');
+
+    /* and it survives the round trip to disk unchanged */
+    const file = path.join(TMP, 'saved.json');
+    extractor.saveReport(file, report);
+    const loaded = extractor.loadReport(file);
+    assert.ok(loaded.report, loaded.why);
+    assert.deepStrictEqual(loaded.report.entries, report.entries);
+
+    verified = entry;
+    retailer.close();
+  });
+
+  await testAsync('--write applies the saved report without searching, fetching or rendering', async () => {
+    assert.ok(verified, 'the test above produced no verified entry to apply');
+    await withCatalogRestored(async () => {
+      const file = path.join(TMP, 'apply.json');
+      extractor.saveReport(file, reportWith([verified]));
+
+      /* the fixture retailer that proved this row was closed at the end
+         of the test above, so its port answers nothing. A write that
+         reached for the page would fail on it, and a write that went
+         searching would say no source is configured — the subprocess
+         has no provider registered. Neither happens, and the row lands. */
+      const result = await run(['--discover', '--write', '--report', file]);
+      assert.strictEqual(result.code, 0, result.stderr);
+      assert.match(result.stdout, /Applying 1 verified row/);
+      assert.match(result.stdout, /without contacting a retailer/);
+      assert.doesNotMatch(result.stdout, /Looking for a real listing/, 'it went searching all over again');
+      assert.doesNotMatch(result.stdout, /no product source is configured/, 'it tried to search');
+
+      const now = evaluate(fs.readFileSync(CATALOG, 'utf8')).find((r) => r.id === verified.id);
+      assert.strictEqual(now.productUrl, verified.productUrl);
+      assert.strictEqual(now.imageUrl, verified.imageUrl);
+      assert.deepStrictEqual(plain(now.imageEvidence), { via: 'json-ld-sku', sku: '664422' });
+      assert.strictEqual(extractor.catalogRowIdentity(now).ok, true,
+        'a row written from the report still accounts for itself');
+
+      /* and the report is spent, so repeating the command cannot write
+         the same rows twice or be mistaken for "go and search again" */
+      const after = JSON.parse(fs.readFileSync(file, 'utf8'));
+      assert.ok(after.appliedAt, 'the report does not record that it was applied');
+      assert.deepStrictEqual(after.applied, [verified.id]);
+
+      const again = await run(['--discover', '--write', '--report', file]);
+      assert.strictEqual(again.code, 0, again.stderr);
+      assert.match(again.stdout, /was already written into assets\/catalog\.js/);
+      assert.doesNotMatch(again.stdout, /Looking for a real listing/, 'a spent report sent it searching');
+    });
+  });
+
+  await testAsync('applying a report moves the three permitted fields and no others', async () => {
+    assert.ok(verified, 'the test above produced no verified entry to apply');
+    await withCatalogRestored(async (before) => {
+      const file = path.join(TMP, 'fields.json');
+      extractor.saveReport(file, reportWith([verified]));
+
+      const result = await run(['--discover', '--write', '--report', file]);
+      assert.strictEqual(result.code, 0, result.stderr);
+
+      const wasRows = evaluate(before.toString());
+      const nowRows = evaluate(fs.readFileSync(CATALOG, 'utf8'));
+      assert.strictEqual(nowRows.length, wasRows.length, 'the write added or dropped a row');
+
+      /* every field of every row, compared by name rather than by the
+         three this happens to know about: a field added to the schema
+         later is covered by this without anyone remembering to add it */
+      for (let at = 0; at < wasRows.length; at += 1) {
+        const wasRow = wasRows[at];
+        const nowRow = nowRows[at];
+        assert.strictEqual(nowRow.id, wasRow.id, 'the row order moved');
+        const allowed = nowRow.id === verified.id ? ['productUrl', 'imageUrl', 'imageEvidence'] : [];
+        for (const field of new Set([...Object.keys(wasRow), ...Object.keys(nowRow)])) {
+          if (allowed.includes(field)) continue;
+          assert.deepStrictEqual(same(nowRow[field]), same(wasRow[field]), `${nowRow.id}.${field} moved`);
+        }
+      }
+
+      const now = nowRows.find((r) => r.id === verified.id);
+      assert.strictEqual(now.name, 'Tailored Wool Coat', 'the row was renamed after the shop');
+      assert.strictEqual(now.brand, 'Halden');
+      assert.strictEqual(now.price, 298);
+      assert.strictEqual(now.productUrl, verified.productUrl);
+      assert.strictEqual(now.imageUrl, verified.imageUrl);
+    });
+  });
+
+  await testAsync('an entry that cannot answer for itself is refused rather than written', async () => {
+    assert.ok(verified, 'the test above produced no verified entry to apply');
+    await withCatalogRestored(async (before) => {
+      /* Six ways a report can say something it cannot prove. Every one
+         of them is decidable without a retailer, which is exactly why
+         they are decided again here rather than taken from the file. */
+      const tampered = [
+        {
+          id: 'sample-halden-merino-crew-knit',
+          verified: false,
+          productUrl: 'https://shop.example.com/p/112233',
+          imageUrl: 'https://cdn.example.com/img/112233-hero.jpg',
+          imageEvidence: null,
+          identity: { ok: true, via: 'image-url', code: '112233' },
+          listingName: 'Merino Crew Knit',
+          provedOnPage: [],
+          row: snapshot('sample-halden-merino-crew-knit')
+        },
+        {
+          /* a listing on an aggregator: the soundness gate, again */
+          id: 'sample-terrace-linen-camp-shirt',
+          verified: true,
+          productUrl: 'https://www.google.com/shopping/product/223344',
+          imageUrl: 'https://cdn.example.com/img/223344-hero.jpg',
+          imageEvidence: null,
+          identity: { ok: true, via: 'image-url', code: '223344' },
+          listingName: 'Linen Camp Shirt',
+          provedOnPage: [],
+          row: snapshot('sample-terrace-linen-camp-shirt')
+        },
+        {
+          /* a photo tied to nothing: the evidence gate, again */
+          id: 'sample-coveworks-wide-leg-trouser',
+          verified: true,
+          productUrl: 'https://shop.example.com/p/334455',
+          imageUrl: 'https://cdn.example.com/media/anonymous.jpg',
+          imageEvidence: null,
+          identity: null,
+          listingName: 'Wide Leg Trouser',
+          provedOnPage: [],
+          row: snapshot('sample-coveworks-wide-leg-trouser')
+        },
+        {
+          /* a note that is not what its finding produces: edited on one
+             side and not the other, and no longer what was proved */
+          id: 'sample-northfold-boxy-cotton-tee',
+          verified: true,
+          productUrl: 'https://shop.example.com/p/445566',
+          imageUrl: 'https://cdn.example.com/media/anonymous.jpg',
+          imageEvidence: "{ via: 'json-ld-sku', sku: '000000' }",
+          identity: { ok: true, via: 'json-ld-sku', sku: '445566' },
+          listingName: 'Boxy Cotton Tee',
+          provedOnPage: [],
+          row: snapshot('sample-northfold-boxy-cotton-tee')
+        },
+        {
+          /* the wrong garment: the semantic gate's title stage, again */
+          id: 'sample-solstice-ribbed-knit-skirt',
+          verified: true,
+          productUrl: 'https://shop.example.com/p/556677',
+          imageUrl: 'https://cdn.example.com/img/556677-hero.jpg',
+          imageEvidence: null,
+          identity: { ok: true, via: 'image-url', code: '556677' },
+          listingName: 'Chunky Knit Jumper',
+          provedOnPage: [],
+          row: snapshot('sample-solstice-ribbed-knit-skirt')
+        },
+        {
+          /* a row that has been renamed since: this listing was never
+             held against the row the catalogue now carries */
+          id: 'sample-kinfield-poplin-shirt',
+          verified: true,
+          productUrl: 'https://shop.example.com/p/667788',
+          imageUrl: 'https://cdn.example.com/img/667788-hero.jpg',
+          imageEvidence: null,
+          identity: { ok: true, via: 'image-url', code: '667788' },
+          listingName: 'Poplin Shirt',
+          provedOnPage: [],
+          row: Object.assign(snapshot('sample-kinfield-poplin-shirt'), { name: 'Something Else Entirely' })
+        }
+      ];
+
+      const file = path.join(TMP, 'tampered.json');
+      extractor.saveReport(file, reportWith([...tampered, verified]));
+
+      const result = await run(['--discover', '--write', '--report', file]);
+      assert.strictEqual(result.code, 0, result.stderr);
+
+      const rows = evaluate(fs.readFileSync(CATALOG, 'utf8'));
+      for (const entry of tampered) {
+        const row = rows.find((r) => r.id === entry.id);
+        assert.strictEqual(row.imageUrl, null, `${entry.id} was written from an entry that proves nothing`);
+        assert.strictEqual(row.productUrl, null, `${entry.id} was linked from an entry that proves nothing`);
+        assert.match(result.stdout, new RegExp(`REFUSED\\s+${entry.id}`), `${entry.id} was not reported as refused`);
+      }
+
+      /* each refusal names the gate that made it, because a gate whose
+         reasoning is invisible cannot be corrected */
+      assert.match(result.stdout, /it is not marked as having cleared the gates/);
+      assert.match(result.stdout, /is an aggregator or stock host/);
+      assert.match(result.stdout, /nothing ties it to this product/);
+      assert.match(result.stdout, /its recorded evidence is not what its identity finding produces/);
+      assert.match(result.stdout, /is not the garment the row means/);
+      assert.match(result.stdout, /has changed since the run/);
+
+      /* and the one entry that can answer for itself is unaffected by
+         the company it kept */
+      const good = rows.find((r) => r.id === verified.id);
+      assert.strictEqual(good.imageUrl, verified.imageUrl, 'a good entry was taken down by the bad ones');
+      assert.strictEqual(extractor.catalogRowIdentity(good).ok, true);
+
+      /* nothing else in the file moved */
+      const wasRows = evaluate(before.toString());
+      for (const wasRow of wasRows) {
+        if (wasRow.id === verified.id) continue;
+        const nowRow = rows.find((r) => r.id === wasRow.id);
+        for (const field of Object.keys(wasRow)) {
+          assert.deepStrictEqual(same(nowRow[field]), same(wasRow[field]), `${wasRow.id}.${field} moved`);
+        }
+      }
+    });
+  });
+
+  await testAsync('--only applies one row of a report and leaves the rest of it applicable', async () => {
+    assert.ok(verified, 'the test above produced no verified entry to apply');
+    await withCatalogRestored(async () => {
+      /* a second entry that answers every gate this side can ask: its
+         photo carries its listing's code, and the shop calls it what
+         the row means */
+      const second = {
+        id: 'sample-halden-merino-crew-knit',
+        verified: true,
+        productUrl: 'https://www.example-shop.com/p/merino-crew-knit/778899',
+        imageUrl: 'https://cdn.example-shop.com/img/778899-hero.jpg',
+        imageEvidence: null,
+        identity: { ok: true, via: 'image-url', code: '778899' },
+        listingName: 'Merino Crew Knit',
+        provedOnPage: [],
+        row: snapshot('sample-halden-merino-crew-knit')
+      };
+
+      const file = path.join(TMP, 'only.json');
+      extractor.saveReport(file, reportWith([verified, second]));
+
+      const one = await run(['--discover', '--write', '--only', second.id, '--report', file]);
+      assert.strictEqual(one.code, 0, one.stderr);
+
+      let rows = evaluate(fs.readFileSync(CATALOG, 'utf8'));
+      assert.strictEqual(rows.find((r) => r.id === second.id).imageUrl, second.imageUrl);
+      assert.strictEqual(rows.find((r) => r.id === verified.id).imageUrl, null,
+        'a row nobody asked for was written');
+
+      /* the report is NOT spent: the entry it never looked at would
+         otherwise be stranded, and the only way back to that row would
+         be the live search this whole thing exists to avoid */
+      const between = JSON.parse(fs.readFileSync(file, 'utf8'));
+      assert.strictEqual(between.appliedAt, null, 'one row closed the whole report');
+      assert.deepStrictEqual(between.applied, [second.id]);
+
+      const rest = await run(['--discover', '--write', '--report', file]);
+      assert.strictEqual(rest.code, 0, rest.stderr);
+      assert.doesNotMatch(rest.stdout, /Looking for a real listing/, 'the remainder cost a search');
+
+      rows = evaluate(fs.readFileSync(CATALOG, 'utf8'));
+      assert.strictEqual(rows.find((r) => r.id === verified.id).imageUrl, verified.imageUrl,
+        'the entry left over was never applied');
+
+      /* and the row written first is refused the second time rather
+         than written twice */
+      assert.match(rest.stdout, new RegExp(`REFUSED\\s+${second.id} — the row already carries a photo`));
+
+      const after = JSON.parse(fs.readFileSync(file, 'utf8'));
+      assert.ok(after.appliedAt, 'the report is spent once the whole of it has been considered');
+      assert.deepStrictEqual(after.applied.sort(), [second.id, verified.id].sort());
+    });
+  });
+
+  await testAsync('a stale, unreadable or unknown report is refused, and never quietly re-run', async () => {
+    assert.ok(verified, 'the test above produced no verified entry to apply');
+    const before = fs.readFileSync(CATALOG);
+
+    const stale = path.join(TMP, 'stale.json');
+    extractor.saveReport(stale, reportWith([verified], {
+      createdAt: new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString()
+    }));
+
+    const ahead = path.join(TMP, 'ahead.json');
+    extractor.saveReport(ahead, reportWith([verified], {
+      createdAt: new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString()
+    }));
+
+    const broken = path.join(TMP, 'broken.json');
+    fs.writeFileSync(broken, '{ this is not json');
+
+    const older = path.join(TMP, 'older.json');
+    extractor.saveReport(older, reportWith([verified], { version: extractor.REPORT_VERSION + 99 }));
+
+    const undated = path.join(TMP, 'undated.json');
+    extractor.saveReport(undated, reportWith([verified], { createdAt: 'whenever' }));
+
+    for (const [file, says] of [
+      [stale, /hours old, past the 24-hour limit/],
+      [ahead, /dated \d+ hours in the future/],
+      [broken, /is not readable JSON/],
+      [older, /written by a different version of this script/],
+      [undated, /does not say when it was made/]
+    ]) {
+      const result = await run(['--discover', '--write', '--report', file]);
+      assert.notStrictEqual(result.code, 0, `${path.basename(file)} was accepted`);
+      assert.match(result.stderr, says);
+      assert.match(result.stderr, /Nothing was written\. Re-run --discover/);
+
+      /* the expensive half is never started on the strength of a report
+         that could not be read: a 35-minute search nobody asked for is
+         its own kind of damage */
+      assert.doesNotMatch(result.stdout, /Looking for a real listing/,
+        `${path.basename(file)} sent it searching`);
+      assert.ok(fs.readFileSync(CATALOG).equals(before), 'the catalogue is not byte-for-byte what it was');
+    }
+  });
+
+  await testAsync('with no report saved at all, --discover still means go and find out', async () => {
+    const before = fs.readFileSync(CATALOG);
+    const result = await run([
+      '--discover', '--write',
+      '--only', 'sample-northfold-boxy-cotton-tee',
+      '--report', path.join(TMP, 'nothing-was-ever-here.json')
+    ]);
+
+    assert.strictEqual(result.code, 0, result.stderr);
+    assert.match(result.stdout, /No discovery report at/);
+    assert.match(result.stdout, /Looking for a real listing/, 'with nothing saved it has to go and look');
+    assert.match(result.stdout, /no product source is configured/);
+    assert.ok(fs.readFileSync(CATALOG).equals(before), 'and it wrote nothing, having verified nothing');
+  });
+
+  await testAsync('the plain path leaves a discovery report alone, and says it is there', async () => {
+    const before = fs.readFileSync(CATALOG);
+    const file = path.join(TMP, 'waiting.json');
+    extractor.saveReport(file, reportWith([verified]));
+
+    /* --write with no --discover is the other mode: it reads the pages
+       rows already link to. Every linked row carries a photo already, so
+       this reads nothing at all — and it must not help itself to a
+       report that belongs to --discover --write. */
+    const result = await run(['--write', '--report', file]);
+    assert.strictEqual(result.code, 0, result.stderr);
+    assert.match(result.stdout, /holds 1 verified row from a --discover run/);
+    assert.match(result.stdout, /Run --discover --write to apply them/);
+
+    assert.ok(fs.readFileSync(CATALOG).equals(before), 'the plain path applied a report that was not its to apply');
+    const after = JSON.parse(fs.readFileSync(file, 'utf8'));
+    assert.strictEqual(after.appliedAt, null, 'and it marked the report spent without writing it');
   });
 
   await testAsync('--coverage reports without reading anything, and --help lists the modes', async () => {
