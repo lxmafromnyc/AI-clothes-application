@@ -70,6 +70,16 @@
    row that already carries a photo is left alone unless --refresh says
    otherwise, so a working URL is never churned.
 
+   Discovery and writing are two commands, and only the first one costs
+   anything. A --discover run writes what cleared every gate into a
+   temporary report, and --discover --write puts that report into the
+   catalogue without searching, fetching or rendering anything — so
+   keeping a result no longer means paying for the search that found it
+   a second time. Nothing in the report is taken on faith: every gate
+   that can be decided without a retailer is decided again on the way
+   in, and an entry that cannot answer for itself is refused and its row
+   left exactly as it was.
+
    Run it from a machine with an ordinary internet connection. Behind a
    proxy that refuses retailer hosts every row comes back UNREACHABLE,
    and the report is about the proxy rather than about the catalogue.
@@ -77,6 +87,8 @@
    Usage
      node scripts/fetch-catalog-images.js
      node scripts/fetch-catalog-images.js --write
+     node scripts/fetch-catalog-images.js --discover          finds, and saves what it proved
+     node scripts/fetch-catalog-images.js --discover --write  writes that, searching nothing
      node scripts/fetch-catalog-images.js --only jcrew-broken-in-oxford
      node scripts/fetch-catalog-images.js --refresh        re-read rows that have one
      node scripts/fetch-catalog-images.js --no-browser     plain HTTP only
@@ -90,6 +102,20 @@ const path = require('path');
 const vm = require('vm');
 
 const CATALOG = path.join(__dirname, '..', 'assets', 'catalog.js');
+
+/* Where a --discover run leaves what it proved, so --write can put it
+   into the catalogue without asking the internet a second time. It is a
+   hand-off between two commands rather than a second catalogue: named
+   for being temporary, gitignored, and believed by nothing. */
+const DEFAULT_REPORT = path.join(__dirname, '..', '.catalog-discovery.tmp.json');
+const REPORT_VERSION = 1;
+
+/* A hand-off is minutes old, not days. Past this the listings behind it
+   have had time to move, and a photo proved against a page that has
+   since changed is not a proved photo — so it is refused rather than
+   written, and a fresh --discover is the operator's call to make. */
+const REPORT_TTL_MS = 24 * 60 * 60 * 1000;
+
 const TIMEOUT = 20000;
 const BROWSER_TIMEOUT = 45000;
 const MIN_BYTES = 2000; // a 1x1 tracker is not a product photo
@@ -134,7 +160,8 @@ const OPTIONS = {
   '--site': 'value',
   '--candidate': 'value',
   '--as': 'value',
-  '--limit': 'value'
+  '--limit': 'value',
+  '--report': 'value'
 };
 
 function parseArgs(argv) {
@@ -173,7 +200,9 @@ const USAGE = `
     --only <row-id>      just this row
     --refresh            re-read rows that already carry a photo
     --no-browser         plain HTTP only, no Chromium
-    --write              write what verified into assets/catalog.js
+    --write              write what verified into assets/catalog.js.
+                         With --discover it applies the report the last
+                         --discover saved and searches nothing.
     --site <origin>      the origin an image is hotlink-tested for
 
     --candidate <productUrl> --as <row-id>
@@ -192,6 +221,10 @@ const USAGE = `
                          never touched. Needs
                          PRODUCT_SOURCE and its key; --limit <n> sets how
                          many listings to try per row (default 8).
+
+    --report <file>      where --discover writes down what it proved,
+                         and where --discover --write reads it back from
+                         (default .catalog-discovery.tmp.json)
 
     --coverage           how many rows carry a verified photo, and
                          whether each still accounts for itself. Reads
@@ -212,6 +245,7 @@ const only = flag('--only');
 const writing = has('--write');
 const refreshing = has('--refresh');
 const useBrowser = !has('--no-browser');
+const reportFile = flag('--report') ? path.resolve(String(flag('--report'))) : DEFAULT_REPORT;
 
 /* ---------- reading the catalogue ----------
 
@@ -2880,6 +2914,365 @@ function printCoverage(report) {
   console.log('');
 }
 
+/* ---------- what a run proved, written down ----------
+
+   Discovery is the expensive half: a live search for every row that has
+   no photo, a page fetch for every listing it offers, and a real browser
+   for the pages that refuse a bare client. Writing is the cheap half —
+   three fields per row, decided entirely by what discovery established.
+
+   They used to be the same command, which meant keeping a result cost
+   the search twice: --discover to see what was found, --discover --write
+   to keep it, and the second run re-derived from nothing what the first
+   had already proved. Two searches for one result, and the second could
+   disagree with the first because the shops had moved on in between.
+
+   So a run that verifies anything writes it down here, and --write reads
+   it back. The file holds only rows that cleared every gate, only the
+   three fields discovery is allowed to fill, and what it took to prove
+   them.
+
+   Nothing in it is believed. Everything that can be decided without a
+   retailer is decided AGAIN on the way back in: the host gate, the
+   evidence that ties this photo to this listing, the title stage of the
+   semantic gate, and whether the row still means what it meant when the
+   listing was checked against it. What genuinely needed the page — the
+   descriptors the title left pending — is carried with what the page
+   said, because that is the one question this side cannot ask again,
+   and an entry whose record does not cover it is refused.
+
+   A report edited by hand therefore fails exactly the way a catalogue
+   row edited by hand fails. What the file buys is the fact that
+   verification happened, never permission to skip it. */
+
+/* the report's path as a human typed it, for a line that has to be read */
+function rel(file) {
+  const relative = path.relative(process.cwd(), file);
+  return relative && !relative.startsWith('..') ? relative : file;
+}
+
+/* Everything the write half needs, and nothing it does not. A row that
+   did not clear every gate is in the run's printed output and nowhere
+   else, because nothing downstream may write it. */
+function reportFrom(found, rows, options) {
+  const entries = [];
+  for (const result of found) {
+    if (!result || result.verdict !== 'VERIFIED' || !result.proposal) continue;
+    const row = rows.find((one) => one && one.id === result.id) || {};
+    entries.push({
+      id: result.id,
+      verified: true,
+
+      /* the three fields discovery is allowed to fill, exactly as this
+         run produced them */
+      productUrl: result.proposal.productUrl,
+      imageUrl: result.proposal.imageUrl,
+
+      /* the note as it will appear in the file, verbatim, so what lands
+         in the catalogue is what was proved rather than something
+         re-derived later from a different reading */
+      imageEvidence: evidenceNote(result.proposal.identity),
+
+      /* the image gate's own finding, which is what re-proves the tie
+         between photo and listing on the way back in */
+      identity: result.proposal.identity || null,
+
+      /* what the shop called it, so the semantic gate's title stage can
+         be put to it again with no page in front of it */
+      listingName: result.proposal.listingName || null,
+      listingBrand: result.proposal.listingBrand || null,
+
+      /* what the page settled of whatever the title left pending. Sets
+         do not survive JSON and are not needed: the name is what a
+         pending item is matched by. */
+      provedOnPage: (result.provedOnPage || []).map((one) => ({
+        kind: one && one.item ? one.item.kind : null,
+        name: nameOfPending(one && one.item),
+        where: one ? one.where : null,
+        quote: one ? one.quote : null
+      })),
+
+      /* the row as it was when the listing was checked against it. A row
+         renamed since is a row this listing was never checked against. */
+      row: {
+        name: row.name === undefined ? null : row.name,
+        brand: row.brand === undefined ? null : row.brand,
+        category: row.category === undefined ? null : row.category
+      },
+
+      why: result.why || null
+    });
+  }
+
+  return {
+    version: REPORT_VERSION,
+    createdAt: new Date().toISOString(),
+    catalog: path.relative(path.join(__dirname, '..'), CATALOG),
+    options: options || {},
+    /* set once these entries are in the catalogue, so the same report
+       cannot be applied twice and a second --write cannot be mistaken
+       for an instruction to go searching again */
+    appliedAt: null,
+    applied: [],
+    entries
+  };
+}
+
+function saveReport(file, report) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(report, null, 2) + '\n');
+  return file;
+}
+
+/* `spent` is whether the WHOLE report was considered. --only takes one
+   row out of one, and the entries it did not look at have not been
+   applied — marking the file spent would strand them, and the rows they
+   belong to would never be written without a fresh search. So the ids
+   are recorded either way, and the report is closed only when there is
+   nothing left in it to apply. */
+function markApplied(file, report, ids, spent) {
+  const next = Object.assign({}, report, {
+    appliedAt: spent === false ? report.appliedAt || null : new Date().toISOString(),
+    applied: ids
+  });
+  saveReport(file, next);
+  return next;
+}
+
+/* Whether the file is a report at all, and recent enough to stand for
+   what the shops were selling. Nothing about the rows is judged here —
+   that is per row, below, so one bad entry cannot take the others with
+   it. A problem at THIS level is different: it means the file cannot be
+   read as a report, and then there is nothing to write. */
+function loadReport(file, now) {
+  let raw;
+  try {
+    raw = fs.readFileSync(file, 'utf8');
+  } catch (err) {
+    /* nothing there is the ordinary case and means "go and find out".
+       Something there that cannot be read is not the same thing, and
+       silently starting a live search on the strength of it would be
+       the expensive half running for the wrong reason. */
+    if (err && err.code === 'ENOENT') {
+      return { missing: true, why: `there is no discovery report at ${rel(file)}` };
+    }
+    return { unusable: true, why: `the discovery report at ${rel(file)} could not be read (${err && err.code})` };
+  }
+
+  let report;
+  try {
+    report = JSON.parse(raw);
+  } catch (err) {
+    return { unusable: true, why: `the discovery report at ${rel(file)} is not readable JSON` };
+  }
+
+  if (!report || typeof report !== 'object' || Array.isArray(report)) {
+    return { unusable: true, why: `${rel(file)} holds something that is not a discovery report` };
+  }
+  if (report.version !== REPORT_VERSION) {
+    return {
+      unusable: true,
+      why: `the discovery report at ${rel(file)} was written by a different version of this script (${report.version})`
+    };
+  }
+  if (!Array.isArray(report.entries)) {
+    return { unusable: true, why: `the discovery report at ${rel(file)} records no rows` };
+  }
+
+  const written = Date.parse(report.createdAt);
+  if (!Number.isFinite(written)) {
+    return { unusable: true, why: `the discovery report at ${rel(file)} does not say when it was made` };
+  }
+
+  const age = (now === undefined ? Date.now() : now) - written;
+  const hours = Math.round(Math.abs(age) / 3600000);
+  if (age < 0) {
+    return { unusable: true, why: `the discovery report at ${rel(file)} is dated ${hours} hours in the future` };
+  }
+  if (age > REPORT_TTL_MS) {
+    return {
+      unusable: true,
+      why: `the discovery report at ${rel(file)} is ${hours} hours old, past the ` +
+        `${Math.round(REPORT_TTL_MS / 3600000)}-hour limit — the listings behind it have had time to move`
+    };
+  }
+
+  return { report, age };
+}
+
+/* One entry, put back through every gate that does not need a retailer.
+   A refusal here leaves the row exactly as it was, and the other entries
+   are unaffected — the same rule discovery itself runs on. */
+function replayable(entry, rows, taken) {
+  const no = (why) => ({ ok: false, why });
+
+  if (!entry || typeof entry !== 'object') return no('the report holds something that is not a row');
+  if (!entry.id) return no('the report holds a row with no id');
+  if (entry.verified !== true) return no('it is not marked as having cleared the gates');
+  if (!entry.productUrl || !entry.imageUrl) return no('it records no listing, or no photo');
+
+  const row = rows.find((one) => one && one.id === entry.id);
+  if (!row) return no('no catalogue row has this id any more');
+  if (row.imageUrl) return no('the row already carries a photo, and a verified photo is never overwritten');
+
+  /* the row still MEANS what it meant. Discovery found a listing to
+     represent "Tailored Wool Coat" by Halden; a row renamed since is a
+     row that listing was never held against. */
+  const was = entry.row || {};
+  for (const field of ['name', 'brand', 'category']) {
+    const now = row[field] === undefined || row[field] === null ? '' : String(row[field]);
+    const then = was[field] === undefined || was[field] === null ? '' : String(was[field]);
+    if (now !== then) {
+      return no(`the row's ${field} has changed since the run — it was "${then}" and is now "${now}"`);
+    }
+  }
+
+  /* the soundness gate, run again on both URLs */
+  const listing = soundness(entry.productUrl, entry.productUrl);
+  if (listing) return no(`its listing is not sound: ${listing}`);
+  const photo = soundness(entry.imageUrl, entry.productUrl);
+  if (photo) return no(`its photo is not sound: ${photo}`);
+
+  /* the note the file will carry has to be the one this finding
+     produces. A report edited on one side and not the other no longer
+     says what was proved, whichever side was edited. */
+  const note = evidenceNote(entry.identity) || null;
+  const recorded = entry.imageEvidence === undefined ? null : entry.imageEvidence;
+  if (note !== recorded) return no('its recorded evidence is not what its identity finding produces');
+
+  /* and the tie itself, re-proved rather than trusted: the same test a
+     shipped row answers to --coverage, asked before it is shipped */
+  const accounted = catalogRowIdentity({
+    id: entry.id,
+    productUrl: entry.productUrl,
+    imageUrl: entry.imageUrl,
+    imageEvidence: entry.identity
+  });
+  if (!accounted.ok) return no(accounted.why);
+
+  /* the semantic gate's title stage needs no page, so it is asked again
+     in full rather than taken from the record */
+  if (!entry.listingName) return no('it records no listing title, so what it sells cannot be checked again');
+  const verdict = semanticMatch(row, { title: entry.listingName });
+  if (!verdict.ok) return no(`its listing is not the garment the row means: ${verdict.why}`);
+
+  /* the page stage cannot be asked again from here, so what the page
+     established has to be on the record — and it has to cover every
+     descriptor the title still leaves pending. Nothing waives this. */
+  const pending = verdict.pending || [];
+  if (pending.length) {
+    const proved = new Set((entry.provedOnPage || [])
+      .filter((one) => one && one.name)
+      .map((one) => `${one.kind}:${one.name}`));
+    const missing = pending
+      .filter((item) => !proved.has(`${item && item.kind}:${nameOfPending(item)}`))
+      .map(nameOfPending);
+    if (missing.length) {
+      return no(`its page was never recorded as establishing ${missing.join(', ')}`);
+    }
+  }
+
+  if (taken.has(entry.imageUrl)) return no(`its photo is already on ${taken.get(entry.imageUrl)}`);
+
+  return { ok: true, how: accounted.how || verdict.why };
+}
+
+/* --write, where a --discover run has already proved something. Returns
+   false only when there is no report at all, which is the one case where
+   --discover --write still means "go and find out". Every other outcome
+   is decided here, and none of them contacts a retailer. */
+function applySavedReport() {
+  const loaded = loadReport(reportFile);
+
+  if (loaded.missing) {
+    console.log(`\nNo discovery report at ${rel(reportFile)}, so there is nothing saved to apply.`);
+    console.log('Discovering now, and what clears every gate will be written down there.');
+    return false;
+  }
+
+  /* Never a silent re-run. A report that cannot be trusted is refused
+     here and the catalogue is left alone; making a fresh one costs a
+     live search, and that is the operator's call rather than a thing
+     this script does to them because a file was out of date. */
+  if (loaded.unusable) {
+    throw new Error(`${loaded.why}.\n  Nothing was written. Re-run --discover to make a fresh report.`);
+  }
+
+  const report = loaded.report;
+  if (report.appliedAt) {
+    console.log(`\nThe discovery report at ${rel(reportFile)} was already written into assets/catalog.js`);
+    console.log(`at ${report.appliedAt}, so there is nothing to apply and nothing was searched.`);
+    console.log('Re-run --discover to look for the rows that still carry no photo.\n');
+    return true;
+  }
+
+  const { source, rows } = readCatalog();
+  let entries = report.entries;
+  if (only) entries = entries.filter((entry) => entry && entry.id === only);
+
+  if (!entries.length) {
+    console.log(only
+      ? `\nThe discovery report at ${rel(reportFile)} records nothing for ${only}.\n`
+      : `\nThe discovery report at ${rel(reportFile)} records no verified row.\n`);
+    return true;
+  }
+
+  console.log(`\nApplying ${entries.length} verified row${entries.length === 1 ? '' : 's'} from ${rel(reportFile)},`);
+  console.log(`proved by the --discover run of ${report.createdAt}.`);
+  console.log('Nothing is searched, fetched or rendered: every gate that can be decided');
+  console.log('without a retailer is decided again here, and the rest is on the record.\n');
+
+  /* no two rows wearing one picture, counting the ones already in the
+     file as well as the ones this run is about to put there */
+  const taken = new Map();
+  for (const row of rows) if (row && row.imageUrl) taken.set(row.imageUrl, row.id);
+
+  const usable = [];
+  const refused = [];
+  for (const entry of entries) {
+    const id = (entry && entry.id) || '(no id)';
+    const checked = replayable(entry, rows, taken);
+    if (!checked.ok) {
+      refused.push({ id, why: checked.why });
+      console.log(`  ${'REFUSED'.padEnd(10)} ${id} — ${checked.why}`);
+      console.log(`  ${''.padEnd(10)} the row is left as it was, and the others are unaffected`);
+      console.log('');
+      continue;
+    }
+    taken.set(entry.imageUrl, entry.id);
+    usable.push(entry);
+    console.log(`  ${'VERIFIED'.padEnd(10)} ${id} — ${checked.how}`);
+    console.log(`  ${''.padEnd(10)} productUrl    ${short(entry.productUrl)}`);
+    console.log(`  ${''.padEnd(10)} imageUrl      ${short(entry.imageUrl)}`);
+    console.log(`  ${''.padEnd(10)} imageEvidence ${entry.imageEvidence || '(none needed — the URL carries the listing\'s code)'}`);
+    console.log('');
+  }
+
+  if (!usable.length) {
+    console.log('  Nothing in the report survived re-checking, so assets/catalog.js is left exactly as it was.\n');
+    return true;
+  }
+
+  let next = source;
+  for (const entry of usable) {
+    next = linkRow(next, entry.id, {
+      productUrl: entry.productUrl,
+      imageUrl: entry.imageUrl,
+      identity: entry.identity
+    });
+  }
+  fs.writeFileSync(CATALOG, next);
+  const already = Array.isArray(report.applied) ? report.applied : [];
+  markApplied(reportFile, report, [...new Set([...already, ...usable.map((entry) => entry.id)])], !only);
+
+  console.log(`  Wrote ${usable.length} row${usable.length === 1 ? '' : 's'} into assets/catalog.js without contacting a retailer.`);
+  if (refused.length) {
+    console.log(`  ${refused.length} row${refused.length === 1 ? ' was' : 's were'} refused and left exactly as ${refused.length === 1 ? 'it was' : 'they were'}.`);
+  }
+  printCoverage(coverage(readCatalog().rows));
+  return true;
+}
+
 /* ---------- report ---------- */
 async function main() {
   if (parsedArgs.errors.length) {
@@ -2903,6 +3296,13 @@ async function main() {
      A row that already carries one is never touched here — that is what
      keeps a verified photo verified. */
   if (has('--discover')) {
+    /* The expensive half is the searching, and --write no longer pays
+       for it. What the last --discover proved is on file, so this puts
+       that into the catalogue and contacts nobody. It comes back false
+       only when there is no report at all, and then this falls through
+       to a live run exactly as it always did. */
+    if (writing && applySavedReport()) return;
+
     const { source, rows } = readCatalog();
     let targets = rows.filter((row) => row && !row.imageUrl);
     if (only) targets = targets.filter((row) => row.id === only);
@@ -3039,9 +3439,18 @@ async function main() {
       for (const one of broken) console.log(`     ${one.id} — ${one.why}`);
     }
 
+    /* What this run proved, written down beside the catalogue, so that
+       putting it into the file never costs the search a second time.
+       Only the rows that cleared every gate go in. */
+    const record = reportFrom(found, rows, { limit, only: only || null, site });
+    if (found.length) {
+      saveReport(reportFile, record);
+      console.log(`  Saved ${found.length} verified row${found.length === 1 ? '' : 's'} to ${rel(reportFile)}.`);
+    }
+
     if (!writing) {
       console.log(found.length
-        ? `  Re-run with --write to put ${found.length} of them into assets/catalog.js.\n`
+        ? `  Re-run with --write to put ${found.length} of them into assets/catalog.js — it reads that report and searches nothing.\n`
         : '  Nothing verified, so there is nothing to write.\n');
       return;
     }
@@ -3053,6 +3462,10 @@ async function main() {
     let next = source;
     for (const result of found) next = linkRow(next, result.id, result.proposal);
     fs.writeFileSync(CATALOG, next);
+    /* discovered and written in the one run: the report is marked spent
+       here too, so a repeat of this command reads "already applied"
+       rather than going out and searching all over again */
+    markApplied(reportFile, record, found.map((result) => result.id));
     console.log(`  Wrote ${found.length} row${found.length === 1 ? '' : 's'} into assets/catalog.js.\n`);
     printCoverage(coverage(readCatalog().rows));
     return;
@@ -3078,6 +3491,17 @@ async function main() {
     fs.writeFileSync(CATALOG, replaceRow(current, forId, proposal));
     console.log(`  Replaced ${forId} — listing, photo, name and brand together.\n`);
     return;
+  }
+
+  /* This mode reads the pages rows already link to; a discovery report
+     belongs to --discover --write. Said once here so a saved run is not
+     quietly forgotten about, and nothing is applied on its behalf. */
+  if (writing) {
+    const waiting = loadReport(reportFile);
+    if (waiting.report && !waiting.report.appliedAt && waiting.report.entries.length) {
+      console.log(`\n  Note: ${rel(reportFile)} holds ${waiting.report.entries.length} verified row${waiting.report.entries.length === 1 ? '' : 's'} from a --discover run.`);
+      console.log('  Run --discover --write to apply them. This mode reads the pages rows already link to.');
+    }
   }
 
   const { source, rows } = readCatalog();
@@ -3189,6 +3613,11 @@ if (require.main === module) {
     garmentsAgree, canonicalCorroborated, wordsInPath, wordsAboutImage, TRACKING_PARAMS,
     parseArgs, OPTIONS, USAGE, intentFor, queryForms, listingsFor, discoverRow, coverage,
     providerChain, outOfSearches,
+    /* the hand-off between the expensive half and the cheap one: what a
+       run writes down, and every gate an entry answers on the way back
+       in before a single field is written */
+    reportFrom, saveReport, loadReport, markApplied, replayable,
+    DEFAULT_REPORT, REPORT_VERSION, REPORT_TTL_MS,
     /* the semantic gate: what the listing SELLS, asked before any page
        is fetched, and decidable with no retailer at all */
     semanticMatch, readGarment, adultSizing, GARMENT_TYPES, DESCRIPTORS, MATERIALS,
