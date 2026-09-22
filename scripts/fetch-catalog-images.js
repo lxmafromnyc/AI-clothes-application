@@ -619,6 +619,107 @@ function canonicalCorroborated(productUrl, candidate) {
   return { agree: true, why: 'nothing it says about itself names a different garment' };
 }
 
+/* ---------- a picture of the SITE is not a picture of the product ----------
+
+   A live run accepted three photos that were not photographs of any
+   garment:
+
+     whbm_logo_seo.avif     9KB, White House Black Market's wordmark
+     social-share-1x.jpg    ASOS's share card
+     social_telfar.jpg      Telfar's share card
+
+   Each came in as the page's og:image, and each was written under
+   `via: 'canonical'`, because the page was canonical for the listing and
+   nothing in the filename named a DIFFERENT garment. That is the
+   canonical rule working as written: it refuses a disagreement it can
+   see, and a logo disagrees with nothing. What it never asked is whether
+   the image is a photograph of a product at all — and a page that
+   publishes its logo as its og:image is vouching for its brand, not for
+   the garment.
+
+   So an image is read for what KIND of asset it is before anything is
+   asked about which product it shows. Two tiers:
+
+     never a product photo   favicons, touch icons, placeholders, "no
+                             image", "coming soon", spacers, and any .ico
+                             or .svg. Refused whatever else is true.
+
+     a site asset            logos, wordmarks, social and share cards,
+                             Open Graph and SEO images, sprites, icons,
+                             banners, and a filename that is nothing but
+                             the shop's own name. Refused unless the
+                             filename itself carries the listing's code or
+                             names a garment — a "logo-tee.jpg" is a
+                             T-shirt, and "og-429066.jpg" is product
+                             429066's own card.
+
+   Only the FILENAME is read for the kind of asset, plus a directory
+   whose whole name is a site-asset folder (/logos/, /social/, /og/).
+   Other directory names say nothing: Salesforce stores every product
+   photo under /default/, and that is not a default image. */
+const NEVER_A_PRODUCT_PHOTO = /\b(favicons?|apple touch icon|touch icon|placeholders?|placeholder image|no ?image|image not available|image unavailable|not available|coming soon|spacer|1x1|missing image)\b/;
+const SITE_ASSET = /\b(logos?|logotype|wordmark|brandmark|favicon|icons?|sprites?|social|share|sharing|shareimage|socialshare|og|ogimage|opengraph|open graph|seo|meta image|twitter|twitter card|facebook|fb|banner|masthead|header|footer|newsletter|branding|default share|site image)\b/;
+const SITE_ASSET_FOLDER = /^(logos?|favicons?|icons?|social|share|sharing|og|og-images?|opengraph|seo|branding|brand-assets|placeholders?|sprites?)$/i;
+const NEVER_A_PHOTO_TYPE = /\.(ico|svg|svgz)$/i;
+/* words a filename uses for its SIZE or its version rather than its
+   subject, discounted before asking whether the rest is only the shop's
+   own name */
+const FILENAME_FILLER = /^(image|images|img|photo|pic|main|large|small|medium|default|final|new|web|hi|hires|lores|retina|copy|v\d+|\d+x|x\d+|\d+x\d+|\d+)$/;
+const HOST_FILLER = new Set(['www', 'cdn', 'com', 'net', 'org', 'co', 'uk', 'us', 'img', 'images', 'image', 'static', 'media', 'assets', 'shop', 'store']);
+
+/* a filename's words, with camelCase and every separator split apart */
+function filenameWords(pathname) {
+  const base = String(pathname || '').split('/').filter(Boolean).pop() || '';
+  return decodeURIComponent(base)
+    .replace(/\.[a-z0-9]{2,5}$/i, '')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+}
+
+function siteAsset(candidate, productUrl) {
+  const raw = typeof candidate === 'string' ? candidate : candidate && candidate.url;
+  let url;
+  try { url = new URL(String(raw)); } catch (err) { return null; }
+
+  const pathname = (() => { try { return decodeURIComponent(url.pathname); } catch (err) { return url.pathname; } })();
+  if (NEVER_A_PHOTO_TYPE.test(pathname)) {
+    return `${pathname.split('.').pop().toLowerCase()} is an icon or vector format, never a product photograph`;
+  }
+
+  const words = filenameWords(pathname);
+  const said = words.join(' ');
+  const file = pathname.split('/').filter(Boolean).pop() || pathname;
+
+  const never = said.match(NEVER_A_PRODUCT_PHOTO);
+  if (never) return `its filename ${file} names a ${never[1]}, which is a stand-in, not a product photo`;
+
+  /* the escape from the second tier: the filename speaks for a product */
+  const carriesCode = identifiersFrom(productUrl).some((id) => containsCode(file.toLowerCase(), id));
+  if (carriesCode) return null;
+  const garment = readGarment(said, {});
+  if (garment.type) return null;
+
+  const asset = said.match(SITE_ASSET);
+  if (asset) return `its filename ${file} names a site ${asset[1]} image, not a photograph of the garment`;
+
+  const folders = pathname.split('/').filter(Boolean).slice(0, -1);
+  const folder = folders.find((segment) => SITE_ASSET_FOLDER.test(segment));
+  if (folder) return `it sits in the site's /${folder}/ folder, which holds the shop's own artwork, not its products`;
+
+  /* a filename that is nothing but the shop's own name: telfar.jpg */
+  const hostWords = new Set();
+  for (const host of [url.hostname, (() => { try { return new URL(productUrl).hostname; } catch (err) { return ''; } })()]) {
+    for (const label of String(host).toLowerCase().split(/[.-]/)) if (label && !HOST_FILLER.has(label)) hostWords.add(label);
+  }
+  const subject = words.filter((word) => !FILENAME_FILLER.test(word) && word.length >= 3);
+  if (subject.length && subject.every((word) => hostWords.has(word))) {
+    return `its filename ${file} is only the shop's own name, which is the shop's picture, not the product's`;
+  }
+  return null;
+}
+
 function identityEvidence(candidate, productUrl) {
   const ids = identifiersFrom(productUrl);
   if (!ids.length) return { ok: false, why: 'the listing URL carries no product code to match against' };
@@ -674,6 +775,16 @@ function identityEvidence(candidate, productUrl) {
       return {
         ok: false,
         why: `the page is canonical for this listing, but its ${candidate.from} is a different garment — ${corroborated.why}`
+      };
+    }
+    /* and the page vouching for its og:image is not the og:image being
+       a photograph: a shop that publishes its logo there is vouching for
+       its brand, and a logo agrees with every garment */
+    const asset = siteAsset(candidate, productUrl);
+    if (asset) {
+      return {
+        ok: false,
+        why: `the page is canonical for this listing, but its ${candidate.from} is not a product photo — ${asset}`
       };
     }
     return {
@@ -752,6 +863,10 @@ function containsCode(text, id) {
 function catalogRowIdentity(row) {
   if (!row || !row.imageUrl) return { ok: true, how: 'no photo to account for' };
   if (!row.productUrl) return { ok: false, why: 'carries a photo but links to no listing' };
+
+  /* whatever evidence the row records, a logo is not its product's photo */
+  const asset = siteAsset(row.imageUrl, row.productUrl);
+  if (asset) return { ok: false, why: asset };
 
   /* the URL says it itself — UNIQLO and J.Crew */
   const direct = identityEvidence({ url: row.imageUrl, from: 'catalogue' }, row.productUrl);
@@ -952,6 +1067,87 @@ async function fetchPage(url, within) {
   }
 }
 
+/* ---------- how big the picture actually is ----------
+
+   The byte floor catches a tracking pixel and nothing else: the 9KB
+   wordmark a live run accepted was four times over it. What a logo
+   cannot hide is its SHAPE — a strip a few dozen pixels tall, or a
+   square the size of a tab icon — and every format a shop serves says
+   its own dimensions in its first few hundred bytes. So they are read
+   from the header, never decoded. A format this cannot read, or a body
+   too short to say, answers null and the photo is judged exactly as it
+   was before: this only ever refuses a shape it can SEE. */
+function imageDimensions(data) {
+  if (!data || typeof data.length !== 'number' || data.length < 24) return null;
+  const b = Buffer.isBuffer(data) ? data : Buffer.from(data);
+  const at = (text, offset) => b.toString('latin1', offset, offset + text.length) === text;
+  const ok = (width, height) => (width > 0 && height > 0 ? { width, height } : null);
+
+  /* PNG: IHDR is always first */
+  if (b[0] === 0x89 && at('PNG', 1)) return ok(b.readUInt32BE(16), b.readUInt32BE(20));
+  if (at('GIF8', 0)) return ok(b.readUInt16LE(6), b.readUInt16LE(8));
+
+  /* JPEG: walk the markers to the first start-of-frame */
+  if (b[0] === 0xff && b[1] === 0xd8) {
+    let i = 2;
+    while (i + 9 < b.length) {
+      if (b[i] !== 0xff) { i += 1; continue; }
+      const marker = b[i + 1];
+      if (marker === 0xd8 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) { i += 2; continue; }
+      if (marker === 0xff) { i += 1; continue; }
+      const length = b.readUInt16BE(i + 2);
+      if (marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker)) {
+        return ok(b.readUInt16BE(i + 7), b.readUInt16BE(i + 5));
+      }
+      if (length < 2) return null;
+      i += 2 + length;
+    }
+    return null;
+  }
+
+  /* WebP, in each of its three encodings */
+  if (at('RIFF', 0) && at('WEBP', 8) && b.length >= 30) {
+    if (at('VP8 ', 12)) return ok(b.readUInt16LE(26) & 0x3fff, b.readUInt16LE(28) & 0x3fff);
+    if (at('VP8L', 12)) {
+      const bits = b.readUInt32LE(21);
+      return ok((bits & 0x3fff) + 1, ((bits >> 14) & 0x3fff) + 1);
+    }
+    if (at('VP8X', 12)) return ok(b.readUIntLE(24, 3) + 1, b.readUIntLE(27, 3) + 1);
+    return null;
+  }
+
+  /* AVIF and HEIF: the image-spatial-extents property, the largest if
+     the file carries a thumbnail as well */
+  if (at('ftyp', 4)) {
+    let best = null;
+    let from = 0;
+    for (;;) {
+      const found = b.indexOf('ispe', from, 'latin1');
+      if (found < 0 || found + 16 > b.length) break;
+      const width = b.readUInt32BE(found + 8);
+      const height = b.readUInt32BE(found + 12);
+      if (width > 0 && height > 0 && (!best || width * height > best.width * best.height)) best = { width, height };
+      from = found + 4;
+    }
+    return best;
+  }
+  return null;
+}
+
+/* the shape of a logo, a badge or a banner rather than a garment */
+const MAX_ASPECT = 3;
+function shapeFault(size) {
+  if (!size) return null;
+  const { width, height } = size;
+  if (Math.min(width, height) < MIN_RENDERED) {
+    return `it is ${width}x${height}, the size of an icon or a badge, not a product photo`;
+  }
+  if (Math.max(width, height) / Math.min(width, height) > MAX_ASPECT) {
+    return `it is ${width}x${height}, the shape of a logo or a banner, not a product photo`;
+  }
+  return null;
+}
+
 /* The two loads a photo has to survive: plainly, and then carrying the
    site's own Referer, so a hotlink block is caught here rather than on
    the page. Both are bounded — an image host that accepts a connection
@@ -967,10 +1163,16 @@ async function verifyImage(url, fetcher, within) {
   let type;
   let status;
   let bytes;
+  let size = null;
   try {
     type = plain.response.headers.get('content-type') || '';
     status = plain.response.status;
-    bytes = (await plain.response.arrayBuffer()).byteLength;
+    const body = await plain.response.arrayBuffer();
+    bytes = body.byteLength;
+    /* the browser path decodes the picture itself and says how big it
+       is; the plain path reads it off the header */
+    size = plain.response.dimensions
+      || (body instanceof ArrayBuffer ? imageDimensions(Buffer.from(body)) : imageDimensions(body));
   } catch (err) {
     return { ok: false, why: `image host ${readingFailed(err)}` };
   } finally {
@@ -980,6 +1182,11 @@ async function verifyImage(url, fetcher, within) {
   if (status !== 200) return { ok: false, why: `answered ${status}` };
   if (!/^image\//i.test(type)) return { ok: false, why: `answered 200 as ${type.split(';')[0] || 'no type'}` };
   if (bytes < MIN_BYTES) return { ok: false, why: `only ${bytes} bytes, too small to be a product photo` };
+  if (/^image\/(svg|x-icon|vnd\.microsoft\.icon)/i.test(type)) {
+    return { ok: false, why: `answered as ${type.split(';')[0]}, an icon or vector format, never a product photograph` };
+  }
+  const misshapen = shapeFault(size);
+  if (misshapen) return { ok: false, why: misshapen };
 
   const referred = await ask(url, { Referer: site }, ms);
   if (!referred.ok) return { ok: false, why: `refused for ${site}: ${referred.why}` };
@@ -1257,7 +1464,19 @@ function imageFetcherFor(page, within) {
         try {
           const response = await fetch(url, { headers: extra || {}, redirect: 'follow', signal: controller.signal });
           const buffer = await response.arrayBuffer();
-          return { status: response.status, type: response.headers.get('content-type') || '', bytes: buffer.byteLength };
+          const type = response.headers.get('content-type') || '';
+          /* the browser can decode every format a shop serves, so it
+             says how big the picture is rather than leaving it to a
+             header this side might not know how to read */
+          let width = 0;
+          let height = 0;
+          try {
+            const bitmap = await createImageBitmap(new Blob([buffer], { type }));
+            width = bitmap.width;
+            height = bitmap.height;
+            bitmap.close();
+          } catch (err) { /* undecodable: judged on everything else */ }
+          return { status: response.status, type, bytes: buffer.byteLength, width, height };
         } finally {
           clearTimeout(timer);
         }
@@ -1268,6 +1487,7 @@ function imageFetcherFor(page, within) {
           status: result.status,
           headers: { get: (k) => (String(k).toLowerCase() === 'content-type' ? result.type : null) },
           arrayBuffer: async () => ({ byteLength: result.bytes }),
+          dimensions: result.width > 0 && result.height > 0 ? { width: result.width, height: result.height } : null,
           body: null
         }
       };
@@ -1365,6 +1585,11 @@ async function firstVerifiable(candidates, row, fetcher, within) {
   const decided = candidates.map((candidate) => {
     const unsound = soundness(candidate, row.productUrl);
     if (unsound) return { candidate, refusal: note(candidate, 'host', unsound) };
+
+    /* a logo, a share card or a placeholder is refused before anyone
+       asks which product it shows, because it shows none */
+    const asset = siteAsset(candidate, row.productUrl);
+    if (asset) return { candidate, refusal: note(candidate, 'asset', asset) };
 
     const identity = identityEvidence(candidate, row.productUrl);
     if (!identity.ok) return { candidate, refusal: note(candidate, 'identity', identity.why) };
@@ -2701,6 +2926,111 @@ function providerChain(source) {
   return chain;
 }
 
+/* ---------- a product page before a page ABOUT products ----------
+
+   The organic fallback asks the open web, and the open web answers with
+   everything that mentions the words: a shop's category page, a
+   magazine's round-up, a Reddit thread, a Pinterest board, a YouTube
+   haul. Each is semantically related — the title really does say "Wide
+   Leg Trousers" — and not one of them is a listing a row can link to.
+   They went through the whole page stage anyway, in whatever order the
+   search engine liked, spending the row's two minutes on pages that
+   could never have been the answer while an actual product page waited
+   behind them.
+
+   This decides nothing a gate decides. It sorts, and it drops only the
+   hosts that sell nothing at all — a forum, a pinboard, a video site, a
+   social network — whose pages are never a retailer's listing whatever
+   they are titled. Everything else still goes through every gate it went
+   through before, in this order:
+
+     product      the URL is shaped like one product: /products/<handle>,
+                  /p/<code>, /dp/<asin>, or it carries a product code
+     unknown      nothing either way
+     listing      a category, collection, search or sale page
+     editorial    a blog, a journal, a guide, a round-up, a magazine
+
+   The sort is stable, so within a tier the source's own ranking holds. */
+const NOT_A_SHOP = /(^|\.)(reddit\.com|redd\.it|pinterest\.[a-z.]+|pin\.it|youtube\.com|youtu\.be|tiktok\.com|instagram\.com|facebook\.com|fb\.com|twitter\.com|x\.com|threads\.net|quora\.com|tumblr\.com|linkedin\.com|wikipedia\.org|vimeo\.com|snapchat\.com)$/i;
+const EDITORIAL_HOST = /(^|\.)(vogue\.[a-z.]+|gq\.com|esquire\.com|harpersbazaar\.com|elle\.com|whowhatwear\.com|refinery29\.com|nytimes\.com|businessinsider\.com|insider\.com|buzzfeed\.com|cosmopolitan\.com|glamour\.com|instyle\.com|thecut\.com|nymag\.com|theguardian\.com|forbes\.com|allure\.com|popsugar\.com|marieclaire\.com|byrdie\.com|wikihow\.com|medium\.com|substack\.com|thestrategist\.co\.uk|goodhousekeeping\.com|realsimple\.com|people\.com|today\.com|usatoday\.com)$/i;
+const EDITORIAL_SEGMENT = /^(blogs?|articles?|news|journal|stories|story|editorial|editorials|magazine|mag|guides?|style-guide|lookbook|lookbooks|inspiration|features?|the-edit|trends?|forum|forums|community|reviews?|wiki|advice|how-to|best|gift-guide|gift-guides)$/i;
+const EDITORIAL_TITLE = /\b(best|top \d+|\d+ (best|ways|ideas|outfits)|how to|guide|review|reviews|vs\.?|versus|what to wear|outfit ideas|ideas|trends?|lookbook|reddit|pinterest|youtube|haul|blog)\b/i;
+const LISTING_SEGMENT = /^(collections?|category|categories|cat|c|browse|catalog|catalogue|department|dept|departments|shop-all|all|plp|search|s|sale|clearance|new-arrivals|new-in|whats-new|bestsellers|best-sellers|brands?|designers?)$/i;
+const LISTING_PARAMS = /^(q|query|search|keyword|keywords|searchterm|cgid|category|categoryid|cat|dept|department|collection|sort|srule|filter)$/i;
+const LISTING_TITLE = /\b(shop (all|now|the|our|women|men)|collection|new arrivals|results for|search results|all products|for (women|men)\b.*\|)|\(\d+\)|\b\d+ (items|products|results|styles)\b/i;
+const PRODUCT_SEGMENT = /^(p|product|products|prod|pd|pdp|prd|item|items|dp|gp|sku)$/i;
+
+function listingShape(productUrl, title) {
+  let url;
+  try { url = new URL(String(productUrl)); } catch (err) { return { kind: 'unknown', why: 'not a URL' }; }
+  const host = url.hostname.toLowerCase();
+  if (NOT_A_SHOP.test(host)) return { kind: 'not-a-shop', why: `${host} is a forum, pinboard, video or social site, which sells nothing` };
+
+  const segments = url.pathname.split('/').filter(Boolean).map((one) => { try { return decodeURIComponent(one); } catch (err) { return one; } });
+  const heading = String(title || '');
+
+  if (EDITORIAL_HOST.test(host)) return { kind: 'editorial', why: `${host} is a publication, not a shop` };
+  const editorialAt = segments.find((segment) => EDITORIAL_SEGMENT.test(segment));
+  if (editorialAt) return { kind: 'editorial', why: `its path sits under /${editorialAt}/` };
+
+  /* a product segment followed by something to name: /products/<handle>,
+     /p/<code>. Shopify nests a product under a collection —
+     /collections/trousers/products/wide-leg — and that is a product. */
+  const productAt = segments.findIndex((segment) => PRODUCT_SEGMENT.test(segment));
+  if (productAt >= 0 && productAt < segments.length - 1) return { kind: 'product', why: `its path names one product under /${segments[productAt]}/` };
+
+  /* the last segment carrying the product's code, and not as the id of
+     a category it sits under (/c/12345): wide-leg-trouser-12345.html */
+  const last = String(segments[segments.length - 1] || '').toLowerCase();
+  const before = segments[segments.length - 2];
+  const codes = identifiersFrom(url.href);
+  const bareId = /^[a-z]{0,3}\d+$/.test(last) && before && LISTING_SEGMENT.test(before);
+  if (last && codes.some((id) => containsCode(last, id)) && !bareId) {
+    return { kind: 'product', why: 'its last path segment carries a product code' };
+  }
+
+  if (EDITORIAL_TITLE.test(heading) && !codes.length) {
+    return { kind: 'editorial', why: `its title reads as an article: "${heading.slice(0, 60)}"` };
+  }
+
+  const listingAt = segments.find((segment) => LISTING_SEGMENT.test(segment));
+  if (listingAt) return { kind: 'listing', why: `its path sits under /${listingAt}/` };
+  for (const key of url.searchParams.keys()) {
+    if (LISTING_PARAMS.test(key)) return { kind: 'listing', why: `it carries a ${key}= parameter, which filters a listing` };
+  }
+  if (LISTING_TITLE.test(heading)) return { kind: 'listing', why: `its title reads as a listing: "${heading.slice(0, 60)}"` };
+
+  if (codes.length) return { kind: 'product', why: 'its URL carries a product code' };
+  return { kind: 'unknown', why: 'nothing in its URL or title says either way' };
+}
+
+const SHAPE_ORDER = { product: 0, unknown: 1, listing: 2, editorial: 3 };
+
+/* products first, then the rest in the source's own order within each
+   tier; a host that sells nothing is set aside with its reason */
+function rankListings(products) {
+  const kept = [];
+  const dropped = [];
+  products.forEach((product, at) => {
+    const shape = listingShape(product.productUrl, product.title);
+    if (shape.kind === 'not-a-shop') { dropped.push(Object.assign({}, product, { shape })); return; }
+    kept.push({ product: Object.assign({}, product, { shape }), at });
+  });
+  kept.sort((a, b) => (SHAPE_ORDER[a.product.shape.kind] - SHAPE_ORDER[b.product.shape.kind]) || (a.at - b.at));
+  return { ranked: kept.map((one) => one.product), dropped };
+}
+
+/* whether a raw record links to a host that sells nothing; read through
+   a guard, because a record is whatever the source handed over */
+function fromNoShop(record) {
+  try {
+    const link = record && typeof record === 'object' ? (record.productUrl || record.link || record.url) : null;
+    return typeof link === 'string' && NOT_A_SHOP.test(new URL(link).hostname);
+  } catch (err) {
+    return false;
+  }
+}
+
 async function listingsFor(row, limit, within) {
   const source = productSource();
   if (!source) return { failed: 'the product source adapter could not be loaded' };
@@ -2741,8 +3071,11 @@ async function listingsFor(row, limit, within) {
        has to be: it keeps going while nothing has been found, and stops
        once something has, after one more form to pad the shortlist. A
        row whose name works answers in two searches, not five. */
-    if (raw.length >= wanted) break;
-    if (raw.length > 0 && attempts.length >= 2) break;
+    /* a forum thread or a pinboard is not something found: it is
+       dropped below, and a shortlist made of them is an empty one */
+    const shortlisted = raw.filter((record) => !fromNoShop(record)).length;
+    if (shortlisted >= wanted) break;
+    if (shortlisted > 0 && attempts.length >= 2) break;
     /* and the ladder stops where the row's clock does: another query
        put to a source that is not answering buys nothing but the wait */
     if (budget.spent()) {
@@ -2960,11 +3293,17 @@ async function listingsFor(row, limit, within) {
     }
   }
 
+  /* the order the page stage reads them in: a product page before a
+     category page, a category page before an article, and a forum
+     thread or a pinboard not at all */
+  const { ranked, dropped } = rankListings(products);
+  if (dropped.length) rejected['not-a-shop'] = (rejected['not-a-shop'] || 0) + dropped.length;
+
   return {
     provider: chain[using].name,
     primary: provider.name,
     switched,
-    products,
+    products: ranked,
     rejected,
     attempts,
     searches: attempts.length
@@ -3024,6 +3363,7 @@ async function discoverRow(row, taken, limit, options) {
     url: product && product.productUrl,
     title: product && product.title,
     brand: product && product.brand,
+    shape: product && product.shape ? product.shape.kind : null,
     semantic: readTitleSafely(row, product),
     why: null
   }));
@@ -3722,7 +4062,7 @@ async function main() {
         const stamp = verdict.ok
           ? `title  PASSED${verdict.kind === 'pending' ? ' (pending on the page)' : ''}`
           : `title  REFUSED (${verdict.kind === 'unreadable' ? 'unreadable' : verdict.kind === 'error' ? 'could not be read' : 'wrong garment'})`;
-        console.log(`  ${''.padEnd(17)}   "${String(attempt.title || '(untitled)').slice(0, 64)}"`);
+        console.log(`  ${''.padEnd(17)}   "${String(attempt.title || '(untitled)').slice(0, 64)}"${attempt.shape ? ` [${attempt.shape}]` : ''}`);
         console.log(`  ${''.padEnd(17)}     ${stamp} — ${verdict.why}`);
         if (attempt.failed) {
           console.log(`  ${''.padEnd(17)}     CANDIDATE FAILED — ${attempt.failed}`);
@@ -3945,6 +4285,7 @@ if (require.main === module) {
     replaceRow, linkRow, setField, indentOf, factsFromHtml, factsFromRendered, inspectCandidate,
     catalogRowIdentity, evidenceNote,
     garmentsAgree, canonicalCorroborated, wordsInPath, wordsAboutImage, TRACKING_PARAMS,
+    siteAsset, imageDimensions, listingShape, rankListings,
     parseArgs, OPTIONS, USAGE, intentFor, queryForms, listingsFor, discoverRow, coverage,
     providerChain, outOfSearches,
     /* the hand-off between the expensive half and the cheap one: what a

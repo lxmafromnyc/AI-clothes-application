@@ -3701,6 +3701,263 @@ function walledRetailer() {
     assert.doesNotMatch(result.stdout, /Reading \d+ linked product page/);
   });
 
+  /* ---------------------------------------------------------
+     A picture of the site is not a picture of the product
+
+     A live run wrote three rows whose photos were not photographs of a
+     garment at all: White House Black Market's whbm_logo_seo.avif (9KB),
+     ASOS's social-share-1x.jpg and Telfar's social_telfar.jpg. Each was
+     the page's og:image, each was accepted `via: 'canonical'`, and the
+     canonical rule was working as written — it refuses a DISAGREEMENT it
+     can see, and a logo disagrees with nothing. What it never asked was
+     whether the image is a product photo at all.
+     --------------------------------------------------------- */
+  console.log('\n  — a picture of the site is not a picture of the product\n');
+
+  const WHBM = 'https://www.whitehouseblackmarket.com/store/product/wide-leg-trouser/570412345';
+  const ASOS = 'https://www.asos.com/us/asos-design/asos-design-wide-leg-trouser/prd/205123456';
+  const TELFAR = 'https://www.telfar.net/products/wide-leg-trouser-black?variant=41234567890';
+
+  /* a JPEG whose header says how big it is, padded to a photo's weight */
+  const jpegOf = (width, height) => {
+    const sof = Buffer.from([0xff, 0xc0, 0x00, 0x11, 0x08,
+      (height >> 8) & 0xff, height & 0xff, (width >> 8) & 0xff, width & 0xff,
+      0x03, 0x01, 0x22, 0x00, 0x02, 0x11, 0x01, 0x03, 0x11, 0x01]);
+    const app0 = Buffer.concat([Buffer.from([0xff, 0xe0, 0x00, 0x10]), Buffer.from('JFIF\0'), Buffer.alloc(9, 0)]);
+    return Buffer.concat([Buffer.from([0xff, 0xd8]), app0, sof, Buffer.alloc(40000, 0x20)]);
+  };
+  /* a fetcher that serves whatever it is asked for as this body, and
+     remembers what it was asked */
+  const serving = (body, type) => {
+    const asked = [];
+    const fetcher = async (url) => {
+      asked.push(url);
+      return {
+        ok: true,
+        response: {
+          status: 200,
+          headers: { get: () => type || 'image/jpeg' },
+          arrayBuffer: async () => body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength),
+          body: null
+        }
+      };
+    };
+    fetcher.asked = asked;
+    return fetcher;
+  };
+
+  test('a retailer logo is refused even though the canonical page vouches for it', () => {
+    const logo = 'https://www.whitehouseblackmarket.com/Assets/whbm/images/whbm_logo_seo.avif';
+    const verdict = extractor.identityEvidence({ url: logo, from: 'og:image', canonical: WHBM }, WHBM);
+    assert.strictEqual(verdict.ok, false, 'a wordmark was accepted as a wide leg trouser');
+    assert.match(verdict.why, /not a product photo/);
+    assert.match(verdict.why, /logo/);
+
+    assert.match(extractor.siteAsset(logo, WHBM), /logo/);
+    assert.match(extractor.siteAsset('https://cdn.example.com/brand/logos/wordmark-black.png', WHBM) || '', /wordmark|logos/);
+  });
+
+  test('a social-share card is refused even though the canonical page vouches for it', () => {
+    for (const [url, listing] of [
+      ['https://images.asos-media.com/navigation/social-share-1x.jpg', ASOS],
+      ['https://www.telfar.net/cdn/shop/files/social_telfar.jpg?v=1699', TELFAR],
+      ['https://cdn.example.com/static/og-image-default.png', WHBM],
+      ['https://cdn.example.com/static/twitterCard.jpg', WHBM]
+    ]) {
+      const verdict = extractor.identityEvidence({ url, from: 'og:image', canonical: listing }, listing);
+      assert.strictEqual(verdict.ok, false, `${url} was accepted as a product photo`);
+      assert.match(verdict.why, /not a product photo/, url);
+    }
+  });
+
+  test('a favicon, a touch icon, a placeholder or a bare brand image is refused', () => {
+    for (const url of [
+      'https://www.telfar.net/favicon.ico',
+      'https://www.telfar.net/cdn/shop/files/favicon-32x32.png',
+      'https://www.telfar.net/apple-touch-icon.png',
+      'https://www.telfar.net/cdn/shop/files/telfar.png',
+      'https://www.telfar.net/assets/brand-mark.svg',
+      'https://cdn.example.com/img/placeholder-product.jpg',
+      'https://cdn.example.com/img/no-image-available.jpg',
+      'https://cdn.example.com/logos/12ab34cd.png'
+    ]) {
+      assert.ok(extractor.siteAsset(url, TELFAR), `${url} passed as a product photo`);
+    }
+    /* never a product photo, whatever vouches for it: a placeholder
+       carrying the listing's own code is still a placeholder */
+    assert.ok(extractor.siteAsset('https://cdn.example.com/img/570412345_placeholder.jpg', WHBM));
+  });
+
+  await testAsync('a site asset is refused before it is ever requested', async () => {
+    const fetcher = serving(jpegOf(1200, 1500));
+    const result = await extractor.firstVerifiable([
+      { url: 'https://www.whitehouseblackmarket.com/Assets/whbm/images/whbm_logo_seo.avif', from: 'og:image', canonical: WHBM },
+      { url: 'https://www.whitehouseblackmarket.com/favicon.ico', from: 'loaded by the page', canonical: WHBM }
+    ], { id: 'x', productUrl: WHBM }, fetcher);
+    assert.ok(!result.url, `a logo verified: ${result.url}`);
+    assert.deepStrictEqual(result.refusals.map((one) => one.gate), ['asset', 'asset']);
+    assert.strictEqual(fetcher.asked.length, 0, 'a lane was spent loading a logo');
+  });
+
+  await testAsync('a real product hero still passes, past the logo in front of it', async () => {
+    const hero = 'https://www.whitehouseblackmarket.com/Product_Images/570412345_001_main.jpg';
+    const fetcher = serving(jpegOf(1200, 1500));
+    const result = await extractor.firstVerifiable([
+      { url: 'https://www.whitehouseblackmarket.com/Assets/whbm/images/whbm_logo_seo.avif', from: 'og:image', canonical: WHBM },
+      { url: hero, from: 'preload', canonical: WHBM }
+    ], { id: 'x', productUrl: WHBM }, fetcher);
+    assert.strictEqual(result.url, hero, JSON.stringify(result.refusals));
+    assert.strictEqual(result.identity.via, 'image-url');
+    assert.deepStrictEqual([...new Set(fetcher.asked)], [hero], 'only the hero was loaded');
+
+    /* a garment with a logo on it is a garment: the word is not banned,
+       a filename that says nothing else is */
+    assert.strictEqual(extractor.siteAsset('https://cdn.example.com/p/logo-tee-white.jpg', WHBM), null);
+    assert.strictEqual(extractor.siteAsset('https://image.uniqlo.com/og-429066.jpg', UNIQLO), null,
+      'a share card named for the product is that product’s card');
+  });
+
+  await testAsync('a valid canonical product image still passes', async () => {
+    /* an opaque CDN filename on the listing's own canonical page is
+       exactly what the canonical rule exists for, and nothing here
+       touches it */
+    const opaque = 'https://cdn.lyst.com/photos/8f2a91c4e7b3.jpg';
+    const verdict = extractor.identityEvidence({ url: opaque, from: 'og:image', canonical: LYST }, LYST);
+    assert.strictEqual(verdict.ok, true, verdict.why);
+    assert.strictEqual(verdict.via, 'canonical');
+
+    const named = 'https://www.telfar.net/cdn/shop/files/wide-leg-trouser-black-front.jpg';
+    const byName = extractor.identityEvidence({ url: named, from: 'og:image', canonical: TELFAR }, TELFAR);
+    assert.strictEqual(byName.ok, true, byName.why);
+    assert.strictEqual(byName.via, 'canonical');
+
+    const result = await extractor.firstVerifiable([
+      { url: 'https://www.telfar.net/cdn/shop/files/social_telfar.jpg', from: 'og:image', canonical: TELFAR },
+      { url: named, from: 'og:image:secure_url', canonical: TELFAR }
+    ], { id: 'x', productUrl: TELFAR }, serving(jpegOf(1000, 1250)));
+    assert.strictEqual(result.url, named, JSON.stringify(result.refusals));
+    assert.strictEqual(result.identity.via, 'canonical');
+  });
+
+  await testAsync('a picture the shape of a logo is refused by its own header', async () => {
+    /* the byte floor stops a tracking pixel, not a 9KB wordmark; the
+       wordmark's shape gives it away wherever its name does not */
+    const opaque = 'https://www.telfar.net/cdn/shop/files/8f2a91c4e7b3.jpg';
+    const candidate = [{ url: opaque, from: 'og:image', canonical: TELFAR }];
+    const strip = await extractor.firstVerifiable(candidate, { id: 'x', productUrl: TELFAR }, serving(jpegOf(600, 90)));
+    assert.ok(!strip.url);
+    assert.match(strip.refusals[0].why, /600x90/);
+    const badge = await extractor.firstVerifiable(candidate, { id: 'x', productUrl: TELFAR }, serving(jpegOf(96, 96)));
+    assert.ok(!badge.url);
+    assert.match(badge.refusals[0].why, /icon or a badge/);
+    const svg = await extractor.firstVerifiable(candidate, { id: 'x', productUrl: TELFAR }, serving(jpegOf(1000, 1000), 'image/svg+xml'));
+    assert.ok(!svg.url);
+
+    const photo = await extractor.firstVerifiable(candidate, { id: 'x', productUrl: TELFAR }, serving(jpegOf(1200, 630)));
+    assert.strictEqual(photo.url, opaque, 'a landscape product photo was refused for its shape');
+
+    /* and every format a shop serves says its size */
+    assert.deepStrictEqual(extractor.imageDimensions(jpegOf(640, 800)), { width: 640, height: 800 });
+    assert.deepStrictEqual(extractor.imageDimensions(PNG), { width: 2, height: 2 });
+    assert.strictEqual(extractor.imageDimensions(Buffer.alloc(8000, 0x20)), null, 'an unreadable header refuses nothing');
+  });
+
+  test('the shipped catalogue carries no site asset', () => {
+    for (const row of extractor.readCatalog().rows) {
+      if (!row.imageUrl || !row.productUrl) continue;
+      assert.strictEqual(extractor.siteAsset(row.imageUrl, row.productUrl), null, `${row.id}: ${row.imageUrl}`);
+    }
+  });
+
+  test('a recorded canonical row wearing a logo is caught by --coverage', () => {
+    const checked = extractor.catalogRowIdentity({
+      id: 'x',
+      productUrl: WHBM,
+      imageUrl: 'https://www.whitehouseblackmarket.com/Assets/whbm/images/whbm_logo_seo.avif',
+      imageEvidence: { via: 'canonical', canonical: WHBM }
+    });
+    assert.strictEqual(checked.ok, false);
+    assert.match(checked.why, /logo/);
+  });
+
+  /* ---------------------------------------------------------
+     A product page before a page about products
+
+     The organic fallback answers with whatever mentions the words: a
+     category page, a round-up, a Reddit thread, a Pinterest board. They
+     are semantically related and not one of them is a listing, and they
+     were read in the search engine's order ahead of the product page.
+     --------------------------------------------------------- */
+  console.log('\n  — a product page before a page about products\n');
+
+  test('each kind of result is told apart', () => {
+    const shape = (url, title) => extractor.listingShape(url, title).kind;
+    assert.strictEqual(shape(TELFAR, 'Wide Leg Trouser'), 'product');
+    assert.strictEqual(shape('https://www.telfar.net/collections/bottoms/products/wide-leg-trouser', 'Wide Leg Trouser'), 'product');
+    assert.strictEqual(shape(ASOS, 'ASOS DESIGN wide leg trouser'), 'product');
+    assert.strictEqual(shape('https://www.example.com/womens/sale/wide-leg-trouser-570412345.html', 'Wide Leg Trouser'), 'product');
+    assert.strictEqual(shape('https://www.example.com/collections/trousers', 'Wide Leg Trousers'), 'listing');
+    assert.strictEqual(shape('https://www.example.com/c/12345', 'Trousers'), 'listing');
+    assert.strictEqual(shape('https://www.example.com/womens/pants?q=wide+leg', 'Wide Leg Pants'), 'listing');
+    assert.strictEqual(shape('https://www.example.com/womens-trousers', 'Shop Women’s Trousers (148)'), 'listing');
+    assert.strictEqual(shape('https://www.example.com/blog/how-to-style-wide-leg-trousers', 'How to Style Wide Leg Trousers'), 'editorial');
+    assert.strictEqual(shape('https://www.whowhatwear.com/wide-leg-trousers', 'Wide Leg Trousers'), 'editorial');
+    assert.strictEqual(shape('https://www.example.com/wide-leg-trousers', 'The 12 Best Wide Leg Trousers of 2026'), 'editorial');
+    for (const url of [
+      'https://www.reddit.com/r/femalefashionadvice/comments/abc/wide_leg_trousers/',
+      'https://www.pinterest.com/pin/123456789/',
+      'https://www.youtube.com/watch?v=abc',
+      'https://www.instagram.com/p/xyz/'
+    ]) assert.strictEqual(shape(url, 'Wide Leg Trousers'), 'not-a-shop', url);
+  });
+
+  test('product pages are ranked first, and a site that sells nothing is set aside', () => {
+    const { ranked, dropped } = extractor.rankListings([
+      { productUrl: 'https://www.reddit.com/r/x/comments/1/wide_leg/', title: 'Wide leg trousers?' },
+      { productUrl: 'https://www.example.com/blog/wide-leg-edit', title: 'Our wide leg edit' },
+      { productUrl: 'https://www.example.com/collections/trousers', title: 'Trousers' },
+      { productUrl: 'https://shop.one.com/about-the-trouser', title: 'The Trouser' },
+      { productUrl: 'https://shop.two.com/products/wide-leg-trouser', title: 'Wide Leg Trouser' },
+      { productUrl: 'https://www.pinterest.com/pin/1/', title: 'Wide leg' },
+      { productUrl: 'https://shop.three.com/p/778899', title: 'Wide Leg Trouser' }
+    ]);
+    assert.deepStrictEqual(ranked.map((one) => one.productUrl), [
+      'https://shop.two.com/products/wide-leg-trouser',
+      'https://shop.three.com/p/778899',
+      'https://shop.one.com/about-the-trouser',
+      'https://www.example.com/collections/trousers',
+      'https://www.example.com/blog/wide-leg-edit'
+    ]);
+    assert.strictEqual(dropped.length, 2);
+  });
+
+  await testAsync('discovery reads a product page before the category page the source ranked above it', async () => {
+    const retailer = await describingRetailer({
+      320001: { name: 'Pleated Midi Skirt', description: 'A pleated midi skirt.' }
+    });
+    const port = retailer.address().port;
+    productSource.registerProvider({
+      name: 'fake-source',
+      configured: () => true,
+      search: async () => [
+        { title: 'Pleated Midi Skirts — Reddit', productUrl: 'https://www.reddit.com/r/x/comments/1/pleated_midi_skirt/' },
+        { title: 'Pleated Midi Skirt', productUrl: `http://127.0.0.1:${port}/collections/skirts` },
+        { title: 'Pleated Midi Skirt', productUrl: listing(port, '320001') }
+      ]
+    });
+    process.env.PRODUCT_SOURCE = 'fake-source';
+
+    const offered = await extractor.listingsFor(catalogueRow('sample-kinfield-pleated-midi-skirt'), 8);
+    assert.deepStrictEqual(offered.products.map((one) => one.shape.kind), ['product', 'listing']);
+    assert.ok(offered.rejected['not-a-shop'], 'the forum thread is counted, not hidden');
+
+    const found = await extractor.discoverRow(catalogueRow('sample-kinfield-pleated-midi-skirt'), new Map(), 8);
+    assert.strictEqual(found.verdict, 'VERIFIED', found.why);
+    assert.strictEqual(found.proposal.productUrl, listing(port, '320001'));
+    assert.strictEqual(found.tried[0].shape, 'product');
+    retailer.close();
+  });
+
   console.log(`\n${passed} passed, ${failures.length} failed${skipped ? `, ${skipped} skipped` : ''}\n`);
   process.exit(failures.length ? 1 : 0);
 })();
