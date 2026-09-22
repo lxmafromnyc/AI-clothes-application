@@ -744,14 +744,35 @@ function walledRetailer() {
       assert.match(notes, /plain HTTP: the page answered 403/, `notes were: ${notes}`);
       assert.match(notes, /browser: \d+ candidate/, `notes were: ${notes}`);
       assert.ok(retailer.plain() > 0, 'plain HTTP was never tried first');
-      /* every candidate is http on localhost, so the host gate refuses
-         them all — which is the correct answer, and proves the gates
-         still run on whatever the browser found */
+
+      /* Nothing verifies, and WHICH gate refuses is the point. This
+         fixture's images are a 78-byte PNG, so the size gate turns them
+         down — a real refusal, reached by actually loading the image
+         through the browsing context that loaded the page.
+
+         It used to be refused for another reason entirely: the browser
+         had already been closed by the time the checker was handed
+         over, so every candidate came back "Target page, context or
+         browser has been closed". The verdict was the same and the gate
+         was never reached. */
       assert.strictEqual(result.verdict, 'NO IMAGE FOUND');
       assert.strictEqual(result.url, null);
+
+      const loadable = (result.refusals || []).filter((r) => r.gate === 'loadable');
+      assert.ok(loadable.length, `no candidate reached the loadable gate: ${JSON.stringify(result.refusals)}`);
+      for (const refusal of loadable) {
+        assert.match(refusal.why, /too small to be a product photo/,
+          `the image was never actually loaded: ${refusal.why}`);
+        assert.doesNotMatch(refusal.why, /has been closed/,
+          'the browser was closed before the photo could be checked through it');
+      }
     });
   }
 
+  /* renderPage hands the page back OPEN now, so that an image can be
+     checked through the browsing context that loaded it. Whoever asked
+     for it closes it. */
+  if (probe.close) await probe.close();
   retailer.server.close();
 
   /* ---------- the cookie wall and the lazy gallery ---------- */
@@ -775,6 +796,7 @@ function walledRetailer() {
         'the hero was never actually fetched by the page');
     });
 
+    if (seen.close) await seen.close();
     walled.close();
   }
 
@@ -2820,6 +2842,396 @@ function walledRetailer() {
     assert.strictEqual(row.name, 'Slim Oxford Shirt', 'a hand-driven swap does move the name');
     assert.deepStrictEqual(plain(row.imageEvidence), { via: 'json-ld-sku', sku: 'E455000' });
     assert.strictEqual(extractor.catalogRowIdentity(row).ok, true);
+  });
+
+  /* ---------------------------------------------------------
+     Ceilings, and a few at a time
+
+     A run used to be able to take as long as the slowest shop on the
+     internet felt like taking. Three things made that possible: a
+     timeout that covered a response's HEADERS and then cleared itself
+     before anyone read the BODY, an image check inside the browser with
+     no ceiling over it at all, and every network operation waiting for
+     the one in front of it.
+
+     What is tested here is that each of those is now bounded, that a
+     shop which never answers costs its ceiling and not the row, and —
+     the part that could quietly go wrong — that reading a few
+     candidates at once still answers with the one that was ranked
+     first, not the one that came back first. Order is a gate. A fast
+     shop further down the ranking must not overtake a better match
+     above it.
+
+     No retailer is contacted. The slow shops here are local servers
+     that hold their sockets open on purpose.
+     --------------------------------------------------------- */
+  console.log('\n  — ceilings, and a few at a time\n');
+
+  /* a server that accepts the connection and then says nothing, ever */
+  function stallingHost() {
+    const sockets = new Set();
+    const server = http.createServer(() => { /* no answer is the point */ });
+    server.on('connection', (socket) => {
+      sockets.add(socket);
+      socket.on('close', () => sockets.delete(socket));
+    });
+    server.shutdown = () => {
+      for (const socket of sockets) socket.destroy();
+      server.close();
+    };
+    return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server)));
+  }
+
+  /* a server that answers, starts its body, and then stops. This is the
+     one the old ceiling could not see: the headers arrived inside the
+     timeout, which cleared it, and the body then never came. */
+  function dribblingHost() {
+    const sockets = new Set();
+    const server = http.createServer((req, res) => {
+      const type = req.url.endsWith('.jpg') ? 'image/jpeg' : 'text/html';
+      res.writeHead(200, { 'content-type': type });
+      res.write(req.url.endsWith('.jpg') ? JPEG.slice(0, 10) : '<!doctype html><html><head>');
+      /* and never ends the response */
+    });
+    server.on('connection', (socket) => {
+      sockets.add(socket);
+      socket.on('close', () => sockets.delete(socket));
+    });
+    server.shutdown = () => {
+      for (const socket of sockets) socket.destroy();
+      server.close();
+    };
+    return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server)));
+  }
+
+  /* an image host that takes its time and counts how many requests are
+     in flight at once, so a claim about lanes can be measured rather
+     than asserted. It serves plainly and refuses a Referer, so every
+     candidate costs two requests and fails the hotlink gate. */
+  function countingHost(delay) {
+    let live = 0;
+    let peak = 0;
+    const asked = [];
+    const server = http.createServer((req, res) => {
+      live += 1;
+      peak = Math.max(peak, live);
+      asked.push(req.url.split('?')[0]);
+      setTimeout(() => {
+        live -= 1;
+        if (req.headers.referer) { res.writeHead(403); return res.end(); }
+        res.writeHead(200, { 'content-type': 'image/jpeg' });
+        res.end(JPEG);
+      }, delay);
+    });
+    server.stats = () => ({ peak, asked: asked.slice() });
+    return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server)));
+  }
+
+  await testAsync('a host that never answers costs its ceiling and no more', async () => {
+    const host = await stallingHost();
+    const url = `http://127.0.0.1:${host.address().port}/p/171960005`;
+
+    const started = Date.now();
+    const got = await extractor.request(url, null, 400);
+    const took = Date.now() - started;
+
+    assert.strictEqual(got.ok, false);
+    assert.strictEqual(got.why, 'timed out');
+    assert.ok(took < 3000, `it waited ${took}ms on a 400ms ceiling`);
+
+    host.shutdown();
+  });
+
+  await testAsync('a body that never arrives is a timeout, not a hang', async () => {
+    /* the bug: fetch() resolving means the response LINE arrived. The
+       old timer was cleared on the way out of request(), so the read
+       that followed had nothing over it. */
+    const host = await dribblingHost();
+    const url = `http://127.0.0.1:${host.address().port}/p/171960005`;
+
+    const started = Date.now();
+    const page = await extractor.fetchPage(url, 400);
+    const took = Date.now() - started;
+
+    assert.ok(page.failed, `it read a page that was never finished: ${JSON.stringify(page).slice(0, 120)}`);
+    assert.match(page.failed, /timed out/);
+    assert.ok(took < 3000, `it waited ${took}ms on a 400ms ceiling`);
+
+    host.shutdown();
+  });
+
+  await testAsync('an image that never finishes downloading is refused on time', async () => {
+    const host = await dribblingHost();
+    const url = `http://127.0.0.1:${host.address().port}/img/171960005-hero.jpg`;
+
+    const started = Date.now();
+    const check = await extractor.verifyImage(url, null, 400);
+    const took = Date.now() - started;
+
+    assert.strictEqual(check.ok, false);
+    assert.match(check.why, /timed out/);
+    assert.ok(took < 3000, `it waited ${took}ms on a 400ms ceiling`);
+
+    host.shutdown();
+  });
+
+  await testAsync('a source that does not answer is given up on, and is not mistaken for a quota refusal', async () => {
+    const forever = new Promise(() => {});
+    const started = Date.now();
+    let failed = null;
+    try {
+      await extractor.withCeiling(forever, 300, 'the fake source did not answer within 0s');
+    } catch (err) {
+      failed = err;
+    }
+    const took = Date.now() - started;
+
+    assert.ok(failed, 'it waited for a promise that never settles');
+    assert.ok(took < 3000, `it waited ${took}ms on a 300ms ceiling`);
+
+    /* the fallback ladder reads a quota refusal and moves to the next
+       source. A ceiling is not that, and a run that treated it as one
+       would burn its fallback on a shop that was merely slow. */
+    assert.strictEqual(extractor.outOfSearches(failed), false,
+      'a source that timed out was read as a source that had run out of searches');
+  });
+
+  await testAsync('a spent budget refuses the work rather than starting it', async () => {
+    const spent = extractor.budgetOf(0);
+    assert.strictEqual(spent.spent(), true);
+    assert.strictEqual(spent.cap(10000), 0);
+
+    /* the most expensive thing here is a Chromium, and a row with no
+       time left must not launch one */
+    const rendered = await extractor.renderPage('http://127.0.0.1:1/p/1', spent);
+    assert.ok(rendered.failed);
+    assert.match(rendered.failed, /no time left|Playwright is not installed/);
+
+    const budget = extractor.budgetOf(5000);
+    assert.ok(budget.cap(10000) <= 5000, 'a ceiling outlasted the budget it sits under');
+    assert.strictEqual(budget.cap(100), 100, 'a short ceiling was stretched to the budget');
+  });
+
+  await testAsync('the earliest candidate that clears wins, not the quickest', async () => {
+    /* ranked first but slow, ranked second but fast. Serially the first
+       one won because it was reached first; the danger in reading them
+       at once is that "first to come back" quietly replaces "first". */
+    const order = [];
+    const { results, winner } = await extractor.raceInOrder([300, 10, 10], 3, async (delay, at) => {
+      await new Promise((r) => setTimeout(r, delay));
+      order.push(at);
+      return { ok: true, at };
+    });
+
+    assert.strictEqual(winner, 0, `the winner was ${winner} — ranking lost to speed`);
+    assert.strictEqual(results[0].at, 0);
+    assert.deepStrictEqual(order.slice(0, 2), [1, 2], 'the later ones did not actually finish first');
+  });
+
+  await testAsync('nothing beyond the winner is read, and nothing runs more than the lanes allow', async () => {
+    let live = 0;
+    let peak = 0;
+    const started = [];
+
+    const { winner } = await extractor.raceInOrder([0, 1, 2, 3, 4, 5, 6, 7], 3, async (item) => {
+      started.push(item);
+      live += 1;
+      peak = Math.max(peak, live);
+      await new Promise((r) => setTimeout(r, 30));
+      live -= 1;
+      /* the first one clears, so everything ranked below it is moot */
+      return { ok: item === 0 };
+    });
+
+    assert.strictEqual(winner, 0);
+    assert.ok(peak <= 3, `${peak} ran at once with three lanes`);
+    assert.ok(started.length <= 3, `${started.length} candidates were read when the first one cleared`);
+  });
+
+  await testAsync('a candidate that throws is that candidate failing, not the run', async () => {
+    const { results, winner } = await extractor.raceInOrder([0, 1, 2], 2, async (item) => {
+      if (item === 0) throw new Error('this one is broken');
+      return { ok: item === 1 };
+    });
+
+    assert.strictEqual(winner, 1, 'a thrown candidate took the others with it');
+    assert.ok(results[0].threw, 'the throw was not recorded against the candidate that threw');
+    assert.strictEqual(results[0].ok, false);
+  });
+
+  await testAsync('reading photos in lanes still answers with the highest-priority one', async () => {
+    /* two candidates that both verify, the better-ranked one served
+       slowly. The gates are unchanged; what must not change with them
+       is which answer comes back. */
+    const slow = await countingHost(250);
+    const fast = await countingHost(0);
+    const port = slow.address().port;
+    const row = { id: 'x', productUrl: `http://127.0.0.1:${port}/p/171960005` };
+
+    /* served plainly and refused to a Referer above, so neither would
+       pass; these two are served by a host that allows both */
+    const both = http.createServer((req, res) => {
+      const delay = req.url.includes('ranked-first') ? 250 : 0;
+      setTimeout(() => {
+        res.writeHead(200, { 'content-type': 'image/jpeg' });
+        res.end(JPEG);
+      }, delay);
+    });
+    await new Promise((r) => both.listen(0, '127.0.0.1', r));
+    const at = both.address().port;
+
+    const candidates = [
+      { url: `http://127.0.0.1:${at}/img/171960005-ranked-first.jpg`, from: 'json-ld' },
+      { url: `http://127.0.0.1:${at}/img/171960005-ranked-second.jpg`, from: 'og:image' }
+    ];
+
+    const found = await extractor.firstVerifiable(candidates, { id: 'x', productUrl: `http://127.0.0.1:${at}/p/171960005` });
+    assert.ok(found.url, `nothing verified: ${JSON.stringify(found.refusals)}`);
+    assert.match(found.url, /ranked-first/, 'the quicker, lower-ranked photo was taken');
+
+    both.close();
+    slow.close();
+    fast.close();
+  });
+
+  await testAsync('the free gates still run first, and never spend a request', async () => {
+    const host = await countingHost(0);
+    const port = host.address().port;
+    const row = { id: 'x', productUrl: `http://127.0.0.1:${port}/p/171960005` };
+
+    const candidates = [
+      /* refused by the host gate: an aggregator */
+      { url: 'https://encrypted-tbn0.gstatic.com/img/171960005.jpg', from: 'json-ld' },
+      /* refused by the identity gate: nothing ties it to this listing */
+      { url: `http://127.0.0.1:${port}/img/something-else.jpg`, from: 'og:image' },
+      /* reaches the network, and is refused for the Referer */
+      { url: `http://127.0.0.1:${port}/img/171960005-hero.jpg`, from: 'preload' }
+    ];
+
+    const found = await extractor.firstVerifiable(candidates, row);
+    assert.ok(!found.url, 'something cleared that should not have');
+
+    const { asked } = host.stats();
+    assert.ok(!asked.some((u) => u.includes('something-else')),
+      'a request was spent on a candidate the identity gate had already refused');
+
+    /* and every refusal comes back in the order the candidates were
+       offered in, whatever order they came back in */
+    assert.deepStrictEqual(found.refusals.map((r) => r.gate), ['host', 'identity', 'loadable']);
+    assert.match(found.refusals[0].why, /aggregator or stock host/);
+    assert.match(found.refusals[1].why, /nothing ties it to this product/);
+    assert.match(found.refusals[2].why, /hotlink blocked/);
+
+    host.close();
+  });
+
+  await testAsync('photos are checked no more than the lanes allow', async () => {
+    const host = await countingHost(120);
+    const port = host.address().port;
+    const row = { id: 'x', productUrl: `http://127.0.0.1:${port}/p/171960005` };
+
+    /* six candidates that all tie to the listing and all fail the
+       hotlink gate, so every one of them is read to the end */
+    const candidates = [1, 2, 3, 4, 5, 6].map((n) => ({
+      url: `http://127.0.0.1:${port}/img/171960005-${n}.jpg`,
+      from: 'gallery image'
+    }));
+
+    const found = await extractor.firstVerifiable(candidates, row);
+    assert.ok(!found.url, 'a hotlink-blocked photo was accepted');
+    assert.strictEqual(found.refusals.length, 6, 'not every candidate was decided');
+
+    const { peak } = host.stats();
+    assert.ok(peak > 1, `nothing ran in parallel at all (peak ${peak})`);
+    assert.ok(peak <= extractor.LANES, `${peak} requests were in flight with ${extractor.LANES} lanes`);
+
+    host.close();
+  });
+
+  await testAsync('a shop that never answers costs its own ceiling, not the row', async () => {
+    const stalled = await stallingHost();
+    const working = await simpleRetailer();
+    const port = working.address().port;
+
+    productSource.registerProvider({
+      name: 'fake-source',
+      configured: () => true,
+      search: async () => [
+        /* ranked first, and it will never answer */
+        { title: 'Boxy Cotton Tee', productUrl: `http://127.0.0.1:${stalled.address().port}/p/553311`, retailer: 'Nowhere' },
+        record(port, '553311')
+      ]
+    });
+    process.env.PRODUCT_SOURCE = 'fake-source';
+
+    const started = Date.now();
+    const result = await extractor.discoverRow(
+      { id: 'sample-northfold-boxy-cotton-tee', name: 'Boxy Cotton Tee', category: 'tee' },
+      new Map(),
+      4,
+      { budget: extractor.budgetOf(6000) }
+    );
+    const took = Date.now() - started;
+
+    /* The dead shop is ranked FIRST, and the run still waits it out —
+       deliberately. Ranking is a gate: a listing the source put above
+       another does not lose its place for being slow, or the answer
+       would depend on which shop's CDN was quicker that afternoon.
+
+       What changed is what that wait costs. The working shop is read
+       during it rather than after it, so the row comes back with a
+       verified listing at roughly the dead shop's ceiling instead of
+       the ceiling plus everything queued behind it — and the ceiling
+       itself is now the row's budget, not "whenever the socket gives
+       up". */
+    assert.strictEqual(result.verdict, 'VERIFIED', result.why);
+    assert.match(result.proposal.productUrl, new RegExp(`:${port}/`), 'it took the listing that never answered');
+    assert.ok(took < 12000, `the row took ${took}ms against a 6s budget — the wait is not bounded`);
+
+    /* and the dead one is on the record, refused for the reason it was
+       actually refused for */
+    assert.ok(result.tried.length >= 2, 'the dead candidate was never recorded');
+    const dead = result.tried.find((one) => one.url.includes(String(stalled.address().port)));
+    assert.ok(dead, 'the dead candidate is missing from the record');
+    /* whichever ceiling it reached first — the page read, or the
+       browser it had no time left to open — it is refused by a clock
+       rather than left hanging on a socket */
+    assert.match(String(dead.why), /timed out|unreachable|ran out|no time left/,
+      `the dead shop was recorded as: ${dead.why}`);
+
+    stalled.shutdown();
+    working.close();
+  });
+
+  await testAsync('a row with no time left refuses its listings instead of reading them', async () => {
+    const working = await simpleRetailer();
+    const port = working.address().port;
+
+    productSource.registerProvider({
+      name: 'fake-source',
+      configured: () => true,
+      search: async () => [record(port, '553311')]
+    });
+    process.env.PRODUCT_SOURCE = 'fake-source';
+
+    /* enough to get the listings back, and nothing left for the pages */
+    const budget = extractor.budgetOf(30);
+    await new Promise((r) => setTimeout(r, 60));
+
+    const result = await extractor.discoverRow(
+      { id: 'sample-northfold-boxy-cotton-tee', name: 'Boxy Cotton Tee', category: 'tee' },
+      new Map(),
+      4,
+      { budget }
+    );
+
+    assert.notStrictEqual(result.verdict, 'VERIFIED', 'a row out of time wrote something anyway');
+    const whys = (result.tried || []).map((one) => one.why).join(' | ');
+    const ranOut = (result.tried || []).some((one) => one.ranOut) || /ran out/.test(whys) ||
+      /no listing|offered no listing/.test(result.why || '');
+    assert.ok(ranOut, `it did not report running out of time: ${result.why} — ${whys}`);
+
+    working.close();
   });
 
   /* ---------------------------------------------------------

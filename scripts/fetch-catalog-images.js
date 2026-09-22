@@ -80,6 +80,14 @@
    in, and an entry that cannot answer for itself is refused and its row
    left exactly as it was.
 
+   Everything here has a ceiling and a row has a clock. A shop that
+   accepts a connection and then says nothing costs its ceiling and no
+   more; a row that spends its clock reports what it managed rather than
+   holding up the rows behind it. A few candidates are read at once, and
+   the answer is still the EARLIEST that cleared every gate rather than
+   the first to come back — ranking is a gate, and a quicker CDN is not
+   an argument about which garment a listing sells.
+
    Run it from a machine with an ordinary internet connection. Behind a
    proxy that refuses retailer hosts every row comes back UNREACHABLE,
    and the report is about the proxy rather than about the catalogue.
@@ -116,8 +124,29 @@ const REPORT_VERSION = 1;
    written, and a fresh --discover is the operator's call to make. */
 const REPORT_TTL_MS = 24 * 60 * 60 * 1000;
 
-const TIMEOUT = 20000;
-const BROWSER_TIMEOUT = 45000;
+/* ---------- what any one thing is allowed to take ----------
+
+   Every number here is a ceiling, never a wait: nothing sleeps for its
+   timeout, and a fast retailer is as fast as it ever was. What they buy
+   is that no single slow shop can hold up the row behind it, and that a
+   run's worst case can be worked out on paper rather than discovered at
+   minute thirty-five.
+
+   They are ceilings on WORK, not on judgement. Nothing here decides
+   whether a photo is this product's, whether a listing is the garment
+   the row means, or whether a page vouches for its own image — a
+   candidate that runs out of time is refused, exactly as one that
+   answered wrongly is. Running out of time never admits anything. */
+const TIMEOUT = 20000;          // one plain HTTP read of a retailer's page, headers AND body
+const IMAGE_TIMEOUT = 10000;    // a product photo either serves or it does not
+const SEARCH_TIMEOUT = 15000;   // one question put to the product source
+const BROWSER_TIMEOUT = 45000;  // page.goto, still capped by what is left of the render budget
+const RENDER_BUDGET = 30000;    // one page in a real browser, from launch to close
+const SETTLE_TIMEOUT = 6000;    // waiting for the network to go quiet after load
+const SETTLE_AFTER_SCROLL = 3000; // and again after the lazy-load walk
+const ROW_BUDGET = 120000;      // one catalogue row's whole discovery
+const LANES = 3;                // how many network operations are allowed at once
+
 const MIN_BYTES = 2000; // a 1x1 tracker is not a product photo
 const MIN_RENDERED = 150; // a rendered image smaller than this is a chip, not the hero
 const DEFAULT_SITE = 'https://lxmafromnyc.github.io';
@@ -793,24 +822,104 @@ function soundness(candidate, pageUrl) {
   return null;
 }
 
+/* ---------- how long is left ----------
+
+   A budget is a clock a row carries with it. Every network operation
+   asks it how much time remains and takes the lesser of that and its own
+   ceiling, so a row's total is bounded by one number rather than by the
+   sum of everything that might go slowly inside it.
+
+   It is checked before work STARTS rather than raced against work in
+   flight. A race would leave the loser running — an orphaned fetch, or
+   worse, an orphaned Chromium — and a browser nobody closes is a leak
+   that outlives the run that made it. */
+function budgetOf(ms) {
+  const until = Date.now() + Math.max(0, ms);
+  return {
+    left: () => Math.max(0, until - Date.now()),
+    spent: () => Date.now() >= until,
+    /* what an operation may take: its own ceiling, or what is left of
+       the row, whichever runs out first */
+    cap: (want) => Math.max(0, Math.min(want, until - Date.now()))
+  };
+}
+
+/* ---------- a few at a time, answered in order ----------
+
+   Candidates arrive ranked — by how confidently their source names the
+   main product image, or by how well the shop's listing matched what
+   was asked for — and the first that clears every gate is the answer.
+   Ranked first and finished first are not the same thing, so this runs
+   a few at once and still answers with the EARLIEST that cleared, never
+   the quickest.
+
+   Dispatch stops as soon as nothing still unstarted could beat the best
+   clearance so far, which keeps the speculation bounded: at most a
+   lane's worth of candidates are read that a serial run would not have
+   reached. A worker that throws is that candidate's failure and no
+   one else's. */
+async function raceInOrder(items, lanes, attempt) {
+  const results = new Array(items.length);
+  const running = new Map();
+  let winner = -1;
+  let next = 0;
+
+  const settle = (at, value) => {
+    results[at] = value;
+    running.delete(at);
+    if (value && value.ok && (winner === -1 || at < winner)) winner = at;
+  };
+
+  for (;;) {
+    while (running.size < Math.max(1, lanes) && next < items.length && (winner === -1 || next < winner)) {
+      const at = next;
+      next += 1;
+      running.set(at, Promise.resolve()
+        .then(() => attempt(items[at], at))
+        .then((value) => settle(at, value), (err) => settle(at, { ok: false, threw: err })));
+    }
+    if (!running.size) break;
+    await Promise.race(running.values());
+  }
+
+  return { results, winner };
+}
+
 /* ---------- the network ---------- */
-async function request(url, extra) {
+
+/* The abort covers the BODY as well as the headers, which it did not
+   before: fetch() resolving means only that the response line arrived,
+   and the timer was cleared on the way out of here — so a retailer that
+   then dribbled its HTML a byte at a time was, for all the ceiling
+   above said, unbounded. The timer now goes back to the caller and is
+   cleared when the body has been read, not when the headers have. */
+async function request(url, extra, within) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TIMEOUT);
+  const ms = Math.max(1, within === undefined || within === null ? TIMEOUT : within);
+  const timer = setTimeout(() => controller.abort(), ms);
+  const release = () => clearTimeout(timer);
   try {
     const response = await fetch(url, {
       redirect: 'follow',
       signal: controller.signal,
       headers: Object.assign({}, BROWSER, extra || {})
     });
-    return { ok: true, response };
+    return { ok: true, response, release };
   } catch (err) {
+    release();
     const why = (err && err.name === 'AbortError') ? 'timed out'
       : (err && err.message) ? err.message : 'unreachable';
-    return { ok: false, why };
-  } finally {
-    clearTimeout(timer);
+    return { ok: false, why, release: () => {} };
   }
+}
+
+/* an abort part-way through a body reads as a timeout, because that is
+   what it is: the ceiling was reached with the page still arriving */
+function readingFailed(err) {
+  if (err && (err.name === 'AbortError' || /aborted|abort/i.test(String(err.message || '')))) {
+    return 'timed out while the page was still arriving';
+  }
+  return err && err.message ? String(err.message).split('\n')[0] : 'the body could not be read';
 }
 
 /* A sandbox that refuses the host answers in place of the retailer, and
@@ -820,40 +929,69 @@ async function request(url, extra) {
    refused, and the fix is an allowlist entry, not a different catalogue. */
 const EGRESS_DENIAL = /not in allowlist|egress|proxy|blocked by/i;
 
-async function fetchPage(url) {
-  const got = await request(url, null);
+async function fetchPage(url, within) {
+  const got = await request(url, null, within);
   if (!got.ok) return { failed: got.why };
   const { response } = got;
-  if (!response.ok) {
-    const body = await response.text().catch(() => '');
-    if (response.status === 403 && EGRESS_DENIAL.test(body)) {
-      return { failed: `this machine's network refuses ${new URL(url).hostname}`, blocked: true };
+  try {
+    if (!response.ok) {
+      const body = await response.text().catch(() => '');
+      if (response.status === 403 && EGRESS_DENIAL.test(body)) {
+        return { failed: `this machine's network refuses ${new URL(url).hostname}`, blocked: true };
+      }
+      /* a retailer's own 403 is a bot check, and a real browser is the
+         answer to it rather than a different URL */
+      return { failed: `the page answered ${response.status}`, refused: response.status === 403 || response.status === 429 };
     }
-    /* a retailer's own 403 is a bot check, and a real browser is the
-       answer to it rather than a different URL */
-    return { failed: `the page answered ${response.status}`, refused: response.status === 403 || response.status === 429 };
+    return { html: await response.text() };
+  } catch (err) {
+    return { failed: readingFailed(err) };
+  } finally {
+    /* the ceiling covered the body too, and this is where it stops */
+    got.release();
   }
-  return { html: await response.text() };
 }
 
-async function verifyImage(url, fetcher) {
+/* The two loads a photo has to survive: plainly, and then carrying the
+   site's own Referer, so a hotlink block is caught here rather than on
+   the page. Both are bounded — an image host that accepts a connection
+   and then serves nothing is the shape that hangs a run, and it is
+   indistinguishable from a slow one until the ceiling says so. */
+async function verifyImage(url, fetcher, within) {
   const ask = fetcher || request;
-  const plain = await ask(url, null);
+  const ms = within === undefined || within === null ? IMAGE_TIMEOUT : within;
+
+  const plain = await ask(url, null, ms);
   if (!plain.ok) return { ok: false, why: `image host ${plain.why}` };
 
-  const type = plain.response.headers.get('content-type') || '';
-  const status = plain.response.status;
-  const bytes = (await plain.response.arrayBuffer()).byteLength;
+  let type;
+  let status;
+  let bytes;
+  try {
+    type = plain.response.headers.get('content-type') || '';
+    status = plain.response.status;
+    bytes = (await plain.response.arrayBuffer()).byteLength;
+  } catch (err) {
+    return { ok: false, why: `image host ${readingFailed(err)}` };
+  } finally {
+    if (plain.release) plain.release();
+  }
 
   if (status !== 200) return { ok: false, why: `answered ${status}` };
   if (!/^image\//i.test(type)) return { ok: false, why: `answered 200 as ${type.split(';')[0] || 'no type'}` };
   if (bytes < MIN_BYTES) return { ok: false, why: `only ${bytes} bytes, too small to be a product photo` };
 
-  const referred = await ask(url, { Referer: site });
+  const referred = await ask(url, { Referer: site }, ms);
   if (!referred.ok) return { ok: false, why: `refused for ${site}: ${referred.why}` };
-  if (referred.response.body) await referred.response.body.cancel();
-  if (referred.response.status !== 200) {
-    return { ok: false, why: `hotlink blocked — served plainly, ${referred.response.status} for ${site}` };
+  try {
+    if (referred.response.body) await referred.response.body.cancel();
+    if (referred.response.status !== 200) {
+      return { ok: false, why: `hotlink blocked — served plainly, ${referred.response.status} for ${site}` };
+    }
+  } catch (err) {
+    return { ok: false, why: `refused for ${site}: ${readingFailed(err)}` };
+  } finally {
+    if (referred.release) referred.release();
   }
 
   return { ok: true, why: `${type.split(';')[0]}, ${Math.round(bytes / 1024)}KB` };
@@ -929,11 +1067,23 @@ function gatherInPage() {
 
 /* One page, in a real browser, reported the same way fetchPage reports:
    candidates in priority order, or a reason there are none. */
-async function renderPage(url) {
+async function renderPage(url, within) {
   const chromium = loadPlaywright();
   if (!chromium) return { failed: 'Playwright is not installed here, so the browser path is unavailable', noBrowser: true };
 
-  const launch = { args: ['--disable-blink-features=AutomationControlled'] };
+  /* the whole render — launch, open, settle, scroll, read — under one
+     ceiling, because the individual waits below cannot see each other
+     and five reasonable ones in a row are not a reasonable total */
+  const budget = within || budgetOf(RENDER_BUDGET);
+  if (budget.spent()) return { failed: 'there was no time left in this row to open a browser' };
+
+  /* never 0: Playwright reads a timeout of 0 as "no timeout at all",
+     so a budget that emptied between the check above and this line
+     would turn the ceiling into its opposite */
+  const launch = {
+    args: ['--disable-blink-features=AutomationControlled'],
+    timeout: Math.max(1, budget.cap(RENDER_BUDGET))
+  };
   if (process.env.CHROME_PATH) launch.executablePath = process.env.CHROME_PATH;
 
   let browser;
@@ -942,6 +1092,12 @@ async function renderPage(url) {
   } catch (err) {
     return { failed: `Chromium would not start (${err && err.message ? err.message.split('\n')[0] : 'unknown'})`, noBrowser: true };
   }
+
+  /* Closing is the caller's to do, once the images have been checked
+     through this page's own context — see the note on `verify` below.
+     Every path out of here that does NOT hand the page over closes it
+     itself, and closing twice is harmless. */
+  const close = async () => { await browser.close().catch(() => {}); };
 
   try {
     const context = await browser.newContext({
@@ -962,39 +1118,57 @@ async function renderPage(url) {
 
     let status = null;
     try {
-      const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: BROWSER_TIMEOUT });
+      const response = await page.goto(url, {
+        waitUntil: 'domcontentloaded',
+        timeout: Math.max(1, budget.cap(BROWSER_TIMEOUT))
+      });
       status = response ? response.status() : null;
     } catch (err) {
-      await browser.close();
+      await close();
       return { failed: `the browser could not open the page (${String(err.message).split('\n')[0]})` };
     }
 
-    /* give the gallery a chance to build itself, without hanging on a
-       page that never goes idle */
-    await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
-    await page.waitForTimeout(1200);
+    /* Give the gallery a chance to build itself, without hanging on a
+       page that never goes idle. A retailer's page carries analytics
+       beacons and live chat that keep the network busy for as long as
+       anyone watches, so this wait almost always ran to its full length
+       — it was not a wait for the gallery, it was a flat toll on every
+       page. What actually loads a lazy gallery is the scroll below, so
+       the toll is now a short one. */
+    await page.waitForLoadState('networkidle', { timeout: Math.max(1, budget.cap(SETTLE_TIMEOUT)) }).catch(() => {});
+    await page.waitForTimeout(Math.min(1200, budget.left()));
 
     /* A consent wall sits over the gallery and, on some retailers, stops
        its images loading at all until it is answered. Accepting it is
        what a shopper does to see the page, and it is the only thing
        clicked here — nothing is submitted, bought or logged into. */
-    const consent = await dismissConsent(page);
-    if (consent) await page.waitForTimeout(800);
+    const consent = await dismissConsent(page, budget);
+    if (consent) await page.waitForTimeout(Math.min(800, budget.left()));
 
     /* a gallery that loads as it is scrolled shows nothing to a browser
        that never scrolls, so the page is walked down before it is read */
-    await coaxLazyImages(page);
+    await coaxLazyImages(page, budget);
 
     const seen = await page.evaluate(gatherInPage);
-    const verify = imageFetcherFor(page);
-    await browser.close();
 
     if (status && status >= 400) {
+      await close();
       return { failed: `the page answered ${status} to a real browser too` };
     }
-    return { seen, loaded, verify };
+
+    /* The page stays OPEN, and this is the whole point of it. `verify`
+       checks an image through this page's own browsing context, which is
+       how a CDN that only serves to a session which has loaded the page
+       gets judged the way the page's own requests are judged. It was
+       being handed back after the browser had already been closed, so
+       every image the browser path ever found was refused by the
+       loadable gate with "Target page, context or browser has been
+       closed" — the gate was not passing wrong photos, it was passing
+       none, and the whole render was spent to reach it. The caller
+       closes once it has finished checking. */
+    return { seen, loaded, verify: imageFetcherFor(page, budget), close };
   } catch (err) {
-    await browser.close().catch(() => {});
+    await close();
     return { failed: `the browser path failed (${err && err.message ? String(err.message).split('\n')[0] : 'unknown'})` };
   }
 }
@@ -1018,12 +1192,16 @@ const CONSENT = [
   'button:has-text("Got it")'
 ];
 
-async function dismissConsent(page) {
+async function dismissConsent(page, within) {
+  const budget = within || budgetOf(RENDER_BUDGET);
   for (const selector of CONSENT) {
+    /* a wall that has not been found by the time the page's budget is
+       gone is a wall this run reads around rather than through */
+    if (budget.spent()) return null;
     try {
       const button = page.locator(selector).first();
-      if (!(await button.isVisible({ timeout: 400 }).catch(() => false))) continue;
-      await button.click({ timeout: 2000 });
+      if (!(await button.isVisible({ timeout: Math.max(1, budget.cap(400)) }).catch(() => false))) continue;
+      await button.click({ timeout: Math.max(1, budget.cap(2000)) });
       return selector;
     } catch (err) { /* the next one, or none at all */ }
   }
@@ -1033,20 +1211,29 @@ async function dismissConsent(page) {
 /* Walks the page down in screenfuls so an image that only loads when it
    scrolls into view actually loads, then returns to the top so the
    gallery is measured where the page puts it. */
-async function coaxLazyImages(page) {
+async function coaxLazyImages(page, within) {
+  const budget = within || budgetOf(RENDER_BUDGET);
   try {
-    await page.evaluate(async () => {
+    /* the walk carries its own deadline INSIDE the page, because
+       page.evaluate takes no timeout and a scroll handler that never
+       returns would otherwise be the one thing here with no ceiling
+       over it at all */
+    const walk = Math.max(1, budget.cap(6 * 250 + 200));
+    await page.evaluate(async (deadline) => {
+      const until = Date.now() + deadline;
       const step = Math.round(window.innerHeight * 0.8);
       const end = Math.min(document.body.scrollHeight, step * 6);
-      for (let y = 0; y <= end; y += step) {
+      for (let y = 0; y <= end && Date.now() < until; y += step) {
         window.scrollTo(0, y);
         await new Promise((r) => setTimeout(r, 250));
       }
       window.scrollTo(0, 0);
       await new Promise((r) => setTimeout(r, 200));
-    });
+    }, walk);
     /* whatever that started, give it a moment to arrive */
-    await page.waitForLoadState('networkidle', { timeout: 8000 }).catch(() => {});
+    await page.waitForLoadState('networkidle', {
+      timeout: Math.max(1, budget.cap(SETTLE_AFTER_SCROLL))
+    }).catch(() => {});
   } catch (err) { /* a page that will not scroll is read as it stands */ }
 }
 
@@ -1054,14 +1241,27 @@ async function coaxLazyImages(page) {
    that only serves to a session which has loaded the page is judged the
    way the page's own requests are. Shaped like request() so verifyImage
    does not care which one it was handed. */
-function imageFetcherFor(page) {
-  return async (url, extra) => {
+function imageFetcherFor(page, within) {
+  const budget = within || budgetOf(RENDER_BUDGET);
+  return async (url, extra, ms) => {
+    /* page.evaluate has no timeout of its own, so the ceiling goes
+       INSIDE the page as an AbortController. Without it an image host
+       that accepts the connection and then serves nothing forever
+       stalls this evaluate, and with it the row, with nothing above to
+       cut it off. */
+    const ceiling = Math.max(1, budget.cap(ms === undefined || ms === null ? IMAGE_TIMEOUT : ms));
     try {
-      const result = await page.evaluate(async ({ url, extra }) => {
-        const response = await fetch(url, { headers: extra || {}, redirect: 'follow' });
-        const buffer = await response.arrayBuffer();
-        return { status: response.status, type: response.headers.get('content-type') || '', bytes: buffer.byteLength };
-      }, { url, extra });
+      const result = await page.evaluate(async ({ url, extra, ceiling }) => {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), ceiling);
+        try {
+          const response = await fetch(url, { headers: extra || {}, redirect: 'follow', signal: controller.signal });
+          const buffer = await response.arrayBuffer();
+          return { status: response.status, type: response.headers.get('content-type') || '', bytes: buffer.byteLength };
+        } finally {
+          clearTimeout(timer);
+        }
+      }, { url, extra, ceiling });
       return {
         ok: true,
         response: {
@@ -1150,36 +1350,67 @@ function factsFromRendered(seen) {
 
 /* Walks candidates in order and returns the first that clears every
    gate, or the reasons they all failed. */
-async function firstVerifiable(candidates, row, fetcher) {
-  const refusals = [];
+async function firstVerifiable(candidates, row, fetcher, within) {
+  const budget = within || budgetOf(ROW_BUDGET);
   /* each refusal keeps the URL and the gate that turned it down, because
      "none of them worked" is not a diagnosis — which gate stopped which
      candidate is what says whether the page was read wrong, the wrong
      product was offered, or the host refused to serve us */
-  const note = (candidate, gate, why) => refusals.push({ url: candidate.url, from: candidate.from, gate, why });
+  const note = (candidate, gate, why) => ({ url: candidate.url, from: candidate.from, gate, why });
 
-  for (const candidate of candidates) {
+  /* The two gates that need nothing from the network are decided first,
+     in order and for free. A lane is a network operation, and spending
+     one on a candidate the host gate or the identity gate has already
+     refused is the cheapest thing here done the most expensive way. */
+  const decided = candidates.map((candidate) => {
     const unsound = soundness(candidate, row.productUrl);
-    if (unsound) { note(candidate, 'host', unsound); continue; }
+    if (unsound) return { candidate, refusal: note(candidate, 'host', unsound) };
 
     const identity = identityEvidence(candidate, row.productUrl);
-    if (!identity.ok) { note(candidate, 'identity', identity.why); continue; }
+    if (!identity.ok) return { candidate, refusal: note(candidate, 'identity', identity.why) };
 
-    const check = await verifyImage(candidate.url, fetcher);
-    if (check.ok) {
-      return { url: candidate.url, why: `${check.why} — ${identity.how}`, from: candidate.from, identity };
-    }
-    note(candidate, 'loadable', check.why);
+    return { candidate, identity };
+  });
+
+  const loadable = decided.filter((one) => !one.refusal);
+  const { results, winner } = await raceInOrder(loadable, LANES, async (one) => {
+    if (budget.spent()) return { ok: false, why: 'the time for this page ran out before this candidate was loaded' };
+    const check = await verifyImage(one.candidate.url, fetcher, budget.cap(IMAGE_TIMEOUT));
+    return { ok: check.ok, why: check.why };
+  });
+
+  if (winner >= 0) {
+    const one = loadable[winner];
+    return {
+      url: one.candidate.url,
+      why: `${results[winner].why} — ${one.identity.how}`,
+      from: one.candidate.from,
+      identity: one.identity
+    };
   }
-  return { refusals };
+
+  /* refusals in the order the candidates were offered in, whatever
+     order they happened to come back in */
+  const loadRefusals = new Map();
+  loadable.forEach((one, at) => {
+    const result = results[at];
+    const why = result && result.threw
+      ? `it could not be checked (${String(result.threw.message || result.threw).split('\n')[0]})`
+      : result && result.why ? result.why
+        : 'it was never reached — the time for this page ran out';
+    loadRefusals.set(one, note(one.candidate, 'loadable', why));
+  });
+
+  return { refusals: decided.map((one) => one.refusal || loadRefusals.get(one)) };
 }
 
-async function resolveRow(row) {
+async function resolveRow(row, within) {
+  const budget = within || budgetOf(ROW_BUDGET);
   const notes = [];
   let facts = { name: null, brand: null };
 
   /* ---- plain HTTP ---- */
-  const page = await fetchPage(row.productUrl);
+  const page = await fetchPage(row.productUrl, budget.cap(TIMEOUT));
   let served = null;
 
   let evidence = [];
@@ -1192,7 +1423,7 @@ async function resolveRow(row) {
     const candidates = candidatesFrom(page.html, row.productUrl);
     notes.push(`plain HTTP: ${candidates.length} candidate${candidates.length === 1 ? '' : 's'}`);
     if (candidates.length) {
-      served = await firstVerifiable(candidates, row);
+      served = await firstVerifiable(candidates, row, null, budget);
       if (served.url) return { id: row.id, verdict: 'VERIFIED', why: served.why, url: served.url, from: served.from, identity: served.identity, facts, evidence, notes };
     }
   } else if (page.blocked) {
@@ -1216,7 +1447,7 @@ async function resolveRow(row) {
     };
   }
 
-  const rendered = await renderPage(row.productUrl);
+  const rendered = await renderPage(row.productUrl, budgetOf(budget.cap(RENDER_BUDGET)));
   if (rendered.failed) {
     notes.push(`browser: ${rendered.failed}`);
     const why = rendered.noBrowser && page.html
@@ -1231,17 +1462,26 @@ async function resolveRow(row) {
     };
   }
 
-  facts = factsFromRendered(rendered.seen);
-  /* the rendered page knows which text belongs to the product, because
-     it can ask the DOM rather than guess from markup */
-  evidence = evidenceFromRendered(rendered.seen).concat(evidence);
-  const candidates = candidatesFromRendered(rendered.seen, rendered.loaded, row.productUrl);
-  notes.push(`browser: ${candidates.length} candidate${candidates.length === 1 ? '' : 's'}`);
-  if (!candidates.length) {
-    return { id: row.id, verdict: 'NO IMAGE FOUND', why: 'the rendered page published no product image either', url: null, notes };
+  /* the browser stays open until the images have been checked through
+     it, and is closed on every way out from here */
+  const shut = rendered.close || (async () => {});
+  let found;
+  try {
+    facts = factsFromRendered(rendered.seen);
+    /* the rendered page knows which text belongs to the product, because
+       it can ask the DOM rather than guess from markup */
+    evidence = evidenceFromRendered(rendered.seen).concat(evidence);
+    const candidates = candidatesFromRendered(rendered.seen, rendered.loaded, row.productUrl);
+    notes.push(`browser: ${candidates.length} candidate${candidates.length === 1 ? '' : 's'}`);
+    if (!candidates.length) {
+      return { id: row.id, verdict: 'NO IMAGE FOUND', why: 'the rendered page published no product image either', url: null, notes };
+    }
+
+    found = await firstVerifiable(candidates, row, rendered.verify, budget);
+  } finally {
+    await shut();
   }
 
-  const found = await firstVerifiable(candidates, row, rendered.verify);
   if (found.url) return { id: row.id, verdict: 'VERIFIED', why: found.why, url: found.url, from: found.from, identity: found.identity, facts, evidence, notes };
 
   const all = [...(served && served.refusals ? served.refusals : []), ...found.refusals];
@@ -2427,6 +2667,20 @@ function queryForms(row) {
    imageEvidence, the same three fields, proved the same way. */
 const QUOTA_EXHAUSTED = /\b429\b|allowance exhausted|run out of searches|quota|rate.?limit|too many requests/i;
 
+/* A ceiling over work this script does not own. The product source is
+   the adapter /api/search uses and is not changed from here, so its
+   request cannot be handed an abort signal — the only thing available
+   is to stop waiting for it. What is left behind is one HTTP request
+   finishing into nothing, which is the cheap kind of orphan; the
+   expensive kind, a Chromium nobody closes, is never raced. */
+function withCeiling(promise, ms, why) {
+  let timer = null;
+  const ceiling = new Promise((resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(why)), Math.max(1, ms));
+  });
+  return Promise.race([promise, ceiling]).finally(() => clearTimeout(timer));
+}
+
 function outOfSearches(err) {
   return QUOTA_EXHAUSTED.test(err && err.message ? err.message : String(err));
 }
@@ -2447,7 +2701,7 @@ function providerChain(source) {
   return chain;
 }
 
-async function listingsFor(row, limit) {
+async function listingsFor(row, limit, within) {
   const source = productSource();
   if (!source) return { failed: 'the product source adapter could not be loaded' };
 
@@ -2459,6 +2713,7 @@ async function listingsFor(row, limit) {
     return { failed: `the ${provider.name} product source has no key configured (see .env.example)` };
   }
 
+  const budget = within || budgetOf(ROW_BUDGET);
   const wanted = limit || 8;
   const forms = queryForms(row);
   const chain = providerChain(source);
@@ -2469,18 +2724,6 @@ async function listingsFor(row, limit) {
   let using = 0;
   let switched = null;
 
-  /* A source whose product surface has already come back with no
-     retailer link for THIS row. A live probe settled why that happens
-     with Serper — its /shopping results are Google's own Shopping
-     cards, forty of them, with no retailer URL anywhere in the
-     response — and once a row has seen that, asking the same endpoint
-     for the row's four other phrasings buys four more empty answers at
-     four more requests. So the rest of the row goes straight to the
-     endpoint that does carry a link. Per row, and per source: nothing
-     is remembered across rows, so a surface that starts working is
-     asked again on the next one. */
-  const noLinksFrom = new Set();
-
   for (const form of forms) {
     /* A search costs money, so the ladder is climbed only as far as it
        has to be: it keeps going while nothing has been found, and stops
@@ -2488,22 +2731,24 @@ async function listingsFor(row, limit) {
        row whose name works answers in two searches, not five. */
     if (raw.length >= wanted) break;
     if (raw.length > 0 && attempts.length >= 2) break;
+    /* and the ladder stops where the row's clock does: another query
+       put to a source that is not answering buys nothing but the wait */
+    if (budget.spent()) {
+      attempts.push({ how: form.how, query: form.query, provider: chain[using].name, failed: 'the time for this row ran out' });
+      break;
+    }
 
     /* one form, asked of the source in use, and asked again of the next
        source only when this one says it has no searches left */
     let batch = null;
     let failed = null;
-    let askedOrganic = false;
     while (using < chain.length) {
-      const source = chain[using];
-      /* only a source that HAS a discovery endpoint of its own, and
-         only after its product surface came back linkless for this row */
-      const organicOnly = noLinksFrom.has(source.name) && typeof source.searchOrganic === 'function';
       try {
-        batch = organicOnly
-          ? await source.searchOrganic(form.intent, { limit: wanted })
-          : await source.search(form.intent, { limit: wanted });
-        askedOrganic = organicOnly;
+        batch = await withCeiling(
+          chain[using].search(form.intent, { limit: wanted }),
+          budget.cap(SEARCH_TIMEOUT),
+          `the ${chain[using].name} source did not answer within ${Math.round(budget.cap(SEARCH_TIMEOUT) / 1000)}s`
+        );
         failed = null;
         break;
       } catch (err) {
@@ -2532,78 +2777,8 @@ async function listingsFor(row, limit) {
     }
 
     const offered = Array.isArray(batch) ? batch : [];
-    /* An adapter may attach its own account of the search to the batch
-       it returns — how many results the source sent, how many of them
-       named a shop, which keys a URL arrived under. It was being
-       dropped on the floor here, which is how a run could report "40
-       offered" and then nothing, and leave no way to tell whether the
-       adapter read the wrong field or the source sent no link at all.
-       It is carried through and printed rather than acted on. */
-    const said = batch && typeof batch === 'object' ? batch.diagnostics : null;
-
-    /* ---- when the product surface carries no retailer URL ----
-
-       Serper's /shopping answers with Google's own Shopping cards, so
-       every record it maps arrives with no productUrl and the link rule
-       drops all of them. Its /search endpoint answers the same question
-       with ordinary web results, whose link IS the shop's own page.
-
-       So: one more request, the same query, asked only when the batch
-       just received carried no link at all. What comes back is a title
-       and a URL and nothing else — no price, no photo, no retailer,
-       because the endpoint supplies none of those and inventing them is
-       the thing every gate here exists to prevent. Those candidates go
-       through the link rule, the semantic gate, the page stage and the
-       four image gates exactly as any other candidate does: the photo
-       is read off the retailer's own page and proved to belong to the
-       product, and the row keeps its own name, brand and price.
-
-       Nothing else in the chain has a searchOrganic, so nothing else
-       changes: SerpApi is asked the way it was always asked. */
-    const source = chain[using];
-    /* read through a guard: a source is not obliged to hand over
-       well-behaved objects, and a record that throws on being read is
-       one record, not a run. It counts as carrying no link. */
-    const carriesLink = (record) => {
-      try { return Boolean(record && typeof record === 'object' && record.productUrl); } catch (err) { return false; }
-    };
-    const linked = offered.some(carriesLink);
-    let organic = [];
-    let organicSaid = null;
-    let organicFailed = null;
-    let organicAsked = false;
-
-    if (!askedOrganic && !linked && typeof source.searchOrganic === 'function') {
-      noLinksFrom.add(source.name);
-      organicAsked = true;
-      try {
-        const more = await source.searchOrganic(form.intent, { limit: wanted });
-        organic = Array.isArray(more) ? more : [];
-        organicSaid = more && typeof more === 'object' && more.diagnostics ? more.diagnostics : null;
-      } catch (err) {
-        /* a failed escalation is one query form that found nothing, not
-           a run that failed: the next form is still asked */
-        organicFailed = err && err.message ? String(err.message).split('\n')[0] : String(err);
-      }
-    }
-
-    attempts.push({
-      how: form.how,
-      query: form.query,
-      provider: source.name,
-      offered: offered.length + organic.length,
-      diagnostics: said && typeof said === 'object' ? said : null,
-      /* the second endpoint, named rather than hidden inside a total */
-      escalated: askedOrganic
-        ? { endpoint: 'organic', asked: 'directly', offered: offered.length, failed: null, diagnostics: null }
-        /* recorded whenever it was ASKED, including when it came back
-           with nothing: a request that bought nothing is the thing a
-           cost report most needs to see */
-        : organicAsked
-          ? { endpoint: 'organic', asked: 'after a linkless batch', offered: organic.length, failed: organicFailed, diagnostics: organicSaid }
-          : null
-    });
-    for (const record of organic.length ? offered.concat(organic) : offered) {
+    attempts.push({ how: form.how, query: form.query, provider: chain[using].name, offered: offered.length });
+    for (const record of offered) {
       let key;
       try {
         key = JSON.stringify([record && record.productUrl, record && record.title]);
@@ -2707,7 +2882,12 @@ function readTitleSafely(row, product) {
    can say why each one passed or failed rather than only naming the
    winner. */
 async function discoverRow(row, taken, limit, options) {
-  const found = await listingsFor(row, limit);
+  /* One row's whole clock, shared by the search, every page read under
+     it and every image checked on those pages. A row that spends it is
+     a row that reports what it managed; it is never a row that stops
+     the nineteen behind it. */
+  const budget = (options && options.budget) || budgetOf(ROW_BUDGET);
+  const found = await listingsFor(row, limit, budget);
   if (found.failed) {
     /* an unconfigured source and a source that answered with an error
        are different problems with different fixes, and calling both
@@ -2742,17 +2922,22 @@ async function discoverRow(row, taken, limit, options) {
   const searched = found.attempts || [];
   const switched = found.switched || null;
 
-  for (let at = 0; at < tried.length; at += 1) {
-    const attempt = tried[at];
+  /* One candidate is one candidate, and now several of them are read at
+     once. The order is still the order: `raceInOrder` answers with the
+     EARLIEST listing that cleared every gate, not the first to come
+     back, so a fast shop further down the source's ranking cannot
+     overtake a better match above it. What concurrency buys is that a
+     retailer taking its twenty seconds does so while the others are
+     being read, instead of in front of them. */
+  const tryCandidate = async (attempt, at) => {
     const product = found.products[at] || {};
 
-    /* One candidate is one candidate. A retailer that serves malformed
-       markup, a page that blocks halfway through, a record in a shape
-       nothing here expected — each is a fact about that listing, not a
-       reason to abandon the other candidates for this row, let alone
-       the twenty rows queued behind it. So the whole of a candidate's
-       handling sits inside this try, and a throw becomes a failed
-       candidate the report can show. */
+    /* A retailer that serves malformed markup, a page that blocks
+       halfway through, a record in a shape nothing here expected — each
+       is a fact about that listing, not a reason to abandon the other
+       candidates for this row, let alone the twenty rows queued behind
+       it. So the whole of a candidate's handling sits inside this try,
+       and a throw becomes a failed candidate the report can show. */
     try {
 
     /* stage one, on the title alone: a contradiction ends it here and
@@ -2760,7 +2945,17 @@ async function discoverRow(row, taken, limit, options) {
        on to the page, which is where a specification lives. */
     if (!attempt.semantic.ok) {
       attempt.why = `the semantic gate refused it: ${attempt.semantic.why}`;
-      continue;
+      return { ok: false };
+    }
+
+    /* the row's clock, checked before the request rather than during
+       it: one unreachable shop takes its ceiling and no more, and the
+       candidates behind it are refused for want of time rather than
+       left queued behind a socket that will never answer */
+    if (budget.spent()) {
+      attempt.why = 'the time for this row ran out before this listing could be read';
+      attempt.ranOut = true;
+      return { ok: false };
     }
 
     const result = await resolveRow({
@@ -2768,11 +2963,11 @@ async function discoverRow(row, taken, limit, options) {
       brand: product.brand || '—',
       name: product.title || row.name,
       productUrl: product.productUrl
-    });
+    }, budget);
 
     if (result.verdict !== 'VERIFIED') {
       attempt.why = result.why;
-      continue;
+      return { ok: false };
     }
 
     /* the page's own name is the better description of what is for sale
@@ -2786,7 +2981,7 @@ async function discoverRow(row, taken, limit, options) {
       attempt.onPage = onPage;
       if (!onPage.ok) {
         attempt.why = `its own page calls it "${facts.name.trim()}" — ${onPage.why}`;
-        continue;
+        return { ok: false };
       }
     }
 
@@ -2806,18 +3001,46 @@ async function discoverRow(row, taken, limit, options) {
       if (proof.missing.length) {
         attempt.why = `its page never establishes ${proof.missing.map(nameOfPending).join(', ')} either` +
           `${proof.proved.length ? `, though it does establish ${proof.proved.map((one) => nameOfPending(one.item)).join(', ')}` : ''}`;
-        continue;
+        return { ok: false };
       }
       attempt.provedOnPage = proof.proved;
     }
 
+    /* A photo another row is already wearing. Rows are still taken one
+       at a time, so this map cannot change underneath a lane — and if
+       two candidates for THIS row were ever to land on one photo, the
+       earlier of them is the one that wins, which is the same answer a
+       serial run gave. */
     if (taken.has(result.url)) {
       attempt.why = `its photo is already on ${taken.get(result.url)}`;
-      continue;
+      return { ok: false };
     }
 
     attempt.why = result.why;
     attempt.verified = true;
+    return { ok: true, result, onPage, facts, product };
+
+    } catch (err) {
+      const said = err && err.message ? String(err.message).split('\n')[0] : String(err);
+      attempt.failed = said;
+      attempt.why = `this candidate could not be read: ${said}`;
+      return { ok: false };
+    }
+  };
+
+  const { results, winner } = await raceInOrder(tried, LANES, tryCandidate);
+
+  /* a candidate a lane never got to, because the answer was already
+     found above it, says so rather than pretending to a verdict */
+  tried.forEach((attempt, at) => {
+    if (!results[at] && attempt.why === null) {
+      attempt.why = 'a listing ranked above it cleared every gate first, so this one was not read';
+    }
+  });
+
+  if (winner >= 0) {
+    const attempt = tried[winner];
+    const { result, onPage, facts, product } = results[winner];
     return {
       id: row.id,
       verdict: 'VERIFIED',
@@ -2842,12 +3065,6 @@ async function discoverRow(row, taken, limit, options) {
       },
       identity: result.identity
     };
-
-    } catch (err) {
-      const said = err && err.message ? String(err.message).split('\n')[0] : String(err);
-      attempt.failed = said;
-      attempt.why = `this candidate could not be read: ${said}`;
-    }
   }
 
   const refused = tried.filter((attempt) => !attempt.semantic.ok).length;
@@ -2862,13 +3079,7 @@ async function discoverRow(row, taken, limit, options) {
         `${unproven ? `, ${unproven} read to the page and still unproven` : ''}` +
         `${broke ? `, ${broke} could not be read at all` : ''}` +
         `, none cleared every gate`
-      /* which link fault dropped them is the whole diagnosis when a
-         source offers listings and none survives, so it is named here
-         rather than left in a tally nothing prints */
-      : `the ${found.provider} source offered no listing that is a product page, over ${searched.length} quer${searched.length === 1 ? 'y' : 'ies'}`
-        + (Object.keys(found.rejected || {}).length
-          ? ` — ${Object.entries(found.rejected).map(([why, n]) => `${n} ${why}`).join(', ')}`
-          : ''),
+      : `the ${found.provider} source offered no listing that is a product page, over ${searched.length} quer${searched.length === 1 ? 'y' : 'ies'}`,
     attempts: searched,
     switched,
     tried
@@ -3344,8 +3555,12 @@ async function main() {
     }
 
     async function discoverOneRow(row) {
-      const result = await discoverRow(row, taken, limit);
-      console.log(`  ${result.verdict.padEnd(17)} ${row.id} — wants "${row.name}"`);
+      /* a clock per row, not per run: a row that spends all of it is
+         reported and the next one starts with a full one */
+      const started = Date.now();
+      const result = await discoverRow(row, taken, limit, { budget: budgetOf(ROW_BUDGET) });
+      const took = Math.round((Date.now() - started) / 100) / 10;
+      console.log(`  ${result.verdict.padEnd(17)} ${row.id} — wants "${row.name}" [${took}s]`);
 
       /* which ways the source was asked, and what each one came back
          with: a row that found nothing should say whether it was the
@@ -3354,28 +3569,6 @@ async function main() {
         const asked = attempt.query === null ? 'everything the row knows' : `"${attempt.query}"`;
         const who = attempt.provider ? ` [${attempt.provider}]` : '';
         console.log(`  ${''.padEnd(17)}   asked ${asked}${who} — ${attempt.failed ? `FAILED: ${attempt.failed}` : `${attempt.offered} offered`}`);
-        /* what the source actually sent, in the adapter's own words:
-           "40 offered" and nothing shown is not a diagnosis */
-        if (attempt.diagnostics) {
-          const d = attempt.diagnostics;
-          const counted = ['withInlineLink', 'googleLinkedOnly', 'unlinked']
-            .filter((key) => typeof d[key] === 'number')
-            .map((key) => `${d[key]} ${key}`)
-            .join(', ');
-          if (counted) console.log(`  ${''.padEnd(17)}     ${counted}`);
-          if (Array.isArray(d.urlFieldsSeen)) {
-            console.log(`  ${''.padEnd(17)}     urls arrived under: ${d.urlFieldsSeen.join(', ') || '(no url-valued field at all)'}`);
-          }
-        }
-        /* the second endpoint, when the first carried no retailer link */
-        if (attempt.escalated) {
-          const e = attempt.escalated;
-          console.log(`  ${''.padEnd(17)}     ${e.asked === 'directly' ? 'asked the organic endpoint directly' : 'no retailer link in that batch — asked the organic endpoint'}`
-            + ` — ${e.failed ? `FAILED: ${e.failed}` : `${e.offered} offered`}`);
-          if (e.diagnostics && Array.isArray(e.diagnostics.urlFieldsSeen)) {
-            console.log(`  ${''.padEnd(17)}       organic urls under: ${e.diagnostics.urlFieldsSeen.join(', ') || '(none)'}`);
-          }
-        }
         if (attempt.fellBackTo) {
           console.log(`  ${''.padEnd(17)}     out of searches — falling back to ${attempt.fellBackTo}, same gates, nothing relaxed`);
         }
@@ -3628,6 +3821,11 @@ if (require.main === module) {
        about images, so the price reader shares one definition of a
        listing's code, one cookie-wall list and one way in */
     BROWSER, fetchPage, jsonLdNodes, parseLdBlock, metaContent, skuOf,
-    loadPlaywright, dismissConsent, coaxLazyImages, rowEndsAt
+    loadPlaywright, dismissConsent, coaxLazyImages, rowEndsAt,
+    /* the ceilings, and the two things that keep a slow shop from
+       becoming a slow run: a clock a row carries, and a few candidates
+       read at once that still answer in the order they were ranked */
+    budgetOf, raceInOrder, withCeiling, request, imageFetcherFor,
+    TIMEOUT, IMAGE_TIMEOUT, SEARCH_TIMEOUT, RENDER_BUDGET, ROW_BUDGET, LANES
   };
 }
