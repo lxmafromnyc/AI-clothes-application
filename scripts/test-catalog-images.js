@@ -50,9 +50,26 @@ const CATALOG = path.join(__dirname, '..', 'assets', 'catalog.js');
    a report belonging to a real --discover run. */
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'fynd-catalog-images-'));
 
-async function run(argv) {
+/* The environment of a run that has no product source at all. The
+   subprocess inherits this process's environment, which on a developer's
+   machine carries whatever keys .env.local exported — and a leftover
+   PRODUCT_SOURCE from an earlier test. A test of "nothing is configured"
+   cannot lean on either being absent, so every variable that selects or
+   unlocks a source is removed here rather than hoped away. */
+const SOURCE_ENV = /^(PRODUCT_SOURCE|OPENWEBNINJA_.*|SERPAPI_.*|SERPER_.*|ETSY_.*|EXAMPLE_API_KEY)$/;
+
+function withoutSources() {
+  const env = {};
+  for (const [name, value] of Object.entries(process.env)) {
+    if (!SOURCE_ENV.test(name.toUpperCase())) env[name] = value;
+  }
+  return env;
+}
+
+async function run(argv, options) {
+  const env = (options && options.env) || process.env;
   try {
-    const { stdout, stderr } = await execFile(process.execPath, [SCRIPT, ...argv], { env: process.env, timeout: 120000 });
+    const { stdout, stderr } = await execFile(process.execPath, [SCRIPT, ...argv], { env, timeout: 120000 });
     return { code: 0, stdout, stderr };
   } catch (err) {
     return { code: err.code === undefined ? 1 : err.code, stdout: err.stdout || '', stderr: err.stderr || String(err.message) };
@@ -1204,21 +1221,82 @@ function walledRetailer() {
     assert.ok(Object.keys(offered.rejected).length, 'and the source says why it dropped them');
   });
 
-  await testAsync('with no source configured, discovery says so and writes nothing', async () => {
-    const before = fs.readFileSync(CATALOG);
-    const result = await run([
-      '--discover', '--only', 'sample-northfold-boxy-cotton-tee', '--write',
-      /* a report path with nothing at it, so this stays a test of what
-         happens with no source rather than of what was left lying
-         beside the catalogue by an earlier run */
-      '--report', path.join(TMP, 'no-source.json')
-    ]);
-    const after = fs.readFileSync(CATALOG);
+  /* A catalogue row that exists only for the length of one test, with no
+     link and no photo, so discovery has something to look for however
+     much of the real catalogue has been photographed since. With nothing
+     to look for, discovery never asks for a source, and a test of "no
+     source is configured" would pass without ever reaching that path.
+     It wears the garment of the Northfold tee, under an id of its own. */
+  const NO_SOURCE_FIXTURE = {
+    id: 'fixture-northfold-boxy-cotton-tee',
+    name: 'Boxy Cotton Tee',
+    brand: 'Northfold',
+    price: null,
+    productUrl: null,
+    imageUrl: null,
+    category: 'tee',
+    style: ['Minimal', 'Sporty'],
+    occasion: ['Everyday', 'Weekend'],
+    fit: ['Relaxed', 'Oversized'],
+    colors: ['White'],
+    sizes: ['XS', 'S', 'M', 'L', 'XL']
+  };
 
-    assert.strictEqual(result.code, 0, result.stderr);
-    assert.match(result.stdout, /no product source is configured/);
-    assert.match(result.stdout, /rows already carry one and are not touched/);
-    assert.ok(before.equals(after), 'assets/catalog.js is byte-for-byte what it was');
+  /* Adds rows to the end of DEMO_PRODUCTS in the file's own shape, runs
+     the test, and puts assets/catalog.js back byte for byte whatever
+     happens. The callback is handed the catalogue as it stood WITH the
+     fixture rows, so "wrote nothing" is judged against what the run was
+     given. A function declaration, so it is usable above
+     withCatalogRestored, which it relies on. */
+  async function withFixtureRows(rows, fn) {
+    const literal = (value) => {
+      if (value === null || value === undefined) return 'null';
+      if (Array.isArray(value)) return `[${value.map(literal).join(', ')}]`;
+      if (typeof value === 'number') return String(value);
+      return `'${String(value).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
+    };
+    return withCatalogRestored(async () => {
+      const source = fs.readFileSync(CATALOG, 'utf8');
+      const start = source.indexOf('const DEMO_PRODUCTS = [');
+      assert.ok(start >= 0, 'assets/catalog.js no longer declares DEMO_PRODUCTS');
+      const end = source.indexOf('\n];', start);
+      assert.ok(end >= 0, 'could not find the end of DEMO_PRODUCTS');
+
+      const text = rows.map((row) => `  {\n${Object.entries(row)
+        .map(([field, value]) => `    ${field}: ${literal(value)}`)
+        .join(',\n')}\n  }`).join(',\n');
+      fs.writeFileSync(CATALOG, `${source.slice(0, end)},\n${text}${source.slice(end)}`);
+
+      const ids = extractor.readCatalog().rows.map((r) => r.id);
+      for (const row of rows) {
+        assert.strictEqual(ids.filter((id) => id === row.id).length, 1, `fixture row ${row.id} did not land once`);
+      }
+      return fn(fs.readFileSync(CATALOG));
+    });
+  }
+
+  await testAsync('with no source configured, discovery says so and writes nothing', async () => {
+    const original = fs.readFileSync(CATALOG);
+    const fixture = NO_SOURCE_FIXTURE;
+    await withFixtureRows([fixture], async (before) => {
+      const result = await run([
+        '--discover', '--only', fixture.id, '--write',
+        /* a report path with nothing at it, so this stays a test of what
+           happens with no source rather than of what was left lying
+           beside the catalogue by an earlier run */
+        '--report', path.join(TMP, 'no-source.json')
+      ], { env: withoutSources() });
+      const after = fs.readFileSync(CATALOG);
+
+      assert.strictEqual(result.code, 0, result.stderr);
+      assert.match(result.stdout, /Looking for a real listing for 1 row that carries no photo/,
+        'discovery had nothing to look for, so this never reached the source');
+      assert.match(result.stdout, new RegExp(fixture.id));
+      assert.match(result.stdout, /no product source is configured/);
+      assert.match(result.stdout, /rows? already carry one and are not touched/);
+      assert.ok(before.equals(after), 'assets/catalog.js is byte-for-byte what it was');
+    });
+    assert.ok(fs.readFileSync(CATALOG).equals(original), 'the fixture row was left in assets/catalog.js');
   });
 
   await testAsync('discovery leaves the verified rows out of its list entirely', async () => {
@@ -3646,18 +3724,26 @@ function walledRetailer() {
   });
 
   await testAsync('with no report saved at all, --discover still means go and find out', async () => {
-    const before = fs.readFileSync(CATALOG);
-    const result = await run([
-      '--discover', '--write',
-      '--only', 'sample-northfold-boxy-cotton-tee',
-      '--report', path.join(TMP, 'nothing-was-ever-here.json')
-    ]);
+    /* its own unlinked row, so "go and find out" has something to find
+       out about — see the no-source test above */
+    const original = fs.readFileSync(CATALOG);
+    const fixture = NO_SOURCE_FIXTURE;
+    await withFixtureRows([fixture], async (before) => {
+      const result = await run([
+        '--discover', '--write',
+        '--only', fixture.id,
+        '--report', path.join(TMP, 'nothing-was-ever-here.json')
+      ], { env: withoutSources() });
 
-    assert.strictEqual(result.code, 0, result.stderr);
-    assert.match(result.stdout, /No discovery report at/);
-    assert.match(result.stdout, /Looking for a real listing/, 'with nothing saved it has to go and look');
-    assert.match(result.stdout, /no product source is configured/);
-    assert.ok(fs.readFileSync(CATALOG).equals(before), 'and it wrote nothing, having verified nothing');
+      assert.strictEqual(result.code, 0, result.stderr);
+      assert.match(result.stdout, /No discovery report at/);
+      assert.match(result.stdout, /Looking for a real listing for 1 row that carries no photo/,
+        'with nothing saved it has to go and look');
+      assert.match(result.stdout, new RegExp(fixture.id));
+      assert.match(result.stdout, /no product source is configured/);
+      assert.ok(fs.readFileSync(CATALOG).equals(before), 'and it wrote nothing, having verified nothing');
+    });
+    assert.ok(fs.readFileSync(CATALOG).equals(original), 'the fixture row was left in assets/catalog.js');
   });
 
   await testAsync('the plain path leaves a discovery report alone, and says it is there', async () => {
@@ -3699,6 +3785,611 @@ function walledRetailer() {
     assert.notStrictEqual(result.code, 0);
     assert.match(result.stderr, /unknown option "--discovar"/);
     assert.doesNotMatch(result.stdout, /Reading \d+ linked product page/);
+  });
+
+  /* ---------------------------------------------------------
+     A picture of the site is not a picture of the product
+
+     A live run wrote three rows whose photos were not photographs of a
+     garment at all: White House Black Market's whbm_logo_seo.avif (9KB),
+     ASOS's social-share-1x.jpg and Telfar's social_telfar.jpg. Each was
+     the page's og:image, each was accepted `via: 'canonical'`, and the
+     canonical rule was working as written — it refuses a DISAGREEMENT it
+     can see, and a logo disagrees with nothing. What it never asked was
+     whether the image is a product photo at all.
+     --------------------------------------------------------- */
+  console.log('\n  — a picture of the site is not a picture of the product\n');
+
+  const WHBM = 'https://www.whitehouseblackmarket.com/store/product/wide-leg-trouser/570412345';
+  const ASOS = 'https://www.asos.com/us/asos-design/asos-design-wide-leg-trouser/prd/205123456';
+  const TELFAR = 'https://www.telfar.net/products/wide-leg-trouser-black?variant=41234567890';
+
+  /* a JPEG whose header says how big it is, padded to a photo's weight */
+  const jpegOf = (width, height) => {
+    const sof = Buffer.from([0xff, 0xc0, 0x00, 0x11, 0x08,
+      (height >> 8) & 0xff, height & 0xff, (width >> 8) & 0xff, width & 0xff,
+      0x03, 0x01, 0x22, 0x00, 0x02, 0x11, 0x01, 0x03, 0x11, 0x01]);
+    const app0 = Buffer.concat([Buffer.from([0xff, 0xe0, 0x00, 0x10]), Buffer.from('JFIF\0'), Buffer.alloc(9, 0)]);
+    return Buffer.concat([Buffer.from([0xff, 0xd8]), app0, sof, Buffer.alloc(40000, 0x20)]);
+  };
+  /* a fetcher that serves whatever it is asked for as this body, and
+     remembers what it was asked */
+  const serving = (body, type) => {
+    const asked = [];
+    const fetcher = async (url) => {
+      asked.push(url);
+      return {
+        ok: true,
+        response: {
+          status: 200,
+          headers: { get: () => type || 'image/jpeg' },
+          arrayBuffer: async () => body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength),
+          body: null
+        }
+      };
+    };
+    fetcher.asked = asked;
+    return fetcher;
+  };
+
+  test('a retailer logo is refused even though the canonical page vouches for it', () => {
+    const logo = 'https://www.whitehouseblackmarket.com/Assets/whbm/images/whbm_logo_seo.avif';
+    const verdict = extractor.identityEvidence({ url: logo, from: 'og:image', canonical: WHBM }, WHBM);
+    assert.strictEqual(verdict.ok, false, 'a wordmark was accepted as a wide leg trouser');
+    assert.match(verdict.why, /not a product photo/);
+    assert.match(verdict.why, /logo/);
+
+    assert.match(extractor.siteAsset(logo, WHBM), /logo/);
+    assert.match(extractor.siteAsset('https://cdn.example.com/brand/logos/wordmark-black.png', WHBM) || '', /wordmark|logos/);
+  });
+
+  test('a social-share card is refused even though the canonical page vouches for it', () => {
+    for (const [url, listing] of [
+      ['https://images.asos-media.com/navigation/social-share-1x.jpg', ASOS],
+      ['https://www.telfar.net/cdn/shop/files/social_telfar.jpg?v=1699', TELFAR],
+      ['https://cdn.example.com/static/og-image-default.png', WHBM],
+      ['https://cdn.example.com/static/twitterCard.jpg', WHBM]
+    ]) {
+      const verdict = extractor.identityEvidence({ url, from: 'og:image', canonical: listing }, listing);
+      assert.strictEqual(verdict.ok, false, `${url} was accepted as a product photo`);
+      assert.match(verdict.why, /not a product photo/, url);
+    }
+  });
+
+  test('a favicon, a touch icon, a placeholder or a bare brand image is refused', () => {
+    for (const url of [
+      'https://www.telfar.net/favicon.ico',
+      'https://www.telfar.net/cdn/shop/files/favicon-32x32.png',
+      'https://www.telfar.net/apple-touch-icon.png',
+      'https://www.telfar.net/cdn/shop/files/telfar.png',
+      'https://www.telfar.net/assets/brand-mark.svg',
+      'https://cdn.example.com/img/placeholder-product.jpg',
+      'https://cdn.example.com/img/no-image-available.jpg',
+      'https://cdn.example.com/logos/12ab34cd.png'
+    ]) {
+      assert.ok(extractor.siteAsset(url, TELFAR), `${url} passed as a product photo`);
+    }
+    /* never a product photo, whatever vouches for it: a placeholder
+       carrying the listing's own code is still a placeholder */
+    assert.ok(extractor.siteAsset('https://cdn.example.com/img/570412345_placeholder.jpg', WHBM));
+  });
+
+  await testAsync('a site asset is refused before it is ever requested', async () => {
+    const fetcher = serving(jpegOf(1200, 1500));
+    const result = await extractor.firstVerifiable([
+      { url: 'https://www.whitehouseblackmarket.com/Assets/whbm/images/whbm_logo_seo.avif', from: 'og:image', canonical: WHBM },
+      { url: 'https://www.whitehouseblackmarket.com/favicon.ico', from: 'loaded by the page', canonical: WHBM }
+    ], { id: 'x', productUrl: WHBM }, fetcher);
+    assert.ok(!result.url, `a logo verified: ${result.url}`);
+    assert.deepStrictEqual(result.refusals.map((one) => one.gate), ['asset', 'asset']);
+    assert.strictEqual(fetcher.asked.length, 0, 'a lane was spent loading a logo');
+  });
+
+  await testAsync('a real product hero still passes, past the logo in front of it', async () => {
+    const hero = 'https://www.whitehouseblackmarket.com/Product_Images/570412345_001_main.jpg';
+    const fetcher = serving(jpegOf(1200, 1500));
+    const result = await extractor.firstVerifiable([
+      { url: 'https://www.whitehouseblackmarket.com/Assets/whbm/images/whbm_logo_seo.avif', from: 'og:image', canonical: WHBM },
+      { url: hero, from: 'preload', canonical: WHBM }
+    ], { id: 'x', productUrl: WHBM }, fetcher);
+    assert.strictEqual(result.url, hero, JSON.stringify(result.refusals));
+    assert.strictEqual(result.identity.via, 'image-url');
+    assert.deepStrictEqual([...new Set(fetcher.asked)], [hero], 'only the hero was loaded');
+
+    /* a garment with a logo on it is a garment: the word is not banned,
+       a filename that says nothing else is */
+    assert.strictEqual(extractor.siteAsset('https://cdn.example.com/p/logo-tee-white.jpg', WHBM), null);
+    assert.strictEqual(extractor.siteAsset('https://image.uniqlo.com/og-429066.jpg', UNIQLO), null,
+      'a share card named for the product is that product’s card');
+  });
+
+  await testAsync('a valid canonical product image still passes', async () => {
+    /* an opaque CDN filename on the listing's own canonical page is
+       exactly what the canonical rule exists for, and nothing here
+       touches it */
+    const opaque = 'https://cdn.lyst.com/photos/8f2a91c4e7b3.jpg';
+    const verdict = extractor.identityEvidence({ url: opaque, from: 'og:image', canonical: LYST }, LYST);
+    assert.strictEqual(verdict.ok, true, verdict.why);
+    assert.strictEqual(verdict.via, 'canonical');
+
+    const named = 'https://www.telfar.net/cdn/shop/files/wide-leg-trouser-black-front.jpg';
+    const byName = extractor.identityEvidence({ url: named, from: 'og:image', canonical: TELFAR }, TELFAR);
+    assert.strictEqual(byName.ok, true, byName.why);
+    assert.strictEqual(byName.via, 'canonical');
+
+    const result = await extractor.firstVerifiable([
+      { url: 'https://www.telfar.net/cdn/shop/files/social_telfar.jpg', from: 'og:image', canonical: TELFAR },
+      { url: named, from: 'og:image:secure_url', canonical: TELFAR }
+    ], { id: 'x', productUrl: TELFAR }, serving(jpegOf(1000, 1250)));
+    assert.strictEqual(result.url, named, JSON.stringify(result.refusals));
+    assert.strictEqual(result.identity.via, 'canonical');
+  });
+
+  await testAsync('a picture the shape of a logo is refused by its own header', async () => {
+    /* the byte floor stops a tracking pixel, not a 9KB wordmark; the
+       wordmark's shape gives it away wherever its name does not */
+    const opaque = 'https://www.telfar.net/cdn/shop/files/8f2a91c4e7b3.jpg';
+    const candidate = [{ url: opaque, from: 'og:image', canonical: TELFAR }];
+    const strip = await extractor.firstVerifiable(candidate, { id: 'x', productUrl: TELFAR }, serving(jpegOf(600, 90)));
+    assert.ok(!strip.url);
+    assert.match(strip.refusals[0].why, /600x90/);
+    const badge = await extractor.firstVerifiable(candidate, { id: 'x', productUrl: TELFAR }, serving(jpegOf(96, 96)));
+    assert.ok(!badge.url);
+    assert.match(badge.refusals[0].why, /icon or a badge/);
+    const svg = await extractor.firstVerifiable(candidate, { id: 'x', productUrl: TELFAR }, serving(jpegOf(1000, 1000), 'image/svg+xml'));
+    assert.ok(!svg.url);
+
+    const photo = await extractor.firstVerifiable(candidate, { id: 'x', productUrl: TELFAR }, serving(jpegOf(1200, 630)));
+    assert.strictEqual(photo.url, opaque, 'a landscape product photo was refused for its shape');
+
+    /* and every format a shop serves says its size */
+    assert.deepStrictEqual(extractor.imageDimensions(jpegOf(640, 800)), { width: 640, height: 800 });
+    assert.deepStrictEqual(extractor.imageDimensions(PNG), { width: 2, height: 2 });
+    assert.strictEqual(extractor.imageDimensions(Buffer.alloc(8000, 0x20)), null, 'an unreadable header refuses nothing');
+  });
+
+  test('the shipped catalogue carries no site asset', () => {
+    for (const row of extractor.readCatalog().rows) {
+      if (!row.imageUrl || !row.productUrl) continue;
+      assert.strictEqual(extractor.siteAsset(row.imageUrl, row.productUrl), null, `${row.id}: ${row.imageUrl}`);
+    }
+  });
+
+  test('a recorded canonical row wearing a logo is caught by --coverage', () => {
+    const checked = extractor.catalogRowIdentity({
+      id: 'x',
+      productUrl: WHBM,
+      imageUrl: 'https://www.whitehouseblackmarket.com/Assets/whbm/images/whbm_logo_seo.avif',
+      imageEvidence: { via: 'canonical', canonical: WHBM }
+    });
+    assert.strictEqual(checked.ok, false);
+    assert.match(checked.why, /logo/);
+  });
+
+  /* ---------------------------------------------------------
+     A product page before a page about products
+
+     The organic fallback answers with whatever mentions the words: a
+     category page, a round-up, a Reddit thread, a Pinterest board. They
+     are semantically related and not one of them is a listing, and they
+     were read in the search engine's order ahead of the product page.
+     --------------------------------------------------------- */
+  console.log('\n  — a product page before a page about products\n');
+
+  test('each kind of result is told apart', () => {
+    const shape = (url, title) => extractor.listingShape(url, title).kind;
+    assert.strictEqual(shape(TELFAR, 'Wide Leg Trouser'), 'product');
+    assert.strictEqual(shape('https://www.telfar.net/collections/bottoms/products/wide-leg-trouser', 'Wide Leg Trouser'), 'product');
+    assert.strictEqual(shape(ASOS, 'ASOS DESIGN wide leg trouser'), 'product');
+    assert.strictEqual(shape('https://www.example.com/womens/sale/wide-leg-trouser-570412345.html', 'Wide Leg Trouser'), 'product');
+    assert.strictEqual(shape('https://www.example.com/collections/trousers', 'Wide Leg Trousers'), 'listing');
+    assert.strictEqual(shape('https://www.example.com/c/12345', 'Trousers'), 'listing');
+    assert.strictEqual(shape('https://www.example.com/womens/pants?q=wide+leg', 'Wide Leg Pants'), 'listing');
+    assert.strictEqual(shape('https://www.example.com/womens-trousers', 'Shop Women’s Trousers (148)'), 'listing');
+    assert.strictEqual(shape('https://www.example.com/blog/how-to-style-wide-leg-trousers', 'How to Style Wide Leg Trousers'), 'editorial');
+    assert.strictEqual(shape('https://www.whowhatwear.com/wide-leg-trousers', 'Wide Leg Trousers'), 'editorial');
+    assert.strictEqual(shape('https://www.example.com/wide-leg-trousers', 'The 12 Best Wide Leg Trousers of 2026'), 'editorial');
+    for (const url of [
+      'https://www.reddit.com/r/femalefashionadvice/comments/abc/wide_leg_trousers/',
+      'https://www.pinterest.com/pin/123456789/',
+      'https://www.youtube.com/watch?v=abc',
+      'https://www.instagram.com/p/xyz/'
+    ]) assert.strictEqual(shape(url, 'Wide Leg Trousers'), 'not-a-shop', url);
+  });
+
+  test('product pages are ranked first, and a site that sells nothing is set aside', () => {
+    const { ranked, dropped } = extractor.rankListings([
+      { productUrl: 'https://www.reddit.com/r/x/comments/1/wide_leg/', title: 'Wide leg trousers?' },
+      { productUrl: 'https://www.example.com/blog/wide-leg-edit', title: 'Our wide leg edit' },
+      { productUrl: 'https://www.example.com/collections/trousers', title: 'Trousers' },
+      { productUrl: 'https://shop.one.com/about-the-trouser', title: 'The Trouser' },
+      { productUrl: 'https://shop.two.com/products/wide-leg-trouser', title: 'Wide Leg Trouser' },
+      { productUrl: 'https://www.pinterest.com/pin/1/', title: 'Wide leg' },
+      { productUrl: 'https://shop.three.com/p/778899', title: 'Wide Leg Trouser' }
+    ]);
+    assert.deepStrictEqual(ranked.map((one) => one.productUrl), [
+      'https://shop.two.com/products/wide-leg-trouser',
+      'https://shop.three.com/p/778899',
+      'https://shop.one.com/about-the-trouser',
+      'https://www.example.com/collections/trousers',
+      'https://www.example.com/blog/wide-leg-edit'
+    ]);
+    assert.strictEqual(dropped.length, 2);
+  });
+
+  await testAsync('discovery reads a product page before the category page the source ranked above it', async () => {
+    const retailer = await describingRetailer({
+      320001: { name: 'Pleated Midi Skirt', description: 'A pleated midi skirt.' }
+    });
+    const port = retailer.address().port;
+    productSource.registerProvider({
+      name: 'fake-source',
+      configured: () => true,
+      search: async () => [
+        { title: 'Pleated Midi Skirts — Reddit', productUrl: 'https://www.reddit.com/r/x/comments/1/pleated_midi_skirt/' },
+        { title: 'Pleated Midi Skirt', productUrl: `http://127.0.0.1:${port}/collections/skirts` },
+        { title: 'Pleated Midi Skirt', productUrl: listing(port, '320001') }
+      ]
+    });
+    process.env.PRODUCT_SOURCE = 'fake-source';
+
+    const offered = await extractor.listingsFor(catalogueRow('sample-kinfield-pleated-midi-skirt'), 8);
+    assert.deepStrictEqual(offered.products.map((one) => one.shape.kind), ['product', 'listing']);
+    assert.ok(offered.rejected['not-a-shop'], 'the forum thread is counted, not hidden');
+
+    const found = await extractor.discoverRow(catalogueRow('sample-kinfield-pleated-midi-skirt'), new Map(), 8);
+    assert.strictEqual(found.verdict, 'VERIFIED', found.why);
+    assert.strictEqual(found.proposal.productUrl, listing(port, '320001'));
+    assert.strictEqual(found.tried[0].shape, 'product');
+    retailer.close();
+  });
+
+  /* ---------------------------------------------------------
+     A Shopify store's own product record
+
+     A live diagnosis of Telfar's cropped-track-jacket-white-2025: 98
+     image candidates, 89 refused on identity, the store's own
+     TELFAR-CROPPED-... photographs among them. The listing URL is a
+     slug, and the only "code" in it was the year. The store publishes
+     the record behind the page at /products/<handle>.js, and that
+     record names the product and lists its images. These are the rules
+     that record is held to.
+     --------------------------------------------------------- */
+  console.log('\n  — a Shopify store’s own product record\n');
+
+  const HANDLE = 'cropped-track-jacket-white-2025';
+  const JACKET_ROW = { id: 'fixture-cropped-track-jacket', name: 'Cropped Track Jacket', brand: 'Atlas Supply', category: 'jacket' };
+  const PHOTO = jpegOf(1000, 1250);
+
+  /* a store whose page, record and images the test decides. `record`
+     is the JSON the record answers with, or a status to answer instead;
+     `page` a status for the listing page itself. It counts what it was
+     asked for, so a test can say what was NOT requested. */
+  function shopifyStore({ record, page }) {
+    const asked = [];
+    const server = http.createServer((req, res) => {
+      asked.push(req.url);
+      const port = server.address().port;
+      const here = `http://127.0.0.1:${port}`;
+      if (req.url === `/products/${HANDLE}`) {
+        if (page) { res.writeHead(page, { 'content-type': 'text/html' }); return res.end('<!doctype html><title>Access denied</title>'); }
+        res.writeHead(200, { 'content-type': 'text/html' });
+        /* what the live page offered: a canonical that is this listing,
+           a social-share card as og:image, the real photographs only in
+           the drawn gallery, and no JSON-LD Product at all */
+        return res.end(`<!doctype html><html><head>
+<link rel="canonical" href="${here}/products/${HANDLE}">
+<meta property="og:image" content="${here}/cdn/shop/files/telfar-social-share.jpg">
+</head><body><img src="/cdn/shop/files/TELFAR-CROPPED-TRACK-JACKET-WHITE-1.jpg?v=1" width="800" height="1000" alt="Cropped Track Jacket"></body></html>`);
+      }
+      if (req.url === `/products/${HANDLE}.js`) {
+        if (typeof record === 'number') { res.writeHead(record, { 'content-type': 'text/html' }); return res.end('no'); }
+        if (typeof record === 'string') { res.writeHead(200, { 'content-type': 'application/javascript' }); return res.end(record); }
+        res.writeHead(200, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify(typeof record === 'function' ? record(port) : record));
+      }
+      if (req.url.startsWith('/cdn/shop/files/')) {
+        res.writeHead(200, { 'content-type': 'image/jpeg' });
+        return res.end(PHOTO);
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({ server, asked, port: server.address().port })));
+  }
+
+  /* the record Shopify publishes, in its own shape: protocol-relative
+     image URLs, a featured image, media and per-variant images */
+  const jacketRecord = (overrides) => (port) => Object.assign({
+    id: 8123456789012,
+    handle: HANDLE,
+    title: 'Cropped Track Jacket - White',
+    vendor: 'Telfar',
+    images: [
+      `//127.0.0.1:${port}/cdn/shop/files/TELFAR-CROPPED-TRACK-JACKET-WHITE-1.jpg?v=1`,
+      `//127.0.0.1:${port}/cdn/shop/files/TELFAR-CROPPED-TRACK-JACKET-WHITE-2.jpg?v=1`
+    ],
+    featured_image: `//127.0.0.1:${port}/cdn/shop/files/TELFAR-CROPPED-TRACK-JACKET-WHITE-1.jpg?v=1`,
+    media: [{ media_type: 'video', src: `//127.0.0.1:${port}/cdn/shop/files/clip.mp4` }],
+    variants: [{ id: 45000000000001, sku: 'TJ-CRP-WHT-S', featured_image: null }]
+  }, overrides || {});
+
+  const listingOf = (port) => `http://127.0.0.1:${port}/products/${HANDLE}`;
+  const asListing = (port) => ({ id: JACKET_ROW.id, brand: '—', name: 'Cropped Track Jacket', productUrl: listingOf(port) });
+
+  test('a year is not a product code, and a Shopify handle is read off its listing', () => {
+    assert.deepStrictEqual(extractor.identifiersFrom(`https://telfar.net/products/${HANDLE}`), [],
+      'the year was taken for the product');
+    /* a real code keeps its place beside a year */
+    const both = extractor.identifiersFrom('https://shop.example.com/p/wide-leg-2024-570412345');
+    assert.ok(both.includes('570412345'));
+    assert.ok(!both.includes('2024'));
+
+    assert.deepStrictEqual(extractor.shopifyHandle(`https://telfar.net/products/${HANDLE}?variant=1`),
+      { handle: HANDLE, origin: 'https://telfar.net', recordUrl: `https://telfar.net/products/${HANDLE}.js` });
+    assert.strictEqual(extractor.shopifyHandle(`https://telfar.net/en-us/collections/new/products/${HANDLE}`).handle, HANDLE);
+    assert.strictEqual(extractor.shopifyHandle('https://www.jcrew.com/p/womens/wide-leg-pant/BX123'), null);
+    assert.strictEqual(extractor.shopifyHandle(`https://telfar.net/products/${HANDLE}.js`), null,
+      'the record itself is not a listing');
+  });
+
+  test('the canonical rule alone still vouches for nothing a code-less listing publishes', () => {
+    /* the page is canonical for itself; that proves the page, not a
+       photo in its gallery, and the record path does not change it */
+    const url = `https://telfar.net/products/${HANDLE}`;
+    const gallery = extractor.identityEvidence(
+      { url: 'https://telfar.net/cdn/shop/files/TELFAR-CROPPED-TRACK-JACKET-WHITE-1.jpg', from: 'gallery image', canonical: url }, url);
+    assert.strictEqual(gallery.ok, false);
+    assert.match(gallery.why, /carries no product code/);
+  });
+
+  await testAsync('a Shopify listing with no product code is tied to its photo by the store’s own record', async () => {
+    const store = await shopifyStore({ record: jacketRecord() });
+    try {
+      const result = await extractor.resolveRow(asListing(store.port), undefined, { catalogRow: JACKET_ROW });
+      assert.strictEqual(result.verdict, 'VERIFIED', result.why);
+      assert.strictEqual(result.url, `http://127.0.0.1:${store.port}/cdn/shop/files/TELFAR-CROPPED-TRACK-JACKET-WHITE-1.jpg?v=1`);
+      assert.strictEqual(result.from, 'product-record');
+      assert.strictEqual(result.identity.via, 'product-record');
+      assert.strictEqual(result.identity.handle, HANDLE);
+      assert.strictEqual(result.identity.productId, '8123456789012');
+      assert.strictEqual(result.identity.title, 'Cropped Track Jacket - White');
+
+      /* the page's own og:image, a share card, was refused first */
+      assert.ok(result.diagnosis.refusals.some((one) => /telfar-social-share/.test(one.url) && one.gate === 'asset'),
+        'the social card was never put to the asset gate');
+      /* the record was asked for once, on the listing's own origin */
+      assert.strictEqual(store.asked.filter((u) => u === `/products/${HANDLE}.js`).length, 1);
+
+      assert.strictEqual(extractor.evidenceNote(result.identity),
+        `{ via: 'product-record', handle: '${HANDLE}', productId: '8123456789012', title: 'Cropped Track Jacket - White' }`);
+    } finally {
+      store.server.close();
+    }
+  });
+
+  await testAsync('a record for a different product, or a different garment, offers nothing', async () => {
+    for (const [record, says] of [
+      [jacketRecord({ handle: 'cropped-track-jacket-black-2024' }), /is for cropped-track-jacket-black-2024, not this listing's/],
+      [jacketRecord({ title: 'Medium Shopping Bag - White' }), /is not the garment the row means/],
+      [jacketRecord({ title: 'Track Jacket - White' }), /is not the garment the row means/],
+      [jacketRecord({ id: 'abc' }), /names no product id/]
+    ]) {
+      const store = await shopifyStore({ record });
+      try {
+        const got = await extractor.productRecordFor(listingOf(store.port), JACKET_ROW);
+        assert.ok(!got.candidates, `a record that ${says} offered images`);
+        assert.match(got.failed, says);
+      } finally {
+        store.server.close();
+      }
+    }
+
+    /* and a record read for one listing does not speak for another */
+    const stranger = extractor.productRecordEvidence({
+      url: 'https://telfar.net/cdn/shop/files/TELFAR-CROPPED-TRACK-JACKET-WHITE-1.jpg',
+      from: 'product-record',
+      record: { handle: 'shopping-bag-medium', id: '1', title: 'Shopping Bag', images: ['https://telfar.net/cdn/shop/files/TELFAR-CROPPED-TRACK-JACKET-WHITE-1.jpg'] }
+    }, `https://telfar.net/products/${HANDLE}`);
+    assert.strictEqual(stranger.ok, false);
+    assert.match(stranger.why, /is for shopping-bag-medium, not this listing's/);
+
+    /* nor for an image it does not list */
+    const unlisted = extractor.productRecordEvidence({
+      url: 'https://telfar.net/cdn/shop/files/SOMETHING-ELSE.jpg',
+      from: 'product-record',
+      record: { handle: HANDLE, id: '1', title: 'Cropped Track Jacket', images: ['https://telfar.net/cdn/shop/files/TELFAR-CROPPED-TRACK-JACKET-WHITE-1.jpg'] }
+    }, `https://telfar.net/products/${HANDLE}`);
+    assert.strictEqual(unlisted.ok, false);
+    assert.match(unlisted.why, /does not list this image/);
+  });
+
+  await testAsync('a social or share image in the record is still refused as site artwork', async () => {
+    const store = await shopifyStore({
+      record: jacketRecord({ images: [`/cdn/shop/files/telfar-social-share.jpg`], featured_image: null, media: [] })
+    });
+    try {
+      const got = await extractor.productRecordFor(listingOf(store.port), JACKET_ROW);
+      assert.strictEqual(got.candidates.length, 1);
+      const found = await extractor.firstVerifiable(got.candidates, { id: 'x', productUrl: listingOf(store.port) });
+      assert.ok(!found.url, 'a share card was accepted because the record listed it');
+      assert.strictEqual(found.refusals[0].gate, 'asset');
+      assert.match(found.refusals[0].why, /names a site (social|share) image/);
+    } finally {
+      store.server.close();
+    }
+  });
+
+  await testAsync('an image the record lists on an unrelated host is refused', async () => {
+    const store = await shopifyStore({
+      record: jacketRecord({
+        images: ['https://images.example.org/cdn/TELFAR-CROPPED-TRACK-JACKET-WHITE-1.jpg'],
+        featured_image: null,
+        media: []
+      })
+    });
+    try {
+      const got = await extractor.productRecordFor(listingOf(store.port), JACKET_ROW);
+      const found = await extractor.firstVerifiable(got.candidates, { id: 'x', productUrl: listingOf(store.port) });
+      assert.ok(!found.url);
+      assert.strictEqual(found.refusals[0].gate, 'identity');
+      assert.match(found.refusals[0].why, /images\.example\.org is not the store's own host or Shopify's CDN/);
+    } finally {
+      store.server.close();
+    }
+
+    /* Shopify's own CDN is the store's, for this purpose */
+    const listed = 'https://cdn.shopify.com/s/files/1/0000/0001/files/TELFAR-CROPPED-TRACK-JACKET-WHITE-1.jpg';
+    const cdn = extractor.productRecordEvidence(
+      { url: listed, from: 'product-record', record: { handle: HANDLE, id: '8123456789012', title: 'Cropped Track Jacket - White', images: [listed] } },
+      `https://telfar.net/products/${HANDLE}`);
+    assert.strictEqual(cdn.ok, true, cdn.why);
+  });
+
+  await testAsync('a missing or refused record, or a refused page, gives no false positive', async () => {
+    for (const record of [404, 403, 418, 'not json at all']) {
+      const store = await shopifyStore({ record });
+      try {
+        const got = await extractor.productRecordFor(listingOf(store.port), JACKET_ROW);
+        assert.ok(!got.candidates, `a record answering ${record} offered images`);
+        assert.match(got.failed, typeof record === 'number' ? new RegExp(`answered ${record}`) : /not readable JSON/);
+        /* asked once, and never asked again another way */
+        assert.strictEqual(store.asked.filter((u) => u.startsWith(`/products/${HANDLE}.js`)).length, 1);
+      } finally {
+        store.server.close();
+      }
+    }
+
+    /* end to end: a refused record leaves the page's own candidates to
+       decide it, and they cannot — the real photographs sit only in the
+       gallery, which the canonical rule does not vouch for */
+    const refused = await shopifyStore({ record: 418 });
+    try {
+      const result = await extractor.resolveRow(asListing(refused.port), undefined, { catalogRow: JACKET_ROW });
+      assert.notStrictEqual(result.verdict, 'VERIFIED', `verified with the record refused: ${result.why}`);
+      assert.strictEqual(refused.asked.filter((u) => u === `/products/${HANDLE}.js`).length, 1);
+    } finally {
+      refused.server.close();
+    }
+
+    /* a store that refuses the PAGE to a plain request is not asked for
+       its record by one */
+    const walled = await shopifyStore({ record: jacketRecord(), page: 403 });
+    try {
+      const result = await extractor.resolveRow(asListing(walled.port), undefined, { catalogRow: JACKET_ROW });
+      assert.notStrictEqual(result.verdict, 'VERIFIED');
+      assert.strictEqual(walled.asked.filter((u) => u.startsWith(`/products/${HANDLE}.js`)).length, 0,
+        'the record was used to get round a refused page');
+    } finally {
+      walled.server.close();
+    }
+
+    /* and with no catalogue row to hold its title against, it is not asked for */
+    const rowless = await shopifyStore({ record: jacketRecord() });
+    try {
+      const got = await extractor.productRecordFor(listingOf(rowless.port), null);
+      assert.ok(!got.candidates);
+      assert.strictEqual(rowless.asked.length, 0);
+    } finally {
+      rowless.server.close();
+    }
+  });
+
+  test('product-record evidence is re-proved from the row’s own URL, never trusted', () => {
+    const shipped = {
+      id: 'fixture-cropped-track-jacket',
+      name: 'Cropped Track Jacket',
+      brand: 'Atlas Supply',
+      category: 'jacket',
+      productUrl: `https://telfar.net/products/${HANDLE}`,
+      imageUrl: 'https://telfar.net/cdn/shop/files/TELFAR-CROPPED-TRACK-JACKET-WHITE-1.jpg?v=1',
+      imageEvidence: { via: 'product-record', handle: HANDLE, productId: '8123456789012', title: 'Cropped Track Jacket - White' }
+    };
+    assert.strictEqual(extractor.catalogRowIdentity(shipped).ok, true, extractor.catalogRowIdentity(shipped).why);
+
+    const refusedFor = (change) => {
+      const verdict = extractor.catalogRowIdentity(Object.assign({}, shipped, change));
+      assert.strictEqual(verdict.ok, false, `accepted: ${JSON.stringify(change)}`);
+      return verdict.why;
+    };
+    assert.match(refusedFor({ imageEvidence: Object.assign({}, shipped.imageEvidence, { handle: 'shopping-bag-medium' }) }),
+      /is not this row's listing/);
+    assert.match(refusedFor({ productUrl: 'https://telfar.net/products/shopping-bag-medium' }), /is not this row's listing/);
+    assert.match(refusedFor({ productUrl: 'https://www.jcrew.com/p/womens/jacket/BX123' }), /not a Shopify/);
+    assert.match(refusedFor({ imageUrl: 'https://images.example.org/TELFAR-CROPPED-TRACK-JACKET-WHITE-1.jpg' }),
+      /not the store's own host or Shopify's CDN/);
+    assert.match(refusedFor({ imageUrl: 'https://telfar.net/cdn/shop/files/telfar-social-share.jpg' }), /site (social|share) image/);
+    assert.match(refusedFor({ name: 'Wide Leg Trouser', category: 'trousers' }), /is not the garment the row means/);
+    assert.match(refusedFor({ imageEvidence: Object.assign({}, shipped.imageEvidence, { productId: '' }) }), /names no product id/);
+    assert.match(refusedFor({ imageEvidence: Object.assign({}, shipped.imageEvidence, { title: '' }) }), /names no title/);
+
+    /* the note the file carries reads back as the evidence it records */
+    const note = extractor.evidenceNote(Object.assign({ ok: true }, shipped.imageEvidence));
+    const readBack = vm.runInNewContext(`(${note})`);
+    assert.strictEqual(extractor.catalogRowIdentity(Object.assign({}, shipped, { imageEvidence: readBack })).ok, true);
+  });
+
+  await testAsync('--coverage and a replayed report both re-prove a product-record row', async () => {
+    const productUrl = `https://telfar.net/products/${HANDLE}`;
+    const imageUrl = 'https://telfar.net/cdn/shop/files/TELFAR-CROPPED-TRACK-JACKET-WHITE-1.jpg?v=1';
+    const identity = { ok: true, via: 'product-record', handle: HANDLE, productId: '8123456789012', title: 'Cropped Track Jacket - White' };
+    const fixture = {
+      id: 'fixture-cropped-track-jacket',
+      name: 'Cropped Track Jacket',
+      brand: 'Atlas Supply',
+      price: null,
+      productUrl: null,
+      imageUrl: null,
+      category: 'jacket',
+      style: ['Streetwear'],
+      occasion: ['Weekend'],
+      fit: ['Regular'],
+      colors: ['White'],
+      sizes: ['S', 'M', 'L']
+    };
+
+    /* replay: an entry carrying this evidence answers every gate again */
+    const entry = {
+      id: fixture.id,
+      verified: true,
+      productUrl,
+      imageUrl,
+      imageEvidence: extractor.evidenceNote(identity),
+      identity,
+      listingName: 'Cropped Track Jacket - White',
+      provedOnPage: [],
+      row: { name: fixture.name, brand: fixture.brand, category: fixture.category }
+    };
+    const replayed = extractor.replayable(entry, [fixture], new Map());
+    assert.strictEqual(replayed.ok, true, replayed.why);
+    const tampered = extractor.replayable(Object.assign({}, entry, {
+      identity: Object.assign({}, identity, { handle: 'shopping-bag-medium' }),
+      imageEvidence: extractor.evidenceNote(Object.assign({}, identity, { handle: 'shopping-bag-medium' }))
+    }), [fixture], new Map());
+    assert.strictEqual(tampered.ok, false, 'a report naming another product’s record was replayed');
+    assert.match(tampered.why, /is not this row's listing/);
+
+    /* --coverage: the row written the way discovery writes it, then the
+       whole catalogue read back by the command itself */
+    await withFixtureRows([fixture], async () => {
+      const linked = extractor.linkRow(fs.readFileSync(CATALOG, 'utf8'), fixture.id, { productUrl, imageUrl, identity });
+      fs.writeFileSync(CATALOG, linked);
+      const written = extractor.readCatalog().rows.find((r) => r.id === fixture.id);
+      assert.strictEqual(written.imageEvidence.via, 'product-record');
+      assert.strictEqual(extractor.catalogRowIdentity(written).ok, true);
+
+      const report = await run(['--coverage']);
+      assert.strictEqual(report.code, 0, report.stderr);
+      const total = extractor.readCatalog().rows.length;
+      assert.match(report.stdout, new RegExp(`${total} of ${total} account for what they carry`));
+
+      /* and the same row with its note pointed at another product is
+         called out, not waved through on the strength of the note */
+      fs.writeFileSync(CATALOG, fs.readFileSync(CATALOG, 'utf8').replace(`handle: '${HANDLE}'`, "handle: 'shopping-bag-medium'"));
+      const caught = await run(['--coverage']);
+      assert.doesNotMatch(caught.stdout, new RegExp(`${total} of ${total} account for what they carry`));
+      assert.match(caught.stdout, new RegExp(fixture.id));
+    });
   });
 
   console.log(`\n${passed} passed, ${failures.length} failed${skipped ? `, ${skipped} skipped` : ''}\n`);
