@@ -4392,6 +4392,338 @@ function walledRetailer() {
     });
   });
 
+  /* ---------------------------------------------------------
+     The same record, embedded in a React Router page
+
+     Telfar's listing is a headless React Router app: /products/<handle>.js
+     answers 404, and the product lives in the loader data the page
+     hydrates from — window.__reactRouterContext.state.loaderData
+     ["routes/_app.($locale).products.$handle"].product, with id (a
+     Product GID), handle, title and media.nodes[*].image.url. Some nodes
+     carry only previewImage.url, and one captured live was a bag.
+     --------------------------------------------------------- */
+  console.log('\n  — a React Router store’s embedded product\n');
+
+  const ROUTE = 'routes/_app.($locale).products.$handle';
+  const GID = 'gid://shopify/Product/7689314336867';
+  const PLANTED_TOKEN = 'fixture-storefront-token-must-never-print';
+
+  /* the route's own product, as the live page carries it */
+  const routerProduct = (here, overrides) => Object.assign({
+    __typename: 'Product',
+    id: GID,
+    handle: HANDLE,
+    title: 'Cropped Track Jacket - White',
+    media: {
+      nodes: [
+        { __typename: 'MediaImage', mediaContentType: 'IMAGE', image: { url: `${here}/cdn/shop/files/TELFAR-CROPPED-TRACK-JACKET-WHITE-FRONT.jpg?v=1` } },
+        { __typename: 'MediaImage', mediaContentType: 'IMAGE', image: { url: `${here}/cdn/shop/files/TELFAR-CROPPED-TRACK-JACKET-WHITE-BACK.jpg?v=1` } },
+        /* a video whose poster is another product entirely */
+        { __typename: 'Video', mediaContentType: 'VIDEO', previewImage: { url: `${here}/cdn/shop/files/Track_Medium_Bag_Black.jpg` } }
+      ]
+    },
+    /* a duplicate reference under a variant, which is not the route's product */
+    selectedOrFirstAvailableVariant: { id: 'gid://shopify/ProductVariant/42986310926435', product: { handle: HANDLE, title: 'Cropped Track Jacket - White' } }
+  }, overrides || {});
+
+  /* a store whose page hydrates from `loader(here)`. Its .js record is
+     404, as Telfar's is. Its og:image is a share card and its drawn
+     gallery carries no code, so nothing the page itself publishes can
+     be tied to the product. */
+  function routerStore(loader, options) {
+    const asked = [];
+    const server = http.createServer((req, res) => {
+      asked.push(req.url);
+      const here = `http://127.0.0.1:${server.address().port}`;
+      if (req.url === `/products/${HANDLE}`) {
+        const state = { state: { loaderData: Object.assign({ root: { env: { PUBLIC_STOREFRONT_API_TOKEN: PLANTED_TOKEN } } }, loader(here)) } };
+        const canonical = (options && options.canonical) || `${here}/products/${HANDLE}`;
+        res.writeHead(200, { 'content-type': 'text/html' });
+        return res.end(`<!doctype html><html><head>
+<link rel="canonical" href="${canonical}">
+<meta property="og:image" content="${here}/cdn/shop/files/telfar-social-share.jpg">
+</head><body>
+<img src="/cdn/shop/files/TELFAR-CROPPED-TRACK-JACKET-WHITE-FRONT.jpg?v=1" width="800" height="1000" alt="">
+<script>window.__reactRouterContext = ${JSON.stringify(state)};</script>
+</body></html>`);
+      }
+      if (req.url.startsWith('/cdn/shop/files/')) {
+        res.writeHead(200, { 'content-type': 'image/jpeg' });
+        return res.end(PHOTO);
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({ server, asked, port: server.address().port })));
+  }
+  const withProduct = (overrides) => (here) => ({ [ROUTE]: { product: routerProduct(here, overrides) } });
+
+  /* what reactRouterProducts hands back from a page, for the rules that
+     are decided without one */
+  const probeOf = (here, products, extra) => Object.assign({
+    pathHandle: HANDLE,
+    canonical: `${here}/products/${HANDLE}`,
+    products: products.map((product) => ({
+      where: `__reactRouterContext.state.loaderData["${ROUTE}"].product`,
+      id: product.id,
+      handle: product.handle,
+      title: product.title,
+      media: ((product.media && product.media.nodes) || []).map((node) => ({
+        typename: node.__typename || null,
+        contentType: node.mediaContentType || null,
+        image: node.image ? node.image.url : null,
+        previewOnly: Boolean(!node.image && node.previewImage)
+      }))
+    }))
+  }, extra || {});
+  const TELFAR_URL = `https://telfar.net/products/${HANDLE}`;
+  const TELFAR_HERE = 'https://telfar.net';
+
+  test('only the route’s own product, by exact handle, GID and full title, offers anything', () => {
+    const good = extractor.embeddedRecordFrom(probeOf(TELFAR_HERE, [routerProduct(TELFAR_HERE)]), TELFAR_URL, JACKET_ROW);
+    assert.ok(good.record, good.failed);
+    assert.strictEqual(good.record.source, 'embedded-react-router');
+    assert.strictEqual(good.record.id, '7689314336867');
+    assert.strictEqual(good.record.handle, HANDLE);
+    /* media.nodes[*].image.url and nothing else: the video's poster is not taken */
+    assert.deepStrictEqual(good.record.images, [
+      `${TELFAR_HERE}/cdn/shop/files/TELFAR-CROPPED-TRACK-JACKET-WHITE-FRONT.jpg?v=1`,
+      `${TELFAR_HERE}/cdn/shop/files/TELFAR-CROPPED-TRACK-JACKET-WHITE-BACK.jpg?v=1`
+    ]);
+    assert.strictEqual(good.record.previewOnly, 1);
+
+    const refusedBy = (products, says, extra, row) => {
+      const got = extractor.embeddedRecordFrom(probeOf(TELFAR_HERE, products, extra), TELFAR_URL, row || JACKET_ROW);
+      assert.ok(!got.candidates, `offered images when it should say ${says}`);
+      assert.match(got.failed, says);
+    };
+    refusedBy([routerProduct(TELFAR_HERE, { handle: 'cropped-track-jacket-black-2025' })], /no route-level product for this handle/);
+    refusedBy([routerProduct(TELFAR_HERE, { title: 'Track Medium Bag - Black' })], /is not the garment the row means/);
+    refusedBy([routerProduct(TELFAR_HERE, { title: 'Track Jacket - White' })], /is not the garment the row means/);
+    refusedBy([routerProduct(TELFAR_HERE, { title: '' })], /names no title/);
+    refusedBy([routerProduct(TELFAR_HERE, { id: 'gid://shopify/ProductVariant/42986310926435' })], /no valid Shopify Product GID/);
+    refusedBy([routerProduct(TELFAR_HERE, { id: 'gid://shopify/Product/abc' })], /no valid Shopify Product GID/);
+    refusedBy([routerProduct(TELFAR_HERE, { id: undefined })], /no valid Shopify Product GID/);
+    refusedBy([routerProduct(TELFAR_HERE), routerProduct(TELFAR_HERE, { id: 'gid://shopify/Product/1' })], /different products under this handle/);
+    refusedBy([routerProduct(TELFAR_HERE)], /the browser ended on shopping-bag-medium/, { pathHandle: 'shopping-bag-medium' });
+    refusedBy([routerProduct(TELFAR_HERE)], /declares .* canonical, which is not this listing/, { canonical: `${TELFAR_HERE}/products/shopping-bag-medium` });
+    refusedBy([routerProduct(TELFAR_HERE)], /router state could not be read/, { failed: 'boom' });
+
+    /* with no catalogue row, or no probe, it is not read at all */
+    assert.ok(extractor.embeddedRecordFrom(probeOf(TELFAR_HERE, [routerProduct(TELFAR_HERE)]), TELFAR_URL, null).skipped);
+    assert.ok(extractor.embeddedRecordFrom(undefined, TELFAR_URL, JACKET_ROW).skipped);
+  });
+
+  await testAsync('an embedded record’s images still answer to every gate', async () => {
+    const recordWith = (images) => ({
+      source: 'embedded-react-router', handle: HANDLE, id: '7689314336867', gid: GID, title: 'Cropped Track Jacket - White', images
+    });
+    const decide = (url) => extractor.productRecordEvidence({ url, from: 'product-record', record: recordWith([url]) }, TELFAR_URL);
+
+    const front = `${TELFAR_HERE}/cdn/shop/files/TELFAR-CROPPED-TRACK-JACKET-WHITE-FRONT.jpg?v=1`;
+    const passed = decide(front);
+    assert.strictEqual(passed.ok, true, passed.why);
+    assert.strictEqual(passed.source, 'embedded-react-router');
+    assert.strictEqual(passed.productId, '7689314336867');
+    assert.strictEqual(decide('https://cdn.shopify.com/s/files/1/0001/files/TELFAR-CROPPED-TRACK-JACKET-WHITE-FRONT.jpg').ok, true);
+
+    /* an image on an unrelated host */
+    assert.match(decide('https://images.example.org/TELFAR-CROPPED-TRACK-JACKET-WHITE-FRONT.jpg').why, /not the store's own host or Shopify's CDN/);
+    /* a media node inside the product that is plainly another garment */
+    assert.match(decide(`${TELFAR_HERE}/cdn/shop/files/Track_Medium_Bag_Black.jpg`).why, /names a different garment — jacket .* against bag/);
+    /* an image the record does not list */
+    const unlisted = extractor.productRecordEvidence({ url: front, from: 'product-record', record: recordWith([]) }, TELFAR_URL);
+    assert.match(unlisted.why, /does not list this image/);
+
+    /* the share card and the shop's artwork are refused before identity is asked */
+    for (const [url, says] of [
+      [`${TELFAR_HERE}/cdn/shop/files/telfar-social-share.jpg`, /names a site (social|share) image/],
+      [`${TELFAR_HERE}/cdn/shop/files/telfar-logo.png`, /names a site logo image/]
+    ]) {
+      const found = await extractor.firstVerifiable([{ url, from: 'product-record', record: recordWith([url]) }], { id: 'x', productUrl: TELFAR_URL });
+      assert.ok(!found.url, `${url} was accepted`);
+      assert.strictEqual(found.refusals[0].gate, 'asset');
+      assert.match(found.refusals[0].why, says);
+    }
+
+    /* and the path is closed to everything else: a gallery image of the
+       very same file, on a listing with no code, is still refused */
+    const gallery = extractor.identityEvidence({ url: front, from: 'gallery image', canonical: TELFAR_URL }, TELFAR_URL);
+    assert.match(gallery.why, /carries no product code/);
+  });
+
+  test('embedded product-record evidence is structurally checked, and never counted on its note', () => {
+    const evidence = { via: 'product-record', source: 'embedded-react-router', handle: HANDLE, productId: '7689314336867', title: 'Cropped Track Jacket - White' };
+    assert.strictEqual(extractor.evidenceNote(Object.assign({ ok: true }, evidence)),
+      `{ via: 'product-record', source: 'embedded-react-router', handle: '${HANDLE}', productId: '7689314336867', title: 'Cropped Track Jacket - White' }`);
+
+    const row = {
+      id: 'fixture-cropped-track-jacket', name: 'Cropped Track Jacket', brand: 'Atlas Supply', category: 'jacket',
+      productUrl: TELFAR_URL,
+      imageUrl: `${TELFAR_HERE}/cdn/shop/files/TELFAR-CROPPED-TRACK-JACKET-WHITE-FRONT.jpg?v=1`,
+      imageEvidence: evidence
+    };
+    const structural = extractor.catalogRowIdentity(row);
+    assert.strictEqual(structural.ok, true, structural.why);
+    assert.strictEqual(structural.needsLive, true, 'an embedded note was accounted for without its page');
+
+    for (const [change, says] of [
+      [{ imageEvidence: Object.assign({}, evidence, { handle: 'shopping-bag-medium' }) }, /is not this row's listing/],
+      [{ imageEvidence: Object.assign({}, evidence, { productId: '' }) }, /names no product id/],
+      [{ imageEvidence: Object.assign({}, evidence, { source: 'somewhere-else' }) }, /unknown source/],
+      [{ imageUrl: 'https://images.example.org/TELFAR-CROPPED-TRACK-JACKET-WHITE-FRONT.jpg' }, /not the store's own host or Shopify's CDN/],
+      [{ name: 'Wide Leg Trouser', category: 'trousers' }, /is not the garment the row means/]
+    ]) {
+      const verdict = extractor.catalogRowIdentity(Object.assign({}, row, change));
+      assert.strictEqual(verdict.ok, false, `accepted: ${JSON.stringify(change)}`);
+      assert.match(verdict.why, says);
+    }
+
+    /* --coverage, without its page, does not count it */
+    const report = extractor.coverage([row]);
+    assert.strictEqual(report.accounted, 0);
+    assert.deepStrictEqual(report.awaitingPage, [row.id]);
+  });
+
+  if (!extractor.loadPlaywright()) {
+    console.log('  skip  the embedded React Router record in a real browser — Playwright is not installed here');
+    skipped += 4;
+  } else {
+    await testAsync('a no-code Shopify listing verifies through its page’s React Router product', async () => {
+      const store = await routerStore(withProduct());
+      try {
+        const result = await extractor.resolveRow(asListing(store.port), undefined, { catalogRow: JACKET_ROW });
+        assert.strictEqual(result.verdict, 'VERIFIED', result.why);
+        assert.strictEqual(result.from, 'product-record');
+        assert.strictEqual(result.url, `http://127.0.0.1:${store.port}/cdn/shop/files/TELFAR-CROPPED-TRACK-JACKET-WHITE-FRONT.jpg?v=1`);
+        assert.strictEqual(result.identity.source, 'embedded-react-router');
+        assert.strictEqual(result.identity.productId, '7689314336867');
+        assert.strictEqual(result.identity.handle, HANDLE);
+        assert.ok(result.notes.some((note) => /embedded React Router product cropped-track-jacket-white-2025 lists 2 media images/.test(note)), result.notes.join(' | '));
+
+        /* the .js record was asked for once, answered 404, and nothing got round it */
+        assert.strictEqual(store.asked.filter((u) => u === `/products/${HANDLE}.js`).length, 1);
+        /* the page's own share card was refused as artwork on the way */
+        assert.ok(result.diagnosis.refusals.some((one) => /telfar-social-share/.test(one.url) && one.gate === 'asset'));
+        /* and none of the router state left the page */
+        assert.ok(!JSON.stringify(result).includes(PLANTED_TOKEN), 'the loader data’s env reached the result');
+      } finally {
+        store.server.close();
+      }
+    });
+
+    await testAsync('preview images, other products and nested duplicates offer nothing', async () => {
+      const cases = [
+        /* a product whose only media is a video poster */
+        [withProduct({ media: { nodes: [{ __typename: 'Video', mediaContentType: 'VIDEO', previewImage: { url: '/cdn/shop/files/TELFAR-CROPPED-TRACK-JACKET-WHITE-FRONT.jpg' } }] } }),
+          (result) => assert.strictEqual(result.diagnosis.embeddedRecord.previewOnly, 1)],
+        /* the adjacent colour is the route's product; this handle only appears nested under it */
+        [(here) => ({ [ROUTE]: { product: routerProduct(here, { handle: 'cropped-track-jacket-black-2025', title: 'Cropped Track Jacket - Black' }) },
+          'routes/_app.($locale).products.$handle.recommendations': { products: [routerProduct(here)] } }),
+          (result) => assert.match(result.diagnosis.embeddedRecord.failed, /no route-level product for this handle/)],
+        /* the right handle, the wrong garment */
+        [withProduct({ title: 'Track Medium Bag - Black' }),
+          (result) => assert.match(result.diagnosis.embeddedRecord.failed, /is not the garment the row means/)]
+      ];
+      for (const [loader, check] of cases) {
+        const store = await routerStore(loader);
+        try {
+          const result = await extractor.resolveRow(asListing(store.port), undefined, { catalogRow: JACKET_ROW });
+          assert.notStrictEqual(result.verdict, 'VERIFIED', `verified: ${result.why}`);
+          check(result);
+        } finally {
+          store.server.close();
+        }
+      }
+    });
+
+    await testAsync('the evidence is re-proved by reading the row’s own page again', async () => {
+      const store = await routerStore(withProduct());
+      try {
+        const here = `http://127.0.0.1:${store.port}`;
+        const row = {
+          id: JACKET_ROW.id, name: JACKET_ROW.name, brand: JACKET_ROW.brand, category: JACKET_ROW.category,
+          productUrl: `${here}/products/${HANDLE}`,
+          imageUrl: `${here}/cdn/shop/files/TELFAR-CROPPED-TRACK-JACKET-WHITE-FRONT.jpg?v=1`,
+          imageEvidence: { via: 'product-record', source: 'embedded-react-router', handle: HANDLE, productId: '7689314336867', title: 'Cropped Track Jacket - White' }
+        };
+        const proved = await extractor.reproveEmbeddedRecord(row);
+        assert.strictEqual(proved.ok, true, proved.why);
+
+        const refusedFor = async (change, says) => {
+          const verdict = await extractor.reproveEmbeddedRecord(Object.assign({}, row, change));
+          assert.strictEqual(verdict.ok, false, `re-proved: ${JSON.stringify(change)}`);
+          assert.match(verdict.why, says);
+        };
+        /* another product's id recorded against this page */
+        await refusedFor({ imageEvidence: Object.assign({}, row.imageEvidence, { productId: '1111111111' }) }, /now carries product 7689314336867, not the recorded 1111111111/);
+        /* a photo the product's media does not list */
+        await refusedFor({ imageUrl: `${here}/cdn/shop/files/TELFAR-CROPPED-TRACK-JACKET-WHITE-SIDE.jpg` }, /no longer lists this photo/);
+        /* the video poster, which is not taken */
+        await refusedFor({ imageUrl: `${here}/cdn/shop/files/Track_Medium_Bag_Black.jpg` }, /no longer lists this photo|different garment/);
+        /* a row that now means something else */
+        await refusedFor({ name: 'Wide Leg Trouser', category: 'trousers' }, /is not the garment the row means/);
+      } finally {
+        store.server.close();
+      }
+    });
+
+    await testAsync('replay and --coverage re-prove an embedded record, and refuse a tampered one', async () => {
+      const store = await routerStore(withProduct());
+      const here = `http://127.0.0.1:${store.port}`;
+      const productUrl = `${here}/products/${HANDLE}`;
+      const imageUrl = `${here}/cdn/shop/files/TELFAR-CROPPED-TRACK-JACKET-WHITE-FRONT.jpg?v=1`;
+      const identity = { ok: true, via: 'product-record', source: 'embedded-react-router', handle: HANDLE, productId: '7689314336867', title: 'Cropped Track Jacket - White' };
+      const fixture = {
+        id: JACKET_ROW.id, name: JACKET_ROW.name, brand: JACKET_ROW.brand, price: null, productUrl: null, imageUrl: null,
+        category: JACKET_ROW.category, style: ['Streetwear'], occasion: ['Weekend'], fit: ['Regular'], colors: ['White'], sizes: ['S', 'M', 'L']
+      };
+      const entryFor = (image) => ({
+        id: fixture.id, verified: true, productUrl, imageUrl: image,
+        imageEvidence: extractor.evidenceNote(identity), identity,
+        listingName: 'Cropped Track Jacket - White', provedOnPage: [],
+        row: { name: fixture.name, brand: fixture.brand, category: fixture.category }
+      });
+      try {
+        await withFixtureRows([fixture], async () => {
+          /* a tampered report: this product's evidence, another photo */
+          const tampered = path.join(TMP, 'embedded-tampered.json');
+          extractor.saveReport(tampered, reportWith([entryFor(`${here}/cdn/shop/files/SOMEONE-ELSES-JACKET.jpg`)]));
+          const refused = await run(['--discover', '--write', '--report', tampered]);
+          assert.strictEqual(refused.code, 0, refused.stderr);
+          assert.match(refused.stdout, new RegExp(`REFUSED\\s+${fixture.id} — its page's product ${HANDLE} no longer lists this photo`));
+          assert.strictEqual(extractor.readCatalog().rows.find((r) => r.id === fixture.id).imageUrl, null, 'a tampered entry was written');
+
+          /* the real one: its page is read again, and it lands */
+          const file = path.join(TMP, 'embedded.json');
+          extractor.saveReport(file, reportWith([entryFor(imageUrl)]));
+          const applied = await run(['--discover', '--write', '--report', file]);
+          assert.strictEqual(applied.code, 0, applied.stderr);
+          assert.match(applied.stdout, /has its page read again — the note alone is never believed/);
+          assert.match(applied.stdout, new RegExp(`VERIFIED\\s+${fixture.id} — its page was read again`));
+          const written = extractor.readCatalog().rows.find((r) => r.id === fixture.id);
+          assert.strictEqual(written.imageUrl, imageUrl);
+          assert.strictEqual(written.imageEvidence.source, 'embedded-react-router');
+
+          /* --coverage reads that one page, and only that one */
+          const total = extractor.readCatalog().rows.length;
+          const report = await run(['--coverage']);
+          assert.strictEqual(report.code, 0, report.stderr);
+          assert.match(report.stdout, /Reading 1 product page again/);
+          assert.match(report.stdout, new RegExp(`${total} of ${total} account for what they carry`));
+
+          /* and a note pointed at another product is caught against the page */
+          fs.writeFileSync(CATALOG, fs.readFileSync(CATALOG, 'utf8').replace("productId: '7689314336867'", "productId: '1111111111'"));
+          const caught = await run(['--coverage']);
+          assert.doesNotMatch(caught.stdout, new RegExp(`${total} of ${total} account for what they carry`));
+          assert.match(caught.stdout, new RegExp(`${fixture.id} — its page now carries product 7689314336867, not the recorded 1111111111`));
+        });
+      } finally {
+        store.server.close();
+      }
+    });
+  }
+
   console.log(`\n${passed} passed, ${failures.length} failed${skipped ? `, ${skipped} skipped` : ''}\n`);
   process.exit(failures.length ? 1 : 0);
 })();

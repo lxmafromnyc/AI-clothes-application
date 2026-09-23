@@ -950,6 +950,126 @@ async function productRecordFor(productUrl, catalogRow, within) {
   };
 }
 
+/* ---------- the same record, embedded in a React Router page ----------
+
+   Some Shopify stores are headless: Telfar's listing is a React Router
+   app, and /products/<handle>.js answers 404. The page carries the
+   product anyway, in the loader data the router hydrates from — at
+   window.__reactRouterContext.state.loaderData (and on the data router
+   as __reactRouterDataRouter.state.loaderData), under the product
+   route's own key, as `.product`: id (a Shopify Product GID), handle,
+   title, and media.nodes, each image node carrying image.url.
+
+   Read in the rendered page itself, and only this much of it: each
+   route's OWN `.product` whose handle is this listing's — never a
+   product nested under a variant, an option, a recommendation or a
+   collection — and of that, only id, handle, title and, per media
+   node, its type and image.url. previewImage is never taken: a video's
+   poster is not a photograph of the garment, and one captured on
+   Telfar was of a bag. Nothing else of the router state leaves the
+   page, and none of it is printed.
+
+   This function runs INSIDE the page (page.evaluate), so it must not
+   reach for anything outside itself. */
+function reactRouterProducts(handle) {
+  const out = { pathHandle: null, canonical: null, products: [] };
+  try {
+    const path = location.pathname.match(/\/products\/([^/?#]+)\/?$/i);
+    out.pathHandle = path ? decodeURIComponent(path[1]).toLowerCase() : null;
+    const link = document.querySelector('link[rel="canonical"]');
+    out.canonical = link && link.href ? String(link.href).slice(0, 1000) : null;
+    const text = (value, most) => (typeof value === 'string' ? value.slice(0, most) : null);
+    const sources = [
+      ['__reactRouterContext.state.loaderData', window.__reactRouterContext && window.__reactRouterContext.state && window.__reactRouterContext.state.loaderData],
+      ['__reactRouterDataRouter.state.loaderData', window.__reactRouterDataRouter && window.__reactRouterDataRouter.state && window.__reactRouterDataRouter.state.loaderData]
+    ];
+    for (const [name, loaderData] of sources) {
+      if (!loaderData || typeof loaderData !== 'object') continue;
+      for (const route of Object.keys(loaderData).slice(0, 200)) {
+        const data = loaderData[route];
+        const product = data && typeof data === 'object' ? data.product : null;
+        if (!product || typeof product !== 'object' || typeof product.handle !== 'string') continue;
+        if (product.handle.toLowerCase() !== handle) continue;
+        const nodes = product.media && Array.isArray(product.media.nodes) ? product.media.nodes.slice(0, 100) : [];
+        out.products.push({
+          where: `${name}[${JSON.stringify(route).slice(0, 200)}].product`,
+          id: text(product.id, 120),
+          handle: text(product.handle, 200),
+          title: text(product.title, 300),
+          media: nodes.map((node) => ({
+            typename: node ? text(node.__typename, 40) : null,
+            contentType: node ? text(node.mediaContentType, 40) : null,
+            image: node && node.image ? text(node.image.url, 2000) : null,
+            previewOnly: Boolean(node && !(node.image && node.image.url) && node.previewImage)
+          }))
+        });
+        if (out.products.length >= 8) return out;
+      }
+    }
+  } catch (err) {
+    out.failed = String(err && err.message ? err.message : err).slice(0, 200);
+  }
+  return out;
+}
+
+const SHOPIFY_PRODUCT_GID = /^gid:\/\/shopify\/Product\/(\d+)$/;
+
+/* What the page's router state says, held to the same rules as the .js
+   record — and to two more, because this record came out of a page: the
+   browser has to have ended up on THIS listing, and a canonical the page
+   declares has to name this handle. */
+function embeddedRecordFrom(probe, productUrl, catalogRow, canonical) {
+  const listing = shopifyHandle(productUrl);
+  if (!listing) return { skipped: true, failed: 'not a Shopify /products/<handle> listing' };
+  if (!catalogRow || !catalogRow.name) return { skipped: true, failed: 'there is no catalogue row to hold the record\'s title against' };
+  if (!probe) return { skipped: true, failed: 'the page was not read in a browser' };
+  if (probe.failed) return { failed: `the page's router state could not be read (${probe.failed})` };
+  if (probe.pathHandle !== listing.handle) {
+    return { failed: `the browser ended on ${probe.pathHandle || 'a page that is not a product'}, not this listing's ${listing.handle}` };
+  }
+  const declared = canonical || probe.canonical;
+  if (declared) {
+    const named = shopifyHandle(declared);
+    if (!named || named.handle !== listing.handle) {
+      return { failed: `the page declares ${declared} canonical, which is not this listing` };
+    }
+  }
+
+  const products = (probe.products || []).filter((one) => one && typeof one.handle === 'string' && one.handle.toLowerCase() === listing.handle);
+  if (!products.length) return { failed: 'the page\'s router state carries no route-level product for this handle' };
+  if (new Set(products.map((one) => one.id)).size > 1) {
+    return { failed: 'the page\'s router state carries different products under this handle' };
+  }
+  const product = products[0];
+  const gid = SHOPIFY_PRODUCT_GID.exec(String(product.id || ''));
+  if (!gid) return { failed: `the embedded product names no valid Shopify Product GID (${product.id || 'none'})` };
+  const title = typeof product.title === 'string' ? product.title.trim() : '';
+  if (!title) return { failed: 'the embedded product names no title' };
+  const verdict = semanticMatch(catalogRow, { title });
+  if (!verdict.ok || verdict.kind !== 'match') {
+    return { failed: `the embedded product's title "${title}" is not the garment the row means — ${verdict.why}` };
+  }
+
+  const images = [];
+  let previewOnly = 0;
+  for (const node of product.media || []) {
+    if (!node) continue;
+    if (!node.image) { if (node.previewOnly) previewOnly += 1; continue; }
+    try { images.push(new URL(node.image, productUrl).href); } catch (err) { /* not a URL: not offered */ }
+  }
+  const record = {
+    source: 'embedded-react-router',
+    where: product.where,
+    handle: listing.handle,
+    id: gid[1],
+    gid: product.id,
+    title,
+    images: [...new Set(images)],
+    previewOnly
+  };
+  return { record, candidates: record.images.map((url) => ({ url, from: 'product-record', record })) };
+}
+
 function productRecordEvidence(candidate, productUrl) {
   const record = candidate.record;
   const listing = shopifyHandle(productUrl);
@@ -961,6 +1081,22 @@ function productRecordEvidence(candidate, productUrl) {
   if (!record.images.includes(candidate.url)) return { ok: false, why: 'the product record does not list this image as its product\'s' };
   const off = recordImageHost(candidate.url, productUrl);
   if (off) return { ok: false, why: `the product record lists it, but ${off}` };
+  if (record.source === 'embedded-react-router') {
+    /* a merchant can attach another product's picture to a product's
+       media; a filename that names a different garment refuses it. This
+       only ever refuses — a filename proves nothing on its own. */
+    const agrees = garmentsAgree(record.title, wordsInPath(candidate.url));
+    if (!agrees.agree) return { ok: false, why: `the embedded product lists it, but its filename names a different garment — ${agrees.why}` };
+    return {
+      ok: true,
+      via: 'product-record',
+      source: 'embedded-react-router',
+      handle: record.handle,
+      productId: record.id,
+      title: record.title,
+      how: `the page's own React Router product ${record.handle} (product ${record.id}, "${record.title}") lists it in its media`
+    };
+  }
   return {
     ok: true,
     via: 'product-record',
@@ -1090,6 +1226,19 @@ function catalogRowIdentity(row) {
     if (!verdict.ok || verdict.kind !== 'match') {
       return { ok: false, why: `the recorded product record's title "${title}" is not the garment the row means — ${verdict.why}` };
     }
+    if (evidence.source === 'embedded-react-router') {
+      /* the structure holds — but a note is not the page. This row is
+         accounted for only once its own page has been read again and
+         still lists this photo; see reproveEmbeddedRecord. */
+      return {
+        ok: true,
+        via: 'product-record',
+        source: 'embedded-react-router',
+        needsLive: true,
+        how: `its page's React Router product ${handle} (product ${evidence.productId}) is to be read again`
+      };
+    }
+    if (evidence.source !== undefined) return { ok: false, why: `the recorded product record names an unknown source (${evidence.source})` };
     return { ok: true, via: 'product-record', how: `its store's product record for ${handle} (product ${evidence.productId}) lists it` };
   }
 
@@ -1681,6 +1830,18 @@ async function renderPage(url, within) {
 
     const seen = await page.evaluate(gatherInPage);
 
+    /* a Shopify listing's own product, as the page's router hydrated it:
+       read here, on the page already open, and only the fields
+       reactRouterProducts takes — never the state itself */
+    const listing = shopifyHandle(url);
+    if (listing) {
+      try {
+        seen.reactRouter = await page.evaluate(`(${reactRouterProducts.toString()})(${JSON.stringify(listing.handle)})`);
+      } catch (err) {
+        seen.reactRouter = { failed: String(err && err.message ? err.message : err).split('\n')[0].slice(0, 200) };
+      }
+    }
+
     if (status && status >= 400) {
       await close();
       return { failed: `the page answered ${status} to a real browser too` };
@@ -1958,7 +2119,7 @@ function evidenceSource(candidate) {
   if (from.startsWith('gallery')) return 'gallery img/srcset (rendered)';
   if (from === 'rendered image') return 'other drawn <img> (rendered)';
   if (from === 'loaded by the page') return 'network-loaded image (everything the page fetched)';
-  if (from === 'product-record') return 'Shopify product record';
+  if (from === 'product-record') return candidate.record && candidate.record.source === 'embedded-react-router' ? 'embedded React Router product' : 'Shopify product record';
   return 'other';
 }
 
@@ -2289,6 +2450,11 @@ function printImageDiagnosis(indent, diagnosis) {
     console.log(`${pad}  ${String(entry.total).padStart(5)}  ${source} — ${top}`);
   }
   console.log(`${pad}  never offered as candidates by this pipeline: ProductGroup variants, embedded product data`);
+  const embedded = diagnosis.embeddedRecord;
+  if (embedded) {
+    console.log(`${pad}product record: ${embedded.failed ? `embedded React Router product ${embedded.skipped ? 'not read' : 'offered nothing'} — ${embedded.failed}`
+      : `embedded React Router product ${embedded.handle} (product ${embedded.id}, "${embedded.title}") offered ${embedded.images} media.nodes[*].image.url image${embedded.images === 1 ? '' : 's'}${embedded.previewOnly ? `; ${embedded.previewOnly} preview-only node${embedded.previewOnly === 1 ? '' : 's'} not taken` : ''}`}`);
+  }
   const record = diagnosis.productRecord;
   console.log(`${pad}Shopify product record: ${!record ? 'not asked for (the page was not served to plain HTTP, or it verified first)'
     : record.failed ? `${record.skipped ? 'not asked for' : 'offered nothing'} — ${record.failed}`
@@ -2428,6 +2594,7 @@ function writeDiagnosisFile() {
       page: one.diagnosis ? one.diagnosis.page : null,
       loadedByPage: one.diagnosis ? one.diagnosis.loadedByPage : null,
       productRecord: one.diagnosis ? one.diagnosis.productRecord || null : null,
+      embeddedRecord: one.diagnosis ? one.diagnosis.embeddedRecord || null : null,
       recordCapture: one.diagnosis ? one.diagnosis.recordCapture || null : null,
       runtime: one.diagnosis ? one.diagnosis.runtime || null : null,
       metadata: one.diagnosis ? one.diagnosis.metadata || null : null,
@@ -2641,11 +2808,8 @@ async function resolveRowInner(row, within, diagnosis, options) {
     evidence = evidenceFromRendered(rendered.seen).concat(evidence);
     const candidates = candidatesFromRendered(rendered.seen, rendered.loaded, row.productUrl);
     notes.push(`browser: ${candidates.length} candidate${candidates.length === 1 ? '' : 's'}`);
-    if (!candidates.length) {
-      return { id: row.id, verdict: 'NO IMAGE FOUND', why: 'the rendered page published no product image either', url: null, notes };
-    }
 
-    found = await firstVerifiable(candidates, row, rendered.verify, budget);
+    found = candidates.length ? await firstVerifiable(candidates, row, rendered.verify, budget) : { refusals: [] };
     /* diagnostics: an image the page itself loaded with a 200 and the
        loadable gate still refused is a refusal of the CHECK, not of the
        image, and is marked so the tally can tell the two apart */
@@ -2653,6 +2817,31 @@ async function resolveRowInner(row, within, diagnosis, options) {
     for (const one of found.refusals || []) {
       if (one && one.gate === 'loadable' && pageLoaded.has(one.url)) one.pageLoadedIt = true;
       diagnosis.refusals.push(one);
+    }
+
+    /* The product the page's router hydrated, asked for only when nothing
+       the rendered page drew could be tied to its product. It is read off
+       the page already open — no request — and its photos are checked
+       through that page, by the same gates, in the same order. */
+    if (!found.url && !budget.spent()) {
+      const embedded = embeddedRecordFrom(rendered.seen.reactRouter, row.productUrl, options.catalogRow, rendered.seen.canonical);
+      diagnosis.embeddedRecord = embedded.record
+        ? { source: embedded.record.source, handle: embedded.record.handle, id: embedded.record.id, title: embedded.record.title, images: embedded.record.images.length, previewOnly: embedded.record.previewOnly }
+        : { failed: embedded.failed, skipped: Boolean(embedded.skipped) };
+      if (!embedded.skipped) {
+        notes.push(embedded.record
+          ? `product record: embedded React Router product ${embedded.record.handle} lists ${embedded.record.images.length} media image${embedded.record.images.length === 1 ? '' : 's'}`
+          : `product record (embedded): ${embedded.failed}`);
+      }
+      if (embedded.candidates && embedded.candidates.length) {
+        const recorded = await firstVerifiable(embedded.candidates, row, rendered.verify, budget);
+        diagnosis.refusals.push(...(recorded.refusals || []));
+        found = recorded.url ? recorded : { refusals: [...found.refusals, ...(recorded.refusals || [])] };
+      }
+    }
+
+    if (!found.url && !candidates.length && !found.refusals.length) {
+      return { id: row.id, verdict: 'NO IMAGE FOUND', why: 'the rendered page published no product image either', url: null, notes };
     }
   } finally {
     await shut();
@@ -2720,6 +2909,10 @@ function evidenceNote(evidence) {
   }
   if (evidence.via === 'canonical' && evidence.canonical) {
     return `{ via: 'canonical', canonical: '${String(evidence.canonical).replace(/'/g, "")}' }`;
+  }
+  if (evidence.via === 'product-record' && evidence.source === 'embedded-react-router' && evidence.handle && evidence.productId && evidence.title) {
+    const clean = (value) => String(value).replace(/['\\\r\n]/g, '');
+    return `{ via: 'product-record', source: 'embedded-react-router', handle: '${clean(evidence.handle)}', productId: '${clean(evidence.productId)}', title: '${clean(evidence.title)}' }`;
   }
   if (evidence.via === 'product-record' && evidence.handle && evidence.productId && evidence.title) {
     const clean = (value) => String(value).replace(/['\\\r\n]/g, '');
@@ -4517,6 +4710,54 @@ async function discoverRow(row, taken, limit, options) {
   };
 }
 
+/* ---------- re-proving an embedded record against its own page ----------
+
+   A .js record's note can be re-proved from the row alone, the way a
+   sku can. An embedded one cannot: what vouched for the photo was the
+   page, so the page is read again. The row's own listing is rendered,
+   its router's product is read by the same rules as discovery, and the
+   row stands only if that product still has the recorded handle and id,
+   its title still fully matches the row, its media still lists this
+   photo, and the photo still clears the host, asset and load checks.
+   The note is never believed on its own. */
+async function reproveEmbeddedRecord(row) {
+  const no = (why) => ({ ok: false, why });
+  const structural = catalogRowIdentity(row);
+  if (!structural.ok || !structural.needsLive) return structural;
+  const evidence = row.imageEvidence;
+
+  const rendered = await renderPage(row.productUrl, budgetOf(RENDER_BUDGET));
+  if (rendered.failed) return no(`its page could not be read again to re-prove it — ${rendered.failed}`);
+  try {
+    const got = embeddedRecordFrom(rendered.seen.reactRouter, row.productUrl, row, rendered.seen.canonical);
+    if (!got.record) return no(`its page no longer proves it — ${got.failed}`);
+    if (got.record.id !== String(evidence.productId)) {
+      return no(`its page now carries product ${got.record.id}, not the recorded ${evidence.productId}`);
+    }
+    let image;
+    try { image = new URL(String(row.imageUrl), row.productUrl).href; } catch (err) { return no('its photo is not a URL'); }
+    if (!got.record.images.includes(image)) {
+      return no(`its page's product ${got.record.handle} no longer lists this photo in its media`);
+    }
+    const identity = productRecordEvidence({ url: image, from: 'product-record', record: got.record }, row.productUrl);
+    if (!identity.ok) return no(identity.why);
+    const unsound = soundness(image, row.productUrl);
+    if (unsound) return no(unsound);
+    const asset = siteAsset(image, row.productUrl);
+    if (asset) return no(asset);
+    const loads = await verifyImage(image, rendered.verify, IMAGE_TIMEOUT);
+    if (!loads.ok) return no(`its photo does not load — ${loads.why}`);
+    return {
+      ok: true,
+      via: 'product-record',
+      source: 'embedded-react-router',
+      how: `its page was read again: product ${got.record.handle} (${got.record.id}, "${got.record.title}") still lists this photo, and it loads`
+    };
+  } finally {
+    await (rendered.close || (async () => {}))();
+  }
+}
+
 /* ---------- what the catalogue looks like right now ---------- */
 function coverage(rows) {
   const linked = rows.filter((row) => row && row.productUrl);
@@ -4524,12 +4765,17 @@ function coverage(rows) {
   const accounted = [];
   const unaccounted = [];
 
+  const awaitingPage = [];
   for (const row of rows) {
     const checked = catalogRowIdentity(row);
+    /* a note that says "the page listed it" is not counted until the
+       page has said so again — coverageLive reads it */
+    if (checked.ok && checked.needsLive) { awaitingPage.push(row.id); continue; }
     (checked.ok ? accounted : unaccounted).push({ id: row.id, why: checked.why || checked.how });
   }
 
   return {
+    awaitingPage,
     rows: rows.length,
     linked: linked.length,
     withPhoto: withPhoto.length,
@@ -4539,9 +4785,29 @@ function coverage(rows) {
   };
 }
 
+/* coverage(), with every row whose evidence is its page read again. Only
+   those rows cost a page; every other row is decided from the file. */
+async function coverageLive(rows) {
+  const report = coverage(rows);
+  if (report.awaitingPage.length) {
+    console.log(`\n  Reading ${report.awaitingPage.length} product page${report.awaitingPage.length === 1 ? '' : 's'} again: ${report.awaitingPage.length === 1 ? 'its photo is' : 'their photos are'} vouched for by the page's own product record.`);
+  }
+  for (const id of report.awaitingPage) {
+    const row = rows.find((one) => one && one.id === id);
+    const proved = await reproveEmbeddedRecord(row);
+    if (proved.ok) report.accounted += 1;
+    else report.unaccounted.push({ id, why: proved.why });
+  }
+  report.awaitingPage = [];
+  return report;
+}
+
 function printCoverage(report) {
   console.log(`\n  ${report.withPhoto} of ${report.rows} rows carry a photo, and ${report.linked} link to a listing.`);
   console.log(`  ${report.accounted} of ${report.rows} account for what they carry.`);
+  if (report.awaitingPage && report.awaitingPage.length) {
+    console.log(`  ${report.awaitingPage.length} more wait on their own page being read again: ${report.awaitingPage.join(', ')}`);
+  }
   if (report.unaccounted.length) {
     console.log('\n  UNACCOUNTED:');
     for (const row of report.unaccounted) console.log(`     ${row.id} — ${row.why}`);
@@ -4819,14 +5085,14 @@ function replayable(entry, rows, taken) {
 
   if (taken.has(entry.imageUrl)) return no(`its photo is already on ${taken.get(entry.imageUrl)}`);
 
-  return { ok: true, how: accounted.how || verdict.why };
+  return { ok: true, how: accounted.how || verdict.why, needsLive: Boolean(accounted.needsLive) };
 }
 
 /* --write, where a --discover run has already proved something. Returns
    false only when there is no report at all, which is the one case where
    --discover --write still means "go and find out". Every other outcome
    is decided here, and none of them contacts a retailer. */
-function applySavedReport() {
+async function applySavedReport() {
   const loaded = loadReport(reportFile);
 
   if (loaded.missing) {
@@ -4862,10 +5128,17 @@ function applySavedReport() {
     return true;
   }
 
+  const onPage = entries.filter((entry) => entry && entry.identity && entry.identity.via === 'product-record' && entry.identity.source === 'embedded-react-router').length;
   console.log(`\nApplying ${entries.length} verified row${entries.length === 1 ? '' : 's'} from ${rel(reportFile)},`);
   console.log(`proved by the --discover run of ${report.createdAt}.`);
-  console.log('Nothing is searched, fetched or rendered: every gate that can be decided');
-  console.log('without a retailer is decided again here, and the rest is on the record.\n');
+  if (onPage) {
+    console.log('Nothing is searched: every gate that can be decided without a retailer is');
+    console.log(`decided again here, and ${onPage} row${onPage === 1 ? ' whose photo was' : 's whose photos were'} vouched for by the page's own product`);
+    console.log(`record ${onPage === 1 ? 'has its page' : 'have their pages'} read again — the note alone is never believed.\n`);
+  } else {
+    console.log('Nothing is searched, fetched or rendered: every gate that can be decided');
+    console.log('without a retailer is decided again here, and the rest is on the record.\n');
+  }
 
   /* no two rows wearing one picture, counting the ones already in the
      file as well as the ones this run is about to put there */
@@ -4876,7 +5149,20 @@ function applySavedReport() {
   const refused = [];
   for (const entry of entries) {
     const id = (entry && entry.id) || '(no id)';
-    const checked = replayable(entry, rows, taken);
+    let checked = replayable(entry, rows, taken);
+    if (checked.ok && checked.needsLive) {
+      const row = rows.find((one) => one && one.id === entry.id) || {};
+      const live = await reproveEmbeddedRecord({
+        id: entry.id,
+        name: row.name,
+        brand: row.brand,
+        category: row.category,
+        productUrl: entry.productUrl,
+        imageUrl: entry.imageUrl,
+        imageEvidence: entry.identity
+      });
+      checked = live.ok ? { ok: true, how: live.how } : live;
+    }
     if (!checked.ok) {
       refused.push({ id, why: checked.why });
       console.log(`  ${'REFUSED'.padEnd(10)} ${id} — ${checked.why}`);
@@ -4910,11 +5196,13 @@ function applySavedReport() {
   const already = Array.isArray(report.applied) ? report.applied : [];
   markApplied(reportFile, report, [...new Set([...already, ...usable.map((entry) => entry.id)])], !only);
 
-  console.log(`  Wrote ${usable.length} row${usable.length === 1 ? '' : 's'} into assets/catalog.js without contacting a retailer.`);
+  console.log(onPage
+    ? `  Wrote ${usable.length} row${usable.length === 1 ? '' : 's'} into assets/catalog.js, searching nothing.`
+    : `  Wrote ${usable.length} row${usable.length === 1 ? '' : 's'} into assets/catalog.js without contacting a retailer.`);
   if (refused.length) {
     console.log(`  ${refused.length} row${refused.length === 1 ? ' was' : 's were'} refused and left exactly as ${refused.length === 1 ? 'it was' : 'they were'}.`);
   }
-  printCoverage(coverage(readCatalog().rows));
+  printCoverage(await coverageLive(readCatalog().rows));
   return true;
 }
 
@@ -4933,7 +5221,7 @@ async function main() {
 
   /* --coverage : what the catalogue carries, without reading anything */
   if (has('--coverage')) {
-    printCoverage(coverage(readCatalog().rows));
+    printCoverage(await coverageLive(readCatalog().rows));
     return;
   }
 
@@ -4946,7 +5234,7 @@ async function main() {
        that into the catalogue and contacts nobody. It comes back false
        only when there is no report at all, and then this falls through
        to a live run exactly as it always did. */
-    if (writing && applySavedReport()) return;
+    if (writing && await applySavedReport()) return;
 
     const { source, rows } = readCatalog();
     let targets = rows.filter((row) => row && !row.imageUrl);
@@ -5126,7 +5414,7 @@ async function main() {
        rather than going out and searching all over again */
     markApplied(reportFile, record, found.map((result) => result.id));
     console.log(`  Wrote ${found.length} row${found.length === 1 ? '' : 's'} into assets/catalog.js.\n`);
-    printCoverage(coverage(readCatalog().rows));
+    printCoverage(await coverageLive(readCatalog().rows));
     return;
   }
 
@@ -5271,6 +5559,7 @@ if (require.main === module) {
     catalogRowIdentity, evidenceNote,
     /* a Shopify store's own product record, as identity evidence */
     shopifyHandle, recordImages, recordImageHost, productRecordFor, productRecordEvidence,
+    reactRouterProducts, embeddedRecordFrom, reproveEmbeddedRecord, coverageLive,
     garmentsAgree, canonicalCorroborated, wordsInPath, wordsAboutImage, TRACKING_PARAMS,
     siteAsset, imageDimensions, listingShape, rankListings,
     parseArgs, OPTIONS, USAGE, intentFor, queryForms, listingsFor, discoverRow, coverage,
