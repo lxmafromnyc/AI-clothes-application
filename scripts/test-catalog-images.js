@@ -1250,9 +1250,9 @@ function walledRetailer() {
     return `'${String(value).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
   };
 
-  const fixtureRow = (id, like) => {
+  const fixtureRow = (id, like, pinned) => {
     const row = catalogueRow(like);
-    return {
+    return Object.assign({
       id,
       name: row.name,
       brand: row.brand,
@@ -1265,7 +1265,7 @@ function walledRetailer() {
       fit: Array.from(row.fit || []),
       colors: Array.from(row.colors || []),
       sizes: Array.from(row.sizes || [])
-    };
+    }, pinned || {});
   };
 
   /* restores the catalogue afterwards, like withCatalogRestored, and
@@ -3377,6 +3377,19 @@ function walledRetailer() {
      gate, which is the only kind of thing that may be written */
   let verified = null;
 
+  /* the row that entry is discovered for and written into: the coat's
+     garment under an id of its own, unlinked because the test made it
+     so. The real coat row may be linked for real at any time, and then
+     every test below would be asking the writer to overwrite a photo.
+     What these tests assert about the row — its name, brand, category
+     and price — is pinned here rather than read off the real one. */
+  const COAT = fixtureRow('fixture-halden-tailored-wool-coat', 'sample-halden-tailored-wool-coat', {
+    name: 'Tailored Wool Coat',
+    brand: 'Halden',
+    price: 298,
+    category: 'coat'
+  });
+
   await testAsync('a run writes down what cleared every gate, and nothing else', async () => {
     const retailer = await opaqueRetailer();
     const port = retailer.address().port;
@@ -3392,9 +3405,8 @@ function walledRetailer() {
     });
     process.env.PRODUCT_SOURCE = 'fake-source';
 
-    const { rows } = extractor.readCatalog();
-    const was = rows.find((r) => r.id === 'sample-halden-tailored-wool-coat');
-    const found = await extractor.discoverRow(was, new Map(), 4);
+    const rows = [...extractor.readCatalog().rows, COAT];
+    const found = await extractor.discoverRow(COAT, new Map(), 4);
     assert.strictEqual(found.verdict, 'VERIFIED', found.why);
 
     /* a row that found nothing is in the run's printed output and
@@ -3408,7 +3420,7 @@ function walledRetailer() {
 
     assert.strictEqual(report.entries.length, 1, 'a row that cleared nothing was written down anyway');
     const entry = report.entries[0];
-    assert.strictEqual(entry.id, 'sample-halden-tailored-wool-coat');
+    assert.strictEqual(entry.id, COAT.id);
     assert.strictEqual(entry.verified, true);
 
     /* the three fields, exactly as the run produced them */
@@ -3437,7 +3449,7 @@ function walledRetailer() {
 
   await testAsync('--write applies the saved report without searching, fetching or rendering', async () => {
     assert.ok(verified, 'the test above produced no verified entry to apply');
-    await withCatalogRestored(async () => {
+    await withFixtureRows([COAT], async () => {
       const file = path.join(TMP, 'apply.json');
       extractor.saveReport(file, reportWith([verified]));
 
@@ -3475,7 +3487,7 @@ function walledRetailer() {
 
   await testAsync('applying a report moves the three permitted fields and no others', async () => {
     assert.ok(verified, 'the test above produced no verified entry to apply');
-    await withCatalogRestored(async (before) => {
+    await withFixtureRows([COAT], async (before) => {
       const file = path.join(TMP, 'fields.json');
       extractor.saveReport(file, reportWith([verified]));
 
@@ -3524,6 +3536,8 @@ function walledRetailer() {
       'fixture-kinfield-poplin-shirt': 'sample-kinfield-poplin-shirt'
     };
     const fixtures = Object.entries(like).map(([id, real]) => fixtureRow(id, real));
+    /* and the one good entry keeps its own fixture row */
+    fixtures.push(COAT);
     await withFixtureRows(fixtures, async (before) => {
       /* Six ways a report can say something it cannot prove. Every one
          of them is decidable without a retailer, which is exactly why
@@ -3651,7 +3665,7 @@ function walledRetailer() {
        the merino knit itself: that row has since been linked for real,
        and this needs a row that is unlinked because the test made it so */
     const fixture = fixtureRow('fixture-halden-merino-crew-knit', 'sample-halden-merino-crew-knit');
-    await withFixtureRows([fixture], async () => {
+    await withFixtureRows([COAT, fixture], async () => {
       /* a second entry that answers every gate this side can ask: its
          photo carries its listing's code, and the shop calls it what
          the row means */
