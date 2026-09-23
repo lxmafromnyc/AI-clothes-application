@@ -4724,6 +4724,149 @@ function walledRetailer() {
     });
   }
 
+  /* ---------------------------------------------------------
+     A canonical page vouches for its image only if it is a product page
+
+     A live run accepted sample-coveworks-cargo-utility-pant from
+     "Utility Pants vs. Cargo Pants" — an article on a trade
+     publication, classed [editorial] — because the page declared itself
+     canonical and carried a product-looking og:image.
+     --------------------------------------------------------- */
+  console.log('\n  — a canonical page vouches for its image only if it is a product page\n');
+
+  const CARGO_ROW = { id: 'fixture-cargo-utility-pant', name: 'Cargo Utility Pant', brand: 'Coveworks', category: 'trousers' };
+  const pageOf = ({ canonical, ogImage, ogType, jsonld, title }) => `<!doctype html><html><head>
+${title ? `<title>${title}</title>` : ''}
+<link rel="canonical" href="${canonical}">
+<meta property="og:image" content="${ogImage}">
+${ogType ? `<meta property="og:type" content="${ogType}">` : ''}
+${jsonld ? `<script type="application/ld+json">${JSON.stringify(jsonld)}</script>` : ''}
+</head><body></body></html>`;
+  /* the gates, as the pipeline runs them, on a page's own markup */
+  const decidePage = async (url, html, title, row) => {
+    const candidates = extractor.candidatesFrom(html, url);
+    return extractor.firstVerifiable(candidates, Object.assign({ id: 'x', productUrl: url, name: title }, row || {}), serving(jpegOf(1000, 1250)));
+  };
+
+  await testAsync('"Utility Pants vs. Cargo Pants" is refused though it is canonical with a product-looking og:image', async () => {
+    const article = 'https://www.forconstructionpros.com/workwear/article/22912345/utility-pants-vs-cargo-pants';
+    /* as live: accepted via canonical, so the image carries no code of its own */
+    const image = 'https://img.forconstructionpros.com/files/base/cygnus/fcp/image/2023/05/cargo-utility-pant.png';
+    const opaque = 'https://img.forconstructionpros.com/files/base/cygnus/fcp/image/2023/05/hero.png';
+
+    /* the listing is editorial by its own address and title, whatever the page declares */
+    assert.strictEqual(extractor.listingShape(article, 'Utility Pants vs. Cargo Pants').kind, 'editorial');
+    for (const [ogImage, jsonld] of [
+      [opaque, null],
+      [opaque, { '@context': 'https://schema.org', '@type': 'Product', name: 'Cargo Utility Pant' }]
+    ]) {
+      const found = await decidePage(article, pageOf({ canonical: article, ogImage }), 'Utility Pants vs. Cargo Pants');
+      assert.ok(!found.url, `the article's og:image was accepted${jsonld ? ' because it marked up a Product' : ''}`);
+      const refusal = found.refusals.find((one) => one.url === ogImage);
+      assert.strictEqual(refusal.gate, 'identity');
+      assert.match(refusal.why, /canonical for this listing, but it is not a product page — the listing is an editorial page/);
+    }
+
+    /* an article whose address alone would read as a product is caught by
+       what the page declares itself to be */
+    const coded = 'https://www.forconstructionpros.com/workwear/utility-pants-cargo-pants-22912345';
+    assert.strictEqual(extractor.listingShape(coded, 'Cargo Utility Pant').kind, 'product');
+    for (const declared of [
+      { ogType: 'article' },
+      { jsonld: { '@context': 'https://schema.org', '@type': 'NewsArticle', headline: 'Utility Pants vs. Cargo Pants' } },
+      /* an article that marks up the product it reviews is still an article */
+      { jsonld: { '@context': 'https://schema.org', '@graph': [{ '@type': 'BlogPosting' }, { '@type': 'Product', name: 'Cargo Utility Pant' }] } }
+    ]) {
+      const found = await decidePage(coded, pageOf(Object.assign({ canonical: coded, ogImage: opaque }, declared)), 'Cargo Utility Pant');
+      assert.ok(!found.url, `an article was accepted: ${JSON.stringify(declared)}`);
+      assert.match(found.refusals[0].why, /not a product page — the page declares itself an article or other non-product page/);
+    }
+
+    /* and the saved report entry from that run is refused on --write */
+    const identity = { ok: true, via: 'canonical', canonical: article };
+    const replay = extractor.replayable({
+      id: CARGO_ROW.id, verified: true, productUrl: article, imageUrl: image,
+      imageEvidence: extractor.evidenceNote(identity), identity,
+      listingName: 'Utility Pants vs. Cargo Pants', provedOnPage: [],
+      row: { name: CARGO_ROW.name, brand: CARGO_ROW.brand, category: CARGO_ROW.category }
+    }, [Object.assign({ productUrl: null, imageUrl: null }, CARGO_ROW)], new Map());
+    assert.strictEqual(replay.ok, false, 'the editorial entry in a saved report would have been written');
+    assert.match(replay.why, /canonical evidence is for a page that is not a product page/);
+
+    /* nor does --coverage account for such a row if one was ever written */
+    const shipped = extractor.catalogRowIdentity(Object.assign({}, CARGO_ROW, {
+      productUrl: article, imageUrl: image, imageEvidence: { via: 'canonical', canonical: article }
+    }));
+    assert.strictEqual(shipped.ok, false);
+    assert.match(shipped.why, /not a product page — its path sits under \/article\//);
+  });
+
+  await testAsync('a genuine product page still vouches for an opaque og:image', async () => {
+    /* its address names one product; the page declares nothing either way */
+    const zara = 'https://www.zara.com/us/en/wide-leg-cargo-trousers-p05555123.html';
+    const opaque = 'https://static.zara.net/photos/2024/I/0/1/p/opaque-hash-e1.jpg?ts=1';
+    const plain = await decidePage(zara, pageOf({ canonical: zara, ogImage: opaque }), 'Wide Leg Cargo Trousers', { name: 'Wide Leg Cargo Trousers' });
+    assert.strictEqual(plain.url, opaque, JSON.stringify(plain.refusals));
+    assert.strictEqual(plain.identity.via, 'canonical');
+
+    /* and one that says it is a product, in its structured data or its og:type */
+    for (const declared of [
+      { jsonld: { '@context': 'https://schema.org', '@type': 'Product', name: 'Wide Leg Cargo Trousers', image: opaque } },
+      { ogType: 'product' }
+    ]) {
+      const found = await decidePage(zara, pageOf(Object.assign({ canonical: zara, ogImage: opaque }, declared)), 'Wide Leg Cargo Trousers');
+      assert.strictEqual(found.url, opaque, `a product page was refused: ${JSON.stringify(declared)} — ${JSON.stringify(found.refusals)}`);
+      assert.strictEqual(found.identity.via, 'canonical');
+    }
+
+    /* and its saved entry still replays */
+    const identity = { ok: true, via: 'canonical', canonical: zara };
+    const replay = extractor.replayable({
+      id: CARGO_ROW.id, verified: true, productUrl: zara, imageUrl: opaque,
+      imageEvidence: extractor.evidenceNote(identity), identity,
+      listingName: 'Wide Leg Cargo Trousers', provedOnPage: [],
+      row: { name: 'Wide Leg Cargo Trousers', brand: CARGO_ROW.brand, category: CARGO_ROW.category }
+    }, [Object.assign({}, CARGO_ROW, { name: 'Wide Leg Cargo Trousers', productUrl: null, imageUrl: null })], new Map());
+    assert.strictEqual(replay.ok, true, replay.why);
+  });
+
+  test('a page that says nothing at an address that says nothing is not a product page', () => {
+    const unknown = { kind: 'unknown', why: 'nothing in its URL or title says either way' };
+    assert.strictEqual(extractor.productPageVerdict(unknown, { declaresProduct: 'its og:type is product', declaresArticle: null }).ok, true);
+    assert.strictEqual(extractor.productPageVerdict(unknown, { declaresProduct: null, declaresArticle: null }).ok, false);
+    assert.strictEqual(extractor.productPageVerdict({ kind: 'product', why: 'x' }, { declaresProduct: null, declaresArticle: null }).ok, true);
+    /* what a page declares, read the same way the pipeline reads it */
+    const declared = (html) => extractor.pageDeclarationsFromHtml(html);
+    assert.ok(declared('<meta property="og:type" content="product">').declaresProduct);
+    assert.ok(declared('<meta property="product:price:amount" content="98.00">').declaresProduct);
+    assert.ok(declared('<div itemscope itemtype="https://schema.org/Product"></div>').declaresProduct);
+    assert.ok(declared('<script type="application/ld+json">{"@type":"FAQPage"}</script>').declaresArticle);
+    assert.ok(declared('<meta property="og:type" content="article">').declaresArticle);
+  });
+
+  await testAsync('category, search and other unrelated canonical pages stay refused', async () => {
+    const opaque = 'https://cdn.example-shop.com/img/hero-opaque.jpg';
+
+    /* a search results page, canonical for itself */
+    const search = 'https://www.example-shop.com/search?q=cargo+pants&start=555123';
+    assert.strictEqual(extractor.listingShape(search, 'Search results for cargo pants').kind, 'listing');
+    const searched = await decidePage(search, pageOf({ canonical: search, ogImage: opaque }), 'Search results for cargo pants');
+    assert.ok(!searched.url);
+    assert.match(searched.refusals[0].why, /not a product page — the listing is a listing page/);
+
+    /* a collection page whose address reads as a product */
+    const collection = 'https://www.example-shop.com/women/cargo-pants-555123';
+    const collected = await decidePage(collection, pageOf({ canonical: collection, ogImage: opaque, jsonld: { '@context': 'https://schema.org', '@type': 'CollectionPage', name: 'Cargo Pants' } }), 'Cargo Utility Pant');
+    assert.ok(!collected.url);
+    assert.match(collected.refusals[0].why, /declares itself an article or other non-product page — its structured data calls it CollectionPage/);
+
+    /* and a canonical that names another page is refused as it always was */
+    const listing = 'https://www.zara.com/us/en/wide-leg-cargo-trousers-p05555123.html';
+    const elsewhere = await decidePage(listing, pageOf({ canonical: 'https://www.zara.com/us/en/linen-shirt-p09999999.html', ogImage: opaque }), 'Wide Leg Cargo Trousers');
+    assert.ok(!elsewhere.url);
+    assert.match(elsewhere.refusals[0].why, /nothing ties it to this product/);
+  });
+
   console.log(`\n${passed} passed, ${failures.length} failed${skipped ? `, ${skipped} skipped` : ''}\n`);
   process.exit(failures.length ? 1 : 0);
 })();

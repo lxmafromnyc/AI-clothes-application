@@ -407,6 +407,78 @@ function largestFromSrcset(value) {
     .map((e) => e.url);
 }
 
+/* ---------- is this page a product page at all? ----------
+
+   The canonical rule lets a page vouch for its own og:image. That is
+   only worth anything when the page is a PRODUCT page. A live run
+   accepted "Utility Pants vs. Cargo Pants", an article on a trade
+   publication, because it declared itself canonical and carried an
+   og:image — an article vouching for its own illustration.
+
+   What the page says it is, read from its structured data and its
+   Open Graph type: a product (JSON-LD Product, ProductGroup, Offer; og
+   type product; a product price in its metas; a schema.org Product
+   itemtype), or an article, blog, guide, FAQ, collection or search
+   results page. An article that marks up a Product it reviews is still
+   an article. */
+const PRODUCT_TYPES = /^(product|productgroup|individualproduct|productmodel|someproducts|offer|aggregateoffer)$/i;
+const NOT_PRODUCT_TYPES = /^(article|newsarticle|blogposting|blog|report|techarticle|scholarlyarticle|analysisnewsarticle|opinionnewsarticle|reviewnewsarticle|liveblogposting|faqpage|qapage|howto|collectionpage|searchresultspage)$/i;
+
+function pageDeclarations(nodes, metas, html) {
+  const types = new Set();
+  for (const node of nodes || []) {
+    for (const type of [].concat(node && node['@type'] ? node['@type'] : [])) types.add(String(type).replace(/^.*[/#]/, ''));
+  }
+  const meta = (name) => {
+    const value = metas && (metas[name] || metas[name.toLowerCase()]);
+    return value ? String(value).trim().toLowerCase() : '';
+  };
+  const ogType = meta('og:type');
+  const productType = [...types].find((type) => PRODUCT_TYPES.test(type));
+  const articleType = [...types].find((type) => NOT_PRODUCT_TYPES.test(type));
+  const priced = ['product:price:amount', 'og:price:amount', 'product:retailer_item_id'].find((name) => meta(name));
+  const itemtype = html && /itemtype=["']https?:\/\/schema\.org\/Product["']/i.test(html);
+
+  const declaresArticle = articleType ? `its structured data calls it ${articleType}`
+    : /^(article|blog|website:article)/.test(ogType) ? `its og:type is ${ogType}` : null;
+  const declaresProduct = productType ? `its structured data describes a ${productType}`
+    : /^(product|og:product|product\.)/.test(ogType) ? `its og:type is ${ogType}`
+      : priced ? `it publishes ${priced}`
+        : itemtype ? 'its markup is a schema.org Product' : null;
+  return { declaresProduct, declaresArticle };
+}
+
+function pageDeclarationsFromHtml(html) {
+  const metas = {};
+  for (const name of ['og:type', 'product:price:amount', 'og:price:amount', 'product:retailer_item_id']) {
+    const value = metaContent(html, name);
+    if (value) metas[name] = decode(value);
+  }
+  return pageDeclarations(jsonLdNodes(html), metas, html);
+}
+
+function pageDeclarationsFromRendered(seen) {
+  const nodes = [];
+  for (const block of (seen && seen.jsonld) || []) nodes.push(...parseLdBlock(block));
+  return pageDeclarations(nodes, (seen && seen.metas) || {}, null);
+}
+
+/* The page's declarations and the listing's own shape, together: the
+   one verdict the canonical rule asks for. An editorial, listing or
+   non-shop listing is never a product page, whatever it declares; a
+   page that declares itself an article is not one either; a product-
+   shaped URL, or a page that declares a product, is. A page that says
+   nothing, at an address that says nothing, is not. */
+const NOT_PRODUCT_SHAPES = new Set(['editorial', 'listing', 'not-a-shop']);
+
+function productPageVerdict(shape, page) {
+  if (shape && NOT_PRODUCT_SHAPES.has(shape.kind)) return { ok: false, why: `the listing is ${shape.kind === 'not-a-shop' ? 'not a shop' : `a${shape.kind === 'editorial' ? 'n editorial page' : ' listing page'}`} — ${shape.why}` };
+  if (page && page.declaresArticle) return { ok: false, why: `the page declares itself an article or other non-product page — ${page.declaresArticle}` };
+  if (shape && shape.kind === 'product') return { ok: true, why: `its address names one product — ${shape.why}` };
+  if (page && page.declaresProduct) return { ok: true, why: `the page declares a product — ${page.declaresProduct}` };
+  return { ok: false, why: 'nothing on the page or in its address says it is a product page' };
+}
+
 /* candidates in the order they deserve to be tried, deduplicated. Each
    keeps where it came from, because the identity gate below weighs an
    og:image on a canonical page differently from a bare URL. */
@@ -422,7 +494,8 @@ function candidatesFrom(html, pageUrl) {
   }
   for (const url of fromPreload(html)) raw.push({ url, from: 'preload' });
 
-  return dedupe(raw, pageUrl, canonical);
+  const page = pageDeclarationsFromHtml(html);
+  return dedupe(raw, pageUrl, canonical).map((one) => Object.assign(one, { page }));
 }
 
 function dedupe(raw, pageUrl, canonical) {
@@ -787,6 +860,15 @@ function identityEvidence(candidate, productUrl) {
      listing, and the image is the one it publishes as the product's */
   const vouches = candidate.from === 'json-ld' || String(candidate.from).startsWith('og:');
   if (vouches && candidate.canonical && samePage(candidate.canonical, productUrl)) {
+    /* a page vouches for its own image only if it is a product page: an
+       article, a guide, a category or a search page declaring itself
+       canonical is vouching for its illustration, not for a product */
+    if (candidate.productPage && !candidate.productPage.ok) {
+      return {
+        ok: false,
+        why: `the page is canonical for this listing, but it is not a product page — ${candidate.productPage.why}`
+      };
+    }
     /* the page vouching for the page is not the picture vouching for
        the product: a canonical that matches the listing exactly is
        still worthless when the image is of a different garment */
@@ -1192,6 +1274,13 @@ function catalogRowIdentity(row) {
   if (evidence.via === 'canonical') {
     if (!samePage(evidence.canonical, row.productUrl)) {
       return { ok: false, why: `the recorded canonical ${evidence.canonical} is not this row's listing` };
+    }
+    /* a canonical claim only ever stood for a product page, and an
+       address that is plainly an article, a category or not a shop at
+       all never was one */
+    const shape = listingShape(row.productUrl, '');
+    if (NOT_PRODUCT_SHAPES.has(shape.kind)) {
+      return { ok: false, why: `the recorded canonical is for a page that is not a product page — ${shape.why}` };
     }
     /* re-proved, not trusted: a note recorded before this rule existed,
        or written by hand, has to survive the same test */
@@ -2010,7 +2099,8 @@ function candidatesFromRendered(seen, loaded, pageUrl) {
 
   for (const url of loaded || []) raw.push({ url, from: 'loaded by the page' });
 
-  return dedupe(raw, pageUrl, seen.canonical);
+  const page = pageDeclarationsFromRendered(seen);
+  return dedupe(raw, pageUrl, seen.canonical).map((one) => Object.assign(one, { page }));
 }
 
 /* ---------- what the page says the product IS ----------
@@ -2644,7 +2734,13 @@ async function firstVerifiable(candidates, row, fetcher, within) {
      in order and for free. A lane is a network operation, and spending
      one on a candidate the host gate or the identity gate has already
      refused is the cheapest thing here done the most expensive way. */
-  const decided = candidates.map((candidate) => {
+  /* whether this listing is a product page at all, settled once from its
+     own shape and from what each candidate's page declared; only the
+     canonical rule reads it */
+  const title = row.name && row.name !== row.productUrl ? row.name : '';
+  const shape = listingShape(row.productUrl, title);
+  const decided = candidates.map((offered) => {
+    const candidate = Object.assign({}, offered, { productPage: productPageVerdict(shape, offered.page) });
     const unsound = soundness(candidate, row.productUrl);
     if (unsound) return { candidate, refusal: note(candidate, 'host', unsound) };
 
@@ -5041,6 +5137,16 @@ function replayable(entry, rows, taken) {
   const photo = soundness(entry.imageUrl, entry.productUrl);
   if (photo) return no(`its photo is not sound: ${photo}`);
 
+  /* canonical evidence stood for a product page, and the listing as the
+     run titled it has to still read as one: an article that declared
+     itself canonical proved nothing about any product */
+  if (entry.identity && entry.identity.via === 'canonical') {
+    const shape = listingShape(entry.productUrl, entry.listingName || '');
+    if (NOT_PRODUCT_SHAPES.has(shape.kind)) {
+      return no(`its canonical evidence is for a page that is not a product page — ${shape.why}`);
+    }
+  }
+
   /* the note the file will carry has to be the one this finding
      produces. A report edited on one side and not the other no longer
      says what was proved, whichever side was edited. */
@@ -5560,6 +5666,8 @@ if (require.main === module) {
     /* a Shopify store's own product record, as identity evidence */
     shopifyHandle, recordImages, recordImageHost, productRecordFor, productRecordEvidence,
     reactRouterProducts, embeddedRecordFrom, reproveEmbeddedRecord, coverageLive,
+    /* whether a page is a product page, for the canonical rule */
+    pageDeclarations, pageDeclarationsFromHtml, productPageVerdict,
     garmentsAgree, canonicalCorroborated, wordsInPath, wordsAboutImage, TRACKING_PARAMS,
     siteAsset, imageDimensions, listingShape, rankListings,
     parseArgs, OPTIONS, USAGE, intentFor, queryForms, listingsFor, discoverRow, coverage,
