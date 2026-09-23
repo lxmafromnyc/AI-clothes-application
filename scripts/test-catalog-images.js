@@ -50,9 +50,26 @@ const CATALOG = path.join(__dirname, '..', 'assets', 'catalog.js');
    a report belonging to a real --discover run. */
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'fynd-catalog-images-'));
 
-async function run(argv) {
+/* The environment of a run that has no product source at all. The
+   subprocess inherits this process's environment, which on a developer's
+   machine carries whatever keys .env.local exported — and a leftover
+   PRODUCT_SOURCE from an earlier test. A test of "nothing is configured"
+   cannot lean on either being absent, so every variable that selects or
+   unlocks a source is removed here rather than hoped away. */
+const SOURCE_ENV = /^(PRODUCT_SOURCE|OPENWEBNINJA_.*|SERPAPI_.*|SERPER_.*|ETSY_.*|EXAMPLE_API_KEY)$/;
+
+function withoutSources() {
+  const env = {};
+  for (const [name, value] of Object.entries(process.env)) {
+    if (!SOURCE_ENV.test(name.toUpperCase())) env[name] = value;
+  }
+  return env;
+}
+
+async function run(argv, options) {
+  const env = (options && options.env) || process.env;
   try {
-    const { stdout, stderr } = await execFile(process.execPath, [SCRIPT, ...argv], { env: process.env, timeout: 120000 });
+    const { stdout, stderr } = await execFile(process.execPath, [SCRIPT, ...argv], { env, timeout: 120000 });
     return { code: 0, stdout, stderr };
   } catch (err) {
     return { code: err.code === undefined ? 1 : err.code, stdout: err.stdout || '', stderr: err.stderr || String(err.message) };
@@ -1204,21 +1221,82 @@ function walledRetailer() {
     assert.ok(Object.keys(offered.rejected).length, 'and the source says why it dropped them');
   });
 
-  await testAsync('with no source configured, discovery says so and writes nothing', async () => {
-    const before = fs.readFileSync(CATALOG);
-    const result = await run([
-      '--discover', '--only', 'sample-northfold-boxy-cotton-tee', '--write',
-      /* a report path with nothing at it, so this stays a test of what
-         happens with no source rather than of what was left lying
-         beside the catalogue by an earlier run */
-      '--report', path.join(TMP, 'no-source.json')
-    ]);
-    const after = fs.readFileSync(CATALOG);
+  /* A catalogue row that exists only for the length of one test, with no
+     link and no photo, so discovery has something to look for however
+     much of the real catalogue has been photographed since. With nothing
+     to look for, discovery never asks for a source, and a test of "no
+     source is configured" would pass without ever reaching that path.
+     It wears the garment of the Northfold tee, under an id of its own. */
+  const NO_SOURCE_FIXTURE = {
+    id: 'fixture-northfold-boxy-cotton-tee',
+    name: 'Boxy Cotton Tee',
+    brand: 'Northfold',
+    price: null,
+    productUrl: null,
+    imageUrl: null,
+    category: 'tee',
+    style: ['Minimal', 'Sporty'],
+    occasion: ['Everyday', 'Weekend'],
+    fit: ['Relaxed', 'Oversized'],
+    colors: ['White'],
+    sizes: ['XS', 'S', 'M', 'L', 'XL']
+  };
 
-    assert.strictEqual(result.code, 0, result.stderr);
-    assert.match(result.stdout, /no product source is configured/);
-    assert.match(result.stdout, /rows already carry one and are not touched/);
-    assert.ok(before.equals(after), 'assets/catalog.js is byte-for-byte what it was');
+  /* Adds rows to the end of DEMO_PRODUCTS in the file's own shape, runs
+     the test, and puts assets/catalog.js back byte for byte whatever
+     happens. The callback is handed the catalogue as it stood WITH the
+     fixture rows, so "wrote nothing" is judged against what the run was
+     given. A function declaration, so it is usable above
+     withCatalogRestored, which it relies on. */
+  async function withFixtureRows(rows, fn) {
+    const literal = (value) => {
+      if (value === null || value === undefined) return 'null';
+      if (Array.isArray(value)) return `[${value.map(literal).join(', ')}]`;
+      if (typeof value === 'number') return String(value);
+      return `'${String(value).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
+    };
+    return withCatalogRestored(async () => {
+      const source = fs.readFileSync(CATALOG, 'utf8');
+      const start = source.indexOf('const DEMO_PRODUCTS = [');
+      assert.ok(start >= 0, 'assets/catalog.js no longer declares DEMO_PRODUCTS');
+      const end = source.indexOf('\n];', start);
+      assert.ok(end >= 0, 'could not find the end of DEMO_PRODUCTS');
+
+      const text = rows.map((row) => `  {\n${Object.entries(row)
+        .map(([field, value]) => `    ${field}: ${literal(value)}`)
+        .join(',\n')}\n  }`).join(',\n');
+      fs.writeFileSync(CATALOG, `${source.slice(0, end)},\n${text}${source.slice(end)}`);
+
+      const ids = extractor.readCatalog().rows.map((r) => r.id);
+      for (const row of rows) {
+        assert.strictEqual(ids.filter((id) => id === row.id).length, 1, `fixture row ${row.id} did not land once`);
+      }
+      return fn(fs.readFileSync(CATALOG));
+    });
+  }
+
+  await testAsync('with no source configured, discovery says so and writes nothing', async () => {
+    const original = fs.readFileSync(CATALOG);
+    const fixture = NO_SOURCE_FIXTURE;
+    await withFixtureRows([fixture], async (before) => {
+      const result = await run([
+        '--discover', '--only', fixture.id, '--write',
+        /* a report path with nothing at it, so this stays a test of what
+           happens with no source rather than of what was left lying
+           beside the catalogue by an earlier run */
+        '--report', path.join(TMP, 'no-source.json')
+      ], { env: withoutSources() });
+      const after = fs.readFileSync(CATALOG);
+
+      assert.strictEqual(result.code, 0, result.stderr);
+      assert.match(result.stdout, /Looking for a real listing for 1 row that carries no photo/,
+        'discovery had nothing to look for, so this never reached the source');
+      assert.match(result.stdout, new RegExp(fixture.id));
+      assert.match(result.stdout, /no product source is configured/);
+      assert.match(result.stdout, /rows? already carry one and are not touched/);
+      assert.ok(before.equals(after), 'assets/catalog.js is byte-for-byte what it was');
+    });
+    assert.ok(fs.readFileSync(CATALOG).equals(original), 'the fixture row was left in assets/catalog.js');
   });
 
   await testAsync('discovery leaves the verified rows out of its list entirely', async () => {
@@ -3646,18 +3724,26 @@ function walledRetailer() {
   });
 
   await testAsync('with no report saved at all, --discover still means go and find out', async () => {
-    const before = fs.readFileSync(CATALOG);
-    const result = await run([
-      '--discover', '--write',
-      '--only', 'sample-northfold-boxy-cotton-tee',
-      '--report', path.join(TMP, 'nothing-was-ever-here.json')
-    ]);
+    /* its own unlinked row, so "go and find out" has something to find
+       out about — see the no-source test above */
+    const original = fs.readFileSync(CATALOG);
+    const fixture = NO_SOURCE_FIXTURE;
+    await withFixtureRows([fixture], async (before) => {
+      const result = await run([
+        '--discover', '--write',
+        '--only', fixture.id,
+        '--report', path.join(TMP, 'nothing-was-ever-here.json')
+      ], { env: withoutSources() });
 
-    assert.strictEqual(result.code, 0, result.stderr);
-    assert.match(result.stdout, /No discovery report at/);
-    assert.match(result.stdout, /Looking for a real listing/, 'with nothing saved it has to go and look');
-    assert.match(result.stdout, /no product source is configured/);
-    assert.ok(fs.readFileSync(CATALOG).equals(before), 'and it wrote nothing, having verified nothing');
+      assert.strictEqual(result.code, 0, result.stderr);
+      assert.match(result.stdout, /No discovery report at/);
+      assert.match(result.stdout, /Looking for a real listing for 1 row that carries no photo/,
+        'with nothing saved it has to go and look');
+      assert.match(result.stdout, new RegExp(fixture.id));
+      assert.match(result.stdout, /no product source is configured/);
+      assert.ok(fs.readFileSync(CATALOG).equals(before), 'and it wrote nothing, having verified nothing');
+    });
+    assert.ok(fs.readFileSync(CATALOG).equals(original), 'the fixture row was left in assets/catalog.js');
   });
 
   await testAsync('the plain path leaves a discovery report alone, and says it is there', async () => {
