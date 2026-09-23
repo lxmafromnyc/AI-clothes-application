@@ -14,3 +14,6 @@ npm-debug.log*
 # Temporary by definition: it records what one run proved, and is spent
 # the moment those rows are in assets/catalog.js.
 .catalog-discovery.tmp.json
+
+# TEMPORARY: what --diagnose found out about the image gates.
+.catalog-image-diagnosis.tmp.json

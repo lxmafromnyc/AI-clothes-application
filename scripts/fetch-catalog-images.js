@@ -190,7 +190,8 @@ const OPTIONS = {
   '--candidate': 'value',
   '--as': 'value',
   '--limit': 'value',
-  '--report': 'value'
+  '--report': 'value',
+  '--diagnose': 'boolean'
 };
 
 function parseArgs(argv) {
@@ -255,6 +256,12 @@ const USAGE = `
                          and where --discover --write reads it back from
                          (default .catalog-discovery.tmp.json)
 
+    --diagnose           TEMPORARY. With --discover or --candidate, say
+                         which gate refused each image candidate and what
+                         kind of evidence offered it, and write it all to
+                         .catalog-image-diagnosis.tmp.json. Reports only:
+                         no gate reads anything it records.
+
     --coverage           how many rows carry a verified photo, and
                          whether each still accounts for itself. Reads
                          nothing but the catalogue.
@@ -274,6 +281,7 @@ const only = flag('--only');
 const writing = has('--write');
 const refreshing = has('--refresh');
 const useBrowser = !has('--no-browser');
+const diagnosing = has('--diagnose');
 const reportFile = flag('--report') ? path.resolve(String(flag('--report'))) : DEFAULT_REPORT;
 
 /* ---------- reading the catalogue ----------
@@ -337,9 +345,10 @@ function fromJsonLd(nodes) {
   for (const node of nodes) {
     const type = String(node['@type'] || '');
     if (!/product/i.test(type)) continue;
+    /* `shape` is for the diagnostics tally only */
     const take = (v) => {
-      if (typeof v === 'string') found.push({ url: v, node });
-      else if (v && typeof v === 'object' && typeof v.url === 'string') found.push({ url: v.url, node });
+      if (typeof v === 'string') found.push({ url: v, node, shape: 'string' });
+      else if (v && typeof v === 'object' && typeof v.url === 'string') found.push({ url: v.url, node, shape: 'ImageObject' });
     };
     if (Array.isArray(node.image)) node.image.forEach(take); else take(node.image);
   }
@@ -406,7 +415,7 @@ function candidatesFrom(html, pageUrl) {
   const canonical = canonicalOf(html);
 
   const raw = [];
-  for (const hit of fromJsonLd(nodes)) raw.push({ url: hit.url, from: 'json-ld', node: hit.node });
+  for (const hit of fromJsonLd(nodes)) raw.push({ url: hit.url, from: 'json-ld', node: hit.node, shape: hit.shape });
   for (const name of ['og:image:secure_url', 'og:image', 'twitter:image', 'twitter:image:src']) {
     const value = metaContent(html, name);
     if (value) raw.push({ url: value, from: name });
@@ -1262,13 +1271,35 @@ function gatherInPage() {
     };
   });
 
+  /* diagnostics only: whether the page carries a product record no gate
+     reads — Shopify's, or a framework's embedded state */
+  const diagnostics = { shopify: null, embedded: [] };
+  try {
+    const product = window.ShopifyAnalytics && window.ShopifyAnalytics.meta && window.ShopifyAnalytics.meta.product;
+    if (product) {
+      const variants = Array.isArray(product.variants) ? product.variants : [];
+      diagnostics.shopify = {
+        productId: product.id ? String(product.id) : null,
+        variants: variants.length,
+        skus: variants.map((one) => one && one.sku).filter(Boolean).slice(0, 3)
+      };
+    }
+    for (const name of ['__NEXT_DATA__', '__NUXT__', '__INITIAL_STATE__', '__PRELOADED_STATE__', '__APOLLO_STATE__']) {
+      if (window[name] || document.getElementById(name)) diagnostics.embedded.push(name);
+    }
+    if (document.querySelector('script[data-product-json], script[type="application/json"][id*="product" i]')) {
+      diagnostics.embedded.push('product JSON script');
+    }
+  } catch (err) { /* a probe that throws reports nothing */ }
+
   return {
     canonical: text('link[rel="canonical"]', 'href') || metas['og:url'] || null,
     metas,
     jsonld,
     detail,
     preload,
-    imgs
+    imgs,
+    diagnostics
   };
 }
 
@@ -1505,7 +1536,7 @@ function candidatesFromRendered(seen, loaded, pageUrl) {
   for (const block of seen.jsonld || []) nodes.push(...parseLdBlock(block));
 
   const raw = [];
-  for (const hit of fromJsonLd(nodes)) raw.push({ url: hit.url, from: 'json-ld (rendered)', node: hit.node });
+  for (const hit of fromJsonLd(nodes)) raw.push({ url: hit.url, from: 'json-ld (rendered)', node: hit.node, shape: hit.shape });
   for (const name of ['og:image:secure_url', 'og:image', 'twitter:image', 'twitter:image:src']) {
     if (seen.metas && seen.metas[name]) raw.push({ url: seen.metas[name], from: `${name} (rendered)` });
   }
@@ -1566,6 +1597,321 @@ function factsFromRendered(seen) {
   return factsFrom(nodes, seen.metas || {});
 }
 
+/* ---------- TEMPORARY: image-gate diagnostics ----------
+
+   A run that finds real listings and verifies none of their photos says
+   "233 image candidates, none cleared every gate" and nothing else, so
+   the gate doing the refusing cannot be seen. Everything in this section
+   REPORTS; none of it decides. No verdict reads a field set here, and
+   deleting the section (and the few lines that call it, each marked
+   "diagnostics") leaves every gate exactly as it is.
+
+   Printed and written to DIAGNOSIS_FILE only under --diagnose. */
+const DIAGNOSIS_FILE = path.join(__dirname, '..', '.catalog-image-diagnosis.tmp.json');
+const DIAGNOSIS_LOG = [];
+
+/* which gate turned a candidate down, in words a tally can group. A
+   candidate is refused by the FIRST gate it fails — host, then
+   identity, then loadable — so this is its first and main reason. */
+function refusalCategory(gate, why) {
+  const said = String(why || '');
+  if (gate === 'asset') {
+    if (/icon or vector format/i.test(said)) return 'site-asset (icon/vector file)';
+    if (/stand-in/i.test(said)) return 'site-asset (placeholder/stand-in)';
+    return 'site-asset';
+  }
+  if (gate === 'host') {
+    if (/not a URL|cannot load on an https page/i.test(said)) return 'unsupported protocol/URL';
+    if (/aggregator or stock host/i.test(said)) return 'wrong host (aggregator/stock)';
+    return 'host: other';
+  }
+  if (gate === 'identity') {
+    if (/carries no product code/i.test(said)) return 'identity not proven — listing URL has no product code';
+    if (/is a different garment/i.test(said)) return 'evidence mismatch (canonical names a different garment)';
+    if (/is not a product photo/i.test(said)) return 'site-asset (refused on the canonical branch)';
+    if (/parameter, which names the stand-in/i.test(said)) return 'identity not proven — code only in a fallback parameter';
+    if (/not a URL/i.test(said)) return 'unsupported protocol/URL';
+    if (/nothing ties it/i.test(said)) return 'identity not proven';
+    return 'identity: other';
+  }
+  if (gate === 'loadable') {
+    if (/hotlink blocked/i.test(said)) return 'image hotlink-blocked (served plainly, refused with Referer)';
+    if (/^answered (401|403|418|429)\b/i.test(said)) return 'image refused by host (401/403/418/429)';
+    if (/^answered 200 as /i.test(said)) return 'image served a non-image content-type';
+    if (/^answered \d+/i.test(said)) return 'image failed to load (HTTP status)';
+    if (/too small/i.test(said)) return `image too small (under ${MIN_BYTES} bytes)`;
+    if (/the size of an icon|the shape of a logo or a banner/i.test(said)) return 'invalid dimensions/aspect ratio';
+    if (/icon or vector format/i.test(said)) return 'image served as an icon/vector content-type';
+    if (/ran out|never reached/i.test(said)) return 'not reached (time ran out)';
+    if (/failed to fetch|typeerror|networkerror|cors/i.test(said)) return 'image failed to load (in-page fetch refused — CORS?)';
+    if (/timed out|unreachable|image host|refused for/i.test(said)) return 'image failed to load (network/timeout)';
+    return 'image failed to load (other)';
+  }
+  return `other gate: ${gate}`;
+}
+
+/* where a candidate came from, in the terms of the question being asked:
+   which kind of evidence put this URL in front of the gates */
+function evidenceSource(candidate) {
+  const from = String((candidate && candidate.from) || '');
+  if (from.startsWith('json-ld')) {
+    const type = String((candidate.node && candidate.node['@type']) || '');
+    if (/productgroup/i.test(type)) return 'JSON-LD ProductGroup';
+    if (candidate.shape === 'ImageObject') return 'JSON-LD ImageObject';
+    return 'JSON-LD Product';
+  }
+  if (/^(og|twitter):/.test(from)) return 'social meta (og/twitter)';
+  if (from.startsWith('preload')) return 'preload link';
+  if (from.startsWith('gallery')) return 'gallery img/srcset (rendered)';
+  if (from === 'rendered image') return 'other drawn <img> (rendered)';
+  if (from === 'loaded by the page') return 'network-loaded image (everything the page fetched)';
+  return 'other';
+}
+
+/* what a URL LOOKS like, for reading a tally — there is no site-asset
+   gate, and this is not one: nothing is refused for matching it */
+const SITE_ASSET_LOOK = /(logo|icon|sprite|favicon|placeholder|spinner|loader|banner|badge|payment|klarna|afterpay|paypal|apple-?pay|flag|pixel|tracking|beacon|spacer|blank|\.svg(\?|$)|\.gif(\?|$))/i;
+
+function diagnosedRefusal(candidate, gate, why) {
+  return {
+    url: candidate.url,
+    from: candidate.from,
+    gate,
+    why,
+    category: refusalCategory(gate, why),
+    source: evidenceSource(candidate),
+    looksLikeSiteAsset: SITE_ASSET_LOOK.test(String(candidate.url || ''))
+  };
+}
+
+/* What a page offers that could tie a photo to its product, whether or
+   not this pipeline reads it. ProductGroup variants, Shopify's product
+   record and a framework's embedded state are NOT read by any gate —
+   this only says whether they are there to be read. */
+function pageFactsFrom(nodes, extra) {
+  const ids = (node) => {
+    const out = {};
+    for (const key of ['sku', 'mpn', 'productID', 'productId', 'productGroupID', 'gtin', 'gtin13', 'gtin12']) {
+      if (typeof node[key] === 'string' || typeof node[key] === 'number') out[key] = String(node[key]);
+    }
+    return out;
+  };
+  const products = [];
+  for (const node of nodes) {
+    const type = String(node['@type'] || '');
+    if (!/product/i.test(type)) continue;
+    const images = Array.isArray(node.image) ? node.image : node.image ? [node.image] : [];
+    const variants = Array.isArray(node.hasVariant) ? node.hasVariant : [];
+    products.push({
+      type,
+      name: typeof node.name === 'string' ? node.name.slice(0, 80) : null,
+      ids: ids(node),
+      images: images.length,
+      imageObjects: images.filter((one) => one && typeof one === 'object').length,
+      /* an ImageObject that names its file only as contentUrl is never
+         taken — fromJsonLd reads .url */
+      imageObjectsWithoutUrl: images.filter((one) => one && typeof one === 'object' && typeof one.url !== 'string').length,
+      variants: variants.length,
+      variantIds: variants.slice(0, 4).map((one) => (one && typeof one === 'object' ? ids(one) : {})),
+      variantImages: variants.reduce((n, one) => n + (one && one.image ? (Array.isArray(one.image) ? one.image.length : 1) : 0), 0)
+    });
+  }
+  return Object.assign({
+    jsonLdTypes: [...new Set(nodes.map((node) => String(node['@type'] || '?')))].slice(0, 12),
+    products
+  }, extra || {});
+}
+
+const EMBEDDED_MARKERS = ['__NEXT_DATA__', '__NUXT__', '__INITIAL_STATE__', '__PRELOADED_STATE__', '__APOLLO_STATE__', 'data-product-json'];
+
+function pageFactsFromHtml(html) {
+  const text = String(html || '');
+  const shopifyId = text.match(/"product"\s*:\s*\{\s*"id"\s*:\s*(\d{6,})/);
+  return pageFactsFrom(jsonLdNodes(text), {
+    shopify: /ShopifyAnalytics|Shopify\.shop|cdn\.shopify\.com|\/cdn\/shop\//.test(text)
+      ? { productId: shopifyId ? shopifyId[1] : null }
+      : null,
+    embedded: EMBEDDED_MARKERS.filter((marker) => text.includes(marker))
+  });
+}
+
+function pageFactsFromRendered(seen) {
+  const nodes = [];
+  for (const block of (seen && seen.jsonld) || []) nodes.push(...parseLdBlock(block));
+  const probe = (seen && seen.diagnostics) || {};
+  return pageFactsFrom(nodes, { shopify: probe.shopify || null, embedded: probe.embedded || [] });
+}
+
+/* the metadata a page states about itself, in one shape for both ways
+   of reading it, so the two can be compared */
+function metadataOf(canonical, metas, nodes) {
+  return {
+    canonical: canonical || null,
+    ogImage: (metas && metas['og:image']) ? decode(String(metas['og:image'])) : null,
+    ogTitle: (metas && metas['og:title']) ? decode(String(metas['og:title'])).trim() : null,
+    jsonLdProducts: (nodes || [])
+      .filter((node) => /product/i.test(String(node['@type'] || '')))
+      .map((node) => `${node['@type']}:${typeof node.name === 'string' ? node.name.trim() : '?'}`)
+  };
+}
+
+function metadataDiffers(metadata) {
+  if (!metadata || !metadata.served || !metadata.rendered) return null;
+  const changed = [];
+  for (const key of ['canonical', 'ogImage', 'ogTitle']) {
+    if ((metadata.served[key] || null) !== (metadata.rendered[key] || null)) changed.push(key);
+  }
+  if (JSON.stringify(metadata.served.jsonLdProducts) !== JSON.stringify(metadata.rendered.jsonLdProducts)) changed.push('JSON-LD products');
+  return changed;
+}
+
+/* one listing's refusals, counted two ways */
+function tallyRefusals(refusals) {
+  const byCategory = {};
+  const bySource = {};
+  let siteAssetLike = 0;
+  for (const one of refusals || []) {
+    if (!one) continue;
+    const category = one.category || refusalCategory(one.gate, one.why);
+    const source = one.source || 'other';
+    byCategory[category] = (byCategory[category] || 0) + 1;
+    bySource[source] = bySource[source] || { total: 0, byCategory: {} };
+    bySource[source].total += 1;
+    bySource[source].byCategory[category] = (bySource[source].byCategory[category] || 0) + 1;
+    if (one.looksLikeSiteAsset) siteAssetLike += 1;
+  }
+  const ranked = Object.entries(byCategory).sort((a, b) => b[1] - a[1]);
+  return { total: (refusals || []).length, byCategory, bySource, siteAssetLike, main: ranked.length ? ranked[0][0] : null };
+}
+
+/* The candidates that COULD have been this product's photo — everything
+   a page publishes as its product image, as opposed to the pool of every
+   image it fetched — because their refusals are the ones that matter. */
+function likelyProductRefusals(refusals, limit) {
+  return (refusals || [])
+    .filter((one) => one && one.source !== 'network-loaded image (everything the page fetched)' && !one.looksLikeSiteAsset)
+    .slice(0, limit || 8);
+}
+
+function printImageDiagnosis(indent, diagnosis) {
+  if (!diagnosis) return;
+  const pad = ' '.repeat(indent);
+  const tally = tallyRefusals(diagnosis.refusals);
+  console.log(`${pad}IMAGE DIAGNOSIS — ${tally.total} candidate${tally.total === 1 ? '' : 's'} refused; first rejecting gate:`);
+  for (const [category, n] of Object.entries(tally.byCategory).sort((a, b) => b[1] - a[1])) {
+    console.log(`${pad}  ${String(n).padStart(5)}  ${category}`);
+  }
+  console.log(`${pad}  (${tally.siteAssetLike} of them look like site assets by a broad URL pattern — a reading aid, not the asset gate)`);
+  console.log(`${pad}by evidence source:`);
+  for (const [source, entry] of Object.entries(tally.bySource).sort((a, b) => b[1].total - a[1].total)) {
+    const top = Object.entries(entry.byCategory).sort((a, b) => b[1] - a[1]).map(([c, n]) => `${n} ${c}`).join('; ');
+    console.log(`${pad}  ${String(entry.total).padStart(5)}  ${source} — ${top}`);
+  }
+  console.log(`${pad}  never offered as candidates by this pipeline: ProductGroup variants, Shopify product record, embedded product data`);
+
+  const page = diagnosis.page || {};
+  console.log(`${pad}listing codes: ${(diagnosis.listingCodes || []).join(', ') || '(none — every candidate fails identity before the canonical check)'}`);
+  console.log(`${pad}canonical: ${diagnosis.canonical || '(none)'}${diagnosis.canonical ? ` — ${diagnosis.canonicalMatchesListing ? 'same page as the listing' : 'NOT the listing\'s page'}` : ''}`);
+  for (const [label, facts] of [['served', page.served], ['rendered', page.rendered]]) {
+    if (!facts) continue;
+    const products = (facts.products || []).map((p) => {
+      const idText = Object.entries(p.ids).map(([k, v]) => `${k}=${v}`).join(' ') || 'no ids';
+      return `${p.type} [${idText}] ${p.images} image${p.images === 1 ? '' : 's'}` +
+        `${p.imageObjects ? ` (${p.imageObjects} ImageObject${p.imageObjectsWithoutUrl ? `, ${p.imageObjectsWithoutUrl} without .url — dropped` : ''})` : ''}` +
+        `${p.variants ? `, ${p.variants} variants (${p.variantImages} variant images, unread)` : ''}`;
+    });
+    console.log(`${pad}${label} page: JSON-LD ${products.length ? products.join(' | ') : `has no Product node (types: ${(facts.jsonLdTypes || []).join(', ') || 'none'})`}`);
+    if (facts.shopify) console.log(`${pad}  Shopify product record present${facts.shopify.productId ? ` (product id ${facts.shopify.productId})` : ''}${facts.shopify.variants !== undefined ? `, ${facts.shopify.variants} variants${facts.shopify.skus && facts.shopify.skus.length ? ` skus ${facts.shopify.skus.join(', ')}` : ''}` : ''} — unread`);
+    if (facts.embedded && facts.embedded.length) console.log(`${pad}  embedded product data present: ${facts.embedded.join(', ')} — unread`);
+  }
+  const md = diagnosis.metadata || {};
+  const changed = metadataDiffers(md);
+  if (changed === null) {
+    console.log(`${pad}metadata: ${md.served ? 'only plain HTTP read the page' : md.rendered ? 'only the browser read the page' : 'the page was read neither way'}, so there is nothing to compare`);
+  } else {
+    console.log(`${pad}metadata, plain HTTP vs browser: ${changed.length ? `DIFFERS in ${changed.join(', ')}` : 'the same'}`);
+    for (const key of changed) {
+      const show = (v) => (Array.isArray(v) ? v.join(' | ') || '(none)' : v || '(none)');
+      const field = key === 'JSON-LD products' ? 'jsonLdProducts' : key;
+      console.log(`${pad}  served:   ${short(show(md.served[field]), 110)}`);
+      console.log(`${pad}  rendered: ${short(show(md.rendered[field]), 110)}`);
+    }
+  }
+  const codes = diagnosis.listingCodes || [];
+  const carrying = (diagnosis.refusals || []).filter((one) => one && codes.some((id) => String(one.url || '').toLowerCase().includes(id)));
+  console.log(`${pad}candidates whose URL carries a listing code: ${carrying.length}`);
+  const loadedButRefused = (diagnosis.refusals || []).filter((one) => one && one.pageLoadedIt);
+  if (loadedButRefused.length) {
+    console.log(`${pad}${loadedButRefused.length} image${loadedButRefused.length === 1 ? '' : 's'} the page itself loaded with a 200 were refused by the loadable check:`);
+    for (const one of loadedButRefused.slice(0, 4)) console.log(`${pad}  ${short(one.url, 90)} — ${one.why}`);
+  }
+  if (diagnosis.loadedByPage !== undefined) console.log(`${pad}the rendered page itself loaded ${diagnosis.loadedByPage} image${diagnosis.loadedByPage === 1 ? '' : 's'} with a 200`);
+
+  const likely = likelyProductRefusals(diagnosis.refusals, 8);
+  if (likely.length) {
+    console.log(`${pad}the candidates that could have been the product photo, and what stopped each:`);
+    for (const one of likely) {
+      console.log(`${pad}  [${one.gate}] ${one.source}${one.pageLoadedIt ? ' — the page itself loaded this image' : ''}`);
+      console.log(`${pad}      ${short(one.url, 110)}`);
+      console.log(`${pad}      ${one.why}`);
+    }
+  } else {
+    console.log(`${pad}no candidate came from anything the page publishes as its product image`);
+  }
+}
+
+function recordDiagnosis(entry) {
+  DIAGNOSIS_LOG.push(entry);
+}
+
+function writeDiagnosisFile() {
+  const rollup = tallyRefusals(DIAGNOSIS_LOG.flatMap((one) => (one.diagnosis && one.diagnosis.refusals) || []));
+  const byListing = DIAGNOSIS_LOG.map((one) => {
+    const tally = tallyRefusals((one.diagnosis && one.diagnosis.refusals) || []);
+    return {
+      rowId: one.rowId,
+      listing: one.listing,
+      title: one.title || null,
+      verdict: one.verdict,
+      why: typeof one.why === 'string' ? one.why : JSON.stringify(one.why),
+      main: tally.main,
+      byCategory: tally.byCategory,
+      bySource: tally.bySource,
+      siteAssetLike: tally.siteAssetLike,
+      listingCodes: one.diagnosis ? one.diagnosis.listingCodes : [],
+      canonical: one.diagnosis ? one.diagnosis.canonical : null,
+      canonicalMatchesListing: one.diagnosis ? one.diagnosis.canonicalMatchesListing : null,
+      page: one.diagnosis ? one.diagnosis.page : null,
+      loadedByPage: one.diagnosis ? one.diagnosis.loadedByPage : null,
+      metadata: one.diagnosis ? one.diagnosis.metadata || null : null,
+      metadataDiffers: one.diagnosis ? metadataDiffers(one.diagnosis.metadata) : null,
+      likelyProduct: likelyProductRefusals(one.diagnosis && one.diagnosis.refusals, 20),
+      refusals: one.diagnosis ? one.diagnosis.refusals : []
+    };
+  });
+  fs.writeFileSync(DIAGNOSIS_FILE, JSON.stringify({
+    createdAt: new Date().toISOString(),
+    note: 'temporary image-gate diagnostics; nothing in here decided anything',
+    rollup,
+    byListing
+  }, null, 2));
+  return { file: DIAGNOSIS_FILE, rollup, listings: byListing.length };
+}
+
+function printDiagnosisRollup() {
+  const all = DIAGNOSIS_LOG.flatMap((one) => (one.diagnosis && one.diagnosis.refusals) || []);
+  const tally = tallyRefusals(all);
+  const likely = tallyRefusals(likelyProductRefusals(all, Infinity));
+  console.log(`  IMAGE DIAGNOSIS, whole run — ${DIAGNOSIS_LOG.length} listing page${DIAGNOSIS_LOG.length === 1 ? '' : 's'} read, ${tally.total} candidates refused:`);
+  for (const [category, n] of Object.entries(tally.byCategory).sort((a, b) => b[1] - a[1])) {
+    console.log(`     ${String(n).padStart(6)}  ${category}`);
+  }
+  console.log(`  of which ${likely.total} came from what a page publishes as its product image (JSON-LD, og/twitter, preload, gallery):`);
+  for (const [category, n] of Object.entries(likely.byCategory).sort((a, b) => b[1] - a[1])) {
+    console.log(`     ${String(n).padStart(6)}  ${category}`);
+  }
+}
+
 /* ---------- one row ---------- */
 
 /* Walks candidates in order and returns the first that clears every
@@ -1576,7 +1922,9 @@ async function firstVerifiable(candidates, row, fetcher, within) {
      "none of them worked" is not a diagnosis — which gate stopped which
      candidate is what says whether the page was read wrong, the wrong
      product was offered, or the host refused to serve us */
-  const note = (candidate, gate, why) => ({ url: candidate.url, from: candidate.from, gate, why });
+  /* diagnostics: the same four fields, plus a category and a source the
+     tally reads — nothing below looks at them */
+  const note = (candidate, gate, why) => diagnosedRefusal(candidate, gate, why);
 
   /* The two gates that need nothing from the network are decided first,
      in order and for free. A lane is a network operation, and spending
@@ -1629,7 +1977,16 @@ async function firstVerifiable(candidates, row, fetcher, within) {
   return { refusals: decided.map((one) => one.refusal || loadRefusals.get(one)) };
 }
 
+/* diagnostics: the verdict is resolveRowInner's, untouched; this only
+   hangs what the gates saw off the side of it */
 async function resolveRow(row, within) {
+  const diagnosis = { listingCodes: identifiersFrom(row.productUrl), canonical: null, page: {}, refusals: [] };
+  const result = await resolveRowInner(row, within, diagnosis);
+  diagnosis.canonicalMatchesListing = diagnosis.canonical ? samePage(diagnosis.canonical, row.productUrl) : null;
+  return Object.assign(result, { diagnosis });
+}
+
+async function resolveRowInner(row, within, diagnosis) {
   const budget = within || budgetOf(ROW_BUDGET);
   const notes = [];
   let facts = { name: null, brand: null };
@@ -1641,6 +1998,13 @@ async function resolveRow(row, within) {
   let evidence = [];
 
   if (page.html) {
+    diagnosis.page.served = pageFactsFromHtml(page.html);
+    diagnosis.canonical = canonicalOf(page.html);
+    diagnosis.metadata = diagnosis.metadata || {};
+    diagnosis.metadata.served = metadataOf(canonicalOf(page.html), {
+      'og:image': metaContent(page.html, 'og:image'),
+      'og:title': metaContent(page.html, 'og:title')
+    }, jsonLdNodes(page.html));
     facts = factsFromHtml(page.html);
     /* what this page says about its own product, kept whether or not a
        photo comes out of it: the semantic gate asks for it afterwards */
@@ -1649,6 +2013,7 @@ async function resolveRow(row, within) {
     notes.push(`plain HTTP: ${candidates.length} candidate${candidates.length === 1 ? '' : 's'}`);
     if (candidates.length) {
       served = await firstVerifiable(candidates, row, null, budget);
+      diagnosis.refusals.push(...(served.refusals || []));
       if (served.url) return { id: row.id, verdict: 'VERIFIED', why: served.why, url: served.url, from: served.from, identity: served.identity, facts, evidence, notes };
     }
   } else if (page.blocked) {
@@ -1692,6 +2057,12 @@ async function resolveRow(row, within) {
   const shut = rendered.close || (async () => {});
   let found;
   try {
+    diagnosis.page.rendered = pageFactsFromRendered(rendered.seen);
+    diagnosis.metadata = diagnosis.metadata || {};
+    diagnosis.metadata.rendered = metadataOf(rendered.seen.canonical, rendered.seen.metas || {},
+      (rendered.seen.jsonld || []).flatMap((block) => parseLdBlock(block)));
+    diagnosis.canonical = rendered.seen.canonical || diagnosis.canonical;
+    diagnosis.loadedByPage = (rendered.loaded || []).length;
     facts = factsFromRendered(rendered.seen);
     /* the rendered page knows which text belongs to the product, because
        it can ask the DOM rather than guess from markup */
@@ -1703,6 +2074,14 @@ async function resolveRow(row, within) {
     }
 
     found = await firstVerifiable(candidates, row, rendered.verify, budget);
+    /* diagnostics: an image the page itself loaded with a 200 and the
+       loadable gate still refused is a refusal of the CHECK, not of the
+       image, and is marked so the tally can tell the two apart */
+    const pageLoaded = new Set(rendered.loaded || []);
+    for (const one of found.refusals || []) {
+      if (one && one.gate === 'loadable' && pageLoaded.has(one.url)) one.pageLoadedIt = true;
+      diagnosis.refusals.push(one);
+    }
   } finally {
     await shut();
   }
@@ -1821,6 +2200,13 @@ async function inspectCandidate(productUrl, forId) {
     for (const refusal of (result.refusals || []).slice(0, 12)) {
       console.log(`  ${''.padEnd(15)}   [${refusal.gate}] ${short(refusal.url)}`);
       console.log(`  ${''.padEnd(15)}     from ${refusal.from} — ${refusal.why}`);
+    }
+    /* diagnostics */
+    if (diagnosing) {
+      console.log('');
+      printImageDiagnosis(4, result.diagnosis);
+      recordDiagnosis({ rowId: forId || 'candidate', listing: productUrl, verdict: result.verdict, why: result.why, diagnosis: result.diagnosis });
+      console.log(`\n  Written to ${rel(writeDiagnosisFile().file)}.`);
     }
     console.log('\n  Not usable as a replacement.\n');
     return null;
@@ -3418,6 +3804,12 @@ async function discoverRow(row, taken, limit, options) {
       productUrl: product.productUrl
     }, budget);
 
+    /* diagnostics */
+    if (diagnosing) {
+      attempt.imageDiagnosis = result.diagnosis;
+      recordDiagnosis({ rowId: row.id, listing: product.productUrl, title: product.title, verdict: result.verdict, why: result.why, diagnosis: result.diagnosis });
+    }
+
     if (result.verdict !== 'VERIFIED') {
       attempt.why = result.why;
       return { ok: false };
@@ -4085,6 +4477,8 @@ async function main() {
         if (verdict.ok) {
           console.log(`  ${''.padEnd(17)}     ${short(attempt.url, 70)}`);
           console.log(`  ${''.padEnd(17)}     ${attempt.verified ? 'photo verified' : 'no photo'} — ${attempt.why}`);
+          /* diagnostics */
+          if (diagnosing && attempt.imageDiagnosis && !attempt.verified) printImageDiagnosis(23, attempt.imageDiagnosis);
         }
       }
 
@@ -4111,6 +4505,14 @@ async function main() {
     if (broken.length) {
       console.log(`  ${broken.length} row${broken.length === 1 ? '' : 's'} could not be read at all, and did not stop the rest:`);
       for (const one of broken) console.log(`     ${one.id} — ${one.why}`);
+    }
+
+    /* diagnostics */
+    if (diagnosing) {
+      console.log('');
+      printDiagnosisRollup();
+      const written = writeDiagnosisFile();
+      console.log(`  Every refusal, with its gate and source, is in ${rel(written.file)}.\n`);
     }
 
     /* What this run proved, written down beside the catalogue, so that
@@ -4308,6 +4710,8 @@ if (require.main === module) {
        becoming a slow run: a clock a row carries, and a few candidates
        read at once that still answer in the order they were ranked */
     budgetOf, raceInOrder, withCeiling, request, imageFetcherFor,
-    TIMEOUT, IMAGE_TIMEOUT, SEARCH_TIMEOUT, RENDER_BUDGET, ROW_BUDGET, LANES
+    TIMEOUT, IMAGE_TIMEOUT, SEARCH_TIMEOUT, RENDER_BUDGET, ROW_BUDGET, LANES,
+    /* TEMPORARY diagnostics: reporting only */
+    refusalCategory, evidenceSource, tallyRefusals, pageFactsFromHtml, likelyProductRefusals
   };
 }
