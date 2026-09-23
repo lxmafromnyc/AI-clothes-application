@@ -1221,21 +1221,103 @@ function walledRetailer() {
     assert.ok(Object.keys(offered.rejected).length, 'and the source says why it dropped them');
   });
 
-  await testAsync('with no source configured, discovery says so and writes nothing', async () => {
-    const before = fs.readFileSync(CATALOG);
-    const result = await run([
-      '--discover', '--only', 'sample-northfold-boxy-cotton-tee', '--write',
-      /* a report path with nothing at it, so this stays a test of what
-         happens with no source rather than of what was left lying
-         beside the catalogue by an earlier run */
-      '--report', path.join(TMP, 'no-source.json')
-    ], { env: withoutSources() });
-    const after = fs.readFileSync(CATALOG);
+  const catalogueRow = (id) => {
+    const row = extractor.readCatalog().rows.find((r) => r.id === id);
+    assert.ok(row, `no catalogue row has the id ${id}`);
+    return row;
+  };
 
-    assert.strictEqual(result.code, 0, result.stderr);
-    assert.match(result.stdout, /no product source is configured/);
-    assert.match(result.stdout, /rows already carry one and are not touched/);
-    assert.ok(before.equals(after), 'assets/catalog.js is byte-for-byte what it was');
+  async function withCatalogRestored(fn) {
+    const before = fs.readFileSync(CATALOG);
+    try {
+      return await fn(before);
+    } finally {
+      fs.writeFileSync(CATALOG, before);
+    }
+  }
+
+  /* A catalogue row that exists only for the length of one test: the
+     garment of a real row (so every semantic gate asks exactly what it
+     would of that row) under an id of its own, with no link and no
+     photo. A test that needs an unlinked row cannot borrow a real one,
+     because real rows get verified and linked — and a borrowed row that
+     has since been given a genuine photo turns a test of the gates into
+     a test of what the catalogue happens to hold today. */
+  const literal = (value) => {
+    if (value === null || value === undefined) return 'null';
+    if (Array.isArray(value)) return `[${value.map(literal).join(', ')}]`;
+    if (typeof value === 'number') return String(value);
+    return `'${String(value).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
+  };
+
+  const fixtureRow = (id, like) => {
+    const row = catalogueRow(like);
+    return {
+      id,
+      name: row.name,
+      brand: row.brand,
+      price: null,
+      productUrl: null,
+      imageUrl: null,
+      category: row.category,
+      style: Array.from(row.style || []),
+      occasion: Array.from(row.occasion || []),
+      fit: Array.from(row.fit || []),
+      colors: Array.from(row.colors || []),
+      sizes: Array.from(row.sizes || [])
+    };
+  };
+
+  /* restores the catalogue afterwards, like withCatalogRestored, and
+     hands the callback the catalogue as it stood WITH the fixture rows,
+     so "nothing else moved" is judged against what the run was given */
+  async function withFixtureRows(rows, fn) {
+    return withCatalogRestored(async () => {
+      const source = fs.readFileSync(CATALOG, 'utf8');
+      const start = source.indexOf('const DEMO_PRODUCTS = [');
+      assert.ok(start >= 0, 'assets/catalog.js no longer declares DEMO_PRODUCTS');
+      const end = source.indexOf('\n];', start);
+      assert.ok(end >= 0, 'could not find the end of DEMO_PRODUCTS');
+
+      const text = rows.map((row) => `  {\n${Object.entries(row)
+        .map(([field, value]) => `    ${field}: ${literal(value)}`)
+        .join(',\n')}\n  }`).join(',\n');
+      fs.writeFileSync(CATALOG, `${source.slice(0, end)},\n${text}${source.slice(end)}`);
+
+      const ids = extractor.readCatalog().rows.map((r) => r.id);
+      for (const row of rows) {
+        assert.strictEqual(ids.filter((id) => id === row.id).length, 1, `fixture row ${row.id} did not land once`);
+      }
+      return fn(fs.readFileSync(CATALOG));
+    });
+  }
+
+  await testAsync('with no source configured, discovery says so and writes nothing', async () => {
+    /* a row of the test's own with no link and no photo, so discovery
+       has something to look for however much of the real catalogue has
+       been photographed since — with nothing to look for it never asks
+       for a source, and "no source" would go unsaid */
+    const original = fs.readFileSync(CATALOG);
+    const fixture = fixtureRow('fixture-northfold-boxy-cotton-tee', 'sample-northfold-boxy-cotton-tee');
+    await withFixtureRows([fixture], async (before) => {
+      const result = await run([
+        '--discover', '--only', fixture.id, '--write',
+        /* a report path with nothing at it, so this stays a test of what
+           happens with no source rather than of what was left lying
+           beside the catalogue by an earlier run */
+        '--report', path.join(TMP, 'no-source.json')
+      ], { env: withoutSources() });
+      const after = fs.readFileSync(CATALOG);
+
+      assert.strictEqual(result.code, 0, result.stderr);
+      assert.match(result.stdout, /Looking for a real listing for 1 row that carries no photo/,
+        'discovery had nothing to look for, so this never reached the source');
+      assert.match(result.stdout, new RegExp(fixture.id));
+      assert.match(result.stdout, /no product source is configured/);
+      assert.match(result.stdout, /rows? already carry one and are not touched/);
+      assert.ok(before.equals(after), 'assets/catalog.js is byte-for-byte what it was');
+    });
+    assert.ok(fs.readFileSync(CATALOG).equals(original), 'the fixture row was left in assets/catalog.js');
   });
 
   await testAsync('discovery leaves the verified rows out of its list entirely', async () => {
@@ -1277,11 +1359,6 @@ function walledRetailer() {
      --------------------------------------------------------- */
   console.log('\n  — the semantic gate: the garment, not just the page\n');
 
-  const catalogueRow = (id) => {
-    const row = extractor.readCatalog().rows.find((r) => r.id === id);
-    assert.ok(row, `no catalogue row has the id ${id}`);
-    return row;
-  };
   const judge = (id, title) => extractor.semanticMatch(catalogueRow(id), { title });
 
   test('a fleece sweatpant is not answered with a trouser', () => {
@@ -3274,71 +3351,6 @@ function walledRetailer() {
   /* the catalogue is written to for real by these tests, because what is
      under test is the command rather than a string it might have
      produced. It goes back byte for byte afterwards, whatever happens. */
-  async function withCatalogRestored(fn) {
-    const before = fs.readFileSync(CATALOG);
-    try {
-      return await fn(before);
-    } finally {
-      fs.writeFileSync(CATALOG, before);
-    }
-  }
-
-  /* A catalogue row that exists only for the length of one test: the
-     garment of a real row (so every semantic gate asks exactly what it
-     would of that row) under an id of its own, with no link and no
-     photo. A test that needs an unlinked row cannot borrow a real one,
-     because real rows get verified and linked — and a borrowed row that
-     has since been given a genuine photo turns a test of the gates into
-     a test of what the catalogue happens to hold today. */
-  const literal = (value) => {
-    if (value === null || value === undefined) return 'null';
-    if (Array.isArray(value)) return `[${value.map(literal).join(', ')}]`;
-    if (typeof value === 'number') return String(value);
-    return `'${String(value).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
-  };
-
-  const fixtureRow = (id, like) => {
-    const row = catalogueRow(like);
-    return {
-      id,
-      name: row.name,
-      brand: row.brand,
-      price: null,
-      productUrl: null,
-      imageUrl: null,
-      category: row.category,
-      style: Array.from(row.style || []),
-      occasion: Array.from(row.occasion || []),
-      fit: Array.from(row.fit || []),
-      colors: Array.from(row.colors || []),
-      sizes: Array.from(row.sizes || [])
-    };
-  };
-
-  /* restores the catalogue afterwards, like withCatalogRestored, and
-     hands the callback the catalogue as it stood WITH the fixture rows,
-     so "nothing else moved" is judged against what the run was given */
-  async function withFixtureRows(rows, fn) {
-    return withCatalogRestored(async () => {
-      const source = fs.readFileSync(CATALOG, 'utf8');
-      const start = source.indexOf('const DEMO_PRODUCTS = [');
-      assert.ok(start >= 0, 'assets/catalog.js no longer declares DEMO_PRODUCTS');
-      const end = source.indexOf('\n];', start);
-      assert.ok(end >= 0, 'could not find the end of DEMO_PRODUCTS');
-
-      const text = rows.map((row) => `  {\n${Object.entries(row)
-        .map(([field, value]) => `    ${field}: ${literal(value)}`)
-        .join(',\n')}\n  }`).join(',\n');
-      fs.writeFileSync(CATALOG, `${source.slice(0, end)},\n${text}${source.slice(end)}`);
-
-      const ids = extractor.readCatalog().rows.map((r) => r.id);
-      for (const row of rows) {
-        assert.strictEqual(ids.filter((id) => id === row.id).length, 1, `fixture row ${row.id} did not land once`);
-      }
-      return fn(fs.readFileSync(CATALOG));
-    });
-  }
-
   const reportWith = (entries, extra) => Object.assign({
     version: extractor.REPORT_VERSION,
     createdAt: new Date().toISOString(),
@@ -3736,18 +3748,26 @@ function walledRetailer() {
   });
 
   await testAsync('with no report saved at all, --discover still means go and find out', async () => {
-    const before = fs.readFileSync(CATALOG);
-    const result = await run([
-      '--discover', '--write',
-      '--only', 'sample-northfold-boxy-cotton-tee',
-      '--report', path.join(TMP, 'nothing-was-ever-here.json')
-    ], { env: withoutSources() });
+    /* its own unlinked row, so "go and find out" has something to find
+       out about — see the no-source test above */
+    const original = fs.readFileSync(CATALOG);
+    const fixture = fixtureRow('fixture-northfold-boxy-cotton-tee', 'sample-northfold-boxy-cotton-tee');
+    await withFixtureRows([fixture], async (before) => {
+      const result = await run([
+        '--discover', '--write',
+        '--only', fixture.id,
+        '--report', path.join(TMP, 'nothing-was-ever-here.json')
+      ], { env: withoutSources() });
 
-    assert.strictEqual(result.code, 0, result.stderr);
-    assert.match(result.stdout, /No discovery report at/);
-    assert.match(result.stdout, /Looking for a real listing/, 'with nothing saved it has to go and look');
-    assert.match(result.stdout, /no product source is configured/);
-    assert.ok(fs.readFileSync(CATALOG).equals(before), 'and it wrote nothing, having verified nothing');
+      assert.strictEqual(result.code, 0, result.stderr);
+      assert.match(result.stdout, /No discovery report at/);
+      assert.match(result.stdout, /Looking for a real listing for 1 row that carries no photo/,
+        'with nothing saved it has to go and look');
+      assert.match(result.stdout, new RegExp(fixture.id));
+      assert.match(result.stdout, /no product source is configured/);
+      assert.ok(fs.readFileSync(CATALOG).equals(before), 'and it wrote nothing, having verified nothing');
+    });
+    assert.ok(fs.readFileSync(CATALOG).equals(original), 'the fixture row was left in assets/catalog.js');
   });
 
   await testAsync('the plain path leaves a discovery report alone, and says it is there', async () => {
