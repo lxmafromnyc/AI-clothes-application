@@ -1908,8 +1908,18 @@ function pageFactsFromHtml(html) {
   const text = String(html || '');
   const shopifyId = text.match(/"product"\s*:\s*\{\s*"id"\s*:\s*(\d{6,})/);
   return pageFactsFrom(jsonLdNodes(text), {
+    /* what was actually seen, named: a page that only loads images from
+       Shopify's CDN is a Shopify store, not a page carrying a record */
     shopify: /ShopifyAnalytics|Shopify\.shop|cdn\.shopify\.com|\/cdn\/shop\//.test(text)
-      ? { productId: shopifyId ? shopifyId[1] : null }
+      ? {
+        productId: shopifyId ? shopifyId[1] : null,
+        signals: [
+          /ShopifyAnalytics/.test(text) && 'ShopifyAnalytics',
+          /Shopify\.shop/.test(text) && 'Shopify.shop',
+          /cdn\.shopify\.com|\/cdn\/shop\//.test(text) && 'Shopify CDN URLs',
+          shopifyId && '"product":{"id":…}'
+        ].filter(Boolean)
+      }
       : null,
     embedded: EMBEDDED_MARKERS.filter((marker) => text.includes(marker))
   });
@@ -1943,6 +1953,64 @@ function metadataDiffers(metadata) {
   }
   if (JSON.stringify(metadata.served.jsonLdProducts) !== JSON.stringify(metadata.rendered.jsonLdProducts)) changed.push('JSON-LD products');
   return changed;
+}
+
+/* Where a page carries the listing's own product, found by its handle
+   rather than by guessing a framework. Every <script> whose text names
+   the handle is described: its attributes, whether it parses as JSON,
+   and — for JSON — the path to each object whose handle is this one and
+   the keys that object carries; otherwise the text around each mention,
+   so the real structure can be read before anything is built on it.
+   Reporting only. */
+function recordCapture(html, productUrl) {
+  const listing = shopifyHandle(productUrl);
+  if (!listing || !html) return null;
+  const handle = listing.handle;
+  const out = { handle, scripts: [] };
+  const re = /<script\b([^>]*)>([\s\S]*?)<\/script>/gi;
+  let m;
+  let index = 0;
+  while ((m = re.exec(String(html)))) {
+    index += 1;
+    const attrs = m[1].trim().replace(/\s+/g, ' ').slice(0, 200);
+    const body = m[2];
+    if (!body.includes(handle)) continue;
+    const entry = { index, attrs, length: body.length, mentions: 0, json: false, objects: [], around: [] };
+    let at = body.indexOf(handle);
+    while (at >= 0) {
+      entry.mentions += 1;
+      if (entry.around.length < 4) {
+        entry.around.push(body.slice(Math.max(0, at - 220), at + handle.length + 220).replace(/\s+/g, ' '));
+      }
+      at = body.indexOf(handle, at + handle.length);
+    }
+    let parsed;
+    try { parsed = JSON.parse(body.trim()); entry.json = true; } catch (err) { parsed = undefined; }
+    if (entry.json) {
+      const stack = [{ node: parsed, path: '$' }];
+      let seen = 0;
+      while (stack.length && seen < 20000) {
+        seen += 1;
+        const { node, path: where } = stack.pop();
+        if (!node || typeof node !== 'object') continue;
+        if (!Array.isArray(node) && typeof node.handle === 'string' && node.handle.toLowerCase() === handle && entry.objects.length < 6) {
+          entry.objects.push({
+            path: where,
+            keys: Object.keys(node).slice(0, 40),
+            id: node.id === undefined ? null : String(node.id).slice(0, 60),
+            title: typeof node.title === 'string' ? node.title.slice(0, 120) : null
+          });
+        }
+        for (const [key, value] of Object.entries(node)) {
+          if (value && typeof value === 'object') stack.push({ node: value, path: `${where}${Array.isArray(node) ? `[${key}]` : `.${key}`}` });
+        }
+      }
+      entry.around = entry.around.slice(0, 1);
+    }
+    out.scripts.push(entry);
+    if (out.scripts.length >= 12) break;
+  }
+  return out;
 }
 
 /* one listing's refusals, counted two ways */
@@ -2005,8 +2073,21 @@ function printImageDiagnosis(indent, diagnosis) {
         `${p.variants ? `, ${p.variants} variants (${p.variantImages} variant images, unread)` : ''}`;
     });
     console.log(`${pad}${label} page: JSON-LD ${products.length ? products.join(' | ') : `has no Product node (types: ${(facts.jsonLdTypes || []).join(', ') || 'none'})`}`);
-    if (facts.shopify) console.log(`${pad}  Shopify product record present${facts.shopify.productId ? ` (product id ${facts.shopify.productId})` : ''}${facts.shopify.variants !== undefined ? `, ${facts.shopify.variants} variants${facts.shopify.skus && facts.shopify.skus.length ? ` skus ${facts.shopify.skus.join(', ')}` : ''}` : ''} (the page's own copy; the gate reads /products/<handle>.js instead)`);
+    if (facts.shopify && facts.shopify.signals) {
+      console.log(`${pad}  Shopify signals: ${facts.shopify.signals.join(', ')}${facts.shopify.productId ? ` — product id ${facts.shopify.productId}` : ' — no product id seen, so no record is known to be here'}`);
+    } else if (facts.shopify) console.log(`${pad}  ShopifyAnalytics.meta.product present${facts.shopify.productId ? ` (product id ${facts.shopify.productId})` : ''}${facts.shopify.variants !== undefined ? `, ${facts.shopify.variants} variants${facts.shopify.skus && facts.shopify.skus.length ? ` skus ${facts.shopify.skus.join(', ')}` : ''}` : ''} (the page's own copy; the gate reads /products/<handle>.js instead)`);
     if (facts.embedded && facts.embedded.length) console.log(`${pad}  embedded product data present: ${facts.embedded.join(', ')} — unread`);
+  }
+  const capture = diagnosis.recordCapture;
+  if (capture) {
+    console.log(`${pad}where the served page names the handle ${capture.handle}: ${capture.scripts.length ? `${capture.scripts.length} script${capture.scripts.length === 1 ? '' : 's'}` : 'in no <script> at all'}`);
+    for (const one of capture.scripts) {
+      console.log(`${pad}  <script ${one.attrs || '(no attributes)'}> #${one.index}, ${one.length} chars, ${one.mentions} mention${one.mentions === 1 ? '' : 's'}, ${one.json ? 'JSON' : 'not JSON'}`);
+      for (const obj of one.objects) {
+        console.log(`${pad}    ${obj.path}: id ${obj.id}, title ${JSON.stringify(obj.title)}, keys ${obj.keys.join(', ')}`);
+      }
+      if (!one.objects.length && one.around.length) console.log(`${pad}    …${short(one.around[0], 160)}…`);
+    }
   }
   const md = diagnosis.metadata || {};
   const changed = metadataDiffers(md);
@@ -2068,6 +2149,7 @@ function writeDiagnosisFile() {
       page: one.diagnosis ? one.diagnosis.page : null,
       loadedByPage: one.diagnosis ? one.diagnosis.loadedByPage : null,
       productRecord: one.diagnosis ? one.diagnosis.productRecord || null : null,
+      recordCapture: one.diagnosis ? one.diagnosis.recordCapture || null : null,
       metadata: one.diagnosis ? one.diagnosis.metadata || null : null,
       metadataDiffers: one.diagnosis ? metadataDiffers(one.diagnosis.metadata) : null,
       likelyProduct: likelyProductRefusals(one.diagnosis && one.diagnosis.refusals, 20),
@@ -2184,6 +2266,7 @@ async function resolveRowInner(row, within, diagnosis, options) {
 
   if (page.html) {
     diagnosis.page.served = pageFactsFromHtml(page.html);
+    diagnosis.recordCapture = recordCapture(page.html, row.productUrl);
     diagnosis.canonical = canonicalOf(page.html);
     diagnosis.metadata = diagnosis.metadata || {};
     diagnosis.metadata.served = metadataOf(canonicalOf(page.html), {
