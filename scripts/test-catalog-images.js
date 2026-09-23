@@ -50,9 +50,26 @@ const CATALOG = path.join(__dirname, '..', 'assets', 'catalog.js');
    a report belonging to a real --discover run. */
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'fynd-catalog-images-'));
 
-async function run(argv) {
+/* The environment of a run that has no product source at all. The
+   subprocess inherits this process's environment, which on a developer's
+   machine carries whatever keys .env.local exported — and a leftover
+   PRODUCT_SOURCE from an earlier test. A test of "nothing is configured"
+   cannot lean on either being absent, so every variable that selects or
+   unlocks a source is removed here rather than hoped away. */
+const SOURCE_ENV = /^(PRODUCT_SOURCE|OPENWEBNINJA_.*|SERPAPI_.*|SERPER_.*|ETSY_.*|EXAMPLE_API_KEY)$/;
+
+function withoutSources() {
+  const env = {};
+  for (const [name, value] of Object.entries(process.env)) {
+    if (!SOURCE_ENV.test(name.toUpperCase())) env[name] = value;
+  }
+  return env;
+}
+
+async function run(argv, options) {
+  const env = (options && options.env) || process.env;
   try {
-    const { stdout, stderr } = await execFile(process.execPath, [SCRIPT, ...argv], { env: process.env, timeout: 120000 });
+    const { stdout, stderr } = await execFile(process.execPath, [SCRIPT, ...argv], { env, timeout: 120000 });
     return { code: 0, stdout, stderr };
   } catch (err) {
     return { code: err.code === undefined ? 1 : err.code, stdout: err.stdout || '', stderr: err.stderr || String(err.message) };
@@ -1212,7 +1229,7 @@ function walledRetailer() {
          happens with no source rather than of what was left lying
          beside the catalogue by an earlier run */
       '--report', path.join(TMP, 'no-source.json')
-    ]);
+    ], { env: withoutSources() });
     const after = fs.readFileSync(CATALOG);
 
     assert.strictEqual(result.code, 0, result.stderr);
@@ -3266,6 +3283,62 @@ function walledRetailer() {
     }
   }
 
+  /* A catalogue row that exists only for the length of one test: the
+     garment of a real row (so every semantic gate asks exactly what it
+     would of that row) under an id of its own, with no link and no
+     photo. A test that needs an unlinked row cannot borrow a real one,
+     because real rows get verified and linked — and a borrowed row that
+     has since been given a genuine photo turns a test of the gates into
+     a test of what the catalogue happens to hold today. */
+  const literal = (value) => {
+    if (value === null || value === undefined) return 'null';
+    if (Array.isArray(value)) return `[${value.map(literal).join(', ')}]`;
+    if (typeof value === 'number') return String(value);
+    return `'${String(value).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
+  };
+
+  const fixtureRow = (id, like) => {
+    const row = catalogueRow(like);
+    return {
+      id,
+      name: row.name,
+      brand: row.brand,
+      price: null,
+      productUrl: null,
+      imageUrl: null,
+      category: row.category,
+      style: Array.from(row.style || []),
+      occasion: Array.from(row.occasion || []),
+      fit: Array.from(row.fit || []),
+      colors: Array.from(row.colors || []),
+      sizes: Array.from(row.sizes || [])
+    };
+  };
+
+  /* restores the catalogue afterwards, like withCatalogRestored, and
+     hands the callback the catalogue as it stood WITH the fixture rows,
+     so "nothing else moved" is judged against what the run was given */
+  async function withFixtureRows(rows, fn) {
+    return withCatalogRestored(async () => {
+      const source = fs.readFileSync(CATALOG, 'utf8');
+      const start = source.indexOf('const DEMO_PRODUCTS = [');
+      assert.ok(start >= 0, 'assets/catalog.js no longer declares DEMO_PRODUCTS');
+      const end = source.indexOf('\n];', start);
+      assert.ok(end >= 0, 'could not find the end of DEMO_PRODUCTS');
+
+      const text = rows.map((row) => `  {\n${Object.entries(row)
+        .map(([field, value]) => `    ${field}: ${literal(value)}`)
+        .join(',\n')}\n  }`).join(',\n');
+      fs.writeFileSync(CATALOG, `${source.slice(0, end)},\n${text}${source.slice(end)}`);
+
+      const ids = extractor.readCatalog().rows.map((r) => r.id);
+      for (const row of rows) {
+        assert.strictEqual(ids.filter((id) => id === row.id).length, 1, `fixture row ${row.id} did not land once`);
+      }
+      return fn(fs.readFileSync(CATALOG));
+    });
+  }
+
   const reportWith = (entries, extra) => Object.assign({
     version: extractor.REPORT_VERSION,
     createdAt: new Date().toISOString(),
@@ -3426,13 +3499,26 @@ function walledRetailer() {
 
   await testAsync('an entry that cannot answer for itself is refused rather than written', async () => {
     assert.ok(verified, 'the test above produced no verified entry to apply');
-    await withCatalogRestored(async (before) => {
+    /* each tampered entry is aimed at a fixture row wearing a real row's
+       garment, never at the real row itself: a real row may since have
+       been linked for real, and then a refusal would be indistinguishable
+       from a row that was simply left as it was */
+    const like = {
+      'fixture-halden-merino-crew-knit': 'sample-halden-merino-crew-knit',
+      'fixture-terrace-linen-camp-shirt': 'sample-terrace-linen-camp-shirt',
+      'fixture-coveworks-wide-leg-trouser': 'sample-coveworks-wide-leg-trouser',
+      'fixture-northfold-boxy-cotton-tee': 'sample-northfold-boxy-cotton-tee',
+      'fixture-solstice-ribbed-knit-skirt': 'sample-solstice-ribbed-knit-skirt',
+      'fixture-kinfield-poplin-shirt': 'sample-kinfield-poplin-shirt'
+    };
+    const fixtures = Object.entries(like).map(([id, real]) => fixtureRow(id, real));
+    await withFixtureRows(fixtures, async (before) => {
       /* Six ways a report can say something it cannot prove. Every one
          of them is decidable without a retailer, which is exactly why
          they are decided again here rather than taken from the file. */
       const tampered = [
         {
-          id: 'sample-halden-merino-crew-knit',
+          id: 'fixture-halden-merino-crew-knit',
           verified: false,
           productUrl: 'https://shop.example.com/p/112233',
           imageUrl: 'https://cdn.example.com/img/112233-hero.jpg',
@@ -3440,11 +3526,11 @@ function walledRetailer() {
           identity: { ok: true, via: 'image-url', code: '112233' },
           listingName: 'Merino Crew Knit',
           provedOnPage: [],
-          row: snapshot('sample-halden-merino-crew-knit')
+          row: snapshot('fixture-halden-merino-crew-knit')
         },
         {
           /* a listing on an aggregator: the soundness gate, again */
-          id: 'sample-terrace-linen-camp-shirt',
+          id: 'fixture-terrace-linen-camp-shirt',
           verified: true,
           productUrl: 'https://www.google.com/shopping/product/223344',
           imageUrl: 'https://cdn.example.com/img/223344-hero.jpg',
@@ -3452,11 +3538,11 @@ function walledRetailer() {
           identity: { ok: true, via: 'image-url', code: '223344' },
           listingName: 'Linen Camp Shirt',
           provedOnPage: [],
-          row: snapshot('sample-terrace-linen-camp-shirt')
+          row: snapshot('fixture-terrace-linen-camp-shirt')
         },
         {
           /* a photo tied to nothing: the evidence gate, again */
-          id: 'sample-coveworks-wide-leg-trouser',
+          id: 'fixture-coveworks-wide-leg-trouser',
           verified: true,
           productUrl: 'https://shop.example.com/p/334455',
           imageUrl: 'https://cdn.example.com/media/anonymous.jpg',
@@ -3464,12 +3550,12 @@ function walledRetailer() {
           identity: null,
           listingName: 'Wide Leg Trouser',
           provedOnPage: [],
-          row: snapshot('sample-coveworks-wide-leg-trouser')
+          row: snapshot('fixture-coveworks-wide-leg-trouser')
         },
         {
           /* a note that is not what its finding produces: edited on one
              side and not the other, and no longer what was proved */
-          id: 'sample-northfold-boxy-cotton-tee',
+          id: 'fixture-northfold-boxy-cotton-tee',
           verified: true,
           productUrl: 'https://shop.example.com/p/445566',
           imageUrl: 'https://cdn.example.com/media/anonymous.jpg',
@@ -3477,11 +3563,11 @@ function walledRetailer() {
           identity: { ok: true, via: 'json-ld-sku', sku: '445566' },
           listingName: 'Boxy Cotton Tee',
           provedOnPage: [],
-          row: snapshot('sample-northfold-boxy-cotton-tee')
+          row: snapshot('fixture-northfold-boxy-cotton-tee')
         },
         {
           /* the wrong garment: the semantic gate's title stage, again */
-          id: 'sample-solstice-ribbed-knit-skirt',
+          id: 'fixture-solstice-ribbed-knit-skirt',
           verified: true,
           productUrl: 'https://shop.example.com/p/556677',
           imageUrl: 'https://cdn.example.com/img/556677-hero.jpg',
@@ -3489,12 +3575,12 @@ function walledRetailer() {
           identity: { ok: true, via: 'image-url', code: '556677' },
           listingName: 'Chunky Knit Jumper',
           provedOnPage: [],
-          row: snapshot('sample-solstice-ribbed-knit-skirt')
+          row: snapshot('fixture-solstice-ribbed-knit-skirt')
         },
         {
           /* a row that has been renamed since: this listing was never
              held against the row the catalogue now carries */
-          id: 'sample-kinfield-poplin-shirt',
+          id: 'fixture-kinfield-poplin-shirt',
           verified: true,
           productUrl: 'https://shop.example.com/p/667788',
           imageUrl: 'https://cdn.example.com/img/667788-hero.jpg',
@@ -3502,7 +3588,7 @@ function walledRetailer() {
           identity: { ok: true, via: 'image-url', code: '667788' },
           listingName: 'Poplin Shirt',
           provedOnPage: [],
-          row: Object.assign(snapshot('sample-kinfield-poplin-shirt'), { name: 'Something Else Entirely' })
+          row: Object.assign(snapshot('fixture-kinfield-poplin-shirt'), { name: 'Something Else Entirely' })
         }
       ];
 
@@ -3549,12 +3635,16 @@ function walledRetailer() {
 
   await testAsync('--only applies one row of a report and leaves the rest of it applicable', async () => {
     assert.ok(verified, 'the test above produced no verified entry to apply');
-    await withCatalogRestored(async () => {
+    /* the second row is a fixture wearing the merino knit's garment, not
+       the merino knit itself: that row has since been linked for real,
+       and this needs a row that is unlinked because the test made it so */
+    const fixture = fixtureRow('fixture-halden-merino-crew-knit', 'sample-halden-merino-crew-knit');
+    await withFixtureRows([fixture], async () => {
       /* a second entry that answers every gate this side can ask: its
          photo carries its listing's code, and the shop calls it what
          the row means */
       const second = {
-        id: 'sample-halden-merino-crew-knit',
+        id: fixture.id,
         verified: true,
         productUrl: 'https://www.example-shop.com/p/merino-crew-knit/778899',
         imageUrl: 'https://cdn.example-shop.com/img/778899-hero.jpg',
@@ -3562,7 +3652,7 @@ function walledRetailer() {
         identity: { ok: true, via: 'image-url', code: '778899' },
         listingName: 'Merino Crew Knit',
         provedOnPage: [],
-        row: snapshot('sample-halden-merino-crew-knit')
+        row: snapshot(fixture.id)
       };
 
       const file = path.join(TMP, 'only.json');
@@ -3651,7 +3741,7 @@ function walledRetailer() {
       '--discover', '--write',
       '--only', 'sample-northfold-boxy-cotton-tee',
       '--report', path.join(TMP, 'nothing-was-ever-here.json')
-    ]);
+    ], { env: withoutSources() });
 
     assert.strictEqual(result.code, 0, result.stderr);
     assert.match(result.stdout, /No discovery report at/);
