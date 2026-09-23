@@ -1955,6 +1955,92 @@ function metadataDiffers(metadata) {
   return changed;
 }
 
+/* TEMPORARY capture limits: bounded windows, never the whole script */
+const CAPTURE_WINDOW = 2000;
+const CAPTURE_OCCURRENCES = 6;
+const CAPTURE_MARKERS = [
+  'gid://shopify/Product/',
+  'gid://shopify/ProductVariant/',
+  '"title"',
+  '"handle"',
+  '"images"',
+  '"featuredImage"',
+  '"media"',
+  '"variants"'
+];
+
+/* what kind of payload a script is, from what it says about itself */
+function payloadFramework(body) {
+  const head = body.slice(0, 400);
+  const whole = [
+    [/self\.__next_f\.push\(/, 'Next.js app-router flight data (self.__next_f.push)'],
+    [/__remixContext/, 'Remix (window.__remixContext)'],
+    [/__NEXT_DATA__/, 'Next.js pages-router (__NEXT_DATA__)'],
+    [/__NUXT__/, 'Nuxt (__NUXT__)'],
+    [/__INITIAL_STATE__|__PRELOADED_STATE__|__APOLLO_STATE__/, 'a framework state assignment'],
+    [/ShopifyAnalytics/, 'ShopifyAnalytics'],
+    [/Shopify\.theme|window\.Shopify\b/, 'Shopify theme globals']
+  ];
+  for (const [re, name] of whole) if (re.test(head)) return `${name} — named in its first 400 characters`;
+  for (const [re, name] of whole) if (re.test(body)) return `${name} — named further in`;
+  return 'unrecognised';
+}
+
+/* one handle mention, with the text either side and what lies near it */
+function occurrenceContext(body, at, handle) {
+  const from = Math.max(0, at - CAPTURE_WINDOW);
+  const to = Math.min(body.length, at + handle.length + CAPTURE_WINDOW);
+  const before = body.slice(from, at);
+  const after = body.slice(at + handle.length, to);
+
+  /* the nearest mention of each marker on either side, written plainly
+     or escaped inside a JS string (\"title\"), within the whole script */
+  const nearest = {};
+  for (const marker of CAPTURE_MARKERS) {
+    const forms = [marker];
+    if (marker.startsWith('"')) forms.push(marker.replace(/"/g, '\\"'));
+    let best = null;
+    for (const form of forms) {
+      const back = body.lastIndexOf(form, at);
+      const ahead = body.indexOf(form, at + handle.length);
+      for (const [pos, side] of [[back, 'before'], [ahead, 'after']]) {
+        if (pos < 0) continue;
+        const distance = side === 'before' ? at - pos : pos - (at + handle.length);
+        if (!best || distance < best.distance) {
+          best = {
+            side,
+            distance,
+            form: form === marker ? 'plain' : 'escaped',
+            snippet: body.slice(Math.max(0, pos - 80), Math.min(body.length, pos + form.length + 220))
+          };
+        }
+      }
+    }
+    nearest[marker] = best;
+  }
+
+  const window = before + handle + after;
+  const uniq = (list) => [...new Set(list)];
+  const contains = {
+    handle: window.includes(handle),
+    productIds: uniq(window.match(/gid:\/\/shopify\/Product\/\d+/g) || []).slice(0, 8),
+    variantIds: uniq(window.match(/gid:\/\/shopify\/ProductVariant\/\d+/g) || []).slice(0, 8),
+    titles: uniq([...window.matchAll(/\\?"title\\?"\s*:\s*\\?"([^"\\]{1,120})/g)].map((m) => m[1])).slice(0, 8),
+    imageUrls: uniq(window.match(/(?:https?:)?\/\/[^\s"'\\<>]+?\.(?:jpe?g|png|webp|avif|gif)(?:\?[^\s"'\\<>]*)?/gi) || []).slice(0, 12),
+    /* how the text is put together around it: whether objects open and
+       close inside the window, and which way the nesting leans */
+    boundaries: {
+      opens: (window.match(/\{/g) || []).length,
+      closes: (window.match(/\}/g) || []).length,
+      arrays: (window.match(/\[/g) || []).length,
+      flightChunks: (window.match(/self\.__next_f\.push/g) || []).length,
+      escapedQuotes: (window.match(/\\"/g) || []).length
+    }
+  };
+
+  return { at, before, after, nearest, contains };
+}
+
 /* Where a page carries the listing's own product, found by its handle
    rather than by guessing a framework. Every <script> whose text names
    the handle is described: its attributes, whether it parses as JSON,
@@ -1975,13 +2061,25 @@ function recordCapture(html, productUrl) {
     const attrs = m[1].trim().replace(/\s+/g, ' ').slice(0, 200);
     const body = m[2];
     if (!body.includes(handle)) continue;
-    const entry = { index, attrs, length: body.length, mentions: 0, json: false, objects: [], around: [] };
+    const entry = {
+      index,
+      attrs,
+      length: body.length,
+      mentions: 0,
+      json: false,
+      head: body.slice(0, 200),
+      framework: payloadFramework(body),
+      objects: [],
+      around: [],
+      occurrences: []
+    };
     let at = body.indexOf(handle);
     while (at >= 0) {
       entry.mentions += 1;
       if (entry.around.length < 4) {
         entry.around.push(body.slice(Math.max(0, at - 220), at + handle.length + 220).replace(/\s+/g, ' '));
       }
+      if (entry.occurrences.length < CAPTURE_OCCURRENCES) entry.occurrences.push(occurrenceContext(body, at, handle));
       at = body.indexOf(handle, at + handle.length);
     }
     let parsed;
@@ -2087,6 +2185,30 @@ function printImageDiagnosis(indent, diagnosis) {
         console.log(`${pad}    ${obj.path}: id ${obj.id}, title ${JSON.stringify(obj.title)}, keys ${obj.keys.join(', ')}`);
       }
       if (!one.objects.length && one.around.length) console.log(`${pad}    …${short(one.around[0], 160)}…`);
+      console.log(`${pad}    framework: ${one.framework}`);
+      console.log(`${pad}    first 200 characters:`);
+      console.log(`${pad}      ${JSON.stringify(one.head)}`);
+      one.occurrences.forEach((occ, n) => {
+        console.log(`${pad}    ── mention ${n + 1} of ${one.mentions}, at character ${occ.at} ──`);
+        const c = occ.contains;
+        console.log(`${pad}    in the ${CAPTURE_WINDOW}-character windows either side:`);
+        console.log(`${pad}      product ids: ${c.productIds.join(', ') || '(none)'}`);
+        console.log(`${pad}      variant ids: ${c.variantIds.length ? `${c.variantIds.length} — ${c.variantIds.slice(0, 3).join(', ')}` : '(none)'}`);
+        console.log(`${pad}      titles:      ${c.titles.map((t) => JSON.stringify(t)).join(', ') || '(none)'}`);
+        console.log(`${pad}      image urls:  ${c.imageUrls.length}${c.imageUrls.length ? ` — ${c.imageUrls.slice(0, 4).join('  ')}` : ''}`);
+        console.log(`${pad}      boundaries:  ${c.boundaries.opens} {, ${c.boundaries.closes} }, ${c.boundaries.arrays} [, ${c.boundaries.flightChunks} __next_f.push, ${c.boundaries.escapedQuotes} escaped quotes`);
+        console.log(`${pad}    nearest markers:`);
+        for (const [marker, near] of Object.entries(occ.nearest)) {
+          console.log(`${pad}      ${marker.padEnd(30)} ${near ? `${near.distance} chars ${near.side} (${near.form})` : 'not in this script'}`);
+          if (near) console.log(`${pad}        ${JSON.stringify(near.snippet.slice(0, 260))}`);
+        }
+        console.log(`${pad}    BEFORE (${occ.before.length} chars):`);
+        console.log(occ.before);
+        console.log(`${pad}    >>> ${capture.handle} <<<`);
+        console.log(`${pad}    AFTER (${occ.after.length} chars):`);
+        console.log(occ.after);
+        console.log('');
+      });
     }
   }
   const md = diagnosis.metadata || {};
