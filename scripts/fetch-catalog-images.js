@@ -1470,6 +1470,120 @@ function gatherInPage() {
     }
   } catch (err) { /* a probe that throws reports nothing */ }
 
+  /* TEMPORARY: the hydrated React Router / Remix runtime, searched for
+     this listing's handle. Bounded in depth and in nodes; a key that
+     sounds like a credential is neither entered nor reported; only key
+     NAMES and the id/handle/title/image-URL values of a matching
+     product are returned — never a whole object. */
+  try {
+    const handleMatch = location.pathname.match(/\/products\/([^/?#]+)/i);
+    const handle = handleMatch ? decodeURIComponent(handleMatch[1]).toLowerCase() : null;
+    const SECRET = /token|secret|password|passwd|cookie|credential|auth|session|api.?key|private|signature|env/i;
+    const IMAGE = /^(?:https?:)?\/\/[^\s"'<>]+\.(?:jpe?g|png|webp|avif|gif)(?:\?[^\s"'<>]*)?$/i;
+    const keysOf = (value) => {
+      if (!value || typeof value !== 'object') return null;
+      try { return Object.keys(value).filter((k) => !SECRET.test(k)).slice(0, 60); } catch (err) { return null; }
+    };
+    const describe = (value) => {
+      if (value === null || value === undefined) return String(value);
+      if (Array.isArray(value)) return `array(${value.length})`;
+      if (typeof value === 'object') {
+        const name = value.constructor && value.constructor.name;
+        return `${name && name !== 'Object' ? name : 'object'}{${(keysOf(value) || []).slice(0, 12).join(',')}}`;
+      }
+      return typeof value;
+    };
+    const runtime = { handle, globals: [], roots: {}, matches: [], searched: 0, truncated: false };
+    runtime.globals = Object.keys(window).filter((k) => /^__(react|remix|next|nuxt)/i.test(k)).slice(0, 30);
+
+    const roots = [
+      ['window.__reactRouterContext', window.__reactRouterContext],
+      ['window.__reactRouterContext.state', window.__reactRouterContext && window.__reactRouterContext.state],
+      ['window.__reactRouterContext.state.loaderData', window.__reactRouterContext && window.__reactRouterContext.state && window.__reactRouterContext.state.loaderData],
+      ['window.__reactRouterDataRouter', window.__reactRouterDataRouter],
+      ['window.__reactRouterDataRouter.state', window.__reactRouterDataRouter && window.__reactRouterDataRouter.state],
+      ['window.__reactRouterDataRouter.state.loaderData', window.__reactRouterDataRouter && window.__reactRouterDataRouter.state && window.__reactRouterDataRouter.state.loaderData],
+      ['window.__remixRouter.state.loaderData', window.__remixRouter && window.__remixRouter.state && window.__remixRouter.state.loaderData],
+      ['window.__remixContext.state.loaderData', window.__remixContext && window.__remixContext.state && window.__remixContext.state.loaderData]
+    ];
+    for (const [name, value] of roots) {
+      runtime.roots[name] = value === undefined ? 'absent' : { is: describe(value), keys: keysOf(value) };
+    }
+    /* what the streamed-payload plumbing is, by kind only */
+    if (window.__reactRouterContext) {
+      runtime.stream = {};
+      for (const key of ['stream', 'streamController', 'decoder', 'decode']) {
+        if (key in window.__reactRouterContext) runtime.stream[key] = describe(window.__reactRouterContext[key]);
+      }
+      runtime.stream.locked = window.__reactRouterContext.stream && 'locked' in window.__reactRouterContext.stream
+        ? Boolean(window.__reactRouterContext.stream.locked) : null;
+    }
+
+    /* the images inside a matched product, by path, a few levels down */
+    const imagesWithin = (root, base) => {
+      const found = [];
+      const stack = [{ node: root, path: base, depth: 0 }];
+      const seen = new WeakSet();
+      let budget = 4000;
+      while (stack.length && budget-- > 0 && found.length < 16) {
+        const { node, path, depth } = stack.pop();
+        if (!node || typeof node !== 'object' || seen.has(node)) continue;
+        seen.add(node);
+        for (const key of keysOf(node) || []) {
+          let value;
+          try { value = node[key]; } catch (err) { continue; }
+          const at = Array.isArray(node) ? `${path}[${key}]` : `${path}.${key}`;
+          if (typeof value === 'string' && IMAGE.test(value)) found.push({ path: at, url: value.slice(0, 300) });
+          else if (value && typeof value === 'object' && depth < 6) stack.push({ node: value, path: at, depth: depth + 1 });
+        }
+      }
+      return found;
+    };
+
+    if (handle) {
+      const seen = new WeakSet();
+      const queue = roots.filter(([, value]) => value && typeof value === 'object').map(([name, value]) => ({ node: value, path: name, depth: 0 }));
+      while (queue.length) {
+        if (runtime.searched >= 60000) { runtime.truncated = true; break; }
+        const { node, path, depth } = queue.shift();
+        if (!node || typeof node !== 'object' || seen.has(node)) continue;
+        seen.add(node);
+        runtime.searched += 1;
+        if (typeof Node !== 'undefined' && node instanceof Node) continue;
+        const keys = keysOf(node) || [];
+        let hit = false;
+        for (const key of keys) {
+          let value;
+          try { value = node[key]; } catch (err) { continue; }
+          if (typeof value === 'string' && value.toLowerCase() === handle) hit = true;
+          else if (value && typeof value === 'object' && depth < 14) {
+            queue.push({ node: value, path: Array.isArray(node) ? `${path}[${key}]` : `${path}.${key}`, depth: depth + 1 });
+          }
+        }
+        if (hit && runtime.matches.length < 12) {
+          const field = (key) => (typeof node[key] === 'string' || typeof node[key] === 'number' ? String(node[key]).slice(0, 200) : node[key] === undefined ? null : describe(node[key]));
+          const shapes = {};
+          for (const key of ['media', 'images', 'featuredImage', 'variants', 'selectedVariant', 'firstVariant']) {
+            if (key in node) shapes[key] = describe(node[key]);
+          }
+          runtime.matches.push({
+            path,
+            id: field('id'),
+            handle: field('handle'),
+            title: field('title'),
+            typename: field('__typename'),
+            keys,
+            shapes,
+            images: imagesWithin(node, path)
+          });
+        }
+      }
+    }
+    diagnostics.runtime = runtime;
+  } catch (err) {
+    diagnostics.runtime = { failed: String(err && err.message ? err.message : err).slice(0, 200) };
+  }
+
   return {
     canonical: text('link[rel="canonical"]', 'href') || metas['og:url'] || null,
     metas,
@@ -1955,6 +2069,27 @@ function metadataDiffers(metadata) {
   return changed;
 }
 
+/* TEMPORARY: every excerpt of page text is redacted before it is printed
+   or saved. A React Router page streams its loaders' data in the same
+   script as the product, and a root loader commonly carries env values —
+   a Storefront API token among them. So: the value of any credential-
+   named key, in `key: value`, `key=value` or the turbo-stream
+   `"key","value"` form; the known Shopify token shapes; JWTs and bearer
+   strings; and any long opaque hex or base64 run, because a turbo-stream
+   value can sit far from the key that names it. */
+const CREDENTIAL_KEY = '[A-Za-z0-9_$-]*(?:token|secret|password|passwd|api[_-]?key|apikey|auth|cookie|session|credential|signature|private)[A-Za-z0-9_$-]*';
+function redact(text) {
+  return String(text === undefined || text === null ? '' : text)
+    /* first, so a credential-named header does not take "Bearer" as its value */
+    .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}/gi, '$1 [REDACTED]')
+    .replace(new RegExp(`((?:\\\\)?["']?${CREDENTIAL_KEY}(?:\\\\)?["']?\\s*[:=]\\s*(?:\\\\)?["']?)([^"'\\\\,}\\]\\s]{4,})`, 'gi'), '$1[REDACTED]')
+    .replace(new RegExp(`((?:\\\\)?"${CREDENTIAL_KEY}(?:\\\\)?"\\s*,\\s*(?:\\\\)?")([^"\\\\]{4,})`, 'gi'), '$1[REDACTED]')
+    .replace(/\b(shpat|shpca|shpss|shppa|shptka)_[A-Za-z0-9]{8,}/g, '[REDACTED]')
+    .replace(/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g, '[REDACTED]')
+    .replace(/\b[a-f0-9]{32,}\b/gi, '[REDACTED]')
+    .replace(/(^|[^A-Za-z0-9/._-])([A-Za-z0-9+/_-]{40,}={0,2})(?=$|[^A-Za-z0-9/._-])/g, '$1[REDACTED]');
+}
+
 /* TEMPORARY capture limits: bounded windows, never the whole script */
 const CAPTURE_WINDOW = 2000;
 const CAPTURE_OCCURRENCES = 6;
@@ -2011,7 +2146,7 @@ function occurrenceContext(body, at, handle) {
             side,
             distance,
             form: form === marker ? 'plain' : 'escaped',
-            snippet: body.slice(Math.max(0, pos - 80), Math.min(body.length, pos + form.length + 220))
+            snippet: redact(body.slice(Math.max(0, pos - 80), Math.min(body.length, pos + form.length + 220)))
           };
         }
       }
@@ -2038,7 +2173,7 @@ function occurrenceContext(body, at, handle) {
     }
   };
 
-  return { at, before, after, nearest, contains };
+  return { at, before: redact(before), after: redact(after), nearest, contains };
 }
 
 /* Where a page carries the listing's own product, found by its handle
@@ -2067,7 +2202,7 @@ function recordCapture(html, productUrl) {
       length: body.length,
       mentions: 0,
       json: false,
-      head: body.slice(0, 200),
+      head: redact(body.slice(0, 200)),
       framework: payloadFramework(body),
       objects: [],
       around: [],
@@ -2077,7 +2212,7 @@ function recordCapture(html, productUrl) {
     while (at >= 0) {
       entry.mentions += 1;
       if (entry.around.length < 4) {
-        entry.around.push(body.slice(Math.max(0, at - 220), at + handle.length + 220).replace(/\s+/g, ' '));
+        entry.around.push(redact(body.slice(Math.max(0, at - 220), at + handle.length + 220)).replace(/\s+/g, ' '));
       }
       if (entry.occurrences.length < CAPTURE_OCCURRENCES) entry.occurrences.push(occurrenceContext(body, at, handle));
       at = body.indexOf(handle, at + handle.length);
@@ -2096,7 +2231,7 @@ function recordCapture(html, productUrl) {
             path: where,
             keys: Object.keys(node).slice(0, 40),
             id: node.id === undefined ? null : String(node.id).slice(0, 60),
-            title: typeof node.title === 'string' ? node.title.slice(0, 120) : null
+            title: typeof node.title === 'string' ? redact(node.title.slice(0, 120)) : null
           });
         }
         for (const [key, value] of Object.entries(node)) {
@@ -2211,6 +2346,28 @@ function printImageDiagnosis(indent, diagnosis) {
       });
     }
   }
+  const runtime = diagnosis.runtime;
+  if (runtime) {
+    console.log(`${pad}HYDRATED RUNTIME (browser):`);
+    if (runtime.failed) console.log(`${pad}  the probe failed: ${runtime.failed}`);
+    else {
+      console.log(`${pad}  framework globals: ${runtime.globals.join(', ') || '(none)'}`);
+      for (const [name, info] of Object.entries(runtime.roots)) {
+        console.log(`${pad}  ${name}: ${info === 'absent' ? 'absent' : `${info.is}${info.keys ? ` — keys: ${info.keys.join(', ')}` : ''}`}`);
+      }
+      if (runtime.stream) console.log(`${pad}  stream plumbing: ${Object.entries(runtime.stream).map(([k, v]) => `${k}=${v}`).join(', ')}`);
+      console.log(`${pad}  searched ${runtime.searched} objects for ${runtime.handle}${runtime.truncated ? ' (stopped at the limit)' : ''}: ${runtime.matches.length} match${runtime.matches.length === 1 ? '' : 'es'}`);
+      for (const match of runtime.matches) {
+        console.log(`${pad}  ▸ ${match.path}`);
+        console.log(`${pad}      id ${match.id}  handle ${match.handle}  title ${JSON.stringify(match.title)}${match.typename ? `  __typename ${match.typename}` : ''}`);
+        console.log(`${pad}      keys: ${match.keys.join(', ')}`);
+        const shapes = Object.entries(match.shapes);
+        console.log(`${pad}      media/images/featuredImage/variants: ${shapes.length ? shapes.map(([k, v]) => `${k}=${v}`).join('; ') : 'none of them'}`);
+        console.log(`${pad}      image URLs inside it: ${match.images.length}`);
+        for (const image of match.images.slice(0, 10)) console.log(`${pad}        ${image.path} = ${short(image.url, 120)}`);
+      }
+    }
+  }
   const md = diagnosis.metadata || {};
   const changed = metadataDiffers(md);
   if (changed === null) {
@@ -2272,6 +2429,7 @@ function writeDiagnosisFile() {
       loadedByPage: one.diagnosis ? one.diagnosis.loadedByPage : null,
       productRecord: one.diagnosis ? one.diagnosis.productRecord || null : null,
       recordCapture: one.diagnosis ? one.diagnosis.recordCapture || null : null,
+      runtime: one.diagnosis ? one.diagnosis.runtime || null : null,
       metadata: one.diagnosis ? one.diagnosis.metadata || null : null,
       metadataDiffers: one.diagnosis ? metadataDiffers(one.diagnosis.metadata) : null,
       likelyProduct: likelyProductRefusals(one.diagnosis && one.diagnosis.refusals, 20),
@@ -2471,6 +2629,7 @@ async function resolveRowInner(row, within, diagnosis, options) {
   let found;
   try {
     diagnosis.page.rendered = pageFactsFromRendered(rendered.seen);
+    diagnosis.runtime = (rendered.seen.diagnostics && rendered.seen.diagnostics.runtime) || null;
     diagnosis.metadata = diagnosis.metadata || {};
     diagnosis.metadata.rendered = metadataOf(rendered.seen.canonical, rendered.seen.metas || {},
       (rendered.seen.jsonld || []).flatMap((block) => parseLdBlock(block)));
