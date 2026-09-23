@@ -4044,6 +4044,354 @@ function walledRetailer() {
     retailer.close();
   });
 
+  /* ---------------------------------------------------------
+     A Shopify store's own product record
+
+     A live diagnosis of Telfar's cropped-track-jacket-white-2025: 98
+     image candidates, 89 refused on identity, the store's own
+     TELFAR-CROPPED-... photographs among them. The listing URL is a
+     slug, and the only "code" in it was the year. The store publishes
+     the record behind the page at /products/<handle>.js, and that
+     record names the product and lists its images. These are the rules
+     that record is held to.
+     --------------------------------------------------------- */
+  console.log('\n  — a Shopify store’s own product record\n');
+
+  const HANDLE = 'cropped-track-jacket-white-2025';
+  const JACKET_ROW = { id: 'fixture-cropped-track-jacket', name: 'Cropped Track Jacket', brand: 'Atlas Supply', category: 'jacket' };
+  const PHOTO = jpegOf(1000, 1250);
+
+  /* a store whose page, record and images the test decides. `record`
+     is the JSON the record answers with, or a status to answer instead;
+     `page` a status for the listing page itself. It counts what it was
+     asked for, so a test can say what was NOT requested. */
+  function shopifyStore({ record, page }) {
+    const asked = [];
+    const server = http.createServer((req, res) => {
+      asked.push(req.url);
+      const port = server.address().port;
+      const here = `http://127.0.0.1:${port}`;
+      if (req.url === `/products/${HANDLE}`) {
+        if (page) { res.writeHead(page, { 'content-type': 'text/html' }); return res.end('<!doctype html><title>Access denied</title>'); }
+        res.writeHead(200, { 'content-type': 'text/html' });
+        /* what the live page offered: a canonical that is this listing,
+           a social-share card as og:image, the real photographs only in
+           the drawn gallery, and no JSON-LD Product at all */
+        return res.end(`<!doctype html><html><head>
+<link rel="canonical" href="${here}/products/${HANDLE}">
+<meta property="og:image" content="${here}/cdn/shop/files/telfar-social-share.jpg">
+</head><body><img src="/cdn/shop/files/TELFAR-CROPPED-TRACK-JACKET-WHITE-1.jpg?v=1" width="800" height="1000" alt="Cropped Track Jacket"></body></html>`);
+      }
+      if (req.url === `/products/${HANDLE}.js`) {
+        if (typeof record === 'number') { res.writeHead(record, { 'content-type': 'text/html' }); return res.end('no'); }
+        if (typeof record === 'string') { res.writeHead(200, { 'content-type': 'application/javascript' }); return res.end(record); }
+        res.writeHead(200, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify(typeof record === 'function' ? record(port) : record));
+      }
+      if (req.url.startsWith('/cdn/shop/files/')) {
+        res.writeHead(200, { 'content-type': 'image/jpeg' });
+        return res.end(PHOTO);
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({ server, asked, port: server.address().port })));
+  }
+
+  /* the record Shopify publishes, in its own shape: protocol-relative
+     image URLs, a featured image, media and per-variant images */
+  const jacketRecord = (overrides) => (port) => Object.assign({
+    id: 8123456789012,
+    handle: HANDLE,
+    title: 'Cropped Track Jacket - White',
+    vendor: 'Telfar',
+    images: [
+      `//127.0.0.1:${port}/cdn/shop/files/TELFAR-CROPPED-TRACK-JACKET-WHITE-1.jpg?v=1`,
+      `//127.0.0.1:${port}/cdn/shop/files/TELFAR-CROPPED-TRACK-JACKET-WHITE-2.jpg?v=1`
+    ],
+    featured_image: `//127.0.0.1:${port}/cdn/shop/files/TELFAR-CROPPED-TRACK-JACKET-WHITE-1.jpg?v=1`,
+    media: [{ media_type: 'video', src: `//127.0.0.1:${port}/cdn/shop/files/clip.mp4` }],
+    variants: [{ id: 45000000000001, sku: 'TJ-CRP-WHT-S', featured_image: null }]
+  }, overrides || {});
+
+  const listingOf = (port) => `http://127.0.0.1:${port}/products/${HANDLE}`;
+  const asListing = (port) => ({ id: JACKET_ROW.id, brand: '—', name: 'Cropped Track Jacket', productUrl: listingOf(port) });
+
+  test('a year is not a product code, and a Shopify handle is read off its listing', () => {
+    assert.deepStrictEqual(extractor.identifiersFrom(`https://telfar.net/products/${HANDLE}`), [],
+      'the year was taken for the product');
+    /* a real code keeps its place beside a year */
+    const both = extractor.identifiersFrom('https://shop.example.com/p/wide-leg-2024-570412345');
+    assert.ok(both.includes('570412345'));
+    assert.ok(!both.includes('2024'));
+
+    assert.deepStrictEqual(extractor.shopifyHandle(`https://telfar.net/products/${HANDLE}?variant=1`),
+      { handle: HANDLE, origin: 'https://telfar.net', recordUrl: `https://telfar.net/products/${HANDLE}.js` });
+    assert.strictEqual(extractor.shopifyHandle(`https://telfar.net/en-us/collections/new/products/${HANDLE}`).handle, HANDLE);
+    assert.strictEqual(extractor.shopifyHandle('https://www.jcrew.com/p/womens/wide-leg-pant/BX123'), null);
+    assert.strictEqual(extractor.shopifyHandle(`https://telfar.net/products/${HANDLE}.js`), null,
+      'the record itself is not a listing');
+  });
+
+  test('the canonical rule alone still vouches for nothing a code-less listing publishes', () => {
+    /* the page is canonical for itself; that proves the page, not a
+       photo in its gallery, and the record path does not change it */
+    const url = `https://telfar.net/products/${HANDLE}`;
+    const gallery = extractor.identityEvidence(
+      { url: 'https://telfar.net/cdn/shop/files/TELFAR-CROPPED-TRACK-JACKET-WHITE-1.jpg', from: 'gallery image', canonical: url }, url);
+    assert.strictEqual(gallery.ok, false);
+    assert.match(gallery.why, /carries no product code/);
+  });
+
+  await testAsync('a Shopify listing with no product code is tied to its photo by the store’s own record', async () => {
+    const store = await shopifyStore({ record: jacketRecord() });
+    try {
+      const result = await extractor.resolveRow(asListing(store.port), undefined, { catalogRow: JACKET_ROW });
+      assert.strictEqual(result.verdict, 'VERIFIED', result.why);
+      assert.strictEqual(result.url, `http://127.0.0.1:${store.port}/cdn/shop/files/TELFAR-CROPPED-TRACK-JACKET-WHITE-1.jpg?v=1`);
+      assert.strictEqual(result.from, 'product-record');
+      assert.strictEqual(result.identity.via, 'product-record');
+      assert.strictEqual(result.identity.handle, HANDLE);
+      assert.strictEqual(result.identity.productId, '8123456789012');
+      assert.strictEqual(result.identity.title, 'Cropped Track Jacket - White');
+
+      /* the page's own og:image, a share card, was refused first */
+      assert.ok(result.diagnosis.refusals.some((one) => /telfar-social-share/.test(one.url) && one.gate === 'asset'),
+        'the social card was never put to the asset gate');
+      /* the record was asked for once, on the listing's own origin */
+      assert.strictEqual(store.asked.filter((u) => u === `/products/${HANDLE}.js`).length, 1);
+
+      assert.strictEqual(extractor.evidenceNote(result.identity),
+        `{ via: 'product-record', handle: '${HANDLE}', productId: '8123456789012', title: 'Cropped Track Jacket - White' }`);
+    } finally {
+      store.server.close();
+    }
+  });
+
+  await testAsync('a record for a different product, or a different garment, offers nothing', async () => {
+    for (const [record, says] of [
+      [jacketRecord({ handle: 'cropped-track-jacket-black-2024' }), /is for cropped-track-jacket-black-2024, not this listing's/],
+      [jacketRecord({ title: 'Medium Shopping Bag - White' }), /is not the garment the row means/],
+      [jacketRecord({ title: 'Track Jacket - White' }), /is not the garment the row means/],
+      [jacketRecord({ id: 'abc' }), /names no product id/]
+    ]) {
+      const store = await shopifyStore({ record });
+      try {
+        const got = await extractor.productRecordFor(listingOf(store.port), JACKET_ROW);
+        assert.ok(!got.candidates, `a record that ${says} offered images`);
+        assert.match(got.failed, says);
+      } finally {
+        store.server.close();
+      }
+    }
+
+    /* and a record read for one listing does not speak for another */
+    const stranger = extractor.productRecordEvidence({
+      url: 'https://telfar.net/cdn/shop/files/TELFAR-CROPPED-TRACK-JACKET-WHITE-1.jpg',
+      from: 'product-record',
+      record: { handle: 'shopping-bag-medium', id: '1', title: 'Shopping Bag', images: ['https://telfar.net/cdn/shop/files/TELFAR-CROPPED-TRACK-JACKET-WHITE-1.jpg'] }
+    }, `https://telfar.net/products/${HANDLE}`);
+    assert.strictEqual(stranger.ok, false);
+    assert.match(stranger.why, /is for shopping-bag-medium, not this listing's/);
+
+    /* nor for an image it does not list */
+    const unlisted = extractor.productRecordEvidence({
+      url: 'https://telfar.net/cdn/shop/files/SOMETHING-ELSE.jpg',
+      from: 'product-record',
+      record: { handle: HANDLE, id: '1', title: 'Cropped Track Jacket', images: ['https://telfar.net/cdn/shop/files/TELFAR-CROPPED-TRACK-JACKET-WHITE-1.jpg'] }
+    }, `https://telfar.net/products/${HANDLE}`);
+    assert.strictEqual(unlisted.ok, false);
+    assert.match(unlisted.why, /does not list this image/);
+  });
+
+  await testAsync('a social or share image in the record is still refused as site artwork', async () => {
+    const store = await shopifyStore({
+      record: jacketRecord({ images: [`/cdn/shop/files/telfar-social-share.jpg`], featured_image: null, media: [] })
+    });
+    try {
+      const got = await extractor.productRecordFor(listingOf(store.port), JACKET_ROW);
+      assert.strictEqual(got.candidates.length, 1);
+      const found = await extractor.firstVerifiable(got.candidates, { id: 'x', productUrl: listingOf(store.port) });
+      assert.ok(!found.url, 'a share card was accepted because the record listed it');
+      assert.strictEqual(found.refusals[0].gate, 'asset');
+      assert.match(found.refusals[0].why, /names a site (social|share) image/);
+    } finally {
+      store.server.close();
+    }
+  });
+
+  await testAsync('an image the record lists on an unrelated host is refused', async () => {
+    const store = await shopifyStore({
+      record: jacketRecord({
+        images: ['https://images.example.org/cdn/TELFAR-CROPPED-TRACK-JACKET-WHITE-1.jpg'],
+        featured_image: null,
+        media: []
+      })
+    });
+    try {
+      const got = await extractor.productRecordFor(listingOf(store.port), JACKET_ROW);
+      const found = await extractor.firstVerifiable(got.candidates, { id: 'x', productUrl: listingOf(store.port) });
+      assert.ok(!found.url);
+      assert.strictEqual(found.refusals[0].gate, 'identity');
+      assert.match(found.refusals[0].why, /images\.example\.org is not the store's own host or Shopify's CDN/);
+    } finally {
+      store.server.close();
+    }
+
+    /* Shopify's own CDN is the store's, for this purpose */
+    const listed = 'https://cdn.shopify.com/s/files/1/0000/0001/files/TELFAR-CROPPED-TRACK-JACKET-WHITE-1.jpg';
+    const cdn = extractor.productRecordEvidence(
+      { url: listed, from: 'product-record', record: { handle: HANDLE, id: '8123456789012', title: 'Cropped Track Jacket - White', images: [listed] } },
+      `https://telfar.net/products/${HANDLE}`);
+    assert.strictEqual(cdn.ok, true, cdn.why);
+  });
+
+  await testAsync('a missing or refused record, or a refused page, gives no false positive', async () => {
+    for (const record of [404, 403, 418, 'not json at all']) {
+      const store = await shopifyStore({ record });
+      try {
+        const got = await extractor.productRecordFor(listingOf(store.port), JACKET_ROW);
+        assert.ok(!got.candidates, `a record answering ${record} offered images`);
+        assert.match(got.failed, typeof record === 'number' ? new RegExp(`answered ${record}`) : /not readable JSON/);
+        /* asked once, and never asked again another way */
+        assert.strictEqual(store.asked.filter((u) => u.startsWith(`/products/${HANDLE}.js`)).length, 1);
+      } finally {
+        store.server.close();
+      }
+    }
+
+    /* end to end: a refused record leaves the page's own candidates to
+       decide it, and they cannot — the real photographs sit only in the
+       gallery, which the canonical rule does not vouch for */
+    const refused = await shopifyStore({ record: 418 });
+    try {
+      const result = await extractor.resolveRow(asListing(refused.port), undefined, { catalogRow: JACKET_ROW });
+      assert.notStrictEqual(result.verdict, 'VERIFIED', `verified with the record refused: ${result.why}`);
+      assert.strictEqual(refused.asked.filter((u) => u === `/products/${HANDLE}.js`).length, 1);
+    } finally {
+      refused.server.close();
+    }
+
+    /* a store that refuses the PAGE to a plain request is not asked for
+       its record by one */
+    const walled = await shopifyStore({ record: jacketRecord(), page: 403 });
+    try {
+      const result = await extractor.resolveRow(asListing(walled.port), undefined, { catalogRow: JACKET_ROW });
+      assert.notStrictEqual(result.verdict, 'VERIFIED');
+      assert.strictEqual(walled.asked.filter((u) => u.startsWith(`/products/${HANDLE}.js`)).length, 0,
+        'the record was used to get round a refused page');
+    } finally {
+      walled.server.close();
+    }
+
+    /* and with no catalogue row to hold its title against, it is not asked for */
+    const rowless = await shopifyStore({ record: jacketRecord() });
+    try {
+      const got = await extractor.productRecordFor(listingOf(rowless.port), null);
+      assert.ok(!got.candidates);
+      assert.strictEqual(rowless.asked.length, 0);
+    } finally {
+      rowless.server.close();
+    }
+  });
+
+  test('product-record evidence is re-proved from the row’s own URL, never trusted', () => {
+    const shipped = {
+      id: 'fixture-cropped-track-jacket',
+      name: 'Cropped Track Jacket',
+      brand: 'Atlas Supply',
+      category: 'jacket',
+      productUrl: `https://telfar.net/products/${HANDLE}`,
+      imageUrl: 'https://telfar.net/cdn/shop/files/TELFAR-CROPPED-TRACK-JACKET-WHITE-1.jpg?v=1',
+      imageEvidence: { via: 'product-record', handle: HANDLE, productId: '8123456789012', title: 'Cropped Track Jacket - White' }
+    };
+    assert.strictEqual(extractor.catalogRowIdentity(shipped).ok, true, extractor.catalogRowIdentity(shipped).why);
+
+    const refusedFor = (change) => {
+      const verdict = extractor.catalogRowIdentity(Object.assign({}, shipped, change));
+      assert.strictEqual(verdict.ok, false, `accepted: ${JSON.stringify(change)}`);
+      return verdict.why;
+    };
+    assert.match(refusedFor({ imageEvidence: Object.assign({}, shipped.imageEvidence, { handle: 'shopping-bag-medium' }) }),
+      /is not this row's listing/);
+    assert.match(refusedFor({ productUrl: 'https://telfar.net/products/shopping-bag-medium' }), /is not this row's listing/);
+    assert.match(refusedFor({ productUrl: 'https://www.jcrew.com/p/womens/jacket/BX123' }), /not a Shopify/);
+    assert.match(refusedFor({ imageUrl: 'https://images.example.org/TELFAR-CROPPED-TRACK-JACKET-WHITE-1.jpg' }),
+      /not the store's own host or Shopify's CDN/);
+    assert.match(refusedFor({ imageUrl: 'https://telfar.net/cdn/shop/files/telfar-social-share.jpg' }), /site (social|share) image/);
+    assert.match(refusedFor({ name: 'Wide Leg Trouser', category: 'trousers' }), /is not the garment the row means/);
+    assert.match(refusedFor({ imageEvidence: Object.assign({}, shipped.imageEvidence, { productId: '' }) }), /names no product id/);
+    assert.match(refusedFor({ imageEvidence: Object.assign({}, shipped.imageEvidence, { title: '' }) }), /names no title/);
+
+    /* the note the file carries reads back as the evidence it records */
+    const note = extractor.evidenceNote(Object.assign({ ok: true }, shipped.imageEvidence));
+    const readBack = vm.runInNewContext(`(${note})`);
+    assert.strictEqual(extractor.catalogRowIdentity(Object.assign({}, shipped, { imageEvidence: readBack })).ok, true);
+  });
+
+  await testAsync('--coverage and a replayed report both re-prove a product-record row', async () => {
+    const productUrl = `https://telfar.net/products/${HANDLE}`;
+    const imageUrl = 'https://telfar.net/cdn/shop/files/TELFAR-CROPPED-TRACK-JACKET-WHITE-1.jpg?v=1';
+    const identity = { ok: true, via: 'product-record', handle: HANDLE, productId: '8123456789012', title: 'Cropped Track Jacket - White' };
+    const fixture = {
+      id: 'fixture-cropped-track-jacket',
+      name: 'Cropped Track Jacket',
+      brand: 'Atlas Supply',
+      price: null,
+      productUrl: null,
+      imageUrl: null,
+      category: 'jacket',
+      style: ['Streetwear'],
+      occasion: ['Weekend'],
+      fit: ['Regular'],
+      colors: ['White'],
+      sizes: ['S', 'M', 'L']
+    };
+
+    /* replay: an entry carrying this evidence answers every gate again */
+    const entry = {
+      id: fixture.id,
+      verified: true,
+      productUrl,
+      imageUrl,
+      imageEvidence: extractor.evidenceNote(identity),
+      identity,
+      listingName: 'Cropped Track Jacket - White',
+      provedOnPage: [],
+      row: { name: fixture.name, brand: fixture.brand, category: fixture.category }
+    };
+    const replayed = extractor.replayable(entry, [fixture], new Map());
+    assert.strictEqual(replayed.ok, true, replayed.why);
+    const tampered = extractor.replayable(Object.assign({}, entry, {
+      identity: Object.assign({}, identity, { handle: 'shopping-bag-medium' }),
+      imageEvidence: extractor.evidenceNote(Object.assign({}, identity, { handle: 'shopping-bag-medium' }))
+    }), [fixture], new Map());
+    assert.strictEqual(tampered.ok, false, 'a report naming another product’s record was replayed');
+    assert.match(tampered.why, /is not this row's listing/);
+
+    /* --coverage: the row written the way discovery writes it, then the
+       whole catalogue read back by the command itself */
+    await withFixtureRows([fixture], async () => {
+      const linked = extractor.linkRow(fs.readFileSync(CATALOG, 'utf8'), fixture.id, { productUrl, imageUrl, identity });
+      fs.writeFileSync(CATALOG, linked);
+      const written = extractor.readCatalog().rows.find((r) => r.id === fixture.id);
+      assert.strictEqual(written.imageEvidence.via, 'product-record');
+      assert.strictEqual(extractor.catalogRowIdentity(written).ok, true);
+
+      const report = await run(['--coverage']);
+      assert.strictEqual(report.code, 0, report.stderr);
+      const total = extractor.readCatalog().rows.length;
+      assert.match(report.stdout, new RegExp(`${total} of ${total} account for what they carry`));
+
+      /* and the same row with its note pointed at another product is
+         called out, not waved through on the strength of the note */
+      fs.writeFileSync(CATALOG, fs.readFileSync(CATALOG, 'utf8').replace(`handle: '${HANDLE}'`, "handle: 'shopping-bag-medium'"));
+      const caught = await run(['--coverage']);
+      assert.doesNotMatch(caught.stdout, new RegExp(`${total} of ${total} account for what they carry`));
+      assert.match(caught.stdout, new RegExp(fixture.id));
+    });
+  });
+
   console.log(`\n${passed} passed, ${failures.length} failed${skipped ? `, ${skipped} skipped` : ''}\n`);
   process.exit(failures.length ? 1 : 0);
 })();

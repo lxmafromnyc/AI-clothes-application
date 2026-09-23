@@ -491,8 +491,15 @@ function identifiersFrom(productUrl) {
     if (token.length >= 4) ids.add(token.toLowerCase());
   }
 
-  return [...ids];
+  /* A year is not a product. Telfar's cropped-track-jacket-white-2025
+     yields 2025 and nothing else, and a bare year matches every image
+     that season's shoot produced — or any file that merely says 2025.
+     Only the four digits on their own are dropped: a longer code that
+     happens to contain a year still names its product. */
+  return [...ids].filter((id) => !YEAR.test(id));
 }
+
+const YEAR = /^(19|20)\d\d$/;
 
 /* the same product path, ignoring the things that do not change which
    product a URL names */
@@ -730,6 +737,10 @@ function siteAsset(candidate, productUrl) {
 }
 
 function identityEvidence(candidate, productUrl) {
+  /* a photo offered by the store's own product record answers to that
+     record and to nothing else — and nothing else may claim it */
+  if (candidate && candidate.from === 'product-record') return productRecordEvidence(candidate, productUrl);
+
   const ids = identifiersFrom(productUrl);
   if (!ids.length) return { ok: false, why: 'the listing URL carries no product code to match against' };
 
@@ -814,6 +825,149 @@ function identityEvidence(candidate, productUrl) {
   return {
     ok: false,
     why: `nothing ties it to this product (looked for ${ids.slice(0, 3).join(', ')})`
+  };
+}
+
+/* ---------- a Shopify store's own product record ----------
+
+   A Shopify listing is /products/<handle>, and its handle is a slug —
+   cropped-track-jacket-white-2025 — with no product code in it. The
+   identity gate has nothing to match, and every photo on the page is
+   refused, including the store's own photographs of the product.
+
+   Every Shopify store publishes the record behind that page at
+   /products/<handle>.js: the product's id, its handle, its title and
+   the images that belong to it. That is the store saying which photos
+   are this product's, in a form that names the product. It is read
+   with the ordinary request, and it counts only when:
+
+   - the listing is a /products/<handle> page, and the record is asked
+     for on the listing's own origin;
+   - the record answers for exactly that handle;
+   - its title is, by the semantic gate, the garment the catalogue row
+     means — a full match, nothing left pending;
+   - the image is one the record itself lists, on the store's own host
+     or Shopify's CDN.
+
+   A record that is missing, refused (403, 418, anything not 200), not
+   JSON, or for another product offers nothing, and the page's own
+   candidates are decided exactly as before. The photos it does offer
+   still go through the asset, host, identity and loadable gates like
+   any other candidate. */
+const SHOPIFY_CDN = 'cdn.shopify.com';
+
+function shopifyHandle(productUrl) {
+  let url;
+  try { url = new URL(String(productUrl)); } catch (err) { return null; }
+  const m = url.pathname.match(/^(?:\/[a-z]{2}(?:-[a-z]{2})?)?(?:\/collections\/[^/]+)?\/products\/([^/]+?)\/?$/i);
+  if (!m) return null;
+  let handle;
+  try { handle = decodeURIComponent(m[1]).toLowerCase(); } catch (err) { return null; }
+  if (!/^[a-z0-9][a-z0-9_-]*$/.test(handle) || /\.(js|json|oembed|xml)$/.test(handle)) return null;
+  return { handle, origin: url.origin, recordUrl: `${url.origin}/products/${handle}.js` };
+}
+
+/* the images a record says are its product's, and only those: the
+   gallery, the featured image, image media and each variant's own
+   image. Video and 3D media are not photographs of anything. */
+function recordImages(record, recordUrl) {
+  const out = [];
+  const add = (value) => {
+    const raw = typeof value === 'string' ? value : value && typeof value.src === 'string' ? value.src : null;
+    if (!raw || !raw.trim()) return;
+    try { out.push(new URL(raw.trim(), recordUrl).href); } catch (err) { /* not a URL: not offered */ }
+  };
+  if (Array.isArray(record.images)) record.images.forEach(add);
+  add(record.featured_image);
+  if (Array.isArray(record.media)) {
+    for (const media of record.media) {
+      if (media && (media.media_type === undefined || media.media_type === 'image')) add(media.src || media.preview_image);
+    }
+  }
+  if (Array.isArray(record.variants)) {
+    for (const variant of record.variants) if (variant && variant.featured_image) add(variant.featured_image);
+  }
+  return [...new Set(out)];
+}
+
+/* the store's own host, or Shopify's CDN — nowhere else */
+function recordImageHost(imageUrl, productUrl) {
+  let image;
+  let listing;
+  try { image = new URL(String(imageUrl)); listing = new URL(String(productUrl)); } catch (err) { return 'not a URL'; }
+  const host = image.hostname.toLowerCase();
+  if (host === SHOPIFY_CDN) return null;
+  if (host === listing.hostname.toLowerCase() || registrable(host) === registrable(listing.hostname)) return null;
+  return `${host} is not the store's own host or Shopify's CDN`;
+}
+
+/* Fetches and checks the record. Returns the candidates it offers, or
+   why it offers none; either way a note for the report. */
+async function productRecordFor(productUrl, catalogRow, within) {
+  const listing = shopifyHandle(productUrl);
+  if (!listing) return { failed: 'not a Shopify /products/<handle> listing', skipped: true };
+  if (!catalogRow || !catalogRow.name) {
+    return { failed: 'there is no catalogue row to hold the record\'s title against', skipped: true };
+  }
+
+  const got = await request(listing.recordUrl, null, within);
+  if (!got.ok) return { failed: `the product record could not be read (${got.why})` };
+  let record;
+  try {
+    const { response } = got;
+    if (response.status !== 200) {
+      if (response.body) await response.body.cancel().catch(() => {});
+      /* refused is refused: no second way in is tried */
+      return { failed: `the product record answered ${response.status}` };
+    }
+    record = JSON.parse(await response.text());
+  } catch (err) {
+    return { failed: `the product record is not readable JSON (${readingFailed(err)})` };
+  } finally {
+    got.release();
+  }
+
+  if (!record || typeof record !== 'object' || Array.isArray(record)) return { failed: 'the product record is not a product' };
+  const handle = typeof record.handle === 'string' ? record.handle.toLowerCase() : '';
+  if (handle !== listing.handle) {
+    return { failed: `the product record is for ${handle || 'no handle'}, not this listing's ${listing.handle}` };
+  }
+  const id = typeof record.id === 'number' || typeof record.id === 'string' ? String(record.id) : '';
+  if (!/^\d+$/.test(id)) return { failed: 'the product record names no product id' };
+  const title = typeof record.title === 'string' ? record.title.trim() : '';
+  if (!title) return { failed: 'the product record names no title' };
+
+  const verdict = semanticMatch(catalogRow, { title });
+  if (!verdict.ok || verdict.kind !== 'match') {
+    return { failed: `the product record's title "${title}" is not the garment the row means — ${verdict.why}` };
+  }
+
+  const images = recordImages(record, listing.recordUrl);
+  const summary = { handle, id, title, images };
+  return {
+    record: summary,
+    candidates: images.map((url) => ({ url, from: 'product-record', record: summary }))
+  };
+}
+
+function productRecordEvidence(candidate, productUrl) {
+  const record = candidate.record;
+  const listing = shopifyHandle(productUrl);
+  if (!listing) return { ok: false, why: 'the listing is not a Shopify /products/<handle> page, so no product record speaks for it' };
+  if (!record || !Array.isArray(record.images)) return { ok: false, why: 'it names a product record that was never read' };
+  if (record.handle !== listing.handle) {
+    return { ok: false, why: `the product record is for ${record.handle}, not this listing's ${listing.handle}` };
+  }
+  if (!record.images.includes(candidate.url)) return { ok: false, why: 'the product record does not list this image as its product\'s' };
+  const off = recordImageHost(candidate.url, productUrl);
+  if (off) return { ok: false, why: `the product record lists it, but ${off}` };
+  return {
+    ok: true,
+    via: 'product-record',
+    handle: record.handle,
+    productId: record.id,
+    title: record.title,
+    how: `the store's product record for ${record.handle} (product ${record.id}, "${record.title}") lists it as the product's own image`
   };
 }
 
@@ -913,6 +1067,30 @@ function catalogRowIdentity(row) {
       };
     }
     return { ok: true, via: 'canonical', how: 'its listing declared itself canonical for this product' };
+  }
+
+  if (evidence.via === 'product-record') {
+    /* re-proved from the row's own URL: the handle has to be the one its
+       listing names, the photo has to sit where the store keeps its
+       photos, and the title the record gave has to be, today, the
+       garment this row means */
+    const listing = shopifyHandle(row.productUrl);
+    if (!listing) return { ok: false, why: 'the recorded product record cannot speak for a listing that is not a Shopify /products/<handle> page' };
+    const handle = String(evidence.handle || '').toLowerCase();
+    if (handle !== listing.handle) {
+      return { ok: false, why: `the recorded product record ${evidence.handle} is not this row's listing ${listing.handle}` };
+    }
+    if (!/^\d+$/.test(String(evidence.productId || ''))) return { ok: false, why: 'the recorded product record names no product id' };
+    const off = recordImageHost(row.imageUrl, row.productUrl);
+    if (off) return { ok: false, why: `the photo is not where the store keeps its photos: ${off}` };
+    const title = String(evidence.title || '').trim();
+    if (!title) return { ok: false, why: 'the recorded product record names no title' };
+    if (!row.name) return { ok: false, why: 'the row names no garment to hold the recorded title against' };
+    const verdict = semanticMatch(row, { title });
+    if (!verdict.ok || verdict.kind !== 'match') {
+      return { ok: false, why: `the recorded product record's title "${title}" is not the garment the row means — ${verdict.why}` };
+    }
+    return { ok: true, via: 'product-record', how: `its store's product record for ${handle} (product ${evidence.productId}) lists it` };
   }
 
   return { ok: false, why: `the recorded evidence names no recognised kind (${evidence.via || 'none'})` };
@@ -1627,6 +1805,7 @@ function refusalCategory(gate, why) {
   }
   if (gate === 'identity') {
     if (/carries no product code/i.test(said)) return 'identity not proven — listing URL has no product code';
+    if (/product record/i.test(said)) return 'identity not proven — product record';
     if (/is a different garment/i.test(said)) return 'evidence mismatch (canonical names a different garment)';
     if (/is not a product photo/i.test(said)) return 'site-asset (refused on the canonical branch)';
     if (/parameter, which names the stand-in/i.test(said)) return 'identity not proven — code only in a fallback parameter';
@@ -1665,6 +1844,7 @@ function evidenceSource(candidate) {
   if (from.startsWith('gallery')) return 'gallery img/srcset (rendered)';
   if (from === 'rendered image') return 'other drawn <img> (rendered)';
   if (from === 'loaded by the page') return 'network-loaded image (everything the page fetched)';
+  if (from === 'product-record') return 'Shopify product record';
   return 'other';
 }
 
@@ -1807,7 +1987,11 @@ function printImageDiagnosis(indent, diagnosis) {
     const top = Object.entries(entry.byCategory).sort((a, b) => b[1] - a[1]).map(([c, n]) => `${n} ${c}`).join('; ');
     console.log(`${pad}  ${String(entry.total).padStart(5)}  ${source} — ${top}`);
   }
-  console.log(`${pad}  never offered as candidates by this pipeline: ProductGroup variants, Shopify product record, embedded product data`);
+  console.log(`${pad}  never offered as candidates by this pipeline: ProductGroup variants, embedded product data`);
+  const record = diagnosis.productRecord;
+  console.log(`${pad}Shopify product record: ${!record ? 'not asked for (the page was not served to plain HTTP, or it verified first)'
+    : record.failed ? `${record.skipped ? 'not asked for' : 'offered nothing'} — ${record.failed}`
+      : `${record.handle} (product ${record.id}, "${record.title}") lists ${record.images} image${record.images === 1 ? '' : 's'}`}`);
 
   const page = diagnosis.page || {};
   console.log(`${pad}listing codes: ${(diagnosis.listingCodes || []).join(', ') || '(none — every candidate fails identity before the canonical check)'}`);
@@ -1821,7 +2005,7 @@ function printImageDiagnosis(indent, diagnosis) {
         `${p.variants ? `, ${p.variants} variants (${p.variantImages} variant images, unread)` : ''}`;
     });
     console.log(`${pad}${label} page: JSON-LD ${products.length ? products.join(' | ') : `has no Product node (types: ${(facts.jsonLdTypes || []).join(', ') || 'none'})`}`);
-    if (facts.shopify) console.log(`${pad}  Shopify product record present${facts.shopify.productId ? ` (product id ${facts.shopify.productId})` : ''}${facts.shopify.variants !== undefined ? `, ${facts.shopify.variants} variants${facts.shopify.skus && facts.shopify.skus.length ? ` skus ${facts.shopify.skus.join(', ')}` : ''}` : ''} — unread`);
+    if (facts.shopify) console.log(`${pad}  Shopify product record present${facts.shopify.productId ? ` (product id ${facts.shopify.productId})` : ''}${facts.shopify.variants !== undefined ? `, ${facts.shopify.variants} variants${facts.shopify.skus && facts.shopify.skus.length ? ` skus ${facts.shopify.skus.join(', ')}` : ''}` : ''} (the page's own copy; the gate reads /products/<handle>.js instead)`);
     if (facts.embedded && facts.embedded.length) console.log(`${pad}  embedded product data present: ${facts.embedded.join(', ')} — unread`);
   }
   const md = diagnosis.metadata || {};
@@ -1883,6 +2067,7 @@ function writeDiagnosisFile() {
       canonicalMatchesListing: one.diagnosis ? one.diagnosis.canonicalMatchesListing : null,
       page: one.diagnosis ? one.diagnosis.page : null,
       loadedByPage: one.diagnosis ? one.diagnosis.loadedByPage : null,
+      productRecord: one.diagnosis ? one.diagnosis.productRecord || null : null,
       metadata: one.diagnosis ? one.diagnosis.metadata || null : null,
       metadataDiffers: one.diagnosis ? metadataDiffers(one.diagnosis.metadata) : null,
       likelyProduct: likelyProductRefusals(one.diagnosis && one.diagnosis.refusals, 20),
@@ -1979,14 +2164,14 @@ async function firstVerifiable(candidates, row, fetcher, within) {
 
 /* diagnostics: the verdict is resolveRowInner's, untouched; this only
    hangs what the gates saw off the side of it */
-async function resolveRow(row, within) {
+async function resolveRow(row, within, options) {
   const diagnosis = { listingCodes: identifiersFrom(row.productUrl), canonical: null, page: {}, refusals: [] };
-  const result = await resolveRowInner(row, within, diagnosis);
+  const result = await resolveRowInner(row, within, diagnosis, options || {});
   diagnosis.canonicalMatchesListing = diagnosis.canonical ? samePage(diagnosis.canonical, row.productUrl) : null;
   return Object.assign(result, { diagnosis });
 }
 
-async function resolveRowInner(row, within, diagnosis) {
+async function resolveRowInner(row, within, diagnosis, options) {
   const budget = within || budgetOf(ROW_BUDGET);
   const notes = [];
   let facts = { name: null, brand: null };
@@ -2015,6 +2200,29 @@ async function resolveRowInner(row, within, diagnosis) {
       served = await firstVerifiable(candidates, row, null, budget);
       diagnosis.refusals.push(...(served.refusals || []));
       if (served.url) return { id: row.id, verdict: 'VERIFIED', why: served.why, url: served.url, from: served.from, identity: served.identity, facts, evidence, notes };
+    }
+
+    /* The store's own product record, asked for only when nothing the
+       page published could be tied to its product, and only because the
+       page itself was served to a plain request: a store that refuses
+       its page to one is not asked for its record by one. Its photos
+       are decided by the same gates, in the same order. */
+    if (!budget.spent()) {
+      const fromStore = await productRecordFor(row.productUrl, options.catalogRow, budget.cap(TIMEOUT));
+      diagnosis.productRecord = fromStore.record
+        ? { handle: fromStore.record.handle, id: fromStore.record.id, title: fromStore.record.title, images: fromStore.record.images.length }
+        : { failed: fromStore.failed, skipped: Boolean(fromStore.skipped) };
+      if (!fromStore.skipped) {
+        notes.push(fromStore.record
+          ? `product record: ${fromStore.record.handle} lists ${fromStore.record.images.length} image${fromStore.record.images.length === 1 ? '' : 's'}`
+          : `product record: ${fromStore.failed}`);
+      }
+      if (fromStore.candidates && fromStore.candidates.length) {
+        const recorded = await firstVerifiable(fromStore.candidates, row, null, budget);
+        diagnosis.refusals.push(...(recorded.refusals || []));
+        if (recorded.url) return { id: row.id, verdict: 'VERIFIED', why: recorded.why, url: recorded.url, from: recorded.from, identity: recorded.identity, facts, evidence, notes };
+        served = { refusals: [...((served && served.refusals) || []), ...(recorded.refusals || [])] };
+      }
     }
   } else if (page.blocked) {
     /* the sandbox, not the retailer: a browser here would be refused the
@@ -2149,6 +2357,10 @@ function evidenceNote(evidence) {
   if (evidence.via === 'canonical' && evidence.canonical) {
     return `{ via: 'canonical', canonical: '${String(evidence.canonical).replace(/'/g, "")}' }`;
   }
+  if (evidence.via === 'product-record' && evidence.handle && evidence.productId && evidence.title) {
+    const clean = (value) => String(value).replace(/['\\\r\n]/g, '');
+    return `{ via: 'product-record', handle: '${clean(evidence.handle)}', productId: '${clean(evidence.productId)}', title: '${clean(evidence.title)}' }`;
+  }
   return null; // via: 'image-url' — the URL is its own evidence
 }
 
@@ -2189,7 +2401,11 @@ function setEvidence(source, id, note, indent) {
    not a replacement; it is a different row that also has no photo. */
 async function inspectCandidate(productUrl, forId) {
   const row = { id: forId || 'candidate', brand: '—', name: productUrl, productUrl };
-  const result = await resolveRow(row);
+  /* the row this would replace, for anything that has to be held against
+     the garment it means — a store's product record, for one. With no
+     --as, nothing is. */
+  const catalogRow = forId ? (readCatalog().rows.find((one) => one && one.id === forId) || null) : null;
+  const result = await resolveRow(row, undefined, { catalogRow });
   const facts = result.facts || {};
 
   console.log(`\n  ${result.verdict.padEnd(15)} ${productUrl}`);
@@ -3802,7 +4018,7 @@ async function discoverRow(row, taken, limit, options) {
       brand: product.brand || '—',
       name: product.title || row.name,
       productUrl: product.productUrl
-    }, budget);
+    }, budget, { catalogRow: row });
 
     /* diagnostics */
     if (diagnosing) {
@@ -4206,6 +4422,9 @@ function replayable(entry, rows, taken) {
      shipped row answers to --coverage, asked before it is shipped */
   const accounted = catalogRowIdentity({
     id: entry.id,
+    name: row.name,
+    brand: row.brand,
+    category: row.category,
     productUrl: entry.productUrl,
     imageUrl: entry.imageUrl,
     imageEvidence: entry.identity
@@ -4609,7 +4828,7 @@ async function main() {
   }
 
   for (const row of todo) {
-    const result = await resolveRow(row);
+    const result = await resolveRow(row, undefined, { catalogRow: row });
     results.push(result);
     console.log(`  ${result.verdict.padEnd(15)} ${row.brand} — ${String(row.name).slice(0, 44)}`);
     for (const note of result.notes || []) console.log(`  ${''.padEnd(15)} · ${note}`);
@@ -4686,6 +4905,8 @@ if (require.main === module) {
     gatherInPage, renderPage, resolveRow, firstVerifiable,
     replaceRow, linkRow, setField, indentOf, factsFromHtml, factsFromRendered, inspectCandidate,
     catalogRowIdentity, evidenceNote,
+    /* a Shopify store's own product record, as identity evidence */
+    shopifyHandle, recordImages, recordImageHost, productRecordFor, productRecordEvidence,
     garmentsAgree, canonicalCorroborated, wordsInPath, wordsAboutImage, TRACKING_PARAMS,
     siteAsset, imageDimensions, listingShape, rankListings,
     parseArgs, OPTIONS, USAGE, intentFor, queryForms, listingsFor, discoverRow, coverage,
