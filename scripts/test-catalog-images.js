@@ -1221,21 +1221,82 @@ function walledRetailer() {
     assert.ok(Object.keys(offered.rejected).length, 'and the source says why it dropped them');
   });
 
-  await testAsync('with no source configured, discovery says so and writes nothing', async () => {
-    const before = fs.readFileSync(CATALOG);
-    const result = await run([
-      '--discover', '--only', 'sample-northfold-boxy-cotton-tee', '--write',
-      /* a report path with nothing at it, so this stays a test of what
-         happens with no source rather than of what was left lying
-         beside the catalogue by an earlier run */
-      '--report', path.join(TMP, 'no-source.json')
-    ], { env: withoutSources() });
-    const after = fs.readFileSync(CATALOG);
+  /* A catalogue row that exists only for the length of one test, with no
+     link and no photo, so discovery has something to look for however
+     much of the real catalogue has been photographed since. With nothing
+     to look for, discovery never asks for a source, and a test of "no
+     source is configured" would pass without ever reaching that path.
+     It wears the garment of the Northfold tee, under an id of its own. */
+  const NO_SOURCE_FIXTURE = {
+    id: 'fixture-northfold-boxy-cotton-tee',
+    name: 'Boxy Cotton Tee',
+    brand: 'Northfold',
+    price: null,
+    productUrl: null,
+    imageUrl: null,
+    category: 'tee',
+    style: ['Minimal', 'Sporty'],
+    occasion: ['Everyday', 'Weekend'],
+    fit: ['Relaxed', 'Oversized'],
+    colors: ['White'],
+    sizes: ['XS', 'S', 'M', 'L', 'XL']
+  };
 
-    assert.strictEqual(result.code, 0, result.stderr);
-    assert.match(result.stdout, /no product source is configured/);
-    assert.match(result.stdout, /rows already carry one and are not touched/);
-    assert.ok(before.equals(after), 'assets/catalog.js is byte-for-byte what it was');
+  /* Adds rows to the end of DEMO_PRODUCTS in the file's own shape, runs
+     the test, and puts assets/catalog.js back byte for byte whatever
+     happens. The callback is handed the catalogue as it stood WITH the
+     fixture rows, so "wrote nothing" is judged against what the run was
+     given. A function declaration, so it is usable above
+     withCatalogRestored, which it relies on. */
+  async function withFixtureRows(rows, fn) {
+    const literal = (value) => {
+      if (value === null || value === undefined) return 'null';
+      if (Array.isArray(value)) return `[${value.map(literal).join(', ')}]`;
+      if (typeof value === 'number') return String(value);
+      return `'${String(value).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
+    };
+    return withCatalogRestored(async () => {
+      const source = fs.readFileSync(CATALOG, 'utf8');
+      const start = source.indexOf('const DEMO_PRODUCTS = [');
+      assert.ok(start >= 0, 'assets/catalog.js no longer declares DEMO_PRODUCTS');
+      const end = source.indexOf('\n];', start);
+      assert.ok(end >= 0, 'could not find the end of DEMO_PRODUCTS');
+
+      const text = rows.map((row) => `  {\n${Object.entries(row)
+        .map(([field, value]) => `    ${field}: ${literal(value)}`)
+        .join(',\n')}\n  }`).join(',\n');
+      fs.writeFileSync(CATALOG, `${source.slice(0, end)},\n${text}${source.slice(end)}`);
+
+      const ids = extractor.readCatalog().rows.map((r) => r.id);
+      for (const row of rows) {
+        assert.strictEqual(ids.filter((id) => id === row.id).length, 1, `fixture row ${row.id} did not land once`);
+      }
+      return fn(fs.readFileSync(CATALOG));
+    });
+  }
+
+  await testAsync('with no source configured, discovery says so and writes nothing', async () => {
+    const original = fs.readFileSync(CATALOG);
+    const fixture = NO_SOURCE_FIXTURE;
+    await withFixtureRows([fixture], async (before) => {
+      const result = await run([
+        '--discover', '--only', fixture.id, '--write',
+        /* a report path with nothing at it, so this stays a test of what
+           happens with no source rather than of what was left lying
+           beside the catalogue by an earlier run */
+        '--report', path.join(TMP, 'no-source.json')
+      ], { env: withoutSources() });
+      const after = fs.readFileSync(CATALOG);
+
+      assert.strictEqual(result.code, 0, result.stderr);
+      assert.match(result.stdout, /Looking for a real listing for 1 row that carries no photo/,
+        'discovery had nothing to look for, so this never reached the source');
+      assert.match(result.stdout, new RegExp(fixture.id));
+      assert.match(result.stdout, /no product source is configured/);
+      assert.match(result.stdout, /rows? already carry one and are not touched/);
+      assert.ok(before.equals(after), 'assets/catalog.js is byte-for-byte what it was');
+    });
+    assert.ok(fs.readFileSync(CATALOG).equals(original), 'the fixture row was left in assets/catalog.js');
   });
 
   await testAsync('discovery leaves the verified rows out of its list entirely', async () => {
@@ -3283,62 +3344,6 @@ function walledRetailer() {
     }
   }
 
-  /* A catalogue row that exists only for the length of one test: the
-     garment of a real row (so every semantic gate asks exactly what it
-     would of that row) under an id of its own, with no link and no
-     photo. A test that needs an unlinked row cannot borrow a real one,
-     because real rows get verified and linked — and a borrowed row that
-     has since been given a genuine photo turns a test of the gates into
-     a test of what the catalogue happens to hold today. */
-  const literal = (value) => {
-    if (value === null || value === undefined) return 'null';
-    if (Array.isArray(value)) return `[${value.map(literal).join(', ')}]`;
-    if (typeof value === 'number') return String(value);
-    return `'${String(value).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
-  };
-
-  const fixtureRow = (id, like) => {
-    const row = catalogueRow(like);
-    return {
-      id,
-      name: row.name,
-      brand: row.brand,
-      price: null,
-      productUrl: null,
-      imageUrl: null,
-      category: row.category,
-      style: Array.from(row.style || []),
-      occasion: Array.from(row.occasion || []),
-      fit: Array.from(row.fit || []),
-      colors: Array.from(row.colors || []),
-      sizes: Array.from(row.sizes || [])
-    };
-  };
-
-  /* restores the catalogue afterwards, like withCatalogRestored, and
-     hands the callback the catalogue as it stood WITH the fixture rows,
-     so "nothing else moved" is judged against what the run was given */
-  async function withFixtureRows(rows, fn) {
-    return withCatalogRestored(async () => {
-      const source = fs.readFileSync(CATALOG, 'utf8');
-      const start = source.indexOf('const DEMO_PRODUCTS = [');
-      assert.ok(start >= 0, 'assets/catalog.js no longer declares DEMO_PRODUCTS');
-      const end = source.indexOf('\n];', start);
-      assert.ok(end >= 0, 'could not find the end of DEMO_PRODUCTS');
-
-      const text = rows.map((row) => `  {\n${Object.entries(row)
-        .map(([field, value]) => `    ${field}: ${literal(value)}`)
-        .join(',\n')}\n  }`).join(',\n');
-      fs.writeFileSync(CATALOG, `${source.slice(0, end)},\n${text}${source.slice(end)}`);
-
-      const ids = extractor.readCatalog().rows.map((r) => r.id);
-      for (const row of rows) {
-        assert.strictEqual(ids.filter((id) => id === row.id).length, 1, `fixture row ${row.id} did not land once`);
-      }
-      return fn(fs.readFileSync(CATALOG));
-    });
-  }
-
   const reportWith = (entries, extra) => Object.assign({
     version: extractor.REPORT_VERSION,
     createdAt: new Date().toISOString(),
@@ -3499,26 +3504,13 @@ function walledRetailer() {
 
   await testAsync('an entry that cannot answer for itself is refused rather than written', async () => {
     assert.ok(verified, 'the test above produced no verified entry to apply');
-    /* each tampered entry is aimed at a fixture row wearing a real row's
-       garment, never at the real row itself: a real row may since have
-       been linked for real, and then a refusal would be indistinguishable
-       from a row that was simply left as it was */
-    const like = {
-      'fixture-halden-merino-crew-knit': 'sample-halden-merino-crew-knit',
-      'fixture-terrace-linen-camp-shirt': 'sample-terrace-linen-camp-shirt',
-      'fixture-coveworks-wide-leg-trouser': 'sample-coveworks-wide-leg-trouser',
-      'fixture-northfold-boxy-cotton-tee': 'sample-northfold-boxy-cotton-tee',
-      'fixture-solstice-ribbed-knit-skirt': 'sample-solstice-ribbed-knit-skirt',
-      'fixture-kinfield-poplin-shirt': 'sample-kinfield-poplin-shirt'
-    };
-    const fixtures = Object.entries(like).map(([id, real]) => fixtureRow(id, real));
-    await withFixtureRows(fixtures, async (before) => {
+    await withCatalogRestored(async (before) => {
       /* Six ways a report can say something it cannot prove. Every one
          of them is decidable without a retailer, which is exactly why
          they are decided again here rather than taken from the file. */
       const tampered = [
         {
-          id: 'fixture-halden-merino-crew-knit',
+          id: 'sample-halden-merino-crew-knit',
           verified: false,
           productUrl: 'https://shop.example.com/p/112233',
           imageUrl: 'https://cdn.example.com/img/112233-hero.jpg',
@@ -3526,11 +3518,11 @@ function walledRetailer() {
           identity: { ok: true, via: 'image-url', code: '112233' },
           listingName: 'Merino Crew Knit',
           provedOnPage: [],
-          row: snapshot('fixture-halden-merino-crew-knit')
+          row: snapshot('sample-halden-merino-crew-knit')
         },
         {
           /* a listing on an aggregator: the soundness gate, again */
-          id: 'fixture-terrace-linen-camp-shirt',
+          id: 'sample-terrace-linen-camp-shirt',
           verified: true,
           productUrl: 'https://www.google.com/shopping/product/223344',
           imageUrl: 'https://cdn.example.com/img/223344-hero.jpg',
@@ -3538,11 +3530,11 @@ function walledRetailer() {
           identity: { ok: true, via: 'image-url', code: '223344' },
           listingName: 'Linen Camp Shirt',
           provedOnPage: [],
-          row: snapshot('fixture-terrace-linen-camp-shirt')
+          row: snapshot('sample-terrace-linen-camp-shirt')
         },
         {
           /* a photo tied to nothing: the evidence gate, again */
-          id: 'fixture-coveworks-wide-leg-trouser',
+          id: 'sample-coveworks-wide-leg-trouser',
           verified: true,
           productUrl: 'https://shop.example.com/p/334455',
           imageUrl: 'https://cdn.example.com/media/anonymous.jpg',
@@ -3550,12 +3542,12 @@ function walledRetailer() {
           identity: null,
           listingName: 'Wide Leg Trouser',
           provedOnPage: [],
-          row: snapshot('fixture-coveworks-wide-leg-trouser')
+          row: snapshot('sample-coveworks-wide-leg-trouser')
         },
         {
           /* a note that is not what its finding produces: edited on one
              side and not the other, and no longer what was proved */
-          id: 'fixture-northfold-boxy-cotton-tee',
+          id: 'sample-northfold-boxy-cotton-tee',
           verified: true,
           productUrl: 'https://shop.example.com/p/445566',
           imageUrl: 'https://cdn.example.com/media/anonymous.jpg',
@@ -3563,11 +3555,11 @@ function walledRetailer() {
           identity: { ok: true, via: 'json-ld-sku', sku: '445566' },
           listingName: 'Boxy Cotton Tee',
           provedOnPage: [],
-          row: snapshot('fixture-northfold-boxy-cotton-tee')
+          row: snapshot('sample-northfold-boxy-cotton-tee')
         },
         {
           /* the wrong garment: the semantic gate's title stage, again */
-          id: 'fixture-solstice-ribbed-knit-skirt',
+          id: 'sample-solstice-ribbed-knit-skirt',
           verified: true,
           productUrl: 'https://shop.example.com/p/556677',
           imageUrl: 'https://cdn.example.com/img/556677-hero.jpg',
@@ -3575,12 +3567,12 @@ function walledRetailer() {
           identity: { ok: true, via: 'image-url', code: '556677' },
           listingName: 'Chunky Knit Jumper',
           provedOnPage: [],
-          row: snapshot('fixture-solstice-ribbed-knit-skirt')
+          row: snapshot('sample-solstice-ribbed-knit-skirt')
         },
         {
           /* a row that has been renamed since: this listing was never
              held against the row the catalogue now carries */
-          id: 'fixture-kinfield-poplin-shirt',
+          id: 'sample-kinfield-poplin-shirt',
           verified: true,
           productUrl: 'https://shop.example.com/p/667788',
           imageUrl: 'https://cdn.example.com/img/667788-hero.jpg',
@@ -3588,7 +3580,7 @@ function walledRetailer() {
           identity: { ok: true, via: 'image-url', code: '667788' },
           listingName: 'Poplin Shirt',
           provedOnPage: [],
-          row: Object.assign(snapshot('fixture-kinfield-poplin-shirt'), { name: 'Something Else Entirely' })
+          row: Object.assign(snapshot('sample-kinfield-poplin-shirt'), { name: 'Something Else Entirely' })
         }
       ];
 
@@ -3635,16 +3627,12 @@ function walledRetailer() {
 
   await testAsync('--only applies one row of a report and leaves the rest of it applicable', async () => {
     assert.ok(verified, 'the test above produced no verified entry to apply');
-    /* the second row is a fixture wearing the merino knit's garment, not
-       the merino knit itself: that row has since been linked for real,
-       and this needs a row that is unlinked because the test made it so */
-    const fixture = fixtureRow('fixture-halden-merino-crew-knit', 'sample-halden-merino-crew-knit');
-    await withFixtureRows([fixture], async () => {
+    await withCatalogRestored(async () => {
       /* a second entry that answers every gate this side can ask: its
          photo carries its listing's code, and the shop calls it what
          the row means */
       const second = {
-        id: fixture.id,
+        id: 'sample-halden-merino-crew-knit',
         verified: true,
         productUrl: 'https://www.example-shop.com/p/merino-crew-knit/778899',
         imageUrl: 'https://cdn.example-shop.com/img/778899-hero.jpg',
@@ -3652,7 +3640,7 @@ function walledRetailer() {
         identity: { ok: true, via: 'image-url', code: '778899' },
         listingName: 'Merino Crew Knit',
         provedOnPage: [],
-        row: snapshot(fixture.id)
+        row: snapshot('sample-halden-merino-crew-knit')
       };
 
       const file = path.join(TMP, 'only.json');
@@ -3736,18 +3724,26 @@ function walledRetailer() {
   });
 
   await testAsync('with no report saved at all, --discover still means go and find out', async () => {
-    const before = fs.readFileSync(CATALOG);
-    const result = await run([
-      '--discover', '--write',
-      '--only', 'sample-northfold-boxy-cotton-tee',
-      '--report', path.join(TMP, 'nothing-was-ever-here.json')
-    ], { env: withoutSources() });
+    /* its own unlinked row, so "go and find out" has something to find
+       out about — see the no-source test above */
+    const original = fs.readFileSync(CATALOG);
+    const fixture = NO_SOURCE_FIXTURE;
+    await withFixtureRows([fixture], async (before) => {
+      const result = await run([
+        '--discover', '--write',
+        '--only', fixture.id,
+        '--report', path.join(TMP, 'nothing-was-ever-here.json')
+      ], { env: withoutSources() });
 
-    assert.strictEqual(result.code, 0, result.stderr);
-    assert.match(result.stdout, /No discovery report at/);
-    assert.match(result.stdout, /Looking for a real listing/, 'with nothing saved it has to go and look');
-    assert.match(result.stdout, /no product source is configured/);
-    assert.ok(fs.readFileSync(CATALOG).equals(before), 'and it wrote nothing, having verified nothing');
+      assert.strictEqual(result.code, 0, result.stderr);
+      assert.match(result.stdout, /No discovery report at/);
+      assert.match(result.stdout, /Looking for a real listing for 1 row that carries no photo/,
+        'with nothing saved it has to go and look');
+      assert.match(result.stdout, new RegExp(fixture.id));
+      assert.match(result.stdout, /no product source is configured/);
+      assert.ok(fs.readFileSync(CATALOG).equals(before), 'and it wrote nothing, having verified nothing');
+    });
+    assert.ok(fs.readFileSync(CATALOG).equals(original), 'the fixture row was left in assets/catalog.js');
   });
 
   await testAsync('the plain path leaves a discovery report alone, and says it is there', async () => {
