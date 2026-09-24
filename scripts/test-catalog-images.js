@@ -44,6 +44,11 @@ const productSource = require('../api/_providers/product-source');
 const SCRIPT = path.join(__dirname, 'fetch-catalog-images.js');
 const CATALOG = path.join(__dirname, '..', 'assets', 'catalog.js');
 
+/* The catalogue as shipped, read once before any test can write to it.
+   A test of what the shipped catalogue says reads this, never the file
+   as some earlier test may have left it mid-run. */
+const SHIPPED_CATALOG = fs.readFileSync(CATALOG, 'utf8');
+
 /* Every discovery report these tests write lives here, and --report
    points the script at it. Nothing touches the default path beside the
    catalogue, so a run of this suite cannot pick up — or leave behind —
@@ -1137,12 +1142,19 @@ function walledRetailer() {
   });
 
   test('the catalogue says how much of itself is photographed', () => {
-    const rows = extractor.readCatalog().rows;
+    const rows = evaluate(SHIPPED_CATALOG);
     const report = extractor.coverage(rows);
 
     assert.strictEqual(report.rows, rows.length);
     assert.strictEqual(report.withPhoto, rows.filter((row) => row.imageUrl).length);
-    assert.strictEqual(report.accounted, rows.length, 'every row accounts for what it carries');
+    /* a row vouched for by its page's embedded record is not counted
+       from the file: it waits for --coverage to read that page again,
+       and is accounted for only then. Nothing else may be left over. */
+    for (const id of report.awaitingPage) {
+      const checked = extractor.catalogRowIdentity(rows.find((row) => row.id === id));
+      assert.ok(checked.ok && checked.needsLive, `${id} waits on its page without evidence that needs one`);
+    }
+    assert.strictEqual(report.accounted + report.awaitingPage.length, rows.length, 'every row accounts for what it carries');
     assert.deepStrictEqual(report.unaccounted, []);
     assert.strictEqual(report.missing.length, rows.length - report.withPhoto);
   });
@@ -1248,7 +1260,8 @@ function walledRetailer() {
      fixture rows, so "wrote nothing" is judged against what the run was
      given. A function declaration, so it is usable above
      withCatalogRestored, which it relies on. */
-  async function withFixtureRows(rows, fn) {
+  async function withFixtureRows(rows, fn, options) {
+    const unlink = (options && options.unlink) || [];
     const literal = (value) => {
       if (value === null || value === undefined) return 'null';
       if (Array.isArray(value)) return `[${value.map(literal).join(', ')}]`;
@@ -1256,7 +1269,7 @@ function walledRetailer() {
       return `'${String(value).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
     };
     return withCatalogRestored(async () => {
-      const source = fs.readFileSync(CATALOG, 'utf8');
+      const source = unlinkedCatalogue(fs.readFileSync(CATALOG, 'utf8'), unlink);
       const start = source.indexOf('const DEMO_PRODUCTS = [');
       assert.ok(start >= 0, 'assets/catalog.js no longer declares DEMO_PRODUCTS');
       const end = source.indexOf('\n];', start);
@@ -1274,6 +1287,66 @@ function walledRetailer() {
       return fn(fs.readFileSync(CATALOG));
     });
   }
+
+  /* The catalogue text with the named rows put back to how a sample row
+     starts: no listing, no photo, no evidence. Every other row, and every
+     other field of these, is left exactly as it is.
+
+     The shipped catalogue is real data that discovery keeps filling in,
+     so a test that needs a row to start empty — or needs the only row
+     carrying some piece of evidence to be its own fixture — cannot take
+     that from the live file. It says which rows it needs cleared, and
+     gets them cleared. */
+  function unlinkedCatalogue(source, ids) {
+    let out = source;
+    for (const id of ids) {
+      const at = out.indexOf(`\n    id: '${id}',`);
+      assert.ok(at >= 0, `assets/catalog.js has no row ${id} to clear`);
+      const start = out.lastIndexOf('\n  {', at);
+      const end = out.indexOf('\n  }', at);
+      const row = out.slice(start, end)
+        .replace(/\n    productUrl: .*,/, '\n    productUrl: null,')
+        .replace(/\n    imageUrl: .*,/, '\n    imageUrl: null,')
+        .replace(/\n    imageEvidence: .*,/, '');
+      out = out.slice(0, start) + row + out.slice(end);
+    }
+
+    const was = evaluate(source);
+    const now = evaluate(out);
+    assert.strictEqual(now.length, was.length, 'clearing rows added or dropped one');
+    for (let at = 0; at < was.length; at += 1) {
+      const cleared = ids.includes(was[at].id);
+      assert.strictEqual(now[at].id, was[at].id, 'clearing rows moved one');
+      if (cleared) {
+        assert.strictEqual(now[at].productUrl, null, `${was[at].id} is still linked`);
+        assert.strictEqual(now[at].imageUrl, null, `${was[at].id} still carries a photo`);
+        assert.strictEqual(now[at].imageEvidence, undefined, `${was[at].id} still carries evidence`);
+      }
+      for (const field of Object.keys(was[at])) {
+        if (cleared && ['productUrl', 'imageUrl', 'imageEvidence'].includes(field)) continue;
+        assert.strictEqual(JSON.stringify(now[at][field]), JSON.stringify(was[at][field]), `${was[at].id}.${field} moved`);
+      }
+    }
+    return out;
+  }
+
+  /* Runs the test against a fixture catalogue — the shipped one with the
+     named rows cleared — and puts assets/catalog.js back byte for byte
+     whatever happens. The callback is handed the fixture as it stood
+     before the test did anything to it. */
+  async function withFixtureCatalogue(ids, fn) {
+    return withCatalogRestored(async () => {
+      fs.writeFileSync(CATALOG, unlinkedCatalogue(fs.readFileSync(CATALOG, 'utf8'), ids));
+      return fn(fs.readFileSync(CATALOG));
+    });
+  }
+
+  /* the shipped rows whose photo is vouched for by their own page's
+     embedded record, which only reading that page again can re-prove.
+     A test that reads the whole catalogue back through --coverage clears
+     these, so it never depends on a live retailer answering, and a test
+     that plants such a row of its own is the only one of its kind. */
+  const EMBEDDED_ROWS = extractor.coverage(evaluate(SHIPPED_CATALOG)).awaitingPage;
 
   await testAsync('with no source configured, discovery says so and writes nothing', async () => {
     const original = fs.readFileSync(CATALOG);
@@ -2197,9 +2270,16 @@ function walledRetailer() {
   test('the shipped catalogue still accounts for every row', () => {
     /* the rule is a tightening, and a tightening that unseats a
        verified row is a bug in the rule */
-    const report = extractor.coverage(extractor.readCatalog().rows);
+    const rows = evaluate(SHIPPED_CATALOG);
+    const report = extractor.coverage(rows);
     assert.deepStrictEqual(report.unaccounted, []);
-    assert.strictEqual(report.accounted, report.rows);
+    /* every row is accounted for from the file, or has evidence that is
+       sound on its face and only its own page, read again, can settle */
+    for (const id of report.awaitingPage) {
+      const checked = extractor.catalogRowIdentity(rows.find((row) => row.id === id));
+      assert.ok(checked.ok && checked.needsLive, `${id} is set aside without evidence that needs its page`);
+    }
+    assert.strictEqual(report.accounted + report.awaitingPage.length, report.rows);
   });
 
   await testAsync('a refused canonical falls back to a photo that proves itself', async () => {
@@ -3365,6 +3445,20 @@ function walledRetailer() {
      which deepStrictEqual refuses however identical the contents */
   const same = (value) => (value === undefined ? undefined : JSON.parse(JSON.stringify(value)));
 
+  /* Every row a report below is applied to. Applying a report writes
+     only into an empty row and refuses one that already carries a
+     photo, so these tests start from a fixture catalogue in which each
+     of them is empty — whatever discovery has since filled in for real. */
+  const REPORT_ROWS = [
+    'sample-halden-tailored-wool-coat',
+    'sample-halden-merino-crew-knit',
+    'sample-terrace-linen-camp-shirt',
+    'sample-coveworks-wide-leg-trouser',
+    'sample-northfold-boxy-cotton-tee',
+    'sample-solstice-ribbed-knit-skirt',
+    'sample-kinfield-poplin-shirt'
+  ];
+
   /* filled by the first test and used by the rest: one genuinely
      discovered row, proved against a fixture retailer through every
      gate, which is the only kind of thing that may be written */
@@ -3430,7 +3524,7 @@ function walledRetailer() {
 
   await testAsync('--write applies the saved report without searching, fetching or rendering', async () => {
     assert.ok(verified, 'the test above produced no verified entry to apply');
-    await withCatalogRestored(async () => {
+    await withFixtureCatalogue(REPORT_ROWS, async () => {
       const file = path.join(TMP, 'apply.json');
       extractor.saveReport(file, reportWith([verified]));
 
@@ -3468,7 +3562,7 @@ function walledRetailer() {
 
   await testAsync('applying a report moves the three permitted fields and no others', async () => {
     assert.ok(verified, 'the test above produced no verified entry to apply');
-    await withCatalogRestored(async (before) => {
+    await withFixtureCatalogue(REPORT_ROWS, async (before) => {
       const file = path.join(TMP, 'fields.json');
       extractor.saveReport(file, reportWith([verified]));
 
@@ -3504,7 +3598,7 @@ function walledRetailer() {
 
   await testAsync('an entry that cannot answer for itself is refused rather than written', async () => {
     assert.ok(verified, 'the test above produced no verified entry to apply');
-    await withCatalogRestored(async (before) => {
+    await withFixtureCatalogue(REPORT_ROWS, async (before) => {
       /* Six ways a report can say something it cannot prove. Every one
          of them is decidable without a retailer, which is exactly why
          they are decided again here rather than taken from the file. */
@@ -3627,7 +3721,7 @@ function walledRetailer() {
 
   await testAsync('--only applies one row of a report and leaves the rest of it applicable', async () => {
     assert.ok(verified, 'the test above produced no verified entry to apply');
-    await withCatalogRestored(async () => {
+    await withFixtureCatalogue(REPORT_ROWS, async () => {
       /* a second entry that answers every gate this side can ask: its
          photo carries its listing's code, and the shop calls it what
          the row means */
@@ -3766,11 +3860,19 @@ function walledRetailer() {
   });
 
   await testAsync('--coverage reports without reading anything, and --help lists the modes', async () => {
-    const report = await run(['--coverage']);
-    assert.strictEqual(report.code, 0);
-    assert.match(report.stdout, /of 27 rows carry a photo/);
-    assert.match(report.stdout, /27 of 27 account for what they carry/);
-    assert.doesNotMatch(report.stdout, /Reading \d+ linked product page/);
+    /* the shipped catalogue with the rows that can only be re-proved by
+       reading their page cleared, so "without reading anything" is what
+       is tested rather than whether a live retailer answered. Those rows
+       are held to account on their own, below and by the tests of the
+       shipped catalogue above. */
+    await withFixtureCatalogue(EMBEDDED_ROWS, async () => {
+      const report = await run(['--coverage']);
+      assert.strictEqual(report.code, 0);
+      assert.match(report.stdout, /of 27 rows carry a photo/);
+      assert.match(report.stdout, /27 of 27 account for what they carry/);
+      assert.doesNotMatch(report.stdout, /Reading \d+ linked product page/);
+      assert.doesNotMatch(report.stdout, /Reading \d+ product pages? again/);
+    });
 
     const help = await run(['--help']);
     assert.match(help.stdout, /--discover/);
@@ -4389,7 +4491,7 @@ function walledRetailer() {
       const caught = await run(['--coverage']);
       assert.doesNotMatch(caught.stdout, new RegExp(`${total} of ${total} account for what they carry`));
       assert.match(caught.stdout, new RegExp(fixture.id));
-    });
+    }, { unlink: EMBEDDED_ROWS });
   });
 
   /* ---------------------------------------------------------
@@ -4717,7 +4819,7 @@ function walledRetailer() {
           const caught = await run(['--coverage']);
           assert.doesNotMatch(caught.stdout, new RegExp(`${total} of ${total} account for what they carry`));
           assert.match(caught.stdout, new RegExp(`${fixture.id} — its page now carries product 7689314336867, not the recorded 1111111111`));
-        });
+        }, { unlink: EMBEDDED_ROWS });
       } finally {
         store.server.close();
       }
