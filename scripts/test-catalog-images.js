@@ -1447,6 +1447,44 @@ function walledRetailer() {
     assert.match(jumbie.why, /never says fleece/);
   });
 
+  test('a puffer jacket or coat is a puffer, not the jacket or coat after it', () => {
+    /* the way shops title the garment: "jacket" and "coat" end the
+       title, and read as the head noun they refused every one */
+    for (const title of ['Cropped Puffer Jacket', "Women's Cropped Puffer Jacket - Red", 'Cropped Puffer Coat']) {
+      const verdict = judge('sample-coveworks-cropped-puffer', title);
+      assert.strictEqual(verdict.ok, true, `${title}: ${verdict.why}`);
+      assert.strictEqual(verdict.kind, 'match', `${title} left something pending: ${verdict.why}`);
+      assert.match(verdict.why, /puffer matches puffer/);
+      assert.match(verdict.why, /cropped on both/);
+    }
+
+    /* the garment is a puffer, but the title never says cropped: the
+       page still has to establish it */
+    for (const title of ['Puffer Jacket', 'Quilted Puffer Coat']) {
+      const verdict = judge('sample-coveworks-cropped-puffer', title);
+      assert.strictEqual(verdict.ok, true, `${title}: ${verdict.why}`);
+      assert.strictEqual(verdict.kind, 'pending', `${title} was settled without saying cropped`);
+      assert.deepStrictEqual(verdict.pending.map(extractor.nameOfPending), ['cropped']);
+    }
+
+    /* a puffer VEST is a vest, not a puffer jacket */
+    const vest = judge('sample-coveworks-cropped-puffer', 'Cropped Puffer Vest');
+    assert.strictEqual(vest.ok, false, 'a vest answered a puffer');
+    assert.match(vest.why, /is a vest/);
+
+    /* and the jacket and coat types around it are read as before */
+    assert.strictEqual(extractor.readGarment('Cropped Puffer Jacket').type, 'puffer');
+    assert.strictEqual(extractor.readGarment('Puffer Coat').type, 'puffer');
+    assert.strictEqual(extractor.readGarment('Puffer Vest').type, 'vest');
+    assert.strictEqual(extractor.readGarment('Denim Jacket').type, 'jacket');
+    assert.strictEqual(extractor.readGarment('Cropped Track Jacket').type, 'jacket');
+    assert.strictEqual(extractor.readGarment('Tailored Wool Coat').type, 'coat');
+    assert.strictEqual(extractor.readGarment('Trench Coat').type, 'coat');
+    assert.strictEqual(extractor.readGarment('Button Down Coat').type, 'coat', 'a button-down coat is not a puffer');
+    const coat = judge('sample-halden-tailored-wool-coat', 'Tailored Wool Puffer Coat');
+    assert.strictEqual(coat.ok, false, 'a puffer answered a tailored coat');
+  });
+
   test('a pleated midi skirt is answered by a pleated skirt, and by nothing shorter', () => {
     const plain = judge('sample-kinfield-pleated-midi-skirt', 'COS Pleated Twill Midi Skirt');
     assert.strictEqual(plain.ok, true, plain.why);

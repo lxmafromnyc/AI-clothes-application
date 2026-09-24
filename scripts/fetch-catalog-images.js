@@ -3256,7 +3256,10 @@ const GARMENT_TYPES = [
   /* outerwear */
   { type: 'coat', family: 'outerwear', terms: ['coat', 'overcoat', 'topcoat', 'peacoat', 'pea coat', 'trench', 'trench coat', 'raincoat', 'rain coat', 'duster'] },
   { type: 'parka', family: 'outerwear', terms: ['parka', 'anorak'] },
-  { type: 'puffer', family: 'outerwear', terms: ['puffer', 'down jacket', 'quilted jacket'] },
+  /* "puffer jacket" and "puffer coat" are how shops title a puffer; as
+     whole terms they outrank the bare "jacket" and "coat" beside them,
+     which would otherwise be read as the head noun */
+  { type: 'puffer', family: 'outerwear', terms: ['puffer', 'puffer jacket', 'puffer coat', 'down jacket', 'quilted jacket'] },
   { type: 'blazer', family: 'outerwear', terms: ['blazer', 'sport coat', 'sports coat', 'suit jacket', 'dinner jacket'] },
   { type: 'vest', family: 'outerwear', terms: ['vest', 'gilet', 'waistcoat'] },
   { type: 'jacket', family: 'outerwear', terms: ['jacket', 'bomber', 'windbreaker', 'shacket', 'track jacket', 'denim jacket', 'trucker jacket'] },
