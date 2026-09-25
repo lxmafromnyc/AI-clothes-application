@@ -5394,7 +5394,7 @@ ${opts.ld === false ? '' : `<script type="application/ld+json">${JSON.stringify(
       'a link kept as an object': { sku: '570412345', name: 'Wide Leg Trouser', link: { href: P }, image: { src: '/img/a.jpg' } },
       'a wrapped tile': { product: { id: '570412345', name: 'Wide Leg Trouser', url: P }, image: { url: '/img/a.jpg' } },
       'a GraphQL edge, media.nodes': { node: { id: '570412345', name: 'Wide Leg Trouser', pdpUrl: P, media: { nodes: [{ image: { url: '/img/a.jpg' } }] } } },
-      'the image only in a variant': { styleId: '570412345', displayName: 'Wide Leg Trouser', productUrl: P, variants: [{ image: { src: '/img/v.jpg' } }] },
+      'the image only in a variant, and plainly this product’s': { styleId: '570412345', displayName: 'Wide Leg Trouser', productUrl: P, variants: [{ image: { src: '/img/570412345_v.jpg' } }] },
       'a bare image file name': { itemNumber: '570412345', name: 'Wide Leg Trouser', pdpURL: P, imageUrl: '570412345_front.jpg' }
     };
     for (const [what, tile] of Object.entries(cases)) {
@@ -5410,7 +5410,9 @@ ${opts.ld === false ? '' : `<script type="application/ld+json">${JSON.stringify(
     assert.deepStrictEqual(tileNames({ grid: [
       { id: '1', name: 'Wide Leg Trouser', url: '/img/570412345.jpg' },
       { productCode: '2', productDescription: 'x'.repeat(200), url: P, image: '/img/a.jpg' },
-      { sku: '3', name: 'Wide Leg Trouser', url: P, image: 'front view' }
+      { sku: '3', name: 'Wide Leg Trouser', url: P, image: 'front view' },
+      /* a variant's picture that does not say whose it is */
+      { styleId: '570412345', displayName: 'Wide Leg Trouser', productUrl: P, variants: [{ image: { src: '/img/v.jpg' } }] }
     ] }), []);
   });
 
@@ -5532,6 +5534,130 @@ ${opts.ld === false ? '' : `<script type="application/ld+json">${JSON.stringify(
       }
     });
   }
+
+  /* ---------------------------------------------------------
+     Embedded product data, round four: fields the record owns one level
+     down
+
+     The live wide-leg run read J.Crew, L.L.Bean and Ann Taylor records
+     with one field missing at the top: J.Crew's image lives in its
+     colours and tiles, L.L.Bean's page in its offers, Ann Taylor's id in
+     its skus. Each is read from the record's own block, on terms that
+     keep it this product's.
+     --------------------------------------------------------- */
+  const J = '/p/womens/pants/kate-wide-leg-pant/BX123';
+
+  test('an image kept in the record’s colours, tiles or variants is taken only when it is plainly this product’s', () => {
+    const ok = {
+      'a colour whose shot carries the code': { productCode: 'BX123', productDescription: 'Kate wide-leg pant', url: J, colors: [{ colorCode: 'KA2345', colorName: 'black', skuShot: 'https://www.jcrew.com/s7-img-facade/BX123_KA2345' }] },
+      'a tile whose image carries the code': { productCode: 'BX123', productDescription: 'Kate wide-leg pant', url: J, tiles: [{ imageUrl: '/s7-img-facade/BX123_KA2345?wid=400' }] },
+      'a variant that names the same product': { productCode: 'BX123', name: 'Kate wide-leg pant', url: J, variants: [{ productCode: 'BX123', imageUrl: '/images/front.jpg' }] }
+    };
+    for (const [what, record] of Object.entries(ok)) assert.deepStrictEqual(tileNames({ grid: [record] }), [J], what);
+    const refused = {
+      'a colour chip that names no product': { productCode: 'BX123', name: 'Kate wide-leg pant', url: J, colors: [{ colorName: 'black', swatchUrl: '/images/swatch-black.jpg' }] },
+      'a tile that names another product': { productCode: 'BX123', name: 'Kate wide-leg pant', url: J, tiles: [{ productCode: 'BX999', imageUrl: '/images/front.jpg' }] },
+      'a colour’s page, which is not a picture': { productCode: 'BX123', name: 'Kate wide-leg pant', url: J, colors: [{ url: `${J}?color=KA2345` }] },
+      'a recommendation inside the tiles': { productCode: 'BX123', name: 'Kate wide-leg pant', url: J, tiles: [{ recommendations: [{ imageUrl: '/s7-img-facade/BX123_KA2345' }] }] }
+    };
+    for (const [what, record] of Object.entries(refused)) assert.deepStrictEqual(tileNames({ grid: [record] }), [], what);
+    /* and a colour's own page is not read as another product */
+    assert.strictEqual(extractor.embeddedProductTiles({ grid: [{ productCode: 'BX123', name: 'Kate wide-leg pant', url: J, image: '/images/a.jpg',
+      tiles: [{ productCode: 'BX123', name: 'Kate wide-leg pant', url: `${J}?color=KA`, image: '/images/b.jpg' }] }] }, 't').length, 1);
+  });
+
+  test('a page kept in the record’s offers or links is taken only when they name one page', () => {
+    assert.deepStrictEqual(tileNames({ itemListElement: [{ '@type': 'Product', name: 'Wide-Leg Trouser', sku: '520123',
+      image: 'https://global.llbean.com/images/520123.jpg', offers: { '@type': 'Offer', url: 'https://www.llbean.com/llb/shop/520123' } }] }),
+      ['https://www.llbean.com/llb/shop/520123']);
+    assert.deepStrictEqual(tileNames({ grid: [{ name: 'Wide-Leg Trouser', sku: '520123', image: '/images/520123.jpg',
+      offers: [{ url: '/llb/shop/520123?attrValue=Navy' }, { url: '/llb/shop/520123?attrValue=Black' }] }] }), ['/llb/shop/520123?attrValue=Navy']);
+    assert.deepStrictEqual(tileNames({ grid: [{ name: 'Wide-Leg Trouser', sku: '520123', image: '/images/520123.jpg', seo: { url: '/llb/shop/520123' } }] }),
+      ['/llb/shop/520123']);
+    /* offers that link different pages settle nothing */
+    assert.deepStrictEqual(tileNames({ grid: [{ name: 'Wide-Leg Trouser', sku: '520123', image: '/images/520123.jpg',
+      offers: [{ url: '/llb/shop/520123' }, { url: '/llb/shop/520999' }] }] }), []);
+    /* and an offer on another site, or at a category, is dropped on this side as any link would be */
+    const links = extractor.listingProductLinks('https://www.llbean.com/llb/shop/womens-pants', [
+      ...extractor.embeddedProductTiles({ grid: [
+        { name: 'Wide-Leg Trouser', sku: '520124', image: '/images/520124.jpg', offers: { url: 'https://reseller.example.net/p/520124' } },
+        { name: 'Wide-Leg Trousers', sku: '520125', image: '/images/520125.jpg', offers: { url: '/llb/shop/womens-pants/collections/wide-leg' } }
+      ] }, 't')
+    ]);
+    assert.deepStrictEqual(links, []);
+  });
+
+  test('a record with no id at the top is taken only with a real sku or product id it owns', () => {
+    const A = '/the-wide-leg-pant/cd/7123456';
+    assert.deepStrictEqual(extractor.embeddedProductTiles({ grid: [{ name: 'The Wide Leg Pant', url: A, image: '/images/7123456.jpg',
+      skus: [{ skuId: '7123456000123', size: '4' }] }] }, 't').map((one) => one.id), ['7123456000123']);
+    assert.deepStrictEqual(extractor.embeddedProductTiles({ grid: [{ name: 'The Wide Leg Pant', url: A, image: '/images/a.jpg',
+      analytics: { prodId: '7123456' } }] }, 't').map((one) => one.id), ['7123456']);
+    assert.deepStrictEqual(extractor.embeddedProductTiles({ grid: [{ name: 'The Wide Leg Pant', url: A, image: '/images/a.jpg',
+      defaultSku: '7123456000123' }] }, 't').map((one) => one.id), ['7123456000123']);
+    /* a code only in the URL is not an id the record gives, and a bare id
+       outside a sku names too many things */
+    assert.deepStrictEqual(tileNames({ grid: [{ name: 'The Wide Leg Pant', url: A, image: '/images/a.jpg' }] }), []);
+    assert.deepStrictEqual(tileNames({ grid: [{ name: 'The Wide Leg Pant', url: A, image: '/images/a.jpg', analytics: { id: 'list-7', code: 'grid' } }] }), []);
+  });
+
+  test('names kept as objects, other id spellings, and links with no leading slash', () => {
+    assert.deepStrictEqual(tileNames({ grid: [{ name: { 'en-US': 'Wide Leg Trouser' }, sku: '570412345', url: '/p/wide-leg-trouser/570412345', image: '/img/a.jpg' }] }),
+      ['/p/wide-leg-trouser/570412345']);
+    for (const key of ['prodId', 'itemCode', 'styleNum', 'productNo']) {
+      assert.strictEqual(tileNames({ grid: [{ [key]: '570412345', name: 'Wide Leg Trouser', url: '/p/wide-leg-trouser/570412345', image: '/img/a.jpg' }] }).length, 1, key);
+    }
+    /* a link with no leading slash is from the site's root, not the category's path */
+    const links = extractor.listingProductLinks('https://shop.example.com/c/womens/pants/wide-leg', [
+      { url: 'p/wide-leg-trouser/570412345', name: 'Wide Leg Trouser', id: '570412345', image: '/img/a.jpg' },
+      { url: './p/wide-leg-trouser/570412346', name: 'Wide Leg Trouser', id: '570412346', image: '/img/b.jpg' }
+    ]);
+    assert.deepStrictEqual(links.map((one) => one.productUrl), [
+      'https://shop.example.com/p/wide-leg-trouser/570412345', 'https://shop.example.com/p/wide-leg-trouser/570412346']);
+  });
+
+  await testAsync('a category page’s J.Crew, L.L.Bean and Ann Taylor-shaped records become product candidates, and decoys do not', async () => {
+    const shop = await categoryShop({
+      570412345: { name: 'Wide Leg Trouser', photo: true },
+      570455555: { name: 'Wide Leg Trouser', photo: true },
+      570466666: { name: 'Wide Leg Trouser', photo: true },
+      570411111: { name: 'Wide Leg Trouser', photo: true },
+      570422222: { name: 'Wide Leg Trouser', photo: true },
+      570433333: { name: 'Wide Leg Trouser', photo: true }
+    }, {
+      ld: false,
+      next: () => ({ props: { pageProps: { initialState: JSON.stringify({ category: { products: [
+        /* J.Crew: no top-level image; its colour's shot carries the code */
+        { productCode: 'BX570412345', productDescription: 'Wide Leg Trouser', url: '/p/womens/pants/wide-leg-trouser/BX570412345',
+          colors: [{ colorCode: 'KA2345', skuShot: '/s7-img-facade/BX570412345_KA2345' }] },
+        /* L.L.Bean: no top-level url; its offer links the page */
+        { name: 'Wide Leg Trouser', sku: '570455555', image: '/images/570455555.jpg', offers: { url: '/llb/shop/570455555' } },
+        /* Ann Taylor: no top-level id; its sku gives one */
+        { name: 'Wide Leg Trouser', url: '/wide-leg-trouser/cd/570466666', image: '/images/570466666.jpg', skus: [{ skuId: '570466666001' }] },
+        /* decoys: a colour chip that says nothing, an id that is not the product's, offers that disagree */
+        { productCode: 'BX570411111', name: 'Wide Leg Trouser', url: '/p/womens/pants/wide-leg-trouser/BX570411111', colors: [{ swatchUrl: '/images/swatch.jpg' }] },
+        { name: 'Wide Leg Trouser', url: '/wide-leg-trouser/cd/570422222', image: '/images/570422222.jpg', analytics: { id: 'grid-1' } },
+        { name: 'Wide Leg Trouser', sku: '570433333', image: '/images/570433333.jpg', offers: [{ url: '/llb/shop/570433333' }, { url: '/llb/shop/570400000' }] }
+      ] } }) } } })
+    });
+    const port = shop.address().port;
+    try {
+      offerCategory(port);
+      const result = await extractor.discoverRow(TROUSER_ROW, new Map(), 8);
+      assert.strictEqual(result.verdict, 'VERIFIED', result.why);
+      assert.strictEqual(result.proposal.productUrl, `http://127.0.0.1:${port}/p/womens/pants/wide-leg-trouser/BX570412345`);
+      assert.match(result.proposal.imageUrl, /\/img\/570412345-hero\.jpg$/, 'the colour shot, not the product page’s photo, was taken');
+      const category = result.tried.find((one) => one.url === categoryFor(port));
+      assert.ok(!category.verified, 'the category page itself was accepted');
+      assert.deepStrictEqual(category.productLinks.map((one) => one.productUrl.replace(`http://127.0.0.1:${port}`, '')), [
+        '/p/womens/pants/wide-leg-trouser/BX570412345', '/llb/shop/570455555', '/wide-leg-trouser/cd/570466666']);
+      for (const code of ['570411111', '570422222', '570433333', '570400000']) {
+        assert.ok(!shop.hits.some((hit) => !hit.endsWith('.jpg') && hit.includes(code)), `the decoy ${code} was read`);
+      }
+    } finally {
+      shop.close();
+    }
+  });
 
   /* ---------------------------------------------------------
      A canonical page vouches for its image only if it is a product page

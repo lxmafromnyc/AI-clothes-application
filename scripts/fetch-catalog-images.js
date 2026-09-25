@@ -4476,11 +4476,26 @@ function embeddedProductTiles(data, source, most, stats) {
   const URL_KEYS = ['pdpurl', 'producturl', 'productpageurl', 'pdplink', 'productlink', 'pdppath', 'productpath', 'pdpuri', 'producturi',
     'detailurl', 'detailpageurl', 'canonicalurl', 'seourl', 'seopath', 'relativeurl', 'url', 'href', 'link', 'uri'];
   const NAME_KEYS = ['name', 'productname', 'displayname', 'producttitle', 'productdisplayname', 'title', 'productdescription'];
-  const ID_KEYS = ['sku', 'skuid', 'productid', 'productcode', 'productnumber', 'pid', 'stylenumber', 'styleid', 'stylecode', 'itemid',
-    'itemnumber', 'partnumber', 'catentryid', 'articlenumber', 'articlecode', 'webid', 'mpn', 'masterid', 'masterproductid', 'code', 'id'];
+  const ID_KEYS = ['sku', 'skuid', 'productid', 'prodid', 'productcode', 'prodcode', 'productnumber', 'productno', 'pid', 'stylenumber', 'stylenum',
+    'styleno', 'styleid', 'stylecode', 'itemid', 'itemnumber', 'itemcode', 'partnumber', 'catentryid', 'articlenumber', 'articlecode', 'webid',
+    'mpn', 'masterid', 'masterproductid', 'code', 'id'];
+  /* outside a sku or variant, a bare id or code names too many things */
+  const PRODUCT_ID_KEYS = ID_KEYS.filter((key) => key !== 'id' && key !== 'code');
   const IMAGE_KEYS = ['image', 'images', 'imageurl', 'imagesrc', 'imagepath', 'img', 'thumbnail', 'thumbnailurl', 'primaryimage',
     'primaryimageurl', 'defaultimage', 'productimage', 'productimages', 'featuredimage', 'heroimage', 'mainimage', 'imageset', 'imagedata',
-    'picture', 'pictures', 'photo', 'photos', 'assets', 'media', 'colors', 'colorways', 'swatches', 'variants', 'skus'];
+    'picture', 'pictures', 'photo', 'photos', 'assets', 'media'];
+  /* Where a record keeps what belongs to it, one level down: the offer
+     that links its page, the sku that numbers it, the colour that
+     pictures it. Read only for the record's own missing field, and only
+     on the terms each reader below sets. */
+  const OWNED_LINKS = ['offers', 'offer', 'seo', 'urls', 'links', 'pdp', 'routes', 'item', 'product'];
+  const CONTAINED_URL_KEYS = URL_KEYS.concat(['pdp', 'self', 'product', 'canonical', 'web', 'desktop']);
+  const SKU_HOLDERS = ['skus', 'sku', 'variants', 'variant', 'defaultsku', 'defaultvariant', 'selectedvariant'];
+  const ID_HOLDERS = SKU_HOLDERS.concat(['identifiers', 'ids', 'attributes', 'analytics', 'productdata', 'productinfo', 'details', 'meta']);
+  const OWNED_IMAGES = ['colors', 'colours', 'colorways', 'swatches', 'variants', 'variant', 'skus', 'tiles', 'defaultsku', 'defaultvariant',
+    'selectedvariant', 'product', 'gallery', 'shots', 'views'];
+  const IMAGE_ADDRESS = /\.(jpe?g|png|webp|avif|gif)(\?.*)?$|s7-img|scene7|\/is\/image\/|\/images?\/|\/img\/|\/photos?\/|\/media\/|cdn\.shopify\.com/i;
+  const IMAGEISH_KEY = /image|img|photo|picture|src|url|shot|media|asset|swatch|thumb|zoom|hero|path/;
   const IMAGE_PARTS = ['url', 'src', 'href', 'contenturl', 'imageurl', 'path', 'image', 'images', 'featuredimage', 'node', 'nodes', 'edges',
     'primary', 'main', 'default', 'hero', 'front', 'large', 'medium', 'small', 'original', 'zoom'];
   /* a tile the data wraps: { product: {...}, image: {...} }, a GraphQL
@@ -4488,7 +4503,7 @@ function embeddedProductTiles(data, source, most, stats) {
   const WRAPS = ['product', 'item', 'node', 'productdata', 'productinfo', 'attributes', 'tile'];
   const AWAY = /recommend|related|similar|recent|upsell|cross.?sell|also|trending|suggest|sponsor|complete.?the.?look|pairs?.?with|wear.?it.?with|carousel|promo|^ads?$|advert|^nav|menu|header|footer|breadcrumb/i;
   const SHOPIFY_PRODUCT = /^gid:\/\/shopify\/Product\/\d+$/;
-  const VARIANT = /^(variants?|colou?rs?|colorways?|swatch(es)?|skus?|sizes?|images?|media|options?|pictures?|photos?)$/;
+  const VARIANT = /^(variants?|colou?rs?|colorways?|swatch(es)?|skus?|sizes?|images?|media|options?|pictures?|photos?|tiles?)$/;
   const limit = most || 60;
   const out = [];
   const st = stats || {};
@@ -4536,8 +4551,8 @@ function embeddedProductTiles(data, source, most, stats) {
      address is skipped for the next one, and a link kept as an object
      ({ href }, { url }) is read through */
   const IMAGE_FILE = /\.(jpe?g|png|webp|avif|gif|svg)(\?.*)?$/i;
-  const linkOf = (node, keys) => {
-    for (const name of URL_KEYS) {
+  const linkOf = (node, keys, names) => {
+    for (const name of names || URL_KEYS) {
       if (!(name in keys)) continue;
       let value = node[keys[name]];
       if (value && typeof value === 'object' && !Array.isArray(value)) {
@@ -4548,11 +4563,117 @@ function embeddedProductTiles(data, source, most, stats) {
     }
     return null;
   };
+  /* two links name one page when their path and any product-naming
+     parameter agree */
+  const pageOf = (link) => {
+    const [path, query] = String(link).split('#')[0].split('?');
+    const ids = (query || '').split('&').filter((pair) => /^(pid|productid|product_id|itemid|styleid|skuid|sku)=/i.test(pair)).sort();
+    return `${path.replace(/\/+$/, '')}?${ids.join('&')}`.toLowerCase();
+  };
+  /* the record's page, from the offer or link block it owns — one page,
+     or none: offers that link different pages settle nothing */
+  const nestedLink = (node, keys) => {
+    for (const name of OWNED_LINKS) {
+      if (!(name in keys)) continue;
+      const value = node[keys[name]];
+      const list = (Array.isArray(value) ? value.slice(0, 20) : [value]).filter((one) => one && typeof one === 'object' && !Array.isArray(one));
+      const links = list.map((one) => linkOf(one, indexOf(one), CONTAINED_URL_KEYS)).filter(Boolean);
+      if (!links.length) continue;
+      return new Set(links.map(pageOf)).size === 1 ? links[0] : null;
+    }
+    return null;
+  };
+  /* the record's own sku or product id, from the sku, variant or
+     identifier block it owns; a bare id or code counts only on a sku */
+  const nestedId = (node, keys) => {
+    const idIn = (value, names, depth) => {
+      if (depth > 2 || !value || typeof value !== 'object') return null;
+      if (Array.isArray(value)) {
+        for (const one of value.slice(0, 5)) { const got = idIn(one, names, depth + 1); if (got) return got; }
+        return null;
+      }
+      const inner = indexOf(value);
+      const direct = first(value, inner, names, 120);
+      if (direct) return direct;
+      for (const key of Object.keys(value).slice(0, 50)) {
+        if (AWAY.test(key) || !value[key] || typeof value[key] !== 'object') continue;
+        const got = idIn(value[key], names, depth + 1);
+        if (got) return got;
+      }
+      return null;
+    };
+    for (const name of ID_HOLDERS) {
+      if (!(name in keys)) continue;
+      const value = node[keys[name]];
+      if (typeof value === 'string' && value.trim() && SKU_HOLDERS.includes(name)) return value.trim().slice(0, 120);
+      const got = idIn(value, SKU_HOLDERS.includes(name) ? ID_KEYS : PRODUCT_ID_KEYS, 0);
+      if (got) return got;
+    }
+    return null;
+  };
+  /* the record's own picture, from the colours, variants or tiles it
+     owns — and only one that is plainly THIS product's: its address
+     carries the product's id, or the object holding it names the same
+     product id. A colour chip or a banner that says neither is not taken. */
+  const tokensOf = (id) => {
+    const text = norm(String(id || '').replace(/^gid:\/\/shopify\/\w+\//i, ''));
+    return [...new Set([text, text.replace(/^0+/, '')])].filter((one) => one.length >= 4);
+  };
+  const ownedImage = (node, keys, id) => {
+    const tokens = tokensOf(id);
+    const search = (value, depth, same) => {
+      if (depth > 4 || value === null || value === undefined) return null;
+      if (typeof value === 'string') {
+        const found = address(value);
+        if (!found || !IMAGE_ADDRESS.test(found)) return null;
+        return same || tokens.some((token) => norm(found).includes(token)) ? found : null;
+      }
+      if (Array.isArray(value)) {
+        for (const one of value.slice(0, 10)) { const got = search(one, depth + 1, same); if (got) return got; }
+        return null;
+      }
+      if (typeof value !== 'object') return null;
+      const inner = indexOf(value);
+      const itsId = first(value, inner, PRODUCT_ID_KEYS, 120);
+      const mine = same || Boolean(itsId && id && norm(itsId) === norm(id));
+      for (const key of Object.keys(value).slice(0, 50)) {
+        if (AWAY.test(key) || !IMAGEISH_KEY.test(norm(key))) continue;
+        const got = search(value[key], depth + 1, mine);
+        if (got) return got;
+      }
+      for (const key of Object.keys(value).slice(0, 50)) {
+        if (AWAY.test(key) || IMAGEISH_KEY.test(norm(key)) || !value[key] || typeof value[key] !== 'object') continue;
+        const got = search(value[key], depth + 1, mine);
+        if (got) return got;
+      }
+      return null;
+    };
+    if (!tokens.length && !id) return null;
+    for (const name of OWNED_IMAGES) {
+      if (!(name in keys)) continue;
+      const got = search(node[keys[name]], 0, false);
+      if (got) return got;
+    }
+    return null;
+  };
+  /* a name kept as an object: { value }, { text }, { en-US } */
+  const nameOf = (node, keys) => {
+    const direct = first(node, keys, NAME_KEYS, 300);
+    if (direct) return direct;
+    for (const name of NAME_KEYS) {
+      const value = name in keys ? node[keys[name]] : null;
+      if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+      const inner = indexOf(value);
+      const got = first(value, inner, ['value', 'text', 'default', 'enus', 'en', 'engb', 'label'], 300);
+      if (got) return got;
+    }
+    return null;
+  };
   const roles = (node) => {
     const keys = indexOf(node);
-    let url = linkOf(node, keys);
-    const id = first(node, keys, ID_KEYS, 120);
-    let name = first(node, keys, NAME_KEYS, 300);
+    let url = linkOf(node, keys) || nestedLink(node, keys);
+    const id = first(node, keys, ID_KEYS, 120) || nestedId(node, keys);
+    let name = nameOf(node, keys);
     /* a product description is a name only when it is the length of one */
     if (name && 'productdescription' in keys && name === String(node[keys.productdescription]).trim().slice(0, 300) && name.length > 120) name = null;
     /* a headless Shopify product names its handle, not its URL */
@@ -4569,6 +4690,7 @@ function embeddedProductTiles(data, source, most, stats) {
         if (typeof value === 'string' && IMAGE_FILE.test(value.trim())) { image = address(value); if (image) break; }
       }
     }
+    if (!image) image = ownedImage(node, keys, id);
     return { keys, url, name, id, image };
   };
   const opened = (value) => {
@@ -4664,7 +4786,10 @@ function listingProductLinks(listingUrl, tiles, stats) {
     if (out.length >= MAX_TILES_PER_PAGE) break;
     if (!tile || typeof tile.url !== 'string' || typeof tile.name !== 'string' || !tile.id || typeof tile.image !== 'string') { drop('incomplete'); continue; }
     let url;
-    try { url = new URL(tile.url, listing); new URL(tile.image, listing); } catch (err) { drop('not a URL'); continue; }
+    /* page data is not a document: a link with no leading slash is from
+       the site's root, not from the category page's own path */
+    const base = /^[a-z][a-z0-9+.-]*:|^\/\/|^\//i.test(tile.url.trim()) ? listing : new URL('/', listing);
+    try { url = new URL(tile.url.trim().replace(/^\.\//, ''), base); new URL(tile.image, listing); } catch (err) { drop('not a URL'); continue; }
     if (!/^https?:$/.test(url.protocol)) { drop('not a URL'); continue; }
     if (registrable(url.hostname) !== registrable(listing.hostname)) { drop('another site', url.hostname); continue; }
     url.hash = '';
