@@ -1981,6 +1981,14 @@ async function renderPage(url, within) {
       }
     }
 
+    /* the products a category page's own framework state lists, read on
+       the page already open; discovery decides whether to offer them */
+    try {
+      seen.embeddedTiles = await page.evaluate(`(${pageStateTiles.toString()})(${embeddedProductTiles.toString()})`);
+    } catch (err) {
+      seen.embeddedTiles = [];
+    }
+
     if (status && status >= 400) {
       await close();
       return { failed: `the page answered ${status} to a real browser too` };
@@ -2632,7 +2640,7 @@ function printImageDiagnosis(indent, diagnosis) {
     const top = Object.entries(entry.byCategory).sort((a, b) => b[1] - a[1]).map(([c, n]) => `${n} ${c}`).join('; ');
     console.log(`${pad}  ${String(entry.total).padStart(5)}  ${source} — ${top}`);
   }
-  console.log(`${pad}  never offered as candidates by this pipeline: ProductGroup variants, embedded product data`);
+  console.log(`${pad}  never offered as candidates by this pipeline: ProductGroup variants; a category page's embedded product tiles are offered only as their own product pages`);
   const embedded = diagnosis.embeddedRecord;
   if (embedded) {
     console.log(`${pad}product record: ${embedded.failed ? `embedded React Router product ${embedded.skipped ? 'not read' : 'offered nothing'} — ${embedded.failed}`
@@ -2659,7 +2667,12 @@ function printImageDiagnosis(indent, diagnosis) {
     if (facts.shopify && facts.shopify.signals) {
       console.log(`${pad}  Shopify signals: ${facts.shopify.signals.join(', ')}${facts.shopify.productId ? ` — product id ${facts.shopify.productId}` : ' — no product id seen, so no record is known to be here'}`);
     } else if (facts.shopify) console.log(`${pad}  ShopifyAnalytics.meta.product present${facts.shopify.productId ? ` (product id ${facts.shopify.productId})` : ''}${facts.shopify.variants !== undefined ? `, ${facts.shopify.variants} variants${facts.shopify.skus && facts.shopify.skus.length ? ` skus ${facts.shopify.skus.join(', ')}` : ''}` : ''} (the page's own copy; the gate reads /products/<handle>.js instead)`);
-    if (facts.embedded && facts.embedded.length) console.log(`${pad}  embedded product data present: ${facts.embedded.join(', ')} — unread`);
+    if (facts.embedded && facts.embedded.length) {
+      const tiles = diagnosis.tiles;
+      console.log(`${pad}  embedded product data present: ${facts.embedded.join(', ')} — ${tiles
+        ? `${tiles.read} product tile${tiles.read === 1 ? '' : 's'} read across the page, ${tiles.offered} same-site product page${tiles.offered === 1 ? '' : 's'} offered as candidates`
+        : 'not read'}`);
+    }
   }
   const capture = diagnosis.recordCapture;
   if (capture) {
@@ -2779,6 +2792,7 @@ function writeDiagnosisFile() {
       loadedByPage: one.diagnosis ? one.diagnosis.loadedByPage : null,
       productRecord: one.diagnosis ? one.diagnosis.productRecord || null : null,
       embeddedRecord: one.diagnosis ? one.diagnosis.embeddedRecord || null : null,
+      tiles: one.diagnosis ? one.diagnosis.tiles || null : null,
       recordCapture: one.diagnosis ? one.diagnosis.recordCapture || null : null,
       runtime: one.diagnosis ? one.diagnosis.runtime || null : null,
       metadata: one.diagnosis ? one.diagnosis.metadata || null : null,
@@ -2885,12 +2899,18 @@ async function firstVerifiable(candidates, row, fetcher, within) {
    hangs what the gates saw off the side of it */
 async function resolveRow(row, within, options) {
   const diagnosis = { listingCodes: identifiersFrom(row.productUrl), canonical: null, page: {}, refusals: [] };
-  const result = await resolveRowInner(row, within, diagnosis, options || {});
+  /* the products the page's own data lists — kept apart from the
+     diagnosis, which reports and never decides */
+  const tiles = [];
+  const result = await resolveRowInner(row, within, diagnosis, options || {}, tiles);
   diagnosis.canonicalMatchesListing = diagnosis.canonical ? samePage(diagnosis.canonical, row.productUrl) : null;
-  return Object.assign(result, { diagnosis });
+  const productLinks = listingProductLinks(row.productUrl, tiles);
+  /* diagnostics */
+  diagnosis.tiles = { read: tiles.length, offered: productLinks.length, from: [...new Set(tiles.map((one) => String(one.where || '').split(/[.[]/)[0]))] };
+  return Object.assign(result, { diagnosis, productLinks });
 }
 
-async function resolveRowInner(row, within, diagnosis, options) {
+async function resolveRowInner(row, within, diagnosis, options, tiles) {
   const budget = within || budgetOf(ROW_BUDGET);
   const notes = [];
   let facts = { name: null, brand: null };
@@ -2914,6 +2934,7 @@ async function resolveRowInner(row, within, diagnosis, options) {
     /* what this page says about its own product, kept whether or not a
        photo comes out of it: the semantic gate asks for it afterwards */
     evidence = evidenceFromHtml(page.html);
+    if (tiles) tiles.push(...tilesFromHtml(page.html));
     const candidates = candidatesFrom(page.html, row.productUrl);
     notes.push(`plain HTTP: ${candidates.length} candidate${candidates.length === 1 ? '' : 's'}`);
     if (candidates.length) {
@@ -2993,6 +3014,10 @@ async function resolveRowInner(row, within, diagnosis, options) {
     diagnosis.canonical = rendered.seen.canonical || diagnosis.canonical;
     diagnosis.loadedByPage = (rendered.loaded || []).length;
     facts = factsFromRendered(rendered.seen);
+    if (tiles) {
+      tiles.push(...embeddedProductTiles((rendered.seen.jsonld || []).flatMap((block) => parseLdBlock(block)), 'json-ld (rendered)'));
+      tiles.push(...(Array.isArray(rendered.seen.embeddedTiles) ? rendered.seen.embeddedTiles : []));
+    }
     /* the rendered page knows which text belongs to the product, because
        it can ask the DOM rather than guess from markup */
     evidence = evidenceFromRendered(rendered.seen).concat(evidence);
@@ -4333,6 +4358,8 @@ const LISTING_SEGMENT = /^(collections?|category|categories|cat|c|browse|catalog
 const LISTING_PARAMS = /^(q|query|search|keyword|keywords|searchterm|cgid|category|categoryid|cat|dept|department|collection|sort|srule|filter)$/i;
 const LISTING_TITLE = /\b(shop (all|now|the|our|women|men)|collection|new arrivals|results for|search results|all products|for (women|men)\b.*\|)|\(\d+\)|\b\d+ (items|products|results|styles)\b/i;
 const PRODUCT_SEGMENT = /^(p|product|products|prod|pd|pdp|prd|item|items|dp|gp|sku)$/i;
+/* a category's own id as a path segment: cat210019, cata000013, cid-45 */
+const CATEGORY_ID = /^(cat[a-z]?|cid|cgid)[-_]?\d+$/i;
 
 function listingShape(productUrl, title) {
   let url;
@@ -4349,16 +4376,25 @@ function listingShape(productUrl, title) {
 
   /* a product segment followed by something to name: /products/<handle>,
      /p/<code>. Shopify nests a product under a collection —
-     /collections/trousers/products/wide-leg — and that is a product. */
+     /collections/trousers/products/wide-leg — and that is a product.
+     A product segment with a whole path after it names one product only
+     if that path carries a code: /p/womens/pants/BX123 does, and H&M's
+     /products/skirts/pleated-skirts.html is a category. */
+  const codes = identifiersFrom(url.href);
   const productAt = segments.findIndex((segment) => PRODUCT_SEGMENT.test(segment));
-  if (productAt >= 0 && productAt < segments.length - 1) return { kind: 'product', why: `its path names one product under /${segments[productAt]}/` };
+  if (productAt >= 0 && productAt < segments.length - 1) {
+    const after = segments.slice(productAt + 1).map((segment) => segment.toLowerCase());
+    if (after.length === 1 || codes.some((id) => after.some((segment) => containsCode(segment, id)))) {
+      return { kind: 'product', why: `its path names one product under /${segments[productAt]}/` };
+    }
+  }
 
   /* the last segment carrying the product's code, and not as the id of
-     a category it sits under (/c/12345): wide-leg-trouser-12345.html */
+     a category it sits under: /c/12345, /category/pants/cat210019,
+     /wide-leg-pants/cat4700001 — wide-leg-trouser-12345.html is a code */
   const last = String(segments[segments.length - 1] || '').toLowerCase();
-  const before = segments[segments.length - 2];
-  const codes = identifiersFrom(url.href);
-  const bareId = /^[a-z]{0,3}\d+$/.test(last) && before && LISTING_SEGMENT.test(before);
+  const bareId = CATEGORY_ID.test(last)
+    || (/^[a-z]{0,3}\d+$/.test(last) && segments.slice(0, -1).some((segment) => LISTING_SEGMENT.test(segment)));
   if (last && codes.some((id) => containsCode(last, id)) && !bareId) {
     return { kind: 'product', why: 'its last path segment carries a product code' };
   }
@@ -4374,7 +4410,9 @@ function listingShape(productUrl, title) {
   }
   if (LISTING_TITLE.test(heading)) return { kind: 'listing', why: `its title reads as a listing: "${heading.slice(0, 60)}"` };
 
-  if (codes.length) return { kind: 'product', why: 'its URL carries a product code' };
+  /* a category's own id is not a product's code */
+  if (codes.some((id) => !(bareId && containsCode(last, id)))) return { kind: 'product', why: 'its URL carries a product code' };
+  if (bareId) return { kind: 'listing', why: `its last segment ${last} is a category's id` };
   return { kind: 'unknown', why: 'nothing in its URL or title says either way' };
 }
 
@@ -4392,6 +4430,170 @@ function rankListings(products) {
   });
   kept.sort((a, b) => (SHAPE_ORDER[a.product.shape.kind] - SHAPE_ORDER[b.product.shape.kind]) || (a.at - b.at));
   return { ranked: kept.map((one) => one.product), dropped };
+}
+
+/* ---------- a category page's own products, as candidates ----------
+
+   The open web answers a garment's name with category pages, and a
+   category page is never the answer: it sells many things, its URL
+   names none of them, and nothing on it can be tied to one product. But
+   the shop's own page data often lists the products it is showing — in
+   a JSON-LD ItemList, or in the state a framework hydrates from
+   (__NEXT_DATA__ and its kin) — each with its own product page.
+
+   Those product pages are offered as candidates of their own, and
+   nothing else about them is taken on trust. A tile counts only when
+   the shop's data names, for one product, all of: its own page's URL,
+   a name, an id or sku, and an image — a record that says less than
+   that does not identify one product. Anything under a recommendation,
+   a recently-viewed list, a carousel, navigation or an ad is not what
+   the page is listing and is never read. The tile's image is never a
+   candidate photo: the product's own page is read, and every gate —
+   the title, the page, host, artwork, identity, loadable, the
+   product-page rule, a Shopify record — decides it exactly as it would
+   a product page the search had returned. The category page itself is
+   still refused as it always was.
+
+   This function runs INSIDE the page too (page.evaluate), so it must
+   not reach for anything outside itself. */
+function embeddedProductTiles(data, source, most) {
+  /* field names are matched lowercased and without punctuation, so
+     pdpUrl, pdpURL and pdp_url are one name; each list is still a list
+     of names that mean exactly that field, never "anything with a url" */
+  const URL_KEYS = ['pdpurl', 'producturl', 'productpageurl', 'pdplink', 'productlink', 'pdppath', 'productpath', 'canonicalurl', 'seourl', 'url', 'href', 'link', 'uri'];
+  const NAME_KEYS = ['name', 'productname', 'displayname', 'producttitle', 'productdisplayname', 'title'];
+  const ID_KEYS = ['sku', 'skuid', 'productid', 'productcode', 'productnumber', 'stylenumber', 'styleid', 'stylecode', 'itemid', 'itemnumber', 'partnumber', 'mpn', 'masterid', 'code', 'id'];
+  const IMAGE_KEYS = ['image', 'images', 'imageurl', 'imagesrc', 'img', 'thumbnail', 'thumbnailurl', 'primaryimage', 'primaryimageurl', 'defaultimage', 'productimage', 'heroimage', 'mainimage', 'media'];
+  const IMAGE_PARTS = ['url', 'src', 'href', 'contenturl', 'imageurl', 'path', 'primary', 'main', 'default', 'large', 'medium', 'original', 'zoom'];
+  const AWAY = /recommend|related|similar|recent|upsell|cross.?sell|also|trending|suggest|sponsor|complete.?the.?look|pairs?.?with|wear.?it.?with|carousel|promo|^ads?$|advert|^nav|menu|header|footer|breadcrumb/i;
+  const limit = most || 40;
+  const out = [];
+  let visits = 0;
+  let parsed = 0;
+  const norm = (key) => String(key).toLowerCase().replace(/[^a-z0-9]/g, '');
+  const indexOf = (node) => {
+    const keys = {};
+    for (const key of Object.keys(node).slice(0, 500)) { const n = norm(key); if (!(n in keys)) keys[n] = key; }
+    return keys;
+  };
+  const first = (node, keys, names, cap) => {
+    for (const name of names) {
+      if (!(name in keys)) continue;
+      const value = node[keys[name]];
+      if (typeof value === 'string' && value.trim()) return value.trim().slice(0, cap);
+      if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+    }
+    return null;
+  };
+  /* an image is an address: absolute, protocol-relative or rooted */
+  const address = (value) => (typeof value === 'string' && /^(https?:)?\/\/|^\/[^/]/i.test(value.trim()) ? value.trim().slice(0, 2000) : null);
+  const imageOf = (value, depth) => {
+    if (depth > 3 || value === null || value === undefined) return null;
+    if (typeof value === 'string') return address(value);
+    if (Array.isArray(value)) {
+      for (const one of value.slice(0, 5)) { const got = imageOf(one, depth + 1); if (got) return got; }
+      return null;
+    }
+    if (typeof value === 'object') {
+      const keys = indexOf(value);
+      for (const name of IMAGE_PARTS) { if (name in keys) { const got = imageOf(value[keys[name]], depth + 1); if (got) return got; } }
+    }
+    return null;
+  };
+  /* a framework's state is sometimes kept as a JSON string inside the
+     page data; a few of those are opened, within a size limit */
+  const opened = (value) => {
+    if (typeof value !== 'string' || parsed >= 8 || value.length < 20 || value.length > 5000000) return null;
+    const text = value.trim();
+    if (!(text.startsWith('{') || text.startsWith('['))) return null;
+    try { parsed += 1; return JSON.parse(text); } catch (err) { return null; }
+  };
+  const walk = (node, where, depth) => {
+    if (out.length >= limit || visits > 200000 || depth > 24 || !node || typeof node !== 'object') return;
+    visits += 1;
+    if (Array.isArray(node)) {
+      for (let i = 0; i < node.length && i < 1000; i += 1) walk(node[i], `${where}[${i}]`, depth + 1);
+      return;
+    }
+    const keys = indexOf(node);
+    const url = first(node, keys, URL_KEYS, 2000);
+    const name = first(node, keys, NAME_KEYS, 300);
+    const id = first(node, keys, ID_KEYS, 120);
+    let image = null;
+    for (const key of IMAGE_KEYS) { if (key in keys) { image = imageOf(node[keys[key]], 0); if (image) break; } }
+    if (url && name && id && image && name.length >= 3) {
+      out.push({ url, name, id, image, where: `${source}${where}`.slice(0, 300) });
+      return;
+    }
+    for (const key of Object.keys(node).slice(0, 1000)) {
+      if (AWAY.test(key)) continue;
+      const value = node[key];
+      if (value && typeof value === 'object') walk(value, `${where}.${key}`, depth + 1);
+      else {
+        const inner = opened(value);
+        if (inner) walk(inner, `${where}.${key}(json)`, depth + 1);
+      }
+    }
+  };
+  try { walk(data, '', 0); } catch (err) { /* a structure that throws offers what it offered */ }
+  return out;
+}
+
+/* A tile's own product page, held to the rules a tile has to meet on
+   this side: on the listing's own site, shaped like one product, and
+   not the listing page itself. Returns the candidates, first-come. */
+const MAX_TILES_PER_PAGE = 6;
+
+function listingProductLinks(listingUrl, tiles) {
+  let listing;
+  try { listing = new URL(String(listingUrl)); } catch (err) { return []; }
+  const out = [];
+  const seen = new Set();
+  for (const tile of tiles || []) {
+    if (out.length >= MAX_TILES_PER_PAGE) break;
+    if (!tile || typeof tile.url !== 'string' || typeof tile.name !== 'string' || !tile.id || typeof tile.image !== 'string') continue;
+    let url;
+    try { url = new URL(tile.url, listing); new URL(tile.image, listing); } catch (err) { continue; }
+    if (!/^https?:$/.test(url.protocol)) continue;
+    if (registrable(url.hostname) !== registrable(listing.hostname)) continue;
+    url.hash = '';
+    if (samePage(url.href, listing.href)) continue;
+    const shape = listingShape(url.href, tile.name);
+    if (shape.kind !== 'product') continue;
+    const key = `${url.origin}${url.pathname}`.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ productUrl: url.href, title: tile.name.trim(), id: String(tile.id), where: tile.where || null });
+  }
+  return out;
+}
+
+/* the served markup's tiles: its JSON-LD, and a Next.js page's data */
+function tilesFromHtml(html) {
+  const tiles = embeddedProductTiles(jsonLdNodes(html), 'json-ld');
+  const next = String(html || '').match(/<script[^>]*\bid=["']__NEXT_DATA__["'][^>]*>([\s\S]*?)<\/script>/i);
+  if (next && next[1].length < 8000000) {
+    try { tiles.push(...embeddedProductTiles(JSON.parse(next[1]), '__NEXT_DATA__')); } catch (err) { /* not JSON: nothing offered */ }
+  }
+  return tiles;
+}
+
+/* the rendered page's framework state, read in the page, and only the
+   tiles embeddedProductTiles takes — never the state itself */
+function pageStateTiles(walker) {
+  const out = [];
+  try {
+    const el = document.getElementById('__NEXT_DATA__');
+    let next = null;
+    if (el && el.textContent && el.textContent.length < 8000000) { try { next = JSON.parse(el.textContent); } catch (err) { next = null; } }
+    const sources = [['__NEXT_DATA__', next || window.__NEXT_DATA__]];
+    for (const name of ['__NUXT__', '__INITIAL_STATE__', '__PRELOADED_STATE__', '__APOLLO_STATE__']) sources.push([name, window[name]]);
+    for (const [name, data] of sources) {
+      if (data && typeof data === 'object') out.push(...walker(data, name, 40));
+      if (out.length >= 80) break;
+    }
+  } catch (err) { /* a page that throws offers nothing */ }
+  return out.slice(0, 80);
 }
 
 /* whether a raw record links to a host that sells nothing; read through
@@ -4684,6 +4886,31 @@ async function listingsFor(row, limit, within) {
   };
 }
 
+/* the product pages the category pages among `tried` listed, in the
+   order the pages were tried, less any the search already offered */
+const MAX_TILES_PER_ROW = 8;
+const TILE_RESERVE = 45000;   // what a row keeps back for those products once a category page has listed some
+
+function tilesOffered(tried, products) {
+  const out = [];
+  const known = (products || []).map((one) => one && one.productUrl).filter(Boolean);
+  for (const attempt of tried) {
+    for (const link of attempt.productLinks || []) {
+      if (out.length >= MAX_TILES_PER_ROW) return out;
+      if (known.some((url) => samePage(url, link.productUrl))) continue;
+      known.push(link.productUrl);
+      out.push({
+        productUrl: link.productUrl,
+        title: link.title,
+        brand: null,
+        shape: listingShape(link.productUrl, link.title),
+        foundOn: attempt.url
+      });
+    }
+  }
+  return out;
+}
+
 /* The title stage, which cannot be allowed to throw: a candidate whose
    title breaks the reader is a candidate that failed, not a run that
    failed. */
@@ -4785,6 +5012,16 @@ async function discoverRow(row, taken, limit, options) {
       return { ok: false };
     }
 
+    /* Category pages rank last, so their listed products can only be
+       read after them. Once one of them has listed some, the category
+       pages still waiting do not get to spend the time that round needs. */
+    if (!attempt.foundOn && attempt.shape !== 'product' && budget.left() < TILE_RESERVE
+        && tried.some((one) => one.productLinks && one.productLinks.length)) {
+      attempt.why = 'held back: the time left is kept for the products a category page already listed';
+      attempt.ranOut = true;
+      return { ok: false };
+    }
+
     const result = await resolveRow({
       id: row.id,
       brand: product.brand || '—',
@@ -4800,6 +5037,11 @@ async function discoverRow(row, taken, limit, options) {
 
     if (result.verdict !== 'VERIFIED') {
       attempt.why = result.why;
+      /* a category page's own products, offered below as candidates of
+         their own; a candidate that came from one offers no more */
+      if (!attempt.foundOn && (attempt.shape === 'listing' || attempt.shape === 'unknown')) {
+        attempt.productLinks = result.productLinks || [];
+      }
       return { ok: false };
     }
 
@@ -4861,7 +5103,35 @@ async function discoverRow(row, taken, limit, options) {
     }
   };
 
-  const { results, winner } = await raceInOrder(tried, LANES, tryCandidate);
+  const first = await raceInOrder(tried, LANES, tryCandidate);
+  const results = first.results;
+  let winner = first.winner;
+
+  /* Nothing the search returned cleared every gate. A category page
+     among them may list, in its own data, the products it shows: those
+     product pages are tried now, in the page's own order, each exactly
+     as a search result would be — title, page, photo, every gate. */
+  if (winner < 0 && !budget.spent()) {
+    const extras = tilesOffered(tried, found.products);
+    if (extras.length) {
+      const base = tried.length;
+      for (const product of extras) {
+        found.products.push(product);
+        tried.push({
+          url: product.productUrl,
+          title: product.title,
+          brand: null,
+          shape: product.shape.kind,
+          foundOn: product.foundOn,
+          semantic: readTitleSafely(row, product),
+          why: null
+        });
+      }
+      const more = await raceInOrder(tried.slice(base), LANES, (attempt, at) => tryCandidate(attempt, base + at));
+      more.results.forEach((one, at) => { results[base + at] = one; });
+      if (more.winner >= 0) winner = base + more.winner;
+    }
+  }
 
   /* a candidate a lane never got to, because the answer was already
      found above it, says so rather than pretending to a verdict */
@@ -5551,6 +5821,11 @@ async function main() {
           ? `title  PASSED${verdict.kind === 'pending' ? ' (pending on the page)' : ''}`
           : `title  REFUSED (${verdict.kind === 'unreadable' ? 'unreadable' : verdict.kind === 'error' ? 'could not be read' : 'wrong garment'})`;
         console.log(`  ${''.padEnd(17)}   "${String(attempt.title || '(untitled)').slice(0, 64)}"${attempt.shape ? ` [${attempt.shape}]` : ''}`);
+        if (attempt.foundOn) console.log(`  ${''.padEnd(17)}     listed in the page data of ${short(attempt.foundOn, 70)}`);
+        if (attempt.productLinks) {
+          const n = attempt.productLinks.length;
+          console.log(`  ${''.padEnd(17)}     ${n ? `its page data listed ${n} product page${n === 1 ? '' : 's'} of its own, tried below` : 'its page data listed no product page that could be offered'}`);
+        }
         console.log(`  ${''.padEnd(17)}     ${stamp} — ${verdict.why}`);
         if (attempt.failed) {
           console.log(`  ${''.padEnd(17)}     CANDIDATE FAILED — ${attempt.failed}`);
@@ -5788,7 +6063,7 @@ if (require.main === module) {
     /* whether a page is a product page, for the canonical rule */
     pageDeclarations, pageDeclarationsFromHtml, productPageVerdict,
     garmentsAgree, canonicalCorroborated, wordsInPath, wordsAboutImage, TRACKING_PARAMS,
-    siteAsset, imageDimensions, listingShape, rankListings,
+    siteAsset, imageDimensions, listingShape, rankListings, embeddedProductTiles, listingProductLinks, tilesFromHtml, tilesOffered,
     parseArgs, OPTIONS, USAGE, intentFor, queryForms, listingsFor, discoverRow, coverage,
     providerChain, outOfSearches,
     /* the hand-off between the expensive half and the cheap one: what a
