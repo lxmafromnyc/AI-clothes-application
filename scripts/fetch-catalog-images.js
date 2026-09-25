@@ -1984,9 +1984,12 @@ async function renderPage(url, within) {
     /* the products a category page's own framework state lists, read on
        the page already open; discovery decides whether to offer them */
     try {
-      seen.embeddedTiles = await page.evaluate(`(${pageStateTiles.toString()})(${embeddedProductTiles.toString()})`);
+      const state = await page.evaluate(`(${pageStateTiles.toString()})(${embeddedProductTiles.toString()})`);
+      seen.embeddedTiles = state && Array.isArray(state.tiles) ? state.tiles : [];
+      seen.embeddedStats = state && state.stats ? state.stats : null;
     } catch (err) {
       seen.embeddedTiles = [];
+      seen.embeddedStats = { failed: String(err && err.message ? err.message : err).split('\n')[0].slice(0, 200) };
     }
 
     if (status && status >= 400) {
@@ -2667,13 +2670,9 @@ function printImageDiagnosis(indent, diagnosis) {
     if (facts.shopify && facts.shopify.signals) {
       console.log(`${pad}  Shopify signals: ${facts.shopify.signals.join(', ')}${facts.shopify.productId ? ` — product id ${facts.shopify.productId}` : ' — no product id seen, so no record is known to be here'}`);
     } else if (facts.shopify) console.log(`${pad}  ShopifyAnalytics.meta.product present${facts.shopify.productId ? ` (product id ${facts.shopify.productId})` : ''}${facts.shopify.variants !== undefined ? `, ${facts.shopify.variants} variants${facts.shopify.skus && facts.shopify.skus.length ? ` skus ${facts.shopify.skus.join(', ')}` : ''}` : ''} (the page's own copy; the gate reads /products/<handle>.js instead)`);
-    if (facts.embedded && facts.embedded.length) {
-      const tiles = diagnosis.tiles;
-      console.log(`${pad}  embedded product data present: ${facts.embedded.join(', ')} — ${tiles
-        ? `${tiles.read} product tile${tiles.read === 1 ? '' : 's'} read across the page, ${tiles.offered} same-site product page${tiles.offered === 1 ? '' : 's'} offered as candidates`
-        : 'not read'}`);
-    }
+    if (facts.embedded && facts.embedded.length) console.log(`${pad}  embedded product data present: ${facts.embedded.join(', ')} — see "product tiles" below`);
   }
+  for (const line of tileLines(diagnosis.tiles)) console.log(`${pad}${line}`);
   const capture = diagnosis.recordCapture;
   if (capture) {
     console.log(`${pad}where the served page names the handle ${capture.handle}: ${capture.scripts.length ? `${capture.scripts.length} script${capture.scripts.length === 1 ? '' : 's'}` : 'in no <script> at all'}`);
@@ -2902,11 +2901,14 @@ async function resolveRow(row, within, options) {
   /* the products the page's own data lists — kept apart from the
      diagnosis, which reports and never decides */
   const tiles = [];
+  tiles.stats = { served: {}, rendered: null };
   const result = await resolveRowInner(row, within, diagnosis, options || {}, tiles);
   diagnosis.canonicalMatchesListing = diagnosis.canonical ? samePage(diagnosis.canonical, row.productUrl) : null;
-  const productLinks = listingProductLinks(row.productUrl, tiles);
-  /* diagnostics */
-  diagnosis.tiles = { read: tiles.length, offered: productLinks.length, from: [...new Set(tiles.map((one) => String(one.where || '').split(/[.[]/)[0]))] };
+  const linkStats = {};
+  const productLinks = listingProductLinks(row.productUrl, tiles, linkStats);
+  /* diagnostics: what the page data held, what was taken, and why the
+     rest was not — field names only, never the data */
+  diagnosis.tiles = tileReport(tiles, productLinks, linkStats);
   return Object.assign(result, { diagnosis, productLinks });
 }
 
@@ -2934,7 +2936,7 @@ async function resolveRowInner(row, within, diagnosis, options, tiles) {
     /* what this page says about its own product, kept whether or not a
        photo comes out of it: the semantic gate asks for it afterwards */
     evidence = evidenceFromHtml(page.html);
-    if (tiles) tiles.push(...tilesFromHtml(page.html));
+    if (tiles) tiles.push(...tilesFromHtml(page.html, tiles.stats.served));
     const candidates = candidatesFrom(page.html, row.productUrl);
     notes.push(`plain HTTP: ${candidates.length} candidate${candidates.length === 1 ? '' : 's'}`);
     if (candidates.length) {
@@ -3015,7 +3017,8 @@ async function resolveRowInner(row, within, diagnosis, options, tiles) {
     diagnosis.loadedByPage = (rendered.loaded || []).length;
     facts = factsFromRendered(rendered.seen);
     if (tiles) {
-      tiles.push(...embeddedProductTiles((rendered.seen.jsonld || []).flatMap((block) => parseLdBlock(block)), 'json-ld (rendered)'));
+      tiles.stats.rendered = Object.assign({}, rendered.seen.embeddedStats || {});
+      tiles.push(...embeddedProductTiles((rendered.seen.jsonld || []).flatMap((block) => parseLdBlock(block)), 'json-ld (rendered)', 60, tiles.stats.rendered));
       tiles.push(...(Array.isArray(rendered.seen.embeddedTiles) ? rendered.seen.embeddedTiles : []));
     }
     /* the rendered page knows which text belongs to the product, because
@@ -4360,6 +4363,9 @@ const LISTING_TITLE = /\b(shop (all|now|the|our|women|men)|collection|new arriva
 const PRODUCT_SEGMENT = /^(p|product|products|prod|pd|pdp|prd|item|items|dp|gp|sku)$/i;
 /* a category's own id as a path segment: cat210019, cata000013, cid-45 */
 const CATEGORY_ID = /^(cat[a-z]?|cid|cgid)[-_]?\d+$/i;
+/* a category named, then numbered after a double hyphen, with no file
+   ending: Abercrombie's /shop/us/womens-dresses-and-jumpsuits--20266 */
+const NAMED_CATEGORY_ID = /^[a-z][a-z0-9-]*[a-z]--\d+$/i;
 
 function listingShape(productUrl, title) {
   let url;
@@ -4393,7 +4399,7 @@ function listingShape(productUrl, title) {
      a category it sits under: /c/12345, /category/pants/cat210019,
      /wide-leg-pants/cat4700001 — wide-leg-trouser-12345.html is a code */
   const last = String(segments[segments.length - 1] || '').toLowerCase();
-  const bareId = CATEGORY_ID.test(last)
+  const bareId = CATEGORY_ID.test(last) || NAMED_CATEGORY_ID.test(last)
     || (/^[a-z]{0,3}\d+$/.test(last) && segments.slice(0, -1).some((segment) => LISTING_SEGMENT.test(segment)));
   if (last && codes.some((id) => containsCode(last, id)) && !bareId) {
     return { kind: 'product', why: 'its last path segment carries a product code' };
@@ -4401,6 +4407,13 @@ function listingShape(productUrl, title) {
 
   if (EDITORIAL_TITLE.test(heading) && !codes.length) {
     return { kind: 'editorial', why: `its title reads as an article: "${heading.slice(0, 60)}"` };
+  }
+
+  /* a product page named by a parameter rather than a path: Gap's
+     /browse/product.do?pid=791234022 — under /browse/, but one product */
+  if (/^(product|productpage|pdp|item)(\.(do|html?|aspx|jsp|php))?$/i.test(last)
+      && [...url.searchParams.keys()].some((key) => PRODUCT_ID_PARAM.test(key))) {
+    return { kind: 'product', why: `its ${last} page names one product by parameter` };
   }
 
   const listingAt = segments.find((segment) => LISTING_SEGMENT.test(segment));
@@ -4456,20 +4469,33 @@ function rankListings(products) {
 
    This function runs INSIDE the page too (page.evaluate), so it must
    not reach for anything outside itself. */
-function embeddedProductTiles(data, source, most) {
-  /* field names are matched lowercased and without punctuation, so
-     pdpUrl, pdpURL and pdp_url are one name; each list is still a list
-     of names that mean exactly that field, never "anything with a url" */
-  const URL_KEYS = ['pdpurl', 'producturl', 'productpageurl', 'pdplink', 'productlink', 'pdppath', 'productpath', 'canonicalurl', 'seourl', 'url', 'href', 'link', 'uri'];
-  const NAME_KEYS = ['name', 'productname', 'displayname', 'producttitle', 'productdisplayname', 'title'];
-  const ID_KEYS = ['sku', 'skuid', 'productid', 'productcode', 'productnumber', 'stylenumber', 'styleid', 'stylecode', 'itemid', 'itemnumber', 'partnumber', 'mpn', 'masterid', 'code', 'id'];
-  const IMAGE_KEYS = ['image', 'images', 'imageurl', 'imagesrc', 'img', 'thumbnail', 'thumbnailurl', 'primaryimage', 'primaryimageurl', 'defaultimage', 'productimage', 'heroimage', 'mainimage', 'media'];
-  const IMAGE_PARTS = ['url', 'src', 'href', 'contenturl', 'imageurl', 'path', 'primary', 'main', 'default', 'large', 'medium', 'original', 'zoom'];
+function embeddedProductTiles(data, source, most, stats) {
+  /* Field names are matched lowercased and without punctuation, so
+     pdpUrl, pdpURL and pdp_url are one name. Each list names exactly
+     that field — never "anything with a url". */
+  const URL_KEYS = ['pdpurl', 'producturl', 'productpageurl', 'pdplink', 'productlink', 'pdppath', 'productpath', 'pdpuri', 'producturi',
+    'detailurl', 'detailpageurl', 'canonicalurl', 'seourl', 'seopath', 'relativeurl', 'url', 'href', 'link', 'uri'];
+  const NAME_KEYS = ['name', 'productname', 'displayname', 'producttitle', 'productdisplayname', 'title', 'productdescription'];
+  const ID_KEYS = ['sku', 'skuid', 'productid', 'productcode', 'productnumber', 'pid', 'stylenumber', 'styleid', 'stylecode', 'itemid',
+    'itemnumber', 'partnumber', 'catentryid', 'articlenumber', 'articlecode', 'webid', 'mpn', 'masterid', 'masterproductid', 'code', 'id'];
+  const IMAGE_KEYS = ['image', 'images', 'imageurl', 'imagesrc', 'imagepath', 'img', 'thumbnail', 'thumbnailurl', 'primaryimage',
+    'primaryimageurl', 'defaultimage', 'productimage', 'productimages', 'featuredimage', 'heroimage', 'mainimage', 'imageset', 'imagedata',
+    'picture', 'pictures', 'photo', 'photos', 'assets', 'media', 'colors', 'colorways', 'swatches', 'variants', 'skus'];
+  const IMAGE_PARTS = ['url', 'src', 'href', 'contenturl', 'imageurl', 'path', 'image', 'images', 'featuredimage', 'node', 'nodes', 'edges',
+    'primary', 'main', 'default', 'hero', 'front', 'large', 'medium', 'small', 'original', 'zoom'];
+  /* a tile the data wraps: { product: {...}, image: {...} }, a GraphQL
+     node, a JSON:API resource's attributes */
+  const WRAPS = ['product', 'item', 'node', 'productdata', 'productinfo', 'attributes', 'tile'];
   const AWAY = /recommend|related|similar|recent|upsell|cross.?sell|also|trending|suggest|sponsor|complete.?the.?look|pairs?.?with|wear.?it.?with|carousel|promo|^ads?$|advert|^nav|menu|header|footer|breadcrumb/i;
-  const limit = most || 40;
+  const SHOPIFY_PRODUCT = /^gid:\/\/shopify\/Product\/\d+$/;
+  const VARIANT = /^(variants?|colou?rs?|colorways?|swatch(es)?|skus?|sizes?|images?|media|options?|pictures?|photos?)$/;
+  const limit = most || 60;
   const out = [];
-  let visits = 0;
-  let parsed = 0;
+  const st = stats || {};
+  st.visits = st.visits || 0;
+  st.opened = st.opened || 0;
+  st.openedChars = st.openedChars || 0;
+  st.misses = st.misses || {};
   const norm = (key) => String(key).toLowerCase().replace(/[^a-z0-9]/g, '');
   const indexOf = (node) => {
     const keys = {};
@@ -4485,10 +4511,16 @@ function embeddedProductTiles(data, source, most) {
     }
     return null;
   };
-  /* an image is an address: absolute, protocol-relative or rooted */
-  const address = (value) => (typeof value === 'string' && /^(https?:)?\/\/|^\/[^/]/i.test(value.trim()) ? value.trim().slice(0, 2000) : null);
+  /* an image is an address: absolute, protocol-relative, rooted, or a
+     file named as a picture */
+  const address = (value) => {
+    if (typeof value !== 'string') return null;
+    const text = value.trim();
+    if (/^(https?:)?\/\/|^\/[^/]/i.test(text) || /^[\w./-]+\.(jpe?g|png|webp|avif|gif)(\?.*)?$/i.test(text)) return text.slice(0, 2000);
+    return null;
+  };
   const imageOf = (value, depth) => {
-    if (depth > 3 || value === null || value === undefined) return null;
+    if (depth > 4 || value === null || value === undefined) return null;
     if (typeof value === 'string') return address(value);
     if (Array.isArray(value)) {
       for (const one of value.slice(0, 5)) { const got = imageOf(one, depth + 1); if (got) return got; }
@@ -4500,33 +4532,87 @@ function embeddedProductTiles(data, source, most) {
     }
     return null;
   };
-  /* a framework's state is sometimes kept as a JSON string inside the
-     page data; a few of those are opened, within a size limit */
+  /* a product link, never a picture: a url field holding an image
+     address is skipped for the next one, and a link kept as an object
+     ({ href }, { url }) is read through */
+  const IMAGE_FILE = /\.(jpe?g|png|webp|avif|gif|svg)(\?.*)?$/i;
+  const linkOf = (node, keys) => {
+    for (const name of URL_KEYS) {
+      if (!(name in keys)) continue;
+      let value = node[keys[name]];
+      if (value && typeof value === 'object' && !Array.isArray(value)) {
+        const inner = indexOf(value);
+        value = ['href', 'url', 'path'].map((part) => value[inner[part]]).find((one) => typeof one === 'string');
+      }
+      if (typeof value === 'string' && value.trim() && !IMAGE_FILE.test(value.trim())) return value.trim().slice(0, 2000);
+    }
+    return null;
+  };
+  const roles = (node) => {
+    const keys = indexOf(node);
+    let url = linkOf(node, keys);
+    const id = first(node, keys, ID_KEYS, 120);
+    let name = first(node, keys, NAME_KEYS, 300);
+    /* a product description is a name only when it is the length of one */
+    if (name && 'productdescription' in keys && name === String(node[keys.productdescription]).trim().slice(0, 300) && name.length > 120) name = null;
+    /* a headless Shopify product names its handle, not its URL */
+    if (!url && typeof node[keys.handle] === 'string' && /^[a-z0-9][a-z0-9_-]*$/i.test(node[keys.handle])
+        && (SHOPIFY_PRODUCT.test(String(id || '')) || node[keys.typename] === 'Product')) {
+      url = `/products/${node[keys.handle]}`;
+    }
+    let image = null;
+    for (const key of IMAGE_KEYS) { if (key in keys) { image = imageOf(node[keys[key]], 0); if (image) break; } }
+    /* a picture kept under a url field is still this record's picture */
+    if (!image) {
+      for (const name of URL_KEYS) {
+        const value = name in keys ? node[keys[name]] : null;
+        if (typeof value === 'string' && IMAGE_FILE.test(value.trim())) { image = address(value); if (image) break; }
+      }
+    }
+    return { keys, url, name, id, image };
+  };
   const opened = (value) => {
-    if (typeof value !== 'string' || parsed >= 8 || value.length < 20 || value.length > 5000000) return null;
+    if (typeof value !== 'string' || st.opened >= 20 || value.length < 20 || value.length > 5000000 || st.openedChars > 20000000) return null;
     const text = value.trim();
     if (!(text.startsWith('{') || text.startsWith('['))) return null;
-    try { parsed += 1; return JSON.parse(text); } catch (err) { return null; }
+    try { const got = JSON.parse(text); st.opened += 1; st.openedChars += text.length; return got; } catch (err) { return null; }
+  };
+  const miss = (found, keys) => {
+    const present = ['url', 'name', 'id', 'image'].filter((role) => found[role]);
+    if (present.length < 3 && !(found.url && found.name)) return;
+    const signature = `has ${present.join('+')}; lacks ${['url', 'name', 'id', 'image'].filter((role) => !found[role]).join('+')}; keys ${Object.values(keys).slice(0, 12).join(',')}`;
+    st.misses[signature] = (st.misses[signature] || 0) + 1;
   };
   const walk = (node, where, depth) => {
-    if (out.length >= limit || visits > 200000 || depth > 24 || !node || typeof node !== 'object') return;
-    visits += 1;
+    if (out.length >= limit || st.visits > 200000 || depth > 24 || !node || typeof node !== 'object') return;
+    st.visits += 1;
     if (Array.isArray(node)) {
       for (let i = 0; i < node.length && i < 1000; i += 1) walk(node[i], `${where}[${i}]`, depth + 1);
       return;
     }
-    const keys = indexOf(node);
-    const url = first(node, keys, URL_KEYS, 2000);
-    const name = first(node, keys, NAME_KEYS, 300);
-    const id = first(node, keys, ID_KEYS, 120);
-    let image = null;
-    for (const key of IMAGE_KEYS) { if (key in keys) { image = imageOf(node[keys[key]], 0); if (image) break; } }
-    if (url && name && id && image && name.length >= 3) {
-      out.push({ url, name, id, image, where: `${source}${where}`.slice(0, 300) });
-      return;
+    const found = roles(node);
+    /* fill what the wrapper lacks from the one product it wraps; the
+       wrapped record is then this one, and is not read a second time */
+    const wrapped = new Set();
+    for (const wrap of WRAPS) {
+      if (found.url && found.name && found.id && found.image) break;
+      const inner = wrap in found.keys ? node[found.keys[wrap]] : null;
+      if (!inner || typeof inner !== 'object' || Array.isArray(inner)) continue;
+      const got = roles(inner);
+      let used = false;
+      for (const role of ['url', 'name', 'id', 'image']) if (!found[role] && got[role]) { found[role] = got[role]; used = true; }
+      if (used) wrapped.add(found.keys[wrap]);
     }
+    const complete = found.url && found.name && found.id && found.image && found.name.length >= 3;
+    if (complete) out.push({ url: found.url, name: found.name, id: found.id, image: found.image, where: `${source}${where}`.slice(0, 300) });
+    else miss(found, found.keys);
+    /* A complete record is read on through, because it may be a
+       container — a category with its own name, id, url and banner, and
+       the products inside it. Only its own variants are not: a colour or
+       a size of this product is not another product. */
     for (const key of Object.keys(node).slice(0, 1000)) {
       if (AWAY.test(key)) continue;
+      if (complete && (VARIANT.test(norm(key)) || wrapped.has(key))) continue;
       const value = node[key];
       if (value && typeof value === 'object') walk(value, `${where}.${key}`, depth + 1);
       else {
@@ -4541,39 +4627,111 @@ function embeddedProductTiles(data, source, most) {
 
 /* A tile's own product page, held to the rules a tile has to meet on
    this side: on the listing's own site, shaped like one product, and
-   not the listing page itself. Returns the candidates, first-come. */
-const MAX_TILES_PER_PAGE = 6;
+   not the listing page itself. Returns the candidates, first-come; what
+   was dropped, and why, is counted into `stats` for the report. */
+const MAX_TILES_PER_PAGE = 40;
+const PRODUCT_ID_PARAM = /^(pid|productid|product_id|itemid|styleid|skuid|sku)$/i;
 
-function listingProductLinks(listingUrl, tiles) {
+/* one product page's key: host, path, and the query parameter that names
+   the product where the path does not (Gap's /browse/product.do?pid=) */
+function productKey(href) {
+  try {
+    const url = new URL(String(href));
+    const ids = [...url.searchParams.entries()].filter(([key]) => PRODUCT_ID_PARAM.test(key)).map(([key, value]) => `${key.toLowerCase()}=${value}`).sort();
+    return `${url.hostname.replace(/^www\./, '')}${url.pathname.replace(/\/+$/, '')}${ids.length ? `?${ids.join('&')}` : ''}`.toLowerCase();
+  } catch (err) {
+    return null;
+  }
+}
+
+function listingProductLinks(listingUrl, tiles, stats) {
+  const st = stats || {};
+  const drop = (why, example) => {
+    st.dropped = st.dropped || {};
+    st.dropped[why] = (st.dropped[why] || 0) + 1;
+    if (example) {
+      st.examples = st.examples || {};
+      st.examples[why] = st.examples[why] || [];
+      if (st.examples[why].length < 3) st.examples[why].push(example);
+    }
+  };
   let listing;
   try { listing = new URL(String(listingUrl)); } catch (err) { return []; }
+  const self = productKey(listing.href);
   const out = [];
   const seen = new Set();
   for (const tile of tiles || []) {
     if (out.length >= MAX_TILES_PER_PAGE) break;
-    if (!tile || typeof tile.url !== 'string' || typeof tile.name !== 'string' || !tile.id || typeof tile.image !== 'string') continue;
+    if (!tile || typeof tile.url !== 'string' || typeof tile.name !== 'string' || !tile.id || typeof tile.image !== 'string') { drop('incomplete'); continue; }
     let url;
-    try { url = new URL(tile.url, listing); new URL(tile.image, listing); } catch (err) { continue; }
-    if (!/^https?:$/.test(url.protocol)) continue;
-    if (registrable(url.hostname) !== registrable(listing.hostname)) continue;
+    try { url = new URL(tile.url, listing); new URL(tile.image, listing); } catch (err) { drop('not a URL'); continue; }
+    if (!/^https?:$/.test(url.protocol)) { drop('not a URL'); continue; }
+    if (registrable(url.hostname) !== registrable(listing.hostname)) { drop('another site', url.hostname); continue; }
     url.hash = '';
-    if (samePage(url.href, listing.href)) continue;
+    const key = productKey(url.href);
+    if (key === self) { drop('the listing page itself'); continue; }
     const shape = listingShape(url.href, tile.name);
-    if (shape.kind !== 'product') continue;
-    const key = `${url.origin}${url.pathname}`.toLowerCase();
-    if (seen.has(key)) continue;
+    if (shape.kind !== 'product') { drop('not shaped like one product', `${url.pathname}${url.search}`.slice(0, 100)); continue; }
+    if (seen.has(key)) { drop('duplicate'); continue; }
     seen.add(key);
     out.push({ productUrl: url.href, title: tile.name.trim(), id: String(tile.id), where: tile.where || null });
   }
   return out;
 }
 
+/* diagnostics only: the tile pipeline's account of one page */
+function tileReport(tiles, links, linkStats) {
+  const stats = (tiles && tiles.stats) || {};
+  const misses = {};
+  for (const side of [stats.served, stats.rendered]) {
+    for (const [signature, n] of Object.entries((side && side.misses) || {})) misses[signature] = (misses[signature] || 0) + n;
+  }
+  return {
+    read: (tiles || []).length,
+    offered: (links || []).length,
+    from: [...new Set((tiles || []).map((one) => String(one.where || '').split(/[.[]/)[0]))],
+    nextData: { served: (stats.served && stats.served.nextServed) || null, rendered: (stats.rendered && stats.rendered.next) || null },
+    stateFailed: (stats.rendered && stats.rendered.failed) || null,
+    jsonStringsOpened: ((stats.served && stats.served.opened) || 0) + ((stats.rendered && stats.rendered.opened) || 0),
+    dropped: linkStats.dropped || {},
+    examples: linkStats.examples || {},
+    nearMisses: Object.entries(misses).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([signature, n]) => ({ signature, n }))
+  };
+}
+
+/* the tile report, as lines: printed under --diagnose and, in short,
+   under each category candidate */
+function tileLines(tiles) {
+  if (!tiles) return [];
+  const lines = [];
+  const next = tiles.nextData || {};
+  lines.push(`product tiles: ${tiles.read} complete tile${tiles.read === 1 ? '' : 's'} read${tiles.from.length ? ` (from ${tiles.from.join(', ')})` : ''}, ${tiles.offered} offered as product pages`
+    + `; __NEXT_DATA__ served: ${next.served || 'not served'}, rendered: ${next.rendered || 'not rendered'}`
+    + `${tiles.jsonStringsOpened ? `; ${tiles.jsonStringsOpened} JSON-string state${tiles.jsonStringsOpened === 1 ? '' : 's'} opened` : ''}`
+    + `${tiles.stateFailed ? `; page state could not be read (${tiles.stateFailed})` : ''}`);
+  const dropped = Object.entries(tiles.dropped || {});
+  if (dropped.length) {
+    lines.push(`  dropped: ${dropped.map(([why, n]) => `${n} ${why}`).join(', ')}`);
+    for (const [why, list] of Object.entries(tiles.examples || {})) lines.push(`    e.g. ${why}: ${list.join(' | ')}`);
+  }
+  for (const one of tiles.nearMisses || []) lines.push(`  near miss ×${one.n}: ${one.signature}`);
+  return lines;
+}
+
 /* the served markup's tiles: its JSON-LD, and a Next.js page's data */
-function tilesFromHtml(html) {
-  const tiles = embeddedProductTiles(jsonLdNodes(html), 'json-ld');
-  const next = String(html || '').match(/<script[^>]*\bid=["']__NEXT_DATA__["'][^>]*>([\s\S]*?)<\/script>/i);
-  if (next && next[1].length < 8000000) {
-    try { tiles.push(...embeddedProductTiles(JSON.parse(next[1]), '__NEXT_DATA__')); } catch (err) { /* not JSON: nothing offered */ }
+function tilesFromHtml(html, stats) {
+  const st = stats || {};
+  const tiles = embeddedProductTiles(jsonLdNodes(html), 'json-ld', 60, st);
+  const next = String(html || '').match(/<script\b[^>]*\bid\s*=\s*["']?__NEXT_DATA__["']?[^>]*>([\s\S]*?)<\/script>/i);
+  if (!next) st.nextServed = st.nextServed || 'absent';
+  else if (next[1].length >= 8000000) st.nextServed = 'too large to read';
+  else {
+    try {
+      tiles.push(...embeddedProductTiles(JSON.parse(next[1]), '__NEXT_DATA__', 60, st));
+      st.nextServed = 'read';
+    } catch (err) {
+      st.nextServed = 'not readable JSON';
+    }
   }
   return tiles;
 }
@@ -4582,18 +4740,23 @@ function tilesFromHtml(html) {
    tiles embeddedProductTiles takes — never the state itself */
 function pageStateTiles(walker) {
   const out = [];
+  const stats = { next: 'absent' };
   try {
     const el = document.getElementById('__NEXT_DATA__');
     let next = null;
-    if (el && el.textContent && el.textContent.length < 8000000) { try { next = JSON.parse(el.textContent); } catch (err) { next = null; } }
-    const sources = [['__NEXT_DATA__', next || window.__NEXT_DATA__]];
+    if (el && el.textContent) {
+      if (el.textContent.length >= 8000000) stats.next = 'too large to read';
+      else { try { next = JSON.parse(el.textContent); stats.next = 'read'; } catch (err) { stats.next = 'not readable JSON'; } }
+    }
+    if (!next && window.__NEXT_DATA__ && typeof window.__NEXT_DATA__ === 'object') { next = window.__NEXT_DATA__; stats.next = 'read'; }
+    const sources = [['__NEXT_DATA__', next]];
     for (const name of ['__NUXT__', '__INITIAL_STATE__', '__PRELOADED_STATE__', '__APOLLO_STATE__']) sources.push([name, window[name]]);
     for (const [name, data] of sources) {
-      if (data && typeof data === 'object') out.push(...walker(data, name, 40));
-      if (out.length >= 80) break;
+      if (data && typeof data === 'object') out.push(...walker(data, name, 60, stats));
+      if (out.length >= 120) break;
     }
-  } catch (err) { /* a page that throws offers nothing */ }
-  return out.slice(0, 80);
+  } catch (err) { stats.failed = String(err && err.message ? err.message : err).slice(0, 200); }
+  return { tiles: out.slice(0, 120), stats };
 }
 
 /* whether a raw record links to a host that sells nothing; read through
@@ -4889,26 +5052,34 @@ async function listingsFor(row, limit, within) {
 /* the product pages the category pages among `tried` listed, in the
    order the pages were tried, less any the search already offered */
 const MAX_TILES_PER_ROW = 8;
+const MAX_REFUSED_TILES = 4;  // wrong-garment tiles kept for the report; they are refused before any request
 const TILE_RESERVE = 45000;   // what a row keeps back for those products once a category page has listed some
 
-function tilesOffered(tried, products) {
-  const out = [];
-  const known = (products || []).map((one) => one && one.productUrl).filter(Boolean);
+function tilesOffered(row, tried, products) {
+  const passing = [];
+  const refused = [];
+  const known = new Set((products || []).map((one) => one && productKey(one.productUrl)).filter(Boolean));
   for (const attempt of tried) {
     for (const link of attempt.productLinks || []) {
-      if (out.length >= MAX_TILES_PER_ROW) return out;
-      if (known.some((url) => samePage(url, link.productUrl))) continue;
-      known.push(link.productUrl);
-      out.push({
+      const key = productKey(link.productUrl);
+      if (!key || known.has(key)) continue;
+      known.add(key);
+      const product = {
         productUrl: link.productUrl,
         title: link.title,
         brand: null,
         shape: listingShape(link.productUrl, link.title),
         foundOn: attempt.url
-      });
+      };
+      /* the same title gate every candidate meets, asked here so that a
+         category page listing forty other garments first cannot use up
+         the row's places; a refused tile costs no request, and a few are
+         kept so the report shows what was turned away */
+      if (readTitleSafely(row, product).ok) { if (passing.length < MAX_TILES_PER_ROW) passing.push(product); }
+      else if (refused.length < MAX_REFUSED_TILES) refused.push(product);
     }
   }
-  return out;
+  return passing.concat(refused);
 }
 
 /* The title stage, which cannot be allowed to throw: a candidate whose
@@ -5041,6 +5212,8 @@ async function discoverRow(row, taken, limit, options) {
          their own; a candidate that came from one offers no more */
       if (!attempt.foundOn && (attempt.shape === 'listing' || attempt.shape === 'unknown')) {
         attempt.productLinks = result.productLinks || [];
+        /* reported, never decided on */
+        attempt.tileReport = result.diagnosis ? result.diagnosis.tiles || null : null;
       }
       return { ok: false };
     }
@@ -5112,7 +5285,7 @@ async function discoverRow(row, taken, limit, options) {
      product pages are tried now, in the page's own order, each exactly
      as a search result would be — title, page, photo, every gate. */
   if (winner < 0 && !budget.spent()) {
-    const extras = tilesOffered(tried, found.products);
+    const extras = tilesOffered(row, tried, found.products);
     if (extras.length) {
       const base = tried.length;
       for (const product of extras) {
@@ -5825,6 +5998,7 @@ async function main() {
         if (attempt.productLinks) {
           const n = attempt.productLinks.length;
           console.log(`  ${''.padEnd(17)}     ${n ? `its page data listed ${n} product page${n === 1 ? '' : 's'} of its own, tried below` : 'its page data listed no product page that could be offered'}`);
+          if (!n) for (const line of tileLines(attempt.tileReport).slice(0, 4)) console.log(`  ${''.padEnd(17)}       ${line}`);
         }
         console.log(`  ${''.padEnd(17)}     ${stamp} — ${verdict.why}`);
         if (attempt.failed) {
@@ -6063,7 +6237,7 @@ if (require.main === module) {
     /* whether a page is a product page, for the canonical rule */
     pageDeclarations, pageDeclarationsFromHtml, productPageVerdict,
     garmentsAgree, canonicalCorroborated, wordsInPath, wordsAboutImage, TRACKING_PARAMS,
-    siteAsset, imageDimensions, listingShape, rankListings, embeddedProductTiles, listingProductLinks, tilesFromHtml, tilesOffered,
+    siteAsset, imageDimensions, listingShape, rankListings, embeddedProductTiles, listingProductLinks, tilesFromHtml, tilesOffered, productKey, tileReport, tileLines,
     parseArgs, OPTIONS, USAGE, intentFor, queryForms, listingsFor, discoverRow, coverage,
     providerChain, outOfSearches,
     /* the hand-off between the expensive half and the cheap one: what a
