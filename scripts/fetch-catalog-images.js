@@ -984,15 +984,22 @@ function recordImageHost(imageUrl, productUrl) {
 }
 
 /* Fetches and checks the record. Returns the candidates it offers, or
-   why it offers none; either way a note for the report. */
-async function productRecordFor(productUrl, catalogRow, within) {
+   why it offers none; either way a note for the report.
+
+   `how` changes only how the record is FETCHED, never how it is judged:
+   `fetch` is a request()-shaped reader (the rendered page's own, for a
+   store that serves its page only to a browser), and `analyticsId` is
+   the product id the page's ShopifyAnalytics names, which the record's
+   id then has to be. */
+async function productRecordFor(productUrl, catalogRow, within, how) {
   const listing = shopifyHandle(productUrl);
   if (!listing) return { failed: 'not a Shopify /products/<handle> listing', skipped: true };
   if (!catalogRow || !catalogRow.name) {
     return { failed: 'there is no catalogue row to hold the record\'s title against', skipped: true };
   }
 
-  const got = await request(listing.recordUrl, null, within);
+  const fetcher = (how && how.fetch) || request;
+  const got = await fetcher(listing.recordUrl, null, within);
   if (!got.ok) return { failed: `the product record could not be read (${got.why})` };
   let record;
   try {
@@ -1016,6 +1023,10 @@ async function productRecordFor(productUrl, catalogRow, within) {
   }
   const id = typeof record.id === 'number' || typeof record.id === 'string' ? String(record.id) : '';
   if (!/^\d+$/.test(id)) return { failed: 'the product record names no product id' };
+  const analyticsId = how && how.analyticsId ? String(how.analyticsId) : null;
+  if (analyticsId && analyticsId !== id) {
+    return { failed: `the page's ShopifyAnalytics names product ${analyticsId}, but the product record is product ${id}` };
+  }
   const title = typeof record.title === 'string' ? record.title.trim() : '';
   if (!title) return { failed: 'the product record names no title' };
 
@@ -1150,6 +1161,45 @@ function embeddedRecordFrom(probe, productUrl, catalogRow, canonical) {
     previewOnly
   };
   return { record, candidates: record.images.map((url) => ({ url, from: 'product-record', record })) };
+}
+
+/* ---------- the .js record, asked for by the page that rendered ----------
+
+   A store can refuse its page to a plain request and serve it to a
+   browser. That store is not asked for its record by a plain request —
+   but the browser it served the page to can ask for it, same-origin,
+   the way the page's own scripts would. The record it gets back is
+   judged by productRecordFor, exactly as a plain-HTTP one is.
+
+   Asked only when the browser ended up on THIS listing: the same
+   origin, a /products/<handle> path with the listing's handle, and a
+   canonical, if the page declares one, that names that handle. A
+   collection, a search, an article or any other page the listing
+   redirected to is not a product page and is never asked for a record. */
+function browserRecordListing(finalUrl, productUrl, canonical) {
+  const listing = shopifyHandle(productUrl);
+  if (!listing) return { skipped: true, failed: 'not a Shopify /products/<handle> listing' };
+  const landed = shopifyHandle(finalUrl);
+  if (!landed || landed.origin !== listing.origin || landed.handle !== listing.handle) {
+    return { failed: `the browser ended on ${finalUrl || 'no page'}, not this listing's ${listing.origin}/products/${listing.handle}` };
+  }
+  if (canonical) {
+    const named = shopifyHandle(canonical);
+    if (!named || named.handle !== listing.handle) return { failed: `the page declares ${canonical} canonical, which is not this listing` };
+  }
+  return { listing };
+}
+
+async function browserProductRecord(rendered, productUrl, catalogRow, within) {
+  const seen = rendered.seen || {};
+  const allowed = browserRecordListing(rendered.finalUrl, productUrl, seen.canonical);
+  if (!allowed.listing) return allowed;
+  if (typeof rendered.fetchRecord !== 'function') return { skipped: true, failed: 'the rendered page cannot be asked for anything' };
+  const shopify = seen.diagnostics && seen.diagnostics.shopify;
+  return productRecordFor(productUrl, catalogRow, within, {
+    fetch: rendered.fetchRecord,
+    analyticsId: shopify && shopify.productId ? shopify.productId : null
+  });
 }
 
 function productRecordEvidence(candidate, productUrl) {
@@ -1946,7 +1996,7 @@ async function renderPage(url, within) {
        closed" — the gate was not passing wrong photos, it was passing
        none, and the whole render was spent to reach it. The caller
        closes once it has finished checking. */
-    return { seen, loaded, verify: imageFetcherFor(page, budget), close };
+    return { seen, loaded, finalUrl: page.url(), verify: imageFetcherFor(page, budget), fetchRecord: recordFetcherFor(page, budget), close };
   } catch (err) {
     await close();
     return { failed: `the browser path failed (${err && err.message ? String(err.message).split('\n')[0] : 'unknown'})` };
@@ -2063,6 +2113,49 @@ function imageFetcherFor(page, within) {
           dimensions: result.width > 0 && result.height > 0 ? { width: result.width, height: result.height } : null,
           body: null
         }
+      };
+    } catch (err) {
+      return { ok: false, why: String(err && err.message ? err.message : err).split('\n')[0] };
+    }
+  };
+}
+
+/* The rendered page asking its OWN origin for a text resource — the
+   Shopify .js record — the way its scripts would. Shaped like request()
+   so productRecordFor does not care which one it was handed. Anything
+   that is not the page's origin, or that redirects off it, is not
+   fetched or not believed; the body is capped, and a record cut short by
+   the cap is simply not JSON. */
+const RECORD_MAX_CHARS = 2000000;
+
+function recordFetcherFor(page, within) {
+  const budget = within || budgetOf(RENDER_BUDGET);
+  return async (url, extra, ms) => {
+    const ceiling = Math.max(1, budget.cap(ms === undefined || ms === null ? TIMEOUT : ms));
+    try {
+      const result = await page.evaluate(async ({ url, extra, ceiling, most }) => {
+        if (new URL(url, location.href).origin !== location.origin) return { offOrigin: true };
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), ceiling);
+        try {
+          const response = await fetch(url, {
+            headers: Object.assign({ accept: 'application/json' }, extra || {}),
+            credentials: 'same-origin',
+            redirect: 'follow',
+            signal: controller.signal
+          });
+          const body = await response.text();
+          return { status: response.status, finalOrigin: new URL(response.url || url, location.href).origin, origin: location.origin, text: body.slice(0, most) };
+        } finally {
+          clearTimeout(timer);
+        }
+      }, { url, extra, ceiling, most: RECORD_MAX_CHARS });
+      if (result.offOrigin) return { ok: false, why: 'it is not on the rendered page\'s own origin' };
+      if (result.finalOrigin !== result.origin) return { ok: false, why: `it redirected off the page's origin, to ${result.finalOrigin}` };
+      return {
+        ok: true,
+        response: { status: result.status, text: async () => result.text, body: null },
+        release: () => {}
       };
     } catch (err) {
       return { ok: false, why: String(err && err.message ? err.message : err).split('\n')[0] };
@@ -2546,7 +2639,8 @@ function printImageDiagnosis(indent, diagnosis) {
       : `embedded React Router product ${embedded.handle} (product ${embedded.id}, "${embedded.title}") offered ${embedded.images} media.nodes[*].image.url image${embedded.images === 1 ? '' : 's'}${embedded.previewOnly ? `; ${embedded.previewOnly} preview-only node${embedded.previewOnly === 1 ? '' : 's'} not taken` : ''}`}`);
   }
   const record = diagnosis.productRecord;
-  console.log(`${pad}Shopify product record: ${!record ? 'not asked for (the page was not served to plain HTTP, or it verified first)'
+  const through = record && record.via === 'browser' ? ' (asked by the rendered page)' : '';
+  console.log(`${pad}Shopify product record${through}: ${!record ? 'not asked for (a candidate verified first, the page never rendered, or time ran out)'
     : record.failed ? `${record.skipped ? 'not asked for' : 'offered nothing'} — ${record.failed}`
       : `${record.handle} (product ${record.id}, "${record.title}") lists ${record.images} image${record.images === 1 ? '' : 's'}`}`);
 
@@ -2931,6 +3025,28 @@ async function resolveRowInner(row, within, diagnosis, options) {
       }
       if (embedded.candidates && embedded.candidates.length) {
         const recorded = await firstVerifiable(embedded.candidates, row, rendered.verify, budget);
+        diagnosis.refusals.push(...(recorded.refusals || []));
+        found = recorded.url ? recorded : { refusals: [...found.refusals, ...(recorded.refusals || [])] };
+      }
+    }
+
+    /* The store's own .js record, for a store that served its page only
+       to the browser: plain HTTP never got the page, so it never asked
+       for the record, and the browser that did get the page asks for it
+       now, same-origin. A page that plain HTTP DID get has had its record
+       asked for already, and refused is refused. */
+    if (!found.url && !page.html && !budget.spent()) {
+      const fromPage = await browserProductRecord(rendered, row.productUrl, options.catalogRow, budget.cap(TIMEOUT));
+      diagnosis.productRecord = fromPage.record
+        ? { via: 'browser', handle: fromPage.record.handle, id: fromPage.record.id, title: fromPage.record.title, images: fromPage.record.images.length }
+        : { via: 'browser', failed: fromPage.failed, skipped: Boolean(fromPage.skipped) };
+      if (!fromPage.skipped) {
+        notes.push(fromPage.record
+          ? `product record (browser): ${fromPage.record.handle} lists ${fromPage.record.images.length} image${fromPage.record.images.length === 1 ? '' : 's'}`
+          : `product record (browser): ${fromPage.failed}`);
+      }
+      if (fromPage.candidates && fromPage.candidates.length) {
+        const recorded = await firstVerifiable(fromPage.candidates, row, rendered.verify, budget);
         diagnosis.refusals.push(...(recorded.refusals || []));
         found = recorded.url ? recorded : { refusals: [...found.refusals, ...(recorded.refusals || [])] };
       }
@@ -5668,7 +5784,7 @@ if (require.main === module) {
     catalogRowIdentity, evidenceNote,
     /* a Shopify store's own product record, as identity evidence */
     shopifyHandle, recordImages, recordImageHost, productRecordFor, productRecordEvidence,
-    reactRouterProducts, embeddedRecordFrom, reproveEmbeddedRecord, coverageLive,
+    reactRouterProducts, embeddedRecordFrom, reproveEmbeddedRecord, coverageLive, browserRecordListing,
     /* whether a page is a product page, for the canonical rule */
     pageDeclarations, pageDeclarationsFromHtml, productPageVerdict,
     garmentsAgree, canonicalCorroborated, wordsInPath, wordsAboutImage, TRACKING_PARAMS,

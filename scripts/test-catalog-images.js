@@ -4865,6 +4865,184 @@ function walledRetailer() {
   }
 
   /* ---------------------------------------------------------
+     The .js record, asked for by the page that rendered
+
+     A store can wall its page off from a plain request and serve it to a
+     browser. Plain HTTP never gets the page, so it never asks for the
+     record; the browser that did get the page asks for it, same-origin,
+     and the record is judged exactly as a plain-HTTP one is.
+     --------------------------------------------------------- */
+  console.log('\n  — the .js record, asked for by the page that rendered\n');
+
+  test('the browser asks only when it ended up on this very listing', () => {
+    const listing = `https://shop.example.com/products/${HANDLE}`;
+    assert.ok(extractor.browserRecordListing(listing, listing, null).listing);
+    assert.ok(extractor.browserRecordListing(`${listing}?variant=1`, listing, listing).listing);
+    const refused = [
+      [`https://shop.example.com/collections/jackets`, null],
+      [`https://shop.example.com/search?q=jacket`, null],
+      [`https://shop.example.com/blogs/journal/how-to-wear-a-track-jacket`, null],
+      [`https://shop.example.com/products/cropped-track-jacket-black-2025`, null],
+      [`https://other.example.net/products/${HANDLE}`, null],
+      [listing, 'https://shop.example.com/collections/jackets']
+    ];
+    for (const [landed, canonical] of refused) {
+      const got = extractor.browserRecordListing(landed, listing, canonical);
+      assert.ok(!got.listing, `asked on ${landed} (canonical ${canonical})`);
+    }
+    assert.ok(extractor.browserRecordListing(listing, 'https://shop.example.com/collections/jackets', null).skipped,
+      'a listing that is not /products/<handle> has no record to ask for');
+  });
+
+  /* a store that answers its page only to a browser's navigation: Node's
+     fetch sends no `sec-fetch-mode: navigate`, Chromium's goto does.
+     `page` walls the browser off too; `redirect` sends the browser
+     elsewhere; `analyticsId` is what ShopifyAnalytics names. */
+  function browserOnlyStore({ record, page, redirect, analyticsId }) {
+    const asked = [];
+    const server = http.createServer((req, res) => {
+      asked.push({ url: req.url, site: req.headers['sec-fetch-site'] || null, mode: req.headers['sec-fetch-mode'] || null });
+      const port = server.address().port;
+      const here = `http://127.0.0.1:${port}`;
+      const navigating = req.headers['sec-fetch-mode'] === 'navigate';
+      if (req.url === `/products/${HANDLE}` || req.url === '/collections/jackets') {
+        if (!navigating || page) { res.writeHead(page || 403, { 'content-type': 'text/html' }); return res.end('<!doctype html><title>Access denied</title>'); }
+        if (redirect && req.url === `/products/${HANDLE}`) { res.writeHead(302, { location: redirect }); return res.end(); }
+        res.writeHead(200, { 'content-type': 'text/html' });
+        const analytics = analyticsId === undefined ? 8123456789012 : analyticsId;
+        return res.end(`<!doctype html><html><head>
+<link rel="canonical" href="${here}${req.url}">
+<meta property="og:image" content="${here}/cdn/shop/files/telfar-social-share.jpg">
+</head><body>
+<img src="/cdn/shop/files/TELFAR-CROPPED-TRACK-JACKET-WHITE-1.jpg?v=1" width="800" height="1000" alt="">
+${analytics === null ? '' : `<script>window.ShopifyAnalytics = { meta: { product: { id: ${JSON.stringify(analytics)}, variants: [] } } };</script>`}
+</body></html>`);
+      }
+      if (req.url === `/products/${HANDLE}.js`) {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify(typeof record === 'function' ? record(port) : record));
+      }
+      if (req.url.startsWith('/cdn/shop/files/')) {
+        res.writeHead(200, { 'content-type': 'image/jpeg' });
+        return res.end(PHOTO);
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({ server, asked, port: server.address().port })));
+  }
+  const recordAsks = (store) => store.asked.filter((one) => one.url === `/products/${HANDLE}.js`);
+
+  if (!extractor.loadPlaywright()) {
+    console.log('  skip  the .js record asked for by a rendered page — Playwright is not installed here');
+    skipped += 5;
+  } else {
+    await testAsync('plain HTTP walled, the browser served: the page’s own .js record ties the photo', async () => {
+      const store = await browserOnlyStore({ record: jacketRecord() });
+      try {
+        const result = await extractor.resolveRow(asListing(store.port), undefined, { catalogRow: JACKET_ROW });
+        assert.strictEqual(result.verdict, 'VERIFIED', result.why);
+        assert.strictEqual(result.from, 'product-record');
+        assert.strictEqual(result.url, `http://127.0.0.1:${store.port}/cdn/shop/files/TELFAR-CROPPED-TRACK-JACKET-WHITE-1.jpg?v=1`);
+        assert.strictEqual(result.identity.via, 'product-record');
+        assert.strictEqual(result.identity.source, undefined, 'the .js record is the standard one, not the embedded kind');
+        assert.strictEqual(result.identity.handle, HANDLE);
+        assert.strictEqual(result.identity.productId, '8123456789012');
+        assert.strictEqual(result.diagnosis.productRecord.via, 'browser');
+        assert.ok(result.notes.some((note) => /product record \(browser\): cropped-track-jacket-white-2025 lists 2 images/.test(note)), result.notes.join(' | '));
+
+        /* the page was refused to plain HTTP first, and the record was
+           asked for once — by the page, same-origin, never by a plain request */
+        assert.ok(store.asked.some((one) => one.url === `/products/${HANDLE}` && one.mode !== 'navigate'), 'plain HTTP never asked for the page');
+        assert.strictEqual(recordAsks(store).length, 1);
+        assert.strictEqual(recordAsks(store)[0].site, 'same-origin');
+
+        /* the gallery photo was refused on identity before the record was read */
+        assert.ok(result.diagnosis.refusals.some((one) => one.gate === 'identity' && /TELFAR-CROPPED-TRACK-JACKET-WHITE-1/.test(one.url) && one.source !== 'Shopify product record'));
+      } finally {
+        store.server.close();
+      }
+    });
+
+    await testAsync('a browser-read record for another handle, product or garment offers nothing', async () => {
+      const cases = [
+        [{ record: jacketRecord({ handle: 'cropped-track-jacket-black-2025' }) }, /is for cropped-track-jacket-black-2025, not this listing's/],
+        [{ record: jacketRecord({ id: 'gid://shopify/Product/8123456789012' }) }, /names no product id/],
+        [{ record: jacketRecord(), analyticsId: 7000000000001 }, /ShopifyAnalytics names product 7000000000001, but the product record is product 8123456789012/],
+        [{ record: jacketRecord({ title: 'Track Medium Bag - Black' }) }, /is not the garment the row means/]
+      ];
+      for (const [setup, says] of cases) {
+        const store = await browserOnlyStore(setup);
+        try {
+          const result = await extractor.resolveRow(asListing(store.port), undefined, { catalogRow: JACKET_ROW });
+          assert.notStrictEqual(result.verdict, 'VERIFIED', `verified: ${result.why}`);
+          assert.strictEqual(result.diagnosis.productRecord.via, 'browser');
+          assert.match(result.diagnosis.productRecord.failed, says);
+          assert.strictEqual(recordAsks(store).length, 1, 'the record was not asked for through the page');
+          assert.ok(!result.diagnosis.refusals.some((one) => one.source === 'Shopify product record'), 'a refused record still offered photos');
+        } finally {
+          store.server.close();
+        }
+      }
+    });
+
+    await testAsync('a browser-read record’s photo on a foreign host is refused', async () => {
+      const store = await browserOnlyStore({
+        record: jacketRecord({ images: [], featured_image: null, variants: [],
+          media: [{ media_type: 'image', src: 'http://localhost:1/cdn/shop/files/TELFAR-CROPPED-TRACK-JACKET-WHITE-1.jpg' }] })
+      });
+      try {
+        const result = await extractor.resolveRow(asListing(store.port), undefined, { catalogRow: JACKET_ROW });
+        assert.notStrictEqual(result.verdict, 'VERIFIED', `verified: ${result.why}`);
+        const refusal = result.diagnosis.refusals.find((one) => one.url === 'http://localhost:1/cdn/shop/files/TELFAR-CROPPED-TRACK-JACKET-WHITE-1.jpg');
+        assert.ok(refusal, 'the foreign photo was never put to the gates');
+        assert.strictEqual(refusal.gate, 'identity');
+        assert.match(refusal.why, /localhost is not the store's own host or Shopify's CDN/);
+      } finally {
+        store.server.close();
+      }
+    });
+
+    await testAsync('a page that is not /products/<handle> is never asked for a record', async () => {
+      /* the listing redirects the browser to a collection */
+      const moved = await browserOnlyStore({ record: jacketRecord(), redirect: '/collections/jackets' });
+      try {
+        const result = await extractor.resolveRow(asListing(moved.port), undefined, { catalogRow: JACKET_ROW });
+        assert.notStrictEqual(result.verdict, 'VERIFIED', `verified: ${result.why}`);
+        assert.match(result.diagnosis.productRecord.failed, /the browser ended on .*\/collections\/jackets, not this listing's/);
+        assert.strictEqual(recordAsks(moved).length, 0, 'a collection page was asked for a product record');
+      } finally {
+        moved.server.close();
+      }
+
+      /* and a listing that is a collection to begin with */
+      const collection = await browserOnlyStore({ record: jacketRecord() });
+      try {
+        const result = await extractor.resolveRow(
+          Object.assign(asListing(collection.port), { productUrl: `http://127.0.0.1:${collection.port}/collections/jackets` }),
+          undefined, { catalogRow: JACKET_ROW });
+        assert.notStrictEqual(result.verdict, 'VERIFIED', `verified: ${result.why}`);
+        assert.ok(result.diagnosis.productRecord.skipped);
+        assert.strictEqual(recordAsks(collection).length, 0, 'a collection listing was asked for a product record');
+      } finally {
+        collection.server.close();
+      }
+    });
+
+    await testAsync('a page the browser is refused too is never asked for a record', async () => {
+      const store = await browserOnlyStore({ record: jacketRecord(), page: 403 });
+      try {
+        const result = await extractor.resolveRow(asListing(store.port), undefined, { catalogRow: JACKET_ROW });
+        assert.notStrictEqual(result.verdict, 'VERIFIED', `verified: ${result.why}`);
+        assert.match(result.why, /answered 403 to a real browser too/);
+        assert.strictEqual(recordAsks(store).length, 0, 'the record was used to get round a page the browser was refused');
+      } finally {
+        store.server.close();
+      }
+    });
+  }
+
+  /* ---------------------------------------------------------
      A canonical page vouches for its image only if it is a product page
 
      A live run accepted sample-coveworks-cargo-utility-pant from
