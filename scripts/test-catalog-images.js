@@ -1501,6 +1501,38 @@ function walledRetailer() {
     }
   });
 
+  test('an FAQ block beside a full product record does not make a product page an article', () => {
+    const ld = (node) => `<script type="application/ld+json">${JSON.stringify(node)}</script>`;
+    const faq = { '@type': 'FAQPage', mainEntity: [{ '@type': 'Question', name: 'How does it fit?', acceptedAnswer: { '@type': 'Answer', text: 'True to size.' } }] };
+    const product = { '@type': 'Product', name: 'Organic Cotton Stretch Poplin Shirt in White', offers: { '@type': 'Offer', price: '39.90', priceCurrency: 'USD', availability: 'https://schema.org/InStock' } };
+    const group = { '@type': 'ProductGroup', name: 'Poplin Shirt', hasVariant: [{ '@type': 'Product', sku: 'PS-1', offers: { price: '39.90' } }] };
+    const verdict = (html) => extractor.productPageVerdict(extractor.listingShape('https://www.shop.example.com/products/poplin-shirt', ''), extractor.pageDeclarationsFromHtml(html));
+    assert.strictEqual(verdict(ld(product) + ld(faq)).ok, true);
+    assert.strictEqual(verdict(ld(group) + ld(faq)).ok, true);
+    assert.strictEqual(extractor.pageDeclarationsFromHtml(ld(product) + ld(faq)).declaresArticle, null);
+    /* an FAQ page with no full product record is what it says it is */
+    assert.strictEqual(verdict(ld(faq)).ok, false);
+    assert.strictEqual(verdict(ld({ '@type': 'Product', name: 'Poplin Shirt' }) + ld(faq)).ok, false, 'a product record that sells nothing does not excuse an FAQ page');
+    /* and nothing excuses an article, however it marks up a product */
+    assert.strictEqual(verdict(ld(product) + ld({ '@type': 'Article', headline: 'The best poplin shirts' })).ok, false);
+    assert.strictEqual(verdict(ld(product) + ld({ '@type': 'CollectionPage', name: 'Shirts' })).ok, false);
+    assert.strictEqual(verdict(`<meta property="og:type" content="article">${ld(product)}${ld(faq)}`).ok, false);
+  });
+
+  test('a ProductGroup’s photos on its variants are candidates, each tied to its own variant', () => {
+    const url = 'https://www.shop.example.com/brand/stone-running-shorts-0141604500001.html';
+    const group = { '@type': 'ProductGroup', name: 'Stone Running Shorts', productGroupID: '0141604500001', hasVariant: [
+      { '@type': 'Product', sku: '0141604500001', image: { '@type': 'ImageObject', contentUrl: 'https://www.shop.example.com/img/0141604500001_01.jpg' }, offers: { price: '44.99', priceCurrency: 'USD' } },
+      { '@type': 'Product', sku: '0141604500002', image: 'https://www.shop.example.com/img/0141604500002_01.jpg', offers: { price: '44.99', priceCurrency: 'USD' } }
+    ] };
+    const candidates = extractor.candidatesFrom(`<script type="application/ld+json">${JSON.stringify(group)}</script>`, url);
+    assert.deepStrictEqual(candidates.map((one) => one.url.split('/').pop()), ['0141604500001_01.jpg', '0141604500002_01.jpg']);
+    assert.strictEqual(extractor.identityEvidence(candidates[0], url).ok, true);
+    assert.strictEqual(extractor.identityEvidence(candidates[1], url).ok, false, 'another colour’s photo was tied to this listing');
+    /* the variant is the record behind the photo, for the sku gate */
+    assert.strictEqual(candidates[1].node.sku, '0141604500002');
+  });
+
   test('a "crew" alone establishes no garment: a Pocket Crew 6-Pack is not read as a sweater', () => {
     for (const title of ['Classic Pocket Crew 6-Pack', 'Cotton Crew', 'Merino Fleece Crew', 'The Crew']) {
       assert.strictEqual(extractor.readGarment(title, {}).type, null, title);

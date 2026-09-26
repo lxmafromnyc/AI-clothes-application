@@ -368,17 +368,31 @@ function parseLdBlock(text) {
 /* A Product node's images, kept WITH the node that supplied them: the
    node also carries the sku, and that is what ties an image to this
    product rather than to a neighbour in the same feed. */
+/* A ProductGroup often puts its photographs on its variants rather than
+   on itself — Google's variant markup: hasVariant[] Products, each with
+   its own sku and image. Those are read too, each kept with the VARIANT
+   record that supplied it, so the identity gate ties a photo to this
+   listing by that variant's own sku and a photo of another colour is
+   refused exactly as it would be on a page that listed it at the top
+   level. An ImageObject may give its address as contentUrl. */
 function fromJsonLd(nodes) {
   const found = [];
-  for (const node of nodes) {
-    const type = String(node['@type'] || '');
-    if (!/product/i.test(type)) continue;
+  const collect = (node) => {
     /* `shape` is for the diagnostics tally only */
     const take = (v) => {
       if (typeof v === 'string') found.push({ url: v, node, shape: 'string' });
       else if (v && typeof v === 'object' && typeof v.url === 'string') found.push({ url: v.url, node, shape: 'ImageObject' });
+      else if (v && typeof v === 'object' && typeof v.contentUrl === 'string') found.push({ url: v.contentUrl, node, shape: 'ImageObject' });
     };
     if (Array.isArray(node.image)) node.image.forEach(take); else take(node.image);
+  };
+  for (const node of nodes) {
+    const type = String(node['@type'] || '');
+    if (!/product/i.test(type)) continue;
+    collect(node);
+    for (const variant of [].concat(node.hasVariant || [])) {
+      if (variant && typeof variant === 'object' && /product/i.test(String(variant['@type'] || ''))) collect(variant);
+    }
   }
   return found;
 }
@@ -452,6 +466,9 @@ function largestFromSrcset(value) {
 const PRODUCT_TYPES = /^(product|productgroup|individualproduct|productmodel|someproducts|offer|aggregateoffer)$/i;
 const NOT_PRODUCT_TYPES = /^(article|newsarticle|blogposting|blog|report|techarticle|scholarlyarticle|analysisnewsarticle|opinionnewsarticle|reviewnewsarticle|liveblogposting|faqpage|qapage|howto|collectionpage|searchresultspage)$/i;
 
+/* page types a product page can carry alongside its product */
+const SUPPLEMENTARY_TYPES = /^(faqpage|qapage)$/i;
+
 function pageDeclarations(nodes, metas, html) {
   const types = new Set();
   for (const node of nodes || []) {
@@ -463,7 +480,20 @@ function pageDeclarations(nodes, metas, html) {
   };
   const ogType = meta('og:type');
   const productType = [...types].find((type) => PRODUCT_TYPES.test(type));
-  const articleType = [...types].find((type) => NOT_PRODUCT_TYPES.test(type));
+  /* An FAQ or Q&A block is something a product page CARRIES — the
+     sizing and returns questions under the product — not something the
+     page IS, when the page also describes its product in full: a
+     Product or ProductGroup record with a name and something to sell.
+     Then the FAQ does not make it an article. Without such a record an
+     FAQ page is still what it declares, and an Article, a blog post, a
+     collection or a search page is never excused, whatever it marks up. */
+  const strongProduct = (nodes || []).some((node) => {
+    if (!node || typeof node !== 'object') return false;
+    const own = [].concat(node['@type'] || []).map((type) => String(type).replace(/^.*[/#]/, ''));
+    if (!own.some((type) => /^(product|productgroup)$/i.test(type))) return false;
+    return typeof node.name === 'string' && node.name.trim() && Boolean(node.offers || node.offer || node.hasVariant);
+  });
+  const articleType = [...types].find((type) => NOT_PRODUCT_TYPES.test(type) && !(strongProduct && SUPPLEMENTARY_TYPES.test(type)));
   const priced = ['product:price:amount', 'og:price:amount', 'product:retailer_item_id'].find((name) => meta(name));
   const itemtype = html && /itemtype=["']https?:\/\/schema\.org\/Product["']/i.test(html);
 

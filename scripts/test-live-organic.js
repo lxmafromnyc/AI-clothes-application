@@ -1325,6 +1325,46 @@ const deadlineIn = (ms) => Date.now() + ms;
     assert.strictEqual(failed.evidence.shopify.record.variants, 2);
   });
 
+
+  console.log('\n  — 12. product pages that carry an FAQ, and a ProductGroup whose photos are on its variants\n');
+
+  const FAQ = { '@type': 'FAQPage', mainEntity: [{ '@type': 'Question', name: 'How does it fit?', acceptedAnswer: { '@type': 'Answer', text: 'True to size.' } }] };
+
+  await testAsync('a code-less product page that also carries an FAQ is identified, priced and shown', async () => {
+    const url = 'https://www.slug-shop.com/products/organic-cotton-stretch-poplin-shirt-white';
+    const shot = 'https://cdn.slug-shop.com/files/poplin-shirt-white.jpg';
+    const html = shopPage(`<meta property="og:site_name" content="Slug Shop"><link rel="canonical" href="${url}">`, [
+      { '@type': 'Product', name: 'Organic Cotton Stretch Poplin Shirt in White', image: [shot], offers: { '@type': 'Offer', price: '39.90', priceCurrency: 'USD', availability: 'https://schema.org/InStock' } },
+      FAQ
+    ]);
+    const { records, diagnostics } = await readOne(html, url, [shot]);
+    assert.deepStrictEqual(diagnostics.outcomes, { photographed: 1 }, JSON.stringify(diagnostics.samples));
+    assert.deepStrictEqual(verifyAll(records).products.map((one) => [one.name, one.price, one.retailer]), [['Organic Cotton Stretch Poplin Shirt in White', 39.9, 'Slug Shop']]);
+  });
+
+  await testAsync('with og:type product and an FAQ, the same — and an FAQ page with no product record is still refused', async () => {
+    const url = 'https://www.slug-shop.com/products/white-poplin-shirt-mother-of-pearl';
+    const shot = 'https://cdn.slug-shop.com/files/white-poplin-shirt.jpg';
+    const head = `<meta property="og:type" content="product"><meta property="og:site_name" content="Slug Shop"><link rel="canonical" href="${url}">`;
+    const shown = await readOne(shopPage(head, [{ '@type': 'Product', name: "Men's White Poplin Shirt, Mother-of-Pearl Buttons", image: [shot], offers: { price: '145.00', priceCurrency: 'USD', availability: 'InStock' } }, FAQ]), url, [shot]);
+    assert.strictEqual(verifyAll(shown.records).products.length, 1, JSON.stringify(shown.diagnostics.samples));
+    const faqOnly = await readOne(shopPage(`<meta property="og:site_name" content="Slug Shop"><link rel="canonical" href="${url}">`, [FAQ]), url, [shot]);
+    assert.deepStrictEqual(faqOnly.diagnostics.outcomes, { 'no-identity': 1 });
+  });
+
+  await testAsync('a coded ProductGroup page whose photos and prices are on its variants is shown with its own variant’s photo', async () => {
+    const url = 'https://www.shop-example.com/brand/stone-running-shorts-0141604500001.html';
+    const own = 'https://www.shop-example.com/img/0141604500001_01.jpg';
+    const other = 'https://www.shop-example.com/img/0141604500002_01.jpg';
+    const variant = (sku, image) => ({ '@type': 'Product', sku, image, offers: { '@type': 'Offer', price: '44.99', priceCurrency: 'USD', availability: 'https://schema.org/InStock' } });
+    const html = shopPage('<meta property="og:site_name" content="Shop Example">', [{ '@type': 'ProductGroup', name: 'Stone Running Shorts', productGroupID: '0141604500001',
+      hasVariant: [variant('0141604500002', other), variant('0141604500001', { '@type': 'ImageObject', contentUrl: own })] }]);
+    const { records, diagnostics } = await readOne(html, url, [own, other]);
+    assert.deepStrictEqual(diagnostics.outcomes, { photographed: 1 }, JSON.stringify(diagnostics.samples));
+    const [product] = verifyAll(records).products;
+    assert.deepStrictEqual([product.name, product.price, product.imageUrl], ['Stone Running Shorts', 44.99, own]);
+  });
+
   console.log(`\n${passed} passed, ${failures.length} failed\n`);
   if (failures.length) process.exitCode = 1;
 })();
