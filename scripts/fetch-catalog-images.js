@@ -3642,7 +3642,7 @@ const GARMENT_TYPES = [
      which would otherwise be read as the head noun */
   /* "puffy jacket" is how a shopper says puffer; only the whole phrase,
      because a "puffy sleeve" blouse is not outerwear */
-  { type: 'puffer', family: 'outerwear', terms: ['puffer', 'puffer jacket', 'puffer coat', 'down jacket', 'down coat', 'quilted jacket', 'padded jacket', 'padded coat', 'puffy jacket', 'puffy coat'] },
+  { type: 'puffer', family: 'outerwear', terms: ['puffer', 'puffer jacket', 'puffer coat', 'down jacket', 'quilted jacket', 'padded jacket', 'padded coat', 'puffy jacket', 'puffy coat'] },
   { type: 'blazer', family: 'outerwear', terms: ['blazer', 'sport coat', 'sports coat', 'suit jacket', 'dinner jacket'] },
   { type: 'vest', family: 'outerwear', terms: ['vest', 'gilet', 'waistcoat'] },
   { type: 'jacket', family: 'outerwear', terms: ['jacket', 'bomber', 'windbreaker', 'shacket', 'track jacket', 'denim jacket', 'trucker jacket'] },
