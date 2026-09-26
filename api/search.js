@@ -91,6 +91,10 @@ function shapeIntent(raw) {
     fits: asArray(i.fits),
     brands: asArray(i.brands),
     styles: asArray(i.styles),
+    /* the garment and its descriptors in the shopper's words, when the
+       interpreter read them: "hoodie", "pleated", "double-breasted" */
+    garments: asArray(i.garments),
+    descriptors: asArray(i.descriptors),
     keywords: asArray(i.keywords),
     maxPrice: asNumber(i.maxPrice),
     minPrice: asNumber(i.minPrice),
@@ -311,3 +315,6 @@ module.exports.shapeAttachments = shapeAttachments;
 /* exported for scripts/test-cache.js and scripts/bench-offer-resolution.js,
    so both measure the path a shopper actually takes */
 module.exports.findProducts = findProducts;
+/* the endpoint's own budget and page size, for scripts/bench-live.js */
+module.exports.requestBudget = requestBudget;
+module.exports.DEFAULT_LIMIT = DEFAULT_LIMIT;

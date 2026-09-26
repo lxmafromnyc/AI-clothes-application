@@ -530,8 +530,10 @@ const bodyOf = (call) => JSON.parse(call.options.body);
 
   /* The exact object /api/search, assets/products.js and the local
      fallback in assets/interpret.js all agree on. */
+  /* garments and descriptors are read from the shopper's own words by the
+     page's vocabulary, whichever model read the rest (api/interpret.js) */
   const INTENT_KEYS = ['categories', 'colors', 'occasions', 'fits', 'brands', 'styles',
-    'maxPrice', 'minPrice', 'season', 'gender', 'keywords'];
+    'maxPrice', 'minPrice', 'season', 'gender', 'keywords', 'garments', 'descriptors'];
 
   await testAsync('a Gemini reading is shaped into the same object an OpenAI reading is', async () => {
     const query = 'a black oversized hoodie under $80';
@@ -592,7 +594,10 @@ const bodyOf = (call) => JSON.parse(call.options.body);
       minPrice: null,
       season: null,
       gender: 'women',
-      keywords: []
+      keywords: [],
+      /* read from "a black hoodie" itself, not from the junk reply */
+      garments: ['hoodie'],
+      descriptors: []
     });
     assert.strictEqual(res.payload.preferences.hallucinated, undefined,
       'a field the schema does not have must not reach the frontend');

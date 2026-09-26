@@ -153,37 +153,51 @@ module.exports = async function handler(req, res) {
   /* the catalogue tells the model which values it can actually match */
   const vocabulary = body.vocabulary && typeof body.vocabulary === 'object' ? body.vocabulary : {};
 
+  const reading = await interpretQuery({ query, vocabulary });
+  if (!reading.ok) {
+    return res.status(502).json({
+      error: reading.reason === 'unparseable'
+        ? 'The interpreter returned an unexpected answer.'
+        : 'The interpreter is unavailable right now.'
+    });
+  }
+
+  /* What it actually cost, from the model's own accounting of the call.
+     A model that reports no usage is counted as nothing rather than as
+     a guess: an invented number in a meter is worse than a gap. */
+  const after = await meter.spend(identity, AI_TOKENS, Number.isFinite(reading.tokens) ? reading.tokens : 0);
+  return res.status(200).json({
+    source: reading.source,
+    query,
+    preferences: reading.preferences,
+    usage: meter.report(after || state)
+  });
+};
+
+/* The reading itself, without the request around it: the model call,
+   its failures, and the shaped preferences. The handler above meters
+   and answers with it; scripts/bench-live.js asks it directly, so a
+   benchmark reads requests exactly the way the site does without
+   spending anyone's plan.
+
+   The garment and what it is like are read from the shopper's own
+   words by the same vocabulary the page's local reader uses, whichever
+   model read the rest: a model constrained to the catalogue's filing
+   says "knit" for a hoodie, and the shopper said "hoodie". */
+async function interpretQuery({ query, vocabulary }) {
+  const alternative = interpreters.getInterpreter();
+  const key = process.env.OPENAI_API_KEY;
+  const read = (raw) => Object.assign(shapePreferences(raw), garmentsIn(query));
   try {
-    /* --- alternative interpreter, when one was explicitly named -------
-       Everything before this point — the origin check, the metering
-       guard, the query limit and the vocabulary — has already run, and
-       everything after it is shared: the reading is put through the same
-       shapePreferences() and metered on the same rule, so the reply
-       carries the same JSON whichever model produced it. Delete this
-       block and the require above to remove the experiment. */
     if (alternative) {
       const reading = await alternative.interpret({ query, vocabulary, systemPrompt: SYSTEM_PROMPT });
-
       if (!reading.ok) {
-        /* `detail` is already redacted by the adapter, and is logged
-           rather than returned: an upstream body can echo the request */
+        /* logged, never returned: an upstream body can echo the request */
         console.error(`Interpreter (${alternative.name}) failed:`, reading.reason, reading.status || '', reading.detail || '');
-        return res.status(502).json({
-          error: reading.reason === 'unparseable'
-            ? 'The interpreter returned an unexpected answer.'
-            : 'The interpreter is unavailable right now.'
-        });
+        return { ok: false, reason: reading.reason === 'unparseable' ? 'unparseable' : 'unavailable', source: alternative.name };
       }
-
-      const alsoSpent = await meter.spend(identity, AI_TOKENS, Number.isFinite(reading.tokens) ? reading.tokens : 0);
-      return res.status(200).json({
-        source: alternative.name,
-        query,
-        preferences: shapePreferences(reading.raw),
-        usage: meter.report(alsoSpent || state)
-      });
+      return { ok: true, source: alternative.name, preferences: read(reading.raw), tokens: reading.tokens };
     }
-    /* --- end alternative interpreter ---------------------------------- */
 
     const response = await fetch(OPENAI_URL, {
       method: 'POST',
@@ -209,7 +223,7 @@ module.exports = async function handler(req, res) {
       const detail = await response.text();
       console.error('OpenAI request failed', response.status, detail.slice(0, 500));
       /* never surface the upstream body: it can echo request details */
-      return res.status(502).json({ error: 'The interpreter is unavailable right now.' });
+      return { ok: false, reason: 'unavailable', source: 'openai', status: response.status };
     }
 
     const payload = await response.json();
@@ -222,28 +236,30 @@ module.exports = async function handler(req, res) {
       parsed = JSON.parse(content);
     } catch (err) {
       console.error('Model returned unparseable JSON');
-      return res.status(502).json({ error: 'The interpreter returned an unexpected answer.' });
+      return { ok: false, reason: 'unparseable', source: 'openai' };
     }
 
-    /* What it actually cost, from OpenAI's own accounting of the call.
-       A model that reports no usage is counted as nothing rather than
-       as a guess: an invented number in a meter is worse than a gap. */
     const spent = payload.usage && Number(payload.usage.total_tokens);
-    const after = await meter.spend(identity, AI_TOKENS, Number.isFinite(spent) ? spent : 0);
-
-    return res.status(200).json({
-      source: 'openai',
-      query,
-      preferences: shapePreferences(parsed),
-      usage: meter.report(after || state)
-    });
+    return { ok: true, source: 'openai', preferences: read(parsed), tokens: Number.isFinite(spent) ? spent : 0 };
   } catch (err) {
     console.error('Interpreter error', err && err.message);
-    return res.status(502).json({ error: 'The interpreter is unavailable right now.' });
+    return { ok: false, reason: 'unavailable', source: alternative ? alternative.name : 'openai' };
   }
-};
+}
+
+/* the page's own garment vocabulary: assets/interpret.js registers its
+   reader on the global object, in a function exactly as in a browser */
+function garmentsIn(query) {
+  require('../assets/interpret.js');
+  const reader = globalThis.Interpreter && globalThis.Interpreter.readGarments;
+  if (typeof reader !== 'function') return { garments: [], descriptors: [] };
+  const { garments, descriptors } = reader(query);
+  return { garments, descriptors };
+}
+
 
 module.exports.shapePreferences = shapePreferences;
+module.exports.interpretQuery = interpretQuery;
 /* the benchmark sends both providers this prompt, from here, so neither
    is measured against a copy of it that has drifted */
 module.exports.SYSTEM_PROMPT = SYSTEM_PROMPT;

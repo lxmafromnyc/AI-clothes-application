@@ -121,7 +121,6 @@ const DEFAULT_ENGINE = 'google_shopping_light';
 const IMMERSIVE_ENGINE = 'google_immersive_product';
 const RETIRED_SERVICE = /no longer offered|no longer available|has been (retired|deprecated|discontinued)|not supported/i;
 const REQUEST_TIMEOUT = 15000;
-const MAX_TERMS = 12;
 
 /* Ask for more than the caller wants so the gate has slack to drop
    unusable records without emptying the page. SerpApi's Google Shopping
@@ -165,28 +164,9 @@ function redact(value) {
 
    No Google search operator is added either. A quoted phrase or a
    site: filter would be Fynd deciding what the shopper meant. */
-const TERM_ORDER = ['gender', 'colors', 'fits', 'styles', 'brands', 'categories', 'occasions', 'keywords'];
 
-function queryFrom(intent) {
-  const i = intent && typeof intent === 'object' ? intent : {};
-  const parts = [];
-  for (const field of TERM_ORDER) {
-    const value = i[field];
-    if (typeof value === 'string') parts.push(value);
-    else if (Array.isArray(value)) parts.push(...value);
-  }
-
-  const seen = new Set();
-  const terms = [];
-  for (const part of parts) {
-    const term = text(part).toLowerCase();
-    if (!term || term.length < 2 || seen.has(term)) continue;
-    seen.add(term);
-    terms.push(term);
-    if (terms.length >= MAX_TERMS) break;
-  }
-  return terms.join(' ');
-}
+/* one phrase for every adapter: see _providers/query.js */
+const { queryFrom } = require('./query');
 
 /* -----------------------------------------------------------
    Reading one shopping result

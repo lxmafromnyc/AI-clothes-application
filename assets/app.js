@@ -259,15 +259,18 @@ function orderFacet(counts, key) {
     </div>`;
 
   function understood(prefs) {
+    /* the garment as the shopper named it — a hoodie, not the catalogue's
+       "knit" — and what they said it is like */
+    const garments = prefs.garments && prefs.garments.length ? prefs.garments : prefs.categories;
     const chips = [
-      ...prefs.categories, ...prefs.colors, ...prefs.fits, ...prefs.occasions,
+      ...garments, ...(prefs.descriptors || []), ...prefs.colors, ...prefs.fits, ...prefs.occasions,
       ...prefs.styles, ...prefs.brands
     ];
     if (prefs.gender) chips.unshift(prefs.gender);
     if (prefs.season) chips.push(prefs.season);
     if (prefs.maxPrice) chips.push(`under $${prefs.maxPrice}`);
     if (prefs.minPrice) chips.push(`over $${prefs.minPrice}`);
-    return chips.slice(0, 7);
+    return chips.slice(0, 8);
   }
 
   /* Verified records from the product source. Every field shown came from

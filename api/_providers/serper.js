@@ -122,29 +122,9 @@ function configured() {
 /* The same terms, in the same order, that the primary source is asked
    for. Discovery builds its own single-phrase intents; this keeps a
    hand-built intent readable too. */
-const TERM_ORDER = ['gender', 'colors', 'fits', 'styles', 'brands', 'categories', 'occasions', 'keywords'];
-const MAX_TERMS = 12;
 
-function queryFrom(intent) {
-  const i = intent && typeof intent === 'object' ? intent : {};
-  const parts = [];
-  for (const field of TERM_ORDER) {
-    const value = i[field];
-    if (typeof value === 'string') parts.push(value);
-    else if (Array.isArray(value)) parts.push(...value);
-  }
-
-  const seen = new Set();
-  const terms = [];
-  for (const part of parts) {
-    const term = text(part).toLowerCase();
-    if (!term || term.length < 2 || seen.has(term)) continue;
-    seen.add(term);
-    terms.push(term);
-    if (terms.length >= MAX_TERMS) break;
-  }
-  return terms.join(' ');
-}
+/* one phrase for every adapter: see _providers/query.js */
+const { queryFrom } = require('./query');
 
 /* "$34.97" -> 34.97, and anything that is not an amount -> null. No
    figure is ever inferred: a listing with no price keeps none, and the
