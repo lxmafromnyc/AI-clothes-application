@@ -1567,6 +1567,64 @@ function walledRetailer() {
     }
   });
 
+  test('a title that says hoodie is a hoodie, whatever sweatshirt or pullover words sit beside it', () => {
+    /* the live wrong-above case: the last garment word was "Pullover" */
+    const zeagoo = "Zeagoo Women's Oversized Hoodies Fleece Sweatshirts Long Sleeve Pullover with Pocket Fall Winter Outfits Y2K";
+    assert.strictEqual(extractor.readGarment(zeagoo, {}).type, 'hoodie');
+    assert.strictEqual(asked('green oversized hoodie', zeagoo).kind, 'match');
+    for (const title of ['Oversized Pullover Hoodie', 'Hoodie Sweatshirt', 'Fleece Hoodie Pullover', 'Oversized Hooded Sweatshirt']) {
+      assert.strictEqual(extractor.readGarment(title, {}).type, 'hoodie', title);
+    }
+    /* "pullover" and "button up" name a closure as readily as a garment:
+       a garment named beside them is the garment */
+    assert.strictEqual(extractor.readGarment('Fleece Crew Sweatshirt Pullover', {}).type, 'sweatshirt');
+    assert.strictEqual(extractor.readGarment('Chunky Cardigan Button Up', {}).type, 'cardigan');
+    /* and alone they still name one */
+    assert.strictEqual(extractor.readGarment('Cashmere Crew Neck Pullover', {}).type, 'sweater');
+    assert.strictEqual(extractor.readGarment('Oxford Button Down', {}).type, 'shirt');
+  });
+
+  test('sweatshirt is not a hoodie, and a hoodie is not a sweatshirt, unless the title names both', () => {
+    for (const title of ['Crew Neck Fleece Sweatshirt', 'Crewneck Sweatshirt', 'Cotton Fleece Sweatshirt']) {
+      const verdict = asked('green oversized hoodie', title);
+      assert.strictEqual(verdict.kind, 'contradiction', `${title}: ${verdict.why}`);
+    }
+    assert.strictEqual(asked('crewneck sweatshirt', 'Oversized Hoodie').kind, 'contradiction');
+    assert.strictEqual(asked('crewneck sweatshirt', 'Oversized Hoodies Fleece Sweatshirts Pullover').kind, 'contradiction');
+    assert.strictEqual(asked('green oversized hoodie', 'Cable Knit Pullover Sweater').kind, 'contradiction');
+    /* a wool sweatshirt is still read as the knit it is; a wool hoodie is a hoodie */
+    assert.strictEqual(asked('merino crewneck jumper', 'Merino Crew Sweatshirt').kind, 'match');
+    assert.strictEqual(extractor.readGarment('Merino Wool Hoodie Sweatshirt', {}).type, 'hoodie');
+  });
+
+  test('a jacket or coat is a puffer when its own title says puff, and only unproven when it says nothing', () => {
+    /* the live cases: "Super Puff … Shorty Jacket" names the kind */
+    for (const title of ["The Super Puff Women's The Super Puff Xtrashorty Jacket in Black | 2XS", "The Super Puff Women's The Super Puff Shorty Jacket in Black | 3XS",
+      'Puffer Hooded Short Jacket', 'Cropped Puffer Jacket', 'Puffy Jacket']) {
+      assert.strictEqual(extractor.readGarment(title, {}).type, 'puffer', title);
+      assert.strictEqual(asked('short puffy jacket', title).kind, 'match', title);
+    }
+    /* a bare jacket or coat never says which kind: not accepted, and not
+       counted as a different garment */
+    for (const title of ["The North Face Women's Short Jacket Nuptse", 'Short Jacket', 'Puff Sleeve Cropped Jacket', 'Long Wool Coat']) {
+      const verdict = asked(/coat/i.test(title) ? 'black puffer coat' : 'short puffy jacket', title);
+      assert.strictEqual(verdict.ok, false, `${title} was accepted as a puffer`);
+      assert.strictEqual(verdict.kind, 'unproven', `${title}: ${verdict.why}`);
+    }
+    /* a named kind of jacket or coat is a claim, and still contradicts */
+    for (const title of ['Short Denim Jacket', 'Cropped Bomber Jacket', 'Wool Trench Coat', 'Puff Print Denim Jacket', 'Puffy Sleeve Blouse']) {
+      assert.strictEqual(asked('short puffy jacket', title).kind, 'contradiction', title);
+    }
+    /* "puff" alone names no garment, and never makes a sleeve or print outerwear */
+    for (const title of ['Puff Sleeve Top', 'Puff Print Hoodie', 'Cream Puff']) {
+      assert.notStrictEqual(extractor.readGarment(title, {}).type, 'puffer', title);
+    }
+    /* a puffer is still not what a shopper asking for a denim jacket means */
+    assert.strictEqual(asked('denim jacket', 'The Super Puff Shorty Jacket').ok, false);
+    /* and a hoodie shopper is never offered a bare jacket as unproven: the families differ */
+    assert.strictEqual(asked('green oversized hoodie', 'Short Jacket').kind, 'contradiction');
+  });
+
   test('a puffer jacket or coat is a puffer, not the jacket or coat after it', () => {
     /* the way shops title the garment: "jacket" and "coat" end the
        title, and read as the head noun they refused every one */

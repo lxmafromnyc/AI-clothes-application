@@ -3727,13 +3727,28 @@ const GARMENT_TYPES = [
      which would otherwise be read as the head noun */
   /* "puffy jacket" is how a shopper says puffer; only the whole phrase,
      because a "puffy sleeve" blouse is not outerwear */
-  { type: 'puffer', family: 'outerwear', terms: ['puffer', 'puffer jacket', 'puffer coat', 'down jacket', 'quilted jacket', 'padded jacket', 'padded coat', 'puffy jacket', 'puffy coat'] },
+  /* A puffer is a KIND of jacket or coat (`within`), so a title that
+     names both — "Puffer Hooded Jacket", "The Super Puff Shorty Jacket"
+     — is a puffer, whichever word comes last. `qualifiers` are words that
+     narrow a jacket or coat to a puffer but never name a garment on their
+     own: "puff" alone is a sleeve, a print or a pastry. And puffers are
+     routinely titled by the bare word alone ("Short Jacket Nuptse"), so
+     a bare "jacket" or "coat" (`titledAs`) neither proves nor
+     contradicts a puffer: it is unproven (see semanticMatch). */
+  { type: 'puffer', family: 'outerwear', within: ['jacket', 'coat'], titledAs: ['jacket', 'coat'], qualifiers: ['puff', 'puffy'],
+    terms: ['puffer', 'puffer jacket', 'puffer coat', 'down jacket', 'quilted jacket', 'padded jacket', 'padded coat', 'puffy jacket', 'puffy coat'] },
   { type: 'blazer', family: 'outerwear', terms: ['blazer', 'sport coat', 'sports coat', 'suit jacket', 'dinner jacket'] },
   { type: 'vest', family: 'outerwear', terms: ['vest', 'gilet', 'waistcoat'] },
   { type: 'jacket', family: 'outerwear', terms: ['jacket', 'bomber', 'windbreaker', 'shacket', 'track jacket', 'denim jacket', 'trucker jacket'] },
 
   /* tops */
-  { type: 'hoodie', family: 'top', terms: ['hoodie', 'hoody', 'hooded sweatshirt'] },
+  /* a hoodie is a sweatshirt with a hood, so "Oversized Hoodies Fleece
+     Sweatshirts" is a hoodie. Only that way round: a title that says
+     sweatshirt and not hoodie is a sweatshirt, and a shopper asking for
+     one is not offered a hoodie. No `titledAs`: a hoodie is titled a
+     hoodie, and a title that says only sweatshirt means one without a
+     hood, so it still contradicts a hoodie */
+  { type: 'hoodie', family: 'top', within: ['sweatshirt'], terms: ['hoodie', 'hoody', 'hooded sweatshirt'] },
   { type: 'sweatshirt', family: 'top', terms: ['sweatshirt'] },
   /* not "crew": a crew is a neckline, and a "Pocket Crew 6-Pack" is a
      pack of tees. A crew is read as a sweater only where its fibre says
@@ -3797,7 +3812,7 @@ const DESCRIPTORS = [
   { group: 'closure', value: 'pullover', terms: ['pullover', 'popover'] },
   { group: 'closure', value: 'button', terms: ['button front', 'button up', 'button down', 'buttoned'] },
 
-  { group: 'pattern', value: 'printed', terms: ['print', 'printed', 'graphic'] },
+  { group: 'pattern', value: 'printed', terms: ['print', 'printed', 'graphic', 'puff print'] },
   { group: 'pattern', value: 'solid', terms: ['solid'] },
   { group: 'pattern', value: 'striped', terms: ['stripe', 'striped'] },
   { group: 'pattern', value: 'floral', terms: ['floral'] },
@@ -3818,7 +3833,7 @@ const DESCRIPTORS = [
   { group: 'sleeve', value: 'long', terms: ['long sleeve'] },
   { group: 'sleeve', value: 'sleeveless', terms: ['sleeveless'] },
   { group: 'sleeve', value: 'cap', terms: ['cap sleeve'] },
-  { group: 'sleeve', value: 'puff', terms: ['puff sleeve', 'puffed sleeve'] },
+  { group: 'sleeve', value: 'puff', terms: ['puff sleeve', 'puffed sleeve', 'puffy sleeve'] },
 
   { group: 'neckline', value: 'crew', terms: ['crewneck', 'crew neck'] },
   { group: 'neckline', value: 'v', terms: ['v neck', 'vneck'] },
@@ -3973,6 +3988,9 @@ function vocabulary(entries) {
 }
 
 const TYPE_INDEX = vocabulary(GARMENT_TYPES);
+/* words that narrow a broader type to one within it, and name nothing alone */
+const QUALIFIER_INDEX = vocabulary(GARMENT_TYPES.filter((entry) => entry.qualifiers)
+  .map((entry) => ({ ...entry, terms: entry.qualifiers, qualifier: true })));
 const DESCRIPTOR_INDEX = vocabulary(DESCRIPTORS);
 const MATERIAL_INDEX = vocabulary(MATERIALS);
 const AUDIENCE_INDEX = vocabulary(AUDIENCES);
@@ -3980,6 +3998,13 @@ const GENDER_INDEX = vocabulary(GENDERS);
 
 /* the groups that report agreement but never refuse */
 const SOFT_GROUPS = new Set(DESCRIPTORS.filter((entry) => entry.soft).map((entry) => entry.group));
+
+/* A type word that is also a descriptor names a detail as readily as a
+   garment: a "Hoodie ... Pullover" is a hoodie that pulls over, and a
+   "Cardigan, Button Up" is a cardigan. Such a word is the garment only
+   when nothing else in the title names one of its family. */
+const WEAK_TYPE_TERMS = new Set(GARMENT_TYPES.flatMap((entry) => entry.terms)
+  .filter((term) => DESCRIPTORS.some((entry) => entry.terms.includes(term))));
 
 const LONGEST_TERM = 4;
 
@@ -4066,6 +4091,29 @@ function readGarment(text, extra) {
     const specific = typeSpans.filter((span) => !span.hit.generic && span.hit.family === head.hit.family);
     if (specific.length) head = specific[specific.length - 1];
   }
+  if (head && WEAK_TYPE_TERMS.has(head.hit.term)) {
+    const named = typeSpans.filter((span) => span !== head && !span.hit.generic && !WEAK_TYPE_TERMS.has(span.hit.term)
+      && span.hit.family === head.hit.family);
+    if (named.length) head = named[named.length - 1];
+  }
+
+  /* A broader type narrowed by a kind of it named in the same title:
+     "Hoodies Fleece Sweatshirts" is a hoodie, "Super Puff Shorty Jacket"
+     a puffer. Only a type that declares itself `within` the head can
+     narrow it, so nothing here makes a sweatshirt a hoodie, or a jacket
+     a puffer, on its own. */
+  let narrowedBy = null;
+  if (head) {
+    const qualifierSpans = spansIn(tokens, QUALIFIER_INDEX).filter((span) => !covered.some((other) =>
+      other.start <= span.start && other.end >= span.end && other.length > span.length));
+    const kinds = [...typeSpans, ...qualifierSpans].filter((span) => span !== head
+      && (span.hit.within || []).includes(head.hit.type));
+    if (kinds.length) {
+      const kind = kinds[kinds.length - 1];
+      narrowedBy = { named: head.hit.type, by: tokens.slice(kind.start, kind.end).join(' ') };
+      head = { ...kind, hit: { ...GARMENT_TYPES.find((entry) => entry.type === kind.hit.type), term: kind.hit.term, qualifier: undefined } };
+    }
+  }
 
   /* a row that names no garment can still say one in its category */
   let via = head ? 'name' : null;
@@ -4148,6 +4196,12 @@ function readGarment(text, extra) {
     family,
     /* when the fabric, not the name, settled the type */
     madeAs,
+    /* when a kind of the head noun, named beside it, settled the type */
+    narrowedBy,
+    /* the head named only by its type's own bare word — "jacket", "coat" —
+       which says nothing about which kind of it the garment is */
+    bare: Boolean(head && via === 'name' && !narrowedBy && head.hit.term === head.hit.type
+      && typeSpans.every((span) => span.hit.type !== head.hit.type || span.hit.term === head.hit.type)),
     generic: head ? Boolean(head.hit.generic) : false,
     typeVia: via,
     types: typeSpans.map((span) => span.hit.type),
@@ -4218,11 +4272,23 @@ function semanticMatch(row, listing) {
   if (wanted.family !== offered.family) {
     return refuse(`the row means a ${wanted.type} and "${title}" is a ${offered.type} — ${wanted.family} against ${offered.family}`);
   }
+  /* A row asking for a kind of garment, and a listing that names only
+     the broader garment by its bare word: "Short Jacket" for a puffer.
+     Nothing in it is a different garment, and nothing proves the kind
+     either, so it is refused as unproven — not accepted, and not counted
+     as a wrong garment. A named kind ("Trench Coat", "Denim Jacket") is
+     a claim, and still contradicts. */
+  const kindOf = GARMENT_TYPES.find((entry) => entry.type === wanted.type);
+  if (wanted.type !== offered.type && offered.bare && kindOf && (kindOf.titledAs || []).includes(offered.type)) {
+    return refuse(`the row means a ${wanted.type}, a kind of ${offered.type}, and "${title}" says only ${offered.type} — it never says which kind`, 'unproven');
+  }
   if (wanted.type !== offered.type && !wanted.generic && !offered.generic) {
     return refuse(`the row means a ${wanted.type} and "${title}" is a ${offered.type}`);
   }
   const madeAs = [wanted, offered].filter((side) => side.madeAs)
-    .map((side) => ` ("${side.text}" is titled a ${side.madeAs.named}, but ${side.madeAs.why})`).join('');
+    .map((side) => ` ("${side.text}" is titled a ${side.madeAs.named}, but ${side.madeAs.why})`).join('')
+    + [wanted, offered].filter((side) => side.narrowedBy)
+      .map((side) => ` ("${side.text}" names a ${side.narrowedBy.named}, and "${side.narrowedBy.by}" says which kind)`).join('');
   agreed.push(wanted.type === offered.type
     ? `${offered.type} matches ${wanted.type}${madeAs}`
     : wanted.generic

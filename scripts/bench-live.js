@@ -353,6 +353,15 @@ function summarise(results) {
     meanBestMatchRank: matchRanks.length ? Number((matchRanks.reduce((a, b) => a + b, 0) / matchRanks.length).toFixed(2)) : null,
     queriesWithWrongGarmentAbove: pct(results.filter((r) => r.wrongAbove > 0).length),
     wrongGarmentsAbove: results.filter((r) => r.wrongAbove > 0).map((r) => ({ query: r.query, results: r.wrongGarments })),
+    /* shown above the first correct garment and neither right nor wrong:
+       a title naming only the broader garment ("Short Jacket" for a
+       puffer). Not counted as wrong, and not as found — listed so a
+       change in how a title is read cannot hide one */
+    unprovenAbove: results.map((r) => {
+      const first = (r.shown || []).findIndex((one) => one.kind === 'match' || one.kind === 'pending');
+      const above = (r.shown || []).slice(0, first < 0 ? undefined : first).filter((one) => one.kind === 'unproven');
+      return above.length ? { query: r.query, results: above.map((one) => ({ name: one.name, productUrl: one.productUrl, why: one.why })) } : null;
+    }).filter(Boolean),
     /* queries that SHOWED something and found no correct garment, with
        every result and its verdict. A result the reader could not judge
        — its title names no garment it knows ("Air Force 1 '07") — is
