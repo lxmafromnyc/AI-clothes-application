@@ -63,6 +63,11 @@
 'use strict';
 
 const { getProvider, verifyAll, providerChain, outOfSearches, linkless } = require('./_providers/product-source');
+const { withoutContradictions } = require('./_providers/garment-filter');
+
+/* the refusal a verified product is counted under when it is plainly a
+   different garment from the one asked for */
+const GARMENT_CONTRADICTION = 'contradicts-the-requested-garment';
 const { readListings } = require('./_providers/retailer-page');
 const { queryFrom } = require('./_providers/query');
 const { timedOut } = require('./_providers/deadline');
@@ -186,6 +191,15 @@ async function searchWithFallback(primary, intent, limit, stats, deadline) {
       });
     } catch (err) {
       const said = err && err.message ? String(err.message).split('\n')[0] : String(err);
+      /* When the fallback fails too, its error is what the search answers
+         with — unchanged, so the handler and every rule reading it see
+         what they always saw. The primary's refusal rides along on it as
+         a property, so a log line or a benchmark can say why the primary
+         was passed over instead of showing only the fallback's error.
+         Adapters redact their keys out of every message before throwing. */
+      if (refused && err && typeof err === 'object' && !err.fellBackFrom) {
+        try { err.fellBackFrom = refused; } catch (ignored) { /* a frozen error is reported as it came */ }
+      }
       if (!outOfSearches(err) || at + 1 >= chain.length) throw err;
       refused = { provider: provider.name, reason: said.slice(0, 200) };
       console.warn('Product source out of searches; falling back.', provider.name, '->', chain[at + 1].name);
@@ -241,16 +255,23 @@ async function recordsFrom(provider, intent, limit, deadline) {
   }
 
   /* A product search that runs out of its share of the clock is, for a
-     source with an organic endpoint, a batch that named no shop. Only
-     when the organic search fails too is the timeout what the search
-     answers with. */
+     source with an organic endpoint, a batch that named no shop. So is
+     one that FAILS while the organic search is already under way beside
+     it: an HTTP error, an error payload, a body that is not JSON. The
+     organic answer was already being paid for, and throwing the query
+     away over the other endpoint's failure is how a live run lost three
+     queries it could have answered. Only when the organic search fails
+     too is the product search's error what the query answers with — its
+     message first, so the fallback rule reads exactly what it read
+     before. Without an organic search in flight, only a timeout falls
+     through, as before. */
   let batch;
   let productTimeout = null;
   try {
     batch = await provider.search(intent, { limit, deadline, organicInFlight: Boolean(early) });
   } catch (err) {
     timing.productSearchMs = Date.now() - started;
-    if (!hasOrganic || !timedOut(err)) throw err;
+    if (!hasOrganic || !(timedOut(err) || early)) throw err;
     productTimeout = err;
     batch = [];
   }
@@ -264,10 +285,11 @@ async function recordsFrom(provider, intent, limit, deadline) {
   }
 
   const organic = {
-    asked: productTimeout ? 'after the product search timed out' : 'after a linkless batch',
+    asked: productTimeout ? (timedOut(productTimeout) ? 'after the product search timed out' : 'after the product search failed') : 'after a linkless batch',
     /* whether it was already under way when the product batch came back */
     startedAlongside: Boolean(early),
-    productSearchTimedOut: productTimeout ? String(productTimeout.message).slice(0, 200) : null,
+    productSearchTimedOut: productTimeout && timedOut(productTimeout) ? String(productTimeout.message).slice(0, 200) : null,
+    productSearchFailed: productTimeout && !timedOut(productTimeout) ? String(productTimeout.message).split('\n')[0].slice(0, 200) : null,
     offered: 0, failed: null, diagnostics: null, pages: null
   };
   try {
@@ -345,7 +367,25 @@ async function findProducts(provider, intent, limit, stats, deadline) {
     }, stats);
   }
 
-  return { records: payload.records, products, rejected, funnel, servedFromCache: Boolean(cached) };
+  /* After the gate, and only removing: a verified product that is plainly
+     a different garment from every one the request names (see
+     _providers/garment-filter.js). The order is the provider's, less
+     those. Counted with the gate's own refusals, so a thinner page says
+     why. */
+  const filtered = withoutContradictions(products, intent);
+  const refusedAll = Object.assign({}, rejected);
+  if (filtered.removed.length) refusedAll[GARMENT_CONTRADICTION] = filtered.removed.length;
+
+  return {
+    records: payload.records,
+    products: filtered.products,
+    rejected: refusedAll,
+    /* which verified products were removed, where each stood among them,
+       and why — for the benchmark and the server; the browser gets the count */
+    semanticRemoved: filtered.removed,
+    funnel,
+    servedFromCache: Boolean(cached)
+  };
 }
 
 /* The organic stage's sample refusals and reason tally carry the
@@ -356,6 +396,8 @@ function withoutSamples(funnel) {
   const pages = Object.assign({}, funnel.organic.pages);
   delete pages.samples;
   delete pages.reasons;
+  delete pages.failedPages;
+  delete pages.discoveryPages;
   return Object.assign({}, funnel, { organic: Object.assign({}, funnel.organic, { pages }) });
 }
 
@@ -410,7 +452,8 @@ module.exports = async function handler(req, res) {
        search produced nothing usable at all, and a search that came back
        with something and then ran short of time is answered below with
        what it did verify. */
-    console.error('Product source failed', provider.name, `${Date.now() - startedAt}ms`, err && err.message);
+    console.error('Product source failed', provider.name, `${Date.now() - startedAt}ms`, err && err.message,
+      err && err.fellBackFrom ? `(after ${err.fellBackFrom.provider} refused: ${err.fellBackFrom.reason})` : '');
     return res.status(502).json({ error: 'The product source is unavailable right now.', source: provider.name });
   }
 
@@ -436,6 +479,9 @@ module.exports = async function handler(req, res) {
     provider: found.provider || provider.name,
     fellBackFrom: found.fellBackFrom || null,
     verified: products.length,
+    /* verified, and then removed as plainly a different garment: a count,
+       never a title */
+    removedAsAnotherGarment: Array.isArray(found.semanticRemoved) ? found.semanticRemoved.length : 0,
     rejected,
     cache: cache.report(cacheStats, { servedFromCache: found.servedFromCache }),
     /* where the time went, so "the page is short" and "the source was
@@ -476,6 +522,8 @@ module.exports.shapeAttachments = shapeAttachments;
    so both measure the path a shopper actually takes */
 module.exports.findProducts = findProducts;
 module.exports.recordsFrom = recordsFrom;
+/* exported for scripts/test-live-organic.js: what the browser is sent */
+module.exports.withoutSamplesForTest = withoutSamples;
 module.exports.searchWithFallback = searchWithFallback;
 /* the endpoint's own budget and page size, for scripts/bench-live.js */
 module.exports.requestBudget = requestBudget;

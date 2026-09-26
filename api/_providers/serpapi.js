@@ -677,7 +677,10 @@ async function account() {
   const key = process.env.SERPAPI_API_KEY;
   if (!key) throw new Error('SERPAPI_API_KEY is not set');
   const response = await fetch(`${ACCOUNT_URL}?api_key=${encodeURIComponent(key)}`, { headers: { Accept: 'application/json' } });
-  if (!response.ok) throw new Error(`SerpApi account responded ${response.status}`);
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '');
+    throw new Error(`SerpApi account responded ${response.status}: ${redact(detail).slice(0, 200)}`);
+  }
   return response.json();
 }
 

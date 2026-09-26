@@ -368,17 +368,31 @@ function parseLdBlock(text) {
 /* A Product node's images, kept WITH the node that supplied them: the
    node also carries the sku, and that is what ties an image to this
    product rather than to a neighbour in the same feed. */
+/* A ProductGroup often puts its photographs on its variants rather than
+   on itself — Google's variant markup: hasVariant[] Products, each with
+   its own sku and image. Those are read too, each kept with the VARIANT
+   record that supplied it, so the identity gate ties a photo to this
+   listing by that variant's own sku and a photo of another colour is
+   refused exactly as it would be on a page that listed it at the top
+   level. An ImageObject may give its address as contentUrl. */
 function fromJsonLd(nodes) {
   const found = [];
-  for (const node of nodes) {
-    const type = String(node['@type'] || '');
-    if (!/product/i.test(type)) continue;
+  const collect = (node) => {
     /* `shape` is for the diagnostics tally only */
     const take = (v) => {
       if (typeof v === 'string') found.push({ url: v, node, shape: 'string' });
       else if (v && typeof v === 'object' && typeof v.url === 'string') found.push({ url: v.url, node, shape: 'ImageObject' });
+      else if (v && typeof v === 'object' && typeof v.contentUrl === 'string') found.push({ url: v.contentUrl, node, shape: 'ImageObject' });
     };
     if (Array.isArray(node.image)) node.image.forEach(take); else take(node.image);
+  };
+  for (const node of nodes) {
+    const type = String(node['@type'] || '');
+    if (!/product/i.test(type)) continue;
+    collect(node);
+    for (const variant of [].concat(node.hasVariant || [])) {
+      if (variant && typeof variant === 'object' && /product/i.test(String(variant['@type'] || ''))) collect(variant);
+    }
   }
   return found;
 }
@@ -452,6 +466,9 @@ function largestFromSrcset(value) {
 const PRODUCT_TYPES = /^(product|productgroup|individualproduct|productmodel|someproducts|offer|aggregateoffer)$/i;
 const NOT_PRODUCT_TYPES = /^(article|newsarticle|blogposting|blog|report|techarticle|scholarlyarticle|analysisnewsarticle|opinionnewsarticle|reviewnewsarticle|liveblogposting|faqpage|qapage|howto|collectionpage|searchresultspage)$/i;
 
+/* page types a product page can carry alongside its product */
+const SUPPLEMENTARY_TYPES = /^(faqpage|qapage)$/i;
+
 function pageDeclarations(nodes, metas, html) {
   const types = new Set();
   for (const node of nodes || []) {
@@ -463,7 +480,20 @@ function pageDeclarations(nodes, metas, html) {
   };
   const ogType = meta('og:type');
   const productType = [...types].find((type) => PRODUCT_TYPES.test(type));
-  const articleType = [...types].find((type) => NOT_PRODUCT_TYPES.test(type));
+  /* An FAQ or Q&A block is something a product page CARRIES — the
+     sizing and returns questions under the product — not something the
+     page IS, when the page also describes its product in full: a
+     Product or ProductGroup record with a name and something to sell.
+     Then the FAQ does not make it an article. Without such a record an
+     FAQ page is still what it declares, and an Article, a blog post, a
+     collection or a search page is never excused, whatever it marks up. */
+  const strongProduct = (nodes || []).some((node) => {
+    if (!node || typeof node !== 'object') return false;
+    const own = [].concat(node['@type'] || []).map((type) => String(type).replace(/^.*[/#]/, ''));
+    if (!own.some((type) => /^(product|productgroup)$/i.test(type))) return false;
+    return typeof node.name === 'string' && node.name.trim() && Boolean(node.offers || node.offer || node.hasVariant);
+  });
+  const articleType = [...types].find((type) => NOT_PRODUCT_TYPES.test(type) && !(strongProduct && SUPPLEMENTARY_TYPES.test(type)));
   const priced = ['product:price:amount', 'og:price:amount', 'product:retailer_item_id'].find((name) => meta(name));
   const itemtype = html && /itemtype=["']https?:\/\/schema\.org\/Product["']/i.test(html);
 
@@ -635,11 +665,23 @@ function pageIdentity(html, productUrl, landedUrl, options) {
   const records = jsonLdNodes(html).filter(isRecord);
   if (!records.length) return { ok: false, why: 'the page carries no product record to say which product it is' };
 
+  /* A record that sells nothing and names nothing — no offers, no
+     variants, no identifier, no address — is an annotation: a reviews
+     widget's {Product, name, aggregateRating}, a breadcrumb's product.
+     It cannot price or identify anything, so it cannot conflict with the
+     record that does; it is set aside when the page's product is chosen,
+     and chosen from only when nothing else is there. */
+  const substantive = (node) => Boolean((node.offers || node.offer || node.hasVariant) || recordCodes(node).length
+    || (typeof node.url === 'string' && node.url.trim()) || (typeof node['@id'] === 'string' && node['@id'].trim()));
+  const weighed = records.filter(substantive).length ? records.filter(substantive) : records;
+  const nameOf = (node) => (typeof node.name === 'string' ? node.name.trim().toLowerCase().replace(/\s+/g, ' ') : '');
+
   let record = null;
   let because = null;
-  if (records.length === 1) {
-    [record] = records;
-    because = 'its only product record';
+  let sameNamed = null;
+  if (weighed.length === 1) {
+    [record] = weighed;
+    because = weighed.length === records.length ? 'its only product record' : 'its only product record that sells or names anything';
   } else {
     const named = records.filter((node) => namesPage(node, canonical));
     const groups = records.filter(isGroup);
@@ -649,6 +691,14 @@ function pageIdentity(html, productUrl, landedUrl, options) {
     } else if (groups.length === 1 && records.every((node) => node === groups[0] || variantOf(node, groups[0]))) {
       [record] = groups;
       because = 'the product group every other record on the page is a variant of';
+    } else if (nameOf(weighed[0]) && weighed.every((node) => nameOf(node) === nameOf(weighed[0]))) {
+      /* several records, every one the same named product — a theme
+         writing each colour or size as its own Product. They are one
+         product; what each charges still has to agree (decide() fails
+         closed if it does not). */
+      [record] = weighed;
+      sameNamed = weighed;
+      because = `the ${weighed.length} product records on the page, every one named "${weighed[0].name.trim()}"`;
     }
   }
 
@@ -666,8 +716,10 @@ function pageIdentity(html, productUrl, landedUrl, options) {
     if (!agree.agree) return { ok: false, why: `the page's product record is a different garment from its address — ${agree.why}` };
   }
 
-  /* a group's variants are the group's: their offers are its offers */
-  const members = [record].concat(isGroup(record) ? records.filter((node) => node !== record && variantOf(node, record)) : []);
+  /* a group's variants are the group's: their offers are its offers — and
+     so are those of records that all name the same product */
+  const members = sameNamed
+    || [record].concat(isGroup(record) ? records.filter((node) => node !== record && variantOf(node, record)) : []);
 
   return {
     ok: true,
@@ -1223,6 +1275,32 @@ async function productRecordFor(productUrl, catalogRow, within, how) {
     return { failed: 'there is no catalogue row to hold the record\'s title against', skipped: true };
   }
 
+  const read = await readProductRecord(productUrl, within, how);
+  if (!read.record) return read;
+  const { summary } = read;
+
+  const verdict = semanticMatch(catalogRow, { title: summary.title });
+  if (!verdict.ok || verdict.kind !== 'match') {
+    return { failed: `the product record's title "${summary.title}" is not the garment the row means — ${verdict.why}` };
+  }
+
+  const record = { handle: summary.handle, id: summary.id, title: summary.title, images: summary.images };
+  return {
+    record,
+    candidates: record.images.map((url) => ({ url, from: 'product-record', record }))
+  };
+}
+
+/* The store's record for a /products/<handle> listing, fetched from the
+   listing's own origin and held to exactly that handle — the half of
+   productRecordFor that is about WHICH product the record answers for,
+   not which garment a catalogue row means. A live search, which has no
+   catalogue row, asks this and nothing more. Its variants are kept as
+   the store states them: id, sku, price, compare_at_price, available. */
+async function readProductRecord(productUrl, within, how) {
+  const listing = shopifyHandle(productUrl);
+  if (!listing) return { failed: 'not a Shopify /products/<handle> listing', skipped: true };
+
   const fetcher = (how && how.fetch) || request;
   const got = await fetcher(listing.recordUrl, null, within);
   if (!got.ok) return { failed: `the product record could not be read (${got.why})` };
@@ -1255,17 +1333,24 @@ async function productRecordFor(productUrl, catalogRow, within, how) {
   const title = typeof record.title === 'string' ? record.title.trim() : '';
   if (!title) return { failed: 'the product record names no title' };
 
-  const verdict = semanticMatch(catalogRow, { title });
-  if (!verdict.ok || verdict.kind !== 'match') {
-    return { failed: `the product record's title "${title}" is not the garment the row means — ${verdict.why}` };
-  }
-
-  const images = recordImages(record, listing.recordUrl);
-  const summary = { handle, id, title, images };
-  return {
-    record: summary,
-    candidates: images.map((url) => ({ url, from: 'product-record', record: summary }))
+  const variants = (Array.isArray(record.variants) ? record.variants : [])
+    .filter((variant) => variant && typeof variant === 'object')
+    .map((variant) => ({
+      id: variant.id === undefined || variant.id === null ? null : String(variant.id),
+      sku: typeof variant.sku === 'string' ? variant.sku : null,
+      price: variant.price,
+      compareAtPrice: variant.compare_at_price === undefined ? null : variant.compare_at_price,
+      available: variant.available
+    }));
+  const summary = {
+    handle,
+    id,
+    title,
+    vendor: typeof record.vendor === 'string' ? record.vendor.trim() : null,
+    images: recordImages(record, listing.recordUrl),
+    variants
   };
+  return { record, summary };
 }
 
 /* ---------- the same record, embedded in a React Router page ----------
@@ -3642,15 +3727,33 @@ const GARMENT_TYPES = [
      which would otherwise be read as the head noun */
   /* "puffy jacket" is how a shopper says puffer; only the whole phrase,
      because a "puffy sleeve" blouse is not outerwear */
-  { type: 'puffer', family: 'outerwear', terms: ['puffer', 'puffer jacket', 'puffer coat', 'down jacket', 'quilted jacket', 'padded jacket', 'padded coat', 'puffy jacket', 'puffy coat'] },
+  /* A puffer is a KIND of jacket or coat (`within`), so a title that
+     names both — "Puffer Hooded Jacket", "The Super Puff Shorty Jacket"
+     — is a puffer, whichever word comes last. `qualifiers` are words that
+     narrow a jacket or coat to a puffer but never name a garment on their
+     own: "puff" alone is a sleeve, a print or a pastry. And puffers are
+     routinely titled by the bare word alone ("Short Jacket Nuptse"), so
+     a bare "jacket" or "coat" (`titledAs`) neither proves nor
+     contradicts a puffer: it is unproven (see semanticMatch). */
+  { type: 'puffer', family: 'outerwear', within: ['jacket', 'coat'], titledAs: ['jacket', 'coat'], qualifiers: ['puff', 'puffy'],
+    terms: ['puffer', 'puffer jacket', 'puffer coat', 'down jacket', 'quilted jacket', 'padded jacket', 'padded coat', 'puffy jacket', 'puffy coat'] },
   { type: 'blazer', family: 'outerwear', terms: ['blazer', 'sport coat', 'sports coat', 'suit jacket', 'dinner jacket'] },
   { type: 'vest', family: 'outerwear', terms: ['vest', 'gilet', 'waistcoat'] },
   { type: 'jacket', family: 'outerwear', terms: ['jacket', 'bomber', 'windbreaker', 'shacket', 'track jacket', 'denim jacket', 'trucker jacket'] },
 
   /* tops */
-  { type: 'hoodie', family: 'top', terms: ['hoodie', 'hoody', 'hooded sweatshirt'] },
+  /* a hoodie is a sweatshirt with a hood, so "Oversized Hoodies Fleece
+     Sweatshirts" is a hoodie. Only that way round: a title that says
+     sweatshirt and not hoodie is a sweatshirt, and a shopper asking for
+     one is not offered a hoodie. No `titledAs`: a hoodie is titled a
+     hoodie, and a title that says only sweatshirt means one without a
+     hood, so it still contradicts a hoodie */
+  { type: 'hoodie', family: 'top', within: ['sweatshirt'], terms: ['hoodie', 'hoody', 'hooded sweatshirt'] },
   { type: 'sweatshirt', family: 'top', terms: ['sweatshirt'] },
-  { type: 'sweater', family: 'top', terms: ['sweater', 'knit', 'jumper', 'pullover', 'crew', 'turtleneck sweater'] },
+  /* not "crew": a crew is a neckline, and a "Pocket Crew 6-Pack" is a
+     pack of tees. A crew is read as a sweater only where its fibre says
+     it was knitted (see IMPLIED_TYPES below) */
+  { type: 'sweater', family: 'top', terms: ['sweater', 'knit', 'jumper', 'pullover', 'turtleneck sweater'] },
   { type: 'cardigan', family: 'top', terms: ['cardigan'] },
   { type: 'tee', family: 'top', terms: ['tee', 't shirt', 'tshirt', 'tee shirt'] },
   { type: 'shirt', family: 'top', terms: ['shirt', 'blouse', 'button down', 'button up', 'oxford', 'oxford shirt', 'camp shirt', 'overshirt'] },
@@ -3709,7 +3812,7 @@ const DESCRIPTORS = [
   { group: 'closure', value: 'pullover', terms: ['pullover', 'popover'] },
   { group: 'closure', value: 'button', terms: ['button front', 'button up', 'button down', 'buttoned'] },
 
-  { group: 'pattern', value: 'printed', terms: ['print', 'printed', 'graphic'] },
+  { group: 'pattern', value: 'printed', terms: ['print', 'printed', 'graphic', 'puff print'] },
   { group: 'pattern', value: 'solid', terms: ['solid'] },
   { group: 'pattern', value: 'striped', terms: ['stripe', 'striped'] },
   { group: 'pattern', value: 'floral', terms: ['floral'] },
@@ -3730,7 +3833,7 @@ const DESCRIPTORS = [
   { group: 'sleeve', value: 'long', terms: ['long sleeve'] },
   { group: 'sleeve', value: 'sleeveless', terms: ['sleeveless'] },
   { group: 'sleeve', value: 'cap', terms: ['cap sleeve'] },
-  { group: 'sleeve', value: 'puff', terms: ['puff sleeve', 'puffed sleeve'] },
+  { group: 'sleeve', value: 'puff', terms: ['puff sleeve', 'puffed sleeve', 'puffy sleeve'] },
 
   { group: 'neckline', value: 'crew', terms: ['crewneck', 'crew neck'] },
   { group: 'neckline', value: 'v', terms: ['v neck', 'vneck'] },
@@ -3885,6 +3988,9 @@ function vocabulary(entries) {
 }
 
 const TYPE_INDEX = vocabulary(GARMENT_TYPES);
+/* words that narrow a broader type to one within it, and name nothing alone */
+const QUALIFIER_INDEX = vocabulary(GARMENT_TYPES.filter((entry) => entry.qualifiers)
+  .map((entry) => ({ ...entry, terms: entry.qualifiers, qualifier: true })));
 const DESCRIPTOR_INDEX = vocabulary(DESCRIPTORS);
 const MATERIAL_INDEX = vocabulary(MATERIALS);
 const AUDIENCE_INDEX = vocabulary(AUDIENCES);
@@ -3892,6 +3998,13 @@ const GENDER_INDEX = vocabulary(GENDERS);
 
 /* the groups that report agreement but never refuse */
 const SOFT_GROUPS = new Set(DESCRIPTORS.filter((entry) => entry.soft).map((entry) => entry.group));
+
+/* A type word that is also a descriptor names a detail as readily as a
+   garment: a "Hoodie ... Pullover" is a hoodie that pulls over, and a
+   "Cardigan, Button Up" is a cardigan. Such a word is the garment only
+   when nothing else in the title names one of its family. */
+const WEAK_TYPE_TERMS = new Set(GARMENT_TYPES.flatMap((entry) => entry.terms)
+  .filter((term) => DESCRIPTORS.some((entry) => entry.terms.includes(term))));
 
 const LONGEST_TERM = 4;
 
@@ -3937,6 +4050,26 @@ const MADE_AS = [
   }
 ];
 
+/* ---------- a title that names no type, but its make does ----------
+
+   Some shops title a garment by its neckline and its yarn and nothing
+   else: "Merino Crew", "Cashmere Crewneck". The neckline alone is not a
+   garment — a "Classic Pocket Crew 6-Pack" is tees — so "crew" is not a
+   type term. But a crew KNITTED from wool yarn is a sweater, by the same
+   reading MADE_AS uses: only when the title names no type at all, only
+   on the fibre in the same title, and never when it names a fleece or
+   jersey construction. Anything short of that is left unread, for the
+   page to settle, rather than guessed. */
+const IMPLIED_TYPES = [
+  {
+    words: ['crew', 'crewneck'],
+    fibre: 'wool',
+    reads: 'sweater',
+    unless: ['fleece', 'terry', 'french terry', 'jersey', 'sherpa'],
+    why: 'a crew knitted from wool yarn is a sweater'
+  }
+];
+
 function readGarment(text, extra) {
   const options = extra || {};
   const tokens = tokenise(text);
@@ -3957,6 +4090,29 @@ function readGarment(text, extra) {
   if (head && head.hit.generic) {
     const specific = typeSpans.filter((span) => !span.hit.generic && span.hit.family === head.hit.family);
     if (specific.length) head = specific[specific.length - 1];
+  }
+  if (head && WEAK_TYPE_TERMS.has(head.hit.term)) {
+    const named = typeSpans.filter((span) => span !== head && !span.hit.generic && !WEAK_TYPE_TERMS.has(span.hit.term)
+      && span.hit.family === head.hit.family);
+    if (named.length) head = named[named.length - 1];
+  }
+
+  /* A broader type narrowed by a kind of it named in the same title:
+     "Hoodies Fleece Sweatshirts" is a hoodie, "Super Puff Shorty Jacket"
+     a puffer. Only a type that declares itself `within` the head can
+     narrow it, so nothing here makes a sweatshirt a hoodie, or a jacket
+     a puffer, on its own. */
+  let narrowedBy = null;
+  if (head) {
+    const qualifierSpans = spansIn(tokens, QUALIFIER_INDEX).filter((span) => !covered.some((other) =>
+      other.start <= span.start && other.end >= span.end && other.length > span.length));
+    const kinds = [...typeSpans, ...qualifierSpans].filter((span) => span !== head
+      && (span.hit.within || []).includes(head.hit.type));
+    if (kinds.length) {
+      const kind = kinds[kinds.length - 1];
+      narrowedBy = { named: head.hit.type, by: tokens.slice(kind.start, kind.end).join(' ') };
+      head = { ...kind, hit: { ...GARMENT_TYPES.find((entry) => entry.type === kind.hit.type), term: kind.hit.term, qualifier: undefined } };
+    }
   }
 
   /* a row that names no garment can still say one in its category */
@@ -4012,6 +4168,18 @@ function readGarment(text, extra) {
   let type = head ? head.hit.type : null;
   let family = head ? head.hit.family : null;
   let madeAs = null;
+  if (!head) {
+    for (const rule of IMPLIED_TYPES) {
+      if (!tokens.some((token) => rule.words.includes(token)) || !fibres.has(rule.fibre)) continue;
+      if ([...materialTerms].some((term) => rule.unless.includes(term))) continue;
+      const reads = GARMENT_TYPES.find((entry) => entry.type === rule.reads);
+      if (!reads) continue;
+      type = reads.type;
+      family = reads.family;
+      via = 'make';
+      madeAs = { named: tokens.filter((token) => rule.words.includes(token))[0], why: rule.why };
+    }
+  }
   for (const rule of MADE_AS) {
     if (type !== rule.type || !fibres.has(rule.fibre)) continue;
     if ([...materialTerms].some((term) => rule.unless.includes(term))) continue;
@@ -4028,6 +4196,12 @@ function readGarment(text, extra) {
     family,
     /* when the fabric, not the name, settled the type */
     madeAs,
+    /* when a kind of the head noun, named beside it, settled the type */
+    narrowedBy,
+    /* the head named only by its type's own bare word — "jacket", "coat" —
+       which says nothing about which kind of it the garment is */
+    bare: Boolean(head && via === 'name' && !narrowedBy && head.hit.term === head.hit.type
+      && typeSpans.every((span) => span.hit.type !== head.hit.type || span.hit.term === head.hit.type)),
     generic: head ? Boolean(head.hit.generic) : false,
     typeVia: via,
     types: typeSpans.map((span) => span.hit.type),
@@ -4081,7 +4255,10 @@ function semanticMatch(row, listing) {
      the listing never saying what the row asked for. Both refuse, and
      the difference is printed, because they call for different fixes:
      one means look elsewhere, the other means look harder. */
-  const refuse = (why, kind) => ({ ok: false, kind: kind || 'contradiction', why, wanted, offered });
+  /* `on` says WHAT contradicted, for a caller that acts only on some of
+     it: 'garment' is a different kind of garment altogether (family or
+     type), where the rest are details of the same one */
+  const refuse = (why, kind, on) => ({ ok: false, kind: kind || 'contradiction', on: on || null, why, wanted, offered });
   const agreed = [];
 
   if (!title) return refuse('the listing carries no title to read, so what it sells cannot be checked', 'unreadable');
@@ -4096,13 +4273,25 @@ function semanticMatch(row, listing) {
   /* family, then type. A different family is a different kind of thing;
      inside one family, a specific type is a claim that has to agree. */
   if (wanted.family !== offered.family) {
-    return refuse(`the row means a ${wanted.type} and "${title}" is a ${offered.type} — ${wanted.family} against ${offered.family}`);
+    return refuse(`the row means a ${wanted.type} and "${title}" is a ${offered.type} — ${wanted.family} against ${offered.family}`, 'contradiction', 'garment');
+  }
+  /* A row asking for a kind of garment, and a listing that names only
+     the broader garment by its bare word: "Short Jacket" for a puffer.
+     Nothing in it is a different garment, and nothing proves the kind
+     either, so it is refused as unproven — not accepted, and not counted
+     as a wrong garment. A named kind ("Trench Coat", "Denim Jacket") is
+     a claim, and still contradicts. */
+  const kindOf = GARMENT_TYPES.find((entry) => entry.type === wanted.type);
+  if (wanted.type !== offered.type && offered.bare && kindOf && (kindOf.titledAs || []).includes(offered.type)) {
+    return refuse(`the row means a ${wanted.type}, a kind of ${offered.type}, and "${title}" says only ${offered.type} — it never says which kind`, 'unproven');
   }
   if (wanted.type !== offered.type && !wanted.generic && !offered.generic) {
-    return refuse(`the row means a ${wanted.type} and "${title}" is a ${offered.type}`);
+    return refuse(`the row means a ${wanted.type} and "${title}" is a ${offered.type}`, 'contradiction', 'garment');
   }
   const madeAs = [wanted, offered].filter((side) => side.madeAs)
-    .map((side) => ` ("${side.text}" is titled a ${side.madeAs.named}, but ${side.madeAs.why})`).join('');
+    .map((side) => ` ("${side.text}" is titled a ${side.madeAs.named}, but ${side.madeAs.why})`).join('')
+    + [wanted, offered].filter((side) => side.narrowedBy)
+      .map((side) => ` ("${side.text}" names a ${side.narrowedBy.named}, and "${side.narrowedBy.by}" says which kind)`).join('');
   agreed.push(wanted.type === offered.type
     ? `${offered.type} matches ${wanted.type}${madeAs}`
     : wanted.generic
@@ -6839,12 +7028,12 @@ if (require.main === module) {
     replaceRow, linkRow, setField, indentOf, factsFromHtml, factsFromRendered, inspectCandidate,
     catalogRowIdentity, evidenceNote,
     /* a Shopify store's own product record, as identity evidence */
-    shopifyHandle, recordImages, recordImageHost, productRecordFor, productRecordEvidence, shopifyCollection, collectionTiles, SHOPIFY_PAGE,
+    shopifyHandle, recordImages, recordImageHost, productRecordFor, readProductRecord, productRecordEvidence, shopifyCollection, collectionTiles, SHOPIFY_PAGE,
     reactRouterProducts, embeddedRecordFrom, reproveEmbeddedRecord, coverageLive, browserRecordListing,
     /* whether a page is a product page, for the canonical rule */
     pageDeclarations, pageDeclarationsFromHtml, productPageVerdict,
     /* a listing whose URL names no product, identified by its own page */
-    pageIdentity, codesIn, recordFingerprint, parseJsonLd,
+    pageIdentity, codesIn, recordFingerprint, parseJsonLd, canonicalOf,
     garmentsAgree, canonicalCorroborated, wordsInPath, wordsAboutImage, TRACKING_PARAMS,
     siteAsset, imageDimensions, listingShape, rankListings, embeddedProductTiles, listingProductLinks, tilesFromHtml, tilesOffered, productKey, tileReport, tileLines,
     parseArgs, OPTIONS, USAGE, intentFor, queryForms, listingsFor, discoverRow, coverage,

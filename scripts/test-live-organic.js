@@ -600,7 +600,7 @@ const deadlineIn = (ms) => Date.now() + ms;
     ];
     const { diagnostics } = await readListings(skipped.map(([productUrl]) => ({ title: 'Boxy Tee', productUrl })), { limit: 12, deadline: deadlineIn(9000) });
     assert.strictEqual(calls.length, 0);
-    assert.deepStrictEqual(diagnostics.outcomes, { 'category-page': 1, 'editorial-page': 1, 'not-a-shop': 1 });
+    assert.deepStrictEqual(diagnostics.outcomes, { 'category-page-unread': 1, 'editorial-page': 1, 'not-a-shop': 1 });
   });
 
   await testAsync('an offer naming the listing’s code proves its price when the record itself names none', async () => {
@@ -780,7 +780,7 @@ const deadlineIn = (ms) => Date.now() + ms;
     const calls = web(tileRoutes);
     const { diagnostics } = await readListings([{ title: 'Trousers', productUrl: CATEGORY }], { limit: 12, deadline: deadlineIn(9000) });
     assert.strictEqual(calls.length, 0);
-    assert.deepStrictEqual(diagnostics.outcomes, { 'category-page': 1 });
+    assert.deepStrictEqual(diagnostics.outcomes, { 'category-page-unread': 1 });
   });
 
   await testAsync('the live search hands the shopper’s phrase to the category reader', async () => {
@@ -805,11 +805,42 @@ const deadlineIn = (ms) => Date.now() + ms;
     assert.strictEqual(found.funnel.organic.asked, 'after the product search timed out');
   });
 
-  await testAsync('a timeout is still the answer when the organic search fails too — and a non-timeout failure is never swallowed', async () => {
+  await testAsync('a timeout is still the answer when the organic search fails too', async () => {
     web((href, options) => (href === serper.SEARCH_URL ? hanging(href, options) : href === serper.WEB_SEARCH_URL ? jsonResponse(500, { message: 'down' }) : null));
     await assert.rejects(() => findProducts(serper, INTENT, 12, cache.counters(), deadlineIn(6500)), /Serper \/shopping did not answer within/);
+  });
+
+  await testAsync('a /shopping that FAILS while the organic search is under way no longer throws the query away', async () => {
+    for (const [label, failing] of [
+      ['an HTTP 500', () => jsonResponse(500, { message: 'boom' })],
+      ['an error payload', () => jsonResponse(200, { error: 'Something went wrong' })],
+      ['a body that is not JSON', () => new Response('<html>Bad gateway</html>', { status: 200, headers: { 'content-type': 'text/html' } })],
+      ['a network error', () => { throw new TypeError('fetch failed'); }]
+    ]) {
+      cache.reset();
+      web((href) => (href === serper.SEARCH_URL ? failing() : null));
+      const found = await findProducts(serper, INTENT, 12, cache.counters(), deadlineIn(9000));
+      assert.deepStrictEqual(found.products.map((one) => one.productUrl), [URLS.good, URLS.forwarded], label);
+      assert.strictEqual(found.funnel.organic.asked, 'after the product search failed', label);
+      assert.ok(found.funnel.organic.productSearchFailed, label);
+    }
+  });
+
+  await testAsync('when both fail the product search’s error is the answer, first — and a quota refusal still reads as one', async () => {
+    web((href) => (href === serper.SEARCH_URL ? jsonResponse(500, { message: 'boom' }) : href === serper.WEB_SEARCH_URL ? jsonResponse(500, { message: 'down' }) : null));
+    await assert.rejects(() => findProducts(serper, INTENT, 12, cache.counters(), deadlineIn(9000)), /^Error: Serper responded 500 on \/shopping: .*; the organic search failed too: Serper responded 500 on \/search/);
+    cache.reset();
+    web(() => jsonResponse(429, { message: 'Not enough credits' }));
+    await assert.rejects(() => findProducts(serper, INTENT, 12, cache.counters(), deadlineIn(9000)), (err) => {
+      assert.ok(outOfSearches(err), err.message);
+      return true;
+    });
+  });
+
+  await testAsync('without an organic search in flight a /shopping failure is thrown as before', async () => {
     web((href) => (href === serper.SEARCH_URL ? jsonResponse(500, { message: 'boom' }) : null));
-    await assert.rejects(() => findProducts(serper, INTENT, 12, cache.counters(), deadlineIn(6500)), /Serper responded 500/);
+    const { recordsFrom } = require('../api/search');
+    await assert.rejects(() => recordsFrom(serper, INTENT, 12, undefined), /Serper responded 500 on \/shopping/);
   });
 
   await testAsync('the benchmark names the stage that stopped each query that showed nothing', async () => {
@@ -1025,6 +1056,462 @@ const deadlineIn = (ms) => Date.now() + ms;
     assert.strictEqual(one.query, 'white court sneakers');
     assert.strictEqual(one.unjudged.length, 1);
     assert.strictEqual(one.wrong.length, 0);
+  });
+
+
+  console.log('\n  — 9. retailer names, annotation records and the variant a listing names\n');
+
+  const shopPage = (head, records) => `<!doctype html><html><head>${head || ''}
+    ${(records || []).map((one) => `<script type="application/ld+json">${JSON.stringify(Object.assign({ '@context': 'https://schema.org' }, one))}</script>`).join('\n')}
+    </head></html>`;
+  const TROUSER = { '@type': 'Product', name: 'Wide Leg Trouser', sku: 'WL48213', image: 'https://cdn.shop-example.com/i/WL48213-front.jpg', offers: { '@type': 'Offer', price: '88.00', priceCurrency: 'USD' } };
+
+  await testAsync('a shop that names itself in its WebSite record, or its application-name, is the retailer', async () => {
+    const website = await readOne(shopPage('', [TROUSER, { '@type': 'WebSite', name: 'Shop Example', url: 'https://www.shop-example.com/' }]));
+    assert.strictEqual(website.records[0].retailer, 'Shop Example');
+    assert.strictEqual(verifyAll(website.records).products.length, 1);
+    const app = await readOne(shopPage('<meta name="application-name" content="Shop Example">', [TROUSER]));
+    assert.strictEqual(app.records[0].retailer, 'Shop Example');
+    const org = await readOne(shopPage('', [TROUSER, { '@type': 'Organization', name: 'Shop Example', logo: 'https://x/logo.png' }]));
+    assert.strictEqual(org.records[0].retailer, 'Shop Example');
+  });
+
+  await testAsync('a brand is never the retailer, nor are organisations that disagree — and the gate’s refusal is reported', async () => {
+    const branded = await readOne(shopPage('', [Object.assign({}, TROUSER, { brand: { '@type': 'Brand', name: 'Northfold' } })]));
+    assert.strictEqual(branded.records[0].retailer, undefined);
+    assert.strictEqual(branded.records[0].brand, 'Northfold');
+    assert.deepStrictEqual(branded.diagnostics.gateRefusals, { 'missing-retailer': 1 });
+    assert.strictEqual(verifyAll(branded.records).rejected['missing-retailer'], 1);
+    const two = await readOne(shopPage('', [TROUSER, { '@type': 'Organization', name: 'Shop Example' }, { '@type': 'Organization', name: 'Payments Co' }]));
+    assert.strictEqual(two.records[0].retailer, undefined);
+  });
+
+  await testAsync('a reviews widget’s bare Product record no longer makes the page two products', async () => {
+    const widget = { '@type': 'Product', name: 'Boxy Cotton Tee', aggregateRating: { '@type': 'AggregateRating', ratingValue: '4.8', reviewCount: '112' } };
+    const main = { '@type': 'Product', name: 'Boxy Cotton Tee', image: [SLUG_PHOTO], offers: { price: '48.00', priceCurrency: 'USD' } };
+    const html = slugPage().replace(/<script type="application\/ld\+json">[\s\S]*<\/script>/, [main, widget].map((one) => `<script type="application/ld+json">${JSON.stringify(one)}</script>`).join(''));
+    const { records, diagnostics } = await readSlug(html);
+    assert.deepStrictEqual(diagnostics.outcomes, { photographed: 1 }, JSON.stringify(diagnostics.samples));
+    assert.strictEqual(records[0].price, 48);
+    /* but two records that each sell something, under different names, still conflict */
+    const other = { '@type': 'Product', name: 'Linen Camp Shirt', offers: { price: '90.00', priceCurrency: 'USD' } };
+    const conflicting = await readSlug(slugPage().replace(/<script type="application\/ld\+json">[\s\S]*<\/script>/, [main, other].map((one) => `<script type="application/ld+json">${JSON.stringify(one)}</script>`).join('')));
+    assert.deepStrictEqual(conflicting.diagnostics.outcomes, { 'no-identity': 1 });
+  });
+
+  await testAsync('records that all name the same product are one product, whose prices must still agree', async () => {
+    const colour = (price, colourName) => ({ '@type': 'Product', name: 'Boxy Cotton Tee', color: colourName, image: [SLUG_PHOTO], offers: { price, priceCurrency: 'USD' } });
+    const same = await readSlug(slugPage().replace(/<script type="application\/ld\+json">[\s\S]*<\/script>/, [colour('48.00', 'White'), colour('48.00', 'Black')].map((one) => `<script type="application/ld+json">${JSON.stringify(one)}</script>`).join('')));
+    assert.strictEqual(same.records[0].price, 48, JSON.stringify(same.diagnostics.samples));
+    const differ = await readSlug(slugPage().replace(/<script type="application\/ld\+json">[\s\S]*<\/script>/, [colour('48.00', 'White'), colour('58.00', 'Black')].map((one) => `<script type="application/ld+json">${JSON.stringify(one)}</script>`).join('')));
+    assert.strictEqual(differ.records[0].price, undefined);
+    assert.strictEqual(differ.diagnostics.samples[0].priceCategory, 'several-prices');
+  });
+
+  await testAsync('a listing that names its variant is priced by that variant’s offer; one that names none still fails closed', async () => {
+    const variants = Object.assign({}, TROUSER, { offers: [
+      { '@type': 'Offer', price: '88.00', priceCurrency: 'USD', url: `${URLS.good}?variant=111` },
+      { '@type': 'Offer', price: '98.00', priceCurrency: 'USD', url: `${URLS.good}?variant=222` }
+    ] });
+    const html = shopPage('<meta property="og:site_name" content="Shop Example">', [variants]);
+    const named = await readOne(html, `${URLS.good}?variant=222&srsltid=AfmBOoq`);
+    assert.strictEqual(named.records[0].price, 98, JSON.stringify(named.diagnostics.samples));
+    const unnamed = await readOne(html);
+    assert.strictEqual(unnamed.records[0].price, undefined);
+    assert.strictEqual(unnamed.diagnostics.samples[0].priceCategory, 'several-prices');
+    const unknown = await readOne(html, `${URLS.good}?variant=999`);
+    assert.strictEqual(unknown.records[0].price, undefined, 'a variant no offer carries selects nothing');
+    /* the rule is the listing's own parameters, never a tracking one */
+    assert.strictEqual(prices.offerIsListing(`${URLS.good}?srsltid=x`, `${URLS.good}?srsltid=x`), false);
+  });
+
+  await testAsync('served microdata that was read and refused is classed by why, not as a reader gap', async () => {
+    const html = MICRO('<span itemprop="price" content="88.00">$88</span>').replace('content="WL48213"', 'content="ZZ99998"');
+    const read = prices.pricesFromHtml(html);
+    const decided = prices.decide(read.candidates, URLS.good);
+    assert.strictEqual(decided.price, undefined);
+    assert.strictEqual(priceDiagnosis(html, read, decided, images), 'record-names-another-product');
+  });
+
+
+  console.log('\n  — 10. the shop named where pages actually name it\n');
+
+  await testAsync('a page’s publisher names the shop — inline, or by @id to an organisation in the same graph', async () => {
+    const inline = await readOne(shopPage('', [TROUSER, { '@type': 'WebPage', name: 'Wide Leg Trouser', publisher: { '@type': 'Organization', name: 'Shop Example' } }]));
+    assert.strictEqual(inline.records[0].retailer, 'Shop Example');
+    assert.strictEqual(verifyAll(inline.records).products.length, 1);
+    /* two organisations disagree, so neither names the shop by itself —
+       the one the page names as its publisher does */
+    const graph = { '@graph': [
+      Object.assign({}, TROUSER),
+      { '@type': 'Organization', '@id': 'https://www.shop-example.com/#org', name: 'Shop Example' },
+      { '@type': 'Organization', '@id': 'https://pay.example/#org', name: 'Payments Co' },
+      { '@type': 'WebPage', '@id': `${URLS.good}#page`, publisher: { '@id': 'https://www.shop-example.com/#org' } }
+    ] };
+    const byRef = await readOne(shopPage('', [graph]));
+    assert.strictEqual(byRef.records[0].retailer, 'Shop Example');
+    /* a person is not a shop */
+    const person = await readOne(shopPage('', [TROUSER, { '@type': 'WebPage', publisher: { '@type': 'Person', name: 'Jane Writer' } }]));
+    assert.strictEqual(person.records[0].retailer, undefined);
+  });
+
+  await testAsync('an offer’s seller counts as a plain string, or when a sibling offer names it — unless they disagree', async () => {
+    const withOffers = (offers) => Object.assign({}, TROUSER, { offers });
+    const plain = await readOne(shopPage('', [withOffers({ '@type': 'Offer', price: '88.00', priceCurrency: 'USD', seller: 'Shop Example' })]));
+    assert.strictEqual(plain.records[0].retailer, 'Shop Example');
+    const sibling = await readOne(shopPage('', [withOffers([
+      { '@type': 'Offer', price: '88.00', priceCurrency: 'USD', sku: 'WL48213-S' },
+      { '@type': 'Offer', price: '88.00', priceCurrency: 'USD', sku: 'WL48213-M', seller: { '@type': 'Organization', legalName: 'Shop Example Ltd' } }
+    ])]));
+    assert.strictEqual(sibling.records[0].retailer, 'Shop Example Ltd');
+    const disagree = await readOne(shopPage('', [withOffers([
+      { '@type': 'Offer', price: '88.00', priceCurrency: 'USD', sku: 'WL48213-S', seller: 'Shop Example' },
+      { '@type': 'Offer', price: '88.00', priceCurrency: 'USD', sku: 'WL48213-M', seller: 'Marketplace Seller 7' }
+    ])]));
+    assert.strictEqual(disagree.records[0].retailer, 'Shop Example', 'the priced offer names its own seller first');
+    /* the priced offer names no seller, and the others disagree: none */
+    const neither = await readOne(shopPage('', [withOffers([
+      { '@type': 'Offer', price: '88.00', priceCurrency: 'USD', sku: 'WL48213-S' },
+      { '@type': 'Offer', price: '88.00', priceCurrency: 'USD', sku: 'WL48213-M', seller: 'Shop Example' },
+      { '@type': 'Offer', price: '88.00', priceCurrency: 'USD', sku: 'WL48213-L', seller: 'Marketplace Seller 7' }
+    ])]));
+    assert.strictEqual(neither.records[0].retailer, undefined);
+    assert.deepStrictEqual(neither.diagnostics.gateRefusals, { 'missing-retailer': 1 });
+  });
+
+  await testAsync('a page that names no shop anywhere is still refused, and the sample says so and where', async () => {
+    const { diagnostics } = await readOne(shopPage('', [Object.assign({}, TROUSER, { brand: { '@type': 'Brand', name: 'Northfold' } })]));
+    const sample = diagnostics.samples.find((one) => one.gateRefusal);
+    assert.strictEqual(sample.gateRefusal, 'missing-retailer');
+    assert.strictEqual(sample.productUrl, URLS.good);
+    assert.match(sample.why, /names no shop in og:site_name/);
+  });
+
+
+  console.log('\n  — 11. microdata prices in parts, offers that cannot be charged, a store’s own record, its manifest\n');
+
+  await testAsync('a microdata price written in parts — $ | 88 | .50 — is read whole, never as 88', async () => {
+    const html = MICRO('<span class="money" itemprop="price"><span class="sym">$</span>88<sup>.50</sup></span>');
+    /* this listing's 88.50, and the related product's 15 beside it */
+    assert.deepStrictEqual(prices.microdataCandidates(html).map((one) => one.amount), [88.5, 15]);
+    assert.strictEqual(prices.decide(prices.pricesFromHtml(html).candidates, URLS.good).price, 88.5);
+  });
+
+  await testAsync('an offer the page marks sold out or expired steps aside only when every chargeable offer agrees', async () => {
+    const priceWith = (offers) => prices.decide(prices.pricesFromHtml(ldRaw(JSON.stringify({ '@type': 'Product', sku: 'WL48213', offers }))).candidates, URLS.good, null, { now: '2026-09-26' });
+    const soldOut = priceWith([{ price: '88.00', priceCurrency: 'USD', availability: 'https://schema.org/InStock' }, { price: '60.00', priceCurrency: 'USD', availability: 'https://schema.org/OutOfStock' }]);
+    assert.strictEqual(soldOut.price, 88);
+    assert.ok(soldOut.refusals.some((one) => one.amount === 60 && /OutOfStock/.test(one.why)));
+    assert.strictEqual(priceWith([{ price: '88.00', priceCurrency: 'USD' }, { price: '60.00', priceCurrency: 'USD', priceValidUntil: '2026-01-31' }]).price, 88);
+    /* chargeable figures that disagree, or none chargeable, still fail closed */
+    assert.deepStrictEqual(priceWith([{ price: '88.00', availability: 'InStock' }, { price: '98.00', availability: 'InStock' }]).ambiguous, [88, 98]);
+    assert.deepStrictEqual(priceWith([{ price: '88.00', availability: 'OutOfStock' }, { price: '98.00', availability: 'OutOfStock' }]).ambiguous, [88, 98]);
+  });
+
+  const STORE = 'https://www.store-example.com/products/heavyweight-hoodie';
+  const STORE_PHOTO = 'https://www.store-example.com/cdn/shop/files/heavyweight-hoodie-front.jpg';
+  const storePage = (extra) => page(`<!doctype html><html><head><title>Heavyweight Hoodie</title>
+    <meta property="og:site_name" content="Store Example"><meta property="og:type" content="product">
+    <link rel="canonical" href="${STORE}">
+    <script>window.Shopify = window.Shopify || {}; Shopify.shop = "store-example.myshopify.com"; Shopify.currency = {"active":"USD","rate":"1.0"};</script>
+    ${extra || ''}</head><body><img src="https://cdn.shopify.com/s/files/hero.jpg"></body></html>`);
+  const storeRecordJs = (overrides) => new Response(JSON.stringify(Object.assign({
+    id: 7001234567, handle: 'heavyweight-hoodie', title: 'Heavyweight Hoodie', vendor: 'Store Example Label',
+    images: [STORE_PHOTO],
+    variants: [{ id: 111, sku: 'HH-S', price: 9800, compare_at_price: 12800, available: true }, { id: 222, sku: 'HH-M', price: 9800, compare_at_price: 12800, available: true }]
+  }, overrides || {})), { status: 200, headers: { 'content-type': 'application/json' } });
+  const storePageHtml = (extra) => `<!doctype html><html><head><title>Heavyweight Hoodie</title>
+    <meta property="og:site_name" content="Store Example"><meta property="og:type" content="product">
+    <link rel="canonical" href="${STORE}"><script>Shopify.shop = "store-example.myshopify.com"; Shopify.currency = {"active":"USD"};</script>${extra || ''}</head></html>`;
+  const readStore = async (listingUrl, html, record) => {
+    const calls = web((href) => {
+      if (href.split('?')[0] === STORE) return html ? page(html) : storePage();
+      if (href === `https://www.store-example.com/products/heavyweight-hoodie.js`) return record ? record() : storeRecordJs();
+      if (href === STORE_PHOTO) return photo();
+      return null;
+    });
+    const out = await readListings([{ title: 'Heavyweight Hoodie', productUrl: listingUrl || STORE }], { limit: 12, deadline: deadlineIn(9000) });
+    return Object.assign(out, { calls });
+  };
+
+  await testAsync('a Shopify store’s own record answers for its listing: identity, price and photo', async () => {
+    const { records, diagnostics } = await readStore();
+    assert.deepStrictEqual(diagnostics.outcomes, { photographed: 1 }, JSON.stringify(diagnostics.samples));
+    const [product] = verifyAll(records).products;
+    assert.deepStrictEqual(
+      { name: product.name, price: product.price, currency: product.currency, imageUrl: product.imageUrl, retailer: product.retailer, brand: product.brand },
+      { name: 'Heavyweight Hoodie', price: 98, currency: 'USD', imageUrl: STORE_PHOTO, retailer: 'Store Example', brand: 'Store Example Label' }
+    );
+  });
+
+  await testAsync('the store record’s variant rules: the listing’s own variant, buyable variants agreeing, never compare_at', async () => {
+    const differing = () => storeRecordJs({ variants: [{ id: 111, price: 9800, available: true }, { id: 222, price: 10800, available: true }, { id: 333, price: 7800, available: false }] });
+    assert.strictEqual((await readStore(`${STORE}?variant=222`, null, differing)).records[0].price, 108);
+    const unnamed = await readStore(STORE, null, differing);
+    assert.strictEqual(unnamed.records[0].price, undefined, 'variants that disagree are not a price');
+    assert.strictEqual((await readStore(`${STORE}?variant=333`, null, differing)).records[0].price, undefined, 'a variant that cannot be bought has no price');
+    const onlyOneBuyable = () => storeRecordJs({ variants: [{ id: 111, price: 9800, available: true }, { id: 222, price: 7800, available: false }] });
+    assert.strictEqual((await readStore(STORE, null, onlyOneBuyable)).records[0].price, 98);
+  });
+
+  await testAsync('no store record is taken for another handle, without a currency the page names, or on a page that is not Shopify', async () => {
+    const other = await readStore(STORE, null, () => storeRecordJs({ handle: 'linen-camp-shirt' }));
+    assert.deepStrictEqual(other.diagnostics.outcomes, { 'no-identity': 1 });
+    const noCurrency = await readStore(STORE, `<!doctype html><html><head><meta property="og:site_name" content="Store Example"><meta property="og:type" content="product">
+      <link rel="canonical" href="${STORE}"><script>Shopify.shop = "x.myshopify.com";</script></head></html>`);
+    assert.strictEqual(noCurrency.records[0].price, undefined);
+    const plain = await readStore(STORE, `<!doctype html><html><head><meta property="og:site_name" content="Store Example"><meta property="og:type" content="product"><link rel="canonical" href="${STORE}"></head></html>`);
+    assert.ok(!plain.calls.some((one) => one.url.endsWith('.js')), 'a store record was asked of a page that is not Shopify');
+    assert.deepStrictEqual(plain.diagnostics.outcomes, { 'no-identity': 1 });
+  });
+
+  await testAsync('the store record prices only what the page’s own markup could not', async () => {
+    /* the page's own JSON-LD settles it; the record is never asked */
+    const ld = `<script type="application/ld+json">${JSON.stringify({ '@type': 'Product', name: 'Heavyweight Hoodie', image: [STORE_PHOTO], offers: { price: '98.00', priceCurrency: 'USD' } })}</script>`;
+    const settled = await readStore(STORE, storePageHtml(ld));
+    assert.strictEqual(settled.records[0].price, 98);
+    assert.ok(!settled.calls.some((one) => one.url.endsWith('.js')), 'the store record was asked for what the page already said');
+  });
+
+  await testAsync('a site that names itself only in its web app manifest is the retailer — a manifest elsewhere is not', async () => {
+    const withManifest = (href) => shopPage(`<link rel="manifest" href="${href}">`, [TROUSER]);
+    web((url) => {
+      if (url === URLS.good) return page(withManifest('/site.webmanifest'));
+      if (url === 'https://www.shop-example.com/site.webmanifest') return jsonResponse(200, { name: 'Shop Example', short_name: 'Shop' });
+      if (url === 'https://cdn.shop-example.com/i/WL48213-front.jpg') return photo();
+      return null;
+    });
+    const own = await readListings([{ title: 'Wide Leg Trouser', productUrl: URLS.good }], { limit: 12, deadline: deadlineIn(9000) });
+    assert.strictEqual(own.records[0].retailer, 'Shop Example');
+    assert.strictEqual(verifyAll(own.records).products.length, 1);
+    const calls = web((url) => {
+      if (url === URLS.good) return page(withManifest('https://manifests.elsewhere.example/site.webmanifest'));
+      if (url === 'https://cdn.shop-example.com/i/WL48213-front.jpg') return photo();
+      return null;
+    });
+    const elsewhere = await readListings([{ title: 'Wide Leg Trouser', productUrl: URLS.good }], { limit: 12, deadline: deadlineIn(9000) });
+    assert.strictEqual(elsewhere.records[0].retailer, undefined);
+    assert.ok(!calls.some((one) => one.url.includes('elsewhere')), 'a manifest on another site was fetched');
+  });
+
+
+  await testAsync('every page read that still failed is reported with its title, gate and the evidence it exposed', async () => {
+    const { records, diagnostics } = await readOne(shopPage('<title>Wide Leg Trouser | Shop Example</title><link rel="canonical" href="https://www.shop-example.com/p/wide-leg-trouser-WL48213"><meta property="og:type" content="product">', [
+      { '@type': 'Product', name: 'Wide Leg Trouser', sku: 'WL48213', offers: [{ price: '88.00', priceCurrency: 'USD', availability: 'InStock' }, { price: '98.00', priceCurrency: 'USD', availability: 'InStock' }] }
+    ]));
+    assert.strictEqual(records[0].price, undefined);
+    assert.strictEqual(diagnostics.failedPages.length, 1);
+    const [failed] = diagnostics.failedPages;
+    assert.strictEqual(failed.productUrl, URLS.good);
+    assert.strictEqual(failed.outcome, 'no-price');
+    assert.strictEqual(failed.priceCategory, 'several-prices');
+    assert.strictEqual(failed.evidence.title, 'Wide Leg Trouser | Shop Example');
+    assert.strictEqual(failed.evidence.canonical, 'https://www.shop-example.com/p/wide-leg-trouser-WL48213');
+    assert.deepStrictEqual(failed.evidence.jsonLd.products[0].prices, ['88.00', '98.00']);
+    assert.deepStrictEqual(failed.evidence.jsonLd.products[0].ids, ['wl48213']);
+    assert.deepStrictEqual(failed.evidence.listingCodes.slice(0, 1), ['wl48213']);
+    /* and none of it reaches a shopper's browser */
+    const { withoutSamplesForTest } = require('../api/search');
+    assert.strictEqual(withoutSamplesForTest({ organic: { pages: diagnostics } }).organic.pages.failedPages, undefined);
+  });
+
+  await testAsync('a photographed page the gate refused carries its evidence too, including what the store record said', async () => {
+    const { diagnostics } = await readStore(STORE, `<!doctype html><html><head><title>Heavyweight Hoodie</title><meta property="og:type" content="product">
+      <link rel="canonical" href="${STORE}"><script>Shopify.shop = "x.myshopify.com"; Shopify.currency = {"active":"USD"};</script></head></html>`);
+    const [failed] = diagnostics.failedPages;
+    assert.strictEqual(failed.outcome, 'photographed-but-refused:missing-retailer');
+    assert.strictEqual(failed.evidence.shopNames.ogSiteName, null);
+    assert.strictEqual(failed.evidence.shopify.record.asked, true);
+    assert.strictEqual(failed.evidence.shopify.record.variants, 2);
+  });
+
+
+  console.log('\n  — 12. product pages that carry an FAQ, and a ProductGroup whose photos are on its variants\n');
+
+  const FAQ = { '@type': 'FAQPage', mainEntity: [{ '@type': 'Question', name: 'How does it fit?', acceptedAnswer: { '@type': 'Answer', text: 'True to size.' } }] };
+
+  await testAsync('a code-less product page that also carries an FAQ is identified, priced and shown', async () => {
+    const url = 'https://www.slug-shop.com/products/organic-cotton-stretch-poplin-shirt-white';
+    const shot = 'https://cdn.slug-shop.com/files/poplin-shirt-white.jpg';
+    const html = shopPage(`<meta property="og:site_name" content="Slug Shop"><link rel="canonical" href="${url}">`, [
+      { '@type': 'Product', name: 'Organic Cotton Stretch Poplin Shirt in White', image: [shot], offers: { '@type': 'Offer', price: '39.90', priceCurrency: 'USD', availability: 'https://schema.org/InStock' } },
+      FAQ
+    ]);
+    const { records, diagnostics } = await readOne(html, url, [shot]);
+    assert.deepStrictEqual(diagnostics.outcomes, { photographed: 1 }, JSON.stringify(diagnostics.samples));
+    assert.deepStrictEqual(verifyAll(records).products.map((one) => [one.name, one.price, one.retailer]), [['Organic Cotton Stretch Poplin Shirt in White', 39.9, 'Slug Shop']]);
+  });
+
+  await testAsync('with og:type product and an FAQ, the same — and an FAQ page with no product record is still refused', async () => {
+    const url = 'https://www.slug-shop.com/products/white-poplin-shirt-mother-of-pearl';
+    const shot = 'https://cdn.slug-shop.com/files/white-poplin-shirt.jpg';
+    const head = `<meta property="og:type" content="product"><meta property="og:site_name" content="Slug Shop"><link rel="canonical" href="${url}">`;
+    const shown = await readOne(shopPage(head, [{ '@type': 'Product', name: "Men's White Poplin Shirt, Mother-of-Pearl Buttons", image: [shot], offers: { price: '145.00', priceCurrency: 'USD', availability: 'InStock' } }, FAQ]), url, [shot]);
+    assert.strictEqual(verifyAll(shown.records).products.length, 1, JSON.stringify(shown.diagnostics.samples));
+    const faqOnly = await readOne(shopPage(`<meta property="og:site_name" content="Slug Shop"><link rel="canonical" href="${url}">`, [FAQ]), url, [shot]);
+    assert.deepStrictEqual(faqOnly.diagnostics.outcomes, { 'no-identity': 1 });
+  });
+
+  await testAsync('a coded ProductGroup page whose photos and prices are on its variants is shown with its own variant’s photo', async () => {
+    const url = 'https://www.shop-example.com/brand/stone-running-shorts-0141604500001.html';
+    const own = 'https://www.shop-example.com/img/0141604500001_01.jpg';
+    const other = 'https://www.shop-example.com/img/0141604500002_01.jpg';
+    const variant = (sku, image) => ({ '@type': 'Product', sku, image, offers: { '@type': 'Offer', price: '44.99', priceCurrency: 'USD', availability: 'https://schema.org/InStock' } });
+    const html = shopPage('<meta property="og:site_name" content="Shop Example">', [{ '@type': 'ProductGroup', name: 'Stone Running Shorts', productGroupID: '0141604500001',
+      hasVariant: [variant('0141604500002', other), variant('0141604500001', { '@type': 'ImageObject', contentUrl: own })] }]);
+    const { records, diagnostics } = await readOne(html, url, [own, other]);
+    assert.deepStrictEqual(diagnostics.outcomes, { photographed: 1 }, JSON.stringify(diagnostics.samples));
+    const [product] = verifyAll(records).products;
+    assert.deepStrictEqual([product.name, product.price, product.imageUrl], ['Stone Running Shorts', 44.99, own]);
+  });
+
+
+  console.log('\n  — 13. a page that lists products is a place to find them, never one itself\n');
+
+  const LISTING = 'https://www.shop-example.com/womens/trousers';
+  const LP = (slug, sku) => `https://www.shop-example.com/p/${slug}-${sku}`;
+  const TROUSER_A = LP('wide-leg-trouser-navy', 'WL48301');
+  const TROUSER_B = LP('wide-leg-trouser-black', 'WL48302');
+  const HOODIE_T = LP('oversized-hoodie', 'HD11224');
+  const JEANS_T = LP('wide-leg-jeans', 'JN55401');
+  const listedProduct = (url, name, sku, price) => ({ '@context': 'https://schema.org', '@type': 'Product', url, name, sku,
+    image: `https://cdn.shop-example.com/i/${sku}-tile.jpg`, offers: { '@type': 'Offer', price, priceCurrency: 'USD' } });
+  const listingHtml = (records) => `<!doctype html><html><head><title>Women's Trousers | Shop Example</title>
+    <meta property="og:site_name" content="Shop Example"><link rel="canonical" href="${LISTING}">
+    ${records.map((one) => `<script type="application/ld+json">${JSON.stringify(one)}</script>`).join('\n')}</head><body></body></html>`;
+  const FOUR = [
+    listedProduct(TROUSER_A, 'Wide Leg Trouser in Navy', 'WL48301', '88.00'),
+    listedProduct(HOODIE_T, 'Oversized Hoodie', 'HD11224', '60.00'),
+    listedProduct(JEANS_T, 'Wide Leg Jeans', 'JN55401', '98.00'),
+    listedProduct(TROUSER_B, 'Wide Leg Trouser in Black', 'WL48302', '88.00')
+  ];
+  const productOwnPage = (sku, name, price) => page(productPage({ sku, name, price, siteName: 'Shop Example', image: `https://cdn.shop-example.com/i/${sku}-front.jpg` }));
+  const discoveryWeb = (overrides) => web((href, options) => {
+    const custom = overrides && overrides(href, options);
+    if (custom) return custom;
+    if (href === LISTING) return page(listingHtml(FOUR));
+    if (href === TROUSER_A) return productOwnPage('WL48301', 'Wide Leg Trouser in Navy', '88.00');
+    if (href === TROUSER_B) return productOwnPage('WL48302', 'Wide Leg Trouser in Black', '88.00');
+    if (href === HOODIE_T) return productOwnPage('HD11224', 'Oversized Hoodie', '60.00');
+    if (href === JEANS_T) return productOwnPage('JN55401', 'Wide Leg Jeans', '98.00');
+    if (/\/i\/(WL48301|WL48302|HD11224|JN55401)-front\.jpg$/.test(href)) return photo();
+    return null;
+  });
+
+  await testAsync('a page read as one product that lists several becomes a discovery source: only the matching products, each proved, are shown', async () => {
+    assert.strictEqual(precheck({ title: "Women's Trousers", productUrl: LISTING }), null, 'the fixture is a listing its address does not reveal');
+    const calls = discoveryWeb();
+    const { records, diagnostics } = await readListings([{ title: "Women's Trousers | Shop Example", productUrl: LISTING }],
+      { limit: 12, deadline: deadlineIn(9000), query: 'wide leg trousers' });
+    const { products, rejected } = verifyAll(records);
+    assert.deepStrictEqual(products.map((one) => one.productUrl), [TROUSER_A, TROUSER_B], 'in the page’s own order, the garment asked for only');
+    assert.deepStrictEqual(products.map((one) => one.price), [88, 88]);
+    assert.ok(!products.some((one) => one.productUrl === LISTING), 'the listing page became a product');
+    assert.strictEqual(rejected['missing-price'], 1, 'the listing page itself went to the gate and was refused');
+    assert.ok(!calls.some((one) => one.url === HOODIE_T || one.url === JEANS_T), 'a listed product that is not the garment asked for was fetched');
+    assert.strictEqual(diagnostics.discoveryPages.length, 1);
+    const [found] = diagnostics.discoveryPages;
+    assert.deepStrictEqual({ url: found.url, by: found.by, listed: found.listed, offered: found.offered, verified: found.verified, accepted: found.accepted },
+      { url: LISTING, by: 'its own data, after no-identity', listed: 4, offered: 2, verified: 2, accepted: 2 });
+    assert.strictEqual(diagnostics.outcomes['no-identity'], 1);
+    assert.strictEqual(diagnostics.outcomes['tile:photographed'], 2);
+  });
+
+  await testAsync('a listed product whose own page proves nothing is not shown on the listing’s word', async () => {
+    discoveryWeb((href) => (href === TROUSER_B ? page(listingHtml([])) : null));
+    const { records } = await readListings([{ title: "Women's Trousers", productUrl: LISTING }], { limit: 12, deadline: deadlineIn(9000), query: 'wide leg trousers' });
+    assert.deepStrictEqual(verifyAll(records).products.map((one) => one.productUrl), [TROUSER_A]);
+    const b = records.find((one) => one.productUrl === TROUSER_B);
+    assert.strictEqual(b.price, undefined, 'the listing’s 88.00 was carried onto its product');
+  });
+
+  await testAsync('a coded page whose records are other products reaches discovery through its refused price', async () => {
+    const coded = 'https://www.shop-example.com/womens/trousers-4012';
+    discoveryWeb((href) => (href === coded ? page(listingHtml(FOUR).replace(LISTING, coded)) : null));
+    const { records, diagnostics } = await readListings([{ title: 'Trousers', productUrl: coded }], { limit: 12, deadline: deadlineIn(9000), query: 'wide leg trousers' });
+    assert.deepStrictEqual(verifyAll(records).products.map((one) => one.productUrl), [TROUSER_A, TROUSER_B]);
+    assert.strictEqual(diagnostics.discoveryPages[0].by, 'its own data, after no-price');
+  });
+
+  await testAsync('a product page with one related product is not a listing, and a search with no phrase discovers nothing', async () => {
+    const lone = listingHtml([FOUR[0]]);
+    discoveryWeb((href) => (href === LISTING ? page(lone) : null));
+    const one = await readListings([{ title: 'Trousers', productUrl: LISTING }], { limit: 12, deadline: deadlineIn(9000), query: 'wide leg trousers' });
+    assert.deepStrictEqual(one.diagnostics.discoveryPages, []);
+    const calls = discoveryWeb();
+    const none = await readListings([{ title: 'Trousers', productUrl: LISTING }], { limit: 12, deadline: deadlineIn(9000) });
+    assert.deepStrictEqual(none.diagnostics.discoveryPages, []);
+    assert.ok(!calls.some((c) => c.url === TROUSER_A));
+  });
+
+  await testAsync('pages found to be listings share the category-page cap', async () => {
+    const lists = [1, 2, 3, 4].map((n) => `https://www.shop-example.com/womens/trousers-edit-${n}`);
+    discoveryWeb((href) => (lists.includes(href) ? page(listingHtml(FOUR).replace(LISTING, href)) : null));
+    const { diagnostics } = await readListings(lists.map((url) => ({ title: 'Trousers', productUrl: url })), { limit: 12, deadline: deadlineIn(9000), query: 'wide leg trousers' });
+    assert.strictEqual(diagnostics.discoveryPages.filter((one) => !one.skipped).length, 3);
+    assert.strictEqual(diagnostics.categoryPagesRead, 3);
+    /* the fourth is reported as kept from use by the cap, with what it listed */
+    const skipped = diagnostics.discoveryPages.filter((one) => one.skipped);
+    assert.strictEqual(skipped.length, 1);
+    assert.match(skipped[0].skipped, /cap was reached/);
+    assert.strictEqual(skipped[0].listed, 4);
+  });
+
+
+  await testAsync('each discovery page reports its read time, what it listed and offered, and what became of every product', async () => {
+    /* one matching product verified and shown, one whose own page proves
+       no price, from a page that lists four */
+    discoveryWeb((href) => (href === TROUSER_B ? page(productPage({ sku: 'WL48302', offerSku: 'ZZ00001', name: 'Wide Leg Trouser in Black', price: '88.00', siteName: 'Shop Example', image: 'https://cdn.shop-example.com/i/WL48302-front.jpg' })) : null));
+    const { diagnostics } = await readListings([{ title: "Women's Trousers", productUrl: LISTING }], { limit: 12, deadline: deadlineIn(9000), query: 'wide leg trousers' });
+    const [one] = diagnostics.discoveryPages;
+    assert.strictEqual(one.listed, 4);
+    assert.deepStrictEqual(one.sources, { 'json-ld': 4 });
+    assert.strictEqual(one.offered, 2);
+    assert.strictEqual(one.verified, 2);
+    assert.strictEqual(one.accepted, 1);
+    assert.deepStrictEqual(one.rejected, { 'no-price:record-names-another-product': 1 });
+    assert.strictEqual(one.notReached, 0);
+    assert.strictEqual(typeof one.readMs, 'number');
+    assert.strictEqual(typeof one.verifyMs, 'number');
+    assert.deepStrictEqual(one.products.map((p) => [p.productUrl, p.source, p.outcome]), [
+      [TROUSER_A, 'json-ld', 'accepted'],
+      [TROUSER_B, 'json-ld', 'rejected: no-price:record-names-another-product']
+    ]);
+  });
+
+  await testAsync('a category page by address that lists nothing is reported as read and empty, and one the clock never reached as skipped', async () => {
+    const empty = 'https://www.shop-example.com/collections/trousers';
+    discoveryWeb((href) => (href === empty ? page(listingHtml([])) : null));
+    const read = await readListings([{ title: 'Trousers', productUrl: empty }], { limit: 12, deadline: deadlineIn(9000), query: 'wide leg trousers' });
+    assert.deepStrictEqual([read.diagnostics.discoveryPages[0].listed, read.diagnostics.discoveryPages[0].offered, read.diagnostics.discoveryPages[0].accepted], [0, 0, 0]);
+    discoveryWeb();
+    const late = await readListings([{ title: 'Trousers', productUrl: empty }], { limit: 12, deadline: deadlineIn(200), query: 'wide leg trousers' });
+    assert.match(late.diagnostics.discoveryPages[0].skipped, /ran out of time/);
+  });
+
+
+  await testAsync('the benchmark groups discovery yield by kind of page, never by site', async () => {
+    const { discoveryEfficiency } = require('./bench-live');
+    const row = (query, pages) => ({ query, organic: { pages: { discoveryPages: pages } } });
+    const out = discoveryEfficiency([
+      row('wide leg trousers', [
+        { url: 'https://a.example/c/trousers', by: 'its address', listed: 24, offered: 4, verified: 4, accepted: 3, notReached: 0, readMs: 900, verifyMs: 2400, sources: { 'json-ld': 24 },
+          rejected: { 'no-price:several-prices': 1 }, products: [{ source: 'json-ld', fullMatch: true, outcome: 'accepted' }, { source: 'json-ld', fullMatch: false, outcome: 'rejected: no-price:several-prices' }] },
+        { url: 'https://b.example/list', by: 'its own data, after no-identity', listed: 0, offered: 0, verified: 0, accepted: 0, readMs: 1200, verifyMs: 0 },
+        { url: 'https://c.example/c/more', by: 'its address', skipped: 'the discovery-page cap was reached', listed: 60 }
+      ])
+    ]);
+    assert.strictEqual(out.pagesRead, 2);
+    assert.deepStrictEqual(out.pagesSkipped, { 'the discovery-page cap was reached': 1 });
+    assert.strictEqual(out.skippedButListed[0].listed, 60);
+    assert.strictEqual(out.listedZero, 1);
+    assert.strictEqual(out.byRecognition.address.accepted, 3);
+    assert.strictEqual(out.byRecognition.content.accepted, 0);
+    assert.strictEqual(out.byListedSize['10-49'].acceptRate, 0.75);
+    assert.deepStrictEqual(out.bySource['json-ld'], { offered: 2, verified: 2, accepted: 1 });
+    assert.deepStrictEqual(out.rejectionReasons, { 'no-price:several-prices': 1 });
+    assert.strictEqual(out.lowYield.length, 1);
+    assert.ok(!Object.keys(out.byRecognition).some((key) => /example/.test(key)), 'a site became a group');
   });
 
   console.log(`\n${passed} passed, ${failures.length} failed\n`);

@@ -345,15 +345,24 @@ async function apiPost(url, body, timeout) {
     body: JSON.stringify(body)
   }, timeout === undefined ? REQUEST_TIMEOUT : timeout);
 
+  /* every failure names the endpoint, so "which half failed" is never
+     a guess — and the wording each rule reads (429, allowance exhausted,
+     "Serper responded", "Serper error") is unchanged */
+  const where = stage.replace(/^Serper /, '');
   if (!response.ok) {
     const detail = await response.text().catch(() => '');
     const note = response.status === 429 ? ' (Serper search allowance exhausted)' : '';
-    throw new Error(`Serper responded ${response.status}${note}: ${redact(detail).slice(0, 200)}`);
+    throw new Error(`Serper responded ${response.status}${note} on ${where}: ${redact(detail).slice(0, 200)}`);
   }
 
-  const payload = await response.json();
+  let payload;
+  try {
+    payload = await response.json();
+  } catch (err) {
+    throw new Error(`Serper answered ${where} with a body that is not JSON (${redact(err && err.message ? err.message : String(err)).slice(0, 120)})`);
+  }
   if (payload && typeof payload === 'object' && payload.error) {
-    throw new Error(`Serper error: ${redact(payload.error).slice(0, 200)}`);
+    throw new Error(`Serper error: ${redact(payload.error).slice(0, 200)} (on ${where})`);
   }
   return payload;
 }

@@ -46,7 +46,7 @@ const REPO = path.join(__dirname, '..');
 const { QUERIES, HELD_OUT } = require('./bench-search.js');
 const { interpretQuery } = require('../api/interpret');
 const { shapeIntent, searchWithFallback, requestBudget, DEFAULT_LIMIT } = require('../api/search');
-const { getProvider, providerChain } = require('../api/_providers/product-source');
+const { getProvider, providerChain, failureKind, toProduct, FIELD_ALIASES, PROVIDERS } = require('../api/_providers/product-source');
 const { queryFrom } = require('../api/_providers/query');
 const cache = require('../api/_cache');
 const interpreters = require('../api/_interpreters');
@@ -125,10 +125,16 @@ async function measure(id, query, category, env, provider, limit) {
   const started = Date.now();
   let found = null;
   let failure = null;
+  /* why the primary source was passed over, when it was: carried on the
+     answer when the fallback answered, and on the error when the
+     fallback failed too — whose own message is all `failure` shows */
+  let passedOver = null;
   try {
     found = await searchWithFallback(provider, intent, limit, cache.counters(), Date.now() + requestBudget());
+    passedOver = found.fellBackFrom || null;
   } catch (err) {
     failure = String(err && err.message ? err.message : err).split('\n')[0].slice(0, 200);
+    passedOver = err && err.fellBackFrom ? err.fellBackFrom : null;
   }
   const searchMs = Date.now() - started;
   const products = found ? found.products.slice(0, limit) : [];
@@ -150,6 +156,12 @@ async function measure(id, query, category, env, provider, limit) {
   const keys = products.map(listingKey);
   const duplicates = keys.length - new Set(keys).size;
 
+  /* the same question asked of the provider's RAW list: every wrong
+     garment above the first correct one, and whether Fynd showed it */
+  const candidates = rawCandidates(found, row, limit);
+  const firstCorrect = candidates.find((one) => one.accepted && one.ok);
+  const wrongAboveRaw = candidates.filter((one) => one.kind === 'contradiction' && (!firstCorrect || one.providerPosition < firstCorrect.providerPosition));
+
   return {
     id, query,
     interpreter: reading.source, interpreterFailure: reading.failure, interpretMs: reading.ms,
@@ -159,6 +171,10 @@ async function measure(id, query, category, env, provider, limit) {
        query, and how many of the top three results carry it */
     survived: descriptors.map((one) => ({ descriptor: one, inQuery: says(asked, one), inTop3: verdicts.slice(0, 3).filter((v) => says(v.name, one)).length })),
     providerFailure: failure,
+    providerFailureKind: failure ? failureKind(failure) : null,
+    /* the primary source's own error, when the search went to the
+       fallback — whether or not the fallback then answered */
+    primaryFailure: passedOver ? { provider: passedOver.provider, kind: failureKind(passedOver.reason), reason: passedOver.reason } : null,
     /* the provider that answered, and whether it was the fallback */
     provider: found ? found.provider : null,
     usedFallback: Boolean(found && found.fellBackFrom),
@@ -180,10 +196,28 @@ async function measure(id, query, category, env, provider, limit) {
     stageMs: found && found.funnel && found.funnel.organic && found.funnel.organic.timing ? found.funnel.organic.timing
       : (found && found.funnel && found.funnel.timing) || null,
     productSearchTimedOutButAnswered: Boolean(found && found.funnel && found.funnel.organic && found.funnel.organic.productSearchTimedOut),
+    /* a product search that FAILED, with the organic search answering */
+    productSearchFailedButAnswered: found && found.funnel && found.funnel.organic && found.funnel.organic.productSearchFailed
+      ? found.funnel.organic.productSearchFailed : null,
     servedFromCache: Boolean(found && found.servedFromCache),
     garmentRank: garmentAt < 0 ? null : garmentAt + 1,
     matchRank: matchAt < 0 ? null : matchAt + 1,
     wrongAbove,
+    /* wrong garments above the first correct one, split by what Fynd did
+       with them: shown to the shopper, or refused by the production gate
+       (or dropped as a duplicate, or past the result limit) */
+    candidates: candidates.length,
+    /* verified products the production filter removed as plainly another
+       garment, each with the judge's own verdict on it against the
+       shopper's words: a removal the judge calls correct is lost recall */
+    semanticRemoved: (found && found.semanticRemoved ? found.semanticRemoved : []).map((one) => {
+      let judged;
+      try { judged = semanticMatch(row, { title: one.name }); } catch (err) { judged = { ok: false, kind: 'error' }; }
+      return Object.assign({}, one, { judge: judged.ok ? judged.kind : (judged.kind || 'refused') });
+    }),
+    firstCorrectProviderPosition: firstCorrect ? firstCorrect.providerPosition : null,
+    acceptedWrongAbove: wrongAboveRaw.filter((one) => one.accepted).map(wrongCase),
+    rejectedWrongAbove: wrongAboveRaw.filter((one) => !one.accepted).map(wrongCase),
     wrongGarments: above.map((one) => ({ name: one.name, retailer: one.retailer, productUrl: one.productUrl, why: one.why })),
     /* every result shown, with the reader's verdict on it — so a query
        that showed something and still found no correct garment says
@@ -251,6 +285,141 @@ function stability(all, repeat) {
   };
 }
 
+/* How well discovery spends the clock, across every query: which kinds
+   of discovery page yield accepted products, and which read and verify
+   for nothing. Grouped by characteristics only — how the page was
+   recognised, where its products came from, how many it listed, how
+   closely an offered product's name matched — never by site. */
+function discoveryEfficiency(results) {
+  const pages = results.flatMap((r) => ((r.organic && r.organic.pages && r.organic.pages.discoveryPages) || []).map((one) => Object.assign({ query: r.query }, one)));
+  const read = pages.filter((one) => !one.skipped);
+  const sum = (list, key) => list.reduce((n, one) => n + (Number(one[key]) || 0), 0);
+  const pct = (list, q) => { const sorted = list.slice().sort((a, b) => a - b); return sorted.length ? sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * q))] : null; };
+  const group = (list) => ({
+    pages: list.length,
+    offered: sum(list, 'offered'),
+    verified: sum(list, 'verified'),
+    accepted: sum(list, 'accepted'),
+    acceptedPerPage: list.length ? Number((sum(list, 'accepted') / list.length).toFixed(2)) : 0,
+    acceptRate: sum(list, 'verified') ? Number((sum(list, 'accepted') / sum(list, 'verified')).toFixed(2)) : null,
+    readMsP50: pct(list.map((one) => one.readMs || 0), 0.5),
+    verifyMs: sum(list, 'verifyMs')
+  });
+  const by = (keyOf) => {
+    const out = {};
+    for (const one of read) { const key = keyOf(one); (out[key] = out[key] || []).push(one); }
+    return Object.fromEntries(Object.entries(out).map(([key, list]) => [key, group(list)]));
+  };
+  const products = read.flatMap((one) => one.products || []);
+  const productGroup = (keyOf) => {
+    const out = {};
+    for (const one of products) {
+      const key = keyOf(one);
+      const g = out[key] = out[key] || { offered: 0, verified: 0, accepted: 0 };
+      g.offered += 1;
+      if (one.outcome !== 'not reached') g.verified += 1;
+      if (one.outcome === 'accepted') g.accepted += 1;
+    }
+    return out;
+  };
+  const rejected = {};
+  for (const one of read) for (const [why, n] of Object.entries(one.rejected || {})) rejected[why] = (rejected[why] || 0) + n;
+  return {
+    total: group(read),
+    pagesRead: read.length,
+    pagesSkipped: pages.filter((one) => one.skipped).reduce((tally, one) => { tally[one.skipped] = (tally[one.skipped] || 0) + 1; return tally; }, {}),
+    skippedButListed: pages.filter((one) => one.skipped && one.listed).map((one) => ({ query: one.query, url: one.url, listed: one.listed, skipped: one.skipped })),
+    listedZero: read.filter((one) => !one.listed).length,
+    offeredZero: read.filter((one) => one.listed && !one.offered).length,
+    readButNothingAccepted: read.filter((one) => one.offered && !one.accepted).length,
+    offeredButNoneReached: read.filter((one) => one.offered && !one.verified).length,
+    byRecognition: by((one) => (/address/.test(one.by) ? 'address' : 'content')),
+    byListedSize: by((one) => (!one.listed ? '0' : one.listed === 1 ? '1' : one.listed < 10 ? '2-9' : one.listed < 50 ? '10-49' : '50+')),
+    bySource: productGroup((one) => one.source || 'unknown'),
+    byTitleMatch: productGroup((one) => (one.fullMatch ? 'full match' : 'partial match')),
+    rejectionReasons: Object.fromEntries(Object.entries(rejected).sort((a, b) => b[1] - a[1])),
+    /* the pages that cost reads and yielded nothing, for a look by eye */
+    lowYield: read.filter((one) => !one.accepted).map((one) => ({ query: one.query, url: one.url, by: one.by, listed: one.listed, offered: one.offered,
+      verified: one.verified, readMs: one.readMs, verifyMs: one.verifyMs, rejected: one.rejected || null, failed: one.failed || null }))
+  };
+}
+
+/* Every record the provider returned, in the provider's order, replayed
+   through the production gate (toProduct, the check verifyAll runs) and
+   read by the semantic judge. `accepted` means Fynd showed it: it passed
+   the gate, was not a duplicate of an earlier listing, and fell within
+   the result limit — the page renders /api/search's products as they
+   come, so nothing else stands between these and the shopper. Nothing
+   here decides anything; it only reports. */
+function rawCandidates(found, row, limit) {
+  const records = found && Array.isArray(found.records) ? found.records : [];
+  if (!records.length) return [];
+  const source = PROVIDERS[found.provider];
+  const context = { retailer: source ? source.defaultRetailer : null };
+  const shownAt = new Map(found.products.slice(0, limit).map((product, at) => [product.productUrl, at + 1]));
+  const removedAsAnother = new Set((found.semanticRemoved || []).map((one) => one.productUrl));
+  const seen = new Set();
+  const field = (raw, keys) => { for (const key of keys || []) { if (raw && raw[key] !== undefined && raw[key] !== null && String(raw[key]).trim()) return String(raw[key]).trim(); } return null; };
+  return records.map((raw, at) => {
+    let gate;
+    try { gate = toProduct(raw, context); } catch (err) { gate = { ok: false, reason: 'unreadable-record' }; }
+    const product = gate.ok ? gate.product : null;
+    const name = product ? product.name : field(raw, FIELD_ALIASES.title);
+    let rejectedBy = gate.ok ? null : gate.reason;
+    let shown = null;
+    if (product) {
+      if (seen.has(product.productUrl)) rejectedBy = 'duplicate-of-an-earlier-listing';
+      else {
+        seen.add(product.productUrl);
+        shown = shownAt.get(product.productUrl) || null;
+        if (!shown) rejectedBy = removedAsAnother.has(product.productUrl) ? 'contradicts-the-requested-garment' : 'past-the-result-limit';
+      }
+    }
+    let verdict;
+    try { verdict = semanticMatch(row, { title: name || '' }); } catch (err) { verdict = { ok: false, kind: 'error' }; }
+    return {
+      providerPosition: at + 1,
+      shownPosition: shown,
+      name,
+      retailer: product ? (product.retailer || product.brand || null) : field(raw, FIELD_ALIASES.retailer),
+      productUrl: product ? product.productUrl : field(raw, FIELD_ALIASES.productUrl),
+      accepted: Boolean(shown),
+      rejectedBy,
+      ok: verdict.ok,
+      kind: verdict.ok ? verdict.kind : (verdict.kind || 'refused'),
+      why: verdict.ok ? null : String(verdict.why || '').slice(0, 200)
+    };
+  });
+}
+
+const wrongCase = (one) => ({
+  name: one.name, retailer: one.retailer, productUrl: one.productUrl,
+  status: one.accepted ? 'accepted' : 'rejected',
+  /* why Fynd refused it; null when Fynd showed it */
+  rejectionReason: one.rejectedBy,
+  /* why the judge calls it the wrong garment */
+  wrongBecause: one.why,
+  providerPosition: one.providerPosition,
+  shownPosition: one.shownPosition
+});
+
+function wrongAboveSummary(results, key) {
+  const cases = results.flatMap((r) => (r[key] || []).map((one) => Object.assign({ query: r.query }, one)));
+  const queries = new Set(cases.map((one) => one.query)).size;
+  return { queries: `${queries}/${results.length}`, candidates: cases.length, cases };
+}
+
+function failureTally(failures) {
+  const tally = {};
+  for (const one of failures) {
+    if (!one) continue;
+    const group = tally[one.kind] || (tally[one.kind] = { queries: 0, providers: [], example: one.reason });
+    group.queries += 1;
+    if (one.provider && !group.providers.includes(one.provider)) group.providers.push(one.provider);
+  }
+  return tally;
+}
+
 function summarise(results) {
   const n = results.length || 1;
   const pct = (count) => `${count}/${results.length} (${Math.round((count / n) * 100)}%)`;
@@ -269,7 +438,36 @@ function summarise(results) {
     fullMatchFound: pct(results.filter((r) => r.matchRank).length),
     meanBestMatchRank: matchRanks.length ? Number((matchRanks.reduce((a, b) => a + b, 0) / matchRanks.length).toFixed(2)) : null,
     queriesWithWrongGarmentAbove: pct(results.filter((r) => r.wrongAbove > 0).length),
+    /* kept for comparison with earlier runs: the same as
+       acceptedWrongGarmentsAbove, counted over what Fynd showed */
     wrongGarmentsAbove: results.filter((r) => r.wrongAbove > 0).map((r) => ({ query: r.query, results: r.wrongGarments })),
+    /* wrong garments above the first correct result that Fynd SHOWED —
+       the shopper's false positives */
+    acceptedWrongGarmentsAbove: wrongAboveSummary(results, 'acceptedWrongAbove'),
+    /* verified products the production filter removed as plainly another
+       garment; removedCorrectGarments are the ones the judge would have
+       counted as correct — recall the filter cost */
+    semanticContradictionsRemoved: (() => {
+      const cases = results.flatMap((r) => (r.semanticRemoved || []).map((one) => Object.assign({ query: r.query }, one)));
+      return {
+        queries: `${new Set(cases.map((one) => one.query)).size}/${results.length}`,
+        removed: cases.length,
+        removedCorrectGarments: cases.filter((one) => one.judge === 'match' || one.judge === 'pending'),
+        cases
+      };
+    })(),
+    /* wrong garments above the first correct result in the provider's raw
+       list that Fynd refused — provider noise the shopper never saw */
+    rejectedWrongCandidatesAbove: wrongAboveSummary(results, 'rejectedWrongAbove'),
+    /* shown above the first correct garment and neither right nor wrong:
+       a title naming only the broader garment ("Short Jacket" for a
+       puffer). Not counted as wrong, and not as found — listed so a
+       change in how a title is read cannot hide one */
+    unprovenAbove: results.map((r) => {
+      const first = (r.shown || []).findIndex((one) => one.kind === 'match' || one.kind === 'pending');
+      const above = (r.shown || []).slice(0, first < 0 ? undefined : first).filter((one) => one.kind === 'unproven');
+      return above.length ? { query: r.query, results: above.map((one) => ({ name: one.name, productUrl: one.productUrl, why: one.why })) } : null;
+    }).filter(Boolean),
     /* queries that SHOWED something and found no correct garment, with
        every result and its verdict. A result the reader could not judge
        — its title names no garment it knows ("Air Force 1 '07") — is
@@ -290,6 +488,7 @@ function summarise(results) {
     /* a product search that ran out of time while the organic search
        still answered the query */
     productSearchTimeoutsAbsorbed: results.filter((r) => r.productSearchTimedOutButAnswered).map((r) => r.query),
+    productSearchFailuresAbsorbed: results.filter((r) => r.productSearchFailedButAnswered).map((r) => `${r.query}: ${r.productSearchFailedButAnswered}`),
     /* how much of the clock each stage took, across the queries that ran it */
     stageMs: (() => {
       const out = {};
@@ -299,6 +498,15 @@ function summarise(results) {
       }
       return out;
     })(),
+    /* every query that showed nothing, with every page read for it: the
+       listing, its title, the gate that stopped it, and what the page
+       exposed (see pageEvidence in api/_providers/retailer-page.js) */
+    failedQueryDiagnostics: results.filter((r) => r.blockedBy).map((r) => ({
+      query: r.query,
+      blockedBy: r.blockedBy,
+      providerFailure: r.providerFailure || null,
+      pages: (r.organic && r.organic.pages && r.organic.pages.failedPages) || []
+    })),
     /* every query that showed nothing, under the stage that stopped it */
     failedQueriesByCause: results.reduce((groups, r) => {
       const cause = blockingCause(r);
@@ -323,6 +531,15 @@ function summarise(results) {
         .map((r) => ({ query: r.query, categories: (r.organic && r.organic.pages && r.organic.pages.priceCategories) || {} }));
       return { byClass, byCategory, queries };
     })(),
+    /* photographed listings the gate still refused, by its reason */
+    photographedButRefused: results.reduce((tally, r) => { for (const [why, n] of Object.entries((r.organic && r.organic.pages && r.organic.pages.gateRefusals) || {})) tally[why] = (tally[why] || 0) + n; return tally; }, {}),
+    /* every page read for the products it lists, per query: recognised
+       by its address, or found to be a listing once read; how many
+       products it listed; how many were the garment asked for */
+    discoveryPages: results.filter((r) => r.organic && r.organic.pages && (r.organic.pages.discoveryPages || []).length)
+      .map((r) => ({ query: r.query, shown: r.returned, pages: r.organic.pages.discoveryPages })),
+    discoveryEfficiency: discoveryEfficiency(results),
+    organicCategoryPagesUnread: results.reduce((sum, r) => sum + ((r.organic && r.organic.pages && r.organic.pages.outcomes && r.organic.pages.outcomes['category-page-unread']) || 0), 0),
     organicCategoryPagesRead: results.reduce((sum, r) => sum + ((r.organic && r.organic.pages && r.organic.pages.categoryPagesRead) || 0), 0),
     organicTilesOffered: results.reduce((sum, r) => sum + ((r.organic && r.organic.pages && r.organic.pages.tilesOffered) || 0), 0),
     organicEscalations: results.filter((r) => r.organic).length,
@@ -345,6 +562,10 @@ function summarise(results) {
       }
       return tally;
     })(),
+    /* why the primary source was passed over, by kind, with one example
+       of its own words — and the same for the errors queries ended on */
+    primaryProviderFailures: failureTally(results.map((r) => r.primaryFailure)),
+    providerFailuresByKind: failureTally(results.map((r) => (r.providerFailure ? { provider: null, kind: r.providerFailureKind, reason: r.providerFailure } : null))),
     answeredBy: results.reduce((tally, r) => { const who = r.provider ? `${r.provider}${r.usedFallback ? ' (fallback)' : ' (primary)'}` : 'none'; tally[who] = (tally[who] || 0) + 1; return tally; }, {}),
     rejectedByGate: results.reduce((tally, r) => { for (const [why, n] of Object.entries(r.rejected || {})) tally[why] = (tally[why] || 0) + n; return tally; }, {}),
     interpreterFailures: results.filter((r) => r.interpreterFailure && r.interpreterFailure !== 'not-configured').length,
@@ -400,7 +621,7 @@ if (require.main === module) {
   const line = (r) => `${String(r.garmentRank || '—').padStart(2)} ${String(r.matchRank || '—').padStart(2)}  ${r.query.padEnd(38)} `
     + `${String(r.returned).padStart(2)} shown  ${String(r.searchMs).padStart(5)}ms  [${r.interpreter}${r.interpreterFailure ? `: ${r.interpreterFailure}` : ''}] `
     + `${r.provider ? `via ${r.provider}${r.usedFallback ? ' (fallback)' : ''} ` : ''}`
-    + `asked "${r.asked}"${r.providerFailure ? `  PROVIDER FAILED: ${r.providerFailure}` : ''}${r.wrongAbove ? `  ${r.wrongAbove} wrong above` : ''}`
+    + `asked "${r.asked}"${r.providerFailure ? `  PROVIDER FAILED: ${r.providerFailure}` : ''}${r.primaryFailure ? `  [${r.primaryFailure.provider} passed over, ${r.primaryFailure.kind}: ${r.primaryFailure.reason}]` : ''}${r.wrongAbove ? `  ${r.wrongAbove} wrong above` : ''}${r.acceptedWrongAbove.length ? ` (shown: ${r.acceptedWrongAbove.length})` : ''}${r.rejectedWrongAbove.length ? `  ${r.rejectedWrongAbove.length} refused wrong above` : ''}${r.semanticRemoved.length ? `  ${r.semanticRemoved.length} removed as another garment` : ''}`
     + `${r.duplicates ? `  ${r.duplicates} duplicate` : ''}${r.survived.some((d) => !d.inQuery) ? `  LOST: ${r.survived.filter((d) => !d.inQuery).map((d) => d.descriptor).join(', ')}` : ''}`;
   if (!json) console.log('\ngarment-rank / full-match-rank, query, results, search latency, interpreter, what the provider was asked\n');
   const textOf = (flag) => { const at = args.indexOf(flag); return at >= 0 ? String(args[at + 1] || '') : ''; };
@@ -429,4 +650,4 @@ if (require.main === module) {
     .catch((err) => { console.error(err); process.exit(1); });
 }
 
-module.exports = { run, measure, summarise, readRequest, blockingCause, stability };
+module.exports = { run, measure, summarise, readRequest, blockingCause, stability, discoveryEfficiency };

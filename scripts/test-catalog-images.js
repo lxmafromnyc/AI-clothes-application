@@ -1501,6 +1501,62 @@ function walledRetailer() {
     }
   });
 
+  test('an FAQ block beside a full product record does not make a product page an article', () => {
+    const ld = (node) => `<script type="application/ld+json">${JSON.stringify(node)}</script>`;
+    const faq = { '@type': 'FAQPage', mainEntity: [{ '@type': 'Question', name: 'How does it fit?', acceptedAnswer: { '@type': 'Answer', text: 'True to size.' } }] };
+    const product = { '@type': 'Product', name: 'Organic Cotton Stretch Poplin Shirt in White', offers: { '@type': 'Offer', price: '39.90', priceCurrency: 'USD', availability: 'https://schema.org/InStock' } };
+    const group = { '@type': 'ProductGroup', name: 'Poplin Shirt', hasVariant: [{ '@type': 'Product', sku: 'PS-1', offers: { price: '39.90' } }] };
+    const verdict = (html) => extractor.productPageVerdict(extractor.listingShape('https://www.shop.example.com/products/poplin-shirt', ''), extractor.pageDeclarationsFromHtml(html));
+    assert.strictEqual(verdict(ld(product) + ld(faq)).ok, true);
+    assert.strictEqual(verdict(ld(group) + ld(faq)).ok, true);
+    assert.strictEqual(extractor.pageDeclarationsFromHtml(ld(product) + ld(faq)).declaresArticle, null);
+    /* an FAQ page with no full product record is what it says it is */
+    assert.strictEqual(verdict(ld(faq)).ok, false);
+    assert.strictEqual(verdict(ld({ '@type': 'Product', name: 'Poplin Shirt' }) + ld(faq)).ok, false, 'a product record that sells nothing does not excuse an FAQ page');
+    /* and nothing excuses an article, however it marks up a product */
+    assert.strictEqual(verdict(ld(product) + ld({ '@type': 'Article', headline: 'The best poplin shirts' })).ok, false);
+    assert.strictEqual(verdict(ld(product) + ld({ '@type': 'CollectionPage', name: 'Shirts' })).ok, false);
+    assert.strictEqual(verdict(`<meta property="og:type" content="article">${ld(product)}${ld(faq)}`).ok, false);
+  });
+
+  test('a ProductGroup’s photos on its variants are candidates, each tied to its own variant', () => {
+    const url = 'https://www.shop.example.com/brand/stone-running-shorts-0141604500001.html';
+    const group = { '@type': 'ProductGroup', name: 'Stone Running Shorts', productGroupID: '0141604500001', hasVariant: [
+      { '@type': 'Product', sku: '0141604500001', image: { '@type': 'ImageObject', contentUrl: 'https://www.shop.example.com/img/0141604500001_01.jpg' }, offers: { price: '44.99', priceCurrency: 'USD' } },
+      { '@type': 'Product', sku: '0141604500002', image: 'https://www.shop.example.com/img/0141604500002_01.jpg', offers: { price: '44.99', priceCurrency: 'USD' } }
+    ] };
+    const candidates = extractor.candidatesFrom(`<script type="application/ld+json">${JSON.stringify(group)}</script>`, url);
+    assert.deepStrictEqual(candidates.map((one) => one.url.split('/').pop()), ['0141604500001_01.jpg', '0141604500002_01.jpg']);
+    assert.strictEqual(extractor.identityEvidence(candidates[0], url).ok, true);
+    assert.strictEqual(extractor.identityEvidence(candidates[1], url).ok, false, 'another colour’s photo was tied to this listing');
+    /* the variant is the record behind the photo, for the sku gate */
+    assert.strictEqual(candidates[1].node.sku, '0141604500002');
+  });
+
+  test('a "crew" alone establishes no garment: a Pocket Crew 6-Pack is not read as a sweater', () => {
+    for (const title of ['Classic Pocket Crew 6-Pack', 'Cotton Crew', 'Merino Fleece Crew', 'The Crew']) {
+      assert.strictEqual(extractor.readGarment(title, {}).type, null, title);
+    }
+    const verdict = asked('thick tee with a pocket', 'Classic Pocket Crew 6-Pack');
+    assert.strictEqual(verdict.ok, false);
+    assert.strictEqual(verdict.kind, 'unreadable', `a crew was guessed at: ${verdict.why}`);
+  });
+
+  test('crew sweaters are still sweaters — by name, or by the yarn a crew is knitted from', () => {
+    for (const title of ['Merino Crew Sweater', 'Crewneck Jumper', 'Cashmere Crew Neck Pullover', 'Merino Crew', 'Cashmere Crewneck', 'Lambswool Crew']) {
+      assert.strictEqual(extractor.readGarment(title, {}).type, 'sweater', title);
+    }
+    assert.strictEqual(asked('merino crewneck jumper', 'Merino Crew').kind, 'match');
+    assert.strictEqual(asked('merino crewneck jumper', 'Merino Crew Sweater').kind, 'match');
+  });
+
+  test('crew tees and shirts are still tees and shirts when they say so', () => {
+    for (const [title, type] of [['Pocket Crew Tee', 'tee'], ['Crew Neck T-Shirt', 'tee'], ['Heavyweight Crew Neck Tee', 'tee'], ['Classic Crew Neck Shirt', 'shirt'], ['Crewneck Sweatshirt', 'sweatshirt']]) {
+      assert.strictEqual(extractor.readGarment(title, {}).type, type, title);
+    }
+    assert.strictEqual(asked('thick tee with a pocket', 'Pocket Crew Tee').ok, true);
+  });
+
   test('the fabric decides a type only on the side that names it', () => {
     /* "merino" in the REQUEST does not turn the listing's sweatshirt into a sweater */
     assert.strictEqual(extractor.readGarment('Crew Sweatshirt', {}).madeAs, null);
@@ -1509,6 +1565,92 @@ function walledRetailer() {
     for (const title of ['Merino Hoodie', 'Wool Blazer', 'Denim Trousers', 'Wool Coat', 'Cashmere Cardigan']) {
       assert.strictEqual(extractor.readGarment(title, {}).madeAs, null, title);
     }
+  });
+
+  test('a title that says hoodie is a hoodie, whatever sweatshirt or pullover words sit beside it', () => {
+    /* the live wrong-above case: the last garment word was "Pullover" */
+    const zeagoo = "Zeagoo Women's Oversized Hoodies Fleece Sweatshirts Long Sleeve Pullover with Pocket Fall Winter Outfits Y2K";
+    assert.strictEqual(extractor.readGarment(zeagoo, {}).type, 'hoodie');
+    assert.strictEqual(asked('green oversized hoodie', zeagoo).kind, 'match');
+    for (const title of ['Oversized Pullover Hoodie', 'Hoodie Sweatshirt', 'Fleece Hoodie Pullover', 'Oversized Hooded Sweatshirt']) {
+      assert.strictEqual(extractor.readGarment(title, {}).type, 'hoodie', title);
+    }
+    /* "pullover" and "button up" name a closure as readily as a garment:
+       a garment named beside them is the garment */
+    assert.strictEqual(extractor.readGarment('Fleece Crew Sweatshirt Pullover', {}).type, 'sweatshirt');
+    assert.strictEqual(extractor.readGarment('Chunky Cardigan Button Up', {}).type, 'cardigan');
+    /* and alone they still name one */
+    assert.strictEqual(extractor.readGarment('Cashmere Crew Neck Pullover', {}).type, 'sweater');
+    assert.strictEqual(extractor.readGarment('Oxford Button Down', {}).type, 'shirt');
+  });
+
+  test('sweatshirt is not a hoodie, and a hoodie is not a sweatshirt, unless the title names both', () => {
+    for (const title of ['Crew Neck Fleece Sweatshirt', 'Crewneck Sweatshirt', 'Cotton Fleece Sweatshirt']) {
+      const verdict = asked('green oversized hoodie', title);
+      assert.strictEqual(verdict.kind, 'contradiction', `${title}: ${verdict.why}`);
+    }
+    assert.strictEqual(asked('crewneck sweatshirt', 'Oversized Hoodie').kind, 'contradiction');
+    assert.strictEqual(asked('crewneck sweatshirt', 'Oversized Hoodies Fleece Sweatshirts Pullover').kind, 'contradiction');
+    assert.strictEqual(asked('green oversized hoodie', 'Cable Knit Pullover Sweater').kind, 'contradiction');
+    /* a wool sweatshirt is still read as the knit it is; a wool hoodie is a hoodie */
+    assert.strictEqual(asked('merino crewneck jumper', 'Merino Crew Sweatshirt').kind, 'match');
+    assert.strictEqual(extractor.readGarment('Merino Wool Hoodie Sweatshirt', {}).type, 'hoodie');
+  });
+
+  test('a jacket or coat is a puffer when its own title says puff, and only unproven when it says nothing', () => {
+    /* the live cases: "Super Puff … Shorty Jacket" names the kind */
+    for (const title of ["The Super Puff Women's The Super Puff Xtrashorty Jacket in Black | 2XS", "The Super Puff Women's The Super Puff Shorty Jacket in Black | 3XS",
+      'Puffer Hooded Short Jacket', 'Cropped Puffer Jacket', 'Puffy Jacket']) {
+      assert.strictEqual(extractor.readGarment(title, {}).type, 'puffer', title);
+      assert.strictEqual(asked('short puffy jacket', title).kind, 'match', title);
+    }
+    /* a bare jacket or coat never says which kind: not accepted, and not
+       counted as a different garment */
+    for (const title of ["The North Face Women's Short Jacket Nuptse", 'Short Jacket', 'Puff Sleeve Cropped Jacket', 'Long Wool Coat']) {
+      const verdict = asked(/coat/i.test(title) ? 'black puffer coat' : 'short puffy jacket', title);
+      assert.strictEqual(verdict.ok, false, `${title} was accepted as a puffer`);
+      assert.strictEqual(verdict.kind, 'unproven', `${title}: ${verdict.why}`);
+    }
+    /* a named kind of jacket or coat is a claim, and still contradicts */
+    for (const title of ['Short Denim Jacket', 'Cropped Bomber Jacket', 'Wool Trench Coat', 'Puff Print Denim Jacket', 'Puffy Sleeve Blouse']) {
+      assert.strictEqual(asked('short puffy jacket', title).kind, 'contradiction', title);
+    }
+    /* "puff" alone names no garment, and never makes a sleeve or print outerwear */
+    for (const title of ['Puff Sleeve Top', 'Puff Print Hoodie', 'Cream Puff']) {
+      assert.notStrictEqual(extractor.readGarment(title, {}).type, 'puffer', title);
+    }
+    /* a puffer is still not what a shopper asking for a denim jacket means */
+    assert.strictEqual(asked('denim jacket', 'The Super Puff Shorty Jacket').ok, false);
+    /* and a hoodie shopper is never offered a bare jacket as unproven: the families differ */
+    assert.strictEqual(asked('green oversized hoodie', 'Short Jacket').kind, 'contradiction');
+  });
+
+  test('a track top is a top and a track jacket a jacket: "track" moves neither', () => {
+    /* the live wrong-above case: refused, as a different garment */
+    const adidas = "adidas Women's Originals Superstar Cropped Track Top";
+    const refused = asked('cropped track jacket', adidas);
+    assert.strictEqual(refused.ok, false);
+    assert.strictEqual(refused.kind, 'contradiction', refused.why);
+    assert.match(refused.why, /outerwear against top/);
+    for (const title of ['Track Top', 'Superstar Track Top', 'Cropped Track Top', 'Quarter Zip Running Top', 'Training Top']) {
+      const read = extractor.readGarment(title, {});
+      assert.deepStrictEqual([read.type, read.family], ['top', 'top'], title);
+      assert.strictEqual(asked('track jacket', title).kind, 'contradiction', title);
+    }
+    /* an explicit track jacket answers a track jacket, cropped or not */
+    for (const [query, title] of [['track jacket', 'Superstar Track Jacket'], ['cropped track jacket', 'Cropped Track Jacket'],
+      ['cropped track jacket', 'Cropped Track Jacket - White']]) {
+      const verdict = asked(query, title);
+      assert.strictEqual(verdict.kind, 'match', `${title}: ${verdict.why}`);
+    }
+    /* and a track top answers a track top */
+    assert.strictEqual(asked('track top', 'Superstar Track Top').kind, 'match');
+    assert.strictEqual(asked('track top', 'Superstar Track Jacket').kind, 'contradiction');
+    /* an ordinary cropped jacket is read as before */
+    assert.strictEqual(asked('cropped jacket', 'Cropped Denim Jacket').kind, 'match');
+    assert.strictEqual(asked('cropped jacket', 'Cropped Track Jacket').kind, 'match');
+    assert.strictEqual(asked('cropped jacket', 'Cropped Track Top').kind, 'contradiction');
+    assert.strictEqual(asked('cropped jacket', 'Longline Denim Jacket').kind, 'contradiction');
   });
 
   test('a puffer jacket or coat is a puffer, not the jacket or coat after it', () => {

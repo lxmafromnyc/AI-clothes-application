@@ -359,6 +359,35 @@ function outOfSearches(err) {
   return QUOTA_EXHAUSTED.test(err && err.message ? err.message : String(err));
 }
 
+/* What KIND of failure a provider's error message describes — for
+   diagnostics only (the benchmark and scripts/probe-provider-error.js).
+   Nothing that decides a search reads this: whether to fall back is
+   outOfSearches above, and only that.
+
+   The provider's own words are read before the status code, because a
+   status alone is ambiguous. SerpApi answers both a spent monthly plan
+   and an hourly throughput limit with 429, and its adapter labels every
+   429 "search allowance exhausted"; that label is set aside here so it
+   cannot decide which of the two a 429 was. */
+const FAILURE_KINDS = [
+  ['credits-exhausted', /run out of (searches|credits)|no (searches|credits) left|searches .{0,40}exhausted|not enough credits|out of credits|insufficient (credits|balance)|plan .{0,40}(limit|exceeded)|quota/i],
+  ['rate-limited', /hourly|throughput|rate.?limit|too many requests|per (second|minute|hour)/i],
+  ['blocked-by-network', /not in allowlist|egress|proxy/i],
+  ['invalid-key', /invalid api key|api key (is )?(invalid|missing|required|not valid)|unauthori[sz]ed|forbidden|account (is )?(disabled|suspended|deleted)|\b(401|403)\b/i],
+  ['not-configured', /is not set\b/i],
+  ['timeout', /did not answer within|ran out before the request was made|timed? ?out/i],
+  ['bad-request', /\b(400|404|422)\b|bad request|unsupported|missing .{0,20}parameter/i],
+  ['server-error', /\b5\d\d\b/],
+  ['network', /fetch failed|ECONN|ENOTFOUND|EAI_AGAIN|socket|network/i],
+  ['rate-limited-or-credits', /\b429\b/]
+];
+
+function failureKind(err) {
+  const said = String(err && err.message ? err.message : err || '').replace(/\s*\(SerpApi search allowance exhausted\)/, '');
+  const hit = FAILURE_KINDS.find(([, pattern]) => pattern.test(said));
+  return hit ? hit[0] : 'other';
+}
+
 /* the sources to ask, in order: the primary, then Serper if it can run
    and is not already the primary. Looked up by name, so a test that
    registers a stand-in for either is asking the same chain. */
@@ -400,6 +429,7 @@ module.exports = {
   getProvider,
   providerChain,
   outOfSearches,
+  failureKind,
   carriesRetailerLink,
   linkless,
   QUOTA_EXHAUSTED,
