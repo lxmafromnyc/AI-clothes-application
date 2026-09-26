@@ -323,6 +323,8 @@ function summarise(results) {
         .map((r) => ({ query: r.query, categories: (r.organic && r.organic.pages && r.organic.pages.priceCategories) || {} }));
       return { byClass, byCategory, queries };
     })(),
+    /* photographed listings the gate still refused, by its reason */
+    photographedButRefused: results.reduce((tally, r) => { for (const [why, n] of Object.entries((r.organic && r.organic.pages && r.organic.pages.gateRefusals) || {})) tally[why] = (tally[why] || 0) + n; return tally; }, {}),
     organicCategoryPagesRead: results.reduce((sum, r) => sum + ((r.organic && r.organic.pages && r.organic.pages.categoryPagesRead) || 0), 0),
     organicTilesOffered: results.reduce((sum, r) => sum + ((r.organic && r.organic.pages && r.organic.pages.tilesOffered) || 0), 0),
     organicEscalations: results.filter((r) => r.organic).length,

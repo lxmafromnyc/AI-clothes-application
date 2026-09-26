@@ -87,7 +87,7 @@ const path = require('path');
 /* the parts of reading a retailer's page that are not about images:
    one definition of a listing's code, one cookie-wall list, one way in */
 const {
-  BROWSER, fetchPage, jsonLdNodes, parseLdBlock, metaContent, skuOf, recordFingerprint,
+  BROWSER, fetchPage, jsonLdNodes, parseLdBlock, metaContent, skuOf, recordFingerprint, TRACKING_PARAMS,
   identifiersFrom, samePage, readCatalog, loadPlaywright, dismissConsent,
   coaxLazyImages, rowEndsAt
 } = require('./fetch-catalog-images');
@@ -725,6 +725,20 @@ function selectedAmong(values, selected) {
   return null;
 }
 
+/* an offer's url is the listing itself: the same page, and every
+   parameter the listing names (tracking aside) carried with the same
+   value. A listing naming no parameter matches nothing here. */
+function offerIsListing(offerUrl, productUrl) {
+  if (typeof offerUrl !== 'string' || !offerUrl.trim()) return false;
+  let offer;
+  let listing;
+  try { listing = new URL(productUrl); offer = new URL(offerUrl.trim(), listing); } catch (err) { return false; }
+  if (!samePage(offer.href, listing.href)) return false;
+  const named = [...listing.searchParams.entries()].filter(([key]) => !TRACKING_PARAMS.test(key));
+  if (!named.length) return false;
+  return named.every(([key, value]) => offer.searchParams.get(key) === value);
+}
+
 function matchingCode(values, ids) {
   for (const value of values || []) {
     for (const id of ids) {
@@ -1192,6 +1206,34 @@ function decide(candidates, productUrl, proven) {
       });
     }
     inPlay = specific;
+  }
+
+  /* ---- the variant the listing itself names ----
+
+     A listing reached as /products/boxy-tee?variant=4012 is ONE variant,
+     and a structured offer whose own url carries that same variant is
+     that listing's offer — the json-ld counterpart of the figure a
+     rendered page has selected. Only the listing's own non-tracking
+     parameters are compared, and only when it has some: a listing that
+     names no variant selects nothing, and the figures it offers are
+     judged together as always. Where the listing's variant is priced
+     more than one way, that disagreement still fails closed below. */
+  if (new Set(inPlay.map((s) => s.candidate.amount)).size > 1) {
+    const chosen = inPlay.filter((s) => s.candidate.offer && offerIsListing(s.candidate.offer.url, productUrl));
+    if (chosen.length && chosen.length < inPlay.length && new Set(chosen.map((s) => s.candidate.amount)).size === 1) {
+      for (const stepped of inPlay) {
+        if (chosen.includes(stepped)) continue;
+        refusals.push({
+          amount: stepped.candidate.amount,
+          currency: stepped.candidate.currency,
+          text: stepped.candidate.text,
+          from: stepped.candidate.from,
+          gate: 'this',
+          why: `another variant's offer — the listing names its own variant, and that variant's offer is ${chosen[0].candidate.amount}`
+        });
+      }
+      inPlay = chosen;
+    }
   }
 
   const distinct = [...new Set(inPlay.map((s) => s.candidate.amount))];
@@ -4141,7 +4183,7 @@ if (require.main === module) {
   main().catch((err) => { console.error(err && err.message); process.exit(1); });
 } else {
   module.exports = {
-    toAmount, currencyIn, moneyInText, offerAmounts, structuredCandidates, microdataCandidates,
+    toAmount, currencyIn, moneyInText, offerAmounts, structuredCandidates, microdataCandidates, offerIsListing,
     metaCandidates, pricesFromHtml, namesCode, priceIdentity, chargedEvidence,
     decide, gatherPricesInPage, renderedCandidates, renderPage, resolveRow,
     inspectUrl, inspectData, selectedAmong, elsewhereIn, isIdKey, isPriceKey, keyWords,

@@ -635,11 +635,23 @@ function pageIdentity(html, productUrl, landedUrl, options) {
   const records = jsonLdNodes(html).filter(isRecord);
   if (!records.length) return { ok: false, why: 'the page carries no product record to say which product it is' };
 
+  /* A record that sells nothing and names nothing — no offers, no
+     variants, no identifier, no address — is an annotation: a reviews
+     widget's {Product, name, aggregateRating}, a breadcrumb's product.
+     It cannot price or identify anything, so it cannot conflict with the
+     record that does; it is set aside when the page's product is chosen,
+     and chosen from only when nothing else is there. */
+  const substantive = (node) => Boolean((node.offers || node.offer || node.hasVariant) || recordCodes(node).length
+    || (typeof node.url === 'string' && node.url.trim()) || (typeof node['@id'] === 'string' && node['@id'].trim()));
+  const weighed = records.filter(substantive).length ? records.filter(substantive) : records;
+  const nameOf = (node) => (typeof node.name === 'string' ? node.name.trim().toLowerCase().replace(/\s+/g, ' ') : '');
+
   let record = null;
   let because = null;
-  if (records.length === 1) {
-    [record] = records;
-    because = 'its only product record';
+  let sameNamed = null;
+  if (weighed.length === 1) {
+    [record] = weighed;
+    because = weighed.length === records.length ? 'its only product record' : 'its only product record that sells or names anything';
   } else {
     const named = records.filter((node) => namesPage(node, canonical));
     const groups = records.filter(isGroup);
@@ -649,6 +661,14 @@ function pageIdentity(html, productUrl, landedUrl, options) {
     } else if (groups.length === 1 && records.every((node) => node === groups[0] || variantOf(node, groups[0]))) {
       [record] = groups;
       because = 'the product group every other record on the page is a variant of';
+    } else if (nameOf(weighed[0]) && weighed.every((node) => nameOf(node) === nameOf(weighed[0]))) {
+      /* several records, every one the same named product — a theme
+         writing each colour or size as its own Product. They are one
+         product; what each charges still has to agree (decide() fails
+         closed if it does not). */
+      [record] = weighed;
+      sameNamed = weighed;
+      because = `the ${weighed.length} product records on the page, every one named "${weighed[0].name.trim()}"`;
     }
   }
 
@@ -666,8 +686,10 @@ function pageIdentity(html, productUrl, landedUrl, options) {
     if (!agree.agree) return { ok: false, why: `the page's product record is a different garment from its address — ${agree.why}` };
   }
 
-  /* a group's variants are the group's: their offers are its offers */
-  const members = [record].concat(isGroup(record) ? records.filter((node) => node !== record && variantOf(node, record)) : []);
+  /* a group's variants are the group's: their offers are its offers — and
+     so are those of records that all name the same product */
+  const members = sameNamed
+    || [record].concat(isGroup(record) ? records.filter((node) => node !== record && variantOf(node, record)) : []);
 
   return {
     ok: true,

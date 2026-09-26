@@ -58,8 +58,10 @@
      the title       the name of the product record the price came from,
                      so the name, the price and the photo answer to the
                      same product; the result's own title otherwise.
-     the retailer    the name the site gives itself (og:site_name), or
-                     the seller on that same offer. Never a hostname:
+     the retailer    the name the site gives itself — og:site_name, its
+                     JSON-LD WebSite or single Organization, the seller
+                     on that same offer, its application-name. Never a
+                     hostname, never a brand:
                      "shop.madewell.com" is a domain, not a shop's name.
      the brand       the product record's own brand, when it has one.
 
@@ -97,7 +99,7 @@
 
 'use strict';
 
-const { linkFault } = require('./product-source');
+const { linkFault, toProduct } = require('./product-source');
 
 /* How many listing pages one search may read, how many at once, and
    the least time worth starting one with. Each read is a page and then
@@ -172,6 +174,33 @@ function brandOf(node) {
   return '';
 }
 
+/* The name the SITE gives itself, wherever it says it: og:site_name,
+   the JSON-LD WebSite's name, the one Organization or store the page
+   describes, the application-name a browser shows. Every one is the
+   shop naming itself; none is read off a hostname, and a brand is never
+   one of them — a Brand record names the maker, not the shop. Several
+   organisations naming different things say nothing. */
+const SITE_TYPES = /^(website|organization|corporation|store|onlinestore|onlinebusiness|clothingstore|shoestore|departmentstore)$/i;
+
+function siteNameOf(html, images) {
+  const meta = decodeEntities(images.metaContent(html, 'og:site_name'));
+  if (meta) return meta;
+  const nodes = images.jsonLdNodes(html);
+  const named = (pattern) => [...new Set(nodes
+    .filter((node) => [].concat(node['@type'] || []).some((type) => pattern.test(String(type).replace(/^.*[/#]/, ''))))
+    .map((node) => decodeEntities(typeof node.name === 'string' ? node.name : ''))
+    .filter(Boolean))];
+  const site = named(/^website$/i);
+  if (site.length === 1) return site[0];
+  const shop = named(SITE_TYPES);
+  if (shop.length === 1) return shop[0];
+  return '';
+}
+
+function appNameOf(html, images) {
+  return decodeEntities(images.metaContent(html, 'application-name') || images.metaContent(html, 'apple-mobile-web-app-title'));
+}
+
 function sellerOf(offer) {
   const seller = offer && offer.seller;
   if (seller && typeof seller === 'object' && typeof seller.name === 'string') return text(seller.name);
@@ -237,12 +266,17 @@ const PRICE_CLASSES = {
 function priceDiagnosis(html, read, decided, images) {
   if (decided.ambiguous) return 'several-prices';
   const refusals = decided.refusals || [];
-  const structured = read.candidates.filter((one) => one.node);
+  /* a structured offer or served microdata: both were READ, and what
+     they came to is the reader's verdict, not a gap */
+  const structured = read.candidates.filter((one) => one.node || (one.dom && one.dom.served));
   if (structured.length) {
     if (structured.every((one) => one.kind === 'range')) return 'range-only';
-    const identity = refusals.filter((one) => one.gate === 'this' && /^json-ld/.test(String(one.from)));
+    const identity = refusals.filter((one) => one.gate === 'this' && /^(json-ld|microdata)/.test(String(one.from)));
     if (identity.length) {
-      return identity.some((one) => /names (a different|[^,]*, which is not this listing)/.test(one.why) && !/names no sku/.test(one.why))
+      /* microdata that named its product scope's sku, and it was not
+         this listing's, names another product as surely as JSON-LD does */
+      const namedOther = structured.some((one) => one.dom && one.dom.served && (one.dom.scopeSkus || []).length);
+      return namedOther || identity.some((one) => /names (a different|[^,]*, which is not this listing)/.test(one.why) && !/names no sku/.test(one.why))
         ? 'record-names-another-product' : 'record-not-tied-to-listing';
     }
     return 'not-the-amount-charged';
@@ -356,7 +390,7 @@ async function readListing(record, budget) {
   /* the product the page named, by its own name: a group, not one size */
   const byRecord = !(decided.identity && decided.identity.sku);
   const name = (byRecord && text(proven && proven.name)) || text(node && node.name) || title;
-  const retailer = decodeEntities(images.metaContent(page.html, 'og:site_name')) || sellerOf(offer);
+  const retailer = siteNameOf(page.html, images) || sellerOf(offer) || appNameOf(page.html, images);
   const brand = brandOf(node);
 
   const priced = { title: decodeEntities(name), productUrl: listingUrl, price: decided.price, currency: decided.currency };
@@ -374,7 +408,13 @@ async function readListing(record, budget) {
     return done('no-photo', first ? `${first.gate}: ${first.why}` : 'the page publishes no image candidate', priced);
   }
 
-  return done('photographed', found.why, Object.assign({}, priced, { imageUrl: found.url }));
+  /* the gate's own verdict on what was proved — reported, never acted
+     on here: the record goes to verifyAll() exactly as it is */
+  const proved = Object.assign({}, priced, { imageUrl: found.url });
+  const result = done('photographed', found.why, proved);
+  const verdict = toProduct(proved, { retailer: null });
+  if (!verdict.ok) result.gateRefusal = verdict.reason;
+  return result;
 }
 
 /* A category page, read only for the products it lists — never as a
@@ -493,6 +533,7 @@ async function readListings(records, options) {
   const outcomes = {};
   const reasons = {};
   const priceCategories = {};
+  const gateRefusals = {};
   const ordered = entries.filter((entry) => !entry.tile).concat(
     entries.filter((entry) => entry.tile).sort((a, b) => a.from - b.from || a.seq - b.seq)
   );
@@ -501,6 +542,7 @@ async function readListings(records, options) {
     const outcome = entry.tile ? `tile:${result.outcome}` : result.outcome;
     outcomes[outcome] = (outcomes[outcome] || 0) + 1;
     if (result.priceCategory) priceCategories[result.priceCategory] = (priceCategories[result.priceCategory] || 0) + 1;
+    if (result.gateRefusal) gateRefusals[result.gateRefusal] = (gateRefusals[result.gateRefusal] || 0) + 1;
     if (READ_FAILURES.has(result.outcome)) {
       const group = reasons[result.outcome] || (reasons[result.outcome] = {});
       const why = reasonKey(result.why);
@@ -524,6 +566,9 @@ async function readListings(records, options) {
       reasons,
       /* each no-price page, by which of the four answers it was */
       priceCategories,
+      /* listings whose page proved a price and a photo and that the gate
+         still refused, by the gate's own reason */
+      gateRefusals,
       samples: ordered.map((entry) => entry.final).filter((one) => one && READ_FAILURES.has(one.outcome)).slice(0, 8)
         .map((one) => Object.assign({ host: hostOf(one.record && one.record.productUrl), outcome: one.outcome, why: text(one.why).slice(0, 160) },
           one.priceCategory ? { priceCategory: one.priceCategory, priceClass: PRICE_CLASSES[one.priceCategory] } : {}))

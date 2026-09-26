@@ -1027,6 +1027,81 @@ const deadlineIn = (ms) => Date.now() + ms;
     assert.strictEqual(one.wrong.length, 0);
   });
 
+
+  console.log('\n  — 9. retailer names, annotation records and the variant a listing names\n');
+
+  const shopPage = (head, records) => `<!doctype html><html><head>${head || ''}
+    ${(records || []).map((one) => `<script type="application/ld+json">${JSON.stringify(Object.assign({ '@context': 'https://schema.org' }, one))}</script>`).join('\n')}
+    </head></html>`;
+  const TROUSER = { '@type': 'Product', name: 'Wide Leg Trouser', sku: 'WL48213', image: 'https://cdn.shop-example.com/i/WL48213-front.jpg', offers: { '@type': 'Offer', price: '88.00', priceCurrency: 'USD' } };
+
+  await testAsync('a shop that names itself in its WebSite record, or its application-name, is the retailer', async () => {
+    const website = await readOne(shopPage('', [TROUSER, { '@type': 'WebSite', name: 'Shop Example', url: 'https://www.shop-example.com/' }]));
+    assert.strictEqual(website.records[0].retailer, 'Shop Example');
+    assert.strictEqual(verifyAll(website.records).products.length, 1);
+    const app = await readOne(shopPage('<meta name="application-name" content="Shop Example">', [TROUSER]));
+    assert.strictEqual(app.records[0].retailer, 'Shop Example');
+    const org = await readOne(shopPage('', [TROUSER, { '@type': 'Organization', name: 'Shop Example', logo: 'https://x/logo.png' }]));
+    assert.strictEqual(org.records[0].retailer, 'Shop Example');
+  });
+
+  await testAsync('a brand is never the retailer, nor are organisations that disagree — and the gate’s refusal is reported', async () => {
+    const branded = await readOne(shopPage('', [Object.assign({}, TROUSER, { brand: { '@type': 'Brand', name: 'Northfold' } })]));
+    assert.strictEqual(branded.records[0].retailer, undefined);
+    assert.strictEqual(branded.records[0].brand, 'Northfold');
+    assert.deepStrictEqual(branded.diagnostics.gateRefusals, { 'missing-retailer': 1 });
+    assert.strictEqual(verifyAll(branded.records).rejected['missing-retailer'], 1);
+    const two = await readOne(shopPage('', [TROUSER, { '@type': 'Organization', name: 'Shop Example' }, { '@type': 'Organization', name: 'Payments Co' }]));
+    assert.strictEqual(two.records[0].retailer, undefined);
+  });
+
+  await testAsync('a reviews widget’s bare Product record no longer makes the page two products', async () => {
+    const widget = { '@type': 'Product', name: 'Boxy Cotton Tee', aggregateRating: { '@type': 'AggregateRating', ratingValue: '4.8', reviewCount: '112' } };
+    const main = { '@type': 'Product', name: 'Boxy Cotton Tee', image: [SLUG_PHOTO], offers: { price: '48.00', priceCurrency: 'USD' } };
+    const html = slugPage().replace(/<script type="application\/ld\+json">[\s\S]*<\/script>/, [main, widget].map((one) => `<script type="application/ld+json">${JSON.stringify(one)}</script>`).join(''));
+    const { records, diagnostics } = await readSlug(html);
+    assert.deepStrictEqual(diagnostics.outcomes, { photographed: 1 }, JSON.stringify(diagnostics.samples));
+    assert.strictEqual(records[0].price, 48);
+    /* but two records that each sell something, under different names, still conflict */
+    const other = { '@type': 'Product', name: 'Linen Camp Shirt', offers: { price: '90.00', priceCurrency: 'USD' } };
+    const conflicting = await readSlug(slugPage().replace(/<script type="application\/ld\+json">[\s\S]*<\/script>/, [main, other].map((one) => `<script type="application/ld+json">${JSON.stringify(one)}</script>`).join('')));
+    assert.deepStrictEqual(conflicting.diagnostics.outcomes, { 'no-identity': 1 });
+  });
+
+  await testAsync('records that all name the same product are one product, whose prices must still agree', async () => {
+    const colour = (price, colourName) => ({ '@type': 'Product', name: 'Boxy Cotton Tee', color: colourName, image: [SLUG_PHOTO], offers: { price, priceCurrency: 'USD' } });
+    const same = await readSlug(slugPage().replace(/<script type="application\/ld\+json">[\s\S]*<\/script>/, [colour('48.00', 'White'), colour('48.00', 'Black')].map((one) => `<script type="application/ld+json">${JSON.stringify(one)}</script>`).join('')));
+    assert.strictEqual(same.records[0].price, 48, JSON.stringify(same.diagnostics.samples));
+    const differ = await readSlug(slugPage().replace(/<script type="application\/ld\+json">[\s\S]*<\/script>/, [colour('48.00', 'White'), colour('58.00', 'Black')].map((one) => `<script type="application/ld+json">${JSON.stringify(one)}</script>`).join('')));
+    assert.strictEqual(differ.records[0].price, undefined);
+    assert.strictEqual(differ.diagnostics.samples[0].priceCategory, 'several-prices');
+  });
+
+  await testAsync('a listing that names its variant is priced by that variant’s offer; one that names none still fails closed', async () => {
+    const variants = Object.assign({}, TROUSER, { offers: [
+      { '@type': 'Offer', price: '88.00', priceCurrency: 'USD', url: `${URLS.good}?variant=111` },
+      { '@type': 'Offer', price: '98.00', priceCurrency: 'USD', url: `${URLS.good}?variant=222` }
+    ] });
+    const html = shopPage('<meta property="og:site_name" content="Shop Example">', [variants]);
+    const named = await readOne(html, `${URLS.good}?variant=222&srsltid=AfmBOoq`);
+    assert.strictEqual(named.records[0].price, 98, JSON.stringify(named.diagnostics.samples));
+    const unnamed = await readOne(html);
+    assert.strictEqual(unnamed.records[0].price, undefined);
+    assert.strictEqual(unnamed.diagnostics.samples[0].priceCategory, 'several-prices');
+    const unknown = await readOne(html, `${URLS.good}?variant=999`);
+    assert.strictEqual(unknown.records[0].price, undefined, 'a variant no offer carries selects nothing');
+    /* the rule is the listing's own parameters, never a tracking one */
+    assert.strictEqual(prices.offerIsListing(`${URLS.good}?srsltid=x`, `${URLS.good}?srsltid=x`), false);
+  });
+
+  await testAsync('served microdata that was read and refused is classed by why, not as a reader gap', async () => {
+    const html = MICRO('<span itemprop="price" content="88.00">$88</span>').replace('content="WL48213"', 'content="ZZ99998"');
+    const read = prices.pricesFromHtml(html);
+    const decided = prices.decide(read.candidates, URLS.good);
+    assert.strictEqual(decided.price, undefined);
+    assert.strictEqual(priceDiagnosis(html, read, decided, images), 'record-names-another-product');
+  });
+
   console.log(`\n${passed} passed, ${failures.length} failed\n`);
   if (failures.length) process.exitCode = 1;
 })();
