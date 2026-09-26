@@ -417,6 +417,52 @@ async function testAsync(name, fn) {
     }
   });
 
+  await testAsync('the live benchmark tells a wrong garment Fynd showed from one its gate refused', async () => {
+    const saved = { key: process.env.OPENAI_API_KEY, ai: process.env.AI_PROVIDER };
+    delete process.env.OPENAI_API_KEY;
+    delete process.env.AI_PROVIDER;
+    const noImage = (title, n) => Object.assign(listing(title, n), { imageUrl: null });
+    const noPrice = (title, n) => Object.assign(listing(title, n), { price: null });
+    /* the benchmark's queries are the next test's too: neither may be
+       answered from the other's cache */
+    cache.reset();
+    try {
+      await withSources({
+        /* the provider's raw order: two refused wrong garments, one shown
+           wrong garment, a duplicate of it, the correct one, and a wrong
+           one after it that is above nothing */
+        primary: () => [noImage('Slim Chino Trousers', 21), listing('Pleated Midi Skirt', 22), noPrice('Denim Jacket', 23),
+          listing('Pleated Midi Skirt', 22), listing('Green Oversized Hoodie', 24), listing('Wool Trench Coat', 25)],
+        fallback: () => []
+      }, async () => {
+        const out = await require('./bench-live').run({ max: 12 });
+        const hoodie = out.results.find((r) => r.id === 'atlas-supply-oversized-hoodie');
+        assert.strictEqual(hoodie.garmentRank, 2);
+        assert.strictEqual(hoodie.firstCorrectProviderPosition, 5);
+        assert.deepStrictEqual(hoodie.acceptedWrongAbove.map((one) => [one.name, one.status, one.rejectionReason, one.providerPosition, one.shownPosition]),
+          [['Pleated Midi Skirt', 'accepted', null, 2, 1]]);
+        assert.deepStrictEqual(hoodie.rejectedWrongAbove.map((one) => [one.name, one.status, one.rejectionReason, one.providerPosition, one.shownPosition]),
+          [['Slim Chino Trousers', 'rejected', 'missing-image-url', 1, null], ['Denim Jacket', 'rejected', 'missing-price', 3, null],
+            ['Pleated Midi Skirt', 'rejected', 'duplicate-of-an-earlier-listing', 4, null]]);
+        const shown = hoodie.acceptedWrongAbove[0];
+        assert.strictEqual(shown.retailer, 'Example');
+        assert.strictEqual(shown.productUrl, 'https://shop.example.com/p/22');
+        assert.match(shown.wrongBecause, /skirt/);
+        /* the old count is kept, and agrees with what was shown */
+        assert.strictEqual(hoodie.wrongAbove, 1);
+        const accepted = out.summary.acceptedWrongGarmentsAbove.cases.filter((one) => one.query === hoodie.query);
+        const rejected = out.summary.rejectedWrongCandidatesAbove.cases.filter((one) => one.query === hoodie.query);
+        assert.deepStrictEqual(accepted.map((one) => one.name), ['Pleated Midi Skirt']);
+        assert.deepStrictEqual(rejected.map((one) => one.providerPosition), [1, 3, 4]);
+        assert.ok(out.summary.wrongGarmentsAbove.some((one) => one.query === hoodie.query));
+      });
+    } finally {
+      cache.reset();
+      if (saved.key !== undefined) process.env.OPENAI_API_KEY = saved.key;
+      if (saved.ai !== undefined) process.env.AI_PROVIDER = saved.ai;
+    }
+  });
+
   await testAsync('the live benchmark reports the provider that answered, and when it was the fallback', async () => {
     const saved = { key: process.env.OPENAI_API_KEY, ai: process.env.AI_PROVIDER };
     delete process.env.OPENAI_API_KEY;

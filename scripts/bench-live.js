@@ -46,7 +46,7 @@ const REPO = path.join(__dirname, '..');
 const { QUERIES, HELD_OUT } = require('./bench-search.js');
 const { interpretQuery } = require('../api/interpret');
 const { shapeIntent, searchWithFallback, requestBudget, DEFAULT_LIMIT } = require('../api/search');
-const { getProvider, providerChain, failureKind } = require('../api/_providers/product-source');
+const { getProvider, providerChain, failureKind, toProduct, FIELD_ALIASES, PROVIDERS } = require('../api/_providers/product-source');
 const { queryFrom } = require('../api/_providers/query');
 const cache = require('../api/_cache');
 const interpreters = require('../api/_interpreters');
@@ -156,6 +156,12 @@ async function measure(id, query, category, env, provider, limit) {
   const keys = products.map(listingKey);
   const duplicates = keys.length - new Set(keys).size;
 
+  /* the same question asked of the provider's RAW list: every wrong
+     garment above the first correct one, and whether Fynd showed it */
+  const candidates = rawCandidates(found, row, limit);
+  const firstCorrect = candidates.find((one) => one.accepted && one.ok);
+  const wrongAboveRaw = candidates.filter((one) => one.kind === 'contradiction' && (!firstCorrect || one.providerPosition < firstCorrect.providerPosition));
+
   return {
     id, query,
     interpreter: reading.source, interpreterFailure: reading.failure, interpretMs: reading.ms,
@@ -197,6 +203,13 @@ async function measure(id, query, category, env, provider, limit) {
     garmentRank: garmentAt < 0 ? null : garmentAt + 1,
     matchRank: matchAt < 0 ? null : matchAt + 1,
     wrongAbove,
+    /* wrong garments above the first correct one, split by what Fynd did
+       with them: shown to the shopper, or refused by the production gate
+       (or dropped as a duplicate, or past the result limit) */
+    candidates: candidates.length,
+    firstCorrectProviderPosition: firstCorrect ? firstCorrect.providerPosition : null,
+    acceptedWrongAbove: wrongAboveRaw.filter((one) => one.accepted).map(wrongCase),
+    rejectedWrongAbove: wrongAboveRaw.filter((one) => !one.accepted).map(wrongCase),
     wrongGarments: above.map((one) => ({ name: one.name, retailer: one.retailer, productUrl: one.productUrl, why: one.why })),
     /* every result shown, with the reader's verdict on it — so a query
        that showed something and still found no correct garment says
@@ -323,6 +336,70 @@ function discoveryEfficiency(results) {
   };
 }
 
+/* Every record the provider returned, in the provider's order, replayed
+   through the production gate (toProduct, the check verifyAll runs) and
+   read by the semantic judge. `accepted` means Fynd showed it: it passed
+   the gate, was not a duplicate of an earlier listing, and fell within
+   the result limit — the page renders /api/search's products as they
+   come, so nothing else stands between these and the shopper. Nothing
+   here decides anything; it only reports. */
+function rawCandidates(found, row, limit) {
+  const records = found && Array.isArray(found.records) ? found.records : [];
+  if (!records.length) return [];
+  const source = PROVIDERS[found.provider];
+  const context = { retailer: source ? source.defaultRetailer : null };
+  const shownAt = new Map(found.products.slice(0, limit).map((product, at) => [product.productUrl, at + 1]));
+  const seen = new Set();
+  const field = (raw, keys) => { for (const key of keys || []) { if (raw && raw[key] !== undefined && raw[key] !== null && String(raw[key]).trim()) return String(raw[key]).trim(); } return null; };
+  return records.map((raw, at) => {
+    let gate;
+    try { gate = toProduct(raw, context); } catch (err) { gate = { ok: false, reason: 'unreadable-record' }; }
+    const product = gate.ok ? gate.product : null;
+    const name = product ? product.name : field(raw, FIELD_ALIASES.title);
+    let rejectedBy = gate.ok ? null : gate.reason;
+    let shown = null;
+    if (product) {
+      if (seen.has(product.productUrl)) rejectedBy = 'duplicate-of-an-earlier-listing';
+      else {
+        seen.add(product.productUrl);
+        shown = shownAt.get(product.productUrl) || null;
+        if (!shown) rejectedBy = 'past-the-result-limit';
+      }
+    }
+    let verdict;
+    try { verdict = semanticMatch(row, { title: name || '' }); } catch (err) { verdict = { ok: false, kind: 'error' }; }
+    return {
+      providerPosition: at + 1,
+      shownPosition: shown,
+      name,
+      retailer: product ? (product.retailer || product.brand || null) : field(raw, FIELD_ALIASES.retailer),
+      productUrl: product ? product.productUrl : field(raw, FIELD_ALIASES.productUrl),
+      accepted: Boolean(shown),
+      rejectedBy,
+      ok: verdict.ok,
+      kind: verdict.ok ? verdict.kind : (verdict.kind || 'refused'),
+      why: verdict.ok ? null : String(verdict.why || '').slice(0, 200)
+    };
+  });
+}
+
+const wrongCase = (one) => ({
+  name: one.name, retailer: one.retailer, productUrl: one.productUrl,
+  status: one.accepted ? 'accepted' : 'rejected',
+  /* why Fynd refused it; null when Fynd showed it */
+  rejectionReason: one.rejectedBy,
+  /* why the judge calls it the wrong garment */
+  wrongBecause: one.why,
+  providerPosition: one.providerPosition,
+  shownPosition: one.shownPosition
+});
+
+function wrongAboveSummary(results, key) {
+  const cases = results.flatMap((r) => (r[key] || []).map((one) => Object.assign({ query: r.query }, one)));
+  const queries = new Set(cases.map((one) => one.query)).size;
+  return { queries: `${queries}/${results.length}`, candidates: cases.length, cases };
+}
+
 function failureTally(failures) {
   const tally = {};
   for (const one of failures) {
@@ -352,7 +429,15 @@ function summarise(results) {
     fullMatchFound: pct(results.filter((r) => r.matchRank).length),
     meanBestMatchRank: matchRanks.length ? Number((matchRanks.reduce((a, b) => a + b, 0) / matchRanks.length).toFixed(2)) : null,
     queriesWithWrongGarmentAbove: pct(results.filter((r) => r.wrongAbove > 0).length),
+    /* kept for comparison with earlier runs: the same as
+       acceptedWrongGarmentsAbove, counted over what Fynd showed */
     wrongGarmentsAbove: results.filter((r) => r.wrongAbove > 0).map((r) => ({ query: r.query, results: r.wrongGarments })),
+    /* wrong garments above the first correct result that Fynd SHOWED —
+       the shopper's false positives */
+    acceptedWrongGarmentsAbove: wrongAboveSummary(results, 'acceptedWrongAbove'),
+    /* wrong garments above the first correct result in the provider's raw
+       list that Fynd refused — provider noise the shopper never saw */
+    rejectedWrongCandidatesAbove: wrongAboveSummary(results, 'rejectedWrongAbove'),
     /* shown above the first correct garment and neither right nor wrong:
        a title naming only the broader garment ("Short Jacket" for a
        puffer). Not counted as wrong, and not as found — listed so a
@@ -515,7 +600,7 @@ if (require.main === module) {
   const line = (r) => `${String(r.garmentRank || '—').padStart(2)} ${String(r.matchRank || '—').padStart(2)}  ${r.query.padEnd(38)} `
     + `${String(r.returned).padStart(2)} shown  ${String(r.searchMs).padStart(5)}ms  [${r.interpreter}${r.interpreterFailure ? `: ${r.interpreterFailure}` : ''}] `
     + `${r.provider ? `via ${r.provider}${r.usedFallback ? ' (fallback)' : ''} ` : ''}`
-    + `asked "${r.asked}"${r.providerFailure ? `  PROVIDER FAILED: ${r.providerFailure}` : ''}${r.primaryFailure ? `  [${r.primaryFailure.provider} passed over, ${r.primaryFailure.kind}: ${r.primaryFailure.reason}]` : ''}${r.wrongAbove ? `  ${r.wrongAbove} wrong above` : ''}`
+    + `asked "${r.asked}"${r.providerFailure ? `  PROVIDER FAILED: ${r.providerFailure}` : ''}${r.primaryFailure ? `  [${r.primaryFailure.provider} passed over, ${r.primaryFailure.kind}: ${r.primaryFailure.reason}]` : ''}${r.wrongAbove ? `  ${r.wrongAbove} wrong above` : ''}${r.acceptedWrongAbove.length ? ` (shown: ${r.acceptedWrongAbove.length})` : ''}${r.rejectedWrongAbove.length ? `  ${r.rejectedWrongAbove.length} refused wrong above` : ''}`
     + `${r.duplicates ? `  ${r.duplicates} duplicate` : ''}${r.survived.some((d) => !d.inQuery) ? `  LOST: ${r.survived.filter((d) => !d.inQuery).map((d) => d.descriptor).join(', ')}` : ''}`;
   if (!json) console.log('\ngarment-rank / full-match-rank, query, results, search latency, interpreter, what the provider was asked\n');
   const textOf = (flag) => { const at = args.indexOf(flag); return at >= 0 ? String(args[at + 1] || '') : ''; };
