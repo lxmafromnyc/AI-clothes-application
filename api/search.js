@@ -52,7 +52,7 @@
 
 'use strict';
 
-const { getProvider, verifyAll } = require('./_providers/product-source');
+const { getProvider, verifyAll, providerChain, outOfSearches } = require('./_providers/product-source');
 const { handledPreflight } = require('./_cors');
 const { envReport } = require('./_env-report');
 const meter = require('./_meter');
@@ -153,6 +153,34 @@ function readBody(req) {
 
    Throws whatever the provider throws, so the handler can answer 502 —
    and so nothing about a failure reaches the cache. */
+/* The search a shopper's request runs: the configured source, and — only
+   when that source says its allowance is spent — the fallback the
+   product source names (see providerChain in _providers/product-source).
+   Every answer, from either, goes through findProducts and so through
+   the same verification gate. Any other failure is thrown as it always
+   was. The answer says which source it came from and, when it fell
+   back, from what and why. */
+async function searchWithFallback(primary, intent, limit, stats, deadline) {
+  const chain = providerChain(primary);
+  let refused = null;
+  for (let at = 0; at < chain.length; at += 1) {
+    const provider = chain[at];
+    try {
+      const found = await findProducts(provider, intent, limit, stats, deadline);
+      return Object.assign(found, {
+        provider: provider.name,
+        fellBackFrom: refused
+      });
+    } catch (err) {
+      const said = err && err.message ? String(err.message).split('\n')[0] : String(err);
+      if (!outOfSearches(err) || at + 1 >= chain.length) throw err;
+      refused = { provider: provider.name, reason: said.slice(0, 200) };
+      console.warn('Product source out of searches; falling back.', provider.name, '->', chain[at + 1].name);
+    }
+  }
+  throw new Error('no product source answered');
+}
+
 async function findProducts(provider, intent, limit, stats, deadline) {
   /* whatever this adapter says changes its results beyond the intent */
   const context = typeof provider.cacheContext === 'function' ? provider.cacheContext() : {};
@@ -246,7 +274,7 @@ module.exports = async function handler(req, res) {
 
   let found;
   try {
-    found = await findProducts(provider, intent, limit, cacheStats, deadline);
+    found = await searchWithFallback(provider, intent, limit, cacheStats, deadline);
   } catch (err) {
     /* Only the search itself can reach here. An offer lookup that fails
        or runs out of time leaves its own record without a link, and the
@@ -276,6 +304,9 @@ module.exports = async function handler(req, res) {
      intent was stored under. */
   const diagnostics = Object.assign({}, found.funnel || {}, {
     reachedGate: records.length,
+    /* which source answered, and from which one it fell back and why */
+    provider: found.provider || provider.name,
+    fellBackFrom: found.fellBackFrom || null,
     verified: products.length,
     rejected,
     cache: cache.report(cacheStats, { servedFromCache: found.servedFromCache }),
@@ -295,7 +326,8 @@ module.exports = async function handler(req, res) {
   }
 
   return res.status(200).json({
-    source: provider.name,
+    /* the source that actually answered: the fallback, when it was used */
+    source: found.provider || provider.name,
     products: products.slice(0, limit),
     /* how many the source returned that could not be verified, and why —
        so a badly behaved provider shows up instead of silently thinning */
@@ -315,6 +347,7 @@ module.exports.shapeAttachments = shapeAttachments;
 /* exported for scripts/test-cache.js and scripts/bench-offer-resolution.js,
    so both measure the path a shopper actually takes */
 module.exports.findProducts = findProducts;
+module.exports.searchWithFallback = searchWithFallback;
 /* the endpoint's own budget and page size, for scripts/bench-live.js */
 module.exports.requestBudget = requestBudget;
 module.exports.DEFAULT_LIMIT = DEFAULT_LIMIT;

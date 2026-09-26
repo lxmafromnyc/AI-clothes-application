@@ -344,8 +344,39 @@ function getProvider() {
   return fallback && fallback.configured() ? fallback : PROVIDERS.none;
 }
 
+/* ---------- when the primary source runs out of searches ----------
+
+   One rule, used by /api/search and by catalogue discovery alike, so the
+   two cannot drift: the configured source is always asked first, and
+   Serper is asked only when that source says its allowance is spent —
+   a 429, a quota, a rate limit — and only when SERPER_API_KEY is set.
+   A timeout, a 500 or a bad key is a fault to report, not a reason to
+   ask somebody else the same question. Whatever the fallback returns
+   goes through the same verification gate as anything else. */
+const QUOTA_EXHAUSTED = /\b429\b|allowance exhausted|run out of searches|quota|rate.?limit|too many requests/i;
+
+function outOfSearches(err) {
+  return QUOTA_EXHAUSTED.test(err && err.message ? err.message : String(err));
+}
+
+/* the sources to ask, in order: the primary, then Serper if it can run
+   and is not already the primary. Looked up by name, so a test that
+   registers a stand-in for either is asking the same chain. */
+function providerChain(primary) {
+  const first = primary || getProvider();
+  const chain = [first];
+  const fallback = PROVIDERS.serper;
+  if (fallback && fallback.name !== first.name && typeof fallback.configured === 'function' && fallback.configured()) {
+    chain.push(fallback);
+  }
+  return chain;
+}
+
 module.exports = {
   getProvider,
+  providerChain,
+  outOfSearches,
+  QUOTA_EXHAUSTED,
   registerProvider: (adapter) => { PROVIDERS[adapter.name] = adapter; },
   toProduct,
   verifyAll,

@@ -4374,7 +4374,6 @@ function queryForms(row) {
    evidence about the garment, and it is never recorded as though it
    were: the row that gets written carries productUrl, imageUrl and
    imageEvidence, the same three fields, proved the same way. */
-const QUOTA_EXHAUSTED = /\b429\b|allowance exhausted|run out of searches|quota|rate.?limit|too many requests/i;
 
 /* A ceiling over work this script does not own. The product source is
    the adapter /api/search uses and is not changed from here, so its
@@ -4390,24 +4389,17 @@ function withCeiling(promise, ms, why) {
   return Promise.race([promise, ceiling]).finally(() => clearTimeout(timer));
 }
 
+/* The fallback rule is the product source's own, shared with
+   /api/search, so a catalogue run and a shopper's search fall back the
+   same way on the same failure. */
 function outOfSearches(err) {
-  return QUOTA_EXHAUSTED.test(err && err.message ? err.message : String(err));
+  return require(path.join(__dirname, '..', 'api', '_providers', 'product-source.js')).outOfSearches(err);
 }
 
 /* the sources discovery may ask, primary first. The fallback is only
    ever appended — it never displaces what PRODUCT_SOURCE chose. */
 function providerChain(source) {
-  const primary = source.getProvider();
-  const chain = [primary];
-  try {
-    const serper = require(path.join(__dirname, '..', 'api', '_providers', 'serper.js'));
-    if (serper && serper.name !== primary.name && typeof serper.configured === 'function' && serper.configured()) {
-      chain.push(serper);
-    }
-  } catch (err) {
-    /* no fallback available is not an error: the primary still answers */
-  }
-  return chain;
+  return require(path.join(__dirname, '..', 'api', '_providers', 'product-source.js')).providerChain(source.getProvider());
 }
 
 /* ---------- a product page before a page ABOUT products ----------

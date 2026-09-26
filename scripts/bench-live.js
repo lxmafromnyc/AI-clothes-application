@@ -12,9 +12,13 @@
                              the failure is counted.
      2. the intent           api/search.js shapeIntent() — the endpoint's
                              own whitelist
-     3. the search           api/search.js findProducts() — the configured
-                             provider and the verification gate, untouched,
-                             inside the endpoint's own time budget
+     3. the search           api/search.js searchWithFallback() — the
+                             configured provider, and the fallback the
+                             endpoint itself turns to when that provider's
+                             allowance is spent, each answer through the
+                             verification gate, untouched, inside the
+                             endpoint's own time budget. Which provider
+                             answered is recorded per query.
 
    The handlers' metering is the one thing not gone through: a benchmark
    must not spend a shopper's plan, or write usage rows to a production
@@ -39,8 +43,8 @@ const vm = require('vm');
 const REPO = path.join(__dirname, '..');
 const { QUERIES, HELD_OUT } = require('./bench-search.js');
 const { interpretQuery } = require('../api/interpret');
-const { shapeIntent, findProducts, requestBudget, DEFAULT_LIMIT } = require('../api/search');
-const { getProvider } = require('../api/_providers/product-source');
+const { shapeIntent, searchWithFallback, requestBudget, DEFAULT_LIMIT } = require('../api/search');
+const { getProvider, providerChain } = require('../api/_providers/product-source');
 const { queryFrom } = require('../api/_providers/query');
 const cache = require('../api/_cache');
 const interpreters = require('../api/_interpreters');
@@ -119,7 +123,7 @@ async function measure(id, query, category, env, provider, limit) {
   let found = null;
   let failure = null;
   try {
-    found = await findProducts(provider, intent, limit, cache.counters(), Date.now() + requestBudget());
+    found = await searchWithFallback(provider, intent, limit, cache.counters(), Date.now() + requestBudget());
   } catch (err) {
     failure = String(err && err.message ? err.message : err).split('\n')[0].slice(0, 200);
   }
@@ -148,7 +152,12 @@ async function measure(id, query, category, env, provider, limit) {
        query, and how many of the top three results carry it */
     survived: descriptors.map((one) => ({ descriptor: one, inQuery: says(asked, one), inTop3: verdicts.slice(0, 3).filter((v) => says(v.name, one)).length })),
     providerFailure: failure,
+    /* the provider that answered, and whether it was the fallback */
+    provider: found ? found.provider : null,
+    usedFallback: Boolean(found && found.fellBackFrom),
+    fellBackFrom: found && found.fellBackFrom ? found.fellBackFrom : null,
     returned: products.length,
+    rejected: found ? found.rejected : null,
     servedFromCache: Boolean(found && found.servedFromCache),
     garmentRank: garmentAt < 0 ? null : garmentAt + 1,
     matchRank: matchAt < 0 ? null : matchAt + 1,
@@ -181,6 +190,8 @@ function summarise(results) {
     descriptorsInSomeTop3Result: `${allDescriptors.filter((d) => d.inTop3 > 0).length}/${allDescriptors.length}`,
     duplicateRate: returnedTotal ? `${results.reduce((sum, r) => sum + r.duplicates, 0)}/${returnedTotal}` : '0/0',
     providerFailures: results.filter((r) => r.providerFailure).length,
+    answeredBy: results.reduce((tally, r) => { const who = r.provider ? `${r.provider}${r.usedFallback ? ' (fallback)' : ' (primary)'}` : 'none'; tally[who] = (tally[who] || 0) + 1; return tally; }, {}),
+    rejectedByGate: results.reduce((tally, r) => { for (const [why, n] of Object.entries(r.rejected || {})) tally[why] = (tally[why] || 0) + n; return tally; }, {}),
     interpreterFailures: results.filter((r) => r.interpreterFailure && r.interpreterFailure !== 'not-configured').length,
     interpreter: [...new Set(results.map((r) => r.interpreter))].join(', '),
     servedFromCache: results.filter((r) => r.servedFromCache).length,
@@ -193,6 +204,11 @@ async function run(options) {
   const opts = options || {};
   const provider = getProvider();
   if (!provider.configured()) return { skipped: `no product source is configured (PRODUCT_SOURCE=${process.env.PRODUCT_SOURCE || 'unset'}) — run with --env-file=.env.local` };
+  /* which sources the endpoint would ask, and whether each can run —
+     yes or no only: a key is never read out, only whether one is set */
+  const chain = providerChain(provider);
+  const sources = [...new Set([...chain, require('../api/_providers/product-source').PROVIDERS.serper].filter(Boolean))]
+    .map((one) => ({ name: one.name, role: one.name === provider.name ? 'primary' : 'fallback', configured: Boolean(one.configured()), inChain: chain.includes(one) }));
   const env = page();
   const categoryOf = new Map(env.catalogue.map((p) => [String(p.id).replace(/^sample-/, ''), p.category]));
   const list = (opts.heldOut ? QUERIES.concat(HELD_OUT) : QUERIES).slice(0, opts.max || Infinity);
@@ -203,7 +219,7 @@ async function run(options) {
     results.push(await measure(id, query, categoryOf.get(id) || '', env, provider, limit));
     if (opts.onResult) opts.onResult(results[results.length - 1]);
   }
-  return { provider: provider.name, limit, results, summary: summarise(results) };
+  return { provider: provider.name, sources, limit, results, summary: summarise(results) };
 }
 
 if (require.main === module) {
@@ -212,6 +228,7 @@ if (require.main === module) {
   const json = args.includes('--json');
   const line = (r) => `${String(r.garmentRank || '—').padStart(2)} ${String(r.matchRank || '—').padStart(2)}  ${r.query.padEnd(38)} `
     + `${String(r.returned).padStart(2)} shown  ${String(r.searchMs).padStart(5)}ms  [${r.interpreter}${r.interpreterFailure ? `: ${r.interpreterFailure}` : ''}] `
+    + `${r.provider ? `via ${r.provider}${r.usedFallback ? ' (fallback)' : ''} ` : ''}`
     + `asked "${r.asked}"${r.providerFailure ? `  PROVIDER FAILED: ${r.providerFailure}` : ''}${r.wrongAbove ? `  ${r.wrongAbove} wrong above` : ''}`
     + `${r.duplicates ? `  ${r.duplicates} duplicate` : ''}${r.survived.some((d) => !d.inQuery) ? `  LOST: ${r.survived.filter((d) => !d.inQuery).map((d) => d.descriptor).join(', ')}` : ''}`;
   if (!json) console.log('\ngarment-rank / full-match-rank, query, results, search latency, interpreter, what the provider was asked\n');
@@ -219,7 +236,8 @@ if (require.main === module) {
     .then((out) => {
       if (out.skipped) { console.log(`Live benchmark skipped: ${out.skipped}`); return; }
       if (json) { console.log(JSON.stringify(out, null, 2)); return; }
-      console.log(`\nLIVE search (${out.provider}, ${out.limit} per query) — not the catalogue benchmark:`);
+      console.log(`\nLIVE search (primary ${out.provider}, ${out.limit} per query) — not the catalogue benchmark:`);
+      console.log(`  sources: ${out.sources.map((one) => `${one.name} ${one.role}, ${one.configured ? 'configured' : 'NOT configured'}${one.inChain ? '' : ' (not in the chain)'}`).join('; ')}`);
       for (const [key, value] of Object.entries(out.summary)) console.log(`  ${key.padEnd(30)} ${typeof value === 'object' ? JSON.stringify(value) : value}`);
       console.log('');
     })

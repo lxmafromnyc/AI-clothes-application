@@ -295,6 +295,116 @@ async function testAsync(name, fn) {
     }
   });
 
+  console.log('\n  — the live search falls back the way discovery does\n');
+
+  const productSource = require('../api/_providers/product-source');
+  const { searchWithFallback, findProducts } = require('../api/search');
+  const QUOTA = 'SerpApi responded 429: Your account has run out of searches.';
+  const listing = (title, n) => ({ title, price: 60, imageUrl: `https://shop.example.com/img/${n}.jpg`, productUrl: `https://shop.example.com/p/${n}`, retailer: 'Example' });
+
+  /* a primary and a stand-in registered under Serper's own name, so the
+     chain the endpoint builds is the one under test; restored after */
+  async function withSources({ primary, fallback, fallbackConfigured = true }, fn) {
+    const asked = { primary: 0, fallback: 0 };
+    const realSerper = productSource.PROVIDERS.serper;
+    const savedSource = process.env.PRODUCT_SOURCE;
+    productSource.registerProvider({ name: 'fallback-test-primary', configured: () => true,
+      search: async () => { asked.primary += 1; return primary(); } });
+    productSource.registerProvider({ name: 'serper', configured: () => fallbackConfigured,
+      search: async () => { asked.fallback += 1; return fallback(); } });
+    process.env.PRODUCT_SOURCE = 'fallback-test-primary';
+    try {
+      await fn(asked, productSource.getProvider());
+    } finally {
+      productSource.PROVIDERS.serper = realSerper;
+      if (savedSource === undefined) delete process.env.PRODUCT_SOURCE; else process.env.PRODUCT_SOURCE = savedSource;
+    }
+  }
+  const stats = () => cache.counters();
+
+  await testAsync('a primary out of searches falls back to Serper, and the answer says so', async () => {
+    await withSources({
+      primary: () => { throw new Error(QUOTA); },
+      /* the fallback's records meet the same gate: the linkless one is dropped */
+      fallback: () => [listing('Green Oversized Hoodie', 1), { title: 'Hoodie, Google card only', price: 40, imageUrl: 'https://shop.example.com/img/2.jpg', retailer: 'Example' }]
+    }, async (asked, primary) => {
+      const found = await searchWithFallback(primary, { garments: ['hoodie'], keywords: ['hoodie'] }, 12, stats());
+      assert.strictEqual(found.provider, 'serper');
+      assert.deepStrictEqual({ provider: found.fellBackFrom.provider, quota: /429/.test(found.fellBackFrom.reason) }, { provider: 'fallback-test-primary', quota: true });
+      assert.deepStrictEqual(found.products.map((one) => one.name), ['Green Oversized Hoodie']);
+      assert.ok(Object.values(found.rejected).reduce((a, b) => a + b, 0) >= 1, 'the fallback’s linkless record was not put to the gate');
+      assert.deepStrictEqual(asked, { primary: 1, fallback: 1 });
+    });
+  });
+
+  await testAsync('a primary that answers is never replaced', async () => {
+    await withSources({ primary: () => [listing('Green Oversized Hoodie', 3)], fallback: () => [listing('Other Hoodie', 4)] }, async (asked, primary) => {
+      const found = await searchWithFallback(primary, { keywords: ['green', 'hoodie', 'answers'] }, 12, stats());
+      assert.strictEqual(found.provider, 'fallback-test-primary');
+      assert.strictEqual(found.fellBackFrom, null);
+      assert.deepStrictEqual(asked, { primary: 1, fallback: 0 });
+    });
+  });
+
+  await testAsync('any other failure is thrown, not handed to someone else', async () => {
+    await withSources({ primary: () => { throw new Error('SerpApi responded 500: boom'); }, fallback: () => [listing('Hoodie', 5)] }, async (asked, primary) => {
+      await assert.rejects(() => searchWithFallback(primary, { keywords: ['hoodie', 'fivehundred'] }, 12, stats()), /500/);
+      assert.deepStrictEqual(asked, { primary: 1, fallback: 0 });
+    });
+  });
+
+  await testAsync('with no Serper key there is nothing to fall back to, and the refusal stands', async () => {
+    await withSources({ primary: () => { throw new Error(QUOTA); }, fallback: () => [listing('Hoodie', 6)], fallbackConfigured: false }, async (asked, primary) => {
+      await assert.rejects(() => searchWithFallback(primary, { keywords: ['hoodie', 'nokey'] }, 12, stats()), /429/);
+      assert.deepStrictEqual(asked, { primary: 1, fallback: 0 });
+    });
+  });
+
+  await testAsync('/api/search answers from the fallback, and names it as the source', async () => {
+    await withSources({ primary: () => { throw new Error(QUOTA); }, fallback: () => [listing('Green Oversized Hoodie', 7)] }, async () => {
+      const handler = require('../api/search');
+      const res = { statusCode: null, body: null, headers: {} };
+      res.setHeader = (k, v) => { res.headers[k] = v; };
+      res.status = (code) => { res.statusCode = code; return res; };
+      res.json = (payload) => { res.body = payload; return res; };
+      res.end = () => res;
+      await handler({ method: 'POST', headers: {}, body: { intent: { garments: ['hoodie'], keywords: ['hoodie', 'handler'] }, limit: 12 }, on: () => {} }, res);
+      assert.strictEqual(res.statusCode, 200, JSON.stringify(res.body));
+      assert.strictEqual(res.body.source, 'serper');
+      assert.deepStrictEqual(res.body.products.map((one) => one.name), ['Green Oversized Hoodie']);
+    });
+  });
+
+  test('discovery and the live search fall back on exactly the same rule', () => {
+    const extractor = require('./fetch-catalog-images.js');
+    for (const said of [QUOTA, 'Serper responded 429', 'quota exceeded', 'rate limit reached', 'SerpApi responded 500: boom', 'fetch failed', 'SERPAPI_API_KEY is not set']) {
+      assert.strictEqual(extractor.outOfSearches(new Error(said)), productSource.outOfSearches(new Error(said)), said);
+    }
+  });
+
+  await testAsync('the live benchmark reports the provider that answered, and when it was the fallback', async () => {
+    const saved = { key: process.env.OPENAI_API_KEY, ai: process.env.AI_PROVIDER };
+    delete process.env.OPENAI_API_KEY;
+    delete process.env.AI_PROVIDER;
+    try {
+      await withSources({ primary: () => { throw new Error(QUOTA); }, fallback: () => [listing('Green Oversized Hoodie', 8)] }, async () => {
+        const out = await require('./bench-live').run({ max: 12 });
+        const hoodie = out.results.find((r) => r.id === 'atlas-supply-oversized-hoodie');
+        assert.strictEqual(hoodie.providerFailure, null);
+        assert.strictEqual(hoodie.provider, 'serper');
+        assert.strictEqual(hoodie.usedFallback, true);
+        assert.strictEqual(hoodie.fellBackFrom.provider, 'fallback-test-primary');
+        assert.strictEqual(hoodie.garmentRank, 1);
+        assert.deepStrictEqual(out.summary.answeredBy, { 'serper (fallback)': 12 });
+        assert.deepStrictEqual(out.sources.map((one) => [one.name, one.role, one.configured, one.inChain]),
+          [['fallback-test-primary', 'primary', true, true], ['serper', 'fallback', true, true]]);
+      });
+    } finally {
+      if (saved.key !== undefined) process.env.OPENAI_API_KEY = saved.key;
+      if (saved.ai !== undefined) process.env.AI_PROVIDER = saved.ai;
+    }
+  });
+
   console.log(`\n${passed} passed, ${failures.length} failed\n`);
   if (failures.length) process.exitCode = 1;
 })();
