@@ -3782,6 +3782,10 @@ function listOf(set) {
   return [...set].join('/');
 }
 
+/* what a pattern shop, a tutorial or a kit calls itself. Not a bare
+   "pattern": a floral pattern dress is a dress. */
+const NOT_THE_GARMENT = /\b(knitting|crochet|sewing|dressmaking|quilting)\s+(patterns?|kits?|tutorials?|charts?)\b|\bpatterns?\s+(pdf|download|booklet|leaflet|book)\b|\b(pdf|digital|printable|downloadable|free)\s+(knitting\s+|sewing\s+|crochet\s+)?patterns?\b|\bpatterns?\s+by\b|\btutorials?\b|\bhow\s+to\s+(knit|sew|crochet|make)\b|\b(yarn|knitting|diy)\s+kits?\b|\bravelry\b/i;
+
 /* ---- the gate itself ---- */
 
 /* `row` is a catalogue row; `listing` is what the source offered, or the
@@ -3808,6 +3812,11 @@ function semanticMatch(row, listing) {
   const agreed = [];
 
   if (!title) return refuse('the listing carries no title to read, so what it sells cannot be checked', 'unreadable');
+  /* a listing that sells the MAKING of a garment — a knitting or sewing
+     pattern, a kit, a tutorial — is not the garment, however well its
+     name describes one */
+  const making = NOT_THE_GARMENT.exec(title);
+  if (making) return refuse(`"${title}" sells ${making[0].trim().toLowerCase()} — how to make a garment, not the garment`);
   if (!wanted.type) return refuse(`the row's own name — "${wanted.text}" — names no garment this can read, so nothing can be checked against it`, 'unreadable');
   if (!offered.type) return refuse(`"${title}" names no garment this can read`, 'unreadable');
 
@@ -4278,12 +4287,14 @@ function queryForms(row) {
     const us = AMERICAN[word.toLowerCase()];
     return us ? (/^[A-Z]/.test(word) ? us[0].toUpperCase() + us.slice(1) : us) : word;
   }).join(' ');
-  if (american.toLowerCase() !== name.toLowerCase()) add('its name, in American spelling', american);
+  /* the garment as shops name it goes first: "Color Block sweater" is
+     what a retailer titles, "Colour Block Knit" is what a pattern does */
   const garment = readGarment(name, { fallback: row.category }).type;
   if (garment && head && !words.some((word) => word.toLowerCase().replace(/s$/, '') === garment)
       && readGarment(head).type === garment) {
     add(`its garment, as a ${garment}`, [...american.split(/\s+/).slice(0, -1), garment].join(' '));
   }
+  if (american.toLowerCase() !== name.toLowerCase()) add('its name, in American spelling', american);
   if (head && !/s$/i.test(head)) add('its name, pluralised', [...words.slice(0, -1), `${head}s`].join(' '));
 
   const category = String(row.category || '').trim();
@@ -4382,9 +4393,9 @@ function providerChain(source) {
 
    The sort is stable, so within a tier the source's own ranking holds. */
 const NOT_A_SHOP = /(^|\.)(reddit\.com|redd\.it|pinterest\.[a-z.]+|pin\.it|youtube\.com|youtu\.be|tiktok\.com|instagram\.com|facebook\.com|fb\.com|twitter\.com|x\.com|threads\.net|quora\.com|tumblr\.com|linkedin\.com|wikipedia\.org|vimeo\.com|snapchat\.com)$/i;
-const EDITORIAL_HOST = /(^|\.)(vogue\.[a-z.]+|gq\.com|esquire\.com|harpersbazaar\.com|elle\.com|whowhatwear\.com|refinery29\.com|nytimes\.com|businessinsider\.com|insider\.com|buzzfeed\.com|cosmopolitan\.com|glamour\.com|instyle\.com|thecut\.com|nymag\.com|theguardian\.com|forbes\.com|allure\.com|popsugar\.com|marieclaire\.com|byrdie\.com|wikihow\.com|medium\.com|substack\.com|thestrategist\.co\.uk|goodhousekeeping\.com|realsimple\.com|people\.com|today\.com|usatoday\.com)$/i;
-const EDITORIAL_SEGMENT = /^(blogs?|articles?|news|journal|stories|story|editorial|editorials|magazine|mag|guides?|style-guide|lookbook|lookbooks|inspiration|features?|the-edit|trends?|forum|forums|community|reviews?|wiki|advice|how-to|best|gift-guide|gift-guides)$/i;
-const EDITORIAL_TITLE = /\b(best|top \d+|\d+ (best|ways|ideas|outfits)|how to|guide|review|reviews|vs\.?|versus|what to wear|outfit ideas|ideas|trends?|lookbook|reddit|pinterest|youtube|haul|blog)\b/i;
+const EDITORIAL_HOST = /(^|\.)(vogue\.[a-z.]+|gq\.com|esquire\.com|harpersbazaar\.com|elle\.com|whowhatwear\.com|refinery29\.com|nytimes\.com|businessinsider\.com|insider\.com|buzzfeed\.com|cosmopolitan\.com|glamour\.com|instyle\.com|thecut\.com|nymag\.com|theguardian\.com|forbes\.com|allure\.com|popsugar\.com|marieclaire\.com|byrdie\.com|wikihow\.com|medium\.com|substack\.com|thestrategist\.co\.uk|goodhousekeeping\.com|realsimple\.com|people\.com|today\.com|usatoday\.com|ravelry\.com)$/i;
+const EDITORIAL_SEGMENT = /^(blogs?|articles?|news|journal|stories|story|editorial|editorials|magazine|mag|guides?|style-guide|lookbook|lookbooks|inspiration|features?|the-edit|trends?|forum|forums|community|reviews?|wiki|advice|how-to|best|gift-guide|gift-guides|tutorials?|patterns|free-patterns?|knitting-patterns?|sewing-patterns?|crochet-patterns?)$/i;
+const EDITORIAL_TITLE = /\b(best|top \d+|\d+ (best|ways|ideas|outfits)|how to|guide|review|reviews|vs\.?|versus|what to wear|outfit ideas|ideas|trends?|lookbook|reddit|pinterest|youtube|haul|blog|tutorials?|(knitting|sewing|crochet) patterns?|patterns? by)\b/i;
 const LISTING_SEGMENT = /^(collections?|category|categories|cat|c|browse|catalog|catalogue|department|dept|departments|shop-all|all|plp|search|s|sale|clearance|new-arrivals|new-in|whats-new|bestsellers|best-sellers|brands?|designers?)$/i;
 const LISTING_PARAMS = /^(q|query|search|keyword|keywords|searchterm|cgid|category|categoryid|cat|dept|department|collection|sort|srule|filter)$/i;
 const LISTING_TITLE = /\b(shop (all|now|the|our|women|men)|collection|new arrivals|results for|search results|all products|for (women|men)\b.*\|)|\(\d+\)|\b\d+ (items|products|results|styles)\b/i;
@@ -5016,6 +5027,19 @@ function fromNoShop(record) {
   }
 }
 
+/* a result counts as found only when the semantic gate reads the row's
+   garment in its title: a page of patterns, tutorials or other garments
+   does not end the search. It decides nothing about the result itself —
+   every one is still ranked and put to every gate. */
+function titleReads(row, record) {
+  try {
+    const title = record && typeof record === 'object' ? (record.title || record.name || '') : '';
+    return readTitleSafely(row, { title }).ok;
+  } catch (err) {
+    return false;
+  }
+}
+
 function fromEditorial(record) {
   try {
     const link = record && typeof record === 'object' ? (record.productUrl || record.link || record.url) : null;
@@ -5070,7 +5094,7 @@ async function listingsFor(row, limit, within) {
     /* an article about the garment is not something found: it is ranked
        last and never offers a product, so a first page of blog posts
        does not end the search before the next wording is asked */
-    const shortlisted = raw.filter((record) => !fromNoShop(record) && !fromEditorial(record)).length;
+    const shortlisted = raw.filter((record) => !fromNoShop(record) && !fromEditorial(record) && titleReads(row, record)).length;
     if (shortlisted >= wanted) break;
     if (shortlisted > 0 && attempts.length >= 2) break;
     /* and the ladder stops where the row's clock does: another query

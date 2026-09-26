@@ -5722,7 +5722,7 @@ ${opts.ld === false ? '' : `<script type="application/ld+json">${JSON.stringify(
 
   await testAsync('a garment is searched in the words shops use for it, and a page of articles does not end the search', async () => {
     const forms = extractor.queryForms(KNIT_ROW).map((one) => one.query);
-    assert.deepStrictEqual(forms.slice(0, 3), ['Colour Block Knit', 'Color Block Knit', 'Color Block sweater']);
+    assert.deepStrictEqual(forms.slice(0, 3), ['Colour Block Knit', 'Color Block sweater', 'Color Block Knit']);
     /* a row already worded as shops word it gains nothing */
     assert.deepStrictEqual(extractor.queryForms(COAT_ROW).map((one) => one.query).slice(0, 2), ['Tailored Wool Coat', 'Tailored Wool Coats']);
 
@@ -5736,13 +5736,13 @@ ${opts.ld === false ? '' : `<script type="application/ld+json">${JSON.stringify(
         if (query === 'Colour Block Knit') {
           return Array.from({ length: 10 }, (_, i) => ({ title: `How to knit a colour block jumper, part ${i}`, productUrl: `https://yarn.example.com/blog/colour-block-${i}` }));
         }
-        if (query === 'Color Block Knit') return [{ title: 'Color Block Sweater', productUrl: 'https://shop.example.com/products/color-block-sweater' }];
+        if (query === 'Color Block sweater') return [{ title: 'Color Block Sweater', productUrl: 'https://shop.example.com/products/color-block-sweater' }];
         return [];
       }
     });
     process.env.PRODUCT_SOURCE = 'fake-source';
     const found = await extractor.listingsFor(KNIT_ROW, 8);
-    assert.deepStrictEqual(asked.slice(0, 2), ['Colour Block Knit', 'Color Block Knit'], 'the blog posts ended the search');
+    assert.deepStrictEqual(asked.slice(0, 2), ['Colour Block Knit', 'Color Block sweater'], 'the blog posts ended the search');
     assert.strictEqual(found.products[0].productUrl, 'https://shop.example.com/products/color-block-sweater');
   });
 
@@ -5838,6 +5838,89 @@ ${shopify === false ? '' : '<script src="https://cdn.shopify.com/s/trekkie.js"><
       assert.ok(!plain.asked.some((u) => u.includes('products.json')), 'a store with no sign of Shopify was asked for a Shopify list');
     } finally {
       plain.server.close();
+    }
+  });
+
+  /* ---------------------------------------------------------
+     Colour Block Knit: a pattern is not a garment
+
+     "Colour Block Knit" is what a knitting pattern is called, and the
+     live results were patterns, tutorials and blog posts. The semantic
+     gate read "Colour Block Jumper Knitting Pattern" as a full match for
+     the row, pattern pages ranked above the retailers' category pages,
+     and a page of them ended the search before the row was asked the
+     way a shop words it.
+     --------------------------------------------------------- */
+  test('a knitting pattern, a tutorial or a kit is not the garment it describes', () => {
+    for (const title of [
+      'Colour Block Jumper Knitting Pattern | LoveCrafts',
+      'Colour Block Sweater Knitting Pattern PDF - Etsy',
+      'Ravelry: Colour Block Sweater pattern by Jane Doe',
+      'Color Block Sweater | Purl Soho Tutorial',
+      'How to Knit a Colour Block Sweater',
+      'Colour Block Sweater Yarn Kit',
+      'Colour Block Sweater — Digital Pattern'
+    ]) {
+      const verdict = extractor.semanticMatch(KNIT_ROW, { title });
+      assert.strictEqual(verdict.ok, false, title);
+      assert.match(verdict.why, /how to make a garment, not the garment/, title);
+    }
+    /* a patterned garment is still a garment */
+    assert.ok(extractor.semanticMatch(KNIT_ROW, { title: 'Colorblock Crewneck Sweater' }).ok);
+    assert.ok(extractor.semanticMatch(KNIT_ROW, { title: 'Cable Knit Pattern Sweater' }).ok);
+    assert.ok(extractor.semanticMatch({ id: 'x', name: 'Floral Midi Dress', category: 'dress' }, { title: 'Floral Pattern Midi Dress' }).ok);
+  });
+
+  test('pattern libraries and tutorials rank as articles, below a retailer’s category page', () => {
+    for (const [url, title] of [
+      ['https://www.ravelry.com/patterns/library/colour-block-sweater', 'Colour Block Sweater'],
+      ['https://yarn.example.com/patterns/colour-block-sweater', 'Colour Block Sweater'],
+      ['https://yarn.example.com/tutorials/colour-block-sweater', 'Colour Block Sweater'],
+      ['https://www.purlsoho.com/create/color-block-sweater/', 'Color Block Sweater | Purl Soho Tutorial']
+    ]) assert.strictEqual(extractor.listingShape(url, title).kind, 'editorial', url);
+    assert.strictEqual(extractor.listingShape('https://www.jcrew.com/p/womens/sweaters/colorblock-crewneck-sweater/BX123', 'Colorblock crewneck sweater').kind, 'product');
+    const { ranked } = extractor.rankListings([
+      { productUrl: 'https://www.ravelry.com/patterns/library/colour-block-sweater', title: 'Colour Block Sweater' },
+      { productUrl: 'https://www.jcrew.com/c/womens/categories/clothing/sweaters', title: 'Women’s Sweaters | J.Crew' }
+    ]);
+    assert.deepStrictEqual(ranked.map((one) => one.shape.kind), ['listing', 'editorial']);
+  });
+
+  await testAsync('a page of patterns does not end the search, and a pattern with a provable photo never beats the garment', async () => {
+    const retailer = await describingRetailer({
+      610001: { name: 'Colour Block Sweater Knitting Pattern PDF', description: 'A knitting pattern.' },
+      610002: { name: 'Colour Block Jumper Knitting Pattern', description: 'A knitting pattern.' },
+      610003: { name: 'Color Block Crewneck Sweater', description: 'A color block crewneck sweater.' }
+    });
+    const port = retailer.address().port;
+    const asked = [];
+    productSource.registerProvider({
+      name: 'fake-source',
+      configured: () => true,
+      search: async (intent) => {
+        const query = intent.keywords[0];
+        asked.push(query);
+        /* the row's own name, and its retail wording: pattern shops, at
+           product-shaped addresses, with photos their pages can prove */
+        if (query === 'Colour Block Knit') return [{ title: 'Colour Block Sweater Knitting Pattern PDF', productUrl: listing(port, '610001') }];
+        if (query === 'Color Block sweater') return [{ title: 'Colour Block Jumper Knitting Pattern', productUrl: listing(port, '610002') }];
+        if (query === 'Color Block Knit') return [{ title: 'Color Block Crewneck Sweater', productUrl: listing(port, '610003') }];
+        return [];
+      }
+    });
+    process.env.PRODUCT_SOURCE = 'fake-source';
+    try {
+      const result = await extractor.discoverRow(KNIT_ROW, new Map(), 8);
+      assert.deepStrictEqual(asked.slice(0, 3), ['Colour Block Knit', 'Color Block sweater', 'Color Block Knit'], 'two pages of patterns ended the search');
+      assert.strictEqual(result.verdict, 'VERIFIED', result.why);
+      assert.strictEqual(result.proposal.productUrl, listing(port, '610003'), 'a knitting pattern was written as the garment');
+      for (const code of ['610001', '610002']) {
+        const pattern = result.tried.find((one) => one.url === listing(port, code));
+        assert.strictEqual(pattern.semantic.ok, false);
+        assert.ok(!retailer.hits.some((hit) => hit.includes(code)), `the pattern ${code} was read`);
+      }
+    } finally {
+      retailer.close();
     }
   });
 
