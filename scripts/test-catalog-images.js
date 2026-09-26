@@ -1625,6 +1625,34 @@ function walledRetailer() {
     assert.strictEqual(asked('green oversized hoodie', 'Short Jacket').kind, 'contradiction');
   });
 
+  test('a track top is a top and a track jacket a jacket: "track" moves neither', () => {
+    /* the live wrong-above case: refused, as a different garment */
+    const adidas = "adidas Women's Originals Superstar Cropped Track Top";
+    const refused = asked('cropped track jacket', adidas);
+    assert.strictEqual(refused.ok, false);
+    assert.strictEqual(refused.kind, 'contradiction', refused.why);
+    assert.match(refused.why, /outerwear against top/);
+    for (const title of ['Track Top', 'Superstar Track Top', 'Cropped Track Top', 'Quarter Zip Running Top', 'Training Top']) {
+      const read = extractor.readGarment(title, {});
+      assert.deepStrictEqual([read.type, read.family], ['top', 'top'], title);
+      assert.strictEqual(asked('track jacket', title).kind, 'contradiction', title);
+    }
+    /* an explicit track jacket answers a track jacket, cropped or not */
+    for (const [query, title] of [['track jacket', 'Superstar Track Jacket'], ['cropped track jacket', 'Cropped Track Jacket'],
+      ['cropped track jacket', 'Cropped Track Jacket - White']]) {
+      const verdict = asked(query, title);
+      assert.strictEqual(verdict.kind, 'match', `${title}: ${verdict.why}`);
+    }
+    /* and a track top answers a track top */
+    assert.strictEqual(asked('track top', 'Superstar Track Top').kind, 'match');
+    assert.strictEqual(asked('track top', 'Superstar Track Jacket').kind, 'contradiction');
+    /* an ordinary cropped jacket is read as before */
+    assert.strictEqual(asked('cropped jacket', 'Cropped Denim Jacket').kind, 'match');
+    assert.strictEqual(asked('cropped jacket', 'Cropped Track Jacket').kind, 'match');
+    assert.strictEqual(asked('cropped jacket', 'Cropped Track Top').kind, 'contradiction');
+    assert.strictEqual(asked('cropped jacket', 'Longline Denim Jacket').kind, 'contradiction');
+  });
+
   test('a puffer jacket or coat is a puffer, not the jacket or coat after it', () => {
     /* the way shops title the garment: "jacket" and "coat" end the
        title, and read as the head noun they refused every one */
