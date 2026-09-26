@@ -186,6 +186,15 @@ async function searchWithFallback(primary, intent, limit, stats, deadline) {
       });
     } catch (err) {
       const said = err && err.message ? String(err.message).split('\n')[0] : String(err);
+      /* When the fallback fails too, its error is what the search answers
+         with — unchanged, so the handler and every rule reading it see
+         what they always saw. The primary's refusal rides along on it as
+         a property, so a log line or a benchmark can say why the primary
+         was passed over instead of showing only the fallback's error.
+         Adapters redact their keys out of every message before throwing. */
+      if (refused && err && typeof err === 'object' && !err.fellBackFrom) {
+        try { err.fellBackFrom = refused; } catch (ignored) { /* a frozen error is reported as it came */ }
+      }
       if (!outOfSearches(err) || at + 1 >= chain.length) throw err;
       refused = { provider: provider.name, reason: said.slice(0, 200) };
       console.warn('Product source out of searches; falling back.', provider.name, '->', chain[at + 1].name);
@@ -420,7 +429,8 @@ module.exports = async function handler(req, res) {
        search produced nothing usable at all, and a search that came back
        with something and then ran short of time is answered below with
        what it did verify. */
-    console.error('Product source failed', provider.name, `${Date.now() - startedAt}ms`, err && err.message);
+    console.error('Product source failed', provider.name, `${Date.now() - startedAt}ms`, err && err.message,
+      err && err.fellBackFrom ? `(after ${err.fellBackFrom.provider} refused: ${err.fellBackFrom.reason})` : '');
     return res.status(502).json({ error: 'The product source is unavailable right now.', source: provider.name });
   }
 

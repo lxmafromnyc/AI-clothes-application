@@ -365,6 +365,36 @@ async function testAsync(name, fn) {
     });
   });
 
+  await testAsync('when the fallback fails too, its error stands and still says why the primary was passed over', async () => {
+    const SERPER_SPENT = 'Serper responded 400: {"message":"Not enough credits","statusCode":400}';
+    await withSources({ primary: () => { throw new Error(QUOTA); }, fallback: () => { throw new Error(SERPER_SPENT); } }, async (asked, primary) => {
+      let caught = null;
+      try { await searchWithFallback(primary, { keywords: ['hoodie', 'bothspent'] }, 12, stats()); } catch (err) { caught = err; }
+      assert.ok(caught, 'the search did not fail');
+      /* the message is exactly the fallback's, as before */
+      assert.strictEqual(caught.message, SERPER_SPENT);
+      assert.deepStrictEqual(caught.fellBackFrom, { provider: 'fallback-test-primary', reason: QUOTA });
+      assert.deepStrictEqual(asked, { primary: 1, fallback: 1 });
+    });
+  });
+
+  test('a provider error is sorted by what it says, not by its status alone', () => {
+    const kinds = [
+      ['SerpApi responded 429 (SerpApi search allowance exhausted): {"error":"Your account has run out of searches."}', 'credits-exhausted'],
+      ['SerpApi error: Your account has run out of searches.', 'credits-exhausted'],
+      ['SerpApi responded 429 (SerpApi search allowance exhausted): {"error":"You have exceeded the hourly throughput limit."}', 'rate-limited'],
+      ['SerpApi responded 429 (SerpApi search allowance exhausted): ', 'rate-limited-or-credits'],
+      ['SerpApi responded 401: {"error":"Invalid API key. Your API key should be here: https://serpapi.com/manage-api-key"}', 'invalid-key'],
+      ['SerpApi responded 403: Host not in allowlist: serpapi.com.', 'blocked-by-network'],
+      ['Serper responded 400: {"message":"Not enough credits","statusCode":400}', 'credits-exhausted'],
+      ['SerpApi did not answer within 4000ms (timed out)', 'timeout'],
+      ['SerpApi responded 400: {"error":"Unsupported `foo` engine."}', 'bad-request'],
+      ['SerpApi responded 503: ', 'server-error'],
+      ['SERPAPI_API_KEY is not set', 'not-configured']
+    ];
+    assert.deepStrictEqual(kinds.map(([said]) => productSource.failureKind(new Error(said))), kinds.map(([, kind]) => kind));
+  });
+
   await testAsync('/api/search answers from the fallback, and names it as the source', async () => {
     await withSources({ primary: () => { throw new Error(QUOTA); }, fallback: () => [listing('Green Oversized Hoodie', 7)] }, async () => {
       const handler = require('../api/search');
@@ -399,6 +429,9 @@ async function testAsync(name, fn) {
         assert.strictEqual(hoodie.provider, 'serper');
         assert.strictEqual(hoodie.usedFallback, true);
         assert.strictEqual(hoodie.fellBackFrom.provider, 'fallback-test-primary');
+        assert.deepStrictEqual({ provider: hoodie.primaryFailure.provider, kind: hoodie.primaryFailure.kind }, { provider: 'fallback-test-primary', kind: 'credits-exhausted' });
+        assert.deepStrictEqual(Object.keys(out.summary.primaryProviderFailures), ['credits-exhausted']);
+        assert.strictEqual(out.summary.primaryProviderFailures['credits-exhausted'].queries, 12);
         assert.strictEqual(hoodie.garmentRank, 1);
         assert.deepStrictEqual(out.summary.answeredBy, { 'serper (fallback)': 12 });
         assert.deepStrictEqual(out.sources.map((one) => [one.name, one.role, one.configured, one.inChain]),

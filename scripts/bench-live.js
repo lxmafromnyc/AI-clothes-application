@@ -46,7 +46,7 @@ const REPO = path.join(__dirname, '..');
 const { QUERIES, HELD_OUT } = require('./bench-search.js');
 const { interpretQuery } = require('../api/interpret');
 const { shapeIntent, searchWithFallback, requestBudget, DEFAULT_LIMIT } = require('../api/search');
-const { getProvider, providerChain } = require('../api/_providers/product-source');
+const { getProvider, providerChain, failureKind } = require('../api/_providers/product-source');
 const { queryFrom } = require('../api/_providers/query');
 const cache = require('../api/_cache');
 const interpreters = require('../api/_interpreters');
@@ -125,10 +125,16 @@ async function measure(id, query, category, env, provider, limit) {
   const started = Date.now();
   let found = null;
   let failure = null;
+  /* why the primary source was passed over, when it was: carried on the
+     answer when the fallback answered, and on the error when the
+     fallback failed too — whose own message is all `failure` shows */
+  let passedOver = null;
   try {
     found = await searchWithFallback(provider, intent, limit, cache.counters(), Date.now() + requestBudget());
+    passedOver = found.fellBackFrom || null;
   } catch (err) {
     failure = String(err && err.message ? err.message : err).split('\n')[0].slice(0, 200);
+    passedOver = err && err.fellBackFrom ? err.fellBackFrom : null;
   }
   const searchMs = Date.now() - started;
   const products = found ? found.products.slice(0, limit) : [];
@@ -159,6 +165,10 @@ async function measure(id, query, category, env, provider, limit) {
        query, and how many of the top three results carry it */
     survived: descriptors.map((one) => ({ descriptor: one, inQuery: says(asked, one), inTop3: verdicts.slice(0, 3).filter((v) => says(v.name, one)).length })),
     providerFailure: failure,
+    providerFailureKind: failure ? failureKind(failure) : null,
+    /* the primary source's own error, when the search went to the
+       fallback — whether or not the fallback then answered */
+    primaryFailure: passedOver ? { provider: passedOver.provider, kind: failureKind(passedOver.reason), reason: passedOver.reason } : null,
     /* the provider that answered, and whether it was the fallback */
     provider: found ? found.provider : null,
     usedFallback: Boolean(found && found.fellBackFrom),
@@ -313,6 +323,17 @@ function discoveryEfficiency(results) {
   };
 }
 
+function failureTally(failures) {
+  const tally = {};
+  for (const one of failures) {
+    if (!one) continue;
+    const group = tally[one.kind] || (tally[one.kind] = { queries: 0, providers: [], example: one.reason });
+    group.queries += 1;
+    if (one.provider && !group.providers.includes(one.provider)) group.providers.push(one.provider);
+  }
+  return tally;
+}
+
 function summarise(results) {
   const n = results.length || 1;
   const pct = (count) => `${count}/${results.length} (${Math.round((count / n) * 100)}%)`;
@@ -426,6 +447,10 @@ function summarise(results) {
       }
       return tally;
     })(),
+    /* why the primary source was passed over, by kind, with one example
+       of its own words — and the same for the errors queries ended on */
+    primaryProviderFailures: failureTally(results.map((r) => r.primaryFailure)),
+    providerFailuresByKind: failureTally(results.map((r) => (r.providerFailure ? { provider: null, kind: r.providerFailureKind, reason: r.providerFailure } : null))),
     answeredBy: results.reduce((tally, r) => { const who = r.provider ? `${r.provider}${r.usedFallback ? ' (fallback)' : ' (primary)'}` : 'none'; tally[who] = (tally[who] || 0) + 1; return tally; }, {}),
     rejectedByGate: results.reduce((tally, r) => { for (const [why, n] of Object.entries(r.rejected || {})) tally[why] = (tally[why] || 0) + n; return tally; }, {}),
     interpreterFailures: results.filter((r) => r.interpreterFailure && r.interpreterFailure !== 'not-configured').length,
@@ -481,7 +506,7 @@ if (require.main === module) {
   const line = (r) => `${String(r.garmentRank || '—').padStart(2)} ${String(r.matchRank || '—').padStart(2)}  ${r.query.padEnd(38)} `
     + `${String(r.returned).padStart(2)} shown  ${String(r.searchMs).padStart(5)}ms  [${r.interpreter}${r.interpreterFailure ? `: ${r.interpreterFailure}` : ''}] `
     + `${r.provider ? `via ${r.provider}${r.usedFallback ? ' (fallback)' : ''} ` : ''}`
-    + `asked "${r.asked}"${r.providerFailure ? `  PROVIDER FAILED: ${r.providerFailure}` : ''}${r.wrongAbove ? `  ${r.wrongAbove} wrong above` : ''}`
+    + `asked "${r.asked}"${r.providerFailure ? `  PROVIDER FAILED: ${r.providerFailure}` : ''}${r.primaryFailure ? `  [${r.primaryFailure.provider} passed over, ${r.primaryFailure.kind}: ${r.primaryFailure.reason}]` : ''}${r.wrongAbove ? `  ${r.wrongAbove} wrong above` : ''}`
     + `${r.duplicates ? `  ${r.duplicates} duplicate` : ''}${r.survived.some((d) => !d.inQuery) ? `  LOST: ${r.survived.filter((d) => !d.inQuery).map((d) => d.descriptor).join(', ')}` : ''}`;
   if (!json) console.log('\ngarment-rank / full-match-rank, query, results, search latency, interpreter, what the provider was asked\n');
   const textOf = (flag) => { const at = args.indexOf(flag); return at >= 0 ? String(args[at + 1] || '') : ''; };
