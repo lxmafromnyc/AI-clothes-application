@@ -151,7 +151,9 @@ function hostOf(url) {
    one whose sku the price gate matched, carrying that amount. */
 function pricedRecord(candidates, decided, images, proven) {
   const sku = decided.identity && decided.identity.sku ? String(decided.identity.sku).toLowerCase() : null;
-  const own = proven && proven.record ? new Set([proven.record].concat(proven.members || [])) : null;
+  /* the page's named record, only when it — not a matched sku — is what
+     tied the price to this listing */
+  const own = !sku && proven && proven.record ? new Set([proven.record].concat(proven.members || [])) : null;
   for (const candidate of candidates) {
     if (!candidate.node || candidate.amount !== decided.price) continue;
     if (own && !own.has(images.recordFingerprint(candidate.node)) && !(candidate.group && own.has(images.recordFingerprint(candidate.group)))) continue;
@@ -198,6 +200,61 @@ function precheck(record) {
   const shape = images.listingShape(productUrl, '');
   if (NOT_A_PRODUCT_PAGE[shape.kind]) return { outcome: NOT_A_PRODUCT_PAGE[shape.kind], why: shape.why };
   return null;
+}
+
+/* Why a page that was read proved no price, as one of the four answers a
+   person investigating it would reach — read off the price reader's own
+   refusals and off what the served page carries. It decides nothing: it
+   is reported, so a benchmark run says which of these it was without
+   anyone opening the page.
+
+     1  no usable price     nothing in the served markup the reader
+                            could ever take: no priced product record, a
+                            record with no offers, or a price only in the
+                            page's meta tags, which describe the PAGE
+     2  reader gap          the page carries a price the reader does not
+                            read: JSON-LD it could not parse, microdata,
+                            or a framework's embedded state
+     3  refused, rightly    two or more figures claim to be the price, or
+                            only a range is published
+     4  identity / variant  a priced record is there, but it names another
+                            product, or nothing ties it to this listing, or
+                            its figure is not marked as the amount charged */
+const PRICE_CLASSES = {
+  'no-price-in-served-markup': '1-no-usable-price',
+  'record-publishes-no-offers': '1-no-usable-price',
+  'price-only-in-page-metadata': '1-no-usable-price',
+  'json-ld-not-readable': '2-reader-gap',
+  'microdata-price-not-read': '2-reader-gap',
+  'price-only-in-embedded-data': '2-reader-gap',
+  'several-prices': '3-refused-rightly',
+  'range-only': '3-refused-rightly',
+  'record-names-another-product': '4-identity-or-variant',
+  'record-not-tied-to-listing': '4-identity-or-variant',
+  'not-the-amount-charged': '4-identity-or-variant'
+};
+
+function priceDiagnosis(html, read, decided, images) {
+  if (decided.ambiguous) return 'several-prices';
+  const refusals = decided.refusals || [];
+  const structured = read.candidates.filter((one) => one.node);
+  if (structured.length) {
+    if (structured.every((one) => one.kind === 'range')) return 'range-only';
+    const identity = refusals.filter((one) => one.gate === 'this' && /^json-ld/.test(String(one.from)));
+    if (identity.length) {
+      return identity.some((one) => /names (a different|[^,]*, which is not this listing)/.test(one.why) && !/names no sku/.test(one.why))
+        ? 'record-names-another-product' : 'record-not-tied-to-listing';
+    }
+    return 'not-the-amount-charged';
+  }
+  const page = String(html || '');
+  const blocks = (page.match(/<script[^>]+type=["']application\/ld\+json["']/gi) || []).length;
+  if (blocks && !images.jsonLdNodes(page).length) return 'json-ld-not-readable';
+  if (/itemprop\s*=\s*["']?(price|lowPrice)["'\s>]/i.test(page)) return 'microdata-price-not-read';
+  if (read.empties && read.empties.length) return 'record-publishes-no-offers';
+  if (/["'](price|salePrice|currentPrice|finalPrice|priceValue)["']\s*:\s*["']?\$?\d/i.test(page)) return 'price-only-in-embedded-data';
+  if (read.candidates.some((one) => one.kind === 'meta')) return 'price-only-in-page-metadata';
+  return 'no-price-in-served-markup';
 }
 
 /* the outcomes of a page that was fetched and still proved nothing */
@@ -266,7 +323,14 @@ async function readListing(record, budget) {
      to. */
   let listingUrl = productUrl;
   let proven = null;
-  if (!images.identifiersFrom(productUrl).length) {
+  if (images.identifiersFrom(productUrl).length) {
+    /* A coded listing is priced by its code. Its page is asked only which
+       of its records is the product, for a record that names no
+       identifier at all; a page that cannot say leaves the code to do
+       all the work, exactly as before. */
+    const own = images.pageIdentity(page.html, productUrl, page.url || productUrl, { coded: true });
+    if (own.ok && own.record) proven = own;
+  } else {
     const identity = images.pageIdentity(page.html, productUrl, page.url || productUrl);
     if (!identity.ok) return done('no-identity', identity.why);
     if (identity.url && identity.url !== productUrl) {
@@ -283,12 +347,15 @@ async function readListing(record, budget) {
   const decided = read.candidates.length ? prices.decide(read.candidates, listingUrl, proven) : { refusals: [] };
   if (!decided.price) {
     const first = (decided.refusals || [])[0];
-    return done('no-price', decided.why || (first ? `${first.from}: ${first.why}` : 'the page publishes no price candidate'));
+    const result = done('no-price', decided.why || (first ? `${first.from}: ${first.why}` : 'the page publishes no price candidate'));
+    result.priceCategory = priceDiagnosis(page.html, read, decided, images);
+    return result;
   }
 
   const { node, offer } = pricedRecord(read.candidates, decided, images, proven);
   /* the product the page named, by its own name: a group, not one size */
-  const name = text(proven && proven.name) || text(node && node.name) || title;
+  const byRecord = !(decided.identity && decided.identity.sku);
+  const name = (byRecord && text(proven && proven.name)) || text(node && node.name) || title;
   const retailer = decodeEntities(images.metaContent(page.html, 'og:site_name')) || sellerOf(offer);
   const brand = brandOf(node);
 
@@ -425,6 +492,7 @@ async function readListings(records, options) {
 
   const outcomes = {};
   const reasons = {};
+  const priceCategories = {};
   const ordered = entries.filter((entry) => !entry.tile).concat(
     entries.filter((entry) => entry.tile).sort((a, b) => a.from - b.from || a.seq - b.seq)
   );
@@ -432,6 +500,7 @@ async function readListings(records, options) {
     const result = entry.result || { record: entry.record, outcome: 'not-reached' };
     const outcome = entry.tile ? `tile:${result.outcome}` : result.outcome;
     outcomes[outcome] = (outcomes[outcome] || 0) + 1;
+    if (result.priceCategory) priceCategories[result.priceCategory] = (priceCategories[result.priceCategory] || 0) + 1;
     if (READ_FAILURES.has(result.outcome)) {
       const group = reasons[result.outcome] || (reasons[result.outcome] = {});
       const why = reasonKey(result.why);
@@ -453,13 +522,18 @@ async function readListings(records, options) {
          in its own words, with codes, figures, hosts and URLs taken out
          so the same reason counts as one across listings */
       reasons,
+      /* each no-price page, by which of the four answers it was */
+      priceCategories,
       samples: ordered.map((entry) => entry.final).filter((one) => one && READ_FAILURES.has(one.outcome)).slice(0, 8)
-        .map((one) => ({ host: hostOf(one.record && one.record.productUrl), outcome: one.outcome, why: text(one.why).slice(0, 160) }))
+        .map((one) => Object.assign({ host: hostOf(one.record && one.record.productUrl), outcome: one.outcome, why: text(one.why).slice(0, 160) },
+          one.priceCategory ? { priceCategory: one.priceCategory, priceClass: PRICE_CLASSES[one.priceCategory] } : {}))
     }
   };
 }
 
 module.exports = {
+  priceDiagnosis,
+  PRICE_CLASSES,
   precheck,
   readCategory,
   readTier,

@@ -322,10 +322,31 @@ function jsonLdNodes(html) {
   return out;
 }
 
+/* A JSON-LD block, parsed as it was always parsed first — entity-decoded
+   — and, when that is not JSON, as the page actually sent it, and then
+   with the two faults shops' templates commonly leave in it. A script's
+   text is not HTML, so decoding it can BREAK it: a description saying
+   `30&quot; inseam` becomes a bare quote in the middle of a string, and
+   the whole product record — its price, its sku, its photo — was lost
+   with it. The repairs only ever make broken JSON readable: raw control
+   characters (a newline typed inside a string) become spaces, and a
+   comma before a closing bracket is dropped. Valid JSON is read by the
+   first attempt that parses it, untouched. */
+function parseJsonLd(text) {
+  const raw = String(text === undefined || text === null ? '' : text).trim()
+    .replace(/^<!\[CDATA\[/, '').replace(/\]\]>$/, '').trim();
+  const repaired = (value) => value.replace(/[\u0000-\u001F]+/g, ' ').replace(/,(\s*[}\]])/g, '$1');
+  const decoded = decode(raw).trim();
+  for (const attempt of [decoded, raw, repaired(raw), repaired(decoded)]) {
+    try { return JSON.parse(attempt); } catch (err) { /* the next reading */ }
+  }
+  return undefined;
+}
+
 function parseLdBlock(text) {
   const out = [];
-  let parsed;
-  try { parsed = JSON.parse(decode(text).trim()); } catch (err) { return out; }
+  const parsed = parseJsonLd(text);
+  if (parsed === undefined) return out;
   const stack = [parsed];
   while (stack.length) {
     const node = stack.pop();
@@ -333,6 +354,13 @@ function parseLdBlock(text) {
     if (Array.isArray(node)) { stack.push(...node); continue; }
     out.push(node);
     if (Array.isArray(node['@graph'])) stack.push(...node['@graph']);
+    /* the page's main thing, when the page wraps it: a WebPage or an
+       ItemPage whose mainEntity is the Product. Only an object — an
+       @id reference names something found elsewhere, or nothing. */
+    const main = node.mainEntity;
+    for (const entity of Array.isArray(main) ? main : [main]) {
+      if (entity && typeof entity === 'object') stack.push(entity);
+    }
   }
   return out;
 }
@@ -561,8 +589,14 @@ function variantOf(node, group) {
   return Boolean(node['@id'] && listed.includes(node['@id']));
 }
 
-function pageIdentity(html, productUrl, landedUrl) {
-  if (identifiersFrom(productUrl).length) return { ok: false, why: 'the listing URL names its product itself' };
+/* `options.coded`: the listing's URL DOES name its product, and the page
+   is asked only which of its records is that product — for a record
+   that names no identifier the code could be matched against. The page
+   must then be canonical for exactly this listing: a coded listing is
+   never moved to another address. */
+function pageIdentity(html, productUrl, landedUrl, options) {
+  const coded = Boolean(options && options.coded);
+  if (!coded && identifiersFrom(productUrl).length) return { ok: false, why: 'the listing URL names its product itself' };
 
   const declared = canonicalOf(String(html || ''));
   if (!declared) return { ok: false, why: 'the page declares no canonical address, so nothing says which page it is' };
@@ -586,6 +620,7 @@ function pageIdentity(html, productUrl, landedUrl) {
      and the same reader the canonical image rule uses says so. Silence
      either way proves nothing and refuses nothing. */
   const moved = !samePage(canonical, productUrl) && !(landedUrl && samePage(canonical, landedUrl));
+  if (moved && coded) return { ok: false, why: `the page is canonical for ${canonical}, not for this listing` };
   if (moved) {
     const agree = garmentsAgree(wordsInPath(productUrl), wordsInPath(canonical));
     if (!agree.agree) return { ok: false, why: `the page calls itself ${canonical}, a different garment from this listing — ${agree.why}` };
@@ -593,7 +628,7 @@ function pageIdentity(html, productUrl, landedUrl) {
 
   /* a canonical address that names its product is identity enough: the
      ordinary gates run on it, code and all */
-  if (identifiersFrom(canonical).length) {
+  if (!coded && identifiersFrom(canonical).length) {
     return { ok: true, url: canonical, codes: [], record: null, how: `the page's canonical address ${canonical} names its product` };
   }
 
@@ -3605,7 +3640,9 @@ const GARMENT_TYPES = [
   /* "puffer jacket" and "puffer coat" are how shops title a puffer; as
      whole terms they outrank the bare "jacket" and "coat" beside them,
      which would otherwise be read as the head noun */
-  { type: 'puffer', family: 'outerwear', terms: ['puffer', 'puffer jacket', 'puffer coat', 'down jacket', 'quilted jacket'] },
+  /* "puffy jacket" is how a shopper says puffer; only the whole phrase,
+     because a "puffy sleeve" blouse is not outerwear */
+  { type: 'puffer', family: 'outerwear', terms: ['puffer', 'puffer jacket', 'puffer coat', 'down jacket', 'down coat', 'quilted jacket', 'padded jacket', 'padded coat', 'puffy jacket', 'puffy coat'] },
   { type: 'blazer', family: 'outerwear', terms: ['blazer', 'sport coat', 'sports coat', 'suit jacket', 'dinner jacket'] },
   { type: 'vest', family: 'outerwear', terms: ['vest', 'gilet', 'waistcoat'] },
   { type: 'jacket', family: 'outerwear', terms: ['jacket', 'bomber', 'windbreaker', 'shacket', 'track jacket', 'denim jacket', 'trucker jacket'] },
@@ -6762,7 +6799,7 @@ if (require.main === module) {
     /* whether a page is a product page, for the canonical rule */
     pageDeclarations, pageDeclarationsFromHtml, productPageVerdict,
     /* a listing whose URL names no product, identified by its own page */
-    pageIdentity, codesIn, recordFingerprint,
+    pageIdentity, codesIn, recordFingerprint, parseJsonLd,
     garmentsAgree, canonicalCorroborated, wordsInPath, wordsAboutImage, TRACKING_PARAMS,
     siteAsset, imageDimensions, listingShape, rankListings, embeddedProductTiles, listingProductLinks, tilesFromHtml, tilesOffered, productKey, tileReport, tileLines,
     parseArgs, OPTIONS, USAGE, intentFor, queryForms, listingsFor, discoverRow, coverage,

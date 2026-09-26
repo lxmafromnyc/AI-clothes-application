@@ -810,6 +810,122 @@ const deadlineIn = (ms) => Date.now() + ms;
     assert.strictEqual(blockingCause(at({}, { returned: 2 })), null);
   });
 
+
+  console.log('\n  — 7. prices the reader could not read, and a garment it could not name\n');
+
+  const { priceDiagnosis, PRICE_CLASSES } = require('../api/_providers/retailer-page');
+  const ldRaw = (text) => `<!doctype html><html><head><meta property="og:site_name" content="Shop Example"><script type="application/ld+json">${text}</script></head></html>`;
+  const readOne = async (html, url, photos) => {
+    const target = url || URLS.good;
+    web((href) => (href === target ? page(html) : (photos || ['https://cdn.shop-example.com/i/WL48213-front.jpg']).includes(href) ? photo() : null));
+    return readListings([{ title: 'Wide Leg Trouser', productUrl: target }], { limit: 12, deadline: deadlineIn(9000) });
+  };
+  const PRODUCT_TEXT = (extra) => `{"@context":"https://schema.org","@type":"Product","name":"Wide Leg Trouser","sku":"WL48213","image":"https://cdn.shop-example.com/i/WL48213-front.jpg",${extra}"offers":{"@type":"Offer","price":"88.00","priceCurrency":"USD"}}`;
+
+  await testAsync('a product record whose description says 30&quot; is still read — decoding had been breaking the JSON', async () => {
+    const { records } = await readOne(ldRaw(PRODUCT_TEXT('"description":"A 30&quot; inseam, cut wide.",')));
+    assert.strictEqual(records[0].price, 88);
+    assert.strictEqual(records[0].imageUrl, 'https://cdn.shop-example.com/i/WL48213-front.jpg');
+  });
+
+  await testAsync('a raw newline in a string, or a trailing comma, no longer loses the whole record', async () => {
+    assert.strictEqual((await readOne(ldRaw(PRODUCT_TEXT('"description":"Line one\nline two",')))).records[0].price, 88);
+    assert.strictEqual((await readOne(ldRaw(PRODUCT_TEXT('').replace(/}}$/, '},}')))).records[0].price, 88);
+    /* and a block that is not JSON at all is still nothing */
+    assert.deepStrictEqual(images.jsonLdNodes(ldRaw('{"@type":"Product", nope')), []);
+  });
+
+  await testAsync('a Product that is a WebPage’s mainEntity is read', async () => {
+    const { records } = await readOne(ldRaw(`{"@context":"https://schema.org","@type":"ItemPage","mainEntity":${PRODUCT_TEXT('')}}`));
+    assert.strictEqual(records[0].price, 88);
+  });
+
+  await testAsync('a group named by its productGroupID is this listing; a record naming ANOTHER product still is not', async () => {
+    const group = (id) => ldRaw(JSON.stringify({ '@context': 'https://schema.org', '@type': 'ProductGroup', name: 'Wide Leg Trouser', productGroupID: id,
+      image: 'https://cdn.shop-example.com/i/WL48213-front.jpg', offers: { '@type': 'Offer', price: '88.00', priceCurrency: 'USD' } }));
+    assert.strictEqual((await readOne(group('WL48213'))).records[0].price, 88);
+    const other = await readOne(group('ZZ11111'));
+    assert.strictEqual(other.records[0].price, undefined);
+    assert.strictEqual(other.diagnostics.samples[0].priceCategory, 'record-names-another-product');
+  });
+
+  await testAsync('a record with no identifier is this listing’s when it names this page, or is the page’s own on its canonical page', async () => {
+    const bare = (extra) => ({ '@context': 'https://schema.org', '@type': 'Product', name: 'Wide Leg Trouser', image: 'https://cdn.shop-example.com/i/WL48213-front.jpg',
+      offers: { '@type': 'Offer', price: '88.00', priceCurrency: 'USD' } , ...extra });
+    /* nothing names it: refused, as before */
+    const none = await readOne(ldRaw(JSON.stringify(bare({}))));
+    assert.strictEqual(none.records[0].price, undefined);
+    assert.strictEqual(none.diagnostics.samples[0].priceCategory, 'record-not-tied-to-listing');
+    /* its own url is this listing */
+    assert.strictEqual((await readOne(ldRaw(JSON.stringify(bare({ url: URLS.good }))))).records[0].price, 88);
+    /* its page is canonical for exactly this listing, and it is the only record */
+    const canonical = ldRaw(JSON.stringify(bare({}))).replace('<head>', `<head><link rel="canonical" href="${URLS.good}"><meta property="og:type" content="product">`);
+    assert.strictEqual((await readOne(canonical)).records[0].price, 88);
+    /* but a coded listing is never moved: a page canonical for another address proves nothing for it */
+    const moved = ldRaw(JSON.stringify(bare({}))).replace('<head>', '<head><link rel="canonical" href="https://www.shop-example.com/p/wide-leg-trouser-WL00001"><meta property="og:type" content="product">');
+    assert.strictEqual((await readOne(moved)).records[0].price, undefined);
+  });
+
+  const MICRO = (priceBlock, extra) => `<!doctype html><html><head><meta property="og:site_name" content="Shop Example">${extra || ''}</head><body>
+    <div itemscope itemtype="https://schema.org/Product"><h1 itemprop="name">Wide Leg Trouser</h1><meta itemprop="sku" content="WL48213">
+      <img itemprop="image" src="https://cdn.shop-example.com/i/WL48213-front.jpg">
+      <div itemprop="offers" itemscope itemtype="https://schema.org/Offer"><meta itemprop="priceCurrency" content="USD">${priceBlock}</div>
+      <div class="related" itemscope itemtype="https://schema.org/Product"><meta itemprop="sku" content="ZZ99999">
+        <div itemprop="offers" itemscope itemtype="https://schema.org/Offer"><span itemprop="price">$15.00</span></div></div>
+    </div></body></html>`;
+
+  await testAsync('microdata on the served page is read by the same gates the rendered page’s is', async () => {
+    const onSale = prices.decide(prices.pricesFromHtml(MICRO('<s class="price-was" itemprop="price" content="120.00">$120</s><span class="price-sale" itemprop="price" content="88.00">$88</span>')).candidates, URLS.good);
+    assert.strictEqual(onSale.price, 88, JSON.stringify(onSale.refusals));
+    assert.ok(onSale.refusals.some((one) => one.amount === 15 && one.gate === 'this'), 'the related product’s price was not refused for identity');
+    assert.ok(onSale.refusals.some((one) => one.amount === 120 && one.gate === 'charged'), 'the was-price was not refused as a list price');
+  });
+
+  await testAsync('served microdata that disagrees with the structured offer fails closed rather than outranking it', async () => {
+    const both = MICRO('<span itemprop="price" content="78.00">$78</span>', `<script type="application/ld+json">${PRODUCT_TEXT('')}</script>`);
+    const decided = prices.decide(prices.pricesFromHtml(both).candidates, URLS.good);
+    assert.strictEqual(decided.price, undefined);
+    assert.deepStrictEqual(decided.ambiguous, [78, 88]);
+    const agreeing = MICRO('<span itemprop="price" content="88.00">$88</span>', `<script type="application/ld+json">${PRODUCT_TEXT('')}</script>`);
+    assert.strictEqual(prices.decide(prices.pricesFromHtml(agreeing).candidates, URLS.good).price, 88);
+  });
+
+  await testAsync('every no-price page is classed by which of the four answers it was', async () => {
+    const classOf = (html) => {
+      const read = prices.pricesFromHtml(html);
+      const decided = read.candidates.length ? prices.decide(read.candidates, URLS.good) : { refusals: [] };
+      assert.strictEqual(decided.price, undefined, 'the fixture was meant to have no provable price');
+      const category = priceDiagnosis(html, read, decided, images);
+      return [category, PRICE_CLASSES[category]];
+    };
+    assert.deepStrictEqual(classOf('<html><body><p>Wide Leg Trouser</p></body></html>'), ['no-price-in-served-markup', '1-no-usable-price']);
+    assert.deepStrictEqual(classOf('<html><head><meta property="og:price:amount" content="88.00"></head></html>'), ['price-only-in-page-metadata', '1-no-usable-price']);
+    assert.deepStrictEqual(classOf(ldRaw('{"@type":"Product", nope')), ['json-ld-not-readable', '2-reader-gap']);
+    assert.deepStrictEqual(classOf('<html><script id="__NEXT_DATA__">{"product":{"salePrice":"88.00"}}</script></html>'), ['price-only-in-embedded-data', '2-reader-gap']);
+    assert.deepStrictEqual(classOf(ldRaw(JSON.stringify({ '@type': 'Product', sku: 'WL48213', offers: [{ price: '88' }, { price: '98' }] }))), ['several-prices', '3-refused-rightly']);
+    assert.deepStrictEqual(classOf(ldRaw(JSON.stringify({ '@type': 'Product', sku: 'WL48213', offers: { '@type': 'AggregateOffer', lowPrice: '70', highPrice: '98' } }))), ['range-only', '3-refused-rightly']);
+    assert.deepStrictEqual(classOf(ldRaw(JSON.stringify({ '@type': 'Product', sku: 'ZZ11111', offers: { price: '88' } }))), ['record-names-another-product', '4-identity-or-variant']);
+    assert.deepStrictEqual(classOf(ldRaw(JSON.stringify({ '@type': 'Product', name: 'x', offers: { price: '88' } }))), ['record-not-tied-to-listing', '4-identity-or-variant']);
+  });
+
+  await testAsync('"puffy jacket" is a puffer to the semantic reader — and a puffy sleeve is still not outerwear', async () => {
+    const read = (query, title) => images.semanticMatch({ id: 'query', name: query }, { title });
+    for (const title of ['Cropped Puffer Jacket', 'Cropped Down Jacket', 'Short Puffer Coat']) {
+      assert.strictEqual(read('short puffy jacket', title).ok, true, title);
+    }
+    assert.strictEqual(read('short puffy jacket', 'Washed Denim Jacket').ok, false, 'a denim jacket is not a puffer');
+    assert.strictEqual(read('short puffy jacket', 'Quilted Puffer Vest').ok, false, 'a vest is not a jacket');
+    assert.strictEqual(read('puff sleeve blouse', 'Puffy Sleeve Blouse').ok, true);
+  });
+
+  await testAsync('the benchmark says why a result above the target was the wrong garment', async () => {
+    const { summarise } = require('./bench-live');
+    const row = { query: 'short puffy jacket', returned: 2, garmentRank: 2, matchRank: 2, wrongAbove: 1, survived: [], duplicates: 0, interpretMs: 1, searchMs: 1, interpreter: 'local',
+      wrongGarments: [{ name: 'Denim Jacket', retailer: 'X', productUrl: 'https://x.example/p/1', why: 'the row means a puffer and "Denim Jacket" is a jacket' }] };
+    const summary = summarise([row]);
+    assert.deepStrictEqual(summary.wrongGarmentsAbove, [{ query: 'short puffy jacket', results: row.wrongGarments }]);
+  });
+
   console.log(`\n${passed} passed, ${failures.length} failed\n`);
   if (failures.length) process.exitCode = 1;
 })();

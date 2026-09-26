@@ -540,11 +540,118 @@ function metaCandidates(html) {
   return out;
 }
 
+/* ---------- microdata, as the page was served ----------
+
+   schema.org's other syntax: itemprop="price" on an element inside an
+   itemscope Offer, inside an itemscope Product that names its sku with
+   itemprop="sku" (or productID, mpn, gtin…). The rendered-page path has
+   always read it, from the DOM; a page read with a plain request — all a
+   live search ever has — never had it read at all, however plainly the
+   product and its offer were marked up.
+
+   Each price element becomes a candidate carrying the same `dom` shape
+   the rendered path builds, so priceIdentity() and chargedEvidence()
+   judge it by the rules they already have: its Product scope must name
+   this listing's code, and its own class must not mark it as a list or
+   was-price. Marked `served`: the page's markup rather than its screen,
+   so it does not get to outrank a structured offer that disagrees —
+   decide() fails closed on the two instead. */
+const VOID_TAGS = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr']);
+const MICRODATA_ID_PROPS = /^(sku|productid|mpn|gtin|gtin8|gtin12|gtin13|gtin14|identifier)$/i;
+
+function microdataCandidates(html) {
+  const page = String(html || '');
+  const attr = (tag, name) => {
+    const m = tag.match(new RegExp(`\\s${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, 'i'));
+    return m ? (m[1] !== undefined ? m[1] : m[2] !== undefined ? m[2] : m[3]) : null;
+  };
+  const hasAttr = (tag, name) => new RegExp(`\\s${name}(\\s|=|>|/)`, 'i').test(tag);
+  const clean = (value) => String(value || '').replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").replace(/\s+/g, ' ').trim();
+
+  const scopes = [];
+  const props = [];
+  const stack = [];
+  const re = /<(\/?)([a-zA-Z][\w:-]*)((?:[^>"']|"[^"]*"|'[^']*')*)>/g;
+  let m;
+  while ((m = re.exec(page))) {
+    const closing = m[1] === '/';
+    const name = m[2].toLowerCase();
+    if (name === 'script' || name === 'style') {
+      if (!closing) {
+        const end = page.toLowerCase().indexOf(`</${name}`, re.lastIndex);
+        if (end >= 0) re.lastIndex = end;
+      }
+      continue;
+    }
+    if (closing) {
+      const at = stack.map((one) => one.name).lastIndexOf(name);
+      if (at >= 0) stack.length = at;
+      continue;
+    }
+    const tag = m[3] || '';
+    const parentScope = [...stack].reverse().find((one) => one.scope !== null);
+    let scope = null;
+    if (hasAttr(tag, 'itemscope')) {
+      scope = scopes.length;
+      const type = String(attr(tag, 'itemtype') || '').replace(/^.*[/#]/, '');
+      scopes.push({ type, parent: parentScope ? parentScope.scope : null });
+    }
+    const prop = attr(tag, 'itemprop');
+    if (prop) {
+      /* an element that opens its own scope is a property OF the
+         enclosing scope (itemprop="offers" itemscope): it belongs above */
+      const owner = parentScope ? parentScope.scope : null;
+      let value = attr(tag, 'content');
+      if (value === null && !VOID_TAGS.has(name)) {
+        const next = page.indexOf('<', re.lastIndex);
+        value = page.slice(re.lastIndex, next < 0 ? undefined : next);
+      }
+      for (const one of String(prop).split(/\s+/).filter(Boolean)) {
+        props.push({ scope: owner, prop: one, value: clean(value), own: [attr(tag, 'class'), attr(tag, 'id')].filter(Boolean).join(' ') });
+      }
+    }
+    const selfClosing = /\/\s*$/.test(tag);
+    if (!VOID_TAGS.has(name) && !selfClosing) stack.push({ name, scope });
+  }
+
+  const chain = (at) => { const out = []; for (let one = at; one !== null && one !== undefined; one = scopes[one].parent) out.push(one); return out; };
+  const out = [];
+  for (const price of props.filter((one) => /^(price|lowprice)$/i.test(one.prop) && one.scope !== null)) {
+    const amount = toAmount(price.value);
+    if (amount === null) continue;
+    const up = chain(price.scope);
+    const offerScope = up.find((one) => /^(offer|aggregateoffer)$/i.test(scopes[one].type));
+    const productScope = up.find((one) => /^(product|productgroup|individualproduct|productmodel)$/i.test(scopes[one].type));
+    const inScope = (at, pattern) => props.filter((one) => one.scope === at && pattern.test(one.prop)).map((one) => one.value).filter(Boolean);
+    const currency = currencyIn((offerScope !== undefined ? inScope(offerScope, /^pricecurrency$/i) : [])[0] || '') || currencyIn(price.value) || 'USD';
+    out.push({
+      amount,
+      currency,
+      text: price.value.slice(0, 60),
+      from: 'microdata (served)',
+      kind: /^lowprice$/i.test(price.prop) ? 'range' : 'price',
+      span: null,
+      dom: {
+        served: true,
+        itemprop: /^lowprice$/i.test(price.prop) ? 'lowPrice' : 'price',
+        offerScope: offerScope !== undefined,
+        scopeSkus: productScope !== undefined ? inScope(productScope, MICRODATA_ID_PROPS).map((one) => one.toLowerCase()) : [],
+        codes: [],
+        own: price.own,
+        near: '',
+        hidden: false,
+        lineThrough: false
+      }
+    });
+  }
+  return out;
+}
+
 function pricesFromHtml(html) {
   const nodes = jsonLdNodes(html);
   const structured = structuredCandidates(nodes);
   return {
-    candidates: [...structured.candidates, ...metaCandidates(html)],
+    candidates: [...structured.candidates, ...microdataCandidates(html), ...metaCandidates(html)],
     empties: structured.empties,
     canonical: (function () {
       const link = String(html).match(/<link[^>]+rel=["']canonical["'][^>]*>/i);
@@ -711,7 +818,16 @@ function priceIdentity(candidate, productUrl, proven) {
      offer naming this listing's code is more specific about it, not
      less. A record naming a different product is still refused. */
   if (candidate.node) {
-    const skus = skuOf(candidate.node).concat(candidate.offer ? skuOf(candidate.offer) : []);
+    /* the identifiers schema.org gives a product: its own and its
+       offer's, and — for a group, or a variant of one — the group's */
+    const groupIds = (node) => (node ? ['productGroupID', 'productGroupId', 'inProductGroupWithID']
+      .map((key) => node[key]).filter((value) => typeof value === 'string' || typeof value === 'number')
+      .map((value) => String(value).toLowerCase()) : []);
+    const skus = skuOf(candidate.node).concat(
+      candidate.offer ? skuOf(candidate.offer) : [],
+      groupIds(candidate.node),
+      candidate.group ? skuOf(candidate.group).concat(groupIds(candidate.group)) : []
+    );
     const hit = matchingCode(skus, ids);
     if (hit) {
       return {
@@ -722,6 +838,29 @@ function priceIdentity(candidate, productUrl, proven) {
           ? `the offer belongs to the page's only product record, naming ${hit.value} — ${proven.how}`
           : `the offer belongs to the product record naming sku ${hit.value}`
       };
+    }
+
+    /* A record that names no identifier at all cannot contradict the
+       listing, and may still say which product it is: its url or @id,
+       or its offer's url, is this listing's own page; or the listing's
+       own page — canonical for exactly this listing — names it as its
+       one product record. A record that names a DIFFERENT identifier is
+       refused below, whatever else it says. */
+    if (!skus.length) {
+      const namesListing = [candidate.node.url, candidate.node['@id'], candidate.offer && candidate.offer.url]
+        .some((value) => {
+          if (typeof value !== 'string' || !value.trim()) return false;
+          try { return samePage(new URL(value.trim(), productUrl).href, productUrl); } catch (err) { return false; }
+        });
+      if (namesListing) {
+        return { ok: true, via: 'json-ld-offer', sku: null, how: 'the offer belongs to the product record that names this listing\'s own page' };
+      }
+      if (!pageProven && proven && proven.record) {
+        const own = new Set([proven.record].concat(proven.members || []));
+        if (own.has(recordFingerprint(candidate.node)) || (candidate.group && own.has(recordFingerprint(candidate.group)))) {
+          return { ok: true, via: 'json-ld-offer', sku: null, how: `the offer belongs to the page's own product record, which names no identifier — ${proven.how}` };
+        }
+      }
     }
     return {
       ok: false,
@@ -1034,7 +1173,8 @@ function decide(candidates, productUrl, proven) {
      record's favour. Two survivors that disagree, at the same rank or
      across layers, still fail closed. */
   const SPECIFIC = ['microdata-offer', 'dom-variant-scope'];
-  const specific = survivors.filter((s) => SPECIFIC.includes(s.identity.via));
+  /* a figure the page DREW; served microdata is markup, like a record */
+  const specific = survivors.filter((s) => SPECIFIC.includes(s.identity.via) && !(s.candidate.dom && s.candidate.dom.served));
   let inPlay = survivors;
 
   if (specific.length && specific.length < survivors.length) {
@@ -4001,7 +4141,7 @@ if (require.main === module) {
   main().catch((err) => { console.error(err && err.message); process.exit(1); });
 } else {
   module.exports = {
-    toAmount, currencyIn, moneyInText, offerAmounts, structuredCandidates,
+    toAmount, currencyIn, moneyInText, offerAmounts, structuredCandidates, microdataCandidates,
     metaCandidates, pricesFromHtml, namesCode, priceIdentity, chargedEvidence,
     decide, gatherPricesInPage, renderedCandidates, renderPage, resolveRow,
     inspectUrl, inspectData, selectedAmong, elsewhereIn, isIdKey, isPriceKey, keyWords,

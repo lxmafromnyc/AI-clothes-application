@@ -114,6 +114,11 @@ test('each garment is read as itself, with its descriptors, and filed where the 
   for (const [query, want] of Object.entries(expected)) assert.deepStrictEqual(readOf(query), want, query);
 });
 
+test('a "puffy jacket" is read as the puffer it is, and filed as a jacket', () => {
+  assert.deepStrictEqual(readOf('short puffy jacket').garments, ['puffer']);
+  assert.deepStrictEqual(readOf('short puffy jacket').categories, ['jacket']);
+});
+
 test('spellings and hyphenations of one descriptor are one descriptor', () => {
   for (const query of ['double-breasted blazer', 'Double Breasted Blazer']) assert.deepStrictEqual(readOf(query).descriptors, ['double-breasted'], query);
   for (const query of ['color block sweater', 'colour-block sweater', 'colorblock sweater']) assert.deepStrictEqual(readOf(query).descriptors, ['colour block'], query);

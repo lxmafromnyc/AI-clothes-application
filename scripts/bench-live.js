@@ -135,11 +135,15 @@ async function measure(id, query, category, env, provider, limit) {
   const verdicts = products.map((product) => {
     let verdict;
     try { verdict = semanticMatch(row, { title: product.name }); } catch (err) { verdict = { ok: false, kind: 'error' }; }
-    return { name: product.name, retailer: product.retailer || product.brand || null, kind: verdict.ok ? verdict.kind : (verdict.kind || 'refused'), ok: verdict.ok };
+    return { name: product.name, retailer: product.retailer || product.brand || null, kind: verdict.ok ? verdict.kind : (verdict.kind || 'refused'), ok: verdict.ok,
+      /* why the semantic reader refused it, so a "wrong garment" can be
+         told apart from a word the reader does not know */
+      why: verdict.ok ? null : String(verdict.why || '').slice(0, 200), productUrl: product.productUrl };
   });
   const garmentAt = verdicts.findIndex((one) => one.ok);
   const matchAt = verdicts.findIndex((one) => one.ok && one.kind === 'match');
-  const wrongAbove = verdicts.slice(0, garmentAt < 0 ? verdicts.length : garmentAt).filter((one) => one.kind === 'contradiction').length;
+  const above = verdicts.slice(0, garmentAt < 0 ? verdicts.length : garmentAt).filter((one) => one.kind === 'contradiction');
+  const wrongAbove = above.length;
 
   const keys = products.map(listingKey);
   const duplicates = keys.length - new Set(keys).size;
@@ -170,6 +174,7 @@ async function measure(id, query, category, env, provider, limit) {
     garmentRank: garmentAt < 0 ? null : garmentAt + 1,
     matchRank: matchAt < 0 ? null : matchAt + 1,
     wrongAbove,
+    wrongGarments: above.map((one) => ({ name: one.name, retailer: one.retailer, productUrl: one.productUrl, why: one.why })),
     duplicates,
     searchMs,
     top: verdicts.slice(0, 3)
@@ -223,6 +228,7 @@ function summarise(results) {
     fullMatchFound: pct(results.filter((r) => r.matchRank).length),
     meanBestMatchRank: matchRanks.length ? Number((matchRanks.reduce((a, b) => a + b, 0) / matchRanks.length).toFixed(2)) : null,
     queriesWithWrongGarmentAbove: pct(results.filter((r) => r.wrongAbove > 0).length),
+    wrongGarmentsAbove: results.filter((r) => r.wrongAbove > 0).map((r) => ({ query: r.query, results: r.wrongGarments })),
     descriptorsInQuery: `${allDescriptors.filter((d) => d.inQuery).length}/${allDescriptors.length}`,
     descriptorsInSomeTop3Result: `${allDescriptors.filter((d) => d.inTop3 > 0).length}/${allDescriptors.length}`,
     duplicateRate: returnedTotal ? `${results.reduce((sum, r) => sum + r.duplicates, 0)}/${returnedTotal}` : '0/0',
@@ -235,6 +241,24 @@ function summarise(results) {
       if (cause) (groups[cause] = groups[cause] || []).push(r.query);
       return groups;
     }, {}),
+    /* every page that proved no price, by which of the four answers it
+       was (see priceDiagnosis in api/_providers/retailer-page.js), and
+       the queries that showed nothing for want of one, with theirs */
+    noPricePages: (() => {
+      const { PRICE_CLASSES } = require('../api/_providers/retailer-page');
+      const byCategory = {};
+      const byClass = {};
+      for (const r of results) {
+        for (const [category, n] of Object.entries((r.organic && r.organic.pages && r.organic.pages.priceCategories) || {})) {
+          byCategory[category] = (byCategory[category] || 0) + n;
+          const cls = PRICE_CLASSES[category] || 'unclassified';
+          byClass[cls] = (byClass[cls] || 0) + n;
+        }
+      }
+      const queries = results.filter((r) => r.blockedBy === 'no-price')
+        .map((r) => ({ query: r.query, categories: (r.organic && r.organic.pages && r.organic.pages.priceCategories) || {} }));
+      return { byClass, byCategory, queries };
+    })(),
     organicCategoryPagesRead: results.reduce((sum, r) => sum + ((r.organic && r.organic.pages && r.organic.pages.categoryPagesRead) || 0), 0),
     organicTilesOffered: results.reduce((sum, r) => sum + ((r.organic && r.organic.pages && r.organic.pages.tilesOffered) || 0), 0),
     organicEscalations: results.filter((r) => r.organic).length,

@@ -55,7 +55,7 @@
     /* a "top" is as often a blouse or a wrap top as a tee */
     ['top', ['top', 'tops'], ['shirt', 'tee']],
     ['blazer', ['sport coat', 'suit jacket', 'blazer', 'blazers'], ['jacket']],
-    ['puffer', ['puffer jacket', 'puffer coat', 'down jacket', 'puffer', 'puffers'], ['jacket']],
+    ['puffer', ['puffer jacket', 'puffer coat', 'puffy jacket', 'puffy jackets', 'puffy coat', 'down jacket', 'puffer', 'puffers'], ['jacket']],
     ['bomber', ['bomber jacket', 'bomber'], ['jacket']],
     ['jacket', ['jacket', 'jackets'], ['jacket']],
     ['trench coat', ['trench coat', 'trench'], ['coat']],
