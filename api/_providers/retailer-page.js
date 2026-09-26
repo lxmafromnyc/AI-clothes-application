@@ -452,7 +452,11 @@ function readTier(record) {
 /* One listing, read. Returns the record to put to the gate — the one it
    was given, or that one with what its own page proved — and what
    happened, as one word the diagnostics can count. */
-async function readListing(record, budget) {
+/* `context`, from readListings: the shopper's phrase, the product pages
+   already offered, and whether this search may still read a page for
+   the products it lists (a discovery page counts against the same cap
+   as a category page). */
+async function readListing(record, budget, context) {
   const { images, prices } = discovery();
   const given = record && typeof record === 'object' ? record : {};
   const productUrl = text(given.productUrl);
@@ -466,6 +470,26 @@ async function readListing(record, budget) {
     if (seen && READ_FAILURES.has(outcome)) {
       try { result.evidence = pageEvidence(seen.html, seen.url, (out || given).productUrl || productUrl, images, prices, storeRead); } catch (err) { result.evidence = { failed: String(err && err.message) }; }
     }
+    return result;
+  };
+  /* A page that was read as one product and is not one — it names no
+     single product of its own, or prices several — may still LIST
+     products, like a category page does. Its refusal stands: it is never
+     a result. What it lists is offered as candidates, each of which
+     proves itself on its own page. Only when the page's data names at
+     least two other products on this shop; a lone related link is not a
+     listing. */
+  const orDiscover = async (result) => {
+    const ctx = context || {};
+    /* the cap is claimed BEFORE the page is read — lanes run at once, and
+       a check made by each before any of them counted lets them all in —
+       and given back when the page lists nothing */
+    if (!seen || !ctx.query || typeof ctx.claim !== 'function' || !ctx.claim()) return result;
+    let found;
+    try { found = await productsListedOn(seen.html, seen.url, budget, ctx.query, ctx.known ? ctx.known() : []); } catch (err) { ctx.release(); return result; }
+    if (found.listed < 2) { ctx.release(); return result; }
+    result.tiles = found.offered;
+    result.discovery = { url: seen.url, by: `its own data, after ${result.outcome}`, listed: found.listed, offered: found.offered.length };
     return result;
   };
 
@@ -528,7 +552,7 @@ async function readListing(record, budget) {
          handle, on this origin. The page must still be a product page. */
       const verdict = images.productPageVerdict(images.listingShape(productUrl, ''), images.pageDeclarationsFromHtml(page.html));
       const own = verdict.ok ? await storeRecord(productUrl) : null;
-      if (!own) return done('no-identity', identity.why);
+      if (!own) return orDiscover(done('no-identity', identity.why));
       identity = {
         ok: true, url: productUrl, codes: [], record: null, name: own.title,
         how: `the store's product record for ${own.handle} (product ${own.id}) answers for this listing`
@@ -557,7 +581,7 @@ async function readListing(record, budget) {
     const first = (decided.refusals || [])[0];
     const result = done('no-price', decided.why || (first ? `${first.from}: ${first.why}` : 'the page publishes no price candidate'));
     result.priceCategory = priceDiagnosis(page.html, read, decided, images);
-    return result;
+    return orDiscover(result);
   }
 
   const { node, offer } = pricedRecord(read.candidates, decided, images, proven);
@@ -637,17 +661,32 @@ async function readCategory(record, budget, query, known) {
   const landedUrl = page.url || categoryUrl;
   if (images.registrable(hostOf(landedUrl) || '') !== images.registrable(hostOf(categoryUrl) || '')) return done('it redirected to another site');
 
+  const found = await productsListedOn(page.html, landedUrl, budget, query, known);
+  const result = done(`${found.listed} product${found.listed === 1 ? '' : 's'} listed, ${found.offered.length} the garment asked for`, found.offered);
+  result.discovery = { url: landedUrl, by: 'its address', listed: found.listed, offered: found.offered.length };
+  return result;
+}
+
+/* The products a page lists in its own data — the same readers for a
+   page known to be a category by its address and for one found to be a
+   listing only once it was read: its JSON-LD and framework tiles, a
+   Shopify collection's product list, each kept only when it names its
+   own product page on this shop shaped like one product, and then only
+   those whose names are, by discovery's title gate, the garment the
+   shopper asked for — full matches first, in the page's own order. */
+async function productsListedOn(html, landedUrl, budget, query, known) {
+  const { images } = discovery();
   const stats = {};
-  const tiles = images.tilesFromHtml(page.html, stats);
-  if (images.shopifyCollection(landedUrl) && images.SHOPIFY_PAGE.test(page.html) && budget.left() >= MIN_PAGE_WINDOW_MS) {
+  const tiles = images.tilesFromHtml(html, stats);
+  if (images.shopifyCollection(landedUrl) && images.SHOPIFY_PAGE.test(html) && budget.left() >= MIN_PAGE_WINDOW_MS) {
     tiles.push(...await images.collectionTiles(landedUrl, images.request, budget.cap(Math.min(images.TIMEOUT, Math.max(MIN_PAGE_WINDOW_MS, budget.left() - IMAGE_RESERVE_MS))), stats));
   }
   const links = images.listingProductLinks(landedUrl, tiles, stats);
-  const offered = images.tilesOffered({ id: 'query', name: query }, [{ url: landedUrl, productLinks: links }], known)
+  const offered = images.tilesOffered({ id: 'query', name: query }, [{ url: landedUrl, productLinks: links }], known || [])
     .filter((one) => one.rank < 2)
     .slice(0, MAX_TILES_PER_CATEGORY)
     .map((one) => ({ title: one.title, productUrl: one.productUrl }));
-  return done(`${links.length} product${links.length === 1 ? '' : 's'} listed, ${offered.length} the garment asked for`, offered);
+  return { listed: links.length, offered };
 }
 
 /* Every listing, read a few at a time, likeliest first, and answered in
@@ -683,6 +722,28 @@ async function readListings(records, options) {
   let categories = 0;
   let tilesOffered = 0;
   let photographed = 0;
+  const discoveryPages = [];
+
+  /* the products a page listed, offered as candidates of their own,
+     grouped under the page that listed them */
+  const offerTiles = (entry, tiles) => {
+    (tiles || []).forEach((tile, seq) => {
+      const key = images.productKey(tile.productUrl);
+      if (!key || known.has(key)) return;
+      known.add(key);
+      tilesOffered += 1;
+      const added = { record: tile, from: entry.from, seq: seq + 1, tile: true };
+      entries.push(added);
+      queue.push({ entry: added, tier: tierOf(added) });
+    });
+    queue = queue.sort(byTier);
+  };
+  const context = {
+    query,
+    known: () => [...known].map((key) => ({ productUrl: `https://${key}` })),
+    claim: () => (categories < MAX_CATEGORY_PAGES ? (categories += 1, true) : false),
+    release: () => { categories -= 1; }
+  };
 
   const lane = async () => {
     while (queue.length) {
@@ -694,7 +755,12 @@ async function readListings(records, options) {
       if (refused && !(refused.outcome === 'category-page' && !entry.tile)) { entry.result = Object.assign({ record: one }, refused); continue; }
       if (refused) {
         /* a category page, for its products only */
-        if (!query || categories >= MAX_CATEGORY_PAGES || started >= MAX_PAGES) { entry.result = Object.assign({ record: one }, refused); continue; }
+        if (!query || categories >= MAX_CATEGORY_PAGES || started >= MAX_PAGES) {
+          /* skipped, not read: said so, so a starved category page is
+             never counted as one that was read and listed nothing */
+          entry.result = Object.assign({ record: one }, refused, { unread: !query ? 'no shopper phrase' : 'the search’s category-page cap was reached' });
+          continue;
+        }
         categories += 1;
         started += 1;
         let read;
@@ -704,26 +770,23 @@ async function readListings(records, options) {
           read = { record: one, outcome: 'category-page', why: err && err.message ? String(err.message).split('\n')[0] : String(err), tiles: [] };
         }
         entry.result = { record: one, outcome: 'category-page', why: read.why };
-        read.tiles.forEach((tile, seq) => {
-          const key = images.productKey(tile.productUrl);
-          if (!key || known.has(key)) return;
-          known.add(key);
-          tilesOffered += 1;
-          const added = { record: tile, from: entry.from, seq: seq + 1, tile: true };
-          entries.push(added);
-          queue.push({ entry: added, tier: tierOf(added) });
-        });
-        queue = queue.sort(byTier);
+        if (read.discovery) discoveryPages.push(read.discovery);
+        offerTiles(entry, read.tiles);
         continue;
       }
       if (started >= MAX_PAGES) return;
       started += 1;
       try {
-        entry.result = await readListing(one, budget);
+        entry.result = await readListing(one, budget, entry.tile ? null : context);
       } catch (err) {
         entry.result = { record: one, outcome: 'unreadable', why: err && err.message ? String(err.message).split('\n')[0] : String(err) };
       }
       if (entry.result.outcome === 'photographed') photographed += 1;
+      /* a page read as one product that turned out to list several */
+      if (entry.result.discovery) {
+        discoveryPages.push(entry.result.discovery);
+        offerTiles(entry, entry.result.tiles);
+      }
     }
   };
   await Promise.all(Array.from({ length: Math.min(PAGE_LANES, Math.max(1, entries.length)) }, lane));
@@ -737,7 +800,7 @@ async function readListings(records, options) {
   );
   const out = ordered.map((entry) => {
     const result = entry.result || { record: entry.record, outcome: 'not-reached' };
-    const outcome = entry.tile ? `tile:${result.outcome}` : result.outcome;
+    const outcome = entry.tile ? `tile:${result.outcome}` : result.unread ? 'category-page-unread' : result.outcome;
     outcomes[outcome] = (outcomes[outcome] || 0) + 1;
     if (result.priceCategory) priceCategories[result.priceCategory] = (priceCategories[result.priceCategory] || 0) + 1;
     if (result.gateRefusal) gateRefusals[result.gateRefusal] = (gateRefusals[result.gateRefusal] || 0) + 1;
@@ -757,6 +820,10 @@ async function readListings(records, options) {
       pagesRead: started,
       categoryPagesRead: categories,
       tilesOffered,
+      /* every page read for the products it lists: which, how it was
+         recognised (its address, or its own data once read), how many
+         products it listed and how many were the garment asked for */
+      discoveryPages,
       outcomes,
       /* why each page that WAS read proved nothing, grouped: which gate,
          in its own words, with codes, figures, hosts and URLs taken out
@@ -782,6 +849,7 @@ async function readListings(records, options) {
 }
 
 module.exports = {
+  productsListedOn,
   priceDiagnosis,
   PRICE_CLASSES,
   precheck,

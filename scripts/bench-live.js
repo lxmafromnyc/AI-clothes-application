@@ -338,6 +338,12 @@ function summarise(results) {
     })(),
     /* photographed listings the gate still refused, by its reason */
     photographedButRefused: results.reduce((tally, r) => { for (const [why, n] of Object.entries((r.organic && r.organic.pages && r.organic.pages.gateRefusals) || {})) tally[why] = (tally[why] || 0) + n; return tally; }, {}),
+    /* every page read for the products it lists, per query: recognised
+       by its address, or found to be a listing once read; how many
+       products it listed; how many were the garment asked for */
+    discoveryPages: results.filter((r) => r.organic && r.organic.pages && (r.organic.pages.discoveryPages || []).length)
+      .map((r) => ({ query: r.query, shown: r.returned, pages: r.organic.pages.discoveryPages })),
+    organicCategoryPagesUnread: results.reduce((sum, r) => sum + ((r.organic && r.organic.pages && r.organic.pages.outcomes && r.organic.pages.outcomes['category-page-unread']) || 0), 0),
     organicCategoryPagesRead: results.reduce((sum, r) => sum + ((r.organic && r.organic.pages && r.organic.pages.categoryPagesRead) || 0), 0),
     organicTilesOffered: results.reduce((sum, r) => sum + ((r.organic && r.organic.pages && r.organic.pages.tilesOffered) || 0), 0),
     organicEscalations: results.filter((r) => r.organic).length,

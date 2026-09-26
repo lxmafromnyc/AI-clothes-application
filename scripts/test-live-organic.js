@@ -600,7 +600,7 @@ const deadlineIn = (ms) => Date.now() + ms;
     ];
     const { diagnostics } = await readListings(skipped.map(([productUrl]) => ({ title: 'Boxy Tee', productUrl })), { limit: 12, deadline: deadlineIn(9000) });
     assert.strictEqual(calls.length, 0);
-    assert.deepStrictEqual(diagnostics.outcomes, { 'category-page': 1, 'editorial-page': 1, 'not-a-shop': 1 });
+    assert.deepStrictEqual(diagnostics.outcomes, { 'category-page-unread': 1, 'editorial-page': 1, 'not-a-shop': 1 });
   });
 
   await testAsync('an offer naming the listing’s code proves its price when the record itself names none', async () => {
@@ -780,7 +780,7 @@ const deadlineIn = (ms) => Date.now() + ms;
     const calls = web(tileRoutes);
     const { diagnostics } = await readListings([{ title: 'Trousers', productUrl: CATEGORY }], { limit: 12, deadline: deadlineIn(9000) });
     assert.strictEqual(calls.length, 0);
-    assert.deepStrictEqual(diagnostics.outcomes, { 'category-page': 1 });
+    assert.deepStrictEqual(diagnostics.outcomes, { 'category-page-unread': 1 });
   });
 
   await testAsync('the live search hands the shopper’s phrase to the category reader', async () => {
@@ -1363,6 +1363,90 @@ const deadlineIn = (ms) => Date.now() + ms;
     assert.deepStrictEqual(diagnostics.outcomes, { photographed: 1 }, JSON.stringify(diagnostics.samples));
     const [product] = verifyAll(records).products;
     assert.deepStrictEqual([product.name, product.price, product.imageUrl], ['Stone Running Shorts', 44.99, own]);
+  });
+
+
+  console.log('\n  — 13. a page that lists products is a place to find them, never one itself\n');
+
+  const LISTING = 'https://www.shop-example.com/womens/trousers';
+  const LP = (slug, sku) => `https://www.shop-example.com/p/${slug}-${sku}`;
+  const TROUSER_A = LP('wide-leg-trouser-navy', 'WL48301');
+  const TROUSER_B = LP('wide-leg-trouser-black', 'WL48302');
+  const HOODIE_T = LP('oversized-hoodie', 'HD11224');
+  const JEANS_T = LP('wide-leg-jeans', 'JN55401');
+  const listedProduct = (url, name, sku, price) => ({ '@context': 'https://schema.org', '@type': 'Product', url, name, sku,
+    image: `https://cdn.shop-example.com/i/${sku}-tile.jpg`, offers: { '@type': 'Offer', price, priceCurrency: 'USD' } });
+  const listingHtml = (records) => `<!doctype html><html><head><title>Women's Trousers | Shop Example</title>
+    <meta property="og:site_name" content="Shop Example"><link rel="canonical" href="${LISTING}">
+    ${records.map((one) => `<script type="application/ld+json">${JSON.stringify(one)}</script>`).join('\n')}</head><body></body></html>`;
+  const FOUR = [
+    listedProduct(TROUSER_A, 'Wide Leg Trouser in Navy', 'WL48301', '88.00'),
+    listedProduct(HOODIE_T, 'Oversized Hoodie', 'HD11224', '60.00'),
+    listedProduct(JEANS_T, 'Wide Leg Jeans', 'JN55401', '98.00'),
+    listedProduct(TROUSER_B, 'Wide Leg Trouser in Black', 'WL48302', '88.00')
+  ];
+  const productOwnPage = (sku, name, price) => page(productPage({ sku, name, price, siteName: 'Shop Example', image: `https://cdn.shop-example.com/i/${sku}-front.jpg` }));
+  const discoveryWeb = (overrides) => web((href, options) => {
+    const custom = overrides && overrides(href, options);
+    if (custom) return custom;
+    if (href === LISTING) return page(listingHtml(FOUR));
+    if (href === TROUSER_A) return productOwnPage('WL48301', 'Wide Leg Trouser in Navy', '88.00');
+    if (href === TROUSER_B) return productOwnPage('WL48302', 'Wide Leg Trouser in Black', '88.00');
+    if (href === HOODIE_T) return productOwnPage('HD11224', 'Oversized Hoodie', '60.00');
+    if (href === JEANS_T) return productOwnPage('JN55401', 'Wide Leg Jeans', '98.00');
+    if (/\/i\/(WL48301|WL48302|HD11224|JN55401)-front\.jpg$/.test(href)) return photo();
+    return null;
+  });
+
+  await testAsync('a page read as one product that lists several becomes a discovery source: only the matching products, each proved, are shown', async () => {
+    assert.strictEqual(precheck({ title: "Women's Trousers", productUrl: LISTING }), null, 'the fixture is a listing its address does not reveal');
+    const calls = discoveryWeb();
+    const { records, diagnostics } = await readListings([{ title: "Women's Trousers | Shop Example", productUrl: LISTING }],
+      { limit: 12, deadline: deadlineIn(9000), query: 'wide leg trousers' });
+    const { products, rejected } = verifyAll(records);
+    assert.deepStrictEqual(products.map((one) => one.productUrl), [TROUSER_A, TROUSER_B], 'in the page’s own order, the garment asked for only');
+    assert.deepStrictEqual(products.map((one) => one.price), [88, 88]);
+    assert.ok(!products.some((one) => one.productUrl === LISTING), 'the listing page became a product');
+    assert.strictEqual(rejected['missing-price'], 1, 'the listing page itself went to the gate and was refused');
+    assert.ok(!calls.some((one) => one.url === HOODIE_T || one.url === JEANS_T), 'a listed product that is not the garment asked for was fetched');
+    assert.deepStrictEqual(diagnostics.discoveryPages, [{ url: LISTING, by: 'its own data, after no-identity', listed: 4, offered: 2 }]);
+    assert.strictEqual(diagnostics.outcomes['no-identity'], 1);
+    assert.strictEqual(diagnostics.outcomes['tile:photographed'], 2);
+  });
+
+  await testAsync('a listed product whose own page proves nothing is not shown on the listing’s word', async () => {
+    discoveryWeb((href) => (href === TROUSER_B ? page(listingHtml([])) : null));
+    const { records } = await readListings([{ title: "Women's Trousers", productUrl: LISTING }], { limit: 12, deadline: deadlineIn(9000), query: 'wide leg trousers' });
+    assert.deepStrictEqual(verifyAll(records).products.map((one) => one.productUrl), [TROUSER_A]);
+    const b = records.find((one) => one.productUrl === TROUSER_B);
+    assert.strictEqual(b.price, undefined, 'the listing’s 88.00 was carried onto its product');
+  });
+
+  await testAsync('a coded page whose records are other products reaches discovery through its refused price', async () => {
+    const coded = 'https://www.shop-example.com/womens/trousers-4012';
+    discoveryWeb((href) => (href === coded ? page(listingHtml(FOUR).replace(LISTING, coded)) : null));
+    const { records, diagnostics } = await readListings([{ title: 'Trousers', productUrl: coded }], { limit: 12, deadline: deadlineIn(9000), query: 'wide leg trousers' });
+    assert.deepStrictEqual(verifyAll(records).products.map((one) => one.productUrl), [TROUSER_A, TROUSER_B]);
+    assert.strictEqual(diagnostics.discoveryPages[0].by, 'its own data, after no-price');
+  });
+
+  await testAsync('a product page with one related product is not a listing, and a search with no phrase discovers nothing', async () => {
+    const lone = listingHtml([FOUR[0]]);
+    discoveryWeb((href) => (href === LISTING ? page(lone) : null));
+    const one = await readListings([{ title: 'Trousers', productUrl: LISTING }], { limit: 12, deadline: deadlineIn(9000), query: 'wide leg trousers' });
+    assert.deepStrictEqual(one.diagnostics.discoveryPages, []);
+    const calls = discoveryWeb();
+    const none = await readListings([{ title: 'Trousers', productUrl: LISTING }], { limit: 12, deadline: deadlineIn(9000) });
+    assert.deepStrictEqual(none.diagnostics.discoveryPages, []);
+    assert.ok(!calls.some((c) => c.url === TROUSER_A));
+  });
+
+  await testAsync('pages found to be listings share the category-page cap', async () => {
+    const lists = [1, 2, 3, 4].map((n) => `https://www.shop-example.com/womens/trousers-edit-${n}`);
+    discoveryWeb((href) => (lists.includes(href) ? page(listingHtml(FOUR).replace(LISTING, href)) : null));
+    const { diagnostics } = await readListings(lists.map((url) => ({ title: 'Trousers', productUrl: url })), { limit: 12, deadline: deadlineIn(9000), query: 'wide leg trousers' });
+    assert.strictEqual(diagnostics.discoveryPages.length, 3);
+    assert.strictEqual(diagnostics.categoryPagesRead, 3);
   });
 
   console.log(`\n${passed} passed, ${failures.length} failed\n`);
