@@ -1447,6 +1447,70 @@ function walledRetailer() {
     assert.match(jumbie.why, /never says fleece/);
   });
 
+  /* A shopper's words against a listing's title, as the live search and
+     its benchmark put them: the row is the request itself. */
+  const asked = (query, title) => extractor.semanticMatch({ id: 'query', name: query }, { title });
+
+  test('a sweatshirt knitted from wool is the sweater it is made as', () => {
+    for (const title of ["Men's Merino Crew Sweatshirt", 'Merino Crewneck Sweatshirt']) {
+      const verdict = asked('merino crewneck jumper', title);
+      assert.strictEqual(verdict.ok, true, `${title}: ${verdict.why}`);
+      assert.strictEqual(verdict.kind, 'match', `${title}: ${verdict.why}`);
+      assert.match(verdict.why, /titled a sweatshirt, but a sweatshirt knitted from wool yarn is a knit pullover/);
+    }
+    /* another wool is still the garment asked for; the fibre asked for
+       is left for the page to establish, as it always was */
+    const cashmere = asked('merino crewneck jumper', 'Cashmere Crew Sweatshirt');
+    assert.strictEqual(cashmere.ok, true, cashmere.why);
+    /* and it works from the request's side too */
+    assert.strictEqual(asked('wool sweatshirt', 'Merino Crew Sweater').kind, 'match');
+    assert.strictEqual(extractor.readGarment('Merino Crew Sweatshirt', {}).type, 'sweater');
+    assert.strictEqual(extractor.readGarment('Merino Crew Sweatshirt', {}).madeAs.named, 'sweatshirt');
+  });
+
+  test('a sweatshirt that is fleece, terry or of no stated fibre is still a sweatshirt', () => {
+    for (const title of ['Crew Neck Sweatshirt', 'Cotton Fleece Crew Sweatshirt', 'Merino Fleece Sweatshirt', 'French Terry Wool Blend Sweatshirt']) {
+      assert.strictEqual(extractor.readGarment(title, {}).type, 'sweatshirt', title);
+      const verdict = asked('merino crewneck jumper', title);
+      assert.strictEqual(verdict.ok, false, `${title} was taken for a sweater: ${verdict.why}`);
+      assert.match(verdict.why, /the row means a sweater and .* is a sweatshirt/);
+    }
+    /* and a shopper who asks for a sweatshirt is not offered a sweater */
+    const sweater = asked('grey crewneck sweatshirt', 'Merino Crew Sweater');
+    assert.strictEqual(sweater.ok, false, sweater.why);
+  });
+
+  test('closely related garments that are genuinely different stay different', () => {
+    for (const [query, title] of [
+      ['grey crewneck sweatshirt', 'Fleece Sweatpant'],
+      ['green oversized hoodie', 'Oversized Sweatshirt'],
+      ['grey crewneck sweatshirt', 'Fleece Hoodie'],
+      ['merino crewneck jumper', 'Merino Hoodie'],
+      ['merino crewneck jumper', 'Merino Wool Hooded Sweatshirt'],
+      ['merino crewneck jumper', 'Merino Sweatpant'],
+      ['navy blazer', 'Wool Jacket'],
+      ['navy jacket', 'Navy Blazer'],
+      ['black wide leg trousers', 'Wide Leg Jeans'],
+      ['black jeans', 'Black Trousers'],
+      ['wool sweater', 'Wool Coat'],
+      ['wool sweater', 'Wool Cardigan']
+    ]) {
+      const verdict = asked(query, title);
+      assert.strictEqual(verdict.ok, false, `"${query}" took "${title}": ${verdict.why}`);
+      assert.strictEqual(verdict.kind, 'contradiction', `"${query}" / "${title}": ${verdict.why}`);
+    }
+  });
+
+  test('the fabric decides a type only on the side that names it', () => {
+    /* "merino" in the REQUEST does not turn the listing's sweatshirt into a sweater */
+    assert.strictEqual(extractor.readGarment('Crew Sweatshirt', {}).madeAs, null);
+    assert.strictEqual(asked('merino crewneck jumper', 'Crew Sweatshirt').ok, false);
+    /* and no other type is read as anything else by what it is made of */
+    for (const title of ['Merino Hoodie', 'Wool Blazer', 'Denim Trousers', 'Wool Coat', 'Cashmere Cardigan']) {
+      assert.strictEqual(extractor.readGarment(title, {}).madeAs, null, title);
+    }
+  });
+
   test('a puffer jacket or coat is a puffer, not the jacket or coat after it', () => {
     /* the way shops title the garment: "jacket" and "coat" end the
        title, and read as the head noun they refused every one */

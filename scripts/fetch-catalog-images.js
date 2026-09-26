@@ -3909,6 +3909,34 @@ function spansIn(tokens, index) {
     other !== span && other.start <= span.start && other.end >= span.end && other.length > span.length));
 }
 
+/* ---------- a garment named as one type and made as another ----------
+
+   Most type words name a shape — a hoodie has a hood, a blazer is cut
+   like a suit jacket, jeans are five-pocket denim — and a listing that
+   says one is making a claim about the garment that no fabric changes.
+   A few name a CONSTRUCTION instead, and the fabric can contradict the
+   name. A sweatshirt is fleece or terry jersey; wool, merino and
+   cashmere are knitting yarns, and a "Merino Crew Sweatshirt" is a
+   knitted merino crew pullover — a sweater by what it is made of,
+   titled after the shape it is styled like.
+
+   So a type here may be read as its neighbour, and only on evidence in
+   the same text: the named fibre, and none of the construction words
+   that would make the name true after all ("merino fleece" is fleece).
+   This is not a synonym list. A plain "Crew Sweatshirt" is a
+   sweatshirt, a "Cotton Fleece Sweatshirt" is a sweatshirt, a "Merino
+   Hoodie" is a hoodie, and a shopper who asks for a sweatshirt is not
+   offered a sweater — each side is read for what IT says. */
+const MADE_AS = [
+  {
+    type: 'sweatshirt',
+    fibre: 'wool',
+    reads: 'sweater',
+    unless: ['fleece', 'terry', 'french terry', 'jersey', 'sherpa'],
+    why: 'a sweatshirt knitted from wool yarn is a knit pullover'
+  }
+];
+
 function readGarment(text, extra) {
   const options = extra || {};
   const tokens = tokenise(text);
@@ -3980,11 +4008,26 @@ function readGarment(text, extra) {
   let audienceFrom = audience ? 'its name' : null;
   if (!audience && adultSizing(options.sizes)) { audience = 'adult'; audienceFrom = 'its sizes'; }
 
+  /* the type the name gives, unless what it is made of says otherwise */
+  let type = head ? head.hit.type : null;
+  let family = head ? head.hit.family : null;
+  let madeAs = null;
+  for (const rule of MADE_AS) {
+    if (type !== rule.type || !fibres.has(rule.fibre)) continue;
+    if ([...materialTerms].some((term) => rule.unless.includes(term))) continue;
+    const reads = GARMENT_TYPES.find((entry) => entry.type === rule.reads);
+    if (!reads || reads.family !== family) continue;
+    madeAs = { named: type, why: rule.why };
+    type = reads.type;
+  }
+
   return {
     text: String(text || ''),
     tokens,
-    type: head ? head.hit.type : null,
-    family: head ? head.hit.family : null,
+    type,
+    family,
+    /* when the fabric, not the name, settled the type */
+    madeAs,
     generic: head ? Boolean(head.hit.generic) : false,
     typeVia: via,
     types: typeSpans.map((span) => span.hit.type),
@@ -4058,8 +4101,10 @@ function semanticMatch(row, listing) {
   if (wanted.type !== offered.type && !wanted.generic && !offered.generic) {
     return refuse(`the row means a ${wanted.type} and "${title}" is a ${offered.type}`);
   }
+  const madeAs = [wanted, offered].filter((side) => side.madeAs)
+    .map((side) => ` ("${side.text}" is titled a ${side.madeAs.named}, but ${side.madeAs.why})`).join('');
   agreed.push(wanted.type === offered.type
-    ? `${offered.type} matches ${wanted.type}`
+    ? `${offered.type} matches ${wanted.type}${madeAs}`
     : wanted.generic
       ? `a ${offered.type} is one of the ${wanted.type}s the row asks for`
       : `"${title}" says ${offered.type}, which the row's ${wanted.type} is one of`);
