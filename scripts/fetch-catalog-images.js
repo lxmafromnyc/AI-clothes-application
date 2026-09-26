@@ -6934,7 +6934,7 @@ if (require.main === module) {
     /* whether a page is a product page, for the canonical rule */
     pageDeclarations, pageDeclarationsFromHtml, productPageVerdict,
     /* a listing whose URL names no product, identified by its own page */
-    pageIdentity, codesIn, recordFingerprint, parseJsonLd,
+    pageIdentity, codesIn, recordFingerprint, parseJsonLd, canonicalOf,
     garmentsAgree, canonicalCorroborated, wordsInPath, wordsAboutImage, TRACKING_PARAMS,
     siteAsset, imageDimensions, listingShape, rankListings, embeddedProductTiles, listingProductLinks, tilesFromHtml, tilesOffered, productKey, tileReport, tileLines,
     parseArgs, OPTIONS, USAGE, intentFor, queryForms, listingsFor, discoverRow, coverage,

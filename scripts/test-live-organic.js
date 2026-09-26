@@ -1294,6 +1294,37 @@ const deadlineIn = (ms) => Date.now() + ms;
     assert.ok(!calls.some((one) => one.url.includes('elsewhere')), 'a manifest on another site was fetched');
   });
 
+
+  await testAsync('every page read that still failed is reported with its title, gate and the evidence it exposed', async () => {
+    const { records, diagnostics } = await readOne(shopPage('<title>Wide Leg Trouser | Shop Example</title><link rel="canonical" href="https://www.shop-example.com/p/wide-leg-trouser-WL48213"><meta property="og:type" content="product">', [
+      { '@type': 'Product', name: 'Wide Leg Trouser', sku: 'WL48213', offers: [{ price: '88.00', priceCurrency: 'USD', availability: 'InStock' }, { price: '98.00', priceCurrency: 'USD', availability: 'InStock' }] }
+    ]));
+    assert.strictEqual(records[0].price, undefined);
+    assert.strictEqual(diagnostics.failedPages.length, 1);
+    const [failed] = diagnostics.failedPages;
+    assert.strictEqual(failed.productUrl, URLS.good);
+    assert.strictEqual(failed.outcome, 'no-price');
+    assert.strictEqual(failed.priceCategory, 'several-prices');
+    assert.strictEqual(failed.evidence.title, 'Wide Leg Trouser | Shop Example');
+    assert.strictEqual(failed.evidence.canonical, 'https://www.shop-example.com/p/wide-leg-trouser-WL48213');
+    assert.deepStrictEqual(failed.evidence.jsonLd.products[0].prices, ['88.00', '98.00']);
+    assert.deepStrictEqual(failed.evidence.jsonLd.products[0].ids, ['wl48213']);
+    assert.deepStrictEqual(failed.evidence.listingCodes.slice(0, 1), ['wl48213']);
+    /* and none of it reaches a shopper's browser */
+    const { withoutSamplesForTest } = require('../api/search');
+    assert.strictEqual(withoutSamplesForTest({ organic: { pages: diagnostics } }).organic.pages.failedPages, undefined);
+  });
+
+  await testAsync('a photographed page the gate refused carries its evidence too, including what the store record said', async () => {
+    const { diagnostics } = await readStore(STORE, `<!doctype html><html><head><title>Heavyweight Hoodie</title><meta property="og:type" content="product">
+      <link rel="canonical" href="${STORE}"><script>Shopify.shop = "x.myshopify.com"; Shopify.currency = {"active":"USD"};</script></head></html>`);
+    const [failed] = diagnostics.failedPages;
+    assert.strictEqual(failed.outcome, 'photographed-but-refused:missing-retailer');
+    assert.strictEqual(failed.evidence.shopNames.ogSiteName, null);
+    assert.strictEqual(failed.evidence.shopify.record.asked, true);
+    assert.strictEqual(failed.evidence.shopify.record.variants, 2);
+  });
+
   console.log(`\n${passed} passed, ${failures.length} failed\n`);
   if (failures.length) process.exitCode = 1;
 })();

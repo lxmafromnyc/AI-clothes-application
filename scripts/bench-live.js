@@ -303,6 +303,15 @@ function summarise(results) {
       }
       return out;
     })(),
+    /* every query that showed nothing, with every page read for it: the
+       listing, its title, the gate that stopped it, and what the page
+       exposed (see pageEvidence in api/_providers/retailer-page.js) */
+    failedQueryDiagnostics: results.filter((r) => r.blockedBy).map((r) => ({
+      query: r.query,
+      blockedBy: r.blockedBy,
+      providerFailure: r.providerFailure || null,
+      pages: (r.organic && r.organic.pages && r.organic.pages.failedPages) || []
+    })),
     /* every query that showed nothing, under the stage that stopped it */
     failedQueriesByCause: results.reduce((groups, r) => {
       const cause = blockingCause(r);

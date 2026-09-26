@@ -364,6 +364,7 @@ function withoutSamples(funnel) {
   const pages = Object.assign({}, funnel.organic.pages);
   delete pages.samples;
   delete pages.reasons;
+  delete pages.failedPages;
   return Object.assign({}, funnel, { organic: Object.assign({}, funnel.organic, { pages }) });
 }
 
@@ -484,6 +485,8 @@ module.exports.shapeAttachments = shapeAttachments;
    so both measure the path a shopper actually takes */
 module.exports.findProducts = findProducts;
 module.exports.recordsFrom = recordsFrom;
+/* exported for scripts/test-live-organic.js: what the browser is sent */
+module.exports.withoutSamplesForTest = withoutSamples;
 module.exports.searchWithFallback = searchWithFallback;
 /* the endpoint's own budget and page size, for scripts/bench-live.js */
 module.exports.requestBudget = requestBudget;

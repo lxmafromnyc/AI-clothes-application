@@ -348,6 +348,75 @@ function priceDiagnosis(html, read, decided, images) {
   return 'no-price-in-served-markup';
 }
 
+/* ---------- what a page that failed exposes ----------
+
+   Diagnostics only: nothing here decides anything, and nothing reads it
+   but a person, or a benchmark report, asking why a page that was read
+   still proved nothing. It lists the evidence the page carries, read
+   with the gates' own parsers, so "the page has no price" and "the page
+   has a price the reader does not take" can be told apart without
+   opening it. No record's contents beyond names, identifiers and
+   figures; never the page's markup. */
+const EMBEDDED_MARKERS = ['__NEXT_DATA__', '__NUXT__', '__INITIAL_STATE__', '__PRELOADED_STATE__', '__APOLLO_STATE__', 'data-product-json', 'ShopifyAnalytics.meta', 'window.__remixContext', '__reactRouterContext'];
+
+function pageEvidence(html, pageUrl, listingUrl, images, prices, storeRead) {
+  const page = String(html || '');
+  const clip = (value, n) => decodeEntities(value).slice(0, n || 100);
+  const titleTag = page.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+  const nodes = images.jsonLdNodes(page);
+  const types = {};
+  for (const node of nodes) for (const type of [].concat(node['@type'] || '(untyped)')) types[String(type)] = (types[String(type)] || 0) + 1;
+  const products = nodes.filter((node) => /product/i.test(String(node['@type'] || ''))).slice(0, 4).map((node) => {
+    const offers = [];
+    const raw = node.offers || node.offer;
+    for (const one of Array.isArray(raw) ? raw : (raw ? [raw] : [])) {
+      if (!one || typeof one !== 'object') continue;
+      offers.push(one);
+      for (const inner of [].concat(one.offers || [])) if (inner && typeof inner === 'object') offers.push(inner);
+    }
+    const variants = [].concat(node.hasVariant || []).filter((one) => one && typeof one === 'object');
+    return {
+      type: [].concat(node['@type'] || []).join(','),
+      name: clip(node.name, 80),
+      ids: images.skuOf(node).concat(['productGroupID', 'inProductGroupWithID'].map((key) => node[key]).filter((v) => v !== undefined).map(String)).slice(0, 6),
+      url: typeof node.url === 'string' ? node.url.slice(0, 160) : null,
+      offers: offers.length,
+      offerSkus: [...new Set(offers.flatMap((one) => images.skuOf(one)))].slice(0, 6),
+      offerUrls: [...new Set(offers.map((one) => one.url).filter((u) => typeof u === 'string'))].slice(0, 3),
+      prices: [...new Set(offers.map((one) => one.price !== undefined ? String(one.price) : one.lowPrice !== undefined ? `${one.lowPrice}-${one.highPrice}` : null).filter(Boolean))].slice(0, 8),
+      currencies: [...new Set(offers.map((one) => one.priceCurrency).filter(Boolean))],
+      availability: [...new Set(offers.map((one) => String(one.availability || '').replace(/^.*[/#]/, '')).filter(Boolean))],
+      variants: variants.length,
+      variantPrices: [...new Set(variants.flatMap((one) => [].concat(one.offers || []).map((o) => o && o.price)).filter((v) => v !== undefined).map(String))].slice(0, 8)
+    };
+  });
+  const meta = (name) => { const value = images.metaContent(page, name); return value ? clip(value, 80) : null; };
+  return {
+    url: pageUrl,
+    title: titleTag ? clip(titleTag[1].replace(/\s+/g, ' ').trim(), 120) : null,
+    canonical: images.canonicalOf(page) || null,
+    listingCodes: images.identifiersFrom(listingUrl).slice(0, 6),
+    ogType: meta('og:type'),
+    shopNames: {
+      ogSiteName: meta('og:site_name'),
+      applicationName: meta('application-name') || meta('apple-mobile-web-app-title'),
+      jsonLd: [...new Set(nodes.filter((node) => /^(website|organization|corporation|store|onlinestore|clothingstore)$/i.test(String(node['@type'] || '').replace(/^.*[/#]/, ''))).map((node) => `${node['@type']}: ${clip(node.name || node.legalName, 60)}`))].slice(0, 4),
+      manifest: /<link\b[^>]*\brel=["']?manifest/i.test(page)
+    },
+    jsonLd: { types, products },
+    microdata: {
+      productScopes: (page.match(/itemtype=["']https?:\/\/schema\.org\/(Product|ProductGroup)["']/gi) || []).length,
+      priceProps: (page.match(/itemprop\s*=\s*["']?(price|lowPrice)["'\s>]/gi) || []).length,
+      read: prices.microdataCandidates(page).map((one) => ({ amount: one.amount, scopeSkus: one.dom.scopeSkus.slice(0, 3), offerScope: one.dom.offerScope })).slice(0, 6)
+    },
+    priceMetas: ['product:price:amount', 'og:price:amount'].map((name) => meta(name) && `${name}=${meta(name)}`).filter(Boolean),
+    embedded: EMBEDDED_MARKERS.filter((marker) => page.includes(marker)),
+    shopify: images.SHOPIFY_PAGE.test(page)
+      ? { handle: (images.shopifyHandle(listingUrl) || {}).handle || null, currency: prices.pageCurrency(page), record: storeRead || { asked: false } }
+      : null
+  };
+}
+
 /* the outcomes of a page that was fetched and still proved nothing */
 const READ_FAILURES = new Set(['unreadable', 'left-the-retailer', 'no-identity', 'no-price', 'no-photo']);
 
@@ -388,7 +457,17 @@ async function readListing(record, budget) {
   const given = record && typeof record === 'object' ? record : {};
   const productUrl = text(given.productUrl);
   const title = text(given.title);
-  const done = (outcome, why, out) => ({ record: out || given, outcome, why: why || null });
+  /* what the page exposed, kept for a page that was read and still
+     failed — diagnostics only (see pageEvidence) */
+  let seen = null;
+  let storeRead;
+  const done = (outcome, why, out) => {
+    const result = { record: out || given, outcome, why: why || null };
+    if (seen && READ_FAILURES.has(outcome)) {
+      try { result.evidence = pageEvidence(seen.html, seen.url, (out || given).productUrl || productUrl, images, prices, storeRead); } catch (err) { result.evidence = { failed: String(err && err.message) }; }
+    }
+    return result;
+  };
 
   const refused = precheck(given);
   if (refused) return done(refused.outcome, refused.why);
@@ -398,6 +477,7 @@ async function readListing(record, budget) {
   const pageWindow = Math.max(MIN_PAGE_WINDOW_MS, budget.left() - IMAGE_RESERVE_MS);
   const page = await images.fetchPage(productUrl, budget.cap(Math.min(images.TIMEOUT, pageWindow)));
   if (!page.html) return done('unreadable', page.failed);
+  seen = { html: page.html, url: page.url || productUrl };
 
   const asked = hostOf(productUrl);
   const landed = hostOf(page.url || productUrl);
@@ -423,6 +503,11 @@ async function readListing(record, budget) {
     if (!isShopify || !images.shopifyHandle(url) || budget.left() < MIN_PAGE_WINDOW_MS) return store;
     const read = await images.readProductRecord(url, budget.cap(Math.min(images.TIMEOUT, Math.max(MIN_PAGE_WINDOW_MS, budget.left() - IMAGE_RESERVE_MS))));
     store = read.summary || null;
+    storeRead = store
+      ? { asked: true, id: store.id, handle: store.handle, variants: store.variants.length,
+        prices: [...new Set(store.variants.map((one) => String(one.price)))].slice(0, 8),
+        available: store.variants.filter((one) => one.available !== false).length }
+      : { asked: true, failed: read.failed || 'no record' };
     return store;
   };
 
@@ -522,6 +607,7 @@ async function readListing(record, budget) {
   const verdict = toProduct(proved, { retailer: null });
   if (!verdict.ok) {
     result.gateRefusal = verdict.reason;
+    try { result.evidence = pageEvidence(page.html, page.url || productUrl, listingUrl, images, prices, storeRead); } catch (err) { /* diagnostics only */ }
     result.why = `${verdict.reason}: ${verdict.reason === 'missing-retailer'
       ? 'the page names no shop in og:site_name, a JSON-LD WebSite, Organization or publisher, an offer\'s seller, its application-name or its web app manifest'
       : 'the gate refused what the page proved'}`;
@@ -681,6 +767,12 @@ async function readListings(records, options) {
       /* listings whose page proved a price and a photo and that the gate
          still refused, by the gate's own reason */
       gateRefusals,
+      /* EVERY page that was read and still failed, with what it exposed:
+         the listing, its title, the gate that stopped it, its evidence */
+      failedPages: ordered.map((entry) => entry.final)
+        .filter((one) => one && (READ_FAILURES.has(one.outcome) || one.gateRefusal) && one.evidence)
+        .map((one) => ({ productUrl: one.record && one.record.productUrl, outcome: one.gateRefusal ? `photographed-but-refused:${one.gateRefusal}` : one.outcome,
+          gate: one.why ? text(one.why).slice(0, 240) : null, priceCategory: one.priceCategory || null, evidence: one.evidence })),
       samples: ordered.map((entry) => entry.final).filter((one) => one && (READ_FAILURES.has(one.outcome) || one.gateRefusal)).slice(0, 8)
         .map((one) => Object.assign({ host: hostOf(one.record && one.record.productUrl), outcome: one.outcome, why: text(one.why).slice(0, 160) },
           one.gateRefusal ? { gateRefusal: one.gateRefusal, productUrl: one.record && one.record.productUrl } : {},
