@@ -1409,7 +1409,10 @@ const deadlineIn = (ms) => Date.now() + ms;
     assert.ok(!products.some((one) => one.productUrl === LISTING), 'the listing page became a product');
     assert.strictEqual(rejected['missing-price'], 1, 'the listing page itself went to the gate and was refused');
     assert.ok(!calls.some((one) => one.url === HOODIE_T || one.url === JEANS_T), 'a listed product that is not the garment asked for was fetched');
-    assert.deepStrictEqual(diagnostics.discoveryPages, [{ url: LISTING, by: 'its own data, after no-identity', listed: 4, offered: 2 }]);
+    assert.strictEqual(diagnostics.discoveryPages.length, 1);
+    const [found] = diagnostics.discoveryPages;
+    assert.deepStrictEqual({ url: found.url, by: found.by, listed: found.listed, offered: found.offered, verified: found.verified, accepted: found.accepted },
+      { url: LISTING, by: 'its own data, after no-identity', listed: 4, offered: 2, verified: 2, accepted: 2 });
     assert.strictEqual(diagnostics.outcomes['no-identity'], 1);
     assert.strictEqual(diagnostics.outcomes['tile:photographed'], 2);
   });
@@ -1445,8 +1448,70 @@ const deadlineIn = (ms) => Date.now() + ms;
     const lists = [1, 2, 3, 4].map((n) => `https://www.shop-example.com/womens/trousers-edit-${n}`);
     discoveryWeb((href) => (lists.includes(href) ? page(listingHtml(FOUR).replace(LISTING, href)) : null));
     const { diagnostics } = await readListings(lists.map((url) => ({ title: 'Trousers', productUrl: url })), { limit: 12, deadline: deadlineIn(9000), query: 'wide leg trousers' });
-    assert.strictEqual(diagnostics.discoveryPages.length, 3);
+    assert.strictEqual(diagnostics.discoveryPages.filter((one) => !one.skipped).length, 3);
     assert.strictEqual(diagnostics.categoryPagesRead, 3);
+    /* the fourth is reported as kept from use by the cap, with what it listed */
+    const skipped = diagnostics.discoveryPages.filter((one) => one.skipped);
+    assert.strictEqual(skipped.length, 1);
+    assert.match(skipped[0].skipped, /cap was reached/);
+    assert.strictEqual(skipped[0].listed, 4);
+  });
+
+
+  await testAsync('each discovery page reports its read time, what it listed and offered, and what became of every product', async () => {
+    /* one matching product verified and shown, one whose own page proves
+       no price, from a page that lists four */
+    discoveryWeb((href) => (href === TROUSER_B ? page(productPage({ sku: 'WL48302', offerSku: 'ZZ00001', name: 'Wide Leg Trouser in Black', price: '88.00', siteName: 'Shop Example', image: 'https://cdn.shop-example.com/i/WL48302-front.jpg' })) : null));
+    const { diagnostics } = await readListings([{ title: "Women's Trousers", productUrl: LISTING }], { limit: 12, deadline: deadlineIn(9000), query: 'wide leg trousers' });
+    const [one] = diagnostics.discoveryPages;
+    assert.strictEqual(one.listed, 4);
+    assert.deepStrictEqual(one.sources, { 'json-ld': 4 });
+    assert.strictEqual(one.offered, 2);
+    assert.strictEqual(one.verified, 2);
+    assert.strictEqual(one.accepted, 1);
+    assert.deepStrictEqual(one.rejected, { 'no-price:record-names-another-product': 1 });
+    assert.strictEqual(one.notReached, 0);
+    assert.strictEqual(typeof one.readMs, 'number');
+    assert.strictEqual(typeof one.verifyMs, 'number');
+    assert.deepStrictEqual(one.products.map((p) => [p.productUrl, p.source, p.outcome]), [
+      [TROUSER_A, 'json-ld', 'accepted'],
+      [TROUSER_B, 'json-ld', 'rejected: no-price:record-names-another-product']
+    ]);
+  });
+
+  await testAsync('a category page by address that lists nothing is reported as read and empty, and one the clock never reached as skipped', async () => {
+    const empty = 'https://www.shop-example.com/collections/trousers';
+    discoveryWeb((href) => (href === empty ? page(listingHtml([])) : null));
+    const read = await readListings([{ title: 'Trousers', productUrl: empty }], { limit: 12, deadline: deadlineIn(9000), query: 'wide leg trousers' });
+    assert.deepStrictEqual([read.diagnostics.discoveryPages[0].listed, read.diagnostics.discoveryPages[0].offered, read.diagnostics.discoveryPages[0].accepted], [0, 0, 0]);
+    discoveryWeb();
+    const late = await readListings([{ title: 'Trousers', productUrl: empty }], { limit: 12, deadline: deadlineIn(200), query: 'wide leg trousers' });
+    assert.match(late.diagnostics.discoveryPages[0].skipped, /ran out of time/);
+  });
+
+
+  await testAsync('the benchmark groups discovery yield by kind of page, never by site', async () => {
+    const { discoveryEfficiency } = require('./bench-live');
+    const row = (query, pages) => ({ query, organic: { pages: { discoveryPages: pages } } });
+    const out = discoveryEfficiency([
+      row('wide leg trousers', [
+        { url: 'https://a.example/c/trousers', by: 'its address', listed: 24, offered: 4, verified: 4, accepted: 3, notReached: 0, readMs: 900, verifyMs: 2400, sources: { 'json-ld': 24 },
+          rejected: { 'no-price:several-prices': 1 }, products: [{ source: 'json-ld', fullMatch: true, outcome: 'accepted' }, { source: 'json-ld', fullMatch: false, outcome: 'rejected: no-price:several-prices' }] },
+        { url: 'https://b.example/list', by: 'its own data, after no-identity', listed: 0, offered: 0, verified: 0, accepted: 0, readMs: 1200, verifyMs: 0 },
+        { url: 'https://c.example/c/more', by: 'its address', skipped: 'the discovery-page cap was reached', listed: 60 }
+      ])
+    ]);
+    assert.strictEqual(out.pagesRead, 2);
+    assert.deepStrictEqual(out.pagesSkipped, { 'the discovery-page cap was reached': 1 });
+    assert.strictEqual(out.skippedButListed[0].listed, 60);
+    assert.strictEqual(out.listedZero, 1);
+    assert.strictEqual(out.byRecognition.address.accepted, 3);
+    assert.strictEqual(out.byRecognition.content.accepted, 0);
+    assert.strictEqual(out.byListedSize['10-49'].acceptRate, 0.75);
+    assert.deepStrictEqual(out.bySource['json-ld'], { offered: 2, verified: 2, accepted: 1 });
+    assert.deepStrictEqual(out.rejectionReasons, { 'no-price:several-prices': 1 });
+    assert.strictEqual(out.lowYield.length, 1);
+    assert.ok(!Object.keys(out.byRecognition).some((key) => /example/.test(key)), 'a site became a group');
   });
 
   console.log(`\n${passed} passed, ${failures.length} failed\n`);

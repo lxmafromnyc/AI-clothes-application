@@ -484,12 +484,18 @@ async function readListing(record, budget, context) {
     /* the cap is claimed BEFORE the page is read — lanes run at once, and
        a check made by each before any of them counted lets them all in —
        and given back when the page lists nothing */
-    if (!seen || !ctx.query || typeof ctx.claim !== 'function' || !ctx.claim()) return result;
+    if (!seen || !ctx.query || typeof ctx.claim !== 'function') return result;
+    if (!ctx.claim()) {
+      /* reported, not read: how many products the cap kept unused */
+      const listed = productsListedCount(seen.html, seen.url);
+      if (listed >= 2) result.discoverySkipped = { url: seen.url, by: `its own data, after ${result.outcome}`, skipped: 'the discovery-page cap was reached', listed };
+      return result;
+    }
     let found;
     try { found = await productsListedOn(seen.html, seen.url, budget, ctx.query, ctx.known ? ctx.known() : []); } catch (err) { ctx.release(); return result; }
     if (found.listed < 2) { ctx.release(); return result; }
     result.tiles = found.offered;
-    result.discovery = { url: seen.url, by: `its own data, after ${result.outcome}`, listed: found.listed, offered: found.offered.length };
+    result.discovery = { url: seen.url, by: `its own data, after ${result.outcome}`, listed: found.listed, offered: found.offered.length, sources: found.sources };
     return result;
   };
 
@@ -663,7 +669,7 @@ async function readCategory(record, budget, query, known) {
 
   const found = await productsListedOn(page.html, landedUrl, budget, query, known);
   const result = done(`${found.listed} product${found.listed === 1 ? '' : 's'} listed, ${found.offered.length} the garment asked for`, found.offered);
-  result.discovery = { url: landedUrl, by: 'its address', listed: found.listed, offered: found.offered.length };
+  result.discovery = { url: landedUrl, by: 'its address', listed: found.listed, offered: found.offered.length, sources: found.sources };
   return result;
 }
 
@@ -682,11 +688,31 @@ async function productsListedOn(html, landedUrl, budget, query, known) {
     tiles.push(...await images.collectionTiles(landedUrl, images.request, budget.cap(Math.min(images.TIMEOUT, Math.max(MIN_PAGE_WINDOW_MS, budget.left() - IMAGE_RESERVE_MS))), stats));
   }
   const links = images.listingProductLinks(landedUrl, tiles, stats);
+  const sourceOf = new Map(links.map((link) => [link.productUrl, sourceKind(link.where)]));
   const offered = images.tilesOffered({ id: 'query', name: query }, [{ url: landedUrl, productLinks: links }], known || [])
     .filter((one) => one.rank < 2)
     .slice(0, MAX_TILES_PER_CATEGORY)
-    .map((one) => ({ title: one.title, productUrl: one.productUrl }));
-  return { listed: links.length, offered };
+    .map((one) => ({ title: one.title, productUrl: one.productUrl, source: sourceOf.get(one.productUrl) || 'unknown', fullMatch: one.rank === 0 }));
+  const sources = {};
+  for (const link of links) { const kind = sourceOf.get(link.productUrl); sources[kind] = (sources[kind] || 0) + 1; }
+  return { listed: links.length, offered, sources };
+}
+
+/* the kind of page data a listed product came from — the reader that
+   found it, never a site: "json-ld", "__NEXT_DATA__", "shopify
+   collection products.json" */
+function sourceKind(where) {
+  const text = String(where || '');
+  if (/^shopify collection/i.test(text)) return 'shopify collection';
+  const head = text.split(/[.[(]/)[0].trim();
+  return head || 'unknown';
+}
+
+/* how many products a page lists, from the markup already in hand — no
+   request — for reporting a page the cap kept from being used */
+function productsListedCount(html, landedUrl) {
+  const { images } = discovery();
+  try { return images.listingProductLinks(landedUrl, images.tilesFromHtml(html, {}), {}).length; } catch (err) { return null; }
 }
 
 /* Every listing, read a few at a time, likeliest first, and answered in
@@ -726,17 +752,25 @@ async function readListings(records, options) {
 
   /* the products a page listed, offered as candidates of their own,
      grouped under the page that listed them */
-  const offerTiles = (entry, tiles) => {
+  const offerTiles = (entry, tiles, page) => {
     (tiles || []).forEach((tile, seq) => {
       const key = images.productKey(tile.productUrl);
       if (!key || known.has(key)) return;
       known.add(key);
       tilesOffered += 1;
-      const added = { record: tile, from: entry.from, seq: seq + 1, tile: true };
+      const added = { record: { title: tile.title, productUrl: tile.productUrl }, from: entry.from, seq: seq + 1, tile: true,
+        discovery: page, source: tile.source || 'unknown', fullMatch: Boolean(tile.fullMatch) };
       entries.push(added);
       queue.push({ entry: added, tier: tierOf(added) });
     });
     queue = queue.sort(byTier);
+  };
+  /* the discovery page as reported: filled in with what became of its
+     products once every lane has stopped */
+  const discoveryPage = (found, readMs) => {
+    const page = Object.assign({}, found, { readMs });
+    discoveryPages.push(page);
+    return page;
   };
   const context = {
     query,
@@ -759,10 +793,12 @@ async function readListings(records, options) {
           /* skipped, not read: said so, so a starved category page is
              never counted as one that was read and listed nothing */
           entry.result = Object.assign({ record: one }, refused, { unread: !query ? 'no shopper phrase' : 'the search’s category-page cap was reached' });
+          if (query) discoveryPages.push({ url: one.productUrl, by: 'its address', skipped: 'the discovery-page cap was reached' });
           continue;
         }
         categories += 1;
         started += 1;
+        const readFrom = Date.now();
         let read;
         try {
           read = await readCategory(one, budget, query, [...known].map((key) => ({ productUrl: `https://${key}` })));
@@ -770,26 +806,59 @@ async function readListings(records, options) {
           read = { record: one, outcome: 'category-page', why: err && err.message ? String(err.message).split('\n')[0] : String(err), tiles: [] };
         }
         entry.result = { record: one, outcome: 'category-page', why: read.why };
-        if (read.discovery) discoveryPages.push(read.discovery);
-        offerTiles(entry, read.tiles);
+        const readMs = Date.now() - readFrom;
+        const page = read.discovery
+          ? discoveryPage(read.discovery, readMs)
+          : discoveryPage({ url: one.productUrl, by: 'its address', listed: 0, offered: 0, failed: read.why }, readMs);
+        offerTiles(entry, read.tiles, page);
         continue;
       }
       if (started >= MAX_PAGES) return;
       started += 1;
+      const readFrom = Date.now();
       try {
         entry.result = await readListing(one, budget, entry.tile ? null : context);
       } catch (err) {
         entry.result = { record: one, outcome: 'unreadable', why: err && err.message ? String(err.message).split('\n')[0] : String(err) };
       }
+      entry.readMs = Date.now() - readFrom;
       if (entry.result.outcome === 'photographed') photographed += 1;
       /* a page read as one product that turned out to list several */
-      if (entry.result.discovery) {
-        discoveryPages.push(entry.result.discovery);
-        offerTiles(entry, entry.result.tiles);
-      }
+      if (entry.result.discovery) offerTiles(entry, entry.result.tiles, discoveryPage(entry.result.discovery, entry.readMs));
+      if (entry.result.discoverySkipped) discoveryPages.push(entry.result.discoverySkipped);
     }
   };
   await Promise.all(Array.from({ length: Math.min(PAGE_LANES, Math.max(1, entries.length)) }, lane));
+
+  /* what became of each discovery page's products: read or never
+     reached, shown or refused and why, and what reading them cost */
+  for (const tileEntry of entries.filter((one) => one.tile && one.discovery)) {
+    const page = tileEntry.discovery;
+    const result = tileEntry.result || { outcome: 'not-reached' };
+    const accepted = result.outcome === 'photographed' && !result.gateRefusal;
+    const reached = !['not-reached', 'no-time', 'refused-link', 'not-a-shop', 'editorial-page', 'category-page'].includes(result.outcome);
+    const reason = accepted ? null
+      : result.gateRefusal ? `photographed-but-refused:${result.gateRefusal}`
+        : result.priceCategory ? `no-price:${result.priceCategory}` : result.outcome;
+    page.verified = (page.verified || 0) + (reached ? 1 : 0);
+    page.accepted = (page.accepted || 0) + (accepted ? 1 : 0);
+    page.notReached = (page.notReached || 0) + (reached ? 0 : 1);
+    page.verifyMs = (page.verifyMs || 0) + (tileEntry.readMs || 0);
+    if (reason && reached) { page.rejected = page.rejected || {}; page.rejected[reason] = (page.rejected[reason] || 0) + 1; }
+    (page.products = page.products || []).push({ productUrl: tileEntry.record.productUrl, source: tileEntry.source, fullMatch: tileEntry.fullMatch,
+      outcome: accepted ? 'accepted' : reached ? `rejected: ${reason}` : 'not reached', readMs: tileEntry.readMs || null });
+  }
+  /* a category page the lanes never got to before the clock ran out */
+  for (const entry of entries.filter((one) => !one.tile && !one.result)) {
+    const refused = precheck(entry.record);
+    if (refused && refused.outcome === 'category-page' && query) {
+      discoveryPages.push({ url: entry.record.productUrl, by: 'its address', skipped: 'the search ran out of time before it was read' });
+    }
+  }
+  for (const page of discoveryPages) {
+    if (page.skipped) continue;
+    for (const key of ['verified', 'accepted', 'notReached', 'verifyMs']) page[key] = page[key] || 0;
+  }
 
   const outcomes = {};
   const reasons = {};
@@ -850,6 +919,7 @@ async function readListings(records, options) {
 
 module.exports = {
   productsListedOn,
+  sourceKind,
   priceDiagnosis,
   PRICE_CLASSES,
   precheck,

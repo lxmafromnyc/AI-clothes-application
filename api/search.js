@@ -365,6 +365,7 @@ function withoutSamples(funnel) {
   delete pages.samples;
   delete pages.reasons;
   delete pages.failedPages;
+  delete pages.discoveryPages;
   return Object.assign({}, funnel, { organic: Object.assign({}, funnel.organic, { pages }) });
 }
 

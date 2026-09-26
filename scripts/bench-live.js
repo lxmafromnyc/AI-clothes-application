@@ -254,6 +254,65 @@ function stability(all, repeat) {
   };
 }
 
+/* How well discovery spends the clock, across every query: which kinds
+   of discovery page yield accepted products, and which read and verify
+   for nothing. Grouped by characteristics only — how the page was
+   recognised, where its products came from, how many it listed, how
+   closely an offered product's name matched — never by site. */
+function discoveryEfficiency(results) {
+  const pages = results.flatMap((r) => ((r.organic && r.organic.pages && r.organic.pages.discoveryPages) || []).map((one) => Object.assign({ query: r.query }, one)));
+  const read = pages.filter((one) => !one.skipped);
+  const sum = (list, key) => list.reduce((n, one) => n + (Number(one[key]) || 0), 0);
+  const pct = (list, q) => { const sorted = list.slice().sort((a, b) => a - b); return sorted.length ? sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * q))] : null; };
+  const group = (list) => ({
+    pages: list.length,
+    offered: sum(list, 'offered'),
+    verified: sum(list, 'verified'),
+    accepted: sum(list, 'accepted'),
+    acceptedPerPage: list.length ? Number((sum(list, 'accepted') / list.length).toFixed(2)) : 0,
+    acceptRate: sum(list, 'verified') ? Number((sum(list, 'accepted') / sum(list, 'verified')).toFixed(2)) : null,
+    readMsP50: pct(list.map((one) => one.readMs || 0), 0.5),
+    verifyMs: sum(list, 'verifyMs')
+  });
+  const by = (keyOf) => {
+    const out = {};
+    for (const one of read) { const key = keyOf(one); (out[key] = out[key] || []).push(one); }
+    return Object.fromEntries(Object.entries(out).map(([key, list]) => [key, group(list)]));
+  };
+  const products = read.flatMap((one) => one.products || []);
+  const productGroup = (keyOf) => {
+    const out = {};
+    for (const one of products) {
+      const key = keyOf(one);
+      const g = out[key] = out[key] || { offered: 0, verified: 0, accepted: 0 };
+      g.offered += 1;
+      if (one.outcome !== 'not reached') g.verified += 1;
+      if (one.outcome === 'accepted') g.accepted += 1;
+    }
+    return out;
+  };
+  const rejected = {};
+  for (const one of read) for (const [why, n] of Object.entries(one.rejected || {})) rejected[why] = (rejected[why] || 0) + n;
+  return {
+    total: group(read),
+    pagesRead: read.length,
+    pagesSkipped: pages.filter((one) => one.skipped).reduce((tally, one) => { tally[one.skipped] = (tally[one.skipped] || 0) + 1; return tally; }, {}),
+    skippedButListed: pages.filter((one) => one.skipped && one.listed).map((one) => ({ query: one.query, url: one.url, listed: one.listed, skipped: one.skipped })),
+    listedZero: read.filter((one) => !one.listed).length,
+    offeredZero: read.filter((one) => one.listed && !one.offered).length,
+    readButNothingAccepted: read.filter((one) => one.offered && !one.accepted).length,
+    offeredButNoneReached: read.filter((one) => one.offered && !one.verified).length,
+    byRecognition: by((one) => (/address/.test(one.by) ? 'address' : 'content')),
+    byListedSize: by((one) => (!one.listed ? '0' : one.listed === 1 ? '1' : one.listed < 10 ? '2-9' : one.listed < 50 ? '10-49' : '50+')),
+    bySource: productGroup((one) => one.source || 'unknown'),
+    byTitleMatch: productGroup((one) => (one.fullMatch ? 'full match' : 'partial match')),
+    rejectionReasons: Object.fromEntries(Object.entries(rejected).sort((a, b) => b[1] - a[1])),
+    /* the pages that cost reads and yielded nothing, for a look by eye */
+    lowYield: read.filter((one) => !one.accepted).map((one) => ({ query: one.query, url: one.url, by: one.by, listed: one.listed, offered: one.offered,
+      verified: one.verified, readMs: one.readMs, verifyMs: one.verifyMs, rejected: one.rejected || null, failed: one.failed || null }))
+  };
+}
+
 function summarise(results) {
   const n = results.length || 1;
   const pct = (count) => `${count}/${results.length} (${Math.round((count / n) * 100)}%)`;
@@ -343,6 +402,7 @@ function summarise(results) {
        products it listed; how many were the garment asked for */
     discoveryPages: results.filter((r) => r.organic && r.organic.pages && (r.organic.pages.discoveryPages || []).length)
       .map((r) => ({ query: r.query, shown: r.returned, pages: r.organic.pages.discoveryPages })),
+    discoveryEfficiency: discoveryEfficiency(results),
     organicCategoryPagesUnread: results.reduce((sum, r) => sum + ((r.organic && r.organic.pages && r.organic.pages.outcomes && r.organic.pages.outcomes['category-page-unread']) || 0), 0),
     organicCategoryPagesRead: results.reduce((sum, r) => sum + ((r.organic && r.organic.pages && r.organic.pages.categoryPagesRead) || 0), 0),
     organicTilesOffered: results.reduce((sum, r) => sum + ((r.organic && r.organic.pages && r.organic.pages.tilesOffered) || 0), 0),
@@ -450,4 +510,4 @@ if (require.main === module) {
     .catch((err) => { console.error(err); process.exit(1); });
 }
 
-module.exports = { run, measure, summarise, readRequest, blockingCause, stability };
+module.exports = { run, measure, summarise, readRequest, blockingCause, stability, discoveryEfficiency };
