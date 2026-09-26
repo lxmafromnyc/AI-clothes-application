@@ -63,6 +63,11 @@
 'use strict';
 
 const { getProvider, verifyAll, providerChain, outOfSearches, linkless } = require('./_providers/product-source');
+const { withoutContradictions } = require('./_providers/garment-filter');
+
+/* the refusal a verified product is counted under when it is plainly a
+   different garment from the one asked for */
+const GARMENT_CONTRADICTION = 'contradicts-the-requested-garment';
 const { readListings } = require('./_providers/retailer-page');
 const { queryFrom } = require('./_providers/query');
 const { timedOut } = require('./_providers/deadline');
@@ -362,7 +367,25 @@ async function findProducts(provider, intent, limit, stats, deadline) {
     }, stats);
   }
 
-  return { records: payload.records, products, rejected, funnel, servedFromCache: Boolean(cached) };
+  /* After the gate, and only removing: a verified product that is plainly
+     a different garment from every one the request names (see
+     _providers/garment-filter.js). The order is the provider's, less
+     those. Counted with the gate's own refusals, so a thinner page says
+     why. */
+  const filtered = withoutContradictions(products, intent);
+  const refusedAll = Object.assign({}, rejected);
+  if (filtered.removed.length) refusedAll[GARMENT_CONTRADICTION] = filtered.removed.length;
+
+  return {
+    records: payload.records,
+    products: filtered.products,
+    rejected: refusedAll,
+    /* which verified products were removed, where each stood among them,
+       and why — for the benchmark and the server; the browser gets the count */
+    semanticRemoved: filtered.removed,
+    funnel,
+    servedFromCache: Boolean(cached)
+  };
 }
 
 /* The organic stage's sample refusals and reason tally carry the
@@ -456,6 +479,9 @@ module.exports = async function handler(req, res) {
     provider: found.provider || provider.name,
     fellBackFrom: found.fellBackFrom || null,
     verified: products.length,
+    /* verified, and then removed as plainly a different garment: a count,
+       never a title */
+    removedAsAnotherGarment: Array.isArray(found.semanticRemoved) ? found.semanticRemoved.length : 0,
     rejected,
     cache: cache.report(cacheStats, { servedFromCache: found.servedFromCache }),
     /* where the time went, so "the page is short" and "the source was

@@ -4255,7 +4255,10 @@ function semanticMatch(row, listing) {
      the listing never saying what the row asked for. Both refuse, and
      the difference is printed, because they call for different fixes:
      one means look elsewhere, the other means look harder. */
-  const refuse = (why, kind) => ({ ok: false, kind: kind || 'contradiction', why, wanted, offered });
+  /* `on` says WHAT contradicted, for a caller that acts only on some of
+     it: 'garment' is a different kind of garment altogether (family or
+     type), where the rest are details of the same one */
+  const refuse = (why, kind, on) => ({ ok: false, kind: kind || 'contradiction', on: on || null, why, wanted, offered });
   const agreed = [];
 
   if (!title) return refuse('the listing carries no title to read, so what it sells cannot be checked', 'unreadable');
@@ -4270,7 +4273,7 @@ function semanticMatch(row, listing) {
   /* family, then type. A different family is a different kind of thing;
      inside one family, a specific type is a claim that has to agree. */
   if (wanted.family !== offered.family) {
-    return refuse(`the row means a ${wanted.type} and "${title}" is a ${offered.type} — ${wanted.family} against ${offered.family}`);
+    return refuse(`the row means a ${wanted.type} and "${title}" is a ${offered.type} — ${wanted.family} against ${offered.family}`, 'contradiction', 'garment');
   }
   /* A row asking for a kind of garment, and a listing that names only
      the broader garment by its bare word: "Short Jacket" for a puffer.
@@ -4283,7 +4286,7 @@ function semanticMatch(row, listing) {
     return refuse(`the row means a ${wanted.type}, a kind of ${offered.type}, and "${title}" says only ${offered.type} — it never says which kind`, 'unproven');
   }
   if (wanted.type !== offered.type && !wanted.generic && !offered.generic) {
-    return refuse(`the row means a ${wanted.type} and "${title}" is a ${offered.type}`);
+    return refuse(`the row means a ${wanted.type} and "${title}" is a ${offered.type}`, 'contradiction', 'garment');
   }
   const madeAs = [wanted, offered].filter((side) => side.madeAs)
     .map((side) => ` ("${side.text}" is titled a ${side.madeAs.named}, but ${side.madeAs.why})`).join('')

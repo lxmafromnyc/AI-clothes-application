@@ -207,6 +207,14 @@ async function measure(id, query, category, env, provider, limit) {
        with them: shown to the shopper, or refused by the production gate
        (or dropped as a duplicate, or past the result limit) */
     candidates: candidates.length,
+    /* verified products the production filter removed as plainly another
+       garment, each with the judge's own verdict on it against the
+       shopper's words: a removal the judge calls correct is lost recall */
+    semanticRemoved: (found && found.semanticRemoved ? found.semanticRemoved : []).map((one) => {
+      let judged;
+      try { judged = semanticMatch(row, { title: one.name }); } catch (err) { judged = { ok: false, kind: 'error' }; }
+      return Object.assign({}, one, { judge: judged.ok ? judged.kind : (judged.kind || 'refused') });
+    }),
     firstCorrectProviderPosition: firstCorrect ? firstCorrect.providerPosition : null,
     acceptedWrongAbove: wrongAboveRaw.filter((one) => one.accepted).map(wrongCase),
     rejectedWrongAbove: wrongAboveRaw.filter((one) => !one.accepted).map(wrongCase),
@@ -349,6 +357,7 @@ function rawCandidates(found, row, limit) {
   const source = PROVIDERS[found.provider];
   const context = { retailer: source ? source.defaultRetailer : null };
   const shownAt = new Map(found.products.slice(0, limit).map((product, at) => [product.productUrl, at + 1]));
+  const removedAsAnother = new Set((found.semanticRemoved || []).map((one) => one.productUrl));
   const seen = new Set();
   const field = (raw, keys) => { for (const key of keys || []) { if (raw && raw[key] !== undefined && raw[key] !== null && String(raw[key]).trim()) return String(raw[key]).trim(); } return null; };
   return records.map((raw, at) => {
@@ -363,7 +372,7 @@ function rawCandidates(found, row, limit) {
       else {
         seen.add(product.productUrl);
         shown = shownAt.get(product.productUrl) || null;
-        if (!shown) rejectedBy = 'past-the-result-limit';
+        if (!shown) rejectedBy = removedAsAnother.has(product.productUrl) ? 'contradicts-the-requested-garment' : 'past-the-result-limit';
       }
     }
     let verdict;
@@ -435,6 +444,18 @@ function summarise(results) {
     /* wrong garments above the first correct result that Fynd SHOWED —
        the shopper's false positives */
     acceptedWrongGarmentsAbove: wrongAboveSummary(results, 'acceptedWrongAbove'),
+    /* verified products the production filter removed as plainly another
+       garment; removedCorrectGarments are the ones the judge would have
+       counted as correct — recall the filter cost */
+    semanticContradictionsRemoved: (() => {
+      const cases = results.flatMap((r) => (r.semanticRemoved || []).map((one) => Object.assign({ query: r.query }, one)));
+      return {
+        queries: `${new Set(cases.map((one) => one.query)).size}/${results.length}`,
+        removed: cases.length,
+        removedCorrectGarments: cases.filter((one) => one.judge === 'match' || one.judge === 'pending'),
+        cases
+      };
+    })(),
     /* wrong garments above the first correct result in the provider's raw
        list that Fynd refused — provider noise the shopper never saw */
     rejectedWrongCandidatesAbove: wrongAboveSummary(results, 'rejectedWrongAbove'),
@@ -600,7 +621,7 @@ if (require.main === module) {
   const line = (r) => `${String(r.garmentRank || '—').padStart(2)} ${String(r.matchRank || '—').padStart(2)}  ${r.query.padEnd(38)} `
     + `${String(r.returned).padStart(2)} shown  ${String(r.searchMs).padStart(5)}ms  [${r.interpreter}${r.interpreterFailure ? `: ${r.interpreterFailure}` : ''}] `
     + `${r.provider ? `via ${r.provider}${r.usedFallback ? ' (fallback)' : ''} ` : ''}`
-    + `asked "${r.asked}"${r.providerFailure ? `  PROVIDER FAILED: ${r.providerFailure}` : ''}${r.primaryFailure ? `  [${r.primaryFailure.provider} passed over, ${r.primaryFailure.kind}: ${r.primaryFailure.reason}]` : ''}${r.wrongAbove ? `  ${r.wrongAbove} wrong above` : ''}${r.acceptedWrongAbove.length ? ` (shown: ${r.acceptedWrongAbove.length})` : ''}${r.rejectedWrongAbove.length ? `  ${r.rejectedWrongAbove.length} refused wrong above` : ''}`
+    + `asked "${r.asked}"${r.providerFailure ? `  PROVIDER FAILED: ${r.providerFailure}` : ''}${r.primaryFailure ? `  [${r.primaryFailure.provider} passed over, ${r.primaryFailure.kind}: ${r.primaryFailure.reason}]` : ''}${r.wrongAbove ? `  ${r.wrongAbove} wrong above` : ''}${r.acceptedWrongAbove.length ? ` (shown: ${r.acceptedWrongAbove.length})` : ''}${r.rejectedWrongAbove.length ? `  ${r.rejectedWrongAbove.length} refused wrong above` : ''}${r.semanticRemoved.length ? `  ${r.semanticRemoved.length} removed as another garment` : ''}`
     + `${r.duplicates ? `  ${r.duplicates} duplicate` : ''}${r.survived.some((d) => !d.inQuery) ? `  LOST: ${r.survived.filter((d) => !d.inQuery).map((d) => d.descriptor).join(', ')}` : ''}`;
   if (!json) console.log('\ngarment-rank / full-match-rank, query, results, search latency, interpreter, what the provider was asked\n');
   const textOf = (flag) => { const at = args.indexOf(flag); return at >= 0 ? String(args[at + 1] || '') : ''; };
