@@ -344,8 +344,65 @@ function getProvider() {
   return fallback && fallback.configured() ? fallback : PROVIDERS.none;
 }
 
+/* ---------- when the primary source runs out of searches ----------
+
+   One rule, used by /api/search and by catalogue discovery alike, so the
+   two cannot drift: the configured source is always asked first, and
+   Serper is asked only when that source says its allowance is spent —
+   a 429, a quota, a rate limit — and only when SERPER_API_KEY is set.
+   A timeout, a 500 or a bad key is a fault to report, not a reason to
+   ask somebody else the same question. Whatever the fallback returns
+   goes through the same verification gate as anything else. */
+const QUOTA_EXHAUSTED = /\b429\b|allowance exhausted|run out of searches|quota|rate.?limit|too many requests/i;
+
+function outOfSearches(err) {
+  return QUOTA_EXHAUSTED.test(err && err.message ? err.message : String(err));
+}
+
+/* the sources to ask, in order: the primary, then Serper if it can run
+   and is not already the primary. Looked up by name, so a test that
+   registers a stand-in for either is asking the same chain. */
+function providerChain(primary) {
+  const first = primary || getProvider();
+  const chain = [first];
+  const fallback = PROVIDERS.serper;
+  if (fallback && fallback.name !== first.name && typeof fallback.configured === 'function' && fallback.configured()) {
+    chain.push(fallback);
+  }
+  return chain;
+}
+
+/* ---------- when a batch names no shop at all ----------
+
+   The second shared rule, and the one that decides when a source's
+   organic endpoint is asked: a batch in which not one record carries a
+   productUrl. Serper's /shopping answers with Google's own Shopping
+   cards, so every record it maps arrives without one. Catalogue
+   discovery and /api/search both escalate on exactly this, so the two
+   cannot disagree about when a batch was linkless.
+
+   Read through a guard: a source is not obliged to hand over
+   well-behaved objects, and a record that throws on being read is one
+   record, not a search. It counts as carrying no link. What it says is
+   only whether the adapter FOUND a URL — the link rule above is still
+   what decides whether that URL may be shown. */
+function carriesRetailerLink(record) {
+  try {
+    return Boolean(record && typeof record === 'object' && record.productUrl);
+  } catch (err) {
+    return false;
+  }
+}
+
+const linkless = (records) => !Array.from(records || []).some(carriesRetailerLink);
+
 module.exports = {
   getProvider,
+  providerChain,
+  outOfSearches,
+  carriesRetailerLink,
+  linkless,
+  QUOTA_EXHAUSTED,
   registerProvider: (adapter) => { PROVIDERS[adapter.name] = adapter; },
   toProduct,
   verifyAll,

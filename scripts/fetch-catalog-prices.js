@@ -87,7 +87,7 @@ const path = require('path');
 /* the parts of reading a retailer's page that are not about images:
    one definition of a listing's code, one cookie-wall list, one way in */
 const {
-  BROWSER, fetchPage, jsonLdNodes, parseLdBlock, metaContent, skuOf,
+  BROWSER, fetchPage, jsonLdNodes, parseLdBlock, metaContent, skuOf, recordFingerprint,
   identifiersFrom, samePage, readCatalog, loadPlaywright, dismissConsent,
   coaxLazyImages, rowEndsAt
 } = require('./fetch-catalog-images');
@@ -392,11 +392,38 @@ function moneyInText(text) {
    An AggregateOffer is a range. lowPrice 58 highPrice 148 is not a
    price this product is sold at; it is the span of a group. It is kept
    as a candidate only so the report can say it was seen and refused. */
+/* A record's offers, including the offers an AggregateOffer lists
+   inside itself — schema.org's own shape for "these are the prices the
+   range above is made of". The aggregate stays a candidate (a range,
+   refused as one); each offer it lists is judged on its own. */
 function offersIn(node) {
   const raw = node && (node.offers || node.offer);
   const list = Array.isArray(raw) ? raw : (raw ? [raw] : []);
-  return list.filter((o) => o && typeof o === 'object');
+  const out = [];
+  for (const offer of list) {
+    if (!offer || typeof offer !== 'object') continue;
+    out.push(offer);
+    const inner = offer.offers || offer.offer;
+    for (const one of Array.isArray(inner) ? inner : (inner ? [inner] : [])) {
+      if (one && typeof one === 'object') out.push(one);
+    }
+  }
+  return out;
 }
+
+/* A ProductGroup's variants, when it lists them as hasVariant products:
+   Google's recommended variant markup puts every price on a variant and
+   none on the group. Each variant is a product record of its own, with
+   its own sku, kept beside the group it belongs to. */
+function variantsOf(node) {
+  const raw = node && node.hasVariant;
+  const list = Array.isArray(raw) ? raw : (raw ? [raw] : []);
+  return list.filter((one) => one && typeof one === 'object' && isProductNode(one));
+}
+
+/* a price specification's own type, when it says it is not the amount
+   charged: schema.org's ListPrice and StrikethroughPrice, and an MSRP */
+const LIST_PRICE_TYPE = /(listprice|strikethroughprice|msrp|suggestedretailprice)$/i;
 
 function isProductNode(node) {
   return Boolean(node) && /product/i.test(String(node['@type'] || ''));
@@ -405,13 +432,25 @@ function isProductNode(node) {
 function offerAmounts(offer) {
   const out = [];
   const currency = currencyIn(offer.priceCurrency) || null;
-  const spec = offer.priceSpecification && typeof offer.priceSpecification === 'object'
-    ? offer.priceSpecification : null;
+  /* one specification or several; one that says it is a list price is
+     what the product is discounted FROM, and is never read as charged */
+  const specs = (Array.isArray(offer.priceSpecification) ? offer.priceSpecification : [offer.priceSpecification])
+    .filter((one) => one && typeof one === 'object' && !Array.isArray(one));
+  const charged = specs.filter((one) => !LIST_PRICE_TYPE.test(String(one.priceType || '').replace(/^.*[/#]/, '')));
 
-  const direct = toAmount(offer.price !== undefined ? offer.price : (spec ? spec.price : undefined));
+  const direct = offer.price !== undefined ? toAmount(offer.price) : null;
   if (direct !== null) {
-    out.push({ amount: direct, currency: currency || currencyIn(spec && spec.priceCurrency) || 'USD', kind: 'price' });
+    out.push({ amount: direct, currency: currency || 'USD', kind: 'price' });
     return out;
+  }
+  if (charged.length) {
+    /* every charged specification is a candidate: two that disagree
+       reach decide() as two figures, and it fails closed on them */
+    for (const spec of charged) {
+      const amount = toAmount(spec.price);
+      if (amount !== null) out.push({ amount, currency: currency || currencyIn(spec.priceCurrency) || 'USD', kind: 'price' });
+    }
+    if (out.length) return out;
   }
 
   const low = toAmount(offer.lowPrice);
@@ -440,9 +479,17 @@ function structuredCandidates(nodes) {
   const out = [];
   const empties = [];
 
+  const records = [];
   for (const node of nodes) {
     if (!isProductNode(node)) continue;
+    records.push({ node, group: null });
+    for (const variant of variantsOf(node)) records.push({ node: variant, group: node });
+  }
+
+  for (const { node, group } of records) {
     const offers = offersIn(node);
+    /* a group whose prices are all on its variants has published them */
+    if (!offers.length && variantsOf(node).length) continue;
     if (!offers.length) {
       empties.push({
         type: String(node['@type'] || 'Product'),
@@ -464,6 +511,8 @@ function structuredCandidates(nodes) {
           kind: found.kind,
           span: found.span || null,
           node,
+          /* the ProductGroup a variant belongs to, when it is one */
+          group,
           offer,
           availability: typeof offer.availability === 'string' ? offer.availability : null
         });
@@ -491,11 +540,118 @@ function metaCandidates(html) {
   return out;
 }
 
+/* ---------- microdata, as the page was served ----------
+
+   schema.org's other syntax: itemprop="price" on an element inside an
+   itemscope Offer, inside an itemscope Product that names its sku with
+   itemprop="sku" (or productID, mpn, gtin…). The rendered-page path has
+   always read it, from the DOM; a page read with a plain request — all a
+   live search ever has — never had it read at all, however plainly the
+   product and its offer were marked up.
+
+   Each price element becomes a candidate carrying the same `dom` shape
+   the rendered path builds, so priceIdentity() and chargedEvidence()
+   judge it by the rules they already have: its Product scope must name
+   this listing's code, and its own class must not mark it as a list or
+   was-price. Marked `served`: the page's markup rather than its screen,
+   so it does not get to outrank a structured offer that disagrees —
+   decide() fails closed on the two instead. */
+const VOID_TAGS = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr']);
+const MICRODATA_ID_PROPS = /^(sku|productid|mpn|gtin|gtin8|gtin12|gtin13|gtin14|identifier)$/i;
+
+function microdataCandidates(html) {
+  const page = String(html || '');
+  const attr = (tag, name) => {
+    const m = tag.match(new RegExp(`\\s${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, 'i'));
+    return m ? (m[1] !== undefined ? m[1] : m[2] !== undefined ? m[2] : m[3]) : null;
+  };
+  const hasAttr = (tag, name) => new RegExp(`\\s${name}(\\s|=|>|/)`, 'i').test(tag);
+  const clean = (value) => String(value || '').replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").replace(/\s+/g, ' ').trim();
+
+  const scopes = [];
+  const props = [];
+  const stack = [];
+  const re = /<(\/?)([a-zA-Z][\w:-]*)((?:[^>"']|"[^"]*"|'[^']*')*)>/g;
+  let m;
+  while ((m = re.exec(page))) {
+    const closing = m[1] === '/';
+    const name = m[2].toLowerCase();
+    if (name === 'script' || name === 'style') {
+      if (!closing) {
+        const end = page.toLowerCase().indexOf(`</${name}`, re.lastIndex);
+        if (end >= 0) re.lastIndex = end;
+      }
+      continue;
+    }
+    if (closing) {
+      const at = stack.map((one) => one.name).lastIndexOf(name);
+      if (at >= 0) stack.length = at;
+      continue;
+    }
+    const tag = m[3] || '';
+    const parentScope = [...stack].reverse().find((one) => one.scope !== null);
+    let scope = null;
+    if (hasAttr(tag, 'itemscope')) {
+      scope = scopes.length;
+      const type = String(attr(tag, 'itemtype') || '').replace(/^.*[/#]/, '');
+      scopes.push({ type, parent: parentScope ? parentScope.scope : null });
+    }
+    const prop = attr(tag, 'itemprop');
+    if (prop) {
+      /* an element that opens its own scope is a property OF the
+         enclosing scope (itemprop="offers" itemscope): it belongs above */
+      const owner = parentScope ? parentScope.scope : null;
+      let value = attr(tag, 'content');
+      if (value === null && !VOID_TAGS.has(name)) {
+        const next = page.indexOf('<', re.lastIndex);
+        value = page.slice(re.lastIndex, next < 0 ? undefined : next);
+      }
+      for (const one of String(prop).split(/\s+/).filter(Boolean)) {
+        props.push({ scope: owner, prop: one, value: clean(value), own: [attr(tag, 'class'), attr(tag, 'id')].filter(Boolean).join(' ') });
+      }
+    }
+    const selfClosing = /\/\s*$/.test(tag);
+    if (!VOID_TAGS.has(name) && !selfClosing) stack.push({ name, scope });
+  }
+
+  const chain = (at) => { const out = []; for (let one = at; one !== null && one !== undefined; one = scopes[one].parent) out.push(one); return out; };
+  const out = [];
+  for (const price of props.filter((one) => /^(price|lowprice)$/i.test(one.prop) && one.scope !== null)) {
+    const amount = toAmount(price.value);
+    if (amount === null) continue;
+    const up = chain(price.scope);
+    const offerScope = up.find((one) => /^(offer|aggregateoffer)$/i.test(scopes[one].type));
+    const productScope = up.find((one) => /^(product|productgroup|individualproduct|productmodel)$/i.test(scopes[one].type));
+    const inScope = (at, pattern) => props.filter((one) => one.scope === at && pattern.test(one.prop)).map((one) => one.value).filter(Boolean);
+    const currency = currencyIn((offerScope !== undefined ? inScope(offerScope, /^pricecurrency$/i) : [])[0] || '') || currencyIn(price.value) || 'USD';
+    out.push({
+      amount,
+      currency,
+      text: price.value.slice(0, 60),
+      from: 'microdata (served)',
+      kind: /^lowprice$/i.test(price.prop) ? 'range' : 'price',
+      span: null,
+      dom: {
+        served: true,
+        itemprop: /^lowprice$/i.test(price.prop) ? 'lowPrice' : 'price',
+        offerScope: offerScope !== undefined,
+        scopeSkus: productScope !== undefined ? inScope(productScope, MICRODATA_ID_PROPS).map((one) => one.toLowerCase()) : [],
+        codes: [],
+        own: price.own,
+        near: '',
+        hidden: false,
+        lineThrough: false
+      }
+    });
+  }
+  return out;
+}
+
 function pricesFromHtml(html) {
   const nodes = jsonLdNodes(html);
   const structured = structuredCandidates(nodes);
   return {
-    candidates: [...structured.candidates, ...metaCandidates(html)],
+    candidates: [...structured.candidates, ...microdataCandidates(html), ...metaCandidates(html)],
     empties: structured.empties,
     canonical: (function () {
       const link = String(html).match(/<link[^>]+rel=["']canonical["'][^>]*>/i);
@@ -632,21 +788,79 @@ function variantChain(record, ids) {
   return chain;
 }
 
-function priceIdentity(candidate, productUrl) {
-  const ids = identifiersFrom(productUrl);
-  if (!ids.length) return { ok: false, why: 'the listing URL carries no product code to match against' };
+/* `proven` is the identity a listing's own page established for it
+   (pageIdentity in fetch-catalog-images.js), consulted ONLY when the
+   listing URL carries no code of its own; a caller that passes nothing
+   is judged exactly as before. */
+function priceIdentity(candidate, productUrl, proven) {
+  const fromUrl = identifiersFrom(productUrl);
+  const pageProven = !fromUrl.length && Boolean(proven && proven.ok !== false
+    && ((Array.isArray(proven.codes) && proven.codes.length > 0) || proven.record));
+  const ids = pageProven ? (proven.codes || []) : fromUrl;
+  if (!ids.length && !pageProven) return { ok: false, why: 'the listing URL carries no product code to match against' };
 
-  /* ---- a structured offer, on a product record that names the sku ---- */
+  /* ---- an offer of the very record the page named as its product ---- */
+  if (pageProven && proven.record && candidate.node) {
+    const own = new Set([proven.record].concat(proven.members || []));
+    const mine = own.has(recordFingerprint(candidate.node))
+      || (candidate.group && own.has(recordFingerprint(candidate.group)));
+    if (mine) {
+      return { ok: true, via: 'json-ld-offer', sku: null, how: `the offer belongs to the page's own product record — ${proven.how}` };
+    }
+    if (!ids.length) return { ok: false, why: 'the offer belongs to a product record other than the one the page names as its product' };
+  }
+
+  /* ---- a structured offer, on a product record that names the sku ----
+
+     The offer's own sku counts as well as its record's: a record that
+     files its identifiers per variant — sku on each offer, none on the
+     product — is still naming which product each amount is for, and an
+     offer naming this listing's code is more specific about it, not
+     less. A record naming a different product is still refused. */
   if (candidate.node) {
-    const skus = skuOf(candidate.node);
+    /* the identifiers schema.org gives a product: its own and its
+       offer's, and — for a group, or a variant of one — the group's */
+    const groupIds = (node) => (node ? ['productGroupID', 'productGroupId', 'inProductGroupWithID']
+      .map((key) => node[key]).filter((value) => typeof value === 'string' || typeof value === 'number')
+      .map((value) => String(value).toLowerCase()) : []);
+    const skus = skuOf(candidate.node).concat(
+      candidate.offer ? skuOf(candidate.offer) : [],
+      groupIds(candidate.node),
+      candidate.group ? skuOf(candidate.group).concat(groupIds(candidate.group)) : []
+    );
     const hit = matchingCode(skus, ids);
     if (hit) {
       return {
         ok: true,
         via: 'json-ld-offer',
         sku: hit.value,
-        how: `the offer belongs to the product record naming sku ${hit.value}`
+        how: pageProven
+          ? `the offer belongs to the page's only product record, naming ${hit.value} — ${proven.how}`
+          : `the offer belongs to the product record naming sku ${hit.value}`
       };
+    }
+
+    /* A record that names no identifier at all cannot contradict the
+       listing, and may still say which product it is: its url or @id,
+       or its offer's url, is this listing's own page; or the listing's
+       own page — canonical for exactly this listing — names it as its
+       one product record. A record that names a DIFFERENT identifier is
+       refused below, whatever else it says. */
+    if (!skus.length) {
+      const namesListing = [candidate.node.url, candidate.node['@id'], candidate.offer && candidate.offer.url]
+        .some((value) => {
+          if (typeof value !== 'string' || !value.trim()) return false;
+          try { return samePage(new URL(value.trim(), productUrl).href, productUrl); } catch (err) { return false; }
+        });
+      if (namesListing) {
+        return { ok: true, via: 'json-ld-offer', sku: null, how: 'the offer belongs to the product record that names this listing\'s own page' };
+      }
+      if (!pageProven && proven && proven.record) {
+        const own = new Set([proven.record].concat(proven.members || []));
+        if (own.has(recordFingerprint(candidate.node)) || (candidate.group && own.has(recordFingerprint(candidate.group)))) {
+          return { ok: true, via: 'json-ld-offer', sku: null, how: `the offer belongs to the page's own product record, which names no identifier — ${proven.how}` };
+        }
+      }
     }
     return {
       ok: false,
@@ -862,7 +1076,7 @@ function chargedEvidence(candidate) {
    More than one distinct survivor is ALSO "the page did not say" — the
    five figures a group page renders, four of them marked current, are
    not an invitation to choose. */
-function decide(candidates, productUrl) {
+function decide(candidates, productUrl, proven) {
   const refusals = [];
   let survivors = [];
 
@@ -877,7 +1091,7 @@ function decide(candidates, productUrl) {
       dom: explaining && candidate.dom ? candidate.dom : undefined
     });
 
-    const identity = priceIdentity(candidate, productUrl);
+    const identity = priceIdentity(candidate, productUrl, proven);
     if (!identity.ok) { note('this', identity.why); continue; }
 
     const charged = chargedEvidence(candidate);
@@ -959,7 +1173,8 @@ function decide(candidates, productUrl) {
      record's favour. Two survivors that disagree, at the same rank or
      across layers, still fail closed. */
   const SPECIFIC = ['microdata-offer', 'dom-variant-scope'];
-  const specific = survivors.filter((s) => SPECIFIC.includes(s.identity.via));
+  /* a figure the page DREW; served microdata is markup, like a record */
+  const specific = survivors.filter((s) => SPECIFIC.includes(s.identity.via) && !(s.candidate.dom && s.candidate.dom.served));
   let inPlay = survivors;
 
   if (specific.length && specific.length < survivors.length) {
@@ -3926,7 +4141,7 @@ if (require.main === module) {
   main().catch((err) => { console.error(err && err.message); process.exit(1); });
 } else {
   module.exports = {
-    toAmount, currencyIn, moneyInText, offerAmounts, structuredCandidates,
+    toAmount, currencyIn, moneyInText, offerAmounts, structuredCandidates, microdataCandidates,
     metaCandidates, pricesFromHtml, namesCode, priceIdentity, chargedEvidence,
     decide, gatherPricesInPage, renderedCandidates, renderPage, resolveRow,
     inspectUrl, inspectData, selectedAmong, elsewhereIn, isIdKey, isPriceKey, keyWords,

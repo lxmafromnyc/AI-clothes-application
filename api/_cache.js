@@ -130,7 +130,7 @@ const digest = (input) => crypto.createHash('sha256').update(input).digest('hex'
    what comes back, so every one of them is in the key: a $60 ceiling
    and an $80 ceiling are two different searches, and so are black and
    white, oversized and slim, hoodie and jacket. */
-const LIST_FIELDS = ['categories', 'colors', 'occasions', 'fits', 'brands', 'styles', 'keywords'];
+const LIST_FIELDS = ['categories', 'colors', 'occasions', 'fits', 'brands', 'styles', 'garments', 'descriptors', 'keywords'];
 const TEXT_FIELDS = ['season', 'gender'];
 const PRICE_FIELDS = ['maxPrice', 'minPrice'];
 
