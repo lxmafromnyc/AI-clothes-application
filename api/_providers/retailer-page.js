@@ -22,17 +22,24 @@
      the link        the organic URL has already survived retailerUrl()
                      in the Serper adapter (Google's hosts refused, a
                      forwarder unwrapped to the destination it carries)
-                     and must pass the gate's link rule. It is read only
-                     if discovery's listingShape() does not call it a
-                     forum, an article or a category page, and only if
-                     it carries a product code — without one the price
-                     gate below refuses every figure on the page, so the
-                     page is not fetched to be told so. The page is used
-                     only if it was served from the shop the URL named;
-                     a redirect to another site is refused.
+                     and must pass the gate's link rule. It is not read
+                     when its ADDRESS alone says it is a forum, an
+                     article or a category page (listingShape()); the
+                     search result's title is no reason to skip a page,
+                     only to read it later. The page is used only if it
+                     was served from the shop the URL named — a redirect
+                     to another site is refused.
+     which product   the code in the listing's URL, when it has one.
+                     When it has none — a Shopify /products/<handle>, a
+                     descriptive slug — the page has to say: canonical
+                     for this listing, a product page, one product
+                     record, naming a code (pageIdentity() in the image
+                     script). A page that cannot is refused as
+                     no-identity, and the gates below run on the code
+                     the page proved, never on nothing.
      the price       pricesFromHtml() + decide(), the price reader's own
                      four gates: an amount in a named currency, on an
-                     offer of the product record whose sku is THIS
+                     offer whose record, or which itself, names THIS
                      listing's code, that is the amount charged — and
                      failing closed when two figures both claim it.
      the photo       candidatesFrom() + firstVerifiable(), the image
@@ -40,7 +47,10 @@
                      asset rule, identity (the listing's code in the
                      image URL, the record's sku, or a canonical PRODUCT
                      page vouching for a photo of the same garment), and
-                     loadable, plainly and with a Referer.
+                     loadable, plainly and with a Referer. On a code the
+                     page proved, the record's sku is not accepted: the
+                     code came off that record, so the photo has to carry
+                     the code or pass the canonical rule instead.
      the title       the name of the product record the price came from,
                      so the name, the price and the photo answer to the
                      same product; the result's own title otherwise.
@@ -62,9 +72,11 @@
    it against the listing's own title would be the record vouching for
    itself. Those listings are left to the gates above.
 
-   Everything runs on the request's clock: a few pages at once, read in
-   the engine's order, and whatever finishes inside the budget is what
-   comes back — in that same order, whatever order the pages answered in.
+   Everything runs on the request's clock: a few pages at once — those
+   whose URL names a product first, then the rest, each tier in the
+   engine's order — and whatever finishes inside the budget is what
+   comes back, in the ENGINE's order, whatever order the pages were read
+   or answered in.
    ========================================================= */
 
 'use strict';
@@ -75,8 +87,8 @@ const { linkFault } = require('./product-source');
    the least time worth starting one with. Each read is a page and then
    up to a few image checks, so this bounds what a single shopper's
    search can ask of retailers' servers. */
-const MAX_PAGES = 16;
-const PAGE_LANES = 4;
+const MAX_PAGES = 20;
+const PAGE_LANES = 6;
 const MIN_PAGE_WINDOW_MS = 1000;
 /* kept back from a page read for proving its photo afterwards */
 const IMAGE_RESERVE_MS = 1500;
@@ -86,8 +98,9 @@ const ANSWER_MARGIN_MS = 300;
 const DEFAULT_BUDGET_MS = 8000;
 
 /* the listing shapes discovery says are never a product page, whatever
-   they declare (productPageVerdict in scripts/fetch-catalog-images.js) */
-const NOT_A_PRODUCT_PAGE = new Set(['not-a-shop', 'editorial', 'listing']);
+   they declare (productPageVerdict in scripts/fetch-catalog-images.js),
+   each counted under its own name */
+const NOT_A_PRODUCT_PAGE = { 'not-a-shop': 'not-a-shop', editorial: 'editorial-page', listing: 'category-page' };
 
 /* Discovery's gates, loaded on first use. They live beside the scripts
    that run them on the catalogue; this is the same code, not a copy. */
@@ -118,7 +131,7 @@ function pricedRecord(candidates, decided, skuOf) {
   const sku = decided.identity && decided.identity.sku ? String(decided.identity.sku).toLowerCase() : null;
   for (const candidate of candidates) {
     if (!candidate.node || candidate.amount !== decided.price) continue;
-    if (sku && !skuOf(candidate.node).includes(sku)) continue;
+    if (sku && !skuOf(candidate.node).concat(candidate.offer ? skuOf(candidate.offer) : []).includes(sku)) continue;
     return { node: candidate.node, offer: candidate.offer || null };
   }
   return { node: null, offer: null };
@@ -138,8 +151,17 @@ function sellerOf(offer) {
 }
 
 /* What can be decided about a listing without asking its shop: the
-   gate's link rule, and whether discovery's reading of the URL says it
-   is a product page at all. Null when the page is worth reading. */
+   gate's link rule, and whether the listing's ADDRESS says it is a
+   forum, an article or a category page. Null when the page is worth
+   reading.
+
+   Only the address. The search result's title can make discovery call a
+   code-less listing an article or a category ("…for Women | Shop",
+   "best…"), and that is a guess about a page nobody has read yet — so
+   such a listing stays pending and is read (after the likelier ones),
+   and its own page decides. A listing with no product code in its URL
+   stays pending too: its page may prove which product it is
+   (pageIdentity in scripts/fetch-catalog-images.js). */
 function precheck(record) {
   const { images } = discovery();
   const given = record && typeof record === 'object' ? record : {};
@@ -147,17 +169,41 @@ function precheck(record) {
   if (!productUrl) return { outcome: 'refused-link', why: 'no link' };
   const fault = linkFault(productUrl);
   if (fault) return { outcome: 'refused-link', why: fault };
-  const shape = images.listingShape(productUrl, text(given.title));
-  if (NOT_A_PRODUCT_PAGE.has(shape.kind)) return { outcome: 'not-a-product-page', why: shape.why };
-  /* The price gate ties a figure to a listing by the product code in the
-     listing's URL, and refuses every figure on a page whose URL carries
-     none. That verdict is known before the page is fetched, so it is
-     reached here, by the same reading of the URL, without spending the
-     search's clock on a page that cannot pass. */
-  if (!images.identifiersFrom(productUrl).length) {
-    return { outcome: 'no-product-code', why: 'the listing URL carries no product code, so no price on its page can be tied to it' };
-  }
+  const shape = images.listingShape(productUrl, '');
+  if (NOT_A_PRODUCT_PAGE[shape.kind]) return { outcome: NOT_A_PRODUCT_PAGE[shape.kind], why: shape.why };
   return null;
+}
+
+/* the outcomes of a page that was fetched and still proved nothing */
+const READ_FAILURES = new Set(['unreadable', 'left-the-retailer', 'no-identity', 'no-price', 'no-photo']);
+
+function reasonKey(why) {
+  /* an HTTP status says what kind of refusal it was, so it is kept */
+  const statuses = [];
+  return text(why)
+    .replace(/\b(answered|responded) (\d{3})\b/g, (all, verb, code) => `${verb} §${String.fromCharCode(97 + statuses.push(code) - 1)}§`)
+    .replace(/https?:\/\/\S+/g, '<url>')
+    .replace(/\([^)]*\)/g, '')
+    .replace(/\b[a-z0-9-]+(\.[a-z0-9-]+)+\b/gi, '<host>')
+    .replace(/[$£€]?\b[A-Za-z_-]*\d[\w.-]*/g, '#')
+    .replace(/"[^"]*"/g, '"…"')
+    .replace(/\s+/g, ' ')
+    .replace(/§([a-z])§/g, (all, letter) => statuses[letter.charCodeAt(0) - 97])
+    .trim()
+    .slice(0, 110) || 'unstated';
+}
+
+/* Which listings are read first when the clock cannot cover them all:
+   a URL that names its product, then a product-shaped address with no
+   code, then the rest. This orders the READING only — what is shown
+   keeps the engine's order, and a stable sort keeps the engine's order
+   within each tier. */
+function readTier(record) {
+  const { images } = discovery();
+  const productUrl = text(record && record.productUrl);
+  if (images.identifiersFrom(productUrl).length) return 0;
+  const shape = images.listingShape(productUrl, text(record && record.title));
+  return shape.kind === 'product' ? 1 : 2;
 }
 
 /* One listing, read. Returns the record to put to the gate — the one it
@@ -185,10 +231,18 @@ async function readListing(record, budget) {
     return done('left-the-retailer', `the listing redirected from ${asked} to ${landed || 'nowhere readable'}`);
   }
 
+  /* ---- which product, when the URL does not say ---- */
+  let proven = null;
+  if (!images.identifiersFrom(productUrl).length) {
+    const identity = images.pageIdentity(page.html, productUrl, page.url || productUrl);
+    if (!identity.ok) return done('no-identity', identity.why);
+    proven = identity;
+  }
+
   /* ---- the price, by the price reader's gates ---- */
   const read = prices.pricesFromHtml(page.html);
   for (const candidate of read.candidates) candidate.canonical = read.canonical;
-  const decided = read.candidates.length ? prices.decide(read.candidates, productUrl) : { refusals: [] };
+  const decided = read.candidates.length ? prices.decide(read.candidates, productUrl, proven) : { refusals: [] };
   if (!decided.price) {
     const first = (decided.refusals || [])[0];
     return done('no-price', decided.why || (first ? `${first.from}: ${first.why}` : 'the page publishes no price candidate'));
@@ -207,7 +261,7 @@ async function readListing(record, budget) {
   /* ---- the photo, by the image gates ---- */
   if (budget.spent()) return done('no-photo', 'the search ran out of time before the photo was checked', priced);
   const offered = images.candidatesFrom(page.html, productUrl);
-  const row = { id: productUrl, productUrl, name: priced.title };
+  const row = { id: productUrl, productUrl, name: priced.title, proven };
   const found = offered.length ? await images.firstVerifiable(offered, row, null, budget) : { refusals: [] };
   if (!found.url) {
     const first = (found.refusals || []).find(Boolean);
@@ -230,14 +284,15 @@ async function readListings(records, options) {
   const wanted = Math.max(1, Number(opts.limit) || 12);
 
   const results = new Array(list.length);
+  const order = list.map((one, at) => ({ at, tier: readTier(one) })).sort((a, b) => a.tier - b.tier || a.at - b.at).map((one) => one.at);
   let next = 0;
   let started = 0;
   let photographed = 0;
 
   const lane = async () => {
-    while (next < list.length) {
+    while (next < order.length) {
       if (photographed >= wanted || budget.left() < MIN_PAGE_WINDOW_MS) return;
-      const at = next;
+      const at = order[next];
       next += 1;
       const one = list[at];
       /* a listing that will not be fetched costs no page and no wait */
@@ -256,9 +311,15 @@ async function readListings(records, options) {
   await Promise.all(Array.from({ length: Math.min(PAGE_LANES, list.length) }, lane));
 
   const outcomes = {};
+  const reasons = {};
   const out = list.map((one, at) => {
     const result = results[at] || { record: one, outcome: 'not-reached' };
     outcomes[result.outcome] = (outcomes[result.outcome] || 0) + 1;
+    if (READ_FAILURES.has(result.outcome)) {
+      const group = reasons[result.outcome] || (reasons[result.outcome] = {});
+      const why = reasonKey(result.why);
+      group[why] = (group[why] || 0) + 1;
+    }
     return result.record;
   });
 
@@ -271,7 +332,11 @@ async function readListings(records, options) {
       /* the first few refusals, by outcome and reason, so a search that
          proved nothing says which gate stopped it — never a record's
          contents beyond its host */
-      samples: results.filter((one) => one && one.outcome !== 'photographed').slice(0, 6)
+      /* why each page that WAS read proved nothing, grouped: which gate,
+         in its own words, with codes, figures, hosts and URLs taken out
+         so the same reason counts as one across listings */
+      reasons,
+      samples: results.filter((one) => one && READ_FAILURES.has(one.outcome)).slice(0, 8)
         .map((one) => ({ host: hostOf(one.record && one.record.productUrl), outcome: one.outcome, why: text(one.why).slice(0, 160) }))
     }
   };
@@ -279,6 +344,8 @@ async function readListings(records, options) {
 
 module.exports = {
   precheck,
+  readTier,
+  reasonKey,
   readListing,
   readListings,
   MAX_PAGES,

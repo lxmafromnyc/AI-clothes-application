@@ -632,20 +632,34 @@ function variantChain(record, ids) {
   return chain;
 }
 
-function priceIdentity(candidate, productUrl) {
-  const ids = identifiersFrom(productUrl);
+/* `proven` is the identity a listing's own page established for it
+   (pageIdentity in fetch-catalog-images.js), consulted ONLY when the
+   listing URL carries no code of its own; a caller that passes nothing
+   is judged exactly as before. */
+function priceIdentity(candidate, productUrl, proven) {
+  const fromUrl = identifiersFrom(productUrl);
+  const pageProven = !fromUrl.length && proven && Array.isArray(proven.codes) && proven.codes.length > 0;
+  const ids = pageProven ? proven.codes : fromUrl;
   if (!ids.length) return { ok: false, why: 'the listing URL carries no product code to match against' };
 
-  /* ---- a structured offer, on a product record that names the sku ---- */
+  /* ---- a structured offer, on a product record that names the sku ----
+
+     The offer's own sku counts as well as its record's: a record that
+     files its identifiers per variant — sku on each offer, none on the
+     product — is still naming which product each amount is for, and an
+     offer naming this listing's code is more specific about it, not
+     less. A record naming a different product is still refused. */
   if (candidate.node) {
-    const skus = skuOf(candidate.node);
+    const skus = skuOf(candidate.node).concat(candidate.offer ? skuOf(candidate.offer) : []);
     const hit = matchingCode(skus, ids);
     if (hit) {
       return {
         ok: true,
         via: 'json-ld-offer',
         sku: hit.value,
-        how: `the offer belongs to the product record naming sku ${hit.value}`
+        how: pageProven
+          ? `the offer belongs to the page's only product record, naming ${hit.value} — ${proven.how}`
+          : `the offer belongs to the product record naming sku ${hit.value}`
       };
     }
     return {
@@ -862,7 +876,7 @@ function chargedEvidence(candidate) {
    More than one distinct survivor is ALSO "the page did not say" — the
    five figures a group page renders, four of them marked current, are
    not an invitation to choose. */
-function decide(candidates, productUrl) {
+function decide(candidates, productUrl, proven) {
   const refusals = [];
   let survivors = [];
 
@@ -877,7 +891,7 @@ function decide(candidates, productUrl) {
       dom: explaining && candidate.dom ? candidate.dom : undefined
     });
 
-    const identity = priceIdentity(candidate, productUrl);
+    const identity = priceIdentity(candidate, productUrl, proven);
     if (!identity.ok) { note('this', identity.why); continue; }
 
     const charged = chargedEvidence(candidate);

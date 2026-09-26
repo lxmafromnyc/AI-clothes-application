@@ -277,13 +277,14 @@ async function findProducts(provider, intent, limit, stats, deadline) {
   return { records: payload.records, products, rejected, funnel, servedFromCache: Boolean(cached) };
 }
 
-/* The organic stage's sample refusals name a listing's host and the
-   gate's reason. The benchmark reads them off findProducts directly;
+/* The organic stage's sample refusals and reason tally carry the
+   gates' own words about particular listings. The benchmark reads them off findProducts directly;
    the browser gets the counts and nothing out of a record. */
 function withoutSamples(funnel) {
-  if (!funnel || !funnel.organic || !funnel.organic.pages || !funnel.organic.pages.samples) return funnel;
+  if (!funnel || !funnel.organic || !funnel.organic.pages) return funnel;
   const pages = Object.assign({}, funnel.organic.pages);
   delete pages.samples;
+  delete pages.reasons;
   return Object.assign({}, funnel, { organic: Object.assign({}, funnel.organic, { pages }) });
 }
 

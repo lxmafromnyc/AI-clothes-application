@@ -297,15 +297,6 @@ const deadlineIn = (ms) => Date.now() + ms;
     }
   });
 
-  await testAsync('a listing whose URL names no product is never fetched: no price on it could be tied to it', async () => {
-    const slug = 'https://www.slug-shop.com/products/wide-leg-trouser-stone';
-    const calls = web();
-    const { records, diagnostics } = await readListings([{ title: 'Wide Leg Trouser', productUrl: slug }], { limit: 12, deadline: deadlineIn(9000) });
-    assert.strictEqual(calls.length, 0);
-    assert.deepStrictEqual(diagnostics.outcomes, { 'no-product-code': 1 });
-    assert.strictEqual(verifyAll(records).rejected['missing-price'], 1);
-  });
-
   console.log('\n  — 3. an organic listing meets exactly the gates every live result meets\n');
 
   await testAsync('what is shown is exactly what verifyAll() makes of the records — nothing added after the gate', async () => {
@@ -334,7 +325,7 @@ const deadlineIn = (ms) => Date.now() + ms;
     assert.deepStrictEqual(Object.keys(byUrl.get(URLS.editorial)).sort(), ['productUrl', 'title']);
 
     const outcomes = found.funnel.organic.pages.outcomes;
-    assert.deepStrictEqual(outcomes, { photographed: 2, 'no-price': 1, 'no-photo': 1, 'left-the-retailer': 1, 'not-a-product-page': 1 });
+    assert.deepStrictEqual(outcomes, { photographed: 2, 'no-price': 1, 'no-photo': 1, 'left-the-retailer': 1, 'editorial-page': 1 });
     assert.strictEqual(found.rejected['missing-price'], 3, 'the wrong-sku listing, the redirect and the article');
     assert.strictEqual(found.rejected['missing-image-url'], 1);
   });
@@ -503,6 +494,149 @@ const deadlineIn = (ms) => Date.now() + ms;
       assert.strictEqual(res.body.diagnostics.organic.pages.samples, undefined, 'sample refusals reached the browser');
       assert.strictEqual(res.body.diagnostics.organic.pages.outcomes.photographed, 2);
     });
+  });
+
+
+  console.log('\n  — 5. a listing’s own page proves what its search result could not\n');
+
+  const images = require('./fetch-catalog-images.js');
+  const prices = require('./fetch-catalog-prices.js');
+  const SLUG = 'https://www.slug-shop.com/products/boxy-cotton-tee';
+  const SLUG_PHOTO = 'https://cdn.slug-shop.com/files/boxy-tee-front.jpg';
+
+  /* a Shopify-style listing: no code in its URL, and a page that says
+     plainly which product it is */
+  function slugPage(options) {
+    const o = Object.assign({ canonical: SLUG, ogType: 'product', sku: 'SUB-TEE-1042', image: SLUG_PHOTO, price: '48.00', extra: [] }, options || {});
+    const records = [{ '@type': 'Product', name: 'Boxy Cotton Tee', brand: { '@type': 'Brand', name: 'Subset' }, image: [o.image],
+      offers: [{ '@type': 'Offer', sku: o.sku, price: o.price, priceCurrency: 'USD' }] }].concat(o.extra);
+    return `<!doctype html><html><head><title>Boxy Cotton Tee</title>
+      <meta property="og:site_name" content="Slug Shop">
+      <meta property="og:type" content="${o.ogType}">
+      <meta property="og:image" content="${o.image}">
+      ${o.canonical ? `<link rel="canonical" href="${o.canonical}">` : ''}
+      ${records.map((one) => `<script type="application/ld+json">${JSON.stringify(Object.assign({ '@context': 'https://schema.org' }, one))}</script>`).join('\n')}
+      </head><body></body></html>`;
+  }
+  const readSlug = async (html, photos, listing) => {
+    web((href) => (href === ((listing && listing.productUrl) || SLUG) ? page(html) : (photos || [SLUG_PHOTO]).includes(href) ? photo() : null));
+    return readListings([listing || { title: 'Boxy Cotton Tee | Slug Shop', productUrl: SLUG }], { limit: 12, deadline: deadlineIn(9000) });
+  };
+
+  await testAsync('a code-less listing whose own page names its product is priced, photographed and shown', async () => {
+    const { records, diagnostics } = await readSlug(slugPage());
+    assert.deepStrictEqual(diagnostics.outcomes, { photographed: 1 }, JSON.stringify(diagnostics.samples));
+    const { products } = verifyAll(records, { retailer: null });
+    assert.strictEqual(products.length, 1);
+    assert.deepStrictEqual(
+      { name: products[0].name, price: products[0].price, imageUrl: products[0].imageUrl, retailer: products[0].retailer, productUrl: products[0].productUrl },
+      { name: 'Boxy Cotton Tee', price: 48, imageUrl: SLUG_PHOTO, retailer: 'Slug Shop', productUrl: SLUG }
+    );
+  });
+
+  await testAsync('the page must be canonical for the listing, or it proves nothing about it', async () => {
+    for (const canonical of [null, 'https://www.slug-shop.com/products/linen-camp-shirt']) {
+      const { records, diagnostics } = await readSlug(slugPage({ canonical }));
+      assert.deepStrictEqual(diagnostics.outcomes, { 'no-identity': 1 }, String(canonical));
+      assert.strictEqual(records[0].price, undefined);
+      assert.strictEqual(verifyAll(records).rejected['missing-price'], 1);
+    }
+  });
+
+  await testAsync('a page that is an article, or that describes two products, proves no identity', async () => {
+    const article = await readSlug(slugPage({ ogType: 'article' }).replace('"@type":"Product"', '"@type":"Article"'));
+    assert.deepStrictEqual(article.diagnostics.outcomes, { 'no-identity': 1 });
+    const two = await readSlug(slugPage({ extra: [{ '@type': 'Product', name: 'Linen Shirt', sku: 'LIN-7788', offers: { price: '90.00', priceCurrency: 'USD' } }] }));
+    assert.deepStrictEqual(two.diagnostics.outcomes, { 'no-identity': 1 });
+    assert.match(two.diagnostics.samples[0].why, /product records naming different products/);
+    const nameless = await readSlug(slugPage({ sku: 'SUB-TEE' }));
+    assert.deepStrictEqual(nameless.diagnostics.outcomes, { 'no-identity': 1 }, 'a record whose identifier holds no code names nothing');
+  });
+
+  await testAsync('on a page-proven code the record cannot vouch for its own photo: a different garment is refused', async () => {
+    /* the photo sits on the very record the code came from, and names a
+       shirt — the canonical rule's garment check refuses it */
+    const shirt = 'https://cdn.slug-shop.com/files/linen-camp-shirt.jpg';
+    const refused = await readSlug(slugPage({ image: shirt }), [shirt]);
+    assert.deepStrictEqual(refused.diagnostics.outcomes, { 'no-photo': 1 });
+    assert.strictEqual(refused.records[0].price, 48, 'the price is still proven');
+    assert.strictEqual(refused.records[0].imageUrl, undefined);
+    /* the same kind of photo carrying the page's code proves itself */
+    const coded = 'https://cdn.slug-shop.com/files/SUB-TEE-1042-shirt-detail.jpg';
+    const accepted = await readSlug(slugPage({ image: coded }), [coded]);
+    assert.strictEqual(accepted.records[0].imageUrl, coded);
+  });
+
+  await testAsync('a title that reads like an article or a category is read, not skipped — its page decides', async () => {
+    const url = 'https://www.slug-shop.com/boxy-cotton-tee';
+    const listing = { title: 'Best Boxy Cotton Tees for Women | Slug Shop', productUrl: url };
+    assert.strictEqual(images.listingShape(url, listing.title).kind === 'product', false, 'the title alone would have skipped it');
+    assert.strictEqual(precheck(listing), null);
+    const { records, diagnostics } = await readSlug(slugPage({ canonical: url }), null, listing);
+    assert.deepStrictEqual(diagnostics.outcomes, { photographed: 1 }, JSON.stringify(diagnostics.samples));
+    assert.strictEqual(verifyAll(records).products.length, 1);
+  });
+
+  await testAsync('an ADDRESS that is a category, an article or a forum is still never fetched', async () => {
+    const calls = web();
+    const skipped = [
+      ['https://www.slug-shop.com/collections/tees', 'category-page'],
+      ['https://www.slug-shop.com/blogs/journal/how-to-style-a-boxy-tee', 'editorial-page'],
+      ['https://www.reddit.com/r/malefashion/comments/abc123/boxy_tees', 'not-a-shop']
+    ];
+    const { diagnostics } = await readListings(skipped.map(([productUrl]) => ({ title: 'Boxy Tee', productUrl })), { limit: 12, deadline: deadlineIn(9000) });
+    assert.strictEqual(calls.length, 0);
+    assert.deepStrictEqual(diagnostics.outcomes, { 'category-page': 1, 'editorial-page': 1, 'not-a-shop': 1 });
+  });
+
+  await testAsync('an offer naming the listing’s code proves its price when the record itself names none', async () => {
+    const html = `<!doctype html><html><head><meta property="og:site_name" content="Shop Example">
+      <script type="application/ld+json">${JSON.stringify({ '@type': 'Product', name: 'Wide Leg Trouser', image: 'https://cdn.shop-example.com/i/WL48213-front.jpg',
+        offers: [{ '@type': 'Offer', sku: 'WL48213-S', price: '88.00', priceCurrency: 'USD' }, { '@type': 'Offer', sku: 'WL48213-M', price: '88.00', priceCurrency: 'USD' }] })}</script>
+      </head></html>`;
+    web((href) => (href === URLS.good ? page(html) : null));
+    const { records } = await readListings([{ title: 'Wide Leg Trouser', productUrl: URLS.good }], { limit: 12, deadline: deadlineIn(9000) });
+    assert.strictEqual(records[0].price, 88);
+    assert.strictEqual(records[0].imageUrl, 'https://cdn.shop-example.com/i/WL48213-front.jpg');
+    /* and offers that disagree still fail closed */
+    const split = html.replace('"sku":"WL48213-M","price":"88.00"', '"sku":"WL48213-M","price":"98.00"');
+    web((href) => (href === URLS.good ? page(split) : null));
+    const ambiguous = await readListings([{ title: 'Wide Leg Trouser', productUrl: URLS.good }], { limit: 12, deadline: deadlineIn(9000) });
+    assert.deepStrictEqual(ambiguous.diagnostics.outcomes, { 'no-price': 1 });
+    assert.match(ambiguous.diagnostics.samples[0].why, /different amounts/);
+  });
+
+  await testAsync('catalogue discovery, which passes no page identity, judges a code-less listing exactly as before', async () => {
+    const html = slugPage();
+    const candidate = images.candidatesFrom(html, SLUG)[0];
+    assert.match(images.identityEvidence(candidate, SLUG).why, /carries no product code/);
+    const read = prices.pricesFromHtml(html);
+    const decided = prices.decide(read.candidates, SLUG);
+    assert.strictEqual(decided.price, undefined);
+    assert.match(decided.refusals[0].why, /carries no product code/);
+    /* and a URL that names its product never consults the page's claim */
+    assert.strictEqual(images.pageIdentity(html, URLS.good).ok, false);
+  });
+
+  await testAsync('listings whose URL names a product are read first; what is shown keeps the engine’s order', async () => {
+    const { readTier } = require('../api/_providers/retailer-page');
+    assert.strictEqual(readTier({ productUrl: URLS.good }), 0);
+    assert.strictEqual(readTier({ productUrl: SLUG, title: 'Boxy Cotton Tee' }), 1);
+    assert.strictEqual(readTier({ productUrl: 'https://www.slug-shop.com/boxy-cotton-tee', title: 'Boxy Cotton Tee' }), 2);
+
+    const seen = [];
+    web((href) => {
+      if (href === SLUG) { seen.push(href); return page(slugPage()); }
+      if (href === SLUG_PHOTO) return photo();
+      if (PAGES[href]) { seen.push(href); return PAGES[href](); }
+      return null;
+    });
+    const { records } = await readListings([
+      { title: 'Boxy Cotton Tee', productUrl: SLUG },
+      { title: 'Wide Leg Trouser', productUrl: URLS.good }
+    ], { limit: 12, deadline: deadlineIn(9000) });
+    assert.deepStrictEqual(verifyAll(records).products.map((one) => one.productUrl), [SLUG, URLS.good], 'the engine’s order');
+    assert.strictEqual(seen[0], URLS.good, 'the coded listing was not read first');
   });
 
   console.log(`\n${passed} passed, ${failures.length} failed\n`);

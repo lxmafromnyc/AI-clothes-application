@@ -479,6 +479,83 @@ function productPageVerdict(shape, page) {
   return { ok: false, why: 'nothing on the page or in its address says it is a product page' };
 }
 
+/* ---------- a listing whose URL names no product ----------
+
+   The identity gates tie a price and a photo to a listing by the code in
+   its URL — /p/wide-leg-trouser-WL48213 names WL48213. Plenty of real
+   listings carry none: a Shopify /products/<handle>, a descriptive slug.
+   Every gate used to stop at "the listing URL carries no product code",
+   so those listings could never show anything, however plainly their
+   own pages said what they were.
+
+   Here the page says it instead, and it has to say all of this:
+
+     it is THIS listing's page   its canonical address is the listing's
+                                 own (or, for Shopify, the same product
+                                 handle on the same store) — the page
+                                 the search result pointed at, not a
+                                 page it happens to link to
+     it is a product page        by productPageVerdict(): the listing's
+                                 address is not a forum, an article or a
+                                 category page, and the page declares a
+                                 product and not an article
+     it is ONE product           every product record on the page names
+                                 a common code; two records that name
+                                 different products is a page that has
+                                 not said which one it is
+     and names it                that record carries an identifier (its
+                                 own, or its offers') holding a code by
+                                 the same definition a listing URL's
+                                 code is read with
+
+   What it returns is the code, and the gates then run on it unchanged —
+   with one thing withheld: a photo cannot pass merely by sitting on the
+   record the code came from (see identityEvidence). Nothing here is
+   consulted for a URL that carries a code of its own. */
+const RECORD_TYPES = /^(product|productgroup|individualproduct|productmodel)$/i;
+
+function recordCodes(node) {
+  const values = skuOf(node);
+  const offers = node && (node.offers || node.offer);
+  for (const offer of Array.isArray(offers) ? offers : (offers ? [offers] : [])) values.push(...skuOf(offer));
+  for (const key of ['productGroupID', 'productGroupId']) {
+    if (node && (typeof node[key] === 'string' || typeof node[key] === 'number')) values.push(String(node[key]).toLowerCase());
+  }
+  return [...new Set(values.flatMap((value) => codesIn(String(value))))];
+}
+
+function pageIdentity(html, productUrl, landedUrl) {
+  if (identifiersFrom(productUrl).length) return { ok: false, why: 'the listing URL names its product itself' };
+
+  const declared = canonicalOf(String(html || ''));
+  if (!declared) return { ok: false, why: 'the page declares no canonical address, so nothing says it is this listing\'s page' };
+  let canonical;
+  try { canonical = new URL(decode(declared).trim(), landedUrl || productUrl).href; } catch (err) { return { ok: false, why: 'the page\'s canonical address is not a URL' }; }
+  const ownHandle = shopifyHandle(productUrl);
+  const theirHandle = shopifyHandle(canonical);
+  const sameHandle = Boolean(ownHandle && theirHandle && ownHandle.handle === theirHandle.handle && ownHandle.origin === theirHandle.origin);
+  if (!samePage(canonical, productUrl) && !(landedUrl && samePage(canonical, landedUrl)) && !sameHandle) {
+    return { ok: false, why: `the page is canonical for ${canonical}, not for this listing` };
+  }
+
+  const verdict = productPageVerdict(listingShape(productUrl, ''), pageDeclarationsFromHtml(html));
+  if (!verdict.ok) return { ok: false, why: verdict.why };
+
+  const records = jsonLdNodes(html).filter((node) => [].concat(node['@type'] || []).some((type) => RECORD_TYPES.test(String(type).replace(/^.*[/#]/, ''))));
+  if (!records.length) return { ok: false, why: 'the page carries no product record to say which product it is' };
+  const sets = records.map(recordCodes);
+  if (sets.some((codes) => !codes.length)) return { ok: false, why: 'a product record on the page names no product code' };
+  const common = sets[0].filter((code) => sets.every((codes) => codes.includes(code)));
+  if (!common.length) return { ok: false, why: `the page carries ${records.length} product records naming different products` };
+
+  return {
+    ok: true,
+    codes: common,
+    canonical,
+    how: `the page is the canonical product page for this listing (${verdict.why}), and its product record names ${common[0]}`
+  };
+}
+
 /* candidates in the order they deserve to be tried, deduplicated. Each
    keeps where it came from, because the identity gate below weighs an
    og:image on a canonical page differently from a bare URL. */
@@ -541,7 +618,18 @@ function identifiersFrom(productUrl) {
     if (TRACKING_PARAMS.test(key)) continue;
     kept.push(`${key}=${value}`);
   }
-  const text = decodeURIComponent(url.pathname) + ' ' + decodeURIComponent(kept.join('&'));
+  let text;
+  try {
+    text = decodeURIComponent(url.pathname) + ' ' + decodeURIComponent(kept.join('&'));
+  } catch (err) {
+    text = url.pathname + ' ' + kept.join('&');
+  }
+  return codesIn(text);
+}
+
+/* The product codes in a piece of text, by the one definition of a code
+   this file has: a listing URL's, or an identifier a page declares. */
+function codesIn(text) {
   const ids = new Set();
 
   /* a long run of digits, with and without its leading zeros: Levi's
@@ -809,13 +897,21 @@ function siteAsset(candidate, productUrl) {
   return null;
 }
 
-function identityEvidence(candidate, productUrl) {
+/* `proven` is an identity the listing's own page established for it —
+   pageIdentity() below — and it is consulted ONLY when the listing URL
+   carries no code of its own. A URL that names its product is judged
+   exactly as it always was, and a caller that passes nothing (every
+   catalogue run) is judged exactly as it always was. */
+function identityEvidence(candidate, productUrl, proven) {
   /* a photo offered by the store's own product record answers to that
      record and to nothing else — and nothing else may claim it */
   if (candidate && candidate.from === 'product-record') return productRecordEvidence(candidate, productUrl);
 
-  const ids = identifiersFrom(productUrl);
+  const fromUrl = identifiersFrom(productUrl);
+  const pageProven = !fromUrl.length && proven && Array.isArray(proven.codes) && proven.codes.length > 0;
+  const ids = pageProven ? proven.codes : fromUrl;
   if (!ids.length) return { ok: false, why: 'the listing URL carries no product code to match against' };
+  const whose = pageProven ? 'the code the page declares for this listing' : 'the listing\'s code';
 
   const where = identityHaystacks(candidate.url);
   if (where.unparseable) return { ok: false, why: 'not a URL' };
@@ -828,7 +924,7 @@ function identityEvidence(candidate, productUrl) {
   for (const id of ids) {
     for (const place of where.meaningful) {
       if (containsCode(place.text, id)) {
-        return { ok: true, via: 'image-url', code: id, how: `the ${place.label} carries the listing's code ${id}` };
+        return { ok: true, via: 'image-url', code: id, how: `the ${place.label} carries ${whose} ${id}` };
       }
     }
   }
@@ -840,13 +936,17 @@ function identityEvidence(candidate, productUrl) {
     if (!/^\d{6,}$/.test(id)) continue;
     for (const place of where.meaningful) {
       if (place.text.replace(/\D/g, '').includes(id)) {
-        return { ok: true, via: 'image-url', code: id, how: `the ${place.label} carries the listing's code ${id}, split across segments` };
+        return { ok: true, via: 'image-url', code: id, how: `the ${place.label} carries ${whose} ${id}, split across segments` };
       }
     }
   }
 
-  /* the structured record that supplied the image names the product */
-  const skus = skuOf(candidate.node);
+  /* the structured record that supplied the image names the product —
+     never taken on a page-proven identity, because that identity WAS
+     read off this record, and the record would be vouching for itself:
+     such a photo has to carry the code, or pass the canonical rule and
+     everything that rule asks of it, below */
+  const skus = pageProven ? [] : skuOf(candidate.node);
   for (const sku of skus) {
     const bare = sku.replace(/[^a-z0-9]/g, '');
     for (const id of ids) {
@@ -2859,7 +2959,7 @@ async function firstVerifiable(candidates, row, fetcher, within) {
     const asset = siteAsset(candidate, row.productUrl);
     if (asset) return { candidate, refusal: note(candidate, 'asset', asset) };
 
-    const identity = identityEvidence(candidate, row.productUrl);
+    const identity = identityEvidence(candidate, row.productUrl, row.proven);
     if (!identity.ok) return { candidate, refusal: note(candidate, 'identity', identity.why) };
 
     return { candidate, identity };
@@ -6571,6 +6671,8 @@ if (require.main === module) {
     reactRouterProducts, embeddedRecordFrom, reproveEmbeddedRecord, coverageLive, browserRecordListing,
     /* whether a page is a product page, for the canonical rule */
     pageDeclarations, pageDeclarationsFromHtml, productPageVerdict,
+    /* a listing whose URL names no product, identified by its own page */
+    pageIdentity, codesIn,
     garmentsAgree, canonicalCorroborated, wordsInPath, wordsAboutImage, TRACKING_PARAMS,
     siteAsset, imageDimensions, listingShape, rankListings, embeddedProductTiles, listingProductLinks, tilesFromHtml, tilesOffered, productKey, tileReport, tileLines,
     parseArgs, OPTIONS, USAGE, intentFor, queryForms, listingsFor, discoverRow, coverage,

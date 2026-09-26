@@ -202,6 +202,21 @@ function summarise(results) {
     organicPagesRead: results.reduce((sum, r) => sum + ((r.organic && r.organic.pages && r.organic.pages.pagesRead) || 0), 0),
     organicPageOutcomes: results.reduce((tally, r) => { for (const [what, n] of Object.entries((r.organic && r.organic.pages && r.organic.pages.outcomes) || {})) tally[what] = (tally[what] || 0) + n; return tally; }, {}),
     organicSearchFailures: results.filter((r) => r.organic && r.organic.failed).length,
+    /* for every page that was read and proved nothing: why, by outcome,
+       most frequent first */
+    organicPageReasons: (() => {
+      const tally = {};
+      for (const r of results) {
+        for (const [outcome, whys] of Object.entries((r.organic && r.organic.pages && r.organic.pages.reasons) || {})) {
+          const group = tally[outcome] || (tally[outcome] = {});
+          for (const [why, n] of Object.entries(whys)) group[why] = (group[why] || 0) + n;
+        }
+      }
+      for (const outcome of Object.keys(tally)) {
+        tally[outcome] = Object.fromEntries(Object.entries(tally[outcome]).sort((a, b) => b[1] - a[1]));
+      }
+      return tally;
+    })(),
     answeredBy: results.reduce((tally, r) => { const who = r.provider ? `${r.provider}${r.usedFallback ? ' (fallback)' : ' (primary)'}` : 'none'; tally[who] = (tally[who] || 0) + 1; return tally; }, {}),
     rejectedByGate: results.reduce((tally, r) => { for (const [why, n] of Object.entries(r.rejected || {})) tally[why] = (tally[why] || 0) + n; return tally; }, {}),
     interpreterFailures: results.filter((r) => r.interpreterFailure && r.interpreterFailure !== 'not-configured').length,
