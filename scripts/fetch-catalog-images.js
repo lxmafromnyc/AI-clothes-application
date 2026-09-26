@@ -2936,7 +2936,12 @@ async function resolveRowInner(row, within, diagnosis, options, tiles) {
     /* what this page says about its own product, kept whether or not a
        photo comes out of it: the semantic gate asks for it afterwards */
     evidence = evidenceFromHtml(page.html);
-    if (tiles) tiles.push(...tilesFromHtml(page.html, tiles.stats.served));
+    if (tiles) {
+      tiles.push(...tilesFromHtml(page.html, tiles.stats.served));
+      if (shopifyCollection(row.productUrl) && SHOPIFY_PAGE.test(page.html) && !budget.spent()) {
+        tiles.push(...await collectionTiles(row.productUrl, request, budget.cap(TIMEOUT), tiles.stats.served));
+      }
+    }
     const candidates = candidatesFrom(page.html, row.productUrl);
     notes.push(`plain HTTP: ${candidates.length} candidate${candidates.length === 1 ? '' : 's'}`);
     if (candidates.length) {
@@ -3018,8 +3023,12 @@ async function resolveRowInner(row, within, diagnosis, options, tiles) {
     facts = factsFromRendered(rendered.seen);
     if (tiles) {
       tiles.stats.rendered = Object.assign({}, rendered.seen.embeddedStats || {});
-      tiles.push(...embeddedProductTiles((rendered.seen.jsonld || []).flatMap((block) => parseLdBlock(block)), 'json-ld (rendered)', 60, tiles.stats.rendered));
+      tiles.push(...embeddedProductTiles((rendered.seen.jsonld || []).flatMap((block) => parseLdBlock(block)), 'json-ld (rendered)', 200, tiles.stats.rendered));
       tiles.push(...(Array.isArray(rendered.seen.embeddedTiles) ? rendered.seen.embeddedTiles : []));
+      /* plain HTTP never got this page, so the browser that did asks */
+      if (!page.html && tiles.stats.rendered.shopify && shopifyCollection(row.productUrl) && !budget.spent()) {
+        tiles.push(...await collectionTiles(row.productUrl, rendered.fetchRecord, budget.cap(TIMEOUT), tiles.stats.rendered));
+      }
     }
     /* the rendered page knows which text belongs to the product, because
        it can ask the DOM rather than guess from markup */
@@ -4239,6 +4248,9 @@ function productSource() {
 
    A form that throws does not end the row — the next one is tried, and
    only a row where every form failed reports the source as failing. */
+/* the spellings a shop in the US titles a garment with */
+const AMERICAN = { colour: 'color', colours: 'colors', grey: 'gray', favourite: 'favorite', jewellery: 'jewelry', tyre: 'tire' };
+
 function queryForms(row) {
   const name = String(row.name || '').trim();
   const forms = [];
@@ -4256,6 +4268,22 @@ function queryForms(row) {
 
   const words = name.split(/\s+/).filter(Boolean);
   const head = words[words.length - 1] || '';
+
+  /* The same garment in the words shops use for it. A British spelling
+     is asked in American too, and a head noun the semantic gate reads as
+     another garment — "knit" is a sweater — is asked by that name as
+     well. Only the question widens: the gate still has to read the
+     row's garment in whatever comes back. */
+  const american = words.map((word) => {
+    const us = AMERICAN[word.toLowerCase()];
+    return us ? (/^[A-Z]/.test(word) ? us[0].toUpperCase() + us.slice(1) : us) : word;
+  }).join(' ');
+  if (american.toLowerCase() !== name.toLowerCase()) add('its name, in American spelling', american);
+  const garment = readGarment(name, { fallback: row.category }).type;
+  if (garment && head && !words.some((word) => word.toLowerCase().replace(/s$/, '') === garment)
+      && readGarment(head).type === garment) {
+    add(`its garment, as a ${garment}`, [...american.split(/\s+/).slice(0, -1), garment].join(' '));
+  }
   if (head && !/s$/i.test(head)) add('its name, pluralised', [...words.slice(0, -1), `${head}s`].join(' '));
 
   const category = String(row.category || '').trim();
@@ -4504,7 +4532,7 @@ function embeddedProductTiles(data, source, most, stats) {
   const AWAY = /recommend|related|similar|recent|upsell|cross.?sell|also|trending|suggest|sponsor|complete.?the.?look|pairs?.?with|wear.?it.?with|carousel|promo|^ads?$|advert|^nav|menu|header|footer|breadcrumb/i;
   const SHOPIFY_PRODUCT = /^gid:\/\/shopify\/Product\/\d+$/;
   const VARIANT = /^(variants?|colou?rs?|colorways?|swatch(es)?|skus?|sizes?|images?|media|options?|pictures?|photos?|tiles?)$/;
-  const limit = most || 60;
+  const limit = most || 200;
   const out = [];
   const st = stats || {};
   st.visits = st.visits || 0;
@@ -4691,7 +4719,22 @@ function embeddedProductTiles(data, source, most, stats) {
       }
     }
     if (!image) image = ownedImage(node, keys, id);
-    return { keys, url, name, id, image };
+    /* every name the record gives, so the title gate can read the one
+       that names the garment rather than a colour or a line name */
+    const names = [];
+    for (const key of NAME_KEYS) {
+      if (!(key in keys)) continue;
+      let value = node[keys[key]];
+      if (value && typeof value === 'object' && !Array.isArray(value)) {
+        const inner = indexOf(value);
+        value = first(value, inner, ['value', 'text', 'default', 'enus', 'en', 'engb', 'label'], 300);
+      }
+      if (typeof value === 'string' && value.trim() && value.trim().length <= 120 && !names.includes(value.trim())) names.push(value.trim().slice(0, 300));
+    }
+    /* the record says what it is: a schema.org Product, a GraphQL Product */
+    const declared = [node[keys.type], node[keys.typename]].flat().map((one) => String(one || ''));
+    const typed = declared.some((one) => /^(product|productgroup|productmodel|individualproduct)$/i.test(one.replace(/^https?:\/\/schema\.org\//i, '')));
+    return { keys, url, name, id, image, names, typed };
   };
   const opened = (value) => {
     if (typeof value !== 'string' || st.opened >= 20 || value.length < 20 || value.length > 5000000 || st.openedChars > 20000000) return null;
@@ -4723,10 +4766,17 @@ function embeddedProductTiles(data, source, most, stats) {
       const got = roles(inner);
       let used = false;
       for (const role of ['url', 'name', 'id', 'image']) if (!found[role] && got[role]) { found[role] = got[role]; used = true; }
-      if (used) wrapped.add(found.keys[wrap]);
+      if (used) {
+        wrapped.add(found.keys[wrap]);
+        for (const one of got.names) if (!found.names.includes(one)) found.names.push(one);
+        found.typed = found.typed || got.typed;
+      }
     }
     const complete = found.url && found.name && found.id && found.image && found.name.length >= 3;
-    if (complete) out.push({ url: found.url, name: found.name, id: found.id, image: found.image, where: `${source}${where}`.slice(0, 300) });
+    if (complete) {
+      out.push({ url: found.url, name: found.name, names: found.names.length ? found.names : [found.name], id: found.id, image: found.image,
+        typed: Boolean(found.typed), where: `${source}${where}`.slice(0, 300) });
+    }
     else miss(found, found.keys);
     /* A complete record is read on through, because it may be a
        container — a category with its own name, id, url and banner, and
@@ -4751,7 +4801,7 @@ function embeddedProductTiles(data, source, most, stats) {
    this side: on the listing's own site, shaped like one product, and
    not the listing page itself. Returns the candidates, first-come; what
    was dropped, and why, is counted into `stats` for the report. */
-const MAX_TILES_PER_PAGE = 40;
+const MAX_TILES_PER_PAGE = 200;
 const PRODUCT_ID_PARAM = /^(pid|productid|product_id|itemid|styleid|skuid|sku)$/i;
 
 /* one product page's key: host, path, and the query parameter that names
@@ -4796,10 +4846,18 @@ function listingProductLinks(listingUrl, tiles, stats) {
     const key = productKey(url.href);
     if (key === self) { drop('the listing page itself'); continue; }
     const shape = listingShape(url.href, tile.name);
-    if (shape.kind !== 'product') { drop('not shaped like one product', `${url.pathname}${url.search}`.slice(0, 100)); continue; }
+    /* An address that says nothing either way (/colour-block-jumper) is
+       taken only from a record that declares itself a Product; the page
+       still has to prove it is one at the product-page gate. A category,
+       search or article address is never taken. */
+    if (shape.kind !== 'product' && !(shape.kind === 'unknown' && tile.typed)) {
+      drop(shape.kind === 'unknown' ? 'not shaped like one product (and not declared a Product)' : (shape.kind === 'editorial' ? 'an editorial page' : `a ${shape.kind} page`), `${url.pathname}${url.search}`.slice(0, 100));
+      continue;
+    }
     if (seen.has(key)) { drop('duplicate'); continue; }
     seen.add(key);
-    out.push({ productUrl: url.href, title: tile.name.trim(), id: String(tile.id), where: tile.where || null });
+    out.push({ productUrl: url.href, title: tile.name.trim(), names: Array.isArray(tile.names) && tile.names.length ? tile.names : [tile.name.trim()],
+      id: String(tile.id), where: tile.where || null });
   }
   return out;
 }
@@ -4817,6 +4875,7 @@ function tileReport(tiles, links, linkStats) {
     from: [...new Set((tiles || []).map((one) => String(one.where || '').split(/[.[]/)[0]))],
     nextData: { served: (stats.served && stats.served.nextServed) || null, rendered: (stats.rendered && stats.rendered.next) || null },
     stateFailed: (stats.rendered && stats.rendered.failed) || null,
+    collection: (stats.served && stats.served.collection) || (stats.rendered && stats.rendered.collection) || null,
     jsonStringsOpened: ((stats.served && stats.served.opened) || 0) + ((stats.rendered && stats.rendered.opened) || 0),
     dropped: linkStats.dropped || {},
     examples: linkStats.examples || {},
@@ -4833,7 +4892,8 @@ function tileLines(tiles) {
   lines.push(`product tiles: ${tiles.read} complete tile${tiles.read === 1 ? '' : 's'} read${tiles.from.length ? ` (from ${tiles.from.join(', ')})` : ''}, ${tiles.offered} offered as product pages`
     + `; __NEXT_DATA__ served: ${next.served || 'not served'}, rendered: ${next.rendered || 'not rendered'}`
     + `${tiles.jsonStringsOpened ? `; ${tiles.jsonStringsOpened} JSON-string state${tiles.jsonStringsOpened === 1 ? '' : 's'} opened` : ''}`
-    + `${tiles.stateFailed ? `; page state could not be read (${tiles.stateFailed})` : ''}`);
+    + `${tiles.stateFailed ? `; page state could not be read (${tiles.stateFailed})` : ''}`
+    + `${tiles.collection ? `; Shopify collection products.json ${tiles.collection}` : ''}`);
   const dropped = Object.entries(tiles.dropped || {});
   if (dropped.length) {
     lines.push(`  dropped: ${dropped.map(([why, n]) => `${n} ${why}`).join(', ')}`);
@@ -4843,16 +4903,76 @@ function tileLines(tiles) {
   return lines;
 }
 
+/* ---------- a Shopify collection's own product list ----------
+
+   A Shopify collection page, /collections/<handle>, is backed by a list
+   the store publishes at /collections/<handle>/products.json: each
+   product's id, handle, title and images. It is to a collection what
+   /products/<handle>.js is to a product, and a theme's JSON-LD often
+   leaves out exactly what it carries. Its products are offered as
+   /products/<handle> candidates like any other tile — never its images,
+   and never the collection — and each is read and proved on its own
+   page. It is asked for the way the page was got: by a plain request
+   only when a plain request was served the page, otherwise by the
+   browser that was, same-origin. */
+const SHOPIFY_COLLECTION = /^((?:\/[a-z]{2}(?:-[a-z]{2})?)?\/collections\/[a-z0-9][a-z0-9_-]*)\/?$/i;
+const SHOPIFY_PAGE = /cdn\.shopify\.com|\/cdn\/shop\/|Shopify\.shop|ShopifyAnalytics/;
+
+function shopifyCollection(listingUrl) {
+  let url;
+  try { url = new URL(String(listingUrl)); } catch (err) { return null; }
+  const m = url.pathname.match(SHOPIFY_COLLECTION);
+  if (!m || /\/collections\/(all-)?search$/i.test(m[1])) return null;
+  return { origin: url.origin, url: `${url.origin}${m[1]}/products.json?limit=250` };
+}
+
+async function collectionTiles(listingUrl, fetcher, within, stats) {
+  const st = stats || {};
+  const target = shopifyCollection(listingUrl);
+  if (!target || typeof fetcher !== 'function') return [];
+  const got = await fetcher(target.url, { accept: 'application/json' }, within);
+  if (!got.ok) { st.collection = `could not be read (${got.why})`; return []; }
+  let data;
+  try {
+    const { response } = got;
+    if (response.status !== 200) {
+      if (response.body) await response.body.cancel().catch(() => {});
+      st.collection = `answered ${response.status}`;
+      return [];
+    }
+    data = JSON.parse(await response.text());
+  } catch (err) {
+    st.collection = 'not readable JSON';
+    return [];
+  } finally {
+    got.release();
+  }
+  const products = data && Array.isArray(data.products) ? data.products.slice(0, 250) : [];
+  const tiles = [];
+  for (const product of products) {
+    if (!product || typeof product !== 'object') continue;
+    const handle = typeof product.handle === 'string' ? product.handle.trim() : '';
+    const title = typeof product.title === 'string' ? product.title.trim() : '';
+    const id = typeof product.id === 'number' || typeof product.id === 'string' ? String(product.id) : '';
+    const images = Array.isArray(product.images) ? product.images : [];
+    const image = images.map((one) => (one && typeof one === 'object' ? one.src : one)).find((one) => typeof one === 'string' && one.trim());
+    if (!/^[a-z0-9][a-z0-9_-]*$/i.test(handle) || !title || !/^\d+$/.test(id) || !image) continue;
+    tiles.push({ url: `/products/${handle}`, name: title, names: [title], id, image, typed: true, where: 'shopify collection products.json' });
+  }
+  st.collection = `read: ${tiles.length} of ${products.length} product${products.length === 1 ? '' : 's'} complete`;
+  return tiles;
+}
+
 /* the served markup's tiles: its JSON-LD, and a Next.js page's data */
 function tilesFromHtml(html, stats) {
   const st = stats || {};
-  const tiles = embeddedProductTiles(jsonLdNodes(html), 'json-ld', 60, st);
+  const tiles = embeddedProductTiles(jsonLdNodes(html), 'json-ld', 200, st);
   const next = String(html || '').match(/<script\b[^>]*\bid\s*=\s*["']?__NEXT_DATA__["']?[^>]*>([\s\S]*?)<\/script>/i);
   if (!next) st.nextServed = st.nextServed || 'absent';
   else if (next[1].length >= 8000000) st.nextServed = 'too large to read';
   else {
     try {
-      tiles.push(...embeddedProductTiles(JSON.parse(next[1]), '__NEXT_DATA__', 60, st));
+      tiles.push(...embeddedProductTiles(JSON.parse(next[1]), '__NEXT_DATA__', 200, st));
       st.nextServed = 'read';
     } catch (err) {
       st.nextServed = 'not readable JSON';
@@ -4867,6 +4987,7 @@ function pageStateTiles(walker) {
   const out = [];
   const stats = { next: 'absent' };
   try {
+    stats.shopify = Boolean(window.Shopify && window.Shopify.shop);
     const el = document.getElementById('__NEXT_DATA__');
     let next = null;
     if (el && el.textContent) {
@@ -4877,11 +4998,11 @@ function pageStateTiles(walker) {
     const sources = [['__NEXT_DATA__', next]];
     for (const name of ['__NUXT__', '__INITIAL_STATE__', '__PRELOADED_STATE__', '__APOLLO_STATE__']) sources.push([name, window[name]]);
     for (const [name, data] of sources) {
-      if (data && typeof data === 'object') out.push(...walker(data, name, 60, stats));
-      if (out.length >= 120) break;
+      if (data && typeof data === 'object') out.push(...walker(data, name, 200, stats));
+      if (out.length >= 300) break;
     }
   } catch (err) { stats.failed = String(err && err.message ? err.message : err).slice(0, 200); }
-  return { tiles: out.slice(0, 120), stats };
+  return { tiles: out.slice(0, 300), stats };
 }
 
 /* whether a raw record links to a host that sells nothing; read through
@@ -4890,6 +5011,15 @@ function fromNoShop(record) {
   try {
     const link = record && typeof record === 'object' ? (record.productUrl || record.link || record.url) : null;
     return typeof link === 'string' && NOT_A_SHOP.test(new URL(link).hostname);
+  } catch (err) {
+    return false;
+  }
+}
+
+function fromEditorial(record) {
+  try {
+    const link = record && typeof record === 'object' ? (record.productUrl || record.link || record.url) : null;
+    return typeof link === 'string' && listingShape(link, record.title || record.name || '').kind === 'editorial';
   } catch (err) {
     return false;
   }
@@ -4937,7 +5067,10 @@ async function listingsFor(row, limit, within) {
        row whose name works answers in two searches, not five. */
     /* a forum thread or a pinboard is not something found: it is
        dropped below, and a shortlist made of them is an empty one */
-    const shortlisted = raw.filter((record) => !fromNoShop(record)).length;
+    /* an article about the garment is not something found: it is ranked
+       last and never offers a product, so a first page of blog posts
+       does not end the search before the next wording is asked */
+    const shortlisted = raw.filter((record) => !fromNoShop(record) && !fromEditorial(record)).length;
     if (shortlisted >= wanted) break;
     if (shortlisted > 0 && attempts.length >= 2) break;
     /* and the ladder stops where the row's clock does: another query
@@ -5189,22 +5322,33 @@ function tilesOffered(row, tried, products) {
       const key = productKey(link.productUrl);
       if (!key || known.has(key)) continue;
       known.add(key);
+      /* The record's own names, read by the same title gate every
+         candidate meets: a full match first, then one that leaves
+         something for the page to prove. A colour or a line name beside
+         the garment's name does not get to speak for it. */
+      let best = null;
+      for (const name of (link.names && link.names.length ? link.names : [link.title])) {
+        const verdict = readTitleSafely(row, { title: name });
+        const rank = verdict.ok ? (verdict.kind === 'match' ? 0 : 1) : 2;
+        if (!best || rank < best.rank) best = { name, rank };
+        if (rank === 0) break;
+      }
       const product = {
         productUrl: link.productUrl,
-        title: link.title,
+        title: best ? best.name : link.title,
         brand: null,
-        shape: listingShape(link.productUrl, link.title),
-        foundOn: attempt.url
+        shape: listingShape(link.productUrl, best ? best.name : link.title),
+        foundOn: attempt.url,
+        rank: best ? best.rank : 2
       };
-      /* the same title gate every candidate meets, asked here so that a
-         category page listing forty other garments first cannot use up
-         the row's places; a refused tile costs no request, and a few are
-         kept so the report shows what was turned away */
-      if (readTitleSafely(row, product).ok) { if (passing.length < MAX_TILES_PER_ROW) passing.push(product); }
+      if (product.rank < 2) passing.push(product);
       else if (refused.length < MAX_REFUSED_TILES) refused.push(product);
     }
   }
-  return passing.concat(refused);
+  /* full matches before partial ones, each in the page's own order: the
+     sort is stable, so the earliest valid candidate still wins its tier */
+  passing.sort((a, b) => a.rank - b.rank);
+  return passing.slice(0, MAX_TILES_PER_ROW).concat(refused);
 }
 
 /* The title stage, which cannot be allowed to throw: a candidate whose
@@ -6357,7 +6501,7 @@ if (require.main === module) {
     replaceRow, linkRow, setField, indentOf, factsFromHtml, factsFromRendered, inspectCandidate,
     catalogRowIdentity, evidenceNote,
     /* a Shopify store's own product record, as identity evidence */
-    shopifyHandle, recordImages, recordImageHost, productRecordFor, productRecordEvidence,
+    shopifyHandle, recordImages, recordImageHost, productRecordFor, productRecordEvidence, shopifyCollection, collectionTiles,
     reactRouterProducts, embeddedRecordFrom, reproveEmbeddedRecord, coverageLive, browserRecordListing,
     /* whether a page is a product page, for the canonical rule */
     pageDeclarations, pageDeclarationsFromHtml, productPageVerdict,

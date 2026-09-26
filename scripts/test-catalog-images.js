@@ -5442,11 +5442,11 @@ ${opts.ld === false ? '' : `<script type="application/ld+json">${JSON.stringify(
     const report = extractor.tileReport(tiles, links, linkStats);
     assert.strictEqual(report.read, 1);
     assert.strictEqual(report.offered, 0);
-    assert.deepStrictEqual(report.dropped, { 'not shaped like one product': 1 });
+    assert.deepStrictEqual(report.dropped, { 'a listing page': 1 });
     assert.ok(report.nearMisses.some((one) => /has url\+name\+id; lacks image; keys productCode,name,url/.test(one.signature)), JSON.stringify(report.nearMisses));
     const lines = extractor.tileLines(report).join('\n');
     assert.match(lines, /__NEXT_DATA__ served: read/);
-    assert.match(lines, /e\.g\. not shaped like one product: \/collections\/wide-leg/);
+    assert.match(lines, /e\.g\. a listing page: \/collections\/wide-leg/);
     assert.ok(!/img\/a\.jpg/.test(lines), 'an image address reached the report');
 
     const broken = {};
@@ -5656,6 +5656,188 @@ ${opts.ld === false ? '' : `<script type="application/ld+json">${JSON.stringify(
       }
     } finally {
       shop.close();
+    }
+  });
+
+  /* ---------------------------------------------------------
+     The last three rows: slip midi dress, tailored wool coat, colour
+     block knit
+
+     A full run found complete tiles on Rihoas, COS and knitwear pages
+     and offered none of them. A record that declares itself a Product
+     at an address that says nothing was dropped; a record's garment name
+     lost to its colour name; the first forty tiles were all a page
+     offered, in page order, however many were partial matches; a Shopify
+     collection's own product list was never read; and "Colour Block
+     Knit" was only ever searched as written, stopping on a page of blog
+     posts.
+     --------------------------------------------------------- */
+  const COAT_ROW = { id: 'fixture-tailored-wool-coat', name: 'Tailored Wool Coat', brand: 'Halden', category: 'coat' };
+  const DRESS_ROW = { id: 'fixture-slip-midi-dress', name: 'Slip Midi Dress', brand: 'Rue Nine', category: 'dress' };
+  const KNIT_ROW = { id: 'sample-solstice-colour-block-knit', name: 'Colour Block Knit', brand: 'Solstice', category: 'knit' };
+
+  test('a record that declares itself a Product may sit at an address that says nothing; nothing else may', () => {
+    const listingUrl = 'https://knits.example.com/collections/sweaters';
+    const typed = extractor.embeddedProductTiles([{ '@type': 'ItemList', itemListElement: [
+      { '@type': 'ListItem', position: 1, item: { '@type': 'Product', name: 'Colour Block Jumper', sku: 'CBJ-01', url: '/colour-block-jumper', image: '/img/cbj.jpg' } },
+      { '@type': 'ListItem', position: 2, item: { '@type': 'Product', name: 'Colour Block Jumper Journal', sku: 'CBJ-02', url: '/blog/colour-block-jumper', image: '/img/b.jpg' } },
+      { '@type': 'ListItem', position: 3, item: { '@type': 'Product', name: 'All Jumpers', sku: 'CBJ-03', url: '/collections/jumpers', image: '/img/c.jpg' } }
+    ] }], 'json-ld');
+    assert.ok(typed.every((one) => one.typed));
+    const untyped = extractor.embeddedProductTiles({ grid: [{ name: 'Colour Block Jumper', sku: 'CBJ-04', url: '/colour-block-jumper-2', image: '/img/d.jpg' }] }, 't');
+    const stats = {};
+    const links = extractor.listingProductLinks(listingUrl, typed.concat(untyped), stats);
+    assert.deepStrictEqual(links.map((one) => one.productUrl), ['https://knits.example.com/colour-block-jumper']);
+    assert.deepStrictEqual(stats.dropped, { 'an editorial page': 1, 'a listing page': 1, 'not shaped like one product (and not declared a Product)': 1 });
+  });
+
+  test('the record’s garment name speaks for it, not its colour; full matches are offered first', () => {
+    const tile = (path, names) => ({ productUrl: `https://www.cos.example/en-us/women/coats/product/${path}`, title: names[0], names, id: path, where: 't' });
+    const offered = extractor.tilesOffered(COAT_ROW, [{ url: 'https://www.cos.example/en-us/women/coats', productLinks: [
+      tile('wool-car-coat-1000000001', ['WOOL CAR COAT']),
+      tile('oversized-wool-coat-1000000002', ['Oversized Wool Coat']),
+      tile('tailored-wool-coat-1000000003', ['Black', 'TAILORED WOOL COAT'])
+    ] }], []);
+    /* the full match leads, though the page listed it last; the partial
+       one follows; the contradiction is kept only to be reported */
+    assert.deepStrictEqual(offered.map((one) => one.title), ['TAILORED WOOL COAT', 'WOOL CAR COAT', 'Oversized Wool Coat']);
+    assert.strictEqual(offered[2].rank, 2);
+
+    /* names kept in a record come through the walker in full */
+    const [one] = extractor.embeddedProductTiles({ grid: [{ name: 'Black', productName: 'Tailored Wool Coat', articleCode: '1000000003',
+      url: '/en-us/women/coats/product/tailored-wool-coat-1000000003', image: '/img/1000000003.jpg' }] }, 't');
+    assert.deepStrictEqual(one.names, ['Black', 'Tailored Wool Coat']);
+  });
+
+  test('a large category page is read past its fortieth product', () => {
+    const grid = Array.from({ length: 60 }, (_, i) => ({ name: i === 55 ? 'Tailored Wool Coat' : 'Wool Car Coat', articleCode: String(1000000100 + i),
+      url: `/en-us/women/coats/product/coat-${1000000100 + i}`, image: `/img/${1000000100 + i}.jpg` }));
+    const tiles = extractor.embeddedProductTiles({ props: { pageProps: { grid } } }, '__NEXT_DATA__');
+    assert.strictEqual(tiles.length, 60);
+    const links = extractor.listingProductLinks('https://www.cos.example/en-us/women/coats', tiles);
+    assert.strictEqual(links.length, 60);
+    const offered = extractor.tilesOffered(COAT_ROW, [{ url: 'https://www.cos.example/en-us/women/coats', productLinks: links }], []);
+    assert.strictEqual(offered[0].title, 'Tailored Wool Coat', 'the one full match was not offered first');
+  });
+
+  await testAsync('a garment is searched in the words shops use for it, and a page of articles does not end the search', async () => {
+    const forms = extractor.queryForms(KNIT_ROW).map((one) => one.query);
+    assert.deepStrictEqual(forms.slice(0, 3), ['Colour Block Knit', 'Color Block Knit', 'Color Block sweater']);
+    /* a row already worded as shops word it gains nothing */
+    assert.deepStrictEqual(extractor.queryForms(COAT_ROW).map((one) => one.query).slice(0, 2), ['Tailored Wool Coat', 'Tailored Wool Coats']);
+
+    const asked = [];
+    productSource.registerProvider({
+      name: 'fake-source',
+      configured: () => true,
+      search: async (intent) => {
+        const query = intent.keywords[0];
+        asked.push(query);
+        if (query === 'Colour Block Knit') {
+          return Array.from({ length: 10 }, (_, i) => ({ title: `How to knit a colour block jumper, part ${i}`, productUrl: `https://yarn.example.com/blog/colour-block-${i}` }));
+        }
+        if (query === 'Color Block Knit') return [{ title: 'Color Block Sweater', productUrl: 'https://shop.example.com/products/color-block-sweater' }];
+        return [];
+      }
+    });
+    process.env.PRODUCT_SOURCE = 'fake-source';
+    const found = await extractor.listingsFor(KNIT_ROW, 8);
+    assert.deepStrictEqual(asked.slice(0, 2), ['Colour Block Knit', 'Color Block Knit'], 'the blog posts ended the search');
+    assert.strictEqual(found.products[0].productUrl, 'https://shop.example.com/products/color-block-sweater');
+  });
+
+  /* a Shopify store whose collection page carries no product in its
+     JSON-LD, and whose /collections/<handle>/products.json does */
+  function shopifyCollectionStore({ page, shopify }) {
+    const asked = [];
+    const server = http.createServer((req, res) => {
+      asked.push(req.url);
+      const port = server.address().port;
+      const here = `http://127.0.0.1:${port}`;
+      const url = req.url.split('?')[0];
+      if (url === '/collections/midi-dresses') {
+        if (page) { res.writeHead(page, { 'content-type': 'text/html' }); return res.end('Access denied'); }
+        /* a store with no sign of Shopify keeps its pictures elsewhere */
+        const files = shopify === false ? '/images/' : '/cdn/shop/files/';
+        res.writeHead(200, { 'content-type': 'text/html' });
+        return res.end(`<!doctype html><html><head><title>Midi Dresses | Fixture</title>
+<link rel="canonical" href="${here}/collections/midi-dresses">
+<meta property="og:image" content="${here}${files}SAGE-SATIN-SLIP-1.jpg">
+<script type="application/ld+json">${JSON.stringify({ '@type': 'Organization', '@id': `${here}/#org`, name: 'Fixture', url: here, logo: `${here}/logo.png` })}</script>
+${shopify === false ? '' : '<script src="https://cdn.shopify.com/s/trekkie.js"></script>'}
+</head><body><img src="${files}SAGE-SATIN-SLIP-1.jpg" width="800" height="1000" alt="Sage Satin Slip Midi Dress"></body></html>`);
+      }
+      if (url === '/collections/midi-dresses/products.json') {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ products: [
+          { id: 7000000000001, handle: 'ribbed-knit-cardigan', title: 'Ribbed Knit Cardigan', images: [{ src: `//127.0.0.1:${port}/cdn/shop/files/cardigan.jpg` }] },
+          { id: 7000000000002, handle: 'slip-midi-dress-no-image', title: 'Satin Slip Midi Dress', images: [] },
+          { id: 8123456789099, handle: 'sage-satin-slip-midi-dress', title: 'Sage Satin Slip Midi Dress', images: [{ src: `//127.0.0.1:${port}/cdn/shop/files/sage-tile.jpg` }] }
+        ] }));
+      }
+      if (url === '/products/sage-satin-slip-midi-dress') {
+        res.writeHead(200, { 'content-type': 'text/html' });
+        return res.end(`<!doctype html><html><head><link rel="canonical" href="${here}/products/sage-satin-slip-midi-dress">
+<meta property="og:image" content="${here}/cdn/shop/files/fixture-social-share.jpg"></head><body></body></html>`);
+      }
+      if (url === '/products/sage-satin-slip-midi-dress.js') {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ id: 8123456789099, handle: 'sage-satin-slip-midi-dress', title: 'Sage Satin Slip Midi Dress',
+          images: [`//127.0.0.1:${port}/cdn/shop/files/SAGE-SATIN-SLIP-MIDI-DRESS-FRONT.jpg`] }));
+      }
+      if (url.startsWith('/cdn/shop/files/') || url.startsWith('/images/')) { res.writeHead(200, { 'content-type': 'image/jpeg' }); return res.end(PHOTO); }
+      res.writeHead(404); res.end();
+    });
+    return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({ server, asked, port: server.address().port })));
+  }
+  const offerCollection = (port) => {
+    productSource.registerProvider({
+      name: 'fake-source',
+      configured: () => true,
+      search: async () => [{ title: 'Midi Dresses | Fixture', productUrl: `http://127.0.0.1:${port}/collections/midi-dresses` }]
+    });
+    process.env.PRODUCT_SOURCE = 'fake-source';
+  };
+
+  await testAsync('a Shopify collection’s own product list offers its products, each proved on its own page', async () => {
+    const store = await shopifyCollectionStore({});
+    try {
+      offerCollection(store.port);
+      const result = await extractor.discoverRow(DRESS_ROW, new Map(), 8);
+      assert.strictEqual(result.verdict, 'VERIFIED', result.why);
+      assert.strictEqual(result.proposal.productUrl, `http://127.0.0.1:${store.port}/products/sage-satin-slip-midi-dress`);
+      assert.match(result.proposal.imageUrl, /SAGE-SATIN-SLIP-MIDI-DRESS-FRONT\.jpg$/, 'the photo is the product record’s, not the collection’s');
+      assert.strictEqual(result.proposal.identity.via, 'product-record');
+      const collection = result.tried.find((one) => /\/collections\/midi-dresses$/.test(one.url));
+      assert.ok(!collection.verified, 'the collection page itself was accepted');
+      assert.match(collection.tileReport.collection, /read: 2 of 3 products complete/);
+      assert.strictEqual(store.asked.filter((u) => u.startsWith('/collections/midi-dresses/products.json')).length, 1);
+      /* the cardigan was refused on its title, the imageless record never offered: neither page was read */
+      for (const handle of ['ribbed-knit-cardigan', 'slip-midi-dress-no-image']) {
+        assert.ok(!store.asked.some((u) => u.startsWith(`/products/${handle}`)), `${handle} was read`);
+      }
+    } finally {
+      store.server.close();
+    }
+  });
+
+  await testAsync('a collection list is never asked of a store that refused the page, or of a store that is not Shopify', async () => {
+    const walled = await shopifyCollectionStore({ page: 403 });
+    try {
+      offerCollection(walled.port);
+      const result = await extractor.discoverRow(DRESS_ROW, new Map(), 8);
+      assert.notStrictEqual(result.verdict, 'VERIFIED');
+      assert.ok(!walled.asked.some((u) => u.includes('products.json')), 'the list was used to get round a refused page');
+    } finally {
+      walled.server.close();
+    }
+    const plain = await shopifyCollectionStore({ shopify: false });
+    try {
+      offerCollection(plain.port);
+      await extractor.discoverRow(DRESS_ROW, new Map(), 8);
+      assert.ok(!plain.asked.some((u) => u.includes('products.json')), 'a store with no sign of Shopify was asked for a Shopify list');
+    } finally {
+      plain.server.close();
     }
   });
 
