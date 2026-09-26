@@ -49,6 +49,7 @@ const { queryFrom } = require('../api/_providers/query');
 const cache = require('../api/_cache');
 const interpreters = require('../api/_interpreters');
 const { semanticMatch } = require('./fetch-catalog-images.js');
+const { timedOut } = require('../api/_providers/deadline');
 
 /* the page's own scripts, as the page runs them: the catalogue it sends
    as vocabulary, and the local reader it falls back to */
@@ -158,6 +159,11 @@ async function measure(id, query, category, env, provider, limit) {
     fellBackFrom: found && found.fellBackFrom ? found.fellBackFrom : null,
     returned: products.length,
     rejected: found ? found.rejected : null,
+    /* when the answering source's batch named no shop: what its organic
+       endpoint offered, and what reading each listing's own page proved */
+    organic: found && found.funnel && found.funnel.organic ? found.funnel.organic : null,
+    /* a failure that was the clock rather than the provider refusing */
+    providerTimedOut: Boolean(failure && timedOut(new Error(failure))),
     servedFromCache: Boolean(found && found.servedFromCache),
     garmentRank: garmentAt < 0 ? null : garmentAt + 1,
     matchRank: matchAt < 0 ? null : matchAt + 1,
@@ -190,6 +196,12 @@ function summarise(results) {
     descriptorsInSomeTop3Result: `${allDescriptors.filter((d) => d.inTop3 > 0).length}/${allDescriptors.length}`,
     duplicateRate: returnedTotal ? `${results.reduce((sum, r) => sum + r.duplicates, 0)}/${returnedTotal}` : '0/0',
     providerFailures: results.filter((r) => r.providerFailure).length,
+    providerTimeouts: results.filter((r) => r.providerTimedOut).length,
+    organicEscalations: results.filter((r) => r.organic).length,
+    organicListingsOffered: results.reduce((sum, r) => sum + ((r.organic && r.organic.offered) || 0), 0),
+    organicPagesRead: results.reduce((sum, r) => sum + ((r.organic && r.organic.pages && r.organic.pages.pagesRead) || 0), 0),
+    organicPageOutcomes: results.reduce((tally, r) => { for (const [what, n] of Object.entries((r.organic && r.organic.pages && r.organic.pages.outcomes) || {})) tally[what] = (tally[what] || 0) + n; return tally; }, {}),
+    organicSearchFailures: results.filter((r) => r.organic && r.organic.failed).length,
     answeredBy: results.reduce((tally, r) => { const who = r.provider ? `${r.provider}${r.usedFallback ? ' (fallback)' : ' (primary)'}` : 'none'; tally[who] = (tally[who] || 0) + 1; return tally; }, {}),
     rejectedByGate: results.reduce((tally, r) => { for (const [why, n] of Object.entries(r.rejected || {})) tally[why] = (tally[why] || 0) + n; return tally; }, {}),
     interpreterFailures: results.filter((r) => r.interpreterFailure && r.interpreterFailure !== 'not-configured').length,

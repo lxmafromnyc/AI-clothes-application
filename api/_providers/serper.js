@@ -96,7 +96,8 @@
    The same query put to the web endpoint returned 9 organic results,
    all 9 of them retailer URLs that pass the link rule. That is the
    fallback, and it is deliberately NOT part of search(): see
-   searchOrganic() below for what it may and may not be used for.
+   searchOrganic() below for who asks for it, and on what evidence its
+   results may ever be shown.
    ========================================================= */
 
 'use strict';
@@ -107,6 +108,19 @@ const WEB_SEARCH_URL = 'https://google.serper.dev/search';
 const REQUEST_TIMEOUT = 15000;
 const API_LIMIT_MAX = 100;
 const OVERFETCH = 2;
+
+/* What each call leaves on the request's clock for the work after it,
+   when /api/search passes a deadline (see _providers/deadline.js). A
+   shopping batch with no retailer link is followed by the organic
+   search and then by reading each listing's own page for its price and
+   photo, so the shopping call leaves room for both, and the organic
+   call leaves room for the pages. Without a deadline — catalogue
+   discovery, which carries its own clock — each call has the whole
+   REQUEST_TIMEOUT, exactly as before. */
+const SHOPPING_RESERVE_MS = 4000;
+const ORGANIC_RESERVE_MS = 3000;
+
+const { legTimeout, fetchWithin } = require('./deadline');
 
 const text = (value) => (value === undefined || value === null ? '' : String(value).trim());
 
@@ -311,23 +325,19 @@ function resultsFrom(payload) {
    account's allowance, which is worth saying out loud for the same
    reason it is worth saying about SerpApi: it is the one failure that
    is not a bug in this adapter. */
-async function apiPost(url, body) {
+/* `timeout` is all the time this one call may have — the request's
+   remaining budget less what comes after it, or REQUEST_TIMEOUT when no
+   deadline was given. Running out is an error that says so and names
+   Serper, rather than the runtime's bare "This operation was aborted". */
+async function apiPost(url, body, timeout) {
   const key = text(process.env.SERPER_API_KEY);
   if (!key) throw new Error('SERPER_API_KEY is not set');
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
-  let response;
-  try {
-    response = await fetch(url, {
-      method: 'POST',
-      headers: { 'X-API-KEY': key, 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify(body),
-      signal: controller.signal
-    });
-  } finally {
-    clearTimeout(timer);
-  }
+  const response = await fetchWithin('Serper', url, {
+    method: 'POST',
+    headers: { 'X-API-KEY': key, 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify(body)
+  }, timeout === undefined ? REQUEST_TIMEOUT : timeout);
 
   if (!response.ok) {
     const detail = await response.text().catch(() => '');
@@ -350,7 +360,7 @@ async function search(intent, options) {
     gl: text(process.env.SERPER_COUNTRY) || 'us',
     hl: text(process.env.SERPER_LANGUAGE) || 'en',
     num: Math.min(wanted * OVERFETCH, API_LIMIT_MAX)
-  });
+  }, legTimeout(options && options.deadline, SHOPPING_RESERVE_MS, REQUEST_TIMEOUT));
 
   const results = resultsFrom(payload);
   const records = results.map(toRecord).filter(Boolean);
@@ -387,37 +397,41 @@ function accountFor(engine, results, records) {
 }
 
 /* -----------------------------------------------------------
-   The organic path — DISCOVERY ONLY
+   The organic path
    -----------------------------------------------------------
 
    A live probe settled what /shopping carries: forty results for one
    catalogue row, every `link` a google.com Shopping card, and not one
    retailer URL anywhere in the response. There is no field to read and
    nothing to repair, so the shopping endpoint cannot answer the
-   question discovery is asking.
+   question either caller is asking.
 
    The web endpoint can. An organic result is an ordinary web result,
    so its `link` is the page itself — the shop's own product page, not
    a card about it. What an organic result does NOT carry is a price or
-   a photo, and that is not a gap to fill in:
+   a photo, and that is not a gap to fill in here:
 
-     * it CANNOT feed /api/search. That gate requires a title, price,
-       photo, link and retailer from the source, and a record from here
-       has two of the five. It is refused there, by the same gate that
-       refuses everything else that is short — which is checked in
-       scripts/test-serper.js rather than asserted here.
-     * it CAN feed catalogue discovery, which wants a page to read. The
-       photo comes off the retailer's own page, through the same four
-       image gates, and the price in the catalogue is the row's own and
-       is never touched.
+     * catalogue discovery wants a page to read. The photo comes off the
+       retailer's own page, through the four image gates, and the price
+       in the catalogue is the row's own and is never touched.
+     * /api/search wants a displayable product, and its gate requires a
+       title, price, photo, link and retailer. A record from here has
+       two of the five, so on its own it is refused there, by the same
+       gate that refuses everything else that is short — checked in
+       scripts/test-serper.js. It reaches a shopper only after its own
+       listing page has proved a price and a photo through discovery's
+       price and image gates (_providers/retailer-page.js), and then
+       only by passing that same gate.
 
    No retailer name is read off a hostname either: "shop.madewell.com"
    is a domain, not a shop's name, and inventing one is the fabricated
    attribution the record contract exists to prevent. So a record from
    here carries a title and a link, and nothing it did not receive.
 
-   This is a separate call rather than part of search(), so the provider
-   contract /api/search runs on is exactly what it was. */
+   Both callers ask for it the same way, on the same rule: only when a
+   batch from search() named no shop at all (linkless() in
+   product-source.js). It is a separate call rather than part of
+   search(), so search() answers exactly what it always answered. */
 function organicFrom(payload) {
   if (!payload || typeof payload !== 'object') return [];
   if (Array.isArray(payload.organic)) return payload.organic;
@@ -474,7 +488,7 @@ async function searchOrganic(intent, options) {
     gl: text(process.env.SERPER_COUNTRY) || 'us',
     hl: text(process.env.SERPER_LANGUAGE) || 'en',
     num: Math.min(wanted * OVERFETCH, API_LIMIT_MAX)
-  });
+  }, legTimeout(options && options.deadline, ORGANIC_RESERVE_MS, REQUEST_TIMEOUT));
 
   const results = organicFrom(payload);
   const main = results.map(toOrganicRecord).filter(Boolean);
@@ -491,10 +505,10 @@ module.exports = {
   name: 'serper',
   configured,
   search,
-  /* NOT part of the provider contract /api/search runs on, which is
-     name + configured + search. Catalogue discovery asks for this by
-     name when the shopping endpoint hands back no retailer URL; every
-     other caller never sees it. */
+  /* Not part of the contract every adapter must meet, which is name +
+     configured + search. Catalogue discovery and /api/search both ask
+     for it, by name, only when search() came back naming no shop; no
+     other adapter has one, so nothing changes for them. */
   searchOrganic,
   /* exported for scripts/test-serper.js and scripts/probe-serper.js */
   toRecord, toOrganicRecord, sitelinkRecords, queryFrom, toPrice, currencyFrom, resultsFrom, organicFrom,

@@ -121,6 +121,7 @@ const DEFAULT_ENGINE = 'google_shopping_light';
 const IMMERSIVE_ENGINE = 'google_immersive_product';
 const RETIRED_SERVICE = /no longer offered|no longer available|has been (retired|deprecated|discontinued)|not supported/i;
 const REQUEST_TIMEOUT = 15000;
+const { legTimeout, fetchWithin } = require('./deadline');
 
 /* Ask for more than the caller wants so the gate has slack to drop
    unusable records without emptying the page. SerpApi's Google Shopping
@@ -460,8 +461,13 @@ function newTally() {
 
 /* One GET against SerpApi. The key is added here and nowhere else, and
    no thrown message or log line carries it: the URL is redacted before
-   it can reach either. */
-async function apiGet(params, tally, kind) {
+   it can reach either.
+
+   `timeout` is all the time this one call may have: what is left of
+   the request's budget when /api/search passed a deadline, and
+   REQUEST_TIMEOUT otherwise. Running out is an error naming SerpApi and
+   the ceiling — never the URL, which carries the key. */
+async function apiGet(params, tally, kind, timeout) {
   const key = process.env.SERPAPI_API_KEY;
   if (!key) throw new Error('SERPAPI_API_KEY is not set');
 
@@ -469,18 +475,12 @@ async function apiGet(params, tally, kind) {
   query.set('api_key', key);
   query.set('output', 'json');
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
-  let response;
-  try {
-    if (tally) { tally[kind] += 1; tally.total += 1; }
-    response = await fetch(`${SEARCH_URL}?${query.toString()}`, {
-      headers: { Accept: 'application/json' },
-      signal: controller.signal
-    });
-  } finally {
-    clearTimeout(timer);
-  }
+  const ms = timeout === undefined ? REQUEST_TIMEOUT : timeout;
+  /* counted only when a request is actually made */
+  if (tally && ms > 0) { tally[kind] += 1; tally.total += 1; }
+  const response = await fetchWithin('SerpApi', `${SEARCH_URL}?${query.toString()}`, {
+    headers: { Accept: 'application/json' }
+  }, ms);
 
   if (!response.ok) {
     const detail = await response.text().catch(() => '');
@@ -501,14 +501,14 @@ async function apiGet(params, tally, kind) {
 /* A failure here is not fatal: that one product ends up without a link
    and the gate drops it, rather than the whole search failing because
    one lookup did. */
-async function sellersFor(pageToken, region, tally) {
+async function sellersFor(pageToken, region, tally, timeout) {
   try {
     const payload = await apiGet({
       engine: IMMERSIVE_ENGINE,
       page_token: String(pageToken),
       gl: region.country,
       hl: region.language
-    }, tally, 'sellers');
+    }, tally, 'sellers', timeout);
     const sellers = sellersFrom(payload);
     return { sellers, failed: false, fatal: false, shape: sellers.length ? null : shapeOf(payload) };
   } catch (err) {
@@ -529,7 +529,7 @@ async function sellersFor(pageToken, region, tally) {
    parallel batches, stopping as soon as enough records have one or the
    budget expires. Mutates in place; a record left unresolved keeps no
    price, retailer or URL and is dropped by the gate. */
-async function resolveMissingSellers(records, wanted, region, stats, tally) {
+async function resolveMissingSellers(records, wanted, region, stats, tally, requestDeadline) {
   const t = stats || {};
   t.neededSellerLookup = records.filter((r) => !r.productUrl).length;
   t.lookupsMade = 0;
@@ -546,7 +546,10 @@ async function resolveMissingSellers(records, wanted, region, stats, tally) {
   if (!sellersEnabled()) { t.skipped = true; return t; }
 
   const budget = Number(process.env.SERPAPI_SELLER_BUDGET_MS) || DEFAULT_SELLER_BUDGET_MS;
-  const deadline = Date.now() + budget;
+  /* this phase's own budget, or the request's deadline, whichever
+     comes first */
+  const own = Date.now() + budget;
+  const deadline = requestDeadline ? Math.min(own, Number(requestDeadline)) : own;
   /* the Immersive Product API is addressed by a page token, so a record
      without one cannot be looked up at all */
   const pending = records.filter((r) => !r.productUrl && r.pageToken);
@@ -560,7 +563,7 @@ async function resolveMissingSellers(records, wanted, region, stats, tally) {
     const batch = pending.slice(i, i + SELLER_CONCURRENCY);
     const found = await Promise.all(batch.map(async (record) => {
       t.lookupsMade += 1;
-      const result = await sellersFor(record.pageToken, region, tally);
+      const result = await sellersFor(record.pageToken, region, tally, requestDeadline ? legTimeout(requestDeadline, 0, REQUEST_TIMEOUT) : undefined);
       if (result.failed) {
         t.lookupsFailed += 1;
         if (result.fatal && !t.halted) t.halted = result.why;
@@ -618,6 +621,7 @@ async function search(intent, options) {
     language: process.env.SERPAPI_LANGUAGE || 'en'
   };
   const tally = newTally();
+  const deadline = options && options.deadline ? Number(options.deadline) : null;
 
   const payload = await apiGet({
     engine: engine(),
@@ -625,7 +629,7 @@ async function search(intent, options) {
     gl: region.country,
     hl: region.language,
     num: String(Math.min(wanted * OVERFETCH, API_LIMIT_MAX))
-  }, tally, 'search');
+  }, tally, 'search', legTimeout(deadline, 0, REQUEST_TIMEOUT));
 
   const results = resultsFrom(payload);
 
@@ -652,7 +656,7 @@ async function search(intent, options) {
   diagnostics.withInlineLink = records.filter((r) => r.productUrl).length;
   diagnostics.secondHand = results.filter(secondHand).length;
 
-  diagnostics.sellers = await resolveMissingSellers(records, wanted, region, {}, tally);
+  diagnostics.sellers = await resolveMissingSellers(records, wanted, region, {}, tally, deadline);
 
   records.forEach((r) => { delete r.retailerHint; delete r.pageToken; });
   diagnostics.withAnyLink = records.filter((r) => r.productUrl).length;

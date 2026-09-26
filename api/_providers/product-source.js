@@ -372,10 +372,36 @@ function providerChain(primary) {
   return chain;
 }
 
+/* ---------- when a batch names no shop at all ----------
+
+   The second shared rule, and the one that decides when a source's
+   organic endpoint is asked: a batch in which not one record carries a
+   productUrl. Serper's /shopping answers with Google's own Shopping
+   cards, so every record it maps arrives without one. Catalogue
+   discovery and /api/search both escalate on exactly this, so the two
+   cannot disagree about when a batch was linkless.
+
+   Read through a guard: a source is not obliged to hand over
+   well-behaved objects, and a record that throws on being read is one
+   record, not a search. It counts as carrying no link. What it says is
+   only whether the adapter FOUND a URL — the link rule above is still
+   what decides whether that URL may be shown. */
+function carriesRetailerLink(record) {
+  try {
+    return Boolean(record && typeof record === 'object' && record.productUrl);
+  } catch (err) {
+    return false;
+  }
+}
+
+const linkless = (records) => !Array.from(records || []).some(carriesRetailerLink);
+
 module.exports = {
   getProvider,
   providerChain,
   outOfSearches,
+  carriesRetailerLink,
+  linkless,
   QUOTA_EXHAUSTED,
   registerProvider: (adapter) => { PROVIDERS[adapter.name] = adapter; },
   toProduct,

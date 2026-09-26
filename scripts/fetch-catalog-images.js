@@ -1533,7 +1533,10 @@ async function fetchPage(url, within) {
          answer to it rather than a different URL */
       return { failed: `the page answered ${response.status}`, refused: response.status === 403 || response.status === 429 };
     }
-    return { html: await response.text() };
+    /* where the page actually came from, after redirects: a caller that
+       has to know the listing still resolves to the shop it named reads
+       it here rather than asking a second time */
+    return { html: await response.text(), url: response.url || url };
   } catch (err) {
     return { failed: readingFailed(err) };
   } finally {
@@ -4396,6 +4399,10 @@ function outOfSearches(err) {
   return require(path.join(__dirname, '..', 'api', '_providers', 'product-source.js')).outOfSearches(err);
 }
 
+function linklessBatch(records) {
+  return require(path.join(__dirname, '..', 'api', '_providers', 'product-source.js')).linkless(records);
+}
+
 /* the sources discovery may ask, primary first. The fallback is only
    ever appended — it never displaces what PRODUCT_SOURCE chose. */
 function providerChain(source) {
@@ -5229,13 +5236,9 @@ async function listingsFor(row, limit, within) {
        Nothing else in the chain has a searchOrganic, so nothing else
        changes: SerpApi is asked the way it was always asked. */
     const source = chain[using];
-    /* read through a guard: a source is not obliged to hand over
-       well-behaved objects, and a record that throws on being read is
-       one record, not a run. It counts as carrying no link. */
-    const carriesLink = (record) => {
-      try { return Boolean(record && typeof record === 'object' && record.productUrl); } catch (err) { return false; }
-    };
-    const linked = offered.some(carriesLink);
+    /* the product source's own rule, shared with /api/search, so a
+       catalogue run and a shopper's search escalate on the same batch */
+    const linked = !linklessBatch(offered);
     let organic = [];
     let organicSaid = null;
     let organicFailed = null;
@@ -6591,7 +6594,7 @@ if (require.main === module) {
     /* the ceilings, and the two things that keep a slow shop from
        becoming a slow run: a clock a row carries, and a few candidates
        read at once that still answer in the order they were ranked */
-    budgetOf, raceInOrder, withCeiling, request, imageFetcherFor,
+    budgetOf, raceInOrder, withCeiling, request, imageFetcherFor, registrable,
     TIMEOUT, IMAGE_TIMEOUT, SEARCH_TIMEOUT, RENDER_BUDGET, ROW_BUDGET, LANES,
     /* TEMPORARY diagnostics: reporting only */
     refusalCategory, evidenceSource, tallyRefusals, pageFactsFromHtml, likelyProductRefusals

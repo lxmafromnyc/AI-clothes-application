@@ -38,7 +38,17 @@
      have a window, and a lookup still in flight when the deadline
      arrives is aborted rather than waited for. What verified inside the
      budget is what comes back: a short page of real products, not an
-     error. See api/_providers/openwebninja.js.
+     error. See api/_providers/openwebninja.js. SerpApi and Serper are
+     held to the same clock (api/_providers/deadline.js), and a provider
+     that does not answer inside it fails with an error that says it
+     timed out, and which provider it was.
+
+   Serper's organic fallback
+     When a source's whole batch names no shop — Serper's /shopping
+     results are Google's own cards — and the source has an organic
+     endpoint, that endpoint is asked too, and each listing it offers is
+     read off its own page by discovery's price and image gates before
+     it reaches the verification gate below. See recordsFrom().
 
    Caching
      Both halves of a search are cached in api/_cache.js: the records a
@@ -52,7 +62,8 @@
 
 'use strict';
 
-const { getProvider, verifyAll, providerChain, outOfSearches } = require('./_providers/product-source');
+const { getProvider, verifyAll, providerChain, outOfSearches, linkless } = require('./_providers/product-source');
+const { readListings } = require('./_providers/retailer-page');
 const { handledPreflight } = require('./_cors');
 const { envReport } = require('./_env-report');
 const meter = require('./_meter');
@@ -181,6 +192,46 @@ async function searchWithFallback(primary, intent, limit, stats, deadline) {
   throw new Error('no product source answered');
 }
 
+/* What one provider has to offer the gate for one search.
+
+   The adapter's search, and — only when not one record it returned
+   names a shop, and only from a source that has an organic endpoint —
+   that endpoint too, with each organic listing read off its own page
+   (see _providers/retailer-page.js). That is catalogue discovery's rule,
+   shared through product-source.js, and today it means Serper: its
+   /shopping results are Google's own cards and carry no retailer URL,
+   while its web results are the shops' own pages.
+
+   Nothing here loosens anything. The shopping records still go to the
+   gate and are still refused, and counted, for having no link. The
+   organic records go after them, in the engine's order, carrying only
+   what their own pages proved; a listing whose page proved nothing goes
+   to the gate as it came and is refused there. A failed organic search
+   is recorded and the shopping batch is answered as it was. */
+async function recordsFrom(provider, intent, limit, deadline) {
+  const batch = await provider.search(intent, { limit, deadline });
+  /* the adapter carries its funnel on the array itself; a cache
+     entry and a coalesced follower both need it as a plain field */
+  let records = Array.from(batch || []);
+  let diagnostics = (batch && batch.diagnostics) || null;
+  if (!linkless(records) || typeof provider.searchOrganic !== 'function') return { records, diagnostics };
+
+  const organic = { asked: 'after a linkless batch', offered: 0, failed: null, diagnostics: null, pages: null };
+  try {
+    const found = await provider.searchOrganic(intent, { limit, deadline });
+    const listings = Array.from(found || []);
+    organic.offered = listings.length;
+    organic.diagnostics = (found && found.diagnostics) || null;
+    const read = await readListings(listings, { limit, deadline });
+    organic.pages = read.diagnostics;
+    records = records.concat(read.records);
+  } catch (err) {
+    organic.failed = err && err.message ? String(err.message).split('\n')[0].slice(0, 200) : String(err);
+  }
+  diagnostics = Object.assign({}, diagnostics || {}, { organic });
+  return { records, diagnostics };
+}
+
 async function findProducts(provider, intent, limit, stats, deadline) {
   /* whatever this adapter says changes its results beyond the intent */
   const context = typeof provider.cacheContext === 'function' ? provider.cacheContext() : {};
@@ -191,12 +242,7 @@ async function findProducts(provider, intent, limit, stats, deadline) {
   let storeable = false;
 
   if (!payload) {
-    const run = await cache.coalesce(key, async () => {
-      const records = await provider.search(intent, { limit, deadline });
-      /* the adapter carries its funnel on the array itself; a cache
-         entry and a coalesced follower both need it as a plain field */
-      return { records: Array.from(records || []), diagnostics: (records && records.diagnostics) || null };
-    });
+    const run = await cache.coalesce(key, () => recordsFrom(provider, intent, limit, deadline));
     payload = run.value;
     /* the request that made the provider call writes the entry; a
        follower would only write the same thing over the top of it */
@@ -229,6 +275,16 @@ async function findProducts(provider, intent, limit, stats, deadline) {
   }
 
   return { records: payload.records, products, rejected, funnel, servedFromCache: Boolean(cached) };
+}
+
+/* The organic stage's sample refusals name a listing's host and the
+   gate's reason. The benchmark reads them off findProducts directly;
+   the browser gets the counts and nothing out of a record. */
+function withoutSamples(funnel) {
+  if (!funnel || !funnel.organic || !funnel.organic.pages || !funnel.organic.pages.samples) return funnel;
+  const pages = Object.assign({}, funnel.organic.pages);
+  delete pages.samples;
+  return Object.assign({}, funnel, { organic: Object.assign({}, funnel.organic, { pages }) });
 }
 
 module.exports = async function handler(req, res) {
@@ -302,7 +358,7 @@ module.exports = async function handler(req, res) {
      "this cost us fourteen requests" are never a guess. It carries
      counts and nothing else: no key, no digest, nothing a record or an
      intent was stored under. */
-  const diagnostics = Object.assign({}, found.funnel || {}, {
+  const diagnostics = Object.assign({}, withoutSamples(found.funnel) || {}, {
     reachedGate: records.length,
     /* which source answered, and from which one it fell back and why */
     provider: found.provider || provider.name,
@@ -347,6 +403,7 @@ module.exports.shapeAttachments = shapeAttachments;
 /* exported for scripts/test-cache.js and scripts/bench-offer-resolution.js,
    so both measure the path a shopper actually takes */
 module.exports.findProducts = findProducts;
+module.exports.recordsFrom = recordsFrom;
 module.exports.searchWithFallback = searchWithFallback;
 /* the endpoint's own budget and page size, for scripts/bench-live.js */
 module.exports.requestBudget = requestBudget;

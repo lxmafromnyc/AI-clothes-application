@@ -380,14 +380,15 @@ function withStubbedFetch(handler, run) {
   });
 
   /* ---------------------------------------------------------
-     The organic path — discovery only
+     The organic path
 
      A live probe settled what /shopping carries: forty results for one
      row, every link a Google Shopping card, no retailer URL anywhere.
      The web endpoint answers the same query with ordinary web results,
      whose link IS the shop's page — and with no price, no photo and no
-     seller, which is exactly why it can only feed catalogue discovery
-     and can never reach /api/search.
+     seller, which is exactly why a record from it is refused by the
+     /api/search gate on its own. It reaches a shopper only once its own
+     page has proved the rest: see scripts/test-live-organic.js.
      --------------------------------------------------------- */
 
   const ORGANIC = {
@@ -465,8 +466,8 @@ function withStubbedFetch(handler, run) {
           'no price, no photo, no retailer: the endpoint supplies none of them');
       }
 
-      /* which is why this can never reach /api/search: its gate wants
-         five fields from the source and these carry two */
+      /* which is why this can never reach /api/search as it is: its
+         gate wants five fields from the source and these carry two */
       const { products, rejected } = verifyAll(records, { retailer: null });
       assert.strictEqual(products.length, 0, 'an organic record is not a displayable product');
       assert.strictEqual(rejected['missing-price'], 3);
@@ -510,10 +511,11 @@ function withStubbedFetch(handler, run) {
     process.env.SERPER_API_KEY = key;
   });
 
-  test('searchOrganic is not part of the contract /api/search runs on', () => {
-    /* api/search.js asks a provider for name, configured and search.
-       The organic path is asked for BY NAME by catalogue discovery, so
-       adding it cannot change what a shopper's search does. */
+  test('searchOrganic is Serper\'s alone, outside the contract every adapter meets', () => {
+    /* every adapter is asked for name, configured and search. The
+       organic path is asked for BY NAME — by catalogue discovery and by
+       /api/search, only after search() came back naming no shop — so no
+       other adapter's search changes. */
     const contract = require('../api/_providers/product-source');
     const registered = contract.PROVIDERS.serper;
     assert.strictEqual(registered, provider, 'the registry holds this adapter');
