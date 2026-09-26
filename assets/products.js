@@ -156,6 +156,88 @@
     };
   }
 
+  /* ---------- ranking against an interpreted request ----------
+
+     Two kinds of evidence, added, not one capped by the other:
+
+       fit        the share of what the interpreter picked out — category,
+                  colour, occasion, fit, style, brand — that the item has
+       words      the share of the shopper's own words that the item's
+                  name or kind carries: "cropped", "puffer", "pleated",
+                  "double breasted", "chinos"
+
+     They used to be one figure, capped at 1 with the words as a small
+     nudge on top — so any jacket that matched "jacket" scored the same
+     as the cropped puffer that was asked for, and the cheapest won. A
+     brand the shopper named is weighed as a brand and not again as a
+     word, so it cannot outweigh the garment. Ties go to the lower price,
+     as before, so an order is always the same order. */
+  const RANK_WEIGHTS = { category: 3.2, color: 2.6, occasion: 2.4, fit: 2.2, brand: 3, style: 2 };
+  const NOT_A_TERM = new Set(['for', 'with', 'and', 'the', 'that', 'this', 'some', 'something', 'want', 'need', 'looking',
+    'like', 'wear', 'outfit', 'men', 'mens', 'women', 'womens', 'man', 'woman', 'unisex', 'length', 'style', 'pair', 'one']);
+
+  function stem(word) {
+    if (word.length > 4 && /(ss|x|ch|sh)es$/.test(word)) return word.slice(0, -2);
+    if (word.length > 3 && /s$/.test(word) && !/ss$/.test(word)) return word.slice(0, -1);
+    return word;
+  }
+
+  function termsOf(text) {
+    return String(text || '').toLowerCase()
+      .replace(/['’]s\b/g, '')
+      .replace(/[^a-z0-9]+/g, ' ')
+      .split(' ')
+      .filter((word) => word.length > 2 && !NOT_A_TERM.has(word))
+      .map(stem);
+  }
+
+  /* one of the shopper's words is on the item when a word of the item's
+     is that word, or holds it, or is held by it ("crewneck" and "crew",
+     "overcoat" and "coat") — never for fragments too short to mean much */
+  const carries = (have, word) => have.some((one) => one === word
+    || (word.length >= 4 && one.length >= 4 && (one.includes(word) || word.includes(one))));
+
+  function scoreItem(item, prefs) {
+    const lower = (list) => (list || []).map((v) => String(v).toLowerCase());
+    const overlap = (values, wanted) => {
+      const want = lower(wanted);
+      return (values || []).filter((v) => want.includes(String(v).toLowerCase()));
+    };
+    let earned = 0;
+    let possible = 0;
+    const hits = {};
+    const take = (key, weight, matches) => {
+      possible += weight;
+      if (matches.length) { earned += weight; hits[key] = matches[0]; }
+    };
+    const p = prefs || {};
+    if ((p.categories || []).length) take('category', RANK_WEIGHTS.category, lower(p.categories).includes(String(item.category).toLowerCase()) ? [item.category] : []);
+    if ((p.colors || []).length) take('color', RANK_WEIGHTS.color, overlap(item.colors, p.colors));
+    if ((p.occasions || []).length) take('occasion', RANK_WEIGHTS.occasion, overlap(item.occasions, p.occasions));
+    if ((p.fits || []).length) take('fit', RANK_WEIGHTS.fit, overlap(item.fits, p.fits));
+    if ((p.styles || []).length) take('style', RANK_WEIGHTS.style, overlap(item.styles, p.styles));
+    if ((p.brands || []).length) take('brand', RANK_WEIGHTS.brand, lower(p.brands).includes(String(item.brand).toLowerCase()) ? [item.brand] : []);
+    const ratio = possible ? earned / possible : 0;
+
+    /* the shopper's own words, less any brand they named */
+    const brandWords = new Set((p.brands || []).flatMap(termsOf));
+    const wanted = [...new Set((p.keywords || []).flatMap(termsOf))].filter((word) => !brandWords.has(word));
+    const have = termsOf(`${item.name} ${item.category}`);
+    const matched = wanted.filter((word) => carries(have, word));
+    const words = wanted.length ? matched.length / wanted.length : 0;
+
+    return { ratio, words, score: ratio + words, hits, matched };
+  }
+
+  /* the items that answer a request, best first; nothing that answers
+     none of it */
+  function rank(list, prefs) {
+    return (list || [])
+      .map((item) => Object.assign({}, item, scoreItem(item, prefs)))
+      .filter((item) => item.score > 0)
+      .sort((a, b) => b.score - a.score || (a.price ?? Infinity) - (b.price ?? Infinity));
+  }
+
   /* Holds the current catalogue and tells the pages when it changes, so a
      later feed can arrive asynchronously and the interface just re-renders.
 
@@ -196,7 +278,10 @@
     },
 
     normalizeProduct,
-    normalizeAll
+    normalizeAll,
+    rank,
+    scoreItem,
+    termsOf
   };
 
   global.Products = store;

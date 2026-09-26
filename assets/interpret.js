@@ -65,7 +65,8 @@
       Bright: ['bright', 'red', 'orange', 'yellow', 'neon', 'vivid']
     },
     categories: {
-      shirt: ['shirt', 'button-up', 'button up', 'button-down', 'oxford', 'blouse'],
+      /* a "top" is as often a blouse or a wrap top as a tee */
+      shirt: ['shirt', 'button-up', 'button up', 'button-down', 'oxford', 'blouse', 'top'],
       tee: ['tee', 't-shirt', 'tshirt', 'top'],
       knit: ['knit', 'sweater', 'jumper', 'hoodie', 'sweatshirt', 'cardigan'],
       jacket: ['jacket', 'blazer', 'bomber', 'puffer'],
@@ -94,15 +95,16 @@
     const prefs = EMPTY();
     const vocab = vocabulary || {};
 
-    const collect = (group, target) => {
+    const collect = (group, target, within) => {
       Object.keys(group).forEach((value) => {
-        if (group[value].some((word) => has(text, word))) target.push(value);
+        if (group[value].some((word) => has(within || text, word))) target.push(value);
       });
     };
     collect(HINTS.fits, prefs.fits);
     collect(HINTS.occasions, prefs.occasions);
     collect(HINTS.colors, prefs.colors);
-    collect(HINTS.categories, prefs.categories);
+    /* a t-shirt is a tee: the "shirt" inside it is not a second garment */
+    collect(HINTS.categories, prefs.categories, text.replace(/\bt-?shirts?\b/g, ' tee '));
 
     /* budget: "under $50", "below 80", "$50", "less than 120" */
     const under = text.match(/(?:under|below|less than|max|up to|cheaper than)\s*\$?\s*(\d+(?:\.\d+)?)/);

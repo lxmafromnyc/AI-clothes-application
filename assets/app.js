@@ -221,37 +221,6 @@ function orderFacet(counts, key) {
     };
   }
 
-  const lower = (list) => list.map((v) => String(v).toLowerCase());
-  const overlap = (values, wanted) => {
-    const want = lower(wanted);
-    return values.filter((v) => want.includes(String(v).toLowerCase()));
-  };
-
-  function score(item, prefs) {
-    const weights = { category: 3.2, color: 2.6, occasion: 2.4, fit: 2.2, brand: 3, style: 2 };
-    let earned = 0;
-    let possible = 0;
-    const hits = {};
-    const take = (key, weight, matches) => {
-      possible += weight;
-      if (matches.length) { earned += weight; hits[key] = matches[0]; }
-    };
-
-    if (prefs.categories.length) take('category', weights.category, lower(prefs.categories).includes(String(item.category).toLowerCase()) ? [item.category] : []);
-    if (prefs.colors.length) take('color', weights.color, overlap(item.colors, prefs.colors));
-    if (prefs.occasions.length) take('occasion', weights.occasion, overlap(item.occasions, prefs.occasions));
-    if (prefs.fits.length) take('fit', weights.fit, overlap(item.fits, prefs.fits));
-    if (prefs.styles.length) take('style', weights.style, overlap(item.styles, prefs.styles));
-    if (prefs.brands.length) take('brand', weights.brand, lower(prefs.brands).includes(item.brand.toLowerCase()) ? [item.brand] : []);
-
-    /* a light nudge when words from the request appear in the product name */
-    const name = item.name.toLowerCase();
-    const wordHit = prefs.keywords.some((w) => w.length > 3 && name.includes(w));
-    if (wordHit) earned += 0.6;
-
-    return { ratio: possible ? Math.min(earned / possible, 1) : 0, hits };
-  }
-
   /* What the interpreter took from the request, said once above the grid.
      This is the only place Fynd claims to have understood anything: no
      card carries a match score or a reason of its own, so a row of
@@ -369,15 +338,9 @@ function orderFacet(counts, key) {
       return true;
     };
 
-    const scored = Products.all()
-      .filter(withinBudget)
-      .map((item) => {
-        const { ratio } = score(item, prefs);
-        return { ...item, ratio };
-      })
-      .filter((item) => item.ratio > 0)
-      .sort((a, b) => b.ratio - a.ratio || (a.price ?? Infinity) - (b.price ?? Infinity))
-      .slice(0, 8);
+    /* ranked by the same function the tests and the search benchmark
+       put to it: see Products.rank in products.js */
+    const scored = Products.rank(Products.all().filter(withinBudget), prefs).slice(0, 8);
 
     /* said plainly when the shown items are samples, not real listings */
     const sourceNotice = found && found.notice
