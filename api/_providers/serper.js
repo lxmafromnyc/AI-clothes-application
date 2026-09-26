@@ -333,7 +333,9 @@ async function apiPost(url, body, timeout) {
   const key = text(process.env.SERPER_API_KEY);
   if (!key) throw new Error('SERPER_API_KEY is not set');
 
-  const response = await fetchWithin('Serper', url, {
+  /* which endpoint, so a timeout says which stage it was */
+  const stage = url === WEB_SEARCH_URL ? 'Serper /search' : url === SEARCH_URL ? 'Serper /shopping' : 'Serper';
+  const response = await fetchWithin(stage, url, {
     method: 'POST',
     headers: { 'X-API-KEY': key, 'Content-Type': 'application/json', Accept: 'application/json' },
     body: JSON.stringify(body)

@@ -31,17 +31,21 @@
                      to another site is refused.
      which product   the code in the listing's URL, when it has one.
                      When it has none — a Shopify /products/<handle>, a
-                     descriptive slug — the page has to say: canonical
-                     for this listing, a product page, one product
-                     record, naming a code (pageIdentity() in the image
-                     script). A page that cannot is refused as
-                     no-identity, and the gates below run on the code
-                     the page proved, never on nothing.
+                     descriptive slug — the page has to say, by
+                     pageIdentity() in the image script: its canonical
+                     address on this shop (which the gates then run on
+                     and which is shown), that it is a product page, and
+                     — where that address names no code either — which
+                     ONE product record is its own. A page that cannot
+                     is refused as no-identity; the gates below run on
+                     what the page proved, never on nothing.
      the price       pricesFromHtml() + decide(), the price reader's own
                      four gates: an amount in a named currency, on an
                      offer whose record, or which itself, names THIS
-                     listing's code, that is the amount charged — and
-                     failing closed when two figures both claim it.
+                     listing's code — or that belongs to the one record
+                     the page named as its own — that is the amount
+                     charged, and failing closed when two figures both
+                     claim it.
      the photo       candidatesFrom() + firstVerifiable(), the image
                      script's gates in their order: the host, the site-
                      asset rule, identity (the listing's code in the
@@ -66,6 +70,18 @@
    drops it as missing-price; one with a price and no provable photo is
    dropped as missing-image-url. Running out of time is the same: a page
    not read is a record without a price. Nothing here fills a gap.
+
+   A category page is never a result. It is read — last, and only a few
+   per search — for the products it lists in its own data, each of which
+   has to be the garment the shopper asked for by discovery's title gate
+   and then proves itself on its own page like any other listing (see
+   readCategory below).
+
+   No page is rendered in a browser here. A page that refuses a plain
+   request (most often a 403 from a bot check) is left unread: the
+   browser path discovery has launches Chromium with automation hidden,
+   which against a refusal is getting round an access control, and it
+   does not run in the deployed function or fit the request's clock.
 
    The Shopify product-record path is NOT used. It holds the record's
    title against a catalogue row, and a live search has no row — holding
@@ -92,6 +108,12 @@ const PAGE_LANES = 6;
 const MIN_PAGE_WINDOW_MS = 1000;
 /* kept back from a page read for proving its photo afterwards */
 const IMAGE_RESERVE_MS = 1500;
+/* A category page is never a result, but the products it lists can be
+   candidates: at most this many category pages read per search, and
+   this many of each one's products offered — each read and proved on
+   its own page like any other listing. */
+const MAX_CATEGORY_PAGES = 3;
+const MAX_TILES_PER_CATEGORY = 4;
 /* kept back from the whole stage for the answer to leave the server */
 const ANSWER_MARGIN_MS = 300;
 /* when no deadline is given at all */
@@ -127,12 +149,16 @@ function hostOf(url) {
 
 /* The product record, and the offer, the decided price came from: the
    one whose sku the price gate matched, carrying that amount. */
-function pricedRecord(candidates, decided, skuOf) {
+function pricedRecord(candidates, decided, images, proven) {
   const sku = decided.identity && decided.identity.sku ? String(decided.identity.sku).toLowerCase() : null;
+  const own = proven && proven.record ? new Set([proven.record].concat(proven.members || [])) : null;
   for (const candidate of candidates) {
     if (!candidate.node || candidate.amount !== decided.price) continue;
-    if (sku && !skuOf(candidate.node).concat(candidate.offer ? skuOf(candidate.offer) : []).includes(sku)) continue;
-    return { node: candidate.node, offer: candidate.offer || null };
+    if (own && !own.has(images.recordFingerprint(candidate.node)) && !(candidate.group && own.has(images.recordFingerprint(candidate.group)))) continue;
+    if (!own && sku && !images.skuOf(candidate.node).concat(candidate.offer ? images.skuOf(candidate.offer) : []).includes(sku)) continue;
+    /* a variant is named by its group when it has no name of its own */
+    const node = candidate.group && !text(candidate.node.name) ? Object.assign({}, candidate.group, candidate.node, { name: candidate.group.name }) : candidate.node;
+    return { node, offer: candidate.offer || null };
   }
   return { node: null, offer: null };
 }
@@ -231,37 +257,50 @@ async function readListing(record, budget) {
     return done('left-the-retailer', `the listing redirected from ${asked} to ${landed || 'nowhere readable'}`);
   }
 
-  /* ---- which product, when the URL does not say ---- */
+  /* ---- which product, when the URL does not say ----
+
+     The page's own canonical address, when it gives one on this shop,
+     is the listing from here on: the gates run on it and it is what is
+     shown. Where that address names no product either, the page's own
+     product record is the identity the gates hold figures and photos
+     to. */
+  let listingUrl = productUrl;
   let proven = null;
   if (!images.identifiersFrom(productUrl).length) {
     const identity = images.pageIdentity(page.html, productUrl, page.url || productUrl);
     if (!identity.ok) return done('no-identity', identity.why);
-    proven = identity;
+    if (identity.url && identity.url !== productUrl) {
+      const fault = linkFault(identity.url);
+      if (fault) return done('no-identity', `the page's canonical address is refused by the link rule (${fault})`);
+      listingUrl = identity.url;
+    }
+    if (!images.identifiersFrom(listingUrl).length) proven = identity;
   }
 
   /* ---- the price, by the price reader's gates ---- */
   const read = prices.pricesFromHtml(page.html);
   for (const candidate of read.candidates) candidate.canonical = read.canonical;
-  const decided = read.candidates.length ? prices.decide(read.candidates, productUrl, proven) : { refusals: [] };
+  const decided = read.candidates.length ? prices.decide(read.candidates, listingUrl, proven) : { refusals: [] };
   if (!decided.price) {
     const first = (decided.refusals || [])[0];
     return done('no-price', decided.why || (first ? `${first.from}: ${first.why}` : 'the page publishes no price candidate'));
   }
 
-  const { node, offer } = pricedRecord(read.candidates, decided, images.skuOf);
-  const name = text(node && node.name) || title;
+  const { node, offer } = pricedRecord(read.candidates, decided, images, proven);
+  /* the product the page named, by its own name: a group, not one size */
+  const name = text(proven && proven.name) || text(node && node.name) || title;
   const retailer = decodeEntities(images.metaContent(page.html, 'og:site_name')) || sellerOf(offer);
   const brand = brandOf(node);
 
-  const priced = { title: decodeEntities(name), productUrl, price: decided.price, currency: decided.currency };
+  const priced = { title: decodeEntities(name), productUrl: listingUrl, price: decided.price, currency: decided.currency };
   if (retailer) priced.retailer = retailer;
   if (brand) priced.brand = brand;
   if (decided.identity && decided.identity.sku) priced.sku = String(decided.identity.sku);
 
   /* ---- the photo, by the image gates ---- */
   if (budget.spent()) return done('no-photo', 'the search ran out of time before the photo was checked', priced);
-  const offered = images.candidatesFrom(page.html, productUrl);
-  const row = { id: productUrl, productUrl, name: priced.title, proven };
+  const offered = images.candidatesFrom(page.html, page.url || productUrl);
+  const row = { id: listingUrl, productUrl: listingUrl, name: priced.title, proven };
   const found = offered.length ? await images.firstVerifiable(offered, row, null, budget) : { refusals: [] };
   if (!found.url) {
     const first = (found.refusals || []).find(Boolean);
@@ -271,10 +310,47 @@ async function readListing(record, budget) {
   return done('photographed', found.why, Object.assign({}, priced, { imageUrl: found.url }));
 }
 
-/* Every listing, read a few at a time, in the order given and answered
-   in that order. Stops starting new reads when the clock is nearly out,
-   when MAX_PAGES have been started, or when as many listings have been
-   photographed as the page can show. */
+/* A category page, read only for the products it lists — never as a
+   result. Discovery's own readers find them: the page's JSON-LD and
+   framework data (tilesFromHtml), a Shopify collection's product list
+   (collectionTiles), each kept only when it names its own product page
+   on this shop, shaped like one product (listingProductLinks), and then
+   only when its name is, by discovery's title gate, the garment the
+   shopper asked for (tilesOffered, held to the shopper's own words
+   instead of a catalogue row). A tile is a lead and nothing more: its
+   own page has to prove the price, the product and the photo. */
+async function readCategory(record, budget, query, known) {
+  const { images } = discovery();
+  const given = record && typeof record === 'object' ? record : {};
+  const categoryUrl = text(given.productUrl);
+  const done = (why, tiles) => ({ record: given, outcome: 'category-page', why, tiles: tiles || [] });
+  if (!query) return done('no shopper phrase to hold its products to');
+  if (budget.left() < MIN_PAGE_WINDOW_MS) return done('the search ran out of time before this page was read');
+
+  const page = await images.fetchPage(categoryUrl, budget.cap(Math.min(images.TIMEOUT, Math.max(MIN_PAGE_WINDOW_MS, budget.left() - IMAGE_RESERVE_MS))));
+  if (!page.html) return done(`not read: ${page.failed}`);
+  const landedUrl = page.url || categoryUrl;
+  if (images.registrable(hostOf(landedUrl) || '') !== images.registrable(hostOf(categoryUrl) || '')) return done('it redirected to another site');
+
+  const stats = {};
+  const tiles = images.tilesFromHtml(page.html, stats);
+  if (images.shopifyCollection(landedUrl) && images.SHOPIFY_PAGE.test(page.html) && budget.left() >= MIN_PAGE_WINDOW_MS) {
+    tiles.push(...await images.collectionTiles(landedUrl, images.request, budget.cap(Math.min(images.TIMEOUT, Math.max(MIN_PAGE_WINDOW_MS, budget.left() - IMAGE_RESERVE_MS))), stats));
+  }
+  const links = images.listingProductLinks(landedUrl, tiles, stats);
+  const offered = images.tilesOffered({ id: 'query', name: query }, [{ url: landedUrl, productLinks: links }], known)
+    .filter((one) => one.rank < 2)
+    .slice(0, MAX_TILES_PER_CATEGORY)
+    .map((one) => ({ title: one.title, productUrl: one.productUrl }));
+  return done(`${links.length} product${links.length === 1 ? '' : 's'} listed, ${offered.length} the garment asked for`, offered);
+}
+
+/* Every listing, read a few at a time, likeliest first, and answered in
+   the ENGINE's order: the organic listings as they came, then each
+   category page's products, grouped by the category page they came from
+   in the order it came. Stops starting new reads when the clock is nearly
+   out, when MAX_PAGES have been started, or when as many listings have
+   been photographed as the page can show. */
 async function readListings(records, options) {
   const opts = options || {};
   const { images } = discovery();
@@ -282,44 +358,86 @@ async function readListings(records, options) {
   const deadline = Number(opts.deadline) || 0;
   const budget = images.budgetOf(deadline ? deadline - Date.now() - ANSWER_MARGIN_MS : DEFAULT_BUDGET_MS);
   const wanted = Math.max(1, Number(opts.limit) || 12);
+  const query = text(opts.query);
 
-  const results = new Array(list.length);
-  const order = list.map((one, at) => ({ at, tier: readTier(one) })).sort((a, b) => a.tier - b.tier || a.at - b.at).map((one) => one.at);
-  let next = 0;
+  /* every listing, organic or from a category page, as one entry */
+  const entries = list.map((record, at) => ({ record, from: at, seq: 0, tile: false }));
+  const known = new Set(list.map((one) => images.productKey(one && one.productUrl)).filter(Boolean));
+  /* the reading order: likeliest first, then the category pages; the
+     engine's order within each tier */
+  const tierOf = (entry) => {
+    if (entry.tile) return readTier(entry.record);
+    const refused = precheck(entry.record);
+    if (refused) return refused.outcome === 'category-page' ? 4 : -1;
+    return readTier(entry.record);
+  };
+  const byTier = (a, b) => a.tier - b.tier || a.entry.from - b.entry.from || a.entry.seq - b.entry.seq;
+  let queue = entries.map((entry) => ({ entry, tier: tierOf(entry) })).sort(byTier);
+
   let started = 0;
+  let categories = 0;
+  let tilesOffered = 0;
   let photographed = 0;
 
   const lane = async () => {
-    while (next < order.length) {
+    while (queue.length) {
       if (photographed >= wanted || budget.left() < MIN_PAGE_WINDOW_MS) return;
-      const at = order[next];
-      next += 1;
-      const one = list[at];
+      const { entry } = queue.shift();
+      const one = entry.record;
       /* a listing that will not be fetched costs no page and no wait */
       const refused = precheck(one);
-      if (refused) { results[at] = Object.assign({ record: one }, refused); continue; }
+      if (refused && !(refused.outcome === 'category-page' && !entry.tile)) { entry.result = Object.assign({ record: one }, refused); continue; }
+      if (refused) {
+        /* a category page, for its products only */
+        if (!query || categories >= MAX_CATEGORY_PAGES || started >= MAX_PAGES) { entry.result = Object.assign({ record: one }, refused); continue; }
+        categories += 1;
+        started += 1;
+        let read;
+        try {
+          read = await readCategory(one, budget, query, [...known].map((key) => ({ productUrl: `https://${key}` })));
+        } catch (err) {
+          read = { record: one, outcome: 'category-page', why: err && err.message ? String(err.message).split('\n')[0] : String(err), tiles: [] };
+        }
+        entry.result = { record: one, outcome: 'category-page', why: read.why };
+        read.tiles.forEach((tile, seq) => {
+          const key = images.productKey(tile.productUrl);
+          if (!key || known.has(key)) return;
+          known.add(key);
+          tilesOffered += 1;
+          const added = { record: tile, from: entry.from, seq: seq + 1, tile: true };
+          entries.push(added);
+          queue.push({ entry: added, tier: tierOf(added) });
+        });
+        queue = queue.sort(byTier);
+        continue;
+      }
       if (started >= MAX_PAGES) return;
       started += 1;
       try {
-        results[at] = await readListing(one, budget);
+        entry.result = await readListing(one, budget);
       } catch (err) {
-        results[at] = { record: one, outcome: 'unreadable', why: err && err.message ? String(err.message).split('\n')[0] : String(err) };
+        entry.result = { record: one, outcome: 'unreadable', why: err && err.message ? String(err.message).split('\n')[0] : String(err) };
       }
-      if (results[at].outcome === 'photographed') photographed += 1;
+      if (entry.result.outcome === 'photographed') photographed += 1;
     }
   };
-  await Promise.all(Array.from({ length: Math.min(PAGE_LANES, list.length) }, lane));
+  await Promise.all(Array.from({ length: Math.min(PAGE_LANES, Math.max(1, entries.length)) }, lane));
 
   const outcomes = {};
   const reasons = {};
-  const out = list.map((one, at) => {
-    const result = results[at] || { record: one, outcome: 'not-reached' };
-    outcomes[result.outcome] = (outcomes[result.outcome] || 0) + 1;
+  const ordered = entries.filter((entry) => !entry.tile).concat(
+    entries.filter((entry) => entry.tile).sort((a, b) => a.from - b.from || a.seq - b.seq)
+  );
+  const out = ordered.map((entry) => {
+    const result = entry.result || { record: entry.record, outcome: 'not-reached' };
+    const outcome = entry.tile ? `tile:${result.outcome}` : result.outcome;
+    outcomes[outcome] = (outcomes[outcome] || 0) + 1;
     if (READ_FAILURES.has(result.outcome)) {
       const group = reasons[result.outcome] || (reasons[result.outcome] = {});
       const why = reasonKey(result.why);
       group[why] = (group[why] || 0) + 1;
     }
+    entry.final = result;
     return result.record;
   });
 
@@ -328,15 +446,14 @@ async function readListings(records, options) {
     diagnostics: {
       offered: list.length,
       pagesRead: started,
+      categoryPagesRead: categories,
+      tilesOffered,
       outcomes,
-      /* the first few refusals, by outcome and reason, so a search that
-         proved nothing says which gate stopped it — never a record's
-         contents beyond its host */
       /* why each page that WAS read proved nothing, grouped: which gate,
          in its own words, with codes, figures, hosts and URLs taken out
          so the same reason counts as one across listings */
       reasons,
-      samples: results.filter((one) => one && READ_FAILURES.has(one.outcome)).slice(0, 8)
+      samples: ordered.map((entry) => entry.final).filter((one) => one && READ_FAILURES.has(one.outcome)).slice(0, 8)
         .map((one) => ({ host: hostOf(one.record && one.record.productUrl), outcome: one.outcome, why: text(one.why).slice(0, 160) }))
     }
   };
@@ -344,6 +461,7 @@ async function readListings(records, options) {
 
 module.exports = {
   precheck,
+  readCategory,
   readTier,
   reasonKey,
   readListing,

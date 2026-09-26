@@ -164,6 +164,8 @@ async function measure(id, query, category, env, provider, limit) {
     organic: found && found.funnel && found.funnel.organic ? found.funnel.organic : null,
     /* a failure that was the clock rather than the provider refusing */
     providerTimedOut: Boolean(failure && timedOut(new Error(failure))),
+    /* which stage, when it was the clock */
+    timedOutStage: failure && timedOut(new Error(failure)) ? failure.split(' did not answer')[0] : null,
     servedFromCache: Boolean(found && found.servedFromCache),
     garmentRank: garmentAt < 0 ? null : garmentAt + 1,
     matchRank: matchAt < 0 ? null : matchAt + 1,
@@ -172,6 +174,35 @@ async function measure(id, query, category, env, provider, limit) {
     searchMs,
     top: verdicts.slice(0, 3)
   };
+}
+
+/* Why a query that showed nothing showed nothing: the FURTHEST stage any
+   of its listings reached, because that is the stage that stopped it. A
+   query whose best listing was priced but had no provable photo was
+   blocked at the photo, whatever its other listings did. */
+function blockingCause(r) {
+  if (r.returned > 0) return null;
+  if (r.providerFailure) return r.providerTimedOut ? 'provider-timeout' : 'provider-failure';
+  const o = r.organic;
+  if (!o) return r.rejected && Object.keys(r.rejected).length ? 'product-search-refused-by-gate' : 'provider-returned-nothing';
+  if (o.failed) return 'organic-search-failed';
+  if (!o.offered) return 'organic-search-offered-nothing';
+  const outcomes = (o.pages && o.pages.outcomes) || {};
+  const n = (what) => (outcomes[what] || 0) + (outcomes[`tile:${what}`] || 0);
+  for (const [what, cause] of [
+    ['photographed', 'photographed-but-refused-by-gate'],
+    ['no-photo', 'no-photo'],
+    ['no-price', 'no-price'],
+    ['no-identity', 'no-identity'],
+    ['left-the-retailer', 'left-the-retailer'],
+    ['unreadable', 'unreadable'],
+    ['no-time', 'out-of-time'],
+    ['not-reached', 'out-of-time'],
+    ['category-page', 'only-category-pages'],
+    ['editorial-page', 'only-articles-and-forums'],
+    ['not-a-shop', 'only-articles-and-forums']
+  ]) if (n(what)) return cause;
+  return 'no-readable-listing';
 }
 
 function summarise(results) {
@@ -197,6 +228,15 @@ function summarise(results) {
     duplicateRate: returnedTotal ? `${results.reduce((sum, r) => sum + r.duplicates, 0)}/${returnedTotal}` : '0/0',
     providerFailures: results.filter((r) => r.providerFailure).length,
     providerTimeouts: results.filter((r) => r.providerTimedOut).length,
+    providerTimeoutStages: results.filter((r) => r.providerTimedOut).map((r) => `${r.query}: ${r.timedOutStage}`),
+    /* every query that showed nothing, under the stage that stopped it */
+    failedQueriesByCause: results.reduce((groups, r) => {
+      const cause = blockingCause(r);
+      if (cause) (groups[cause] = groups[cause] || []).push(r.query);
+      return groups;
+    }, {}),
+    organicCategoryPagesRead: results.reduce((sum, r) => sum + ((r.organic && r.organic.pages && r.organic.pages.categoryPagesRead) || 0), 0),
+    organicTilesOffered: results.reduce((sum, r) => sum + ((r.organic && r.organic.pages && r.organic.pages.tilesOffered) || 0), 0),
     organicEscalations: results.filter((r) => r.organic).length,
     organicListingsOffered: results.reduce((sum, r) => sum + ((r.organic && r.organic.offered) || 0), 0),
     organicPagesRead: results.reduce((sum, r) => sum + ((r.organic && r.organic.pages && r.organic.pages.pagesRead) || 0), 0),
@@ -243,7 +283,9 @@ async function run(options) {
   const results = [];
   /* one at a time: a provider's rate limit is not what is being measured */
   for (const [id, query] of list) {
-    results.push(await measure(id, query, categoryOf.get(id) || '', env, provider, limit));
+    const measured = await measure(id, query, categoryOf.get(id) || '', env, provider, limit);
+    measured.blockedBy = blockingCause(measured);
+    results.push(measured);
     if (opts.onResult) opts.onResult(results[results.length - 1]);
   }
   return { provider: provider.name, sources, limit, results, summary: summarise(results) };
@@ -271,4 +313,4 @@ if (require.main === module) {
     .catch((err) => { console.error(err); process.exit(1); });
 }
 
-module.exports = { run, measure, summarise, readRequest };
+module.exports = { run, measure, summarise, readRequest, blockingCause };

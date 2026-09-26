@@ -490,29 +490,41 @@ function productPageVerdict(shape, page) {
 
    Here the page says it instead, and it has to say all of this:
 
-     it is THIS listing's page   its canonical address is the listing's
-                                 own (or, for Shopify, the same product
-                                 handle on the same store) — the page
-                                 the search result pointed at, not a
-                                 page it happens to link to
-     it is a product page        by productPageVerdict(): the listing's
-                                 address is not a forum, an article or a
-                                 category page, and the page declares a
-                                 product and not an article
-     it is ONE product           every product record on the page names
-                                 a common code; two records that name
-                                 different products is a page that has
-                                 not said which one it is
-     and names it                that record carries an identifier (its
-                                 own, or its offers') holding a code by
-                                 the same definition a listing URL's
-                                 code is read with
+     where it lives        its canonical address, on the listing's own
+                           site. That address is what the gates then run
+                           on, and what is shown: a page that calls
+                           itself /p/boxy-tee-12345 is judged as
+                           /p/boxy-tee-12345, code and all, by the
+                           ordinary rules
+     it is a product page  by productPageVerdict() on THAT address: not a
+                           forum, an article or a category page, and the
+                           page declares a product and not an article
+     which product         when the canonical address carries no code
+                           either, the page must name ONE product record
+                           as its own — its only product record, or the
+                           one whose url/@id is the page, or a
+                           ProductGroup whose other records are its
+                           variants — or every product record on it must
+                           name a common code. Two records that name
+                           different products is a page that has not
+                           said which it is.
 
-   What it returns is the code, and the gates then run on it unchanged —
-   with one thing withheld: a photo cannot pass merely by sitting on the
-   record the code came from (see identityEvidence). Nothing here is
-   consulted for a URL that carries a code of its own. */
+   What it returns is that address and that record (or code), and the
+   gates run on them unchanged — with one thing withheld: a photo cannot
+   pass merely by sitting on the record the identity came from (see
+   identityEvidence). Nothing here is consulted for a URL that carries a
+   code of its own. */
 const RECORD_TYPES = /^(product|productgroup|individualproduct|productmodel)$/i;
+
+const typesOf = (node) => [].concat((node && node['@type']) || []).map((type) => String(type).replace(/^.*[/#]/, ''));
+const isRecord = (node) => typesOf(node).some((type) => RECORD_TYPES.test(type));
+const isGroup = (node) => typesOf(node).some((type) => /^productgroup$/i.test(type));
+
+/* the one identity a parsed record has across two readings of the same
+   markup: its own serialisation */
+function recordFingerprint(node) {
+  try { return JSON.stringify(node); } catch (err) { return null; }
+}
 
 function recordCodes(node) {
   const values = skuOf(node);
@@ -521,38 +533,115 @@ function recordCodes(node) {
   for (const key of ['productGroupID', 'productGroupId']) {
     if (node && (typeof node[key] === 'string' || typeof node[key] === 'number')) values.push(String(node[key]).toLowerCase());
   }
+  const variants = node && node.hasVariant;
+  for (const variant of Array.isArray(variants) ? variants : (variants ? [variants] : [])) {
+    if (variant && typeof variant === 'object') values.push(...skuOf(variant));
+  }
   return [...new Set(values.flatMap((value) => codesIn(String(value))))];
+}
+
+/* the record names this page as its own: its url or @id is the page */
+function namesPage(node, canonical) {
+  for (const key of ['url', '@id']) {
+    const value = node && node[key];
+    if (typeof value !== 'string' || !value.trim()) continue;
+    try { if (samePage(new URL(value.trim(), canonical).href, canonical)) return true; } catch (err) { /* not a URL */ }
+  }
+  return false;
+}
+
+/* a record is a variant of this group: it says so, or the group lists it */
+function variantOf(node, group) {
+  const ref = (value) => (value && typeof value === 'object' ? value['@id'] : value);
+  const groupId = group['@id'];
+  const parent = ref(node.isVariantOf);
+  if (groupId && parent && parent === groupId) return true;
+  if (node.inProductGroupWithID !== undefined && group.productGroupID !== undefined && String(node.inProductGroupWithID) === String(group.productGroupID)) return true;
+  const listed = [].concat(group.hasVariant || []).map(ref).filter(Boolean);
+  return Boolean(node['@id'] && listed.includes(node['@id']));
 }
 
 function pageIdentity(html, productUrl, landedUrl) {
   if (identifiersFrom(productUrl).length) return { ok: false, why: 'the listing URL names its product itself' };
 
   const declared = canonicalOf(String(html || ''));
-  if (!declared) return { ok: false, why: 'the page declares no canonical address, so nothing says it is this listing\'s page' };
+  if (!declared) return { ok: false, why: 'the page declares no canonical address, so nothing says which page it is' };
   let canonical;
   try { canonical = new URL(decode(declared).trim(), landedUrl || productUrl).href; } catch (err) { return { ok: false, why: 'the page\'s canonical address is not a URL' }; }
-  const ownHandle = shopifyHandle(productUrl);
-  const theirHandle = shopifyHandle(canonical);
-  const sameHandle = Boolean(ownHandle && theirHandle && ownHandle.handle === theirHandle.handle && ownHandle.origin === theirHandle.origin);
-  if (!samePage(canonical, productUrl) && !(landedUrl && samePage(canonical, landedUrl)) && !sameHandle) {
-    return { ok: false, why: `the page is canonical for ${canonical}, not for this listing` };
+  let site;
+  let own;
+  try { site = new URL(canonical); own = new URL(productUrl); } catch (err) { return { ok: false, why: 'not a URL' }; }
+  if (!/^https?:$/.test(site.protocol) || registrable(site.hostname) !== registrable(own.hostname)) {
+    return { ok: false, why: `the page names ${site.hostname} as its address, not a page on this shop` };
   }
+  site.hash = '';
+  canonical = site.href;
 
-  const verdict = productPageVerdict(listingShape(productUrl, ''), pageDeclarationsFromHtml(html));
+  const verdict = productPageVerdict(listingShape(canonical, ''), pageDeclarationsFromHtml(html));
   if (!verdict.ok) return { ok: false, why: verdict.why };
 
-  const records = jsonLdNodes(html).filter((node) => [].concat(node['@type'] || []).some((type) => RECORD_TYPES.test(String(type).replace(/^.*[/#]/, ''))));
+  /* An address elsewhere on the shop is the same listing only if it does
+     not describe a different garment: /products/boxy-cotton-tee calling
+     itself /products/linen-camp-shirt is a page that has changed hands,
+     and the same reader the canonical image rule uses says so. Silence
+     either way proves nothing and refuses nothing. */
+  const moved = !samePage(canonical, productUrl) && !(landedUrl && samePage(canonical, landedUrl));
+  if (moved) {
+    const agree = garmentsAgree(wordsInPath(productUrl), wordsInPath(canonical));
+    if (!agree.agree) return { ok: false, why: `the page calls itself ${canonical}, a different garment from this listing — ${agree.why}` };
+  }
+
+  /* a canonical address that names its product is identity enough: the
+     ordinary gates run on it, code and all */
+  if (identifiersFrom(canonical).length) {
+    return { ok: true, url: canonical, codes: [], record: null, how: `the page's canonical address ${canonical} names its product` };
+  }
+
+  const records = jsonLdNodes(html).filter(isRecord);
   if (!records.length) return { ok: false, why: 'the page carries no product record to say which product it is' };
-  const sets = records.map(recordCodes);
-  if (sets.some((codes) => !codes.length)) return { ok: false, why: 'a product record on the page names no product code' };
-  const common = sets[0].filter((code) => sets.every((codes) => codes.includes(code)));
-  if (!common.length) return { ok: false, why: `the page carries ${records.length} product records naming different products` };
+
+  let record = null;
+  let because = null;
+  if (records.length === 1) {
+    [record] = records;
+    because = 'its only product record';
+  } else {
+    const named = records.filter((node) => namesPage(node, canonical));
+    const groups = records.filter(isGroup);
+    if (named.length === 1) {
+      [record] = named;
+      because = 'the product record that names this page as its own';
+    } else if (groups.length === 1 && records.every((node) => node === groups[0] || variantOf(node, groups[0]))) {
+      [record] = groups;
+      because = 'the product group every other record on the page is a variant of';
+    }
+  }
+
+  if (!record) {
+    const sets = records.map(recordCodes);
+    const common = sets.every((codes) => codes.length) ? sets[0].filter((code) => sets.every((codes) => codes.includes(code))) : [];
+    if (!common.length) return { ok: false, why: `the page carries ${records.length} product records naming different products` };
+    return { ok: true, url: canonical, codes: common, record: null, how: `the page is the canonical product page ${canonical} (${verdict.why}), and every product record on it names ${common[0]}` };
+  }
+
+  /* and the record the page names must not describe a different garment
+     from the address it lives at */
+  if (typeof record.name === 'string' && record.name.trim()) {
+    const agree = garmentsAgree(wordsInPath(canonical), record.name);
+    if (!agree.agree) return { ok: false, why: `the page's product record is a different garment from its address — ${agree.why}` };
+  }
+
+  /* a group's variants are the group's: their offers are its offers */
+  const members = [record].concat(isGroup(record) ? records.filter((node) => node !== record && variantOf(node, record)) : []);
 
   return {
     ok: true,
-    codes: common,
-    canonical,
-    how: `the page is the canonical product page for this listing (${verdict.why}), and its product record names ${common[0]}`
+    url: canonical,
+    codes: recordCodes(record),
+    record: recordFingerprint(record),
+    members: members.map(recordFingerprint),
+    name: typeof record.name === 'string' ? record.name.trim() : null,
+    how: `the page is the canonical product page ${canonical} (${verdict.why}), and ${because} is its product`
   };
 }
 
@@ -908,9 +997,10 @@ function identityEvidence(candidate, productUrl, proven) {
   if (candidate && candidate.from === 'product-record') return productRecordEvidence(candidate, productUrl);
 
   const fromUrl = identifiersFrom(productUrl);
-  const pageProven = !fromUrl.length && proven && Array.isArray(proven.codes) && proven.codes.length > 0;
-  const ids = pageProven ? proven.codes : fromUrl;
-  if (!ids.length) return { ok: false, why: 'the listing URL carries no product code to match against' };
+  const pageProven = !fromUrl.length && Boolean(proven && proven.ok !== false
+    && ((Array.isArray(proven.codes) && proven.codes.length > 0) || proven.record));
+  const ids = pageProven ? (proven.codes || []) : fromUrl;
+  if (!ids.length && !pageProven) return { ok: false, why: 'the listing URL carries no product code to match against' };
   const whose = pageProven ? 'the code the page declares for this listing' : 'the listing\'s code';
 
   const where = identityHaystacks(candidate.url);
@@ -6667,12 +6757,12 @@ if (require.main === module) {
     replaceRow, linkRow, setField, indentOf, factsFromHtml, factsFromRendered, inspectCandidate,
     catalogRowIdentity, evidenceNote,
     /* a Shopify store's own product record, as identity evidence */
-    shopifyHandle, recordImages, recordImageHost, productRecordFor, productRecordEvidence, shopifyCollection, collectionTiles,
+    shopifyHandle, recordImages, recordImageHost, productRecordFor, productRecordEvidence, shopifyCollection, collectionTiles, SHOPIFY_PAGE,
     reactRouterProducts, embeddedRecordFrom, reproveEmbeddedRecord, coverageLive, browserRecordListing,
     /* whether a page is a product page, for the canonical rule */
     pageDeclarations, pageDeclarationsFromHtml, productPageVerdict,
     /* a listing whose URL names no product, identified by its own page */
-    pageIdentity, codesIn,
+    pageIdentity, codesIn, recordFingerprint,
     garmentsAgree, canonicalCorroborated, wordsInPath, wordsAboutImage, TRACKING_PARAMS,
     siteAsset, imageDimensions, listingShape, rankListings, embeddedProductTiles, listingProductLinks, tilesFromHtml, tilesOffered, productKey, tileReport, tileLines,
     parseArgs, OPTIONS, USAGE, intentFor, queryForms, listingsFor, discoverRow, coverage,

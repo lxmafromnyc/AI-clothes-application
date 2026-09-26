@@ -87,7 +87,7 @@ const path = require('path');
 /* the parts of reading a retailer's page that are not about images:
    one definition of a listing's code, one cookie-wall list, one way in */
 const {
-  BROWSER, fetchPage, jsonLdNodes, parseLdBlock, metaContent, skuOf,
+  BROWSER, fetchPage, jsonLdNodes, parseLdBlock, metaContent, skuOf, recordFingerprint,
   identifiersFrom, samePage, readCatalog, loadPlaywright, dismissConsent,
   coaxLazyImages, rowEndsAt
 } = require('./fetch-catalog-images');
@@ -392,11 +392,38 @@ function moneyInText(text) {
    An AggregateOffer is a range. lowPrice 58 highPrice 148 is not a
    price this product is sold at; it is the span of a group. It is kept
    as a candidate only so the report can say it was seen and refused. */
+/* A record's offers, including the offers an AggregateOffer lists
+   inside itself — schema.org's own shape for "these are the prices the
+   range above is made of". The aggregate stays a candidate (a range,
+   refused as one); each offer it lists is judged on its own. */
 function offersIn(node) {
   const raw = node && (node.offers || node.offer);
   const list = Array.isArray(raw) ? raw : (raw ? [raw] : []);
-  return list.filter((o) => o && typeof o === 'object');
+  const out = [];
+  for (const offer of list) {
+    if (!offer || typeof offer !== 'object') continue;
+    out.push(offer);
+    const inner = offer.offers || offer.offer;
+    for (const one of Array.isArray(inner) ? inner : (inner ? [inner] : [])) {
+      if (one && typeof one === 'object') out.push(one);
+    }
+  }
+  return out;
 }
+
+/* A ProductGroup's variants, when it lists them as hasVariant products:
+   Google's recommended variant markup puts every price on a variant and
+   none on the group. Each variant is a product record of its own, with
+   its own sku, kept beside the group it belongs to. */
+function variantsOf(node) {
+  const raw = node && node.hasVariant;
+  const list = Array.isArray(raw) ? raw : (raw ? [raw] : []);
+  return list.filter((one) => one && typeof one === 'object' && isProductNode(one));
+}
+
+/* a price specification's own type, when it says it is not the amount
+   charged: schema.org's ListPrice and StrikethroughPrice, and an MSRP */
+const LIST_PRICE_TYPE = /(listprice|strikethroughprice|msrp|suggestedretailprice)$/i;
 
 function isProductNode(node) {
   return Boolean(node) && /product/i.test(String(node['@type'] || ''));
@@ -405,13 +432,25 @@ function isProductNode(node) {
 function offerAmounts(offer) {
   const out = [];
   const currency = currencyIn(offer.priceCurrency) || null;
-  const spec = offer.priceSpecification && typeof offer.priceSpecification === 'object'
-    ? offer.priceSpecification : null;
+  /* one specification or several; one that says it is a list price is
+     what the product is discounted FROM, and is never read as charged */
+  const specs = (Array.isArray(offer.priceSpecification) ? offer.priceSpecification : [offer.priceSpecification])
+    .filter((one) => one && typeof one === 'object' && !Array.isArray(one));
+  const charged = specs.filter((one) => !LIST_PRICE_TYPE.test(String(one.priceType || '').replace(/^.*[/#]/, '')));
 
-  const direct = toAmount(offer.price !== undefined ? offer.price : (spec ? spec.price : undefined));
+  const direct = offer.price !== undefined ? toAmount(offer.price) : null;
   if (direct !== null) {
-    out.push({ amount: direct, currency: currency || currencyIn(spec && spec.priceCurrency) || 'USD', kind: 'price' });
+    out.push({ amount: direct, currency: currency || 'USD', kind: 'price' });
     return out;
+  }
+  if (charged.length) {
+    /* every charged specification is a candidate: two that disagree
+       reach decide() as two figures, and it fails closed on them */
+    for (const spec of charged) {
+      const amount = toAmount(spec.price);
+      if (amount !== null) out.push({ amount, currency: currency || currencyIn(spec.priceCurrency) || 'USD', kind: 'price' });
+    }
+    if (out.length) return out;
   }
 
   const low = toAmount(offer.lowPrice);
@@ -440,9 +479,17 @@ function structuredCandidates(nodes) {
   const out = [];
   const empties = [];
 
+  const records = [];
   for (const node of nodes) {
     if (!isProductNode(node)) continue;
+    records.push({ node, group: null });
+    for (const variant of variantsOf(node)) records.push({ node: variant, group: node });
+  }
+
+  for (const { node, group } of records) {
     const offers = offersIn(node);
+    /* a group whose prices are all on its variants has published them */
+    if (!offers.length && variantsOf(node).length) continue;
     if (!offers.length) {
       empties.push({
         type: String(node['@type'] || 'Product'),
@@ -464,6 +511,8 @@ function structuredCandidates(nodes) {
           kind: found.kind,
           span: found.span || null,
           node,
+          /* the ProductGroup a variant belongs to, when it is one */
+          group,
           offer,
           availability: typeof offer.availability === 'string' ? offer.availability : null
         });
@@ -638,9 +687,21 @@ function variantChain(record, ids) {
    is judged exactly as before. */
 function priceIdentity(candidate, productUrl, proven) {
   const fromUrl = identifiersFrom(productUrl);
-  const pageProven = !fromUrl.length && proven && Array.isArray(proven.codes) && proven.codes.length > 0;
-  const ids = pageProven ? proven.codes : fromUrl;
-  if (!ids.length) return { ok: false, why: 'the listing URL carries no product code to match against' };
+  const pageProven = !fromUrl.length && Boolean(proven && proven.ok !== false
+    && ((Array.isArray(proven.codes) && proven.codes.length > 0) || proven.record));
+  const ids = pageProven ? (proven.codes || []) : fromUrl;
+  if (!ids.length && !pageProven) return { ok: false, why: 'the listing URL carries no product code to match against' };
+
+  /* ---- an offer of the very record the page named as its product ---- */
+  if (pageProven && proven.record && candidate.node) {
+    const own = new Set([proven.record].concat(proven.members || []));
+    const mine = own.has(recordFingerprint(candidate.node))
+      || (candidate.group && own.has(recordFingerprint(candidate.group)));
+    if (mine) {
+      return { ok: true, via: 'json-ld-offer', sku: null, how: `the offer belongs to the page's own product record — ${proven.how}` };
+    }
+    if (!ids.length) return { ok: false, why: 'the offer belongs to a product record other than the one the page names as its product' };
+  }
 
   /* ---- a structured offer, on a product record that names the sku ----
 

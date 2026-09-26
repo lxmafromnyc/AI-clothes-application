@@ -64,6 +64,8 @@
 
 const { getProvider, verifyAll, providerChain, outOfSearches, linkless } = require('./_providers/product-source');
 const { readListings } = require('./_providers/retailer-page');
+const { queryFrom } = require('./_providers/query');
+const { timedOut } = require('./_providers/deadline');
 const { handledPreflight } = require('./_cors');
 const { envReport } = require('./_env-report');
 const meter = require('./_meter');
@@ -209,23 +211,45 @@ async function searchWithFallback(primary, intent, limit, stats, deadline) {
    to the gate as it came and is refused there. A failed organic search
    is recorded and the shopping batch is answered as it was. */
 async function recordsFrom(provider, intent, limit, deadline) {
-  const batch = await provider.search(intent, { limit, deadline });
+  const hasOrganic = typeof provider.searchOrganic === 'function';
+  /* A product search that runs out of its share of the clock is, for a
+     source with an organic endpoint, a batch that named no shop: its
+     call was capped short of the deadline precisely so the organic
+     search would still have time, and that time is used rather than
+     thrown away with the whole search. Only when the organic search
+     fails too is the timeout what the search answers with. */
+  let batch;
+  let productTimeout = null;
+  try {
+    batch = await provider.search(intent, { limit, deadline });
+  } catch (err) {
+    if (!hasOrganic || !timedOut(err)) throw err;
+    productTimeout = err;
+    batch = [];
+  }
   /* the adapter carries its funnel on the array itself; a cache
      entry and a coalesced follower both need it as a plain field */
   let records = Array.from(batch || []);
   let diagnostics = (batch && batch.diagnostics) || null;
-  if (!linkless(records) || typeof provider.searchOrganic !== 'function') return { records, diagnostics };
+  if (!linkless(records) || !hasOrganic) return { records, diagnostics };
 
-  const organic = { asked: 'after a linkless batch', offered: 0, failed: null, diagnostics: null, pages: null };
+  const organic = {
+    asked: productTimeout ? 'after the product search timed out' : 'after a linkless batch',
+    productSearchTimedOut: productTimeout ? String(productTimeout.message).slice(0, 200) : null,
+    offered: 0, failed: null, diagnostics: null, pages: null
+  };
   try {
     const found = await provider.searchOrganic(intent, { limit, deadline });
     const listings = Array.from(found || []);
     organic.offered = listings.length;
     organic.diagnostics = (found && found.diagnostics) || null;
-    const read = await readListings(listings, { limit, deadline });
+    /* the shopper's own phrase, which a category page's products are
+       held to before any of them is read */
+    const read = await readListings(listings, { limit, deadline, query: queryFrom(intent) });
     organic.pages = read.diagnostics;
     records = records.concat(read.records);
   } catch (err) {
+    if (productTimeout) throw productTimeout;
     organic.failed = err && err.message ? String(err.message).split('\n')[0].slice(0, 200) : String(err);
   }
   diagnostics = Object.assign({}, diagnostics || {}, { organic });
