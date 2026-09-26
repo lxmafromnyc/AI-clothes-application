@@ -212,46 +212,93 @@ async function searchWithFallback(primary, intent, limit, stats, deadline) {
    is recorded and the shopping batch is answered as it was. */
 async function recordsFrom(provider, intent, limit, deadline) {
   const hasOrganic = typeof provider.searchOrganic === 'function';
+  const started = Date.now();
+  const timing = {};
+
+  /* On a live search — one with a deadline — the organic search is
+     STARTED alongside the product search rather than after it. Which
+     records are used does not change: the organic ones only when the
+     product batch names no shop (or its search ran out of time), exactly
+     as before. What changes is that the organic search no longer waits
+     for the product search, and no longer gets only what is left after
+     it: it has the same share of the clock it would have had if it had
+     gone first, and the product search is bounded by the same reserve —
+     the time the pages need — rather than by room for a second search on
+     top. A live benchmark showed the cost of the old order: /shopping
+     taking its full share, timing out, and handing the organic search
+     about a second, which it could not answer in.
+
+     Catalogue discovery passes no deadline and keeps the old order: the
+     organic endpoint is asked only after a linkless batch. On a live
+     search, a product batch that DOES name a shop leaves the organic
+     request it did not need to finish in the background, unread. */
+  let early = null;
+  if (hasOrganic && deadline) {
+    early = provider.searchOrganic(intent, { limit, deadline }).then(
+      (value) => { timing.organicMs = Date.now() - started; return { value }; },
+      (error) => { timing.organicMs = Date.now() - started; return { error }; }
+    );
+  }
+
   /* A product search that runs out of its share of the clock is, for a
-     source with an organic endpoint, a batch that named no shop: its
-     call was capped short of the deadline precisely so the organic
-     search would still have time, and that time is used rather than
-     thrown away with the whole search. Only when the organic search
-     fails too is the timeout what the search answers with. */
+     source with an organic endpoint, a batch that named no shop. Only
+     when the organic search fails too is the timeout what the search
+     answers with. */
   let batch;
   let productTimeout = null;
   try {
-    batch = await provider.search(intent, { limit, deadline });
+    batch = await provider.search(intent, { limit, deadline, organicInFlight: Boolean(early) });
   } catch (err) {
+    timing.productSearchMs = Date.now() - started;
     if (!hasOrganic || !timedOut(err)) throw err;
     productTimeout = err;
     batch = [];
   }
+  if (timing.productSearchMs === undefined) timing.productSearchMs = Date.now() - started;
   /* the adapter carries its funnel on the array itself; a cache
      entry and a coalesced follower both need it as a plain field */
   let records = Array.from(batch || []);
   let diagnostics = (batch && batch.diagnostics) || null;
-  if (!linkless(records) || !hasOrganic) return { records, diagnostics };
+  if (!linkless(records) || !hasOrganic) {
+    return { records, diagnostics: early ? Object.assign({}, diagnostics || {}, { timing }) : diagnostics };
+  }
 
   const organic = {
     asked: productTimeout ? 'after the product search timed out' : 'after a linkless batch',
+    /* whether it was already under way when the product batch came back */
+    startedAlongside: Boolean(early),
     productSearchTimedOut: productTimeout ? String(productTimeout.message).slice(0, 200) : null,
     offered: 0, failed: null, diagnostics: null, pages: null
   };
   try {
-    const found = await provider.searchOrganic(intent, { limit, deadline });
+    let found;
+    if (early) {
+      const settled = await early;
+      if (settled.error) throw settled.error;
+      found = settled.value;
+    } else {
+      found = await provider.searchOrganic(intent, { limit, deadline });
+      timing.organicMs = Date.now() - started;
+    }
     const listings = Array.from(found || []);
     organic.offered = listings.length;
     organic.diagnostics = (found && found.diagnostics) || null;
     /* the shopper's own phrase, which a category page's products are
        held to before any of them is read */
+    const pagesFrom = Date.now();
     const read = await readListings(listings, { limit, deadline, query: queryFrom(intent) });
+    timing.pagesMs = Date.now() - pagesFrom;
     organic.pages = read.diagnostics;
     records = records.concat(read.records);
   } catch (err) {
-    if (productTimeout) throw productTimeout;
-    organic.failed = err && err.message ? String(err.message).split('\n')[0].slice(0, 200) : String(err);
+    const said = err && err.message ? String(err.message).split('\n')[0].slice(0, 200) : String(err);
+    /* both halves failed: the answer names both, the product search's
+       timeout first so the fallback rule reads it exactly as before */
+    if (productTimeout) throw new Error(`${productTimeout.message}; the organic search failed too: ${said}`);
+    organic.failed = said;
   }
+  timing.totalMs = Date.now() - started;
+  organic.timing = timing;
   diagnostics = Object.assign({}, diagnostics || {}, { organic });
   return { records, diagnostics };
 }

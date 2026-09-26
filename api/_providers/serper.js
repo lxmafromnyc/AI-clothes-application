@@ -119,6 +119,10 @@ const OVERFETCH = 2;
    REQUEST_TIMEOUT, exactly as before. */
 const SHOPPING_RESERVE_MS = 4000;
 const ORGANIC_RESERVE_MS = 3000;
+/* When the caller has already started the organic search alongside
+   this one (see recordsFrom in api/search.js), the shopping call no
+   longer has to leave room for it — only for reading the pages after —
+   so it leaves the organic call's own reserve and not both. */
 
 const { legTimeout, fetchWithin } = require('./deadline');
 
@@ -362,7 +366,8 @@ async function search(intent, options) {
     gl: text(process.env.SERPER_COUNTRY) || 'us',
     hl: text(process.env.SERPER_LANGUAGE) || 'en',
     num: Math.min(wanted * OVERFETCH, API_LIMIT_MAX)
-  }, legTimeout(options && options.deadline, SHOPPING_RESERVE_MS, REQUEST_TIMEOUT));
+  }, legTimeout(options && options.deadline,
+    options && options.organicInFlight ? ORGANIC_RESERVE_MS : SHOPPING_RESERVE_MS, REQUEST_TIMEOUT));
 
   const results = resultsFrom(payload);
   const records = results.map(toRecord).filter(Boolean);

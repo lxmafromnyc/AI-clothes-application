@@ -215,10 +215,12 @@ const deadlineIn = (ms) => Date.now() + ms;
       assert.strictEqual(shown.retailer, 'Shop Example', 'the name the site gives itself');
       assert.strictEqual(shown.brand, 'Northfold');
 
-      /* both endpoints asked, the same phrase, shopping first */
+      /* both endpoints asked, once each, the same phrase — on a live
+         search the two are started together */
       const serperCalls = calls.filter((one) => one.url.startsWith('https://google.serper.dev/'));
-      assert.deepStrictEqual(serperCalls.map((one) => one.url), [serper.SEARCH_URL, serper.WEB_SEARCH_URL]);
+      assert.deepStrictEqual(serperCalls.map((one) => one.url).sort(), [serper.SEARCH_URL, serper.WEB_SEARCH_URL].sort());
       assert.strictEqual(JSON.parse(serperCalls[0].body).q, JSON.parse(serperCalls[1].body).q);
+      assert.strictEqual(found.funnel.organic.startedAlongside, true);
 
       /* the account of it */
       const organic = found.funnel.organic;
@@ -228,15 +230,25 @@ const deadlineIn = (ms) => Date.now() + ms;
     });
   });
 
-  await testAsync('a shopping batch that DOES name a shop is answered as it always was — no organic request', async () => {
-    const calls = web((href) => (href === serper.SEARCH_URL ? jsonResponse(200, { shopping: [
+  await testAsync('a shopping batch that DOES name a shop is answered by it alone — the organic results are never used', async () => {
+    const linked = (href) => (href === serper.SEARCH_URL ? jsonResponse(200, { shopping: [
       { title: 'Wide Leg Trouser', source: 'Shop Example', link: URLS.good, price: '$88.00', imageUrl: 'https://cdn.shop-example.com/i/WL48213-front.jpg' }
-    ] }) : null));
+    ] }) : null);
+    /* live: the organic search was started alongside, and is left unread */
+    let calls = web(linked);
     const found = await findProducts(serper, INTENT, 12, cache.counters(), deadlineIn(9000));
     assert.deepStrictEqual(found.products.map((one) => one.productUrl), [URLS.good]);
-    assert.ok(!calls.some((one) => one.url === serper.WEB_SEARCH_URL), 'the organic endpoint was asked anyway');
+    assert.deepStrictEqual(found.records.map((one) => one.productUrl), [URLS.good], 'an organic record reached the gate');
     assert.ok(!calls.some((one) => one.url === URLS.good), 'a listing the source already priced and photographed was fetched');
-    assert.ok(!found.funnel || !found.funnel.organic);
+    assert.ok(!calls.some((one) => PAGES[one.url]), 'an organic listing’s page was read');
+    assert.ok(!found.funnel.organic);
+    /* no deadline — catalogue discovery's order — asks the organic
+       endpoint only after a linkless batch, exactly as before */
+    cache.reset();
+    calls = web(linked);
+    const { recordsFrom } = require('../api/search');
+    await recordsFrom(serper, INTENT, 12, undefined);
+    assert.ok(!calls.some((one) => one.url === serper.WEB_SEARCH_URL), 'the organic endpoint was asked without a deadline');
   });
 
   await testAsync('a failed organic search is recorded, and the shopping batch is answered as it was', async () => {
@@ -445,7 +457,7 @@ const deadlineIn = (ms) => Date.now() + ms;
     await withSpentPrimary(async (primary) => {
       await assert.rejects(
         () => searchWithFallback(primary, INTENT, 12, cache.counters(), deadlineIn(800)),
-        /Serper \/shopping did not answer within \d+ms \(timed out\)$/
+        /Serper \/shopping did not answer within \d+ms \(timed out\); the organic search failed too: Serper \/search did not answer within \d+ms \(timed out\)$/
       );
     });
   });
@@ -924,6 +936,79 @@ const deadlineIn = (ms) => Date.now() + ms;
       wrongGarments: [{ name: 'Denim Jacket', retailer: 'X', productUrl: 'https://x.example/p/1', why: 'the row means a puffer and "Denim Jacket" is a jacket' }] };
     const summary = summarise([row]);
     assert.deepStrictEqual(summary.wrongGarmentsAbove, [{ query: 'short puffy jacket', results: row.wrongGarments }]);
+  });
+
+
+  console.log('\n  — 8. a slow /shopping does not starve the organic search\n');
+
+  const later = (ms, make) => new Promise((resolve) => setTimeout(() => resolve(make()), ms));
+
+  await testAsync('/shopping that never answers leaves a 1.5s organic search time to answer — it used to get about one second', async () => {
+    web((href, options) => {
+      if (href === serper.SEARCH_URL) return hanging(href, options);
+      if (href === serper.WEB_SEARCH_URL) return later(1500, () => jsonResponse(200, ORGANIC));
+      return null;
+    });
+    const started = Date.now();
+    const found = await findProducts(serper, INTENT, 12, cache.counters(), deadlineIn(9000));
+    const took = Date.now() - started;
+    assert.deepStrictEqual(found.products.map((one) => one.productUrl), [URLS.good, URLS.forwarded]);
+    assert.match(found.funnel.organic.productSearchTimedOut, /^Serper \/shopping did not answer within \d+ms/);
+    assert.strictEqual(found.funnel.organic.startedAlongside, true);
+    assert.ok(found.funnel.organic.timing.organicMs < 2500, JSON.stringify(found.funnel.organic.timing));
+    assert.ok(took < 9000, `took ${took}ms`);
+  });
+
+  await testAsync('a slow /shopping and a slow organic search overlap: the wait is the longer of the two, not their sum', async () => {
+    web((href) => {
+      if (href === serper.SEARCH_URL) return later(1500, () => jsonResponse(200, SHOPPING));
+      if (href === serper.WEB_SEARCH_URL) return later(1500, () => jsonResponse(200, ORGANIC));
+      return null;
+    });
+    const found = await findProducts(serper, INTENT, 12, cache.counters(), deadlineIn(9000));
+    const timing = found.funnel.organic.timing;
+    assert.deepStrictEqual(found.products.map((one) => one.productUrl), [URLS.good, URLS.forwarded]);
+    assert.ok(timing.productSearchMs >= 1400 && timing.organicMs >= 1400, JSON.stringify(timing));
+    assert.ok(timing.productSearchMs + (timing.totalMs - timing.productSearchMs - timing.pagesMs) < 2700, `the two searches ran one after the other: ${JSON.stringify(timing)}`);
+    for (const key of ['productSearchMs', 'organicMs', 'pagesMs', 'totalMs']) assert.strictEqual(typeof timing[key], 'number', key);
+  });
+
+  await testAsync('with the organic search already running, /shopping is bounded by the page reserve alone', async () => {
+    web((href, options) => (href === serper.SEARCH_URL ? hanging(href, options) : null));
+    const found = await findProducts(serper, INTENT, 12, cache.counters(), deadlineIn(7000));
+    const cap = Number(found.funnel.organic.productSearchTimedOut.match(/within (\d+)ms/)[1]);
+    /* 7s less the 3s the pages need — not less another 4s for a second search */
+    assert.ok(cap > 3500 && cap <= 4000, `the /shopping cap was ${cap}ms`);
+    assert.deepStrictEqual(found.products.map((one) => one.productUrl), [URLS.good, URLS.forwarded]);
+  });
+
+  await testAsync('without a deadline the product search keeps its full ceiling and the organic search waits for it', async () => {
+    const order = [];
+    web((href) => {
+      if (href.startsWith('https://google.serper.dev/')) order.push(href);
+      if (href === serper.SEARCH_URL) return later(200, () => jsonResponse(200, SHOPPING));
+      return null;
+    });
+    const { recordsFrom } = require('../api/search');
+    await recordsFrom(serper, INTENT, 12, undefined);
+    assert.deepStrictEqual(order, [serper.SEARCH_URL, serper.WEB_SEARCH_URL], 'the organic search did not wait for the linkless batch');
+  });
+
+
+  await testAsync('the benchmark tells a query that always times out from one that only sometimes does', async () => {
+    const { stability, summarise } = require('./bench-live');
+    const row = (query, pass, timedOut, returned) => ({ query, pass, providerTimedOut: timedOut, providerFailure: timedOut ? 'Serper /shopping did not answer within 5000ms (timed out)' : null, returned, searchMs: 1000 });
+    const out = stability([
+      row('comfy fleece joggers', 1, true, 0), row('comfy fleece joggers', 2, true, 0), row('comfy fleece joggers', 3, true, 0),
+      row('thick tee with a pocket', 1, true, 0), row('thick tee with a pocket', 2, false, 3), row('thick tee with a pocket', 3, false, 2)
+    ], 3);
+    assert.deepStrictEqual(out.alwaysTimesOut, ['comfy fleece joggers']);
+    assert.deepStrictEqual(out.sometimesTimesOut, ['thick tee with a pocket']);
+    assert.deepStrictEqual(out.unstableResults, ['thick tee with a pocket']);
+    /* and the summary says where each stage's time went */
+    const summary = summarise([{ query: 'q', returned: 1, garmentRank: 1, matchRank: 1, wrongAbove: 0, survived: [], duplicates: 0, interpretMs: 1, searchMs: 4000, interpreter: 'local',
+      stageMs: { productSearchMs: 3000, organicMs: 1200, pagesMs: 2500, totalMs: 4200 } }]);
+    assert.deepStrictEqual(summary.stageMs.productSearchMs, { n: 1, p50: 3000, p90: 3000, max: 3000 });
   });
 
   console.log(`\n${passed} passed, ${failures.length} failed\n`);

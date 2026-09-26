@@ -32,6 +32,7 @@
    two are never reported as one.
 
    Usage: node --env-file=.env.local scripts/bench-live.js [--held-out] [--limit N] [--json]
+          [--only "query one|query two"] [--repeat N]   (each pass from a cold cache)
    ========================================================= */
 
 'use strict';
@@ -169,7 +170,15 @@ async function measure(id, query, category, env, provider, limit) {
     /* a failure that was the clock rather than the provider refusing */
     providerTimedOut: Boolean(failure && timedOut(new Error(failure))),
     /* which stage, when it was the clock */
-    timedOutStage: failure && timedOut(new Error(failure)) ? failure.split(' did not answer')[0] : null,
+    timedOutStage: failure && timedOut(new Error(failure))
+      ? [...failure.matchAll(/([A-Za-z][\w /]*?) did not answer within (\d+)ms/g)].map((m) => `${m[1].trim()} after ${m[2]}ms`).join('; then ') || failure.split(' did not answer')[0]
+      : null,
+    /* where the search's time went, stage by stage, when the source ran
+       an organic stage: the product search, the organic search (started
+       alongside it on a live search), and reading the listings' pages */
+    stageMs: found && found.funnel && found.funnel.organic && found.funnel.organic.timing ? found.funnel.organic.timing
+      : (found && found.funnel && found.funnel.timing) || null,
+    productSearchTimedOutButAnswered: Boolean(found && found.funnel && found.funnel.organic && found.funnel.organic.productSearchTimedOut),
     servedFromCache: Boolean(found && found.servedFromCache),
     garmentRank: garmentAt < 0 ? null : garmentAt + 1,
     matchRank: matchAt < 0 ? null : matchAt + 1,
@@ -210,6 +219,33 @@ function blockingCause(r) {
   return 'no-readable-listing';
 }
 
+/* The same queries asked more than once: whether a failure is the query
+   or the moment. A query that times out on every pass is deterministic;
+   one that times out on some passes is the provider's variability. */
+function stability(all, repeat) {
+  const byQuery = new Map();
+  for (const r of all) {
+    const one = byQuery.get(r.query) || { query: r.query, passes: 0, returned: [], timeouts: 0, failures: 0, searchMs: [] };
+    one.passes += 1;
+    one.returned.push(r.returned);
+    if (r.providerTimedOut) one.timeouts += 1;
+    if (r.providerFailure) one.failures += 1;
+    one.searchMs.push(r.searchMs);
+    byQuery.set(r.query, one);
+  }
+  const rows = [...byQuery.values()].map((one) => Object.assign(one, {
+    verdict: one.timeouts === 0 ? 'no timeouts' : one.timeouts === one.passes ? 'times out every pass' : `times out on ${one.timeouts} of ${one.passes} passes`,
+    showedSomething: `${one.returned.filter((n) => n > 0).length}/${one.passes}`
+  }));
+  return {
+    passes: repeat,
+    alwaysTimesOut: rows.filter((one) => one.timeouts === one.passes).map((one) => one.query),
+    sometimesTimesOut: rows.filter((one) => one.timeouts > 0 && one.timeouts < one.passes).map((one) => one.query),
+    unstableResults: rows.filter((one) => new Set(one.returned.map((n) => n > 0)).size > 1).map((one) => one.query),
+    queries: rows
+  };
+}
+
 function summarise(results) {
   const n = results.length || 1;
   const pct = (count) => `${count}/${results.length} (${Math.round((count / n) * 100)}%)`;
@@ -235,6 +271,18 @@ function summarise(results) {
     providerFailures: results.filter((r) => r.providerFailure).length,
     providerTimeouts: results.filter((r) => r.providerTimedOut).length,
     providerTimeoutStages: results.filter((r) => r.providerTimedOut).map((r) => `${r.query}: ${r.timedOutStage}`),
+    /* a product search that ran out of time while the organic search
+       still answered the query */
+    productSearchTimeoutsAbsorbed: results.filter((r) => r.productSearchTimedOutButAnswered).map((r) => r.query),
+    /* how much of the clock each stage took, across the queries that ran it */
+    stageMs: (() => {
+      const out = {};
+      for (const stage of ['productSearchMs', 'organicMs', 'pagesMs', 'totalMs']) {
+        const list = results.map((r) => r.stageMs && r.stageMs[stage]).filter((v) => typeof v === 'number').sort((a, b) => a - b);
+        if (list.length) out[stage] = { n: list.length, p50: p(list, 0.5), p90: p(list, 0.9), max: list[list.length - 1] };
+      }
+      return out;
+    })(),
     /* every query that showed nothing, under the stage that stopped it */
     failedQueriesByCause: results.reduce((groups, r) => {
       const cause = blockingCause(r);
@@ -302,17 +350,31 @@ async function run(options) {
     .map((one) => ({ name: one.name, role: one.name === provider.name ? 'primary' : 'fallback', configured: Boolean(one.configured()), inChain: chain.includes(one) }));
   const env = page();
   const categoryOf = new Map(env.catalogue.map((p) => [String(p.id).replace(/^sample-/, ''), p.category]));
-  const list = (opts.heldOut ? QUERIES.concat(HELD_OUT) : QUERIES).slice(0, opts.max || Infinity);
+  const only = (opts.only || []).map((one) => String(one).trim().toLowerCase()).filter(Boolean);
+  const list = (opts.heldOut ? QUERIES.concat(HELD_OUT) : QUERIES)
+    .filter(([, query]) => !only.length || only.includes(String(query).toLowerCase()))
+    .slice(0, opts.max || Infinity);
   const limit = opts.limit || DEFAULT_LIMIT;
+  const repeat = Math.max(1, Number(opts.repeat) || 1);
   const results = [];
-  /* one at a time: a provider's rate limit is not what is being measured */
-  for (const [id, query] of list) {
-    const measured = await measure(id, query, categoryOf.get(id) || '', env, provider, limit);
-    measured.blockedBy = blockingCause(measured);
-    results.push(measured);
-    if (opts.onResult) opts.onResult(results[results.length - 1]);
+  const runs = [];
+  /* one at a time: a provider's rate limit is not what is being measured.
+     With --repeat, each pass starts from a cold cache, so a repeated
+     query really asks the provider again rather than replaying itself. */
+  for (let pass = 0; pass < repeat; pass += 1) {
+    if (pass) cache.reset();
+    for (const [id, query] of list) {
+      const measured = await measure(id, query, categoryOf.get(id) || '', env, provider, limit);
+      measured.blockedBy = blockingCause(measured);
+      measured.pass = pass + 1;
+      (pass ? runs : results).push(measured);
+      if (pass) continue;
+      if (opts.onResult) opts.onResult(results[results.length - 1]);
+    }
   }
-  return { provider: provider.name, sources, limit, results, summary: summarise(results) };
+  const out = { provider: provider.name, sources, limit, results, summary: summarise(results) };
+  if (repeat > 1) out.stability = stability(results.concat(runs), repeat);
+  return out;
 }
 
 if (require.main === module) {
@@ -325,7 +387,14 @@ if (require.main === module) {
     + `asked "${r.asked}"${r.providerFailure ? `  PROVIDER FAILED: ${r.providerFailure}` : ''}${r.wrongAbove ? `  ${r.wrongAbove} wrong above` : ''}`
     + `${r.duplicates ? `  ${r.duplicates} duplicate` : ''}${r.survived.some((d) => !d.inQuery) ? `  LOST: ${r.survived.filter((d) => !d.inQuery).map((d) => d.descriptor).join(', ')}` : ''}`;
   if (!json) console.log('\ngarment-rank / full-match-rank, query, results, search latency, interpreter, what the provider was asked\n');
-  run({ heldOut: args.includes('--held-out'), limit: valueOf('--limit'), max: valueOf('--max'), onResult: json ? null : (r) => console.log(line(r)) })
+  const textOf = (flag) => { const at = args.indexOf(flag); return at >= 0 ? String(args[at + 1] || '') : ''; };
+  run({
+    heldOut: args.includes('--held-out'), limit: valueOf('--limit'), max: valueOf('--max'),
+    /* --only "comfy fleece joggers|thick tee with a pocket" --repeat 3 */
+    only: textOf('--only') ? textOf('--only').split('|') : null,
+    repeat: valueOf('--repeat'),
+    onResult: json ? null : (r) => console.log(line(r))
+  })
     .then((out) => {
       if (out.skipped) { console.log(`Live benchmark skipped: ${out.skipped}`); return; }
       if (json) { console.log(JSON.stringify(out, null, 2)); return; }
@@ -337,4 +406,4 @@ if (require.main === module) {
     .catch((err) => { console.error(err); process.exit(1); });
 }
 
-module.exports = { run, measure, summarise, readRequest, blockingCause };
+module.exports = { run, measure, summarise, readRequest, blockingCause, stability };
