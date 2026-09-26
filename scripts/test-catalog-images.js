@@ -5722,7 +5722,7 @@ ${opts.ld === false ? '' : `<script type="application/ld+json">${JSON.stringify(
 
   await testAsync('a garment is searched in the words shops use for it, and a page of articles does not end the search', async () => {
     const forms = extractor.queryForms(KNIT_ROW).map((one) => one.query);
-    assert.deepStrictEqual(forms.slice(0, 3), ['Colour Block Knit', 'Color Block sweater', 'Color Block Knit']);
+    assert.deepStrictEqual(forms.slice(0, 3), ['Color Block Knit Sweater', 'Colour Block Knit Sweater', 'Color Block Sweater']);
     /* a row already worded as shops word it gains nothing */
     assert.deepStrictEqual(extractor.queryForms(COAT_ROW).map((one) => one.query).slice(0, 2), ['Tailored Wool Coat', 'Tailored Wool Coats']);
 
@@ -5733,16 +5733,16 @@ ${opts.ld === false ? '' : `<script type="application/ld+json">${JSON.stringify(
       search: async (intent) => {
         const query = intent.keywords[0];
         asked.push(query);
-        if (query === 'Colour Block Knit') {
+        if (query === 'Color Block Knit Sweater') {
           return Array.from({ length: 10 }, (_, i) => ({ title: `How to knit a colour block jumper, part ${i}`, productUrl: `https://yarn.example.com/blog/colour-block-${i}` }));
         }
-        if (query === 'Color Block sweater') return [{ title: 'Color Block Sweater', productUrl: 'https://shop.example.com/products/color-block-sweater' }];
+        if (query === 'Colour Block Knit Sweater') return [{ title: 'Color Block Sweater', productUrl: 'https://shop.example.com/products/color-block-sweater' }];
         return [];
       }
     });
     process.env.PRODUCT_SOURCE = 'fake-source';
     const found = await extractor.listingsFor(KNIT_ROW, 8);
-    assert.deepStrictEqual(asked.slice(0, 2), ['Colour Block Knit', 'Color Block sweater'], 'the blog posts ended the search');
+    assert.deepStrictEqual(asked.slice(0, 2), ['Color Block Knit Sweater', 'Colour Block Knit Sweater'], 'the blog posts ended the search');
     assert.strictEqual(found.products[0].productUrl, 'https://shop.example.com/products/color-block-sweater');
   });
 
@@ -5902,16 +5902,16 @@ ${shopify === false ? '' : '<script src="https://cdn.shopify.com/s/trekkie.js"><
         asked.push(query);
         /* the row's own name, and its retail wording: pattern shops, at
            product-shaped addresses, with photos their pages can prove */
-        if (query === 'Colour Block Knit') return [{ title: 'Colour Block Sweater Knitting Pattern PDF', productUrl: listing(port, '610001') }];
-        if (query === 'Color Block sweater') return [{ title: 'Colour Block Jumper Knitting Pattern', productUrl: listing(port, '610002') }];
-        if (query === 'Color Block Knit') return [{ title: 'Color Block Crewneck Sweater', productUrl: listing(port, '610003') }];
+        if (query === 'Color Block Knit Sweater') return [{ title: 'Colour Block Sweater Knitting Pattern PDF', productUrl: listing(port, '610001') }];
+        if (query === 'Colour Block Knit Sweater') return [{ title: 'Colour Block Jumper Knitting Pattern', productUrl: listing(port, '610002') }];
+        if (query === 'Color Block Sweater') return [{ title: 'Color Block Crewneck Sweater', productUrl: listing(port, '610003') }];
         return [];
       }
     });
     process.env.PRODUCT_SOURCE = 'fake-source';
     try {
       const result = await extractor.discoverRow(KNIT_ROW, new Map(), 8);
-      assert.deepStrictEqual(asked.slice(0, 3), ['Colour Block Knit', 'Color Block sweater', 'Color Block Knit'], 'two pages of patterns ended the search');
+      assert.deepStrictEqual(asked.slice(0, 3), ['Color Block Knit Sweater', 'Colour Block Knit Sweater', 'Color Block Sweater'], 'two pages of patterns ended the search');
       assert.strictEqual(result.verdict, 'VERIFIED', result.why);
       assert.strictEqual(result.proposal.productUrl, listing(port, '610003'), 'a knitting pattern was written as the garment');
       for (const code of ['610001', '610002']) {
@@ -5922,6 +5922,56 @@ ${shopify === false ? '' : '<script src="https://cdn.shopify.com/s/trekkie.js"><
     } finally {
       retailer.close();
     }
+  });
+
+  /* ---------------------------------------------------------
+     Colour Block Knit: the query ladder
+
+     A live run asked "Colour Block Knit" and "Color Block Knit", met a
+     couple of passable titles among the tutorials, and stopped: 7
+     listings over 2 searches. Shops title the garment "Color Block Knit
+     Sweater" or "Colorblock Sweater", and those were never asked;
+     meanwhile "Colour Knit" and "Block Knit" — half a descriptor each —
+     were.
+     --------------------------------------------------------- */
+  test('a garment named by a word shops do not lead with is asked as shops title it, first, and boundedly', () => {
+    const forms = extractor.queryForms(KNIT_ROW);
+    assert.deepStrictEqual(forms.map((one) => one.query), [
+      'Color Block Knit Sweater', 'Colour Block Knit Sweater', 'Color Block Sweater', 'Colorblock Sweater',
+      'Colour Block Knit', 'Color Block Knit', 'Colour Block Knits', null
+    ]);
+    assert.ok(forms.length <= 8, 'the ladder is bounded');
+    /* a descriptor is dropped whole or not at all */
+    assert.ok(!forms.some((one) => /^(Colour|Block) Knit$/.test(one.query || '')), 'half of "colour block" was searched');
+    assert.ok(!extractor.queryForms({ id: 'w', name: 'Wide Leg Trouser', category: 'trousers' }).some((one) => /^(Wide|Leg) Trouser$/.test(one.query || '')));
+    /* rows already worded as shops word them gain nothing, and are asked as before */
+    assert.deepStrictEqual(extractor.queryForms(COAT_ROW).map((one) => one.query), ['Tailored Wool Coat', 'Tailored Wool Coats', 'Wool Coat', 'Tailored Coat', null]);
+    assert.deepStrictEqual(extractor.queryForms(DRESS_ROW).map((one) => one.query), ['Slip Midi Dress', 'Midi Dress', 'Slip Dress', null]);
+  });
+
+  await testAsync('two searches with a stray passable title among the tutorials do not end the ladder', async () => {
+    const asked = [];
+    productSource.registerProvider({
+      name: 'fake-source',
+      configured: () => true,
+      search: async (intent) => {
+        const query = intent.keywords[0];
+        asked.push(query);
+        const tutorials = Array.from({ length: 6 }, (_, i) => ({ title: `Colour block knitting tutorial ${i}`, productUrl: `https://yarn.example.com/tutorials/cb-${query.length}-${i}` }));
+        if (query === 'Color Block Knit Sweater') return tutorials.concat([{ title: 'Colour Block Knit Sweater', productUrl: 'https://one.example.com/products/stray-sweater' }]);
+        if (query === 'Colour Block Knit Sweater') return tutorials;
+        if (query === 'Color Block Sweater') {
+          return ['a', 'b', 'c', 'd'].map((x) => ({ title: `Color Block Sweater ${x}`, productUrl: `https://shop.example.com/products/color-block-sweater-${x}` }));
+        }
+        return [];
+      }
+    });
+    process.env.PRODUCT_SOURCE = 'fake-source';
+    const found = await extractor.listingsFor(KNIT_ROW, 8);
+    assert.deepStrictEqual(asked, ['Color Block Knit Sweater', 'Colour Block Knit Sweater', 'Color Block Sweater'], 'one stray title ended the search after two');
+    assert.ok(found.products.some((one) => one.productUrl === 'https://shop.example.com/products/color-block-sweater-a'));
+    /* the tutorials are still there, ranked last */
+    assert.strictEqual(found.products[found.products.length - 1].shape.kind, 'editorial');
   });
 
   /* ---------------------------------------------------------

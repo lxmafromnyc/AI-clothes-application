@@ -460,6 +460,30 @@ function toOrganicRecord(result) {
   return { title, productUrl };
 }
 
+/* A result's sitelinks: the same shop's own deeper links, verbatim from
+   the same response — a department, often a product. Kept only on the
+   host of the result they sit under, four at most, and put through the
+   same retailerUrl() test; they carry a title and a link like any
+   organic record and prove nothing on their own. */
+const MAX_SITELINKS = 4;
+
+function sitelinkRecords(result) {
+  if (!result || typeof result !== 'object' || !Array.isArray(result.sitelinks)) return [];
+  const parent = retailerUrl(result.link, 0);
+  if (!parent) return [];
+  const host = new URL(parent).hostname.replace(/^www\./, '').toLowerCase();
+  const out = [];
+  for (const link of result.sitelinks.slice(0, MAX_SITELINKS)) {
+    if (!link || typeof link !== 'object') continue;
+    const productUrl = retailerUrl(link.link, 0);
+    const title = text(link.title);
+    if (!productUrl || !title) continue;
+    if (new URL(productUrl).hostname.replace(/^www\./, '').toLowerCase() !== host) continue;
+    out.push({ title, productUrl });
+  }
+  return out;
+}
+
 async function searchOrganic(intent, options) {
   const wanted = Math.min(Math.max(Number(options && options.limit) || 12, 1), 100);
 
@@ -473,8 +497,13 @@ async function searchOrganic(intent, options) {
   });
 
   const results = organicFrom(payload);
-  const records = results.map(toOrganicRecord).filter(Boolean);
-  records.diagnostics = accountFor('serper-search', results, records);
+  const main = results.map(toOrganicRecord).filter(Boolean);
+  /* every main result first, in the engine's order, then the sitelinks
+     under them: a shop's deeper links never outrank a result */
+  const seen = new Set(main.map((record) => record.productUrl));
+  const deeper = results.flatMap(sitelinkRecords).filter((record) => !seen.has(record.productUrl) && seen.add(record.productUrl));
+  const records = main.concat(deeper);
+  records.diagnostics = Object.assign(accountFor('serper-search', results, records), { fromSitelinks: deeper.length });
   return records;
 }
 
@@ -488,7 +517,7 @@ module.exports = {
      other caller never sees it. */
   searchOrganic,
   /* exported for scripts/test-serper.js and scripts/probe-serper.js */
-  toRecord, toOrganicRecord, queryFrom, toPrice, currencyFrom, resultsFrom, organicFrom,
+  toRecord, toOrganicRecord, sitelinkRecords, queryFrom, toPrice, currencyFrom, resultsFrom, organicFrom,
   redact, SEARCH_URL, WEB_SEARCH_URL,
   retailerUrl, productUrlFrom, urlFieldsOf
 };

@@ -4260,11 +4260,31 @@ function productSource() {
 /* the spellings a shop in the US titles a garment with */
 const AMERICAN = { colour: 'color', colours: 'colors', grey: 'gray', favourite: 'favorite', jewellery: 'jewelry', tyre: 'tire' };
 
+/* The words that make one descriptor between them — "colour block",
+   "wide leg" — so a widening query drops the whole phrase or none of it,
+   and the one-word spellings shops also use for them ("colorblock"). */
+const PHRASES = new Set(DESCRIPTORS.flatMap((entry) => entry.terms).filter((term) => /\s/.test(term)).map((term) => term.toLowerCase()));
+const JOINED = new Set(DESCRIPTORS.flatMap((entry) => entry.terms).filter((term) => !/\s/.test(term)).map((term) => term.toLowerCase()));
+const MAX_QUERY_FORMS = 8;
+const ENOUGH_FOUND = 4;       // title-passing listings that let the ladder stop after two searches   // every query costs a search; the ladder stops early when it can
+
+function phrasesOf(words) {
+  const units = [];
+  for (let i = 0; i < words.length;) {
+    const three = words.slice(i, i + 3).join(' ').toLowerCase();
+    const two = words.slice(i, i + 2).join(' ').toLowerCase();
+    const size = words.length - i >= 3 && PHRASES.has(three) ? 3 : words.length - i >= 2 && PHRASES.has(two) ? 2 : 1;
+    units.push(words.slice(i, i + size).join(' '));
+    i += size;
+  }
+  return units;
+}
+
 function queryForms(row) {
   const name = String(row.name || '').trim();
   const forms = [];
   const add = (how, keywords, extra) => {
-    const query = String(keywords || '').trim();
+    const query = String(keywords || '').trim().replace(/\s+/g, ' ');
     if (!query) return;
     if (forms.some((form) => form.query.toLowerCase() === query.toLowerCase())) return;
     forms.push({ how, query, intent: Object.assign({
@@ -4273,27 +4293,42 @@ function queryForms(row) {
     }, extra || {}) });
   };
 
-  add('its name', name);
-
   const words = name.split(/\s+/).filter(Boolean);
   const head = words[words.length - 1] || '';
-
-  /* The same garment in the words shops use for it. A British spelling
-     is asked in American too, and a head noun the semantic gate reads as
-     another garment — "knit" is a sweater — is asked by that name as
-     well. Only the question widens: the gate still has to read the
-     row's garment in whatever comes back. */
+  const titled = (word) => (/^[A-Z]/.test(head) ? word[0].toUpperCase() + word.slice(1) : word);
   const american = words.map((word) => {
     const us = AMERICAN[word.toLowerCase()];
     return us ? (/^[A-Z]/.test(word) ? us[0].toUpperCase() + us.slice(1) : us) : word;
   }).join(' ');
-  /* the garment as shops name it goes first: "Color Block sweater" is
-     what a retailer titles, "Colour Block Knit" is what a pattern does */
+
+  /* The garment as shops title it, asked FIRST when the row names it by
+     a word shops do not lead with. "Knit" is how a knitting pattern is
+     titled and a sweater is how a shop titles the garment, so a row
+     called "Colour Block Knit" is asked, in order, as
+       Color Block Knit Sweater     its name, with the garment it means
+       Colour Block Knit Sweater    the same, as the row spells it
+       Color Block Sweater          the garment by its descriptors
+       Colorblock Sweater           the one-word spelling shops use
+     — four at most, from the semantic gate's own vocabulary, never a
+     hand list. A row whose name already says its garment gains none. */
   const garment = readGarment(name, { fallback: row.category }).type;
-  if (garment && head && !words.some((word) => word.toLowerCase().replace(/s$/, '') === garment)
-      && readGarment(head).type === garment) {
-    add(`its garment, as a ${garment}`, [...american.split(/\s+/).slice(0, -1), garment].join(' '));
+  const says = (word) => { const low = word.toLowerCase(); return low === garment || low === `${garment}s` || low === `${garment}es`; };
+  const renamed = garment && head && !words.some(says) && readGarment(head).type === garment;
+  if (renamed) {
+    const noun = titled(garment);
+    const describing = american.split(/\s+/).slice(0, -1).join(' ');
+    add(`its name, with the garment it means (${garment})`, `${american} ${noun}`);
+    if (american.toLowerCase() !== name.toLowerCase()) add(`its name as spelled, with the garment it means (${garment})`, `${name} ${noun}`);
+    add(`its garment, as a ${garment}`, `${describing} ${noun}`);
+    const joined = phrasesOf(describing.split(/\s+/).filter(Boolean)).map((unit) => {
+      const one = unit.toLowerCase().replace(/\s+/g, '');
+      return /\s/.test(unit) && JOINED.has(one) ? unit.replace(/\s+/g, '').replace(/^./, (c) => c.toUpperCase()).replace(/(?<=.)[A-Z]/g, (c) => c.toLowerCase()) : unit;
+    }).join(' ');
+    if (joined.toLowerCase() !== describing.toLowerCase()) add(`its garment, as a ${garment}, in one-word spelling`, `${joined} ${noun}`);
   }
+
+  /* then the row as written, and in American spelling */
+  add('its name', name);
   if (american.toLowerCase() !== name.toLowerCase()) add('its name, in American spelling', american);
   if (head && !/s$/i.test(head)) add('its name, pluralised', [...words.slice(0, -1), `${head}s`].join(' '));
 
@@ -4302,10 +4337,18 @@ function queryForms(row) {
     add('its name and category', `${name} ${category}`);
   }
 
-  /* one word at a time, widening: the gate downstream still has to see
-     the dropped word established before anything is written */
-  for (const word of words.slice(0, -1)) add(`"${word} ${head}"`, `${word} ${head}`);
+  /* One descriptor at a time, widening — a whole phrase ("colour
+     block"), never half of one — and never down to the bare garment.
+     The gate downstream still has to see what was dropped established. */
+  const units = phrasesOf(words.slice(0, -1));
+  if (units.length >= 2) {
+    for (const unit of units) {
+      const rest = units.filter((one) => one !== unit);
+      add(`without "${unit}"`, `${rest.join(' ')} ${head}`);
+    }
+  }
 
+  forms.splice(MAX_QUERY_FORMS - 1);
   if (name) forms.push({ how: 'everything the row knows', query: null, intent: intentFor(row) });
   return forms;
 }
@@ -5096,7 +5139,11 @@ async function listingsFor(row, limit, within) {
        does not end the search before the next wording is asked */
     const shortlisted = raw.filter((record) => !fromNoShop(record) && !fromEditorial(record) && titleReads(row, record)).length;
     if (shortlisted >= wanted) break;
-    if (shortlisted > 0 && attempts.length >= 2) break;
+    /* Two searches are enough once they have found a real shortlist;
+       one or two passable titles are not, because a page of tutorials
+       with a stray match in it is exactly what a wrongly worded query
+       returns, and the next wording may be the one shops use. */
+    if (shortlisted >= ENOUGH_FOUND && attempts.length >= 2) break;
     /* and the ladder stops where the row's clock does: another query
        put to a source that is not answering buys nothing but the wait */
     if (budget.spent()) {

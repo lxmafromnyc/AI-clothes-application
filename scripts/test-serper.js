@@ -431,6 +431,31 @@ function withStubbedFetch(handler, run) {
     });
   });
 
+  await testAsync('a result’s own sitelinks enter as records, after every result, on its own host only', async () => {
+    const payload = { organic: [
+      { title: 'Sweaters | Shop', link: 'https://www.shop.example.com/c/sweaters', position: 1, sitelinks: [
+        { title: 'Color Block Knit Sweater', link: 'https://www.shop.example.com/p/color-block-knit-sweater-12345' },
+        /* another host, Google's own, and an untitled link: none taken */
+        { title: 'Elsewhere', link: 'https://other.example.net/p/1' },
+        { title: 'Google', link: 'https://www.google.com/search?q=sweater' },
+        { link: 'https://www.shop.example.com/p/2' },
+        /* the result itself again is not a second record */
+        { title: 'Sweaters', link: 'https://www.shop.example.com/c/sweaters' }
+      ] },
+      { title: 'Colorblock Sweater | Madewell', link: 'https://www.madewell.com/colorblock-sweater-NK1234.html', position: 2 }
+    ] };
+    await withStubbedFetch(() => jsonResponse(200, payload), async () => {
+      const records = await provider.searchOrganic({ keywords: ['Color Block Knit Sweater'] }, { limit: 8 });
+      assert.deepStrictEqual(records.map((r) => r.productUrl), [
+        'https://www.shop.example.com/c/sweaters',
+        'https://www.madewell.com/colorblock-sweater-NK1234.html',
+        'https://www.shop.example.com/p/color-block-knit-sweater-12345'
+      ]);
+      for (const record of records) assert.deepStrictEqual(Object.keys(record).sort(), ['productUrl', 'title']);
+      assert.strictEqual(records.diagnostics.fromSitelinks, 1);
+    });
+  });
+
   await testAsync('an organic record carries a title and a link, and nothing it was not given', async () => {
     await withStubbedFetch(() => jsonResponse(200, ORGANIC), async () => {
       const records = await provider.searchOrganic({ keywords: ['Boxy Cotton Tee'] }, { limit: 8 });
