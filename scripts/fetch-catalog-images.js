@@ -3672,7 +3672,10 @@ const GARMENT_TYPES = [
   /* tops */
   { type: 'hoodie', family: 'top', terms: ['hoodie', 'hoody', 'hooded sweatshirt'] },
   { type: 'sweatshirt', family: 'top', terms: ['sweatshirt'] },
-  { type: 'sweater', family: 'top', terms: ['sweater', 'knit', 'jumper', 'pullover', 'crew', 'turtleneck sweater'] },
+  /* not "crew": a crew is a neckline, and a "Pocket Crew 6-Pack" is a
+     pack of tees. A crew is read as a sweater only where its fibre says
+     it was knitted (see IMPLIED_TYPES below) */
+  { type: 'sweater', family: 'top', terms: ['sweater', 'knit', 'jumper', 'pullover', 'turtleneck sweater'] },
   { type: 'cardigan', family: 'top', terms: ['cardigan'] },
   { type: 'tee', family: 'top', terms: ['tee', 't shirt', 'tshirt', 'tee shirt'] },
   { type: 'shirt', family: 'top', terms: ['shirt', 'blouse', 'button down', 'button up', 'oxford', 'oxford shirt', 'camp shirt', 'overshirt'] },
@@ -3959,6 +3962,26 @@ const MADE_AS = [
   }
 ];
 
+/* ---------- a title that names no type, but its make does ----------
+
+   Some shops title a garment by its neckline and its yarn and nothing
+   else: "Merino Crew", "Cashmere Crewneck". The neckline alone is not a
+   garment — a "Classic Pocket Crew 6-Pack" is tees — so "crew" is not a
+   type term. But a crew KNITTED from wool yarn is a sweater, by the same
+   reading MADE_AS uses: only when the title names no type at all, only
+   on the fibre in the same title, and never when it names a fleece or
+   jersey construction. Anything short of that is left unread, for the
+   page to settle, rather than guessed. */
+const IMPLIED_TYPES = [
+  {
+    words: ['crew', 'crewneck'],
+    fibre: 'wool',
+    reads: 'sweater',
+    unless: ['fleece', 'terry', 'french terry', 'jersey', 'sherpa'],
+    why: 'a crew knitted from wool yarn is a sweater'
+  }
+];
+
 function readGarment(text, extra) {
   const options = extra || {};
   const tokens = tokenise(text);
@@ -4034,6 +4057,18 @@ function readGarment(text, extra) {
   let type = head ? head.hit.type : null;
   let family = head ? head.hit.family : null;
   let madeAs = null;
+  if (!head) {
+    for (const rule of IMPLIED_TYPES) {
+      if (!tokens.some((token) => rule.words.includes(token)) || !fibres.has(rule.fibre)) continue;
+      if ([...materialTerms].some((term) => rule.unless.includes(term))) continue;
+      const reads = GARMENT_TYPES.find((entry) => entry.type === rule.reads);
+      if (!reads) continue;
+      type = reads.type;
+      family = reads.family;
+      via = 'make';
+      madeAs = { named: tokens.filter((token) => rule.words.includes(token))[0], why: rule.why };
+    }
+  }
   for (const rule of MADE_AS) {
     if (type !== rule.type || !fibres.has(rule.fibre)) continue;
     if ([...materialTerms].some((term) => rule.unless.includes(term))) continue;

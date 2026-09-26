@@ -182,29 +182,63 @@ function brandOf(node) {
    organisations naming different things say nothing. */
 const SITE_TYPES = /^(website|organization|corporation|store|onlinestore|onlinebusiness|clothingstore|shoestore|departmentstore)$/i;
 
+const typeIs = (node, pattern) => [].concat((node && node['@type']) || []).some((type) => pattern.test(String(type).replace(/^.*[/#]/, '')));
+const nameIn = (node) => decodeEntities(node && typeof node === 'object'
+  ? (typeof node.name === 'string' && node.name.trim() ? node.name : typeof node.legalName === 'string' ? node.legalName : '')
+  : typeof node === 'string' ? node : '');
+
+/* the page's own pages and site: whose publisher, provider or source
+   organisation is the shop — never a Product's brand or manufacturer,
+   which name the maker */
+const PAGE_TYPES = /^(website|webpage|itempage|productpage|collectionpage)$/i;
+const PUBLISHER_KEYS = ['publisher', 'provider', 'sourceOrganization'];
+
 function siteNameOf(html, images) {
   const meta = decodeEntities(images.metaContent(html, 'og:site_name'));
   if (meta) return meta;
   const nodes = images.jsonLdNodes(html);
-  const named = (pattern) => [...new Set(nodes
-    .filter((node) => [].concat(node['@type'] || []).some((type) => pattern.test(String(type).replace(/^.*[/#]/, ''))))
-    .map((node) => decodeEntities(typeof node.name === 'string' ? node.name : ''))
-    .filter(Boolean))];
-  const site = named(/^website$/i);
-  if (site.length === 1) return site[0];
-  const shop = named(SITE_TYPES);
-  if (shop.length === 1) return shop[0];
-  return '';
+  const byId = new Map(nodes.filter((node) => typeof node['@id'] === 'string').map((node) => [node['@id'], node]));
+  const single = (names) => { const distinct = [...new Set(names.filter(Boolean))]; return distinct.length === 1 ? distinct[0] : ''; };
+
+  const site = single(nodes.filter((node) => typeIs(node, /^website$/i)).map(nameIn));
+  if (site) return site;
+  const shop = single(nodes.filter((node) => typeIs(node, SITE_TYPES)).map(nameIn));
+  if (shop) return shop;
+  /* the organisation a page or site names as its publisher, inline or
+     by an @id reference to one elsewhere in the same graph */
+  const publishers = [];
+  for (const node of nodes.filter((one) => typeIs(one, PAGE_TYPES))) {
+    for (const key of PUBLISHER_KEYS) {
+      for (const entry of [].concat(node[key] || [])) {
+        const target = entry && typeof entry === 'object' && !entry.name && !entry.legalName && typeof entry['@id'] === 'string' ? byId.get(entry['@id']) : entry;
+        if (target && typeof target === 'object' && !typeIs(target, SITE_TYPES) && target['@type']) continue;
+        publishers.push(nameIn(target));
+      }
+    }
+  }
+  return single(publishers);
 }
 
 function appNameOf(html, images) {
   return decodeEntities(images.metaContent(html, 'application-name') || images.metaContent(html, 'apple-mobile-web-app-title'));
 }
 
-function sellerOf(offer) {
-  const seller = offer && offer.seller;
-  if (seller && typeof seller === 'object' && typeof seller.name === 'string') return text(seller.name);
-  return '';
+/* The seller the record's offers name — the priced offer's own, or, when
+   it names none, the one every other offer on the same record (and an
+   AggregateOffer around them) agrees on. A plain string counts, as does
+   a legalName. Offers that name different sellers name none. */
+function sellerOf(offer, node) {
+  const own = nameIn(offer && offer.seller);
+  if (own) return own;
+  const offers = [];
+  const raw = node && (node.offers || node.offer);
+  for (const one of Array.isArray(raw) ? raw : (raw ? [raw] : [])) {
+    if (!one || typeof one !== 'object') continue;
+    offers.push(one);
+    for (const inner of [].concat(one.offers || [])) if (inner && typeof inner === 'object') offers.push(inner);
+  }
+  const names = [...new Set(offers.map((one) => nameIn(one.seller)).filter(Boolean))];
+  return names.length === 1 ? names[0] : '';
 }
 
 /* What can be decided about a listing without asking its shop: the
@@ -390,7 +424,7 @@ async function readListing(record, budget) {
   /* the product the page named, by its own name: a group, not one size */
   const byRecord = !(decided.identity && decided.identity.sku);
   const name = (byRecord && text(proven && proven.name)) || text(node && node.name) || title;
-  const retailer = siteNameOf(page.html, images) || sellerOf(offer) || appNameOf(page.html, images);
+  const retailer = siteNameOf(page.html, images) || sellerOf(offer, node) || appNameOf(page.html, images);
   const brand = brandOf(node);
 
   const priced = { title: decodeEntities(name), productUrl: listingUrl, price: decided.price, currency: decided.currency };
@@ -413,7 +447,12 @@ async function readListing(record, budget) {
   const proved = Object.assign({}, priced, { imageUrl: found.url });
   const result = done('photographed', found.why, proved);
   const verdict = toProduct(proved, { retailer: null });
-  if (!verdict.ok) result.gateRefusal = verdict.reason;
+  if (!verdict.ok) {
+    result.gateRefusal = verdict.reason;
+    result.why = `${verdict.reason}: ${verdict.reason === 'missing-retailer'
+      ? 'the page names no shop in og:site_name, a JSON-LD WebSite, Organization or publisher, an offer\'s seller, or its application-name'
+      : 'the gate refused what the page proved'}`;
+  }
   return result;
 }
 
@@ -569,8 +608,9 @@ async function readListings(records, options) {
       /* listings whose page proved a price and a photo and that the gate
          still refused, by the gate's own reason */
       gateRefusals,
-      samples: ordered.map((entry) => entry.final).filter((one) => one && READ_FAILURES.has(one.outcome)).slice(0, 8)
+      samples: ordered.map((entry) => entry.final).filter((one) => one && (READ_FAILURES.has(one.outcome) || one.gateRefusal)).slice(0, 8)
         .map((one) => Object.assign({ host: hostOf(one.record && one.record.productUrl), outcome: one.outcome, why: text(one.why).slice(0, 160) },
+          one.gateRefusal ? { gateRefusal: one.gateRefusal, productUrl: one.record && one.record.productUrl } : {},
           one.priceCategory ? { priceCategory: one.priceCategory, priceClass: PRICE_CLASSES[one.priceCategory] } : {}))
     }
   };

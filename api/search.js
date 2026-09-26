@@ -241,16 +241,23 @@ async function recordsFrom(provider, intent, limit, deadline) {
   }
 
   /* A product search that runs out of its share of the clock is, for a
-     source with an organic endpoint, a batch that named no shop. Only
-     when the organic search fails too is the timeout what the search
-     answers with. */
+     source with an organic endpoint, a batch that named no shop. So is
+     one that FAILS while the organic search is already under way beside
+     it: an HTTP error, an error payload, a body that is not JSON. The
+     organic answer was already being paid for, and throwing the query
+     away over the other endpoint's failure is how a live run lost three
+     queries it could have answered. Only when the organic search fails
+     too is the product search's error what the query answers with — its
+     message first, so the fallback rule reads exactly what it read
+     before. Without an organic search in flight, only a timeout falls
+     through, as before. */
   let batch;
   let productTimeout = null;
   try {
     batch = await provider.search(intent, { limit, deadline, organicInFlight: Boolean(early) });
   } catch (err) {
     timing.productSearchMs = Date.now() - started;
-    if (!hasOrganic || !timedOut(err)) throw err;
+    if (!hasOrganic || !(timedOut(err) || early)) throw err;
     productTimeout = err;
     batch = [];
   }
@@ -264,10 +271,11 @@ async function recordsFrom(provider, intent, limit, deadline) {
   }
 
   const organic = {
-    asked: productTimeout ? 'after the product search timed out' : 'after a linkless batch',
+    asked: productTimeout ? (timedOut(productTimeout) ? 'after the product search timed out' : 'after the product search failed') : 'after a linkless batch',
     /* whether it was already under way when the product batch came back */
     startedAlongside: Boolean(early),
-    productSearchTimedOut: productTimeout ? String(productTimeout.message).slice(0, 200) : null,
+    productSearchTimedOut: productTimeout && timedOut(productTimeout) ? String(productTimeout.message).slice(0, 200) : null,
+    productSearchFailed: productTimeout && !timedOut(productTimeout) ? String(productTimeout.message).split('\n')[0].slice(0, 200) : null,
     offered: 0, failed: null, diagnostics: null, pages: null
   };
   try {

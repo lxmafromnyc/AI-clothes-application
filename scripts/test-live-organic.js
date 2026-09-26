@@ -805,11 +805,42 @@ const deadlineIn = (ms) => Date.now() + ms;
     assert.strictEqual(found.funnel.organic.asked, 'after the product search timed out');
   });
 
-  await testAsync('a timeout is still the answer when the organic search fails too — and a non-timeout failure is never swallowed', async () => {
+  await testAsync('a timeout is still the answer when the organic search fails too', async () => {
     web((href, options) => (href === serper.SEARCH_URL ? hanging(href, options) : href === serper.WEB_SEARCH_URL ? jsonResponse(500, { message: 'down' }) : null));
     await assert.rejects(() => findProducts(serper, INTENT, 12, cache.counters(), deadlineIn(6500)), /Serper \/shopping did not answer within/);
+  });
+
+  await testAsync('a /shopping that FAILS while the organic search is under way no longer throws the query away', async () => {
+    for (const [label, failing] of [
+      ['an HTTP 500', () => jsonResponse(500, { message: 'boom' })],
+      ['an error payload', () => jsonResponse(200, { error: 'Something went wrong' })],
+      ['a body that is not JSON', () => new Response('<html>Bad gateway</html>', { status: 200, headers: { 'content-type': 'text/html' } })],
+      ['a network error', () => { throw new TypeError('fetch failed'); }]
+    ]) {
+      cache.reset();
+      web((href) => (href === serper.SEARCH_URL ? failing() : null));
+      const found = await findProducts(serper, INTENT, 12, cache.counters(), deadlineIn(9000));
+      assert.deepStrictEqual(found.products.map((one) => one.productUrl), [URLS.good, URLS.forwarded], label);
+      assert.strictEqual(found.funnel.organic.asked, 'after the product search failed', label);
+      assert.ok(found.funnel.organic.productSearchFailed, label);
+    }
+  });
+
+  await testAsync('when both fail the product search’s error is the answer, first — and a quota refusal still reads as one', async () => {
+    web((href) => (href === serper.SEARCH_URL ? jsonResponse(500, { message: 'boom' }) : href === serper.WEB_SEARCH_URL ? jsonResponse(500, { message: 'down' }) : null));
+    await assert.rejects(() => findProducts(serper, INTENT, 12, cache.counters(), deadlineIn(9000)), /^Error: Serper responded 500 on \/shopping: .*; the organic search failed too: Serper responded 500 on \/search/);
+    cache.reset();
+    web(() => jsonResponse(429, { message: 'Not enough credits' }));
+    await assert.rejects(() => findProducts(serper, INTENT, 12, cache.counters(), deadlineIn(9000)), (err) => {
+      assert.ok(outOfSearches(err), err.message);
+      return true;
+    });
+  });
+
+  await testAsync('without an organic search in flight a /shopping failure is thrown as before', async () => {
     web((href) => (href === serper.SEARCH_URL ? jsonResponse(500, { message: 'boom' }) : null));
-    await assert.rejects(() => findProducts(serper, INTENT, 12, cache.counters(), deadlineIn(6500)), /Serper responded 500/);
+    const { recordsFrom } = require('../api/search');
+    await assert.rejects(() => recordsFrom(serper, INTENT, 12, undefined), /Serper responded 500 on \/shopping/);
   });
 
   await testAsync('the benchmark names the stage that stopped each query that showed nothing', async () => {
@@ -1100,6 +1131,60 @@ const deadlineIn = (ms) => Date.now() + ms;
     const decided = prices.decide(read.candidates, URLS.good);
     assert.strictEqual(decided.price, undefined);
     assert.strictEqual(priceDiagnosis(html, read, decided, images), 'record-names-another-product');
+  });
+
+
+  console.log('\n  — 10. the shop named where pages actually name it\n');
+
+  await testAsync('a page’s publisher names the shop — inline, or by @id to an organisation in the same graph', async () => {
+    const inline = await readOne(shopPage('', [TROUSER, { '@type': 'WebPage', name: 'Wide Leg Trouser', publisher: { '@type': 'Organization', name: 'Shop Example' } }]));
+    assert.strictEqual(inline.records[0].retailer, 'Shop Example');
+    assert.strictEqual(verifyAll(inline.records).products.length, 1);
+    /* two organisations disagree, so neither names the shop by itself —
+       the one the page names as its publisher does */
+    const graph = { '@graph': [
+      Object.assign({}, TROUSER),
+      { '@type': 'Organization', '@id': 'https://www.shop-example.com/#org', name: 'Shop Example' },
+      { '@type': 'Organization', '@id': 'https://pay.example/#org', name: 'Payments Co' },
+      { '@type': 'WebPage', '@id': `${URLS.good}#page`, publisher: { '@id': 'https://www.shop-example.com/#org' } }
+    ] };
+    const byRef = await readOne(shopPage('', [graph]));
+    assert.strictEqual(byRef.records[0].retailer, 'Shop Example');
+    /* a person is not a shop */
+    const person = await readOne(shopPage('', [TROUSER, { '@type': 'WebPage', publisher: { '@type': 'Person', name: 'Jane Writer' } }]));
+    assert.strictEqual(person.records[0].retailer, undefined);
+  });
+
+  await testAsync('an offer’s seller counts as a plain string, or when a sibling offer names it — unless they disagree', async () => {
+    const withOffers = (offers) => Object.assign({}, TROUSER, { offers });
+    const plain = await readOne(shopPage('', [withOffers({ '@type': 'Offer', price: '88.00', priceCurrency: 'USD', seller: 'Shop Example' })]));
+    assert.strictEqual(plain.records[0].retailer, 'Shop Example');
+    const sibling = await readOne(shopPage('', [withOffers([
+      { '@type': 'Offer', price: '88.00', priceCurrency: 'USD', sku: 'WL48213-S' },
+      { '@type': 'Offer', price: '88.00', priceCurrency: 'USD', sku: 'WL48213-M', seller: { '@type': 'Organization', legalName: 'Shop Example Ltd' } }
+    ])]));
+    assert.strictEqual(sibling.records[0].retailer, 'Shop Example Ltd');
+    const disagree = await readOne(shopPage('', [withOffers([
+      { '@type': 'Offer', price: '88.00', priceCurrency: 'USD', sku: 'WL48213-S', seller: 'Shop Example' },
+      { '@type': 'Offer', price: '88.00', priceCurrency: 'USD', sku: 'WL48213-M', seller: 'Marketplace Seller 7' }
+    ])]));
+    assert.strictEqual(disagree.records[0].retailer, 'Shop Example', 'the priced offer names its own seller first');
+    /* the priced offer names no seller, and the others disagree: none */
+    const neither = await readOne(shopPage('', [withOffers([
+      { '@type': 'Offer', price: '88.00', priceCurrency: 'USD', sku: 'WL48213-S' },
+      { '@type': 'Offer', price: '88.00', priceCurrency: 'USD', sku: 'WL48213-M', seller: 'Shop Example' },
+      { '@type': 'Offer', price: '88.00', priceCurrency: 'USD', sku: 'WL48213-L', seller: 'Marketplace Seller 7' }
+    ])]));
+    assert.strictEqual(neither.records[0].retailer, undefined);
+    assert.deepStrictEqual(neither.diagnostics.gateRefusals, { 'missing-retailer': 1 });
+  });
+
+  await testAsync('a page that names no shop anywhere is still refused, and the sample says so and where', async () => {
+    const { diagnostics } = await readOne(shopPage('', [Object.assign({}, TROUSER, { brand: { '@type': 'Brand', name: 'Northfold' } })]));
+    const sample = diagnostics.samples.find((one) => one.gateRefusal);
+    assert.strictEqual(sample.gateRefusal, 'missing-retailer');
+    assert.strictEqual(sample.productUrl, URLS.good);
+    assert.match(sample.why, /names no shop in og:site_name/);
   });
 
   console.log(`\n${passed} passed, ${failures.length} failed\n`);

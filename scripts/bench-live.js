@@ -180,6 +180,9 @@ async function measure(id, query, category, env, provider, limit) {
     stageMs: found && found.funnel && found.funnel.organic && found.funnel.organic.timing ? found.funnel.organic.timing
       : (found && found.funnel && found.funnel.timing) || null,
     productSearchTimedOutButAnswered: Boolean(found && found.funnel && found.funnel.organic && found.funnel.organic.productSearchTimedOut),
+    /* a product search that FAILED, with the organic search answering */
+    productSearchFailedButAnswered: found && found.funnel && found.funnel.organic && found.funnel.organic.productSearchFailed
+      ? found.funnel.organic.productSearchFailed : null,
     servedFromCache: Boolean(found && found.servedFromCache),
     garmentRank: garmentAt < 0 ? null : garmentAt + 1,
     matchRank: matchAt < 0 ? null : matchAt + 1,
@@ -290,6 +293,7 @@ function summarise(results) {
     /* a product search that ran out of time while the organic search
        still answered the query */
     productSearchTimeoutsAbsorbed: results.filter((r) => r.productSearchTimedOutButAnswered).map((r) => r.query),
+    productSearchFailuresAbsorbed: results.filter((r) => r.productSearchFailedButAnswered).map((r) => `${r.query}: ${r.productSearchFailedButAnswered}`),
     /* how much of the clock each stage took, across the queries that ran it */
     stageMs: (() => {
       const out = {};

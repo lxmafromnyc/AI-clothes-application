@@ -1501,6 +1501,30 @@ function walledRetailer() {
     }
   });
 
+  test('a "crew" alone establishes no garment: a Pocket Crew 6-Pack is not read as a sweater', () => {
+    for (const title of ['Classic Pocket Crew 6-Pack', 'Cotton Crew', 'Merino Fleece Crew', 'The Crew']) {
+      assert.strictEqual(extractor.readGarment(title, {}).type, null, title);
+    }
+    const verdict = asked('thick tee with a pocket', 'Classic Pocket Crew 6-Pack');
+    assert.strictEqual(verdict.ok, false);
+    assert.strictEqual(verdict.kind, 'unreadable', `a crew was guessed at: ${verdict.why}`);
+  });
+
+  test('crew sweaters are still sweaters — by name, or by the yarn a crew is knitted from', () => {
+    for (const title of ['Merino Crew Sweater', 'Crewneck Jumper', 'Cashmere Crew Neck Pullover', 'Merino Crew', 'Cashmere Crewneck', 'Lambswool Crew']) {
+      assert.strictEqual(extractor.readGarment(title, {}).type, 'sweater', title);
+    }
+    assert.strictEqual(asked('merino crewneck jumper', 'Merino Crew').kind, 'match');
+    assert.strictEqual(asked('merino crewneck jumper', 'Merino Crew Sweater').kind, 'match');
+  });
+
+  test('crew tees and shirts are still tees and shirts when they say so', () => {
+    for (const [title, type] of [['Pocket Crew Tee', 'tee'], ['Crew Neck T-Shirt', 'tee'], ['Heavyweight Crew Neck Tee', 'tee'], ['Classic Crew Neck Shirt', 'shirt'], ['Crewneck Sweatshirt', 'sweatshirt']]) {
+      assert.strictEqual(extractor.readGarment(title, {}).type, type, title);
+    }
+    assert.strictEqual(asked('thick tee with a pocket', 'Pocket Crew Tee').ok, true);
+  });
+
   test('the fabric decides a type only on the side that names it', () => {
     /* "merino" in the REQUEST does not turn the listing's sweatshirt into a sweater */
     assert.strictEqual(extractor.readGarment('Crew Sweatshirt', {}).madeAs, null);
