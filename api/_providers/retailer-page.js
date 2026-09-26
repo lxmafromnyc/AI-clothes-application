@@ -219,6 +219,29 @@ function siteNameOf(html, images) {
   return single(publishers);
 }
 
+/* The site's web app manifest names the site too — the name a browser
+   installs it under. Asked only when nothing on the page named the shop,
+   only on the page's own site, inside the clock. */
+async function manifestNameOf(html, pageUrl, images, budget) {
+  const link = String(html || '').match(/<link\b[^>]*\brel=["']?manifest["']?[^>]*>/i);
+  const href = link && link[0].match(/\bhref=["']([^"']+)["']/i);
+  if (!href || budget.left() < MIN_PAGE_WINDOW_MS) return '';
+  let url;
+  try { url = new URL(decodeEntities(href[1]), pageUrl); } catch (err) { return ''; }
+  if (!/^https?:$/.test(url.protocol) || images.registrable(url.hostname) !== images.registrable(hostOf(pageUrl) || '')) return '';
+  const got = await images.request(url.href, { Accept: 'application/manifest+json, application/json' }, budget.cap(Math.min(3000, budget.left())));
+  if (!got.ok) return '';
+  try {
+    if (got.response.status !== 200) return '';
+    const manifest = JSON.parse(await got.response.text());
+    return decodeEntities(manifest && typeof manifest === 'object' ? (typeof manifest.name === 'string' && manifest.name.trim() ? manifest.name : manifest.short_name) : '');
+  } catch (err) {
+    return '';
+  } finally {
+    got.release();
+  }
+}
+
 function appNameOf(html, images) {
   return decodeEntities(images.metaContent(html, 'application-name') || images.metaContent(html, 'apple-mobile-web-app-title'));
 }
@@ -389,6 +412,20 @@ async function readListing(record, budget) {
      shown. Where that address names no product either, the page's own
      product record is the identity the gates hold figures and photos
      to. */
+  /* The store's own product record, for a Shopify /products/<handle>
+     listing: read at most once, only for a Shopify page, and only when
+     something the page's own markup could not settle needs it. */
+  const isShopify = images.SHOPIFY_PAGE.test(page.html);
+  let store;
+  const storeRecord = async (url) => {
+    if (store !== undefined) return store;
+    store = null;
+    if (!isShopify || !images.shopifyHandle(url) || budget.left() < MIN_PAGE_WINDOW_MS) return store;
+    const read = await images.readProductRecord(url, budget.cap(Math.min(images.TIMEOUT, Math.max(MIN_PAGE_WINDOW_MS, budget.left() - IMAGE_RESERVE_MS))));
+    store = read.summary || null;
+    return store;
+  };
+
   let listingUrl = productUrl;
   let proven = null;
   if (images.identifiersFrom(productUrl).length) {
@@ -399,8 +436,19 @@ async function readListing(record, budget) {
     const own = images.pageIdentity(page.html, productUrl, page.url || productUrl, { coded: true });
     if (own.ok && own.record) proven = own;
   } else {
-    const identity = images.pageIdentity(page.html, productUrl, page.url || productUrl);
-    if (!identity.ok) return done('no-identity', identity.why);
+    let identity = images.pageIdentity(page.html, productUrl, page.url || productUrl);
+    if (!identity.ok) {
+      /* A Shopify listing whose page did not say which product it is may
+         still be answered for by the store: its record for exactly this
+         handle, on this origin. The page must still be a product page. */
+      const verdict = images.productPageVerdict(images.listingShape(productUrl, ''), images.pageDeclarationsFromHtml(page.html));
+      const own = verdict.ok ? await storeRecord(productUrl) : null;
+      if (!own) return done('no-identity', identity.why);
+      identity = {
+        ok: true, url: productUrl, codes: [], record: null, name: own.title,
+        how: `the store's product record for ${own.handle} (product ${own.id}) answers for this listing`
+      };
+    }
     if (identity.url && identity.url !== productUrl) {
       const fault = linkFault(identity.url);
       if (fault) return done('no-identity', `the page's canonical address is refused by the link rule (${fault})`);
@@ -412,7 +460,14 @@ async function readListing(record, budget) {
   /* ---- the price, by the price reader's gates ---- */
   const read = prices.pricesFromHtml(page.html);
   for (const candidate of read.candidates) candidate.canonical = read.canonical;
-  const decided = read.candidates.length ? prices.decide(read.candidates, listingUrl, proven) : { refusals: [] };
+  let decided = read.candidates.length ? prices.decide(read.candidates, listingUrl, proven) : { refusals: [] };
+  if (!decided.price) {
+    /* what the page's markup could not settle, the store's own record for
+       this handle may: see shopifyRecordPrice for what it may answer */
+    const own = await storeRecord(listingUrl);
+    const fromStore = own ? prices.shopifyRecordPrice(own, listingUrl, prices.pageCurrency(page.html)) : null;
+    if (fromStore && fromStore.price) decided = Object.assign({ refusals: decided.refusals || [] }, fromStore);
+  }
   if (!decided.price) {
     const first = (decided.refusals || [])[0];
     const result = done('no-price', decided.why || (first ? `${first.from}: ${first.why}` : 'the page publishes no price candidate'));
@@ -423,9 +478,10 @@ async function readListing(record, budget) {
   const { node, offer } = pricedRecord(read.candidates, decided, images, proven);
   /* the product the page named, by its own name: a group, not one size */
   const byRecord = !(decided.identity && decided.identity.sku);
-  const name = (byRecord && text(proven && proven.name)) || text(node && node.name) || title;
+  const name = (byRecord && text(proven && proven.name)) || text(node && node.name) || text(store && store.title) || title;
   const retailer = siteNameOf(page.html, images) || sellerOf(offer, node) || appNameOf(page.html, images);
-  const brand = brandOf(node);
+  /* the maker, when a record names one: the page's, or the store's vendor */
+  const brand = brandOf(node) || text(store && store.vendor);
 
   const priced = { title: decodeEntities(name), productUrl: listingUrl, price: decided.price, currency: decided.currency };
   if (retailer) priced.retailer = retailer;
@@ -436,10 +492,27 @@ async function readListing(record, budget) {
   if (budget.spent()) return done('no-photo', 'the search ran out of time before the photo was checked', priced);
   const offered = images.candidatesFrom(page.html, page.url || productUrl);
   const row = { id: listingUrl, productUrl: listingUrl, name: priced.title, proven };
-  const found = offered.length ? await images.firstVerifiable(offered, row, null, budget) : { refusals: [] };
+  let found = offered.length ? await images.firstVerifiable(offered, row, null, budget) : { refusals: [] };
+  if (!found.url && !budget.spent()) {
+    /* the store's record lists its product's own photos, judged by the
+       same gates discovery judges them by (productRecordEvidence) */
+    const own = await storeRecord(listingUrl);
+    if (own && own.images.length) {
+      const summary = { handle: own.handle, id: own.id, title: own.title, images: own.images };
+      const recorded = await images.firstVerifiable(own.images.map((url) => ({ url, from: 'product-record', record: summary })), row, null, budget);
+      found = recorded.url ? recorded : { refusals: [...(found.refusals || []), ...(recorded.refusals || [])] };
+    }
+  }
   if (!found.url) {
     const first = (found.refusals || []).find(Boolean);
     return done('no-photo', first ? `${first.gate}: ${first.why}` : 'the page publishes no image candidate', priced);
+  }
+
+  /* proved everything but whose shop it is: the site's manifest, the
+     one place left where a site names itself */
+  if (!priced.retailer) {
+    const named = await manifestNameOf(page.html, page.url || productUrl, images, budget);
+    if (named) priced.retailer = named;
   }
 
   /* the gate's own verdict on what was proved — reported, never acted
@@ -450,7 +523,7 @@ async function readListing(record, budget) {
   if (!verdict.ok) {
     result.gateRefusal = verdict.reason;
     result.why = `${verdict.reason}: ${verdict.reason === 'missing-retailer'
-      ? 'the page names no shop in og:site_name, a JSON-LD WebSite, Organization or publisher, an offer\'s seller, or its application-name'
+      ? 'the page names no shop in og:site_name, a JSON-LD WebSite, Organization or publisher, an offer\'s seller, its application-name or its web app manifest'
       : 'the gate refused what the page proved'}`;
   }
   return result;

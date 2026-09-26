@@ -559,6 +559,27 @@ function metaCandidates(html) {
 const VOID_TAGS = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr']);
 const MICRODATA_ID_PROPS = /^(sku|productid|mpn|gtin|gtin8|gtin12|gtin13|gtin14|identifier)$/i;
 
+/* An element's own text, to its matching close tag, with its child tags
+   taken out: <span itemprop="price"><span>$</span>88</span> is "$88".
+   Nested elements of the same name are counted, so the text stops at
+   THIS element's end; a page that never closes it gives up at a bounded
+   length rather than reading the rest of the document. */
+function elementText(page, from, name) {
+  const re = new RegExp(`<(/?)${name}\\b[^>]*>`, 'gi');
+  re.lastIndex = from;
+  let depth = 1;
+  let end = -1;
+  let m;
+  while ((m = re.exec(page))) {
+    if (m.index - from > 2000) break;
+    depth += m[1] === '/' ? -1 : 1;
+    if (depth === 0) { end = m.index; break; }
+  }
+  const slice = page.slice(from, end < 0 ? Math.min(page.length, from + 200) : end);
+  /* joined, not spaced: "88<sup>.50</sup>" is 88.50, never 88 */
+  return slice.replace(/<[^>]*>/g, '');
+}
+
 function microdataCandidates(html) {
   const page = String(html || '');
   const attr = (tag, name) => {
@@ -602,10 +623,7 @@ function microdataCandidates(html) {
          enclosing scope (itemprop="offers" itemscope): it belongs above */
       const owner = parentScope ? parentScope.scope : null;
       let value = attr(tag, 'content');
-      if (value === null && !VOID_TAGS.has(name)) {
-        const next = page.indexOf('<', re.lastIndex);
-        value = page.slice(re.lastIndex, next < 0 ? undefined : next);
-      }
+      if (value === null && !VOID_TAGS.has(name)) value = elementText(page, re.lastIndex, name);
       for (const one of String(prop).split(/\s+/).filter(Boolean)) {
         props.push({ scope: owner, prop: one, value: clean(value), own: [attr(tag, 'class'), attr(tag, 'id')].filter(Boolean).join(' ') });
       }
@@ -1090,7 +1108,102 @@ function chargedEvidence(candidate) {
    More than one distinct survivor is ALSO "the page did not say" — the
    five figures a group page renders, four of them marked current, are
    not an invitation to choose. */
-function decide(candidates, productUrl, proven) {
+/* ---------- a Shopify store's own product record ----------
+
+   /products/<handle>.js is the record the store's own product page
+   builds its variant picker from: the product, and each variant's price,
+   compare_at_price and whether it can be bought. It is the commerce
+   source in this file's own terms — what the shop answers when asked
+   what it charges — not a copy the page carries for crawlers, and it
+   answers for exactly the listing's handle (readProductRecord checks
+   that). So it may answer, on these rules:
+
+     the variant the listing names   a listing reached as ?variant=<id>
+                                     is that variant, and is priced by
+                                     it — if the store says it can be
+                                     bought
+     otherwise                       every variant that can be bought
+                                     must agree on one price; variants
+                                     that disagree are not a price
+     never                           compare_at_price, which is what the
+                                     product is discounted FROM
+
+   The record names no currency, so the page must: the currency Shopify
+   says is active, or the one currency its price metas and JSON-LD offers
+   agree on. A page that names none, or several, gives no price. */
+function pageCurrency(html) {
+  const page = String(html || '');
+  const active = page.match(/Shopify\.currency\s*=\s*\{[^}]*["']active["']\s*:\s*["']([A-Z]{3})["']/);
+  if (active) return active[1];
+  const named = new Set();
+  for (const name of ['og:price:currency', 'product:price:currency']) {
+    const value = metaContent(page, name);
+    if (value && /^[A-Z]{3}$/i.test(value.trim())) named.add(value.trim().toUpperCase());
+  }
+  for (const node of jsonLdNodes(page)) {
+    for (const offer of offersIn(node)) {
+      if (typeof offer.priceCurrency === 'string' && /^[A-Z]{3}$/i.test(offer.priceCurrency.trim())) named.add(offer.priceCurrency.trim().toUpperCase());
+    }
+  }
+  return named.size === 1 ? [...named][0] : null;
+}
+
+/* a variant's price as the record states it: integer cents in the .js
+   record, a decimal string in the .json one */
+function recordAmount(value) {
+  if (typeof value === 'number' && Number.isInteger(value)) return toAmount(value / 100);
+  if (typeof value === 'string' && /\d\.\d{2}$/.test(value.trim())) return toAmount(value);
+  return null;
+}
+
+function shopifyRecordPrice(summary, listingUrl, currency) {
+  if (!summary || !Array.isArray(summary.variants) || !summary.variants.length) return { why: 'the product record lists no variants' };
+  if (!currency) return { why: 'the page names no currency for the product record\'s prices' };
+  let named = null;
+  try { named = new URL(listingUrl).searchParams.get('variant'); } catch (err) { named = null; }
+  const how = (what) => `the store's product record for ${summary.handle} (product ${summary.id}) ${what}`;
+
+  if (named) {
+    const variant = summary.variants.find((one) => one.id === named);
+    if (variant) {
+      if (variant.available === false) return { why: `the variant this listing names (${named}) cannot be bought` };
+      const amount = recordAmount(variant.price);
+      if (amount === null) return { why: `the product record states no readable price for variant ${named}` };
+      return { price: amount, currency, identity: { via: 'shopify-product-record', variant: named, how: how(`prices the variant this listing names, ${named}`) } };
+    }
+    return { why: `the listing names variant ${named}, which the product record does not carry` };
+  }
+
+  const chargeable = summary.variants.filter((one) => one.available !== false);
+  if (!chargeable.length) return { why: 'the product record says no variant can be bought' };
+  const amounts = chargeable.map((one) => recordAmount(one.price));
+  if (amounts.some((one) => one === null)) return { why: 'the product record states a variant price that cannot be read' };
+  const distinct = [...new Set(amounts)].sort((a, b) => a - b);
+  if (distinct.length > 1) {
+    return { ambiguous: distinct, why: `the variants that can be bought are priced ${distinct.map((n) => '$' + n).join(', ')}, and the listing names none of them` };
+  }
+  return { price: distinct[0], currency, identity: { via: 'shopify-product-record', how: how(`prices every variant that can be bought at ${distinct[0]}`) } };
+}
+
+/* why a structured offer says it cannot be charged now, or null */
+const NOT_FOR_SALE = /(outofstock|soldout|discontinued)$/i;
+function offerNotChargeable(offer, now) {
+  if (!offer || typeof offer !== 'object') return null;
+  const availability = String(offer.availability || '').replace(/^.*[/#]/, '');
+  if (NOT_FOR_SALE.test(availability)) return `the offer is marked ${availability}`;
+  const day = (value) => {
+    const at = typeof value === 'string' && /^\d{4}-\d{2}-\d{2}/.test(value) ? new Date(value.slice(0, 10) + 'T00:00:00Z') : null;
+    return at && !Number.isNaN(at.getTime()) ? at : null;
+  };
+  const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const until = day(offer.priceValidUntil);
+  if (until && until < today) return `the offer's price was valid until ${offer.priceValidUntil.slice(0, 10)}`;
+  const from = day(offer.validFrom);
+  if (from && from > today) return `the offer is not valid until ${offer.validFrom.slice(0, 10)}`;
+  return null;
+}
+
+function decide(candidates, productUrl, proven, options) {
   const refusals = [];
   let survivors = [];
 
@@ -1233,6 +1346,36 @@ function decide(candidates, productUrl, proven) {
         });
       }
       inPlay = chosen;
+    }
+  }
+
+  /* ---- figures the page says cannot be charged now ----
+
+     An offer schema.org marks OutOfStock, SoldOut or Discontinued, or
+     whose priceValidUntil has passed, or whose validFrom has not come,
+     is not an amount a shopper can be charged today. When the figures
+     disagree and every one that CAN be charged agrees, that is the
+     charged price; the rest step aside, each with its reason. Nothing
+     is set aside when the figures already agree, an offer that says
+     nothing about stock or dates is chargeable, and chargeable figures
+     that still disagree fail closed below. */
+  if (new Set(inPlay.map((s) => s.candidate.amount)).size > 1) {
+    const now = options && options.now ? new Date(options.now) : new Date();
+    const unchargeable = inPlay.map((s) => [s, offerNotChargeable(s.candidate.offer, now)]);
+    const chargeable = unchargeable.filter(([, why]) => !why).map(([s]) => s);
+    if (chargeable.length && chargeable.length < inPlay.length && new Set(chargeable.map((s) => s.candidate.amount)).size === 1) {
+      for (const [stepped, why] of unchargeable) {
+        if (!why) continue;
+        refusals.push({
+          amount: stepped.candidate.amount,
+          currency: stepped.candidate.currency,
+          text: stepped.candidate.text,
+          from: stepped.candidate.from,
+          gate: 'charged',
+          why: `${why}, and every offer that can be charged is ${chargeable[0].candidate.amount}`
+        });
+      }
+      inPlay = chargeable;
     }
   }
 
@@ -4183,7 +4326,8 @@ if (require.main === module) {
   main().catch((err) => { console.error(err && err.message); process.exit(1); });
 } else {
   module.exports = {
-    toAmount, currencyIn, moneyInText, offerAmounts, structuredCandidates, microdataCandidates, offerIsListing,
+    toAmount, currencyIn, moneyInText, offerAmounts, structuredCandidates, microdataCandidates, offerIsListing, offerNotChargeable,
+    shopifyRecordPrice, pageCurrency, recordAmount,
     metaCandidates, pricesFromHtml, namesCode, priceIdentity, chargedEvidence,
     decide, gatherPricesInPage, renderedCandidates, renderPage, resolveRow,
     inspectUrl, inspectData, selectedAmong, elsewhereIn, isIdKey, isPriceKey, keyWords,

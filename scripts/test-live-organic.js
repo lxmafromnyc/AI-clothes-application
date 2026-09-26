@@ -1187,6 +1187,113 @@ const deadlineIn = (ms) => Date.now() + ms;
     assert.match(sample.why, /names no shop in og:site_name/);
   });
 
+
+  console.log('\n  — 11. microdata prices in parts, offers that cannot be charged, a store’s own record, its manifest\n');
+
+  await testAsync('a microdata price written in parts — $ | 88 | .50 — is read whole, never as 88', async () => {
+    const html = MICRO('<span class="money" itemprop="price"><span class="sym">$</span>88<sup>.50</sup></span>');
+    /* this listing's 88.50, and the related product's 15 beside it */
+    assert.deepStrictEqual(prices.microdataCandidates(html).map((one) => one.amount), [88.5, 15]);
+    assert.strictEqual(prices.decide(prices.pricesFromHtml(html).candidates, URLS.good).price, 88.5);
+  });
+
+  await testAsync('an offer the page marks sold out or expired steps aside only when every chargeable offer agrees', async () => {
+    const priceWith = (offers) => prices.decide(prices.pricesFromHtml(ldRaw(JSON.stringify({ '@type': 'Product', sku: 'WL48213', offers }))).candidates, URLS.good, null, { now: '2026-09-26' });
+    const soldOut = priceWith([{ price: '88.00', priceCurrency: 'USD', availability: 'https://schema.org/InStock' }, { price: '60.00', priceCurrency: 'USD', availability: 'https://schema.org/OutOfStock' }]);
+    assert.strictEqual(soldOut.price, 88);
+    assert.ok(soldOut.refusals.some((one) => one.amount === 60 && /OutOfStock/.test(one.why)));
+    assert.strictEqual(priceWith([{ price: '88.00', priceCurrency: 'USD' }, { price: '60.00', priceCurrency: 'USD', priceValidUntil: '2026-01-31' }]).price, 88);
+    /* chargeable figures that disagree, or none chargeable, still fail closed */
+    assert.deepStrictEqual(priceWith([{ price: '88.00', availability: 'InStock' }, { price: '98.00', availability: 'InStock' }]).ambiguous, [88, 98]);
+    assert.deepStrictEqual(priceWith([{ price: '88.00', availability: 'OutOfStock' }, { price: '98.00', availability: 'OutOfStock' }]).ambiguous, [88, 98]);
+  });
+
+  const STORE = 'https://www.store-example.com/products/heavyweight-hoodie';
+  const STORE_PHOTO = 'https://www.store-example.com/cdn/shop/files/heavyweight-hoodie-front.jpg';
+  const storePage = (extra) => page(`<!doctype html><html><head><title>Heavyweight Hoodie</title>
+    <meta property="og:site_name" content="Store Example"><meta property="og:type" content="product">
+    <link rel="canonical" href="${STORE}">
+    <script>window.Shopify = window.Shopify || {}; Shopify.shop = "store-example.myshopify.com"; Shopify.currency = {"active":"USD","rate":"1.0"};</script>
+    ${extra || ''}</head><body><img src="https://cdn.shopify.com/s/files/hero.jpg"></body></html>`);
+  const storeRecordJs = (overrides) => new Response(JSON.stringify(Object.assign({
+    id: 7001234567, handle: 'heavyweight-hoodie', title: 'Heavyweight Hoodie', vendor: 'Store Example Label',
+    images: [STORE_PHOTO],
+    variants: [{ id: 111, sku: 'HH-S', price: 9800, compare_at_price: 12800, available: true }, { id: 222, sku: 'HH-M', price: 9800, compare_at_price: 12800, available: true }]
+  }, overrides || {})), { status: 200, headers: { 'content-type': 'application/json' } });
+  const storePageHtml = (extra) => `<!doctype html><html><head><title>Heavyweight Hoodie</title>
+    <meta property="og:site_name" content="Store Example"><meta property="og:type" content="product">
+    <link rel="canonical" href="${STORE}"><script>Shopify.shop = "store-example.myshopify.com"; Shopify.currency = {"active":"USD"};</script>${extra || ''}</head></html>`;
+  const readStore = async (listingUrl, html, record) => {
+    const calls = web((href) => {
+      if (href.split('?')[0] === STORE) return html ? page(html) : storePage();
+      if (href === `https://www.store-example.com/products/heavyweight-hoodie.js`) return record ? record() : storeRecordJs();
+      if (href === STORE_PHOTO) return photo();
+      return null;
+    });
+    const out = await readListings([{ title: 'Heavyweight Hoodie', productUrl: listingUrl || STORE }], { limit: 12, deadline: deadlineIn(9000) });
+    return Object.assign(out, { calls });
+  };
+
+  await testAsync('a Shopify store’s own record answers for its listing: identity, price and photo', async () => {
+    const { records, diagnostics } = await readStore();
+    assert.deepStrictEqual(diagnostics.outcomes, { photographed: 1 }, JSON.stringify(diagnostics.samples));
+    const [product] = verifyAll(records).products;
+    assert.deepStrictEqual(
+      { name: product.name, price: product.price, currency: product.currency, imageUrl: product.imageUrl, retailer: product.retailer, brand: product.brand },
+      { name: 'Heavyweight Hoodie', price: 98, currency: 'USD', imageUrl: STORE_PHOTO, retailer: 'Store Example', brand: 'Store Example Label' }
+    );
+  });
+
+  await testAsync('the store record’s variant rules: the listing’s own variant, buyable variants agreeing, never compare_at', async () => {
+    const differing = () => storeRecordJs({ variants: [{ id: 111, price: 9800, available: true }, { id: 222, price: 10800, available: true }, { id: 333, price: 7800, available: false }] });
+    assert.strictEqual((await readStore(`${STORE}?variant=222`, null, differing)).records[0].price, 108);
+    const unnamed = await readStore(STORE, null, differing);
+    assert.strictEqual(unnamed.records[0].price, undefined, 'variants that disagree are not a price');
+    assert.strictEqual((await readStore(`${STORE}?variant=333`, null, differing)).records[0].price, undefined, 'a variant that cannot be bought has no price');
+    const onlyOneBuyable = () => storeRecordJs({ variants: [{ id: 111, price: 9800, available: true }, { id: 222, price: 7800, available: false }] });
+    assert.strictEqual((await readStore(STORE, null, onlyOneBuyable)).records[0].price, 98);
+  });
+
+  await testAsync('no store record is taken for another handle, without a currency the page names, or on a page that is not Shopify', async () => {
+    const other = await readStore(STORE, null, () => storeRecordJs({ handle: 'linen-camp-shirt' }));
+    assert.deepStrictEqual(other.diagnostics.outcomes, { 'no-identity': 1 });
+    const noCurrency = await readStore(STORE, `<!doctype html><html><head><meta property="og:site_name" content="Store Example"><meta property="og:type" content="product">
+      <link rel="canonical" href="${STORE}"><script>Shopify.shop = "x.myshopify.com";</script></head></html>`);
+    assert.strictEqual(noCurrency.records[0].price, undefined);
+    const plain = await readStore(STORE, `<!doctype html><html><head><meta property="og:site_name" content="Store Example"><meta property="og:type" content="product"><link rel="canonical" href="${STORE}"></head></html>`);
+    assert.ok(!plain.calls.some((one) => one.url.endsWith('.js')), 'a store record was asked of a page that is not Shopify');
+    assert.deepStrictEqual(plain.diagnostics.outcomes, { 'no-identity': 1 });
+  });
+
+  await testAsync('the store record prices only what the page’s own markup could not', async () => {
+    /* the page's own JSON-LD settles it; the record is never asked */
+    const ld = `<script type="application/ld+json">${JSON.stringify({ '@type': 'Product', name: 'Heavyweight Hoodie', image: [STORE_PHOTO], offers: { price: '98.00', priceCurrency: 'USD' } })}</script>`;
+    const settled = await readStore(STORE, storePageHtml(ld));
+    assert.strictEqual(settled.records[0].price, 98);
+    assert.ok(!settled.calls.some((one) => one.url.endsWith('.js')), 'the store record was asked for what the page already said');
+  });
+
+  await testAsync('a site that names itself only in its web app manifest is the retailer — a manifest elsewhere is not', async () => {
+    const withManifest = (href) => shopPage(`<link rel="manifest" href="${href}">`, [TROUSER]);
+    web((url) => {
+      if (url === URLS.good) return page(withManifest('/site.webmanifest'));
+      if (url === 'https://www.shop-example.com/site.webmanifest') return jsonResponse(200, { name: 'Shop Example', short_name: 'Shop' });
+      if (url === 'https://cdn.shop-example.com/i/WL48213-front.jpg') return photo();
+      return null;
+    });
+    const own = await readListings([{ title: 'Wide Leg Trouser', productUrl: URLS.good }], { limit: 12, deadline: deadlineIn(9000) });
+    assert.strictEqual(own.records[0].retailer, 'Shop Example');
+    assert.strictEqual(verifyAll(own.records).products.length, 1);
+    const calls = web((url) => {
+      if (url === URLS.good) return page(withManifest('https://manifests.elsewhere.example/site.webmanifest'));
+      if (url === 'https://cdn.shop-example.com/i/WL48213-front.jpg') return photo();
+      return null;
+    });
+    const elsewhere = await readListings([{ title: 'Wide Leg Trouser', productUrl: URLS.good }], { limit: 12, deadline: deadlineIn(9000) });
+    assert.strictEqual(elsewhere.records[0].retailer, undefined);
+    assert.ok(!calls.some((one) => one.url.includes('elsewhere')), 'a manifest on another site was fetched');
+  });
+
   console.log(`\n${passed} passed, ${failures.length} failed\n`);
   if (failures.length) process.exitCode = 1;
 })();

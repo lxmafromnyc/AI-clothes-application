@@ -1245,6 +1245,32 @@ async function productRecordFor(productUrl, catalogRow, within, how) {
     return { failed: 'there is no catalogue row to hold the record\'s title against', skipped: true };
   }
 
+  const read = await readProductRecord(productUrl, within, how);
+  if (!read.record) return read;
+  const { summary } = read;
+
+  const verdict = semanticMatch(catalogRow, { title: summary.title });
+  if (!verdict.ok || verdict.kind !== 'match') {
+    return { failed: `the product record's title "${summary.title}" is not the garment the row means — ${verdict.why}` };
+  }
+
+  const record = { handle: summary.handle, id: summary.id, title: summary.title, images: summary.images };
+  return {
+    record,
+    candidates: record.images.map((url) => ({ url, from: 'product-record', record }))
+  };
+}
+
+/* The store's record for a /products/<handle> listing, fetched from the
+   listing's own origin and held to exactly that handle — the half of
+   productRecordFor that is about WHICH product the record answers for,
+   not which garment a catalogue row means. A live search, which has no
+   catalogue row, asks this and nothing more. Its variants are kept as
+   the store states them: id, sku, price, compare_at_price, available. */
+async function readProductRecord(productUrl, within, how) {
+  const listing = shopifyHandle(productUrl);
+  if (!listing) return { failed: 'not a Shopify /products/<handle> listing', skipped: true };
+
   const fetcher = (how && how.fetch) || request;
   const got = await fetcher(listing.recordUrl, null, within);
   if (!got.ok) return { failed: `the product record could not be read (${got.why})` };
@@ -1277,17 +1303,24 @@ async function productRecordFor(productUrl, catalogRow, within, how) {
   const title = typeof record.title === 'string' ? record.title.trim() : '';
   if (!title) return { failed: 'the product record names no title' };
 
-  const verdict = semanticMatch(catalogRow, { title });
-  if (!verdict.ok || verdict.kind !== 'match') {
-    return { failed: `the product record's title "${title}" is not the garment the row means — ${verdict.why}` };
-  }
-
-  const images = recordImages(record, listing.recordUrl);
-  const summary = { handle, id, title, images };
-  return {
-    record: summary,
-    candidates: images.map((url) => ({ url, from: 'product-record', record: summary }))
+  const variants = (Array.isArray(record.variants) ? record.variants : [])
+    .filter((variant) => variant && typeof variant === 'object')
+    .map((variant) => ({
+      id: variant.id === undefined || variant.id === null ? null : String(variant.id),
+      sku: typeof variant.sku === 'string' ? variant.sku : null,
+      price: variant.price,
+      compareAtPrice: variant.compare_at_price === undefined ? null : variant.compare_at_price,
+      available: variant.available
+    }));
+  const summary = {
+    handle,
+    id,
+    title,
+    vendor: typeof record.vendor === 'string' ? record.vendor.trim() : null,
+    images: recordImages(record, listing.recordUrl),
+    variants
   };
+  return { record, summary };
 }
 
 /* ---------- the same record, embedded in a React Router page ----------
@@ -6896,7 +6929,7 @@ if (require.main === module) {
     replaceRow, linkRow, setField, indentOf, factsFromHtml, factsFromRendered, inspectCandidate,
     catalogRowIdentity, evidenceNote,
     /* a Shopify store's own product record, as identity evidence */
-    shopifyHandle, recordImages, recordImageHost, productRecordFor, productRecordEvidence, shopifyCollection, collectionTiles, SHOPIFY_PAGE,
+    shopifyHandle, recordImages, recordImageHost, productRecordFor, readProductRecord, productRecordEvidence, shopifyCollection, collectionTiles, SHOPIFY_PAGE,
     reactRouterProducts, embeddedRecordFrom, reproveEmbeddedRecord, coverageLive, browserRecordListing,
     /* whether a page is a product page, for the canonical rule */
     pageDeclarations, pageDeclarationsFromHtml, productPageVerdict,
