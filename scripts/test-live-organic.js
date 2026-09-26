@@ -1011,6 +1011,22 @@ const deadlineIn = (ms) => Date.now() + ms;
     assert.deepStrictEqual(summary.stageMs.productSearchMs, { n: 1, p50: 3000, p90: 3000, max: 3000 });
   });
 
+
+  await testAsync('the benchmark lists a query that showed something but no correct garment, judged apart from wrong ones', async () => {
+    const { summarise } = require('./bench-live');
+    const base = { survived: [], duplicates: 0, interpretMs: 1, searchMs: 1, interpreter: 'local', wrongAbove: 0, matchRank: null };
+    const summary = summarise([
+      Object.assign({}, base, { query: 'white court sneakers', returned: 1, garmentRank: null,
+        shown: [{ name: "Air Force 1 '07", retailer: 'X', productUrl: 'https://x.example/p/1', kind: 'unreadable', why: '"Air Force 1 \'07" names no garment this can read' }] }),
+      Object.assign({}, base, { query: 'fleece sweatpants', returned: 1, garmentRank: 1, shown: [{ name: 'Fleece Sweatpant', kind: 'match', why: null }] })
+    ]);
+    assert.strictEqual(summary.returnedWithoutCorrectGarment.length, 1);
+    const [one] = summary.returnedWithoutCorrectGarment;
+    assert.strictEqual(one.query, 'white court sneakers');
+    assert.strictEqual(one.unjudged.length, 1);
+    assert.strictEqual(one.wrong.length, 0);
+  });
+
   console.log(`\n${passed} passed, ${failures.length} failed\n`);
   if (failures.length) process.exitCode = 1;
 })();

@@ -33,6 +33,7 @@
 
    Usage: node --env-file=.env.local scripts/bench-live.js [--held-out] [--limit N] [--json]
           [--only "query one|query two"] [--repeat N]   (each pass from a cold cache)
+          [--out bench-live.json]                     (the JSON, written as UTF-8)
    ========================================================= */
 
 'use strict';
@@ -184,6 +185,10 @@ async function measure(id, query, category, env, provider, limit) {
     matchRank: matchAt < 0 ? null : matchAt + 1,
     wrongAbove,
     wrongGarments: above.map((one) => ({ name: one.name, retailer: one.retailer, productUrl: one.productUrl, why: one.why })),
+    /* every result shown, with the reader's verdict on it — so a query
+       that showed something and still found no correct garment says
+       what it showed and why each one was not counted */
+    shown: verdicts.map((one) => ({ name: one.name, retailer: one.retailer, productUrl: one.productUrl, kind: one.kind, why: one.why })),
     duplicates,
     searchMs,
     top: verdicts.slice(0, 3)
@@ -265,6 +270,17 @@ function summarise(results) {
     meanBestMatchRank: matchRanks.length ? Number((matchRanks.reduce((a, b) => a + b, 0) / matchRanks.length).toFixed(2)) : null,
     queriesWithWrongGarmentAbove: pct(results.filter((r) => r.wrongAbove > 0).length),
     wrongGarmentsAbove: results.filter((r) => r.wrongAbove > 0).map((r) => ({ query: r.query, results: r.wrongGarments })),
+    /* queries that SHOWED something and found no correct garment, with
+       every result and its verdict. A result the reader could not judge
+       — its title names no garment it knows ("Air Force 1 '07") — is
+       listed apart from one it judged to be a different garment: the
+       first may well be right, the second is wrong. */
+    returnedWithoutCorrectGarment: results.filter((r) => r.returned > 0 && !r.garmentRank).map((r) => ({
+      query: r.query,
+      unjudged: (r.shown || []).filter((one) => one.kind === 'unreadable'),
+      wrong: (r.shown || []).filter((one) => one.kind === 'contradiction'),
+      shown: r.shown || []
+    })),
     descriptorsInQuery: `${allDescriptors.filter((d) => d.inQuery).length}/${allDescriptors.length}`,
     descriptorsInSomeTop3Result: `${allDescriptors.filter((d) => d.inTop3 > 0).length}/${allDescriptors.length}`,
     duplicateRate: returnedTotal ? `${results.reduce((sum, r) => sum + r.duplicates, 0)}/${returnedTotal}` : '0/0',
@@ -397,6 +413,13 @@ if (require.main === module) {
   })
     .then((out) => {
       if (out.skipped) { console.log(`Live benchmark skipped: ${out.skipped}`); return; }
+      /* --out writes the whole result as UTF-8 JSON: a shell redirect on
+         Windows writes UTF-16, which is awkward to share or diff */
+      const outFile = textOf('--out');
+      if (outFile) {
+        fs.writeFileSync(path.resolve(outFile), `${JSON.stringify(out, null, 2)}\n`, 'utf8');
+        console.error(`wrote ${path.resolve(outFile)}`);
+      }
       if (json) { console.log(JSON.stringify(out, null, 2)); return; }
       console.log(`\nLIVE search (primary ${out.provider}, ${out.limit} per query) — not the catalogue benchmark:`);
       console.log(`  sources: ${out.sources.map((one) => `${one.name} ${one.role}, ${one.configured ? 'configured' : 'NOT configured'}${one.inChain ? '' : ' (not in the chain)'}`).join('; ')}`);
