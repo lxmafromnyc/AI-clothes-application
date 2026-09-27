@@ -603,6 +603,102 @@ const bodyOf = (call) => JSON.parse(call.options.body);
       'a field the schema does not have must not reach the frontend');
   });
 
+  console.log('\na budget the shopper states is read whichever model answered');
+
+  /* What gemini-3.6-flash actually answered "find me a green oversized
+     hoodie under $80" with: everything right but the budget. Every field
+     but the two prices is filled, so the tests below also show that
+     reading the budget from the words leaves the model's reading of the
+     rest exactly as it was. */
+  const PRICELESS = {
+    categories: ['knit'], colors: ['Green'], occasions: ['Everyday'], fits: ['Oversized'],
+    brands: ['UNIQLO'], styles: ['Minimal'], maxPrice: null, minPrice: null,
+    season: 'fall', gender: 'women', keywords: ['hoodie']
+  };
+
+  async function readBoth(query, raw) {
+    const openai = await withEnv({ OPENAI_API_KEY: 'sk-test' }, () => withStubbedFetch(
+      async () => jsonResponse(200, { choices: [{ message: { content: JSON.stringify(raw) } }], usage: { total_tokens: 358 } }),
+      async () => { const r = fakeRes(); await interpret(request({ query, vocabulary: VOCABULARY }), r); return r.payload.preferences; }
+    ));
+    const fromGemini = await withEnv({ AI_PROVIDER: 'gemini', GEMINI_API_KEY: FAKE_KEY }, () => withStubbedFetch(
+      async () => jsonResponse(200, reply(JSON.stringify(raw))),
+      async () => { const r = fakeRes(); await interpret(request({ query, vocabulary: VOCABULARY }), r); return r.payload.preferences; }
+    ));
+    return { openai, gemini: fromGemini };
+  }
+
+  const BUDGETS = [
+    ['find me a green oversized hoodie under $80', { maxPrice: 80, minPrice: null }],
+    ['a green oversized hoodie below $80', { maxPrice: 80, minPrice: null }],
+    ['a green oversized hoodie up to $80', { maxPrice: 80, minPrice: null }],
+    ['a green oversized hoodie $50-$100', { maxPrice: 100, minPrice: 50 }],
+    ['a green oversized hoodie over $50', { maxPrice: null, minPrice: 50 }]
+  ];
+
+  for (const [query, expected] of BUDGETS) {
+    await testAsync(`"${query}" -> maxPrice ${expected.maxPrice}, minPrice ${expected.minPrice}`, async () => {
+      const read = await readBoth(query, PRICELESS);
+      assert.strictEqual(read.gemini.maxPrice, expected.maxPrice, 'maxPrice');
+      assert.strictEqual(read.gemini.minPrice, expected.minPrice, 'minPrice');
+      assert.deepStrictEqual(read.gemini, read.openai,
+        'the same reply must produce the same intent whichever model returned it');
+      /* the rest of the reading is the model's, untouched */
+      assert.deepStrictEqual(read.gemini.categories, ['knit']);
+      assert.deepStrictEqual(read.gemini.colors, ['Green']);
+      assert.deepStrictEqual(read.gemini.fits, ['Oversized']);
+      assert.deepStrictEqual(read.gemini.brands, ['UNIQLO']);
+      assert.deepStrictEqual(read.gemini.styles, ['Minimal']);
+      assert.strictEqual(read.gemini.season, 'fall');
+      assert.strictEqual(read.gemini.gender, 'women');
+      assert.deepStrictEqual(read.gemini.garments, ['hoodie']);
+      assert.deepStrictEqual(read.gemini.descriptors, []);
+      assert.deepStrictEqual(Object.keys(read.gemini), INTENT_KEYS, 'the intent schema is unchanged');
+    });
+  }
+
+  await testAsync('garment descriptors survive beside a stated budget', async () => {
+    const read = await readBoth('a cropped cotton hoodie under $80', PRICELESS);
+    assert.strictEqual(read.gemini.maxPrice, 80);
+    assert.deepStrictEqual(read.gemini.garments, ['hoodie']);
+    assert.deepStrictEqual(read.gemini.descriptors, ['cropped', 'cotton']);
+  });
+
+  await testAsync('a request with no price leaves both prices null', async () => {
+    const read = await readBoth('find me a green oversized hoodie', PRICELESS);
+    assert.strictEqual(read.gemini.maxPrice, null);
+    assert.strictEqual(read.gemini.minPrice, null);
+    assert.deepStrictEqual(read.gemini, read.openai);
+  });
+
+  await testAsync('a price the model read from words the reader leaves alone still stands', async () => {
+    /* "eighty bucks" carries no digits, so only the model can read it */
+    const read = await readBoth('a green hoodie for eighty bucks or less', Object.assign({}, PRICELESS, { maxPrice: 80 }));
+    assert.strictEqual(read.gemini.maxPrice, 80);
+    assert.strictEqual(read.gemini.minPrice, null);
+  });
+
+  test('a number without a currency is not read as a budget', () => {
+    /* an age, a size and a pack count: all the model's to judge */
+    assert.deepStrictEqual(interpret.pricesIn('a dress for women over 50'), {});
+    assert.deepStrictEqual(interpret.pricesIn('jeans in size 10-12'), {});
+    assert.deepStrictEqual(interpret.pricesIn('tees, 3 pack, under 30'), {});
+    assert.deepStrictEqual(interpret.pricesIn('find me a green oversized hoodie'), {});
+    /* a bare price is not a bound: "a $50 hoodie" may be a target */
+    assert.deepStrictEqual(interpret.pricesIn('a $50 hoodie'), {});
+  });
+
+  test('the stated budget is read in the ways shoppers write it', () => {
+    assert.deepStrictEqual(interpret.pricesIn('under 80 dollars'), { maxPrice: 80 });
+    assert.deepStrictEqual(interpret.pricesIn('$80 or less'), { maxPrice: 80 });
+    assert.deepStrictEqual(interpret.pricesIn('a coat under $1,200'), { maxPrice: 1200 });
+    assert.deepStrictEqual(interpret.pricesIn('between $50 and $100'), { minPrice: 50, maxPrice: 100 });
+    assert.deepStrictEqual(interpret.pricesIn('$50 – $100'), { minPrice: 50, maxPrice: 100 });
+    assert.deepStrictEqual(interpret.pricesIn('$50 to $100'), { minPrice: 50, maxPrice: 100 });
+    assert.deepStrictEqual(interpret.pricesIn('$50+'), { minPrice: 50 });
+    assert.deepStrictEqual(interpret.pricesIn('over $50 and under $120'), { minPrice: 50, maxPrice: 120 });
+  });
+
   console.log('\nwhat did not change');
 
   await testAsync('production — AI_PROVIDER unset — still calls OpenAI and nothing else', async () => {
@@ -613,13 +709,17 @@ const bodyOf = (call) => JSON.parse(call.options.body);
         await interpret(request({ query: 'a black hoodie' }), r);
         assert.strictEqual(r.statusCode, 200);
         assert.strictEqual(r.payload.source, 'openai');
+        /* asked here, inside withEnv, where AI_PROVIDER really is unset:
+           outside it the shell's own AI_PROVIDER is back, and a run with
+           AI_PROVIDER=gemini exported failed this on the harness rather
+           than on the code */
+        assert.strictEqual(registry.getInterpreter(), null,
+          'with AI_PROVIDER unset the registry must select nobody at all');
         return made;
       }
     ));
     assert.strictEqual(calls.length, 1);
     assert.ok(calls[0].url.startsWith('https://api.openai.com/'), calls[0].url);
-    assert.strictEqual(registry.getInterpreter(), null,
-      'with AI_PROVIDER unset the registry must select nobody at all');
   });
 
   await testAsync('AI_PROVIDER=openai is the same built-in path, not an adapter', async () => {
