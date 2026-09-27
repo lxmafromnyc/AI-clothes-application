@@ -183,11 +183,18 @@ module.exports = async function handler(req, res) {
    The garment and what it is like are read from the shopper's own
    words by the same vocabulary the page's local reader uses, whichever
    model read the rest: a model constrained to the catalogue's filing
-   says "knit" for a hoodie, and the shopper said "hoodie". */
+   says "knit" for a hoodie, and the shopper said "hoodie".
+
+   So is a budget stated in so many words. The prompt says "under $50"
+   means maxPrice 50, and gemini-3.6-flash at minimal thinking still
+   answered "a green oversized hoodie under $80" with maxPrice null.
+   A bound the shopper spelled out is not a judgement call, so it does
+   not depend on which model was asked; anything vaguer is left to the
+   model. */
 async function interpretQuery({ query, vocabulary }) {
   const alternative = interpreters.getInterpreter();
   const key = process.env.OPENAI_API_KEY;
-  const read = (raw) => Object.assign(shapePreferences(raw), garmentsIn(query));
+  const read = (raw) => Object.assign(shapePreferences(raw), garmentsIn(query), pricesIn(query));
   try {
     if (alternative) {
       const reading = await alternative.interpret({ query, vocabulary, systemPrompt: SYSTEM_PROMPT });
@@ -257,9 +264,59 @@ function garmentsIn(query) {
   return { garments, descriptors };
 }
 
+/* The budget a request states outright: "under $80", "below $80", "up
+   to $80", "$80 or less", "over $50", "at least $50", "$50-$100",
+   "between $50 and $100". Returns only the bounds it found, so a model's
+   reading of anything else stands.
+
+   A number is read as a price only when it carries a currency — "$",
+   "dollars", "bucks" or "usd" — because "under 30" and "over 50" are an
+   age as often as a budget, and "10-12" is a size. Those are left for
+   the model to judge, as they always were. */
+const MONEY = String.raw`(\$\s*)?(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)(\s*(?:dollars?|bucks|usd)\b)?`;
+const PRICE_RANGE = [
+  new RegExp(String.raw`\bbetween\s+${MONEY}\s+and\s+${MONEY}`),
+  new RegExp(String.raw`(?:^|[^\w.,])${MONEY}\s*(?:-|to)\s*${MONEY}`)
+];
+const PRICE_MAX = [
+  new RegExp(String.raw`\b(?:under|below|less than|up to|at most|no more than|max(?:imum)?|cheaper than)\s*${MONEY}`),
+  new RegExp(String.raw`${MONEY}\s*(?:or less|or under|or below|max(?:imum)?\b)`)
+];
+const PRICE_MIN = [
+  new RegExp(String.raw`\b(?:over|above|more than|at least|no less than|min(?:imum)?|starting at)\s*${MONEY}`),
+  new RegExp(String.raw`${MONEY}\s*(?:or more|and up\b|and over\b|\+)`)
+];
+
+function pricesIn(query) {
+  const text = String(query || '').toLowerCase().replace(/[\u2010-\u2015]/g, '-');
+  /* groups come in threes per amount: currency sign, number, currency word */
+  const amount = (m, at) => (m[at] || m[at + 2] ? Number(m[at + 1].replace(/,/g, '')) : null);
+  const found = {};
+
+  for (const pattern of PRICE_RANGE) {
+    const m = text.match(pattern);
+    if (!m || !(m[1] || m[3] || m[4] || m[6])) continue;
+    const low = Number(m[2].replace(/,/g, ''));
+    const high = Number(m[5].replace(/,/g, ''));
+    if (low <= high) return { minPrice: low, maxPrice: high };
+  }
+  for (const pattern of PRICE_MAX) {
+    const m = text.match(pattern);
+    const n = m && amount(m, 1);
+    if (n !== null) { found.maxPrice = n; break; }
+  }
+  for (const pattern of PRICE_MIN) {
+    const m = text.match(pattern);
+    const n = m && amount(m, 1);
+    if (n !== null) { found.minPrice = n; break; }
+  }
+  return found;
+}
+
 
 module.exports.shapePreferences = shapePreferences;
 module.exports.interpretQuery = interpretQuery;
+module.exports.pricesIn = pricesIn;
 /* the benchmark sends both providers this prompt, from here, so neither
    is measured against a copy of it that has drifted */
 module.exports.SYSTEM_PROMPT = SYSTEM_PROMPT;
