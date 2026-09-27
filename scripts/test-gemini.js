@@ -688,6 +688,37 @@ const bodyOf = (call) => JSON.parse(call.options.body);
     assert.deepStrictEqual(interpret.pricesIn('a $50 hoodie'), {});
   });
 
+  test('every bound the contract names, and none of the things that only look like one', () => {
+    const cases = [
+      ['find me a green oversized hoodie under $80', { maxPrice: 80 }],
+      ['under $80', { maxPrice: 80 }],
+      ['below $80', { maxPrice: 80 }],
+      ['up to $80', { maxPrice: 80 }],
+      ['at most $80', { maxPrice: 80 }],
+      ['over $50', { minPrice: 50 }],
+      ['above $50', { minPrice: 50 }],
+      ['$50-$100', { minPrice: 50, maxPrice: 100 }],
+      ['$50 to $100', { minPrice: 50, maxPrice: 100 }],
+      ['between $50 and $100', { minPrice: 50, maxPrice: 100 }],
+      ['a hoodie for women over 50', {}],
+      ['jeans in size 10-12', {}],
+      ['a 3 pack of tees', {}],
+      ['a hoodie under 80', {}],
+      ['a $50 hoodie', {}]
+    ];
+    for (const [query, expected] of cases) {
+      assert.deepStrictEqual(interpret.pricesIn(query), expected, query);
+    }
+  });
+
+  test('a price the shell ate before node saw it is not a price', () => {
+    /* node -e "…under $80" in double quotes: bash expands $8 to nothing,
+       so the string that arrives is "…under 0". Reading that as maxPrice
+       0 would be a budget nobody stated. Quote the script with single
+       quotes, or escape the dollar as \$80. */
+    assert.deepStrictEqual(interpret.pricesIn('find me a green oversized hoodie under 0'), {});
+  });
+
   test('the stated budget is read in the ways shoppers write it', () => {
     assert.deepStrictEqual(interpret.pricesIn('under 80 dollars'), { maxPrice: 80 });
     assert.deepStrictEqual(interpret.pricesIn('$80 or less'), { maxPrice: 80 });
