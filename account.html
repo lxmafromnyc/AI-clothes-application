@@ -10,10 +10,10 @@
      else the page happens to reach. The script also strips it out of the
      URL the moment it has read it. -->
 <meta name="referrer" content="same-origin">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%23141414'/><text x='16' y='23' font-family='Helvetica,Arial,sans-serif' font-size='20' font-weight='700' fill='white' text-anchor='middle'>F</text></svg>">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%23121212'/><text x='16' y='24' font-family='Georgia,serif' font-size='22' fill='white' text-anchor='middle'>F</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=Instrument+Serif:ital@0;1&amp;display=swap" rel="stylesheet">
 <link rel="stylesheet" href="assets/styles.css">
 <meta name="findwear-api" content="https://ai-clothes-application.vercel.app/api/interpret">
 <script>document.documentElement.classList.add('js');</script>
@@ -22,6 +22,9 @@
 
 <a class="skip-link" href="#account">Skip to your account</a>
 
+<!-- The wordmark sits in the centre of the bar; the links fall either
+     side of it — finding things on the left, the house's business on
+     the right. On a phone the list becomes a page of its own. -->
 <header class="site-header">
   <div class="container">
     <div class="nav">
@@ -45,18 +48,21 @@
 
 <main id="main">
 
-  <section class="stage stage--tight">
-    <div class="container stage-inner">
-      <div class="hero hero--compact">
-        <h1>Your account</h1>
+  <section id="account">
+    <div class="container account-grid">
+
+      <div class="hero hero--compact account-intro">
+        <p class="eyebrow">Account</p>
+        <h1>Your <em class="voice">account</em></h1>
         <p class="lead">Sign in to subscribe, and to see what you have used.</p>
+        <ul class="account-points">
+          <li>Searching never needs an account.</li>
+          <li>Payment happens on Stripe&rsquo;s own pages.</li>
+          <li>Your plan is read from Stripe, not from this page.</li>
+        </ul>
       </div>
-    </div>
-  </section>
 
-  <section class="section" id="account">
-    <div class="container narrow">
-
+      <div class="account-main">
       <!-- Each note has one job and stays empty until it has something
            true to say. Announced when written, not on page load. -->
       <p class="billing-note" id="deployment-note" role="status" hidden></p>
@@ -218,50 +224,47 @@
           <button class="link-btn" type="button" id="signout-button">Log out</button>
         </p>
       </div>
+      </div>
 
     </div>
   </section>
 
-  <section class="section section--flush">
-    <div class="container narrow">
-      <div class="section-head">
-        <div>
-          <p class="eyebrow">How this works</p>
-          <h2>Your account, plainly</h2>
-        </div>
+  <div class="container">
+    <section class="chapter">
+      <div class="chapter-head">
+        <p class="eyebrow">How this works</p>
+        <h2>Your account, plainly</h2>
       </div>
-
+      <div>
       <div class="faq-row">
         <h3>Searching does not need an account</h3>
         <p>The Free allowance is counted per browser and comes back every day. An account is what a subscription belongs to, and what your usage is counted against once you have one.</p>
       </div>
-
       <div class="faq-row">
         <h3>Fynd never sees your Google password</h3>
         <p>Continue with Google sends you to Google's own pages. Google tells Fynd your email address and nothing else — no password, ever, and no access to your Google account beyond knowing who you are.</p>
       </div>
-
       <div class="faq-row">
         <h3>Why we confirm your email</h3>
         <p>Receipts, renewal notices and failed-payment warnings all go to your address, so we check it works before you can subscribe. The confirmation link expires and works once.</p>
       </div>
-
       <div class="faq-row">
         <h3>Your plan is decided on the server</h3>
         <p>What you are entitled to is read from your subscription in Stripe, not from anything this page holds. Editing the page changes what it draws and nothing about your account.</p>
       </div>
-    </div>
-  </section>
+      </div>
+    </section>
+  </div>
 
 </main>
 
 <footer class="site-footer">
   <div class="container">
+    <div class="footer-top">
+      <p class="footer-tagline">Find what you <em class="voice">mean.</em></p>
+      <a class="btn btn-light btn-lg" href="index.html#search">Start a search <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12h16M14 6l6 6-6 6"/></svg></a>
+    </div>
     <div class="footer-inner">
-      <a class="brand" href="index.html" aria-label="Fynd — home">
-        <span class="brand-mark" aria-hidden="true"></span>
-        <span class="brand-word">Fynd</span>
-      </a>
       <nav aria-label="Footer">
         <ul class="footer-links">
           <li><a href="index.html">Search</a></li>
@@ -271,8 +274,9 @@
           <li><a href="account.html">Account</a></li>
         </ul>
       </nav>
+      <p class="footer-note">Fynd is a demo experience. Live results come from a connected product source; when none is connected, sample items are shown and labelled as such.</p>
     </div>
-    <p class="footer-note">Fynd is a demo experience. Live results come from a connected product source; when none is connected, sample items are shown and labelled as such.</p>
+    <span class="footer-mark" aria-hidden="true">Fynd</span>
   </div>
 </footer>
 

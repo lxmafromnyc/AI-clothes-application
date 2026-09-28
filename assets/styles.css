@@ -1,73 +1,67 @@
 /* =========================================================
    Fynd — design system
 
-   Warm paper, black type, and almost nothing else. The interface is
-   meant to feel like a well-made fashion publication: generous space,
-   strong alignment, restrained weights, and large product imagery doing
-   the talking. Nothing glows, nothing is gradient-filled, and colour
-   only appears where it is saying something.
+   A fashion house's discipline applied to a search product. Two faces,
+   warm paper, ink, and one accent:
 
-   Every colour in the interface is named here and nowhere else: no rule
-   below writes a raw colour value, so the palette can be read, checked
-   and changed in one place.
+     Inter              the interface: every control, every heading,
+                        every line of product text
+     Instrument Serif   the voice: the wordmark, and the odd word in a
+                        headline set in italic, the way a magazine
+                        lets one word lean
 
-   How colour divides the work:
+     ink                the one filled control, the current page, the
+                        name a piece is sold under
+     oxblood            the accent, and it only ever marks language —
+                        the word that leans in a headline, the example
+                        requests, the numbering of a sequence. Nothing
+                        decorative is ever set in it.
 
-     primary   action and place. The one filled control, the focus
-               ring, the current page, links, and the name a product is
-               sold under. It is ink-black, so the interface reads as
-               type on paper rather than as an app with a brand hue.
-     accent    a single warm bronze, used sparingly for the invitations
-               to try something: the example searches and the step
-               numbers.
+     success            a live listing came back from a real source
+     warning            a caveat: sample data, or a request to fix
 
-     success   a live listing came back from a real source.
-     warning   a caveat: sample data, or a request that needs fixing.
-
-   Everything else — pages, cards, rules — stays neutral, so the colour
-   that is there is always saying something.
+   Every colour is named here and nowhere else: no rule below writes a
+   raw colour value, so the palette can be read, checked and changed in
+   one place. Nothing glows, nothing is gradient-filled.
    ========================================================= */
 
 :root {
-  /* ---------- neutral foundation ---------- */
+  /* ---------- paper ---------- */
+  --color-bg: #F6F4EF;             /* the page */
+  --color-bg-subtle: #EFECE5;      /* the one deeper band */
+  --color-bg-glass: rgba(246, 244, 239, .92); /* the header, over the page */
+  --color-surface: #FFFFFF;        /* the search field, sheets, forms */
+  --color-surface-2: #EDEAE3;      /* product imagery — never carries muted type */
+  --color-surface-3: #E1DDD4;      /* skeletons, meter tracks */
+  --color-surface-invert: #121212; /* the footer, the featured plan */
 
-  /* surfaces — warm paper in a few close steps */
-  --color-bg: #FAF9F6;             /* the page */
-  --color-bg-subtle: #F3F1EC;      /* the footer, and the one quiet band */
-  --color-bg-glass: rgba(250, 249, 246, .86); /* the header, over the page */
-  --color-surface: #FFFFFF;        /* the search field, cards, forms */
-  --color-surface-2: #EFEDE8;      /* product imagery, chips */
-  --color-surface-3: #E5E2DC;      /* skeletons, meter tracks */
+  --color-border: #E2DED5;
+  --color-border-strong: #CBC5B9;
+  --color-border-invert: rgba(255, 255, 255, .16);
 
-  --color-border: #E6E3DD;
-  --color-border-strong: #D3CFC7;
+  /* ---------- type ----------
+     black for what matters, one step down for prose, muted for
+     metadata, white on ink */
+  --color-text: #000000;
+  --color-text-2: #2B2B2B;
+  --color-text-muted: #6B6B6B;
+  --color-text-invert: #FFFFFF;
 
-  /* text — black for what matters, one step down for prose, muted for
-     metadata. The foundation carries no hue at all. */
-  --color-text: #000000;           /* headings, prices, primary copy */
-  --color-text-2: #2B2B2B;         /* body and supporting paragraphs */
-  --color-text-muted: #6B6B6B;     /* small metadata, captions, hints */
-  --color-text-invert: #FFFFFF;    /* type on a filled control */
-
-  /* ---------- brand ----------
-     Each hue comes in the weights it actually needs: the solid for
-     filled controls and dots, an ink dark enough to set type on paper,
-     and where something is tinted, a soft ground and a line for its
-     edge. Every ink clears 4.5:1 on the page and on its own tint. */
-
-  --color-primary: #141414;
+  /* ---------- ink ---------- */
+  --color-primary: #121212;
   --color-primary-hover: #2E2E2E;
-  --color-primary-ink: #141414;
-  --color-primary-soft: #F1EFEA;
-  --color-primary-line: #DAD6CE;
+  --color-primary-ink: #121212;
+  --color-primary-soft: #F0EDE7;
+  --color-primary-line: #D8D2C7;
 
-  --color-accent: #A88A6A;
-  --color-accent-ink: #7A5F45;
-  --color-accent-soft: #F4EEE6;
+  /* ---------- oxblood ---------- */
+  --color-accent: #7E3036;
+  --color-accent-ink: #6F262D;
+  --color-accent-soft: #F4E7E5;
 
+  /* ---------- states ---------- */
   --color-success: #3E7D5A;
   --color-success-ink: #2D6446;
-
   --color-warning: #B08A3E;
   --color-warning-ink: #76561A;
   --color-warning-soft: #F7F0E0;
@@ -76,46 +70,71 @@
   --color-text-on-primary: var(--color-text-invert);
   --color-focus: var(--color-primary);
 
-  /* the drawn stand-in for a missing photo */
-  --color-artwork: rgba(20, 20, 20, .24);
+  /* the drawn garments: the hero's flat, and the stand-in for a missing
+     photo */
+  --color-artwork: rgba(18, 18, 18, .32);
+  --color-garment: #1C1C1C;
+  --color-garment-shade: #2B2B2B;
+  --color-garment-trim: #141414;
+  --color-garment-seam: #3C3C3C;
 
-  /* shape — small radii for things you read, a pill for things you
-     press. Imagery keeps a near-square corner: a photograph with soft
-     round corners reads as an app tile, not as a page of a catalogue. */
-  --r-xs: 4px;
+  /* ---------- faces ---------- */
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --font-serif: 'Instrument Serif', 'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif;
+
+  /* ---------- space: one scale, used everywhere ---------- */
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 24px;
+  --s6: 32px;
+  --s7: 48px;
+  --s8: 64px;
+  --s9: 96px;
+  --s10: 128px;
+  --s11: 176px;
+
+  --gutter: 48px;
+  --section: var(--s11);
+  --header: 76px;
+
+  /* ---------- shape ----------
+     imagery keeps a near-square corner — a photograph with soft round
+     corners reads as an app tile, not a page of a catalogue. Sheets are
+     gently rounded; anything you press is a pill. */
+  --r-xs: 3px;
   --r-sm: 8px;
-  --r: 12px;
-  --r-lg: 16px;
-  --r-xl: 20px;
+  --r: 14px;
+  --r-lg: 20px;
+  --r-xl: 28px;
   --r-pill: 999px;
 
-  /* elevation — barely there. Only the search field and the menu sit
-     above the page, and they do it with a whisper, not a drop shadow. */
-  --shadow-sm: 0 1px 2px rgba(20, 18, 15, .04);
-  --shadow: 0 1px 2px rgba(20, 18, 15, .04), 0 12px 32px -18px rgba(20, 18, 15, .16);
-  --shadow-lift: 0 1px 2px rgba(20, 18, 15, .05), 0 18px 44px -22px rgba(20, 18, 15, .22);
-  --ring: 0 0 0 4px rgba(20, 20, 20, .06);
+  /* ---------- depth ----------
+     two shadows in the whole system: a sheet resting on paper, and a
+     sheet lifted by focus. Both are long and faint rather than dark. */
+  --shadow: 0 1px 1px rgba(28, 22, 12, .04), 0 24px 56px -28px rgba(28, 22, 12, .20);
+  --shadow-lift: 0 1px 2px rgba(28, 22, 12, .05), 0 32px 72px -30px rgba(28, 22, 12, .30);
+  --ring: 0 0 0 5px rgba(18, 18, 18, .06);
 
-  /* rhythm */
-  --gutter: 40px;
-  --gap: 20px;
-  --section: 128px;
-  --header: 72px;
-
-  --ease: cubic-bezier(.2, .6, .2, 1);
+  /* ---------- motion ----------
+     one curve, three speeds: a control answers, a surface settles, an
+     image breathes */
+  --ease: cubic-bezier(.22, .61, .21, 1);
   --fast: .18s;
-  --slow: .6s;
+  --mid: .32s;
+  --slow: .8s;
 }
 
 *, *::before, *::after { box-sizing: border-box; }
 
-html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; scroll-padding-top: var(--header); }
 
 body {
   margin: 0;
   background: var(--color-bg);
   color: var(--color-text);
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  font-family: var(--font-sans);
   font-size: 16px;
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
@@ -124,17 +143,16 @@ body {
   text-rendering: optimizeLegibility;
 }
 
-/* headings are set large and light rather than small and heavy: the
-   weight comes from the size and the tight tracking, not from bold */
-h1, h2, h3, h4 { margin: 0; font-weight: 500; letter-spacing: -.025em; line-height: 1.15; color: var(--color-text); }
+h1, h2, h3, h4 { margin: 0; font-weight: 500; letter-spacing: -.03em; line-height: 1.1; color: var(--color-text); }
 p { margin: 0; }
 img, svg { display: block; max-width: 100%; }
 a { color: inherit; text-decoration: none; }
 button, input, select, textarea { font: inherit; color: inherit; }
-ul { margin: 0; padding: 0; }
+ul, ol { margin: 0; padding: 0; }
 strong { font-weight: 600; }
+figure { margin: 0; }
 
-::selection { background: var(--color-surface-3); color: var(--color-text); }
+::selection { background: var(--color-accent-soft); color: var(--color-text); }
 
 :focus-visible {
   outline: 2px solid var(--color-focus);
@@ -148,8 +166,6 @@ strong { font-weight: 600; }
   clip: rect(0 0 0 0); white-space: nowrap; border: 0;
 }
 
-/* the accessibility path stays complete, and stays out of the way:
-   off-screen until a keyboard reaches it */
 .skip-link {
   position: absolute;
   left: 16px; top: -64px;
@@ -163,27 +179,44 @@ strong { font-weight: 600; }
 }
 .skip-link:focus { top: 14px; }
 
-/* The small label above a heading. Sentence case, not shouted: a
-   kicker in capitals on every section is how a page starts to read as
-   a slide deck. */
+/* ---------- the voice ----------
+   The one word in a headline that leans. Italic serif, in oxblood: the
+   accent marks language, and this is where the language is. */
+.voice {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-weight: 400;
+  letter-spacing: -.01em;
+  color: var(--color-accent-ink);
+}
+
+/* The label above a heading: sentence case, led by a short rule. A rule
+   and a few words read as a fashion page; a row of capitals reads as a
+   slide deck. */
 .eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s3);
   font-size: 13px;
   font-weight: 500;
   letter-spacing: 0;
   color: var(--color-text-muted);
 }
+.eyebrow::before {
+  content: '';
+  width: 22px; height: 1px;
+  background: var(--color-accent);
+}
 
 /* ---------- layout ---------- */
 
-.container { width: min(1280px, 100% - 2 * var(--gutter)); margin-inline: auto; }
+.container { width: min(1360px, 100% - 2 * var(--gutter)); margin-inline: auto; }
 .narrow { width: min(760px, 100% - 2 * var(--gutter)); margin-inline: auto; }
 
 .section { padding: var(--section) 0; }
-.section--tight { padding: 72px 0 var(--section); }
+.section--tight { padding: var(--s8) 0 var(--section); }
 .section--flush { padding-top: 0; }
-/* the stage already leaves room under the title, so whatever follows it
-   starts close rather than adding a second gap of its own */
-.stage + .section { padding-top: 8px; }
+.band { background: var(--color-bg-subtle); }
 
 .divider { border: 0; border-top: 1px solid var(--color-border); margin: 0; }
 
@@ -191,62 +224,69 @@ strong { font-weight: 600; }
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
-  gap: 24px;
+  gap: var(--s5) var(--s7);
   flex-wrap: wrap;
-  margin-bottom: 40px;
+  margin-bottom: var(--s8);
 }
-.section-head h2 { font-size: clamp(26px, 2.6vw, 34px); letter-spacing: -.03em; }
-.section-head .eyebrow { margin-bottom: 10px; }
-.section-head p { color: var(--color-text-muted); font-size: 16px; max-width: 46ch; margin-top: 10px; }
-/* a heading that opens a new block partway down a prose page */
-.section-head--spaced { margin-top: 88px; }
+.section-head .eyebrow { margin-bottom: var(--s5); }
+.section-head h2 {
+  font-size: clamp(36px, 4.4vw, 64px);
+  letter-spacing: -.045em;
+  line-height: 1;
+}
+.section-head p { color: var(--color-text-muted); font-size: 17px; max-width: 40ch; margin-top: var(--s4); text-wrap: pretty; }
+.section-head--spaced { margin-top: var(--s10); }
+/* a smaller head, for blocks inside a page rather than chapters of it */
+.section-head--minor { margin-bottom: var(--s6); }
+.section-head--minor h2 { font-size: clamp(26px, 2.6vw, 34px); letter-spacing: -.035em; }
 
 .head-link {
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--color-primary-ink);
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding-bottom: 3px;
-  border-bottom: 1px solid var(--color-primary-line);
-  transition: border-color var(--fast) var(--ease);
+  gap: var(--s2);
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--color-primary-ink);
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--color-primary);
+  transition: gap var(--fast) var(--ease);
 }
-.head-link svg { width: 12px; height: 12px; transition: transform var(--fast) var(--ease); }
-.head-link:hover { border-color: var(--color-primary); }
-.head-link:hover svg { transform: translateX(2px); }
+.head-link svg { width: 13px; height: 13px; }
+.head-link:hover { gap: var(--s3); }
 
 /* ---------- header ----------
-   Light and quiet: a wordmark on the left, a handful of links on the
-   right, and a hairline. It stays with the reader as they scroll, over
-   a translucent ground, so it never feels like a bar bolted on top. */
+   The wordmark sits in the centre, the way a house's name does over its
+   door; the links fall either side of it, finding things on the left
+   and the house's business on the right. */
 
 .site-header {
   position: sticky;
   top: 0;
   z-index: 60;
   background: var(--color-bg-glass);
-  -webkit-backdrop-filter: saturate(1.4) blur(14px);
-  backdrop-filter: saturate(1.4) blur(14px);
+  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
   border-bottom: 1px solid var(--color-border);
 }
 .nav {
   position: relative;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 24px;
   height: var(--header);
 }
+.nav > nav { flex: 1; }
 
-/* The logo is a wordmark closed by a small square, set like a full
-   stop. It is the only mark, so the header, the footer and the tab all
-   carry the same thing. */
+/* the wordmark: the name in the voice's face, closed by a small square
+   set like a full stop */
 .brand {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
   display: inline-flex;
   align-items: baseline;
-  gap: 3px;
-  flex: none;
+  gap: 2px;
+  z-index: 1;
 }
 .brand-mark {
   order: 2;
@@ -254,21 +294,24 @@ strong { font-weight: 600; }
   background: var(--color-primary);
 }
 .brand-word {
-  font-size: 21px;
-  font-weight: 600;
-  letter-spacing: -.045em;
+  font-family: var(--font-serif);
+  font-size: 34px;
+  font-weight: 400;
+  letter-spacing: -.02em;
   line-height: 1;
   color: var(--color-text);
 }
 
-.nav-links { display: flex; align-items: center; gap: 36px; list-style: none; }
+.nav-links { display: flex; align-items: center; gap: var(--s6); list-style: none; }
+.nav-links li:nth-child(3) { margin-left: auto; }
 .nav-links a {
   position: relative;
-  display: inline-block;
-  padding: 6px 0;
+  display: inline-flex;
+  align-items: center;
+  height: 40px;
   font-size: 14px;
   font-weight: 400;
-  color: var(--color-text-muted);
+  color: var(--color-text-2);
   transition: color var(--fast) var(--ease);
 }
 .nav-links a:hover { color: var(--color-text); }
@@ -276,31 +319,40 @@ strong { font-weight: 600; }
 .nav-links a[aria-current="page"]::after {
   content: '';
   position: absolute;
-  left: 0; right: 0; bottom: 0;
+  left: 0; right: 0; bottom: 6px;
   height: 1px;
   background: var(--color-primary);
 }
+/* the account link is the one place a visitor acts on the house rather
+   than the catalogue, so it is drawn as a control */
+.nav-links a[href="account.html"] {
+  padding: 0 var(--s4);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--r-pill);
+  transition: border-color var(--fast) var(--ease), background var(--fast) var(--ease);
+}
+.nav-links a[href="account.html"]:hover { border-color: var(--color-primary); background: var(--color-surface); }
+.nav-links a[href="account.html"][aria-current="page"] { border-color: var(--color-primary); }
+.nav-links a[href="account.html"][aria-current="page"]::after { left: 50%; right: auto; bottom: -9px; width: 5px; height: 5px; margin-left: -2.5px; }
 
-/* two lines that fold into a cross */
 .nav-toggle {
   display: none;
   width: 44px; height: 44px;
-  margin-right: -10px;
+  margin: 0 -10px 0 auto;
   border: 0;
   background: transparent;
-  border-radius: var(--r-sm);
   cursor: pointer;
   padding: 0;
   place-items: center;
 }
-.nav-toggle span { position: relative; display: block; width: 20px; height: 8px; }
+.nav-toggle span { position: relative; display: block; width: 22px; height: 8px; }
 .nav-toggle span::before, .nav-toggle span::after {
   content: '';
   position: absolute;
   left: 0;
-  width: 20px; height: 1.5px;
+  width: 22px; height: 1.5px;
   background: var(--color-text);
-  transition: transform var(--fast) var(--ease), top var(--fast) var(--ease);
+  transition: transform var(--mid) var(--ease), top var(--mid) var(--ease);
 }
 .nav-toggle span::before { top: 0; }
 .nav-toggle span::after { top: 6.5px; }
@@ -308,16 +360,17 @@ strong { font-weight: 600; }
 .nav-toggle[aria-expanded="true"] span::after { top: 3.25px; transform: rotate(-45deg); }
 
 /* ---------- buttons ----------
-   One filled control, in ink, shaped as a pill. Everything else is an
-   outline or plain text. Motion is a change of tone, never a bounce. */
+   Three kinds, and only three: the ink pill that does the thing, the
+   outline pill beside it, and plain text. They answer with a change of
+   tone and a slight give when pressed, never a bounce. */
 
 .btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 9px;
-  height: 48px;
-  padding: 0 26px;
+  gap: 10px;
+  height: 52px;
+  padding: 0 28px;
   border-radius: var(--r-pill);
   border: 1px solid transparent;
   font-size: 15px;
@@ -328,8 +381,9 @@ strong { font-weight: 600; }
   transition: background var(--fast) var(--ease), border-color var(--fast) var(--ease),
               color var(--fast) var(--ease), transform var(--fast) var(--ease);
 }
-.btn svg { width: 15px; height: 15px; flex: none; }
-.btn:active { transform: scale(.985); }
+.btn svg { width: 16px; height: 16px; flex: none; transition: transform var(--fast) var(--ease); }
+.btn:hover svg { transform: translateX(2px); }
+.btn:active { transform: scale(.98); }
 
 .btn-primary {
   background: var(--color-primary);
@@ -345,9 +399,17 @@ strong { font-weight: 600; }
 }
 .btn-secondary:hover { border-color: var(--color-primary); background: var(--color-surface); }
 
-.btn-lg { height: 54px; padding: 0 32px; font-size: 15.5px; }
+/* the primary action turned over, for the ink surfaces */
+.btn-light {
+  background: var(--color-text-invert);
+  border-color: var(--color-text-invert);
+  color: var(--color-text);
+}
+.btn-light:hover { background: var(--color-surface-3); border-color: var(--color-surface-3); }
+
+.btn-lg { height: 58px; padding: 0 34px; font-size: 16px; }
 .btn-block { width: 100%; }
-.btn-row { display: flex; flex-wrap: wrap; gap: 12px; }
+.btn-row { display: flex; flex-wrap: wrap; gap: var(--s3); }
 
 .link-btn {
   border: none; background: none; padding: 8px 4px;
@@ -358,79 +420,112 @@ strong { font-weight: 600; }
 .link-btn:hover { color: var(--color-text); text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 4px; }
 
 /* ---------- the stage ----------
-   The top of every page. No tinted band and no hairline under it: the
-   headline and the search sit straight on the paper, with room around
-   them, and the page simply continues below. */
+   The top of every page, straight on the paper. */
 
-.stage {
-  padding: clamp(72px, 13vh, 150px) 0 72px;
-  scroll-margin-top: var(--header);
-}
+.stage { padding: var(--s10) 0 var(--s9); }
 .stage-inner { display: flex; flex-direction: column; align-items: center; }
 
-.hero { text-align: center; max-width: min(900px, 100%); margin-bottom: 44px; }
+/* ---------- the home stage ----------
+   Two halves: the request on the left, what Fynd makes of it on the
+   right. The first screen is a composition, not a column of text — and
+   the search field, at the centre of the left half, is the heaviest
+   thing on it. */
+
+.stage--home { padding: var(--s8) 0 var(--s10); }
+.hero-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.08fr) minmax(0, .92fr);
+  gap: var(--s9);
+  align-items: center;
+}
+
+.hero .eyebrow { margin-bottom: var(--s6); }
 .hero h1 {
-  font-size: clamp(44px, 6.2vw, 88px);
+  font-size: clamp(56px, 7vw, 112px);
   font-weight: 500;
-  letter-spacing: -.05em;
-  line-height: 1;
-  margin-bottom: 24px;
+  letter-spacing: -.058em;
+  line-height: .94;
+  margin-bottom: var(--s6);
   text-wrap: balance;
 }
-/* a second sentence in a headline takes its own line, so it never
-   breaks mid-clause however wide the window is */
+.hero h1 .voice { letter-spacing: -.025em; padding-right: .04em; }
 .hero-line { display: block; }
 .hero .lead {
-  color: var(--color-text-muted);
-  font-size: clamp(17px, 1.4vw, 19px);
+  color: var(--color-text-2);
+  font-size: clamp(17px, 1.35vw, 20px);
   line-height: 1.55;
-  max-width: 44ch;
-  margin-inline: auto;
+  max-width: 38ch;
+  margin-bottom: var(--s7);
   text-wrap: pretty;
 }
 
-/* the page header on the inner pages: the same shape, smaller */
-.page-head { text-align: center; max-width: 680px; margin: 0 auto 44px; }
-/* on a page whose stage carries only the title, the band closes on its
-   own padding rather than on the title's trailing space */
-.page-head:only-child { margin-bottom: 0; }
-.page-head h1 {
-  font-size: clamp(38px, 4.6vw, 60px);
-  letter-spacing: -.045em;
-  line-height: 1.04;
-  margin-bottom: 18px;
+/* the smaller hero the account page opens with */
+.hero--compact h1 { font-size: clamp(44px, 5.2vw, 76px); letter-spacing: -.052em; margin-bottom: var(--s5); }
+.hero--compact .lead { margin-bottom: 0; }
+
+/* ---------- inner page openings ----------
+   Left-aligned, in two columns: the title, large, and one paragraph set
+   against its baseline. The same shape on every inner page. */
+
+.page-intro {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, .8fr);
+  gap: var(--s5) var(--s9);
+  align-items: end;
+  padding: var(--s10) 0 var(--s9);
+}
+.page-intro .eyebrow { margin-bottom: var(--s5); }
+.page-intro h1 {
+  font-size: clamp(52px, 7.4vw, 120px);
+  letter-spacing: -.06em;
+  line-height: .92;
   text-wrap: balance;
 }
-.page-head p { color: var(--color-text-muted); font-size: 17px; max-width: 48ch; margin-inline: auto; text-wrap: pretty; }
+.page-intro p { color: var(--color-text-2); font-size: 18px; line-height: 1.55; max-width: 40ch; padding-bottom: 10px; text-wrap: pretty; }
+.page-intro--center { grid-template-columns: 1fr; justify-items: center; text-align: center; }
+.page-intro--center p { padding-bottom: 0; }
+
+/* the centred title the search page opens with */
+.page-head { text-align: center; max-width: 820px; margin: 0 auto var(--s8); }
+.page-head .eyebrow { margin-bottom: var(--s5); }
+.page-head h1 {
+  font-size: clamp(48px, 6.4vw, 96px);
+  letter-spacing: -.056em;
+  line-height: .96;
+  margin-bottom: var(--s5);
+  text-wrap: balance;
+}
+.page-head p { color: var(--color-text-2); font-size: 18px; max-width: 44ch; margin-inline: auto; text-wrap: pretty; }
+.page-head:only-child { margin-bottom: 0; }
 
 /* ---------- the search field ----------
-   The centrepiece, and the only thing on the page that is raised. It
-   reads as one substantial field — the words you type, and underneath
-   them a quiet row of options with the one action on the right. */
+   The product, drawn as an object: a white sheet on the paper, large
+   type, the one ink control at its corner. It lifts when you are in it. */
 
-.ask-wrap { width: min(720px, 100%); }
+.ask-wrap { width: 100%; max-width: 720px; }
+.stage-inner .ask-wrap { max-width: 760px; }
 
 .ask-card {
   position: relative;
-  scroll-margin-top: 104px;
+  scroll-margin-top: 120px;
   background: var(--color-surface);
-  border: 1px solid var(--color-border-strong);
+  border: 1px solid var(--color-border);
   border-radius: var(--r-xl);
   box-shadow: var(--shadow);
-  padding: 20px 14px 14px 22px;
-  transition: border-color var(--fast) var(--ease), box-shadow var(--fast) var(--ease);
+  padding: var(--s5) var(--s5) var(--s4) var(--s6);
+  transition: border-color var(--mid) var(--ease), box-shadow var(--mid) var(--ease), transform var(--mid) var(--ease);
 }
-.ask-card:hover { border-color: var(--color-text-muted); }
+.ask-card:hover { border-color: var(--color-border-strong); }
 .ask-card:focus-within {
   border-color: var(--color-primary);
   box-shadow: var(--shadow-lift), var(--ring);
 }
 
-.ask-field { display: flex; gap: 14px; padding: 2px 8px 0 0; }
+.ask-field { display: flex; gap: var(--s4); padding: 6px var(--s3) 0 0; }
 .ask-icon {
   flex: none;
-  width: 20px; height: 20px;
-  margin-top: 5px;
+  width: 22px; height: 22px;
+  margin-top: 6px;
   color: var(--color-text-muted);
   transition: color var(--fast) var(--ease);
 }
@@ -443,52 +538,58 @@ strong { font-weight: 600; }
   resize: none;
   background: transparent;
   font-family: inherit;
-  font-size: 19px;
-  line-height: 1.55;
-  letter-spacing: -.012em;
+  font-size: 23px;
+  line-height: 1.45;
+  letter-spacing: -.02em;
   color: var(--color-text);
   padding: 0;
-  min-height: 30px;
+  min-height: 68px;
 }
 .ask-card textarea::placeholder { color: var(--color-text-muted); opacity: 1; }
 
 .ask-actions {
   display: flex;
   align-items: center;
-  gap: 4px;
-  margin-top: 18px;
-  padding-left: 30px;
+  gap: var(--s2);
+  margin-top: var(--s4);
+  padding-top: var(--s4);
+  border-top: 1px solid var(--color-border);
 }
-.ask-actions .btn-primary { order: 3; margin-left: auto; height: 44px; padding: 0 24px; }
+.ask-actions .btn-primary { order: 4; height: 50px; padding: 0 26px 0 28px; }
 .ask-actions .attach-btn { order: 1; }
 .ask-actions .link-btn { order: 2; }
+.ask-hint { order: 3; margin-left: auto; margin-right: var(--s3); font-size: 12.5px; color: var(--color-text-muted); white-space: nowrap; }
+.ask-hint kbd {
+  font-family: inherit;
+  font-size: 11.5px;
+  padding: 2px 6px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 5px;
+  color: var(--color-text-2);
+  background: var(--color-surface);
+}
 
-/* Clear appears only once there is something to clear. It stays in the
-   layout either way, so the row never shifts as it comes and goes. */
+/* Clear appears only once there is something to clear. It keeps its
+   place either way, so the row never shifts. */
 .ask-card:has(textarea:placeholder-shown):has(#attachments[hidden]) #reset-form { visibility: hidden; }
 
-/* attaching is the second action: plainly available, plainly not the
-   main one — text and a glyph, no box */
 .attach-btn {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: var(--s2);
   height: 40px;
-  padding: 0 10px 0 0;
+  padding: 0 var(--s3) 0 0;
   border-radius: var(--r-sm);
   font-size: 14px;
-  font-weight: 400;
   color: var(--color-text-muted);
   cursor: pointer;
   white-space: nowrap;
   transition: color var(--fast) var(--ease);
 }
-.attach-btn svg { width: 15px; height: 15px; flex: none; }
+.attach-btn svg { width: 16px; height: 16px; flex: none; }
 .attach-btn:hover { color: var(--color-text); }
 #ask-files:focus-visible + .attach-btn { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 
-/* the whole field is the drop target, so a file can be let go anywhere
-   over it rather than on a small strip */
 .ask-dropveil {
   position: absolute;
   inset: 0;
@@ -497,7 +598,7 @@ strong { font-weight: 600; }
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 10px;
+  gap: var(--s3);
   border-radius: var(--r-xl);
   border: 1px dashed var(--color-primary);
   background: var(--color-surface);
@@ -505,7 +606,7 @@ strong { font-weight: 600; }
   font-size: 15px;
   font-weight: 500;
 }
-.ask-dropveil svg { width: 22px; height: 22px; }
+.ask-dropveil svg { width: 24px; height: 24px; }
 .ask-card.is-dragover .ask-dropveil { display: flex; }
 .ask-card.is-dragover { border-color: var(--color-primary); }
 
@@ -513,16 +614,16 @@ strong { font-weight: 600; }
   list-style: none;
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--s2);
   margin: 0;
-  padding: 14px 0 0 34px;
+  padding: var(--s4) 0 0 38px;
 }
 .attachment {
   display: flex;
   align-items: center;
   gap: 10px;
   max-width: 100%;
-  padding: 5px 5px 5px 5px;
+  padding: 5px;
   background: var(--color-primary-soft);
   border: 1px solid var(--color-primary-line);
   border-radius: var(--r);
@@ -530,14 +631,13 @@ strong { font-weight: 600; }
 .attachment-thumb,
 .attachment-kind {
   flex: none;
-  width: 34px;
-  height: 34px;
+  width: 36px;
+  height: 36px;
   border-radius: var(--r-sm);
   background: var(--color-surface);
   border: 1px solid var(--color-border);
 }
 .attachment-thumb { object-fit: cover; }
-/* a document cannot be shown, so it is named instead of faked */
 .attachment-kind {
   display: grid;
   place-items: center;
@@ -560,8 +660,8 @@ strong { font-weight: 600; }
   flex: none;
   display: grid;
   place-items: center;
-  width: 26px;
-  height: 26px;
+  width: 28px;
+  height: 28px;
   border: 0;
   border-radius: var(--r-pill);
   background: transparent;
@@ -573,17 +673,17 @@ strong { font-weight: 600; }
 .attachment-remove:hover { background: var(--color-primary-line); color: var(--color-text); }
 
 .attachment-note {
-  margin: 10px 0 0 34px;
+  margin: var(--s3) 0 0 38px;
   font-size: 12.5px;
   color: var(--color-text-muted);
   line-height: 1.5;
 }
 
-/* Something to put right before the search can run. It is set in the
-   warning ink — the same hue that marks sample data — because both are
-   the interface saying "read this first", not "something broke". */
+/* Something to put right before the search can run, in the warning
+   ink — the same hue that marks sample data, because both are the
+   interface saying "read this first", not "something broke". */
 .form-error {
-  margin: 10px 0 0 34px;
+  margin: var(--s3) 0 0 38px;
   font-size: 14px;
   font-weight: 500;
   color: var(--color-warning-ink);
@@ -591,78 +691,193 @@ strong { font-weight: 600; }
 }
 .form-error.show { display: block; }
 #attachment-error:empty { display: none; }
-#attachment-error {
-  display: block;
-  font-size: 13.5px;
-  font-weight: 400;
-}
-/* forms elsewhere have no glyph column to line up with */
+#attachment-error { display: block; font-size: 13.5px; font-weight: 400; }
 .auth-card .form-error { margin: 4px 0 14px; }
 
 /* ---------- examples ----------
-   Written as things you could have typed, and clickable, so the first
-   search costs one click rather than a sentence. */
+   Written as things you could have typed, and one click from being
+   searched. They are words, so they are set in the accent. */
 
 .ask-examples {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  justify-content: center;
-  gap: 8px;
-  width: min(720px, 100%);
-  margin-top: 22px;
+  gap: var(--s2);
+  margin-top: var(--s5);
 }
-.ask-examples .examples-label { margin-right: 6px; }
+.stage-inner .ask-examples { justify-content: center; }
+/* the label takes its own line, so the requests sit in one row under it */
+.ask-examples .examples-label { width: 100%; margin-bottom: 2px; }
+.ask-examples .examples-label::before { display: none; }
 .example {
   display: inline-flex;
   align-items: center;
-  border: 1px solid var(--color-border);
+  gap: var(--s2);
+  height: 38px;
+  border: 1px solid var(--color-border-strong);
+  flex: none;
   background: transparent;
   border-radius: var(--r-pill);
-  padding: 7px 15px;
+  padding: 0 14px;
   font-size: 13.5px;
   font-weight: 400;
   color: var(--color-accent-ink);
   cursor: pointer;
+  white-space: nowrap;
   transition: border-color var(--fast) var(--ease), background var(--fast) var(--ease);
 }
-.example:hover {
-  border-color: var(--color-accent);
-  background: var(--color-accent-soft);
+.example::after {
+  content: '';
+  width: 10px; height: 10px;
+  border-top: 1px solid currentColor;
+  border-right: 1px solid currentColor;
+  transform: scale(.7) rotate(45deg);
+  opacity: 0;
+  margin-right: -4px;
+  transition: opacity var(--fast) var(--ease), margin var(--fast) var(--ease);
+}
+.example:hover { border-color: var(--color-accent); background: var(--color-accent-soft); }
+.example:hover::after { opacity: 1; margin-right: 0; }
+
+/* ---------- the reading ----------
+   What the right half of the home stage shows: a request, taken apart.
+   One garment drawn as a flat, the way a line sheet draws it, with the
+   four things Fynd reads out of the sentence pinned to it. Nothing here
+   is a product: it is the idea of the product, drawn. */
+
+.reading {
+  position: relative;
+  aspect-ratio: 6 / 7;
+  background: var(--color-surface-2);
+  border-radius: var(--r-xs);
+  overflow: hidden;
+}
+/* the drawing's own box: the pins are placed in it, in the garment's
+   coordinates, so each dot lands on its part at every size */
+.reading-art {
+  position: absolute;
+  left: 50%; top: 57%;
+  width: 62%;
+  aspect-ratio: 480 / 600;
+  transform: translate(-50%, -50%);
+}
+.reading-art svg { width: 100%; height: auto; }
+.reading-art .g-body { fill: var(--color-garment); }
+.reading-art .g-hood { fill: var(--color-garment-shade); }
+.reading-art .g-trim { fill: var(--color-garment-trim); }
+.reading-art .g-seam { stroke: var(--color-garment-seam); }
+.reading-art .g-cord { stroke: var(--color-surface-2); }
+.reading-art .g-tag { fill: var(--color-surface); stroke: var(--color-border-strong); }
+.reading-art .g-string { stroke: var(--color-accent); }
+.reading-art .g-shadow { fill: var(--color-surface-3); }
+
+/* the sentence it was given, at the top of the sheet */
+.reading-request {
+  position: absolute;
+  top: var(--s6); left: var(--s6); right: var(--s6);
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--s4);
+}
+.reading-request span {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--color-text-2);
+}
+.reading-request q {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: clamp(19px, 1.7vw, 25px);
+  line-height: 1.15;
+  color: var(--color-accent-ink);
+  text-align: right;
+}
+
+/* each thing it read, pinned to the part of the garment it is about */
+.pin {
+  position: absolute;
+  top: var(--y);
+  display: flex;
+  align-items: center;
+  transform: translateY(-50%);
+}
+.pin-card {
+  display: flex;
+  flex-direction: column;
+  padding: 9px 14px 10px;
+  background: var(--color-surface);
+  border-radius: var(--r-sm);
+  box-shadow: var(--shadow);
+  white-space: nowrap;
+}
+.pin-card small { font-size: 11.5px; line-height: 1.3; color: var(--color-text-muted); }
+.pin-card b { font-size: 15px; font-weight: 500; line-height: 1.35; color: var(--color-text); letter-spacing: -.01em; }
+.pin-line { width: var(--reach, 48px); height: 1px; background: var(--color-primary); }
+.pin-line::after {
+  content: '';
+  display: block;
+  width: 7px; height: 7px;
+  margin: -3px 0 0 auto;
+  border-radius: 50%;
+  background: var(--color-primary);
+  box-shadow: 0 0 0 4px var(--color-surface);
+}
+.pin--left { flex-direction: row; right: calc(100% - var(--x)); }
+.pin--right { flex-direction: row-reverse; left: var(--x); }
+.pin--right .pin-line::after { margin: -3px auto 0 0; }
+
+/* anchors, as a share of the 480 x 600 drawing */
+.pin--garment { --x: 36.5%; --y: 22%; --reach: 56px; }
+.pin--colour { --x: 76%; --y: 40%; --reach: 40px; }
+.pin--fit { --x: 21%; --y: 44%; --reach: 30px; }
+.pin--budget { --x: 89.6%; --y: 75%; --reach: 20px; }
+
+.reading-caption {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--s4);
+  margin-top: var(--s4);
+  font-size: 13px;
+  color: var(--color-text-muted);
 }
 
 /* ---------- results ---------- */
 
-.results { padding: 24px 0 var(--section); scroll-margin-top: calc(var(--header) + 24px); }
+.results { padding: var(--s4) 0 var(--section); scroll-margin-top: calc(var(--header) + var(--s5)); }
 
 .results-head {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 20px 32px;
-  flex-wrap: wrap;
-  padding-bottom: 24px;
-  margin-bottom: 36px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: var(--s5) var(--s7);
+  padding-bottom: var(--s6);
+  margin-bottom: var(--s7);
   border-bottom: 1px solid var(--color-border);
 }
-.results-head h2 { font-size: clamp(28px, 3vw, 40px); letter-spacing: -.04em; }
-
-/* what the interpreter took from the request, said once, beside the
-   count, instead of a claim repeated on every card */
-.understood { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.understood-label { font-size: 13px; color: var(--color-text-muted); margin-right: 4px; }
-.understood span:not(.understood-label) {
-  padding: 5px 12px;
-  border-radius: var(--r-pill);
-  background: var(--color-primary-soft);
-  border: 1px solid var(--color-primary-line);
-  color: var(--color-primary-ink);
-  font-size: 13px;
-  font-weight: 400;
+.results-head h2 { font-size: clamp(40px, 5vw, 76px); letter-spacing: -.055em; line-height: .96; }
+.results-query {
+  margin-top: var(--s4);
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: clamp(20px, 1.8vw, 26px);
+  line-height: 1.25;
+  color: var(--color-accent-ink);
 }
 
-/* One small marker beside the kicker, saying where the rows on screen
-   came from. A dot and a word rather than another filled pill. */
+/* what was read out of the request, said once, beside the count,
+   instead of a claim repeated on every card */
+.understood { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; max-width: 520px; }
+.understood-label { width: 100%; text-align: right; font-size: 12.5px; color: var(--color-text-muted); margin-bottom: 4px; }
+.understood span:not(.understood-label) {
+  padding: 6px 14px;
+  border-radius: var(--r-pill);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  color: var(--color-primary-ink);
+  font-size: 13.5px;
+}
+
 .status {
   display: inline-flex;
   align-items: center;
@@ -671,118 +886,127 @@ strong { font-weight: 600; }
   font-weight: 500;
   white-space: nowrap;
 }
-.status::before {
-  content: '';
-  width: 6px; height: 6px;
-  border-radius: 50%;
-}
+.status::before { content: ''; width: 6px; height: 6px; border-radius: 50%; }
 .status--live { color: var(--color-success-ink); }
 .status--live::before { background: var(--color-success); }
 .status--sample { color: var(--color-warning-ink); }
 .status--sample::before { background: var(--color-warning); }
-.results-head-line { display: flex; align-items: center; gap: 14px; margin-bottom: 10px; }
+.results-head-line { display: flex; align-items: center; gap: var(--s4); margin-bottom: var(--s5); }
+.results-head-line .eyebrow { margin: 0; }
+
+/* ---------- waiting ----------
+   A hairline that runs while the request is read, over the shape of the
+   answer drawn in paper. It says "working" without a spinner. */
 
 .thinking {
-  display: flex; align-items: center; gap: 10px;
-  color: var(--color-text-muted); font-size: 14.5px;
-  padding: 0 0 28px;
+  display: flex; align-items: center; gap: var(--s3);
+  color: var(--color-text-2); font-size: 15px;
+  padding: 0 0 var(--s5);
 }
 .thinking .dot {
   width: 6px; height: 6px; border-radius: 50%;
-  background: var(--color-primary);
+  background: var(--color-accent);
   animation: breathe 1.4s ease-in-out infinite;
 }
-@keyframes breathe { 0%, 100% { opacity: .2; } 50% { opacity: 1; } }
+@keyframes breathe { 0%, 100% { opacity: .25; } 50% { opacity: 1; } }
 
-/* the shape of the answer, drawn before the answer arrives, so the
-   grid does not jump into place from nothing */
-.skeleton-card { animation: fade 1.6s ease-in-out infinite; }
-.skeleton-media { aspect-ratio: 4 / 5; background: var(--color-surface-2); border-radius: var(--r-xs); }
-.skeleton-line {
-  height: 10px;
-  margin-top: 16px;
-  width: 70%;
-  border-radius: var(--r-xs);
-  background: var(--color-surface-3);
+.progress {
+  position: relative;
+  height: 1px;
+  margin-bottom: var(--s7);
+  background: var(--color-border);
+  overflow: hidden;
 }
-.skeleton-line--short { width: 35%; margin-top: 10px; }
-@keyframes fade { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
+.progress::after {
+  content: '';
+  position: absolute;
+  top: 0; bottom: 0; left: 0;
+  width: 30%;
+  background: var(--color-primary);
+  animation: travel 1.6s var(--ease) infinite;
+}
+@keyframes travel { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
+
+.skeleton-card { animation: fade 1.8s ease-in-out infinite; }
+.skeleton-card:nth-child(2) { animation-delay: .15s; }
+.skeleton-card:nth-child(3) { animation-delay: .3s; }
+.skeleton-card:nth-child(4) { animation-delay: .45s; }
+.skeleton-media { aspect-ratio: 3 / 4; background: var(--color-surface-2); border-radius: var(--r-xs); }
+.skeleton-line { height: 9px; margin-top: var(--s4); width: 38%; border-radius: 2px; background: var(--color-surface-3); }
+.skeleton-line + .skeleton-line { width: 72%; margin-top: 10px; }
+.skeleton-line--short { width: 22% !important; }
+@keyframes fade { 0%, 100% { opacity: .5; } 50% { opacity: 1; } }
 
 .notice {
-  margin: 0 0 28px;
-  padding: 14px 18px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--r);
+  margin: 0 0 var(--s6);
+  padding: var(--s4) var(--s5);
+  border-left: 2px solid var(--color-primary);
   background: var(--color-surface);
   color: var(--color-text-2);
-  font-size: 14px;
+  font-size: 14.5px;
   line-height: 1.55;
 }
 
-.sample-note { margin: 0 0 24px; font-size: 13px; color: var(--color-text-muted); }
+.sample-note { margin: 0 0 var(--s5); font-size: 13px; color: var(--color-text-muted); }
 .sample-note strong { color: var(--color-warning-ink); font-weight: 500; }
 
+/* ---------- nothing to show ----------
+   Said as a page, not as a box: a large line, the reason, and the next
+   move. */
+
 .empty {
-  padding: 72px 24px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--r-lg);
-  background: var(--color-surface);
-  text-align: center;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--s5) var(--s9);
+  align-items: end;
+  padding: var(--s8) 0 0;
 }
-.empty h3 { font-size: 22px; letter-spacing: -.03em; margin-bottom: 10px; }
-.empty p { color: var(--color-text-muted); font-size: 15px; max-width: 46ch; margin-inline: auto; }
+.empty h3 { font-size: clamp(32px, 3.6vw, 52px); letter-spacing: -.05em; line-height: 1; }
+.empty p { color: var(--color-text-2); font-size: 17px; line-height: 1.55; max-width: 44ch; }
+.empty-action { grid-column: 2; display: flex; flex-wrap: wrap; gap: var(--s3); margin-top: 0; }
+.empty-action .btn { display: inline-flex; }
 
 /* ---------- product cards ----------
-   Editorial rather than retail: no box around the product, no button
-   under it. A large photograph at one fixed proportion, then three
-   short lines — who makes it, what it is, what it costs — and a quiet
-   note of where it is sold. The whole card is the link, so it needs no
-   control of its own to say so.
-
-   Every card carries the same things in the same order, so a grid
-   always reads as one set of rows rather than as a collage. */
+   A catalogue page, not a shop shelf: a tall photograph at one fixed
+   proportion, and under it the maker, the piece, the price, and where
+   it is sold — each a step quieter than the last. No box, no button:
+   the whole card is the link. */
 
 .grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 56px var(--gap);
+  gap: var(--s8) var(--s5);
 }
 
-.item-card {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
+.item-card { display: flex; flex-direction: column; min-width: 0; }
 a.item-card { color: inherit; text-decoration: none; }
 
 .item-media {
   position: relative;
-  aspect-ratio: 4 / 5;
+  aspect-ratio: 3 / 4;
   display: grid;
   place-items: center;
   overflow: hidden;
   background: var(--color-surface-2);
   border-radius: var(--r-xs);
 }
-/* Photographs are laid onto the warm tile rather than pasted over it:
-   a packshot on a white ground takes the tile's tone, so a grid of
-   products from different retailers reads as one shoot. */
+/* photographs are laid onto the warm tile rather than pasted over it: a
+   packshot on white takes the tile's tone, so a grid from a dozen
+   retailers reads as one shoot */
 .item-media img {
   width: 100%; height: 100%;
   object-fit: cover;
   mix-blend-mode: multiply;
   transition: transform var(--slow) var(--ease);
 }
-.item-card:hover .item-media img { transform: scale(1.035); }
-/* drawn artwork where a source ships no photo: line work, so a grid of
-   them reads as a considered placeholder rather than a grey blob */
-.item-media svg.silhouette { width: 56%; height: 56%; color: var(--color-artwork); }
+.item-card:hover .item-media img { transform: scale(1.045); }
+.item-media svg.silhouette { width: 58%; height: 58%; color: var(--color-artwork); transition: transform var(--slow) var(--ease); }
+.item-card:hover .item-media svg.silhouette { transform: scale(1.045); }
 
-/* one badge slot, top-left, used only to mark a placeholder row */
 .item-badge {
   position: absolute;
-  top: 12px; left: 12px;
-  padding: 3px 9px;
+  top: var(--s3); left: var(--s3);
+  padding: 3px 10px;
   border-radius: var(--r-pill);
   background: var(--color-warning-soft);
   border: 1px solid var(--color-warning-line);
@@ -791,18 +1015,12 @@ a.item-card { color: inherit; text-decoration: none; }
   color: var(--color-warning-ink);
 }
 
-.item-body {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  padding-top: 16px;
-}
-/* the name the piece is sold under — the brand where the source gives
-   one, the retailer where it does not */
+.item-body { display: flex; flex-direction: column; flex: 1; padding-top: var(--s4); }
+/* the maker — the brand where the source gives one, else the retailer */
 .item-retailer {
-  font-size: 12px;
-  font-weight: 500;
-  letter-spacing: .06em;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: .1em;
   text-transform: uppercase;
   color: var(--color-primary-ink);
   min-height: 18px;
@@ -810,28 +1028,22 @@ a.item-card { color: inherit; text-decoration: none; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* clamped to two lines so no card is taller than its neighbours */
 .item-name {
-  font-size: 14.5px;
+  font-size: 15px;
   font-weight: 400;
-  letter-spacing: -.005em;
-  line-height: 1.45;
+  letter-spacing: -.01em;
+  line-height: 1.4;
   color: var(--color-text-2);
-  margin: 4px 0 8px;
+  margin: 5px 0 10px;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
-  min-height: calc(2 * 1.45em);
+  min-height: calc(2 * 1.4em);
+  transition: color var(--fast) var(--ease);
 }
-.item-price {
-  font-size: 14.5px;
-  font-weight: 500;
-  letter-spacing: -.005em;
-  color: var(--color-text);
-}
-/* a source that ships no price still fills the slot, so the row of
-   cards keeps its shape */
+a.item-card:hover .item-name { color: var(--color-text); }
+.item-price { font-size: 15px; font-weight: 500; letter-spacing: -.01em; color: var(--color-text); font-variant-numeric: tabular-nums; }
 .item-price--none { font-weight: 400; color: var(--color-text-muted); }
 
 .item-attrs {
@@ -846,70 +1058,68 @@ a.item-card { color: inherit; text-decoration: none; }
   overflow: hidden;
 }
 
-/* where it goes: a quiet line, not a button. It firms up with the rest
-   of the card on hover. */
+/* where it is sold, and the way out — only as wide as its words */
 .item-action {
   display: inline-flex;
+  align-self: flex-start;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   margin-top: auto;
-  padding-top: 12px;
+  padding-top: var(--s3);
   font-size: 13px;
-  font-weight: 400;
   color: var(--color-text-muted);
-  transition: color var(--fast) var(--ease);
+  border-bottom: 1px solid transparent;
+  transition: color var(--fast) var(--ease), border-color var(--fast) var(--ease);
 }
 .item-action svg { width: 11px; height: 11px; flex: none; transition: transform var(--fast) var(--ease); }
-a.item-card:hover .item-action { color: var(--color-text); }
+a.item-card:hover .item-action { color: var(--color-text); border-color: var(--color-primary); }
 a.item-card:hover .item-action svg { transform: translate(1px, -1px); }
-a.item-card:focus-visible { outline-offset: 6px; }
+a.item-card:focus-visible { outline-offset: 8px; }
+
+/* the home page's edit: a grid on a wide screen, a rail you swipe on a
+   narrow one */
+.grid--rail { scroll-snap-type: x mandatory; }
 
 /* ---------- how it works ---------- */
 
 .steps {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 48px;
+  gap: var(--s7);
+  list-style: none;
 }
-.step { padding-top: 24px; border-top: 1px solid var(--color-border); }
+.step { padding-top: var(--s5); border-top: 1px solid var(--color-primary); }
 .step-num {
   display: block;
-  font-size: 13px;
-  font-weight: 500;
-  font-variant-numeric: tabular-nums;
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: 56px;
+  line-height: 1;
   color: var(--color-accent-ink);
-  margin-bottom: 20px;
+  margin-bottom: var(--s6);
 }
-.step h3 { font-size: 19px; letter-spacing: -.025em; margin-bottom: 10px; }
-.step p { color: var(--color-text-muted); font-size: 15px; line-height: 1.6; max-width: 34ch; }
+.step h3 { font-size: 22px; letter-spacing: -.03em; margin-bottom: var(--s3); }
+.step p { color: var(--color-text-muted); font-size: 16px; line-height: 1.6; max-width: 32ch; }
 
 /* ---------- the demo ----------
-   The one place on the site that shows a search happening rather than
-   describing one. A plain frame with a hairline and a single line of
-   chrome — enough to say "this is a recording of the site", and no more.
+   One search, end to end, in a plain frame. The single line of chrome is
+   there so the recording is not mistaken for the page around it. */
 
-   It takes the whole column. The video is the argument for the product,
-   and an argument made at two thirds width reads as an aside. */
-
-.demo-figure { margin: 72px 0 0; }
-
+.demo-figure { margin-top: var(--s10); }
 .demo-stage {
   position: relative;
-  border: 1px solid var(--color-border);
-  border-radius: var(--r);
+  border-radius: var(--r-lg);
   overflow: hidden;
-  background: var(--color-surface-2);
+  background: var(--color-surface);
+  box-shadow: var(--shadow);
+  border: 1px solid var(--color-border);
 }
-
-/* the frame's own title bar. The recording is of this same site, and
-   without a line between them the page reads as having two headers
-   rather than a page and a recording of one. */
 .demo-bar {
   display: flex;
   align-items: center;
-  gap: 12px;
-  height: 38px;
-  padding: 0 16px;
+  gap: var(--s3);
+  height: 40px;
+  padding: 0 var(--s4);
   background: var(--color-surface);
   border-bottom: 1px solid var(--color-border);
 }
@@ -921,51 +1131,28 @@ a.item-card:focus-visible { outline-offset: 6px; }
   box-shadow: 14px 0 0 var(--color-border-strong), 28px 0 0 var(--color-border-strong);
   margin-right: 28px;
 }
-.demo-bar-label {
-  font-size: 12.5px;
-  font-weight: 400;
-  color: var(--color-text-muted);
-}
-
-/* the frame is held open from the file's own dimensions, so nothing on
-   the page moves when the video finally arrives */
-.demo-video {
-  display: block;
-  width: 100%;
-  height: auto;
-  aspect-ratio: 8 / 5;
-  background: var(--color-surface-2);
-}
-
-/* Shown only where the browser will not start a muted video by itself,
-   or where the reader has asked for less motion. It is the same filled
-   control as every other action on the site, over the poster frame. */
+.demo-bar-label { font-size: 12.5px; color: var(--color-text-muted); }
+.demo-video { display: block; width: 100%; height: auto; aspect-ratio: 8 / 5; background: var(--color-bg); }
 .demo-play {
   position: absolute;
   left: 50%;
-  /* centred on the picture, not on the frame: the offset is half the
-     title bar above it */
-  top: calc(50% + 19px);
+  top: calc(50% + 20px);
   transform: translate(-50%, -50%);
   box-shadow: var(--shadow-lift);
 }
-.demo-play:active { transform: translate(-50%, -50%) scale(.985); }
+.demo-play:active { transform: translate(-50%, -50%) scale(.98); }
 .demo-play[hidden] { display: none; }
-
-/* Sample rows are marked wherever they appear, and a recording of
-   sample rows is no different. The flag is the product card's badge,
-   set in a line of prose instead of on a tile. */
 .demo-note {
-  margin: 18px 0 0;
+  margin: var(--s4) 0 0;
   font-size: 13.5px;
   line-height: 1.7;
   color: var(--color-text-muted);
-  max-width: 78ch;
+  max-width: 80ch;
 }
 .demo-flag {
   display: inline-block;
-  margin-right: 8px;
-  padding: 2px 9px;
+  margin-right: var(--s2);
+  padding: 2px 10px;
   border-radius: var(--r-pill);
   background: var(--color-warning-soft);
   border: 1px solid var(--color-warning-line);
@@ -974,133 +1161,167 @@ a.item-card:focus-visible { outline-offset: 6px; }
   color: var(--color-warning-ink);
 }
 
-/* ---------- the quiet band ----------
-   One section on the home page sits on a slightly deeper paper, so the
-   explanation reads as set apart from the products above it without a
-   rule or a box to say so. */
+/* ---------- the closing block (inner pages) ---------- */
 
-.band { background: var(--color-bg-subtle); }
+.closing { padding: var(--section) 0; border-top: 1px solid var(--color-border); }
+.closing-cta { text-align: center; max-width: 720px; margin: 0 auto; }
+.closing-cta .eyebrow { margin-bottom: var(--s5); }
+.closing-cta h2 { font-size: clamp(40px, 5vw, 72px); letter-spacing: -.055em; line-height: .98; margin-bottom: var(--s5); text-wrap: balance; }
+.closing-cta p { color: var(--color-text-muted); font-size: 18px; max-width: 42ch; margin: 0 auto var(--s7); text-wrap: pretty; }
 
-/* ---------- the closing block ----------
-   A last invitation, on the same paper as the rest of the page: a
-   heading, one line, and the one filled control. */
-
-.closing {
-  padding: var(--section) 0;
-  border-top: 1px solid var(--color-border);
-}
-.closing-cta { text-align: center; max-width: 620px; margin: 0 auto; }
-.closing-cta .eyebrow { margin-bottom: 16px; }
-.closing-cta h2 {
-  font-size: clamp(32px, 3.8vw, 48px);
-  letter-spacing: -.045em;
-  line-height: 1.06;
-  margin-bottom: 16px;
-  text-wrap: balance;
-}
-.closing-cta p {
-  color: var(--color-text-muted);
-  font-size: 17px;
-  max-width: 42ch;
-  margin: 0 auto 36px;
-  text-wrap: pretty;
-}
-
-/* ---------- footer ---------- */
+/* ---------- footer ----------
+   The page ends on ink: an invitation, the links, the fine print, and
+   the name set as large as the page is wide. */
 
 .site-footer {
-  background: var(--color-bg-subtle);
-  border-top: 1px solid var(--color-border);
-  padding: 56px 0 64px;
+  background: var(--color-surface-invert);
+  color: var(--color-text-invert);
+  padding: var(--s10) 0 0;
+  overflow: hidden;
 }
+.footer-top {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--s6);
+  flex-wrap: wrap;
+  padding-bottom: var(--s9);
+  border-bottom: 1px solid var(--color-border-invert);
+}
+.footer-tagline {
+  font-size: clamp(40px, 5.2vw, 80px);
+  font-weight: 500;
+  letter-spacing: -.055em;
+  line-height: .95;
+  color: var(--color-text-invert);
+}
+.footer-tagline .voice { color: var(--color-text-invert); }
 .footer-inner {
-  display: flex; align-items: center; justify-content: space-between;
-  gap: 24px; flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--s6) var(--s9);
+  padding: var(--s7) 0;
 }
-.footer-links { display: flex; flex-wrap: wrap; gap: 8px 32px; list-style: none; }
+.footer-links { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s6); list-style: none; }
 .footer-links a {
   display: inline-block;
   padding: 4px 0;
-  font-size: 14px;
-  color: var(--color-text-muted);
-  transition: color var(--fast) var(--ease);
+  font-size: 15px;
+  color: var(--color-text-invert);
+  opacity: .66;
+  transition: opacity var(--fast) var(--ease);
 }
-.footer-links a:hover { color: var(--color-text); }
+.footer-links a:hover { opacity: 1; }
 .footer-note {
   font-size: 13px;
-  color: var(--color-text-muted);
-  margin-top: 40px;
-  padding-top: 24px;
-  border-top: 1px solid var(--color-border);
-  max-width: none;
-  line-height: 1.6;
+  line-height: 1.65;
+  color: var(--color-text-invert);
+  opacity: .56;
+  max-width: 56ch;
+  justify-self: end;
+}
+.footer-mark {
+  display: block;
+  margin-bottom: -.2em;
+  font-family: var(--font-serif);
+  font-size: clamp(120px, 30vw, 460px);
+  line-height: .8;
+  letter-spacing: -.04em;
+  color: var(--color-text-invert);
+  user-select: none;
 }
 
 /* ---------- discover ---------- */
 
 .filter-bar {
+  position: sticky;
+  top: var(--header);
+  z-index: 20;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  flex-wrap: wrap;
-  padding-bottom: 24px;
-  margin-bottom: 40px;
+  gap: var(--s4);
+  padding: var(--s4) 0;
+  margin-bottom: var(--s7);
+  background: var(--color-bg-glass);
+  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
   border-bottom: 1px solid var(--color-border);
 }
-.filter-pills { display: flex; flex-wrap: wrap; gap: 8px; }
+.filter-pills { display: flex; flex-wrap: wrap; gap: var(--s2); }
 .pill {
-  padding: 8px 17px;
+  height: 40px;
+  padding: 0 var(--s5);
   border-radius: var(--r-pill);
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--color-border-strong);
   background: transparent;
-  font-size: 14px; font-weight: 400;
+  font-size: 14px;
   color: var(--color-text-2);
   cursor: pointer;
+  white-space: nowrap;
   transition: background var(--fast) var(--ease), border-color var(--fast) var(--ease), color var(--fast) var(--ease);
 }
-.pill:hover { border-color: var(--color-border-strong); background: var(--color-surface); }
+.pill:hover { border-color: var(--color-primary); background: var(--color-surface); }
 .pill[aria-pressed="true"] {
   background: var(--color-primary);
   border-color: var(--color-primary);
   color: var(--color-text-on-primary);
 }
-.filter-count { font-size: 14px; color: var(--color-text-muted); white-space: nowrap; }
+.filter-count { font-size: 14px; color: var(--color-text-muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
 
 /* ---------- about ---------- */
 
-.prose > * + * { margin-top: 22px; }
-.prose p { color: var(--color-text-2); font-size: 17px; line-height: 1.75; }
-.prose .lede { font-size: clamp(21px, 2vw, 25px); line-height: 1.5; color: var(--color-text); letter-spacing: -.02em; }
+/* a chapter: its title on the left, held while its text scrolls past */
+.chapter {
+  display: grid;
+  grid-template-columns: minmax(0, 4fr) minmax(0, 7fr);
+  gap: var(--s6) var(--s9);
+  padding: var(--s9) 0;
+  border-top: 1px solid var(--color-border);
+}
+.chapter-head { align-self: start; position: sticky; top: calc(var(--header) + var(--s6)); }
+.chapter-head .eyebrow { margin-bottom: var(--s4); }
+.chapter-head h2 { font-size: clamp(30px, 3vw, 44px); letter-spacing: -.045em; line-height: 1.02; }
+
+.prose > * + * { margin-top: var(--s5); }
+.prose p { color: var(--color-text-2); font-size: 18px; line-height: 1.7; max-width: 62ch; }
+.prose .lede { font-size: clamp(24px, 2.4vw, 34px); line-height: 1.3; color: var(--color-text); letter-spacing: -.03em; }
 
 .signal-list {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
-  gap: 0 56px;
+  gap: 0 var(--s7);
+  counter-reset: signal;
 }
-.signal { padding: 22px 0; border-top: 1px solid var(--color-border); }
-.signal h3 { font-size: 16px; letter-spacing: -.015em; margin-bottom: 6px; }
+.signal { padding: var(--s5) 0; border-top: 1px solid var(--color-border); counter-increment: signal; }
+.signal:nth-child(-n+2) { border-top-color: var(--color-primary); }
+.signal h3 { display: flex; gap: var(--s3); align-items: baseline; font-size: 18px; letter-spacing: -.02em; margin-bottom: var(--s2); }
+.signal h3::before {
+  content: counter(signal, decimal-leading-zero);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
 .signal p { font-size: 15px; color: var(--color-text-muted); line-height: 1.6; }
 
-.faq-row { padding: 28px 0; border-top: 1px solid var(--color-border); }
+.faq-row { padding: var(--s5) 0 var(--s6); border-top: 1px solid var(--color-border); }
+.faq-row:first-child { border-top-color: var(--color-primary); }
 .faq-row:last-child { border-bottom: 1px solid var(--color-border); }
-.faq-row h3 { font-size: 17px; letter-spacing: -.02em; margin-bottom: 8px; }
-.faq-row p { color: var(--color-text-muted); font-size: 15.5px; line-height: 1.65; max-width: 64ch; }
+.faq-row h3 { font-size: 19px; letter-spacing: -.025em; margin-bottom: var(--s2); }
+.faq-row p { color: var(--color-text-muted); font-size: 16px; line-height: 1.65; max-width: 62ch; }
 
 /* ---------- plans and billing ----------
-   The pricing page is the same page as everything else: warm paper,
-   black type, one filled control. A plan is a white sheet with a
-   hairline, so the shopper is not asked to learn a second layout to
-   spend money.
-
-   Colour keeps its jobs. Primary marks the plan somebody is on, the
-   way it marks the current page in the navigation. Success says a
-   subscription is live; warning says something needs attention. */
+   Three sheets. The middle one is the one most people want, so it is
+   the one turned over into ink. Primary still marks the plan somebody
+   is on; success says a subscription is live; warning says something
+   needs attention. */
 
 .plan-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: var(--gap);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--s4);
   align-items: stretch;
 }
 
@@ -1108,73 +1329,61 @@ a.item-card:focus-visible { outline-offset: 6px; }
   display: flex;
   flex-direction: column;
   height: 100%;
-  padding: 32px 30px 30px;
+  padding: var(--s6) var(--s6) var(--s6);
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--r-lg);
-  transition: border-color var(--fast) var(--ease);
+  transition: border-color var(--fast) var(--ease), transform var(--mid) var(--ease);
 }
 .plan-card:hover { border-color: var(--color-border-strong); }
 
-/* The plan the shopper is on, marked the way the current page is
-   marked in the navigation: the primary edge, and nothing else. */
-.plan-card--current {
-  border-color: var(--color-primary);
-  box-shadow: var(--ring);
-}
+.plan-card--current { border-color: var(--color-primary); box-shadow: var(--ring); }
 .plan-card--current:hover { border-color: var(--color-primary); }
 
-.plan-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
-.plan-name { font-size: 20px; letter-spacing: -.025em; }
+.plan-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); min-height: 30px; }
+.plan-name { font-size: 22px; letter-spacing: -.03em; }
 .plan-current-tag {
   font-size: 12.5px;
   font-weight: 500;
   color: var(--color-primary-ink);
-  padding: 2px 10px;
+  padding: 3px 12px;
   border: 1px solid var(--color-primary-line);
   border-radius: var(--r-pill);
 }
 
-.plan-price { display: flex; align-items: baseline; gap: 8px; margin: 22px 0 6px; }
-.plan-amount { font-size: 44px; font-weight: 500; letter-spacing: -.05em; line-height: 1.1; }
+.plan-price { display: flex; align-items: baseline; gap: var(--s2); margin: var(--s7) 0 var(--s2); }
+.plan-amount { font-size: clamp(52px, 5vw, 72px); font-weight: 500; letter-spacing: -.06em; line-height: 1; font-variant-numeric: tabular-nums; }
 .plan-interval { font-size: 14px; color: var(--color-text-muted); }
-.plan-tagline { font-size: 15px; color: var(--color-text-muted); margin-bottom: 26px; }
+.plan-tagline { font-size: 16px; color: var(--color-text-muted); margin-bottom: var(--s6); }
 
 .plan-features {
   list-style: none;
   display: grid;
-  gap: 12px;
-  margin-bottom: 32px;
-  padding-top: 24px;
+  gap: var(--s3);
+  margin-bottom: var(--s7);
+  padding-top: var(--s5);
   border-top: 1px solid var(--color-border);
 }
 .plan-features li {
   position: relative;
-  padding-left: 24px;
-  font-size: 14.5px;
+  padding-left: 26px;
+  font-size: 15px;
   line-height: 1.5;
   color: var(--color-text-2);
 }
-/* a tick drawn as a border, so it needs no glyph and no icon file */
 .plan-features li::before {
   content: '';
   position: absolute;
   left: 3px;
   top: 5px;
-  width: 5px; height: 9px;
+  width: 5px; height: 10px;
   border: solid var(--color-primary);
   border-width: 0 1.25px 1.25px 0;
   transform: rotate(45deg);
 }
 
-/* the action sits at the foot of every card, level across the row
-   however many lines of features are above it */
 .plan-action { margin-top: auto; }
 .plan-action .btn { width: 100%; }
-
-/* A plan that cannot be bought here — the one you are on, or one this
-   deployment has no price configured for. It stays legible rather than
-   being greyed into unreadability: it is information, not a control. */
 .plan-action .btn[disabled] {
   background: var(--color-surface-2);
   border-color: var(--color-surface-2);
@@ -1183,63 +1392,83 @@ a.item-card:focus-visible { outline-offset: 6px; }
   transform: none;
 }
 
-/* ---------- the banner that says where you stand ---------- */
+/* the featured sheet, turned over */
+.plan-card[data-plan="pro"] {
+  background: var(--color-surface-invert);
+  border-color: var(--color-surface-invert);
+  color: var(--color-text-invert);
+}
+.plan-card[data-plan="pro"] .plan-name,
+.plan-card[data-plan="pro"] .plan-amount { color: var(--color-text-invert); }
+.plan-card[data-plan="pro"] .plan-interval,
+.plan-card[data-plan="pro"] .plan-tagline { color: var(--color-text-invert); opacity: .62; }
+.plan-card[data-plan="pro"] .plan-features { border-top-color: var(--color-border-invert); }
+.plan-card[data-plan="pro"] .plan-features li { color: var(--color-text-invert); opacity: .86; }
+.plan-card[data-plan="pro"] .plan-features li::before { border-color: var(--color-text-invert); }
+.plan-card[data-plan="pro"] .plan-current-tag { color: var(--color-text-invert); border-color: var(--color-border-invert); }
+.plan-card[data-plan="pro"] .btn-primary { background: var(--color-text-invert); border-color: var(--color-text-invert); color: var(--color-text); }
+.plan-card[data-plan="pro"] .btn-primary:hover { background: var(--color-surface-3); border-color: var(--color-surface-3); }
+.plan-card[data-plan="pro"] .btn-secondary { color: var(--color-text-invert); border-color: var(--color-border-invert); }
+.plan-card[data-plan="pro"] .btn-secondary:hover { background: transparent; border-color: var(--color-text-invert); }
+.plan-card--current[data-plan="pro"] { box-shadow: 0 0 0 1px var(--color-surface), 0 0 0 3px var(--color-primary); }
 
 .plan-banner {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 16px 24px;
-  padding: 24px 28px;
-  margin-bottom: 32px;
+  gap: var(--s4) var(--s5);
+  padding: var(--s5) var(--s6);
+  margin-bottom: var(--s5);
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--r-lg);
 }
-.plan-banner-plan { font-size: 22px; letter-spacing: -.03em; margin-top: 4px; }
+.plan-banner .eyebrow::before { display: none; }
+.plan-banner-plan { font-size: 26px; letter-spacing: -.04em; margin-top: 2px; }
 .plan-banner-detail { font-size: 14.5px; color: var(--color-text-muted); margin-top: 4px; }
-.plan-banner-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.plan-banner-actions { display: flex; flex-wrap: wrap; gap: var(--s3); }
 
-/* ---------- usage meters ----------
-   What is left, at a glance. The bar carries no number of its own —
-   the figures are written beside it, because a bar can be misread and
-   "1 of 3 searches" cannot. */
-
-.meters { display: grid; gap: 22px; margin-top: 4px; }
-.meter-head { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
-.meter-label { font-size: 14.5px; font-weight: 500; }
-.meter-value { font-size: 14px; color: var(--color-text-muted); }
-.meter-track {
-  height: 4px;
-  margin-top: 10px;
-  border-radius: var(--r-pill);
-  background: var(--color-surface-3);
-  overflow: hidden;
-}
+.meters { display: grid; gap: var(--s5); margin-top: 4px; }
+.meter-head { display: flex; justify-content: space-between; gap: var(--s3); align-items: baseline; }
+.meter-label { font-size: 15px; font-weight: 500; }
+.meter-value { font-size: 14px; color: var(--color-text-muted); font-variant-numeric: tabular-nums; }
+.meter-track { height: 3px; margin-top: var(--s3); border-radius: var(--r-pill); background: var(--color-surface-3); overflow: hidden; }
 .meter-fill { height: 100%; background: var(--color-primary); border-radius: var(--r-pill); }
-/* nothing left is a caveat, and warning is the colour caveats use */
 .meter-fill--spent { background: var(--color-warning); }
-.meter-reset { font-size: 13px; color: var(--color-text-muted); margin-top: 8px; }
+.meter-reset { font-size: 13px; color: var(--color-text-muted); margin-top: var(--s2); }
 
-/* ---------- account form ---------- */
+/* ---------- account ---------- */
+
+.account-grid {
+  display: grid;
+  grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr);
+  gap: var(--s9);
+  align-items: start;
+  padding: var(--s10) 0 var(--s9);
+}
+.account-intro { position: sticky; top: calc(var(--header) + var(--s7)); }
+.account-intro .eyebrow { margin-bottom: var(--s5); }
+.account-points { list-style: none; margin-top: var(--s7); border-top: 1px solid var(--color-primary); }
+.account-points li { padding: var(--s4) 0; border-bottom: 1px solid var(--color-border); font-size: 15px; color: var(--color-text-2); }
 
 .auth-card {
-  max-width: 460px;
-  padding: 36px 32px 32px;
+  max-width: 520px;
+  padding: var(--s7) var(--s7) var(--s6);
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--r-lg);
+  box-shadow: var(--shadow);
 }
-.auth-card h2 { font-size: 24px; letter-spacing: -.035em; }
-.auth-intro { font-size: 15px; color: var(--color-text-muted); margin: 8px 0 26px; }
+.auth-card h2 { font-size: 30px; letter-spacing: -.045em; }
+.auth-intro { font-size: 15.5px; color: var(--color-text-muted); margin: var(--s2) 0 var(--s6); }
 
-.field { display: block; margin-bottom: 18px; }
-.field span { display: block; font-size: 13.5px; font-weight: 500; margin-bottom: 8px; }
+.field { display: block; margin-bottom: var(--s5); }
+.field span { display: block; font-size: 13.5px; font-weight: 500; margin-bottom: var(--s2); }
 .field input {
   width: 100%;
-  height: 48px;
-  padding: 0 16px;
+  height: 52px;
+  padding: 0 var(--s4);
   background: var(--color-surface);
   border: 1px solid var(--color-border-strong);
   border-radius: var(--r);
@@ -1251,17 +1480,13 @@ a.item-card:focus-visible { outline-offset: 6px; }
 .field input:focus { border-color: var(--color-primary); box-shadow: var(--ring); }
 .field input::placeholder { color: var(--color-text-muted); opacity: 1; }
 
-.auth-actions { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-top: 6px; }
-.auth-actions .btn-primary { min-width: 140px; }
-.auth-switch { font-size: 14px; color: var(--color-text-muted); margin-top: 20px; }
-
-/* ---------- notes that carry a state ----------
-   Three grounds, three meanings, and each one only ever says its own
-   thing: a caveat is never dressed as a success. */
+.auth-actions { display: flex; align-items: center; gap: var(--s4); flex-wrap: wrap; margin-top: var(--s2); }
+.auth-actions .btn-primary { min-width: 160px; }
+.auth-switch { font-size: 14px; color: var(--color-text-muted); margin-top: var(--s5); }
 
 .billing-note {
-  margin: 0 0 24px;
-  padding: 14px 18px;
+  margin: 0 0 var(--s5);
+  padding: var(--s4) var(--s5);
   border: 1px solid var(--color-border);
   border-radius: var(--r);
   background: var(--color-surface);
@@ -1269,124 +1494,87 @@ a.item-card:focus-visible { outline-offset: 6px; }
   font-size: 14px;
   line-height: 1.55;
 }
-.billing-note--warn {
-  background: var(--color-warning-soft);
-  border-color: var(--color-warning-line);
-  color: var(--color-warning-ink);
-}
-.billing-note--good {
-  background: var(--color-primary-soft);
-  border-color: var(--color-primary-line);
-  color: var(--color-primary-ink);
-}
+.billing-note--warn { background: var(--color-warning-soft); border-color: var(--color-warning-line); color: var(--color-warning-ink); }
+.billing-note--good { background: var(--color-primary-soft); border-color: var(--color-primary-line); color: var(--color-primary-ink); }
 .billing-note[hidden] { display: none; }
 
-/* the upgrade offered from an exhausted search */
-.empty-action { margin-top: 24px; }
-.empty-action .btn { display: inline-flex; }
-
-/* ---------- signing in ----------
-   The account page asks one question with two answers, so the two
-   answers are the only shapes on it. Both are secondary buttons rather
-   than one primary and one not: neither way in is the recommended one.
-
-   Google's mark keeps Google's colours, inline in the markup, because
-   a monochrome version of somebody else's logo is not their logo. It
-   is the one thing on the page that is not from this palette, and it
-   sits in an icon slot rather than colouring any type. */
-
-.stage--tight { padding: clamp(64px, 10vh, 112px) 0 24px; }
-.hero--compact { margin-bottom: 0; }
-.hero--compact h1 { font-size: clamp(38px, 4.6vw, 60px); letter-spacing: -.045em; line-height: 1.04; margin-bottom: 18px; }
-
+.stage--tight { padding: var(--s10) 0 var(--s7); }
 .auth-card--centred { margin-inline: auto; }
-.auth-heading { font-size: 24px; }
-
-.auth-choices { display: grid; gap: 12px; margin: 26px 0 20px; }
-
-.btn-provider {
-  width: 100%;
-  justify-content: center;
-  gap: 12px;
-  height: 52px;
-  font-size: 15px;
-}
+.auth-heading { font-size: 30px; }
+.auth-choices { display: grid; gap: var(--s3); margin: var(--s6) 0 var(--s5); }
+.btn-provider { width: 100%; justify-content: center; gap: var(--s3); height: 56px; font-size: 15px; }
 .provider-mark { width: 18px; height: 18px; flex: none; }
-
-/* the second line under a control: what it does not do, which on this
-   page is the reassuring part */
-.auth-fineprint {
-  font-size: 13px;
-  line-height: 1.6;
-  color: var(--color-text-muted);
-  margin-top: 14px;
-}
-
-.auth-back {
-  display: inline-block;
-  margin: -8px 0 18px -4px;
-}
-.auth-row { margin-top: 16px; }
-
-/* ---------- the account itself ----------
-   A list of facts, one per row, label left and value right. No cards
-   inside cards and no icons: it is a small amount of information and
-   it should read like one. */
+.auth-fineprint { font-size: 13px; line-height: 1.6; color: var(--color-text-muted); margin-top: var(--s3); }
+.auth-back { display: inline-block; margin: -8px 0 var(--s5) -4px; }
+.auth-row { margin-top: var(--s4); }
 
 .detail-card {
-  padding: 26px 28px 22px;
+  padding: var(--s6) var(--s6) var(--s5);
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--r-lg);
-  margin-bottom: 24px;
+  margin-bottom: var(--s5);
 }
-.detail-head { margin-bottom: 8px; }
-
+.detail-head { margin-bottom: var(--s2); }
+.detail-head .eyebrow::before { display: none; }
 .detail-row {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
   justify-content: space-between;
-  gap: 8px 20px;
-  padding: 14px 0;
+  gap: var(--s2) var(--s5);
+  padding: var(--s4) 0;
   border-top: 1px solid var(--color-border);
 }
 .detail-row:first-of-type { border-top: 0; }
 .detail-label { font-size: 14px; color: var(--color-text-muted); }
-.detail-value { font-size: 14.5px; font-weight: 500; text-align: right; }
-
-.detail-action { margin-top: 20px; }
-.detail-action--end { margin-top: 32px; text-align: right; }
+.detail-value { font-size: 15px; font-weight: 500; text-align: right; }
+.detail-action { margin-top: var(--s5); }
+.detail-action--end { margin-top: var(--s6); text-align: right; }
 
 /* ---------- responsive ----------
-   Recomposed, not shrunk: the gutter, the section rhythm and the type
-   scale all step down together, and on a phone the grid becomes a
-   two-up contact sheet rather than one tall column of tiles. */
+   Recomposed at each step, not shrunk: the gutter, the rhythm and the
+   type scale step down together, the two-column openings fold into
+   one, and on a phone the grids become contact sheets and rails. */
 
-@media (max-width: 1100px) {
-  :root { --gutter: 32px; --section: 104px; }
-  .nav-links { gap: 28px; }
+@media (max-width: 1180px) {
+  :root { --gutter: 36px; --section: var(--s10); }
+  .hero-grid { gap: var(--s8); }
+  .nav-links { gap: var(--s5); }
   .grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .ask-hint { display: none; }
+  .ask-actions .btn-primary { margin-left: auto; }
 }
 
-@media (max-width: 900px) {
-  :root { --section: 88px; }
+@media (max-width: 960px) {
+  :root { --section: var(--s9); }
+  .hero-grid { grid-template-columns: minmax(0, 1fr); gap: var(--s8); }
+  .hero .lead { max-width: 46ch; }
+  .ask-wrap { max-width: none; }
+  .reading { aspect-ratio: 5 / 4; }
+  .reading-art { width: 44%; }
+
+  .page-intro { grid-template-columns: minmax(0, 1fr); padding: var(--s9) 0 var(--s8); }
   .steps { grid-template-columns: 1fr; gap: 0; }
-  .step { display: grid; grid-template-columns: 56px 1fr; column-gap: 8px; padding: 24px 0 28px; }
-  .step-num { grid-row: span 2; margin: 3px 0 0; }
+  .step { display: grid; grid-template-columns: 88px 1fr; padding: var(--s5) 0 var(--s6); }
+  .step:not(:first-child) { border-top-color: var(--color-border); }
+  .step-num { grid-row: span 2; margin: 0; font-size: 48px; }
   .step p { max-width: none; }
-  .signal-list { grid-template-columns: 1fr; gap: 0; }
-  .demo-figure { margin-top: 56px; }
+
+  .chapter { grid-template-columns: minmax(0, 1fr); padding: var(--s8) 0; }
+  .chapter-head { position: static; }
+  .plan-grid { grid-template-columns: 1fr; max-width: 560px; }
+  .account-grid { grid-template-columns: minmax(0, 1fr); gap: var(--s7); padding-top: var(--s9); }
+  .account-intro { position: static; }
+  .results-head { grid-template-columns: minmax(0, 1fr); }
+  .understood { justify-content: flex-start; max-width: none; }
+  .understood-label { text-align: left; }
+  .empty { grid-template-columns: minmax(0, 1fr); }
+  .empty-action { grid-column: 1; }
+  .footer-inner { grid-template-columns: minmax(0, 1fr); }
+  .footer-note { justify-self: start; }
 }
 
-/* The demo video's own breakpoint, and the only rule on the site that
-   does not turn at one of the layout's. It is not about the layout: it
-   is where the wide recording stops being readable, and below it the
-   phone-shaped recording is far easier to read than a shrunken wide one.
-
-   index.html chooses the file at the same width, in the script beside
-   the element, so the shape and the file cannot disagree. With no
-   script at all both stay landscape: small, but not broken. */
 @media (max-width: 860px) {
   .demo-figure.is-portrait .demo-stage { max-width: 440px; margin-inline: auto; }
   .demo-figure.is-portrait .demo-video { aspect-ratio: 5 / 9; }
@@ -1394,91 +1582,164 @@ a.item-card:focus-visible { outline-offset: 6px; }
 }
 
 @media (max-width: 760px) {
-  :root { --gutter: 20px; --section: 72px; --header: 60px; }
+  :root { --gutter: 20px; --section: var(--s9); --header: 60px; }
 
-  .stage { padding: 56px 0 48px; }
-  .hero { margin-bottom: 32px; }
-  .hero h1 { margin-bottom: 18px; letter-spacing: -.045em; }
-  .page-head { margin-bottom: 32px; }
-  .page-head h1 { margin-bottom: 14px; }
-  .page-head p { font-size: 16px; }
-
-  .nav { justify-content: flex-start; }
-  .nav-toggle { display: grid; margin-left: auto; }
+  /* the header: the wordmark on the left, the menu on the right. Solid
+     paper rather than blur here: a backdrop filter makes the header the
+     containing block for the menu's fixed sheet, which would then be
+     clipped to the header's own height. */
+  .site-header { background: var(--color-bg); -webkit-backdrop-filter: none; backdrop-filter: none; }
+  .brand { position: static; transform: none; }
+  .brand-word { font-size: 30px; }
+  .nav-toggle { display: grid; }
+  .nav > nav { flex: 0; }
+  /* the menu is a page of its own: large names, set in the voice */
   .nav-links {
-    position: absolute;
-    top: calc(100% + 1px);
-    left: calc(-1 * var(--gutter)); right: calc(-1 * var(--gutter));
+    position: fixed;
+    top: var(--header);
+    left: 0; right: 0; bottom: 0;
     flex-direction: column;
     align-items: stretch;
     gap: 0;
-    padding: 8px var(--gutter) 20px;
+    padding: var(--s5) var(--gutter) var(--s7);
     background: var(--color-bg);
-    border-bottom: 1px solid var(--color-border);
-    box-shadow: var(--shadow);
+    border-top: 1px solid var(--color-border);
+    overflow-y: auto;
     display: none;
   }
-  .nav-links.open { display: flex; }
-  .nav-links li + li { border-top: 1px solid var(--color-border); }
-  .nav-links a { display: block; padding: 16px 0; font-size: 18px; letter-spacing: -.015em; color: var(--color-text-2); }
-  .nav-links a[aria-current="page"]::after { left: auto; right: 2px; top: 50%; bottom: auto; width: 6px; height: 6px; margin-top: -3px; }
+  .nav-links.open { display: flex; animation: sheet-in var(--mid) var(--ease); }
+  @keyframes sheet-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
+  .nav-links li:nth-child(3) { margin-left: 0; }
+  .nav-links li { border-bottom: 1px solid var(--color-border); }
+  .nav-links a {
+    display: flex;
+    height: auto;
+    padding: var(--s4) 0;
+    font-family: var(--font-serif);
+    font-size: 40px;
+    line-height: 1.1;
+    letter-spacing: -.02em;
+    color: var(--color-text);
+  }
+  .nav-links a[aria-current="page"] { color: var(--color-accent-ink); font-style: italic; }
+  .nav-links a[aria-current="page"]::after,
+  .nav-links a[href="account.html"][aria-current="page"]::after { left: auto; right: 0; top: 50%; bottom: auto; width: 6px; height: 6px; margin: -3px 0 0; }
+  .nav-links a[href="account.html"] { padding: var(--s4) 0; border: 0; border-radius: 0; }
+  .nav-links a[href="account.html"]:hover { background: transparent; }
 
-  .ask-card { border-radius: var(--r-lg); padding: 16px 10px 10px 16px; }
+  .stage { padding: var(--s8) 0 var(--s8); }
+  .stage--home { padding: var(--s7) 0 var(--s8); }
+  .hero .eyebrow { margin-bottom: var(--s5); }
+  .hero h1 { font-size: clamp(52px, 15vw, 72px); margin-bottom: var(--s5); }
+  .hero .lead { font-size: 17px; margin-bottom: var(--s6); }
+
+  .page-intro { padding: var(--s8) 0 var(--s7); }
+  .page-intro h1 { font-size: clamp(52px, 16vw, 76px); }
+  .page-intro p { font-size: 17px; }
+  .page-head { margin-bottom: var(--s6); text-align: left; }
+  .page-head h1 { font-size: clamp(44px, 13vw, 64px); }
+  .page-head p { font-size: 17px; margin-inline: 0; }
+  .stage-inner { align-items: stretch; }
+
+  .ask-card { border-radius: var(--r-lg); padding: var(--s4) var(--s3) var(--s3) var(--s4); }
   .ask-dropveil { border-radius: var(--r-lg); }
-  .ask-field { gap: 10px; }
-  .ask-icon { width: 18px; height: 18px; margin-top: 4px; }
-  /* 16px or more, or a phone zooms the page when the field takes focus */
-  .ask-card textarea { font-size: 17px; }
-  .ask-actions { margin-top: 14px; padding-left: 0; }
-  .ask-actions .btn-primary { height: 44px; padding: 0 22px; }
+  .ask-field { gap: var(--s3); padding-right: var(--s2); }
+  .ask-icon { width: 19px; height: 19px; margin-top: 4px; }
+  .ask-card textarea { font-size: 18px; min-height: 54px; }
+  .ask-actions { margin-top: var(--s3); padding-top: var(--s3); gap: 2px; }
+  .ask-actions .btn-primary { height: 48px; padding: 0 20px 0 22px; }
   .attachments, .attachment-note, .form-error { padding-left: 0; margin-left: 0; }
-  .attachments { padding-top: 12px; }
 
-  .ask-examples { justify-content: flex-start; gap: 6px; margin-top: 18px; }
-  .ask-examples .examples-label { margin-right: 4px; }
-  .example { padding: 6px 12px; font-size: 13px; }
+  /* the examples become a rail you swipe, running to the screen's edge */
+  .ask-examples,
+  .stage-inner .ask-examples {
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    overflow-x: auto;
+    margin-inline: calc(-1 * var(--gutter));
+    padding: 2px var(--gutter);
+    scrollbar-width: none;
+  }
+  .ask-examples::-webkit-scrollbar { display: none; }
+  .example { flex: none; height: 40px; }
+  .ask-examples .examples-label { width: auto; margin: 0 var(--s1) 0 0; }
 
-  .results { padding-top: 16px; }
-  .results-head { margin-bottom: 28px; padding-bottom: 20px; }
+  .reading { aspect-ratio: 1 / 1; }
+  .reading-art { width: 58%; top: 58%; left: 47%; }
+  .reading-request { top: var(--s4); left: var(--s4); right: var(--s4); flex-direction: column; gap: 4px; }
+  .reading-request q { text-align: left; font-size: 20px; }
+  .pin-card { padding: 7px 11px 8px; }
+  .pin-card small { font-size: 10.5px; }
+  .pin-card b { font-size: 13.5px; }
+  .pin--garment { --reach: 22px; }
+  .pin--colour { --reach: 16px; }
+  .pin--fit { --reach: 12px; }
+  .pin--budget { --reach: 10px; }
+  .reading-caption { flex-direction: column; gap: 2px; }
 
-  /* the label goes short before the control does: a play button that
-     wraps onto two lines over the poster reads as a mistake */
+  .results { padding-top: 0; }
+  .results-head { padding-bottom: var(--s5); margin-bottom: var(--s6); }
+  .results-head h2 { font-size: 44px; }
+
+  .section-head { margin-bottom: var(--s6); }
+  .section-head h2 { font-size: clamp(36px, 10.5vw, 48px); }
+  .section-head--spaced { margin-top: var(--s8); }
+
+  .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s6) var(--s3); }
+  .item-body { padding-top: var(--s3); }
+  .item-retailer { font-size: 10.5px; min-height: 16px; }
+  .item-name { font-size: 14px; margin: 3px 0 6px; }
+  .item-price { font-size: 14px; }
+  .item-attrs { font-size: 12px; min-height: 18px; }
+  .item-action { font-size: 12.5px; padding-top: var(--s2); }
+
+  /* the home edit: one tall picture and the edge of the next, swiped */
+  .grid--rail {
+    grid-template-columns: none;
+    grid-auto-flow: column;
+    grid-auto-columns: 68%;
+    gap: var(--s3);
+    overflow-x: auto;
+    margin-inline: calc(-1 * var(--gutter));
+    padding: 0 var(--gutter);
+    scroll-padding-inline: var(--gutter);
+    scrollbar-width: none;
+    /* the photographs are blended onto their tiles, and a blended layer
+       in a scroller otherwise widens the whole page in Chromium */
+    contain: paint;
+  }
+  .grid--rail::-webkit-scrollbar { display: none; }
+  .grid--rail .item-card { scroll-snap-align: start; }
+
+  .demo-figure { margin-top: var(--s8); }
   .demo-play { height: 48px; padding: 0 22px; font-size: 15px; }
   .demo-play .demo-play-label { display: none; }
   .demo-note { font-size: 13px; }
 
-  .section-head { margin-bottom: 28px; }
-  .section-head--spaced { margin-top: 64px; }
-
-  .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 36px 12px; }
-  .item-body { padding-top: 12px; }
-  .item-retailer { font-size: 11px; min-height: 16px; }
-  .item-name { font-size: 13.5px; margin: 3px 0 6px; }
-  .item-price { font-size: 13.5px; }
-  .item-attrs { font-size: 12px; min-height: 18px; }
-  .item-action { font-size: 12px; padding-top: 10px; }
-
-  .filter-bar { margin-bottom: 28px; }
-  .filter-pills { flex-wrap: nowrap; overflow-x: auto; margin-inline: calc(-1 * var(--gutter)); padding: 2px var(--gutter); scrollbar-width: none; }
+  .filter-bar { margin-inline: calc(-1 * var(--gutter)); padding: var(--s3) var(--gutter); margin-bottom: var(--s6); flex-direction: column; align-items: stretch; gap: var(--s2); }
+  .filter-pills { flex-wrap: nowrap; overflow-x: auto; margin-inline: calc(-1 * var(--gutter)); padding: 0 var(--gutter); scrollbar-width: none; }
   .filter-pills::-webkit-scrollbar { display: none; }
   .pill { flex: none; }
 
-  .closing-cta p { margin-bottom: 28px; }
+  .chapter { padding: var(--s7) 0; }
+  .signal-list { grid-template-columns: 1fr; }
+  .signal:nth-child(2) { border-top-color: var(--color-border); }
+  .prose p { font-size: 17px; }
 
-  .site-footer { padding: 40px 0 48px; }
-  .footer-inner { flex-direction: column; align-items: flex-start; gap: 20px; }
-  .footer-links { gap: 4px 24px; }
-  .footer-note { margin-top: 28px; }
+  .closing-cta { text-align: left; }
+  .closing-cta p { margin-inline: 0; }
 
-  .plan-grid { grid-template-columns: 1fr; }
-  .plan-card { padding: 28px 24px 24px; }
-  .plan-banner { padding: 20px; }
+  .site-footer { padding-top: var(--s9); }
+  .footer-top { flex-direction: column; align-items: flex-start; padding-bottom: var(--s8); }
+  .footer-tagline { font-size: 44px; }
+  .footer-links { gap: var(--s1) var(--s5); }
+
+  .plan-card { padding: var(--s6) var(--s5) var(--s5); }
+  .plan-banner { padding: var(--s5); }
   .plan-banner-actions, .plan-banner-actions .btn { width: 100%; }
 
-  .auth-card { padding: 28px 22px 24px; }
-  .detail-card { padding: 20px 20px 16px; }
-  /* label above value once the row has to wrap, rather than two
-     fragments fighting for the same line */
+  .auth-card { padding: var(--s6) var(--s5) var(--s5); }
+  .detail-card { padding: var(--s5) var(--s5) var(--s4); }
   .detail-row { flex-direction: column; align-items: flex-start; gap: 3px; }
   .detail-value { text-align: left; }
   .detail-action--end { text-align: left; }

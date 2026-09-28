@@ -152,6 +152,7 @@ function productCard(item) {
 const SKELETON = `<div class="skeleton-card">
   <div class="skeleton-media"></div>
   <div class="skeleton-line"></div>
+  <div class="skeleton-line"></div>
   <div class="skeleton-line skeleton-line--short"></div>
 </div>`;
 
@@ -210,6 +211,9 @@ function orderFacet(counts, key) {
   const reset = document.getElementById('reset-form');
   const examples = document.getElementById('ask-examples');
   const preview = document.getElementById('preview');
+  /* the words the shopper used, echoed under the outcome so the answer
+     is always read against the question */
+  let asked = '';
 
   /* the vocabulary the catalogue can actually match, handed to the
      interpreter so it maps a request onto values that exist */
@@ -258,6 +262,7 @@ function orderFacet(counts, key) {
           ${status || ''}
         </div>
         <h2>${heading}</h2>
+        ${asked ? `<p class="results-query"><q>${esc(asked)}</q></p>` : ''}
       </div>
       ${readback(prefs)}
     </div>`;
@@ -324,9 +329,8 @@ function orderFacet(counts, key) {
 
     /* offered only when a bigger plan would actually help — the server
        says so; the page does not decide who should be sold to */
-    const action = limited && found.upgrade
-      ? '<p class="empty-action"><a class="btn btn-primary" href="pricing.html">See plans</a></p>'
-      : '';
+    const action = `<p class="empty-action">${limited && found.upgrade
+      ? '<a class="btn btn-primary" href="pricing.html">See plans</a>' : ''}<a class="btn btn-secondary" href="#search">Change the request</a></p>`;
 
     results.innerHTML = `${resultsHead(heading, outcome.preferences)}
       <div class="empty">
@@ -364,6 +368,7 @@ function orderFacet(counts, key) {
         <div class="empty">
           <h3>Try describing it a little differently</h3>
           <p>Nothing in the catalogue fits that request. Asking for something broader usually helps.</p>
+          <p class="empty-action"><a class="btn btn-secondary" href="#search">Change the request</a></p>
         </div>`;
       announce('No matches yet. Try describing it a little differently, or ask for something broader.');
       return;
@@ -396,7 +401,9 @@ function orderFacet(counts, key) {
        running, the page has something better to put in that space */
     if (preview) preview.hidden = true;
     results.hidden = false;
+    asked = query;
     results.innerHTML = `<p class="thinking"><span class="dot"></span>Reading your request…</p>
+      <div class="progress" aria-hidden="true"></div>
       <div class="grid">${SKELETON.repeat(4)}</div>`;
     results.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
@@ -464,10 +471,9 @@ function orderFacet(counts, key) {
   /* The closing call to action points back at the search. Landing there
      with the cursor already in the box means the button does the whole
      job in one press rather than leaving the shopper to find the field. */
-  document.querySelectorAll('a[href="#search"]').forEach((link) => {
-    link.addEventListener('click', () => {
-      window.setTimeout(() => input.focus({ preventScroll: true }), 400);
-    });
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest || !e.target.closest('a[href="#search"], a[href="index.html#search"]')) return;
+    window.setTimeout(() => input.focus({ preventScroll: true }), 400);
   });
 
   if (examples) {
@@ -499,7 +505,7 @@ function orderFacet(counts, key) {
 })();
 
 /* ---------- what a result looks like ----------
-   The home page carries a short row of catalogue rows, so a first-time
+   The home page carries two short rows of catalogue rows, so a first-time
    visitor can see the shape of an answer — retailer, name, price, link —
    before typing anything. It is never mistaken for the answer itself:
    the rows are labelled exactly as they are anywhere else, and the whole
@@ -510,7 +516,7 @@ function orderFacet(counts, key) {
   const note = document.getElementById('preview-note');
 
   Products.subscribe(() => {
-    const items = Products.all().slice(0, 4);
+    const items = Products.all().slice(0, 8);
     if (note) note.innerHTML = sampleNote(items);
     grid.innerHTML = items.map(productCard).join('');
     bindImageFallback(grid);
