@@ -33,7 +33,7 @@ const shapeOf = (item) => SILHOUETTES[item.category] || SILHOUETTES.tee;
 
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
-const ARROW = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7M9 7h8v8"/></svg>';
+const ARROW = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7M9 7h8v8"/></svg>';
 
 const artSvg = (item) =>
   `<svg class="silhouette" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${shapeOf(item)}</svg>`;
@@ -113,21 +113,25 @@ function attributes(item) {
 
 /* One card, one shape, everywhere it is used:
 
-     image -> retailer -> name -> price -> attributes -> action
+     image -> brand -> name -> price -> attributes -> where it is sold
 
    Nothing on it is conditional on which page or which search produced
-   it, so a grid always reads as one set of rows. The only variation is
-   the action, which tells the truth about whether there is somewhere to
-   go: a real listing links out, a placeholder says it is a placeholder. */
+   it, so a grid always reads as one set of rows. The top line is the
+   name the piece is sold under — its brand where the source gives one,
+   otherwise the retailer — and the retailer, when it is a different
+   name, is said once more, quietly, in the last line. That line also
+   tells the truth about whether there is somewhere to go: a real
+   listing links out, a placeholder says it is a placeholder. */
 function productCard(item) {
   const linked = Boolean(item.productUrl);
   const tag = linked ? 'a' : 'article';
   const attrs = linked ? ` href="${esc(item.productUrl)}" target="_blank" rel="noopener noreferrer"` : '';
-  const seller = item.retailer || item.brand || '';
+  const seller = item.brand || item.retailer || '';
+  const soldAt = item.retailer && item.retailer !== seller ? item.retailer : '';
   const price = formatPrice(item.price);
   const attrLine = attributes(item);
   const action = linked
-    ? `<span class="item-action">View item ${ARROW}<span class="sr-only">(opens in a new tab)</span></span>`
+    ? `<span class="item-action">${soldAt ? `View at ${esc(soldAt)}` : 'View item'} ${ARROW}<span class="sr-only">(opens in a new tab)</span></span>`
     : '<span class="item-action item-action--muted">Sample item</span>';
 
   return `<${tag} class="item-card"${attrs}>
