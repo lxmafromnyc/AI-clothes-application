@@ -75,8 +75,9 @@ try {
 
    A product tile needs a photograph, and there is no photograph of a
    real listing this repository may carry. So the demo draws its own:
-   flat-lay artwork in the same neutral tile the interface already uses
-   for a product with no picture, one drawing per row. They read as
+   flat-lay artwork on a white ground, one drawing per row. The card
+   lays a photo onto its own warm tile, so the white takes the tile's
+   tone exactly as a retailer's packshot does. They read as
    product imagery without standing in for anybody's photograph.
    --------------------------------------------------------- */
 
@@ -96,11 +97,12 @@ function hoodieArt(tone, cut) {
        <path d="M198 344 L232 344 M248 344 L292 344" stroke="${c.seam}" stroke-width="3.5" stroke-linecap="round"/>`
     : `<path d="M186 338 L294 338 L302 410 L178 410 Z" fill="none" stroke="${c.seam}" stroke-width="3.5" stroke-linejoin="round"/>`;
 
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 600" width="480" height="600" role="img">
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 640" width="480" height="640" role="img">
   <defs><filter id="s" x="-20%" y="-20%" width="140%" height="140%">
     <feDropShadow dx="0" dy="10" stdDeviation="14" flood-color="#000" flood-opacity="0.14"/>
   </filter></defs>
-  <rect width="480" height="600" fill="#F5F5F4"/>
+  <rect width="480" height="640" fill="#FFFFFF"/>
+  <g transform="translate(0 20)">
   <ellipse cx="240" cy="486" rx="146" ry="15" fill="#000" opacity="0.06"/>
   <g filter="url(#s)">
     <path d="M168 148 C176 84 304 84 312 148 C312 190 282 214 240 214 C198 214 168 190 168 148 Z" fill="${c.hood}"/>
@@ -116,6 +118,7 @@ function hoodieArt(tone, cut) {
     <path d="M156 434 L324 434 L324 452 Q324 468 308 468 L172 468 Q156 468 156 452 Z" fill="${c.trim}"/>
     <path d="M220 198 C218 224 217 240 217 258 M260 198 C262 224 263 240 263 258"
           stroke="${c.cord}" stroke-width="4.5" fill="none" stroke-linecap="round"/>
+  </g>
   </g>
 </svg>`;
 }
@@ -191,11 +194,11 @@ const TYPES = {
 };
 
 /* ---------------------------------------------------------
-   Inter, served locally
+   The site's faces, served locally
 
-   The recording browser is cut off from everything except this origin,
-   and a demo set in a different typeface than the site is a demo of
-   something else. So the face is fetched once here, in Node, and served
+   Inter and Instrument Serif. The recording browser is cut off from
+   everything except this origin, and a demo set in a different typeface
+   than the site is a demo of something else. So the face is fetched once here, in Node, and served
    back at the address the page already asks for. Only the Latin subsets
    are kept: the recording has no other alphabet in it.
 
@@ -204,7 +207,7 @@ const TYPES = {
    with a line saying so.
    --------------------------------------------------------- */
 
-const FONT_CSS = 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap';
+const FONT_CSS = 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Instrument+Serif:ital@0;1&display=swap';
 const CHROME_UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
 const fontFiles = new Map();
@@ -312,33 +315,43 @@ const OVERLAY = (compact) => {
     #demo-badge { position: absolute; right: ${compact ? 12 : 22}px;
       ${compact ? 'top: 74px' : 'bottom: 30px'};
       display: flex; align-items: center; gap: 9px;
-      padding: ${10 * u}px ${16 * u}px; border-radius: 999px;
-      background: var(--color-surface-invert); color: var(--color-text-invert);
-      font-size: ${11 * u}px; font-weight: 700; letter-spacing: .13em; text-transform: uppercase;
+      padding: ${9 * u}px ${16 * u}px; border-radius: 999px;
+      background: var(--color-primary); color: var(--color-text-invert);
+      font-size: ${12.5 * u}px; font-weight: 500; letter-spacing: 0;
       opacity: 0; transition: opacity .5s ease; }
     #demo-badge.on { opacity: .93; }
-    #demo-badge i { width: 7px; height: 7px; border-radius: 50%; background: var(--color-warning); }
+    #demo-badge i { width: 6px; height: 6px; border-radius: 50%; background: var(--color-warning); }
 
     #demo-caption { position: absolute; left: ${compact ? 14 : 46}px; right: ${compact ? 14 : 'auto'};
       bottom: ${compact ? 22 : 30}px; transform: translate(0, 14px);
       display: flex; align-items: center; gap: ${12 * u}px;
-      padding: ${13 * u}px ${22 * u}px ${13 * u}px ${16 * u}px; border-radius: 999px;
-      background: var(--color-surface-invert); color: var(--color-text-invert);
-      font-size: ${17 * u}px; font-weight: 600; letter-spacing: -.01em; line-height: 1.3;
+      padding: ${13 * u}px ${24 * u}px ${13 * u}px ${14 * u}px; border-radius: 999px;
+      background: var(--color-primary); color: var(--color-text-invert);
+      font-size: ${17 * u}px; font-weight: 500; letter-spacing: -.015em; line-height: 1.3;
       opacity: 0; transition: opacity .34s ease, transform .34s cubic-bezier(.2,.7,.2,1); }
     #demo-caption.on { opacity: .95; transform: translate(0, 0); }
     #demo-caption b { flex: none; display: grid; place-items: center;
       width: ${26 * u}px; height: ${26 * u}px; border-radius: 50%;
-      background: var(--color-text-invert); color: var(--color-surface-invert);
-      font-size: ${13 * u}px; font-weight: 700; }
+      background: var(--color-text-invert); color: var(--color-primary);
+      font-size: ${12.5 * u}px; font-weight: 500; font-variant-numeric: tabular-nums; }
 
-    #demo-link { position: absolute; padding: ${11 * u}px ${18 * u}px; border-radius: 12px;
-      background: var(--color-primary); color: #fff;
-      font-size: ${15 * u}px; font-weight: 600; white-space: nowrap;
+    #demo-link { position: absolute; padding: ${11 * u}px ${20 * u}px; border-radius: 999px;
+      background: var(--color-primary); color: var(--color-text-invert);
+      font-size: ${15 * u}px; font-weight: 500; white-space: nowrap;
       box-shadow: 0 12px 30px -12px rgba(0,0,0,.55);
       opacity: 0; transform: translateY(8px); transition: opacity .28s ease, transform .28s ease; }
     #demo-link.on { opacity: 1; transform: translateY(0); }
     #demo-link small { display: block; font-size: ${12.5 * u}px; font-weight: 500; opacity: .8; margin-top: 2px; }
+
+    /* The screencast a recording is made from only sends a frame when
+       something repaints. A still page sends none, so what appears
+       during a pause — the chip saying where the click goes — reaches
+       the video seconds late, bunched into its last moments. One pixel
+       that never stops repainting keeps the frames coming at an even
+       rate, so every beat lands in the video when it happened. */
+    #demo-tick { position: absolute; left: 0; bottom: 0; width: 1px; height: 1px;
+      background: var(--color-bg); animation: demo-tick .2s steps(2) infinite; }
+    @keyframes demo-tick { to { background: var(--color-surface); } }
   `;
 
   const style = document.createElement('style');
@@ -350,9 +363,10 @@ const OVERLAY = (compact) => {
   layer.innerHTML = `
     <div id="demo-cursor"><svg viewBox="0 0 24 24" fill="#fff" stroke="#111" stroke-width="1.4"
       stroke-linejoin="round"><path d="M5 3l14 8.4-6.1 1.2-2.6 5.9z"/></svg></div>
-    <div id="demo-badge"><i></i>Product demo · sample data</div>
+    <div id="demo-badge"><i></i>Product demo · Sample data</div>
     <div id="demo-caption"><b>1</b><span>caption</span></div>
-    <div id="demo-link"></div>`;
+    <div id="demo-link"></div>
+    <div id="demo-tick"></div>`;
   document.body.appendChild(layer);
 
   const cursor = layer.querySelector('#demo-cursor');
@@ -593,7 +607,7 @@ async function record(shot, interCss, raw) {
   let interCss = '';
   try {
     interCss = await loadInter();
-    console.log(`Inter: ${fontFiles.size} files cached for the recording`);
+    console.log(`Fonts: ${fontFiles.size} files cached for the recording`);
   } catch (err) {
     console.log('Inter could not be fetched — recording in the fallback stack.');
   }
@@ -614,6 +628,20 @@ async function record(shot, interCss, raw) {
   server.close();
 
   for (const [shot, take] of takes) {
+    /* The recorder falls behind the wall clock while it works, so the
+       video runs longer than the walkthrough took — about a tenth, and
+       more towards the end. The cues were timed on the wall clock, so
+       they are stretched to the video's own length, or the captions
+       track would run ahead of the frames it describes. */
+    const actual = videoLength(take.source);
+    if (actual && actual > take.length) {
+      const stretch = actual / take.length;
+      take.cues.forEach((cue) => {
+        cue.start *= stretch;
+        if (cue.end != null) cue.end *= stretch;
+      });
+      take.length = actual;
+    }
     writeTrack(shot.name, take.cues, take.length);
 
     if (process.argv.includes('--raw')) {
@@ -630,6 +658,22 @@ async function record(shot, interCss, raw) {
     encode(shot, take.source, still);
   }
 })().catch((err) => { console.error(err); process.exit(1); });
+
+/* How long a recording actually runs, read off the file. ffmpeg -i with
+   no output exits with an error and prints what it found on stderr, so
+   the answer comes from the error. Null when there is no ffmpeg to ask. */
+function videoLength(file) {
+  const ffmpeg = findFfmpeg();
+  if (!ffmpeg) return null;
+  let text = '';
+  try {
+    execFileSync(ffmpeg, ['-hide_banner', '-i', file], { stdio: ['ignore', 'ignore', 'pipe'] });
+  } catch (err) {
+    text = String(err.stderr || '');
+  }
+  const m = /Duration: (\d+):(\d+):([\d.]+)/.exec(text);
+  return m ? Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]) : null;
+}
 
 /* ---------------------------------------------------------
    The captions track

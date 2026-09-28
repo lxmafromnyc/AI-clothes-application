@@ -5,10 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Discover — Fynd</title>
 <meta name="description" content="Browse clothes by style — minimal, classic, streetwear, sporty, bohemian and bold.">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%23141414'/><text x='16' y='23' font-family='Helvetica,Arial,sans-serif' font-size='20' font-weight='700' fill='white' text-anchor='middle'>F</text></svg>">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%23121212'/><text x='16' y='24' font-family='Georgia,serif' font-size='22' fill='white' text-anchor='middle'>F</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=Instrument+Serif:ital@0;1&amp;display=swap" rel="stylesheet">
 <link rel="stylesheet" href="assets/styles.css">
 <script>document.documentElement.classList.add('js');</script>
 </head>
@@ -16,6 +16,9 @@
 
 <a class="skip-link" href="#main">Skip to content</a>
 
+<!-- The wordmark sits in the centre of the bar; the links fall either
+     side of it — finding things on the left, the house's business on
+     the right. On a phone the list becomes a page of its own. -->
 <header class="site-header">
   <div class="container">
     <div class="nav">
@@ -39,18 +42,21 @@
 
 <main id="main">
 
-  <section class="stage">
-    <div class="container">
-      <div class="page-head">
+  <div class="container">
+    <header class="page-intro">
+      <div>
+        <p class="eyebrow">The catalogue</p>
         <h1>Discover</h1>
-        <p>Browse by style if you would rather look than describe.</p>
       </div>
-    </div>
-  </section>
+      <p>Browse by style if you would rather look than describe. Every piece links out to the retailer that sells it.</p>
+    </header>
+  </div>
 
-  <section class="section section--tight">
+  <section class="section section--flush">
     <div class="container">
 
+      <!-- Held under the header while the grid scrolls, so the style can
+           be changed from anywhere in the catalogue. -->
       <div class="filter-bar">
         <div class="filter-pills" role="group" aria-label="Filter by style"></div>
         <span class="filter-count" id="filter-count" aria-live="polite"></span>
@@ -62,27 +68,15 @@
     </div>
   </section>
 
-
-  <section class="closing">
-    <div class="container">
-      <div class="closing-cta">
-        <p class="eyebrow">Start here</p>
-        <h2>Know what you want instead?</h2>
-        <p>Describe it in one sentence and Fynd will go and look for it.</p>
-        <a class="btn btn-primary btn-lg" href="find-clothes.html">Find my clothes</a>
-      </div>
-    </div>
-  </section>
-
 </main>
 
 <footer class="site-footer">
   <div class="container">
+    <div class="footer-top">
+      <p class="footer-tagline">Find what you <em class="voice">mean.</em></p>
+      <a class="btn btn-light btn-lg" href="index.html#search">Start a search <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12h16M14 6l6 6-6 6"/></svg></a>
+    </div>
     <div class="footer-inner">
-      <a class="brand" href="index.html" aria-label="Fynd — home">
-        <span class="brand-mark" aria-hidden="true"></span>
-        <span class="brand-word">Fynd</span>
-      </a>
       <nav aria-label="Footer">
         <ul class="footer-links">
           <li><a href="index.html">Search</a></li>
@@ -92,8 +86,9 @@
           <li><a href="account.html">Account</a></li>
         </ul>
       </nav>
+      <p class="footer-note">Fynd is a demo experience. Live results come from a connected product source; when none is connected, sample items are shown and labelled as such.</p>
     </div>
-    <p class="footer-note">Fynd is a demo experience. Live results come from a connected product source; when none is connected, sample items are shown and labelled as such.</p>
+    <span class="footer-mark" aria-hidden="true">Fynd</span>
   </div>
 </footer>
 

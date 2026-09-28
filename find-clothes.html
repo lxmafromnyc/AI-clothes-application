@@ -3,12 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Find Clothes — Fynd</title>
+<title>Search — Fynd</title>
 <meta name="description" content="Describe the clothes you want in your own words. Fynd reads your request and finds real items that match.">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%23141414'/><text x='16' y='23' font-family='Helvetica,Arial,sans-serif' font-size='20' font-weight='700' fill='white' text-anchor='middle'>F</text></svg>">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%23121212'/><text x='16' y='24' font-family='Georgia,serif' font-size='22' fill='white' text-anchor='middle'>F</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=Instrument+Serif:ital@0;1&amp;display=swap" rel="stylesheet">
 <link rel="stylesheet" href="assets/styles.css">
 <!-- Where the AI interpreter lives. The function is deployed on Vercel because
      GitHub Pages cannot run server code; the OpenAI key is held there as an
@@ -20,6 +20,9 @@
 
 <a class="skip-link" href="#search">Skip to search</a>
 
+<!-- The wordmark sits in the centre of the bar; the links fall either
+     side of it — finding things on the left, the house's business on
+     the right. On a phone the list becomes a page of its own. -->
 <header class="site-header">
   <div class="container">
     <div class="nav">
@@ -47,7 +50,8 @@
     <div class="container stage-inner">
 
       <div class="page-head">
-        <h1>What are you looking for?</h1>
+        <p class="eyebrow">Search</p>
+        <h1>What are you <em class="voice">looking for?</em></h1>
         <p>Describe one piece in your own words &mdash; the colour, the fit, the occasion, the budget.</p>
       </div>
 
@@ -56,8 +60,8 @@
         <label class="sr-only" for="ask">Describe the clothes you are looking for</label>
 
         <div class="ask-field">
-          <svg class="ask-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.8-3.8"/></svg>
-          <textarea id="ask" name="ask" rows="1" maxlength="400"
+          <svg class="ask-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.8-3.8"/></svg>
+          <textarea id="ask" name="ask" rows="2" maxlength="400"
             placeholder="Black oversized hoodie under $80"></textarea>
         </div>
 
@@ -65,22 +69,23 @@
              assistive technology: it is a visual cue for a pointer
              gesture, and the file button below is the accessible path. -->
         <div class="ask-dropveil" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 15v3a2 2 0 002 2h12a2 2 0 002-2v-3"/></svg>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 15v3a2 2 0 002 2h12a2 2 0 002-2v-3"/></svg>
           <span>Drop to attach</span>
         </div>
 
         <ul class="attachments" id="attachments" hidden></ul>
 
         <div class="ask-actions">
-          <button class="btn btn-primary" type="submit">Search</button>
+          <button class="btn btn-primary" type="submit">Search <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12h16M14 6l6 6-6 6"/></svg></button>
 
           <input class="sr-only" type="file" id="ask-files" name="ask-files">
           <label class="attach-btn" for="ask-files">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.4 11.05l-9.19 9.19a5 5 0 01-7.07-7.07l9.19-9.19a3.5 3.5 0 014.95 4.95l-9.2 9.19a2 2 0 01-2.82-2.83l8.49-8.48"/></svg>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.4 11.05l-9.19 9.19a5 5 0 01-7.07-7.07l9.19-9.19a3.5 3.5 0 014.95 4.95l-9.2 9.19a2 2 0 01-2.82-2.83l8.49-8.48"/></svg>
             Add a photo
           </label>
 
           <button class="link-btn" type="button" id="reset-form">Clear</button>
+          <span class="ask-hint" aria-hidden="true">Press <kbd>Enter</kbd> to search</span>
         </div>
 
         <!-- Both start empty: an alert is announced when its text
@@ -118,11 +123,11 @@
 
 <footer class="site-footer">
   <div class="container">
+    <div class="footer-top">
+      <p class="footer-tagline">Find what you <em class="voice">mean.</em></p>
+      <a class="btn btn-light btn-lg" href="index.html#search">Start a search <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12h16M14 6l6 6-6 6"/></svg></a>
+    </div>
     <div class="footer-inner">
-      <a class="brand" href="index.html" aria-label="Fynd — home">
-        <span class="brand-mark" aria-hidden="true"></span>
-        <span class="brand-word">Fynd</span>
-      </a>
       <nav aria-label="Footer">
         <ul class="footer-links">
           <li><a href="index.html">Search</a></li>
@@ -132,8 +137,9 @@
           <li><a href="account.html">Account</a></li>
         </ul>
       </nav>
+      <p class="footer-note">Fynd is a demo experience. Live results come from a connected product source; when none is connected, sample items are shown and labelled as such.</p>
     </div>
-    <p class="footer-note">Fynd is a demo experience. Live results come from a connected product source; when none is connected, sample items are shown and labelled as such.</p>
+    <span class="footer-mark" aria-hidden="true">Fynd</span>
   </div>
 </footer>
 
