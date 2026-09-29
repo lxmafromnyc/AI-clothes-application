@@ -10,10 +10,10 @@
      No Stripe key is here, or anywhere else a browser can reach: the
      secret key lives only in the deployment's environment. -->
 <meta name="findwear-api" content="https://ai-clothes-application.vercel.app/api/interpret">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%23121212'/><text x='16' y='24' font-family='Georgia,serif' font-size='22' fill='white' text-anchor='middle'>F</text></svg>">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' fill='%231F2BD6'/><text x='6' y='24' font-family='Helvetica,Arial,sans-serif' font-size='22' font-weight='700' fill='white'>f</text><rect x='19' y='9' width='3' height='15' fill='white'/></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=Instrument+Serif:ital@0;1&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Fragment+Mono&amp;family=Inter:ital,opsz,wght@0,14..32,300..700;1,14..32,300..500&amp;display=swap" rel="stylesheet">
 <link rel="stylesheet" href="assets/styles.css">
 <script>document.documentElement.classList.add('js');</script>
 </head>
@@ -21,15 +21,21 @@
 
 <a class="skip-link" href="#plans">Skip to plans</a>
 
-<!-- The wordmark sits in the centre of the bar; the links fall either
-     side of it — finding things on the left, the house's business on
-     the right. On a phone the list becomes a page of its own. -->
+<!-- The wordmark is the name being typed: lower case, and a caret after
+     it. Links are numbered like the sections they lead to; the one you
+     are on is bracketed, the way a word Fynd has read is. -->
 <header class="site-header">
   <div class="container">
     <div class="nav">
       <a class="brand" href="index.html" aria-label="Fynd — home">
-        <span class="brand-mark" aria-hidden="true"></span>
-        <span class="brand-word">Fynd</span>
+        <span class="brand-word" aria-hidden="true">fynd</span><span class="brand-mark" aria-hidden="true"></span>
+      </a>
+      <!-- The search, one click away from every inner page: a field in
+           the bar that opens it. -->
+      <a class="nav-prompt" href="find-clothes.html">
+        <span class="nav-prompt-caret" aria-hidden="true"></span>
+        <span class="nav-prompt-text">Describe what you&rsquo;re looking for</span>
+        <span class="nav-prompt-key" aria-hidden="true">&crarr;</span>
       </a>
       <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" aria-label="Open menu"><span></span></button>
       <nav aria-label="Main">
@@ -49,10 +55,8 @@
 
   <div class="container">
     <header class="page-intro">
-      <div>
-        <p class="eyebrow">Pricing</p>
-        <h1>Start free. <em class="voice">Grow into it.</em></h1>
-      </div>
+      <div class="index-line"><span class="index-num">01</span><span>Pricing</span><span class="index-rule"></span><span class="index-note">Billed monthly through Stripe</span></div>
+      <h1>Start free. Grow into it.</h1>
       <p>Every plan searches the same retailers and returns the same real listings. What changes is how much you can ask for.</p>
     </header>
   </div>
@@ -155,10 +159,10 @@
   <div class="container">
     <section class="chapter">
       <div class="chapter-head">
-        <p class="eyebrow">The details</p>
+        <div class="index-line"><span class="index-num">02</span><span>The details</span><span class="index-rule"></span></div>
         <h2>What you are actually buying</h2>
       </div>
-      <div>
+      <div class="faq-list">
       <div class="faq-row">
         <h3>What counts as a live product search?</h3>
         <p>One request that reaches a real product source and comes back with listings. Browsing Discover, re-reading results you already have, and a search that finds nothing because nothing matched all cost you the one search that ran.</p>
@@ -185,11 +189,14 @@
 
 </main>
 
+<!-- Every page ends on a field of ultramarine, with the wordmark set
+     as wide as it will go. -->
 <footer class="site-footer">
   <div class="container">
+    <div class="index-line"><span class="index-num">fynd</span><span>Clothing search, in plain language</span><span class="index-rule"></span><span class="index-note">Say it. Fynd finds it.</span></div>
     <div class="footer-top">
-      <p class="footer-tagline">Find what you <em class="voice">mean.</em></p>
-      <a class="btn btn-light btn-lg" href="index.html#search">Start a search <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12h16M14 6l6 6-6 6"/></svg></a>
+      <p class="footer-tagline">Find what you <span class="words">mean.</span></p>
+      <a class="btn btn-light btn-lg" href="index.html#search">Start a search <span class="key" aria-hidden="true">&crarr;</span></a>
     </div>
     <div class="footer-inner">
       <nav aria-label="Footer">
@@ -203,7 +210,7 @@
       </nav>
       <p class="footer-note">Fynd is a demo experience. Live results come from a connected product source; when none is connected, sample items are shown and labelled as such.</p>
     </div>
-    <span class="footer-mark" aria-hidden="true">Fynd</span>
+    <div class="footer-mark" aria-hidden="true"><span class="footer-mark-word">fynd</span><span class="footer-mark-caret"></span></div>
   </div>
 </footer>
 
