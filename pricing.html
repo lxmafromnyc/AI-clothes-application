@@ -5,28 +5,37 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Plans and pricing — Fynd</title>
 <meta name="description" content="Fynd is free to try every day. Pro and Max raise the AI and live-search allowances, billed monthly through Stripe.">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%23141414'/><text x='16' y='23' font-family='Helvetica,Arial,sans-serif' font-size='20' font-weight='700' fill='white' text-anchor='middle'>F</text></svg>">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="assets/styles.css">
 <!-- The same endpoint the interpreter uses. /api/account, /api/checkout
      and /api/portal are derived from it, so one tag configures them all.
      No Stripe key is here, or anywhere else a browser can reach: the
      secret key lives only in the deployment's environment. -->
 <meta name="findwear-api" content="https://ai-clothes-application.vercel.app/api/interpret">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' fill='%231F2BD6'/><text x='6' y='24' font-family='Helvetica,Arial,sans-serif' font-size='22' font-weight='700' fill='white'>f</text><rect x='19' y='9' width='3' height='15' fill='white'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fragment+Mono&amp;family=Inter:ital,opsz,wght@0,14..32,300..700;1,14..32,300..500&amp;display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/styles.css">
 <script>document.documentElement.classList.add('js');</script>
 </head>
 <body data-page="pricing">
 
 <a class="skip-link" href="#plans">Skip to plans</a>
 
+<!-- The wordmark is the name being typed: lower case, and a caret after
+     it. Links are numbered like the sections they lead to; the one you
+     are on is bracketed, the way a word Fynd has read is. -->
 <header class="site-header">
   <div class="container">
     <div class="nav">
       <a class="brand" href="index.html" aria-label="Fynd — home">
-        <span class="brand-mark" aria-hidden="true"></span>
-        <span class="brand-word">Fynd</span>
+        <span class="brand-word" aria-hidden="true">fynd</span><span class="brand-mark" aria-hidden="true"></span>
+      </a>
+      <!-- The search, one click away from every inner page: a field in
+           the bar that opens it. -->
+      <a class="nav-prompt" href="find-clothes.html">
+        <span class="nav-prompt-caret" aria-hidden="true"></span>
+        <span class="nav-prompt-text">Describe what you&rsquo;re looking for</span>
+        <span class="nav-prompt-key" aria-hidden="true">&crarr;</span>
       </a>
       <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" aria-label="Open menu"><span></span></button>
       <nav aria-label="Main">
@@ -44,16 +53,15 @@
 
 <main id="main">
 
-  <section class="stage">
-    <div class="container stage-inner">
-      <div class="hero">
-        <h1>Start free. <span class="hero-line">Pay when you outgrow it.</span></h1>
-        <p class="lead">Every plan searches the same retailers and returns the same real listings. What changes is how much you can ask for.</p>
-      </div>
-    </div>
-  </section>
+  <div class="container">
+    <header class="page-intro">
+      <div class="index-line"><span class="index-num">01</span><span>Pricing</span><span class="index-rule"></span><span class="index-note">Billed monthly through Stripe</span></div>
+      <h1>Start free. Grow into it.</h1>
+      <p>Every plan searches the same retailers and returns the same real listings. What changes is how much you can ask for.</p>
+    </header>
+  </div>
 
-  <section class="section" id="plans">
+  <section class="section section--flush" id="plans">
     <div class="container">
 
       <!-- Written by assets/billing-ui.js from what /api/account returned.
@@ -148,62 +156,49 @@
     </div>
   </section>
 
-  <section class="section section--flush">
-    <div class="container narrow">
-      <div class="section-head">
-        <div>
-          <p class="eyebrow">The details</p>
-          <h2>What you are actually buying</h2>
-        </div>
+  <div class="container">
+    <section class="chapter">
+      <div class="chapter-head">
+        <div class="index-line"><span class="index-num">02</span><span>The details</span><span class="index-rule"></span></div>
+        <h2>What you are actually buying</h2>
       </div>
-
+      <div class="faq-list">
       <div class="faq-row">
         <h3>What counts as a live product search?</h3>
         <p>One request that reaches a real product source and comes back with listings. Browsing Discover, re-reading results you already have, and a search that finds nothing because nothing matched all cost you the one search that ran.</p>
       </div>
-
       <div class="faq-row">
         <h3>What counts as an AI token?</h3>
         <p>Reading your request into a set of constraints costs tokens, counted exactly as the model reports them. A typical request is a few hundred, so the free allowance is dozens of requests a day rather than a handful.</p>
       </div>
-
       <div class="faq-row">
         <h3>Where do I type my card?</h3>
         <p>On Stripe, not here. Fynd sends you to Stripe Checkout and never sees, handles or stores a card number. Changing a card, switching plan, downloading invoices and cancelling all happen in Stripe's billing portal, reached from your account page.</p>
       </div>
-
       <div class="faq-row">
         <h3>What happens if a payment fails?</h3>
         <p>Stripe retries it and tells Fynd. While the subscription is unpaid your allowance goes back to Free, and your account page says why and links to the portal to fix the card. Nothing is deleted; the plan comes back with the payment.</p>
       </div>
-
       <div class="faq-row">
         <h3>What happens when I cancel?</h3>
         <p>You keep the plan you paid for until the end of the period you paid for, and then go back to Free. Cancelling is a button in the billing portal.</p>
       </div>
-    </div>
-  </section>
-
-  <section class="closing">
-    <div class="container">
-      <div class="closing-cta">
-        <p class="eyebrow">No decision needed yet</p>
-        <h2>Try it first</h2>
-        <p>The free allowance comes back every day, and nothing here asks for a card.</p>
-        <a class="btn btn-primary btn-lg" href="find-clothes.html">Find my clothes</a>
       </div>
-    </div>
-  </section>
+    </section>
+  </div>
 
 </main>
 
+<!-- Every page ends on a field of ultramarine, with the wordmark set
+     as wide as it will go. -->
 <footer class="site-footer">
   <div class="container">
+    <div class="index-line"><span class="index-num">fynd</span><span>Clothing search, in plain language</span><span class="index-rule"></span><span class="index-note">Say it. Fynd finds it.</span></div>
+    <div class="footer-top">
+      <p class="footer-tagline">Find what you <span class="words">mean.</span></p>
+      <a class="btn btn-light btn-lg" href="index.html#search">Start a search <span class="key" aria-hidden="true">&crarr;</span></a>
+    </div>
     <div class="footer-inner">
-      <a class="brand" href="index.html" aria-label="Fynd — home">
-        <span class="brand-mark" aria-hidden="true"></span>
-        <span class="brand-word">Fynd</span>
-      </a>
       <nav aria-label="Footer">
         <ul class="footer-links">
           <li><a href="index.html">Search</a></li>
@@ -213,8 +208,9 @@
           <li><a href="account.html">Account</a></li>
         </ul>
       </nav>
+      <p class="footer-note">Fynd is a demo experience. Live results come from a connected product source; when none is connected, sample items are shown and labelled as such.</p>
     </div>
-    <p class="footer-note">Fynd is a demo experience. Live results come from a connected product source; when none is connected, sample items are shown and labelled as such.</p>
+    <div class="footer-mark" aria-hidden="true"><span class="footer-mark-word">fynd</span><span class="footer-mark-caret"></span></div>
   </div>
 </footer>
 

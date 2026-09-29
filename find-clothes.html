@@ -3,12 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Find Clothes — Fynd</title>
+<title>Search — Fynd</title>
 <meta name="description" content="Describe the clothes you want in your own words. Fynd reads your request and finds real items that match.">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%23141414'/><text x='16' y='23' font-family='Helvetica,Arial,sans-serif' font-size='20' font-weight='700' fill='white' text-anchor='middle'>F</text></svg>">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' fill='%231F2BD6'/><text x='6' y='24' font-family='Helvetica,Arial,sans-serif' font-size='22' font-weight='700' fill='white'>f</text><rect x='19' y='9' width='3' height='15' fill='white'/></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Fragment+Mono&amp;family=Inter:ital,opsz,wght@0,14..32,300..700;1,14..32,300..500&amp;display=swap" rel="stylesheet">
 <link rel="stylesheet" href="assets/styles.css">
 <!-- Where the AI interpreter lives. The function is deployed on Vercel because
      GitHub Pages cannot run server code; the OpenAI key is held there as an
@@ -20,12 +20,14 @@
 
 <a class="skip-link" href="#search">Skip to search</a>
 
+<!-- The wordmark is the name being typed: lower case, and a caret after
+     it. Links are numbered like the sections they lead to; the one you
+     are on is bracketed, the way a word Fynd has read is. -->
 <header class="site-header">
   <div class="container">
     <div class="nav">
       <a class="brand" href="index.html" aria-label="Fynd — home">
-        <span class="brand-mark" aria-hidden="true"></span>
-        <span class="brand-word">Fynd</span>
+        <span class="brand-word" aria-hidden="true">fynd</span><span class="brand-mark" aria-hidden="true"></span>
       </a>
       <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" aria-label="Open menu"><span></span></button>
       <nav aria-label="Main">
@@ -44,43 +46,52 @@
 <main id="main">
 
   <section class="stage" id="search">
-    <div class="container stage-inner">
-
+    <div class="container">
+      <div class="index-line"><span class="index-num">01</span><span>Search</span><span class="index-rule"></span><span class="index-note">Say it in your own words</span></div>
       <div class="page-head">
         <h1>What are you looking for?</h1>
-        <p>Describe one piece in your own words &mdash; the colour, the fit, the occasion, the budget.</p>
+        <p>One piece, described the way you&rsquo;d say it &mdash; the colour, the fit, the occasion, the budget.</p>
       </div>
 
+      <!-- The field: a white sheet with crop marks at its corners. The
+           shopper's words are set at display size; behind them a mirror of
+           the same words carries a bracket under each one that says
+           something — garment, colour, fit, budget — drawn in as it is
+           typed by assets/reading.js. -->
       <div class="ask-wrap">
       <form class="ask-card" id="ask-form" data-dropzone>
         <label class="sr-only" for="ask">Describe the clothes you are looking for</label>
+        <div class="ask-label" aria-hidden="true"><span>Your words</span></div>
 
         <div class="ask-field">
-          <svg class="ask-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.8-3.8"/></svg>
-          <textarea id="ask" name="ask" rows="1" maxlength="400"
-            placeholder="Black oversized hoodie under $80"></textarea>
+          <div class="ask-input">
+            <div class="ask-mirror" aria-hidden="true"></div>
+            <textarea id="ask" name="ask" rows="1" maxlength="400"
+              placeholder="black oversized hoodie under $80"></textarea>
+          </div>
         </div>
 
         <!-- Shown only while a file is over the card. Hidden from
              assistive technology: it is a visual cue for a pointer
              gesture, and the file button below is the accessible path. -->
         <div class="ask-dropveil" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 15v3a2 2 0 002 2h12a2 2 0 002-2v-3"/></svg>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 15v3a2 2 0 002 2h12a2 2 0 002-2v-3"/></svg>
           <span>Drop to attach</span>
         </div>
 
         <ul class="attachments" id="attachments" hidden></ul>
 
         <div class="ask-actions">
-          <button class="btn btn-primary" type="submit">Search</button>
+          <button class="btn btn-primary" type="submit">Find it <span class="key" aria-hidden="true">&crarr;</span></button>
 
           <input class="sr-only" type="file" id="ask-files" name="ask-files">
           <label class="attach-btn" for="ask-files">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.4 11.05l-9.19 9.19a5 5 0 01-7.07-7.07l9.19-9.19a3.5 3.5 0 014.95 4.95l-9.2 9.19a2 2 0 01-2.82-2.83l8.49-8.48"/></svg>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
             Add a photo
           </label>
 
           <button class="link-btn" type="button" id="reset-form">Clear</button>
+          <span class="ask-hint" aria-hidden="true">Shift &crarr; for a new line</span>
         </div>
 
         <!-- Both start empty: an alert is announced when its text
@@ -93,20 +104,23 @@
         </p>
       </form>
 
-      <p class="ask-examples" id="ask-examples">
-        <span class="eyebrow examples-label">Try</span>
-        <button type="button" class="example">Minimal neutrals for fall</button>
-        <button type="button" class="example">Linen shirt for a wedding</button>
-        <button type="button" class="example">Relaxed jeans under $100</button>
-      </p>
+      <!-- Under the field: the sentence restated as the attributes in it,
+           and other things a person might say. -->
+      <div class="ask-under">
+        <div class="readout" id="readout"><span class="readout-label">Read as &rarr;</span><span class="tokens"></span></div>
+        <p class="ask-examples" id="ask-examples">
+          <span class="examples-label">Or try</span>
+          <button type="button" class="example">minimal neutrals for fall</button>
+          <button type="button" class="example">linen shirt for a wedding</button>
+          <button type="button" class="example">relaxed jeans under $100</button>
+        </p>
       </div>
-
+      </div>
     </div>
   </section>
 
   <!-- Results break out of the search column onto the page: the products
-       are the answer, so they get the full width rather than the width of
-       the box that asked the question. -->
+       are the answer, so they get the full width. -->
   <div class="container">
     <!-- The outcome in one line, for screen readers only: the grid itself
          is too long to announce, and the count is the part worth hearing. -->
@@ -116,13 +130,16 @@
 
 </main>
 
+<!-- Every page ends on a field of ultramarine, with the wordmark set
+     as wide as it will go. -->
 <footer class="site-footer">
   <div class="container">
+    <div class="index-line"><span class="index-num">fynd</span><span>Clothing search, in plain language</span><span class="index-rule"></span><span class="index-note">Say it. Fynd finds it.</span></div>
+    <div class="footer-top">
+      <p class="footer-tagline">Find what you <span class="words">mean.</span></p>
+      <a class="btn btn-light btn-lg" href="index.html#search">Start a search <span class="key" aria-hidden="true">&crarr;</span></a>
+    </div>
     <div class="footer-inner">
-      <a class="brand" href="index.html" aria-label="Fynd — home">
-        <span class="brand-mark" aria-hidden="true"></span>
-        <span class="brand-word">Fynd</span>
-      </a>
       <nav aria-label="Footer">
         <ul class="footer-links">
           <li><a href="index.html">Search</a></li>
@@ -132,13 +149,15 @@
           <li><a href="account.html">Account</a></li>
         </ul>
       </nav>
+      <p class="footer-note">Fynd is a demo experience. Live results come from a connected product source; when none is connected, sample items are shown and labelled as such.</p>
     </div>
-    <p class="footer-note">Fynd is a demo experience. Live results come from a connected product source; when none is connected, sample items are shown and labelled as such.</p>
+    <div class="footer-mark" aria-hidden="true"><span class="footer-mark-word">fynd</span><span class="footer-mark-caret"></span></div>
   </div>
 </footer>
 
 <script src="assets/products.js"></script>
 <script src="assets/interpret.js"></script>
+<script src="assets/reading.js"></script>
 <script src="assets/search.js"></script>
 <script src="assets/attachments.js"></script>
 <script src="assets/catalog.js"></script>

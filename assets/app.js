@@ -55,7 +55,9 @@ function media(item, badge) {
   const inner = item.imageUrl
     ? `<img src="${esc(item.imageUrl)}" alt="${esc(item.name)}" loading="lazy" decoding="async" referrerpolicy="no-referrer" data-fallback="${esc(item.id)}">`
     : artSvg(item);
-  return `<div class="item-media">${inner}${badge || ''}</div>`;
+  /* the frame is what the crop marks are drawn on; the tile inside it
+     clips the photograph */
+  return `<div class="item-frame"><div class="item-media">${inner}${badge || ''}</div></div>`;
 }
 
 /* a dead image URL leaves drawn artwork in its place rather than a broken
@@ -97,18 +99,31 @@ const SAMPLE_NOTE = 'Items marked <strong>Sample</strong> are placeholder data f
 const sampleNote = (items) => (items.some((i) => !i.productUrl)
   ? `<p class="sample-note">${SAMPLE_NOTE}</p>` : '');
 
-/* The short line under the price. Three attributes at most, in one
-   order, from whichever of them the record actually carries — provider
-   records bring colours and sizes, catalogue rows bring fits and styles,
-   and both end up reading the same way. */
+/* The short line beside the price, set in the reading's type. Three
+   attributes at most, in one order, from whichever of them the record
+   actually carries — provider records bring colours and sizes, catalogue
+   rows bring fits and styles, and both end up reading the same way. */
 function attributes(item) {
-  const sizes = (item.sizes || []).slice(0, 3).join(' / ');
+  const sizes = (item.sizes || []).slice(0, 3).join('\u00b7');
   return [
     (item.colors || [])[0],
     (item.fits || [])[0],
     (item.styles || [])[0],
     sizes || null
-  ].filter(Boolean).slice(0, 3).join(' \u00b7 ');
+  ].filter(Boolean).slice(0, 3);
+}
+
+/* The shopper's own words, underlined where the listing's name uses
+   them. It is a literal match on the words, not a claim about the piece:
+   the card still says nothing Fynd did not read off the listing. */
+function markWords(name, words) {
+  const safe = esc(name);
+  const terms = (words || [])
+    .map((w) => String(w).toLowerCase().trim())
+    .filter((w) => w.length > 2 && /^[a-z][a-z -]*$/.test(w));
+  if (!terms.length) return safe;
+  const pattern = new RegExp(`\\b(${terms.map((t) => t.replace(/[ -]/g, '[ -]')).join('|')})\\b`, 'gi');
+  return safe.replace(pattern, '<mark class="hit">$1</mark>');
 }
 
 /* One card, one shape, everywhere it is used:
@@ -122,7 +137,8 @@ function attributes(item) {
    name, is said once more, quietly, in the last line. That line also
    tells the truth about whether there is somewhere to go: a real
    listing links out, a placeholder says it is a placeholder. */
-function productCard(item) {
+function productCard(item, index, options) {
+  const opts = options || {};
   const linked = Boolean(item.productUrl);
   const tag = linked ? 'a' : 'article';
   const attrs = linked ? ` href="${esc(item.productUrl)}" target="_blank" rel="noopener noreferrer"` : '';
@@ -130,20 +146,35 @@ function productCard(item) {
   const soldAt = item.retailer && item.retailer !== seller ? item.retailer : '';
   const price = formatPrice(item.price);
   const attrLine = attributes(item);
+  const number = index == null ? '' : String(index + 1).padStart(2, '0');
+  const role = opts.lead ? ` item-card--lead${opts.leadRight ? ' item-card--lead-right' : ''}` : '';
   const action = linked
     ? `<span class="item-action">${soldAt ? `View at ${esc(soldAt)}` : 'View item'} ${ARROW}<span class="sr-only">(opens in a new tab)</span></span>`
     : '<span class="item-action item-action--muted">Sample item</span>';
 
-  return `<${tag} class="item-card"${attrs}>
+  return `<${tag} class="item-card${role}"${attrs}${index == null ? '' : ` style="--i:${index}"`}>
     ${media(item, linked ? '' : SAMPLE_BADGE)}
     <div class="item-body">
-      <p class="item-retailer">${esc(seller)}</p>
-      <h3 class="item-name">${esc(item.name)}</h3>
-      <p class="item-price${price ? '' : ' item-price--none'}">${price || 'Price at retailer'}</p>
-      <p class="item-attrs">${esc(attrLine)}</p>
+      <div class="item-meta">${number ? `<span class="item-index">${number}</span>` : ''}<p class="item-retailer">${esc(seller)}</p></div>
+      <h3 class="item-name">${markWords(item.name, opts.words)}</h3>
+      <div class="item-line">
+        <p class="item-price${price ? '' : ' item-price--none'}">${price || 'Price at retailer'}</p>
+        <span class="item-attrs tokens">${attrLine.map((a) => `<span class="token">${esc(a)}</span>`).join('')}</span>
+      </div>
       ${action}
     </div>
   </${tag}>`;
+}
+
+/* A set of cards: numbered in the order they came back, the first as
+   the lead where there are enough to give it room. */
+function cardGrid(items, options) {
+  const opts = options || {};
+  return items.map((item, i) => productCard(item, i, {
+    words: opts.words,
+    lead: Boolean(opts.lead && opts.lead(i, items.length)),
+    leadRight: Boolean(opts.leadRight && opts.leadRight(i))
+  })).join('');
 }
 
 /* The shape of a card, drawn while the real one is on its way, so the
@@ -151,6 +182,7 @@ function productCard(item) {
    no text: there is nothing true to say yet. */
 const SKELETON = `<div class="skeleton-card">
   <div class="skeleton-media"></div>
+  <div class="skeleton-line"></div>
   <div class="skeleton-line"></div>
   <div class="skeleton-line skeleton-line--short"></div>
 </div>`;
@@ -210,6 +242,9 @@ function orderFacet(counts, key) {
   const reset = document.getElementById('reset-form');
   const examples = document.getElementById('ask-examples');
   const preview = document.getElementById('preview');
+  /* the words the shopper used, echoed under the outcome so the answer
+     is always read against the question */
+  let asked = '';
 
   /* the vocabulary the catalogue can actually match, handed to the
      interpreter so it maps a request onto values that exist */
@@ -233,10 +268,28 @@ function orderFacet(counts, key) {
     const chips = understood(prefs);
     if (!chips.length) return '';
     return `<div class="understood">
-      <span class="understood-label">Fynd understood</span>
-      ${chips.map((c) => `<span>${esc(c)}</span>`).join('')}
+      <span class="understood-label">Fynd read</span>
+      <span class="tokens">${chips.map((c) => `<span class="token">${esc(c)}</span>`).join('')}</span>
     </div>`;
   }
+
+  /* The request, in the shopper's words, with a bracket under each
+     stretch that the interpreter's answer accounts for. A word is only
+     bracketed when what it says is in that answer — the page never
+     marks more than was actually read. */
+  function readQuery(query, prefs) {
+    if (typeof Reading === 'undefined') return esc(query);
+    const said = new Set(understood(prefs).map((c) => String(c).toLowerCase()));
+    const prices = [prefs.maxPrice, prefs.minPrice].filter(Boolean).map(String);
+    const spans = Reading.read(query).filter((s) => (s.kind === 'Budget'
+      ? prices.some((p) => new RegExp(`(^|[^0-9])${p.replace('.', '\\.')}([^0-9]|$)`).test(s.value))
+      : said.has(String(s.canonical).toLowerCase()) || said.has(String(s.value).toLowerCase())));
+    return Reading.annotate(query, spans);
+  }
+
+  /* the words to underline in a listing's name: what the shopper asked
+     for, as the interpreter took it */
+  const wordsOf = (prefs) => understood(prefs).filter((c) => !/\$/.test(c));
 
   /* Where the rows on screen came from, in one marker. Green is only
      ever used for rows a product source actually returned; amber marks
@@ -251,15 +304,13 @@ function orderFacet(counts, key) {
      came from, then the outcome in one line, then what was understood
      beside it. The shopper reads the same shape whether eight things
      came back or none. */
-  const resultsHead = (heading, prefs, status) => `<div class="results-head">
-      <div>
-        <div class="results-head-line">
-          <p class="eyebrow">Results</p>
-          ${status || ''}
-        </div>
+  const resultsHead = (heading, prefs, status, note) => `<div class="results-head">
+      <div class="index-line"><span class="index-num">&rarr;</span><span>Results</span>${status || ''}<span class="index-rule"></span>${note ? `<span class="index-note">${note}</span>` : ''}</div>
+      ${asked ? `<p class="results-query words"><q>${readQuery(asked, prefs)}</q></p>` : ''}
+      <div class="results-summary">
         <h2>${heading}</h2>
+        ${readback(prefs)}
       </div>
-      ${readback(prefs)}
     </div>`;
 
   function understood(prefs) {
@@ -284,9 +335,12 @@ function orderFacet(counts, key) {
       ? `<p class="notice" role="status">${esc(outcome.notice)}</p>` : '';
 
     const count = `${found.products.length} ${found.products.length === 1 ? 'piece' : 'pieces'} found`;
-    results.innerHTML = `${resultsHead(count, outcome.preferences, STATUS.live)}
+    results.innerHTML = `${resultsHead(count, outcome.preferences, STATUS.live, 'Each links to the retailer\u2019s own page')}
       ${notice}
-      <div class="grid">${found.products.map(productCard).join('')}</div>`;
+      <div class="grid grid--reveal">${cardGrid(found.products, {
+        words: wordsOf(outcome.preferences),
+        lead: (i, n) => i === 0 && n >= 5
+      })}</div>`;
     bindImageFallback(results);
     announce(`${found.products.length} ${found.products.length === 1 ? 'piece' : 'pieces'} found.`);
   }
@@ -324,9 +378,8 @@ function orderFacet(counts, key) {
 
     /* offered only when a bigger plan would actually help — the server
        says so; the page does not decide who should be sold to */
-    const action = limited && found.upgrade
-      ? '<p class="empty-action"><a class="btn btn-primary" href="pricing.html">See plans</a></p>'
-      : '';
+    const action = `<p class="empty-action">${limited && found.upgrade
+      ? '<a class="btn btn-primary" href="pricing.html">See plans</a>' : ''}<a class="btn btn-secondary" href="#search">Change the request</a></p>`;
 
     results.innerHTML = `${resultsHead(heading, outcome.preferences)}
       <div class="empty">
@@ -364,6 +417,7 @@ function orderFacet(counts, key) {
         <div class="empty">
           <h3>Try describing it a little differently</h3>
           <p>Nothing in the catalogue fits that request. Asking for something broader usually helps.</p>
+          <p class="empty-action"><a class="btn btn-secondary" href="#search">Change the request</a></p>
         </div>`;
       announce('No matches yet. Try describing it a little differently, or ask for something broader.');
       return;
@@ -377,7 +431,10 @@ function orderFacet(counts, key) {
       ${notice}
       ${sourceNotice}
       ${sampleNote(scored)}
-      <div class="grid">${scored.map(productCard).join('')}</div>`;
+      <div class="grid grid--reveal">${cardGrid(scored, {
+        words: wordsOf(prefs),
+        lead: (i, n) => i === 0 && n >= 5
+      })}</div>`;
     bindImageFallback(results);
     announce(`${scored.length} ${scored.length === 1 ? 'piece' : 'pieces'} picked for you.`);
   }
@@ -396,7 +453,15 @@ function orderFacet(counts, key) {
        running, the page has something better to put in that space */
     if (preview) preview.hidden = true;
     results.hidden = false;
-    results.innerHTML = `<p class="thinking"><span class="dot"></span>Reading your request…</p>
+    asked = query;
+    /* while it is read: the request as it was typed, a line running under
+       it, and the shape of the answer drawn in paper */
+    results.innerHTML = `<div class="results-head">
+        <div class="index-line"><span class="index-num">&rarr;</span><span>Reading</span><span class="index-rule"></span></div>
+        <p class="results-query words"><q>${esc(query)}</q></p>
+        <div class="thinking"><span class="dot"></span>Reading your request\u2026</div>
+        <div class="progress" aria-hidden="true"></div>
+      </div>
       <div class="grid">${SKELETON.repeat(4)}</div>`;
     results.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
@@ -446,7 +511,7 @@ function orderFacet(counts, key) {
   /* The box grows with the request up to a few lines, then scrolls, so a
      long description stays readable while it is being typed and the card
      never runs away down the page. */
-  const GROW_LIMIT = 168;
+  const GROW_LIMIT = 420;
   function grow() {
     input.style.height = 'auto';
     input.style.height = Math.min(input.scrollHeight, GROW_LIMIT) + 'px';
@@ -464,10 +529,9 @@ function orderFacet(counts, key) {
   /* The closing call to action points back at the search. Landing there
      with the cursor already in the box means the button does the whole
      job in one press rather than leaving the shopper to find the field. */
-  document.querySelectorAll('a[href="#search"]').forEach((link) => {
-    link.addEventListener('click', () => {
-      window.setTimeout(() => input.focus({ preventScroll: true }), 400);
-    });
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest || !e.target.closest('a[href="#search"], a[href="index.html#search"]')) return;
+    window.setTimeout(() => input.focus({ preventScroll: true }), 400);
   });
 
   if (examples) {
@@ -476,6 +540,7 @@ function orderFacet(counts, key) {
       if (!button) return;
       input.value = button.textContent.trim();
       grow();
+      input.dispatchEvent(new Event('fynd:set'));
       search(input.value);
     });
   }
@@ -483,6 +548,7 @@ function orderFacet(counts, key) {
   reset.addEventListener('click', () => {
     input.value = '';
     input.style.height = '';
+    input.dispatchEvent(new Event('fynd:set'));
     error.classList.remove('show');
     error.textContent = '';
     input.removeAttribute('aria-invalid');
@@ -499,7 +565,7 @@ function orderFacet(counts, key) {
 })();
 
 /* ---------- what a result looks like ----------
-   The home page carries a short row of catalogue rows, so a first-time
+   The home page carries two short rows of catalogue rows, so a first-time
    visitor can see the shape of an answer — retailer, name, price, link —
    before typing anything. It is never mistaken for the answer itself:
    the rows are labelled exactly as they are anywhere else, and the whole
@@ -510,9 +576,9 @@ function orderFacet(counts, key) {
   const note = document.getElementById('preview-note');
 
   Products.subscribe(() => {
-    const items = Products.all().slice(0, 4);
+    const items = Products.all().slice(0, 5);
     if (note) note.innerHTML = sampleNote(items);
-    grid.innerHTML = items.map(productCard).join('');
+    grid.innerHTML = cardGrid(items, { lead: (i) => i === 0 });
     bindImageFallback(grid);
   });
 })();
@@ -533,7 +599,12 @@ function orderFacet(counts, key) {
     count.textContent = `${items.length} ${items.length === 1 ? 'piece' : 'pieces'}`;
     const note = document.getElementById('discover-note');
     if (note) note.innerHTML = sampleNote(items);
-    grid.innerHTML = items.map(productCard).join('');
+    /* a lead every nine pieces, alternating sides, so the long catalogue
+       reads as spreads rather than as one unbroken shelf */
+    grid.innerHTML = cardGrid(items, {
+      lead: (i) => i % 9 === 0,
+      leadRight: (i) => Math.floor(i / 9) % 2 === 1
+    });
     bindImageFallback(grid);
   }
 
