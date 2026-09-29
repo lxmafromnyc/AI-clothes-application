@@ -322,11 +322,5 @@
     }
   }
 
-  /* The words the local parser knows, handed out read-only so the page
-     can mark them in the search field as they are typed. Marking is all
-     it is used for: nothing here changes what a search sends or how the
-     served interpreter reads it. */
-  const lexicon = Object.freeze({ GARMENTS, DESCRIPTORS, HINTS });
-
-  global.Interpreter = { interpret, localInterpret, readGarments, shape, EMPTY, endpoint, FALLBACK_REASON, lexicon };
+  global.Interpreter = { interpret, localInterpret, readGarments, shape, EMPTY, endpoint, FALLBACK_REASON };
 })(typeof window !== 'undefined' ? window : globalThis);
