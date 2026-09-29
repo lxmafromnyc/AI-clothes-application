@@ -5,10 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>About — Fynd</title>
 <meta name="description" content="What Fynd does, how it reads a request, and what it takes into account.">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%23121212'/><text x='16' y='24' font-family='Georgia,serif' font-size='22' fill='white' text-anchor='middle'>F</text></svg>">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' fill='%231F2BD6'/><text x='6' y='24' font-family='Helvetica,Arial,sans-serif' font-size='22' font-weight='700' fill='white'>f</text><rect x='19' y='9' width='3' height='15' fill='white'/></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=Instrument+Serif:ital@0;1&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Fragment+Mono&amp;family=Inter:ital,opsz,wght@0,14..32,300..700;1,14..32,300..500&amp;display=swap" rel="stylesheet">
 <link rel="stylesheet" href="assets/styles.css">
 <script>document.documentElement.classList.add('js');</script>
 </head>
@@ -16,15 +16,21 @@
 
 <a class="skip-link" href="#main">Skip to content</a>
 
-<!-- The wordmark sits in the centre of the bar; the links fall either
-     side of it — finding things on the left, the house's business on
-     the right. On a phone the list becomes a page of its own. -->
+<!-- The wordmark is the name being typed: lower case, and a caret after
+     it. Links are numbered like the sections they lead to; the one you
+     are on is bracketed, the way a word Fynd has read is. -->
 <header class="site-header">
   <div class="container">
     <div class="nav">
       <a class="brand" href="index.html" aria-label="Fynd — home">
-        <span class="brand-mark" aria-hidden="true"></span>
-        <span class="brand-word">Fynd</span>
+        <span class="brand-word" aria-hidden="true">fynd</span><span class="brand-mark" aria-hidden="true"></span>
+      </a>
+      <!-- The search, one click away from every inner page: a field in
+           the bar that opens it. -->
+      <a class="nav-prompt" href="find-clothes.html">
+        <span class="nav-prompt-caret" aria-hidden="true"></span>
+        <span class="nav-prompt-text">Describe what you&rsquo;re looking for</span>
+        <span class="nav-prompt-key" aria-hidden="true">&crarr;</span>
       </a>
       <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" aria-label="Open menu"><span></span></button>
       <nav aria-label="Main">
@@ -44,16 +50,14 @@
 
   <div class="container">
     <header class="page-intro">
-      <div>
-        <p class="eyebrow">About</p>
-        <h1>Clothes, found the way you <em class="voice">describe</em> them.</h1>
-      </div>
+      <div class="index-line"><span class="index-num">01</span><span>About</span><span class="index-rule"></span><span class="index-note">What Fynd is</span></div>
+      <h1 data-read-on-view>Clothes, found the way you <span class="read" data-kind="Your words">describe</span> them.</h1>
       <p>A clothing finder you talk to in plain words. You describe what you want to wear; it returns items that match.</p>
     </header>
 
     <section class="chapter">
       <div class="chapter-head">
-        <p class="eyebrow">Why</p>
+        <div class="index-line"><span class="index-num">02</span><span>Why</span><span class="index-rule"></span></div>
         <h2>One sentence instead of a wall of filters</h2>
       </div>
       <div class="prose">
@@ -65,9 +69,12 @@
 
     <section class="chapter">
       <div class="chapter-head">
-        <p class="eyebrow">Signals</p>
+        <div class="index-line"><span class="index-num">03</span><span>Signals</span><span class="index-rule"></span></div>
         <h2>What it takes into account</h2>
       </div>
+      <div>
+        <!-- the six signals, shown where they come from: one sentence, read -->
+        <p class="signal-sentence words" data-read-on-view>&ldquo;a <span class="read" data-kind="Colour">black</span> <span class="read" data-kind="Fit">oversized</span> <span class="read" data-kind="Garment">hoodie</span> for <span class="read" data-kind="Occasion">weekends</span> from <span class="read" data-kind="Brand">Champion</span>, <span class="read" data-kind="Budget">under $80</span>&rdquo;</p>
       <div class="signal-list">
         <div class="signal"><h3>Garment</h3><p>What you actually asked for — a shirt, a hoodie, trousers.</p></div>
         <div class="signal"><h3>Colour</h3><p>The tones you name, mapped to the closest ones available.</p></div>
@@ -76,14 +83,15 @@
         <div class="signal"><h3>Budget</h3><p>Say &ldquo;under $50&rdquo; and nothing above it comes back.</p></div>
         <div class="signal"><h3>Brands</h3><p>Name a label and it is weighted up the list.</p></div>
       </div>
+      </div>
     </section>
 
     <section class="chapter">
       <div class="chapter-head">
-        <p class="eyebrow">Questions</p>
+        <div class="index-line"><span class="index-num">04</span><span>Questions</span><span class="index-rule"></span></div>
         <h2>Good to know</h2>
       </div>
-      <div>
+      <div class="faq-list">
       <div class="faq-row">
         <h3>Are these real products?</h3>
         <p>When a product source is connected, yes — every item comes from that source and links to the retailer. When none is connected, Fynd shows a small sample catalogue and marks each row <strong>Sample</strong> so it cannot be mistaken for stock.</p>
@@ -102,11 +110,14 @@
 
 </main>
 
+<!-- Every page ends on a field of ultramarine, with the wordmark set
+     as wide as it will go. -->
 <footer class="site-footer">
   <div class="container">
+    <div class="index-line"><span class="index-num">fynd</span><span>Clothing search, in plain language</span><span class="index-rule"></span><span class="index-note">Say it. Fynd finds it.</span></div>
     <div class="footer-top">
-      <p class="footer-tagline">Find what you <em class="voice">mean.</em></p>
-      <a class="btn btn-light btn-lg" href="index.html#search">Start a search <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12h16M14 6l6 6-6 6"/></svg></a>
+      <p class="footer-tagline">Find what you <span class="words">mean.</span></p>
+      <a class="btn btn-light btn-lg" href="index.html#search">Start a search <span class="key" aria-hidden="true">&crarr;</span></a>
     </div>
     <div class="footer-inner">
       <nav aria-label="Footer">
@@ -120,11 +131,13 @@
       </nav>
       <p class="footer-note">Fynd is a demo experience. Live results come from a connected product source; when none is connected, sample items are shown and labelled as such.</p>
     </div>
-    <span class="footer-mark" aria-hidden="true">Fynd</span>
+    <div class="footer-mark" aria-hidden="true"><span class="footer-mark-word">fynd</span><span class="footer-mark-caret"></span></div>
   </div>
 </footer>
 
 <script src="assets/products.js"></script>
+<script src="assets/interpret.js"></script>
+<script src="assets/reading.js"></script>
 <script src="assets/catalog.js"></script>
 <script src="assets/app.js"></script>
 </body>

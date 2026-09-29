@@ -196,7 +196,7 @@ const TYPES = {
 /* ---------------------------------------------------------
    The site's faces, served locally
 
-   Inter and Instrument Serif. The recording browser is cut off from
+   Inter and Fragment Mono. The recording browser is cut off from
    everything except this origin, and a demo set in a different typeface
    than the site is a demo of something else. So the face is fetched once here, in Node, and served
    back at the address the page already asks for. Only the Latin subsets
@@ -207,7 +207,7 @@ const TYPES = {
    with a line saying so.
    --------------------------------------------------------- */
 
-const FONT_CSS = 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Instrument+Serif:ital@0;1&display=swap';
+const FONT_CSS = 'https://fonts.googleapis.com/css2?family=Fragment+Mono&family=Inter:ital,opsz,wght@0,14..32,300..700;1,14..32,300..500&display=swap';
 const CHROME_UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
 const fontFiles = new Map();
@@ -313,35 +313,35 @@ const OVERLAY = (compact) => {
     /* in the narrow frame it goes up under the header instead, where
        the caption running the width of the screen cannot reach it */
     #demo-badge { position: absolute; right: ${compact ? 12 : 22}px;
-      ${compact ? 'top: 74px' : 'bottom: 30px'};
+      ${compact ? 'top: 72px' : 'bottom: 30px'};
       display: flex; align-items: center; gap: 9px;
-      padding: ${9 * u}px ${16 * u}px; border-radius: 999px;
-      background: var(--color-primary); color: var(--color-text-invert);
-      font-size: ${12.5 * u}px; font-weight: 500; letter-spacing: 0;
+      padding: ${8 * u}px ${14 * u}px;
+      background: var(--color-text); color: var(--color-text-invert);
+      font-family: var(--font-mono); font-size: ${11 * u}px; letter-spacing: .06em; text-transform: uppercase;
       opacity: 0; transition: opacity .5s ease; }
-    #demo-badge.on { opacity: .93; }
-    #demo-badge i { width: 6px; height: 6px; border-radius: 50%; background: var(--color-warning); }
+    #demo-badge.on { opacity: .94; }
+    #demo-badge i { width: 6px; height: 6px; background: var(--color-warning); }
 
+    /* the step captions: ink sheets, numbered the way the site numbers
+       its sections */
     #demo-caption { position: absolute; left: ${compact ? 14 : 46}px; right: ${compact ? 14 : 'auto'};
-      bottom: ${compact ? 22 : 30}px; transform: translate(0, 14px);
-      display: flex; align-items: center; gap: ${12 * u}px;
-      padding: ${13 * u}px ${24 * u}px ${13 * u}px ${14 * u}px; border-radius: 999px;
-      background: var(--color-primary); color: var(--color-text-invert);
+      bottom: ${compact ? 22 : 30}px; transform: translate(0, 12px);
+      display: flex; align-items: center; gap: ${14 * u}px;
+      padding: ${14 * u}px ${22 * u}px ${14 * u}px ${18 * u}px;
+      background: var(--color-text); color: var(--color-text-invert);
       font-size: ${17 * u}px; font-weight: 500; letter-spacing: -.015em; line-height: 1.3;
-      opacity: 0; transition: opacity .34s ease, transform .34s cubic-bezier(.2,.7,.2,1); }
-    #demo-caption.on { opacity: .95; transform: translate(0, 0); }
-    #demo-caption b { flex: none; display: grid; place-items: center;
-      width: ${26 * u}px; height: ${26 * u}px; border-radius: 50%;
-      background: var(--color-text-invert); color: var(--color-primary);
-      font-size: ${12.5 * u}px; font-weight: 500; font-variant-numeric: tabular-nums; }
+      opacity: 0; transition: opacity .3s ease, transform .3s cubic-bezier(.2,.7,.1,1); }
+    #demo-caption.on { opacity: .96; transform: translate(0, 0); }
+    #demo-caption b { flex: none; font-family: var(--font-mono); font-weight: 400;
+      font-size: ${12 * u}px; letter-spacing: .06em; color: var(--color-text-invert); opacity: .7; }
 
-    #demo-link { position: absolute; padding: ${11 * u}px ${20 * u}px; border-radius: 999px;
+    #demo-link { position: absolute; padding: ${11 * u}px ${18 * u}px;
       background: var(--color-primary); color: var(--color-text-invert);
       font-size: ${15 * u}px; font-weight: 500; white-space: nowrap;
-      box-shadow: 0 12px 30px -12px rgba(0,0,0,.55);
+      box-shadow: 0 12px 30px -12px rgba(0,0,0,.45);
       opacity: 0; transform: translateY(8px); transition: opacity .28s ease, transform .28s ease; }
     #demo-link.on { opacity: 1; transform: translateY(0); }
-    #demo-link small { display: block; font-size: ${12.5 * u}px; font-weight: 500; opacity: .8; margin-top: 2px; }
+    #demo-link small { display: block; font-family: var(--font-mono); font-size: ${10.5 * u}px; letter-spacing: .06em; text-transform: uppercase; opacity: .85; margin-top: 4px; }
 
     /* The screencast a recording is made from only sends a frame when
        something repaints. A still page sends none, so what appears
@@ -379,7 +379,7 @@ const OVERLAY = (compact) => {
     move: (x, y) => { cursor.style.transform = `translate(${x}px, ${y}px)`; },
     tap: () => { cursor.classList.remove('tap'); void cursor.offsetWidth; cursor.classList.add('tap'); },
     say: (n, text) => {
-      caption.querySelector('b').textContent = n;
+      caption.querySelector('b').textContent = String(n).padStart(2, '0');
       caption.querySelector('span').textContent = text;
       caption.classList.add('on');
     },

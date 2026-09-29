@@ -5,10 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Fynd — Find what you mean</title>
 <meta name="description" content="Describe what you want to wear in plain words. Fynd reads your request and finds real clothes that match, with prices and links to the retailer.">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%23121212'/><text x='16' y='24' font-family='Georgia,serif' font-size='22' fill='white' text-anchor='middle'>F</text></svg>">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' fill='%231F2BD6'/><text x='6' y='24' font-family='Helvetica,Arial,sans-serif' font-size='22' font-weight='700' fill='white'>f</text><rect x='19' y='9' width='3' height='15' fill='white'/></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=Instrument+Serif:ital@0;1&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Fragment+Mono&amp;family=Inter:ital,opsz,wght@0,14..32,300..700;1,14..32,300..500&amp;display=swap" rel="stylesheet">
 <link rel="stylesheet" href="assets/styles.css">
 <!-- Where the AI interpreter lives. The function is deployed on Vercel because
      GitHub Pages cannot run server code; the OpenAI key is held there as an
@@ -20,15 +20,14 @@
 
 <a class="skip-link" href="#search">Skip to search</a>
 
-<!-- The wordmark sits in the centre of the bar; the links fall either
-     side of it — finding things on the left, the house's business on
-     the right. On a phone the list becomes a page of its own. -->
+<!-- The wordmark is the name being typed: lower case, and a caret after
+     it. Links are numbered like the sections they lead to; the one you
+     are on is bracketed, the way a word Fynd has read is. -->
 <header class="site-header">
   <div class="container">
     <div class="nav">
       <a class="brand" href="index.html" aria-label="Fynd — home">
-        <span class="brand-mark" aria-hidden="true"></span>
-        <span class="brand-word">Fynd</span>
+        <span class="brand-word" aria-hidden="true">fynd</span><span class="brand-mark" aria-hidden="true"></span>
       </a>
       <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" aria-label="Open menu"><span></span></button>
       <nav aria-label="Main">
@@ -46,25 +45,32 @@
 
 <main id="main">
 
-  <!-- The first screen, in two halves: the request on the left, what
-       Fynd makes of it on the right. The search is the product, so it is
-       on screen immediately rather than behind a click. -->
-  <section class="stage stage--home" id="search">
-    <div class="container hero-grid">
-
+  <!-- 01. The search is the product, so it is the page: Fynd's line, and
+       under it the field, set larger than anything else on the screen. -->
+  <section class="stage" id="search">
+    <div class="container">
+      <div class="index-line"><span class="index-num">01</span><span>Search</span><span class="index-rule"></span><span class="index-note">Real retailers &middot; direct links</span></div>
       <div class="hero">
-        <p class="eyebrow">Fashion search, in your own words</p>
-        <h1>Find what you <em class="voice">mean.</em></h1>
-        <p class="lead">Describe the piece the way you&rsquo;d say it out loud. Fynd searches real retailers and brings back what fits.</p>
+        <h1>Find what you mean.</h1>
+        <p class="lead">Say it the way you&rsquo;d say it to a friend. Fynd reads the sentence &mdash; garment, colour, fit, budget &mdash; and finds the pieces at real retailers.</p>
+      </div>
 
+      <!-- The field: a white sheet with crop marks at its corners. The
+           shopper's words are set at display size; behind them a mirror of
+           the same words carries a bracket under each one that says
+           something — garment, colour, fit, budget — drawn in as it is
+           typed by assets/reading.js. -->
       <div class="ask-wrap">
       <form class="ask-card" id="ask-form" data-dropzone>
         <label class="sr-only" for="ask">Describe the clothes you are looking for</label>
+        <div class="ask-label" aria-hidden="true"><span>Your words</span></div>
 
         <div class="ask-field">
-          <svg class="ask-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.8-3.8"/></svg>
-          <textarea id="ask" name="ask" rows="2" maxlength="400"
-            placeholder="Black oversized hoodie under $80"></textarea>
+          <div class="ask-input">
+            <div class="ask-mirror" aria-hidden="true"></div>
+            <textarea id="ask" name="ask" rows="1" maxlength="400"
+              placeholder="black oversized hoodie under $80"></textarea>
+          </div>
         </div>
 
         <!-- Shown only while a file is over the card. Hidden from
@@ -78,16 +84,16 @@
         <ul class="attachments" id="attachments" hidden></ul>
 
         <div class="ask-actions">
-          <button class="btn btn-primary" type="submit">Search <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12h16M14 6l6 6-6 6"/></svg></button>
+          <button class="btn btn-primary" type="submit">Find it <span class="key" aria-hidden="true">&crarr;</span></button>
 
           <input class="sr-only" type="file" id="ask-files" name="ask-files">
           <label class="attach-btn" for="ask-files">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.4 11.05l-9.19 9.19a5 5 0 01-7.07-7.07l9.19-9.19a3.5 3.5 0 014.95 4.95l-9.2 9.19a2 2 0 01-2.82-2.83l8.49-8.48"/></svg>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
             Add a photo
           </label>
 
           <button class="link-btn" type="button" id="reset-form">Clear</button>
-          <span class="ask-hint" aria-hidden="true">Press <kbd>Enter</kbd> to search</span>
+          <span class="ask-hint" aria-hidden="true">Shift &crarr; for a new line</span>
         </div>
 
         <!-- Both start empty: an alert is announced when its text
@@ -100,53 +106,23 @@
         </p>
       </form>
 
-      <p class="ask-examples" id="ask-examples">
-        <span class="eyebrow examples-label">Try</span>
-        <button type="button" class="example">Minimal neutrals for fall</button>
-        <button type="button" class="example">Linen shirt for a wedding</button>
-        <button type="button" class="example">Relaxed jeans under $100</button>
-      </p>
+      <!-- Under the field: the sentence restated as the attributes in it,
+           and other things a person might say. -->
+      <div class="ask-under">
+        <div class="readout" id="readout"><span class="readout-label">Read as &rarr;</span><span class="tokens"></span></div>
+        <p class="ask-examples" id="ask-examples">
+          <span class="examples-label">Or try</span>
+          <button type="button" class="example">minimal neutrals for fall</button>
+          <button type="button" class="example">linen shirt for a wedding</button>
+          <button type="button" class="example">relaxed jeans under $100</button>
+        </p>
       </div>
       </div>
-
-    <!-- What Fynd makes of a sentence, drawn. The request at the top, a
-         garment drawn as a flat, and the four things read out of the
-         sentence pinned to the parts they are about. It is decoration
-         for a sighted reader and says nothing the headline beside it
-         does not, so it is hidden from assistive technology. -->
-    <figure class="reading-figure">
-      <div class="reading" aria-hidden="true">
-        <p class="reading-request"><span>The request</span><q>black oversized hoodie under $80</q></p>
-        <div class="reading-art">
-                  <svg viewBox="0 0 480 600" aria-hidden="true">
-            <ellipse class="g-shadow" cx="240" cy="486" rx="150" ry="13"/>
-            <path class="g-hood" d="M168 148 C176 84 304 84 312 148 C312 190 282 214 240 214 C198 214 168 190 168 148 Z"/>
-            <path class="g-body" d="M182 134 L96 178 L48 336 Q46 344 54 347 L118 370 Q126 373 129 365 L156 288 L156 452 Q156 468 172 468 L308 468 Q324 468 324 452 L324 288 L351 365 Q354 373 362 370 L426 347 Q434 344 432 336 L384 178 L298 134 C286 170 194 170 182 134 Z"/>
-            <path class="g-trim" d="M190 146 C198 100 282 100 290 146 C290 180 268 200 240 200 C212 200 190 180 190 146 Z"/>
-            <path class="g-seam" d="M182 134 L200 196 M298 134 L280 196 M156 288 L140 206 M324 288 L340 206" stroke-width="2.5" fill="none" stroke-linecap="round"/>
-            <path class="g-seam" d="M186 338 L294 338 L302 410 L178 410 Z" fill="none" stroke-width="2.5" stroke-linejoin="round"/>
-            <path class="g-trim" d="M48 336 L118 361 L108 396 L38 371 Z"/>
-            <path class="g-trim" d="M432 336 L362 361 L372 396 L442 371 Z"/>
-            <path class="g-trim" d="M156 434 L324 434 L324 452 Q324 468 308 468 L172 468 Q156 468 156 452 Z"/>
-            <path class="g-cord" d="M220 198 C218 224 217 240 217 258 M260 198 C262 224 263 240 263 258" stroke-width="4" fill="none" stroke-linecap="round"/>
-            <path class="g-string" d="M404 386 C406 402 410 414 414 426" stroke-width="1.5" fill="none"/>
-            <path class="g-tag" d="M398 426 L430 426 L430 474 L414 486 L398 474 Z" stroke-width="1.2"/>
-          </svg>
-          <div class="pin pin--left pin--garment"><span class="pin-card"><small>Garment</small><b>Hoodie</b></span><span class="pin-line"></span></div>
-          <div class="pin pin--right pin--colour"><span class="pin-card"><small>Colour</small><b>Black</b></span><span class="pin-line"></span></div>
-          <div class="pin pin--left pin--fit"><span class="pin-card"><small>Fit</small><b>Oversized</b></span><span class="pin-line"></span></div>
-          <div class="pin pin--right pin--budget"><span class="pin-card"><small>Budget</small><b>Under $80</b></span><span class="pin-line"></span></div>
-        </div>
-      </div>
-      <figcaption class="reading-caption"><span>One sentence, read four ways.</span><span>Every result links to the retailer&rsquo;s own page.</span></figcaption>
-    </figure>
-
     </div>
   </section>
 
   <!-- Results break out of the search column onto the page: the products
-       are the answer, so they get the full width rather than the width of
-       the box that asked the question. -->
+       are the answer, so they get the full width. -->
   <div class="container">
     <!-- The outcome in one line, for screen readers only: the grid itself
          is too long to announce, and the count is the part worth hearing. -->
@@ -154,58 +130,66 @@
     <div class="results" id="results" hidden></div>
   </div>
 
-  <!-- What an answer looks like, shown rather than described: pieces
-       straight from the catalogue. A grid on a wide screen, a rail you
-       swipe on a phone. It steps aside as soon as a real search has
-       something better to put here. -->
-  <section class="section section--flush" id="preview">
+  <!-- 02. How a sentence becomes a search, shown in the page's own three
+       voices: the words, the reading, the find. -->
+  <section class="section band" id="how" aria-labelledby="how-title">
     <div class="container">
       <div class="section-head">
-        <div>
-          <p class="eyebrow">From the catalogue</p>
-          <h2>The <em class="voice">edit</em></h2>
-        </div>
-        <a class="head-link" href="discover.html">Browse everything <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12h16M14 6l6 6-6 6"/></svg></a>
+        <div class="index-line"><span class="index-num">02</span><span>How Fynd reads</span><span class="index-rule"></span><span class="index-note">Words &rarr; reading &rarr; pieces</span></div>
+        <h2 id="how-title">From a sentence to the exact piece.</h2>
+        <p>No filters, no categories. You say it; Fynd takes it apart into the things a search can use; real listings come back.</p>
+      </div>
+
+      <ol class="steps">
+        <li class="step">
+          <span class="step-num">01 &mdash; YOU SAY IT</span>
+          <div class="step-figure"><p class="words">&ldquo;a linen shirt for a summer wedding, under $120&rdquo;</p></div>
+          <h3>In your own words</h3>
+          <p>Describe it the way you would out loud. There is nothing to pick from a menu.</p>
+        </li>
+        <li class="step">
+          <span class="step-num">02 &mdash; FYND READS IT</span>
+          <div class="step-figure" data-read-on-view><p class="words">a <span class="read" data-kind="Fabric">linen</span> <span class="read" data-kind="Garment">shirt</span> for a <span class="read" data-kind="Season">summer</span> <span class="read" data-kind="Occasion">wedding</span>, <span class="read" data-kind="Budget">under $120</span></p></div>
+          <h3>Taken apart</h3>
+          <p>The garment, colour, fit, fabric, occasion and budget are read out of the sentence.</p>
+        </li>
+        <li class="step">
+          <span class="step-num">03 &mdash; FYND FINDS IT</span>
+          <div class="step-figure"><span class="tokens"><span class="token">Shirt</span><span class="token">Linen</span><span class="token">Wedding &middot; Summer</span><span class="token">Under $120</span></span></div>
+          <h3>Real pieces back</h3>
+          <p>Listings from real retailers, each with its price and a link to the retailer&rsquo;s own page.</p>
+        </li>
+      </ol>
+    </div>
+  </section>
+
+  <!-- 03. What an answer looks like before anything is asked. It steps
+       aside as soon as a real search has something better to put here. -->
+  <section class="section" id="preview">
+    <div class="container">
+      <div class="section-head">
+        <div class="index-line"><span class="index-num">03</span><span>The edit</span><span class="index-rule"></span><a class="index-note" href="discover.html">Browse the catalogue &rarr;</a></div>
+        <h2>Pieces from the catalogue.</h2>
+        <p>What an answer looks like before you ask: the maker, the piece, the price, and a link out.</p>
       </div>
       <div id="preview-note"></div>
       <div class="grid grid--rail" id="preview-grid"></div>
     </div>
   </section>
 
-  <!-- How it works, and one search end to end, on the one band of
-       deeper paper.
+  <!-- 04. One search, end to end.
 
        The recording answers from a stand-in product source, so the
        listings in it are samples rather than live stock. The video says
        so on every frame and the note under it says so in words: the
        same rule the interface holds to for a sample row. -->
-  <section class="section band" id="demo" aria-labelledby="demo-title">
+  <section class="section section--flush" id="demo" aria-labelledby="demo-title">
     <div class="container">
       <div class="section-head">
-        <div>
-          <p class="eyebrow">How it works</p>
-          <h2 id="demo-title">One sentence. <em class="voice">Real</em> clothes.</h2>
-        </div>
-        <a class="head-link" href="#search">Try it yourself <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12h16M14 6l6 6-6 6"/></svg></a>
+        <div class="index-line"><span class="index-num">04</span><span>One search, end to end</span><span class="index-rule"></span><a class="index-note" href="#search">Try it yourself &uarr;</a></div>
+        <h2 id="demo-title">Watch a sentence become a shortlist.</h2>
+        <p>Typed in plain words, read, and answered with pieces from real retailers &mdash; in twenty-five seconds.</p>
       </div>
-
-      <ol class="steps">
-        <li class="step">
-          <span class="step-num">1</span>
-          <h3>Describe it</h3>
-          <p>Say what you want the way you would to a friend. No filters, no categories, no account.</p>
-        </li>
-        <li class="step">
-          <span class="step-num">2</span>
-          <h3>Fynd reads it</h3>
-          <p>The garment, colour, fit, occasion and budget are taken from what you wrote.</p>
-        </li>
-        <li class="step">
-          <span class="step-num">3</span>
-          <h3>Real pieces come back</h3>
-          <p>Each with its maker, its price and a direct link to the retailer&rsquo;s own page.</p>
-        </li>
-      </ol>
 
       <figure class="demo-figure" id="demo-figure">
         <div class="demo-stage">
@@ -300,11 +284,14 @@
 
 </main>
 
+<!-- Every page ends on a field of ultramarine, with the wordmark set
+     as wide as it will go. -->
 <footer class="site-footer">
   <div class="container">
+    <div class="index-line"><span class="index-num">fynd</span><span>Clothing search, in plain language</span><span class="index-rule"></span><span class="index-note">Say it. Fynd finds it.</span></div>
     <div class="footer-top">
-      <p class="footer-tagline">Find what you <em class="voice">mean.</em></p>
-      <a class="btn btn-light btn-lg" href="index.html#search">Start a search <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12h16M14 6l6 6-6 6"/></svg></a>
+      <p class="footer-tagline">Find what you <span class="words">mean.</span></p>
+      <a class="btn btn-light btn-lg" href="index.html#search">Start a search <span class="key" aria-hidden="true">&crarr;</span></a>
     </div>
     <div class="footer-inner">
       <nav aria-label="Footer">
@@ -318,12 +305,13 @@
       </nav>
       <p class="footer-note">Fynd is a demo experience. Live results come from a connected product source; when none is connected, sample items are shown and labelled as such.</p>
     </div>
-    <span class="footer-mark" aria-hidden="true">Fynd</span>
+    <div class="footer-mark" aria-hidden="true"><span class="footer-mark-word">fynd</span><span class="footer-mark-caret"></span></div>
   </div>
 </footer>
 
 <script src="assets/products.js"></script>
 <script src="assets/interpret.js"></script>
+<script src="assets/reading.js"></script>
 <script src="assets/search.js"></script>
 <script src="assets/attachments.js"></script>
 <script src="assets/catalog.js"></script>
