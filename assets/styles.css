@@ -89,7 +89,7 @@
   :root { --pad: 24px; --h1: 48px; --search: 680px; --gap: 18px; --section: 64px; }
 }
 @media (max-width: 767px) {
-  :root { --pad: 20px; --header: 60px; --h1: 40px; --h1-lh: 1.08; --gap: 14px; --section: 48px; }
+  :root { --pad: 20px; --header: 60px; --h1: 40px; --h1-lh: 1.08; --search: 100%; --gap: 14px; --section: 48px; }
 }
 @media (max-width: 479px) {
   :root { --pad: 16px; --h1: 34px; --gap: 10px; --section: 40px; }
@@ -228,11 +228,13 @@ strong { font-weight: 600; }
   border: 1px solid transparent; border-radius: var(--r);
   font-size: 15px; font-weight: 600; letter-spacing: -.005em;
   cursor: pointer; white-space: nowrap;
-  transition: background var(--fast) var(--ease), border-color var(--fast) var(--ease), color var(--fast) var(--ease);
+  transition: background var(--fast) var(--ease), border-color var(--fast) var(--ease), color var(--fast) var(--ease), transform .1s var(--ease);
 }
 .btn svg { width: 16px; height: 16px; flex: none; }
 .btn-primary { background: var(--color-primary); border-color: var(--color-primary); color: var(--color-text-on-primary); }
 .btn-primary:hover { background: var(--color-primary-hover); border-color: var(--color-primary-hover); }
+/* pressed: a slight give, so a tap is felt */
+.btn:active { transform: scale(.98); }
 .btn-secondary { background: var(--color-surface); border-color: var(--color-border-strong); color: var(--color-text); }
 .btn-secondary:hover { border-color: var(--color-text-muted); }
 .btn-lg { height: 52px; padding: 0 26px; font-size: 16px; }
