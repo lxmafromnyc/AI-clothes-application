@@ -166,17 +166,26 @@ function orderFacet(counts, key) {
   const links = document.querySelector('.nav-links');
   if (!toggle || !links) return;
 
-  toggle.addEventListener('click', () => {
-    const open = toggle.getAttribute('aria-expanded') === 'true';
-    toggle.setAttribute('aria-expanded', String(!open));
-    links.classList.toggle('open', !open);
-  });
+  const setOpen = (open) => {
+    toggle.setAttribute('aria-expanded', String(open));
+    toggle.setAttribute('aria-label', open ? 'Close menu' : 'Open menu');
+    links.classList.toggle('open', open);
+  };
+
+  toggle.addEventListener('click', () => setOpen(toggle.getAttribute('aria-expanded') !== 'true'));
 
   document.addEventListener('click', (e) => {
     if (!links.classList.contains('open')) return;
     if (e.target.closest('.nav')) return;
-    links.classList.remove('open');
-    toggle.setAttribute('aria-expanded', 'false');
+    setOpen(false);
+  });
+
+  /* Escape closes the menu and hands focus back to the button that
+     opened it, so a keyboard user is never left inside a closed panel */
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || !links.classList.contains('open')) return;
+    setOpen(false);
+    toggle.focus();
   });
 })();
 
