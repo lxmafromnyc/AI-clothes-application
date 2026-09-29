@@ -3,15 +3,15 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Fynd — Find what you mean</title>
-<meta name="description" content="Describe what you want to wear in plain words. Fynd reads your request and finds real clothes that match, with prices and links to the retailer.">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' fill='%231F2BD6'/><text x='6' y='24' font-family='Helvetica,Arial,sans-serif' font-size='22' font-weight='700' fill='white'>f</text><rect x='19' y='9' width='3' height='15' fill='white'/></svg>">
+<title>Fynd — Clothing search in plain words</title>
+<meta name="description" content="Describe any clothing item naturally and Fynd will find matching products, with prices and links to the retailer.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23111111'/><text x='16' y='23' font-family='Helvetica,Arial,sans-serif' font-size='19' font-weight='700' fill='white' text-anchor='middle'>F</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fragment+Mono&amp;family=Inter:ital,opsz,wght@0,14..32,300..700;1,14..32,300..500&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
 <link rel="stylesheet" href="assets/styles.css">
 <!-- Where the AI interpreter lives. The function is deployed on Vercel because
-     GitHub Pages cannot run server code; the OpenAI key is held there as an
+     GitHub Pages cannot run server code; the API key is held there as an
      environment variable and never reaches the browser. See README.md. -->
 <meta name="findwear-api" content="https://ai-clothes-application.vercel.app/api/interpret">
 <script>document.documentElement.classList.add('js');</script>
@@ -20,14 +20,12 @@
 
 <a class="skip-link" href="#search">Skip to search</a>
 
-<!-- The wordmark is the name being typed: lower case, and a caret after
-     it. Links are numbered like the sections they lead to; the one you
-     are on is bracketed, the way a word Fynd has read is. -->
 <header class="site-header">
   <div class="container">
     <div class="nav">
       <a class="brand" href="index.html" aria-label="Fynd — home">
-        <span class="brand-word" aria-hidden="true">fynd</span><span class="brand-mark" aria-hidden="true"></span>
+        <span class="brand-mark" aria-hidden="true">F</span>
+        <span class="brand-word">Fynd</span>
       </a>
       <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" aria-label="Open menu"><span></span></button>
       <nav aria-label="Main">
@@ -45,60 +43,42 @@
 
 <main id="main">
 
-  <!-- 01. The search is the product, so it is the page: Fynd's line, and
-       under it the field, set larger than anything else on the screen. -->
-  <section class="stage" id="search">
-    <div class="container">
-      <div class="index-line"><span class="index-num">01</span><span>Search</span><span class="index-rule"></span><span class="index-note">Real retailers &middot; direct links</span></div>
-      <div class="hero">
-        <h1>Find what you mean.</h1>
-        <p class="lead">Say it the way you&rsquo;d say it to a friend. Fynd reads the sentence &mdash; garment, colour, fit, budget &mdash; and finds the pieces at real retailers.</p>
-      </div>
-
-      <!-- The field: a white sheet with crop marks at its corners. The
-           shopper's words are set at display size; behind them a mirror of
-           the same words carries a bracket under each one that says
-           something — garment, colour, fit, budget — drawn in as it is
-           typed by assets/reading.js. -->
+  <!-- The first screen is the product: what it does, in one line, and
+       the box to do it in. Nothing else competes with it. -->
+  <section class="container hero" id="search">
+    <h1>Find what you&rsquo;re looking for.</h1>
+    <p class="lead">Describe any clothing item naturally and Fynd will find matching products.</p>
       <div class="ask-wrap">
       <form class="ask-card" id="ask-form" data-dropzone>
         <label class="sr-only" for="ask">Describe the clothes you are looking for</label>
-        <div class="ask-label" aria-hidden="true"><span>Your words</span></div>
-
         <div class="ask-field">
-          <div class="ask-input">
-            <div class="ask-mirror" aria-hidden="true"></div>
-            <textarea id="ask" name="ask" rows="1" maxlength="400"
-              placeholder="black oversized hoodie under $80"></textarea>
-          </div>
+          <svg class="ask-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.8-3.8"/></svg>
+          <textarea id="ask" name="ask" rows="1" maxlength="400" placeholder="black oversized hoodie under $80"></textarea>
         </div>
 
-        <!-- Shown only while a file is over the card. Hidden from
-             assistive technology: it is a visual cue for a pointer
-             gesture, and the file button below is the accessible path. -->
+        <!-- Shown only while a file is over the box. The file button is
+             the accessible path; this is a cue for a pointer gesture. -->
         <div class="ask-dropveil" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 15v3a2 2 0 002 2h12a2 2 0 002-2v-3"/></svg>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 15v3a2 2 0 002 2h12a2 2 0 002-2v-3"/></svg>
           <span>Drop to attach</span>
+        </div>
+
+        <div class="ask-actions">
+          <button class="icon-btn" type="button" id="reset-form" aria-label="Clear search">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+          </button>
+          <input class="sr-only" type="file" id="ask-files" name="ask-files">
+          <label class="attach-btn" for="ask-files" title="Add a photo">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.4 11.05l-9.19 9.19a5 5 0 01-7.07-7.07l9.19-9.19a3.5 3.5 0 014.95 4.95l-9.2 9.19a2 2 0 01-2.82-2.83l8.49-8.48"/></svg>
+            <span class="sr-only">Add a photo</span>
+          </label>
+          <button class="btn btn-primary" type="submit">Search</button>
         </div>
 
         <ul class="attachments" id="attachments" hidden></ul>
 
-        <div class="ask-actions">
-          <button class="btn btn-primary" type="submit">Find it <span class="key" aria-hidden="true">&crarr;</span></button>
-
-          <input class="sr-only" type="file" id="ask-files" name="ask-files">
-          <label class="attach-btn" for="ask-files">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
-            Add a photo
-          </label>
-
-          <button class="link-btn" type="button" id="reset-form">Clear</button>
-          <span class="ask-hint" aria-hidden="true">Shift &crarr; for a new line</span>
-        </div>
-
-        <!-- Both start empty: an alert is announced when its text
-             arrives, so a message sitting in the markup from page load
-             would never be read out. app.js writes them. -->
+        <!-- Both start empty: an alert is announced when its text arrives.
+             app.js writes them. -->
         <p class="form-error" id="form-error" role="alert"></p>
         <p class="form-error" id="attachment-error" role="alert"></p>
         <p class="attachment-note" id="attachment-note" hidden>
@@ -106,194 +86,66 @@
         </p>
       </form>
 
-      <!-- Under the field: the sentence restated as the attributes in it,
-           and other things a person might say. -->
-      <div class="ask-under">
-        <div class="readout" id="readout"><span class="readout-label">Read as &rarr;</span><span class="tokens"></span></div>
-        <p class="ask-examples" id="ask-examples">
-          <span class="examples-label">Or try</span>
-          <button type="button" class="example">minimal neutrals for fall</button>
-          <button type="button" class="example">linen shirt for a wedding</button>
-          <button type="button" class="example">relaxed jeans under $100</button>
-        </p>
+      <p class="ask-examples" id="ask-examples">
+        <span class="examples-label">Try</span>
+        <button type="button" class="example">linen shirt for a summer wedding</button>
+        <button type="button" class="example">white sneakers under $120</button>
+        <button type="button" class="example">wool coat for winter</button>
+      </p>
       </div>
-      </div>
-    </div>
   </section>
 
-  <!-- Results break out of the search column onto the page: the products
-       are the answer, so they get the full width. -->
   <div class="container">
-    <!-- The outcome in one line, for screen readers only: the grid itself
-         is too long to announce, and the count is the part worth hearing. -->
+    <!-- The outcome in one line, for screen readers. -->
     <p class="sr-only" id="search-status" role="status" aria-live="polite"></p>
     <div class="results" id="results" hidden></div>
   </div>
 
-  <!-- 02. How a sentence becomes a search, shown in the page's own three
-       voices: the words, the reading, the find. -->
-  <section class="section band" id="how" aria-labelledby="how-title">
+  <section class="section section--flush" id="how">
     <div class="container">
-      <div class="section-head">
-        <div class="index-line"><span class="index-num">02</span><span>How Fynd reads</span><span class="index-rule"></span><span class="index-note">Words &rarr; reading &rarr; pieces</span></div>
-        <h2 id="how-title">From a sentence to the exact piece.</h2>
-        <p>No filters, no categories. You say it; Fynd takes it apart into the things a search can use; real listings come back.</p>
-      </div>
-
+      <div class="section-head"><h2>How Fynd works</h2></div>
       <ol class="steps">
         <li class="step">
-          <span class="step-num">01 &mdash; YOU SAY IT</span>
-          <div class="step-figure"><p class="words">&ldquo;a linen shirt for a summer wedding, under $120&rdquo;</p></div>
-          <h3>In your own words</h3>
-          <p>Describe it the way you would out loud. There is nothing to pick from a menu.</p>
+          <span class="step-num">1</span>
+          <h3>Describe it</h3>
+          <p>Type what you want in your own words &mdash; the item, colour, fit, occasion or budget.</p>
         </li>
         <li class="step">
-          <span class="step-num">02 &mdash; FYND READS IT</span>
-          <div class="step-figure" data-read-on-view><p class="words">a <span class="read" data-kind="Fabric">linen</span> <span class="read" data-kind="Garment">shirt</span> for a <span class="read" data-kind="Season">summer</span> <span class="read" data-kind="Occasion">wedding</span>, <span class="read" data-kind="Budget">under $120</span></p></div>
-          <h3>Taken apart</h3>
-          <p>The garment, colour, fit, fabric, occasion and budget are read out of the sentence.</p>
+          <span class="step-num">2</span>
+          <h3>Fynd searches</h3>
+          <p>Fynd understands the request and looks for matching products at real retailers.</p>
         </li>
         <li class="step">
-          <span class="step-num">03 &mdash; FYND FINDS IT</span>
-          <div class="step-figure"><span class="tokens"><span class="token">Shirt</span><span class="token">Linen</span><span class="token">Wedding &middot; Summer</span><span class="token">Under $120</span></span></div>
-          <h3>Real pieces back</h3>
-          <p>Listings from real retailers, each with its price and a link to the retailer&rsquo;s own page.</p>
+          <span class="step-num">3</span>
+          <h3>Shop the results</h3>
+          <p>Every result shows its price and links straight to the retailer&rsquo;s product page.</p>
         </li>
       </ol>
     </div>
   </section>
 
-  <!-- 03. What an answer looks like before anything is asked. It steps
-       aside as soon as a real search has something better to put here. -->
+  <!-- A few pieces from the catalogue, so the page shows what an answer
+       looks like. It steps aside when a real search runs. -->
   <section class="section" id="preview">
     <div class="container">
       <div class="section-head">
-        <div class="index-line"><span class="index-num">03</span><span>The edit</span><span class="index-rule"></span><a class="index-note" href="discover.html">Browse the catalogue &rarr;</a></div>
-        <h2>Pieces from the catalogue.</h2>
-        <p>What an answer looks like before you ask: the maker, the piece, the price, and a link out.</p>
+        <h2>Browse the catalogue</h2>
+        <a class="head-link" href="discover.html">See all</a>
       </div>
       <div id="preview-note"></div>
-      <div class="grid grid--rail" id="preview-grid"></div>
-    </div>
-  </section>
-
-  <!-- 04. One search, end to end.
-
-       The recording answers from a stand-in product source, so the
-       listings in it are samples rather than live stock. The video says
-       so on every frame and the note under it says so in words: the
-       same rule the interface holds to for a sample row. -->
-  <section class="section section--flush" id="demo" aria-labelledby="demo-title">
-    <div class="container">
-      <div class="section-head">
-        <div class="index-line"><span class="index-num">04</span><span>One search, end to end</span><span class="index-rule"></span><a class="index-note" href="#search">Try it yourself &uarr;</a></div>
-        <h2 id="demo-title">Watch a sentence become a shortlist.</h2>
-        <p>Typed in plain words, read, and answered with pieces from real retailers &mdash; in twenty-five seconds.</p>
-      </div>
-
-      <figure class="demo-figure" id="demo-figure">
-        <div class="demo-stage">
-          <!-- The recording is of this same site, so without something
-               to divide them the page appears to have two headers. One
-               bar says which of the two is the recording. -->
-          <div class="demo-bar">
-            <span class="demo-dots" aria-hidden="true"></span>
-            <span class="demo-bar-label">Fynd &middot; screen recording</span>
-          </div>
-
-          <!-- preload="none": not one byte of video is fetched until
-               something asks for it, so nothing here is on the path to
-               first paint. The still frame is all the section needs
-               until then, and assets/demo-video.js decides when to stop
-               holding off.
-
-               The poster is named in data-poster rather than in poster,
-               because a poster attribute is fetched the moment it is
-               parsed — which is before any script could say which of
-               the two posters this screen wants. The script below is
-               what puts it on, in the same pass. -->
-          <video class="demo-video" id="demo-video"
-            width="1280" height="800"
-            data-poster="assets/demo/fynd-demo-poster.jpg"
-            preload="none" muted loop playsinline controls
-            aria-describedby="demo-note"
-            aria-label="Screen recording of Fynd: a request for a black oversized hoodie under fifty dollars is typed in, Fynd reads it, and hoodies come back with their prices, their retailers and links out to those retailers.">
-            <!-- WebM first: the browsers that can take VP9 get the
-                 smaller file, and a Chromium built without proprietary
-                 codecs — most Linux builds — gets one it can play at
-                 all. Safari falls through to the H.264. -->
-            <source id="demo-webm" src="assets/demo/fynd-demo.webm" type="video/webm">
-            <source id="demo-mp4" src="assets/demo/fynd-demo.mp4" type="video/mp4">
-            <track id="demo-track" kind="captions" src="assets/demo/fynd-demo.vtt" srclang="en" label="English">
-          </video>
-
-          <!-- Which of the two recordings, settled here rather than in a
-               deferred file, because both decisions have to be made
-               before the browser acts on the markup: a poster is
-               fetched as soon as it is set, and a source swapped after
-               the player has already chosen one is ignored.
-
-               There are two because the demo is a recording of an
-               interface, and an interface recorded in a 1280-wide
-               window is unreadable at 390 — the type in it lands at
-               about six pixels. 860 is where the wide one stops being
-               readable rather than where the layout turns, and
-               assets/styles.css reshapes the frame at the same width,
-               so the two cannot disagree; it happens before first
-               paint, so nothing jumps.
-
-               A media attribute on <source> would be the declarative
-               way to do this, and browsers have never agreed on it:
-               the one that ignores it hands a phone the wide file. -->
-          <script>
-            (function () {
-              var narrow = window.matchMedia && window.matchMedia('(max-width: 860px)').matches;
-              var name = narrow ? 'fynd-demo-mobile' : 'fynd-demo';
-              var video = document.getElementById('demo-video');
-              video.poster = 'assets/demo/' + name + '-poster.jpg';
-              if (narrow) {
-                document.getElementById('demo-webm').src = 'assets/demo/' + name + '.webm';
-                document.getElementById('demo-mp4').src = 'assets/demo/' + name + '.mp4';
-                document.getElementById('demo-track').src = 'assets/demo/' + name + '.vtt';
-                document.getElementById('demo-figure').classList.add('is-portrait');
-                video.width = 800;
-                video.height = 1440;
-              }
-            })();
-          </script>
-
-          <!-- The path for every browser that will not start a muted
-               video on its own, and for anyone who asked for less
-               motion. Hidden until the page finds out which that is;
-               with no script at all the player's own controls are
-               already there and already work. -->
-          <button class="btn btn-primary btn-lg demo-play" type="button" id="demo-play" hidden>
-            <svg viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true"><path d="M8 5.6v12.8a1 1 0 001.53.85l10-6.4a1 1 0 000-1.7l-10-6.4A1 1 0 008 5.6z"/></svg>
-            <span>Play the <span class="demo-play-label">25-second </span>demo</span>
-          </button>
-        </div>
-
-        <figcaption class="demo-note" id="demo-note">
-          <span class="demo-flag">Product demo</span> Recorded against a stand-in product source, so the
-          listings in it are samples rather than live stock. The interface, what Fynd takes from the
-          request, and the links out to the retailers are the real ones. Twenty-five seconds, no sound.
-        </figcaption>
-      </figure>
+      <div class="grid" id="preview-grid"></div>
     </div>
   </section>
 
 </main>
 
-<!-- Every page ends on a field of ultramarine, with the wordmark set
-     as wide as it will go. -->
 <footer class="site-footer">
   <div class="container">
-    <div class="index-line"><span class="index-num">fynd</span><span>Clothing search, in plain language</span><span class="index-rule"></span><span class="index-note">Say it. Fynd finds it.</span></div>
-    <div class="footer-top">
-      <p class="footer-tagline">Find what you <span class="words">mean.</span></p>
-      <a class="btn btn-light btn-lg" href="index.html#search">Start a search <span class="key" aria-hidden="true">&crarr;</span></a>
-    </div>
     <div class="footer-inner">
+      <a class="brand" href="index.html" aria-label="Fynd — home">
+        <span class="brand-mark" aria-hidden="true">F</span>
+        <span class="brand-word">Fynd</span>
+      </a>
       <nav aria-label="Footer">
         <ul class="footer-links">
           <li><a href="index.html">Search</a></li>
@@ -303,19 +155,16 @@
           <li><a href="account.html">Account</a></li>
         </ul>
       </nav>
-      <p class="footer-note">Fynd is a demo experience. Live results come from a connected product source; when none is connected, sample items are shown and labelled as such.</p>
     </div>
-    <div class="footer-mark" aria-hidden="true"><span class="footer-mark-word">fynd</span><span class="footer-mark-caret"></span></div>
+    <p class="footer-note">Fynd is a demo experience. Live results come from a connected product source; when none is connected, sample items are shown and labelled as such.</p>
   </div>
 </footer>
 
 <script src="assets/products.js"></script>
 <script src="assets/interpret.js"></script>
-<script src="assets/reading.js"></script>
 <script src="assets/search.js"></script>
 <script src="assets/attachments.js"></script>
 <script src="assets/catalog.js"></script>
 <script src="assets/app.js"></script>
-<script src="assets/demo-video.js" defer></script>
 </body>
 </html>
