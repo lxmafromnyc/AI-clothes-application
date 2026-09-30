@@ -47,7 +47,7 @@
 
   <!-- 01. The search is the product, so it is the page: Fynd's line, and
        under it the field, set larger than anything else on the screen. -->
-  <section class="stage" id="search">
+  <section class="stage stage--lead" id="search">
     <div class="container">
       <div class="index-line"><span class="index-num">01</span><span>Search</span><span class="index-rule"></span><span class="index-note">Real retailers &middot; direct links</span></div>
       <div class="hero">
@@ -130,66 +130,19 @@
     <div class="results" id="results" hidden></div>
   </div>
 
-  <!-- 02. How a sentence becomes a search, shown in the page's own three
-       voices: the words, the reading, the find. -->
-  <section class="section band" id="how" aria-labelledby="how-title">
-    <div class="container">
-      <div class="section-head">
-        <div class="index-line"><span class="index-num">02</span><span>How Fynd reads</span><span class="index-rule"></span><span class="index-note">Words &rarr; reading &rarr; pieces</span></div>
-        <h2 id="how-title">From a sentence to the exact piece.</h2>
-        <p>No filters, no categories. You say it; Fynd takes it apart into the things a search can use; real listings come back.</p>
-      </div>
-
-      <ol class="steps">
-        <li class="step">
-          <span class="step-num">01 &mdash; YOU SAY IT</span>
-          <div class="step-figure"><p class="words">&ldquo;a linen shirt for a summer wedding, under $120&rdquo;</p></div>
-          <h3>In your own words</h3>
-          <p>Describe it the way you would out loud. There is nothing to pick from a menu.</p>
-        </li>
-        <li class="step">
-          <span class="step-num">02 &mdash; FYND READS IT</span>
-          <div class="step-figure" data-read-on-view><p class="words">a <span class="read" data-kind="Fabric">linen</span> <span class="read" data-kind="Garment">shirt</span> for a <span class="read" data-kind="Season">summer</span> <span class="read" data-kind="Occasion">wedding</span>, <span class="read" data-kind="Budget">under $120</span></p></div>
-          <h3>Taken apart</h3>
-          <p>The garment, colour, fit, fabric, occasion and budget are read out of the sentence.</p>
-        </li>
-        <li class="step">
-          <span class="step-num">03 &mdash; FYND FINDS IT</span>
-          <div class="step-figure"><span class="tokens"><span class="token">Shirt</span><span class="token">Linen</span><span class="token">Wedding &middot; Summer</span><span class="token">Under $120</span></span></div>
-          <h3>Real pieces back</h3>
-          <p>Listings from real retailers, each with its price and a link to the retailer&rsquo;s own page.</p>
-        </li>
-      </ol>
-    </div>
-  </section>
-
-  <!-- 03. What an answer looks like before anything is asked. It steps
-       aside as soon as a real search has something better to put here. -->
-  <section class="section" id="preview">
-    <div class="container">
-      <div class="section-head">
-        <div class="index-line"><span class="index-num">03</span><span>The edit</span><span class="index-rule"></span><a class="index-note" href="discover.html">Browse the catalogue &rarr;</a></div>
-        <h2>Pieces from the catalogue.</h2>
-        <p>What an answer looks like before you ask: the maker, the piece, the price, and a link out.</p>
-      </div>
-      <div id="preview-note"></div>
-      <div class="grid grid--rail" id="preview-grid"></div>
-    </div>
-  </section>
-
-  <!-- 04. One search, end to end.
+  <!-- 02. How it works, shown rather than told: one search, end to end,
+       straight under the field it happens in. Four steps, one short line
+       each — describe it, Fynd understands it, Fynd finds it, open it at
+       the retailer.
 
        The recording answers from a stand-in product source, so the
        listings in it are samples rather than live stock. The video says
        so on every frame and the note under it says so in words: the
        same rule the interface holds to for a sample row. -->
-  <section class="section section--flush" id="demo" aria-labelledby="demo-title">
+  <section class="section section--demo" id="demo" aria-labelledby="demo-title">
     <div class="container">
-      <div class="section-head">
-        <div class="index-line"><span class="index-num">04</span><span>One search, end to end</span><span class="index-rule"></span><a class="index-note" href="#search">Try it yourself &uarr;</a></div>
-        <h2 id="demo-title">Watch a sentence become a shortlist.</h2>
-        <p>Typed in plain words, read, and answered with pieces from real retailers &mdash; in twenty-five seconds.</p>
-      </div>
+      <h2 class="sr-only" id="demo-title">How Fynd works, in 25 seconds</h2>
+      <div class="index-line"><span class="index-num">02</span><span>How it works</span><span class="index-rule"></span><span class="index-note">25 seconds &middot; no sound</span></div>
 
       <figure class="demo-figure" id="demo-figure">
         <div class="demo-stage">
@@ -217,7 +170,7 @@
             data-poster="assets/demo/fynd-demo-poster.jpg"
             preload="none" muted loop playsinline controls
             aria-describedby="demo-note"
-            aria-label="Screen recording of Fynd: a request for a black oversized hoodie under fifty dollars is typed in, Fynd reads it, and hoodies come back with their prices, their retailers and links out to those retailers.">
+            aria-label="Screen recording of Fynd: black oversized hoodie under $80 is typed into the search box, Fynd reads it as black, oversized, hoodie, under $80, four hoodies come back with their prices and retailers, and one opens on the retailer’s site.">
             <!-- WebM first: the browsers that can take VP9 get the
                  smaller file, and a Chromium built without proprietary
                  codecs — most Linux builds — gets one it can play at
@@ -274,11 +227,57 @@
         </div>
 
         <figcaption class="demo-note" id="demo-note">
-          <span class="demo-flag">Product demo</span> Recorded against a stand-in product source, so the
-          listings in it are samples rather than live stock. The interface, what Fynd takes from the
-          request, and the links out to the retailers are the real ones. Twenty-five seconds, no sound.
+          <span class="demo-flag">Product demo</span> The listings are samples from a stand-in product
+          source; the interface, what Fynd reads from the request and the retailer links are the real ones.
         </figcaption>
       </figure>
+    </div>
+  </section>
+
+  <!-- 03. How a sentence becomes a search, shown in the page's own three
+       voices: the words, the reading, the find. -->
+  <section class="section band" id="how" aria-labelledby="how-title">
+    <div class="container">
+      <div class="section-head">
+        <div class="index-line"><span class="index-num">03</span><span>How Fynd reads</span><span class="index-rule"></span><span class="index-note">Words &rarr; reading &rarr; pieces</span></div>
+        <h2 id="how-title">From a sentence to the exact piece.</h2>
+        <p>No filters, no categories. You say it; Fynd takes it apart into the things a search can use; real listings come back.</p>
+      </div>
+
+      <ol class="steps">
+        <li class="step">
+          <span class="step-num">01 &mdash; YOU SAY IT</span>
+          <div class="step-figure"><p class="words">&ldquo;a linen shirt for a summer wedding, under $120&rdquo;</p></div>
+          <h3>In your own words</h3>
+          <p>Describe it the way you would out loud. There is nothing to pick from a menu.</p>
+        </li>
+        <li class="step">
+          <span class="step-num">02 &mdash; FYND READS IT</span>
+          <div class="step-figure" data-read-on-view><p class="words">a <span class="read" data-kind="Fabric">linen</span> <span class="read" data-kind="Garment">shirt</span> for a <span class="read" data-kind="Season">summer</span> <span class="read" data-kind="Occasion">wedding</span>, <span class="read" data-kind="Budget">under $120</span></p></div>
+          <h3>Taken apart</h3>
+          <p>The garment, colour, fit, fabric, occasion and budget are read out of the sentence.</p>
+        </li>
+        <li class="step">
+          <span class="step-num">03 &mdash; FYND FINDS IT</span>
+          <div class="step-figure"><span class="tokens"><span class="token">Shirt</span><span class="token">Linen</span><span class="token">Wedding &middot; Summer</span><span class="token">Under $120</span></span></div>
+          <h3>Real pieces back</h3>
+          <p>Listings from real retailers, each with its price and a link to the retailer&rsquo;s own page.</p>
+        </li>
+      </ol>
+    </div>
+  </section>
+
+  <!-- 04. What an answer looks like before anything is asked. It steps
+       aside as soon as a real search has something better to put here. -->
+  <section class="section" id="preview">
+    <div class="container">
+      <div class="section-head">
+        <div class="index-line"><span class="index-num">04</span><span>The edit</span><span class="index-rule"></span><a class="index-note" href="discover.html">Browse the catalogue &rarr;</a></div>
+        <h2>Pieces from the catalogue.</h2>
+        <p>What an answer looks like before you ask: the maker, the piece, the price, and a link out.</p>
+      </div>
+      <div id="preview-note"></div>
+      <div class="grid grid--rail" id="preview-grid"></div>
     </div>
   </section>
 

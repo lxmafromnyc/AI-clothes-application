@@ -43,7 +43,7 @@ page, the examples, the steps and the retailer labels.
 
 | Page | File | What it does |
 | --- | --- | --- |
-| Home | `index.html` | States the value proposition, carries the search itself directly under the headline, shows one search happening in the demo video, and shows what an answer looks like |
+| Home | `index.html` | States the value proposition, carries the search itself directly under the headline, shows one search happening in the demo video directly under the search, and then how Fynd reads and what an answer looks like |
 | Find Clothes | `find-clothes.html` | The same search, with nothing else on the page |
 | Discover | `discover.html` | Browse the catalogue, filtered by style |
 | Pricing | `pricing.html` | The three plans, which one you are on, and the way to change it |
@@ -1612,25 +1612,42 @@ garment categories fall back to neutral artwork rather than breaking.
 
 ## The demo video
 
-The landing page carries a 25-second screen recording, directly under the search
-card, where a first-time visitor scrolls next. It exists because the product is
-easier to show than to describe: one request typed in plain words, Fynd reading
-it, listings arriving with prices and retailers, and a click going out to one of
-them.
+The landing page carries a 25-second screen recording as section 02, directly
+under the search — after the field and before how Fynd reads and the
+catalogue, so it is the next thing a first-time visitor sees. Its job is to make
+Fynd understandable in one watch, in four steps with one short line each:
 
-Nothing about it is a mock-up. `scripts/record-demo.js` serves this repository
-over HTTP, drives `index.html` in a real browser through the real search flow,
-and records what happens. The only thing standing in is the product source,
-which answers from a fixed set of records in the shape
+| | On screen | What happens |
+| --- | --- | --- |
+| 01 | Describe it. | `black oversized hoodie under $80` is typed into the search box |
+| 02 | Fynd understands it. | the line under the field reads it as black / oversized / hoodie / under $80, framed for a moment |
+| 03 | Fynd finds it. | the search is submitted and four hoodies come back, each with its maker, price and link |
+| 04 | Open it at the retailer. | one card is clicked and the retailer's tab opens |
+| | Search naturally. Find the right clothes. | the closing frame |
+
+There is no narration and no soundtrack; the same five lines are the captions
+track, so it reads the same with the sound off or the frames unseen.
+
+Nothing about the interface in it is a mock-up. `scripts/record-demo.js` serves
+this repository over HTTP, drives `index.html` in a real browser through the
+real search flow, and records what happens. The only thing standing in is the
+product source, which answers from a fixed set of records in the shape
 `api/_providers/product-source.js` hands to the page — so the cards on screen
 are built by the real rendering code, from fields in the real shape, at the real
-speed the interface waits at.
+speed the interface waits at. Their pictures are drawn flat-lay packshots rather
+than anybody's photograph.
 
 Those records are not live stock, and the site's rule for anything a shopper
 cannot buy applies to a recording of it as much as to a row in a grid: the video
 carries a **Product demo · sample data** badge on every frame, and the note under
 the video on the page says the same thing in words. The retailer links in it are
 real, and the product names describe the garment rather than quoting a listing.
+
+The retailer step stops at the tab opening. The recording cannot reach a
+retailer, and drawing one retailer's page would be putting words in its mouth,
+so the tab shows the real host the card links to and the page arriving, with no
+retailer's branding or content in it. The page's own demo section is left out
+of the frame while recording, so the video never shows itself.
 
 ```sh
 node scripts/record-demo.js          # record both shapes, then encode
@@ -1671,7 +1688,7 @@ nobody has to be asked about, except that a Chromium built without proprietary
 codecs — which is what most Linux distributions ship, and what this repository's
 own test browser is — cannot play it at all. VP9 covers those and is the smaller
 file, so the page lists the WebM first. Each visitor downloads exactly one video
-of about 640 KB and one poster of about 75 KB.
+of about 520 KB and one poster of about 70 KB.
 
 ### What the page does with it
 

@@ -1058,7 +1058,12 @@ a.item-card:focus-visible { outline-offset: 12px; }
    The recording
    ========================================================= */
 
-.demo-figure { margin-top: var(--s9); }
+/* straight under the search, as the next thing read after it: the
+   stage above already gives it its breathing room, so the section adds
+   none of its own on top */
+.stage--lead { padding-bottom: var(--s7); }
+.section--demo { padding: 0 0 var(--s9); }
+.demo-figure { margin: var(--s5) 0 0; }
 .demo-stage { position: relative; background: var(--color-surface); --crop-gap: 14px; --crop-size: 22px; }
 .demo-bar {
   display: flex;
@@ -1075,7 +1080,7 @@ a.item-card:focus-visible { outline-offset: 12px; }
 .demo-play { position: absolute; left: 50%; top: calc(50% + 19px); transform: translate(-50%, -50%); box-shadow: var(--shadow); }
 .demo-play:active { transform: translate(-50%, calc(-50% + 1px)); }
 .demo-play[hidden] { display: none; }
-.demo-note { margin: var(--s6) 0 0; font-size: 13.5px; line-height: 1.7; color: var(--color-text-muted); max-width: 84ch; }
+.demo-note { margin: var(--s4) 0 0; font-size: 13.5px; line-height: 1.7; color: var(--color-text-muted); max-width: 84ch; }
 .demo-flag {
   display: inline-block;
   margin-right: var(--s2);
@@ -1500,6 +1505,7 @@ a.item-card:focus-visible { outline-offset: 12px; }
   .nav-links a[aria-current="page"]::before { bottom: 12px; }
 
   .stage { padding: var(--s6) 0 var(--s8); }
+  .stage--lead { padding-bottom: var(--s6); }
   .index-line { margin-bottom: var(--s5); font-size: 10.5px; }
   .index-note { display: none; }
   .hero { margin-bottom: var(--s6); }
@@ -1567,7 +1573,7 @@ a.item-card:focus-visible { outline-offset: 12px; }
   .grid--rail .item-card--lead .item-name { font-size: 14px; }
   .grid--rail .item-card--lead .item-price { font-size: 14.5px; }
 
-  .demo-figure { margin-top: var(--s8); }
+  .demo-figure { margin-top: var(--s4); }
   .demo-play { height: 48px; padding: 0 var(--s5); font-size: 15px; }
   .demo-play .demo-play-label { display: none; }
   .demo-note { font-size: 13px; }
