@@ -49,6 +49,15 @@ const OPENAI_URL = 'https://api.openai.com/v1/chat/completions';
 const DEFAULT_MODEL = 'gpt-4o-mini';
 const MAX_QUERY = 400;
 
+/* Models that reject the temperature parameter outright: OpenAI answers
+   400 "Unsupported value: 'temperature' does not support 0 with this
+   model". Requests to these leave the field out; every other model still
+   gets temperature 0, which is what keeps a reading repeatable. Dated
+   snapshots ("gpt-6-luna-2026-…") share their base model's limits. */
+const NO_TEMPERATURE = ['gpt-6-luna'];
+const acceptsTemperature = (model) =>
+  !NO_TEMPERATURE.some((base) => model === base || model.startsWith(`${base}-`));
+
 /* The model is told to answer with this shape and nothing else. Values are
    constrained to the vocabulary the catalogue actually uses, which is sent
    with the request, so the interpretation can be matched directly. */
@@ -206,6 +215,7 @@ async function interpretQuery({ query, vocabulary }) {
       return { ok: true, source: alternative.name, preferences: read(reading.raw), tokens: reading.tokens };
     }
 
+    const model = process.env.OPENAI_MODEL || DEFAULT_MODEL;
     const response = await fetch(OPENAI_URL, {
       method: 'POST',
       headers: {
@@ -213,8 +223,8 @@ async function interpretQuery({ query, vocabulary }) {
         Authorization: `Bearer ${key}`
       },
       body: JSON.stringify({
-        model: process.env.OPENAI_MODEL || DEFAULT_MODEL,
-        temperature: 0,
+        model,
+        ...(acceptsTemperature(model) ? { temperature: 0 } : {}),
         response_format: { type: 'json_object' },
         messages: [
           { role: 'system', content: SYSTEM_PROMPT },
