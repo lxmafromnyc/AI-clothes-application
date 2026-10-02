@@ -1680,7 +1680,18 @@ node scripts/record-demo.js --only=mobile   # one shape (or --only=desktop)
 node scripts/record-demo.js --stills        # a PNG at every beat, no video
 ```
 
-It needs ffmpeg with libx264, libvpx-vp9, AAC and Opus. The pointer paths,
+It needs ffmpeg with libx264, libvpx-vp9, AAC and Opus, and the ffprobe that
+ships beside it: ffmpeg encodes, ffprobe reads durations. `FFMPEG_PATH` points
+at ffmpeg; ffprobe is found next to it (`C:\ffmpeg\bin\ffmpeg.exe` gives
+`C:\ffmpeg\bin\ffprobe.exe`), or set `FFPROBE_PATH` if it lives elsewhere.
+On Windows (PowerShell):
+
+```powershell
+$env:FFMPEG_PATH = "C:\ffmpeg\bin\ffmpeg.exe"
+npm run demo:record
+```
+
+`node scripts/test-record-demo.js` checks those paths offline. The pointer paths,
 typing rhythm and pauses come from a seeded generator, the narration is fixed,
 and the saved search pins the products, so the same inputs give the same video.
 

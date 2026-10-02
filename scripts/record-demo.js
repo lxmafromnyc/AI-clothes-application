@@ -143,8 +143,29 @@ function findFfmpeg() {
     path.join(REPO, 'node_modules', 'ffmpeg-static', 'ffmpeg')];
   return candidates.find((p) => fs.existsSync(p)) || 'ffmpeg';
 }
-const FFMPEG = findFfmpeg();
-const FFPROBE = process.env.FFPROBE_PATH || FFMPEG.replace(/ffmpeg$/, 'ffprobe');
+/* ffprobe reads durations; ffmpeg only encodes. ffprobe ships beside
+   ffmpeg, so unless FFPROBE_PATH names it outright, it is looked for in
+   the same folder under the same naming: C:\ffmpeg\bin\ffmpeg.exe gives
+   C:\ffmpeg\bin\ffprobe.exe, /usr/bin/ffmpeg gives /usr/bin/ffprobe, and
+   a bare "ffmpeg" on the PATH gives a bare "ffprobe". Windows paths are
+   read as Windows paths whatever machine this runs on. */
+function ffprobeFor(ffmpegPath, env = process.env, platform = process.platform) {
+  if (env.FFPROBE_PATH) return env.FFPROBE_PATH;
+  const windows = platform === 'win32' || /^[a-z]:[\\/]|\\/i.test(ffmpegPath);
+  const p = windows ? path.win32 : path.posix;
+  const dir = p.dirname(ffmpegPath);
+  const base = p.basename(ffmpegPath);
+  const ext = /\.exe$/i.test(base) ? base.slice(-4) : (windows ? '.exe' : '');
+  const name = /ffmpeg/i.test(base)
+    ? base.replace(/\.exe$/i, '').replace(/ffmpeg/i, (m) => (m === 'FFMPEG' ? 'FFPROBE' : 'ffprobe')) + ext
+    : `ffprobe${ext}`;
+  return dir === '.' && !/[\\/]/.test(ffmpegPath) ? name : p.join(dir, name);
+}
+
+/* resolved again once .env is read, so FFMPEG_PATH / FFPROBE_PATH set
+   there count as much as ones set in the shell */
+let FFMPEG = findFfmpeg();
+let FFPROBE = ffprobeFor(FFMPEG);
 
 function loadPlaywright() {
   const tries = [process.env.PLAYWRIGHT_PATH, 'playwright', '@playwright/test',
@@ -876,9 +897,22 @@ async function record(chromium, shot, rawDir, stillsDir) {
 
 const run = (args) => execFileSync(FFMPEG, ['-y', '-hide_banner', '-loglevel', 'error', ...args], { stdio: 'inherit' });
 
+/* The one command that reads a duration. It goes to ffprobe and nowhere
+   else: -show_entries is an ffprobe option, and ffmpeg given it fails
+   with "Unrecognized option 'show_entries'". */
+function durationCommand(file, probe = FFPROBE) {
+  if (/^ffmpeg(\.exe)?$/i.test(path.win32.basename(probe))) {
+    throw new Error(`Durations are read with ffprobe, not ffmpeg (was asked to run ${probe}). Set FFPROBE_PATH to ffprobe.`);
+  }
+  return [probe, ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', file]];
+}
+
 function lengthOf(file) {
-  const out = execFileSync(FFPROBE, ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', file]).toString();
-  return Number(out.trim());
+  const [bin, args] = durationCommand(file);
+  const out = execFileSync(bin, args).toString();
+  const seconds = Number(out.trim());
+  if (!Number.isFinite(seconds) || seconds <= 0) throw new Error(`ffprobe could not read a duration from ${file}`);
+  return seconds;
 }
 
 function build(shot, take, outDir) {
@@ -995,15 +1029,19 @@ function describeOnPage(saved) {
    The run
    --------------------------------------------------------- */
 
-(async () => {
+async function main() {
   const hadEnv = loadEnv();
+  FFMPEG = findFfmpeg();
+  FFPROBE = ffprobeFor(FFMPEG);
   /* in-memory metering only: never production KV */
   ['KV_REST_API_URL', 'KV_REST_API_TOKEN', 'KV_URL', 'UPSTASH_REDIS_REST_URL', 'UPSTASH_REDIS_REST_TOKEN']
     .forEach((k) => { delete process.env[k]; });
 
   if (!NARRATION_LINES) fail('assets/demo/narration/manifest.json is missing. Run scripts/demo-narration.py.');
   if (!STILLS) {
-    try { execFileSync(FFMPEG, ['-hide_banner', '-version'], { stdio: 'ignore' }); } catch (err) { fail('ffmpeg was not found. Install it, or set FFMPEG_PATH.'); }
+    try { execFileSync(FFMPEG, ['-hide_banner', '-version'], { stdio: 'ignore' }); } catch (err) { fail(`ffmpeg was not found at ${FFMPEG}. Install it, or set FFMPEG_PATH.`); }
+    /* checked now, not after two recordings: the encode needs it */
+    try { execFileSync(FFPROBE, ['-hide_banner', '-version'], { stdio: 'ignore' }); } catch (err) { fail(`ffprobe was not found at ${FFPROBE}. It ships beside ffmpeg; set FFPROBE_PATH if it lives elsewhere.`); }
   }
   const chromium = loadPlaywright();
   fs.mkdirSync(OUT, { recursive: true });
@@ -1053,4 +1091,11 @@ function describeOnPage(saved) {
     console.error(err);
     fail('The recording stopped with an error.');
   }
-})();
+}
+
+/* run when invoked; importable (for scripts/test-record-demo.js) without
+   starting anything */
+if (require.main === module) main();
+
+module.exports = { ffprobeFor, durationCommand };
+
