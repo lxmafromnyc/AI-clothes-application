@@ -2,42 +2,73 @@
 /* =========================================================
    Fynd — records the landing page demo video
 
-   One idea, in about eighteen seconds: describe clothes the way you
-   would say them, and Fynd finds matching products.
+   A screen recording of a person using Fynd for the first time:
 
-     1. Describe   a request is typed into the real search field
-     2. Search     Search is pressed
-     3. Results    the real results page; the grid is the picture
-     4. Retailer   one product is pointed at, and it goes to its retailer
-     5. End        back to the clean results, and the closing line
+     the homepage, a moment to look at it
+     the pointer goes to the search box, clicks, and the request is typed
+       "I'm looking for a black oversized hoodie, under eighty dollars."
+     Search is clicked; the site's own searching state runs
+     real products come back: photos, brands, names, prices, retailers
+       "Fynd finds matching products from different retailers."
+     a small scroll, a product is pointed at, and clicked
+       "And I can open the product directly at the retailer."
+     the retailer's own page opens in a new tab, as it does for anyone
+     back on Fynd: "Describe what you want. Fynd finds it."
 
-   Everything on screen is the site itself, driven in a real browser.
-   The only thing standing in is the product source, which answers here
-   from a fixed set of records instead of a paid API, so the recording is
-   identical every time it is made.
+   Nothing on screen is made for the camera. The page is the site as
+   visitors get it, the search is the real Fynd search — the real
+   /api/interpret and /api/search handlers from this repository, run with
+   your own .env — and the products are the real listings it returns, with
+   their real photographs, prices and retailer links. If any product comes
+   back without a real photograph, or a photograph does not load, the
+   script stops and writes nothing: it never falls back to drawings or
+   placeholders.
 
-   What the camera adds is deliberately small: a pointer, and one short
-   caption at a time in the site's own type. No badges, arrows, zooms,
-   highlights or numbered steps — the interface carries the video.
+   It runs in two passes:
 
-   Usage:
-     node scripts/record-demo.js            record, then encode
-     node scripts/record-demo.js --raw      record only, leave the WebM
-     node scripts/record-demo.js --stills   no video: a PNG at every beat,
-                                            for checking the framing
+     1. The search. The request is typed into the page once, off camera,
+        and the real search answers it. What it answered — every product,
+        exactly as the page received it — is saved to
+        assets/demo/demo-search.json, and every photo is checked loaded.
+     2. The recordings. Desktop, then the phone layout, each driven like a
+        person would drive it. Both ask the same real answer back from
+        the saved search, so the two show the same products, and a
+        re-recording shows the same products as the last one.
 
-   Needs Chromium for the recording and ffmpeg for the encode. Both are
-   found from the environment; either missing is reported and skipped
-   rather than failing the run, because neither is a dependency of the
-   site itself.
+   Usage (from the repository root, with your .env in place):
 
-     CHROME_PATH       chromium binary
-     PLAYWRIGHT_PATH   the playwright module
-     FFMPEG_PATH       ffmpeg binary
+     node scripts/record-demo.js            search for real, then record both
+     node scripts/record-demo.js --replay   record again from the saved search
+     node scripts/record-demo.js --stills   a PNG at every beat, no video
+     node scripts/record-demo.js --only=desktop   (or --only=mobile)
+     node scripts/record-demo.js --out=DIR  write somewhere other than assets/demo
 
-   Writes assets/demo/fynd-demo{,-mobile}.{mp4,webm}, a poster frame and
-   a captions track for each. The files are committed: the site is
-   static, so the video ships with it.
+   Needs:
+     - Playwright with Chromium (npx playwright install chromium)
+     - ffmpeg with libx264, libvpx-vp9, aac and libopus
+     - network access to your product source, OpenAI, and the retailers'
+       image hosts and pages — the same access a visitor's browser has
+     - .env with PRODUCT_SOURCE and that source's key; OPENAI_API_KEY for
+       the AI interpreter (without it the page reads the request with its
+       local interpreter, exactly as the live site would)
+
+   The recording never touches production state: KV / Upstash settings are
+   dropped from this process, so the one search it makes is metered in
+   memory, not against anybody's real allowance.
+
+   The narration is three committed clips in assets/demo/narration/, made
+   by scripts/demo-narration.py. Nothing here needs a speech model.
+
+   Writes, into assets/demo/:
+     fynd-demo.mp4 / .webm                desktop, 1280 x 800, with narration
+     fynd-demo-mobile.mp4 / .webm         phone layout, 800 x 1440 (400 x 720 @2x)
+     fynd-demo-poster.jpg, fynd-demo-mobile-poster.jpg
+     fynd-demo.vtt, fynd-demo-mobile.vtt  captions, timed to the narration
+     demo-search.json                     the real search both were made from
+
+   Determinism: the pointer paths, typing rhythm and pauses come from a
+   seeded generator, the narration is fixed, and --replay reuses the saved
+   search, so the same inputs make the same video.
    ========================================================= */
 
 'use strict';
@@ -49,268 +80,207 @@ const os = require('os');
 const { execFileSync } = require('child_process');
 
 const REPO = path.join(__dirname, '..');
-const OUT = path.join(REPO, 'assets', 'demo');
-const PORT = 8917;
+const arg = (name) => {
+  const hit = process.argv.find((a) => a === `--${name}` || a.startsWith(`--${name}=`));
+  if (!hit) return null;
+  return hit.includes('=') ? hit.slice(hit.indexOf('=') + 1) : true;
+};
 
-const STILLS = process.argv.includes('--stills');
-const RAW = process.argv.includes('--raw');
+const OUT = path.resolve(arg('out') || path.join(REPO, 'assets', 'demo'));
+const NARRATION = path.join(REPO, 'assets', 'demo', 'narration');
+const SEARCH_FILE = path.join(OUT, 'demo-search.json');
+const STILLS = Boolean(arg('stills'));
+const REPLAY = arg('replay');
+const ONLY = arg('only');
+const PORT = Number(process.env.DEMO_PORT || 8917);
+const ORIGIN = `http://127.0.0.1:${PORT}`;
 
-function findChrome() {
-  if (process.env.CHROME_PATH) return process.env.CHROME_PATH;
-  const roots = ['/opt/pw-browsers'];
-  for (const root of roots) {
-    if (!fs.existsSync(root)) continue;
-    const dirs = fs.readdirSync(root).filter((d) => /^chromium-\d+$/.test(d)).sort().reverse();
-    for (const d of dirs) {
-      const p = path.join(root, d, 'chrome-linux', 'chrome');
-      if (fs.existsSync(p)) return p;
-    }
+const QUERY = 'black oversized hoodie under $80';
+const SEED = 20261002;
+
+/* the fewest products worth showing, and the longest the page's own
+   "Searching…" state is allowed to run on camera: the real search can
+   take several seconds, and a recording of a spinner is not the point */
+const MIN_PRODUCTS = 4;
+const MAX_LOADING_MS = 1800;
+const MIN_LOADING_MS = 900;
+
+const CAPTION_END = 'Describe what you want. Fynd finds it.';
+
+const SHOTS = [
+  { name: 'fynd-demo', kind: 'desktop', width: 1280, height: 800, dpr: 1, touch: false, h264: 28, vp9: 37 },
+  { name: 'fynd-demo-mobile', kind: 'mobile', width: 400, height: 720, dpr: 2, touch: true, h264: 31, vp9: 41 }
+].filter((s) => !ONLY || s.kind === ONLY);
+
+/* ---------------------------------------------------------
+   Setup
+   --------------------------------------------------------- */
+
+function fail(message) {
+  console.error(`\n✗ ${message}\n\nNothing was written.`);
+  process.exit(1);
+}
+
+/* .env is read the way the deployment would read its variables: each
+   KEY=value line, without overriding anything already in the environment.
+   Values are never printed. */
+function loadEnv() {
+  const file = path.join(REPO, '.env');
+  if (!fs.existsSync(file)) return false;
+  for (const line of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {
+    const m = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/.exec(line);
+    if (!m || line.trim().startsWith('#')) continue;
+    let value = m[2];
+    if (/^(['"]).*\1$/.test(value)) value = value.slice(1, -1);
+    if (process.env[m[1]] === undefined) process.env[m[1]] = value;
   }
-  return undefined; /* Playwright's own */
+  return true;
 }
 
 function findFfmpeg() {
   if (process.env.FFMPEG_PATH) return process.env.FFMPEG_PATH;
-  const candidates = [
-    '/usr/bin/ffmpeg',
-    '/usr/local/bin/ffmpeg',
-    path.join(REPO, 'node_modules', 'ffmpeg-static', 'ffmpeg')
-  ];
-  return candidates.find((p) => fs.existsSync(p)) || null;
+  const candidates = ['/usr/bin/ffmpeg', '/usr/local/bin/ffmpeg', '/opt/homebrew/bin/ffmpeg',
+    path.join(REPO, 'node_modules', 'ffmpeg-static', 'ffmpeg')];
+  return candidates.find((p) => fs.existsSync(p)) || 'ffmpeg';
 }
+const FFMPEG = findFfmpeg();
+const FFPROBE = process.env.FFPROBE_PATH || FFMPEG.replace(/ffmpeg$/, 'ffprobe');
 
-let chromium;
-try {
-  chromium = require(process.env.PLAYWRIGHT_PATH || 'playwright').chromium;
-} catch (err) {
-  try {
-    chromium = require('/opt/node22/lib/node_modules/playwright').chromium;
-  } catch (err2) {
-    console.log('Playwright is not available here — cannot record the demo.');
-    process.exit(0);
+function loadPlaywright() {
+  const tries = [process.env.PLAYWRIGHT_PATH, 'playwright', '@playwright/test',
+    '/opt/node-tools/node_modules/playwright', '/opt/node22/lib/node_modules/playwright'].filter(Boolean);
+  for (const t of tries) {
+    try { return require(t).chromium; } catch (err) { /* next */ }
   }
+  return fail('Playwright is not installed. Run: npm i -D playwright && npx playwright install chromium');
+}
+
+function chromePath() {
+  if (process.env.CHROME_PATH) return process.env.CHROME_PATH;
+  const root = '/opt/pw-browsers';
+  if (fs.existsSync(root)) {
+    const dir = fs.readdirSync(root).filter((d) => /^chromium-\d+$/.test(d)).sort().reverse()[0];
+    const p = dir && path.join(root, dir, 'chrome-linux', 'chrome');
+    if (p && fs.existsSync(p)) return p;
+  }
+  return undefined; /* Playwright's own */
 }
 
 /* ---------------------------------------------------------
-   The garment artwork
-
-   A product tile needs a photograph, and there is no photograph of a
-   real listing this repository may carry. So the demo draws its own:
-   flat-lay artwork on a white ground, one drawing per row. The card
-   lays a photo onto its own warm tile, so the white takes the tile's
-   tone exactly as a retailer's packshot does. They read as product
-   imagery without standing in for anybody's photograph.
+   A seeded hand: every pause, path and keystroke comes from here, so a
+   run is repeatable and still never perfectly even.
    --------------------------------------------------------- */
 
-const FABRIC = {
-  black: { body: '#1E1E1E', hood: '#2E2E2E', trim: '#151515', seam: '#3A3A3A', cord: '#E8E8E4' },
-  washed: { body: '#333331', hood: '#403F3C', trim: '#282826', seam: '#4E4D49', cord: '#E4E2DC' },
-  charcoal: { body: '#26282B', hood: '#343739', trim: '#1D1F21', seam: '#43464A', cord: '#DFE1E3' },
-  ink: { body: '#181B22', hood: '#262A33', trim: '#12141A', seam: '#343945', cord: '#E2E4E9' }
-};
-
-/* pullover and zip read differently enough at tile size to keep a grid
-   of one garment from looking like one product repeated */
-function hoodieArt(tone, cut) {
-  const c = FABRIC[tone] || FABRIC.black;
-  const front = cut === 'zip'
-    ? `<path d="M240 196 L240 434" stroke="${c.seam}" stroke-width="4" stroke-linecap="round"/>
-       <path d="M198 344 L232 344 M248 344 L292 344" stroke="${c.seam}" stroke-width="3.5" stroke-linecap="round"/>`
-    : `<path d="M186 338 L294 338 L302 410 L178 410 Z" fill="none" stroke="${c.seam}" stroke-width="3.5" stroke-linejoin="round"/>`;
-
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 640" width="480" height="640" role="img">
-  <defs><filter id="s" x="-20%" y="-20%" width="140%" height="140%">
-    <feDropShadow dx="0" dy="10" stdDeviation="14" flood-color="#000" flood-opacity="0.14"/>
-  </filter></defs>
-  <rect width="480" height="640" fill="#FFFFFF"/>
-  <g transform="translate(0 20)">
-  <ellipse cx="240" cy="486" rx="146" ry="15" fill="#000" opacity="0.06"/>
-  <g filter="url(#s)">
-    <path d="M168 148 C176 84 304 84 312 148 C312 190 282 214 240 214 C198 214 168 190 168 148 Z" fill="${c.hood}"/>
-    <path d="M182 134 L96 178 L48 336 Q46 344 54 347 L118 370 Q126 373 129 365 L156 288
-             L156 452 Q156 468 172 468 L308 468 Q324 468 324 452 L324 288
-             L351 365 Q354 373 362 370 L426 347 Q434 344 432 336 L384 178 L298 134
-             C286 170 194 170 182 134 Z" fill="${c.body}"/>
-    <path d="M190 146 C198 100 282 100 290 146 C290 180 268 200 240 200 C212 200 190 180 190 146 Z" fill="${c.trim}"/>
-    <path d="M182 134 L200 196 M298 134 L280 196" stroke="${c.seam}" stroke-width="3.5" fill="none" stroke-linecap="round"/>
-    ${front}
-    <path d="M48 336 L118 361 L108 396 L38 371 Z" fill="${c.trim}"/>
-    <path d="M432 336 L362 361 L372 396 L442 371 Z" fill="${c.trim}"/>
-    <path d="M156 434 L324 434 L324 452 Q324 468 308 468 L172 468 Q156 468 156 452 Z" fill="${c.trim}"/>
-    <path d="M220 198 C218 224 217 240 217 258 M260 198 C262 224 263 240 263 258"
-          stroke="${c.cord}" stroke-width="4.5" fill="none" stroke-linecap="round"/>
-  </g>
-  </g>
-</svg>`;
+function generator(seed) {
+  let a = seed >>> 0;
+  const next = () => {
+    a = (a + 0x6D2B79F5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  return {
+    next,
+    between: (lo, hi) => lo + (hi - lo) * next(),
+    /* roughly normal, from the sum of three uniforms */
+    around: (mean, spread) => mean + spread * ((next() + next() + next()) / 1.5 - 1)
+  };
 }
 
-/* ---------------------------------------------------------
-   What the stand-in product source answers with
-
-   Records in the shape api/_providers/product-source.js hands to the
-   page, so the cards on screen are built by the real rendering code from
-   fields in the real shape. Names describe the garment rather than
-   quoting a listing, and every link goes to the retailer's own search
-   for that garment — a page that exists, rather than a product id
-   invented to look convincing. All of them sit under the $80 asked for.
-   --------------------------------------------------------- */
-
-const DEMO_PRODUCTS = [
-  { id: 'd1', name: 'Oversized Heavyweight Fleece Hoodie', retailer: 'H&M', price: 34.99, tone: 'black', cut: 'pullover',
-    productUrl: 'https://www2.hm.com/en_us/search-results.html?q=oversized%20black%20hoodie',
-    colors: ['Black'], fits: ['Oversized'], styles: ['Streetwear'], sizes: ['S', 'M', 'L'] },
-  { id: 'd2', name: 'Boxy Brushed-Back Hooded Sweatshirt', retailer: 'UNIQLO', price: 49.9, tone: 'charcoal', cut: 'pullover',
-    productUrl: 'https://www.uniqlo.com/us/en/search?q=oversized%20black%20hoodie',
-    colors: ['Black'], fits: ['Oversized'], styles: ['Minimal'], sizes: ['XS', 'S', 'M'] },
-  { id: 'd3', name: 'Relaxed Cotton-Blend Zip Hoodie', retailer: 'GAP', price: 64.95, tone: 'ink', cut: 'zip',
-    productUrl: 'https://www.gap.com/browse/search.do?searchText=black%20oversized%20hoodie',
-    colors: ['Black'], fits: ['Relaxed'], styles: ['Classic'], sizes: ['S', 'M', 'L'] },
-  { id: 'd4', name: 'Washed Black Drop-Shoulder Hoodie', retailer: 'ASOS', price: 45.0, tone: 'washed', cut: 'pullover',
-    productUrl: 'https://www.asos.com/us/search/?q=black%20oversized%20hoodie',
-    colors: ['Washed black'], fits: ['Oversized'], styles: ['Streetwear'], sizes: ['M', 'L', 'XL'] },
-  { id: 'd5', name: 'Reverse Weave Pullover Hoodie', retailer: 'CHAMPION', price: 70.0, tone: 'black', cut: 'pullover',
-    productUrl: 'https://www.champion.com/search?q=black%20hoodie',
-    colors: ['Black'], fits: ['Regular'], styles: ['Sporty'], sizes: ['S', 'M', 'L'] },
-  { id: 'd6', name: 'Loose Fit Hooded Sweatshirt', retailer: 'ZARA', price: 45.9, tone: 'charcoal', cut: 'zip',
-    productUrl: 'https://www.zara.com/us/en/search?searchTerm=black%20hoodie',
-    colors: ['Black'], fits: ['Loose'], styles: ['Minimal'], sizes: ['S', 'M'] },
-  { id: 'd7', name: 'Garment-Dyed Oversized Hoodie', retailer: 'URBAN OUTFITTERS', price: 69.0, tone: 'washed', cut: 'pullover',
-    productUrl: 'https://www.urbanoutfitters.com/search?q=black+oversized+hoodie',
-    colors: ['Faded black'], fits: ['Oversized'], styles: ['Streetwear'], sizes: ['M', 'L'] },
-  { id: 'd8', name: 'Everyday Fleece Hoodie', retailer: 'OLD NAVY', price: 29.99, tone: 'ink', cut: 'pullover',
-    productUrl: 'https://oldnavy.gap.com/browse/search.do?searchText=black%20hoodie',
-    colors: ['Black'], fits: ['Relaxed'], styles: ['Classic'], sizes: ['S', 'M', 'L', 'XL'] }
-];
-
-/* what the interpreter takes out of the sentence that gets typed */
-const DEMO_INTENT = {
-  categories: ['hoodie'],
-  colors: ['Black'],
-  fits: ['Oversized'],
-  occasions: [],
-  brands: [],
-  styles: [],
-  keywords: ['black', 'oversized', 'hoodie'],
-  maxPrice: 80,
-  minPrice: null,
-  season: null,
-  gender: null
-};
-
-const QUERY = 'black oversized hoodie under $80';
-
-/* Long enough for the page's own waiting state to register as a moment,
-   short enough that it never reads as a loading screen. */
-const INTERPRET_DELAY = 450;
-const SEARCH_DELAY = 450;
-
-/* The four lines the video says, one at a time and never two at once. */
-const CAPTIONS = {
-  describe: 'Describe what you want',
-  results: 'Fynd finds matching products',
-  retailer: 'Open the product at the retailer',
-  end: 'Describe it. Find it.'
-};
+const wait = (ms) => new Promise((r) => setTimeout(r, Math.max(0, ms)));
 
 /* ---------------------------------------------------------
-   The origin everything is served from
+   The local origin: the repository's files as they are, and the two API
+   routes answered by the repository's own handlers.
    --------------------------------------------------------- */
 
 const TYPES = {
-  '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css',
-  '.svg': 'image/svg+xml', '.json': 'application/json',
-  '.mp4': 'video/mp4', '.webm': 'video/webm', '.jpg': 'image/jpeg', '.vtt': 'text/vtt'
+  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css',
+  '.svg': 'image/svg+xml', '.json': 'application/json', '.png': 'image/png',
+  '.jpg': 'image/jpeg', '.mp4': 'video/mp4', '.webm': 'video/webm', '.vtt': 'text/vtt', '.wav': 'audio/wav'
 };
 
-/* ---------------------------------------------------------
-   The site's face, served locally
+/* what the API routes do: 'live' runs the real handlers and keeps what
+   they answered; 'replay' gives that same answer back */
+const api = { mode: 'live', exchanges: {}, saved: null };
 
-   Inter. The recording browser is cut off from
-   everything except this origin, and a demo set in a different typeface
-   than the site is a demo of something else. So the face is fetched once
-   here, in Node, and served back at the address the page already asks
-   for. Only the Latin subsets are kept: the recording has no other
-   alphabet in it.
-
-   If the fetch does not work — no network, or Google Fonts moved — the
-   recording still happens in the stack the site itself falls back to,
-   with a line saying so.
-   --------------------------------------------------------- */
-
-/* the stylesheet the page itself links, read from the page, so the
-   recording always asks for exactly the faces the site uses */
-const FONT_CSS = (() => {
-  const html = fs.readFileSync(path.join(REPO, 'index.html'), 'utf8');
-  const m = /href="(https:\/\/fonts\.googleapis\.com\/css2[^"]+)"/.exec(html);
-  return m ? m[1].replace(/&amp;/g, '&') : 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap';
-})();
-const CHROME_UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
-
-const fontFiles = new Map();
-
-async function loadFonts() {
-  const css = await fetch(FONT_CSS, { headers: { 'User-Agent': CHROME_UA } }).then((r) => r.text());
-
-  /* Google Fonts labels each block with the subset it covers, in a
-     comment above it. Keeping the Latin ones drops about nine tenths of
-     the bytes and loses nothing that appears on screen. */
-  const blocks = [...css.matchAll(/\/\* ([\w-]+) \*\/\s*(@font-face\s*\{[^}]*\})/g)]
-    .filter(([, subset]) => subset === 'latin' || subset === 'latin-ext');
-
-  let out = '';
-  for (const [, , face] of blocks) {
-    const url = /url\((https:\/\/fonts\.gstatic\.com[^)]+)\)/.exec(face);
-    if (!url) continue;
-    const name = url[1].split('/').pop();
-    if (!fontFiles.has(name)) {
-      const bytes = await fetch(url[1], { headers: { 'User-Agent': CHROME_UA } })
-        .then((r) => r.arrayBuffer());
-      fontFiles.set(name, Buffer.from(bytes));
+function vercelRes(res) {
+  const out = {
+    setHeader: (k, v) => res.setHeader(k, v),
+    status(code) {
+      res.statusCode = code;
+      return {
+        json: (body) => { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(body)); },
+        end: () => res.end()
+      };
     }
-    out += face.replace(url[1], `http://127.0.0.1:${PORT}/demo-fonts/${name}`) + '\n';
-  }
+  };
   return out;
 }
 
-const json = (res, body, delay) => setTimeout(() => {
+/* runs a real handler and keeps the request and its answer */
+async function live(route, req, res) {
+  const handler = require(path.join(REPO, 'api', `${route}.js`));
+  const chunks = [];
+  req.on('data', (c) => chunks.push(c));
+  await new Promise((r) => req.on('end', r));
+  const raw = Buffer.concat(chunks).toString('utf8');
+  let body = {};
+  try { body = JSON.parse(raw || '{}'); } catch (err) { body = {}; }
+
+  const started = Date.now();
+  let status = 200;
+  let answer = null;
+  const fake = {
+    setHeader: (k, v) => res.setHeader(k, v),
+    status(code) {
+      status = code;
+      return {
+        json: (payload) => { answer = payload; },
+        end: () => {}
+      };
+    }
+  };
+  await handler({ method: req.method, headers: req.headers, body, socket: req.socket,
+    on: () => {}, destroy: () => {} }, fake);
+  const ms = Date.now() - started;
+  api.exchanges[route] = { request: body, status, ms, response: answer };
+
+  res.statusCode = status;
   res.setHeader('Content-Type', 'application/json');
-  res.end(JSON.stringify(body));
-}, delay || 0);
+  res.end(JSON.stringify(answer));
+}
+
+function replay(route, res) {
+  const saved = api.saved && api.saved[route];
+  if (!saved) { res.statusCode = 503; return res.end('{}'); }
+  const delay = route === 'search'
+    ? Math.min(MAX_LOADING_MS, Math.max(MIN_LOADING_MS, saved.ms))
+    : Math.min(700, Math.max(250, saved.ms));
+  setTimeout(() => {
+    res.statusCode = saved.status;
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify(saved.response));
+  }, delay);
+}
 
 const server = http.createServer((req, res) => {
-  const url = new URL(req.url, 'http://x');
-
-  if (url.pathname === '/api/interpret') {
-    return json(res, { source: 'openai', query: QUERY, preferences: DEMO_INTENT }, INTERPRET_DELAY);
+  const url = new URL(req.url, ORIGIN);
+  const route = /^\/api\/(interpret|search)\/?$/.exec(url.pathname);
+  if (route) {
+    if (req.method === 'OPTIONS') { res.statusCode = 204; return res.end(); }
+    if (api.mode === 'live') {
+      return live(route[1], req, res).catch((err) => {
+        console.error(`  /api/${route[1]} threw:`, err && err.message);
+        res.statusCode = 500; res.end('{}');
+      });
+    }
+    return replay(route[1], res);
   }
+  if (url.pathname.startsWith('/api/')) { res.statusCode = 404; return res.end('{}'); }
 
-  if (url.pathname === '/api/search') {
-    const products = DEMO_PRODUCTS.map((p) => ({
-      id: p.id, name: p.name, retailer: p.retailer, brand: p.retailer,
-      price: p.price, currency: 'USD', productUrl: p.productUrl,
-      imageUrl: `/demo-media/${p.id}.svg`,
-      category: 'hoodie', colors: p.colors, fits: p.fits, styles: p.styles, sizes: p.sizes
-    }));
-    return json(res, { source: 'demo', products, returned: products.length, rejected: {} }, SEARCH_DELAY);
-  }
-
-  const font = /^\/demo-fonts\/(.+)$/.exec(url.pathname);
-  if (font) {
-    const bytes = fontFiles.get(font[1]);
-    if (!bytes) { res.statusCode = 404; return res.end('no such face'); }
-    res.setHeader('Content-Type', 'font/woff2');
-    return res.end(bytes);
-  }
-
-  const media = /^\/demo-media\/(\w+)\.svg$/.exec(url.pathname);
-  if (media) {
-    const item = DEMO_PRODUCTS.find((p) => p.id === media[1]);
-    if (!item) { res.statusCode = 404; return res.end('no such tile'); }
-    res.setHeader('Content-Type', 'image/svg+xml');
-    return res.end(hoodieArt(item.tone, item.cut));
-  }
-
-  const file = path.join(REPO, url.pathname.replace(/^\/+/, ''));
+  const file = path.join(REPO, decodeURIComponent(url.pathname).replace(/^\/+/, '') || 'index.html');
   if (!file.startsWith(REPO) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
     res.statusCode = 404; return res.end('not found');
   }
@@ -321,523 +291,766 @@ const server = http.createServer((req, res) => {
 /* ---------------------------------------------------------
    What the camera changes about the page
 
-   Kept to the least that makes the recording quiet and true:
+   - The demo section is hidden, so the video never contains itself.
+   - The search box starts empty. Its placeholder is the very sentence
+     typed in the video; left on, the request would be on screen before
+     anybody asked for it.
+   - The page asks this machine's API instead of the production one, so
+     the search runs with your .env, not the deployment's.
 
-   - The demo section is removed, so the video never shows itself.
-   - The field starts empty. Its placeholder is the very sentence the
-     video types; left on, the request would be on screen before anybody
-     had asked for anything.
-   - The stand-in source is marked as what it is. Rows from a product
-     source carry no marker, because on the live site they are live
-     stock; these are not, so the results heading carries the page's own
-     "Sample data" marker, exactly as it does for the demo catalogue.
-
-   Nothing else is restyled: type, colour, spacing, the search box, the
-   buttons and the cards are the site's own.
+   Nothing else: type, colour, layout, the box, the button, the cards and
+   the photos are the site's own.
    --------------------------------------------------------- */
 
-const QUIET_CSS = `
-  #demo { display: none !important; }
-`;
+function pagePrep(origin) {
+  window.FINDWEAR_API = `${origin}/api/interpret`;
+  window.FINDWEAR_SEARCH_API = `${origin}/api/search`;
+  const blank = new MutationObserver(() => {
+    const field = document.getElementById('ask');
+    if (!field) return;
+    field.setAttribute('placeholder', '');
+    blank.disconnect();
+  });
+  blank.observe(document, { childList: true, subtree: true });
+  document.addEventListener('DOMContentLoaded', () => {
+    const s = document.createElement('style');
+    s.textContent = '#demo { display: none !important; }';
+    document.head.appendChild(s);
+  });
+}
 
 /* ---------------------------------------------------------
    The layer that only exists for the camera
 
-   A pointer and one caption. Injected into the page rather than
-   composited afterwards so it moves with the interface at the same frame
-   rate, and drawn from the site's own tokens so it belongs to the same
-   design as everything under it.
+   A headless browser draws no pointer, so the pointer is drawn here —
+   the size of a real one, following the real mouse events the page
+   receives, and taking the shape the page asks for: an arrow, a text
+   cursor over the box, a hand over a link. On a phone there is no
+   pointer; a touch shows as a small soft dot, the way a phone's own
+   screen recording shows touches.
+
+   The caption sits in a thin strip along the bottom edge, never over a
+   product or a control, and shows the words being spoken.
    --------------------------------------------------------- */
 
-const OVERLAY = (compact) => {
-  const css = `
-    #demo-layer { position: fixed; inset: 0; z-index: 9999; pointer-events: none;
-      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
+function overlay(touch) {
+  const install = () => {
+    if (document.getElementById('demo-layer')) return;
+    const style = document.createElement('style');
+    style.textContent = `
+      #demo-layer { position: fixed; inset: 0; z-index: 2147483647; pointer-events: none;
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
+      #demo-pointer { position: absolute; left: 0; top: 0; width: 24px; height: 24px; display: none; will-change: transform; }
+      #demo-pointer.on { display: block; }
+      #demo-pointer svg { display: none; position: absolute; left: 0; top: 0; overflow: visible; }
+      #demo-pointer[data-shape="arrow"] .arrow, #demo-pointer[data-shape="hand"] .hand,
+      #demo-pointer[data-shape="text"] .text { display: block; }
+      #demo-touch { position: absolute; left: 0; top: 0; width: 34px; height: 34px; margin: -17px 0 0 -17px;
+        border-radius: 50%; background: rgba(60,60,60,.22); border: 1px solid rgba(255,255,255,.7);
+        opacity: 0; transition: opacity .18s ease; }
+      #demo-touch.on { opacity: 1; transition: opacity .06s ease; }
+      #demo-strip { position: absolute; left: 0; right: 0; bottom: 0; height: ${touch ? 44 : 46}px;
+        display: flex; align-items: center; justify-content: center; padding: 0 16px;
+        background: #fff; border-top: 1px solid #E7E7E3; }
+      #demo-caption { color: #111; font-size: ${touch ? 13.5 : 14}px; font-weight: 500; letter-spacing: -.005em;
+        line-height: 1.25; text-align: center; opacity: 0; transition: opacity .3s ease; }
+      #demo-caption.on { opacity: 1; }
+      /* the screencast only sends a frame when something repaints; one
+         pixel that keeps repainting keeps the frame rate even */
+      #demo-tick { position: absolute; right: 0; top: 0; width: 1px; height: 1px; background: #fff;
+        animation: demo-tick .2s steps(2) infinite; }
+      @keyframes demo-tick { to { background: #fefefe; } }
+    `;
+    document.head.appendChild(style);
+    const layer = document.createElement('div');
+    layer.id = 'demo-layer';
+    layer.innerHTML = `
+      <div id="demo-pointer" data-shape="arrow">
+        <svg class="arrow" width="17" height="25" viewBox="0 0 17 25"><path d="M1.5 1.5v19.2l4.6-4.4 3.2 7.2 3-1.3-3.1-7h6.4z"
+          fill="#000" stroke="#fff" stroke-width="1.4" stroke-linejoin="round"/></svg>
+        <svg class="hand" width="22" height="25" viewBox="0 0 22 25" style="left:-6px;top:-1px"><path d="M8.2 1.4c-1 0-1.8.8-1.8 1.8v9.3l-1.3-1.4c-.8-.8-2-.9-2.8-.2-.8.7-.8 1.9-.1 2.7l4.9 6.1c1.3 1.6 3.2 2.6 5.3 2.6h1.7c3.3 0 6-2.7 6-6v-5.6c0-1-.8-1.8-1.8-1.8s-1.7.7-1.7 1.6V9.9c0-1-.8-1.8-1.8-1.8s-1.8.8-1.8 1.8V9c0-1-.8-1.8-1.8-1.8S11.5 8 11.5 9V3.2c0-1-.8-1.8-1.8-1.8z"
+          fill="#fff" stroke="#000" stroke-width="1.3" stroke-linejoin="round"/></svg>
+        <svg class="text" width="9" height="20" viewBox="0 0 9 20" style="left:-4px;top:-10px"><path d="M1 1.5c1.6 0 2.6.4 3.5 1.3.9-.9 1.9-1.3 3.5-1.3M4.5 2.8v14.4M1 18.5c1.6 0 2.6-.4 3.5-1.3.9.9 1.9 1.3 3.5 1.3"
+          fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round"/><path d="M1 1.5c1.6 0 2.6.4 3.5 1.3.9-.9 1.9-1.3 3.5-1.3M4.5 2.8v14.4M1 18.5c1.6 0 2.6-.4 3.5-1.3.9.9 1.9 1.3 3.5 1.3"
+          fill="none" stroke="#000" stroke-width="1.2" stroke-linecap="round"/></svg>
+      </div>
+      <div id="demo-touch"></div>
+      <div id="demo-strip"><div id="demo-caption"></div></div>
+      <div id="demo-tick"></div>`;
+    document.body.appendChild(layer);
 
-    /* a plain system pointer; a click is the pointer pressing, nothing more */
-    #demo-cursor { position: absolute; top: 0; left: 0; width: 22px; height: 22px;
-      margin: -2px 0 0 -4px; opacity: 0; transform: translate(70vw, 85vh);
-      transition: transform .7s cubic-bezier(.3,.7,.25,1), opacity .3s ease; will-change: transform; }
-    #demo-cursor.on { opacity: 1; }
-    #demo-cursor svg { width: 22px; height: 22px; display: block; transition: transform .12s ease;
-      filter: drop-shadow(0 1px 2px rgba(0,0,0,.28)); }
-    #demo-cursor.down svg { transform: scale(.86); }
+    const pointer = layer.querySelector('#demo-pointer');
+    const dot = layer.querySelector('#demo-touch');
+    const caption = layer.querySelector('#demo-caption');
 
-    /* One short line at a time, in a quiet strip along the bottom edge
-       of the frame. The strip is there from the first frame to the last,
-       so a caption arriving never moves anything, and it sits below the
-       interface rather than on it: no product or control is ever under
-       the words. Ink on the page's own paper, in the page's own face. */
-    #demo-strip { position: absolute; left: 0; right: 0; bottom: 0; height: ${compact ? 44 : 48}px;
-      display: flex; align-items: center; justify-content: center;
-      background: var(--color-bg); border-top: 1px solid var(--color-border); }
-    #demo-caption { color: var(--color-text);
-      font-size: ${compact ? 13.5 : 14}px; font-weight: 500; letter-spacing: -.005em; line-height: 1;
-      white-space: nowrap; opacity: 0; transition: opacity .35s ease; }
-    #demo-caption.on { opacity: 1; }
+    /* the shape a real pointer would take over whatever is under it */
+    const shapeAt = (x, y) => {
+      pointer.style.visibility = 'hidden';
+      const el = document.elementFromPoint(x, y);
+      pointer.style.visibility = '';
+      if (!el) return 'arrow';
+      const c = getComputedStyle(el).cursor;
+      if (c === 'pointer') return 'hand';
+      if (c === 'text' || ((c === 'auto') && (el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && /text|search/.test(el.type))))) return 'text';
+      return 'arrow';
+    };
+    if (!touch) {
+      window.addEventListener('mousemove', (e) => {
+        pointer.classList.add('on');
+        pointer.style.transform = `translate(${e.clientX}px, ${e.clientY}px)`;
+        pointer.dataset.shape = shapeAt(e.clientX, e.clientY);
+      }, { capture: true, passive: true });
+      window.addEventListener('scroll', () => {
+        const m = /translate\(([-\d.]+)px, ([-\d.]+)px\)/.exec(pointer.style.transform);
+        if (m) pointer.dataset.shape = shapeAt(Number(m[1]), Number(m[2]));
+      }, { passive: true });
+    }
 
-    /* Where a pointed-at link goes, shown the way a desktop browser
-       shows it: the real address, small, in the bottom corner. */
-    #demo-status { position: absolute; left: 0; bottom: ${compact ? 44 : 48}px; max-width: 60%;
-      padding: 4px 10px; background: #F1F1F1; color: #3C3C3C;
-      border: 1px solid #D6D6D6; border-left: 0; border-bottom: 0; border-top-right-radius: 4px;
-      font: 12px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-      opacity: 0; transition: opacity .15s ease; }
-    #demo-status.on { opacity: 1; }
-
-    /* The screencast a recording is made from only sends a frame when
-       something repaints. A still page sends none, so what appears
-       during a pause reaches the video late, bunched into its last
-       moments. One pixel that never stops repainting keeps the frames
-       coming at an even rate, so every beat lands when it happened. */
-    #demo-tick { position: absolute; left: 0; top: 0; width: 1px; height: 1px;
-      background: var(--color-bg); animation: demo-tick .2s steps(2) infinite; }
-    @keyframes demo-tick { to { background: var(--color-surface); } }
-  `;
-
-  const style = document.createElement('style');
-  style.textContent = css;
-  document.head.appendChild(style);
-
-  const layer = document.createElement('div');
-  layer.id = 'demo-layer';
-  layer.innerHTML = `
-    <div id="demo-cursor"><svg viewBox="0 0 24 24"><path d="M5 2.5v17.2l4.6-4.3 2.9 6.6 2.9-1.3-2.9-6.5h6.3z"
-      fill="#111" stroke="#fff" stroke-width="1.3" stroke-linejoin="round"/></svg></div>
-    <div id="demo-strip"><div id="demo-caption"></div></div>
-    <div id="demo-status"></div>
-    <div id="demo-tick"></div>`;
-  document.body.appendChild(layer);
-
-  const cursor = layer.querySelector('#demo-cursor');
-  const caption = layer.querySelector('#demo-caption');
-  const status = layer.querySelector('#demo-status');
-
-  window.demo = {
-    show: () => cursor.classList.add('on'),
-    hide: () => cursor.classList.remove('on'),
-    move: (x, y) => { cursor.style.transform = `translate(${x}px, ${y}px)`; },
-    press: (down) => cursor.classList.toggle('down', down),
-    say: (text) => { caption.textContent = text; caption.classList.add('on'); },
-    hush: () => caption.classList.remove('on'),
-    status: (text) => { if (text) status.textContent = text; status.classList.toggle('on', Boolean(text)); }
+    window.demo = {
+      say: (text) => { caption.textContent = text; caption.classList.add('on'); },
+      hush: () => caption.classList.remove('on'),
+      touchAt: (x, y, on) => {
+        dot.style.transform = `translate(${x}px, ${y}px)`;
+        dot.classList.toggle('on', on);
+      }
+    };
   };
-
-  /* Following the link would end the recording on somebody else's page,
-     and this environment cannot reach one anyway. The click still
-     happens, on the real anchor, with the real href — it is only the
-     navigation that is held back. */
-  document.addEventListener('click', (e) => {
-    const card = e.target.closest && e.target.closest('a.item-card');
-    if (!card) return;
-    e.preventDefault();
-    window.demo.clicked = card.getAttribute('href');
-  }, true);
-
-  /* the page's own sample marker beside the count: see above */
-  new MutationObserver(() => {
-    const head = document.querySelector('#results .results-head h2');
-    if (!head || head.classList.contains('thinking') || head.querySelector('.status')) return;
-    if (!document.querySelector('#results .grid .item-card')) return;
-    head.insertAdjacentHTML('beforeend', ' <span class="status status--sample">Sample data</span>');
-  }).observe(document.getElementById('results'), { childList: true, subtree: true });
-};
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', install);
+  else install();
+}
 
 /* ---------------------------------------------------------
-   The recording itself
+   Pass 1: the real search
    --------------------------------------------------------- */
 
-const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+/* Everything a recording needs to be true of the results, checked in the
+   page itself: enough products, every one a real listing, every photo a
+   real photograph that actually loaded. Returns what it found, so a
+   failure can say exactly which product it was. */
+async function checkResults(page) {
+  return page.evaluate(async () => {
+    const deadline = Date.now() + 25000;
+    const cards = () => [...document.querySelectorAll('#results .grid .item-card')];
+    const settled = () => cards().every((c) => {
+      const img = c.querySelector('.item-media img');
+      return !img || (img.complete && img.naturalWidth > 0);
+    });
+    /* lazy images below the fold load as they near the viewport; ask for
+       every one now so the check covers the whole grid */
+    cards().forEach((c) => { const img = c.querySelector('img'); if (img) img.loading = 'eager'; });
+    while (Date.now() < deadline && !settled()) await new Promise((r) => setTimeout(r, 250));
+    return cards().map((c, i) => {
+      const img = c.querySelector('.item-media img');
+      return {
+        i,
+        name: (c.querySelector('.item-name') || {}).textContent || '',
+        href: c.getAttribute('href') || '',
+        retailer: ((c.querySelector('.item-seller') || c.querySelector('.item-retailer') || {}).textContent || '').trim(),
+        drawn: Boolean(c.querySelector('.item-media svg')),
+        sample: Boolean(c.querySelector('.item-badge')),
+        src: img ? img.currentSrc || img.src : '',
+        width: img ? img.naturalWidth : 0,
+        height: img ? img.naturalHeight : 0,
+        loaded: Boolean(img && img.complete && img.naturalWidth > 0)
+      };
+    });
+  });
+}
 
-/* Two recordings, not one. An interface shot for a 1280-wide window is
-   unreadable on a phone — the type in it lands at about six pixels — and
-   a crop of it is not what a phone shows anyway. So the same walkthrough
-   is driven twice, once in each shape, and the narrow one is the site's
-   real mobile layout. The page picks the one that fits the screen.
+function verdict(found) {
+  const problems = [];
+  if (found.length < MIN_PRODUCTS) problems.push(`only ${found.length} product(s) came back; need at least ${MIN_PRODUCTS}`);
+  for (const p of found) {
+    const who = `#${p.i + 1} "${p.name.trim().slice(0, 60)}"`;
+    if (p.sample) problems.push(`${who} is a sample row, not a real listing`);
+    if (p.drawn) problems.push(`${who} shows drawn placeholder artwork instead of a photo`);
+    if (!/^https?:\/\//.test(p.href)) problems.push(`${who} has no retailer link`);
+    if (!p.drawn && !p.loaded) problems.push(`${who} photo did not load: ${p.src}`);
+    if (p.loaded && (p.width < 150 || p.height < 150)) problems.push(`${who} photo is too small to be a product photo (${p.width}x${p.height})`);
+  }
+  return problems;
+}
 
-   The narrow one is captured at two device pixels per CSS pixel so that
-   a phone, which has at least that many, is not shown an upscale.
+async function realSearch(chromium) {
+  const missing = [];
+  if (!process.env.PRODUCT_SOURCE) missing.push('PRODUCT_SOURCE');
+  if (missing.length) fail(`.env does not configure a product source (${missing.join(', ')}). The demo is a real search; set PRODUCT_SOURCE and its API key.`);
+  if (!process.env.OPENAI_API_KEY && !process.env.AI_PROVIDER) {
+    console.log('  note: no OPENAI_API_KEY — the page will read the request with its local interpreter, as the live site does without one');
+  }
 
-   h264 and vp9 are the quality settings for the two encodes, tuned per
-   shape and per codec so the WebM the page offers first is never the
-   bigger of the two files. */
-const SHOTS = [
-  { name: 'fynd-demo', width: 1280, height: 800, dpr: 1, compact: false, h264: 30, vp9: 38 },
-  { name: 'fynd-demo-mobile', width: 400, height: 720, dpr: 2, compact: true, h264: 33, vp9: 45 }
-];
+  api.mode = 'live';
+  const browser = await chromium.launch({ executablePath: chromePath() });
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  const page = await context.newPage();
+  await page.addInitScript(pagePrep, ORIGIN);
+  await page.goto(`${ORIGIN}/index.html`, { waitUntil: 'load' });
+  await page.fill('#ask', QUERY);
+  await page.click('#ask-form button[type=submit]');
 
-async function record(shot, fontCss, rawDir, stillsDir) {
+  const outcome = await Promise.race([
+    page.waitForSelector('#results .grid .item-card', { timeout: 45000 }).then(() => 'cards'),
+    page.waitForSelector('#results .empty', { timeout: 45000 }).then(() => 'empty')
+  ]).catch(() => 'timeout');
+
+  const search = api.exchanges.search;
+  if (!search) fail('The page never reached /api/search.');
+  if (search.status !== 200 || outcome !== 'cards') {
+    const why = search.response && (search.response.error || search.response.notice || search.response.state);
+    fail(`The real search did not return products (HTTP ${search.status}${why ? `: ${why}` : ''}). Check PRODUCT_SOURCE and its key in .env.`);
+  }
+
+  const found = await checkResults(page);
+  await browser.close();
+  const problems = verdict(found);
+  if (problems.length) fail(`The real results are not fit to record:\n  - ${problems.join('\n  - ')}`);
+
+  const products = (search.response && search.response.products) || [];
+  const record = {
+    query: QUERY,
+    searchedAt: new Date().toISOString(),
+    productSource: process.env.PRODUCT_SOURCE,
+    interpreter: api.exchanges.interpret ? { status: api.exchanges.interpret.status, ms: api.exchanges.interpret.ms } : null,
+    interpret: api.exchanges.interpret || null,
+    search,
+    shown: found.map(({ name, retailer, href, src, width, height }) => ({ name: name.trim(), retailer, href, photo: src, width, height }))
+  };
+  console.log(`  ${products.length} real products from ${new Set(found.map((f) => f.retailer)).size} retailer(s); every photo loaded`);
+  return record;
+}
+
+/* ---------------------------------------------------------
+   Pass 2: a person using the page
+   --------------------------------------------------------- */
+
+const NARRATION_LINES = (() => {
+  const file = path.join(NARRATION, 'manifest.json');
+  if (!fs.existsSync(file)) return null;
+  return JSON.parse(fs.readFileSync(file, 'utf8')).lines;
+})();
+
+async function record(chromium, shot, rawDir, stillsDir) {
+  const rand = generator(SEED + (shot.touch ? 7 : 0));
   const browser = await chromium.launch({
-    executablePath: findChrome(),
+    executablePath: chromePath(),
     args: shot.dpr > 1 ? [`--force-device-scale-factor=${shot.dpr}`] : []
   });
-
   const context = await browser.newContext({
     viewport: { width: shot.width, height: shot.height },
     deviceScaleFactor: shot.dpr,
-    isMobile: shot.compact,
-    hasTouch: shot.compact,
+    isMobile: shot.touch,
+    hasTouch: shot.touch,
     reducedMotion: 'no-preference',
-    ...(stillsDir ? {} : {
-      recordVideo: { dir: rawDir, size: { width: shot.width * shot.dpr, height: shot.height * shot.dpr } }
-    })
+    ...(stillsDir ? {} : { recordVideo: { dir: rawDir, size: { width: shot.width * shot.dpr, height: shot.height * shot.dpr } } })
   });
+  await context.addInitScript(pagePrep, ORIGIN);
+  await context.addInitScript(overlay, shot.touch);
 
+  /* The product photos are fetched once before the camera starts, into
+     this browser's own cache — as they would be for anybody who had the
+     page open a moment — so the grid appears with its photos rather than
+     with a row of empty frames filling in. */
+  const photos = api.saved.shown.map((s) => s.photo).filter(Boolean);
+  const warm = await context.newPage();
+  await warm.goto(`${ORIGIN}/index.html`, { waitUntil: 'load' });
+  await warm.evaluate((urls) => Promise.all(urls.map((u) => new Promise((r) => {
+    const img = new Image(); img.referrerPolicy = 'no-referrer';
+    img.onload = img.onerror = r; img.src = u;
+  }))), photos);
+  await warm.close();
+
+  const pageBorn = Date.now();
   const page = await context.newPage();
-
-  /* Every caption is timed against one clock that starts with the page,
-     and written out as a captions track afterwards: burned-in text is
-     not text, and somebody reading captions rather than watching them
-     needs the words. */
-  const startedAt = Date.now();
-  const now = () => (Date.now() - startedAt) / 1000;
+  const now = () => (Date.now() - pageBorn) / 1000;
+  const marks = {};
   const cues = [];
+  const voice = [];
   let stillN = 0;
+
   const still = async (label) => {
     if (!stillsDir) return;
     stillN += 1;
     await page.screenshot({ path: path.join(stillsDir, `${shot.name}-${String(stillN).padStart(2, '0')}-${label}.png`) });
   };
-  const say = async (text) => {
-    cues.push({ text, start: now(), end: null });
+  /* a narrated line: the clip starts now, and its words stay in the strip
+     for as long as it is spoken */
+  const speak = async (key) => {
+    const line = NARRATION_LINES && NARRATION_LINES[key];
+    const text = line ? line.text : key;
+    const start = now();
+    voice.push({ key, start });
+    cues.push({ text, start, end: start + (line ? line.duration + 0.35 : 2.5) });
+    await page.evaluate((t) => window.demo.say(t), text);
+    return line ? line.duration * 1000 : 2500;
+  };
+  const caption = async (text, ms) => {
+    cues.push({ text, start: now(), end: now() + ms / 1000 });
     await page.evaluate((t) => window.demo.say(t), text);
   };
-  const hush = async () => {
-    const open = cues[cues.length - 1];
-    if (open && open.end === null) open.end = now();
-    await page.evaluate(() => window.demo.hush());
-  };
+  const hush = () => page.evaluate(() => window.demo.hush());
 
-  await page.addInitScript(() => {
-    window.FINDWEAR_API = `${location.origin}/api/interpret`;
-    window.FINDWEAR_SEARCH_API = `${location.origin}/api/search`;
-  });
-  await page.addInitScript((css) => {
-    /* before assets/reading.js runs, which is what animates it */
-    const blank = new MutationObserver(() => {
-      const field = document.getElementById('ask');
-      if (!field) return;
-      field.setAttribute('placeholder', '');
-      blank.disconnect();
-    });
-    blank.observe(document, { childList: true, subtree: true });
-    document.addEventListener('DOMContentLoaded', () => {
-      const s = document.createElement('style');
-      s.textContent = css;
-      document.head.appendChild(s);
-    });
-  }, QUIET_CSS);
-
-  /* The page's own stylesheet link is answered from the cache above, so
-     the recording is set in the face the site is set in. Everything else
-     off this origin is unreachable here anyway, and cutting it keeps the
-     recording identical from one run to the next. */
-  await page.route((url) => !String(url).includes(`127.0.0.1:${PORT}`), (route) => {
-    if (fontCss && String(route.request().url()).startsWith('https://fonts.googleapis.com/css2')) {
-      return route.fulfill({ status: 200, contentType: 'text/css', body: fontCss });
-    }
-    return route.abort();
-  });
-
-  await page.goto(`http://127.0.0.1:${PORT}/index.html`, { waitUntil: 'load' });
+  await page.goto(`${ORIGIN}/index.html`, { waitUntil: 'load' });
   await page.waitForSelector('#ask-form');
   await page.evaluate(() => document.fonts.ready);
-  await page.evaluate(OVERLAY, shot.compact);
 
-  const rect = async (selector) => {
+  /* --- the hand ------------------------------------------------------ */
+
+  const viewH = shot.height - (shot.touch ? 44 : 46);
+  let at = { x: shot.width * 0.74, y: shot.height * 0.78 };
+
+  const box = async (selector) => {
     const b = await page.locator(selector).first().boundingBox();
-    return { x: b.x + b.width / 2, y: b.y + b.height / 2, b };
+    if (!b) fail(`Could not find ${selector} on the page.`);
+    return b;
   };
-  const moveTo = async (x, y, settle = 720) => {
-    await page.evaluate(([px, py]) => window.demo.move(px, py), [x, y]);
-    await wait(settle);
-  };
-  const press = async () => {
-    await page.evaluate(() => window.demo.press(true));
-    await wait(110);
-    await page.evaluate(() => window.demo.press(false));
-  };
-  const scrollTo = (y) => page.evaluate((top) => window.scrollTo({ top, behavior: 'smooth' }), y);
-  /* the page's y for an element, under the sticky header */
-  const topOf = (selector, gap) => page.evaluate(([sel, g]) => {
-    const el = document.querySelector(sel);
-    const header = document.querySelector('.site-header');
-    const h = header ? header.getBoundingClientRect().height : 0;
-    return Math.max(0, el.getBoundingClientRect().top + window.scrollY - h - g);
-  }, [selector, gap]);
+  /* somewhere natural inside a box: not its exact centre */
+  const spotIn = (b, fx = 0.5, fy = 0.5) => ({
+    x: b.x + b.width * (fx + rand.between(-0.08, 0.08)),
+    y: b.y + b.height * (fy + rand.between(-0.12, 0.12))
+  });
 
-  /* On a phone the field sits under the headline; bring it up the way a
-     shopper would, before anything starts. Not part of the recording's
-     story, so it happens while the first frames are still empty. */
-  if (shot.compact) {
-    await page.evaluate((y) => window.scrollTo(0, y), await topOf('.hero h1', 4));
+  /* A hand moves on a gentle curve, fast in the middle and slow at both
+     ends, and a long move overshoots a little and settles back. */
+  async function moveTo(target, ms) {
+    const from = { ...at };
+    const dx = target.x - from.x;
+    const dy = target.y - from.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist < 1) return;
+    const duration = ms || Math.min(1100, 380 + dist * 0.9) * rand.between(0.9, 1.12);
+    const bend = rand.between(-0.18, 0.18) * dist;
+    const nx = -dy / dist;
+    const ny = dx / dist;
+    const c1 = { x: from.x + dx * 0.3 + nx * bend, y: from.y + dy * 0.3 + ny * bend };
+    const c2 = { x: from.x + dx * 0.75 + nx * bend * 0.4, y: from.y + dy * 0.75 + ny * bend * 0.4 };
+    const over = dist > 220 ? rand.between(3, 7) : 0;
+    const end = { x: target.x + (dx / dist) * over, y: target.y + (dy / dist) * over };
+    /* paced by the clock, not by a step count: however long the browser
+       takes to take each position, the move lasts as long as it should */
+    const began = Date.now();
+    for (;;) {
+      const t = Math.min(1, (Date.now() - began) / duration);
+      const e = t * t * t * (10 - 15 * t + 6 * t * t);
+      const u = 1 - e;
+      const x = u * u * u * from.x + 3 * u * u * e * c1.x + 3 * u * e * e * c2.x + e * e * e * end.x;
+      const y = u * u * u * from.y + 3 * u * u * e * c1.y + 3 * u * e * e * c2.y + e * e * e * end.y;
+      await page.mouse.move(x + (t < 1 ? rand.between(-0.4, 0.4) : 0), y + (t < 1 ? rand.between(-0.4, 0.4) : 0));
+      if (t >= 1) break;
+      await wait(12);
+    }
+    if (over) {
+      await wait(rand.between(40, 90));
+      for (let i = 1; i <= 6; i += 1) {
+        await page.mouse.move(end.x + (target.x - end.x) * (i / 6), end.y + (target.y - end.y) * (i / 6));
+        await wait(18);
+      }
+    }
+    at = { ...target };
   }
-  await wait(400);
 
-  /* Everything before this moment is the page loading, which the video
-     does not need: the encode starts here. */
-  const startAt = now();
+  async function click() {
+    await page.mouse.down();
+    await wait(rand.between(70, 120));
+    await page.mouse.up();
+  }
 
-  /* --- 1. Describe ------------------------------------------------- */
+  async function tap(point) {
+    await page.evaluate(([x, y]) => window.demo.touchAt(x, y, true), [point.x, point.y]);
+    await wait(rand.between(60, 100));
+    await page.touchscreen.tap(point.x, point.y);
+    await wait(rand.between(90, 140));
+    await page.evaluate(([x, y]) => window.demo.touchAt(x, y, false), [point.x, point.y]);
+  }
 
-  const field = await rect('#ask');
-  const fieldStart = { x: field.b.x + Math.min(70, field.b.width * 0.2), y: field.y };
-  await page.evaluate(([x, y]) => window.demo.move(x, y), [fieldStart.x + 60, fieldStart.y + 120]);
-  await page.evaluate(() => window.demo.show());
-  await say(CAPTIONS.describe);
-  await moveTo(fieldStart.x, fieldStart.y, 650);
-  await press();
+  /* Typing with a person's rhythm: no two keys the same distance apart,
+     a beat at each space, a longer one now and then between words, and
+     the shift for "$" taking its moment. */
+  async function typeLikeAPerson(text) {
+    const words = text.split(' ');
+    for (let w = 0; w < words.length; w += 1) {
+      for (const ch of words[w]) {
+        let gap = rand.around(96, 30);
+        if (ch === '$') gap += rand.between(90, 160);
+        await page.keyboard.type(ch);
+        await wait(Math.max(48, gap));
+      }
+      if (w < words.length - 1) {
+        await page.keyboard.type(' ');
+        await wait(rand.around(140, 38) + (rand.next() < 0.18 ? rand.between(110, 240) : 0));
+      }
+    }
+  }
+
+  /* A real scroll: the wheel on a desktop, through the browser's own
+     scroll gesture; on a phone, a finger's swipe as real touch events,
+     quick in the middle and easing off, the way a thumb moves. */
+  const cdp = await context.newCDPSession(page);
+  async function scrollBy(pixels, point) {
+    const p = point || { x: shot.width * rand.between(0.45, 0.6), y: viewH * 0.68 };
+    if (!shot.touch) {
+      await cdp.send('Input.synthesizeScrollGesture', {
+        x: Math.round(p.x), y: Math.round(p.y), yDistance: -Math.round(pixels),
+        speed: 900, gestureSourceType: 'mouse', preventFling: true
+      });
+      return;
+    }
+    const steps = 22;
+    const drift = rand.between(-10, 10);
+    await page.evaluate(([x, y]) => window.demo.touchAt(x, y, true), [p.x, p.y]);
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: p.x, y: p.y }] });
+    for (let i = 1; i <= steps; i += 1) {
+      const t = i / steps;
+      const e = 1 - Math.pow(1 - t, 2.2);
+      const x = p.x + drift * e;
+      const y = p.y - pixels * e;
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y }] });
+      await page.evaluate(([px, py]) => window.demo.touchAt(px, py, true), [x, y]);
+      await wait(17);
+    }
+    await wait(50);
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await page.evaluate(([x, y]) => window.demo.touchAt(x, y, false), [p.x + drift, p.y - pixels]);
+    await wait(500);
+  }
+
+  /* --- 1. The homepage ----------------------------------------------- */
+
+  if (!shot.touch) await page.mouse.move(at.x, at.y);
+  await wait(450);
+  marks.start = now();
+  await wait(rand.between(1100, 1400));
+
+  /* --- 2. Into the box, and the request ------------------------------- */
+
+  const field = await box('#ask');
+  const fieldSpot = { x: field.x + Math.min(160, field.width * 0.3) + rand.between(-20, 20), y: field.y + field.height / 2 };
+  if (shot.touch) {
+    await wait(rand.between(200, 400));
+    await tap(fieldSpot);
+  } else {
+    await moveTo(fieldSpot);
+    await wait(rand.between(120, 220));
+    await click();
+  }
   await page.focus('#ask');
-  await wait(150);
-  await page.keyboard.type(QUERY, { delay: 62 });
+  await wait(rand.between(350, 520));
+  const looking = await speak('looking');
+  const typedFrom = Date.now();
+  await typeLikeAPerson(QUERY);
   await still('typed');
-  await wait(650);
-
-  /* --- 2. Search --------------------------------------------------- */
-
+  /* let the line finish before the hand moves on */
+  await wait(Math.max(rand.between(450, 700), looking - (Date.now() - typedFrom) + 250));
   await hush();
-  const go = await rect('#ask-form button[type=submit]');
-  await moveTo(go.x, go.y, 680);
-  await press();
-  await page.click('#ask-form button[type=submit]');
-  /* the real pointer is parked off the page, so no card under where it
-     clicked is left showing a hover the drawn pointer is not making */
-  await page.mouse.move(1, 1);
-  await page.evaluate(() => window.demo.hide());
 
-  /* --- 3. Results -------------------------------------------------- */
+  /* --- 3. Search ------------------------------------------------------ */
 
-  await page.waitForSelector('#results .item-card', { timeout: 20000 });
-  /* the page scrolls itself to the results; let it land and the grid
-     develop before anything is said about it */
+  const go = await box('#ask-form button[type=submit]');
+  const goSpot = spotIn(go);
+  if (shot.touch) {
+    await wait(rand.between(250, 400));
+    await tap(goSpot);
+  } else {
+    await moveTo(goSpot);
+    await wait(rand.between(140, 260));
+    await click();
+  }
+  marks.searched = now();
+
+  /* --- 4. The results ------------------------------------------------- */
+
+  await page.waitForSelector('#results .grid .item-card', { timeout: 20000 });
+  /* the page scrolls itself to the results; let that land */
   await wait(700);
-  const resultsTop = await topOf('#results', 8);
-  await scrollTo(resultsTop);
-  await wait(300);
-  await say(CAPTIONS.results);
+  const shown = await checkResults(page);
+  const problems = verdict(shown);
+  if (problems.length) fail(`On camera, the results were not all real and loaded:\n  - ${problems.join('\n  - ')}`);
+  marks.results = now();
+
+  /* "from different retailers" is only said when the links really do
+     go to more than one shop */
+  const host = (u) => { try { return new URL(u).hostname.replace(/^www\d?\./, ''); } catch (err) { return ''; } };
+  const retailers = new Set(shown.map((s) => host(s.href)).filter(Boolean));
+  const found = await speak(retailers.size > 1 ? 'found' : 'found-one');
   await still('results');
-  await wait(2000);
-
-  /* one easy look further down the grid, the way a shopper would: on a
-     phone to the cards themselves, on a wide screen far enough to bring
-     the second row in under the first */
-  const further = shot.compact
-    ? await topOf('#results .grid', 12)
-    : resultsTop + Math.round(shot.height * 0.4);
-  await scrollTo(further);
-  await wait(2000);
-  await still('grid');
+  /* the pointer rests while the products are looked at */
+  await wait(found + rand.between(300, 500));
   await hush();
 
-  /* --- 4. Retailer ------------------------------------------------- */
+  /* a small scroll, to see a little more */
+  await scrollBy(viewH * rand.between(0.28, 0.36));
+  await wait(rand.between(900, 1200));
+  await still('scrolled');
 
-  /* the second card: beside the first in either shape */
-  const target = '#results .grid .item-card:nth-child(2)';
-  if (shot.compact) {
-    await scrollTo(await topOf(target, 12));
-    await wait(700);
+  /* --- 5. One product, out to its retailer ---------------------------- */
+
+  /* the first card wholly on screen after the scroll, on the second
+     column where there is one — where a hand would naturally go */
+  const targetIndex = await page.evaluate((limit) => {
+    const cards = [...document.querySelectorAll('#results .grid .item-card')];
+    const whole = cards.map((c, i) => ({ i, r: c.getBoundingClientRect() }))
+      .filter(({ r }) => r.top >= 60 && r.bottom <= limit);
+    const pick = whole.find(({ i }) => i % 2 === 1) || whole[0];
+    return pick ? pick.i : 1;
+  }, viewH);
+  const card = `#results .grid .item-card:nth-child(${targetIndex + 1})`;
+  const media = await box(`${card} .item-media`);
+  const cardSpot = spotIn(media, 0.5, 0.45);
+
+  const open = await speak('open');
+  const openedFrom = Date.now();
+  if (shot.touch) {
+    await wait(Math.max(900, open - 700));
+  } else {
+    await moveTo(cardSpot);
+    await wait(Math.max(500, open - (Date.now() - openedFrom) - 400));
   }
-  const action = await rect(`${target} .item-name`);
-  await page.evaluate(() => window.demo.show());
-  await say(CAPTIONS.retailer);
-  await moveTo(action.x, action.y, 700);
-  await page.hover(`${target} .item-name`);
-  const href = await page.locator(target).getAttribute('href');
-  if (!shot.compact && href) {
-    await page.evaluate((h) => window.demo.status(h.replace(/^https?:\/\//, '')), href);
-  }
-  await wait(900);
-  await still('retailer');
-  await press();
-  await page.click(`${target} .item-name`);
-  await wait(1300);
-  await page.evaluate(() => window.demo.status(''));
+  await still('chosen');
+
+  const href = await page.locator(card).getAttribute('href');
+  const popupPromise = context.waitForEvent('page', { timeout: 6000 }).catch(() => null);
+  marks.click = now();
+  if (shot.touch) await tap(cardSpot);
+  else await click();
+  const popup = await popupPromise;
   await hush();
 
-  /* --- 5. End ------------------------------------------------------ */
+  /* The retailer's own page, in the new tab the link opens — the real
+     page at the real address, for as long as it takes to show itself.
+     A page that refuses a robot, or does not arrive within a few
+     seconds, is not shown at all: a blank or a block page is not the
+     retailer. */
+  let retailer = null;
+  if (popup) {
+    const opened = Date.now();
+    marks.popup = now();
+    let ok = false;
+    try {
+      await popup.waitForLoadState('domcontentloaded', { timeout: 6000 });
+      const status = await popup.evaluate(() => {
+        const nav = performance.getEntriesByType('navigation')[0];
+        return nav && nav.responseStatus ? nav.responseStatus : 200;
+      }).catch(() => 0);
+      const title = await popup.title().catch(() => '');
+      const blocked = /access denied|forbidden|captcha|just a moment|attention required|are you a robot|blocked/i.test(title);
+      const text = await popup.evaluate(() => (document.body && document.body.innerText || '').length).catch(() => 0);
+      ok = status < 400 && !blocked && text > 200 && /^https?:/.test(popup.url());
+      if (ok) await wait(Math.max(0, 2800 - (Date.now() - opened)));
+    } catch (err) { ok = false; }
+    marks.popupEnd = now();
+    retailer = { ok, url: popup.url(), video: stillsDir ? null : popup.video() };
+    if (stillsDir && ok) await popup.screenshot({ path: path.join(stillsDir, `${shot.name}-retailer.png`) }).catch(() => {});
+    await popup.close();
+    await page.bringToFront();
+    if (!ok) console.log(`  ${shot.name}: the retailer page (${href}) did not show itself in time; the video stays on Fynd`);
+  } else {
+    console.log(`  ${shot.name}: the link opened no new tab; the video stays on Fynd`);
+  }
+  marks.back = now();
 
-  await page.mouse.move(1, 1);
-  await page.evaluate(() => window.demo.hide());
-  await scrollTo(resultsTop);
-  await wait(800);
-  await say(CAPTIONS.end);
+  /* --- 6. Back on Fynd ------------------------------------------------ */
+
+  await wait(350);
+  await caption(CAPTION_END, 2400);
   await still('end');
   await wait(2400);
   await hush();
-  await wait(450);
+  await wait(300);
+  marks.end = now();
 
-  const length = now();
-  const video = stillsDir ? null : page.video();
+  const mainVideo = stillsDir ? null : page.video();
   await context.close();
   await browser.close();
 
-  if (!video) {
-    console.log(`  ${shot.name}: ${(length - startAt).toFixed(1)}s walkthrough, stills written`);
-    return { cues, length, startAt };
-  }
-  const source = await video.path();
-  console.log(`  ${shot.name}: ${(length - startAt).toFixed(1)}s, ${(fs.statSync(source).size / 1e6).toFixed(2)} MB raw`);
-  return { source, cues, length, startAt };
-}
-
-(async () => {
-  fs.mkdirSync(OUT, { recursive: true });
-  const rawDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fynd-demo-'));
-  const stillsDir = STILLS ? fs.mkdtempSync(path.join(os.tmpdir(), 'fynd-stills-')) : null;
-
-  await new Promise((r) => server.listen(PORT, r));
-
-  let fontCss = '';
-  try {
-    fontCss = await loadFonts();
-    console.log(`Fonts: ${fontFiles.size} files cached for the recording`);
-  } catch (err) {
-    console.log('Inter could not be fetched — recording in the fallback stack.');
-  }
-
-  console.log(STILLS ? 'walking through for stills…' : 'recording…');
-  const takes = [];
-  try {
-    for (const shot of SHOTS) takes.push([shot, await record(shot, fontCss, rawDir, stillsDir)]);
-  } catch (err) {
-    server.close();
-    if (/executable|launch|ENOENT/i.test(String(err && err.message))) {
-      console.log('Chromium could not launch here — cannot record the demo.');
-      process.exit(0);
-    }
-    throw err;
-  }
-  server.close();
-
-  if (STILLS) {
-    console.log(`stills in ${stillsDir}`);
-    return;
-  }
-
-  for (const [shot, take] of takes) {
-    /* The recorder falls behind the wall clock while it works, so the
-       video can run a little longer than the walkthrough took. The cues
-       were timed on the wall clock, so they are stretched to the video's
-       own length, or the captions track would run ahead of the frames. */
-    const actual = videoLength(take.source);
-    if (actual && actual > take.length) {
-      const stretch = actual / take.length;
-      take.cues.forEach((cue) => {
-        cue.start *= stretch;
-        if (cue.end != null) cue.end *= stretch;
-      });
-      take.startAt *= stretch;
-      take.length = actual;
-    }
-    /* and every time is then counted from where the encode starts */
-    take.cues.forEach((cue) => {
-      cue.start -= take.startAt;
-      if (cue.end != null) cue.end -= take.startAt;
-    });
-    take.length -= take.startAt;
-    writeTrack(shot.name, take.cues, take.length);
-
-    if (RAW) {
-      const kept = path.join(OUT, `${shot.name}.source.webm`);
-      fs.copyFileSync(take.source, kept);
-      console.log(`  (the video proper starts ${take.startAt.toFixed(2)}s in)`);
-      console.log(`kept the raw recording at ${path.relative(REPO, kept)}`);
-      continue;
-    }
-
-    /* the poster is what the section shows before anything plays: the
-       results, framed whole, with the line that says what they are */
-    const results = take.cues.find((c) => c.text === CAPTIONS.results);
-    encode(shot, take.source, take.startAt, results ? results.start + 1.6 : 9);
-  }
-})().catch((err) => { console.error(err); process.exit(1); });
-
-/* How long a recording actually runs, read off the file. ffmpeg -i with
-   no output exits with an error and prints what it found on stderr, so
-   the answer comes from the error. Null when there is no ffmpeg to ask. */
-function videoLength(file) {
-  const ffmpeg = findFfmpeg();
-  if (!ffmpeg) return null;
-  let text = '';
-  try {
-    execFileSync(ffmpeg, ['-hide_banner', '-i', file], { stdio: ['ignore', 'ignore', 'pipe'] });
-  } catch (err) {
-    text = String(err.stderr || '');
-  }
-  const m = /Duration: (\d+):(\d+):([\d.]+)/.exec(text);
-  return m ? Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]) : null;
+  if (process.env.DEMO_DEBUG) console.log('  marks', JSON.stringify(Object.fromEntries(Object.entries(marks).map(([k, t]) => [k, Number(t.toFixed(2))]))));
+  if (stillsDir) return { marks };
+  return {
+    marks, cues, voice,
+    main: await mainVideo.path(),
+    retailer: retailer && retailer.ok ? { ...retailer, file: await retailer.video.path() } : null
+  };
 }
 
 /* ---------------------------------------------------------
-   The captions track
-
-   The same lines the frame carries, as text, timed against the recording
-   that just happened. They are placed at the top of the frame so that
-   turning them on does not stack them over the ones drawn into it.
+   Putting it together: the cut, the narration, the encode
    --------------------------------------------------------- */
 
-function writeTrack(name, cues, length) {
-  const clock = (s) => {
-    const t = Math.max(0, s);
-    const mm = String(Math.floor(t / 60)).padStart(2, '0');
-    const ss = String(Math.floor(t % 60)).padStart(2, '0');
-    const ms = String(Math.round((t % 1) * 1000)).padStart(3, '0');
-    return `00:${mm}:${ss}.${ms}`;
+const run = (args) => execFileSync(FFMPEG, ['-y', '-hide_banner', '-loglevel', 'error', ...args], { stdio: 'inherit' });
+
+function lengthOf(file) {
+  const out = execFileSync(FFPROBE, ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', file]).toString();
+  return Number(out.trim());
+}
+
+function build(shot, take, outDir) {
+  const W = shot.width * shot.dpr;
+  const H = shot.height * shot.dpr;
+  const m = take.marks;
+
+  /* The recorder runs a little behind the wall clock, so the wall-clock
+     marks are scaled to the video's own length before they cut it. */
+  const mainLen = lengthOf(take.main);
+  const k = mainLen / m.end;
+  const v = (t) => t * k;
+
+  /* the cut: Fynd up to the click, the retailer's tab while it is open,
+     then Fynd again */
+  const segments = [];
+  if (take.retailer) {
+    const popLen = lengthOf(take.retailer.file);
+    const popWall = m.popupEnd - m.popup;
+    const kp = popWall > 0 ? popLen / popWall : 1;
+    segments.push({ input: 0, from: v(m.start), to: v(m.click + 0.25) });
+    segments.push({ input: 1, from: 0, to: Math.min(popLen, popWall * kp) });
+    segments.push({ input: 0, from: v(m.back), to: v(m.end) });
+  } else {
+    segments.push({ input: 0, from: v(m.start), to: v(m.end) });
+  }
+  const lens = segments.map((s) => s.to - s.from);
+  const total = lens.reduce((a, b) => a + b, 0);
+
+  /* where a wall-clock moment lands in the finished video */
+  const at = (t) => {
+    if (!take.retailer) return v(t) - v(m.start);
+    if (t <= m.click + 0.25) return v(t) - v(m.start);
+    if (t < m.back) return lens[0] + Math.min(lens[1], (t - m.popup) * (lens[1] / Math.max(0.01, m.popupEnd - m.popup)));
+    return lens[0] + lens[1] + (v(t) - v(m.back));
   };
 
-  const body = cues.map(({ text, start, end }, i) =>
-    `${i + 1}\n${clock(start)} --> ${clock(end == null ? length : end)} line:8%\n${text}`).join('\n\n');
+  const inputs = ['-i', take.main];
+  if (take.retailer) inputs.push('-i', take.retailer.file);
+  const voiceInputs = take.voice.map((line) => path.join(NARRATION, NARRATION_LINES[line.key].file));
+  voiceInputs.forEach((f) => inputs.push('-i', f));
+  const firstVoice = take.retailer ? 2 : 1;
 
-  const file = path.join(OUT, `${name}.vtt`);
+  const vf = segments.map((s, i) => `[${s.input}:v]trim=start=${s.from.toFixed(3)}:end=${s.to.toFixed(3)},setpts=PTS-STARTPTS,`
+    + `fps=30,scale=${W}:${H}:force_original_aspect_ratio=decrease,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2:white,setsar=1[s${i}]`).join(';');
+  const concat = `${segments.map((_, i) => `[s${i}]`).join('')}concat=n=${segments.length}:v=1:a=0[v]`;
+  const af = take.voice.map((line, i) => `[${firstVoice + i}:a]adelay=${Math.round(at(line.start) * 1000)}:all=1[a${i}]`).join(';');
+  const mix = take.voice.length
+    ? `;${af};${take.voice.map((_, i) => `[a${i}]`).join('')}amix=inputs=${take.voice.length}:normalize=0,apad,atrim=end=${total.toFixed(3)}[a]`
+    : `;anullsrc=r=48000:cl=mono,atrim=end=${total.toFixed(3)}[a]`;
+
+  const master = path.join(os.tmpdir(), `${shot.name}-master.mkv`);
+  run([...inputs, '-filter_complex', `${vf};${concat}${mix}`, '-map', '[v]', '-map', '[a]',
+    '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '10', '-pix_fmt', 'yuv420p',
+    '-c:a', 'pcm_s16le', '-ar', '48000', '-ac', '1', master]);
+
+  const mp4 = path.join(outDir, `${shot.name}.mp4`);
+  const webm = path.join(outDir, `${shot.name}.webm`);
+  const poster = path.join(outDir, `${shot.name}-poster.jpg`);
+  console.log(`  encoding ${shot.name}.mp4…`);
+  run(['-i', master, '-c:v', 'libx264', '-profile:v', 'high', '-preset', 'veryslow', '-crf', String(shot.h264),
+    '-g', '60', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '96k', '-ac', '1', '-movflags', '+faststart', mp4]);
+  console.log(`  encoding ${shot.name}.webm…`);
+  run(['-i', master, '-c:v', 'libvpx-vp9', '-crf', String(shot.vp9), '-b:v', '0', '-row-mt', '1',
+    '-deadline', 'good', '-cpu-used', '2', '-pix_fmt', 'yuv420p', '-c:a', 'libopus', '-b:a', '64k', '-ac', '1', webm]);
+  /* the poster: the real results, a moment after they arrive */
+  run(['-ss', (at(m.results) + 1.2).toFixed(3), '-i', master, '-frames:v', '1', '-q:v', '3', poster]);
+  fs.unlinkSync(master);
+
+  writeTrack(path.join(outDir, `${shot.name}.vtt`), take.cues.map((c) => ({ ...c, start: at(c.start), end: Math.min(total, at(c.end)) })), total);
+  const size = (p) => `${(fs.statSync(p).size / 1024).toFixed(0)} KB`;
+  console.log(`  ${shot.name}: ${total.toFixed(1)}s — mp4 ${size(mp4)}, webm ${size(webm)}, poster ${size(poster)}`);
+  return total;
+}
+
+/* The captions track: the narration, word for word, and the closing
+   line, timed to the finished video. Placed at the top of the frame when
+   turned on, so they never stack on the strip drawn into it. */
+function writeTrack(file, cues, length) {
+  const clock = (s) => {
+    const t = Math.max(0, Math.min(length, s));
+    const mm = String(Math.floor(t / 60)).padStart(2, '0');
+    const ss = String(Math.floor(t % 60)).padStart(2, '0');
+    const ms = String(Math.round((t % 1) * 1000)).padStart(3, '0').slice(0, 3);
+    return `00:${mm}:${ss}.${ms}`;
+  };
+  const body = cues.map(({ text, start, end }, i) => `${i + 1}\n${clock(start)} --> ${clock(end)} line:8%\n${text}`).join('\n\n');
   fs.writeFileSync(file, `WEBVTT\n\n${body}\n`);
-  console.log(`wrote ${path.relative(REPO, file)} (${cues.length} cues)`);
+}
+
+/* The note under the video says what it is: a real search, and when it
+   was made, because prices and stock move on after a recording. Only the
+   text between the markers in index.html is replaced. */
+function describeOnPage(saved) {
+  const file = path.join(REPO, 'index.html');
+  const html = fs.readFileSync(file, 'utf8');
+  const when = new Date(saved.searchedAt);
+  const date = Number.isNaN(when.getTime()) ? 'recently'
+    : when.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  const note = `<!-- demo-note -->
+          <span class="status status--live">Real search</span>
+          Recorded on Fynd on ${date}. Prices and availability may have changed since. Turn the sound on for the narration.
+          <!-- /demo-note -->`;
+  const next = html.replace(/<!-- demo-note -->[\s\S]*?<!-- \/demo-note -->/, note);
+  if (next === html && !html.includes(note)) {
+    console.log('  note: the demo-note markers were not found in index.html; update the note under the video by hand');
+    return;
+  }
+  fs.writeFileSync(file, next);
+  console.log('  updated the note under the video in index.html');
 }
 
 /* ---------------------------------------------------------
-   The encode
-
-   Two codecs per shape, because neither one alone reaches every
-   browser. H.264 is the format nobody has to be asked about — except
-   that a Chromium built without proprietary codecs, which is what most
-   Linux distributions ship and what this repository's own test browser
-   is, cannot play it at all. VP9 covers those and is the smaller file
-   besides; Safari takes the H.264. The page lists the WebM first.
+   The run
    --------------------------------------------------------- */
 
-function encode(shot, source, startAt, stillAt) {
-  const name = shot.name;
-  const ffmpeg = findFfmpeg();
-  if (!ffmpeg) {
-    console.log('\nffmpeg was not found, so nothing was encoded.');
-    console.log('Set FFMPEG_PATH, or `npm i ffmpeg-static`, and run again.');
-    return;
+(async () => {
+  const hadEnv = loadEnv();
+  /* in-memory metering only: never production KV */
+  ['KV_REST_API_URL', 'KV_REST_API_TOKEN', 'KV_URL', 'UPSTASH_REDIS_REST_URL', 'UPSTASH_REDIS_REST_TOKEN']
+    .forEach((k) => { delete process.env[k]; });
+
+  if (!NARRATION_LINES) fail('assets/demo/narration/manifest.json is missing. Run scripts/demo-narration.py.');
+  if (!STILLS) {
+    try { execFileSync(FFMPEG, ['-hide_banner', '-version'], { stdio: 'ignore' }); } catch (err) { fail('ffmpeg was not found. Install it, or set FFMPEG_PATH.'); }
   }
+  const chromium = loadPlaywright();
+  fs.mkdirSync(OUT, { recursive: true });
+  await new Promise((r) => server.listen(PORT, '127.0.0.1', r));
 
-  const run = (args) => execFileSync(ffmpeg, ['-y', '-hide_banner', '-loglevel', 'error', ...args], { stdio: 'inherit' });
-  const mp4 = path.join(OUT, `${name}.mp4`);
-  const webm = path.join(OUT, `${name}.webm`);
-  const poster = path.join(OUT, `${name}-poster.jpg`);
+  try {
+    /* pass 1 */
+    if (REPLAY) {
+      const file = typeof REPLAY === 'string' ? path.resolve(REPLAY) : SEARCH_FILE;
+      if (!fs.existsSync(file)) fail(`No saved search at ${path.relative(REPO, file)}. Run without --replay first.`);
+      api.saved = JSON.parse(fs.readFileSync(file, 'utf8'));
+      console.log(`Replaying the real search of ${api.saved.searchedAt} (${api.saved.shown.length} products)`);
+    } else {
+      console.log(`Searching for real${hadEnv ? ' with .env' : ''}: "${QUERY}"`);
+      api.saved = await realSearch(chromium);
+    }
+    api.mode = 'replay';
 
-  /* Kept at the size it was recorded at, and at a steady 30 frames a
-     second. -an because the demo is silent: there is no soundtrack to
-     carry, and even a muted track costs bytes. +faststart so the file
-     can start playing before it has finished arriving. -ss before -i
-     drops the page load, which is not part of the demo. */
-  const common = ['-ss', startAt.toFixed(3), '-i', source, '-an', '-vf', 'fps=30', '-pix_fmt', 'yuv420p'];
+    /* pass 2, into a scratch folder: nothing reaches the output folder
+       unless every shape made it through */
+    const rawDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fynd-demo-raw-'));
+    const stage = fs.mkdtempSync(path.join(os.tmpdir(), 'fynd-demo-out-'));
+    const stillsDir = STILLS ? fs.mkdtempSync(path.join(os.tmpdir(), 'fynd-demo-stills-')) : null;
+    const takes = [];
+    for (const shot of SHOTS) {
+      console.log(`Recording ${shot.kind}…`);
+      takes.push([shot, await record(chromium, shot, rawDir, stillsDir)]);
+    }
+    server.close();
 
-  console.log(`encoding ${name}.mp4…`);
-  run([...common, '-c:v', 'libx264', '-profile:v', 'high', '-preset', 'veryslow',
-    '-crf', String(shot.h264), '-g', '60', '-movflags', '+faststart', mp4]);
+    if (STILLS) {
+      console.log(`Stills in ${stillsDir}`);
+      return;
+    }
 
-  console.log(`encoding ${name}.webm…`);
-  run([...common, '-c:v', 'libvpx-vp9', '-crf', String(shot.vp9), '-b:v', '0',
-    '-row-mt', '1', '-deadline', 'good', '-cpu-used', '2', webm]);
+    const lengths = {};
+    for (const [shot, take] of takes) lengths[shot.name] = build(shot, take, stage);
 
-  run(['-ss', (startAt + stillAt).toFixed(3), '-i', source, '-frames:v', '1', '-q:v', '4', poster]);
-
-  const size = (p) => `${(fs.statSync(p).size / 1024).toFixed(0)} KB`;
-  console.log(`  ${path.relative(REPO, mp4)}  ${size(mp4)}`);
-  console.log(`  ${path.relative(REPO, webm)}  ${size(webm)}`);
-  console.log(`  ${path.relative(REPO, poster)}  ${size(poster)}`);
-}
+    for (const f of fs.readdirSync(stage)) fs.copyFileSync(path.join(stage, f), path.join(OUT, f));
+    if (!REPLAY) fs.writeFileSync(SEARCH_FILE, `${JSON.stringify(api.saved, null, 2)}\n`);
+    if (OUT === path.join(REPO, 'assets', 'demo')) describeOnPage(api.saved);
+    console.log(`\nWrote to ${path.relative(REPO, OUT) || '.'}:`);
+    for (const [name, len] of Object.entries(lengths)) console.log(`  ${name}.mp4 / .webm  ${len.toFixed(1)}s`);
+    console.log('Watch both, with sound and without, before committing.');
+  } catch (err) {
+    server.close();
+    console.error(err);
+    fail('The recording stopped with an error.');
+  }
+})();

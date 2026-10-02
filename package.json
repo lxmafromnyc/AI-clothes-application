@@ -1,4 +1,8 @@
 {
+  "scripts": {
+    "demo:record": "node scripts/record-demo.js",
+    "demo:replay": "node scripts/record-demo.js --replay"
+  },
   "devDependencies": {
     "playwright": "^1.63.0"
   }

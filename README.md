@@ -123,7 +123,8 @@ assets/products.js      data layer: normalises any source into one schema
 assets/catalog.js       demo product source, replaceable by a real feed
 assets/demo-video.js    lazy-loads the landing page demo, and decides autoplay
 assets/demo/            the demo recording: two shapes, two codecs, two posters
-scripts/record-demo.js  records and encodes the demo, end to end
+scripts/record-demo.js  records the demo from a real search, end to end
+scripts/demo-narration.py  speaks the demo's narration lines
 assets/interpret.js     sends the request to the endpoint; local fallback
 assets/app.js           rendering and page behaviour
 assets/styles.css       colour tokens, design tokens and all shared components
@@ -1612,88 +1613,124 @@ garment categories fall back to neutral artwork rather than breaking.
 
 ## The demo video
 
-The landing page carries a 20-second screen recording directly under the search
-(`#demo` in `index.html`) — the first thing after the search box and before How
-Fynd works, so it is the next thing a first-time visitor sees. It is compact,
-narrower than the page, and steps aside as soon as a real search starts, because
-the results take its place. It says one thing — describe clothes naturally, and
-Fynd finds matching products — in five beats:
+The landing page carries a short screen recording directly under the search
+(`#demo` in `index.html`): a person using Fynd for the first time, with a calm
+narration. It is compact, narrower than the page, and steps aside as soon as a
+real search starts, because the results take its place.
 
-| | On screen | Caption |
+| | On screen | Narration / caption |
 | --- | --- | --- |
-| Describe | `black oversized hoodie under $80` is typed into the search box | Describe what you want |
-| Search | Search is pressed; the page's own brief "Searching…" state | — |
-| Results | the real results page; the grid is the picture | Fynd finds matching products |
-| Retailer | one product is pointed at; its real address shows, as a browser shows it | Open the product at the retailer |
-| End | back to the clean results | Describe it. Find it. |
+| Homepage | the page as visitors get it; a moment before anything happens | — |
+| Describe | the pointer goes to the box and the request is typed, at a person's pace | "I'm looking for a black oversized hoodie, under eighty dollars." |
+| Search | Search is clicked; the site's own "Searching…" state | — |
+| Results | the real products: photos, brands, names, prices, retailers; a small scroll | "Fynd finds matching products from different retailers." |
+| Retailer | the pointer settles on one product and clicks it; the retailer's own page opens in the new tab | "And I can open the product directly at the retailer." |
+| End | back on Fynd | Describe what you want. Fynd finds it. |
 
-It is deliberately quiet: one short caption at a time, in a thin strip along the
-bottom edge of the frame so it never sits on a product or a control, and a plain
-pointer. No badges, arrows, highlights, zooms, numbered steps or drawn retailer
-pages — the site supplies the design. There is no soundtrack; the same lines are
-the captions track, so it reads the same with the sound off or the frames unseen.
+The words are spoken and shown in a thin strip along the bottom edge, so the
+video reads the same with the sound off, and the same lines are its captions
+track. No music, no overlays on the page, no drawn products.
 
-Nothing about the interface in it is a mock-up. `scripts/record-demo.js` serves
-this repository over HTTP, drives `index.html` in a real browser through the
-real search flow, and records what happens. The only thing standing in is the
-product source, which answers from a fixed set of records in the shape
-`api/_providers/product-source.js` hands to the page — so the cards on screen
-are built by the real rendering code, from fields in the real shape. Their
-pictures are drawn flat-lay packshots rather than anybody's photograph.
+### It is a real search
 
-The recording changes as little about the page as it can, and says so in the
-script: the demo section is hidden so the video never shows itself, and the
-search box starts empty instead of showing its placeholder, which is the same
-sentence the video types.
+`scripts/record-demo.js` serves this repository locally, points the page at the
+repository's own `/api/interpret` and `/api/search` handlers, and runs them with
+your `.env` — the same code and the same product source the live site uses. The
+products in the video are the real listings that search returns, with their real
+photographs, prices and retailer links.
 
-Those records are not live stock, and the site's rule for anything a shopper
-cannot buy applies to a recording of it as much as to a row in a grid: the
-results heading in the video carries the page's own **Sample data** marker, and
-the note under the video on the page says the same thing in words. The retailer
-links in it are real, and the product names describe the garment rather than
-quoting a listing.
+The script refuses to record anything less. Before a frame is recorded it
+checks, in the page itself, that at least four products came back, that every
+one is a real listing with a retailer link, and that every photograph actually
+loaded at product-photo size. A sample row, drawn placeholder artwork or a photo
+that fails to load stops the run, names the product, and writes nothing. The
+same check runs again on camera.
+
+The search is made once, off camera, and saved to `assets/demo/demo-search.json`.
+Both recordings — desktop and the phone layout — are made from that one saved
+answer, so they show the same products, and `--replay` re-records from it
+without searching again. The "Searching…" state on camera is the page's own,
+held to at most 1.8 seconds. The recording keeps its metering in memory (KV
+settings are dropped from the process), so it never touches production state.
+
+When the product is clicked, the link opens the retailer's page in a new tab as
+it would for anyone, and the video shows that tab for a moment. A retailer page
+that blocks automated browsers, or does not arrive within a few seconds, is left
+out rather than shown blank. The note under the video on the homepage is
+rewritten by the script with the date of the search, since prices and stock
+move on after a recording.
+
+### Recording it
+
+On a machine with network access and your `.env` (`PRODUCT_SOURCE` and its key;
+`OPENAI_API_KEY` for the AI interpreter):
 
 ```sh
-node scripts/record-demo.js          # record both shapes, then encode
-node scripts/record-demo.js --raw    # record only, keep the WebM as captured
-node scripts/record-demo.js --stills # no video: a PNG at every beat, to check framing
+npm install                       # Playwright
+npx playwright install chromium   # the browser it records with
+npm run demo:record               # = node scripts/record-demo.js
 ```
 
-It needs Chromium to record and ffmpeg to encode. Both are found from the
-environment — `CHROME_PATH`, `PLAYWRIGHT_PATH`, `FFMPEG_PATH` — and either one
-missing is reported and skipped rather than failing, because neither is a
-dependency of the site itself. Inter is fetched once and served back at the
-address the page already asks for, so the recording is set in the same face the
-site is.
+Then watch both videos — with sound, without sound, and without reading the
+captions — and commit `assets/demo/` and `index.html`.
+
+```sh
+node scripts/record-demo.js --replay        # re-record from the saved search
+node scripts/record-demo.js --only=mobile   # one shape (or --only=desktop)
+node scripts/record-demo.js --stills        # a PNG at every beat, no video
+```
+
+It needs ffmpeg with libx264, libvpx-vp9, AAC and Opus. The pointer paths,
+typing rhythm and pauses come from a seeded generator, the narration is fixed,
+and the saved search pins the products, so the same inputs give the same video.
+
+How it moves: the pointer travels on gentle curves, slow at both ends, with a
+small overshoot on long moves, and takes the shape the page asks for — arrow,
+text cursor over the box, hand over a product. Typing has an uneven rhythm with
+a beat at each space. Scrolling is a real wheel gesture on desktop and a real
+touch swipe on the phone layout, where taps show as a small soft dot, the way a
+phone's own screen recording shows touches. The browser draws no pointer of its
+own when headless, which is the only reason one is drawn.
+
+### The narration
+
+Three short lines in `assets/demo/narration/`, spoken by Kokoro v1.0 (voice
+`af_heart`), a neural text-to-speech model run offline through sherpa-onnx, then
+trimmed and brought to one loudness. They are committed, so recording needs no
+speech model. `scripts/demo-narration.py` makes them again if a line changes:
+
+```sh
+pip install sherpa-onnx soundfile numpy
+# kokoro-multi-lang-v1_0.tar.bz2 from
+# https://github.com/k2-fsa/sherpa-onnx/releases/tag/tts-models, unpacked
+KOKORO_DIR=/path/to/kokoro-multi-lang-v1_0 python3 scripts/demo-narration.py
+```
+
+"From different retailers" is only said when the products on screen link to
+more than one shop; otherwise the shorter line is used.
 
 ### What it writes
 
-Two shapes, because the demo is a recording of an interface and an interface
-recorded in a 1280-wide window is unreadable at 390 — the type in it lands at
-about six pixels. The narrow one is the site's real mobile layout, driven in a
-phone-shaped window rather than cropped from the wide one, and captured at two
-device pixels per CSS pixel so a phone is not shown an upscale.
-
-The two swap at 1023px, the site's own tablet breakpoint: measured against the
-recording, the interface type in the wide one holds up to about three quarters
-scale, and below this width the column no longer gives that. At 1023px and under
-the phone-shaped recording is shown at up to 440px — a little over the 400 it was
-recorded at, so a tablet held at arm's length reads it as easily as a phone held
-close.
-
 | File | | |
 | --- | --- | --- |
-| `fynd-demo.mp4` / `.webm` | 1280 × 800 | wide screens |
-| `fynd-demo-mobile.mp4` / `.webm` | 800 × 1440 | 1023px and under |
-| `fynd-demo{,-mobile}-poster.jpg` | | the still the section shows before playback |
-| `fynd-demo{,-mobile}.vtt` | | the captions, timed against the recording that made them |
+| `fynd-demo.mp4` / `.webm` | 1280 × 800, with narration | wide screens |
+| `fynd-demo-mobile.mp4` / `.webm` | 800 × 1440 (400 × 720 at 2×), with narration | 1023px and under |
+| `fynd-demo{,-mobile}-poster.jpg` | | the real results, shown before playback |
+| `fynd-demo{,-mobile}.vtt` | | the narration as captions, timed to the video |
+| `demo-search.json` | | the real search both recordings were made from |
+| `narration/*.wav`, `narration/manifest.json` | | the spoken lines |
 
-Two codecs, because neither one alone reaches every browser: H.264 is the format
-nobody has to be asked about, except that a Chromium built without proprietary
-codecs — which is what most Linux distributions ship, and what this repository's
-own test browser is — cannot play it at all. VP9 covers those and is the smaller
-file, so the page lists the WebM first. Each visitor downloads exactly one video
-of about 310–390 KB and one poster of about 60–70 KB.
+The narrow one is the site's real mobile layout, driven in a phone-shaped window
+rather than cropped from the wide one. The two swap at 1023px, the site's own
+tablet breakpoint.
+
+Two codecs, because neither one alone reaches every browser: H.264 with AAC is
+the format nobody has to be asked about, except that a Chromium built without
+proprietary codecs — which is what most Linux distributions ship, and what this
+repository's own test browser is — cannot play it at all. VP9 with Opus covers
+those and is the smaller file, so the page lists the WebM first. The page starts
+the video muted, as browsers require for autoplay; the player's own controls
+turn the narration on.
 
 ### What the page does with it
 
@@ -1729,9 +1766,8 @@ after one the page does not touch the video again.
 ## Notes
 
 - Typeface is Inter, loaded from Google Fonts.
-- The demo video on the landing page is a recording of this site driving its own
-  search against a stand-in product source. Its results are marked as sample
-  data in the frame and in the note under it; see **The demo video** above.
+- The demo video on the landing page is a recording of a real search on this
+  site, made by `scripts/record-demo.js`; see **The demo video** above.
 - Products without an `imageUrl` — every row but the UNIQLO one — render
   generated artwork built from CSS gradients and inline SVG. Set `imageUrl` on a
   product and it renders the photo; if that photo fails to load, the artwork

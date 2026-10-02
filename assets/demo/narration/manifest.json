@@ -1,0 +1,26 @@
+{
+  "voice": "Kokoro v1.0 af_heart",
+  "speed": 0.94,
+  "lines": {
+    "looking": {
+      "text": "I’m looking for a black oversized hoodie, under eighty dollars.",
+      "file": "looking.wav",
+      "duration": 3.207
+    },
+    "found": {
+      "text": "Fynd finds matching products from different retailers.",
+      "file": "found.wav",
+      "duration": 3.052
+    },
+    "found-one": {
+      "text": "Fynd finds matching products.",
+      "file": "found-one.wav",
+      "duration": 1.75
+    },
+    "open": {
+      "text": "And I can open the product directly at the retailer.",
+      "file": "open.wav",
+      "duration": 2.654
+    }
+  }
+}
