@@ -238,7 +238,6 @@ q { quotes: '\201C' '\201D'; }
 .crop::after,
 .ask-card::after,
 .item-frame::after,
-.demo-stage::after,
 .auth-card::after {
   content: '';
   position: absolute;
@@ -1056,26 +1055,32 @@ a.item-card:focus-visible { outline-offset: 12px; }
 
 /* =========================================================
    The recording
+
+   Directly under the search, and quieter than it: narrower than the
+   field, with no frame of its own beyond a hairline and one line saying
+   what it is. The recording itself is the site, so the site supplies
+   the design.
    ========================================================= */
 
-.demo-figure { margin-top: var(--s9); }
-.demo-stage { position: relative; background: var(--color-surface); --crop-gap: 14px; --crop-size: 22px; }
+.demo { padding: 0 0 var(--section); margin-top: calc(-1 * var(--s5)); }
+.demo-figure { margin: 0; max-width: 880px; }
+.demo-stage { position: relative; background: var(--color-surface); border: 1px solid var(--color-border); }
 .demo-bar {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: var(--s3);
   height: 38px;
   padding: 0 var(--s4);
   background: var(--color-surface);
   border-bottom: 1px solid var(--color-border);
 }
-.demo-dots { flex: none; width: 7px; height: 7px; background: var(--color-border-strong); box-shadow: 13px 0 0 var(--color-border-strong), 26px 0 0 var(--color-border-strong); margin-right: 26px; }
 .demo-bar-label { font-family: var(--font-mono); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--color-text-muted); }
 .demo-video { display: block; width: 100%; height: auto; aspect-ratio: 8 / 5; background: var(--color-bg); }
 .demo-play { position: absolute; left: 50%; top: calc(50% + 19px); transform: translate(-50%, -50%); box-shadow: var(--shadow); }
 .demo-play:active { transform: translate(-50%, calc(-50% + 1px)); }
 .demo-play[hidden] { display: none; }
-.demo-note { margin: var(--s6) 0 0; font-size: 13.5px; line-height: 1.7; color: var(--color-text-muted); max-width: 84ch; }
+.demo-note { margin: var(--s4) 0 0; font-size: 13.5px; line-height: 1.7; color: var(--color-text-muted); max-width: 84ch; }
 .demo-flag {
   display: inline-block;
   margin-right: var(--s2);
@@ -1567,7 +1572,6 @@ a.item-card:focus-visible { outline-offset: 12px; }
   .grid--rail .item-card--lead .item-name { font-size: 14px; }
   .grid--rail .item-card--lead .item-price { font-size: 14.5px; }
 
-  .demo-figure { margin-top: var(--s8); }
   .demo-play { height: 48px; padding: 0 var(--s5); font-size: 15px; }
   .demo-play .demo-play-label { display: none; }
   .demo-note { font-size: 13px; }

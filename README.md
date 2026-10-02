@@ -1612,11 +1612,24 @@ garment categories fall back to neutral artwork rather than breaking.
 
 ## The demo video
 
-The landing page carries a 25-second screen recording, directly under the search
-card, where a first-time visitor scrolls next. It exists because the product is
-easier to show than to describe: one request typed in plain words, Fynd reading
-it, listings arriving with prices and retailers, and a click going out to one of
-them.
+The landing page carries a 20-second screen recording, directly under the search
+section: headline, then the search, then the demo, then the rest of the page. It
+says one thing — describe clothes naturally, and Fynd finds matching products —
+in five beats:
+
+| | On screen | Caption |
+| --- | --- | --- |
+| Describe | `black oversized hoodie under $80` is typed into the field | Describe what you want |
+| Search | Find it is pressed; the page's own waiting state | — |
+| Results | the real results page; the grid is the picture | Fynd finds matching products |
+| Retailer | one product is pointed at; its real address shows | Open the product at the retailer |
+| End | back to the clean results | Describe it. Find it. |
+
+It is deliberately quiet: one short caption at a time, in a thin strip along the
+bottom edge of the frame so it never sits on a product or a control, and a plain
+pointer. No badges, arrows, highlights, zooms or numbered steps — the site
+supplies the design. The section steps aside as soon as a real search starts,
+because the results take its place.
 
 Nothing about it is a mock-up. `scripts/record-demo.js` serves this repository
 over HTTP, drives `index.html` in a real browser through the real search flow,
@@ -1626,15 +1639,24 @@ which answers from a fixed set of records in the shape
 are built by the real rendering code, from fields in the real shape, at the real
 speed the interface waits at.
 
+The recording changes as little about the page as it can, and says so in
+`scripts/record-demo.js`: the demo section is hidden so the video never shows
+itself, the field starts empty instead of typing its own placeholder (which is
+the same sentence), and the reading decoration — brackets under words, the
+"Read as" line, crop marks — is turned off, because in twenty seconds it is
+motion competing with the one thing the video says.
+
 Those records are not live stock, and the site's rule for anything a shopper
-cannot buy applies to a recording of it as much as to a row in a grid: the video
-carries a **Product demo · sample data** badge on every frame, and the note under
-the video on the page says the same thing in words. The retailer links in it are
-real, and the product names describe the garment rather than quoting a listing.
+cannot buy applies to a recording of it as much as to a row in a grid: the
+results page in the video carries the page's own **Sample data** marker where a
+live search says "Live listings", and the note under the video on the page says
+the same thing in words. The retailer links in it are real, and the product
+names describe the garment rather than quoting a listing.
 
 ```sh
 node scripts/record-demo.js          # record both shapes, then encode
 node scripts/record-demo.js --raw    # record only, keep the WebM as captured
+node scripts/record-demo.js --stills # no video: a PNG at every beat, to check framing
 ```
 
 It needs Chromium to record and ffmpeg to encode. Both are found from the
@@ -1648,8 +1670,9 @@ site is.
 
 Two shapes, because the demo is a recording of an interface and an interface
 recorded in a 1280-wide window is unreadable at 390 — the type in it lands at
-about six pixels. The narrow one is captured at two device pixels per CSS pixel
-so a phone is not shown an upscale.
+about six pixels. The narrow one is the site's real mobile layout, driven in a
+phone-shaped window rather than cropped from the wide one, and captured at two
+device pixels per CSS pixel so a phone is not shown an upscale.
 
 The two swap at 860px, which is the demo's own breakpoint and the only one on
 the site that is not the layout's. It is not about the layout: measured against
@@ -1671,7 +1694,7 @@ nobody has to be asked about, except that a Chromium built without proprietary
 codecs — which is what most Linux distributions ship, and what this repository's
 own test browser is — cannot play it at all. VP9 covers those and is the smaller
 file, so the page lists the WebM first. Each visitor downloads exactly one video
-of about 640 KB and one poster of about 75 KB.
+of about 450 KB and one poster of about 50 KB.
 
 ### What the page does with it
 
@@ -1708,8 +1731,8 @@ after one the page does not touch the video again.
 
 - Typeface is Inter, loaded from Google Fonts.
 - The demo video on the landing page is a recording of this site driving its own
-  search against a stand-in product source. It is labelled as a demo on every
-  frame and in the note under it; see **The demo video** above.
+  search against a stand-in product source. Its results are marked as sample
+  data in the frame and in the note under it; see **The demo video** above.
 - Products without an `imageUrl` — every row but the UNIQLO one — render
   generated artwork built from CSS gradients and inline SVG. Set `imageUrl` on a
   product and it renders the photo; if that photo fails to load, the artwork
