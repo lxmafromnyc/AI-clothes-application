@@ -1612,47 +1612,51 @@ garment categories fall back to neutral artwork rather than breaking.
 
 ## The demo video
 
-The landing page carries a 25-second screen recording directly under the search
-(`#demo` in `index.html`) — the first section after the search screen and before
-How Fynd works and the catalogue, so it is the next thing a first-time visitor
-sees. Its job is to make
-Fynd understandable in one watch, in four steps with one short line each:
+The landing page carries a 20-second screen recording directly under the search
+(`#demo` in `index.html`) — the first thing after the search box and before How
+Fynd works, so it is the next thing a first-time visitor sees. It is compact,
+narrower than the page, and steps aside as soon as a real search starts, because
+the results take its place. It says one thing — describe clothes naturally, and
+Fynd finds matching products — in five beats:
 
-| | On screen | What happens |
+| | On screen | Caption |
 | --- | --- | --- |
-| 01 | Describe it. | `black oversized hoodie under $80` is typed into the search box |
-| 02 | Fynd understands it. | what the interpreter read — Black, Oversized, Hoodie, Under $80 — is shown for a moment in the page's pill style, under the box |
-| 03 | Fynd finds it. | the search is submitted and four hoodies come back, each with its maker, price and link |
-| 04 | Open it at the retailer. | one card is clicked and the retailer's tab opens |
-| | Search naturally. Find the right clothes. | the closing frame |
+| Describe | `black oversized hoodie under $80` is typed into the search box | Describe what you want |
+| Search | Search is pressed; the page's own brief "Searching…" state | — |
+| Results | the real results page; the grid is the picture | Fynd finds matching products |
+| Retailer | one product is pointed at; its real address shows, as a browser shows it | Open the product at the retailer |
+| End | back to the clean results | Describe it. Find it. |
 
-There is no narration and no soundtrack; the same five lines are the captions
-track, so it reads the same with the sound off or the frames unseen.
+It is deliberately quiet: one short caption at a time, in a thin strip along the
+bottom edge of the frame so it never sits on a product or a control, and a plain
+pointer. No badges, arrows, highlights, zooms, numbered steps or drawn retailer
+pages — the site supplies the design. There is no soundtrack; the same lines are
+the captions track, so it reads the same with the sound off or the frames unseen.
 
 Nothing about the interface in it is a mock-up. `scripts/record-demo.js` serves
 this repository over HTTP, drives `index.html` in a real browser through the
 real search flow, and records what happens. The only thing standing in is the
 product source, which answers from a fixed set of records in the shape
 `api/_providers/product-source.js` hands to the page — so the cards on screen
-are built by the real rendering code, from fields in the real shape, at the real
-speed the interface waits at. Their pictures are drawn flat-lay packshots rather
-than anybody's photograph.
+are built by the real rendering code, from fields in the real shape. Their
+pictures are drawn flat-lay packshots rather than anybody's photograph.
+
+The recording changes as little about the page as it can, and says so in the
+script: the demo section is hidden so the video never shows itself, and the
+search box starts empty instead of showing its placeholder, which is the same
+sentence the video types.
 
 Those records are not live stock, and the site's rule for anything a shopper
-cannot buy applies to a recording of it as much as to a row in a grid: the video
-carries a **Product demo · sample data** badge on every frame, and the note under
-the video on the page says the same thing in words. The retailer links in it are
-real, and the product names describe the garment rather than quoting a listing.
-
-The retailer step stops at the tab opening. The recording cannot reach a
-retailer, and drawing one retailer's page would be putting words in its mouth,
-so the tab shows the real host the card links to and the page arriving, with no
-retailer's branding or content in it. The page's own demo section is left out
-of the frame while recording, so the video never shows itself.
+cannot buy applies to a recording of it as much as to a row in a grid: the
+results heading in the video carries the page's own **Sample data** marker, and
+the note under the video on the page says the same thing in words. The retailer
+links in it are real, and the product names describe the garment rather than
+quoting a listing.
 
 ```sh
 node scripts/record-demo.js          # record both shapes, then encode
 node scripts/record-demo.js --raw    # record only, keep the WebM as captured
+node scripts/record-demo.js --stills # no video: a PNG at every beat, to check framing
 ```
 
 It needs Chromium to record and ffmpeg to encode. Both are found from the
@@ -1666,8 +1670,9 @@ site is.
 
 Two shapes, because the demo is a recording of an interface and an interface
 recorded in a 1280-wide window is unreadable at 390 — the type in it lands at
-about six pixels. The narrow one is captured at two device pixels per CSS pixel
-so a phone is not shown an upscale.
+about six pixels. The narrow one is the site's real mobile layout, driven in a
+phone-shaped window rather than cropped from the wide one, and captured at two
+device pixels per CSS pixel so a phone is not shown an upscale.
 
 The two swap at 1023px, the site's own tablet breakpoint: measured against the
 recording, the interface type in the wide one holds up to about three quarters
@@ -1688,7 +1693,7 @@ nobody has to be asked about, except that a Chromium built without proprietary
 codecs — which is what most Linux distributions ship, and what this repository's
 own test browser is — cannot play it at all. VP9 covers those and is the smaller
 file, so the page lists the WebM first. Each visitor downloads exactly one video
-of about 380 KB and one poster of about 70 KB.
+of about 310–390 KB and one poster of about 60–70 KB.
 
 ### What the page does with it
 
@@ -1725,8 +1730,8 @@ after one the page does not touch the video again.
 
 - Typeface is Inter, loaded from Google Fonts.
 - The demo video on the landing page is a recording of this site driving its own
-  search against a stand-in product source. It is labelled as a demo on every
-  frame and in the note under it; see **The demo video** above.
+  search against a stand-in product source. Its results are marked as sample
+  data in the frame and in the note under it; see **The demo video** above.
 - Products without an `imageUrl` — every row but the UNIQLO one — render
   generated artwork built from CSS gradients and inline SVG. Set `imageUrl` on a
   product and it renders the photo; if that photo fails to load, the artwork

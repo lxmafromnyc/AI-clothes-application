@@ -410,9 +410,10 @@ strong { font-weight: 600; }
 
 /* ---------- the demo ----------
    A screen recording of this page, framed like a card so it reads as a
-   picture of the product rather than a second copy of the page. */
+   picture of the product rather than a second copy of the page. Kept
+   narrower than the page, under the search and quieter than it. */
 
-.demo-figure { margin: 0; }
+.demo-figure { margin: 0 auto; max-width: 880px; }
 .demo-stage {
   position: relative;
   overflow: hidden;

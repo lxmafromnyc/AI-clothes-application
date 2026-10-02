@@ -2,22 +2,29 @@
 /* =========================================================
    Fynd — records the landing page demo video
 
-   Drives the real pages, in a real browser, through the real search
-   flow: a request typed into the search card, the interpreter's
-   read-back, product cards arriving from a source, and a click that
-   leaves for the retailer. Nothing about the interface is mocked up for
-   the camera — the only thing standing in is the product source, which
-   answers here from a fixed set of records instead of a paid API, so the
-   recording is identical every time it is made.
+   One idea, in about eighteen seconds: describe clothes the way you
+   would say them, and Fynd finds matching products.
 
-   Because those records are not live stock, the recording carries a
-   badge saying so for its whole length. That is the rule the site
-   already holds to for sample rows, applied to the video: anything the
-   shopper cannot buy has to say it cannot be bought.
+     1. Describe   a request is typed into the real search field
+     2. Search     Search is pressed
+     3. Results    the real results page; the grid is the picture
+     4. Retailer   one product is pointed at, and it goes to its retailer
+     5. End        back to the clean results, and the closing line
+
+   Everything on screen is the site itself, driven in a real browser.
+   The only thing standing in is the product source, which answers here
+   from a fixed set of records instead of a paid API, so the recording is
+   identical every time it is made.
+
+   What the camera adds is deliberately small: a pointer, and one short
+   caption at a time in the site's own type. No badges, arrows, zooms,
+   highlights or numbered steps — the interface carries the video.
 
    Usage:
      node scripts/record-demo.js            record, then encode
      node scripts/record-demo.js --raw      record only, leave the WebM
+     node scripts/record-demo.js --stills   no video: a PNG at every beat,
+                                            for checking the framing
 
    Needs Chromium for the recording and ffmpeg for the encode. Both are
    found from the environment; either missing is reported and skipped
@@ -45,12 +52,22 @@ const REPO = path.join(__dirname, '..');
 const OUT = path.join(REPO, 'assets', 'demo');
 const PORT = 8917;
 
-/* the frame. 16:10 holds the search card and the first row of results at
-   once, which is the whole story the video has to tell. */
-const WIDTH = 1280;
-const HEIGHT = 800;
+const STILLS = process.argv.includes('--stills');
+const RAW = process.argv.includes('--raw');
 
-const CHROME = process.env.CHROME_PATH || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
+function findChrome() {
+  if (process.env.CHROME_PATH) return process.env.CHROME_PATH;
+  const roots = ['/opt/pw-browsers'];
+  for (const root of roots) {
+    if (!fs.existsSync(root)) continue;
+    const dirs = fs.readdirSync(root).filter((d) => /^chromium-\d+$/.test(d)).sort().reverse();
+    for (const d of dirs) {
+      const p = path.join(root, d, 'chrome-linux', 'chrome');
+      if (fs.existsSync(p)) return p;
+    }
+  }
+  return undefined; /* Playwright's own */
+}
 
 function findFfmpeg() {
   if (process.env.FFMPEG_PATH) return process.env.FFMPEG_PATH;
@@ -64,10 +81,14 @@ function findFfmpeg() {
 
 let chromium;
 try {
-  chromium = require(process.env.PLAYWRIGHT_PATH || '/opt/node22/lib/node_modules/playwright').chromium;
+  chromium = require(process.env.PLAYWRIGHT_PATH || 'playwright').chromium;
 } catch (err) {
-  console.log('Playwright is not available here — cannot record the demo.');
-  process.exit(0);
+  try {
+    chromium = require('/opt/node22/lib/node_modules/playwright').chromium;
+  } catch (err2) {
+    console.log('Playwright is not available here — cannot record the demo.');
+    process.exit(0);
+  }
 }
 
 /* ---------------------------------------------------------
@@ -77,105 +98,48 @@ try {
    real listing this repository may carry. So the demo draws its own:
    flat-lay artwork on a white ground, one drawing per row. The card
    lays a photo onto its own warm tile, so the white takes the tile's
-   tone exactly as a retailer's packshot does. They read as
-   product imagery without standing in for anybody's photograph.
+   tone exactly as a retailer's packshot does. They read as product
+   imagery without standing in for anybody's photograph.
    --------------------------------------------------------- */
 
 const FABRIC = {
-  black:    { body: '#222223', light: '#3A3A3C', dark: '#0E0E0F', rib: '#1A1A1B', cord: '#ECEAE4', tip: '#9A9A98' },
-  washed:   { body: '#3A3937', light: '#56544F', dark: '#22211F', rib: '#302F2D', cord: '#E6E3DB', tip: '#A09D96' },
-  charcoal: { body: '#3B3E42', light: '#565A5F', dark: '#23252A', rib: '#33363A', cord: '#E3E5E8', tip: '#9EA1A5' },
-  ink:      { body: '#1C1F27', light: '#343947', dark: '#0C0E13', rib: '#171A21', cord: '#E4E6EB', tip: '#9A9DA4' }
+  black: { body: '#1E1E1E', hood: '#2E2E2E', trim: '#151515', seam: '#3A3A3A', cord: '#E8E8E4' },
+  washed: { body: '#333331', hood: '#403F3C', trim: '#282826', seam: '#4E4D49', cord: '#E4E2DC' },
+  charcoal: { body: '#26282B', hood: '#343739', trim: '#1D1F21', seam: '#43464A', cord: '#DFE1E3' },
+  ink: { body: '#181B22', hood: '#262A33', trim: '#12141A', seam: '#343945', cord: '#E2E4E9' }
 };
 
-/* A flat-lay packshot, drawn: the garment laid on white under soft top
-   light, with the cloth's grain, its folds, ribbed cuffs and hem, and
-   metal-tipped cords. */
+/* pullover and zip read differently enough at tile size to keep a grid
+   of one garment from looking like one product repeated */
 function hoodieArt(tone, cut) {
   const c = FABRIC[tone] || FABRIC.black;
-  const id = `${tone}-${cut}`;
-  /* the left half, mirrored: a dropped shoulder, a long sleeve laid
-     along the body, and the gap between them below the arm */
-  const half = [[186, 132], [128, 150], [104, 160], [96, 186], [60, 418], [110, 432], [148, 238], [152, 462]];
-  const mirror = (pts) => pts.map(([x, y]) => [480 - x, y]).reverse();
-  const pts = [...half, [164, 474], [316, 474], ...mirror(half)];
-  const BODY = 'M' + pts.map(([x, y]) => `${x} ${y}`).join(' L') + ' C282 168 198 168 186 132 Z';
-  const HOOD = 'M166 150 C170 80 310 80 314 150 C316 196 284 222 240 222 C196 222 164 196 166 150 Z';
   const front = cut === 'zip'
-    ? `<path d="M240 204 L240 440" stroke="${c.dark}" stroke-width="7" stroke-linecap="round"/>
-       <path d="M240 204 L240 440" stroke="${c.tip}" stroke-width="2" stroke-dasharray="2 3" opacity=".75"/>
-       <rect x="234" y="206" width="12" height="20" rx="2" fill="${c.tip}"/>
-       <path d="M196 340 Q208 346 226 344 M254 344 Q272 346 284 340" stroke="${c.dark}" stroke-width="3" fill="none" stroke-linecap="round" opacity=".8"/>`
-    : `<path d="M184 336 L296 336 L306 414 L174 414 Z" fill="url(#pk-${id})" stroke="${c.dark}" stroke-width="2.5" stroke-linejoin="round" opacity=".95"/>
-       <path d="M184 336 L174 414 M296 336 L306 414" stroke="${c.light}" stroke-width="1.2" opacity=".5"/>`;
+    ? `<path d="M240 196 L240 434" stroke="${c.seam}" stroke-width="4" stroke-linecap="round"/>
+       <path d="M198 344 L232 344 M248 344 L292 344" stroke="${c.seam}" stroke-width="3.5" stroke-linecap="round"/>`
+    : `<path d="M186 338 L294 338 L302 410 L178 410 Z" fill="none" stroke="${c.seam}" stroke-width="3.5" stroke-linejoin="round"/>`;
+
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 640" width="480" height="640" role="img">
-  <defs>
-    <linearGradient id="side-${id}" x1="0" x2="1" y1="0" y2="0">
-      <stop offset="0" stop-color="${c.dark}"/><stop offset=".3" stop-color="${c.body}"/>
-      <stop offset=".46" stop-color="${c.light}"/><stop offset=".7" stop-color="${c.body}"/>
-      <stop offset="1" stop-color="${c.dark}"/>
-    </linearGradient>
-    <linearGradient id="top-${id}" x1="0" x2="0" y1="0" y2="1">
-      <stop offset="0" stop-color="#fff" stop-opacity=".10"/><stop offset=".55" stop-color="#fff" stop-opacity="0"/>
-      <stop offset="1" stop-color="#000" stop-opacity=".22"/>
-    </linearGradient>
-    <linearGradient id="pk-${id}" x1="0" x2="0" y1="0" y2="1">
-      <stop offset="0" stop-color="${c.light}"/><stop offset="1" stop-color="${c.body}"/>
-    </linearGradient>
-    <radialGradient id="in-${id}" cx=".5" cy=".38" r=".62">
-      <stop offset="0" stop-color="#000" stop-opacity=".95"/><stop offset="1" stop-color="${c.dark}"/>
-    </radialGradient>
-    <pattern id="rib-${id}" width="5" height="10" patternUnits="userSpaceOnUse">
-      <rect width="5" height="10" fill="${c.rib}"/><rect width="1.6" height="10" fill="${c.light}" opacity=".35"/>
-    </pattern>
-    <filter id="grain-${id}" x="0" y="0" width="100%" height="100%">
-      <feTurbulence type="fractalNoise" baseFrequency=".85" numOctaves="2" seed="4"/>
-      <feColorMatrix values="0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 .09 0"/>
-      <feComposite in2="SourceGraphic" operator="in"/>
-    </filter>
-    <filter id="soft-${id}"><feGaussianBlur stdDeviation="5"/></filter>
-    <filter id="drop-${id}" x="-20%" y="-20%" width="140%" height="140%">
-      <feDropShadow dx="0" dy="12" stdDeviation="13" flood-color="#000" flood-opacity=".18"/>
-    </filter>
-    <clipPath id="clip-${id}"><path d="${BODY}"/><path d="${HOOD}"/></clipPath>
-  </defs>
+  <defs><filter id="s" x="-20%" y="-20%" width="140%" height="140%">
+    <feDropShadow dx="0" dy="10" stdDeviation="14" flood-color="#000" flood-opacity="0.14"/>
+  </filter></defs>
   <rect width="480" height="640" fill="#FFFFFF"/>
-  <g transform="translate(240 320) scale(1.12) translate(-240 -290)">
-    <ellipse cx="240" cy="488" rx="190" ry="14" fill="#000" opacity=".07" filter="url(#soft-${id})"/>
-    <g filter="url(#drop-${id})">
-      <path d="${HOOD}" fill="url(#side-${id})"/>
-      <path d="${BODY}" fill="url(#side-${id})"/>
-    </g>
-    <g clip-path="url(#clip-${id})">
-      <rect width="480" height="530" fill="url(#top-${id})"/>
-      <!-- folds: soft light and shade where cloth creases -->
-      <g filter="url(#soft-${id})" fill="none" stroke-linecap="round">
-        <path d="M106 200 Q100 300 84 380" stroke="${c.light}" stroke-width="9" opacity=".55"/>
-        <path d="M374 200 Q380 300 396 380" stroke="${c.dark}" stroke-width="11" opacity=".7"/>
-        <path d="M90 300 Q110 296 126 306 M354 306 Q370 296 390 300" stroke="${c.dark}" stroke-width="6" opacity=".5"/>
-        <path d="M176 260 Q190 330 182 430" stroke="${c.dark}" stroke-width="10" opacity=".5"/>
-        <path d="M300 250 Q288 340 298 430" stroke="${c.dark}" stroke-width="10" opacity=".45"/>
-        <path d="M214 232 Q232 300 222 330" stroke="${c.light}" stroke-width="12" opacity=".4"/>
-        <path d="M158 300 L322 296" stroke="${c.dark}" stroke-width="6" opacity=".35"/>
-      </g>
-      <!-- ribbed cuffs and hem -->
-      <path d="M65 384 L117 398 L110 432 L60 418 Z" fill="url(#rib-${id})"/>
-      <path d="M415 384 L363 398 L370 432 L420 418 Z" fill="url(#rib-${id})"/>
-      <path d="M65 384 L117 398 M415 384 L363 398" stroke="${c.dark}" stroke-width="3" opacity=".8"/>
-      <rect x="150" y="436" width="180" height="40" fill="url(#rib-${id})"/>
-      <path d="M152 436 L328 436" stroke="${c.dark}" stroke-width="3" opacity=".8"/>
-      <!-- the hood's lining and its seams -->
-      <path d="M190 146 C198 102 282 102 290 146 C290 182 268 204 240 204 C212 204 190 182 190 146 Z" fill="url(#in-${id})"/>
-      <path d="M182 134 L204 202 M298 134 L276 202" stroke="${c.dark}" stroke-width="3" fill="none" stroke-linecap="round"/>
-      <path d="M128 150 Q140 190 148 238 M352 150 Q340 190 332 238" stroke="${c.dark}" stroke-width="2.5" opacity=".55" fill="none"/>
-      ${front}
-      <rect width="480" height="530" filter="url(#grain-${id})"/>
-    </g>
-    <!-- cords, with metal tips -->
-    <path d="M221 204 C219 230 214 250 216 276 M259 204 C261 230 266 250 264 276" stroke="${c.cord}" stroke-width="5" fill="none" stroke-linecap="round"/>
-    <rect x="212.5" y="272" width="7" height="16" rx="2" fill="${c.tip}"/>
-    <rect x="260.5" y="272" width="7" height="16" rx="2" fill="${c.tip}"/>
-    <circle cx="221" cy="204" r="4.5" fill="${c.tip}"/><circle cx="259" cy="204" r="4.5" fill="${c.tip}"/>
+  <g transform="translate(0 20)">
+  <ellipse cx="240" cy="486" rx="146" ry="15" fill="#000" opacity="0.06"/>
+  <g filter="url(#s)">
+    <path d="M168 148 C176 84 304 84 312 148 C312 190 282 214 240 214 C198 214 168 190 168 148 Z" fill="${c.hood}"/>
+    <path d="M182 134 L96 178 L48 336 Q46 344 54 347 L118 370 Q126 373 129 365 L156 288
+             L156 452 Q156 468 172 468 L308 468 Q324 468 324 452 L324 288
+             L351 365 Q354 373 362 370 L426 347 Q434 344 432 336 L384 178 L298 134
+             C286 170 194 170 182 134 Z" fill="${c.body}"/>
+    <path d="M190 146 C198 100 282 100 290 146 C290 180 268 200 240 200 C212 200 190 180 190 146 Z" fill="${c.trim}"/>
+    <path d="M182 134 L200 196 M298 134 L280 196" stroke="${c.seam}" stroke-width="3.5" fill="none" stroke-linecap="round"/>
+    ${front}
+    <path d="M48 336 L118 361 L108 396 L38 371 Z" fill="${c.trim}"/>
+    <path d="M432 336 L362 361 L372 396 L442 371 Z" fill="${c.trim}"/>
+    <path d="M156 434 L324 434 L324 452 Q324 468 308 468 L172 468 Q156 468 156 452 Z" fill="${c.trim}"/>
+    <path d="M220 198 C218 224 217 240 217 258 M260 198 C262 224 263 240 263 258"
+          stroke="${c.cord}" stroke-width="4.5" fill="none" stroke-linecap="round"/>
+  </g>
   </g>
 </svg>`;
 }
@@ -188,26 +152,34 @@ function hoodieArt(tone, cut) {
    fields in the real shape. Names describe the garment rather than
    quoting a listing, and every link goes to the retailer's own search
    for that garment — a page that exists, rather than a product id
-   invented to look convincing.
+   invented to look convincing. All of them sit under the $80 asked for.
    --------------------------------------------------------- */
 
-/* Four, so the answer lands as one even row on a wide screen and two on
-   a phone: every card in it whole, none promoted over the others. Prices
-   sit where these retailers actually price a hoodie, all under the $80
-   the request names. */
 const DEMO_PRODUCTS = [
-  { id: 'd1', name: 'Oversized Heavyweight Hoodie', retailer: 'H&M', price: 34.99, tone: 'black', cut: 'pullover',
+  { id: 'd1', name: 'Oversized Heavyweight Fleece Hoodie', retailer: 'H&M', price: 34.99, tone: 'black', cut: 'pullover',
     productUrl: 'https://www2.hm.com/en_us/search-results.html?q=oversized%20black%20hoodie',
     colors: ['Black'], fits: ['Oversized'], styles: ['Streetwear'], sizes: ['S', 'M', 'L'] },
-  { id: 'd2', name: 'Boxy Brushed-Back Oversized Hoodie', retailer: 'UNIQLO', price: 49.9, tone: 'charcoal', cut: 'pullover',
+  { id: 'd2', name: 'Boxy Brushed-Back Hooded Sweatshirt', retailer: 'UNIQLO', price: 49.9, tone: 'charcoal', cut: 'pullover',
     productUrl: 'https://www.uniqlo.com/us/en/search?q=oversized%20black%20hoodie',
     colors: ['Black'], fits: ['Oversized'], styles: ['Minimal'], sizes: ['XS', 'S', 'M'] },
-  { id: 'd3', name: 'Washed Black Oversized Zip Hoodie', retailer: 'ASOS', price: 56.0, tone: 'washed', cut: 'zip',
+  { id: 'd3', name: 'Relaxed Cotton-Blend Zip Hoodie', retailer: 'GAP', price: 64.95, tone: 'ink', cut: 'zip',
+    productUrl: 'https://www.gap.com/browse/search.do?searchText=black%20oversized%20hoodie',
+    colors: ['Black'], fits: ['Relaxed'], styles: ['Classic'], sizes: ['S', 'M', 'L'] },
+  { id: 'd4', name: 'Washed Black Drop-Shoulder Hoodie', retailer: 'ASOS', price: 45.0, tone: 'washed', cut: 'pullover',
     productUrl: 'https://www.asos.com/us/search/?q=black%20oversized%20hoodie',
     colors: ['Washed black'], fits: ['Oversized'], styles: ['Streetwear'], sizes: ['M', 'L', 'XL'] },
-  { id: 'd4', name: 'Garment-Dyed Oversized Hoodie', retailer: 'URBAN OUTFITTERS', price: 69.0, tone: 'ink', cut: 'pullover',
+  { id: 'd5', name: 'Reverse Weave Pullover Hoodie', retailer: 'CHAMPION', price: 70.0, tone: 'black', cut: 'pullover',
+    productUrl: 'https://www.champion.com/search?q=black%20hoodie',
+    colors: ['Black'], fits: ['Regular'], styles: ['Sporty'], sizes: ['S', 'M', 'L'] },
+  { id: 'd6', name: 'Loose Fit Hooded Sweatshirt', retailer: 'ZARA', price: 45.9, tone: 'charcoal', cut: 'zip',
+    productUrl: 'https://www.zara.com/us/en/search?searchTerm=black%20hoodie',
+    colors: ['Black'], fits: ['Loose'], styles: ['Minimal'], sizes: ['S', 'M'] },
+  { id: 'd7', name: 'Garment-Dyed Oversized Hoodie', retailer: 'URBAN OUTFITTERS', price: 69.0, tone: 'washed', cut: 'pullover',
     productUrl: 'https://www.urbanoutfitters.com/search?q=black+oversized+hoodie',
-    colors: ['Black'], fits: ['Oversized'], styles: ['Classic'], sizes: ['M', 'L'] }
+    colors: ['Faded black'], fits: ['Oversized'], styles: ['Streetwear'], sizes: ['M', 'L'] },
+  { id: 'd8', name: 'Everyday Fleece Hoodie', retailer: 'OLD NAVY', price: 29.99, tone: 'ink', cut: 'pullover',
+    productUrl: 'https://oldnavy.gap.com/browse/search.do?searchText=black%20hoodie',
+    colors: ['Black'], fits: ['Relaxed'], styles: ['Classic'], sizes: ['S', 'M', 'L', 'XL'] }
 ];
 
 /* what the interpreter takes out of the sentence that gets typed */
@@ -227,19 +199,18 @@ const DEMO_INTENT = {
 
 const QUERY = 'black oversized hoodie under $80';
 
-/* What the "understands" step shows: the interpreter's own answer above,
-   said back as the attributes in it, so the frame never claims more than
-   the stubbed reply contains. */
-const READING = [
-  ...DEMO_INTENT.colors, ...DEMO_INTENT.fits,
-  ...DEMO_INTENT.categories.map((c) => c[0].toUpperCase() + c.slice(1)),
-  `Under $${DEMO_INTENT.maxPrice}`
-];
+/* Long enough for the page's own waiting state to register as a moment,
+   short enough that it never reads as a loading screen. */
+const INTERPRET_DELAY = 450;
+const SEARCH_DELAY = 450;
 
-/* the source is slower than a local file, and the video should show the
-   waiting state the shopper actually sees rather than an instant grid */
-const INTERPRET_DELAY = 800;
-const SEARCH_DELAY = 1000;
+/* The four lines the video says, one at a time and never two at once. */
+const CAPTIONS = {
+  describe: 'Describe what you want',
+  results: 'Fynd finds matching products',
+  retailer: 'Open the product at the retailer',
+  end: 'Describe it. Find it.'
+};
 
 /* ---------------------------------------------------------
    The origin everything is served from
@@ -252,25 +223,32 @@ const TYPES = {
 };
 
 /* ---------------------------------------------------------
-   The site's faces, served locally
+   The site's face, served locally
 
-   Inter, the site's one face. The recording browser is cut off from
+   Inter. The recording browser is cut off from
    everything except this origin, and a demo set in a different typeface
-   than the site is a demo of something else. So the face is fetched once here, in Node, and served
-   back at the address the page already asks for. Only the Latin subsets
-   are kept: the recording has no other alphabet in it.
+   than the site is a demo of something else. So the face is fetched once
+   here, in Node, and served back at the address the page already asks
+   for. Only the Latin subsets are kept: the recording has no other
+   alphabet in it.
 
    If the fetch does not work — no network, or Google Fonts moved — the
    recording still happens in the stack the site itself falls back to,
    with a line saying so.
    --------------------------------------------------------- */
 
-const FONT_CSS = 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap';
+/* the stylesheet the page itself links, read from the page, so the
+   recording always asks for exactly the faces the site uses */
+const FONT_CSS = (() => {
+  const html = fs.readFileSync(path.join(REPO, 'index.html'), 'utf8');
+  const m = /href="(https:\/\/fonts\.googleapis\.com\/css2[^"]+)"/.exec(html);
+  return m ? m[1].replace(/&amp;/g, '&') : 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap';
+})();
 const CHROME_UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
 const fontFiles = new Map();
 
-async function loadInter() {
+async function loadFonts() {
   const css = await fetch(FONT_CSS, { headers: { 'User-Agent': CHROME_UA } }).then((r) => r.text());
 
   /* Google Fonts labels each block with the subset it covers, in a
@@ -341,188 +319,109 @@ const server = http.createServer((req, res) => {
 });
 
 /* ---------------------------------------------------------
-   The layer that only exists for the camera
+   What the camera changes about the page
 
-   A pointer, one short line per step, the attributes Fynd read, the tab
-   the retailer opens in, the closing line, and the badge that says what
-   this recording is. It is injected into the page rather than
-   composited afterwards so it moves with the interface at the same frame
-   rate, and it is drawn from the site's own tokens — the same Inter, the
-   same black, the same pills — so it belongs to the design under it.
-   Nothing in it is louder than the interface, and every change is a fade.
+   Kept to the least that makes the recording quiet and true:
+
+   - The demo section is removed, so the video never shows itself.
+   - The field starts empty. Its placeholder is the very sentence the
+     video types; left on, the request would be on screen before anybody
+     had asked for anything.
+   - The stand-in source is marked as what it is. Rows from a product
+     source carry no marker, because on the live site they are live
+     stock; these are not, so the results heading carries the page's own
+     "Sample data" marker, exactly as it does for the demo catalogue.
+
+   Nothing else is restyled: type, colour, spacing, the search box, the
+   buttons and the cards are the site's own.
    --------------------------------------------------------- */
 
-const OVERLAY = ([compact, reading]) => {
-  const u = compact ? .86 : 1;   /* the narrow frame is shown near its own size, the wide one scaled down */
+const QUIET_CSS = `
+  #demo { display: none !important; }
+`;
+
+/* ---------------------------------------------------------
+   The layer that only exists for the camera
+
+   A pointer and one caption. Injected into the page rather than
+   composited afterwards so it moves with the interface at the same frame
+   rate, and drawn from the site's own tokens so it belongs to the same
+   design as everything under it.
+   --------------------------------------------------------- */
+
+const OVERLAY = (compact) => {
   const css = `
-    /* The page being recorded is the page the recording is shown on, and
-       its player sits straight under the search. Filmed, it would be a
-       video of the video; the recording leaves it out of the frame. */
-    #demo { display: none !important; }
+    #demo-layer { position: fixed; inset: 0; z-index: 9999; pointer-events: none;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
 
-    #demo-layer { position: fixed; inset: 0; z-index: 9999; pointer-events: none; }
+    /* a plain system pointer; a click is the pointer pressing, nothing more */
+    #demo-cursor { position: absolute; top: 0; left: 0; width: 22px; height: 22px;
+      margin: -2px 0 0 -4px; opacity: 0; transform: translate(70vw, 85vh);
+      transition: transform .7s cubic-bezier(.3,.7,.25,1), opacity .3s ease; will-change: transform; }
+    #demo-cursor.on { opacity: 1; }
+    #demo-cursor svg { width: 22px; height: 22px; display: block; transition: transform .12s ease;
+      filter: drop-shadow(0 1px 2px rgba(0,0,0,.28)); }
+    #demo-cursor.down svg { transform: scale(.86); }
 
-    #demo-cursor { position: absolute; top: 0; left: 0; z-index: 5; width: ${26 * u}px; height: ${26 * u}px;
-      margin: -3px 0 0 -3px; transform: translate(50vw, 92vh);
-      transition: transform .62s cubic-bezier(.32,.72,.24,1), opacity .3s ease; will-change: transform; }
-    #demo-cursor svg { width: ${26 * u}px; height: ${26 * u}px; filter: drop-shadow(0 2px 5px rgba(0,0,0,.3)); }
-    #demo-cursor::after { content: ''; position: absolute; inset: -9px; border-radius: 50%;
-      background: var(--color-accent); opacity: 0; transform: scale(.4); }
-    #demo-cursor.tap::after { animation: demo-tap .5s ease-out; }
-    @keyframes demo-tap { 0% { opacity: .3; transform: scale(.4); } 100% { opacity: 0; transform: scale(1.5); } }
+    /* One short line at a time, in a quiet strip along the bottom edge
+       of the frame. The strip is there from the first frame to the last,
+       so a caption arriving never moves anything, and it sits below the
+       interface rather than on it: no product or control is ever under
+       the words. Ink on the page's own paper, in the page's own face. */
+    #demo-strip { position: absolute; left: 0; right: 0; bottom: 0; height: ${compact ? 44 : 48}px;
+      display: flex; align-items: center; justify-content: center;
+      background: var(--color-bg); border-top: 1px solid var(--color-border); }
+    #demo-caption { color: var(--color-text);
+      font-size: ${compact ? 13.5 : 14}px; font-weight: 500; letter-spacing: -.005em; line-height: 1;
+      white-space: nowrap; opacity: 0; transition: opacity .35s ease; }
+    #demo-caption.on { opacity: 1; }
 
-    /* on screen for the whole recording: what it says has to be true of
-       every frame, not only of the frames somebody happens to pause on.
-       It sits in the header, between the logo and the navigation, where
-       it covers no content in any scene. The site's own Sample marker. */
-    #demo-badge { position: absolute; z-index: 6; top: ${compact ? 17 : 19}px;
-      ${compact ? 'right: 70px' : 'left: 50%; transform: translateX(-50%)'};
-      display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: var(--r-pill);
-      background: var(--color-warning-soft); color: var(--color-warning-ink);
-      font-size: ${compact ? 12 : 12.5}px; font-weight: 500; white-space: nowrap; }
-    #demo-badge::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--color-warning); }
-
-    /* one short line per step, numbered the way the page numbers its
-       steps, on the site's black */
-    #demo-caption { position: absolute; z-index: 4; left: 50%; bottom: ${compact ? 22 : 32}px;
-      transform: translate(-50%, 10px);
-      display: flex; align-items: center; gap: ${10 * u}px; white-space: nowrap;
-      padding: ${10 * u}px ${22 * u}px ${10 * u}px ${10 * u}px; border-radius: var(--r-pill);
-      background: var(--color-primary); color: var(--color-text-on-primary); box-shadow: var(--shadow);
-      font-size: ${compact ? 18 : 21}px; font-weight: 600; letter-spacing: -.02em; line-height: 1.2;
-      opacity: 0; transition: opacity .3s ease, transform .3s cubic-bezier(.2,.7,.1,1); }
-    #demo-caption.on { opacity: 1; transform: translate(-50%, 0); }
-    #demo-caption b { display: grid; place-items: center; flex: none; width: ${28 * u}px; height: ${28 * u}px;
-      border-radius: 50%; background: var(--color-text-on-primary); color: var(--color-primary);
-      font-size: ${14 * u}px; font-weight: 600; letter-spacing: 0; }
-
-    /* What the interpreter took from the sentence, in the page's own pill,
-       laid over the example searches under the box for a moment. */
-    #demo-read { position: absolute; z-index: 3; display: flex; flex-wrap: wrap; align-items: center;
-      justify-content: center; gap: 8px; background: var(--color-bg);
-      opacity: 0; transform: translateY(6px); transition: opacity .35s ease, transform .35s ease; }
-    #demo-read.on { opacity: 1; transform: none; }
-    /* narrow, the label takes its own line, as the page's own Try does */
-    #demo-read .label { font-size: 14px; color: var(--color-text-muted); margin-right: 2px; ${compact ? 'width: 100%; text-align: center;' : ''} }
-    #demo-read .chip { display: inline-flex; align-items: center; height: ${compact ? 32 : 36}px; padding: 0 ${compact ? 11 : 14}px;
-      border: 1px solid var(--color-accent-soft); border-radius: var(--r-pill);
-      background: var(--color-accent-soft); color: var(--color-accent-ink); font-size: ${compact ? 13 : 14}px; font-weight: 500; }
-
-    /* The retailer's page, opening in its own tab. The recording cannot
-       reach a retailer, and a drawing of one retailer's page would be
-       putting words in its mouth, so this is the tab as it opens: the
-       real host the card links to, and the page arriving. */
-    #demo-tab { position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column;
-      background: var(--color-surface);
-      opacity: 0; transform: translateY(14px); transition: opacity .4s ease, transform .4s cubic-bezier(.2,.7,.1,1); }
-    #demo-tab.on { opacity: 1; transform: none; }
-    #demo-tab .strip { display: flex; align-items: flex-end; gap: 2px; height: ${40 * u}px; padding: 0 ${14 * u}px;
-      background: var(--color-surface-3); }
-    #demo-tab .tab { display: flex; align-items: center; gap: 8px; height: ${31 * u}px; padding: 0 ${14 * u}px;
-      border-radius: var(--r-sm) var(--r-sm) 0 0; font-size: ${13 * u}px; color: var(--color-text-muted); white-space: nowrap; }
-    #demo-tab .tab.cur { background: var(--color-surface); color: var(--color-text); min-width: ${compact ? 0 : 220}px; }
-    #demo-tab .tab i { width: ${11 * u}px; height: ${11 * u}px; flex: none; border: 1.5px solid currentColor; border-radius: 50%;
-      border-right-color: transparent; animation: demo-spin .8s linear infinite; }
-    @keyframes demo-spin { to { transform: rotate(360deg); } }
-    #demo-tab .bar { display: flex; align-items: center; height: ${52 * u}px; padding: 0 ${16 * u}px;
-      border-bottom: 1px solid var(--color-border); }
-    #demo-tab .url { flex: 1; display: flex; align-items: center; gap: 10px; min-width: 0; height: ${34 * u}px; padding: 0 ${14 * u}px;
-      background: var(--color-bg-subtle); border-radius: var(--r-pill); font-size: ${compact ? 14 : 15}px; font-weight: 500;
-      color: var(--color-text); overflow: hidden; white-space: nowrap; }
-    #demo-tab .url svg { flex: none; width: 13px; height: 13px; color: var(--color-text-muted); }
-    #demo-tab .load { height: 2px; background: var(--color-accent); width: 0; transition: width 2.4s cubic-bezier(.2,.6,.3,1); }
-    #demo-tab.on .load { width: 82%; }
-    #demo-tab .page { flex: 1; display: grid; grid-template-columns: ${compact ? '1fr' : '1.1fr 1fr'}; gap: ${compact ? 20 : 48}px;
-      align-content: start; padding: ${compact ? '20px 18px' : '44px 72px'}; }
-    #demo-tab .shot { aspect-ratio: ${compact ? '4 / 3.3' : '4 / 4.2'}; border-radius: var(--r); background: var(--color-surface-2);
-      overflow: hidden; display: grid; place-items: center; }
-    #demo-tab .shot img { width: ${compact ? '62%' : '92%'}; mix-blend-mode: multiply; }
-    #demo-tab .lines { display: grid; gap: ${14 * u}px; align-content: start; padding-top: ${compact ? 0 : 10}px; }
-    #demo-tab .lines span { display: block; height: ${12 * u}px; border-radius: 6px; background: var(--color-surface-3); }
-    #demo-tab .lines .btn-line { height: ${48 * u}px; margin-top: ${14 * u}px; border-radius: var(--r); }
-
-    /* the last frame: what to take away, and nothing else */
-    #demo-end { position: absolute; inset: 0; z-index: 3; display: grid; place-content: center; justify-items: center;
-      gap: ${22 * u}px; padding: 0 24px; text-align: center; background: var(--color-bg);
-      opacity: 0; transition: opacity .5s ease; }
-    #demo-end.on { opacity: 1; }
-    #demo-end .brand { display: inline-flex; align-items: center; gap: 10px; }
-    #demo-end p { margin: 0; font-size: ${compact ? 30 : 44}px; font-weight: 700; letter-spacing: -.04em; line-height: 1.1; }
-    #demo-end p span { display: block; color: var(--color-text-muted); }
+    /* Where a pointed-at link goes, shown the way a desktop browser
+       shows it: the real address, small, in the bottom corner. */
+    #demo-status { position: absolute; left: 0; bottom: ${compact ? 44 : 48}px; max-width: 60%;
+      padding: 4px 10px; background: #F1F1F1; color: #3C3C3C;
+      border: 1px solid #D6D6D6; border-left: 0; border-bottom: 0; border-top-right-radius: 4px;
+      font: 12px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      opacity: 0; transition: opacity .15s ease; }
+    #demo-status.on { opacity: 1; }
 
     /* The screencast a recording is made from only sends a frame when
        something repaints. A still page sends none, so what appears
-       during a pause reaches the video seconds late, bunched into its
-       last moments. One pixel that never stops repainting keeps the
-       frames coming at an even rate, so every beat lands in the video
-       when it happened. */
-    #demo-tick { position: absolute; left: 0; bottom: 0; width: 1px; height: 1px;
+       during a pause reaches the video late, bunched into its last
+       moments. One pixel that never stops repainting keeps the frames
+       coming at an even rate, so every beat lands when it happened. */
+    #demo-tick { position: absolute; left: 0; top: 0; width: 1px; height: 1px;
       background: var(--color-bg); animation: demo-tick .2s steps(2) infinite; }
-    @keyframes demo-tick { to { background: var(--color-bg-subtle); } }
+    @keyframes demo-tick { to { background: var(--color-surface); } }
   `;
 
   const style = document.createElement('style');
   style.textContent = css;
   document.head.appendChild(style);
 
-  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const layer = document.createElement('div');
   layer.id = 'demo-layer';
   layer.innerHTML = `
-    <div id="demo-cursor"><svg viewBox="0 0 24 24" fill="#fff" stroke="#111" stroke-width="1.4"
-      stroke-linejoin="round"><path d="M5 3l14 8.4-6.1 1.2-2.6 5.9z"/></svg></div>
-    <div id="demo-read"><span class="label">Fynd read</span>${reading.map((r) => `<span class="chip">${esc(r)}</span>`).join('')}</div>
-    <div id="demo-tab">
-      <div class="strip">${compact ? '' : '<div class="tab">Fynd</div>'}<div class="tab cur"><i></i><span class="title"></span></div></div>
-      <div class="bar"><div class="url"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
-        stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="1.5"/><path d="M8 11V8a4 4 0 018 0v3"/></svg><span class="addr"></span></div></div>
-      <div class="load"></div>
-      <div class="page"><div class="shot"><img alt=""></div>
-        <div class="lines"><span style="width:28%"></span><span style="width:86%;height:${22 * u}px"></span>
-          <span style="width:22%;height:${18 * u}px"></span><span style="width:64%"></span><span class="btn-line"></span></div></div>
-    </div>
-    <div id="demo-end"><span class="brand"><span class="brand-mark">F</span><span class="brand-word">Fynd</span></span>
-      <p>Search naturally.<span>Find the right clothes.</span></p></div>
-    <div id="demo-badge">Product demo · sample data</div>
-    <div id="demo-caption"><b>1</b><span>caption</span></div>
+    <div id="demo-cursor"><svg viewBox="0 0 24 24"><path d="M5 2.5v17.2l4.6-4.3 2.9 6.6 2.9-1.3-2.9-6.5h6.3z"
+      fill="#111" stroke="#fff" stroke-width="1.3" stroke-linejoin="round"/></svg></div>
+    <div id="demo-strip"><div id="demo-caption"></div></div>
+    <div id="demo-status"></div>
     <div id="demo-tick"></div>`;
   document.body.appendChild(layer);
 
-  const $ = (s) => layer.querySelector(s);
-  const cursor = $('#demo-cursor');
-  const caption = $('#demo-caption');
-  const read = $('#demo-read');
-  const tab = $('#demo-tab');
+  const cursor = layer.querySelector('#demo-cursor');
+  const caption = layer.querySelector('#demo-caption');
+  const status = layer.querySelector('#demo-status');
 
   window.demo = {
+    show: () => cursor.classList.add('on'),
+    hide: () => cursor.classList.remove('on'),
     move: (x, y) => { cursor.style.transform = `translate(${x}px, ${y}px)`; },
-    tap: () => { cursor.classList.remove('tap'); void cursor.offsetWidth; cursor.classList.add('tap'); },
-    say: (n, text) => {
-      caption.querySelector('b').textContent = String(n);
-      caption.querySelector('span').textContent = text;
-      caption.classList.add('on');
-    },
+    press: (down) => cursor.classList.toggle('down', down),
+    say: (text) => { caption.textContent = text; caption.classList.add('on'); },
     hush: () => caption.classList.remove('on'),
-    /* laid exactly over the example searches, so nothing under it moves */
-    read: (on) => {
-      if (!on) { read.classList.remove('on'); return; }
-      const r = document.querySelector('#ask-examples').getBoundingClientRect();
-      const box = document.querySelector('#ask-form').getBoundingClientRect();
-      Object.assign(read.style, { left: `${box.left}px`, width: `${box.width}px`,
-        top: `${r.top - 4}px`, minHeight: `${r.height + 8}px` });
-      read.classList.add('on');
-    },
-    /* the host is the card's own link, the picture the card's own */
-    open: (href, image, title) => {
-      const host = new URL(href).host.replace(/^www\d?\./, '');
-      $('#demo-tab .addr').textContent = host;
-      $('#demo-tab .title').textContent = host;
-      $('#demo-tab img').src = image;
-      $('#demo-tab img').alt = title;
-      tab.classList.add('on');
-      cursor.style.opacity = '0';
-    },
-    end: () => { $('#demo-end').classList.add('on'); }
+    status: (text) => { if (text) status.textContent = text; status.classList.toggle('on', Boolean(text)); }
   };
 
   /* Following the link would end the recording on somebody else's page,
@@ -533,8 +432,16 @@ const OVERLAY = ([compact, reading]) => {
     const card = e.target.closest && e.target.closest('a.item-card');
     if (!card) return;
     e.preventDefault();
-    window.demo.__clicked = card.getAttribute('href');
+    window.demo.clicked = card.getAttribute('href');
   }, true);
+
+  /* the page's own sample marker beside the count: see above */
+  new MutationObserver(() => {
+    const head = document.querySelector('#results .results-head h2');
+    if (!head || head.classList.contains('thinking') || head.querySelector('.status')) return;
+    if (!document.querySelector('#results .grid .item-card')) return;
+    head.insertAdjacentHTML('beforeend', ' <span class="status status--sample">Sample data</span>');
+  }).observe(document.getElementById('results'), { childList: true, subtree: true });
 };
 
 /* ---------------------------------------------------------
@@ -543,209 +450,256 @@ const OVERLAY = ([compact, reading]) => {
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/* Two recordings, not one. The demo is a recording of an interface, and
-   an interface shot for a 1280-wide window is unreadable on a phone —
-   the type in it lands at about six pixels. So the same walkthrough is
-   driven twice, once in each shape, and the page picks the one that fits
-   the screen it is on.
+/* Two recordings, not one. An interface shot for a 1280-wide window is
+   unreadable on a phone — the type in it lands at about six pixels — and
+   a crop of it is not what a phone shows anyway. So the same walkthrough
+   is driven twice, once in each shape, and the narrow one is the site's
+   real mobile layout. The page picks the one that fits the screen.
 
    The narrow one is captured at two device pixels per CSS pixel so that
-   a phone, which has at least that many, is not shown an upscale. */
+   a phone, which has at least that many, is not shown an upscale.
 
-/* h264 and vp9 are the quality settings for the two encodes. They are
-   high — a screencast is mostly flat colour that barely moves, which is
-   what these codecs are best at, and at 1:1 against the recording the
-   type is still clean. They are also tuned per shape and per codec
-   rather than by a formula, because the point is that the WebM the page
-   offers first is never the bigger of the two files. */
+   h264 and vp9 are the quality settings for the two encodes, tuned per
+   shape and per codec so the WebM the page offers first is never the
+   bigger of the two files. */
 const SHOTS = [
-  { name: 'fynd-demo', width: 1280, height: 800, dpr: 1, compact: false, h264: 34, vp9: 43 },
-  /* the narrow frame carries more pixels than the wide one once it is
-     doubled, so it is compressed harder to land in the same place */
-  { name: 'fynd-demo-mobile', width: 400, height: 720, dpr: 2, compact: true, h264: 37, vp9: 48 }
+  { name: 'fynd-demo', width: 1280, height: 800, dpr: 1, compact: false, h264: 30, vp9: 38 },
+  { name: 'fynd-demo-mobile', width: 400, height: 720, dpr: 2, compact: true, h264: 33, vp9: 45 }
 ];
 
-/* The four steps, and the line the recording closes on. The same words
-   are the captions track, so a reader who never sees a frame gets the
-   same account of what Fynd does. */
-const STEPS = {
-  describe: 'Describe it.',
-  understand: 'Fynd understands it.',
-  find: 'Fynd finds it.',
-  open: 'Open it at the retailer.',
-  close: 'Search naturally. Find the right clothes.'
-};
-
-async function record(shot, interCss, raw) {
-  /* The screencast a video is made from comes off the compositor at the
-     browser's own scale, not the context's, so a narrow frame is
-     captured at two device pixels per CSS pixel by launching for it.
-     Without this the phone-shaped recording is 400 pixels wide and every
-     phone has to double it. */
+async function record(shot, fontCss, rawDir, stillsDir) {
   const browser = await chromium.launch({
-    executablePath: CHROME,
+    executablePath: findChrome(),
     args: shot.dpr > 1 ? [`--force-device-scale-factor=${shot.dpr}`] : []
   });
 
   const context = await browser.newContext({
     viewport: { width: shot.width, height: shot.height },
     deviceScaleFactor: shot.dpr,
+    isMobile: shot.compact,
+    hasTouch: shot.compact,
     reducedMotion: 'no-preference',
-    recordVideo: { dir: raw, size: { width: shot.width * shot.dpr, height: shot.height * shot.dpr } }
+    ...(stillsDir ? {} : {
+      recordVideo: { dir: rawDir, size: { width: shot.width * shot.dpr, height: shot.height * shot.dpr } }
+    })
   });
 
   const page = await context.newPage();
 
-  /* The recording begins with the page, so every caption can be timed
-     against that one clock and written out as a track afterwards. The
-     captions are burned into the frame as well — they are part of how
-     the video reads — but burned-in text is not text, and somebody
-     reading captions rather than watching them needs the words. */
+  /* Every caption is timed against one clock that starts with the page,
+     and written out as a captions track afterwards: burned-in text is
+     not text, and somebody reading captions rather than watching them
+     needs the words. */
   const startedAt = Date.now();
   const now = () => (Date.now() - startedAt) / 1000;
   const cues = [];
-  const close = () => {
-    if (cues.length && cues[cues.length - 1].end === null) cues[cues.length - 1].end = now();
+  let stillN = 0;
+  const still = async (label) => {
+    if (!stillsDir) return;
+    stillN += 1;
+    await page.screenshot({ path: path.join(stillsDir, `${shot.name}-${String(stillN).padStart(2, '0')}-${label}.png`) });
   };
-  const say = async (n, text) => {
-    close();
-    cues.push({ n, text, start: now(), end: null });
-    await page.evaluate(([i, t]) => window.demo.say(i, t), [n, text]);
+  const say = async (text) => {
+    cues.push({ text, start: now(), end: null });
+    await page.evaluate((t) => window.demo.say(t), text);
   };
-  const hush = async () => { close(); await page.evaluate(() => window.demo.hush()); };
+  const hush = async () => {
+    const open = cues[cues.length - 1];
+    if (open && open.end === null) open.end = now();
+    await page.evaluate(() => window.demo.hush());
+  };
 
   await page.addInitScript(() => {
     window.FINDWEAR_API = `${location.origin}/api/interpret`;
     window.FINDWEAR_SEARCH_API = `${location.origin}/api/search`;
   });
+  await page.addInitScript((css) => {
+    /* before assets/reading.js runs, which is what animates it */
+    const blank = new MutationObserver(() => {
+      const field = document.getElementById('ask');
+      if (!field) return;
+      field.setAttribute('placeholder', '');
+      blank.disconnect();
+    });
+    blank.observe(document, { childList: true, subtree: true });
+    document.addEventListener('DOMContentLoaded', () => {
+      const s = document.createElement('style');
+      s.textContent = css;
+      document.head.appendChild(s);
+    });
+  }, QUIET_CSS);
+
   /* The page's own stylesheet link is answered from the cache above, so
      the recording is set in the face the site is set in. Everything else
      off this origin is unreachable here anyway, and cutting it keeps the
      recording identical from one run to the next. */
   await page.route((url) => !String(url).includes(`127.0.0.1:${PORT}`), (route) => {
-    if (interCss && String(route.request().url()).startsWith('https://fonts.googleapis.com/css2')) {
-      return route.fulfill({ status: 200, contentType: 'text/css', body: interCss });
+    if (fontCss && String(route.request().url()).startsWith('https://fonts.googleapis.com/css2')) {
+      return route.fulfill({ status: 200, contentType: 'text/css', body: fontCss });
     }
     return route.abort();
   });
 
-  await page.goto(`http://127.0.0.1:${PORT}/index.html`, { waitUntil: 'domcontentloaded' });
+  await page.goto(`http://127.0.0.1:${PORT}/index.html`, { waitUntil: 'load' });
   await page.waitForSelector('#ask-form');
-  if (interCss) await page.evaluate(() => document.fonts.ready);
-  await page.evaluate(OVERLAY, [shot.compact, READING]);
-  /* The first screen is the headline and the search box, whichever
-     shape the frame is, so it opens where the page opens. */
-  await wait(250);
+  await page.evaluate(() => document.fonts.ready);
+  await page.evaluate(OVERLAY, shot.compact);
 
-  const box = async (selector) => {
+  const rect = async (selector) => {
     const b = await page.locator(selector).first().boundingBox();
-    return b ? { x: b.x + b.width / 2, y: b.y + b.height / 2, b } : null;
+    return { x: b.x + b.width / 2, y: b.y + b.height / 2, b };
   };
-  const point = async (selector, ms) => {
-    const p = await box(selector);
-    await page.evaluate(([x, y]) => window.demo.move(x, y), [p.x, p.y]);
-    await wait(ms || 620);
-    return p;
+  const moveTo = async (x, y, settle = 720) => {
+    await page.evaluate(([px, py]) => window.demo.move(px, py), [x, y]);
+    await wait(settle);
   };
-  const tap = async () => { await page.evaluate(() => window.demo.tap()); await wait(200); };
+  const press = async () => {
+    await page.evaluate(() => window.demo.press(true));
+    await wait(110);
+    await page.evaluate(() => window.demo.press(false));
+  };
+  const scrollTo = (y) => page.evaluate((top) => window.scrollTo({ top, behavior: 'smooth' }), y);
+  /* the page's y for an element, under the sticky header */
+  const topOf = (selector, gap) => page.evaluate(([sel, g]) => {
+    const el = document.querySelector(sel);
+    const header = document.querySelector('.site-header');
+    const h = header ? header.getBoundingClientRect().height : 0;
+    return Math.max(0, el.getBoundingClientRect().top + window.scrollY - h - g);
+  }, [selector, gap]);
 
-  /* --- 1. the request ---------------------------------------------- */
-
-  await say(1, STEPS.describe);
+  /* On a phone the field sits under the headline; bring it up the way a
+     shopper would, before anything starts. Not part of the recording's
+     story, so it happens while the first frames are still empty. */
+  if (shot.compact) {
+    await page.evaluate((y) => window.scrollTo(0, y), await topOf('.hero h1', 4));
+  }
   await wait(400);
-  await point('#ask', 520);
-  await tap();
-  await page.click('#ask');
-  await page.type('#ask', QUERY, { delay: 78 });
-  await wait(600);
 
-  /* --- 2. what Fynd took from it ----------------------------------- */
+  /* Everything before this moment is the page loading, which the video
+     does not need: the encode starts here. */
+  const startAt = now();
 
-  await say(2, STEPS.understand);
-  await page.evaluate(() => window.demo.read(true));
-  await wait(2600);
+  /* --- 1. Describe ------------------------------------------------- */
 
-  /* --- 3. the search ------------------------------------------------ */
-
-  await point('#ask-form button[type=submit]', 560);
-  await tap();
-  await hush();
-  await page.click('#ask-form button[type=submit]');
-  await page.evaluate(() => window.demo.read(false));
-  await page.waitForSelector('#results .grid .item-card', { timeout: 20000 });
-
-  /* --- 4. what came back -------------------------------------------- */
-
-  /* the whole answer in one frame: the count, the request it answers,
-     and every card with its picture, maker, price and retailer */
-  await page.evaluate(() => {
-    const head = document.querySelector('#results .results-head');
-    const top = head.getBoundingClientRect().top + window.scrollY;
-    const header = document.querySelector('.site-header').getBoundingClientRect().height;
-    window.scrollTo({ top: top - header - 20, behavior: 'smooth' });
-  });
-  await wait(500);
-  await say(3, STEPS.find);
-  await point('.grid .item-card:nth-child(1) .item-media', 900);
-  await wait(900);
-  await point('.grid .item-card:nth-child(2) .item-media', 900);
-  await wait(1000);
-
-  /* --- 5. out to the retailer --------------------------------------- */
-
-  await say(4, STEPS.open);
-  await point('.grid .item-card:nth-child(2) .item-name', 520);
-  await page.hover('.grid .item-card:nth-child(2)');
+  const field = await rect('#ask');
+  const fieldStart = { x: field.b.x + Math.min(70, field.b.width * 0.2), y: field.y };
+  await page.evaluate(([x, y]) => window.demo.move(x, y), [fieldStart.x + 60, fieldStart.y + 120]);
+  await page.evaluate(() => window.demo.show());
+  await say(CAPTIONS.describe);
+  await moveTo(fieldStart.x, fieldStart.y, 650);
+  await press();
+  await page.focus('#ask');
+  await wait(150);
+  await page.keyboard.type(QUERY, { delay: 62 });
+  await still('typed');
   await wait(650);
-  await tap();
-  await page.click('.grid .item-card:nth-child(2) .item-name');
-  await wait(250);
 
-  const opened = await page.evaluate(() => {
-    const card = document.querySelectorAll('.grid .item-card')[1];
-    return { href: window.demo.__clicked || card.getAttribute('href'),
-      image: card.querySelector('img').src, title: card.querySelector('.item-name').textContent };
-  });
-  await page.evaluate(([h, i, t]) => window.demo.open(h, i, t), [opened.href, opened.image, opened.title]);
-  await wait(2900);
-
-  /* --- the line it closes on ---------------------------------------- */
+  /* --- 2. Search --------------------------------------------------- */
 
   await hush();
-  await page.evaluate(() => window.demo.end());
-  cues.push({ n: 5, text: STEPS.close, start: now() + 0.2, end: null });
-  await wait(3300);
-  close();
+  const go = await rect('#ask-form button[type=submit]');
+  await moveTo(go.x, go.y, 680);
+  await press();
+  await page.click('#ask-form button[type=submit]');
+  /* the real pointer is parked off the page, so no card under where it
+     clicked is left showing a hover the drawn pointer is not making */
+  await page.mouse.move(1, 1);
+  await page.evaluate(() => window.demo.hide());
 
-  const video = page.video();
+  /* --- 3. Results -------------------------------------------------- */
+
+  await page.waitForSelector('#results .item-card', { timeout: 20000 });
+  /* the page scrolls itself to the results; let it land and the grid
+     develop before anything is said about it */
+  await wait(700);
+  const resultsTop = await topOf('#results', 8);
+  await scrollTo(resultsTop);
+  await wait(300);
+  await say(CAPTIONS.results);
+  await still('results');
+  await wait(2000);
+
+  /* one easy look further down the grid, the way a shopper would: on a
+     phone to the cards themselves, on a wide screen far enough to bring
+     the second row in under the first */
+  const further = shot.compact
+    ? await topOf('#results .grid', 12)
+    : resultsTop + Math.round(shot.height * 0.4);
+  await scrollTo(further);
+  await wait(2000);
+  await still('grid');
+  await hush();
+
+  /* --- 4. Retailer ------------------------------------------------- */
+
+  /* the second card: beside the first in either shape */
+  const target = '#results .grid .item-card:nth-child(2)';
+  if (shot.compact) {
+    await scrollTo(await topOf(target, 12));
+    await wait(700);
+  }
+  const action = await rect(`${target} .item-name`);
+  await page.evaluate(() => window.demo.show());
+  await say(CAPTIONS.retailer);
+  await moveTo(action.x, action.y, 700);
+  await page.hover(`${target} .item-name`);
+  const href = await page.locator(target).getAttribute('href');
+  if (!shot.compact && href) {
+    await page.evaluate((h) => window.demo.status(h.replace(/^https?:\/\//, '')), href);
+  }
+  await wait(900);
+  await still('retailer');
+  await press();
+  await page.click(`${target} .item-name`);
+  await wait(1300);
+  await page.evaluate(() => window.demo.status(''));
+  await hush();
+
+  /* --- 5. End ------------------------------------------------------ */
+
+  await page.mouse.move(1, 1);
+  await page.evaluate(() => window.demo.hide());
+  await scrollTo(resultsTop);
+  await wait(800);
+  await say(CAPTIONS.end);
+  await still('end');
+  await wait(2400);
+  await hush();
+  await wait(450);
+
   const length = now();
+  const video = stillsDir ? null : page.video();
   await context.close();
   await browser.close();
 
+  if (!video) {
+    console.log(`  ${shot.name}: ${(length - startAt).toFixed(1)}s walkthrough, stills written`);
+    return { cues, length, startAt };
+  }
   const source = await video.path();
-  console.log(`  ${shot.name}: ${length.toFixed(1)}s, ${(fs.statSync(source).size / 1e6).toFixed(2)} MB`);
-
-  return { source, cues, length };
+  console.log(`  ${shot.name}: ${(length - startAt).toFixed(1)}s, ${(fs.statSync(source).size / 1e6).toFixed(2)} MB raw`);
+  return { source, cues, length, startAt };
 }
 
 (async () => {
   fs.mkdirSync(OUT, { recursive: true });
-  const raw = fs.mkdtempSync(path.join(os.tmpdir(), 'fynd-demo-'));
+  const rawDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fynd-demo-'));
+  const stillsDir = STILLS ? fs.mkdtempSync(path.join(os.tmpdir(), 'fynd-stills-')) : null;
 
   await new Promise((r) => server.listen(PORT, r));
 
-  let interCss = '';
+  let fontCss = '';
   try {
-    interCss = await loadInter();
+    fontCss = await loadFonts();
     console.log(`Fonts: ${fontFiles.size} files cached for the recording`);
   } catch (err) {
     console.log('Inter could not be fetched — recording in the fallback stack.');
   }
 
-  console.log('recording…');
+  console.log(STILLS ? 'walking through for stills…' : 'recording…');
   const takes = [];
   try {
-    for (const shot of SHOTS) takes.push([shot, await record(shot, interCss, raw)]);
+    for (const shot of SHOTS) takes.push([shot, await record(shot, fontCss, rawDir, stillsDir)]);
   } catch (err) {
     server.close();
     if (/executable|launch|ENOENT/i.test(String(err && err.message))) {
@@ -754,15 +708,18 @@ async function record(shot, interCss, raw) {
     }
     throw err;
   }
-
   server.close();
+
+  if (STILLS) {
+    console.log(`stills in ${stillsDir}`);
+    return;
+  }
 
   for (const [shot, take] of takes) {
     /* The recorder falls behind the wall clock while it works, so the
-       video runs longer than the walkthrough took — about a tenth, and
-       more towards the end. The cues were timed on the wall clock, so
-       they are stretched to the video's own length, or the captions
-       track would run ahead of the frames it describes. */
+       video can run a little longer than the walkthrough took. The cues
+       were timed on the wall clock, so they are stretched to the video's
+       own length, or the captions track would run ahead of the frames. */
     const actual = videoLength(take.source);
     if (actual && actual > take.length) {
       const stretch = actual / take.length;
@@ -770,22 +727,29 @@ async function record(shot, interCss, raw) {
         cue.start *= stretch;
         if (cue.end != null) cue.end *= stretch;
       });
+      take.startAt *= stretch;
       take.length = actual;
     }
+    /* and every time is then counted from where the encode starts */
+    take.cues.forEach((cue) => {
+      cue.start -= take.startAt;
+      if (cue.end != null) cue.end -= take.startAt;
+    });
+    take.length -= take.startAt;
     writeTrack(shot.name, take.cues, take.length);
 
-    if (process.argv.includes('--raw')) {
+    if (RAW) {
       const kept = path.join(OUT, `${shot.name}.source.webm`);
       fs.copyFileSync(take.source, kept);
+      console.log(`  (the video proper starts ${take.startAt.toFixed(2)}s in)`);
       console.log(`kept the raw recording at ${path.relative(REPO, kept)}`);
       continue;
     }
 
-    /* the poster is the frame the section shows before anything plays,
-       so it is taken from the moment the grid is framed whole rather
-       than from the first frame, which is an empty search box */
-    const still = take.cues.length > 2 ? take.cues[2].start + 2.4 : 14;
-    encode(shot, take.source, still);
+    /* the poster is what the section shows before anything plays: the
+       results, framed whole, with the line that says what they are */
+    const results = take.cues.find((c) => c.text === CAPTIONS.results);
+    encode(shot, take.source, take.startAt, results ? results.start + 1.6 : 9);
   }
 })().catch((err) => { console.error(err); process.exit(1); });
 
@@ -808,10 +772,9 @@ function videoLength(file) {
 /* ---------------------------------------------------------
    The captions track
 
-   The same four lines the frame carries, as text, timed against the
-   recording that just happened rather than against a guess. They are
-   placed at the top of the frame so that turning them on does not stack
-   them over the ones drawn into it.
+   The same lines the frame carries, as text, timed against the recording
+   that just happened. They are placed at the top of the frame so that
+   turning them on does not stack them over the ones drawn into it.
    --------------------------------------------------------- */
 
 function writeTrack(name, cues, length) {
@@ -823,8 +786,8 @@ function writeTrack(name, cues, length) {
     return `00:${mm}:${ss}.${ms}`;
   };
 
-  const body = cues.map(({ n, text, start, end }) =>
-    `${n}\n${clock(start)} --> ${clock(end == null ? length : end)} line:8%\n${text}`).join('\n\n');
+  const body = cues.map(({ text, start, end }, i) =>
+    `${i + 1}\n${clock(start)} --> ${clock(end == null ? length : end)} line:8%\n${text}`).join('\n\n');
 
   const file = path.join(OUT, `${name}.vtt`);
   fs.writeFileSync(file, `WEBVTT\n\n${body}\n`);
@@ -836,15 +799,13 @@ function writeTrack(name, cues, length) {
 
    Two codecs per shape, because neither one alone reaches every
    browser. H.264 is the format nobody has to be asked about — except
-   that it is patent-encumbered, so a Chromium built without proprietary
-   codecs, which is what most Linux distributions ship and what this
-   repository's own test browser is, cannot play it at all. VP9 covers
-   those and is the smaller file besides; Safari takes the H.264. The
-   page lists the WebM first, so the browsers that can take the smaller
-   file do.
+   that a Chromium built without proprietary codecs, which is what most
+   Linux distributions ship and what this repository's own test browser
+   is, cannot play it at all. VP9 covers those and is the smaller file
+   besides; Safari takes the H.264. The page lists the WebM first.
    --------------------------------------------------------- */
 
-function encode(shot, source, still) {
+function encode(shot, source, startAt, stillAt) {
   const name = shot.name;
   const ffmpeg = findFfmpeg();
   if (!ffmpeg) {
@@ -858,23 +819,22 @@ function encode(shot, source, still) {
   const webm = path.join(OUT, `${name}.webm`);
   const poster = path.join(OUT, `${name}-poster.jpg`);
 
-  /* Kept at the size it was recorded at: each shape is already the
-     smallest frame its half of the breakpoint does not have to scale up,
-     and interface type is the first thing a resize costs. -an because
-     the demo is silent — there is no soundtrack to carry, and even a
-     muted track costs bytes. +faststart so the file can start playing
-     before it has finished arriving. */
+  /* Kept at the size it was recorded at, and at a steady 30 frames a
+     second. -an because the demo is silent: there is no soundtrack to
+     carry, and even a muted track costs bytes. +faststart so the file
+     can start playing before it has finished arriving. -ss before -i
+     drops the page load, which is not part of the demo. */
+  const common = ['-ss', startAt.toFixed(3), '-i', source, '-an', '-vf', 'fps=30', '-pix_fmt', 'yuv420p'];
 
   console.log(`encoding ${name}.mp4…`);
-  run(['-i', source, '-an', '-c:v', 'libx264', '-profile:v', 'high',
-    '-preset', 'veryslow', '-crf', String(shot.h264), '-pix_fmt', 'yuv420p', '-g', '50',
-    '-movflags', '+faststart', mp4]);
+  run([...common, '-c:v', 'libx264', '-profile:v', 'high', '-preset', 'veryslow',
+    '-crf', String(shot.h264), '-g', '60', '-movflags', '+faststart', mp4]);
 
   console.log(`encoding ${name}.webm…`);
-  run(['-i', source, '-an', '-c:v', 'libvpx-vp9', '-crf', String(shot.vp9), '-b:v', '0',
-    '-row-mt', '1', '-deadline', 'good', '-cpu-used', '2', '-pix_fmt', 'yuv420p', webm]);
+  run([...common, '-c:v', 'libvpx-vp9', '-crf', String(shot.vp9), '-b:v', '0',
+    '-row-mt', '1', '-deadline', 'good', '-cpu-used', '2', webm]);
 
-  run(['-ss', String(still), '-i', source, '-frames:v', '1', '-q:v', '5', poster]);
+  run(['-ss', (startAt + stillAt).toFixed(3), '-i', source, '-frames:v', '1', '-q:v', '4', poster]);
 
   const size = (p) => `${(fs.statSync(p).size / 1024).toFixed(0)} KB`;
   console.log(`  ${path.relative(REPO, mp4)}  ${size(mp4)}`);

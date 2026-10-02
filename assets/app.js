@@ -204,6 +204,8 @@ function orderFacet(counts, key) {
   const reset = document.getElementById('reset-form');
   const examples = document.getElementById('ask-examples');
   const preview = document.getElementById('preview');
+  /* the demo recording sits where the results will; it steps aside for them */
+  const demo = document.getElementById('demo');
   /* the words the shopper used, echoed under the outcome so the answer
      is always read against the question */
   let asked = '';
@@ -351,6 +353,7 @@ function orderFacet(counts, key) {
     /* the sample row on the home page steps aside: once a real search is
        running, the page has something better to put in that space */
     if (preview) preview.hidden = true;
+    if (demo) demo.hidden = true;
     results.hidden = false;
     asked = query;
     results.innerHTML = `<div class="results-head">
@@ -452,6 +455,7 @@ function orderFacet(counts, key) {
     results.hidden = true;
     results.innerHTML = '';
     if (preview) preview.hidden = false;
+    if (demo) demo.hidden = false;
     input.focus();
     form.scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
