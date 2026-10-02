@@ -282,6 +282,35 @@ const bodyOf = (call) => JSON.parse(call.options.body);
     assert.strictEqual(sent.temperature, 0);
   });
 
+  await testAsync('an OpenAI request to gpt-6-luna sends no temperature; other models still send 0', async () => {
+    /* gpt-6-luna answers 400 "Unsupported value: 'temperature' does not
+       support 0 with this model", so the field must be absent, not 0 and
+       not null. Every other model keeps the request it always had. */
+    const sentTo = (model) => withEnv({ OPENAI_API_KEY: 'sk-test', OPENAI_MODEL: model }, () => withStubbedFetch(
+      async () => jsonResponse(200, { choices: [{ message: { content: JSON.stringify(INTENT) } }], usage: { total_tokens: 100 } }),
+      async (calls) => {
+        const res = fakeRes();
+        await interpret(request({ query: 'a black shirt under $50', vocabulary: VOCABULARY }), res);
+        assert.strictEqual(res.statusCode, 200, `${model}: the interpretation must still succeed`);
+        return bodyOf(calls[0]);
+      }
+    ));
+
+    for (const model of ['gpt-6-luna', 'gpt-6-luna-2026-09-01']) {
+      const sent = await sentTo(model);
+      assert.strictEqual(sent.model, model);
+      assert.ok(!Object.prototype.hasOwnProperty.call(sent, 'temperature'), `${model} must not be sent temperature`);
+      assert.deepStrictEqual(sent.response_format, { type: 'json_object' });
+      assert.strictEqual(sent.messages[0].content, interpret.SYSTEM_PROMPT);
+    }
+
+    for (const model of ['gpt-4o-mini', 'gpt-4o', 'gpt-6-lunar']) {
+      const sent = await sentTo(model);
+      assert.strictEqual(sent.model, model);
+      assert.strictEqual(sent.temperature, 0, `${model} must still be sent temperature 0`);
+    }
+  });
+
   console.log('\nresponse parsing');
 
   test('a well-formed reply parses into the raw intent', () => {
