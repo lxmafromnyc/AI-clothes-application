@@ -1630,6 +1630,12 @@ its place.
 | Search 3 | cleared again; a brand or designer request typed; its results | "I can search for a specific brand too." |
 | End | still on Fynd's results | Search naturally. |
 
+The demo runs roughly 45–70 seconds: three real searches, each with its own
+typing, loading and results, and two or three retailer pages. The recorder
+refuses a video over 70 seconds (or under 15) and writes nothing, and warns about
+one under 45, which usually means a search or a retailer visit was left out. The
+limits are `DURATION` in `scripts/record-demo.js`.
+
 The searches are set in `SEARCHES` in `scripts/record-demo.js`. The first is
 fixed — it is the one said out loud. The second and third are narrated without
 naming them, and each lists real queries to try in order (a linen midi dress for
@@ -1660,7 +1666,7 @@ The search is made once, off camera, and saved to `assets/demo/demo-search.json`
 Both recordings — desktop and the phone layout — are made from that one saved
 answer, so they show the same products, and `--replay` re-records from it
 without searching again. The "Searching…" state on camera is the page's own,
-held to at most 1.8 seconds. The recording keeps its metering in memory (KV
+held to at most about 1.6 seconds. The recording keeps its metering in memory (KV
 settings are dropped from the process), so it never touches production state.
 
 Each product is opened through its real link (`scripts/demo-retailer-visit.js`),

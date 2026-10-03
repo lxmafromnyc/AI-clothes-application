@@ -18,7 +18,7 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 
-const { ffprobeFor, durationCommand, planCut, SEARCHES } = require('./record-demo');
+const { ffprobeFor, durationCommand, planCut, SEARCHES, DURATION, durationProblem, durationNote } = require('./record-demo');
 
 let passed = 0;
 let failed = 0;
@@ -258,6 +258,40 @@ test('a skipped attempt is cut from where the hand set off for it', () => {
   assert.ok(Math.abs(plan.segments[0].wallTo - 13.2) < 1e-6, 'Fynd runs only up to the approach');
   assert.ok(Math.abs(plan.segments[1].wallFrom - 16.1) < 1e-6, 'and resumes when the blocked tab is closed');
   assert.ok(plan.segments.every((x) => x.src !== 'x'), 'the blocked page is never in the video');
+});
+
+console.log('\nhow long a finished video may run');
+
+test('the limit is 70 seconds, the target 45–70', () => {
+  assert.strictEqual(DURATION.max, 70);
+  assert.strictEqual(DURATION.targetMin, 45);
+});
+
+test('a 65–70 second video is valid, without a warning (the real replay: 64.5s and 65.3s)', () => {
+  for (const s2 of [64.5, 65.0, 65.3, 67.8, 69.9, 70.0]) {
+    assert.strictEqual(durationProblem(s2), null, `${s2}s was refused`);
+    assert.strictEqual(durationNote(s2), null, `${s2}s was warned about`);
+  }
+});
+
+test('over 70 seconds is still refused, and says why', () => {
+  for (const s2 of [70.1, 75, 120]) {
+    assert.ok(/outside the allowed 15–70s/.test(durationProblem(s2) || ''), `${s2}s was accepted`);
+  }
+});
+
+test('too short or unreadable is refused; short but plausible is kept with a warning', () => {
+  assert.ok(durationProblem(10));
+  assert.ok(durationProblem(NaN));
+  assert.strictEqual(durationProblem(40), null);
+  assert.ok(/under the usual 45–70s/.test(durationNote(40) || ''));
+});
+
+test('the video check uses these limits, not a number of its own', () => {
+  const src = fs.readFileSync(path.join(__dirname, 'record-demo.js'), 'utf8');
+  const body = src.slice(src.indexOf('function checkVideo('), src.indexOf('\n}\n', src.indexOf('function checkVideo(')));
+  assert.ok(body.includes('durationProblem(seconds)'), 'checkVideo no longer goes through durationProblem');
+  assert.ok(!/seconds\s*[<>]\s*\d/.test(body), 'checkVideo compares seconds against a bare number');
 });
 
 console.log('\nthe narration');

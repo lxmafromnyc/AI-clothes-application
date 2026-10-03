@@ -144,6 +144,12 @@ const SEED = 20261002;
    "Searching…" state is allowed to run on camera: the real search can
    take several seconds, and a recording of a spinner is not the point */
 const MIN_PRODUCTS = 4;
+/* How long a finished video may run. Three real searches, each with its
+   own typing, loading and results, and two or three retailer pages, come
+   to roughly 45–70 seconds. Outside MIN–MAX the video is refused and
+   nothing is written; under TARGET_MIN it is kept, with a warning, since
+   a short one usually means a search or a retailer visit was left out. */
+const DURATION = { min: 15, targetMin: 45, max: 70 };
 /* retailer visits: at least this many must load, or nothing is written;
    and no search tries more products than this */
 const MIN_VISITS = 2;
@@ -1321,6 +1327,20 @@ function probeCommand(file, entries, probe = FFPROBE) {
 }
 const durationCommand = (file, probe = FFPROBE) => probeCommand(file, 'format=duration', probe);
 
+/* the length check on its own, so it can be tested without a video */
+function durationProblem(seconds) {
+  if (!Number.isFinite(seconds)) return 'has no readable length';
+  if (seconds < DURATION.min || seconds > DURATION.max) {
+    return `runs ${seconds.toFixed(1)}s, outside the allowed ${DURATION.min}–${DURATION.max}s`;
+  }
+  return null;
+}
+function durationNote(seconds) {
+  return Number.isFinite(seconds) && seconds >= DURATION.min && seconds < DURATION.targetMin
+    ? `runs ${seconds.toFixed(1)}s, under the usual ${DURATION.targetMin}–${DURATION.max}s — was a search or a retailer visit left out?`
+    : null;
+}
+
 /* a finished video is only kept if it really is one: picture at the
    expected size, a sound track, and a length in the expected range */
 function checkVideo(file, width, height) {
@@ -1333,8 +1353,11 @@ function checkVideo(file, width, height) {
   if (!video) problems.push('no video stream');
   else if (Number(video[1]) !== width || Number(video[2]) !== height) problems.push(`video is ${video[1]}x${video[2]}, not ${width}x${height}`);
   if (!audio) problems.push('no audio stream');
-  if (seconds < 15 || seconds > 65) problems.push(`runs ${seconds.toFixed(1)}s`);
+  const long = durationProblem(seconds);
+  if (long) problems.push(long);
   if (problems.length) throw new Error(`${path.basename(file)} is not a valid demo video: ${problems.join('; ')}`);
+  const note = durationNote(seconds);
+  if (note) console.log(`  warning: ${path.basename(file)} ${note}`);
 }
 
 function lengthOf(file) {
@@ -1627,5 +1650,5 @@ async function main() {
    starting anything */
 if (require.main === module) main();
 
-module.exports = { ffprobeFor, durationCommand, planCut, SEARCHES };
+module.exports = { ffprobeFor, durationCommand, planCut, SEARCHES, DURATION, durationProblem, durationNote };
 
