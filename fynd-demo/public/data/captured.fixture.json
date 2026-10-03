@@ -1,0 +1,352 @@
+{
+  "source": "fixture",
+  "capturedAt": "1970-01-01T00:00:00.000Z",
+  "searches": [
+    {
+      "id": "hoodie",
+      "query": "black oversized hoodie under $80",
+      "count": 24,
+      "attributes": [
+        {
+          "label": "Colour",
+          "value": "Black"
+        },
+        {
+          "label": "Fit",
+          "value": "Oversized"
+        },
+        {
+          "label": "Garment",
+          "value": "Hoodie"
+        },
+        {
+          "label": "Budget",
+          "value": "Under $80"
+        }
+      ],
+      "products": [
+        {
+          "id": "hoodie-1",
+          "brand": "Fixture Brand A",
+          "name": "Fixture hoodie 1 — not a real listing",
+          "price": "$00",
+          "retailer": "shop-a.example.com",
+          "image": "fixture/hoodie-1.svg",
+          "imageWidth": 800,
+          "imageHeight": 1000,
+          "url": "https://shop-a.example.com/products/fixture-hoodie-1"
+        },
+        {
+          "id": "hoodie-2",
+          "brand": "Fixture Brand B",
+          "name": "Fixture hoodie 2 — not a real listing",
+          "price": "$00",
+          "retailer": "shop-b.example.com",
+          "image": "fixture/hoodie-2.svg",
+          "imageWidth": 800,
+          "imageHeight": 1000,
+          "url": "https://shop-b.example.com/products/fixture-hoodie-2"
+        },
+        {
+          "id": "hoodie-3",
+          "brand": "Fixture Brand C",
+          "name": "Fixture hoodie 3 — not a real listing",
+          "price": "$00",
+          "retailer": "shop-c.example.com",
+          "image": "fixture/hoodie-3.svg",
+          "imageWidth": 800,
+          "imageHeight": 1000,
+          "url": "https://shop-c.example.com/products/fixture-hoodie-3"
+        },
+        {
+          "id": "hoodie-4",
+          "brand": "Fixture Brand D",
+          "name": "Fixture hoodie 4 — not a real listing",
+          "price": "$00",
+          "retailer": "shop-d.example.com",
+          "image": "fixture/hoodie-4.svg",
+          "imageWidth": 800,
+          "imageHeight": 1000,
+          "url": "https://shop-d.example.com/products/fixture-hoodie-4"
+        },
+        {
+          "id": "hoodie-5",
+          "brand": "Fixture Brand E",
+          "name": "Fixture hoodie 5 — not a real listing",
+          "price": "$00",
+          "retailer": "shop-e.example.com",
+          "image": "fixture/hoodie-5.svg",
+          "imageWidth": 800,
+          "imageHeight": 1000,
+          "url": "https://shop-e.example.com/products/fixture-hoodie-5"
+        },
+        {
+          "id": "hoodie-6",
+          "brand": "Fixture Brand F",
+          "name": "Fixture hoodie 6 — not a real listing",
+          "price": "$00",
+          "retailer": "shop-f.example.com",
+          "image": "fixture/hoodie-6.svg",
+          "imageWidth": 800,
+          "imageHeight": 1000,
+          "url": "https://shop-f.example.com/products/fixture-hoodie-6"
+        },
+        {
+          "id": "hoodie-7",
+          "brand": "Fixture Brand A",
+          "name": "Fixture hoodie 7 — not a real listing",
+          "price": "$00",
+          "retailer": "shop-a.example.com",
+          "image": "fixture/hoodie-7.svg",
+          "imageWidth": 800,
+          "imageHeight": 1000,
+          "url": "https://shop-a.example.com/products/fixture-hoodie-7"
+        },
+        {
+          "id": "hoodie-8",
+          "brand": "Fixture Brand B",
+          "name": "Fixture hoodie 8 — not a real listing",
+          "price": "$00",
+          "retailer": "shop-b.example.com",
+          "image": "fixture/hoodie-8.svg",
+          "imageWidth": 800,
+          "imageHeight": 1000,
+          "url": "https://shop-b.example.com/products/fixture-hoodie-8"
+        },
+        {
+          "id": "hoodie-9",
+          "brand": "Fixture Brand C",
+          "name": "Fixture hoodie 9 — not a real listing",
+          "price": "$00",
+          "retailer": "shop-c.example.com",
+          "image": "fixture/hoodie-9.svg",
+          "imageWidth": 800,
+          "imageHeight": 1000,
+          "url": "https://shop-c.example.com/products/fixture-hoodie-9"
+        },
+        {
+          "id": "hoodie-10",
+          "brand": "Fixture Brand D",
+          "name": "Fixture hoodie 10 — not a real listing",
+          "price": "$00",
+          "retailer": "shop-d.example.com",
+          "image": "fixture/hoodie-10.svg",
+          "imageWidth": 800,
+          "imageHeight": 1000,
+          "url": "https://shop-d.example.com/products/fixture-hoodie-10"
+        },
+        {
+          "id": "hoodie-11",
+          "brand": "Fixture Brand E",
+          "name": "Fixture hoodie 11 — not a real listing",
+          "price": "$00",
+          "retailer": "shop-e.example.com",
+          "image": "fixture/hoodie-11.svg",
+          "imageWidth": 800,
+          "imageHeight": 1000,
+          "url": "https://shop-e.example.com/products/fixture-hoodie-11"
+        },
+        {
+          "id": "hoodie-12",
+          "brand": "Fixture Brand F",
+          "name": "Fixture hoodie 12 — not a real listing",
+          "price": "$00",
+          "retailer": "shop-f.example.com",
+          "image": "fixture/hoodie-12.svg",
+          "imageWidth": 800,
+          "imageHeight": 1000,
+          "url": "https://shop-f.example.com/products/fixture-hoodie-12"
+        }
+      ]
+    },
+    {
+      "id": "dress",
+      "query": "cream linen midi dress for summer",
+      "count": 18,
+      "attributes": [
+        {
+          "label": "Colour",
+          "value": "White"
+        },
+        {
+          "label": "Garment",
+          "value": "Dress"
+        }
+      ],
+      "products": [
+        {
+          "id": "dress-1",
+          "brand": "Fixture Brand A",
+          "name": "Fixture dress 1 — not a real listing",
+          "price": "$00",
+          "retailer": "shop-a.example.com",
+          "image": "fixture/dress-1.svg",
+          "imageWidth": 800,
+          "imageHeight": 1000,
+          "url": "https://shop-a.example.com/products/fixture-dress-1"
+        },
+        {
+          "id": "dress-2",
+          "brand": "Fixture Brand B",
+          "name": "Fixture dress 2 — not a real listing",
+          "price": "$00",
+          "retailer": "shop-b.example.com",
+          "image": "fixture/dress-2.svg",
+          "imageWidth": 800,
+          "imageHeight": 1000,
+          "url": "https://shop-b.example.com/products/fixture-dress-2"
+        },
+        {
+          "id": "dress-3",
+          "brand": "Fixture Brand C",
+          "name": "Fixture dress 3 — not a real listing",
+          "price": "$00",
+          "retailer": "shop-c.example.com",
+          "image": "fixture/dress-3.svg",
+          "imageWidth": 800,
+          "imageHeight": 1000,
+          "url": "https://shop-c.example.com/products/fixture-dress-3"
+        },
+        {
+          "id": "dress-4",
+          "brand": "Fixture Brand D",
+          "name": "Fixture dress 4 — not a real listing",
+          "price": "$00",
+          "retailer": "shop-d.example.com",
+          "image": "fixture/dress-4.svg",
+          "imageWidth": 800,
+          "imageHeight": 1000,
+          "url": "https://shop-d.example.com/products/fixture-dress-4"
+        },
+        {
+          "id": "dress-5",
+          "brand": "Fixture Brand E",
+          "name": "Fixture dress 5 — not a real listing",
+          "price": "$00",
+          "retailer": "shop-e.example.com",
+          "image": "fixture/dress-5.svg",
+          "imageWidth": 800,
+          "imageHeight": 1000,
+          "url": "https://shop-e.example.com/products/fixture-dress-5"
+        },
+        {
+          "id": "dress-6",
+          "brand": "Fixture Brand F",
+          "name": "Fixture dress 6 — not a real listing",
+          "price": "$00",
+          "retailer": "shop-f.example.com",
+          "image": "fixture/dress-6.svg",
+          "imageWidth": 800,
+          "imageHeight": 1000,
+          "url": "https://shop-f.example.com/products/fixture-dress-6"
+        }
+      ]
+    },
+    {
+      "id": "bag",
+      "query": "vintage Prada bag under $500",
+      "count": 18,
+      "attributes": [
+        {
+          "label": "Budget",
+          "value": "Under $500"
+        }
+      ],
+      "products": [
+        {
+          "id": "bag-1",
+          "brand": "Fixture Brand A",
+          "name": "Fixture bag 1 — not a real listing",
+          "price": "$00",
+          "retailer": "shop-a.example.com",
+          "image": "fixture/bag-1.svg",
+          "imageWidth": 800,
+          "imageHeight": 1000,
+          "url": "https://shop-a.example.com/products/fixture-bag-1"
+        },
+        {
+          "id": "bag-2",
+          "brand": "Fixture Brand B",
+          "name": "Fixture bag 2 — not a real listing",
+          "price": "$00",
+          "retailer": "shop-b.example.com",
+          "image": "fixture/bag-2.svg",
+          "imageWidth": 800,
+          "imageHeight": 1000,
+          "url": "https://shop-b.example.com/products/fixture-bag-2"
+        },
+        {
+          "id": "bag-3",
+          "brand": "Fixture Brand C",
+          "name": "Fixture bag 3 — not a real listing",
+          "price": "$00",
+          "retailer": "shop-c.example.com",
+          "image": "fixture/bag-3.svg",
+          "imageWidth": 800,
+          "imageHeight": 1000,
+          "url": "https://shop-c.example.com/products/fixture-bag-3"
+        },
+        {
+          "id": "bag-4",
+          "brand": "Fixture Brand D",
+          "name": "Fixture bag 4 — not a real listing",
+          "price": "$00",
+          "retailer": "shop-d.example.com",
+          "image": "fixture/bag-4.svg",
+          "imageWidth": 800,
+          "imageHeight": 1000,
+          "url": "https://shop-d.example.com/products/fixture-bag-4"
+        },
+        {
+          "id": "bag-5",
+          "brand": "Fixture Brand E",
+          "name": "Fixture bag 5 — not a real listing",
+          "price": "$00",
+          "retailer": "shop-e.example.com",
+          "image": "fixture/bag-5.svg",
+          "imageWidth": 800,
+          "imageHeight": 1000,
+          "url": "https://shop-e.example.com/products/fixture-bag-5"
+        },
+        {
+          "id": "bag-6",
+          "brand": "Fixture Brand F",
+          "name": "Fixture bag 6 — not a real listing",
+          "price": "$00",
+          "retailer": "shop-f.example.com",
+          "image": "fixture/bag-6.svg",
+          "imageWidth": 800,
+          "imageHeight": 1000,
+          "url": "https://shop-f.example.com/products/fixture-bag-6"
+        }
+      ]
+    }
+  ],
+  "choose": [
+    "hoodie-2",
+    "hoodie-3",
+    "hoodie-4"
+  ],
+  "retailer": {
+    "productId": "hoodie-4",
+    "url": "https://shop-d.example.com/products/fixture-hoodie-4",
+    "host": "shop-d.example.com",
+    "name": "Fixture Shop",
+    "screenshots": {
+      "desktop": "fixture/retailer-desktop.svg",
+      "mobile": "fixture/retailer-mobile.svg"
+    },
+    "loaded": true,
+    "outcome": "loaded",
+    "checkedAt": "1970-01-01T00:00:00.000Z"
+  },
+  "mosaic": [
+    "hoodie-5",
+    "hoodie-6",
+    "hoodie-7",
+    "dress-5",
+    "dress-6",
+    "bag-5",
+    "bag-6"
+  ]
+}

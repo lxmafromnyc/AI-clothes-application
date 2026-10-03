@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="1000" viewBox="0 0 800 1000">
+  <defs><linearGradient id="g" x1="0" y1="0" x2="0.4" y2="1"><stop offset="0" stop-color="#26282B"/><stop offset="1" stop-color="#45484D"/></linearGradient></defs>
+  <rect width="800" height="1000" fill="url(#g)"/>
+  <rect x="40" y="40" width="720" height="920" fill="none" stroke="#FFFFFF" stroke-opacity=".35" stroke-width="4" stroke-dasharray="18 14"/>
+  <text x="400" y="480" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="64" font-weight="700" fill="#FFFFFF" fill-opacity=".8">FIXTURE</text>
+  <text x="400" y="550" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="34" fill="#FFFFFF" fill-opacity=".7">hoodie 12</text>
+  <text x="400" y="600" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="26" fill="#FFFFFF" fill-opacity=".55">not a product photo</text>
+</svg>

@@ -1,0 +1,52 @@
+[
+  {
+    "id": "looking",
+    "file": "audio/narration/looking.wav",
+    "durationInFrames": 92,
+    "seconds": 3.058,
+    "caption": "I’m looking for a black oversized hoodie under $80.",
+    "spoken": "I’m looking for a black oversized hoodie under eighty dollars.",
+    "speed": 1.0,
+    "longestGap": 0.1
+  },
+  {
+    "id": "understands",
+    "file": "audio/narration/understands.wav",
+    "durationInFrames": 60,
+    "seconds": 1.979,
+    "caption": "Fynd understands what you’re asking for.",
+    "spoken": "Fynd understands what you’re asking for.",
+    "speed": 1.0,
+    "longestGap": 0.08
+  },
+  {
+    "id": "brings",
+    "file": "audio/narration/brings.wav",
+    "durationInFrames": 98,
+    "seconds": 3.263,
+    "caption": "And Fynd brings back matching products from different retailers.",
+    "spoken": "And Fynd brings back matching products from different retailers.",
+    "speed": 0.98,
+    "longestGap": 0.1
+  },
+  {
+    "id": "compare",
+    "file": "audio/narration/compare.wav",
+    "durationInFrames": 80,
+    "seconds": 2.655,
+    "caption": "I can compare the options and open the one I want.",
+    "spoken": "I can compare the options and open the one I want.",
+    "speed": 0.97,
+    "longestGap": 0.08
+  },
+  {
+    "id": "straight",
+    "file": "audio/narration/straight.wav",
+    "durationInFrames": 54,
+    "seconds": 1.792,
+    "caption": "And I can go straight to the retailer.",
+    "spoken": "And I can go straight to the retailer.",
+    "speed": 1.0,
+    "longestGap": 0.06
+  }
+]

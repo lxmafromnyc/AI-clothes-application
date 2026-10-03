@@ -1,0 +1,33 @@
+{
+  "name": "fynd-demo",
+  "private": true,
+  "description": "The Fynd product film, rendered from code with Remotion. See README.md.",
+  "scripts": {
+    "studio": "remotion studio",
+    "collect": "node scripts/collect-assets.mjs",
+    "narration": "python3 scripts/narration.py",
+    "sfx": "node scripts/sfx.mjs",
+    "fixture": "node scripts/make-fixture.mjs",
+    "preview": "node scripts/render.mjs --preview",
+    "render": "node scripts/render.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "node scripts/check.mjs",
+    "stills": "node scripts/stills.mjs",
+    "verify": "python3 scripts/verify.py"
+  },
+  "dependencies": {
+    "@fontsource/inter": "5.3.0",
+    "@remotion/bundler": "4.0.532",
+    "@remotion/cli": "4.0.532",
+    "@remotion/renderer": "4.0.532",
+    "esbuild": "0.28.1",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "remotion": "4.0.532"
+  },
+  "devDependencies": {
+    "@types/react": "18.3.31",
+    "@types/react-dom": "18.3.7",
+    "typescript": "5.9.3"
+  }
+}

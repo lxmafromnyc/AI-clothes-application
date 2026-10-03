@@ -1613,6 +1613,16 @@ garment categories fall back to neutral artwork rather than breaking.
 
 ## The demo video
 
+There are two ways to make it:
+
+- **The product film** (`fynd-demo/`). A 32-second film made in code with
+  Remotion, at 16:9 and 9:16. Its products, prices, shops, links and retailer page
+  come from these same real searches. See `fynd-demo/README.md`.
+- **The screen recording** described below.
+
+Both write the same files into `assets/demo/`, so the page plays whichever was
+made last.
+
 The landing page carries a short screen recording directly under the search
 (`#demo` in `index.html`): a person casually using Fynd for three completely
 different requests, with a relaxed narration. It is compact, narrower than the
