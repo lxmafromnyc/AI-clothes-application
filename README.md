@@ -1710,7 +1710,16 @@ preferring a retailer not yet shown in the video. If a page still does not show
 when its product is clicked, that click is cut from the video, the shop is not
 tried again anywhere in the run, and another verified product from the same
 search is taken — the search itself is kept. If no product in a search reaches
-its page within three tries, nothing is written. The video shows the retailer's
+its page within three tries, nothing is written.
+
+No retailer can stall a recording. Every step of a retailer check has a hard
+limit — navigation, the page appearing, each read of the page, opening and
+closing its tab — and so does each whole check (12 s) and each whole run of
+checks. A page that runs out of time, or stops responding (a script holding its
+main thread, say), is a failed retailer: excluded, and the next one is checked.
+The preflight says so line by line: `mobile preflight 3/16: checking
+shop.example`, then `mobile preflight 3/16: timed out — excluded: shop.example
+(…)` or `passed — shop.example`. The video shows the retailer's
 tab for about two seconds once the page has arrived; the wait for it to arrive
 is cut. The recording report lists, per search and per layout, the product and
 retailer opened, any product the preflight left out, and any click that was cut,

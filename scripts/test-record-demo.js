@@ -29,7 +29,8 @@ const {
   ffprobeFor, durationCommand, SEARCHES, MIN_PRODUCTS, verdict, fitness, pickProduct,
   budgetOf, priceOf, mentionOf, cutMap, savedProblem, narrationNeeded,
   requestsFor, instability, howFound, recordingReport, RETRY_DELAYS_MS, loadEnv,
-  handoffAllowed, visitRetailer, RETAILER_LOAD_MS, MAX_HANDOFFS
+  handoffAllowed, visitRetailer, RETAILER_LOAD_MS, MAX_HANDOFFS,
+  LIMITS, withDeadline, probeRetailers, preflightRetailers
 } = require('./record-demo');
 const http = require('http');
 const store = require('../api/_store');
@@ -376,6 +377,107 @@ test('the report says plainly whether every click reached its retailer', () => {
   assert.strictEqual(recordingReport(saved, [[{ kind: 'desktop' }, { picks: [] }]], {}).everyHandoffShown, false);
 });
 
+section('\nno retailer can hang the recording');
+
+/* small limits, so a test of "never" takes a second, not a minute */
+const quick = { load: 300, settle: 20, hold: 100, step: 150, check: 1000 };
+const never = () => new Promise(() => {});
+const fakeTab = (o = {}) => ({
+  goto: o.goto || (async () => ({ status: () => 200 })),
+  waitForLoadState: o.waitForLoadState || (async () => {}),
+  evaluate: o.evaluate || (async () => 1000),
+  title: o.title || (async () => 'Ascender Softshell Jacket'),
+  url: () => 'https://shop.example/p/1',
+  close: o.close || (async () => {})
+});
+const within = async (ms, fn) => {
+  const started = Date.now();
+  const value = await fn();
+  const took = Date.now() - started;
+  assert.ok(took < ms, `took ${took}ms, more than ${ms}ms`);
+  return value;
+};
+
+test('the camera limits are the ones every check uses, and none is open-ended', () => {
+  assert.strictEqual(LIMITS.load, RETAILER_LOAD_MS);
+  for (const [k, v] of Object.entries(LIMITS)) assert.ok(Number.isFinite(v) && v > 0 && v <= 15000, `${k}: ${v}`);
+  assert.ok(LIMITS.check >= LIMITS.load + LIMITS.settle + LIMITS.hold, 'a whole check fits in its limit');
+});
+
+test('withDeadline gives up on a promise that never settles, and says it timed out', async () => {
+  const err = await within(500, () => withDeadline(never(), 100, 'x').then(() => null, (e) => e));
+  assert.ok(err && err.timedOut);
+  assert.strictEqual(await withDeadline(Promise.resolve(7), 100, 'x'), 7);
+});
+
+test('a navigation that never resolves fails the retailer, in bounded time', async () => {
+  const r = await within(quick.check + 500, () => visitRetailer(fakeTab({ goto: never }), 'https://shop.example/p/1', quick));
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.timedOut, true);
+});
+
+test('a page that never appears (a tab opened by a click) fails, in bounded time', async () => {
+  const r = await within(quick.check + 500, () => visitRetailer(fakeTab({ waitForLoadState: never }), null, quick));
+  assert.strictEqual(r.ok, false);
+});
+
+test('a page that arrives but can never be read fails, in bounded time', async () => {
+  const r = await within(quick.check + 500, () => visitRetailer(fakeTab({ evaluate: never, title: never }), 'https://shop.example/p/1', quick));
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.timedOut, true);
+  assert.ok(/stopped responding/.test(r.why), r.why);
+});
+
+test('a page that stalls only after the hold still fails, in bounded time', async () => {
+  let reads = 0;
+  const r = await within(quick.check + 500, () => visitRetailer(fakeTab({ evaluate: () => (++reads > 1 ? never() : Promise.resolve(1000)) }), 'https://shop.example/p/1', quick));
+  assert.strictEqual(r.ok, false);
+});
+
+test('a healthy page still passes under the same limits', async () => {
+  assert.strictEqual((await visitRetailer(fakeTab(), 'https://shop.example/p/1', quick)).ok, true);
+});
+
+test('timeout → exclude retailer → continue to the next candidate', async () => {
+  const tabs = {
+    'https://stuck.example/p': fakeTab({ goto: never, close: never }),
+    'https://unreadable.example/p': fakeTab({ evaluate: never, title: never }),
+    'https://good.example/p': fakeTab()
+  };
+  const order = Object.keys(tabs);
+  let opened = 0;
+  const context = { newPage: async () => tabs[order[opened++]] };
+  /* one worker's worth: the products go in order, so each must finish before the next starts */
+  const lines = [];
+  const out = await within(4 * (quick.check + 2 * quick.step) + 1000, () => probeRetailers(context,
+    order.map((href) => ({ href })), { limit: Infinity, limits: quick, log: (l) => lines.push(l) }));
+  assert.strictEqual(out['https://stuck.example/p'].ok, false);
+  assert.strictEqual(out['https://stuck.example/p'].timedOut, true);
+  assert.strictEqual(out['https://unreadable.example/p'].ok, false);
+  assert.strictEqual(out['https://good.example/p'].ok, true);
+  assert.ok(lines.includes('1/3: checking stuck.example'), lines.join(' | '));
+  assert.ok(lines.some((l) => /^1\/3: timed out — excluded: stuck\.example/.test(l)), lines.join(' | '));
+  assert.ok(lines.some((l) => /^2\/3: timed out — excluded: unreadable\.example \(the page stopped responding/.test(l)), lines.join(' | '));
+  assert.ok(lines.includes('3/3: passed — good.example'), lines.join(' | '));
+});
+
+test('a tab that never opens is excluded, and the others are still checked', async () => {
+  let n = 0;
+  const context = { newPage: () => (n++ === 0 ? never() : Promise.resolve(fakeTab())) };
+  const out = await within(4000, () => probeRetailers(context, [{ href: 'https://a.example/1' }, { href: 'https://b.example/2' }],
+    { limit: Infinity, limits: quick }));
+  assert.strictEqual(out['https://a.example/1'].ok, false);
+  assert.strictEqual(out['https://a.example/1'].timedOut, true);
+  assert.strictEqual(out['https://b.example/2'].ok, true);
+});
+
+test('a phone preflight whose browser never starts excludes every retailer and returns', async () => {
+  const shown = [{ href: 'https://a.example/1', retailerOk: true }, { href: 'https://b.example/2', retailerOk: true }];
+  const out = await within(3000, () => preflightRetailers({ newContext: never }, { kind: 'mobile', width: 400, height: 720, dpr: 2, touch: true },
+    [{ shown }], quick));
+  assert.deepStrictEqual(Object.values(out).map((r) => r.ok), [false, false]);
+});
+
 section('\nthe edit');
 
 test('Fynd, retailer, Fynd: lengths add up and lines land where they were said', () => {
@@ -546,6 +648,10 @@ if (chromium) {
     '/denied': (res) => res.end('<title>Access Denied</title><p>You don\'t have permission.</p>'),
     '/blank': (res) => res.end('<title>Jacket</title><p></p>'),
     '/gone': (res) => { res.statusCode = 404; res.end(`<title>Not found</title><p>${words}</p>`); },
+    /* headers, a start, and then nothing, for ever */
+    '/never': (res) => { res.write('<title>Jacket</title><p>'); },
+    /* arrives, then its script holds the main thread so nothing can read it */
+    '/locks': (res) => res.end(`<title>Jacket</title><p>${words}</p><script>setTimeout(() => { for (;;) {} }, 30)</script>`),
     '/turns': (res) => res.end(`<title>Jacket</title><p>${words}</p><script>setTimeout(() => { document.title = 'Just a moment...'; document.body.innerHTML = ''; }, 900)</script>`)
   };
   let server;
@@ -565,7 +671,26 @@ if (chromium) {
   test('a blank page fails', async () => { assert.ok(/blank/.test((await visit('/blank')).why)); });
   test('an error page fails', async () => { assert.ok(/HTTP 404/.test((await visit('/gone')).why)); });
   test('a page that turns into a challenge while held fails', async () => { assert.ok(/once held/.test((await visit('/turns')).why)); });
-  queue.push(async () => { await browser.close(); server.close(); });
+  test('a phone preflight with a page that never finishes and one that locks up is bounded, and the good page passes', async () => {
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const shown = ['/never', '/locks', '/fine'].map((r) => ({ href: base + r, retailerOk: true }));
+    const limits = { load: 2000, settle: 100, hold: 400, step: 800, check: 5000 };
+    const lines = [];
+    const log = console.log;
+    console.log = (l) => lines.push(l);
+    let out;
+    try {
+      out = await within(3 * (limits.check + 2 * limits.step) + 2000, () => preflightRetailers(browser,
+        { kind: 'mobile', width: 400, height: 720, dpr: 2, touch: true }, [{ shown }], limits));
+    } finally { console.log = log; }
+    assert.strictEqual(out[`${base}/never`].ok, false, 'never finishes');
+    assert.strictEqual(out[`${base}/locks`].ok, false, 'locks up');
+    assert.strictEqual(out[`${base}/fine`].ok, true, 'the good one');
+    assert.ok(lines.some((l) => /mobile preflight \d\/3: checking 127\.0\.0\.1/.test(l)), lines.join(' | '));
+    assert.ok(lines.some((l) => /mobile preflight \d\/3: timed out — excluded: 127\.0\.0\.1/.test(l)), lines.join(' | '));
+    assert.ok(lines.some((l) => /mobile preflight \d\/3: passed — 127\.0\.0\.1/.test(l)), lines.join(' | '));
+  });
+  queue.push(async () => { await withDeadline(browser.close(), 10000, 'closing').catch(() => {}); server.closeAllConnections(); server.close(); });
 } else {
   queue.push(async () => console.log('\n  (the browser checks were skipped: Playwright is not installed)'));
 }

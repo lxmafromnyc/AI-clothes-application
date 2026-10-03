@@ -629,77 +629,175 @@ const mentions = (re, p) => !re || re.test(`${p.brand || ''} ${p.name || ''}`);
 const budgetOf = (query) => { const m = /\bunder \$\s?([\d,]+)/i.exec(query || ''); return m ? Number(m[1].replace(/,/g, '')) : null; };
 const priceOf = (text) => { const m = /\$\s?([\d,]+(?:\.\d+)?)/.exec(text || ''); return m ? Number(m[1].replace(/,/g, '')) : null; };
 
+
+
+
+
+/* ---------------------------------------------------------
+   Nothing about a retailer page may wait for ever
+
+   A page can stall any step: a navigation that never finishes, a page
+   whose script keeps its main thread busy so nothing can be read from
+   it, a tab that will not open or close. Each step is given its own hard
+   limit, each whole check another, and a whole run of checks a third;
+   whatever runs out is a failed retailer, left out, and the run goes on
+   to the next. The limits are the camera's own, not looser.
+   --------------------------------------------------------- */
+
+const LIMITS = {
+  load: RETAILER_LOAD_MS,      /* the page must arrive within this */
+  settle: RETAILER_SETTLE_MS,  /* then be itself this soon after */
+  hold: RETAILER_MS,           /* and still be itself after this */
+  step: 2500,                  /* any one read of the page, or opening or closing a tab */
+  check: 12000                 /* one whole check, from navigation to the read after the hold */
+};
+
+/* `promise`, or a rejection once `ms` have passed, whichever comes first.
+   The rejection carries timedOut so a caller can say which it was. */
+function withDeadline(promise, ms, what) {
+  let timer;
+  const late = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      const err = new Error(`${what} did not finish within ${(ms / 1000).toFixed(1)}s`);
+      err.timedOut = true;
+      reject(err);
+    }, ms);
+  });
+  return Promise.race([Promise.resolve(promise), late]).finally(() => clearTimeout(timer));
+}
+
+/* closing a stuck tab can itself get stuck; it is asked, not waited on */
+const closeQuietly = (target, ms = LIMITS.step) => withDeadline(
+  Promise.resolve().then(() => target.close({ runBeforeUnload: false })), ms, 'closing').catch(() => {});
+
 /* Whether an open tab is the retailer's page, and not a block page, an
-   error or a blank: the same test on the first pass and on camera. */
-async function retailerShows(tab, status) {
-  const code = status || await tab.evaluate(() => {
+   error or a blank: the same test on the first pass, in the preflight
+   and on camera. A read that does not come back in time reads as
+   nothing, which fails. */
+async function retailerShows(tab, status, limits = LIMITS) {
+  let stalled = false;
+  const read = (fn, fallback) => withDeadline(Promise.resolve().then(fn), limits.step, 'reading the page')
+    .catch((err) => { if (err && err.timedOut) stalled = true; return fallback; });
+  const code = status || await read(() => tab.evaluate(() => {
     const nav = performance.getEntriesByType('navigation')[0];
     return nav && nav.responseStatus ? nav.responseStatus : 200;
-  }).catch(() => 0);
-  const title = await tab.title().catch(() => '');
+  }), 0);
+  const title = await read(() => tab.title(), '');
   const blocked = /access denied|forbidden|captcha|just a moment|attention required|are you a robot|blocked/i.test(title);
-  const text = await tab.evaluate(() => (document.body && document.body.innerText || '').length).catch(() => 0);
-  const ok = code > 0 && code < 400 && !blocked && text > 200 && /^https?:/.test(tab.url());
-  const why = ok ? '' : blocked ? `blocked ("${title.slice(0, 40)}")` : code >= 400 ? `HTTP ${code}` : text <= 200 ? 'blank page' : 'no page';
-  return { ok, why };
+  const text = await read(() => tab.evaluate(() => (document.body && document.body.innerText || '').length), 0);
+  const url = await read(() => tab.url(), '');
+  const ok = !stalled && code > 0 && code < 400 && !blocked && text > 200 && /^https?:/.test(url);
+  const why = ok ? '' : stalled ? `the page stopped responding (a read took over ${limits.step / 1000}s)`
+    : blocked ? `blocked ("${title.slice(0, 40)}")` : code >= 400 ? `HTTP ${code}` : text <= 200 ? 'blank page' : 'no page';
+  return { ok, why, timedOut: stalled };
 }
 
 /* Opens a retailer page — `href` in this tab, or whatever the tab is
    already loading when the link opened it — and puts it through the one
-   test. Returns { ok, why, shownAt } with shownAt the moment it arrived
-   (Date.now()), so the camera can start showing it from there. */
-async function visitRetailer(tab, href) {
-  let status = 0;
-  try {
-    if (href) {
-      const response = await tab.goto(href, { waitUntil: 'domcontentloaded', timeout: RETAILER_LOAD_MS });
-      status = response ? response.status() : 0;
-    } else {
-      await tab.waitForLoadState('domcontentloaded', { timeout: RETAILER_LOAD_MS });
+   test. Returns { ok, why, timedOut, shownAt } with shownAt the moment it
+   arrived (Date.now()), so the camera can start showing it from there.
+   Always returns, within limits.check. */
+async function visitRetailer(tab, href, limits = LIMITS) {
+  const run = async () => {
+    let status = 0;
+    try {
+      if (href) {
+        const response = await withDeadline(tab.goto(href, { waitUntil: 'domcontentloaded', timeout: limits.load }), limits.load + limits.step, 'navigation');
+        status = response ? response.status() : 0;
+      } else {
+        await withDeadline(tab.waitForLoadState('domcontentloaded', { timeout: limits.load }), limits.load + limits.step, 'the page appearing');
+      }
+    } catch (err) {
+      return { ok: false, why: `did not arrive within ${limits.load / 1000}s`, timedOut: true, shownAt: 0 };
     }
+    const shownAt = Date.now();
+    await wait(limits.settle);
+    const first = await retailerShows(tab, status, limits);
+    if (!first.ok) return { ...first, shownAt };
+    await wait(Math.max(0, limits.hold - (Date.now() - shownAt)));
+    const held = await retailerShows(tab, status, limits);
+    if (!held.ok) return { ok: false, why: `${held.why} once held`, timedOut: held.timedOut, shownAt };
+    return { ok: true, why: '', timedOut: false, shownAt };
+  };
+  try {
+    return await withDeadline(run(), limits.check, 'the retailer check');
   } catch (err) {
-    return { ok: false, why: `did not arrive within ${RETAILER_LOAD_MS / 1000}s`, shownAt: 0 };
+    return err && err.timedOut
+      ? { ok: false, why: `timed out after ${limits.check / 1000}s`, timedOut: true, shownAt: 0 }
+      : { ok: false, why: 'did not load', timedOut: false, shownAt: 0 };
   }
-  const shownAt = Date.now();
-  await wait(RETAILER_SETTLE_MS);
-  const first = await retailerShows(tab, status);
-  if (!first.ok) return { ...first, shownAt };
-  await wait(Math.max(0, RETAILER_MS - (Date.now() - shownAt)));
-  const held = await retailerShows(tab, status);
-  if (!held.ok) return { ok: false, why: `${held.why} once held`, shownAt };
-  return { ok: true, why: '', shownAt };
 }
 
-/* Opens each product's retailer page, as a click on camera would, and
-   notes which ones show themselves. Only those are ever clicked. */
-async function probeRetailers(context, products, limit = PROBE_PRODUCTS) {
+/* Opens each product's retailer page, as a click on camera would, three
+   at a time, and notes which ones show themselves. Only those are ever
+   clicked. Every product gets an answer — a tab that would not open, a
+   check that ran out of time, or the whole run running out of time all
+   count as failed — and the function always returns. `log` hears each
+   one by number: "3/16: checking …", "3/16: timed out — excluded". */
+async function probeRetailers(context, products, { limit = PROBE_PRODUCTS, limits = LIMITS, log = null } = {}) {
   const out = {};
-  const queue = products.slice(0, limit);
+  const list = products.slice(0, limit);
+  const total = list.length;
+  const say = (i, text) => { if (log) log(`${i + 1}/${total}: ${text}`); };
+  let next = 0;
+  let stopped = false;
+
   const worker = async () => {
-    for (let p = queue.shift(); p; p = queue.shift()) {
-      const tab = await context.newPage();
-      out[p.href] = await visitRetailer(tab, p.href).catch(() => ({ ok: false, why: 'did not load' }));
-      await tab.close().catch(() => {});
+    while (!stopped && next < total) {
+      const i = next;
+      next += 1;
+      const { href } = list[i];
+      const where = hostOf(href) || href;
+      say(i, `checking ${where}`);
+      let tab = null;
+      let result;
+      try {
+        tab = await withDeadline(context.newPage(), limits.step, 'opening a tab');
+        result = await visitRetailer(tab, href, limits);
+      } catch (err) {
+        result = { ok: false, why: 'a tab could not be opened in time', timedOut: true };
+      }
+      if (tab) await closeQuietly(tab, limits.step);
+      if (stopped) return;
+      out[href] = result;
+      say(i, result.ok ? `passed — ${where}` : `${result.timedOut ? 'timed out' : 'failed'} — excluded: ${where} (${result.why})`);
     }
   };
-  await Promise.all([worker(), worker(), worker()]);
+
+  /* the whole run: as long as its checks could take one after another
+     three abreast, and not a moment more */
+  const cap = Math.ceil(total / 3) * (limits.check + 2 * limits.step) + limits.step;
+  await withDeadline(Promise.all([worker(), worker(), worker()]), cap, 'the retailer checks').catch(() => { stopped = true; });
+  list.forEach(({ href }, i) => {
+    if (out[href]) return;
+    out[href] = { ok: false, why: 'the checks ran out of time', timedOut: true };
+    say(i, `timed out — excluded: ${hostOf(href) || href} (the checks ran out of time)`);
+  });
   return out;
 }
 
 /* Right before a recording: every product the first pass saw open is
    opened again, in a tab shaped like the recording's own (a phone's for
    the phone layout), because a page that opened an hour ago, or for a
-   desktop browser, may not open now on this one. Off camera. */
-async function preflightRetailers(browser, shot, searches) {
-  const context = await browser.newContext({
-    viewport: { width: shot.width, height: shot.height },
-    deviceScaleFactor: shot.dpr, isMobile: shot.touch, hasTouch: shot.touch
-  });
+   desktop browser, may not open now on this one. Off camera, and never
+   for longer than its checks are allowed. */
+async function preflightRetailers(browser, shot, searches, limits = LIMITS) {
+  const hrefs = [...new Set(searches.flatMap((s) => s.shown.filter((p) => p.retailerOk === true).map((p) => p.href)))];
+  const log = (line) => console.log(`  ${shot.kind} preflight ${line}`);
+  let context;
   try {
-    const hrefs = new Set(searches.flatMap((s) => s.shown.filter((p) => p.retailerOk === true).map((p) => p.href)));
-    return await probeRetailers(context, [...hrefs].map((href) => ({ href })), Infinity);
+    context = await withDeadline(browser.newContext({
+      viewport: { width: shot.width, height: shot.height },
+      deviceScaleFactor: shot.dpr, isMobile: shot.touch, hasTouch: shot.touch
+    }), limits.check, 'opening the preflight browser');
+  } catch (err) {
+    log(`could not start (${err.message}); every retailer is excluded`);
+    return Object.fromEntries(hrefs.map((href) => [href, { ok: false, why: 'the preflight could not start', timedOut: true }]));
+  }
+  try {
+    return await probeRetailers(context, hrefs.map((href) => ({ href })), { limit: Infinity, limits, log });
   } finally {
-    await context.close();
+    await closeQuietly(context, limits.check);
   }
 }
 
@@ -814,11 +912,13 @@ async function searchOnce(browser, request) {
     }
 
     const found = await checkResults(page);
-    const opened = verdict(found).length ? {} : await probeRetailers(context, found);
+    const opened = verdict(found).length ? {} : await probeRetailers(context, found, {
+      log: (line) => { if (!/: checking |: passed — /.test(line)) console.log(`    retailer ${line}`); }
+    });
     found.forEach((p) => { p.retailerOk = Boolean(opened[p.href] && opened[p.href].ok); p.retailerWhy = opened[p.href] ? opened[p.href].why : 'not opened'; });
     return { found, search, interpret: api.exchanges.interpret || null, verified: found.length, unsteady, problems: fitness(found, request) };
   } finally {
-    await context.close();
+    await closeQuietly(context, LIMITS.check);
   }
 }
 
@@ -901,7 +1001,7 @@ async function realSearches(chromium) {
       });
     }
   } finally {
-    await browser.close();
+    await withDeadline(browser.close(), 30000, 'closing the browser').catch(() => {});
   }
   return {
     version: 3,
@@ -945,14 +1045,16 @@ async function record(chromium, shot, rawDir, stillsDir) {
   const photos = api.saved.searches.flatMap((s) => s.shown.map((p) => p.photo)).filter(Boolean);
   const warm = await context.newPage();
   await warm.goto(`${ORIGIN}/index.html`, { waitUntil: 'load' });
-  await warm.evaluate((urls) => Promise.all(urls.map((u) => new Promise((r) => {
+  /* a photo host that never answers costs this step, not the run: the
+     photos are checked again, loaded, on camera */
+  await withDeadline(warm.evaluate((urls) => Promise.all(urls.map((u) => new Promise((r) => {
     const img = new Image(); img.referrerPolicy = 'no-referrer';
     img.onload = img.onerror = r; img.src = u;
-  }))), photos);
-  await warm.close();
+  }))), photos), 30000, 'fetching the photos').catch(() => {});
+  await closeQuietly(warm);
 
   /* every candidate retailer page, opened again now, off camera */
-  console.log(`  ${shot.name}: checking the retailer pages before filming…`);
+  console.log(`  ${shot.name}: checking the retailer pages before filming (each one at most ${LIMITS.check / 1000}s)…`);
   const preflight = await preflightRetailers(browser, shot, api.saved.searches);
   const refused = Object.entries(preflight).filter(([, r]) => !r.ok);
   console.log(`  ${shot.name}: ${Object.keys(preflight).length - refused.length} of ${Object.keys(preflight).length} retailer pages showed themselves`
@@ -980,7 +1082,7 @@ async function record(chromium, shot, rawDir, stillsDir) {
   const still = async (label, target = page) => {
     if (!stillsDir) return;
     stillN += 1;
-    await target.screenshot({ path: path.join(stillsDir, `${shot.name}-${String(stillN).padStart(2, '0')}-${label}.png`) }).catch(() => {});
+    await withDeadline(target.screenshot({ path: path.join(stillsDir, `${shot.name}-${String(stillN).padStart(2, '0')}-${label}.png`) }), LIMITS.check, 'a still').catch(() => {});
   };
   /* a narrated line: the clip starts now, and its words stay in the strip
      for as long as it is spoken */
@@ -1283,13 +1385,13 @@ async function record(chromium, shot, rawDir, stillsDir) {
       let video = null;
       if (popup) {
         born = now();
-        result = await visitRetailer(popup, null).catch(() => ({ ok: false, why: 'did not load' }));
+        result = await visitRetailer(popup, null);
         if (stillsDir && result.ok) await still(`${tag}-retailer`, popup);
         video = stillsDir ? null : popup.video();
       }
       const gone = now();
       const landed = popup ? popup.url() : null;
-      if (popup) await popup.close();
+      if (popup) await closeQuietly(popup);
       await page.bringToFront();
 
       if (result.ok) {
@@ -1332,8 +1434,10 @@ async function record(chromium, shot, rawDir, stillsDir) {
   cut.push({ src: 'main', from: segFrom, to: marks.end });
 
   const mainVideo = stillsDir ? null : page.video();
-  await context.close();
-  await browser.close();
+  /* closing the context is what finishes writing the videos: given
+     its time, but not for ever */
+  await withDeadline(context.close(), 60000, 'finishing the recording').catch((err) => fail(`${shot.name}: ${err.message}.`));
+  await withDeadline(browser.close(), 30000, 'closing the browser').catch(() => {});
 
   if (process.env.DEMO_DEBUG) {
     console.log('  marks', JSON.stringify(Object.fromEntries(Object.entries(marks).map(([k, t]) => [k, Number(t.toFixed(2))]))));
@@ -1649,5 +1753,5 @@ async function main() {
    starting anything */
 if (require.main === module) main();
 
-module.exports = { handoffAllowed, visitRetailer, RETAILER_LOAD_MS, RETAILER_SETTLE_MS, MAX_HANDOFFS, ffprobeFor, durationCommand, SEARCHES, requestsFor, instability, howFound, recordingReport, RETRY_DELAYS_MS, loadEnv, MIN_PRODUCTS, verdict, fitness, pickProduct, budgetOf, priceOf, mentionOf, cutMap, savedProblem, narrationNeeded };
+module.exports = { LIMITS, withDeadline, probeRetailers, preflightRetailers, retailerShows, handoffAllowed, visitRetailer, RETAILER_LOAD_MS, RETAILER_SETTLE_MS, MAX_HANDOFFS, ffprobeFor, durationCommand, SEARCHES, requestsFor, instability, howFound, recordingReport, RETRY_DELAYS_MS, loadEnv, MIN_PRODUCTS, verdict, fitness, pickProduct, budgetOf, priceOf, mentionOf, cutMap, savedProblem, narrationNeeded };
 
