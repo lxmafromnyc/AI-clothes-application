@@ -9,6 +9,12 @@
    FFMPEG_PATH=...\ffmpeg.exe by a pattern that only matched a path
    ending in "ffmpeg". These checks hold that line.
 
+   And the demo's own rules, which decide what may be shown: four
+   different searches, results that are real and loaded and not one
+   product repeated, a brand search that really returns the brand, only
+   retailer pages seen to open ever clicked, and an edit that places
+   every line where it was said.
+
    Offline, no browser, no ffmpeg needed:  node scripts/test-record-demo.js
    ========================================================= */
 
@@ -18,7 +24,10 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 
-const { ffprobeFor, durationCommand } = require('./record-demo');
+const {
+  ffprobeFor, durationCommand, SEARCHES, MIN_PRODUCTS, verdict, fitness, pickProduct,
+  budgetOf, priceOf, mentionOf, cutMap, savedProblem, narrationNeeded
+} = require('./record-demo');
 
 let passed = 0;
 let failed = 0;
@@ -121,6 +130,186 @@ test('lengthOf reads through durationCommand', () => {
   const body = src.slice(src.indexOf('function lengthOf('), src.indexOf('\n}\n', src.indexOf('function lengthOf(')));
   assert.ok(body.includes('durationCommand('), 'lengthOf no longer goes through durationCommand');
   assert.ok(!/FFMPEG/.test(body), 'lengthOf mentions FFMPEG');
+});
+
+console.log('\nthe searches');
+
+test('four searches, each a different slot with its own narration line', () => {
+  assert.strictEqual(SEARCHES.length, 4);
+  assert.strictEqual(new Set(SEARCHES.map((s) => s.slot)).size, 4);
+  assert.strictEqual(new Set(SEARCHES.map((s) => s.line)).size, 4);
+});
+
+test('no request appears twice, and every one has a budget', () => {
+  const all = SEARCHES.flatMap((s) => s.candidates.map((c) => c.query));
+  assert.strictEqual(new Set(all.map((q) => q.toLowerCase())).size, all.length);
+  for (const q of all) assert.ok(budgetOf(q) > 0, `"${q}" names no budget`);
+});
+
+test('the first choices span different budgets', () => {
+  const budgets = SEARCHES.map((s) => budgetOf(s.candidates[0].query));
+  assert.strictEqual(new Set(budgets).size, budgets.length, budgets.join(', '));
+});
+
+test('the opening request is the one its narration names, with no fall-back', () => {
+  const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'assets', 'demo', 'narration', 'manifest.json'), 'utf8'));
+  const first = SEARCHES[0];
+  assert.strictEqual(first.candidates.length, 1);
+  assert.ok(/black oversized hoodie/.test(first.candidates[0].query));
+  assert.ok(/black oversized hoodie/i.test(manifest.lines[first.line].text) && /eighty/.test(manifest.lines[first.line].text));
+});
+
+test('the later lines name no request, since those slots can fall back', () => {
+  const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'assets', 'demo', 'narration', 'manifest.json'), 'utf8'));
+  for (const s of SEARCHES.slice(1)) {
+    const said = manifest.lines[s.line].text.toLowerCase();
+    for (const c of s.candidates) {
+      for (const word of c.query.toLowerCase().split(/\W+/).filter((w) => w.length > 4 && w !== 'under')) {
+        assert.ok(!said.includes(word), `"${s.line}" says "${word}" from "${c.query}"`);
+      }
+    }
+  }
+});
+
+test('every narration line the recording can ask for has its clip', () => {
+  const dir = path.join(__dirname, '..', 'assets', 'demo', 'narration');
+  const manifest = JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8'));
+  for (const key of narrationNeeded()) {
+    assert.ok(manifest.lines[key], `no line "${key}" in the manifest`);
+    assert.ok(fs.existsSync(path.join(dir, manifest.lines[key].file)), `no clip for "${key}"`);
+    assert.ok(manifest.lines[key].duration > 0.5 && manifest.lines[key].duration < 6, `"${key}" is ${manifest.lines[key].duration}s`);
+  }
+});
+
+console.log('\nwhat may be shown');
+
+const product = (i, extra = {}) => ({
+  i, name: `Product ${i}`, brand: 'Brand', price: '$60', href: `https://shop${i}.example/p/${i}`,
+  retailer: `shop${i}.example`, drawn: false, sample: false, src: `https://img.example/${i}.jpg`,
+  width: 600, height: 800, loaded: true, retailerOk: true, ...extra
+});
+const grid = (n, extra) => Array.from({ length: n }, (_, i) => product(i, typeof extra === 'function' ? extra(i) : extra));
+
+test('real, loaded, different products pass', () => {
+  assert.deepStrictEqual(verdict(grid(6)), []);
+});
+
+test('too few products, a sample row, a drawing, no link, a failed or tiny photo are each refused', () => {
+  assert.ok(verdict(grid(MIN_PRODUCTS - 1)).some((p) => /only 3/.test(p)));
+  assert.ok(verdict(grid(5, (i) => (i === 2 ? { sample: true } : {}))).some((p) => /sample row/.test(p)));
+  assert.ok(verdict(grid(5, (i) => (i === 2 ? { drawn: true, loaded: false } : {}))).some((p) => /placeholder/.test(p)));
+  assert.ok(verdict(grid(5, (i) => (i === 2 ? { href: '' } : {}))).some((p) => /no retailer link/.test(p)));
+  assert.ok(verdict(grid(5, (i) => (i === 2 ? { loaded: false } : {}))).some((p) => /did not load/.test(p)));
+  assert.ok(verdict(grid(5, (i) => (i === 2 ? { width: 90, height: 90 } : {}))).some((p) => /too small/.test(p)));
+});
+
+test('one product shown several times is not several products', () => {
+  const same = grid(6, (i) => (i > 1 ? { name: 'Product 1', src: 'https://img.example/1.jpg' } : {}));
+  assert.ok(verdict(same).some((p) => /different product/.test(p)));
+});
+
+test('a brand search is only used when the results are really that brand', () => {
+  const bape = SEARCHES.flatMap((s) => s.candidates).find((c) => /BAPE/.test(c.query));
+  assert.ok(bape && bape.mention, 'the BAPE request names its brand');
+  const mostlyOthers = grid(8, (i) => (i < 2 ? { brand: 'A Bathing Ape', name: 'Shark Full Zip Hoodie' } : { name: 'Shark Hoodie' }));
+  assert.ok(fitness(mostlyOthers, bape).some((p) => /actually BAPE/.test(p)));
+  const real = grid(8, (i) => (i < 5 ? { brand: 'BAPE', name: `Shark Full Zip Hoodie ${i}` } : {}));
+  assert.deepStrictEqual(fitness(real, bape), []);
+});
+
+test('a search with no retailer page that opens is not used', () => {
+  assert.ok(fitness(grid(6, { retailerOk: false }), { query: 'x under $10' }).some((p) => /retailer page/.test(p)));
+  /* nor one whose only opening pages are not the brand asked for */
+  const offBrand = grid(8, (i) => (i < 5 ? { brand: 'BAPE', name: `Shark ${i}`, retailerOk: false } : {}));
+  assert.ok(fitness(offBrand, { query: 'BAPE shark hoodie under $400', mention: 'bape' }).some((p) => /retailer page/.test(p)));
+});
+
+console.log('\nwhich product is opened');
+
+test('never a product whose retailer page was not seen to open', () => {
+  const cards = grid(4, (i) => ({ retailerOk: i === 3 }));
+  assert.strictEqual(pickProduct(cards), 3);
+  assert.strictEqual(pickProduct(grid(4, { retailerOk: false })), -1);
+});
+
+test('a retailer not yet shown in the video beats one already shown', () => {
+  const cards = grid(4);
+  const used = new Set(['shop0.example', 'shop1.example', 'shop3.example']);
+  assert.strictEqual(pickProduct(cards, { used }), 2);
+});
+
+test('the same shop twice only when no other shop opens', () => {
+  const cards = grid(3, (i) => ({ retailerOk: i === 1 }));
+  assert.strictEqual(pickProduct(cards, { used: new Set(['shop1.example']) }), 1);
+});
+
+test('only the brand asked for, within budget, and on screen are preferred', () => {
+  const cards = grid(6, (i) => ({ brand: i >= 3 ? 'BAPE' : 'Other', price: i === 3 ? '$520' : '$300' }));
+  const pick = pickProduct(cards, { mention: mentionOf({ mention: 'bape|bathing ape' }), budget: 400, visible: new Set([0, 1, 2, 3, 4]) });
+  assert.strictEqual(pick, 4);
+});
+
+test('budgets and prices are read the way the page writes them', () => {
+  assert.strictEqual(budgetOf('lightweight jacket for fall under $150'), 150);
+  assert.strictEqual(budgetOf('BAPE shark hoodie under $1,200'), 1200);
+  assert.strictEqual(budgetOf('a wool coat'), null);
+  assert.strictEqual(priceOf('$64.99'), 64.99);
+  assert.strictEqual(priceOf('$1,250'), 1250);
+  assert.strictEqual(priceOf('Price at retailer'), null);
+});
+
+console.log('\nthe edit');
+
+test('Fynd, retailer, Fynd: lengths add up and lines land where they were said', () => {
+  const cut = [
+    { src: 'main', from: 1, to: 11 },
+    { src: 'tab', tab: 0, born: 11.2, from: 12.2, to: 14.2 },
+    { src: 'main', from: 15, to: 25 }
+  ];
+  /* the Fynd tab's video runs at 0.9 of the wall clock; the tab's video is 2.7s for 3s of wall clock */
+  const { pieces, total, at } = cutMap(cut, 0.9, [2.7]);
+  assert.strictEqual(pieces.length, 3);
+  assert.strictEqual(pieces[1].input, 1);
+  assert.ok(Math.abs(pieces[1].start - 0.9) < 1e-9 && Math.abs(pieces[1].end - 2.7) < 1e-9);
+  assert.ok(Math.abs(total - (9 + 1.8 + 9)) < 1e-9, `total ${total}`);
+  assert.ok(Math.abs(at(1) - 0) < 1e-9);
+  assert.ok(Math.abs(at(6) - 4.5) < 1e-9);
+  assert.ok(Math.abs(at(13.2) - (9 + 0.9)) < 1e-9);
+  /* a moment in a cut lands where the next piece starts */
+  assert.ok(Math.abs(at(14.6) - 10.8) < 1e-9);
+  assert.ok(Math.abs(at(20) - (10.8 + 4.5)) < 1e-9);
+  assert.ok(Math.abs(at(99) - total) < 1e-9);
+});
+
+test('a retailer tab that was not shown leaves a plain cut between two Fynd pieces', () => {
+  const { pieces, total } = cutMap([{ src: 'main', from: 0, to: 10 }, { src: 'main', from: 16, to: 20 }], 1, []);
+  assert.strictEqual(pieces.length, 2);
+  assert.ok(Math.abs(total - 14) < 1e-9);
+});
+
+console.log('\nreplaying a saved search');
+
+const savedRun = () => ({
+  version: 2,
+  searchedAt: '2026-10-03T12:00:00.000Z',
+  searches: SEARCHES.map((s) => ({
+    slot: s.slot, line: s.line, query: s.candidates[s.candidates.length - 1].query, search: { status: 200 },
+    shown: [{ href: 'https://shop.example/p', retailerOk: true }]
+  }))
+});
+
+test('a whole run replays', () => {
+  assert.strictEqual(savedProblem(savedRun()), '');
+});
+
+test('the old one-search file, a short run, a stale request or no opened page is refused', () => {
+  assert.ok(/older/.test(savedProblem({ query: 'black oversized hoodie under $80', shown: [] })));
+  const short = savedRun(); short.searches.pop();
+  assert.ok(/holds 3 searches/.test(savedProblem(short)));
+  const stale = savedRun(); stale.searches[2].query = 'something else under $10';
+  assert.ok(/no longer/.test(savedProblem(stale)));
+  const closed = savedRun(); closed.searches[1].shown[0].retailerOk = false;
+  assert.ok(/no retailer page/.test(savedProblem(closed)));
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

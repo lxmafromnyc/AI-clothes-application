@@ -21,6 +21,26 @@
       "text": "And I can open the product directly at the retailer.",
       "file": "open.wav",
       "duration": 2.654
+    },
+    "different": {
+      "text": "Something completely different works the same way.",
+      "file": "different.wav",
+      "duration": 2.429
+    },
+    "specific": {
+      "text": "Even something specific that’s hard to find.",
+      "file": "specific.wav",
+      "duration": 2.308
+    },
+    "particular": {
+      "text": "Or the exact style and color I have in mind.",
+      "file": "particular.wav",
+      "duration": 2.39
+    },
+    "close": {
+      "text": "No more searching store after store. Describe it, and Fynd finds it.",
+      "file": "close.wav",
+      "duration": 3.991
     }
   }
 }
