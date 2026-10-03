@@ -2,7 +2,7 @@
 """
 Fynd - the demo video's narration
 
-Speaks the three short lines the demo video is narrated with, in a calm
+Speaks the four short lines the demo video is narrated with, in a calm
 conversational voice, and writes them to assets/demo/narration/ with a
 manifest that scripts/record-demo.js reads to place each line against the
 recording.
@@ -37,14 +37,15 @@ SPEAKER_ID = 3          # af_heart in kokoro-multi-lang-v1_0
 SPEED = 0.94            # a touch under 1: unhurried, not slow
 
 # What is said, and when, in the order it happens on screen. The keys are
-# what scripts/record-demo.js asks for. "found-one" stands in for "found"
-# when every result comes from the same retailer, so the line is never
-# claiming something the screen does not show.
+# what scripts/record-demo.js asks for. "options-one" stands in for
+# "options" when every result comes from the same retailer, so the line
+# never claims something the screen does not show.
 LINES = [
-    ('looking', 'I’m looking for a black oversized hoodie, under eighty dollars.'),
-    ('found', 'Fynd finds matching products from different retailers.'),
-    ('found-one', 'Fynd finds matching products.'),
-    ('open', 'And I can open the product directly at the retailer.'),
+    ('looking', 'I\u2019m looking for a black oversized hoodie, under eighty dollars.'),
+    ('options', 'Fynd gives me several options, from different retailers.'),
+    ('options-one', 'Fynd gives me several options.'),
+    ('compare', 'I can compare them, and open the ones I like.'),
+    ('choose', 'So I can search naturally, and choose where I want to buy.'),
 ]
 
 
@@ -78,7 +79,10 @@ def main():
 
     manifest = {'voice': f'Kokoro v1.0 {VOICE}', 'speed': SPEED, 'lines': {}}
     for key, text in LINES:
-        audio = tts.generate(text, sid=SPEAKER_ID, speed=SPEED)
+        # "Fynd" is said "find", and spelled that way for the voice: as
+        # written, the model swallows its last consonant ("Fin gives…").
+        # The caption keeps the name as it is written.
+        audio = tts.generate(text.replace('Fynd', 'Find'), sid=SPEAKER_ID, speed=SPEED)
         with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as raw:
             sf.write(raw.name, audio.samples, audio.sample_rate, subtype='PCM_16')
         target = os.path.join(OUT, f'{key}.wav')

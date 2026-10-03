@@ -2,18 +2,27 @@
 /* =========================================================
    Fynd — records the landing page demo video
 
-   A screen recording of a person using Fynd for the first time:
+   A screen recording of a person shopping with Fynd for the first time:
 
      the homepage, a moment to look at it
      the pointer goes to the search box, clicks, and the request is typed
        "I'm looking for a black oversized hoodie, under eighty dollars."
      Search is clicked; the site's own searching state runs
      real products come back: photos, brands, names, prices, retailers
-       "Fynd finds matching products from different retailers."
-     a small scroll, a product is pointed at, and clicked
-       "And I can open the product directly at the retailer."
-     the retailer's own page opens in a new tab, as it does for anyone
-     back on Fynd: "Describe what you want. Fynd finds it."
+       "Fynd gives me several options, from different retailers."
+     a look along the first row, then three products, one at a time:
+       "I can compare them, and open the ones I like."
+       pointer to a product, a pause, click — the retailer's own page
+       opens in a new tab and is looked at for a moment — back to Fynd,
+       a slight scroll, the next one, from a different shop where the
+       results have one (scripts/demo-retailer-visit.js)
+     back up to the results
+       "So I can search naturally, and choose where I want to buy."
+       Compare. Choose. Buy.
+
+   A retailer that is slow, blocks robots, or opens no tab never stops the
+   run or the next product: its tab is not shown, the strip says which
+   address was opened, and the wait is cut out of the video.
 
    Nothing on screen is made for the camera. The page is the site as
    visitors get it, the search is the real Fynd search — the real
@@ -48,7 +57,7 @@
      - ffmpeg with libx264, libvpx-vp9, aac and libopus
      - network access to your product source, OpenAI, and the retailers'
        image hosts and pages — the same access a visitor's browser has
-     - .env with PRODUCT_SOURCE and that source's key; OPENAI_API_KEY for
+     - .env.local / .env with PRODUCT_SOURCE and its key; OPENAI_API_KEY for
        the AI interpreter (without it the page reads the request with its
        local interpreter, exactly as the live site would)
 
@@ -56,7 +65,7 @@
    dropped from this process, so the one search it makes is metered in
    memory, not against anybody's real allowance.
 
-   The narration is three committed clips in assets/demo/narration/, made
+   The narration is four committed clips in assets/demo/narration/, made
    by scripts/demo-narration.py. Nothing here needs a speech model.
 
    Writes, into assets/demo/:
@@ -65,6 +74,7 @@
      fynd-demo-poster.jpg, fynd-demo-mobile-poster.jpg
      fynd-demo.vtt, fynd-demo-mobile.vtt  captions, timed to the narration
      demo-search.json                     the real search both were made from
+     demo-recording.json                  which products each video opened, and how
 
    Determinism: the pointer paths, typing rhythm and pauses come from a
    seeded generator, the narration is fixed, and --replay reuses the saved
@@ -78,6 +88,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { execFileSync } = require('child_process');
+const { visitRetailer, hostOf } = require('./demo-retailer-visit');
 
 const REPO = path.join(__dirname, '..');
 const arg = (name) => {
@@ -102,10 +113,20 @@ const SEED = 20261002;
    "Searching…" state is allowed to run on camera: the real search can
    take several seconds, and a recording of a spinner is not the point */
 const MIN_PRODUCTS = 4;
-const MAX_LOADING_MS = 1800;
+const MAX_LOADING_MS = 1500;
 const MIN_LOADING_MS = 900;
 
-const CAPTION_END = 'Describe what you want. Fynd finds it.';
+const CAPTION_END = 'Compare. Choose. Buy.';
+
+/* the address a retailer tab is at, as a browser would show it: the shop
+   and the start of the path, never the query string */
+function displayUrl(url) {
+  try {
+    const u = new URL(url);
+    const shown = u.hostname.replace(/^www\d?\./, '') + (u.pathname === '/' ? '' : u.pathname);
+    return shown.length > 56 ? `${shown.slice(0, 55)}…` : shown;
+  } catch (err) { return url; }
+}
 
 const SHOTS = [
   { name: 'fynd-demo', kind: 'desktop', width: 1280, height: 800, dpr: 1, touch: false, h264: 28, vp9: 37 },
@@ -125,8 +146,13 @@ function fail(message) {
    KEY=value line, without overriding anything already in the environment.
    Values are never printed. */
 function loadEnv() {
-  const file = path.join(REPO, '.env');
-  if (!fs.existsSync(file)) return false;
+  /* .env.local first, so it wins over .env, as it does for the site */
+  const files = ['.env.local', '.env'].map((f) => path.join(REPO, f)).filter((f) => fs.existsSync(f));
+  for (const file of files) readEnvFile(file);
+  return files.length ? files.map((f) => path.basename(f)).join(' + ') : false;
+}
+
+function readEnvFile(file) {
   for (const line of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {
     const m = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/.exec(line);
     if (!m || line.trim().startsWith('#')) continue;
@@ -324,6 +350,8 @@ const server = http.createServer((req, res) => {
    --------------------------------------------------------- */
 
 function pagePrep(origin) {
+  /* retailer tabs opened from the page are left exactly as they are */
+  if (location.origin !== origin) return;
   window.FINDWEAR_API = `${origin}/api/interpret`;
   window.FINDWEAR_SEARCH_API = `${origin}/api/search`;
   const blank = new MutationObserver(() => {
@@ -689,15 +717,19 @@ async function record(chromium, shot, rawDir, stillsDir) {
   async function typeLikeAPerson(text) {
     const words = text.split(' ');
     for (let w = 0; w < words.length; w += 1) {
+      /* each gap is measured from the last key, so the time the
+         browser takes to take a key is part of the gap, not added to it */
       for (const ch of words[w]) {
         let gap = rand.around(96, 30);
         if (ch === '$') gap += rand.between(90, 160);
+        const pressed = Date.now();
         await page.keyboard.type(ch);
-        await wait(Math.max(48, gap));
+        await wait(Math.max(48, gap) - (Date.now() - pressed));
       }
       if (w < words.length - 1) {
+        const pressed = Date.now();
         await page.keyboard.type(' ');
-        await wait(rand.around(140, 38) + (rand.next() < 0.18 ? rand.between(110, 240) : 0));
+        await wait(rand.around(140, 38) + (rand.next() < 0.18 ? rand.between(110, 240) : 0) - (Date.now() - pressed));
       }
     }
   }
@@ -707,7 +739,9 @@ async function record(chromium, shot, rawDir, stillsDir) {
      quick in the middle and easing off, the way a thumb moves. */
   const cdp = await context.newCDPSession(page);
   async function scrollBy(pixels, point) {
-    const p = point || { x: shot.width * rand.between(0.45, 0.6), y: viewH * 0.68 };
+    /* a swipe starts low to scroll down and high to scroll back up, so
+       the finger stays on the screen */
+    const p = point || { x: shot.width * rand.between(0.45, 0.6), y: viewH * (pixels < 0 ? 0.3 : 0.68) };
     if (!shot.touch) {
       await cdp.send('Input.synthesizeScrollGesture', {
         x: Math.round(p.x), y: Math.round(p.y), yDistance: -Math.round(pixels),
@@ -734,12 +768,56 @@ async function record(chromium, shot, rawDir, stillsDir) {
     await wait(500);
   }
 
+  /* --- choosing what to compare ------------------------------------ */
+
+  const cardSel = (i) => `#results .grid .item-card:nth-child(${i + 1})`;
+
+  /* Up to three products to open, from three different shops where the
+     results have them: the first from the first row, the second from
+     further down when there is a further down (so the slight scroll has
+     a reason), the third from what is left. Never more than the real
+     results hold. */
+  async function pickProducts() {
+    const cards = await page.evaluate(() => [...document.querySelectorAll('#results .grid .item-card')].map((c, i) => {
+      const r = c.getBoundingClientRect();
+      return { i, href: c.getAttribute('href') || '', top: Math.round(r.top) };
+    }));
+    const rowTop = cards.length ? cards[0].top : 0;
+    const linked = cards.filter((c) => /^https?:\/\//.test(c.href)).map((c) => ({ ...c, host: hostOf(c.href), row: c.top > rowTop + 20 ? 1 : 0 }));
+    const picks = [];
+    const used = new Set();
+    const take = (c) => { if (c && !picks.includes(c)) { picks.push(c); used.add(c.host); } };
+    const fresh = (c) => !used.has(c.host);
+    take(linked.find((c) => c.row === 0));
+    take(linked.find((c) => c.row === 1 && fresh(c)) || linked.find((c) => fresh(c) && !picks.includes(c)));
+    take(linked.find((c) => fresh(c) && !picks.includes(c)));
+    /* fewer shops than three: different products, never the same one */
+    for (const c of linked) { if (picks.length >= 3) break; take(c); }
+    return picks.slice(0, 3);
+  }
+
+  /* a card is scrolled to only if it is not already wholly in view */
+  async function bringIntoView(sel) {
+    const r = await page.evaluate((s2) => {
+      const b = document.querySelector(s2).getBoundingClientRect();
+      const header = document.querySelector('.site-header');
+      return { top: b.top, bottom: b.bottom, head: header ? header.getBoundingClientRect().height : 0 };
+    }, sel);
+    const low = r.bottom - (viewH - 12);
+    const high = r.top - (r.head + 12);
+    const by = low > 0 ? Math.min(low + 24, high) : (high < 0 ? high - 24 : 0);
+    if (Math.abs(by) < 6) return false;
+    await scrollBy(by);
+    await wait(rand.between(350, 600));
+    return true;
+  }
+
   /* --- 1. The homepage ----------------------------------------------- */
 
   if (!shot.touch) await page.mouse.move(at.x, at.y);
   await wait(450);
   marks.start = now();
-  await wait(rand.between(1100, 1400));
+  await wait(rand.between(800, 1000));
 
   /* --- 2. Into the box, and the request ------------------------------- */
 
@@ -757,7 +835,9 @@ async function record(chromium, shot, rawDir, stillsDir) {
   await wait(rand.between(350, 520));
   const looking = await speak('looking');
   const typedFrom = Date.now();
+  marks.typing = now();
   await typeLikeAPerson(QUERY);
+  marks.typed = now();
   await still('typed');
   /* let the line finish before the hand moves on */
   await wait(Math.max(rand.between(450, 700), looking - (Date.now() - typedFrom) + 250));
@@ -781,7 +861,7 @@ async function record(chromium, shot, rawDir, stillsDir) {
 
   await page.waitForSelector('#results .grid .item-card', { timeout: 20000 });
   /* the page scrolls itself to the results; let that land */
-  await wait(700);
+  await wait(350);
   const shown = await checkResults(page);
   const problems = verdict(shown);
   if (problems.length) fail(`On camera, the results were not all real and loaded:\n  - ${problems.join('\n  - ')}`);
@@ -789,91 +869,119 @@ async function record(chromium, shot, rawDir, stillsDir) {
 
   /* "from different retailers" is only said when the links really do
      go to more than one shop */
-  const host = (u) => { try { return new URL(u).hostname.replace(/^www\d?\./, ''); } catch (err) { return ''; } };
-  const retailers = new Set(shown.map((s) => host(s.href)).filter(Boolean));
-  const found = await speak(retailers.size > 1 ? 'found' : 'found-one');
+  const hosts = new Set(shown.map((s) => hostOf(s.href)).filter(Boolean));
+  const options = await speak(hosts.size > 1 ? 'options' : 'options-one');
+  const optionsFrom = Date.now();
   await still('results');
-  /* the pointer rests while the products are looked at */
-  await wait(found + rand.between(300, 500));
+
+  /* a look along the first row: the pointer drifts slowly over it and
+     settles, the way an eye leads a hand */
+  const picks = await pickProducts();
+  if (!picks.length) fail('No product on screen could be opened.');
+  if (!shot.touch) {
+    const first = await box(`${cardSel(picks[0].i)} .item-media`);
+    await moveTo({ x: first.x + first.width * rand.between(0.7, 1.1), y: first.y + first.height * rand.between(0.55, 0.75) },
+      rand.between(1100, 1400));
+  }
+  await wait(Math.max(250, options - (Date.now() - optionsFrom) + rand.between(100, 200)));
   await hush();
 
-  /* a small scroll, to see a little more */
-  await scrollBy(viewH * rand.between(0.28, 0.36));
-  await wait(rand.between(900, 1200));
-  await still('scrolled');
+  /* --- 5. Comparing: three products, three shops -------------------- */
 
-  /* --- 5. One product, out to its retailer ---------------------------- */
+  const visits = [];
+  for (let k = 0; k < picks.length; k += 1) {
+    const pick = picks[k];
+    const sel = cardSel(pick.i);
 
-  /* the first card wholly on screen after the scroll, on the second
-     column where there is one — where a hand would naturally go */
-  const targetIndex = await page.evaluate((limit) => {
-    const cards = [...document.querySelectorAll('#results .grid .item-card')];
-    const whole = cards.map((c, i) => ({ i, r: c.getBoundingClientRect() }))
-      .filter(({ r }) => r.top >= 60 && r.bottom <= limit);
-    const pick = whole.find(({ i }) => i % 2 === 1) || whole[0];
-    return pick ? pick.i : 1;
-  }, viewH);
-  const card = `#results .grid .item-card:nth-child(${targetIndex + 1})`;
-  const media = await box(`${card} .item-media`);
-  const cardSpot = spotIn(media, 0.5, 0.45);
+    /* a slight scroll before the second choice, as a shopper would to
+       see what else there is, and whatever scroll the card itself needs */
+    const scrolled = await bringIntoView(sel);
+    if (k === 1 && !scrolled) {
+      await scrollBy(viewH * rand.between(0.18, 0.26));
+      await wait(rand.between(300, 500));
+      await bringIntoView(sel);
+    }
 
-  const open = await speak('open');
-  const openedFrom = Date.now();
-  if (shot.touch) {
-    await wait(Math.max(900, open - 700));
-  } else {
-    await moveTo(cardSpot);
-    await wait(Math.max(500, open - (Date.now() - openedFrom) - 400));
+    /* the line about comparing is said on the way to the first one, and
+       finishes before anything is opened */
+    let line = 0;
+    const lineFrom = Date.now();
+    if (k === 0) line = await speak('compare');
+
+    const media = await box(`${sel} .item-media`);
+    const spot = spotIn(media, 0.5, 0.45);
+    if (!shot.touch) {
+      await moveTo(spot);
+      await wait(rand.between(300, 550));         /* looking at it */
+    } else {
+      await wait(rand.between(450, 700));
+    }
+    if (line) {
+      await wait(line - (Date.now() - lineFrom) + 150);
+      await hush();
+    }
+    await still(`product-${k + 1}`);
+
+    /* the card on screen is the product the search returned: same link,
+       same name — so what is opened is what was shown */
+    const card = await page.evaluate((s2) => {
+      const el = document.querySelector(s2);
+      return el && { href: el.getAttribute('href') || '', name: (el.querySelector('.item-name') || {}).textContent || '' };
+    }, sel);
+    const listed = (api.saved.search.response.products || []).find((p2) => p2.productUrl === card.href);
+    if (!card || !/^https?:\/\//.test(card.href) || !listed) {
+      fail(`Card ${pick.i + 1} links to ${card && card.href} — not one of the products the search returned.`);
+    }
+
+    const visit = await visitRetailer({
+      context, page, href: card.href,
+      holdMs: rand.between(2000, 2200),
+      click: () => (shot.touch ? tap(spot) : click()),
+      onLoaded: async (tab) => {
+        await tab.evaluate((label) => window.demo && window.demo.say(label), displayUrl(tab.url())).catch(() => {});
+        if (stillsDir) await tab.screenshot({ path: path.join(stillsDir, `${shot.name}-retailer-${k + 1}.png`) }).catch(() => {});
+      },
+      log: (m) => console.log(`  ${shot.kind}:${m}`)
+    });
+    const at = (ms) => (ms == null ? null : (ms - pageBorn) / 1000);
+    visits.push({
+      product: card.name.trim(), href: card.href, host: visit.host, kind: visit.kind, url: visit.url,
+      click: at(visit.clickedAt), opened: at(visit.openedAt), pageAt: at(visit.pageAt),
+      dom: at(visit.domAt), closed: at(visit.closedAt), video: visit.video
+    });
+    if (visit.kind === 'loaded' && visit.url && hostOf(visit.url) !== visit.host) {
+      console.log(`  ${shot.kind}: ${visit.host} redirected to ${hostOf(visit.url)}`);
+    }
+
+    /* a tab that opened but is not shown is still said: the address it
+       was opening, on Fynd, in the strip */
+    if (visit.kind === 'slow' || visit.kind === 'blocked') {
+      await caption(`Opened ${visit.host} in a new tab`, 1250);
+      await wait(1250);
+      await hush();
+    }
+    if (k < picks.length - 1) await wait(rand.between(200, 350));   /* back on Fynd, a beat */
   }
-  await still('chosen');
 
-  const href = await page.locator(card).getAttribute('href');
-  const popupPromise = context.waitForEvent('page', { timeout: 6000 }).catch(() => null);
-  marks.click = now();
-  if (shot.touch) await tap(cardSpot);
-  else await click();
-  const popup = await popupPromise;
+  /* --- 6. Back on the results ----------------------------------------- */
+
+  /* up to where the results begin, the way a hand scrolls back */
+  const climb = await page.evaluate(() => {
+    const head = document.querySelector('#results .results-head');
+    const header = document.querySelector('.site-header');
+    const top = head.getBoundingClientRect().top - (header ? header.getBoundingClientRect().height : 0) - 16;
+    return Math.min(0, top);
+  });
+  /* the last line is said on the way back up, not after it */
+  const choose = await speak('choose');
+  const chooseFrom = Date.now();
+  if (climb < -40) await scrollBy(climb);
+  await wait(choose - (Date.now() - chooseFrom) + 200);
   await hush();
-
-  /* The retailer's own page, in the new tab the link opens — the real
-     page at the real address, for as long as it takes to show itself.
-     A page that refuses a robot, or does not arrive within a few
-     seconds, is not shown at all: a blank or a block page is not the
-     retailer. */
-  let retailer = null;
-  if (popup) {
-    const opened = Date.now();
-    marks.popup = now();
-    let ok = false;
-    try {
-      await popup.waitForLoadState('domcontentloaded', { timeout: 6000 });
-      const status = await popup.evaluate(() => {
-        const nav = performance.getEntriesByType('navigation')[0];
-        return nav && nav.responseStatus ? nav.responseStatus : 200;
-      }).catch(() => 0);
-      const title = await popup.title().catch(() => '');
-      const blocked = /access denied|forbidden|captcha|just a moment|attention required|are you a robot|blocked/i.test(title);
-      const text = await popup.evaluate(() => (document.body && document.body.innerText || '').length).catch(() => 0);
-      ok = status < 400 && !blocked && text > 200 && /^https?:/.test(popup.url());
-      if (ok) await wait(Math.max(0, 2800 - (Date.now() - opened)));
-    } catch (err) { ok = false; }
-    marks.popupEnd = now();
-    retailer = { ok, url: popup.url(), video: stillsDir ? null : popup.video() };
-    if (stillsDir && ok) await popup.screenshot({ path: path.join(stillsDir, `${shot.name}-retailer.png`) }).catch(() => {});
-    await popup.close();
-    await page.bringToFront();
-    if (!ok) console.log(`  ${shot.name}: the retailer page (${href}) did not show itself in time; the video stays on Fynd`);
-  } else {
-    console.log(`  ${shot.name}: the link opened no new tab; the video stays on Fynd`);
-  }
-  marks.back = now();
-
-  /* --- 6. Back on Fynd ------------------------------------------------ */
-
-  await wait(350);
-  await caption(CAPTION_END, 2400);
+  await wait(200);
+  await caption(CAPTION_END, 1500);
   await still('end');
-  await wait(2400);
+  await wait(1500);
   await hush();
   await wait(300);
   marks.end = now();
@@ -882,13 +990,15 @@ async function record(chromium, shot, rawDir, stillsDir) {
   await context.close();
   await browser.close();
 
-  if (process.env.DEMO_DEBUG) console.log('  marks', JSON.stringify(Object.fromEntries(Object.entries(marks).map(([k, t]) => [k, Number(t.toFixed(2))]))));
-  if (stillsDir) return { marks };
-  return {
-    marks, cues, voice,
-    main: await mainVideo.path(),
-    retailer: retailer && retailer.ok ? { ...retailer, file: await retailer.video.path() } : null
-  };
+  if (process.env.DEMO_DEBUG) console.log('  marks', JSON.stringify(Object.fromEntries(Object.entries(marks).map(([k2, t]) => [k2, Number(t.toFixed(2))]))));
+  const summary = visits.map((v) => `${v.host} (${v.kind})`).join(', ');
+  console.log(`  ${shot.kind}: opened ${visits.length} product(s): ${summary}`);
+  if (stillsDir) return { marks, visits };
+  for (const v of visits) {
+    v.file = v.kind === 'loaded' && v.video ? await v.video.path().catch(() => null) : null;
+    delete v.video;
+  }
+  return { marks, cues, voice, visits, main: await mainVideo.path() };
 }
 
 /* ---------------------------------------------------------
@@ -900,11 +1010,28 @@ const run = (args) => execFileSync(FFMPEG, ['-y', '-hide_banner', '-loglevel', '
 /* The one command that reads a duration. It goes to ffprobe and nowhere
    else: -show_entries is an ffprobe option, and ffmpeg given it fails
    with "Unrecognized option 'show_entries'". */
-function durationCommand(file, probe = FFPROBE) {
+function probeCommand(file, entries, probe = FFPROBE) {
   if (/^ffmpeg(\.exe)?$/i.test(path.win32.basename(probe))) {
     throw new Error(`Durations are read with ffprobe, not ffmpeg (was asked to run ${probe}). Set FFPROBE_PATH to ffprobe.`);
   }
-  return [probe, ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', file]];
+  return [probe, ['-v', 'error', '-show_entries', entries, '-of', 'csv=p=0', file]];
+}
+const durationCommand = (file, probe = FFPROBE) => probeCommand(file, 'format=duration', probe);
+
+/* a finished video is only kept if it really is one: picture at the
+   expected size, a sound track, and a length in the expected range */
+function checkVideo(file, width, height) {
+  const [bin, args] = probeCommand(file, 'stream=codec_type,width,height');
+  const rows = execFileSync(bin, args).toString().trim().split(/\r?\n/).map((r) => r.split(','));
+  const video = rows.find((r) => r[0] === 'video');
+  const audio = rows.find((r) => r[0] === 'audio');
+  const seconds = lengthOf(file);
+  const problems = [];
+  if (!video) problems.push('no video stream');
+  else if (Number(video[1]) !== width || Number(video[2]) !== height) problems.push(`video is ${video[1]}x${video[2]}, not ${width}x${height}`);
+  if (!audio) problems.push('no audio stream');
+  if (seconds < 15 || seconds > 45) problems.push(`runs ${seconds.toFixed(1)}s`);
+  if (problems.length) throw new Error(`${path.basename(file)} is not a valid demo video: ${problems.join('; ')}`);
 }
 
 function lengthOf(file) {
@@ -915,46 +1042,86 @@ function lengthOf(file) {
   return seconds;
 }
 
+/* The cut, worked out from the wall-clock marks of one recording.
+
+   Fynd plays up to each click. A retailer tab that loaded is cut in from
+   just before its page appears until it is closed, and Fynd resumes. A
+   tab that was slow, a bot check, or a click that opened nothing shows
+   no retailer at all: the seconds spent waiting on it are cut out, and
+   Fynd simply carries on.
+
+   marks    { start, end } on the Fynd page's clock, in seconds
+   visits   [{ kind, click, pageAt, dom, closed, file }] on the same clock
+   mainLen  the Fynd recording's real length (it runs behind the clock)
+   popLen   (file) => a retailer recording's real length
+
+   Returns the pieces to join, the finished length, and at(t): where a
+   moment on the Fynd page's clock lands in the finished video. */
+function planCut({ marks, visits, mainLen, popLen }) {
+  const k = mainLen / marks.end;
+  const v = (t) => t * k;
+  const pieces = [];
+  let cursor = marks.start;
+  for (const vis of visits) {
+    if (vis.kind === 'loaded' && vis.file && vis.pageAt != null && vis.dom != null) {
+      pieces.push({ src: 'main', wallFrom: cursor, wallTo: vis.click + 0.25 });
+      const len = popLen(vis.file);
+      const wall = vis.closed - vis.pageAt;
+      const kp = wall > 0 ? len / wall : 1;
+      const from = Math.max(0, vis.dom - vis.pageAt - 0.25) * kp;
+      const to = Math.min(len, wall * kp);
+      if (to - from > 0.3) pieces.push({ src: vis.file, from, to, host: vis.host });
+      cursor = vis.closed + 0.05;
+    } else {
+      pieces.push({ src: 'main', wallFrom: cursor, wallTo: vis.click + 0.35 });
+      cursor = vis.closed;
+    }
+  }
+  pieces.push({ src: 'main', wallFrom: cursor, wallTo: marks.end });
+
+  const segments = [];
+  let out = 0;
+  for (const piece of pieces) {
+    const seg = piece.src === 'main' ? { ...piece, from: v(piece.wallFrom), to: v(piece.wallTo) } : { ...piece };
+    if (seg.to - seg.from <= 0.02) continue;
+    seg.outStart = out;
+    out += seg.to - seg.from;
+    segments.push(seg);
+  }
+  const total = out;
+  const at = (t) => {
+    for (const seg of segments) {
+      if (seg.src !== 'main') continue;
+      if (t < seg.wallFrom) return seg.outStart;          /* in a cut: where Fynd resumes */
+      if (t <= seg.wallTo) return seg.outStart + (v(t) - v(seg.wallFrom));
+    }
+    return total;
+  };
+  return { segments, total, at };
+}
+
 function build(shot, take, outDir) {
   const W = shot.width * shot.dpr;
   const H = shot.height * shot.dpr;
   const m = take.marks;
 
   /* The recorder runs a little behind the wall clock, so the wall-clock
-     marks are scaled to the video's own length before they cut it. */
-  const mainLen = lengthOf(take.main);
-  const k = mainLen / m.end;
-  const v = (t) => t * k;
+     marks are scaled to each video's own length before they cut it. */
+  const { segments, total, at } = planCut({
+    marks: m, visits: take.visits, mainLen: lengthOf(take.main), popLen: lengthOf
+  });
 
-  /* the cut: Fynd up to the click, the retailer's tab while it is open,
-     then Fynd again */
-  const segments = [];
-  if (take.retailer) {
-    const popLen = lengthOf(take.retailer.file);
-    const popWall = m.popupEnd - m.popup;
-    const kp = popWall > 0 ? popLen / popWall : 1;
-    segments.push({ input: 0, from: v(m.start), to: v(m.click + 0.25) });
-    segments.push({ input: 1, from: 0, to: Math.min(popLen, popWall * kp) });
-    segments.push({ input: 0, from: v(m.back), to: v(m.end) });
-  } else {
-    segments.push({ input: 0, from: v(m.start), to: v(m.end) });
-  }
-  const lens = segments.map((s) => s.to - s.from);
-  const total = lens.reduce((a, b) => a + b, 0);
-
-  /* where a wall-clock moment lands in the finished video */
-  const at = (t) => {
-    if (!take.retailer) return v(t) - v(m.start);
-    if (t <= m.click + 0.25) return v(t) - v(m.start);
-    if (t < m.back) return lens[0] + Math.min(lens[1], (t - m.popup) * (lens[1] / Math.max(0.01, m.popupEnd - m.popup)));
-    return lens[0] + lens[1] + (v(t) - v(m.back));
+  const files = [take.main];
+  const inputFor = (src) => {
+    const f = src === 'main' ? take.main : src;
+    if (!files.includes(f)) files.push(f);
+    return files.indexOf(f);
   };
-
-  const inputs = ['-i', take.main];
-  if (take.retailer) inputs.push('-i', take.retailer.file);
+  segments.forEach((seg) => { seg.input = inputFor(seg.src); });
+  const inputs = files.flatMap((f) => ['-i', f]);
   const voiceInputs = take.voice.map((line) => path.join(NARRATION, NARRATION_LINES[line.key].file));
   voiceInputs.forEach((f) => inputs.push('-i', f));
-  const firstVoice = take.retailer ? 2 : 1;
+  const firstVoice = files.length;
 
   const vf = segments.map((s, i) => `[${s.input}:v]trim=start=${s.from.toFixed(3)}:end=${s.to.toFixed(3)},setpts=PTS-STARTPTS,`
     + `fps=30,scale=${W}:${H}:force_original_aspect_ratio=decrease,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2:white,setsar=1[s${i}]`).join(';');
@@ -983,6 +1150,7 @@ function build(shot, take, outDir) {
   fs.unlinkSync(master);
 
   writeTrack(path.join(outDir, `${shot.name}.vtt`), take.cues.map((c) => ({ ...c, start: at(c.start), end: Math.min(total, at(c.end)) })), total);
+  for (const f of [mp4, webm]) checkVideo(f, W, H);
   const size = (p) => `${(fs.statSync(p).size / 1024).toFixed(0)} KB`;
   console.log(`  ${shot.name}: ${total.toFixed(1)}s — mp4 ${size(mp4)}, webm ${size(webm)}, poster ${size(poster)}`);
   return total;
@@ -999,7 +1167,10 @@ function writeTrack(file, cues, length) {
     const ms = String(Math.round((t % 1) * 1000)).padStart(3, '0').slice(0, 3);
     return `00:${mm}:${ss}.${ms}`;
   };
-  const body = cues.map(({ text, start, end }, i) => `${i + 1}\n${clock(start)} --> ${clock(end)} line:8%\n${text}`).join('\n\n');
+  /* one thought at a time: a cue never runs into the next one */
+  const sorted = [...cues].sort((a, b) => a.start - b.start)
+    .map((c, i, all) => ({ ...c, end: i + 1 < all.length ? Math.min(c.end, all[i + 1].start - 0.05) : c.end }));
+  const body = sorted.map(({ text, start, end }, i) => `${i + 1}\n${clock(start)} --> ${clock(end)} line:8%\n${text}`).join('\n\n');
   fs.writeFileSync(file, `WEBVTT\n\n${body}\n`);
 }
 
@@ -1055,7 +1226,7 @@ async function main() {
       api.saved = JSON.parse(fs.readFileSync(file, 'utf8'));
       console.log(`Replaying the real search of ${api.saved.searchedAt} (${api.saved.shown.length} products)`);
     } else {
-      console.log(`Searching for real${hadEnv ? ' with .env' : ''}: "${QUERY}"`);
+      console.log(`Searching for real${hadEnv ? ` with ${hadEnv}` : ''}: "${QUERY}"`);
       api.saved = await realSearch(chromium);
     }
     api.mode = 'replay';
@@ -1080,6 +1251,17 @@ async function main() {
     const lengths = {};
     for (const [shot, take] of takes) lengths[shot.name] = build(shot, take, stage);
 
+    /* what each recording opened, for the record */
+    const report = {
+      searchedAt: api.saved.searchedAt,
+      recordings: takes.map(([shot, take]) => ({
+        file: `${shot.name}.mp4`,
+        seconds: Number(lengths[shot.name].toFixed(1)),
+        opened: take.visits.map((vis) => ({ product: vis.product, retailer: vis.host, shown: vis.kind === 'loaded', outcome: vis.kind }))
+      }))
+    };
+    fs.writeFileSync(path.join(stage, 'demo-recording.json'), `${JSON.stringify(report, null, 2)}\n`);
+
     for (const f of fs.readdirSync(stage)) fs.copyFileSync(path.join(stage, f), path.join(OUT, f));
     if (!REPLAY) fs.writeFileSync(SEARCH_FILE, `${JSON.stringify(api.saved, null, 2)}\n`);
     if (OUT === path.join(REPO, 'assets', 'demo')) describeOnPage(api.saved);
@@ -1097,5 +1279,5 @@ async function main() {
    starting anything */
 if (require.main === module) main();
 
-module.exports = { ffprobeFor, durationCommand };
+module.exports = { ffprobeFor, durationCommand, planCut };
 

@@ -18,7 +18,7 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 
-const { ffprobeFor, durationCommand } = require('./record-demo');
+const { ffprobeFor, durationCommand, planCut } = require('./record-demo');
 
 let passed = 0;
 let failed = 0;
@@ -103,13 +103,13 @@ test('asked to read a duration with ffmpeg, it refuses instead of failing obscur
   }
 });
 
-test('-show_entries appears once in the recorder, in the duration command, and never beside FFMPEG', () => {
+test('-show_entries appears once in the recorder, in the probe command, and never beside FFMPEG', () => {
   const src = fs.readFileSync(path.join(__dirname, 'record-demo.js'), 'utf8');
   const hits = [...src.matchAll(/'-show_entries'/g)].map((m) => m.index);
   assert.strictEqual(hits.length, 1, `found ${hits.length} uses of '-show_entries'`);
-  const body = src.indexOf('function durationCommand(');
+  const body = src.indexOf('function probeCommand(');
   const end = src.indexOf('\n}\n', body);
-  assert.ok(body > 0 && hits[0] > body && hits[0] < end, "'-show_entries' is outside durationCommand");
+  assert.ok(body > 0 && hits[0] > body && hits[0] < end, "'-show_entries' is outside probeCommand");
   /* every ffmpeg invocation: execFileSync(FFMPEG, …) and the run([…]) helper */
   const calls = [...src.matchAll(/execFileSync\(FFMPEG,[^)]*\)|\brun\(\[[\s\S]*?\]\)/g)].map((m) => m[0]);
   assert.ok(calls.length > 0, 'found no ffmpeg calls to check');
@@ -121,6 +121,61 @@ test('lengthOf reads through durationCommand', () => {
   const body = src.slice(src.indexOf('function lengthOf('), src.indexOf('\n}\n', src.indexOf('function lengthOf(')));
   assert.ok(body.includes('durationCommand('), 'lengthOf no longer goes through durationCommand');
   assert.ok(!/FFMPEG/.test(body), 'lengthOf mentions FFMPEG');
+});
+
+console.log('\nthe cut, with three retailer visits');
+
+/* a recording whose clock and video agree (k = 1), so the arithmetic is
+   easy to read: Fynd from 1s to 30s, three products clicked at 10, 15, 20 */
+const marks = { start: 1, end: 30 };
+const loaded = (click, file) => ({ kind: 'loaded', click, pageAt: click + 0.2, dom: click + 0.7, closed: click + 3.4, file, host: file });
+const popLen = () => 3.2;   /* each retailer recording runs pageAt → closed */
+
+test('loaded tabs are cut in, Fynd resumes after each', () => {
+  const plan = planCut({ marks, visits: [loaded(10, 'a'), loaded(15, 'b'), loaded(20, 'c')], mainLen: 30, popLen });
+  assert.deepStrictEqual(plan.segments.map((s) => s.src), ['main', 'a', 'main', 'b', 'main', 'c', 'main']);
+  /* each tab from just before its page appears (dom − 0.25s) to its close */
+  const tab = plan.segments[1];
+  assert.ok(Math.abs(tab.from - 0.25) < 1e-6 && Math.abs(tab.to - 3.2) < 1e-6, `${tab.from}→${tab.to}`);
+});
+
+test('a slow tab shows no retailer, and its waiting is cut out', () => {
+  const slow = { kind: 'slow', click: 15, pageAt: null, dom: null, closed: 20.4, file: null };
+  const plan = planCut({ marks, visits: [loaded(10, 'a'), slow, loaded(25, 'c')], mainLen: 30, popLen });
+  assert.deepStrictEqual(plan.segments.map((s) => s.src), ['main', 'a', 'main', 'main', 'c', 'main']);
+  const before = plan.segments[2];
+  const after = plan.segments[3];
+  assert.ok(Math.abs(before.wallTo - 15.35) < 1e-6, 'Fynd should run just past the click');
+  assert.ok(Math.abs(after.wallFrom - 20.4) < 1e-6, 'Fynd should resume when the slow tab was given up');
+  /* the next product still gets its turn */
+  assert.strictEqual(plan.segments[4].src, 'c');
+});
+
+test('a click that opened no tab cuts its wait and carries on', () => {
+  const none = { kind: 'no-tab', click: 15, pageAt: null, dom: null, closed: 18, file: null };
+  const plan = planCut({ marks, visits: [none, loaded(20, 'b')], mainLen: 30, popLen });
+  assert.deepStrictEqual(plan.segments.map((s) => s.src), ['main', 'main', 'b', 'main']);
+  assert.ok(plan.total < 29 - 2.5, `the 3s wait was not cut (total ${plan.total})`);
+});
+
+test('a blocked page is never cut in', () => {
+  const blocked = { kind: 'blocked', click: 15, pageAt: 15.2, dom: 15.6, closed: 15.9, file: 'x' };
+  const plan = planCut({ marks, visits: [blocked], mainLen: 30, popLen });
+  assert.ok(plan.segments.every((s) => s.src === 'main'));
+});
+
+test('at(): narration before, between and after the tabs lands on Fynd', () => {
+  const plan = planCut({ marks, visits: [loaded(10, 'a'), loaded(15, 'b')], mainLen: 30, popLen });
+  assert.ok(Math.abs(plan.at(5) - 4) < 1e-6);                           /* 5s on the clock, 1s trimmed */
+  const resume = plan.segments[2];
+  assert.ok(Math.abs(plan.at(14) - (resume.outStart + (14 - resume.wallFrom))) < 1e-6);
+  assert.strictEqual(plan.at(12), resume.outStart, 'a moment inside a cut lands where Fynd resumes');
+  assert.ok(Math.abs(plan.at(30) - plan.total) < 1e-6);
+});
+
+test('the recorder scales to a video that runs behind the clock', () => {
+  const plan = planCut({ marks, visits: [], mainLen: 33, popLen });
+  assert.ok(Math.abs(plan.total - 31.9) < 1e-6, `${plan.total}`);   /* (30 − 1) × 1.1 */
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

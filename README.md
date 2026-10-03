@@ -1623,9 +1623,9 @@ real search starts, because the results take its place.
 | Homepage | the page as visitors get it; a moment before anything happens | — |
 | Describe | the pointer goes to the box and the request is typed, at a person's pace | "I'm looking for a black oversized hoodie, under eighty dollars." |
 | Search | Search is clicked; the site's own "Searching…" state | — |
-| Results | the real products: photos, brands, names, prices, retailers; a small scroll | "Fynd finds matching products from different retailers." |
-| Retailer | the pointer settles on one product and clicks it; the retailer's own page opens in the new tab | "And I can open the product directly at the retailer." |
-| End | back on Fynd | Describe what you want. Fynd finds it. |
+| Results | the real products: photos, brands, names, prices, retailers; the pointer drifts along the first row | "Fynd gives me several options, from different retailers." |
+| Compare | three products, one at a time, from different shops where the results have them: pointer to the card, a pause, click; the retailer's own page opens in a new tab for 2–3 seconds, its address in the strip; back to Fynd; a slight scroll; the next | "I can compare them, and open the ones I like." |
+| End | back up to the results | "So I can search naturally, and choose where I want to buy." · Compare. Choose. Buy. |
 
 The words are spoken and shown in a thin strip along the bottom edge, so the
 video reads the same with the sound off, and the same lines are its captions
@@ -1653,17 +1653,30 @@ without searching again. The "Searching…" state on camera is the page's own,
 held to at most 1.8 seconds. The recording keeps its metering in memory (KV
 settings are dropped from the process), so it never touches production state.
 
-When the product is clicked, the link opens the retailer's page in a new tab as
-it would for anyone, and the video shows that tab for a moment. A retailer page
-that blocks automated browsers, or does not arrive within a few seconds, is left
-out rather than shown blank. The note under the video on the homepage is
-rewritten by the script with the date of the search, since prices and stock
-move on after a recording.
+Each product is opened through its real link (`scripts/demo-retailer-visit.js`),
+with separate short limits so no shop can hold up the next product: the new tab
+must exist within 3 seconds of the click (it is seen the moment the browser
+creates it), its page must reach `domcontentloaded` within 5 seconds, and a
+loaded page is looked at for 2–3 seconds. Then:
+
+- **A — tab opened, page loaded:** the real retailer page is shown, its address
+  in the strip, and the video returns to Fynd.
+- **B — tab opened, page slow** (or a bot check): no retailer page is shown; the
+  strip on Fynd says which address was opened, the wait is cut out, and the next
+  product follows. The slow host is logged.
+- **C — no tab:** logged, nothing shown, and the next product follows.
+
+Before each click the card is checked against the search: its link must be one
+of the products the search returned. What each video opened, and with which
+outcome, is written to `assets/demo/demo-recording.json`. Each finished file is
+checked for a picture at the expected size, a sound track, and a sensible
+length. The note under the video on the homepage is rewritten by the script with
+the date of the search, since prices and stock move on after a recording.
 
 ### Recording it
 
-On a machine with network access and your `.env` (`PRODUCT_SOURCE` and its key;
-`OPENAI_API_KEY` for the AI interpreter):
+On a machine with network access and your `.env.local` or `.env`
+(`PRODUCT_SOURCE` and its key; `OPENAI_API_KEY` for the AI interpreter):
 
 ```sh
 npm install                       # Playwright
@@ -1691,7 +1704,9 @@ $env:FFMPEG_PATH = "C:\ffmpeg\bin\ffmpeg.exe"
 npm run demo:record
 ```
 
-`node scripts/test-record-demo.js` checks those paths offline. The pointer paths,
+`node scripts/test-record-demo.js` checks those paths and the cut offline;
+`node scripts/test-retailer-visit.js` drives a real browser through a fast, a
+slow, a never-loading and a tab-less retailer. The pointer paths,
 typing rhythm and pauses come from a seeded generator, the narration is fixed,
 and the saved search pins the products, so the same inputs give the same video.
 
@@ -1705,7 +1720,7 @@ own when headless, which is the only reason one is drawn.
 
 ### The narration
 
-Three short lines in `assets/demo/narration/`, spoken by Kokoro v1.0 (voice
+Four short lines in `assets/demo/narration/`, spoken by Kokoro v1.0 (voice
 `af_heart`), a neural text-to-speech model run offline through sherpa-onnx, then
 trimmed and brought to one loudness. They are committed, so recording needs no
 speech model. `scripts/demo-narration.py` makes them again if a line changes:

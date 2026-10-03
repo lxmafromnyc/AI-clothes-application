@@ -5,22 +5,27 @@
     "looking": {
       "text": "I’m looking for a black oversized hoodie, under eighty dollars.",
       "file": "looking.wav",
-      "duration": 3.207
+      "duration": 3.208
     },
-    "found": {
-      "text": "Fynd finds matching products from different retailers.",
-      "file": "found.wav",
-      "duration": 3.052
+    "options": {
+      "text": "Fynd gives me several options, from different retailers.",
+      "file": "options.wav",
+      "duration": 2.968
     },
-    "found-one": {
-      "text": "Fynd finds matching products.",
-      "file": "found-one.wav",
-      "duration": 1.75
+    "options-one": {
+      "text": "Fynd gives me several options.",
+      "file": "options-one.wav",
+      "duration": 1.778
     },
-    "open": {
-      "text": "And I can open the product directly at the retailer.",
-      "file": "open.wav",
-      "duration": 2.654
+    "compare": {
+      "text": "I can compare them, and open the ones I like.",
+      "file": "compare.wav",
+      "duration": 2.394
+    },
+    "choose": {
+      "text": "So I can search naturally, and choose where I want to buy.",
+      "file": "choose.wav",
+      "duration": 2.985
     }
   }
 }
