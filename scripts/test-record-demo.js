@@ -24,21 +24,29 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 
+const os = require('os');
 const {
   ffprobeFor, durationCommand, SEARCHES, MIN_PRODUCTS, verdict, fitness, pickProduct,
-  budgetOf, priceOf, mentionOf, cutMap, savedProblem, narrationNeeded
+  budgetOf, priceOf, mentionOf, cutMap, savedProblem, narrationNeeded,
+  requestsFor, instability, howFound, recordingReport, RETRY_DELAYS_MS, loadEnv
 } = require('./record-demo');
+const store = require('../api/_store');
 
 let passed = 0;
 let failed = 0;
+/* run in order, one at a time, each awaited: some read the store */
+const queue = [];
 function test(name, fn) {
-  try { fn(); passed += 1; console.log(`  ok    ${name}`); }
-  catch (err) { failed += 1; console.log(`  FAIL  ${name}\n        ${err.message}`); }
+  queue.push(async () => {
+    try { await fn(); passed += 1; console.log(`  ok    ${name}`); }
+    catch (err) { failed += 1; console.log(`  FAIL  ${name}\n        ${err.message}`); }
+  });
 }
+const section = (title) => queue.push(async () => console.log(title));
 
 const none = {};
 
-console.log('\nwhere ffprobe is found');
+section('\nwhere ffprobe is found');
 
 test('Windows: ffprobe.exe beside ffmpeg.exe', () => {
   assert.strictEqual(ffprobeFor('C:\\ffmpeg\\bin\\ffmpeg.exe', none, 'win32'), 'C:\\ffmpeg\\bin\\ffprobe.exe');
@@ -97,7 +105,7 @@ test('nothing derived from an ffmpeg path is ffmpeg itself', () => {
   }
 });
 
-console.log('\nthe duration command');
+section('\nthe duration command');
 
 test('-show_entries goes to ffprobe', () => {
   const [bin, args] = durationCommand('clip.webm', 'C:\\ffmpeg\\bin\\ffprobe.exe');
@@ -132,7 +140,7 @@ test('lengthOf reads through durationCommand', () => {
   assert.ok(!/FFMPEG/.test(body), 'lengthOf mentions FFMPEG');
 });
 
-console.log('\nthe searches');
+section('\nthe searches');
 
 test('four searches, each a different slot with its own narration line', () => {
   assert.strictEqual(SEARCHES.length, 4);
@@ -141,7 +149,7 @@ test('four searches, each a different slot with its own narration line', () => {
 });
 
 test('no request appears twice, and every one has a budget', () => {
-  const all = SEARCHES.flatMap((s) => s.candidates.map((c) => c.query));
+  const all = SEARCHES.flatMap((s) => requestsFor(s).map((c) => c.query));
   assert.strictEqual(new Set(all.map((q) => q.toLowerCase())).size, all.length);
   for (const q of all) assert.ok(budgetOf(q) > 0, `"${q}" names no budget`);
 });
@@ -151,19 +159,46 @@ test('the first choices span different budgets', () => {
   assert.strictEqual(new Set(budgets).size, budgets.length, budgets.join(', '));
 });
 
-test('the opening request is the one its narration names, with no fall-back', () => {
+test('the opening request is the one its narration names, with no alternative', () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'assets', 'demo', 'narration', 'manifest.json'), 'utf8'));
   const first = SEARCHES[0];
   assert.strictEqual(first.candidates.length, 1);
-  assert.ok(/black oversized hoodie/.test(first.candidates[0].query));
+  assert.ok(!requestsFor(first).some((r) => r.kind === 'alternative'));
+  assert.strictEqual(first.candidates[0].query, 'black oversized hoodie under $80');
   assert.ok(/black oversized hoodie/i.test(manifest.lines[first.line].text) && /eighty/.test(manifest.lines[first.line].text));
+});
+
+test('the hoodie equivalent wordings keep the exact intent: black, oversized, a hoodie, under $80', () => {
+  const eq = requestsFor(SEARCHES[0]).filter((r) => r.kind === 'equivalent').map((r) => r.query);
+  assert.deepStrictEqual(eq, ['black oversized pullover hoodie under $80', 'black oversized hooded sweatshirt under $80', 'black baggy hoodie under $80']);
+  for (const q of eq) {
+    assert.ok(/\bblack\b/.test(q) && /\b(oversized|baggy)\b/.test(q) && /\b(hoodie|hooded sweatshirt)\b/.test(q), q);
+    assert.strictEqual(budgetOf(q), 80, q);
+  }
+});
+
+test('every equivalent keeps the budget and brand of its request', () => {
+  for (const slot of SEARCHES) {
+    for (const r of requestsFor(slot).filter((x) => x.kind === 'equivalent')) {
+      assert.strictEqual(budgetOf(r.query), budgetOf(r.of), r.query);
+      const parent = slot.candidates.find((c) => c.query === r.of);
+      assert.strictEqual(r.mention, parent.mention || null, r.query);
+      if (r.mention) assert.ok(mentionOf(r).test(r.query), `"${r.query}" drops the brand`);
+    }
+  }
+});
+
+test('a slot tries its request, then its equivalents, then any alternative', () => {
+  const order = requestsFor(SEARCHES[2]).map((r) => r.kind);
+  assert.deepStrictEqual(order, ['exact', 'equivalent', 'equivalent', 'alternative', 'alternative']);
+  assert.strictEqual(requestsFor(SEARCHES[2])[0].query, 'BAPE shark hoodie under $400');
 });
 
 test('the later lines name no request, since those slots can fall back', () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'assets', 'demo', 'narration', 'manifest.json'), 'utf8'));
   for (const s of SEARCHES.slice(1)) {
     const said = manifest.lines[s.line].text.toLowerCase();
-    for (const c of s.candidates) {
+    for (const c of requestsFor(s)) {
       for (const word of c.query.toLowerCase().split(/\W+/).filter((w) => w.length > 4 && w !== 'under')) {
         assert.ok(!said.includes(word), `"${s.line}" says "${word}" from "${c.query}"`);
       }
@@ -181,7 +216,7 @@ test('every narration line the recording can ask for has its clip', () => {
   }
 });
 
-console.log('\nwhat may be shown');
+section('\nwhat may be shown');
 
 const product = (i, extra = {}) => ({
   i, name: `Product ${i}`, brand: 'Brand', price: '$60', href: `https://shop${i}.example/p/${i}`,
@@ -224,7 +259,7 @@ test('a search with no retailer page that opens is not used', () => {
   assert.ok(fitness(offBrand, { query: 'BAPE shark hoodie under $400', mention: 'bape' }).some((p) => /retailer page/.test(p)));
 });
 
-console.log('\nwhich product is opened');
+section('\nwhich product is opened');
 
 test('never a product whose retailer page was not seen to open', () => {
   const cards = grid(4, (i) => ({ retailerOk: i === 3 }));
@@ -258,7 +293,7 @@ test('budgets and prices are read the way the page writes them', () => {
   assert.strictEqual(priceOf('Price at retailer'), null);
 });
 
-console.log('\nthe edit');
+section('\nthe edit');
 
 test('Fynd, retailer, Fynd: lengths add up and lines land where they were said', () => {
   const cut = [
@@ -287,7 +322,100 @@ test('a retailer tab that was not shown leaves a plain cut between two Fynd piec
   assert.ok(Math.abs(total - 14) < 1e-9);
 });
 
-console.log('\nreplaying a saved search');
+section('\nan unsteady product source');
+
+const exchange = (diagnostics, status = 200) => ({ status, response: { diagnostics } });
+
+test('aborted or failed offer lookups are the source being unsteady', () => {
+  assert.ok(/3 offer lookup\(s\) aborted or failed/.test(instability(exchange({ offers: { lookupsFailed: 3, budgetExpired: false } }), 'cards')));
+  assert.ok(/ran out of time/.test(instability(exchange({ offers: { lookupsFailed: 0, budgetExpired: true } }), 'cards')));
+  assert.ok(/seller lookup/.test(instability(exchange({ sellers: { lookupsFailed: 2 } }), 'cards')));
+  assert.ok(/ran out of time/.test(instability(exchange({ timing: { deadlineExpired: true } }), 'cards')));
+  assert.ok(/HTTP 502/.test(instability(exchange({}, 502), 'empty')));
+  assert.ok(/45 s/.test(instability(null, 'timeout')));
+});
+
+test('a search that simply found few products is not unsteady, and is not retried', () => {
+  assert.strictEqual(instability(exchange({ offers: { lookupsFailed: 0, budgetExpired: false }, timing: { deadlineExpired: false } }), 'cards'), '');
+  assert.strictEqual(instability(exchange({}), 'empty'), '');
+  assert.strictEqual(instability(exchange(undefined), 'cards'), '');
+});
+
+test('the same request is tried at most twice more, after a short pause', () => {
+  assert.ok(RETRY_DELAYS_MS.length >= 1 && RETRY_DELAYS_MS.length <= 2);
+  for (const ms of RETRY_DELAYS_MS) assert.ok(ms >= 1000 && ms <= 10000, `${ms}ms`);
+});
+
+test('the minimum stays at four, and three verified products still fail', () => {
+  assert.strictEqual(MIN_PRODUCTS, 4);
+  assert.ok(verdict(grid(3)).some((p) => /only 3 product/.test(p)));
+});
+
+test('a retry forgets the cached search and the allowance, and keeps the offers', () => {
+  store.reset();
+  return Promise.all([
+    store.set('fynd:cache:v1:search:abc', { records: [] }),
+    store.set('fynd:cache:v1:offer:def', { commerce: {} }),
+    store.add('usage:anon:searches:day:2026-10-03', 1)
+  ]).then(async () => {
+    store.forget((key) => key.includes(':search:') || key.startsWith('usage:'));
+    assert.strictEqual(await store.get('fynd:cache:v1:search:abc'), null);
+    assert.ok(await store.get('fynd:cache:v1:offer:def'));
+    assert.strictEqual(await store.readNumber('usage:anon:searches:day:2026-10-03'), 0);
+    store.reset();
+  });
+});
+
+section('\nthe report');
+
+const tried = (extra) => ({ query: 'black oversized hoodie under $80', kind: 'exact', of: 'black oversized hoodie under $80', verified: 3, passed: false, unsteady: '4 offer lookup(s) aborted or failed', ...extra });
+
+test('it says when a search passed first time', () => {
+  assert.strictEqual(howFound([tried({ try: 1, verified: 8, passed: true, unsteady: undefined })]), 'passed first time');
+});
+
+test('it says when a retry was needed', () => {
+  assert.ok(/1 retry after an unsteady product source/.test(howFound([tried({ try: 1 }), tried({ try: 2, verified: 7, passed: true })])));
+});
+
+test('it says when an equivalent wording was used, and which', () => {
+  const said = howFound([tried({ try: 1 }), tried({ try: 2 }), tried({ try: 3 }),
+    tried({ query: 'black oversized pullover hoodie under $80', kind: 'equivalent', try: 1, verified: 6, passed: true })]);
+  assert.ok(/2 retries/.test(said) && /equivalent wording, "black oversized pullover hoodie under \$80"/.test(said), said);
+});
+
+test('the report names what was meant, what was typed, and what each recording opened', () => {
+  const saved = { searchedAt: 'x', searches: [{ slot: 'everyday', intended: 'black oversized hoodie under $80', query: 'black baggy hoodie under $80', kind: 'equivalent',
+    attempts: [tried({ try: 1 }), tried({ query: 'black baggy hoodie under $80', kind: 'equivalent', try: 1, verified: 5, passed: true })],
+    shown: [{ href: 'https://www.a.example/1' }, { href: 'https://b.example/2' }] }] };
+  const pick = { search: 1, brand: 'B', name: 'Hoodie', price: '$60', retailer: 'a.example', href: 'https://www.a.example/1', shown: true };
+  const r = recordingReport(saved, [[{ kind: 'desktop' }, { picks: [pick] }], [{ kind: 'mobile' }, { picks: [] }]], { 'fynd-demo': 55.61 });
+  const s = r.searches[0];
+  assert.strictEqual(s.intended, 'black oversized hoodie under $80');
+  assert.strictEqual(s.typed, 'black baggy hoodie under $80');
+  assert.ok(/equivalent wording/.test(s.howFound));
+  assert.deepStrictEqual(s.retailers, ['a.example', 'b.example']);
+  assert.strictEqual(s.opened.desktop.retailer, 'a.example');
+  assert.strictEqual(s.opened.mobile, null);
+  assert.strictEqual(r.seconds['fynd-demo'], 55.6);
+});
+
+test('.env.local is read, and nothing already set is overridden', () => {
+  const file = path.join(os.tmpdir(), `fynd-env-${process.pid}.local`);
+  fs.writeFileSync(file, 'FYND_TEST_A=from-file\nexport FYND_TEST_B="quoted"\n# FYND_TEST_C=commented\n');
+  process.env.FYND_TEST_A = 'already';
+  try {
+    assert.deepStrictEqual(loadEnv(file).length, 1);
+    assert.strictEqual(process.env.FYND_TEST_A, 'already');
+    assert.strictEqual(process.env.FYND_TEST_B, 'quoted');
+    assert.strictEqual(process.env.FYND_TEST_C, undefined);
+  } finally {
+    fs.unlinkSync(file);
+    delete process.env.FYND_TEST_A; delete process.env.FYND_TEST_B;
+  }
+});
+
+section('\nreplaying a saved search');
 
 const savedRun = () => ({
   version: 2,
@@ -298,8 +426,10 @@ const savedRun = () => ({
   }))
 });
 
-test('a whole run replays', () => {
+test('a whole run replays, including one that used an equivalent wording', () => {
   assert.strictEqual(savedProblem(savedRun()), '');
+  const eq = savedRun(); eq.searches[0].query = 'black baggy hoodie under $80';
+  assert.strictEqual(savedProblem(eq), '');
 });
 
 test('the old one-search file, a short run, a stale request or no opened page is refused', () => {
@@ -312,5 +442,8 @@ test('the old one-search file, a short run, a stale request or no opened page is
   assert.ok(/no retailer page/.test(savedProblem(closed)));
 });
 
-console.log(`\n${passed} passed, ${failed} failed`);
-process.exit(failed ? 1 : 0);
+(async () => {
+  for (const run of queue) await run();
+  console.log(`\n${passed} passed, ${failed} failed`);
+  process.exit(failed ? 1 : 0);
+})();

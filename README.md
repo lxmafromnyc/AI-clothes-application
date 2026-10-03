@@ -1635,12 +1635,36 @@ each time wherever the results allow. The video cuts from the retailer's tab
 straight to the search box for the next request, so the scroll back up the page
 is never watched.
 
-The later three slots have fall-backs, in `SEARCHES` at the top of
-`scripts/record-demo.js` (Levi's 501s and a Ralph Lauren cable knit behind the
-BAPE hoodie; a black satin slip dress and a vintage Burberry trench behind the
-linen dress). A request is used only when its real answer passes every check
-below; otherwise the next one in its slot is tried, and if none passes nothing
-is written. Their narration names no request, so it is true whichever one runs.
+Product sources have bad minutes — offer lookups aborted at the time budget, a
+search that times out — and a page that comes back one product short for that
+reason says nothing about the request. So each slot, in `SEARCHES` at the top of
+`scripts/record-demo.js`, gets its answer in this order:
+
+1. its request, exactly as written;
+2. the same request again, up to twice, after 3 s and then 7 s — only when the
+   search endpoint's own diagnostics say the source was unsteady (offer or
+   seller lookups aborted or failed, lookups out of time, the search out of
+   time, a 5xx). A retry forgets the cached search and the allowance, and keeps
+   the offers the provider really answered, so its time goes on the ones it did
+   not. A search that simply found too little is not retried;
+3. equivalent wordings of the same shopping intent, each with the same retries:
+   for the hoodie, "black oversized pullover hoodie under $80", "black oversized
+   hooded sweatshirt under $80" and "black baggy hoodie under $80". The
+   narration stays as it is;
+4. for the later three slots only, an alternative piece that is the same kind
+   of problem (Levi's 501s and a Ralph Lauren cable knit behind the BAPE hoodie;
+   a black satin slip dress and a vintage Burberry trench behind the linen
+   dress). The later slots' narration names no request, so it is true
+   whichever one runs.
+
+Every attempt is held to every check below; nothing is lowered along the way,
+and the minimum stays at four products. If no attempt passes, nothing is
+written, and the run lists every attempt and why it was not used.
+
+Every run ends with a recording report, printed and written to
+`assets/demo/demo-report.json`: for each search, what was meant, what was typed,
+whether it needed a retry or an equivalent wording (and why), and the product
+and retailer each recording opened, then the finished lengths.
 
 The words are spoken and shown in a thin strip along the bottom edge, so the
 video reads the same with the sound off, and the same lines are its captions
@@ -1685,8 +1709,10 @@ outside 50–60 seconds.
 
 ### Recording it
 
-On a machine with network access and your `.env` (`PRODUCT_SOURCE` and its key;
-`OPENAI_API_KEY` for the AI interpreter):
+On a machine with network access and your `.env.local` or `.env`
+(`PRODUCT_SOURCE` and its key; `OPENAI_API_KEY` for the AI interpreter). Both
+are read, `.env.local` first, so a value there wins; `--env=FILE` reads one file
+instead:
 
 ```sh
 npm install                       # Playwright
@@ -1751,7 +1777,8 @@ more than one shop; otherwise the shorter line is used.
 | `fynd-demo-mobile.mp4` / `.webm` | 800 × 1440 (400 × 720 at 2×), with narration | 1023px and under |
 | `fynd-demo{,-mobile}-poster.jpg` | | the real results, shown before playback |
 | `fynd-demo{,-mobile}.vtt` | | the narration as captions, timed to the video |
-| `demo-search.json` | | the real searches both recordings were made from |
+| `demo-search.json` | | the real searches both recordings were made from, with every attempt each took |
+| `demo-report.json` | | the recording report: attempts, retries, equivalents, products and retailers opened, lengths |
 | `narration/*.wav`, `narration/manifest.json` | | the spoken lines |
 
 The narrow one is the site's real mobile layout, driven in a phone-shaped window

@@ -62,13 +62,19 @@
      node scripts/record-demo.js --stills   a PNG at every beat, no video
      node scripts/record-demo.js --only=desktop   (or --only=mobile)
      node scripts/record-demo.js --out=DIR  write somewhere other than assets/demo
+     node scripts/record-demo.js --env=FILE read FILE instead of .env.local / .env
+
+   Every run ends with a report — for each search, the request typed,
+   whether it needed a retry or an equivalent wording, and the product
+   and retailer opened in each recording — printed and written to
+   demo-report.json beside the videos.
 
    Needs:
      - Playwright with Chromium (npx playwright install chromium)
      - ffmpeg with libx264, libvpx-vp9, aac and libopus
      - network access to your product source, OpenAI, and the retailers'
        image hosts and pages — the same access a visitor's browser has
-     - .env with PRODUCT_SOURCE and that source's key; OPENAI_API_KEY for
+     - .env.local or .env with PRODUCT_SOURCE and that source's key; OPENAI_API_KEY for
        the AI interpreter (without it the page reads the request with its
        local interpreter, exactly as the live site would)
 
@@ -84,7 +90,9 @@
      fynd-demo-mobile.mp4 / .webm         phone layout, 800 x 1440 (400 x 720 @2x)
      fynd-demo-poster.jpg, fynd-demo-mobile-poster.jpg
      fynd-demo.vtt, fynd-demo-mobile.vtt  captions, timed to the narration
-     demo-search.json                     the real searches both were made from
+     demo-search.json                     the real searches both were made from,
+                                          with every attempt each one took
+     demo-report.json                     what happened: attempts, products opened, lengths
 
    Determinism: the pointer paths, typing rhythm and pauses come from a
    seeded generator, the narration is fixed, and --replay reuses the saved
@@ -120,31 +128,69 @@ const ORIGIN = `http://127.0.0.1:${PORT}`;
    thing that is a chore to track down across shops, and a particular
    style and colour. `line` is the narration said while it is typed.
 
-   Each slot lists the request it would rather make first, then its
-   fall-backs. `mention` is a brand the request names: a request for a
-   brand is only used when at least MIN_PRODUCTS of its results are that
-   brand, and only one of those is clicked — a search for BAPE that
-   comes back with other people's shark hoodies is not shown. The first
-   slot has no fall-back because its narration names its request. */
+   How each slot gets a real answer, in order:
+
+     1. its request, exactly as written;
+     2. the same request again, once or twice after a short pause, but
+        only when it came up short because the product source was
+        unsteady — offer lookups aborted or failed, the search out of
+        time — never because the products were not there;
+     3. its `equivalents`: the same shopping intent in other words ("a
+        black oversized pullover hoodie" for "a black oversized hoodie"),
+        each given the same retries. These exist only to get round a
+        provider having a bad minute; the narration stays as it is;
+     4. then, for the later slots only, an `alternative` — a different
+        piece that is the same kind of problem — with its own retries.
+
+   Every attempt is held to every check; nothing is relaxed along the
+   way. `mention` is a brand the request names: a request for a brand is
+   only used when at least MIN_PRODUCTS of its results are that brand,
+   and only one of those is clicked — a search for BAPE that comes back
+   with other people's shark hoodies is not shown. The first slot has no
+   alternative because its narration names its request. */
 const SEARCHES = [
   { slot: 'everyday', line: 'looking', candidates: [
-    { query: 'black oversized hoodie under $80' }
+    { query: 'black oversized hoodie under $80', equivalents: [
+      'black oversized pullover hoodie under $80',
+      'black oversized hooded sweatshirt under $80',
+      'black baggy hoodie under $80'
+    ] }
   ] },
   { slot: 'category', line: 'different', candidates: [
-    { query: 'lightweight jacket for fall under $150' },
-    { query: 'light fall jacket under $150' }
+    { query: 'lightweight jacket for fall under $150', equivalents: [
+      'lightweight fall jacket under $150',
+      'light jacket for fall under $150'
+    ] }
   ] },
   { slot: 'hard-to-find', line: 'specific', candidates: [
-    { query: 'BAPE shark hoodie under $400', mention: 'bape|bathing ape' },
+    { query: 'BAPE shark hoodie under $400', mention: 'bape|bathing ape', equivalents: [
+      'A Bathing Ape shark hoodie under $400',
+      'BAPE shark full zip hoodie under $400'
+    ] },
     { query: "Levi's 501 '90s jeans in light wash under $100", mention: 'levi' },
     { query: 'Ralph Lauren cable knit sweater in cream under $200', mention: 'ralph lauren|polo' }
   ] },
   { slot: 'particular', line: 'particular', candidates: [
-    { query: 'sage green linen midi dress under $120' },
+    { query: 'sage green linen midi dress under $120', equivalents: [
+      'linen midi dress in sage green under $120',
+      'sage linen midi dress under $120'
+    ] },
     { query: 'black satin slip dress under $100' },
     { query: 'vintage Burberry trench coat under $500', mention: 'burberry' }
   ] }
 ];
+
+/* Every request a slot may make, in the order it makes them. */
+function requestsFor(slot) {
+  return slot.candidates.flatMap((c, i) => {
+    const kind = i === 0 ? 'exact' : 'alternative';
+    return [{ query: c.query, mention: c.mention || null, kind, of: c.query },
+      ...(c.equivalents || []).map((q) => ({ query: q, mention: c.mention || null, kind: 'equivalent', of: c.query }))];
+  });
+}
+
+/* the pauses before the second and third try of one request */
+const RETRY_DELAYS_MS = [3000, 7000];
 const SEED = 20261002;
 
 /* the fewest products worth showing, and the longest the page's own
@@ -176,20 +222,26 @@ function fail(message) {
   process.exit(1);
 }
 
-/* .env is read the way the deployment would read its variables: each
-   KEY=value line, without overriding anything already in the environment.
-   Values are never printed. */
-function loadEnv() {
-  const file = path.join(REPO, '.env');
-  if (!fs.existsSync(file)) return false;
-  for (const line of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {
-    const m = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/.exec(line);
-    if (!m || line.trim().startsWith('#')) continue;
-    let value = m[2];
-    if (/^(['"]).*\1$/.test(value)) value = value.slice(1, -1);
-    if (process.env[m[1]] === undefined) process.env[m[1]] = value;
+/* The env files are read the way the deployment would read its
+   variables: each KEY=value line, without overriding anything already in
+   the environment. --env=FILE names one; otherwise .env.local, then .env,
+   so a value in .env.local wins. Values are never printed; the names of
+   the files read are. */
+function loadEnv(only = arg('env')) {
+  const files = typeof only === 'string' ? [path.resolve(only)] : ['.env.local', '.env'].map((f) => path.join(REPO, f));
+  if (typeof only === 'string' && !fs.existsSync(files[0])) fail(`No env file at ${only}.`);
+  const read = [];
+  for (const file of files.filter((f) => fs.existsSync(f))) {
+    for (const line of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {
+      const m = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/.exec(line);
+      if (!m || line.trim().startsWith('#')) continue;
+      let value = m[2];
+      if (/^(['"]).*\1$/.test(value)) value = value.slice(1, -1);
+      if (process.env[m[1]] === undefined) process.env[m[1]] = value;
+    }
+    read.push(path.relative(REPO, file) || file);
   }
-  return true;
+  return read;
 }
 
 function findFfmpeg() {
@@ -621,6 +673,8 @@ function fitness(found, candidate) {
   return problems;
 }
 
+const pickedOf = (c) => ({ brand: c.brand, name: c.name, price: c.price, retailer: hostOf(c.href), href: c.href });
+
 /* Which product to open, among the cards on screen: one whose retailer
    page was seen to open, of the brand asked for, ideally at a retailer
    not already shown in this video, within the budget asked for, and
@@ -654,10 +708,29 @@ function checkSetup() {
   return store;
 }
 
+/* Whether a search came up short because the product source was having
+   a bad moment rather than because the products were not there: what
+   the search endpoint's own diagnostics say about its offer and seller
+   lookups and its time budget. Returns the reason in words, or ''. */
+function instability(search, outcome) {
+  if (outcome === 'timeout') return 'the search did not answer within 45 s';
+  if (!search) return '';
+  if ([500, 502, 503, 504].includes(search.status)) return `the product source failed (HTTP ${search.status})`;
+  const d = (search.response && search.response.diagnostics) || {};
+  const reasons = [];
+  for (const [name, t] of [['offer', d.offers], ['seller', d.sellers]]) {
+    if (!t || typeof t !== 'object') continue;
+    if (Number(t.lookupsFailed) > 0) reasons.push(`${t.lookupsFailed} ${name} lookup(s) aborted or failed`);
+    if (t.budgetExpired) reasons.push(`the ${name} lookups ran out of time`);
+    if (t.halted) reasons.push(`the ${name} lookups were halted (${t.halted})`);
+  }
+  if (d.timing && d.timing.deadlineExpired && !reasons.length) reasons.push('the search ran out of time');
+  return reasons.join('; ');
+}
+
 /* One request, made the way a visitor makes it, and everything about its
    answer that decides whether it can be shown. */
-async function searchOnce(browser, store, candidate) {
-  store.reset();
+async function searchOnce(browser, request) {
   api.mode = 'live';
   api.exchanges = {};
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
@@ -665,7 +738,7 @@ async function searchOnce(browser, store, candidate) {
     const page = await context.newPage();
     await page.addInitScript(pagePrep, ORIGIN);
     await page.goto(`${ORIGIN}/index.html`, { waitUntil: 'load' });
-    await page.fill('#ask', candidate.query);
+    await page.fill('#ask', request.query);
     await page.click('#ask-form button[type=submit]');
 
     const outcome = await Promise.race([
@@ -674,19 +747,69 @@ async function searchOnce(browser, store, candidate) {
     ]).catch(() => 'timeout');
 
     const search = api.exchanges.search;
-    if (!search) return { problems: ['the page never reached /api/search'] };
+    const unsteady = instability(search, outcome);
+    if (!search) return { verified: 0, unsteady, problems: ['the page never reached /api/search'] };
     if (search.status !== 200 || outcome !== 'cards') {
       const why = search.response && (search.response.error || search.response.notice || search.response.state);
-      return { problems: [`the real search did not return products (HTTP ${search.status}${why ? `: ${why}` : ''})`] };
+      return { verified: 0, unsteady, problems: [`the real search did not return products (HTTP ${search.status}${why ? `: ${why}` : ''})`] };
     }
 
     const found = await checkResults(page);
     const opened = verdict(found).length ? {} : await probeRetailers(context, found);
     found.forEach((p) => { p.retailerOk = Boolean(opened[p.href] && opened[p.href].ok); p.retailerWhy = opened[p.href] ? opened[p.href].why : 'not opened'; });
-    return { found, search, interpret: api.exchanges.interpret || null, problems: fitness(found, candidate) };
+    return { found, search, interpret: api.exchanges.interpret || null, verified: found.length, unsteady, problems: fitness(found, request) };
   } finally {
     await context.close();
   }
+}
+
+/* A slot's requests, each tried — and tried again only when the source
+   was unsteady — until one passes every check. Returns the one that
+   passed, and every attempt along the way. */
+async function searchSlot(browser, store, slot) {
+  const attempts = [];
+  /* a new slot starts from nothing; a later attempt at the same slot
+     forgets the cached searches (or it would be handed the same short
+     page back) and the usage counters, and keeps the offers the
+     provider really answered, so its time goes on the ones it did not */
+  store.reset();
+  let fresh = true;
+  for (const request of requestsFor(slot)) {
+    for (let n = 0; n <= RETRY_DELAYS_MS.length; n += 1) {
+      if (n > 0) await wait(RETRY_DELAYS_MS[n - 1]);
+      if (!fresh) store.forget((key) => key.includes(':search:') || key.startsWith('usage:'));
+      fresh = false;
+      const label = n === 0 ? request.kind : `${request.kind}, try ${n + 1}`;
+      console.log(`  "${request.query}" (${label})`);
+      const result = await searchOnce(browser, request);
+      attempts.push({
+        query: request.query, kind: request.kind, of: request.of, try: n + 1,
+        verified: result.verified, passed: !result.problems.length,
+        ...(result.unsteady ? { unsteady: result.unsteady } : {}),
+        ...(result.problems.length ? { problems: result.problems } : {})
+      });
+      if (!result.problems.length) return { request, attempts, ...result };
+      console.log(`    not used:\n      - ${result.problems.join('\n      - ')}`);
+      if (!result.unsteady) break;
+      console.log(`    the product source was unsteady: ${result.unsteady}`);
+      if (n < RETRY_DELAYS_MS.length) console.log(`    trying the same request again in ${RETRY_DELAYS_MS[n] / 1000}s`);
+    }
+  }
+  return { request: null, attempts };
+}
+
+/* In a few words, what it took to get a slot's answer. */
+function howFound(attempts) {
+  const passed = attempts.find((a) => a.passed);
+  if (!passed) return 'no request passed';
+  const before = attempts.slice(0, attempts.indexOf(passed));
+  const retries = attempts.filter((a) => a.try > 1 && attempts.indexOf(a) <= attempts.indexOf(passed)).length;
+  if (!before.length) return 'passed first time';
+  const parts = [];
+  if (retries) parts.push(`${retries} retr${retries === 1 ? 'y' : 'ies'} after an unsteady product source`);
+  if (passed.kind === 'equivalent') parts.push(`an equivalent wording, "${passed.query}", in place of "${passed.of}"`);
+  if (passed.kind === 'alternative') parts.push(`the alternative request "${passed.query}"`);
+  return `needed ${parts.join(' and ') || 'another attempt'}`;
 }
 
 async function realSearches(chromium) {
@@ -695,27 +818,22 @@ async function realSearches(chromium) {
   const searches = [];
   try {
     for (const slot of SEARCHES) {
-      const passedOver = [];
-      let chosen = null;
-      for (const candidate of slot.candidates) {
-        console.log(`  "${candidate.query}"`);
-        const result = await searchOnce(browser, store, candidate);
-        if (!result.problems.length) { chosen = { candidate, ...result }; break; }
-        console.log(`    not used:\n      - ${result.problems.join('\n      - ')}`);
-        passedOver.push({ query: candidate.query, problems: result.problems });
+      const chosen = await searchSlot(browser, store, slot);
+      if (!chosen.request) {
+        fail(`No request for the "${slot.slot}" search came back fit to record. Tried:\n${chosen.attempts.map((a) => `  "${a.query}" (${a.kind}, try ${a.try}): ${a.verified} verified${a.unsteady ? `; unsteady source: ${a.unsteady}` : ''}\n    - ${(a.problems || []).join('\n    - ')}`).join('\n')}\nNothing was lowered to make it pass. Try again later, or add another request to that slot in SEARCHES.`);
       }
-      if (!chosen) {
-        fail(`No request for the "${slot.slot}" search came back fit to record. Tried:\n${passedOver.map((p) => `  "${p.query}"\n    - ${p.problems.join('\n    - ')}`).join('\n')}\nAdd another request to that slot in SEARCHES, or try again later.`);
-      }
-      const { candidate, found, search, interpret } = chosen;
+      const { request, attempts, found, search, interpret } = chosen;
       const hosts = new Set(found.map((f) => hostOf(f.href)).filter(Boolean));
-      console.log(`    used: ${found.length} real products from ${hosts.size} retailer(s); every photo loaded; ${found.filter((f) => f.retailerOk).length} retailer page(s) opened`);
+      console.log(`    used: ${found.length} real products from ${hosts.size} retailer(s); every photo loaded; ${found.filter((f) => f.retailerOk).length} retailer page(s) opened — ${howFound(attempts)}`);
       searches.push({
         slot: slot.slot,
         line: slot.line,
-        query: candidate.query,
-        mention: candidate.mention || null,
-        passedOver,
+        intended: slot.candidates[0].query,
+        query: request.query,
+        kind: request.kind,
+        mention: request.mention,
+        howFound: howFound(attempts),
+        attempts,
         interpret: interpret ? { ...interpret } : null,
         search,
         shown: found.map(({ name, brand, price, retailer, href, src, width, height, retailerOk, retailerWhy }) => ({
@@ -727,7 +845,7 @@ async function realSearches(chromium) {
     await browser.close();
   }
   return {
-    version: 2,
+    version: 3,
     searchedAt: new Date().toISOString(),
     productSource: process.env.PRODUCT_SOURCE,
     searches
@@ -784,6 +902,8 @@ async function record(chromium, shot, rawDir, stillsDir) {
      retailer tabs in between */
   const cut = [];
   const tabs = [];
+  /* which product each search opened, and whether its page was shown */
+  const picks = [];
   let stillN = 0;
 
   const still = async (label, target = page) => {
@@ -1087,6 +1207,7 @@ async function record(chromium, shot, rawDir, stillsDir) {
       if (stillsDir && ok) await still(`${tag}-retailer`, popup);
       const video = stillsDir ? null : popup.video();
       await popup.close();
+      picks.push({ search: n + 1, query: s.query, ...pickedOf(cards[pick]), opened: popup.url(), shown: ok });
       if (ok) {
         used.add(hostOf(popup.url()) || hostOf(href));
         cut.push({ src: 'tab', tab: tabs.length, born, from: Math.max(born, shownAt - 0.15), to: gone });
@@ -1095,6 +1216,7 @@ async function record(chromium, shot, rawDir, stillsDir) {
         console.log(`  ${shot.name}: the retailer page (${href}) did not show itself in time; the video stays on Fynd`);
       }
     } else {
+      picks.push({ search: n + 1, query: s.query, ...pickedOf(cards[pick]), opened: null, shown: false });
       console.log(`  ${shot.name}: the link opened no new tab; the video stays on Fynd`);
     }
     await page.bringToFront();
@@ -1125,9 +1247,9 @@ async function record(chromium, shot, rawDir, stillsDir) {
     console.log('  marks', JSON.stringify(Object.fromEntries(Object.entries(marks).map(([k, t]) => [k, Number(t.toFixed(2))]))));
     console.log('  cut', cut.map((c) => `${c.src} ${(c.to - c.from).toFixed(2)}s`).join(', '));
   }
-  if (stillsDir) return { marks };
+  if (stillsDir) return { marks, picks };
   return {
-    marks, cues, voice, cut,
+    marks, cues, voice, cut, picks,
     main: await mainVideo.path(),
     tabs: await Promise.all(tabs.map((v) => v.path()))
   };
@@ -1289,6 +1411,43 @@ function describeOnPage(saved) {
    The run
    --------------------------------------------------------- */
 
+/* What happened, search by search: what was meant, what was typed,
+   every attempt it took, and what each recording opened. */
+function recordingReport(saved, takes, lengths) {
+  return {
+    searchedAt: saved.searchedAt,
+    productSource: saved.productSource || null,
+    searches: saved.searches.map((s, i) => ({
+      search: i + 1,
+      slot: s.slot,
+      intended: s.intended || s.query,
+      typed: s.query,
+      kind: s.kind || 'exact',
+      howFound: s.howFound || (s.attempts ? howFound(s.attempts) : 'passed first time'),
+      attempts: s.attempts || [],
+      products: s.shown.length,
+      retailers: [...new Set(s.shown.map((p) => hostOf(p.href)).filter(Boolean))],
+      opened: Object.fromEntries(takes.map(([shot, take]) => [shot.kind, (take.picks || []).find((p) => p.search === i + 1) || null]))
+    })),
+    seconds: Object.fromEntries(Object.entries(lengths).map(([k, v]) => [k, Number(v.toFixed(1))]))
+  };
+}
+
+function printReport(r) {
+  console.log('\nRecording report');
+  for (const s of r.searches) {
+    console.log(`  ${s.search}. ${s.slot}: "${s.typed}"${s.typed !== s.intended ? ` (meant: "${s.intended}")` : ''}`);
+    console.log(`     ${s.howFound}; ${s.products} products from ${s.retailers.length} retailer(s)`);
+    for (const a of s.attempts.filter((x) => !x.passed)) {
+      console.log(`     - "${a.query}" (${a.kind}, try ${a.try}): ${a.verified} verified${a.unsteady ? `; unsteady: ${a.unsteady}` : ''}`);
+    }
+    for (const [kind, p] of Object.entries(s.opened)) {
+      console.log(`     ${kind}: ${p ? `${p.brand ? `${p.brand} — ` : ''}${p.name}, ${p.price}, at ${p.retailer}${p.shown ? '' : ' (its page did not show on camera; left out)'}` : 'nothing opened'}`);
+    }
+  }
+  for (const [name, sec] of Object.entries(r.seconds)) console.log(`  ${name}: ${sec}s`);
+}
+
 /* every narration clip the recording can ask for */
 const narrationNeeded = () => [...new Set([...SEARCHES.map((s) => s.line), 'found', 'found-one', 'open', 'close'])];
 
@@ -1301,7 +1460,7 @@ function savedProblem(saved) {
   for (let i = 0; i < SEARCHES.length; i += 1) {
     const s = saved.searches[i];
     if (!s || s.slot !== SEARCHES[i].slot) return `does not hold the "${SEARCHES[i].slot}" search in place ${i + 1}`;
-    if (!SEARCHES[i].candidates.some((c) => c.query === s.query)) return `holds "${s.query}", which is no longer one of the "${s.slot}" requests`;
+    if (!requestsFor(SEARCHES[i]).some((c) => c.query === s.query)) return `holds "${s.query}", which is no longer one of the "${s.slot}" requests`;
     if (!s.search || !Array.isArray(s.shown) || !s.shown.length) return `has no products for "${s.query}"`;
     if (!s.shown.some((p) => p.retailerOk === true)) return `has no retailer page seen to open for "${s.query}"`;
   }
@@ -1340,7 +1499,7 @@ async function main() {
       console.log(`Replaying the real searches of ${api.saved.searchedAt}:`);
       for (const s of api.saved.searches) console.log(`  "${s.query}" (${s.shown.length} products)`);
     } else {
-      console.log(`Searching for real${hadEnv ? ' with .env' : ''}:`);
+      console.log(`Searching for real${hadEnv.length ? ` with ${hadEnv.join(' and ')}` : ''}:`);
       api.saved = await realSearches(chromium);
     }
     api.mode = 'replay';
@@ -1358,12 +1517,16 @@ async function main() {
     server.close();
 
     if (STILLS) {
+      printReport(recordingReport(api.saved, takes, {}));
       console.log(`Stills in ${stillsDir}`);
       return;
     }
 
     const lengths = {};
     for (const [shot, take] of takes) lengths[shot.name] = build(shot, take, stage);
+    const summary = recordingReport(api.saved, takes, lengths);
+    fs.writeFileSync(path.join(stage, 'demo-report.json'), `${JSON.stringify(summary, null, 2)}\n`);
+    printReport(summary);
 
     for (const f of fs.readdirSync(stage)) fs.copyFileSync(path.join(stage, f), path.join(OUT, f));
     if (!REPLAY) fs.writeFileSync(SEARCH_FILE, `${JSON.stringify(api.saved, null, 2)}\n`);
@@ -1382,5 +1545,5 @@ async function main() {
    starting anything */
 if (require.main === module) main();
 
-module.exports = { ffprobeFor, durationCommand, SEARCHES, MIN_PRODUCTS, verdict, fitness, pickProduct, budgetOf, priceOf, mentionOf, cutMap, savedProblem, narrationNeeded };
+module.exports = { ffprobeFor, durationCommand, SEARCHES, requestsFor, instability, howFound, recordingReport, RETRY_DELAYS_MS, loadEnv, MIN_PRODUCTS, verdict, fitness, pickProduct, budgetOf, priceOf, mentionOf, cutMap, savedProblem, narrationNeeded };
 
