@@ -1,72 +1,72 @@
 {
   "video": "fynd-demo",
-  "duration": 56.181,
-  "source": "Reconstructed for the recording of 3 October 2026: the lines from its captions (the narration was placed where each caption starts), the rest from the video's own scene changes, checked frame by frame. Recordings made by scripts/record-demo.js write this file themselves.",
+  "duration": 55.742,
+  "source": "Written by scripts/record-demo.js as it made the recording.",
   "lines": [
     {
       "key": "looking",
-      "at": 2.184
+      "at": 2.149
     },
     {
       "key": "found",
-      "at": 9.827
+      "at": 9.59
     },
     {
       "key": "open",
-      "at": 13.065
+      "at": 12.847
     },
     {
       "key": "different",
-      "at": 17.032
+      "at": 16.32
     },
     {
       "key": "specific",
-      "at": 29.203
+      "at": 27.18
     },
     {
       "key": "particular",
-      "at": 39.856
+      "at": 39.247
     },
     {
       "key": "close",
-      "at": 51.681
+      "at": 51.006
     }
   ],
   "searches": [
     {
-      "typing": 1,
-      "searched": 7.53,
-      "results": 9.03,
+      "typing": 0.432,
+      "searched": 7.641,
+      "results": 9.59,
       "retailer": [
-        14.67,
-        16.9
+        13.888,
+        16.189
       ]
     },
     {
-      "typing": 17.03,
-      "searched": 22.33,
-      "results": 23.93,
+      "typing": 16.32,
+      "searched": 21.43,
+      "results": 23.311,
       "retailer": [
-        26.67,
-        29.07
+        24.638,
+        26.889
       ]
     },
     {
-      "typing": 29.2,
-      "searched": 33.63,
-      "results": 35.23,
+      "typing": 27.18,
+      "searched": 33.111,
+      "results": 35.136,
       "retailer": [
-        37.5,
-        39.7
+        36.654,
+        39.064
       ]
     },
     {
-      "typing": 39.86,
-      "searched": 44.77,
-      "results": 46.47,
+      "typing": 39.247,
+      "searched": 44.746,
+      "results": 46.661,
       "retailer": [
-        49.53,
-        51.67
+        48.576,
+        51.006
       ]
     }
   ]

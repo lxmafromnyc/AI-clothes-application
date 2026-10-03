@@ -1,5 +1,5 @@
 {
-  "searchedAt": "2026-10-03T22:43:03.995Z",
+  "searchedAt": "2026-10-03T23:28:46.768Z",
   "productSource": "openwebninja",
   "searches": [
     {
@@ -15,44 +15,42 @@
           "kind": "exact",
           "of": "black oversized hoodie under $80",
           "try": 1,
-          "verified": 8,
+          "verified": 7,
           "passed": true,
-          "unsteady": "2 offer lookup(s) aborted or failed; the offer lookups ran out of time"
+          "unsteady": "4 offer lookup(s) aborted or failed; the offer lookups ran out of time"
         }
       ],
-      "products": 8,
+      "products": 7,
       "retailers": [
-        "abercrombie.com",
         "hollisterco.com",
-        "hourscollection.com",
-        "oldnavy.gap.com",
-        "hm.com",
-        "aeropostale.com",
+        "gap.com",
         "nordstrom.com",
-        "us.aybl.com"
+        "walmart.com",
+        "ae.com",
+        "zara.com"
       ],
       "opened": {
         "desktop": {
           "search": 1,
           "query": "black oversized hoodie under $80",
-          "brand": "Old Navy",
-          "name": "Old Navy Men's Rotation Hoodie",
-          "price": "$39.99",
-          "retailer": "oldnavy.gap.com",
-          "href": "https://oldnavy.gap.com/browse/product.do?pid=564240002&vid=1&tid=onns000009",
-          "opened": "https://oldnavy.gap.com/browse/product.do?pid=564240002&vid=1&tid=onns000009#pdp-page-content",
+          "brand": "Gap",
+          "name": "Gap Men's Shirts Gap Hoodie",
+          "price": "$39",
+          "retailer": "gap.com",
+          "href": "https://www.gap.com/browse/product.do?pid=821270242&vid=1&tid=gpns000044",
+          "opened": "https://www.gap.com/browse/product.do?pid=821270242&vid=1&tid=gpns000044#pdp-page-content",
           "shown": true,
           "attempt": 1
         },
         "mobile": {
           "search": 1,
           "query": "black oversized hoodie under $80",
-          "brand": "Old Navy",
-          "name": "Old Navy Men's Rotation Hoodie",
-          "price": "$39.99",
-          "retailer": "oldnavy.gap.com",
-          "href": "https://oldnavy.gap.com/browse/product.do?pid=564240002&vid=1&tid=onns000009",
-          "opened": "https://oldnavy.gap.com/browse/product.do?pid=564240002&vid=1&tid=onns000009#pdp-page-content",
+          "brand": "Gap",
+          "name": "Gap Men's Shirts Gap Hoodie",
+          "price": "$39",
+          "retailer": "gap.com",
+          "href": "https://www.gap.com/browse/product.do?pid=821270242&vid=1&tid=gpns000044",
+          "opened": "https://www.gap.com/browse/product.do?pid=821270242&vid=1&tid=gpns000044#pdp-page-content",
           "shown": true,
           "attempt": 1
         }
@@ -87,36 +85,38 @@
       "products": 11,
       "retailers": [
         "bananarepublicfactory.gapfactory.com",
-        "rei.com",
-        "sportsbasement.com",
         "oldnavy.gap.com",
+        "coldwatercreek.com",
+        "rei.com",
         "uniqlo.com",
-        "kohls.com",
+        "carhartt.com",
         "macys.com",
-        "32degrees.com"
+        "dickssportinggoods.com",
+        "finishline.com",
+        "columbia.com"
       ],
       "opened": {
         "desktop": {
           "search": 2,
           "query": "lightweight jacket for fall under $150",
-          "brand": "Banana Republic Factory",
-          "name": "Men's Luxe Touch Full Zip Jacket Black Regular Size M",
-          "price": "$60",
-          "retailer": "bananarepublicfactory.gapfactory.com",
-          "href": "https://bananarepublicfactory.gapfactory.com/browse/product.do?pid=1176093011&vid=1&tid=bfns000001",
-          "opened": "https://bananarepublicfactory.gapfactory.com/browse/product.do?pid=1176093011&vid=1&tid=bfns000001#pdp-page-content",
+          "brand": "Old Navy",
+          "name": "Old Navy Men's Water-Resistant Zip Bomber Jacket",
+          "price": "$48.99",
+          "retailer": "oldnavy.gap.com",
+          "href": "https://oldnavy.gap.com/browse/product.do?pid=417247012&vid=1&tid=onns000009",
+          "opened": "https://oldnavy.gap.com/browse/product.do?pid=417247012&vid=1&tid=onns000009#pdp-page-content",
           "shown": true,
           "attempt": 1
         },
         "mobile": {
           "search": 2,
           "query": "lightweight jacket for fall under $150",
-          "brand": "Banana Republic Factory",
-          "name": "Men's Luxe Touch Full Zip Jacket",
-          "price": "$60",
-          "retailer": "bananarepublicfactory.gapfactory.com",
-          "href": "https://bananarepublicfactory.gapfactory.com/browse/product.do?pid=1176093001&vid=1&tid=bfns000001",
-          "opened": "https://bananarepublicfactory.gapfactory.com/browse/product.do?pid=1176093001&vid=1&tid=bfns000001#pdp-page-content",
+          "brand": "Old Navy",
+          "name": "Old Navy Men's Water-Resistant Zip Bomber Jacket",
+          "price": "$48.99",
+          "retailer": "oldnavy.gap.com",
+          "href": "https://oldnavy.gap.com/browse/product.do?pid=417247012&vid=1&tid=onns000009",
+          "opened": "https://oldnavy.gap.com/browse/product.do?pid=417247012&vid=1&tid=onns000009#pdp-page-content",
           "shown": true,
           "attempt": 1
         }
@@ -144,40 +144,41 @@
           "of": "BAPE shark hoodie under $400",
           "try": 1,
           "verified": 11,
-          "passed": true,
-          "unsteady": "1 offer lookup(s) aborted or failed; the offer lookups ran out of time"
+          "passed": true
         }
       ],
       "products": 11,
       "retailers": [
-        "bape-store.com",
-        "kbimaison.com",
-        "techwear-x.com",
-        "breezeshare.com",
-        "jacketcraze.com"
+        "undergroundclothing.com",
+        "poshmark.com",
+        "ebay.com",
+        "thedousedshop.com",
+        "us.vestiairecollective.com",
+        "stockx.com",
+        "americasuits.com"
       ],
       "opened": {
         "desktop": {
           "search": 3,
           "query": "BAPE shark hoodie under $400",
-          "brand": "Bape-Store.com",
-          "name": "Bape Split 1st Camo Shark Full Zip Hoodie Black",
-          "price": "$217",
-          "retailer": "bape-store.com",
-          "href": "https://bape-store.com/product/bape-split-1st-camo-shark-full-zip-hoodie-black/?attribute_pa_size=l",
-          "opened": "https://bape-store.com/product/bape-split-1st-camo-shark-full-zip-hoodie-black/?attribute_pa_size=l",
+          "brand": "Poshmark",
+          "name": "BAPE Color Camo 2nd Shark Pullover Hoodie Men's",
+          "price": "$250",
+          "retailer": "poshmark.com",
+          "href": "https://poshmark.com/listing/BAPE-Red-Camo-Shark-Hoodie-67e94e66981d48433ed07086?srsltid=AU7gw4WtnIu5x_MHxEfO62649ygcknGNXr21XFCP7xHkmXd6kvzDfBMSRT8#utm_source=gdm_unpaid",
+          "opened": "https://poshmark.com/listing/BAPE-Red-Camo-Shark-Hoodie-67e94e66981d48433ed07086?srsltid=AU7gw4WtnIu5x_MHxEfO62649ygcknGNXr21XFCP7xHkmXd6kvzDfBMSRT8#utm_source=gdm_unpaid",
           "shown": true,
           "attempt": 1
         },
         "mobile": {
           "search": 3,
           "query": "BAPE shark hoodie under $400",
-          "brand": "Bape-Store.com",
-          "name": "Bape Split 1st Camo Shark Full Zip Hoodie Black",
-          "price": "$217",
-          "retailer": "bape-store.com",
-          "href": "https://bape-store.com/product/bape-split-1st-camo-shark-full-zip-hoodie-black/?attribute_pa_size=l",
-          "opened": "https://bape-store.com/product/bape-split-1st-camo-shark-full-zip-hoodie-black/?attribute_pa_size=l",
+          "brand": "Poshmark",
+          "name": "BAPE Color Camo 2nd Shark Pullover Hoodie Men's",
+          "price": "$250",
+          "retailer": "poshmark.com",
+          "href": "https://poshmark.com/listing/BAPE-Red-Camo-Shark-Hoodie-67e94e66981d48433ed07086?srsltid=AU7gw4WtnIu5x_MHxEfO62649ygcknGNXr21XFCP7xHkmXd6kvzDfBMSRT8#utm_source=gdm_unpaid",
+          "opened": "https://poshmark.com/listing/BAPE-Red-Camo-Shark-Hoodie-67e94e66981d48433ed07086?srsltid=AU7gw4WtnIu5x_MHxEfO62649ygcknGNXr21XFCP7xHkmXd6kvzDfBMSRT8#utm_source=gdm_unpaid",
           "shown": true,
           "attempt": 1
         }
@@ -190,15 +191,25 @@
         "desktop": [
           {
             "search": 3,
-            "brand": "breezeshare.com",
-            "name": "BAPE Double-hat Big ABC Camo Shark Hoodie",
-            "price": "$49.99",
-            "retailer": "breezeshare.com",
-            "href": "https://breezeshare.com/products/bape-double-hat-big-abc-camo-shark-hoodie",
-            "why": "did not arrive within 6s"
+            "brand": "eBay - areth",
+            "name": "COLOR CAMO REVERSIBLE SHARK FULL ZIP HOODIE MENS",
+            "price": "$399.95",
+            "retailer": "ebay.com",
+            "href": "https://www.ebay.com/itm/276627833558?chn=ps&mkevt=1&mkcid=28&google_free_listing_action=view_item&srsltid=AU7gw4VYEx-NJjwEyM8ZCz0CG6J2m42-qRPPKWmrkggiN0qzDv-QjFQfk84",
+            "why": "HTTP 403"
           }
         ],
-        "mobile": []
+        "mobile": [
+          {
+            "search": 3,
+            "brand": "eBay - areth",
+            "name": "COLOR CAMO REVERSIBLE SHARK FULL ZIP HOODIE MENS",
+            "price": "$399.95",
+            "retailer": "ebay.com",
+            "href": "https://www.ebay.com/itm/276627833558?chn=ps&mkevt=1&mkcid=28&google_free_listing_action=view_item&srsltid=AU7gw4VYEx-NJjwEyM8ZCz0CG6J2m42-qRPPKWmrkggiN0qzDv-QjFQfk84",
+            "why": "HTTP 403"
+          }
+        ]
       }
     },
     {
@@ -230,7 +241,8 @@
         "walmart.com",
         "simonjersey.com",
         "shopxiaolizi.com",
-        "shoppetwelve.com"
+        "shoppetwelve.com",
+        "menique.com"
       ],
       "opened": {
         "desktop": {
@@ -240,20 +252,20 @@
           "name": "Women Sleeveless Linen Look Midi Dress Crew Neck Loose Shift Dress with Side Pockets Casual Vacation Sundress",
           "price": "$45.95",
           "retailer": "target.com",
-          "href": "https://www.target.com/p/women-sleeveless-linen-look-midi-dress-crew-neck-loose-shift-dress-with-side-pockets-casual-vacation-sundress-green-xl/-/A-1012397257?TCID=OGS&AFID=google&CPNG=Women+-+Target+Plus&adgroup=303-9&srsltid=AU7gw4U2JtM2JS-r6F63kUiATJNa_Ubv-WqondyoJkSj4gCPszMcud7_Wig",
-          "opened": "https://www.target.com/p/women-sleeveless-linen-look-midi-dress-crew-neck-loose-shift-dress-with-side-pockets-casual-vacation-sundress-green-xl/-/A-1012397257?TCID=OGS&AFID=google&CPNG=Women+-+Target+Plus&adgroup=303-9&srsltid=AU7gw4U2JtM2JS-r6F63kUiATJNa_Ubv-WqondyoJkSj4gCPszMcud7_Wig",
+          "href": "https://www.target.com/p/women-sleeveless-linen-look-midi-dress-crew-neck-loose-shift-dress-with-side-pockets-casual-vacation-sundress-green-xl/-/A-1012397257?TCID=OGS&AFID=google&CPNG=Women+-+Target+Plus&adgroup=303-9&srsltid=AU7gw4XBige7Q5dtHuHS3-tCTzTYedRImHjW9wTmazDcftEClE7gRlm3jOg",
+          "opened": "https://www.target.com/p/women-sleeveless-linen-look-midi-dress-crew-neck-loose-shift-dress-with-side-pockets-casual-vacation-sundress-green-xl/-/A-1012397257?TCID=OGS&AFID=google&CPNG=Women+-+Target+Plus&adgroup=303-9&srsltid=AU7gw4XBige7Q5dtHuHS3-tCTzTYedRImHjW9wTmazDcftEClE7gRlm3jOg",
           "shown": true,
           "attempt": 1
         },
         "mobile": {
           "search": 4,
           "query": "sage green linen midi dress under $120",
-          "brand": "Walmart - FIOPHY",
-          "name": "Women's Fiophy 100% Linen Dresses Square Neck Sleeveless Spaghetti Strap Summer Casual Midi Dress with Slit",
-          "price": "$59.99",
-          "retailer": "walmart.com",
-          "href": "https://www.walmart.com/ip/Fiophy-100-Linen-Dresses-Square-Neck-Sleeveless-Spaghetti-Strap-Summer-Casual-Midi-Dress-with-Slit-Green-L/21043154883?wmlspartner=wlpa&selectedSellerId=101460448&veh=seo_fpl&cn=google",
-          "opened": "https://www.walmart.com/blocked?url=L2lwL0Zpb3BoeS0xMDAtTGluZW4tRHJlc3Nlcy1TcXVhcmUtTmVjay1TbGVldmVsZXNzLVNwYWdoZXR0aS1TdHJhcC1TdW1tZXItQ2FzdWFsLU1pZGktRHJlc3Mtd2l0aC1TbGl0LUdyZWVuLUwvMjEwNDMxNTQ4ODM/d21sc3BhcnRuZXI9d2xwYSZzZWxlY3RlZFNlbGxlcklkPTEwMTQ2MDQ0OCZ2ZWg9c2VvX2ZwbCZjbj1nb29nbGU=&uuid=443e8962-bf7c-11f1-a59a-5d89c89cdc58&vid=&g=b",
+          "brand": "Target",
+          "name": "Women Sleeveless Linen Look Midi Dress Crew Neck Loose Shift Dress with Side Pockets Casual Vacation Sundress",
+          "price": "$45.95",
+          "retailer": "target.com",
+          "href": "https://www.target.com/p/women-sleeveless-linen-look-midi-dress-crew-neck-loose-shift-dress-with-side-pockets-casual-vacation-sundress-green-xl/-/A-1012397257?TCID=OGS&AFID=google&CPNG=Women+-+Target+Plus&adgroup=303-9&srsltid=AU7gw4XBige7Q5dtHuHS3-tCTzTYedRImHjW9wTmazDcftEClE7gRlm3jOg",
+          "opened": "https://www.target.com/p/women-sleeveless-linen-look-midi-dress-crew-neck-loose-shift-dress-with-side-pockets-casual-vacation-sundress-green-xl/-/A-1012397257?TCID=OGS&AFID=google&CPNG=Women+-+Target+Plus&adgroup=303-9&srsltid=AU7gw4XBige7Q5dtHuHS3-tCTzTYedRImHjW9wTmazDcftEClE7gRlm3jOg",
           "shown": true,
           "attempt": 1
         }
@@ -264,32 +276,13 @@
       },
       "leftOut": {
         "desktop": [],
-        "mobile": [
-          {
-            "search": 4,
-            "brand": "Quince",
-            "name": "Women's Quince 100% European Linen Scoop Neck Midi Dress",
-            "price": "$84",
-            "retailer": "quince.com",
-            "href": "https://www.quince.com/women/100-european-linen-scoop-neck-midi-dress?color=martini-olive&size=l&srsltid=AU7gw4Vqajje1WCHPHBhxazxB1SEFSHOrnS081V4_qgwXmo7ueScyrD3Vdc",
-            "why": "the page stopped responding (a read took over 2.5s) once held"
-          },
-          {
-            "search": 4,
-            "brand": "Target",
-            "name": "Women Sleeveless Linen Look Midi Dress Crew Neck Loose Shift Dress with Side Pockets Casual Vacation Sundress",
-            "price": "$45.95",
-            "retailer": "target.com",
-            "href": "https://www.target.com/p/women-sleeveless-linen-look-midi-dress-crew-neck-loose-shift-dress-with-side-pockets-casual-vacation-sundress-green-xl/-/A-1012397257?TCID=OGS&AFID=google&CPNG=Women+-+Target+Plus&adgroup=303-9&srsltid=AU7gw4U2JtM2JS-r6F63kUiATJNa_Ubv-WqondyoJkSj4gCPszMcud7_Wig",
-            "why": "the page stopped responding (a read took over 2.5s)"
-          }
-        ]
+        "mobile": []
       }
     }
   ],
   "everyHandoffShown": true,
   "seconds": {
-    "fynd-demo": 56.2,
-    "fynd-demo-mobile": 54.5
+    "fynd-demo": 55.7,
+    "fynd-demo-mobile": 50.6
   }
 }

@@ -1,72 +1,72 @@
 {
   "video": "fynd-demo-mobile",
-  "duration": 54.567,
-  "source": "Reconstructed for the recording of 3 October 2026: the lines from its captions (the narration was placed where each caption starts), the rest from the video's own scene changes, checked frame by frame. Recordings made by scripts/record-demo.js write this file themselves.",
+  "duration": 50.626,
+  "source": "Written by scripts/record-demo.js as it made the recording.",
   "lines": [
     {
       "key": "looking",
-      "at": 1.421
+      "at": 1.108
     },
     {
       "key": "found",
-      "at": 7.788
+      "at": 7.352
     },
     {
       "key": "open",
-      "at": 12.591
+      "at": 10.615
     },
     {
       "key": "different",
-      "at": 16.23
+      "at": 14.064
     },
     {
       "key": "specific",
-      "at": 27.486
+      "at": 24.652
     },
     {
       "key": "particular",
-      "at": 36.912
+      "at": 34.271
     },
     {
       "key": "close",
-      "at": 50.04
+      "at": 45.897
     }
   ],
   "searches": [
     {
-      "typing": 0.5,
-      "searched": 5.43,
-      "results": 6.97,
+      "typing": 0.46,
+      "searched": 5.475,
+      "results": 7.352,
       "retailer": [
-        13.73,
-        16.1
+        11.762,
+        13.933
       ]
     },
     {
-      "typing": 16.23,
-      "searched": 21.27,
-      "results": 22.93,
+      "typing": 14.064,
+      "searched": 18.961,
+      "results": 20.816,
       "retailer": [
-        25.07,
-        27.33
+        21.952,
+        24.506
       ]
     },
     {
-      "typing": 27.49,
-      "searched": 30.67,
-      "results": 32.33,
+      "typing": 24.652,
+      "searched": 28.544,
+      "results": 30.429,
       "retailer": [
-        34.6,
-        36.73
+        31.562,
+        34.107
       ]
     },
     {
-      "typing": 36.91,
-      "searched": 41.13,
-      "results": 42.77,
+      "typing": 34.271,
+      "searched": 38.846,
+      "results": 40.714,
       "retailer": [
-        47.7,
-        50.1
+        43.849,
+        45.897
       ]
     }
   ]
