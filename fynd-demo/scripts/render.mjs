@@ -11,6 +11,7 @@
                                stamped PREVIEW · FIXTURE DATA
    options: --only=desktop|mobile  --scale=0.5  --frames=0-149  --burn-captions
             --check   only check the data and photos; render nothing
+            --audio   the soundtrack only, as WAV (seconds, not minutes), for npm run verify
 
    The same bundle, props and settings every time: the output depends on
    the data, the narration and the code, nothing else. */
@@ -102,14 +103,14 @@ const report = { dataset, capturedAt: data.capturedAt, renderedAt: new Date().to
 for (const shape of SHAPES) {
   const inputProps = { dataset, burnCaptions: Boolean(args['burn-captions']), layout: shape.layout };
   const composition = await selectComposition({ ...common, id: shape.id, inputProps });
-  const encodes = preview ? [['mp4', 'h264']] : [['mp4', 'h264'], ['webm', 'vp9']];
+  const encodes = args.audio ? [['wav', 'wav']] : preview ? [['mp4', 'h264']] : [['mp4', 'h264'], ['webm', 'vp9']];
   for (const [ext, codec] of encodes) {
     const file = path.join(OUT, `${shape.name}.${ext}`);
     let last = -1;
     console.log(`Rendering ${path.relative(ROOT, file)}…`);
     await renderMedia({
       ...common, composition, inputProps, codec, outputLocation: file, scale, frameRange,
-      ...(codec === 'h264' ? { crf: 18, pixelFormat: 'yuv420p', audioCodec: 'aac', audioBitrate: '192k', x264Preset: 'slow' } : { crf: 30, pixelFormat: 'yuv420p', audioCodec: 'opus' }),
+      ...(codec === 'wav' ? {} : codec === 'h264' ? { crf: 18, pixelFormat: 'yuv420p', audioCodec: 'aac', audioBitrate: '192k', x264Preset: 'slow' } : { crf: 30, pixelFormat: 'yuv420p', audioCodec: 'opus' }),
       onProgress: ({ progress }) => {
         const p = Math.floor(progress * 10);
         if (p !== last) { last = p; process.stdout.write(`  ${p * 10}%\r`); }
@@ -117,7 +118,7 @@ for (const shape of SHAPES) {
     });
     report.outputs.push(path.basename(file));
   }
-  if (!preview) {
+  if (!preview && !args.audio) {
     /* the poster: the hoodie results with A, B and C marked */
     const poster = path.join(OUT, `${shape.name}-poster.jpg`);
     await renderStill({ ...common, composition, inputProps, frame: BEAT.emphasisC + 12, output: poster, imageFormat: 'jpeg', jpegQuality: 92 });

@@ -22,6 +22,7 @@ import json
 import math
 import os
 import re
+import subprocess
 import sys
 import tempfile
 
@@ -95,16 +96,19 @@ def main():
         target = os.path.join(OUT, f'{key}.wav')
         shared.finish(raw.name, target)
         os.unlink(raw.name)
+        level = exact_level(target, shared.LOUDNESS)
 
         seconds = shared.duration(target)
         frames = math.ceil(seconds * FPS)
         gap = shared.longest_gap(target)
         heard = recognizer(target) if recognizer else None
-        print(f'  {key:12s} {seconds:.2f}s ({frames} frames, budget {budget})  gap {gap:.2f}s  {text}')
+        print(f'  {key:12s} {seconds:.2f}s ({frames} frames, budget {budget})  {level:.1f} LUFS  gap {gap:.2f}s  {text}')
         if heard is not None:
             print(f'  {"":12s} heard: {heard}')
             if words(heard) != words(text.replace('Fynd', 'Find')):
                 failures.append(f'{key}: transcribed as "{heard}"')
+        if abs(level - shared.LOUDNESS) > 0.5:
+            failures.append(f'{key}: {level:.1f} LUFS, not {shared.LOUDNESS}')
         if gap > MAX_GAP:
             failures.append(f'{key}: a {gap:.2f}s pause inside the line')
         if frames > budget:
@@ -119,6 +123,29 @@ def main():
         json.dump(voice, f, indent=2, ensure_ascii=False)
         f.write('\n')
     print(f'wrote {os.path.relpath(os.path.join(OUT, "voice.json"), ROOT)}')
+
+
+def measure(path):
+    out = subprocess.run(['ffmpeg', '-hide_banner', '-nostats', '-i', path, '-af', 'ebur128=peak=true', '-f', 'null', '-'],
+                         capture_output=True, text=True).stderr
+    return float(re.findall(r'I:\s+(-?[\d.]+) LUFS', out)[-1]), float(re.findall(r'Peak:\s+(-?[\d.]+) dBFS', out)[-1])
+
+
+def exact_level(path, target):
+    """loudnorm's single pass undershoots on a clip this short. Measure it
+    and apply the exact gain; the few consonant peaks that would then pass
+    -1.5 dBFS are caught by a fast, gentle limiter (nothing else is
+    compressed). Measured again and nudged until it is within 0.2 LU."""
+    for _ in range(4):
+        lufs, _ = measure(path)
+        if abs(lufs - target) <= 0.2:
+            break
+        tmp = path + '.tmp.wav'
+        subprocess.run(['ffmpeg', '-y', '-hide_banner', '-loglevel', 'error', '-i', path,
+                        '-af', f'volume={target - lufs:.2f}dB,alimiter=limit=0.84:attack=3:release=60:level=disabled',
+                        '-ar', '48000', '-c:a', 'pcm_s16le', tmp], check=True)
+        os.replace(tmp, path)
+    return measure(path)[0]
 
 
 def words(s):

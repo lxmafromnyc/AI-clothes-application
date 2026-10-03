@@ -195,12 +195,19 @@ console.log('real photographs');
 }
 
 console.log('music');
-test('the music bed exists and sits at about -27 LUFS', () => {
+test('the music bed exists and sits at about -29 LUFS', () => {
   const file = path.join(PUBLIC, MUSIC.file);
   assert.ok(fs.existsSync(file), 'run python3 scripts/music.py');
   const out = spawnSync(process.env.FFMPEG_PATH || 'ffmpeg', ['-hide_banner', '-nostats', '-i', file, '-af', 'ebur128', '-f', 'null', '-'], { encoding: 'utf8' }).stderr;
   const lufs = Number([...out.matchAll(/I:\s+(-?[\d.]+) LUFS/g)].pop()[1]);
-  assert.ok(lufs <= -26 && lufs >= -31, `${lufs} LUFS`);
+  assert.ok(lufs <= -27 && lufs >= -30.5, `${lufs} LUFS`);
+});
+test('every voice line is at -18 LUFS', () => {
+  for (const v of voice) {
+    const out = spawnSync(process.env.FFMPEG_PATH || 'ffmpeg', ['-hide_banner', '-nostats', '-i', path.join(PUBLIC, v.file), '-af', 'ebur128', '-f', 'null', '-'], { encoding: 'utf8' }).stderr;
+    const lufs = Number([...out.matchAll(/I:\s+(-?[\d.]+) LUFS/g)].pop()[1]);
+    assert.ok(Math.abs(lufs + 18) <= 0.5, `${v.id}: ${lufs} LUFS`);
+  }
 });
 test('the music ducks under every line and is full between them', () => {
   const beats = placeVoice(voice);

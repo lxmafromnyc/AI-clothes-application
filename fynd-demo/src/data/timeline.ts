@@ -117,8 +117,8 @@ export function soundCues(typedFrames: number[], layout: 'desktop' | 'mobile' = 
 /* The music bed: in softly under the hook, ducked about 6 dB whenever a
    line is being said (eased in just ahead of the voice, eased out after
    it), and faded to nothing by the last frame. The bed file itself is
-   made at -27 LUFS (scripts/music.py), so it sits around -27 between
-   lines and around -33 under them; the voice is at -18. */
+   made at -29 LUFS (scripts/music.py), so it sits around -29 between
+   lines and around -35 under them; the voice is at -18. */
 export const MUSIC = { file: 'audio/music/bed.wav', duck: 0.5, attack: 8, release: 14, fadeIn: 24, fadeOutFrom: 900 } as const;
 
 export function musicVolume(frame: number, beats: VoiceBeat[]): number {

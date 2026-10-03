@@ -13,11 +13,11 @@
     "id": "understands",
     "file": "audio/narration/understands.wav",
     "durationInFrames": 60,
-    "seconds": 1.97,
+    "seconds": 1.969,
     "caption": "Fynd understands what you’re looking for.",
     "spoken": "Fynd understands what you’re looking for.",
     "speed": 1.0,
-    "longestGap": 0.08
+    "longestGap": 0.1
   },
   {
     "id": "brings",
@@ -27,7 +27,7 @@
     "caption": "And it brings back matching products from different retailers.",
     "spoken": "And it brings back matching products from different retailers.",
     "speed": 0.98,
-    "longestGap": 0.08
+    "longestGap": 0.1
   },
   {
     "id": "compare",
@@ -43,7 +43,7 @@
     "id": "straight",
     "file": "audio/narration/straight.wav",
     "durationInFrames": 55,
-    "seconds": 1.825,
+    "seconds": 1.827,
     "caption": "And that takes me straight to the retailer.",
     "spoken": "And that takes me straight to the retailer.",
     "speed": 1.0,

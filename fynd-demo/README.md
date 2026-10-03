@@ -125,7 +125,7 @@ Three layers, at three levels:
 | Layer | Level | Source |
 |---|---|---|
 | Voice | about −18 LUFS | `npm run narration` |
-| Music | about −27 LUFS between lines, about −33 under them | `npm run music` |
+| Music | about −29 LUFS between lines, about −35 under them | `npm run music` |
 | Effects | very quiet | `npm run sfx` |
 
 **Voice.** The five lines (Kokoro v1.0 `af_heart`) are made the way the recorder's

@@ -7,7 +7,7 @@ Checks a rendered film against what it was meant to be:
     starts (cross-correlation of each line's own clip against the mixed
     track: within one frame)
   - captions inside the film, never overlapping
-  - the voice at about -18 LUFS, the music alone at about -27, and every
+  - the voice at about -18 LUFS, the music alone at about -29, and every
     line at least 8 LU over the music
 
     python3 scripts/verify.py out/fynd-demo.mp4 [out/fynd-demo.vtt]
@@ -61,19 +61,22 @@ def main():
     if len(sys.argv) < 2:
         sys.exit(__doc__)
     film = sys.argv[1]
-    vtt = sys.argv[2] if len(sys.argv) > 2 else re.sub(r'\.(mp4|webm)$', '.vtt', film)
+    vtt = sys.argv[2] if len(sys.argv) > 2 else re.sub(r'\.(mp4|webm|wav)$', '.vtt', film)
     problems = []
 
     info = probe(film)
-    v = next(s for s in info['streams'] if s['codec_type'] == 'video')
+    v = next((s for s in info['streams'] if s['codec_type'] == 'video'), None)
     has_audio = any(s['codec_type'] == 'audio' for s in info['streams'])
     dur = float(info['format']['duration'])
-    num, den = map(int, v['r_frame_rate'].split('/'))
-    print(f'{os.path.basename(film)}: {v["width"]}x{v["height"]}, {num / den:g} fps, {dur:.2f}s, audio {"yes" if has_audio else "NO"}')
+    if v:
+        num, den = map(int, v['r_frame_rate'].split('/'))
+        print(f'{os.path.basename(film)}: {v["width"]}x{v["height"]}, {num / den:g} fps, {dur:.2f}s, audio {"yes" if has_audio else "NO"}')
+        if num / den != FPS:
+            problems.append(f'{num / den} fps, not {FPS}')
+    else:
+        print(f'{os.path.basename(film)}: soundtrack only, {dur:.2f}s')
     if abs(dur - 32.0) > 0.08:
         problems.append(f'{dur:.2f}s long, not 32.0s')
-    if num / den != FPS:
-        problems.append(f'{num / den} fps, not {FPS}')
     if not has_audio:
         problems.append('no audio track')
         return finish(problems)
@@ -105,11 +108,14 @@ def main():
     # mix, against the music alone (a stretch between the last line and the
     # closing fade, where nothing else plays)
     beats = [(start, start + line['durationInFrames'] / FPS) for line, (start, _, _) in zip(voice, cs)]
-    music_from = beats[-1][1] + 0.6
-    music_alone = lufs(film, music_from, 1.0)
-    print(f'  music alone {music_alone:.1f} LUFS ({music_from:.1f}-{music_from + 1:.1f}s)')
-    if not -32 <= music_alone <= -25:
-        problems.append(f'the music alone is {music_alone:.1f} LUFS, outside -32..-25')
+    # the music alone: the longest stretch with no line being said (clear of
+    # the ducking either side), before the closing fade
+    gaps = [(beats[i][1] + 0.6, beats[i + 1][0] - 0.4) for i in range(len(beats) - 1)]
+    a, b = max(gaps, key=lambda g: g[1] - g[0])
+    music_alone = lufs(film, a, b - a)
+    print(f'  music alone {music_alone:.1f} LUFS ({a:.1f}-{b:.1f}s, nobody speaking)')
+    if not -31 <= music_alone <= -26:
+        problems.append(f'the music alone is {music_alone:.1f} LUFS, outside -31..-26')
     for line, (a, b) in zip(voice, beats):
         speech = lufs(film, a, b - a)
         margin = speech - music_alone

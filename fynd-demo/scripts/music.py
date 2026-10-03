@@ -19,7 +19,7 @@ randomness is seeded).
 No drums, no vocals, no lead melody. Bar 1 (the hook) is pad and piano
 only; the last bar is the chord alone, fading out by 32.0s.
 
-The file is brought to -27 LUFS integrated with a true peak under -3 dB;
+The file is brought to -29 LUFS integrated with a true peak under -3 dB;
 the film plays it at full level between lines and ducks it about 6 dB
 under the voice (src/data/timeline.ts musicVolume).
 
@@ -42,7 +42,7 @@ BPM = 90
 BEAT = 60 / BPM
 BAR = 4 * BEAT
 LENGTH = 32.0
-TARGET = -27.0          # LUFS integrated
+TARGET = -29.0          # LUFS integrated: the middle of -30..-27
 
 rng = np.random.default_rng(20261003)
 N = int(LENGTH * RATE)
