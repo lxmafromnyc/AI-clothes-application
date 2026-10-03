@@ -28,8 +28,10 @@ const os = require('os');
 const {
   ffprobeFor, durationCommand, SEARCHES, MIN_PRODUCTS, verdict, fitness, pickProduct,
   budgetOf, priceOf, mentionOf, cutMap, savedProblem, narrationNeeded,
-  requestsFor, instability, howFound, recordingReport, RETRY_DELAYS_MS, loadEnv
+  requestsFor, instability, howFound, recordingReport, RETRY_DELAYS_MS, loadEnv,
+  handoffAllowed, visitRetailer, RETAILER_LOAD_MS, MAX_HANDOFFS
 } = require('./record-demo');
+const http = require('http');
 const store = require('../api/_store');
 
 let passed = 0;
@@ -293,6 +295,87 @@ test('budgets and prices are read the way the page writes them', () => {
   assert.strictEqual(priceOf('Price at retailer'), null);
 });
 
+section('\nthe retailer handoff on camera');
+
+/* the jacket search as it really came back: Nordstrom Rack passed the
+   first pass but did not show its page on camera */
+const jackets = () => [
+  product(0, { brand: 'COLUMBIA', name: "Men's Ascender Softshell Jacket", href: 'https://www.nordstromrack.com/s/columbia-ascender/1', price: '$59.97' }),
+  product(1, { href: 'https://www.uniqlo.com/us/en/products/E1', price: '$79.90' }),
+  product(2, { href: 'https://www.llbean.com/llb/shop/2', price: '$129' }),
+  product(3, { href: 'https://www.rei.com/product/3', price: '$99.95' }),
+  product(4, { href: 'https://www.patagonia.com/product/4', price: '$149' })
+];
+const allOpen = (cards) => new Map(cards.map((c) => [c.href, true]));
+const preflightOf = (cards, bad = []) => Object.fromEntries(cards.map((c) => [c.href, { ok: !bad.includes(hostOf(c.href)), why: bad.includes(hostOf(c.href)) ? 'did not arrive within 6s' : '' }]));
+const hostOf = (u) => new URL(u).hostname.replace(/^www\d?\./, '');
+const choose = (cards, verified, preflight, failed, opts = {}) => pickProduct(
+  cards.map((c) => ({ ...c, retailerOk: handoffAllowed(c, verified, preflight, failed) })), { budget: 150, visible: new Set([0, 1, 2, 3]), ...opts });
+
+test('a product whose page fails the preflight is never the one clicked', () => {
+  const cards = jackets();
+  /* without the preflight's word it would be Nordstrom Rack: on screen, off the first column… */
+  const pre = choose(cards, allOpen(cards), preflightOf(cards), new Set(), { visible: new Set([0]) });
+  assert.strictEqual(hostOf(cards[pre].href), 'nordstromrack.com');
+  const pick = choose(cards, allOpen(cards), preflightOf(cards, ['nordstromrack.com']), new Set(), { visible: new Set([0]) });
+  assert.notStrictEqual(hostOf(cards[pick].href), 'nordstromrack.com');
+  assert.ok(pick > 0);
+});
+
+test('a shop that failed on camera is not tried again, in this search or a later one', () => {
+  const cards = jackets();
+  const failed = new Set(['nordstromrack.com']);
+  for (let i = 0; i < 5; i += 1) {
+    const pick = choose(cards, allOpen(cards), preflightOf(cards), failed);
+    assert.notStrictEqual(hostOf(cards[pick].href), 'nordstromrack.com');
+  }
+});
+
+test('another product from the same search is taken, at a shop not yet shown', () => {
+  const cards = jackets();
+  const used = new Set(['uniqlo.com', 'rei.com']);
+  const pick = choose(cards, allOpen(cards), preflightOf(cards), new Set(['nordstromrack.com']), { used });
+  assert.ok(['llbean.com', 'patagonia.com'].includes(hostOf(cards[pick].href)), cards[pick].href);
+});
+
+test('a product the first pass never saw open stays out, whatever the preflight says', () => {
+  const cards = jackets();
+  const verified = allOpen(cards); verified.set(cards[1].href, false);
+  assert.strictEqual(handoffAllowed(cards[1], verified, preflightOf(cards), new Set()), false);
+  assert.strictEqual(handoffAllowed(cards[2], verified, {}, new Set()), false, 'no preflight answer is not a pass');
+});
+
+test('when nothing is left to click, there is no pick (and the recording stops)', () => {
+  const cards = jackets();
+  assert.strictEqual(choose(cards, allOpen(cards), preflightOf(cards, cards.map((c) => hostOf(c.href))), new Set()), -1);
+  assert.ok(MAX_HANDOFFS >= 2 && MAX_HANDOFFS <= 4);
+});
+
+test('a click that went nowhere is cut: the video goes from before the hand moved to the next click', () => {
+  /* Fynd 0–10, the hand sets off at 10 for a card whose page fails; the
+     retake starts at 14 and clicks at 16; its tab is shown 16.5–19 */
+  const cut = [
+    { src: 'main', from: 0, to: 10 },
+    { src: 'main', from: 14, to: 16.25 },
+    { src: 'tab', tab: 0, born: 16.3, from: 16.5, to: 19 },
+    { src: 'main', from: 19.5, to: 25 }
+  ];
+  const { total, at } = cutMap(cut, 1, [2.7]);
+  assert.ok(Math.abs(total - (10 + 2.25 + 2.5 + 5.5)) < 1e-6, `total ${total}`);
+  assert.ok(Math.abs(at(12) - 10) < 1e-9, 'a moment inside the failed click lands at the retake');
+  assert.ok(Math.abs(at(15) - 11) < 1e-9);
+});
+
+test('the report says plainly whether every click reached its retailer', () => {
+  const saved = { searchedAt: 'x', searches: [{ slot: 'category', query: 'lightweight jacket for fall under $150', shown: [] }] };
+  const good = { picks: [{ search: 1, shown: true }], retakes: [{ search: 1, retailer: 'nordstromrack.com', name: 'Ascender', why: 'did not arrive within 6s' }], leftOut: [] };
+  const r = recordingReport(saved, [[{ kind: 'desktop' }, good]], {});
+  assert.strictEqual(r.everyHandoffShown, true);
+  assert.strictEqual(r.searches[0].cut.desktop[0].retailer, 'nordstromrack.com');
+  assert.strictEqual(recordingReport(saved, [[{ kind: 'desktop' }, { picks: [{ search: 1, shown: false }] }]], {}).everyHandoffShown, false);
+  assert.strictEqual(recordingReport(saved, [[{ kind: 'desktop' }, { picks: [] }]], {}).everyHandoffShown, false);
+});
+
 section('\nthe edit');
 
 test('Fynd, retailer, Fynd: lengths add up and lines land where they were said', () => {
@@ -441,6 +524,51 @@ test('the old one-search file, a short run, a stale request or no opened page is
   const closed = savedRun(); closed.searches[1].shown[0].retailerOk = false;
   assert.ok(/no retailer page/.test(savedProblem(closed)));
 });
+
+/* The one retailer test, in a real browser against pages served here:
+   only when Playwright's Chromium is installed (npm install). */
+let chromium = null;
+try { chromium = require('playwright').chromium; } catch (err) { /* skipped */ }
+const browserPath = (() => {
+  const root = '/opt/pw-browsers';
+  if (!fs.existsSync(root)) return undefined;
+  const dir = fs.readdirSync(root).filter((d) => /^chromium-\d+$/.test(d)).sort().reverse()[0];
+  const p = dir && path.join(root, dir, 'chrome-linux', 'chrome');
+  return p && fs.existsSync(p) ? p : undefined;
+})();
+
+if (chromium) {
+  section('\nthe retailer test, in a browser');
+  const words = 'A real product page with its name, price, sizes and a button to buy it. '.repeat(6);
+  const pages = {
+    '/fine': (res) => res.end(`<title>Jacket</title><p>${words}</p>`),
+    '/slow': (res) => setTimeout(() => res.end(`<title>Jacket</title><p>${words}</p>`), RETAILER_LOAD_MS + 1500),
+    '/denied': (res) => res.end('<title>Access Denied</title><p>You don\'t have permission.</p>'),
+    '/blank': (res) => res.end('<title>Jacket</title><p></p>'),
+    '/gone': (res) => { res.statusCode = 404; res.end(`<title>Not found</title><p>${words}</p>`); },
+    '/turns': (res) => res.end(`<title>Jacket</title><p>${words}</p><script>setTimeout(() => { document.title = 'Just a moment...'; document.body.innerHTML = ''; }, 900)</script>`)
+  };
+  let server;
+  let browser;
+  const visit = async (route) => {
+    const tab = await browser.newPage();
+    try { return await visitRetailer(tab, `http://127.0.0.1:${server.address().port}${route}`); } finally { await tab.close(); }
+  };
+  queue.push(async () => {
+    server = http.createServer((req, res) => { res.setHeader('Content-Type', 'text/html'); (pages[req.url] || pages['/gone'])(res); });
+    await new Promise((r) => server.listen(0, '127.0.0.1', r));
+    browser = await chromium.launch({ executablePath: browserPath });
+  });
+  test('a page that arrives and stays itself passes', async () => { assert.strictEqual((await visit('/fine')).ok, true); });
+  test('a page slower than the camera allows fails', async () => { assert.ok(/did not arrive/.test((await visit('/slow')).why)); });
+  test('a block page fails', async () => { assert.ok(/blocked/.test((await visit('/denied')).why)); });
+  test('a blank page fails', async () => { assert.ok(/blank/.test((await visit('/blank')).why)); });
+  test('an error page fails', async () => { assert.ok(/HTTP 404/.test((await visit('/gone')).why)); });
+  test('a page that turns into a challenge while held fails', async () => { assert.ok(/once held/.test((await visit('/turns')).why)); });
+  queue.push(async () => { await browser.close(); server.close(); });
+} else {
+  queue.push(async () => console.log('\n  (the browser checks were skipped: Playwright is not installed)'));
+}
 
 (async () => {
   for (const run of queue) await run();

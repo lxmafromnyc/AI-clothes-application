@@ -1685,8 +1685,9 @@ one is a real listing with a retailer link, and that every photograph actually
 loaded at product-photo size. A request that names a brand (BAPE, Levi's, Ralph
 Lauren, Burberry) is only used when at least four of its results are that brand,
 and only one of those is ever clicked. Each product's retailer page is opened
-off camera; a page that blocks automated browsers, errors, or comes up blank is
-noted, and only products whose page did open are ever clicked. The same
+off camera, under the same test the camera applies (below); a page that blocks
+automated browsers, errors, comes up blank or arrives too slowly is noted, and
+only products whose page did open are ever clicked. The same
 photo checks run again on camera.
 
 The searches are made once, off camera, and saved to
@@ -1698,10 +1699,23 @@ held to about a second and a half. Each search starts from an untouched
 allowance in the in-memory usage store (KV settings are dropped from the
 process), so the recording never touches production state.
 
-When a product is clicked, the video shows the retailer's tab for about two
-seconds once the page has arrived; the wait for it to arrive is cut. A retailer
-page that blocks the browser on camera, or does not arrive within a few
-seconds, is left out rather than shown blank. The note under the video on the
+Every click in the video reaches its retailer's page on camera. A retailer page
+is held to one test wherever it is checked — in the first pass, in a preflight
+just before each recording, and on camera: it arrives within 6 seconds, is not a
+block, challenge, error or blank page a moment later, and is still itself after
+being held for about two seconds. The preflight opens every candidate page again
+in a tab shaped like the recording's own (a phone's, for the phone layout), and
+only products that passed both the first pass and the preflight may be clicked,
+preferring a retailer not yet shown in the video. If a page still does not show
+when its product is clicked, that click is cut from the video, the shop is not
+tried again anywhere in the run, and another verified product from the same
+search is taken — the search itself is kept. If no product in a search reaches
+its page within three tries, nothing is written. The video shows the retailer's
+tab for about two seconds once the page has arrived; the wait for it to arrive
+is cut. The recording report lists, per search and per layout, the product and
+retailer opened, any product the preflight left out, and any click that was cut,
+and ends by saying whether every click reached its retailer. The note under the
+video on the
 homepage, and the video's label, are rewritten by the script with the requests
 and the date of the searches, since prices and stock move on after a
 recording. The script prints the finished length and says so if it falls

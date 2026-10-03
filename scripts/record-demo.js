@@ -205,6 +205,17 @@ const MIN_LOADING_MS = 700;
 const PROBE_PRODUCTS = 8;
 const RETAILER_MS = 2100;
 
+/* The one test a retailer page is held to, off camera and on alike: it
+   arrives within RETAILER_LOAD_MS, is itself RETAILER_SETTLE_MS later,
+   and is still itself after being held for RETAILER_MS. A check looser
+   than the camera's lets through a page the camera then cannot show. */
+const RETAILER_LOAD_MS = 6000;
+const RETAILER_SETTLE_MS = 250;
+
+/* how many products one search may try to hand off on camera before
+   the recording gives up and writes nothing */
+const MAX_HANDOFFS = 3;
+
 /* the finished length being aimed for, in seconds */
 const TARGET = { min: 50, max: 60 };
 
@@ -633,26 +644,63 @@ async function retailerShows(tab, status) {
   return { ok, why };
 }
 
+/* Opens a retailer page — `href` in this tab, or whatever the tab is
+   already loading when the link opened it — and puts it through the one
+   test. Returns { ok, why, shownAt } with shownAt the moment it arrived
+   (Date.now()), so the camera can start showing it from there. */
+async function visitRetailer(tab, href) {
+  let status = 0;
+  try {
+    if (href) {
+      const response = await tab.goto(href, { waitUntil: 'domcontentloaded', timeout: RETAILER_LOAD_MS });
+      status = response ? response.status() : 0;
+    } else {
+      await tab.waitForLoadState('domcontentloaded', { timeout: RETAILER_LOAD_MS });
+    }
+  } catch (err) {
+    return { ok: false, why: `did not arrive within ${RETAILER_LOAD_MS / 1000}s`, shownAt: 0 };
+  }
+  const shownAt = Date.now();
+  await wait(RETAILER_SETTLE_MS);
+  const first = await retailerShows(tab, status);
+  if (!first.ok) return { ...first, shownAt };
+  await wait(Math.max(0, RETAILER_MS - (Date.now() - shownAt)));
+  const held = await retailerShows(tab, status);
+  if (!held.ok) return { ok: false, why: `${held.why} once held`, shownAt };
+  return { ok: true, why: '', shownAt };
+}
+
 /* Opens each product's retailer page, as a click on camera would, and
    notes which ones show themselves. Only those are ever clicked. */
-async function probeRetailers(context, found) {
+async function probeRetailers(context, products, limit = PROBE_PRODUCTS) {
   const out = {};
-  const queue = found.slice(0, PROBE_PRODUCTS);
+  const queue = products.slice(0, limit);
   const worker = async () => {
     for (let p = queue.shift(); p; p = queue.shift()) {
       const tab = await context.newPage();
-      let result = { ok: false, why: 'did not load' };
-      try {
-        const response = await tab.goto(p.href, { waitUntil: 'domcontentloaded', timeout: 9000 });
-        await wait(800);
-        result = await retailerShows(tab, response ? response.status() : 0);
-      } catch (err) { /* did not arrive in time */ }
-      out[p.href] = result;
+      out[p.href] = await visitRetailer(tab, p.href).catch(() => ({ ok: false, why: 'did not load' }));
       await tab.close().catch(() => {});
     }
   };
   await Promise.all([worker(), worker(), worker()]);
   return out;
+}
+
+/* Right before a recording: every product the first pass saw open is
+   opened again, in a tab shaped like the recording's own (a phone's for
+   the phone layout), because a page that opened an hour ago, or for a
+   desktop browser, may not open now on this one. Off camera. */
+async function preflightRetailers(browser, shot, searches) {
+  const context = await browser.newContext({
+    viewport: { width: shot.width, height: shot.height },
+    deviceScaleFactor: shot.dpr, isMobile: shot.touch, hasTouch: shot.touch
+  });
+  try {
+    const hrefs = new Set(searches.flatMap((s) => s.shown.filter((p) => p.retailerOk === true).map((p) => p.href)));
+    return await probeRetailers(context, [...hrefs].map((href) => ({ href })), Infinity);
+  } finally {
+    await context.close();
+  }
 }
 
 /* Is this candidate's real answer fit to be one of the demo's searches?
@@ -672,6 +720,17 @@ function fitness(found, candidate) {
   }
   return problems;
 }
+
+/* May this card be the one clicked on camera? Seen to open in the first
+   pass, seen to open again in the preflight just before filming, and at
+   a shop that has not already failed to show its page on camera. */
+const handoffAllowed = (card, verified, preflight, failedHosts) => verified.get(card.href) === true
+  && Boolean(preflight[card.href] && preflight[card.href].ok)
+  && !failedHosts.has(hostOf(card.href));
+
+/* shops whose page did not show on camera, kept across both recordings
+   of one run, so a shop known to fail is never clicked again */
+const failedHosts = new Set();
 
 const pickedOf = (c) => ({ brand: c.brand, name: c.name, price: c.price, retailer: hostOf(c.href), href: c.href });
 
@@ -892,6 +951,15 @@ async function record(chromium, shot, rawDir, stillsDir) {
   }))), photos);
   await warm.close();
 
+  /* every candidate retailer page, opened again now, off camera */
+  console.log(`  ${shot.name}: checking the retailer pages before filming…`);
+  const preflight = await preflightRetailers(browser, shot, api.saved.searches);
+  const refused = Object.entries(preflight).filter(([, r]) => !r.ok);
+  console.log(`  ${shot.name}: ${Object.keys(preflight).length - refused.length} of ${Object.keys(preflight).length} retailer pages showed themselves`
+    + (refused.length ? `; left out: ${[...refused.reduce((m, [href, r]) => {
+      const k = `${hostOf(href)} (${r.why})`; return m.set(k, (m.get(k) || 0) + 1);
+    }, new Map())].map(([k, c]) => (c > 1 ? `${k} ×${c}` : k)).join(', ')}` : ''));
+
   const pageBorn = Date.now();
   const page = await context.newPage();
   const now = () => (Date.now() - pageBorn) / 1000;
@@ -902,8 +970,11 @@ async function record(chromium, shot, rawDir, stillsDir) {
      retailer tabs in between */
   const cut = [];
   const tabs = [];
-  /* which product each search opened, and whether its page was shown */
+  /* which product each search opened, the ones whose page did not show
+     on camera and were cut, and the ones the preflight left out */
   const picks = [];
+  const retakes = [];
+  const leftOut = [];
   let stillN = 0;
 
   const still = async (label, target = page) => {
@@ -1137,89 +1208,110 @@ async function record(chromium, shot, rawDir, stillsDir) {
 
     /* --- one product, out to its retailer ------------------------------ */
 
-    /* only a product whose retailer page was seen to open in the first
-       pass, of the brand asked for; at a shop not yet shown if there is
-       one, within the budget, and already on screen if possible */
+    /* Only a product whose retailer page was seen to open in the first
+       pass AND again in the preflight just now, at a shop that has not
+       failed on camera in this run, of the brand asked for; at a shop
+       not yet shown if there is one, within the budget, and already on
+       screen if possible. If its page still does not show when it is
+       clicked, the click is cut from the video and the next one is
+       taken: the video never shows a click that goes nowhere. */
     const verified = new Map(s.shown.map((p) => [p.href, p.retailerOk === true]));
-    const cards = onScreen.map((p) => ({ ...p, retailerOk: verified.get(p.href) === true }));
+    for (const p of onScreen) {
+      if (verified.get(p.href) && preflight[p.href] && !preflight[p.href].ok) {
+        leftOut.push({ search: n + 1, ...pickedOf(p), why: preflight[p.href].why });
+      }
+    }
     /* on screen: its photo, which is what is pressed, wholly in view
        above the caption strip */
     const inView = async () => new Set(await page.evaluate((limit) => [...document.querySelectorAll('#results .grid .item-card')]
       .map((c, i) => ({ i, r: (c.querySelector('.item-media') || c).getBoundingClientRect() }))
       .filter(({ r }) => r.top >= 60 && r.bottom <= limit - 12).map(({ i }) => i), viewH));
-    const pick = pickProduct(cards, { used, mention: mentionOf(s), budget: budgetOf(s.query), visible: await inView() });
-    if (pick < 0) fail(`No product in "${s.query}" has a retailer page that was seen to open. Search again without --replay.`);
 
-    const card = `#results .grid .item-card:nth-child(${pick + 1})`;
-    if (!(await inView()).has(pick)) {
-      const r = await page.locator(`${card} .item-media`).boundingBox();
-      await scrollBy(Math.max(80, r.y + r.height - viewH + 60));
-      await wait(rand.between(250, 400));
-    }
-    const media = await box(`${card} .item-media`);
-    const cardSpot = spotIn(media, 0.5, 0.45);
-
-    if (first) {
-      /* the click lands on "open", and the rest of the line is said over
-         the retailer's page */
-      await speak('open');
-      if (shot.touch) await wait(rand.between(800, 950));
-      else {
-        await moveTo(cardSpot);
-        await wait(rand.between(180, 280));
+    let handed = false;
+    for (let attempt = 1; !handed; attempt += 1) {
+      const cards = onScreen.map((p) => ({ ...p, retailerOk: handoffAllowed(p, verified, preflight, failedHosts) }));
+      const pick = pickProduct(cards, { used, mention: mentionOf(s), budget: budgetOf(s.query), visible: await inView() });
+      if (pick < 0 || attempt > MAX_HANDOFFS) {
+        fail(`No product in "${s.query}" reached its retailer page on camera (${shot.name}). Tried: ${retakes.filter((r) => r.search === n + 1).map((r) => `${r.retailer} (${r.why})`).join(', ') || 'none left after the preflight'}. Nothing is recorded with a click that goes nowhere.`);
       }
-    } else if (shot.touch) {
-      /* no pointer to watch travel on a phone: the look before the tap
-         is the beat that shows the choice */
-      await wait(rand.between(650, 850));
-    } else {
-      await moveTo(cardSpot);
-      await wait(rand.between(150, 260));
-    }
-    await still(`${tag}-chosen`);
+      const aimFrom = now();
+      const voiceMark = voice.length;
+      const cueMark = cues.length;
 
-    const href = cards[pick].href;
-    const popupPromise = context.waitForEvent('page', { timeout: 6000 }).catch(() => null);
-    const clickedAt = now();
-    if (shot.touch) await tap(cardSpot);
-    else await click();
-    const popup = await popupPromise;
-    await hush();
-    cut.push({ src: 'main', from: segFrom, to: clickedAt + 0.25 });
+      const card = `#results .grid .item-card:nth-child(${pick + 1})`;
+      if (!(await inView()).has(pick)) {
+        const r = await page.locator(`${card} .item-media`).boundingBox();
+        await scrollBy(Math.max(80, r.y + r.height - viewH + 60));
+        await wait(rand.between(250, 400));
+      }
+      const media = await box(`${card} .item-media`);
+      const cardSpot = spotIn(media, 0.5, 0.45);
 
-    /* The retailer's own page, in the new tab the link opens — the real
-       page at the real address, held for a moment once it has arrived.
-       A page that refuses a robot, or does not arrive within a few
-       seconds, is not shown at all: a blank or a block page is not the
-       retailer. The wait for it to arrive is not shown either. */
-    if (popup) {
-      const born = now();
-      let ok = false;
-      let shownAt = born;
-      try {
-        await popup.waitForLoadState('domcontentloaded', { timeout: 6000 });
-        shownAt = now();
-        await wait(250);
-        ok = (await retailerShows(popup)).ok;
-        if (ok) await wait(Math.max(0, RETAILER_MS - (now() - shownAt) * 1000));
-      } catch (err) { ok = false; }
-      const gone = now();
-      if (stillsDir && ok) await still(`${tag}-retailer`, popup);
-      const video = stillsDir ? null : popup.video();
-      await popup.close();
-      picks.push({ search: n + 1, query: s.query, ...pickedOf(cards[pick]), opened: popup.url(), shown: ok });
-      if (ok) {
-        used.add(hostOf(popup.url()) || hostOf(href));
-        cut.push({ src: 'tab', tab: tabs.length, born, from: Math.max(born, shownAt - 0.15), to: gone });
-        tabs.push(video);
+      if (first) {
+        /* the click lands on "open", and the rest of the line is said over
+           the retailer's page */
+        await speak('open');
+        if (shot.touch) await wait(rand.between(800, 950));
+        else {
+          await moveTo(cardSpot);
+          await wait(rand.between(180, 280));
+        }
+      } else if (shot.touch) {
+        /* no pointer to watch travel on a phone: the look before the tap
+           is the beat that shows the choice */
+        await wait(rand.between(650, 850));
       } else {
-        console.log(`  ${shot.name}: the retailer page (${href}) did not show itself in time; the video stays on Fynd`);
+        await moveTo(cardSpot);
+        await wait(rand.between(150, 260));
       }
-    } else {
-      picks.push({ search: n + 1, query: s.query, ...pickedOf(cards[pick]), opened: null, shown: false });
-      console.log(`  ${shot.name}: the link opened no new tab; the video stays on Fynd`);
+      await still(`${tag}-chosen${attempt > 1 ? `-${attempt}` : ''}`);
+
+      const chosen = cards[pick];
+      const popupPromise = context.waitForEvent('page', { timeout: 6000 }).catch(() => null);
+      const clickedAt = now();
+      if (shot.touch) await tap(cardSpot);
+      else await click();
+      const popup = await popupPromise;
+      await hush();
+
+      /* The retailer's own page, in the new tab the link opens — the real
+         page at the real address, put through the same test as the
+         preflight and held for a moment once it has arrived. The wait
+         for it to arrive is not shown. */
+      let result = { ok: false, why: 'the link opened no new tab' };
+      let born = clickedAt;
+      let video = null;
+      if (popup) {
+        born = now();
+        result = await visitRetailer(popup, null).catch(() => ({ ok: false, why: 'did not load' }));
+        if (stillsDir && result.ok) await still(`${tag}-retailer`, popup);
+        video = stillsDir ? null : popup.video();
+      }
+      const gone = now();
+      const landed = popup ? popup.url() : null;
+      if (popup) await popup.close();
+      await page.bringToFront();
+
+      if (result.ok) {
+        cut.push({ src: 'main', from: segFrom, to: clickedAt + 0.25 });
+        cut.push({ src: 'tab', tab: tabs.length, born, from: Math.max(born, (result.shownAt - pageBorn) / 1000 - 0.15), to: gone });
+        tabs.push(video);
+        used.add(hostOf(landed) || hostOf(chosen.href));
+        picks.push({ search: n + 1, query: s.query, ...pickedOf(chosen), opened: landed, shown: true, attempt });
+        handed = true;
+      } else {
+        /* cut from the moment the hand set off for it; the line said on
+           the way is said again on the next one */
+        cut.push({ src: 'main', from: segFrom, to: aimFrom });
+        voice.splice(voiceMark);
+        cues.splice(cueMark);
+        failedHosts.add(hostOf(chosen.href));
+        retakes.push({ search: n + 1, ...pickedOf(chosen), why: result.why });
+        console.log(`  ${shot.name}: ${hostOf(chosen.href)} did not show its page on camera (${result.why}); that click is cut, and another product is taken`);
+        await wait(250);
+        segFrom = now();
+      }
     }
-    await page.bringToFront();
 
     /* --- back to the top of Fynd, off camera --------------------------- */
 
@@ -1247,9 +1339,9 @@ async function record(chromium, shot, rawDir, stillsDir) {
     console.log('  marks', JSON.stringify(Object.fromEntries(Object.entries(marks).map(([k, t]) => [k, Number(t.toFixed(2))]))));
     console.log('  cut', cut.map((c) => `${c.src} ${(c.to - c.from).toFixed(2)}s`).join(', '));
   }
-  if (stillsDir) return { marks, picks };
+  if (stillsDir) return { marks, picks, retakes, leftOut };
   return {
-    marks, cues, voice, cut, picks,
+    marks, cues, voice, cut, picks, retakes, leftOut,
     main: await mainVideo.path(),
     tabs: await Promise.all(tabs.map((v) => v.path()))
   };
@@ -1427,8 +1519,14 @@ function recordingReport(saved, takes, lengths) {
       attempts: s.attempts || [],
       products: s.shown.length,
       retailers: [...new Set(s.shown.map((p) => hostOf(p.href)).filter(Boolean))],
-      opened: Object.fromEntries(takes.map(([shot, take]) => [shot.kind, (take.picks || []).find((p) => p.search === i + 1) || null]))
+      opened: Object.fromEntries(takes.map(([shot, take]) => [shot.kind, (take.picks || []).find((p) => p.search === i + 1) || null])),
+      /* clicked on camera, page did not show, click cut from the video */
+      cut: Object.fromEntries(takes.map(([shot, take]) => [shot.kind, (take.retakes || []).filter((p) => p.search === i + 1)])),
+      /* passed the first pass, failed the preflight just before filming */
+      leftOut: Object.fromEntries(takes.map(([shot, take]) => [shot.kind, (take.leftOut || []).filter((p) => p.search === i + 1)]))
     })),
+    everyHandoffShown: takes.every(([, take]) => (take.picks || []).length === saved.searches.length
+      && take.picks.every((p) => p.shown)),
     seconds: Object.fromEntries(Object.entries(lengths).map(([k, v]) => [k, Number(v.toFixed(1))]))
   };
 }
@@ -1442,9 +1540,12 @@ function printReport(r) {
       console.log(`     - "${a.query}" (${a.kind}, try ${a.try}): ${a.verified} verified${a.unsteady ? `; unsteady: ${a.unsteady}` : ''}`);
     }
     for (const [kind, p] of Object.entries(s.opened)) {
-      console.log(`     ${kind}: ${p ? `${p.brand ? `${p.brand} — ` : ''}${p.name}, ${p.price}, at ${p.retailer}${p.shown ? '' : ' (its page did not show on camera; left out)'}` : 'nothing opened'}`);
+      console.log(`     ${kind}: ${p ? `${p.brand ? `${p.brand} — ` : ''}${p.name}, ${p.price}, at ${p.retailer}${p.shown ? ' — retailer page shown on camera' : ' — RETAILER PAGE NOT SHOWN'}` : 'nothing opened'}`);
+      for (const x of (s.leftOut && s.leftOut[kind]) || []) console.log(`       left out before filming: ${x.retailer} — ${x.name} (${x.why})`);
+      for (const x of (s.cut && s.cut[kind]) || []) console.log(`       click cut, page did not show on camera: ${x.retailer} — ${x.name} (${x.why})`);
     }
   }
+  if (r.everyHandoffShown !== undefined) console.log(`  every click reached its retailer on camera: ${r.everyHandoffShown ? 'yes' : 'NO'}`);
   for (const [name, sec] of Object.entries(r.seconds)) console.log(`  ${name}: ${sec}s`);
 }
 
@@ -1527,6 +1628,9 @@ async function main() {
     const summary = recordingReport(api.saved, takes, lengths);
     fs.writeFileSync(path.join(stage, 'demo-report.json'), `${JSON.stringify(summary, null, 2)}\n`);
     printReport(summary);
+    /* nothing is written unless every click in both videos reached its
+       retailer's page on camera */
+    if (!summary.everyHandoffShown) fail('Not every click in the videos reached its retailer page on camera.');
 
     for (const f of fs.readdirSync(stage)) fs.copyFileSync(path.join(stage, f), path.join(OUT, f));
     if (!REPLAY) fs.writeFileSync(SEARCH_FILE, `${JSON.stringify(api.saved, null, 2)}\n`);
@@ -1545,5 +1649,5 @@ async function main() {
    starting anything */
 if (require.main === module) main();
 
-module.exports = { ffprobeFor, durationCommand, SEARCHES, requestsFor, instability, howFound, recordingReport, RETRY_DELAYS_MS, loadEnv, MIN_PRODUCTS, verdict, fitness, pickProduct, budgetOf, priceOf, mentionOf, cutMap, savedProblem, narrationNeeded };
+module.exports = { handoffAllowed, visitRetailer, RETAILER_LOAD_MS, RETAILER_SETTLE_MS, MAX_HANDOFFS, ffprobeFor, durationCommand, SEARCHES, requestsFor, instability, howFound, recordingReport, RETRY_DELAYS_MS, loadEnv, MIN_PRODUCTS, verdict, fitness, pickProduct, budgetOf, priceOf, mentionOf, cutMap, savedProblem, narrationNeeded };
 
