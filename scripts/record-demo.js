@@ -108,6 +108,7 @@ const os = require('os');
 const { execFileSync } = require('child_process');
 
 const REPO = path.join(__dirname, '..');
+const demoAudio = require('./demo-audio');
 const arg = (name) => {
   const hit = process.argv.find((a) => a === `--${name}` || a.startsWith(`--${name}=`));
   if (!hit) return null;
@@ -678,6 +679,21 @@ const closeQuietly = (target, ms = LIMITS.step) => withDeadline(
    error or a blank: the same test on the first pass, in the preflight
    and on camera. A read that does not come back in time reads as
    nothing, which fails. */
+/* A bot check, a block or a challenge, by its title or by what it says
+   at the top of the page. Walmart's reads "Robot or human? … Press &
+   Hold" under a plain title and has enough footer text not to look
+   blank, which is how one reached a recording: the words matter as much
+   as the title. Returns the words that gave it away, or ''. */
+const CHALLENGE_TITLE = /access denied|forbidden|captcha|just a moment|attention required|are you a robot|robot or human|are you (a )?human|human verification|verify(ing)? (you are|you're|that you are) (a )?human|security check|pardon our interruption|request unsuccessful|request blocked|blocked|bot detect|please wait|checking your browser|one more step/i;
+const CHALLENGE_TEXT = /robot or human|are you a robot|are you (a )?human|press (&|and) hold|verify (you are|you're|that you are) (a )?human|confirm (you are|you're|that you are) (a )?human|human verification|complete the security check|checking (if the site connection is secure|your browser)|unusual (traffic|activity) from your|enable (javascript|js) and cookies to continue|pardon our interruption|access to this page has been denied|request (un)?successful\. incapsula|why have i been blocked|you have been blocked|cf-chl|px-captcha|g-recaptcha/i;
+
+function challengeIn(title, text) {
+  const t = CHALLENGE_TITLE.exec(title || '');
+  if (t) return title.slice(0, 40);
+  const b = CHALLENGE_TEXT.exec(text || '');
+  return b ? b[0] : '';
+}
+
 async function retailerShows(tab, status, limits = LIMITS) {
   let stalled = false;
   const read = (fn, fallback) => withDeadline(Promise.resolve().then(fn), limits.step, 'reading the page')
@@ -687,12 +703,17 @@ async function retailerShows(tab, status, limits = LIMITS) {
     return nav && nav.responseStatus ? nav.responseStatus : 200;
   }), 0);
   const title = await read(() => tab.title(), '');
-  const blocked = /access denied|forbidden|captcha|just a moment|attention required|are you a robot|blocked/i.test(title);
-  const text = await read(() => tab.evaluate(() => (document.body && document.body.innerText || '').length), 0);
+  /* the page's visible words: how many, and the first few hundred, where
+     a challenge says what it is */
+  const body = await read(() => tab.evaluate(() => {
+    const words = (document.body && document.body.innerText) || '';
+    return { length: words.length, head: words.slice(0, 1500) };
+  }), { length: 0, head: '' });
   const url = await read(() => tab.url(), '');
-  const ok = !stalled && code > 0 && code < 400 && !blocked && text > 200 && /^https?:/.test(url);
+  const challenge = challengeIn(title, body.head);
+  const ok = !stalled && code > 0 && code < 400 && !challenge && body.length > 200 && /^https?:/.test(url);
   const why = ok ? '' : stalled ? `the page stopped responding (a read took over ${limits.step / 1000}s)`
-    : blocked ? `blocked ("${title.slice(0, 40)}")` : code >= 400 ? `HTTP ${code}` : text <= 200 ? 'blank page' : 'no page';
+    : challenge ? `blocked ("${challenge}")` : code >= 400 ? `HTTP ${code}` : body.length <= 200 ? 'blank page' : 'no page';
   return { ok, why, timedOut: stalled };
 }
 
@@ -1250,6 +1271,7 @@ async function record(chromium, shot, rawDir, stillsDir) {
 
     const field = await box('#ask');
     const fieldSpot = { x: field.x + Math.min(160, field.width * 0.3) + rand.between(-20, 20), y: field.y + field.height / 2 };
+    marks[`typing${n}`] = now();
     /* the first line waits for the box to be clicked; later ones start as
        the hand sets off for it, so the words cover the move */
     let said = first ? 0 : await speak(s.line);
@@ -1405,7 +1427,7 @@ async function record(chromium, shot, rawDir, stillsDir) {
       if (result.ok) {
         cut.push({ src: 'main', from: segFrom, to: clickedAt + 0.25 });
         const arrived = (result.shownAt - pageBorn) / 1000;
-        cut.push({ src: 'tab', tab: tabs.length, born, gone, from: Math.max(born, arrived - 0.15), to: Math.min(gone, arrived + RETAILER_SHOWN_MS / 1000) });
+        cut.push({ src: 'tab', tab: tabs.length, search: n, born, gone, from: Math.max(born, arrived - 0.15), to: Math.min(gone, arrived + RETAILER_SHOWN_MS / 1000) });
         tabs.push(video);
         used.add(hostOf(landed) || hostOf(chosen.href));
         picks.push({ search: n + 1, query: s.query, ...pickedOf(chosen), opened: landed, shown: true, attempt });
@@ -1525,6 +1547,37 @@ function cutMap(cut, k, tabLens = []) {
   return { pieces, total, at };
 }
 
+/* What happened when, in the finished video: where each line is said,
+   and when each search was typed, made, answered and opened at its
+   retailer. The score is written to this (scripts/demo-audio.js), and it
+   is saved beside the video so the sound can be made again without
+   recording again. */
+function timelineOf(shot, take, total, pieces, at) {
+  const searches = [];
+  for (let n = 0; take.marks[`searched${n}`] !== undefined; n += 1) {
+    let offset = 0;
+    let retailer = null;
+    for (const piece of pieces) {
+      const len = piece.end - piece.start;
+      if (piece.src === 'tab' && piece.search === n) retailer = [offset, offset + len];
+      offset += len;
+    }
+    searches.push({
+      typing: Number(at(take.marks[`typing${n}`] !== undefined ? take.marks[`typing${n}`] : take.marks.start).toFixed(3)),
+      searched: Number(at(take.marks[`searched${n}`]).toFixed(3)),
+      results: Number(at(take.marks[`results${n}`]).toFixed(3)),
+      retailer: retailer && retailer.map((t) => Number(t.toFixed(3)))
+    });
+  }
+  return {
+    video: shot.name,
+    duration: Number(total.toFixed(3)),
+    source: 'Written by scripts/record-demo.js as it made the recording.',
+    lines: take.voice.map((line) => ({ key: line.key, at: Number(at(line.start).toFixed(3)) })),
+    searches
+  };
+}
+
 function build(shot, take, outDir) {
   const W = shot.width * shot.dpr;
   const H = shot.height * shot.dpr;
@@ -1536,58 +1589,46 @@ function build(shot, take, outDir) {
 
   const inputs = ['-i', take.main];
   take.tabs.forEach((f) => inputs.push('-i', f));
-  const voiceInputs = take.voice.map((line) => path.join(NARRATION, NARRATION_LINES[line.key].file));
-  voiceInputs.forEach((f) => inputs.push('-i', f));
-  const firstVoice = 1 + take.tabs.length;
 
   const vf = pieces.map((s, i) => `[${s.input}:v]trim=start=${s.start.toFixed(3)}:end=${s.end.toFixed(3)},setpts=PTS-STARTPTS,`
     + `fps=30,scale=${W}:${H}:force_original_aspect_ratio=decrease,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2:white,setsar=1[s${i}]`).join(';');
   const concat = `${pieces.map((_, i) => `[s${i}]`).join('')}concat=n=${pieces.length}:v=1:a=0[v]`;
-  const af = take.voice.map((line, i) => `[${firstVoice + i}:a]adelay=${Math.round(at(line.start) * 1000)}:all=1[a${i}]`).join(';');
-  const mix = take.voice.length
-    ? `;${af};${take.voice.map((_, i) => `[a${i}]`).join('')}amix=inputs=${take.voice.length}:normalize=0,apad,atrim=end=${total.toFixed(3)}[a]`
-    : `;anullsrc=r=48000:cl=mono,atrim=end=${total.toFixed(3)}[a]`;
 
   const master = path.join(os.tmpdir(), `${shot.name}-master.mkv`);
-  run([...inputs, '-filter_complex', `${vf};${concat}${mix}`, '-map', '[v]', '-map', '[a]',
-    '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '10', '-pix_fmt', 'yuv420p',
-    '-c:a', 'pcm_s16le', '-ar', '48000', '-ac', '1', master]);
+  run([...inputs, '-filter_complex', `${vf};${concat}`, '-map', '[v]',
+    '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '10', '-pix_fmt', 'yuv420p', master]);
+
+  /* the sound: the narration and its score, mixed to the timeline of
+     this very cut (scripts/demo-audio.js) */
+  const timeline = timelineOf(shot, take, total, pieces, at);
+  fs.writeFileSync(path.join(outDir, `${shot.name}.timeline.json`), `${JSON.stringify(timeline, null, 2)}\n`);
+  const sound = path.join(os.tmpdir(), `${shot.name}-sound.wav`);
+  console.log(`  composing and mixing the sound for ${shot.name}…`);
+  const mixed = demoAudio.renderTo(timeline, sound);
+  console.log(`  sound: voice ${mixed.voiceLufs} LUFS, ${mixed.lufs} LUFS integrated, true peak ${mixed.truePeakDbtp} dBTP`);
 
   const mp4 = path.join(outDir, `${shot.name}.mp4`);
   const webm = path.join(outDir, `${shot.name}.webm`);
   const poster = path.join(outDir, `${shot.name}-poster.jpg`);
   console.log(`  encoding ${shot.name}.mp4…`);
-  run(['-i', master, '-c:v', 'libx264', '-profile:v', 'high', '-preset', 'veryslow', '-crf', String(shot.h264),
-    '-g', '60', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '96k', '-ac', '1', '-movflags', '+faststart', mp4]);
+  run(['-i', master, '-i', sound, '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'libx264', '-profile:v', 'high', '-preset', 'veryslow', '-crf', String(shot.h264),
+    '-g', '60', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '160k', '-ar', '48000', '-ac', '2', '-movflags', '+faststart', mp4]);
   console.log(`  encoding ${shot.name}.webm…`);
-  run(['-i', master, '-c:v', 'libvpx-vp9', '-crf', String(shot.vp9), '-b:v', '0', '-row-mt', '1',
-    '-deadline', 'good', '-cpu-used', '2', '-pix_fmt', 'yuv420p', '-c:a', 'libopus', '-b:a', '64k', '-ac', '1', webm]);
+  run(['-i', master, '-i', sound, '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'libvpx-vp9', '-crf', String(shot.vp9), '-b:v', '0', '-row-mt', '1',
+    '-deadline', 'good', '-cpu-used', '2', '-pix_fmt', 'yuv420p', '-c:a', 'libopus', '-b:a', '128k', '-ar', '48000', '-ac', '2', webm]);
   /* the poster: the first search's real results, a moment after they arrive */
   run(['-ss', (at(take.marks.results0) + 1.2).toFixed(3), '-i', master, '-frames:v', '1', '-q:v', '3', poster]);
   fs.unlinkSync(master);
+  fs.unlinkSync(sound);
 
-  writeTrack(path.join(outDir, `${shot.name}.vtt`), take.cues.map((c) => ({ ...c, start: at(c.start), end: Math.min(total, at(c.end)) })), total);
+  /* the captions, from where each line is actually spoken in the mix */
+  fs.writeFileSync(path.join(outDir, `${shot.name}.vtt`), mixed.captions);
   const size = (p) => `${(fs.statSync(p).size / 1024).toFixed(0)} KB`;
   console.log(`  ${shot.name}: ${total.toFixed(1)}s — mp4 ${size(mp4)}, webm ${size(webm)}, poster ${size(poster)}`);
   if (total < TARGET.min || total > TARGET.max) {
     console.log(`  note: ${shot.name} is ${total.toFixed(1)}s, outside the ${TARGET.min}–${TARGET.max}s it is meant to be`);
   }
   return total;
-}
-
-/* The captions track: the narration, word for word, and the closing
-   line, timed to the finished video. Placed at the top of the frame when
-   turned on, so they never stack on the strip drawn into it. */
-function writeTrack(file, cues, length) {
-  const clock = (s) => {
-    const t = Math.max(0, Math.min(length, s));
-    const mm = String(Math.floor(t / 60)).padStart(2, '0');
-    const ss = String(Math.floor(t % 60)).padStart(2, '0');
-    const ms = String(Math.round((t % 1) * 1000)).padStart(3, '0').slice(0, 3);
-    return `00:${mm}:${ss}.${ms}`;
-  };
-  const body = cues.map(({ text, start, end }, i) => `${i + 1}\n${clock(start)} --> ${clock(end)} line:8%\n${text}`).join('\n\n');
-  fs.writeFileSync(file, `WEBVTT\n\n${body}\n`);
 }
 
 /* The note under the video says what it is: real searches, which ones,
@@ -1773,5 +1814,5 @@ async function main() {
    starting anything */
 if (require.main === module) main();
 
-module.exports = { RETAILER_MS, RETAILER_SHOWN_MS, LIMITS, withDeadline, probeRetailers, preflightRetailers, retailerShows, handoffAllowed, visitRetailer, RETAILER_LOAD_MS, RETAILER_SETTLE_MS, MAX_HANDOFFS, ffprobeFor, durationCommand, SEARCHES, requestsFor, instability, howFound, recordingReport, RETRY_DELAYS_MS, loadEnv, MIN_PRODUCTS, verdict, fitness, pickProduct, budgetOf, priceOf, mentionOf, cutMap, savedProblem, narrationNeeded };
+module.exports = { challengeIn, timelineOf, RETAILER_MS, RETAILER_SHOWN_MS, LIMITS, withDeadline, probeRetailers, preflightRetailers, retailerShows, handoffAllowed, visitRetailer, RETAILER_LOAD_MS, RETAILER_SETTLE_MS, MAX_HANDOFFS, ffprobeFor, durationCommand, SEARCHES, requestsFor, instability, howFound, recordingReport, RETRY_DELAYS_MS, loadEnv, MIN_PRODUCTS, verdict, fitness, pickProduct, budgetOf, priceOf, mentionOf, cutMap, savedProblem, narrationNeeded };
 
