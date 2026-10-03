@@ -27,7 +27,7 @@ const assert = require('assert');
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
-const { visitRetailer, LIMITS } = require('./demo-retailer-visit');
+const { visitRetailer, checkRetailer, LIMITS } = require('./demo-retailer-visit');
 
 let chromium;
 for (const t of [process.env.PLAYWRIGHT_PATH, 'playwright', '/opt/node-tools/node_modules/playwright'].filter(Boolean)) {
@@ -59,6 +59,9 @@ const server = http.createServer((req, res) => {
       <a class="card" id="never" href="${ORIGIN}/shop/never" target="_blank" rel="noopener">never</a>
       <a class="card" id="blocked" href="${ORIGIN}/shop/blocked" target="_blank" rel="noopener">blocked</a>
       <a class="card" id="notab" href="${ORIGIN}/shop/notab" onclick="event.preventDefault()">no tab</a>
+      <a class="card" id="denied" href="${ORIGIN}/shop/denied" target="_blank" rel="noopener">denied</a>
+      <a class="card" id="forbidden" href="${ORIGIN}/shop/forbidden" target="_blank" rel="noopener">403</a>
+      <a class="card" id="empty" href="${ORIGIN}/shop/empty" target="_blank" rel="noopener">empty</a>
     </body>`);
   }
   if (url.pathname === '/shop/fast') { res.setHeader('Content-Type', 'text/html'); return res.end(SHOP('Fast')); }
@@ -70,6 +73,17 @@ const server = http.createServer((req, res) => {
     return res.end('<!doctype html><title>Access Denied</title><body>Access Denied</body>');
   }
   if (url.pathname === '/shop/never') { hung.push(res); return undefined; } /* never answers */
+  /* the shape of H&M's wall: a 200, a shop-like title, and a line of
+     "Access Denied" with a reference number — no product anywhere */
+  if (url.pathname === '/shop/denied') {
+    res.setHeader('Content-Type', 'text/html');
+    return res.end('<!doctype html><title>H&amp;M | Online Fashion</title><body><h1>Access Denied</h1><p>You don\'t have permission to access "http://www2.hm.com/en_us/productpage.html" on this server.</p><p>Reference #18.6f2d1402.1759450000.3a1b2c</p></body>');
+  }
+  if (url.pathname === '/shop/forbidden') {
+    res.statusCode = 403; res.setHeader('Content-Type', 'text/html');
+    return res.end(SHOP('Forbidden-ish'));
+  }
+  if (url.pathname === '/shop/empty') { res.setHeader('Content-Type', 'text/html'); return res.end('<!doctype html><title>Shop</title><body></body>'); }
   res.statusCode = 404; return res.end('no');
 });
 
@@ -162,6 +176,33 @@ async function test(name, fn) {
     const v = await visit('blocked', { onLoaded: async () => { shown = true; } });
     assert.strictEqual(v.kind, 'blocked');
     assert.strictEqual(shown, false);
+    await backOnFynd();
+  });
+
+  await test('an "Access Denied" page behind a shop-like title is blocked, not shown', async () => {
+    let shown = false;
+    const v = await visit('denied', { onLoaded: async () => { shown = true; } });
+    assert.strictEqual(v.kind, 'blocked', `${v.kind} ${v.reason}`);
+    assert.strictEqual(shown, false);
+    await backOnFynd();
+  });
+
+  await test('a 403 is blocked and a blank page is unusable; neither is shown', async () => {
+    assert.strictEqual((await visit('forbidden')).kind, 'blocked');
+    assert.strictEqual((await visit('empty')).kind, 'unusable');
+    await backOnFynd();
+  });
+
+  await test('off camera, checkRetailer sorts the shops the same way', async () => {
+    const check = async (p) => (await checkRetailer(context, `${ORIGIN}/shop/${p}`)).kind;
+    assert.strictEqual(await check('fast'), 'loaded');
+    assert.strictEqual(await check('denied'), 'blocked');
+    assert.strictEqual(await check('forbidden'), 'blocked');
+    assert.strictEqual(await check('empty'), 'unusable');
+    assert.strictEqual(await check('blocked'), 'blocked');
+    const started = Date.now();
+    assert.strictEqual(await check('never'), 'slow');
+    assert.ok(Date.now() - started < LIMITS.tab + LIMITS.dom + 1500, 'a shop that never answers is given up on in time');
     await backOnFynd();
   });
 

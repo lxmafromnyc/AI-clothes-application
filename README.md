@@ -1664,17 +1664,33 @@ held to at most 1.8 seconds. The recording keeps its metering in memory (KV
 settings are dropped from the process), so it never touches production state.
 
 Each product is opened through its real link (`scripts/demo-retailer-visit.js`),
-with separate short limits so no shop can hold up the next product: the new tab
-must exist within 3 seconds of the click (it is seen the moment the browser
-creates it), its page must reach `domcontentloaded` within 5 seconds, and a
-loaded page is looked at for 2–3 seconds. Then:
+and only a retailer page that really loads counts. The first search shows two
+retailers, the second one more; a search that cannot get its share passes it on
+to the next. The video needs at least two, or nothing is written.
 
-- **A — tab opened, page loaded:** the real retailer page is shown, its address
-  in the strip, and the video returns to Fynd.
-- **B — tab opened, page slow** (or a bot check): no retailer page is shown; the
-  strip on Fynd says which address was opened, the wait is cut out, and the next
-  product follows. The slow host is logged.
-- **C — no tab:** logged, nothing shown, and the next product follows.
+Retailers are asked off camera first: right after each real search, its products'
+links are opened in a background browser, in grid order, one per shop, until four
+usable shops are known (at most ten tried). A page is judged by its HTTP status,
+its title and its visible text, so a 403/429, "Access Denied" (however the page is
+titled), a bot check, a CAPTCHA or an empty page all count as blocked or unusable.
+The verdicts are saved with the search (`check` on each product in
+`demo-search.json`), and on camera only products whose shop answered are reached
+for. A blocked shop is never tried again, here or in a later search, and a shop
+already shown is only chosen again when no other usable shop is left.
+
+If a retailer still fails on camera — blocked, unusable, slow (no
+`domcontentloaded` in 5 seconds) or no new tab within 3 seconds — the whole
+attempt, from the moment the hand set off for that product, is cut from the
+video, its shop is set aside, and the next product is tried. The console lists
+what was opened and, separately, what was skipped and why:
+
+```
+desktop: 3 search(es), opened 3 product(s): gap.com (loaded), hollisterco.com (loaded), asos.com (loaded)
+desktop: skipped hm.com (blocked: "Access Denied")
+```
+
+`--replay` re-asks the retailers when the saved search has no verdicts; `--recheck`
+asks again anyway, and `--no-check` skips the off-camera check.
 
 Before each click the card is checked against the search: its link must be one
 of the products the search returned. What each video opened, and with which

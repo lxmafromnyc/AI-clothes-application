@@ -190,6 +190,76 @@ test('a line said on a retailer tab lands inside that tab, or nowhere', () => {
   assert.strictEqual(plan.onVisit(1, 0.15), null, 'a slow tab is not shown, so nothing is said on it');
 });
 
+console.log('\nchoosing what to open');
+
+const { chooseNext } = require('./demo-retailer-visit');
+const grid = (hosts) => hosts.map((h, i) => ({ i, href: `https://www.${h}/p/${i}`, row: i < 4 ? 0 : 1 }));
+
+/* the recorder's loop, without a browser: choose, open, keep or skip */
+function run(cards, outcomes, want, verdicts = {}) {
+  const tried = new Set();
+  const used = new Set();
+  const bad = new Set();
+  const log = [];
+  while (used.size < want) {
+    const pick = chooseNext(cards, { tried, used, bad, verdicts, row: used.size ? 1 : 0 });
+    if (!pick) break;
+    tried.add(pick.i);
+    const kind = outcomes[pick.host] || 'loaded';
+    log.push(`${pick.host}:${kind}`);
+    if (kind === 'loaded') used.add(pick.host); else bad.add(pick.host);
+  }
+  return { log, used: [...used] };
+}
+
+test('H&M blocks → it is skipped and the next shops are tried until enough load', () => {
+  const r = run(grid(['hm.com', 'gap.com', 'hollisterco.com', 'uniqlo.com']), { 'hm.com': 'blocked' }, 3);
+  assert.deepStrictEqual(r.log, ['hm.com:blocked', 'gap.com:loaded', 'hollisterco.com:loaded', 'uniqlo.com:loaded']);
+  assert.deepStrictEqual(r.used, ['gap.com', 'hollisterco.com', 'uniqlo.com']);
+});
+
+test('a blocked shop is never tried again, even for its other products', () => {
+  const r = run(grid(['hm.com', 'hm.com', 'hm.com', 'gap.com', 'hm.com', 'asos.com']), { 'hm.com': 'blocked' }, 2);
+  assert.strictEqual(r.log.filter((x) => x.startsWith('hm.com')).length, 1, r.log.join(' '));
+  assert.deepStrictEqual(r.used, ['gap.com', 'asos.com']);
+});
+
+test('a shop already opened is not opened again while another usable shop is left', () => {
+  const cards = grid(['gap.com', 'gap.com', 'gap.com', 'asos.com']);
+  const first = chooseNext(cards, { used: new Set(), row: 0 });
+  const second = chooseNext(cards, { tried: new Set([first.i]), used: new Set(['gap.com']), row: 1 });
+  assert.strictEqual(second.host, 'asos.com');
+});
+
+test('…and only when none is left does it go back to a shop it already opened', () => {
+  const cards = grid(['gap.com', 'gap.com']);
+  const second = chooseNext(cards, { tried: new Set([0]), used: new Set(['gap.com']) });
+  assert.strictEqual(second.i, 1);
+});
+
+test('shops checked off camera: blocked ones never come up, usable ones come first', () => {
+  const cards = grid(['hm.com', 'zara.com', 'gap.com', 'asos.com']);
+  const verdicts = { [cards[0].href]: 'blocked', [cards[1].href]: 'slow', [cards[3].href]: 'loaded' };
+  const first = chooseNext(cards, { verdicts, row: 0 });
+  assert.strictEqual(first.host, 'asos.com', 'a shop checked usable comes before one not checked');
+  const r = run(cards, {}, 3, verdicts);
+  assert.ok(!r.log.some((x) => /hm\.com|zara\.com/.test(x)), r.log.join(' '));
+});
+
+test('when every shop fails, the loop ends instead of looping', () => {
+  const r = run(grid(['a.com', 'b.com', 'c.com']), { 'a.com': 'blocked', 'b.com': 'slow', 'c.com': 'no-tab' }, 2);
+  assert.strictEqual(r.used.length, 0);
+  assert.strictEqual(r.log.length, 3);
+});
+
+test('a skipped attempt is cut from where the hand set off for it', () => {
+  const skipped = { kind: 'blocked', approach: 13.2, click: 15, pageAt: 15.3, dom: 15.8, closed: 16.1, file: 'x' };
+  const plan = planCut({ marks, visits: [skipped, loaded(20, 'b')], mainLen: 30, popLen });
+  assert.ok(Math.abs(plan.segments[0].wallTo - 13.2) < 1e-6, 'Fynd runs only up to the approach');
+  assert.ok(Math.abs(plan.segments[1].wallFrom - 16.1) < 1e-6, 'and resumes when the blocked tab is closed');
+  assert.ok(plan.segments.every((x) => x.src !== 'x'), 'the blocked page is never in the video');
+});
+
 console.log('\nthe narration');
 
 const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'assets', 'demo', 'narration', 'manifest.json'), 'utf8'));

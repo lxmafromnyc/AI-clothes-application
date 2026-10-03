@@ -91,7 +91,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { execFileSync } = require('child_process');
-const { visitRetailer, hostOf } = require('./demo-retailer-visit');
+const { visitRetailer, checkRetailer, chooseNext, hostOf } = require('./demo-retailer-visit');
 
 const REPO = path.join(__dirname, '..');
 const arg = (name) => {
@@ -123,12 +123,13 @@ const ORIGIN = `http://127.0.0.1:${PORT}`;
      before   the line said while the last search is cleared away
      results  the line said when its results arrive
      browse   the line said while the pointer goes through them
-     open     how many of its products are opened at their retailers
+     open     how many retailer pages it should show; one it cannot get
+              (every shop blocked) is owed by the next search
      required whether the recording stops if no query in the slot works */
 const SEARCHES = [
-  { slot: 'everyday', required: true, typing: 'looking', results: 'options', browse: 'browse', open: 1,
+  { slot: 'everyday', required: true, typing: 'looking', results: 'options', browse: 'browse', open: 2,
     queries: ['black oversized hoodie under $80'] },
-  { slot: 'different', required: true, before: 'different', results: 'results', open: 0,
+  { slot: 'different', required: true, before: 'different', results: 'results', open: 1,
     queries: ['cream linen midi dress for summer', 'white linen midi dress for summer',
       'floral midi dress for a summer wedding', 'linen midi dress'] },
   { slot: 'brand', required: false, typing: 'brand', open: 0,
@@ -143,6 +144,14 @@ const SEED = 20261002;
    "Searching…" state is allowed to run on camera: the real search can
    take several seconds, and a recording of a spinner is not the point */
 const MIN_PRODUCTS = 4;
+/* retailer visits: at least this many must load, or nothing is written;
+   and no search tries more products than this */
+const MIN_VISITS = 2;
+const MAX_ATTEMPTS = 6;
+/* off camera, per search: retailers checked until this many usable shops
+   are known, trying at most CHECK_LIMIT products */
+const CHECK_WANT = 4;
+const CHECK_LIMIT = 10;
 const MAX_LOADING_MS = 1100;
 const MIN_LOADING_MS = 900;
 
@@ -613,6 +622,7 @@ async function realSearches(chromium) {
   }
 
   const searches = [];
+  const knownBad = new Set();
   for (const slot of SEARCHES) {
     let chosen = null;
     for (const query of slot.queries) {
@@ -627,15 +637,57 @@ async function realSearches(chromium) {
     }
     const hosts = new Set(chosen.found.map((f) => hostOf(f.href)));
     console.log(`  "${chosen.query}": ${chosen.found.length} real products from ${hosts.size} retailer(s); every photo loaded`);
-    searches.push({
+    const entry = {
       slot: slot.slot,
       query: chosen.query,
       interpret: chosen.interpret,
       search: chosen.search,
       shown: chosen.found.map(({ name, retailer, href, src, width, height }) => ({ name: name.trim(), retailer, href, photo: src, width, height }))
-    });
+    };
+    /* every search is checked: a later one may have to make up visits an
+       earlier one could not get */
+    await checkRetailers(chromium, entry, knownBad);
+    searches.push(entry);
   }
   return { searchedAt: new Date().toISOString(), productSource: process.env.PRODUCT_SOURCE, searches };
+}
+
+/* Off camera: which of a search's products lead to a usable retailer
+   page. Tried in the order they sit in the grid, one per shop, until
+   CHECK_WANT usable shops are known or CHECK_LIMIT products are tried. A
+   shop already known to block is not asked again. Each product's verdict
+   is kept with the search, so the recording only reaches for products
+   whose shop answered — and a blocked one is never clicked on camera. */
+async function checkRetailers(chromium, search, knownBad) {
+  const browser = await chromium.launch({ executablePath: chromePath() });
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  const usable = new Set();
+  const asked = new Set();
+  let tried = 0;
+  for (const item of search.shown) {
+    if (usable.size >= CHECK_WANT || tried >= CHECK_LIMIT) break;
+    const host = hostOf(item.href);
+    if (!/^https?:\/\//.test(item.href) || asked.has(host)) continue;
+    asked.add(host);
+    if (knownBad.has(host)) { item.check = { kind: 'blocked', reason: 'blocked in an earlier search' }; continue; }
+    tried += 1;
+    const verdict = await checkRetailer(context, item.href);
+    item.check = { kind: verdict.kind, reason: verdict.reason, checkedAt: new Date().toISOString() };
+    if (verdict.kind === 'loaded') usable.add(host);
+    else knownBad.add(host);
+  }
+  /* a shop's verdict holds for its other products too */
+  const byHost = {};
+  for (const item of search.shown) if (item.check) byHost[hostOf(item.href)] = item.check;
+  for (const item of search.shown) if (!item.check && byHost[hostOf(item.href)]) item.check = { ...byHost[hostOf(item.href)] };
+  await browser.close();
+  const said = search.shown.filter((x) => x.check).reduce((acc, x) => {
+    const h = hostOf(x.href);
+    if (!acc.some((a) => a.startsWith(`${h} `))) acc.push(`${h} ${x.check.kind === 'loaded' ? 'ok' : `${x.check.kind}${x.check.reason ? ` (${x.check.reason})` : ''}`}`);
+    return acc;
+  }, []);
+  console.log(`  retailers for "${search.query}": ${said.join(', ') || 'none checked'}`);
+  return usable.size;
 }
 
 /* a search saved before there were several: one search, the first slot */
@@ -823,7 +875,33 @@ async function record(chromium, shot, rawDir, stillsDir) {
      scroll gesture; on a phone, a finger's swipe as real touch events,
      quick in the middle and easing off, the way a thumb moves. */
   const cdp = await context.newCDPSession(page);
+  /* a scroll is over when the page stops moving — a swipe keeps going
+     after the finger lifts, and anything measured before it stops is
+     measured in the wrong place */
+  async function settle(quiet = 3) {
+    let last = null;
+    let still = 0;
+    const until = Date.now() + 2500;
+    while (Date.now() < until && still < quiet) {
+      const y = await page.evaluate(() => window.scrollY);
+      still = y === last ? still + 1 : 0;
+      last = y;
+      await wait(50);
+    }
+  }
+
   async function scrollBy(pixels, point) {
+    /* on a phone, anything shorter than a real drag is read as a tap on
+       whatever is under the finger — so it is not done at all */
+    if (shot.touch && Math.abs(pixels) < 40) return;
+    const flick = shot.touch && Math.abs(pixels) > viewH * 0.5;
+    await scrollGesture(pixels, point);
+    /* a flick glides on after the finger lifts; wait for the glide */
+    if (flick) await wait(500);
+    await settle(flick ? 7 : 3);
+  }
+
+  async function scrollGesture(pixels, point) {
     /* a swipe starts low to scroll down and high to scroll back up, so
        the finger stays on the screen */
     const p = point || { x: shot.width * rand.between(0.45, 0.6), y: viewH * (pixels < 0 ? 0.3 : 0.68) };
@@ -834,17 +912,25 @@ async function record(chromium, shot, rawDir, stillsDir) {
       });
       return;
     }
-    /* a thumb covers about half the screen per swipe: longer scrolls are
-       several swipes, the way a phone is actually scrolled */
+    /* a long way on a phone is a flick: a quick swipe let go while still
+       moving, and the page glides on by itself. The caller measures
+       again afterwards and finishes with a short swipe if it needs to. */
     const most = viewH * 0.5;
     if (Math.abs(pixels) > most) {
-      let left = pixels;
-      while (Math.abs(left) > 4) {
-        const step = Math.sign(left) * Math.min(Math.abs(left), most * rand.between(0.85, 1));
-        await scrollBy(step);
-        left -= step;
-        await wait(rand.between(80, 160));
+      const dir = Math.sign(pixels);
+      const fx = shot.width * rand.between(0.45, 0.6);
+      const fy = viewH * (dir < 0 ? 0.3 : 0.7);
+      const reach = most * rand.between(0.8, 0.95);
+      await page.evaluate(([x, y]) => window.demo.touchAt(x, y, true), [fx, fy]);
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: fx, y: fy }] });
+      for (let i = 1; i <= 8; i += 1) {
+        const y = fy - dir * reach * (i / 8);
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: fx, y }] });
+        await page.evaluate(([px, py]) => window.demo.touchAt(px, py, true), [fx, y]);
+        await wait(12);
       }
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+      await page.evaluate(([x, y]) => window.demo.touchAt(x, y, false), [fx, fy - dir * reach]);
       return;
     }
     const steps = 22;
@@ -870,28 +956,14 @@ async function record(chromium, shot, rawDir, stillsDir) {
 
   const cardSel = (i) => `#results .grid .item-card:nth-child(${i + 1})`;
 
-  /* Which products to open: from shops not opened yet in this video
-     where the results allow, the first from the first row and any second
-     from further down. Never more than the real results hold. */
-  async function pickProducts(count, openedHosts) {
+  /* the results as they sit on screen: index, link and row */
+  async function cardsOnScreen() {
     const cards = await page.evaluate(() => [...document.querySelectorAll('#results .grid .item-card')].map((c, i) => {
       const r = c.getBoundingClientRect();
       return { i, href: c.getAttribute('href') || '', top: Math.round(r.top) };
     }));
     const rowTop = cards.length ? cards[0].top : 0;
-    const linked = cards.filter((c) => /^https?:\/\//.test(c.href)).map((c) => ({ ...c, host: hostOf(c.href), row: c.top > rowTop + 20 ? 1 : 0 }));
-    const used = new Set(openedHosts);
-    const picks = [];
-    const fresh = (c) => !used.has(c.host) && !picks.includes(c);
-    const take = (c) => { if (c && !picks.includes(c)) { picks.push(c); used.add(c.host); } };
-    while (picks.length < count) {
-      const row = picks.length === 0 ? 0 : 1;
-      const next = linked.find((c) => c.row === row && fresh(c)) || linked.find(fresh)
-        || linked.find((c) => !picks.includes(c));
-      if (!next) break;
-      take(next);
-    }
-    return picks;
+    return cards.map((c) => ({ ...c, row: c.top > rowTop + 20 ? 1 : 0 }));
   }
 
   /* a card is scrolled to only if it is not already wholly in view */
@@ -906,6 +978,19 @@ async function record(chromium, shot, rawDir, stillsDir) {
     const by = low > 0 ? Math.min(low + 24, high) : (high < 0 ? high - 24 : 0);
     if (Math.abs(by) < 6) return false;
     await scrollBy(by);
+    /* a swipe can fall short: finish the job if it did */
+    for (let i = 0; i < 3; i += 1) {
+      const again = await page.evaluate((s2) => {
+        const b = document.querySelector(s2).getBoundingClientRect();
+        const header = document.querySelector('.site-header');
+        return { top: b.top, bottom: b.bottom, head: header ? header.getBoundingClientRect().height : 0 };
+      }, sel);
+      const over = again.bottom - (viewH - 12);
+      const under = again.top - (again.head + 12);
+      const more = over > 0 ? Math.min(over + 24, under) : (under < 0 ? under - 24 : 0);
+      if (Math.abs(more) < 6) break;
+      await scrollBy(more);
+    }
     await wait(rand.between(350, 600));
     return true;
   }
@@ -920,8 +1005,12 @@ async function record(chromium, shot, rawDir, stillsDir) {
   /* DEMO_DEBUG=1 prints when each step happened, to find slack */
   const beat = (label) => { if (process.env.DEMO_DEBUG) (marks.beats = marks.beats || []).push(`${now().toFixed(1)} ${label}`); };
   const visits = [];
-  const openedHosts = [];
+  const opened = new Set();       /* shops shown successfully */
+  const bad = new Set();          /* shops that blocked or failed */
   let retailerSaid = false;
+  let browseSaid = false;
+  /* successful retailer visits owed by the end of search n */
+  const owed = (n) => api.saved.searches.slice(0, n + 1).reduce((sum, x) => sum + (slotOf(x.slot).open || 0), 0);
   marks.results = [];
 
   for (let n = 0; n < api.saved.searches.length; n += 1) {
@@ -956,24 +1045,48 @@ async function record(chromium, shot, rawDir, stillsDir) {
       /* starting again: back up to the box, and its own × clears it —
          the page hides the old results and puts the cursor in the box */
       if (spec.before) await saying(spec.before);
-      const form = await page.evaluate(() => {
-        const f = document.getElementById('ask-form').getBoundingClientRect();
-        const header = document.querySelector('.site-header');
-        return { top: f.top, head: header ? header.getBoundingClientRect().height : 0 };
-      });
-      const up = form.top - (form.head + rand.between(60, 110));
-      if (up < -6) {
+      /* swipe or wheel back up until the box is really in view: a
+         scroll can fall short, so it is measured again after each one */
+      const aim = rand.between(60, 110);
+      for (let i = 0; i < 5; i += 1) {
+        const form = await page.evaluate(() => {
+          const f = document.getElementById('ask-form').getBoundingClientRect();
+          const header = document.querySelector('.site-header');
+          return { top: f.top, head: header ? header.getBoundingClientRect().height : 0 };
+        });
+        const up = form.top - (form.head + aim);
+        /* anywhere in the upper part of the screen will do */
+        if (form.top >= form.head + 8 && form.top <= viewH * 0.45) break;
         await scrollBy(up);
-        await wait(rand.between(150, 280));
       }
-      const clear = spotIn(await box('#reset-form'));
-      if (shot.touch) await tap(clear);
-      else {
-        await moveTo(clear);
-        await wait(rand.between(120, 220));
-        await click();
+      await wait(rand.between(150, 280));
+      /* the × that clears the box; measured once the page has stopped,
+         and pressed again if the box did not empty */
+      for (let tryClear = 0; ; tryClear += 1) {
+        const clear = spotIn(await box('#reset-form'), 0.5, 0.5);
+        if (shot.touch) await tap(clear);
+        else {
+          await moveTo(clear);
+          await wait(rand.between(120, 220));
+          await click();
+        }
+        await wait(rand.between(250, 400));
+        await settle();
+        const left2 = await page.evaluate(() => document.getElementById('ask').value);
+        if (!left2) break;
+        if (tryClear >= 1) {
+          const under = await page.evaluate(([x, y]) => {
+            const e = document.elementFromPoint(x, y);
+            const r = document.getElementById('reset-form').getBoundingClientRect();
+            return { el: e ? `${e.tagName.toLowerCase()}${e.id ? `#${e.id}` : ''}.${String(e.className).slice(0, 40)}` : 'nothing',
+              x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height), shown: getComputedStyle(document.getElementById('reset-form')).display };
+          }, [clear.x, clear.y]);
+          const shotPath = path.join(os.tmpdir(), `${shot.name}-clear-failed.png`);
+          await page.screenshot({ path: shotPath }).catch(() => {});
+          fail(`The search box could not be cleared before "${saved.query}" (it still says "${left2}"). `
+            + `Tapped (${Math.round(clear.x)}, ${Math.round(clear.y)}); there: ${under.el}; the × is at ${under.x},${under.y} ${under.w}x${under.h} (${under.shown}). Screenshot: ${shotPath}`);
+        }
       }
-      await wait(rand.between(250, 400));
       await page.focus('#ask');
     }
     await wait(rand.between(150, 280));
@@ -988,6 +1101,9 @@ async function record(chromium, shot, rawDir, stillsDir) {
     const typedFrom = Date.now();
     /* a little quicker the second and third time: the box is familiar */
     await typeLikeAPerson(saved.query, n === 0 ? 92 : 84);
+    /* what is in the box is exactly the request, nothing left over */
+    const inBox = await page.evaluate(() => document.getElementById('ask').value);
+    if (inBox !== saved.query) fail(`The search box says "${inBox}", not "${saved.query}".`);
     await still(`typed-${n + 1}`);
     /* a short pause after typing, longer only if a line is still going */
     const left = pending ? pending - (Date.now() - pendingFrom) : 0;
@@ -1022,13 +1138,19 @@ async function record(chromium, shot, rawDir, stillsDir) {
     await still(`results-${n + 1}`);
 
     if (spec.results) await saying(spec.results);
-    const picks = spec.open ? await pickProducts(spec.open, openedHosts) : [];
 
-    if (picks.length) {
+    /* how many retailer visits this search still owes: its own share,
+       plus whatever earlier searches could not get */
+    const want = Math.max(0, owed(n) - opened.size);
+    const cards = await cardsOnScreen();
+    const verdicts = Object.fromEntries(saved.shown.filter((x) => x.check).map((x) => [x.href, x.check.kind]));
+    const firstChoice = want ? chooseNext(cards, { used: opened, bad, verdicts, row: 0 }) : null;
+
+    if (firstChoice) {
       /* a look along the first row: the pointer drifts slowly over it,
-         to where the first choice is */
+         towards the first choice */
       if (!shot.touch) {
-        const first = await box(`${cardSel(picks[0].i)} .item-media`);
+        const first = await box(`${cardSel(firstChoice.i)} .item-media`);
         await moveTo({ x: first.x + first.width * rand.between(0.7, 1.15), y: first.y + first.height * rand.between(0.55, 0.75) },
           rand.between(1000, 1300));
       }
@@ -1036,7 +1158,7 @@ async function record(chromium, shot, rawDir, stillsDir) {
     } else if (!spec.results) {
       /* the last search: a look at one of the results, and that is all */
       if (!shot.touch) {
-        const a = await box(`${cardSel(1)} .item-media`);
+        const a = await box(`${cardSel(Math.min(1, cards.length - 1))} .item-media`);
         await moveTo(spotIn(a, 0.5, 0.5), rand.between(800, 1000));
       } else {
         await scrollBy(viewH * rand.between(0.14, 0.2));
@@ -1047,7 +1169,7 @@ async function record(chromium, shot, rawDir, stillsDir) {
       /* nothing to open this time: a look at what came back while the
          line is said — over one product, a slight scroll, over another */
       if (!shot.touch) {
-        const a = await box(`${cardSel(1)} .item-media`);
+        const a = await box(`${cardSel(Math.min(1, cards.length - 1))} .item-media`);
         await moveTo(spotIn(a, 0.5, 0.5), rand.between(800, 1000));
         await wait(rand.between(250, 400));
       } else {
@@ -1056,21 +1178,36 @@ async function record(chromium, shot, rawDir, stillsDir) {
       await scrollBy(viewH * rand.between(0.16, 0.24));
       await wait(rand.between(200, 350));
       if (!shot.touch) {
-        const count = await page.evaluate(() => document.querySelectorAll('#results .grid .item-card').length);
-        const other = await box(`${cardSel(Math.min(count - 1, 2))} .item-media`);
+        const other = await box(`${cardSel(Math.min(cards.length - 1, 2))} .item-media`);
         await moveTo(spotIn(other, 0.5, 0.5));
       }
       await finishLine(150);
       await wait(rand.between(150, 300));
     }
 
-    /* --- products, at their retailers --------------------------------- */
+    /* --- products, at their retailers ---------------------------------
 
-    for (let k = 0; k < picks.length; k += 1) {
-      const pick = picks[k];
+       One product at a time until this search has its visits: open it;
+       a retailer page that loads is kept; one that blocks (Access
+       Denied, a bot check, a CAPTCHA), shows nothing usable, is slow or
+       opens no tab is skipped — the whole attempt is cut from the video
+       — its shop is never tried again, and the next product is tried. */
+    const tried = new Set();
+    let got = 0;
+    let attempts = 0;
+    while (got < want && attempts < MAX_ATTEMPTS) {
+      const pick = chooseNext(cards, { tried, used: opened, bad, verdicts, row: got === 0 ? 0 : 1 });
+      if (!pick) break;
+      tried.add(pick.i);
+      attempts += 1;
       const sel = cardSel(pick.i);
-      if (spec.browse && k === 0) await saying(spec.browse);
-      else if (n > 0 && k === 0) {
+      const approach = now();
+      beat(`try ${pick.host}`);
+
+      if (spec.browse && !browseSaid) {
+        browseSaid = true;
+        await saying(spec.browse);
+      } else if (n > 0 && attempts === 1) {
         /* a slight scroll, to see what else came back */
         await scrollBy(viewH * rand.between(0.15, 0.22));
         await wait(rand.between(250, 400));
@@ -1099,7 +1236,6 @@ async function record(chromium, shot, rawDir, stillsDir) {
         fail(`Card ${pick.i + 1} links to ${card && card.href} — not one of the products "${saved.query}" returned.`);
       }
 
-      beat(`click ${visits.length + 1}`);
       const index = visits.length;
       const narrate = !retailerSaid;
       const visit = await visitRetailer({
@@ -1120,22 +1256,23 @@ async function record(chromium, shot, rawDir, stillsDir) {
       });
       const t = (ms) => (ms == null ? null : (ms - pageBorn) / 1000);
       visits.push({
-        search: saved.query, product: card.name.trim(), href: card.href, host: visit.host, kind: visit.kind, url: visit.url,
+        search: saved.query, product: card.name.trim(), href: card.href, host: visit.host, kind: visit.kind,
+        reason: visit.reason || null, url: visit.url, approach,
         click: t(visit.clickedAt), opened: t(visit.openedAt), pageAt: t(visit.pageAt),
         dom: t(visit.domAt), closed: t(visit.closedAt), video: visit.video
       });
-      openedHosts.push(visit.host);
-      beat(`back ${visits.length} (${visit.kind})`);
+      beat(`back ${visit.host} (${visit.kind})`);
 
-      /* a tab that opened but is not shown is still said: the address it
-         was opening, on Fynd, in the strip */
-      if (visit.kind === 'slow' || visit.kind === 'blocked') {
-        await caption(`Opened ${visit.host} in a new tab`, 1250);
-        await wait(1250);
-        await hush();
+      if (visit.kind === 'loaded') {
+        opened.add(visit.host);
+        got += 1;
+        await wait(rand.between(250, 400));     /* back on Fynd, a beat */
+      } else {
+        bad.add(visit.host);
+        await wait(rand.between(100, 200));
       }
-      await wait(rand.between(250, 400));       /* back on Fynd, a beat */
     }
+    if (got < want) console.log(`  ${shot.kind}: "${saved.query}" — ${got} of ${want} retailer visit(s) after ${attempts} attempt(s)`);
   }
 
   /* --- the end: still on Fynd's results -------------------------------- */
@@ -1152,8 +1289,13 @@ async function record(chromium, shot, rawDir, stillsDir) {
   await browser.close();
 
   if (process.env.DEMO_DEBUG) console.log(`  timeline: ${(marks.beats || []).join(' | ')}`);
-  const summary = visits.map((v) => `${v.host} (${v.kind})`).join(', ');
-  console.log(`  ${shot.kind}: ${api.saved.searches.length} search(es), opened ${visits.length} product(s): ${summary}`);
+  const kept = visits.filter((v) => v.kind === 'loaded');
+  const skipped = visits.filter((v) => v.kind !== 'loaded');
+  console.log(`  ${shot.kind}: ${api.saved.searches.length} search(es), opened ${kept.length} product(s): ${kept.map((v) => `${v.host} (loaded)`).join(', ') || 'none'}`);
+  if (skipped.length) console.log(`  ${shot.kind}: skipped ${skipped.map((v) => `${v.host} (${v.kind}${v.reason ? `: ${v.reason}` : ''})`).join(', ')}`);
+  if (kept.length < MIN_VISITS && !arg('allow-fewer')) {
+    fail(`The ${shot.kind} recording reached only ${kept.length} retailer page(s); the demo needs at least ${MIN_VISITS}. Every retailer tried blocked or failed — see the skipped list above.`);
+  }
   if (stillsDir) return { marks, visits };
   for (const v of visits) {
     v.file = v.kind === 'loaded' && v.video ? await v.video.path().catch(() => null) : null;
@@ -1191,7 +1333,7 @@ function checkVideo(file, width, height) {
   if (!video) problems.push('no video stream');
   else if (Number(video[1]) !== width || Number(video[2]) !== height) problems.push(`video is ${video[1]}x${video[2]}, not ${width}x${height}`);
   if (!audio) problems.push('no audio stream');
-  if (seconds < 15 || seconds > 55) problems.push(`runs ${seconds.toFixed(1)}s`);
+  if (seconds < 15 || seconds > 65) problems.push(`runs ${seconds.toFixed(1)}s`);
   if (problems.length) throw new Error(`${path.basename(file)} is not a valid demo video: ${problems.join('; ')}`);
 }
 
@@ -1234,7 +1376,9 @@ function planCut({ marks, visits, mainLen, popLen }) {
       if (to - from > 0.3) pieces.push({ src: vis.file, from, to, rate: kp, host: vis.host, visit: index });
       cursor = vis.closed + 0.05;
     } else {
-      pieces.push({ src: 'main', wallFrom: cursor, wallTo: vis.click + 0.35 });
+      /* a skipped product is cut from where the hand set off for it, so
+         the attempt is not in the video at all */
+      pieces.push({ src: 'main', wallFrom: cursor, wallTo: vis.approach != null ? vis.approach : vis.click + 0.35 });
       cursor = vis.closed;
     }
   });
@@ -1412,6 +1556,17 @@ async function main() {
       if (!fs.existsSync(file)) fail(`No saved search at ${path.relative(REPO, file)}. Run without --replay first.`);
       api.saved = asSearches(JSON.parse(fs.readFileSync(file, 'utf8')));
       console.log(`Replaying the real searches of ${api.saved.searchedAt}: ${api.saved.searches.map((x) => `"${x.query}" (${x.shown.length})`).join(', ')}`);
+      /* retailers change their minds: a saved search without checks, or
+         --recheck, asks them again before recording */
+      if (!arg('no-check') && (arg('recheck') || api.saved.searches.some((x) => !x.shown.some((y) => y.check)))) {
+        console.log('Checking which retailers answer…');
+        const knownBad = new Set();
+        for (const x of api.saved.searches) {
+          x.shown.forEach((y) => { delete y.check; });
+          await checkRetailers(chromium, x, knownBad);
+        }
+        if (file === SEARCH_FILE) fs.writeFileSync(SEARCH_FILE, `${JSON.stringify(api.saved, null, 2)}\n`);
+      }
     } else {
       console.log(`Searching for real${hadEnv ? ` with ${hadEnv}` : ''}…`);
       api.saved = await realSearches(chromium);
@@ -1449,7 +1604,8 @@ async function main() {
       recordings: takes.map(([shot, take]) => ({
         file: `${shot.name}.mp4`,
         seconds: Number(lengths[shot.name].toFixed(1)),
-        opened: take.visits.map((vis) => ({ search: vis.search, product: vis.product, retailer: vis.host, shown: vis.kind === 'loaded', outcome: vis.kind }))
+        opened: take.visits.filter((vis) => vis.kind === 'loaded').map((vis) => ({ search: vis.search, product: vis.product, retailer: vis.host, url: vis.url })),
+        skipped: take.visits.filter((vis) => vis.kind !== 'loaded').map((vis) => ({ search: vis.search, product: vis.product, retailer: vis.host, outcome: vis.kind, reason: vis.reason || null }))
       }))
     };
     fs.writeFileSync(path.join(stage, 'demo-recording.json'), `${JSON.stringify(report, null, 2)}\n`);

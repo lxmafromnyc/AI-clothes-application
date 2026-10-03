@@ -14,9 +14,13 @@
      B  'slow'    a new tab opened, but its page did not reach
                   domcontentloaded in time. Nothing more is waited for:
                   the tab is closed and the visit is reported slow, with
-                  the address it was opening. A page that reached the DOM
-                  but is plainly a bot check is reported 'blocked' and
-                  treated the same way — a block page is not the shop.
+                  the address it was opening.
+        'blocked' the page arrived but is a block: Access Denied, a bot
+                  check, a CAPTCHA, a 401/403/429 — read from its status,
+                  its title and its text (classifyPage, below).
+        'unusable' the page arrived with nothing a shopper could use: an
+                  error status, or next to no content.
+                  Neither is ever shown — a block page is not the shop.
      C  'no-tab'  the click opened no new tab within LIMITS.tab. Reported
                   as such; there is no tab to show.
 
@@ -37,6 +41,34 @@ const LIMITS = {
 };
 
 const BLOCKED = /access denied|forbidden|captcha|just a moment|attention required|are you a robot|pardon our interruption|request unsuccessful|blocked/i;
+
+/* said in the page itself by the common bot walls (Akamai, Cloudflare,
+   PerimeterX, DataDome, Imperva…) whatever the title says */
+const BLOCKED_TEXT = /access denied|you don.t have permission to access|verify (that )?you are (a )?human|are you a robot|captcha|unusual traffic|pardon our interruption|request unsuccessful|checking your browser|enable (javascript and )?cookies to continue|press (&|and) hold|reference #[0-9a-f.]+/i;
+
+/* What a page that arrived actually is. Read from the page itself: the
+   status it was served with, its title, and the first of its visible
+   text — a product page has plenty, a block page a line or two. */
+async function classifyPage(tab) {
+  const info = await tab.evaluate(() => {
+    const nav = performance.getEntriesByType('navigation')[0];
+    const text = (document.body && document.body.innerText) || '';
+    return {
+      status: nav && nav.responseStatus ? nav.responseStatus : 0,
+      title: document.title || '',
+      text: text.slice(0, 4000),
+      length: text.trim().length,
+      images: document.images ? document.images.length : 0
+    };
+  }).catch(() => null);
+  if (!info) return { kind: 'unusable', reason: 'the page could not be read' };
+  if ([401, 403, 429].includes(info.status)) return { kind: 'blocked', reason: `HTTP ${info.status}` };
+  if (BLOCKED.test(info.title)) return { kind: 'blocked', reason: `"${info.title.slice(0, 60)}"` };
+  if (info.length < 600 && BLOCKED_TEXT.test(info.text)) return { kind: 'blocked', reason: `"${info.text.trim().slice(0, 60)}"` };
+  if (info.status >= 400) return { kind: 'unusable', reason: `HTTP ${info.status}` };
+  if (info.length < 120 && info.images < 2) return { kind: 'unusable', reason: 'next to no content' };
+  return { kind: 'loaded', reason: '' };
+}
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, Math.max(0, ms)));
 
@@ -140,10 +172,11 @@ async function visitRetailer({ context, page, click, href, holdMs, onLoaded, lim
 
   if (loaded) {
     visit.domAt = Date.now();
-    const title = await tab.title().catch(() => '');
-    if (BLOCKED.test(title)) {
-      visit.kind = 'blocked';
-      log(`  ${host}: the page that opened is a bot check ("${title.slice(0, 60)}") — not shown; carrying on`);
+    const verdict = await classifyPage(tab);
+    if (verdict.kind !== 'loaded') {
+      visit.kind = verdict.kind;
+      visit.reason = verdict.reason;
+      log(`  ${host}: ${verdict.kind} (${verdict.reason}) — not shown; trying another product`);
     } else {
       visit.kind = 'loaded';
       if (onLoaded) await onLoaded(tab).catch(() => {});
@@ -161,4 +194,45 @@ async function visitRetailer({ context, page, click, href, holdMs, onLoaded, lim
   return visit;
 }
 
-module.exports = { visitRetailer, LIMITS, hostOf };
+/* Off camera, before any recording: does this product's link lead to a
+   usable retailer page? Opened directly in its own page, held to the same
+   limits as a visit. 'loaded' or the reason it is not. */
+async function checkRetailer(context, url, limits) {
+  const lim = { ...LIMITS, ...(limits || {}) };
+  const page = await context.newPage();
+  let result;
+  try {
+    const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: lim.tab + lim.dom });
+    result = await classifyPage(page);
+    if (result.kind === 'loaded' && response && response.status() >= 400) {
+      result = { kind: [401, 403, 429].includes(response.status()) ? 'blocked' : 'unusable', reason: `HTTP ${response.status()}` };
+    }
+  } catch (err) {
+    result = { kind: 'slow', reason: 'no domcontentloaded in time' };
+  }
+  await page.close().catch(() => {});
+  return { ...result, host: hostOf(url), finalHost: hostOf(page.url()) };
+}
+
+/* Which product to open next, given what has happened so far.
+
+   cards     [{ i, href, row }] — the results on screen, in grid order
+   tried     indices already tried in this search
+   used      shops already opened successfully in this video
+   bad       shops that blocked or failed (never tried again)
+   verdicts  href → off-camera check ('loaded', 'blocked', …), if any
+   row       the row a person would look at next (0 first, then 1)
+
+   Shops checked usable come first, then ones not checked; a shop that
+   blocked, here or in a check, never comes at all. A shop already opened
+   is only chosen again when no other usable shop is left. */
+function chooseNext(cards, { tried = new Set(), used = new Set(), bad = new Set(), verdicts = {}, row = 0 } = {}) {
+  const fresh = cards.filter((c) => /^https?:\/\//.test(c.href) && !tried.has(c.i))
+    .map((c) => ({ ...c, host: hostOf(c.href), check: verdicts[c.href] }))
+    .filter((c) => !bad.has(c.host) && !(c.check && c.check !== 'loaded'));
+  if (!fresh.length) return null;
+  const score = (c) => (c.check === 'loaded' ? 0 : 100) + (used.has(c.host) ? 1000 : 0) + (c.row === row ? 0 : 10) + c.i * 0.01;
+  return fresh.sort((a, b) => score(a) - score(b))[0];
+}
+
+module.exports = { visitRetailer, checkRetailer, chooseNext, classifyPage, LIMITS, hostOf };
