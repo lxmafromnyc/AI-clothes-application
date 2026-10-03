@@ -1614,18 +1614,28 @@ garment categories fall back to neutral artwork rather than breaking.
 ## The demo video
 
 The landing page carries a short screen recording directly under the search
-(`#demo` in `index.html`): a person using Fynd for the first time, with a calm
-narration. It is compact, narrower than the page, and steps aside as soon as a
-real search starts, because the results take its place.
+(`#demo` in `index.html`): a person casually using Fynd for three completely
+different requests, with a relaxed narration. It is compact, narrower than the
+page, and steps aside as soon as a real search starts, because the results take
+its place.
 
 | | On screen | Narration / caption |
 | --- | --- | --- |
-| Homepage | the page as visitors get it; a moment before anything happens | — |
-| Describe | the pointer goes to the box and the request is typed, at a person's pace | "I'm looking for a black oversized hoodie, under eighty dollars." |
-| Search | Search is clicked; the site's own "Searching…" state | — |
-| Results | the real products: photos, brands, names, prices, retailers; the pointer drifts along the first row | "Fynd gives me several options, from different retailers." |
-| Compare | three products, one at a time, from different shops where the results have them: pointer to the card, a pause, click; the retailer's own page opens in a new tab for 2–3 seconds, its address in the strip; back to Fynd; a slight scroll; the next | "I can compare them, and open the ones I like." |
-| End | back up to the results | "So I can search naturally, and choose where I want to buy." · Compare. Choose. Buy. |
+| Search 1 | the homepage; the request is typed at a person's pace | "I'm looking for a black oversized hoodie under eighty dollars." |
+| | Search; the site's own "Searching…" state; real hoodies come back | "And Fynd gives me a few different options to compare." |
+| | the pointer goes through them to one | "I can look through them and open whichever one I like." |
+| | it opens in a new tab: the retailer's own page | "That takes me straight to the retailer." |
+| Search 2 | back on Fynd, up to the box, its × clears it; a different garment typed | "Let me try something completely different." |
+| | different real results; a look through them | "And now I get a whole different set of results." |
+| Search 3 | cleared again; a brand or designer request typed; its results | "I can search for a specific brand too." |
+| End | still on Fynd's results | Search naturally. |
+
+The searches are set in `SEARCHES` in `scripts/record-demo.js`. The first is
+fixed — it is the one said out loud. The second and third are narrated without
+naming them, and each lists real queries to try in order (a linen midi dress for
+summer; a vintage Prada bag under $500, or another brand): the first one the
+product source answers with enough real products, every photo loading, is the one
+recorded. A query that comes back thin is skipped, never padded.
 
 The words are spoken and shown in a thin strip along the bottom edge, so the
 video reads the same with the sound off, and the same lines are its captions
@@ -1720,10 +1730,22 @@ own when headless, which is the only reason one is drawn.
 
 ### The narration
 
-Four short lines in `assets/demo/narration/`, spoken by Kokoro v1.0 (voice
-`af_heart`), a neural text-to-speech model run offline through sherpa-onnx, then
-trimmed and brought to one loudness. They are committed, so recording needs no
-speech model. `scripts/demo-narration.py` makes them again if a line changes:
+Seven short lines in `assets/demo/narration/`, spoken by Kokoro v1.0 (voice
+`af_heart`), a neural text-to-speech model run offline through sherpa-onnx. They
+are written the way a person says what they are doing to someone sitting next to
+them, and generated so they do not sound recited:
+
+- no commas inside a line — the model turns a comma into a stop and a restart
+  ("a black oversized hoodie… under eighty dollars"), which nobody does out loud;
+- each line at its own speed, all close to normal speech, so they do not share
+  one even rhythm;
+- every clip is measured, and an internal gap over 0.3 seconds fails the run;
+- a little quiet (−20 LUFS): talking, not announcing.
+
+"Fynd" is spelled "Find" for the voice only (as written, the model swallows its
+last consonant); the captions keep the name. The clips are committed, so
+recording needs no speech model. `scripts/demo-narration.py` makes them again if
+a line changes:
 
 ```sh
 pip install sherpa-onnx soundfile numpy
@@ -1732,8 +1754,11 @@ pip install sherpa-onnx soundfile numpy
 KOKORO_DIR=/path/to/kokoro-multi-lang-v1_0 python3 scripts/demo-narration.py
 ```
 
-"From different retailers" is only said when the products on screen link to
-more than one shop; otherwise the shorter line is used.
+Each line starts when what it describes is on screen, and the retailer line is
+placed on the retailer's page itself — if no retailer page loads, it is not
+said. Playwright's recording can run slower than the clock (about 12% here);
+every piece of the video is played back at the pace it really happened, so the
+pointer, the typing and the voice stay together.
 
 ### What it writes
 
@@ -1743,7 +1768,7 @@ more than one shop; otherwise the shorter line is used.
 | `fynd-demo-mobile.mp4` / `.webm` | 800 × 1440 (400 × 720 at 2×), with narration | 1023px and under |
 | `fynd-demo{,-mobile}-poster.jpg` | | the real results, shown before playback |
 | `fynd-demo{,-mobile}.vtt` | | the narration as captions, timed to the video |
-| `demo-search.json` | | the real search both recordings were made from |
+| `demo-search.json` | | the real searches both recordings were made from |
 | `narration/*.wav`, `narration/manifest.json` | | the spoken lines |
 
 The narrow one is the site's real mobile layout, driven in a phone-shaped window

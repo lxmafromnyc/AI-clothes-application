@@ -2,23 +2,26 @@
 /* =========================================================
    Fynd — records the landing page demo video
 
-   A screen recording of a person shopping with Fynd for the first time:
+   A screen recording of a person casually using Fynd, three times over,
+   each request completely different from the last (SEARCHES, below):
 
-     the homepage, a moment to look at it
-     the pointer goes to the search box, clicks, and the request is typed
-       "I'm looking for a black oversized hoodie, under eighty dollars."
-     Search is clicked; the site's own searching state runs
-     real products come back: photos, brands, names, prices, retailers
-       "Fynd gives me several options, from different retailers."
-     a look along the first row, then three products, one at a time:
-       "I can compare them, and open the ones I like."
-       pointer to a product, a pause, click — the retailer's own page
-       opens in a new tab and is looked at for a moment — back to Fynd,
-       a slight scroll, the next one, from a different shop where the
-       results have one (scripts/demo-retailer-visit.js)
-     back up to the results
-       "So I can search naturally, and choose where I want to buy."
-       Compare. Choose. Buy.
+     the homepage; the pointer goes to the box and the first request is typed
+       "I'm looking for a black oversized hoodie under eighty dollars."
+     Search; the site's own searching state; real products come back
+       "And Fynd gives me a few different options to compare."
+       "I can look through them and open whichever one I like."
+     one is opened; the retailer's own page in its new tab
+       "That takes me straight to the retailer."
+     back on Fynd, up to the box, its × clears it
+       "Let me try something completely different."
+     a different garment typed; different real results; a look through them
+       "And now I get a whole different set of results."
+     cleared again, a brand typed, its results
+       "I can search for a specific brand too."
+     Search naturally.
+
+   Each line starts when what it describes is on screen, and the line about
+   the retailer is said on the retailer's page itself.
 
    A retailer that is slow, blocks robots, or opens no tab never stops the
    run or the next product: its tab is not shown, the strip says which
@@ -106,17 +109,44 @@ const ONLY = arg('only');
 const PORT = Number(process.env.DEMO_PORT || 8917);
 const ORIGIN = `http://127.0.0.1:${PORT}`;
 
-const QUERY = 'black oversized hoodie under $80';
+/* The searches, in the order they are made — one ordinary piece, then
+   something completely different, then a brand. Each lists real queries
+   to try in order: the first the product source answers with enough real
+   products, every one with a photo that loads, is the one recorded. A
+   query that comes back thin is skipped, never padded.
+
+   Only the first query is said out loud, so it is fixed. The others are
+   narrated without naming them ("something completely different", "a
+   specific brand"), so any query here that fits its slot can stand in.
+
+     typing   the line said while it is typed
+     before   the line said while the last search is cleared away
+     results  the line said when its results arrive
+     browse   the line said while the pointer goes through them
+     open     how many of its products are opened at their retailers
+     required whether the recording stops if no query in the slot works */
+const SEARCHES = [
+  { slot: 'everyday', required: true, typing: 'looking', results: 'options', browse: 'browse', open: 1,
+    queries: ['black oversized hoodie under $80'] },
+  { slot: 'different', required: true, before: 'different', results: 'results', open: 0,
+    queries: ['cream linen midi dress for summer', 'white linen midi dress for summer',
+      'floral midi dress for a summer wedding', 'linen midi dress'] },
+  { slot: 'brand', required: false, typing: 'brand', open: 0,
+    queries: ['vintage Prada bag under $500', 'vintage Prada shoulder bag under $500', 'Gucci horsebit loafers',
+      'Ralph Lauren cable knit sweater', "Levi's 501 jeans under $100"] }
+];
+const QUERY = SEARCHES[0].queries[0];
+const slotOf = (name) => SEARCHES.find((x) => x.slot === name) || SEARCHES[0];
 const SEED = 20261002;
 
 /* the fewest products worth showing, and the longest the page's own
    "Searching…" state is allowed to run on camera: the real search can
    take several seconds, and a recording of a spinner is not the point */
 const MIN_PRODUCTS = 4;
-const MAX_LOADING_MS = 1500;
+const MAX_LOADING_MS = 1100;
 const MIN_LOADING_MS = 900;
 
-const CAPTION_END = 'Compare. Choose. Buy.';
+const CAPTION_END = 'Search naturally.';
 
 /* the address a retailer tab is at, as a browser would show it: the shop
    and the start of the path, never the query string */
@@ -299,12 +329,21 @@ async function live(route, req, res) {
   res.end(JSON.stringify(answer));
 }
 
-function replay(route, res) {
-  const saved = api.saved && api.saved[route];
+/* the saved search the page is in the middle of: chosen by the query
+   it sends to /api/interpret, answered again by /api/search */
+let replaying = null;
+const sameQuery = (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
+
+function replay(route, res, body) {
+  if (route === 'interpret') {
+    replaying = (api.saved.searches || []).find((x) => sameQuery(x.query, body && body.query)) || null;
+    if (!replaying) console.log(`  replay: no saved search for "${body && body.query}"`);
+  }
+  const saved = replaying && replaying[route];
   if (!saved) { res.statusCode = 503; return res.end('{}'); }
   const delay = route === 'search'
     ? Math.min(MAX_LOADING_MS, Math.max(MIN_LOADING_MS, saved.ms))
-    : Math.min(700, Math.max(250, saved.ms));
+    : Math.min(500, Math.max(250, saved.ms));
   setTimeout(() => {
     res.statusCode = saved.status;
     res.setHeader('Content-Type', 'application/json');
@@ -323,7 +362,13 @@ const server = http.createServer((req, res) => {
         res.statusCode = 500; res.end('{}');
       });
     }
-    return replay(route[1], res);
+    const chunks = [];
+    req.on('data', (c) => chunks.push(c));
+    return req.on('end', () => {
+      let body = {};
+      try { body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'); } catch (err) { body = {}; }
+      replay(route[1], res, body);
+    });
   }
   if (url.pathname.startsWith('/api/')) { res.statusCode = 404; return res.end('{}'); }
 
@@ -520,21 +565,23 @@ function verdict(found) {
   return problems;
 }
 
-async function realSearch(chromium) {
-  const missing = [];
-  if (!process.env.PRODUCT_SOURCE) missing.push('PRODUCT_SOURCE');
-  if (missing.length) fail(`.env does not configure a product source (${missing.join(', ')}). The demo is a real search; set PRODUCT_SOURCE and its API key.`);
-  if (!process.env.OPENAI_API_KEY && !process.env.AI_PROVIDER) {
-    console.log('  note: no OPENAI_API_KEY — the page will read the request with its local interpreter, as the live site does without one');
-  }
-
+/* One real search, made the way the page makes it: typed into the box on
+   a fresh page, submitted, answered by the real handlers. Returns what it
+   found, or why it is not fit to record. */
+async function searchOnce(chromium, query) {
   api.mode = 'live';
+  api.exchanges = {};
+  /* the recorder's own metering starts empty for each search: the free
+     allowance is one search a day, and these are the recorder's, not a
+     visitor's. Memory only — production KV is never configured here. */
+  require(path.join(REPO, 'api', '_store')).reset();
+
   const browser = await chromium.launch({ executablePath: chromePath() });
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   const page = await context.newPage();
   await page.addInitScript(pagePrep, ORIGIN);
   await page.goto(`${ORIGIN}/index.html`, { waitUntil: 'load' });
-  await page.fill('#ask', QUERY);
+  await page.fill('#ask', query);
   await page.click('#ask-form button[type=submit]');
 
   const outcome = await Promise.race([
@@ -543,29 +590,59 @@ async function realSearch(chromium) {
   ]).catch(() => 'timeout');
 
   const search = api.exchanges.search;
-  if (!search) fail('The page never reached /api/search.');
-  if (search.status !== 200 || outcome !== 'cards') {
+  let problems = [];
+  let found = [];
+  if (!search) problems = ['the page never reached /api/search'];
+  else if (search.status !== 200 || outcome !== 'cards') {
     const why = search.response && (search.response.error || search.response.notice || search.response.state);
-    fail(`The real search did not return products (HTTP ${search.status}${why ? `: ${why}` : ''}). Check PRODUCT_SOURCE and its key in .env.`);
+    problems = [`no products (HTTP ${search.status}${why ? `: ${why}` : ''})`];
+  } else {
+    found = await checkResults(page);
+    problems = verdict(found);
+  }
+  await browser.close();
+  return { query, search, interpret: api.exchanges.interpret || null, found, problems };
+}
+
+async function realSearches(chromium) {
+  if (!process.env.PRODUCT_SOURCE) {
+    fail('.env.local / .env does not configure a product source (PRODUCT_SOURCE). The demo is a real search; set PRODUCT_SOURCE and its API key.');
+  }
+  if (!process.env.OPENAI_API_KEY && !process.env.AI_PROVIDER) {
+    console.log('  note: no OPENAI_API_KEY — the page will read requests with its local interpreter, as the live site does without one');
   }
 
-  const found = await checkResults(page);
-  await browser.close();
-  const problems = verdict(found);
-  if (problems.length) fail(`The real results are not fit to record:\n  - ${problems.join('\n  - ')}`);
+  const searches = [];
+  for (const slot of SEARCHES) {
+    let chosen = null;
+    for (const query of slot.queries) {
+      const r = await searchOnce(chromium, query);
+      if (!r.problems.length) { chosen = r; break; }
+      console.log(`  "${query}": not used — ${r.problems.slice(0, 3).join('; ')}`);
+    }
+    if (!chosen) {
+      if (slot.required) fail(`No query for the "${slot.slot}" search returned enough real products with photos. Try other queries in SEARCHES.`);
+      console.log(`  the "${slot.slot}" search is left out: none of its queries returned enough real products`);
+      continue;
+    }
+    const hosts = new Set(chosen.found.map((f) => hostOf(f.href)));
+    console.log(`  "${chosen.query}": ${chosen.found.length} real products from ${hosts.size} retailer(s); every photo loaded`);
+    searches.push({
+      slot: slot.slot,
+      query: chosen.query,
+      interpret: chosen.interpret,
+      search: chosen.search,
+      shown: chosen.found.map(({ name, retailer, href, src, width, height }) => ({ name: name.trim(), retailer, href, photo: src, width, height }))
+    });
+  }
+  return { searchedAt: new Date().toISOString(), productSource: process.env.PRODUCT_SOURCE, searches };
+}
 
-  const products = (search.response && search.response.products) || [];
-  const record = {
-    query: QUERY,
-    searchedAt: new Date().toISOString(),
-    productSource: process.env.PRODUCT_SOURCE,
-    interpreter: api.exchanges.interpret ? { status: api.exchanges.interpret.status, ms: api.exchanges.interpret.ms } : null,
-    interpret: api.exchanges.interpret || null,
-    search,
-    shown: found.map(({ name, retailer, href, src, width, height }) => ({ name: name.trim(), retailer, href, photo: src, width, height }))
-  };
-  console.log(`  ${products.length} real products from ${new Set(found.map((f) => f.retailer)).size} retailer(s); every photo loaded`);
-  return record;
+/* a search saved before there were several: one search, the first slot */
+function asSearches(saved) {
+  if (saved.searches) return saved;
+  return { searchedAt: saved.searchedAt, productSource: saved.productSource,
+    searches: [{ slot: 'everyday', query: saved.query || QUERY, interpret: saved.interpret, search: saved.search, shown: saved.shown }] };
 }
 
 /* ---------------------------------------------------------
@@ -599,7 +676,7 @@ async function record(chromium, shot, rawDir, stillsDir) {
      this browser's own cache — as they would be for anybody who had the
      page open a moment — so the grid appears with its photos rather than
      with a row of empty frames filling in. */
-  const photos = api.saved.shown.map((s) => s.photo).filter(Boolean);
+  const photos = api.saved.searches.flatMap((x) => x.shown.map((s) => s.photo)).filter(Boolean);
   const warm = await context.newPage();
   await warm.goto(`${ORIGIN}/index.html`, { waitUntil: 'load' });
   await warm.evaluate((urls) => Promise.all(urls.map((u) => new Promise((r) => {
@@ -631,6 +708,14 @@ async function record(chromium, shot, rawDir, stillsDir) {
     cues.push({ text, start, end: start + (line ? line.duration + 0.35 : 2.5) });
     await page.evaluate((t) => window.demo.say(t), text);
     return line ? line.duration * 1000 : 2500;
+  };
+  /* a line said on a retailer's own page: placed against that tab in the
+     finished video, its words in that page's strip */
+  const speakOn = async (tab, key, visitIndex) => {
+    const line = NARRATION_LINES[key];
+    voice.push({ key, visit: visitIndex, offset: 0.15 });
+    cues.push({ text: line.text, visit: visitIndex, offset: 0.15, length: line.duration + 0.3 });
+    await tab.evaluate((t) => window.demo && window.demo.say(t), line.text).catch(() => {});
   };
   const caption = async (text, ms) => {
     cues.push({ text, start: now(), end: now() + ms / 1000 });
@@ -714,13 +799,13 @@ async function record(chromium, shot, rawDir, stillsDir) {
   /* Typing with a person's rhythm: no two keys the same distance apart,
      a beat at each space, a longer one now and then between words, and
      the shift for "$" taking its moment. */
-  async function typeLikeAPerson(text) {
+  async function typeLikeAPerson(text, pace = 96) {
     const words = text.split(' ');
     for (let w = 0; w < words.length; w += 1) {
       /* each gap is measured from the last key, so the time the
          browser takes to take a key is part of the gap, not added to it */
       for (const ch of words[w]) {
-        let gap = rand.around(96, 30);
+        let gap = rand.around(pace, pace * 0.3);
         if (ch === '$') gap += rand.between(90, 160);
         const pressed = Date.now();
         await page.keyboard.type(ch);
@@ -729,7 +814,7 @@ async function record(chromium, shot, rawDir, stillsDir) {
       if (w < words.length - 1) {
         const pressed = Date.now();
         await page.keyboard.type(' ');
-        await wait(rand.around(140, 38) + (rand.next() < 0.18 ? rand.between(110, 240) : 0) - (Date.now() - pressed));
+        await wait(rand.around(pace * 1.45, 38) + (rand.next() < 0.18 ? rand.between(110, 240) : 0) - (Date.now() - pressed));
       }
     }
   }
@@ -745,8 +830,21 @@ async function record(chromium, shot, rawDir, stillsDir) {
     if (!shot.touch) {
       await cdp.send('Input.synthesizeScrollGesture', {
         x: Math.round(p.x), y: Math.round(p.y), yDistance: -Math.round(pixels),
-        speed: 900, gestureSourceType: 'mouse', preventFling: true
+        speed: Math.abs(pixels) > 500 ? 1500 : 900, gestureSourceType: 'mouse', preventFling: true
       });
+      return;
+    }
+    /* a thumb covers about half the screen per swipe: longer scrolls are
+       several swipes, the way a phone is actually scrolled */
+    const most = viewH * 0.5;
+    if (Math.abs(pixels) > most) {
+      let left = pixels;
+      while (Math.abs(left) > 4) {
+        const step = Math.sign(left) * Math.min(Math.abs(left), most * rand.between(0.85, 1));
+        await scrollBy(step);
+        left -= step;
+        await wait(rand.between(80, 160));
+      }
       return;
     }
     const steps = 22;
@@ -772,28 +870,28 @@ async function record(chromium, shot, rawDir, stillsDir) {
 
   const cardSel = (i) => `#results .grid .item-card:nth-child(${i + 1})`;
 
-  /* Up to three products to open, from three different shops where the
-     results have them: the first from the first row, the second from
-     further down when there is a further down (so the slight scroll has
-     a reason), the third from what is left. Never more than the real
-     results hold. */
-  async function pickProducts() {
+  /* Which products to open: from shops not opened yet in this video
+     where the results allow, the first from the first row and any second
+     from further down. Never more than the real results hold. */
+  async function pickProducts(count, openedHosts) {
     const cards = await page.evaluate(() => [...document.querySelectorAll('#results .grid .item-card')].map((c, i) => {
       const r = c.getBoundingClientRect();
       return { i, href: c.getAttribute('href') || '', top: Math.round(r.top) };
     }));
     const rowTop = cards.length ? cards[0].top : 0;
     const linked = cards.filter((c) => /^https?:\/\//.test(c.href)).map((c) => ({ ...c, host: hostOf(c.href), row: c.top > rowTop + 20 ? 1 : 0 }));
+    const used = new Set(openedHosts);
     const picks = [];
-    const used = new Set();
+    const fresh = (c) => !used.has(c.host) && !picks.includes(c);
     const take = (c) => { if (c && !picks.includes(c)) { picks.push(c); used.add(c.host); } };
-    const fresh = (c) => !used.has(c.host);
-    take(linked.find((c) => c.row === 0));
-    take(linked.find((c) => c.row === 1 && fresh(c)) || linked.find((c) => fresh(c) && !picks.includes(c)));
-    take(linked.find((c) => fresh(c) && !picks.includes(c)));
-    /* fewer shops than three: different products, never the same one */
-    for (const c of linked) { if (picks.length >= 3) break; take(c); }
-    return picks.slice(0, 3);
+    while (picks.length < count) {
+      const row = picks.length === 0 ? 0 : 1;
+      const next = linked.find((c) => c.row === row && fresh(c)) || linked.find(fresh)
+        || linked.find((c) => !picks.includes(c));
+      if (!next) break;
+      take(next);
+    }
+    return picks;
   }
 
   /* a card is scrolled to only if it is not already wholly in view */
@@ -812,187 +910,250 @@ async function record(chromium, shot, rawDir, stillsDir) {
     return true;
   }
 
-  /* --- 1. The homepage ----------------------------------------------- */
+  /* --- the homepage --------------------------------------------------- */
 
   if (!shot.touch) await page.mouse.move(at.x, at.y);
   await wait(450);
   marks.start = now();
-  await wait(rand.between(800, 1000));
+  await wait(rand.between(600, 800));
 
-  /* --- 2. Into the box, and the request ------------------------------- */
-
-  const field = await box('#ask');
-  const fieldSpot = { x: field.x + Math.min(160, field.width * 0.3) + rand.between(-20, 20), y: field.y + field.height / 2 };
-  if (shot.touch) {
-    await wait(rand.between(200, 400));
-    await tap(fieldSpot);
-  } else {
-    await moveTo(fieldSpot);
-    await wait(rand.between(120, 220));
-    await click();
-  }
-  await page.focus('#ask');
-  await wait(rand.between(350, 520));
-  const looking = await speak('looking');
-  const typedFrom = Date.now();
-  marks.typing = now();
-  await typeLikeAPerson(QUERY);
-  marks.typed = now();
-  await still('typed');
-  /* let the line finish before the hand moves on */
-  await wait(Math.max(rand.between(450, 700), looking - (Date.now() - typedFrom) + 250));
-  await hush();
-
-  /* --- 3. Search ------------------------------------------------------ */
-
-  const go = await box('#ask-form button[type=submit]');
-  const goSpot = spotIn(go);
-  if (shot.touch) {
-    await wait(rand.between(250, 400));
-    await tap(goSpot);
-  } else {
-    await moveTo(goSpot);
-    await wait(rand.between(140, 260));
-    await click();
-  }
-  marks.searched = now();
-
-  /* --- 4. The results ------------------------------------------------- */
-
-  await page.waitForSelector('#results .grid .item-card', { timeout: 20000 });
-  /* the page scrolls itself to the results; let that land */
-  await wait(350);
-  const shown = await checkResults(page);
-  const problems = verdict(shown);
-  if (problems.length) fail(`On camera, the results were not all real and loaded:\n  - ${problems.join('\n  - ')}`);
-  marks.results = now();
-
-  /* "from different retailers" is only said when the links really do
-     go to more than one shop */
-  const hosts = new Set(shown.map((s) => hostOf(s.href)).filter(Boolean));
-  const options = await speak(hosts.size > 1 ? 'options' : 'options-one');
-  const optionsFrom = Date.now();
-  await still('results');
-
-  /* a look along the first row: the pointer drifts slowly over it and
-     settles, the way an eye leads a hand */
-  const picks = await pickProducts();
-  if (!picks.length) fail('No product on screen could be opened.');
-  if (!shot.touch) {
-    const first = await box(`${cardSel(picks[0].i)} .item-media`);
-    await moveTo({ x: first.x + first.width * rand.between(0.7, 1.1), y: first.y + first.height * rand.between(0.55, 0.75) },
-      rand.between(1100, 1400));
-  }
-  await wait(Math.max(250, options - (Date.now() - optionsFrom) + rand.between(100, 200)));
-  await hush();
-
-  /* --- 5. Comparing: three products, three shops -------------------- */
-
+  /* DEMO_DEBUG=1 prints when each step happened, to find slack */
+  const beat = (label) => { if (process.env.DEMO_DEBUG) (marks.beats = marks.beats || []).push(`${now().toFixed(1)} ${label}`); };
   const visits = [];
-  for (let k = 0; k < picks.length; k += 1) {
-    const pick = picks[k];
-    const sel = cardSel(pick.i);
+  const openedHosts = [];
+  let retailerSaid = false;
+  marks.results = [];
 
-    /* a slight scroll before the second choice, as a shopper would to
-       see what else there is, and whatever scroll the card itself needs */
-    const scrolled = await bringIntoView(sel);
-    if (k === 1 && !scrolled) {
-      await scrollBy(viewH * rand.between(0.18, 0.26));
-      await wait(rand.between(300, 500));
-      await bringIntoView(sel);
-    }
+  for (let n = 0; n < api.saved.searches.length; n += 1) {
+    const saved = api.saved.searches[n];
+    const spec = slotOf(saved.slot);
+    let pending = 0;          /* a line still being said, in ms from pendingFrom */
+    let pendingFrom = Date.now();
+    const saying = async (key) => { pending = await speak(key); pendingFrom = Date.now(); };
+    const finishLine = async (extra = 150) => {
+      if (!pending) return;
+      await wait(pending - (Date.now() - pendingFrom) + extra);
+      await hush();
+      pending = 0;
+    };
 
-    /* the line about comparing is said on the way to the first one, and
-       finishes before anything is opened */
-    let line = 0;
-    const lineFrom = Date.now();
-    if (k === 0) line = await speak('compare');
+    beat('box '+(n+1));
+    /* --- into the box ------------------------------------------------- */
 
-    const media = await box(`${sel} .item-media`);
-    const spot = spotIn(media, 0.5, 0.45);
-    if (!shot.touch) {
-      await moveTo(spot);
-      await wait(rand.between(300, 550));         /* looking at it */
+    if (n === 0) {
+      const field = await box('#ask');
+      const spot = { x: field.x + Math.min(160, field.width * 0.3) + rand.between(-20, 20), y: field.y + field.height / 2 };
+      if (shot.touch) {
+        await wait(rand.between(200, 400));
+        await tap(spot);
+      } else {
+        await moveTo(spot);
+        await wait(rand.between(120, 220));
+        await click();
+      }
+      await page.focus('#ask');
     } else {
-      await wait(rand.between(450, 700));
+      /* starting again: back up to the box, and its own × clears it —
+         the page hides the old results and puts the cursor in the box */
+      if (spec.before) await saying(spec.before);
+      const form = await page.evaluate(() => {
+        const f = document.getElementById('ask-form').getBoundingClientRect();
+        const header = document.querySelector('.site-header');
+        return { top: f.top, head: header ? header.getBoundingClientRect().height : 0 };
+      });
+      const up = form.top - (form.head + rand.between(60, 110));
+      if (up < -6) {
+        await scrollBy(up);
+        await wait(rand.between(150, 280));
+      }
+      const clear = spotIn(await box('#reset-form'));
+      if (shot.touch) await tap(clear);
+      else {
+        await moveTo(clear);
+        await wait(rand.between(120, 220));
+        await click();
+      }
+      await wait(rand.between(250, 400));
+      await page.focus('#ask');
     }
-    if (line) {
-      await wait(line - (Date.now() - lineFrom) + 150);
-      await hush();
-    }
-    await still(`product-${k + 1}`);
+    await wait(rand.between(150, 280));
 
-    /* the card on screen is the product the search returned: same link,
-       same name — so what is opened is what was shown */
-    const card = await page.evaluate((s2) => {
-      const el = document.querySelector(s2);
-      return el && { href: el.getAttribute('href') || '', name: (el.querySelector('.item-name') || {}).textContent || '' };
-    }, sel);
-    const listed = (api.saved.search.response.products || []).find((p2) => p2.productUrl === card.href);
-    if (!card || !/^https?:\/\//.test(card.href) || !listed) {
-      fail(`Card ${pick.i + 1} links to ${card && card.href} — not one of the products the search returned.`);
+    beat('typing '+(n+1));
+    /* --- the request --------------------------------------------------- */
+
+    if (spec.typing) {
+      await finishLine(0);
+      await saying(spec.typing);
+    }
+    const typedFrom = Date.now();
+    /* a little quicker the second and third time: the box is familiar */
+    await typeLikeAPerson(saved.query, n === 0 ? 92 : 84);
+    await still(`typed-${n + 1}`);
+    /* a short pause after typing, longer only if a line is still going */
+    const left = pending ? pending - (Date.now() - pendingFrom) : 0;
+    await wait(Math.max(rand.between(350, 550), left + 200 - 300));
+    void typedFrom;
+
+    beat('search '+(n+1));
+    /* --- search -------------------------------------------------------- */
+
+    const go = spotIn(await box('#ask-form button[type=submit]'));
+    if (shot.touch) {
+      await wait(rand.between(150, 300));
+      await tap(go);
+    } else {
+      await moveTo(go);
+      await wait(rand.between(120, 220));
+      await click();
+    }
+    await finishLine(0);
+
+    beat('waiting '+(n+1));
+    /* --- the results --------------------------------------------------- */
+
+    await page.waitForSelector('#results .grid .item-card', { timeout: 20000 });
+    /* the page scrolls itself to the results; let that land */
+    await wait(400);
+    const shown = await checkResults(page);
+    const problems = verdict(shown);
+    if (problems.length) fail(`On camera, the results for "${saved.query}" were not all real and loaded:\n  - ${problems.join('\n  - ')}`);
+    marks.results.push(now());
+    beat(`results ${n + 1}`);
+    await still(`results-${n + 1}`);
+
+    if (spec.results) await saying(spec.results);
+    const picks = spec.open ? await pickProducts(spec.open, openedHosts) : [];
+
+    if (picks.length) {
+      /* a look along the first row: the pointer drifts slowly over it,
+         to where the first choice is */
+      if (!shot.touch) {
+        const first = await box(`${cardSel(picks[0].i)} .item-media`);
+        await moveTo({ x: first.x + first.width * rand.between(0.7, 1.15), y: first.y + first.height * rand.between(0.55, 0.75) },
+          rand.between(1000, 1300));
+      }
+      await finishLine(rand.between(100, 200));
+    } else if (!spec.results) {
+      /* the last search: a look at one of the results, and that is all */
+      if (!shot.touch) {
+        const a = await box(`${cardSel(1)} .item-media`);
+        await moveTo(spotIn(a, 0.5, 0.5), rand.between(800, 1000));
+      } else {
+        await scrollBy(viewH * rand.between(0.14, 0.2));
+      }
+      await finishLine(100);
+      await wait(rand.between(500, 700));
+    } else {
+      /* nothing to open this time: a look at what came back while the
+         line is said — over one product, a slight scroll, over another */
+      if (!shot.touch) {
+        const a = await box(`${cardSel(1)} .item-media`);
+        await moveTo(spotIn(a, 0.5, 0.5), rand.between(800, 1000));
+        await wait(rand.between(250, 400));
+      } else {
+        await wait(rand.between(500, 700));
+      }
+      await scrollBy(viewH * rand.between(0.16, 0.24));
+      await wait(rand.between(200, 350));
+      if (!shot.touch) {
+        const count = await page.evaluate(() => document.querySelectorAll('#results .grid .item-card').length);
+        const other = await box(`${cardSel(Math.min(count - 1, 2))} .item-media`);
+        await moveTo(spotIn(other, 0.5, 0.5));
+      }
+      await finishLine(150);
+      await wait(rand.between(150, 300));
     }
 
-    const visit = await visitRetailer({
-      context, page, href: card.href,
-      holdMs: rand.between(2000, 2200),
-      click: () => (shot.touch ? tap(spot) : click()),
-      onLoaded: async (tab) => {
-        await tab.evaluate((label) => window.demo && window.demo.say(label), displayUrl(tab.url())).catch(() => {});
-        if (stillsDir) await tab.screenshot({ path: path.join(stillsDir, `${shot.name}-retailer-${k + 1}.png`) }).catch(() => {});
-      },
-      log: (m) => console.log(`  ${shot.kind}:${m}`)
-    });
-    const at = (ms) => (ms == null ? null : (ms - pageBorn) / 1000);
-    visits.push({
-      product: card.name.trim(), href: card.href, host: visit.host, kind: visit.kind, url: visit.url,
-      click: at(visit.clickedAt), opened: at(visit.openedAt), pageAt: at(visit.pageAt),
-      dom: at(visit.domAt), closed: at(visit.closedAt), video: visit.video
-    });
-    if (visit.kind === 'loaded' && visit.url && hostOf(visit.url) !== visit.host) {
-      console.log(`  ${shot.kind}: ${visit.host} redirected to ${hostOf(visit.url)}`);
-    }
+    /* --- products, at their retailers --------------------------------- */
 
-    /* a tab that opened but is not shown is still said: the address it
-       was opening, on Fynd, in the strip */
-    if (visit.kind === 'slow' || visit.kind === 'blocked') {
-      await caption(`Opened ${visit.host} in a new tab`, 1250);
-      await wait(1250);
-      await hush();
+    for (let k = 0; k < picks.length; k += 1) {
+      const pick = picks[k];
+      const sel = cardSel(pick.i);
+      if (spec.browse && k === 0) await saying(spec.browse);
+      else if (n > 0 && k === 0) {
+        /* a slight scroll, to see what else came back */
+        await scrollBy(viewH * rand.between(0.15, 0.22));
+        await wait(rand.between(250, 400));
+      }
+      await bringIntoView(sel);
+
+      const media = await box(`${sel} .item-media`);
+      const spot = spotIn(media, 0.5, 0.45);
+      if (!shot.touch) {
+        await moveTo(spot);
+        await wait(rand.between(300, 550));       /* looking at it */
+      } else {
+        await wait(rand.between(450, 700));
+      }
+      await finishLine(100);
+      await still(`product-${visits.length + 1}`);
+
+      /* the card on screen is a product the search returned: same link —
+         so what is opened is what was shown */
+      const card = await page.evaluate((s2) => {
+        const el = document.querySelector(s2);
+        return el && { href: el.getAttribute('href') || '', name: (el.querySelector('.item-name') || {}).textContent || '' };
+      }, sel);
+      const listed = ((saved.search.response || {}).products || []).find((p2) => p2.productUrl === card.href);
+      if (!card || !/^https?:\/\//.test(card.href) || !listed) {
+        fail(`Card ${pick.i + 1} links to ${card && card.href} — not one of the products "${saved.query}" returned.`);
+      }
+
+      beat(`click ${visits.length + 1}`);
+      const index = visits.length;
+      const narrate = !retailerSaid;
+      const visit = await visitRetailer({
+        context, page, href: card.href,
+        /* long enough for the line, when this is the page it is said on */
+        holdMs: narrate ? Math.max(2200, NARRATION_LINES.retailer.duration * 1000 + 450) : rand.between(2000, 2200),
+        click: () => (shot.touch ? tap(spot) : click()),
+        onLoaded: async (tab) => {
+          if (narrate) {
+            retailerSaid = true;
+            await speakOn(tab, 'retailer', index);
+          } else {
+            await tab.evaluate((label) => window.demo && window.demo.say(label), displayUrl(tab.url())).catch(() => {});
+          }
+          if (stillsDir) await tab.screenshot({ path: path.join(stillsDir, `${shot.name}-retailer-${index + 1}.png`) }).catch(() => {});
+        },
+        log: (m) => console.log(`  ${shot.kind}:${m}`)
+      });
+      const t = (ms) => (ms == null ? null : (ms - pageBorn) / 1000);
+      visits.push({
+        search: saved.query, product: card.name.trim(), href: card.href, host: visit.host, kind: visit.kind, url: visit.url,
+        click: t(visit.clickedAt), opened: t(visit.openedAt), pageAt: t(visit.pageAt),
+        dom: t(visit.domAt), closed: t(visit.closedAt), video: visit.video
+      });
+      openedHosts.push(visit.host);
+      beat(`back ${visits.length} (${visit.kind})`);
+
+      /* a tab that opened but is not shown is still said: the address it
+         was opening, on Fynd, in the strip */
+      if (visit.kind === 'slow' || visit.kind === 'blocked') {
+        await caption(`Opened ${visit.host} in a new tab`, 1250);
+        await wait(1250);
+        await hush();
+      }
+      await wait(rand.between(250, 400));       /* back on Fynd, a beat */
     }
-    if (k < picks.length - 1) await wait(rand.between(200, 350));   /* back on Fynd, a beat */
   }
 
-  /* --- 6. Back on the results ----------------------------------------- */
+  /* --- the end: still on Fynd's results -------------------------------- */
 
-  /* up to where the results begin, the way a hand scrolls back */
-  const climb = await page.evaluate(() => {
-    const head = document.querySelector('#results .results-head');
-    const header = document.querySelector('.site-header');
-    const top = head.getBoundingClientRect().top - (header ? header.getBoundingClientRect().height : 0) - 16;
-    return Math.min(0, top);
-  });
-  /* the last line is said on the way back up, not after it */
-  const choose = await speak('choose');
-  const chooseFrom = Date.now();
-  if (climb < -40) await scrollBy(climb);
-  await wait(choose - (Date.now() - chooseFrom) + 200);
-  await hush();
-  await wait(200);
   await caption(CAPTION_END, 1500);
   await still('end');
   await wait(1500);
   await hush();
-  await wait(300);
+  await wait(200);
   marks.end = now();
 
   const mainVideo = stillsDir ? null : page.video();
   await context.close();
   await browser.close();
 
-  if (process.env.DEMO_DEBUG) console.log('  marks', JSON.stringify(Object.fromEntries(Object.entries(marks).map(([k2, t]) => [k2, Number(t.toFixed(2))]))));
+  if (process.env.DEMO_DEBUG) console.log(`  timeline: ${(marks.beats || []).join(' | ')}`);
   const summary = visits.map((v) => `${v.host} (${v.kind})`).join(', ');
-  console.log(`  ${shot.kind}: opened ${visits.length} product(s): ${summary}`);
+  console.log(`  ${shot.kind}: ${api.saved.searches.length} search(es), opened ${visits.length} product(s): ${summary}`);
   if (stillsDir) return { marks, visits };
   for (const v of visits) {
     v.file = v.kind === 'loaded' && v.video ? await v.video.path().catch(() => null) : null;
@@ -1030,7 +1191,7 @@ function checkVideo(file, width, height) {
   if (!video) problems.push('no video stream');
   else if (Number(video[1]) !== width || Number(video[2]) !== height) problems.push(`video is ${video[1]}x${video[2]}, not ${width}x${height}`);
   if (!audio) problems.push('no audio stream');
-  if (seconds < 15 || seconds > 45) problems.push(`runs ${seconds.toFixed(1)}s`);
+  if (seconds < 15 || seconds > 55) problems.push(`runs ${seconds.toFixed(1)}s`);
   if (problems.length) throw new Error(`${path.basename(file)} is not a valid demo video: ${problems.join('; ')}`);
 }
 
@@ -1062,7 +1223,7 @@ function planCut({ marks, visits, mainLen, popLen }) {
   const v = (t) => t * k;
   const pieces = [];
   let cursor = marks.start;
-  for (const vis of visits) {
+  visits.forEach((vis, index) => {
     if (vis.kind === 'loaded' && vis.file && vis.pageAt != null && vis.dom != null) {
       pieces.push({ src: 'main', wallFrom: cursor, wallTo: vis.click + 0.25 });
       const len = popLen(vis.file);
@@ -1070,22 +1231,26 @@ function planCut({ marks, visits, mainLen, popLen }) {
       const kp = wall > 0 ? len / wall : 1;
       const from = Math.max(0, vis.dom - vis.pageAt - 0.25) * kp;
       const to = Math.min(len, wall * kp);
-      if (to - from > 0.3) pieces.push({ src: vis.file, from, to, host: vis.host });
+      if (to - from > 0.3) pieces.push({ src: vis.file, from, to, rate: kp, host: vis.host, visit: index });
       cursor = vis.closed + 0.05;
     } else {
       pieces.push({ src: 'main', wallFrom: cursor, wallTo: vis.click + 0.35 });
       cursor = vis.closed;
     }
-  }
+  });
   pieces.push({ src: 'main', wallFrom: cursor, wallTo: marks.end });
 
+  /* Each piece is played back at the pace it really happened: a
+     recording that ran behind the clock (rate > 1) is brought back to
+     real time, so the pointer, the typing and the voice keep together. */
   const segments = [];
   let out = 0;
   for (const piece of pieces) {
-    const seg = piece.src === 'main' ? { ...piece, from: v(piece.wallFrom), to: v(piece.wallTo) } : { ...piece };
+    const seg = piece.src === 'main' ? { ...piece, from: v(piece.wallFrom), to: v(piece.wallTo), rate: k } : { ...piece };
     if (seg.to - seg.from <= 0.02) continue;
     seg.outStart = out;
-    out += seg.to - seg.from;
+    seg.outLength = (seg.to - seg.from) / seg.rate;
+    out += seg.outLength;
     segments.push(seg);
   }
   const total = out;
@@ -1093,11 +1258,17 @@ function planCut({ marks, visits, mainLen, popLen }) {
     for (const seg of segments) {
       if (seg.src !== 'main') continue;
       if (t < seg.wallFrom) return seg.outStart;          /* in a cut: where Fynd resumes */
-      if (t <= seg.wallTo) return seg.outStart + (v(t) - v(seg.wallFrom));
+      if (t <= seg.wallTo) return seg.outStart + (t - seg.wallFrom);
     }
     return total;
   };
-  return { segments, total, at };
+  /* where a moment on a retailer tab lands: offset seconds into the piece
+     that shows visit `index`, or null if that tab was not shown */
+  const onVisit = (index, offset) => {
+    const seg = segments.find((x) => x.visit === index);
+    return seg ? seg.outStart + Math.min(offset, seg.outLength) : null;
+  };
+  return { segments, total, at, onVisit };
 }
 
 function build(shot, take, outDir) {
@@ -1107,7 +1278,7 @@ function build(shot, take, outDir) {
 
   /* The recorder runs a little behind the wall clock, so the wall-clock
      marks are scaled to each video's own length before they cut it. */
-  const { segments, total, at } = planCut({
+  const { segments, total, at, onVisit } = planCut({
     marks: m, visits: take.visits, mainLen: lengthOf(take.main), popLen: lengthOf
   });
 
@@ -1119,14 +1290,18 @@ function build(shot, take, outDir) {
   };
   segments.forEach((seg) => { seg.input = inputFor(seg.src); });
   const inputs = files.flatMap((f) => ['-i', f]);
+  /* every line, placed: against Fynd's clock, or against the retailer tab
+     it was said on — a line whose tab was not shown is not placed at all */
+  const placeOf = (x) => (x.visit != null ? onVisit(x.visit, x.offset || 0) : at(x.start));
+  take.voice = take.voice.filter((line) => placeOf(line) != null);
   const voiceInputs = take.voice.map((line) => path.join(NARRATION, NARRATION_LINES[line.key].file));
   voiceInputs.forEach((f) => inputs.push('-i', f));
   const firstVoice = files.length;
 
-  const vf = segments.map((s, i) => `[${s.input}:v]trim=start=${s.from.toFixed(3)}:end=${s.to.toFixed(3)},setpts=PTS-STARTPTS,`
+  const vf = segments.map((s, i) => `[${s.input}:v]trim=start=${s.from.toFixed(3)}:end=${s.to.toFixed(3)},setpts=(PTS-STARTPTS)/${s.rate.toFixed(5)},`
     + `fps=30,scale=${W}:${H}:force_original_aspect_ratio=decrease,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2:white,setsar=1[s${i}]`).join(';');
   const concat = `${segments.map((_, i) => `[s${i}]`).join('')}concat=n=${segments.length}:v=1:a=0[v]`;
-  const af = take.voice.map((line, i) => `[${firstVoice + i}:a]adelay=${Math.round(at(line.start) * 1000)}:all=1[a${i}]`).join(';');
+  const af = take.voice.map((line, i) => `[${firstVoice + i}:a]adelay=${Math.round(placeOf(line) * 1000)}:all=1[a${i}]`).join(';');
   const mix = take.voice.length
     ? `;${af};${take.voice.map((_, i) => `[a${i}]`).join('')}amix=inputs=${take.voice.length}:normalize=0,apad,atrim=end=${total.toFixed(3)}[a]`
     : `;anullsrc=r=48000:cl=mono,atrim=end=${total.toFixed(3)}[a]`;
@@ -1146,10 +1321,15 @@ function build(shot, take, outDir) {
   run(['-i', master, '-c:v', 'libvpx-vp9', '-crf', String(shot.vp9), '-b:v', '0', '-row-mt', '1',
     '-deadline', 'good', '-cpu-used', '2', '-pix_fmt', 'yuv420p', '-c:a', 'libopus', '-b:a', '64k', '-ac', '1', webm]);
   /* the poster: the real results, a moment after they arrive */
-  run(['-ss', (at(m.results) + 1.2).toFixed(3), '-i', master, '-frames:v', '1', '-q:v', '3', poster]);
+  run(['-ss', (at([].concat(m.results)[0]) + 1.2).toFixed(3), '-i', master, '-frames:v', '1', '-q:v', '3', poster]);
   fs.unlinkSync(master);
 
-  writeTrack(path.join(outDir, `${shot.name}.vtt`), take.cues.map((c) => ({ ...c, start: at(c.start), end: Math.min(total, at(c.end)) })), total);
+  const cues = take.cues.map((c) => {
+    if (c.visit == null) return { ...c, start: at(c.start), end: Math.min(total, at(c.end)) };
+    const start = onVisit(c.visit, c.offset || 0);
+    return start == null ? null : { ...c, start, end: Math.min(total, start + c.length) };
+  }).filter(Boolean);
+  writeTrack(path.join(outDir, `${shot.name}.vtt`), cues, total);
   for (const f of [mp4, webm]) checkVideo(f, W, H);
   const size = (p) => `${(fs.statSync(p).size / 1024).toFixed(0)} KB`;
   console.log(`  ${shot.name}: ${total.toFixed(1)}s — mp4 ${size(mp4)}, webm ${size(webm)}, poster ${size(poster)}`);
@@ -1187,7 +1367,11 @@ function describeOnPage(saved) {
           <span class="status status--live">Real search</span>
           Recorded on Fynd on ${date}. Prices and availability may have changed since. Turn the sound on for the narration.
           <!-- /demo-note -->`;
-  const next = html.replace(/<!-- demo-note -->[\s\S]*?<!-- \/demo-note -->/, note);
+  const queries = saved.searches.map((x) => x.query.replace(/"/g, ''));
+  const said = queries.length > 1 ? `${queries.slice(0, -1).join(', ')} and then ${queries[queries.length - 1]}` : queries[0];
+  const label = `aria-label="Screen recording of Fynd: searches for ${said} are typed into the search box in plain words; real products come back for each, with their photos, prices and retailers, and some are opened at their retailers."`;
+  const next = html.replace(/<!-- demo-note -->[\s\S]*?<!-- \/demo-note -->/, note)
+    .replace(/aria-label="Screen recording of Fynd:[^"]*"/, label);
   if (next === html && !html.includes(note)) {
     console.log('  note: the demo-note markers were not found in index.html; update the note under the video by hand');
     return;
@@ -1209,6 +1393,9 @@ async function main() {
     .forEach((k) => { delete process.env[k]; });
 
   if (!NARRATION_LINES) fail('assets/demo/narration/manifest.json is missing. Run scripts/demo-narration.py.');
+  const needed = [...new Set(SEARCHES.flatMap((x) => [x.typing, x.before, x.results, x.browse]).filter(Boolean).concat('retailer'))];
+  const missingLines = needed.filter((k) => !NARRATION_LINES[k]);
+  if (missingLines.length) fail(`The narration has no ${missingLines.join(', ')} line. Run scripts/demo-narration.py.`);
   if (!STILLS) {
     try { execFileSync(FFMPEG, ['-hide_banner', '-version'], { stdio: 'ignore' }); } catch (err) { fail(`ffmpeg was not found at ${FFMPEG}. Install it, or set FFMPEG_PATH.`); }
     /* checked now, not after two recordings: the encode needs it */
@@ -1223,11 +1410,11 @@ async function main() {
     if (REPLAY) {
       const file = typeof REPLAY === 'string' ? path.resolve(REPLAY) : SEARCH_FILE;
       if (!fs.existsSync(file)) fail(`No saved search at ${path.relative(REPO, file)}. Run without --replay first.`);
-      api.saved = JSON.parse(fs.readFileSync(file, 'utf8'));
-      console.log(`Replaying the real search of ${api.saved.searchedAt} (${api.saved.shown.length} products)`);
+      api.saved = asSearches(JSON.parse(fs.readFileSync(file, 'utf8')));
+      console.log(`Replaying the real searches of ${api.saved.searchedAt}: ${api.saved.searches.map((x) => `"${x.query}" (${x.shown.length})`).join(', ')}`);
     } else {
-      console.log(`Searching for real${hadEnv ? ` with ${hadEnv}` : ''}: "${QUERY}"`);
-      api.saved = await realSearch(chromium);
+      console.log(`Searching for real${hadEnv ? ` with ${hadEnv}` : ''}…`);
+      api.saved = await realSearches(chromium);
     }
     api.mode = 'replay';
 
@@ -1254,10 +1441,15 @@ async function main() {
     /* what each recording opened, for the record */
     const report = {
       searchedAt: api.saved.searchedAt,
+      searches: api.saved.searches.map((x) => ({
+        query: x.query,
+        products: x.shown.length,
+        retailers: [...new Set(x.shown.map((p2) => hostOf(p2.href)).filter(Boolean))]
+      })),
       recordings: takes.map(([shot, take]) => ({
         file: `${shot.name}.mp4`,
         seconds: Number(lengths[shot.name].toFixed(1)),
-        opened: take.visits.map((vis) => ({ product: vis.product, retailer: vis.host, shown: vis.kind === 'loaded', outcome: vis.kind }))
+        opened: take.visits.map((vis) => ({ search: vis.search, product: vis.product, retailer: vis.host, shown: vis.kind === 'loaded', outcome: vis.kind }))
       }))
     };
     fs.writeFileSync(path.join(stage, 'demo-recording.json'), `${JSON.stringify(report, null, 2)}\n`);
@@ -1279,5 +1471,5 @@ async function main() {
    starting anything */
 if (require.main === module) main();
 
-module.exports = { ffprobeFor, durationCommand, planCut };
+module.exports = { ffprobeFor, durationCommand, planCut, SEARCHES };
 

@@ -18,7 +18,7 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 
-const { ffprobeFor, durationCommand, planCut } = require('./record-demo');
+const { ffprobeFor, durationCommand, planCut, SEARCHES } = require('./record-demo');
 
 let passed = 0;
 let failed = 0;
@@ -173,9 +173,55 @@ test('at(): narration before, between and after the tabs lands on Fynd', () => {
   assert.ok(Math.abs(plan.at(30) - plan.total) < 1e-6);
 });
 
-test('the recorder scales to a video that runs behind the clock', () => {
+test('a recording that ran behind the clock is played back in real time', () => {
+  /* 30s on the clock recorded as 33s of video: the finished piece is
+     29s long again (1s trimmed at the start), played at 1.1× */
   const plan = planCut({ marks, visits: [], mainLen: 33, popLen });
-  assert.ok(Math.abs(plan.total - 31.9) < 1e-6, `${plan.total}`);   /* (30 − 1) × 1.1 */
+  assert.ok(Math.abs(plan.total - 29) < 1e-6, `${plan.total}`);
+  assert.ok(Math.abs(plan.segments[0].rate - 1.1) < 1e-6);
+  assert.ok(Math.abs(plan.at(10) - 9) < 1e-6, 'moments land on the real clock');
+});
+
+test('a line said on a retailer tab lands inside that tab, or nowhere', () => {
+  const slow = { kind: 'slow', click: 15, pageAt: null, dom: null, closed: 20.4, file: null };
+  const plan = planCut({ marks, visits: [loaded(10, 'a'), slow], mainLen: 30, popLen });
+  const tab = plan.segments.find((x) => x.visit === 0);
+  assert.ok(Math.abs(plan.onVisit(0, 0.15) - (tab.outStart + 0.15)) < 1e-6);
+  assert.strictEqual(plan.onVisit(1, 0.15), null, 'a slow tab is not shown, so nothing is said on it');
+});
+
+console.log('\nthe narration');
+
+const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'assets', 'demo', 'narration', 'manifest.json'), 'utf8'));
+
+test('every line the searches use has been spoken, plus the retailer line', () => {
+  const used = new Set(SEARCHES.flatMap((x) => [x.typing, x.before, x.results, x.browse]).filter(Boolean).concat('retailer'));
+  for (const key of used) {
+    assert.ok(manifest.lines[key], `no "${key}" line`);
+    assert.ok(fs.existsSync(path.join(__dirname, '..', 'assets', 'demo', 'narration', manifest.lines[key].file)), `${key}: file missing`);
+  }
+});
+
+test('no line is read with recited pauses', () => {
+  for (const [key, line] of Object.entries(manifest.lines)) {
+    assert.ok(!/,/.test(line.text), `${key}: a comma inside the line makes the voice stop and restart`);
+    assert.ok(line.longestGap != null && line.longestGap <= 0.3, `${key}: ${line.longestGap}s gap inside the line`);
+  }
+});
+
+test('only the first search is named out loud; the others can change', () => {
+  const first = SEARCHES[0];
+  assert.strictEqual(first.queries.length, 1, 'the first query is said out loud, so it is fixed');
+  const looking = manifest.lines[first.typing].text.toLowerCase();
+  assert.ok(looking.includes('black oversized hoodie') && looking.includes('eighty dollars'), looking);
+  for (const slot of SEARCHES.slice(1)) {
+    for (const key of [slot.typing, slot.before, slot.results].filter(Boolean)) {
+      const said = manifest.lines[key].text.toLowerCase();
+      for (const q of slot.queries) {
+        assert.ok(!said.includes(q.toLowerCase().split(' ').slice(-2).join(' ')), `"${key}" names the query "${q}"`);
+      }
+    }
+  }
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

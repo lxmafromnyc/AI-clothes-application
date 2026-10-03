@@ -1,31 +1,55 @@
 {
   "voice": "Kokoro v1.0 af_heart",
-  "speed": 0.94,
+  "loudness": -20,
   "lines": {
     "looking": {
-      "text": "I’m looking for a black oversized hoodie, under eighty dollars.",
+      "text": "I’m looking for a black oversized hoodie under eighty dollars.",
       "file": "looking.wav",
-      "duration": 3.208
+      "duration": 3.057,
+      "speed": 1.0,
+      "longestGap": 0.1
     },
     "options": {
-      "text": "Fynd gives me several options, from different retailers.",
+      "text": "And Fynd gives me a few different options to compare.",
       "file": "options.wav",
-      "duration": 2.968
+      "duration": 2.841,
+      "speed": 1.02,
+      "longestGap": 0.2
     },
-    "options-one": {
-      "text": "Fynd gives me several options.",
-      "file": "options-one.wav",
-      "duration": 1.778
+    "browse": {
+      "text": "I can look through them and open whichever one I like.",
+      "file": "browse.wav",
+      "duration": 2.62,
+      "speed": 0.97,
+      "longestGap": 0.18
     },
-    "compare": {
-      "text": "I can compare them, and open the ones I like.",
-      "file": "compare.wav",
-      "duration": 2.394
+    "retailer": {
+      "text": "That takes me straight to the retailer.",
+      "file": "retailer.wav",
+      "duration": 1.733,
+      "speed": 1.0,
+      "longestGap": 0.04
     },
-    "choose": {
-      "text": "So I can search naturally, and choose where I want to buy.",
-      "file": "choose.wav",
-      "duration": 2.985
+    "different": {
+      "text": "Let me try something completely different.",
+      "file": "different.wav",
+      "duration": 2.015,
+      "speed": 1.03,
+      "longestGap": 0.1
+    },
+    "results": {
+      "text": "And now I get a whole different set of results.",
+      "file": "results.wav",
+      "duration": 2.445,
+      "speed": 0.99,
+      "longestGap": 0.16
+    },
+    "brand": {
+      "text": "I can search for a specific brand too.",
+      "file": "brand.wav",
+      "duration": 2.046,
+      "speed": 1.02,
+      "longestGap": 0.08
     }
   }
 }
