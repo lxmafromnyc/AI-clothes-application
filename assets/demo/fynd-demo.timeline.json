@@ -1,0 +1,73 @@
+{
+  "video": "fynd-demo",
+  "duration": 56.181,
+  "source": "Reconstructed for the recording of 3 October 2026: the lines from its captions (the narration was placed where each caption starts), the rest from the video's own scene changes, checked frame by frame. Recordings made by scripts/record-demo.js write this file themselves.",
+  "lines": [
+    {
+      "key": "looking",
+      "at": 2.184
+    },
+    {
+      "key": "found",
+      "at": 9.827
+    },
+    {
+      "key": "open",
+      "at": 13.065
+    },
+    {
+      "key": "different",
+      "at": 17.032
+    },
+    {
+      "key": "specific",
+      "at": 29.203
+    },
+    {
+      "key": "particular",
+      "at": 39.856
+    },
+    {
+      "key": "close",
+      "at": 51.681
+    }
+  ],
+  "searches": [
+    {
+      "typing": 1,
+      "searched": 7.53,
+      "results": 9.03,
+      "retailer": [
+        14.67,
+        16.9
+      ]
+    },
+    {
+      "typing": 17.03,
+      "searched": 22.33,
+      "results": 23.93,
+      "retailer": [
+        26.67,
+        29.07
+      ]
+    },
+    {
+      "typing": 29.2,
+      "searched": 33.63,
+      "results": 35.23,
+      "retailer": [
+        37.5,
+        39.7
+      ]
+    },
+    {
+      "typing": 39.86,
+      "searched": 44.77,
+      "results": 46.47,
+      "retailer": [
+        49.53,
+        51.67
+      ]
+    }
+  ]
+}

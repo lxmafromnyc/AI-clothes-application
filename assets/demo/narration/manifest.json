@@ -1,46 +1,78 @@
 {
   "voice": "Kokoro v1.0 af_heart",
-  "speed": 0.94,
   "lines": {
     "looking": {
       "text": "I’m looking for a black oversized hoodie, under eighty dollars.",
+      "spoken": "I’m looking for a black oversized hoodie, under eighty dollars.",
+      "pace": [
+        0.95
+      ],
       "file": "looking.wav",
-      "duration": 3.207
+      "duration": 3.194
     },
     "found": {
       "text": "Fynd finds matching products from different retailers.",
+      "spoken": "Find finds matching products from different retailers.",
+      "pace": [
+        0.99
+      ],
       "file": "found.wav",
-      "duration": 3.052
+      "duration": 3.048
     },
     "found-one": {
       "text": "Fynd finds matching products.",
+      "spoken": "Find finds matching products.",
+      "pace": [
+        0.97
+      ],
       "file": "found-one.wav",
-      "duration": 1.75
+      "duration": 1.736
     },
     "open": {
       "text": "And I can open the product directly at the retailer.",
+      "spoken": "And I can open the product directly at the retailer.",
+      "pace": [
+        0.97
+      ],
       "file": "open.wav",
-      "duration": 2.654
+      "duration": 2.598
     },
     "different": {
       "text": "Something completely different works the same way.",
+      "spoken": "Something completely different works the same way.",
+      "pace": [
+        0.95
+      ],
       "file": "different.wav",
-      "duration": 2.429
+      "duration": 2.419
     },
     "specific": {
       "text": "Even something specific that’s hard to find.",
+      "spoken": "Even something specific that’s hard to find.",
+      "pace": [
+        0.92
+      ],
       "file": "specific.wav",
-      "duration": 2.308
+      "duration": 2.312
     },
     "particular": {
       "text": "Or the exact style and color I have in mind.",
+      "spoken": "Or the exact style and color I have in mind.",
+      "pace": [
+        0.96
+      ],
       "file": "particular.wav",
-      "duration": 2.39
+      "duration": 2.373
     },
     "close": {
       "text": "No more searching store after store. Describe it, and Fynd finds it.",
+      "spoken": "No more searching store after store. Describe it, and Find finds it.",
+      "pace": [
+        1.0,
+        0.9
+      ],
       "file": "close.wav",
-      "duration": 3.991
+      "duration": 4.227
     }
   }
 }

@@ -125,6 +125,7 @@ assets/demo-video.js    lazy-loads the landing page demo, and decides autoplay
 assets/demo/            the demo recording: two shapes, two codecs, two posters
 scripts/record-demo.js  records the demo from four real searches, end to end
 scripts/demo-narration.py  speaks the demo's narration lines
+scripts/demo-audio.js   the demo's score and mix: composed to each video's timeline
 assets/interpret.js     sends the request to the endpoint; local fallback
 assets/app.js           rendering and page behaviour
 assets/styles.css       colour tokens, design tokens and all shared components
@@ -964,6 +965,7 @@ node scripts/test-catalog-images.js  # the catalogue image extractor's gates
 node scripts/test-catalog-prices.js  # the catalogue price extractor's gates
 node scripts/test-ui.js        # the interface, its palette and its contrast
 node scripts/record-demo.js    # re-records the landing page demo video
+node scripts/test-demo-audio.js     # the demo's sound: loudness, ducking, captions
 node scripts/test-e2e.js       # the whole sign-in flow, in a real browser
 ```
 
@@ -1668,7 +1670,8 @@ and retailer each recording opened, then the finished lengths.
 
 The words are spoken and shown in a thin strip along the bottom edge, so the
 video reads the same with the sound off, and the same lines are its captions
-track. No music, no overlays on the page, no drawn products.
+track. Under the narration, a quiet score written for the video (below); no
+overlays on the page, no drawn products.
 
 ### It is a real search
 
@@ -1782,9 +1785,17 @@ own when headless, which is the only reason one is drawn.
 ### The narration
 
 The lines in `assets/demo/narration/`, spoken by Kokoro v1.0 (voice
-`af_heart`), a neural text-to-speech model run offline through sherpa-onnx, then
-trimmed and brought to one loudness. They are committed, so recording needs no
-speech model. `scripts/demo-narration.py` makes them again if a line changes:
+`af_heart`), a neural text-to-speech model run offline through sherpa-onnx. Each
+line has its own pace, so seven lines never share one cadence, and a sentence is
+never cut in two (a synthetic voice drops its pitch at the end of anything it is
+given); the closing line is two sentences with a breath between them. "Fynd" is
+spoken as "Find" — the voice has no entry for the brand and would guess — while
+the captions keep "Fynd". Each line is finished the way a voice recorded close to
+a good microphone is: a high-pass, a little body, its slight glassiness eased, a
+de-esser, gentle 2:1 compression, every line set to -19 LUFS, and the few
+stressed vowels that stand far above the rest held by a look-ahead limiter.
+They are committed, so recording needs no speech model.
+`scripts/demo-narration.py` makes them again if a line changes:
 
 ```sh
 pip install sherpa-onnx soundfile numpy
@@ -1796,14 +1807,48 @@ KOKORO_DIR=/path/to/kokoro-multi-lang-v1_0 python3 scripts/demo-narration.py
 "From different retailers" is only said when the products on screen link to
 more than one shop; otherwise the shorter line is used.
 
+### The music and the mix
+
+`scripts/demo-audio.js` writes a score for each video from that video's own
+timeline — when each line is said, and when each search is typed, made,
+answered and opened at its retailer — rather than laying a loop under it. Soft
+pads in D, close warm voicings with ninths and elevenths, a felt-on-glass note
+now and then, and a little air; no drums, no lead melody, no build. It enters
+softly under the first line; gains a little texture while a search runs; lifts
+when results arrive (the chord opens, three quiet notes); rises by the smallest
+step at each retailer; and comes home to D under the last line, ending in
+silence so the looping player starts again from silence.
+
+The voice comes first. The music starts to fall just before each line, sits
+lower under it — its brighter layers lower still, and the whole bed eased around
+2.5 kHz, so the words have the range speech is understood in to themselves —
+and comes back over about a second after. The movement is drawn from where the
+lines are rather than by a compressor listening to them, so nothing pumps. The
+voice is set to -16 LUFS (ITU BS.1770, measured on the voice), the music about
+10 LU under it between lines, and a true-peak ceiling of -2 dBTP keeps the
+AAC (160 kb/s stereo) and Opus (128 kb/s stereo) encodes clear of clipping. The
+last line is laid in 0.4 s before the cut back to Fynd, so it can finish with
+music still under it. The captions are written from where each line is actually
+spoken.
+
+Every recording writes its timeline beside the video, so the sound can be made
+again without recording again — the video streams are copied, not re-encoded:
+
+```sh
+node scripts/demo-audio.js --remix                 # both videos
+node scripts/demo-audio.js --remix --stems=DIR     # and the voice and music stems, to listen to
+node scripts/test-demo-audio.js                    # the checks: loudness, ducking, captions
+```
+
 ### What it writes
 
 | File | | |
 | --- | --- | --- |
-| `fynd-demo.mp4` / `.webm` | 1280 × 800, with narration | wide screens |
-| `fynd-demo-mobile.mp4` / `.webm` | 800 × 1440 (400 × 720 at 2×), with narration | 1023px and under |
+| `fynd-demo.mp4` / `.webm` | 1280 × 800, with narration and score, stereo | wide screens |
+| `fynd-demo-mobile.mp4` / `.webm` | 800 × 1440 (400 × 720 at 2×), with narration and score, stereo | 1023px and under |
 | `fynd-demo{,-mobile}-poster.jpg` | | the real results, shown before playback |
-| `fynd-demo{,-mobile}.vtt` | | the narration as captions, timed to the video |
+| `fynd-demo{,-mobile}.vtt` | | the narration as captions, timed to where it is spoken |
+| `fynd-demo{,-mobile}.timeline.json` | | when each line is said and each search typed, made, answered and opened: what the score is written to |
 | `demo-search.json` | | the real searches both recordings were made from, with every attempt each took |
 | `demo-report.json` | | the recording report: attempts, retries, equivalents, products and retailers opened, lengths |
 | `narration/*.wav`, `narration/manifest.json` | | the spoken lines |

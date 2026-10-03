@@ -30,7 +30,8 @@ const {
   budgetOf, priceOf, mentionOf, cutMap, savedProblem, narrationNeeded,
   requestsFor, instability, howFound, recordingReport, RETRY_DELAYS_MS, loadEnv,
   handoffAllowed, visitRetailer, RETAILER_LOAD_MS, MAX_HANDOFFS,
-  LIMITS, withDeadline, probeRetailers, preflightRetailers, RETAILER_MS, RETAILER_SHOWN_MS
+  LIMITS, withDeadline, probeRetailers, preflightRetailers, RETAILER_MS, RETAILER_SHOWN_MS,
+  challengeIn, timelineOf
 } = require('./record-demo');
 const http = require('http');
 const store = require('../api/_store');
@@ -377,6 +378,55 @@ test('the report says plainly whether every click reached its retailer', () => {
   assert.strictEqual(recordingReport(saved, [[{ kind: 'desktop' }, { picks: [] }]], {}).everyHandoffShown, false);
 });
 
+section('\nchallenge pages are not retailer pages');
+
+/* what reached the phone recording of 3 October: Walmart's bot check,
+   under a plain title, with enough footer to not look blank */
+const WALMART = "Robot or human?\nActivate and hold the button to confirm that you're human. Thank You!\nPRESS & HOLD\nTerms of Use\nPrivacy Policy\nDo Not Sell My Personal Information\nRequest My Personal Information\n©2026 Walmart Stores, Inc.";
+
+test('the Walmart "Robot or human? / Press & Hold" page is a challenge, by its words alone', () => {
+  assert.ok(challengeIn('Walmart.com', WALMART));
+  assert.ok(challengeIn('Robot or human?', ''));
+});
+
+test('the usual challenges are caught by title or by words', () => {
+  for (const title of ['Just a moment...', 'Attention Required! | Cloudflare', 'Access Denied', 'Pardon Our Interruption', 'Request unsuccessful. Incapsula incident ID', 'Security Check', 'Human Verification']) {
+    assert.ok(challengeIn(title, ''), title);
+  }
+  for (const words of ['Please verify you are a human', 'Press and hold to confirm you are a human', 'We have detected unusual traffic from your network', 'Enable JavaScript and cookies to continue', 'Checking your browser before accessing']) {
+    assert.ok(challengeIn('Shop', words), words);
+  }
+});
+
+test('real product pages are not mistaken for challenges', () => {
+  const pages = [
+    ['Women Sleeveless Linen Look Midi Dress : Target', 'Women Sleeveless Linen Look Midi Dress\n$29.99\nColor: Sage\nSize\nAdd to cart\nShipping\nFree returns'],
+    ["Men's Ascender Softshell Jacket | Columbia Sportswear", "Men's Ascender Softshell Jacket\n$59.97\nWater resistant\nAdd to Bag\nReviews"],
+    ['Bape Split 1st Camo Shark Full Zip Hoodie Black', 'BAPE STORE\nShark Full Zip Hoodie\n$437\nSize\nAdd to cart\nHold on to your size']
+  ];
+  for (const [title, words] of pages) assert.strictEqual(challengeIn(title, words), '', title);
+});
+
+section('\nthe timeline the recorder leaves for the sound');
+
+test('lines, searches and retailer pieces are placed in finished-video time', () => {
+  const take = {
+    marks: { start: 1, typing0: 2, searched0: 8, results0: 9.5, typing1: 20, searched1: 25, results1: 26.5, end: 40 },
+    voice: [{ key: 'looking', start: 3 }, { key: 'close', start: 35 }]
+  };
+  const pieces = [
+    { src: 'main', start: 1, end: 15 }, { src: 'tab', search: 0, start: 0, end: 1.8 },
+    { src: 'main', start: 18, end: 30 }, { src: 'tab', search: 1, start: 0, end: 1.8 }, { src: 'main', start: 32, end: 40 }
+  ];
+  const at = (t) => t - 1;
+  const tl = timelineOf({ name: 'fynd-demo' }, take, 37.6, pieces, at);
+  assert.strictEqual(tl.video, 'fynd-demo');
+  assert.deepStrictEqual(tl.lines, [{ key: 'looking', at: 2 }, { key: 'close', at: 34 }]);
+  assert.strictEqual(tl.searches.length, 2);
+  assert.deepStrictEqual(tl.searches[0], { typing: 1, searched: 7, results: 8.5, retailer: [14, 15.8] });
+  assert.deepStrictEqual(tl.searches[1].retailer, [27.8, 29.6]);
+});
+
 section('\nno retailer can hang the recording');
 
 /* small limits, so a test of "never" takes a second, not a minute */
@@ -385,7 +435,8 @@ const never = () => new Promise(() => {});
 const fakeTab = (o = {}) => ({
   goto: o.goto || (async () => ({ status: () => 200 })),
   waitForLoadState: o.waitForLoadState || (async () => {}),
-  evaluate: o.evaluate || (async () => 1000),
+  /* the page's words when asked for them, its status otherwise */
+  evaluate: o.evaluate || (async (fn) => (String(fn).includes('innerText') ? { length: 1000, head: 'Ascender Softshell Jacket $59.97 Add to Bag' } : 200)),
   title: o.title || (async () => 'Ascender Softshell Jacket'),
   url: () => 'https://shop.example/p/1',
   close: o.close || (async () => {})
@@ -430,7 +481,7 @@ test('a page that arrives but can never be read fails, in bounded time', async (
 
 test('a page that stalls only after the hold still fails, in bounded time', async () => {
   let reads = 0;
-  const r = await within(quick.check + 500, () => visitRetailer(fakeTab({ evaluate: () => (++reads > 1 ? never() : Promise.resolve(1000)) }), 'https://shop.example/p/1', quick));
+  const r = await within(quick.check + 500, () => visitRetailer(fakeTab({ evaluate: () => (++reads > 1 ? never() : Promise.resolve({ length: 1000, head: 'Jacket' })) }), 'https://shop.example/p/1', quick));
   assert.strictEqual(r.ok, false);
 });
 
@@ -667,6 +718,8 @@ if (chromium) {
     '/denied': (res) => res.end('<title>Access Denied</title><p>You don\'t have permission.</p>'),
     '/blank': (res) => res.end('<title>Jacket</title><p></p>'),
     '/gone': (res) => { res.statusCode = 404; res.end(`<title>Not found</title><p>${words}</p>`); },
+    /* Walmart's bot check: a plain title, its words, and a footer */
+    '/walmart': (res) => res.end(`<title>Walmart.com</title><p>${WALMART.replace(/\n/g, '<br>')}</p><footer>${words}</footer>`),
     /* headers, a start, and then nothing, for ever */
     '/never': (res) => { res.write('<title>Jacket</title><p>'); },
     /* arrives, then its script holds the main thread so nothing can read it */
@@ -689,6 +742,7 @@ if (chromium) {
   test('a block page fails', async () => { assert.ok(/blocked/.test((await visit('/denied')).why)); });
   test('a blank page fails', async () => { assert.ok(/blank/.test((await visit('/blank')).why)); });
   test('an error page fails', async () => { assert.ok(/HTTP 404/.test((await visit('/gone')).why)); });
+  test('a bot check under a plain title fails, read by its words', async () => { assert.ok(/blocked/.test((await visit('/walmart')).why)); });
   test('a page that turns into a challenge while held fails', async () => { assert.ok(/once held/.test((await visit('/turns')).why)); });
   test('a phone preflight with a page that never finishes and one that locks up is bounded, and the good page passes', async () => {
     const base = `http://127.0.0.1:${server.address().port}`;
