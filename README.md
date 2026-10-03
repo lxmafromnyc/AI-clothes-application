@@ -1623,39 +1623,53 @@ There are two ways to make it:
 Both write the same files into `assets/demo/`, so the page plays whichever was
 made last.
 
-The landing page carries a short screen recording directly under the search
-(`#demo` in `index.html`): a person casually using Fynd for three completely
-different requests, with a relaxed narration. It is compact, narrower than the
-page, and steps aside as soon as a real search starts, because the results take
-its place.
+The landing page carries a screen recording directly under the search (`#demo` in
+`index.html`). It shows one idea: Fynd saves you from spending twenty minutes
+checking store after store for one specific piece of clothing. A person types
+what they want in plain words, compares real products from different stores,
+opens the ones they like at the store selling them, and changes the request
+without touching a filter. It steps aside as soon as a real search starts,
+because the results take its place.
 
 | | On screen | Narration / caption |
 | --- | --- | --- |
-| Search 1 | the homepage; the request is typed at a person's pace | "I'm looking for a black oversized hoodie under eighty dollars." |
-| | Search; the site's own "Searching…" state; real hoodies come back | "And Fynd gives me a few different options to compare." |
-| | the pointer goes through them to one | "I can look through them and open whichever one I like." |
-| | it opens in a new tab: the retailer's own page | "That takes me straight to the retailer." |
-| Search 2 | back on Fynd, up to the box, its × clears it; a different garment typed | "Let me try something completely different." |
-| | different real results; a look through them | "And now I get a whole different set of results." |
-| Search 3 | cleared again; a brand or designer request typed; its results | "I can search for a specific brand too." |
-| End | still on Fynd's results | Search naturally. |
+| Opening | the homepage, nothing typed yet | "Ever know exactly what you want, but not where to find it?" |
+| | the pointer goes to the box | "Instead of checking a bunch of stores, I can just describe it." |
+| Hoodie | `black oversized hoodie under $80` typed and searched | "I need a black oversized hoodie, but I don't want to spend more than $80." |
+| | real hoodies come back; a look along them, a moment on one | "And these are all coming from different stores." |
+| | product A opened: the retailer's own page in its new tab | "Then I can open the exact product at the store selling it." |
+| | back on Fynd; product B opened at another shop; back | |
+| Change one detail | `$80` changed to `$120` by hand and searched; different products come forward | "And I can change the details without rebuilding a bunch of filters." |
+| Dress | cleared; `cream linen midi dress for summer`; one opened at its retailer | "Or maybe I'm looking for something completely different." |
+| Designer | cleared; `vintage Prada bag under $500`; real Prada results; one opened | "I can even get more specific and search for a particular designer." |
+| One sentence | cleared; e.g. `oversized cream knit sweater for fall under $100`; one opened | "I don't need any filters for this. I can say the whole thing in one sentence." |
+| End | a closing card | Describe what you want. Fynd finds it. |
 
-The demo runs roughly 45–70 seconds: three real searches, each with its own
-typing, loading and results, and two or three retailer pages. The recorder
-refuses a video over 70 seconds (or under 15) and writes nothing, and warns about
-one under 45, which usually means a search or a retailer visit was left out. The
-limits are `DURATION` in `scripts/record-demo.js`.
+Five products are opened in all, at five different shops where the shops allow
+it. A calm instrumental bed plays underneath (`assets/demo/music/bed.opus`, made by
+`fynd-demo/scripts/music.py --bars=27`). It is ducked by about 6–8 dB whenever
+someone speaks and fades out with the closing card. The voice sits at −18 LUFS
+and the music alone at about −29. The recorder measures the finished mix and
+refuses it if the music comes within 8 LU of any line.
 
-The searches are set in `SEARCHES` in `scripts/record-demo.js`. The first is
-fixed — it is the one said out loud. The second and third are narrated without
-naming them, and each lists real queries to try in order (a linen midi dress for
-summer; a vintage Prada bag under $500, or another brand): the first one the
-product source answers with enough real products, every photo loading, is the one
-recorded. A query that comes back thin is skipped, never padded.
+**Length.** With every step, the film runs about 66–69 seconds in real time, a
+little over the 45–60 second target. `--no-refine` leaves out the `$80` → `$120`
+change and runs about 62 seconds. Nothing is sped up or cut from a real
+interaction to hit a number. A video over 70 seconds (or under 15) is refused and
+nothing is written; one outside 45–60 is kept, with a note. The limits are
+`DURATION` in `scripts/record-demo.js`.
+
+**The searches** are set in `scripts/demo-plan.js`, each with what its products
+must show: the garment in the name, the designer (Prada) in the brand or name, a
+price within the budget. The first query is fixed, because it is said out loud.
+The others are narrated without naming them, and each lists real queries to try
+in order. The first that the product source answers with enough products, all of
+which pass, is the one recorded. The `$120` change is used only if it really
+brings at least two new products into the first row; otherwise it is left out. A
+query that comes back thin is skipped, never padded.
 
 The words are spoken and shown in a thin strip along the bottom edge, so the
-video reads the same with the sound off, and the same lines are its captions
-track. No music, no overlays on the page, no drawn products.
+video reads the same with the sound off. The same lines are its captions track.
 
 ### It is a real search
 
@@ -1665,12 +1679,20 @@ your `.env` — the same code and the same product source the live site uses. Th
 products in the video are the real listings that search returns, with their real
 photographs, prices and retailer links.
 
-The script refuses to record anything less. Before a frame is recorded it
-checks, in the page itself, that at least four products came back, that every
-one is a real listing with a retailer link, and that every photograph actually
-loaded at product-photo size. A sample row, drawn placeholder artwork or a photo
-that fails to load stops the run, names the product, and writes nothing. The
-same check runs again on camera.
+The script refuses to record anything less. Before a frame is recorded, it checks
+every product that can come into view (the first twelve of each search):
+
+- it is one of the products the search returned, linking to an https product page;
+- it is what the search asked for (garment, designer, budget);
+- its photograph is a real photograph, downloaded from the very address the card
+  shows and put through `fynd-demo/scripts/photos.mjs`: a raster photo at least
+  320px wide with real detail, never drawn artwork, a placeholder or a thumbnail.
+
+A query whose products do not all pass is not used, and a saved search is checked
+again on every `--replay`. On camera, the page's own check runs again: a sample
+row, drawn artwork or a photo that fails to load stops the run. The page also notes
+every card that comes into view, and the video is refused if any of them was not
+one of the checked products.
 
 The search is made once, off camera, and saved to `assets/demo/demo-search.json`.
 Both recordings — desktop and the phone layout — are made from that one saved
@@ -1680,9 +1702,11 @@ held to at most about 1.6 seconds. The recording keeps its metering in memory (K
 settings are dropped from the process), so it never touches production state.
 
 Each product is opened through its real link (`scripts/demo-retailer-visit.js`),
-and only a retailer page that really loads counts. The first search shows two
-retailers, the second one more; a search that cannot get its share passes it on
-to the next. The video needs at least two, or nothing is written.
+and only a retailer page that really loads, on the product's own shop, counts. A
+redirect to another site is skipped as `moved`. The hoodie search shows two
+retailers; the dress, designer and sentence searches one each. A search that
+cannot get its share passes it on to the next. The video needs at least four, or
+nothing is written. Only products checked before recording are ever clicked.
 
 Retailers are asked off camera first: right after each real search, its products'
 links are opened in a background browser, in grid order, one per shop, until four
@@ -1733,6 +1757,7 @@ captions — and commit `assets/demo/` and `index.html`.
 node scripts/record-demo.js --replay        # re-record from the saved search
 node scripts/record-demo.js --only=mobile   # one shape (or --only=desktop)
 node scripts/record-demo.js --stills        # a PNG at every beat, no video
+node scripts/record-demo.js --no-refine     # without the "$80" → "$120" change (about 62s)
 ```
 
 It needs ffmpeg with libx264, libvpx-vp9, AAC and Opus, and the ffprobe that
@@ -1762,7 +1787,7 @@ own when headless, which is the only reason one is drawn.
 
 ### The narration
 
-Seven short lines in `assets/demo/narration/`, spoken by Kokoro v1.0 (voice
+Nine short lines in `assets/demo/narration/`, spoken by Kokoro v1.0 (voice
 `af_heart`), a neural text-to-speech model run offline through sherpa-onnx. They
 are written the way a person says what they are doing to someone sitting next to
 them, and generated so they do not sound recited:
@@ -1771,8 +1796,11 @@ them, and generated so they do not sound recited:
   ("a black oversized hoodie… under eighty dollars"), which nobody does out loud;
 - each line at its own speed, all close to normal speech, so they do not share
   one even rhythm;
-- every clip is measured, and an internal gap over 0.3 seconds fails the run;
-- a little quiet (−20 LUFS): talking, not announcing.
+- every clip is measured, and an internal gap over 0.25 seconds fails the run;
+- every clip is brought to exactly −18 LUFS (a gentle limiter catches the odd
+  consonant peak), above the music bed;
+- with `WHISPER_DIR` set, every clip is transcribed back and must say what it
+  was asked to say.
 
 "Fynd" is spelled "Find" for the voice only (as written, the model swallows its
 last consonant); the captions keep the name. The clips are committed, so
@@ -1799,7 +1827,7 @@ pointer, the typing and the voice stay together.
 | `fynd-demo.mp4` / `.webm` | 1280 × 800, with narration | wide screens |
 | `fynd-demo-mobile.mp4` / `.webm` | 800 × 1440 (400 × 720 at 2×), with narration | 1023px and under |
 | `fynd-demo{,-mobile}-poster.jpg` | | the real results, shown before playback |
-| `fynd-demo{,-mobile}.vtt` | | the narration as captions, timed to the video |
+| `fynd-demo{,-mobile}.vtt` | | the narration as captions, timed to the video, and the closing line |
 | `demo-search.json` | | the real searches both recordings were made from |
 | `narration/*.wav`, `narration/manifest.json` | | the spoken lines |
 

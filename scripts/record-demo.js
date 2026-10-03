@@ -2,26 +2,48 @@
 /* =========================================================
    Fynd — records the landing page demo video
 
-   A screen recording of a person casually using Fynd, three times over,
-   each request completely different from the last (SEARCHES, below):
+   A screen recording of a person using Fynd to solve real shopping
+   problems — the time it saves over checking store after store, shown by
+   doing it (the searches: scripts/demo-plan.js):
 
-     the homepage; the pointer goes to the box and the first request is typed
-       "I'm looking for a black oversized hoodie under eighty dollars."
-     Search; the site's own searching state; real products come back
-       "And Fynd gives me a few different options to compare."
-       "I can look through them and open whichever one I like."
-     one is opened; the retailer's own page in its new tab
-       "That takes me straight to the retailer."
-     back on Fynd, up to the box, its × clears it
-       "Let me try something completely different."
-     a different garment typed; different real results; a look through them
-       "And now I get a whole different set of results."
-     cleared again, a brand typed, its results
-       "I can search for a specific brand too."
-     Search naturally.
+     the homepage, nothing typed yet
+       "Ever know exactly what you want, but not where to find it?"
+     the pointer goes to the box
+       "Instead of checking a bunch of stores, I can just describe it."
+     the first request is typed and searched
+       "I need a black oversized hoodie, but I don't want to spend more than $80."
+     real products come back; a look along them, a moment on one
+       "And these are all coming from different stores."
+     one is opened: the retailer's own page, in its own tab
+       "Then I can open the exact product at the store selling it."
+     back on Fynd; another product, another shop; back again
+     the request is changed by hand — "$80" becomes "$120" — and searched
+       "And I can change the details without rebuilding a bunch of filters."
+     different products come forward
+     cleared; a completely different garment
+       "Or maybe I'm looking for something completely different."
+     its results; one opened at its retailer; back
+     cleared; a designer
+       "I can even get more specific and search for a particular designer."
+     real Prada results; one opened at its retailer; back
+     cleared; one sentence with several details at once
+       "I don't need any filters for this. I can say the whole thing in one sentence."
+     its results; one opened at its retailer; back
+     a closing card: "Describe what you want. Fynd finds it."  Fynd
 
-   Each line starts when what it describes is on screen, and the line about
-   the retailer is said on the retailer's page itself.
+   Five products are opened at five different shops where the shops allow
+   it. A calm music bed plays underneath, ducked under the voice. Each
+   line starts when what it describes is on screen, and the retailer line
+   is said on the retailer's page itself.
+
+   Nothing reaches the camera unchecked. Before recording, every product
+   that can come into view is checked: it is what its search asked for
+   (the garment, the designer, the budget), it links to an https product
+   page, and its photo is a real photograph (fynd-demo/scripts/photos.mjs:
+   a raster photo of at least 320px with real detail — never drawn
+   artwork, a placeholder or a thumbnail). A query whose products do not
+   all pass is not used. While recording, the page notes every card that
+   comes into view, and the video is refused if any was not checked.
 
    A retailer that is slow, blocks robots, or opens no tab never stops the
    run or the next product: its tab is not shown, the strip says which
@@ -92,6 +114,8 @@ const path = require('path');
 const os = require('os');
 const { execFileSync } = require('child_process');
 const { visitRetailer, checkRetailer, chooseNext, hostOf } = require('./demo-retailer-visit');
+const PLAN = require('./demo-plan');
+const { satisfies, editFor, changedEnough } = PLAN;
 
 const REPO = path.join(__dirname, '..');
 const arg = (name) => {
@@ -100,6 +124,9 @@ const arg = (name) => {
   return hit.includes('=') ? hit.slice(hit.indexOf('=') + 1) : true;
 };
 
+/* --no-refine leaves out changing "$80" to "$120": six or seven seconds
+   shorter (about 62s instead of 66–69s), every other search the same */
+const SEARCHES = PLAN.SEARCHES.filter((x) => !(arg('no-refine') && x.mode === 'edit'));
 const OUT = path.resolve(arg('out') || path.join(REPO, 'assets', 'demo'));
 const NARRATION = path.join(REPO, 'assets', 'demo', 'narration');
 const SEARCH_FILE = path.join(OUT, 'demo-search.json');
@@ -109,34 +136,9 @@ const ONLY = arg('only');
 const PORT = Number(process.env.DEMO_PORT || 8917);
 const ORIGIN = `http://127.0.0.1:${PORT}`;
 
-/* The searches, in the order they are made — one ordinary piece, then
-   something completely different, then a brand. Each lists real queries
-   to try in order: the first the product source answers with enough real
-   products, every one with a photo that loads, is the one recorded. A
-   query that comes back thin is skipped, never padded.
-
-   Only the first query is said out loud, so it is fixed. The others are
-   narrated without naming them ("something completely different", "a
-   specific brand"), so any query here that fits its slot can stand in.
-
-     typing   the line said while it is typed
-     before   the line said while the last search is cleared away
-     results  the line said when its results arrive
-     browse   the line said while the pointer goes through them
-     open     how many retailer pages it should show; one it cannot get
-              (every shop blocked) is owed by the next search
-     required whether the recording stops if no query in the slot works */
-const SEARCHES = [
-  { slot: 'everyday', required: true, typing: 'looking', results: 'options', browse: 'browse', open: 2,
-    queries: ['black oversized hoodie under $80'] },
-  { slot: 'different', required: true, before: 'different', results: 'results', open: 1,
-    queries: ['cream linen midi dress for summer', 'white linen midi dress for summer',
-      'floral midi dress for a summer wedding', 'linen midi dress'] },
-  { slot: 'brand', required: false, typing: 'brand', open: 0,
-    queries: ['vintage Prada bag under $500', 'vintage Prada shoulder bag under $500', 'Gucci horsebit loafers',
-      'Ralph Lauren cable knit sweater', "Levi's 501 jeans under $100"] }
-];
-const QUERY = SEARCHES[0].queries[0];
+/* The searches, what each must show, and how a person moves from one to
+   the next: scripts/demo-plan.js. */
+const QUERY = SEARCHES[0].queries[0].text;
 const slotOf = (name) => SEARCHES.find((x) => x.slot === name) || SEARCHES[0];
 const SEED = 20261002;
 
@@ -144,24 +146,36 @@ const SEED = 20261002;
    "Searching…" state is allowed to run on camera: the real search can
    take several seconds, and a recording of a spinner is not the point */
 const MIN_PRODUCTS = 4;
-/* How long a finished video may run. Three real searches, each with its
-   own typing, loading and results, and two or three retailer pages, come
-   to roughly 45–70 seconds. Outside MIN–MAX the video is refused and
-   nothing is written; under TARGET_MIN it is kept, with a warning, since
-   a short one usually means a search or a retailer visit was left out. */
-const DURATION = { min: 15, targetMin: 45, max: 70 };
+/* How long a finished video may run. Four or five real searches, each
+   with its own typing, loading and results, and five to seven retailer
+   pages, come to roughly 45–60 seconds. Outside MIN–MAX the video is
+   refused and nothing is written; outside TARGET it is kept, with a
+   note: a short one usually means a search or a visit was left out. */
+const DURATION = { min: 15, targetMin: 45, targetMax: 60, max: 70 };
 /* retailer visits: at least this many must load, or nothing is written;
    and no search tries more products than this */
-const MIN_VISITS = 2;
+const MIN_VISITS = 4;
+/* how many of each search's first results are checked before anything
+   is recorded — every one that can come into view on camera. A search
+   is only used if all of them pass; afterwards, every card that really
+   was on camera is checked against this list. */
+const ON_CAMERA = 12;
 const MAX_ATTEMPTS = 6;
 /* off camera, per search: retailers checked until this many usable shops
    are known, trying at most CHECK_LIMIT products */
 const CHECK_WANT = 4;
 const CHECK_LIMIT = 10;
-const MAX_LOADING_MS = 1100;
-const MIN_LOADING_MS = 900;
+const MAX_LOADING_MS = 650;
+const MIN_LOADING_MS = 500;
 
-const CAPTION_END = 'Search naturally.';
+/* the closing card, after the last retailer and back on Fynd */
+const END_LINE = 'Describe what you want. Fynd finds it.';
+const END_SECONDS = 2.2;
+const END_FADE = 0.5;
+/* the music bed under the recording: made by fynd-demo/scripts/music.py
+   (--bars=27), a calm, warm 72-second bed at -29 LUFS; trimmed to the
+   film and faded out with the closing card */
+const MUSIC = path.join(REPO, 'assets', 'demo', 'music', 'bed.opus');
 
 /* the address a retailer tab is at, as a browser would show it: the shop
    and the start of the path, never the query string */
@@ -358,7 +372,7 @@ function replay(route, res, body) {
   if (!saved) { res.statusCode = 503; return res.end('{}'); }
   const delay = route === 'search'
     ? Math.min(MAX_LOADING_MS, Math.max(MIN_LOADING_MS, saved.ms))
-    : Math.min(500, Math.max(250, saved.ms));
+    : Math.min(260, Math.max(150, saved.ms));
   setTimeout(() => {
     res.statusCode = saved.status;
     res.setHeader('Content-Type', 'application/json');
@@ -515,6 +529,22 @@ function overlay(touch) {
       }, { passive: true });
     }
 
+    /* every result card that comes into view (a third of it or more),
+       by the product it links to: the recorder checks afterwards that each
+       one was a product checked before recording. Nothing on the page is
+       changed — the cards are only watched. */
+    const seen = new Set();
+    const watched = new WeakSet();
+    const io = new IntersectionObserver((entries) => {
+      for (const e of entries) if (e.isIntersecting && e.intersectionRatio >= 0.3) seen.add(e.target.getAttribute('href') || e.target.outerHTML.slice(0, 80));
+    }, { threshold: [0.3] });
+    const watch = () => document.querySelectorAll('#results .item-card').forEach((c) => {
+      if (!watched.has(c)) { watched.add(c); io.observe(c); }
+    });
+    new MutationObserver(watch).observe(document.body, { childList: true, subtree: true });
+    watch();
+    window.demoSeen = () => [...seen];
+
     window.demo = {
       say: (text) => { caption.textContent = text; caption.classList.add('on'); },
       hush: () => caption.classList.remove('on'),
@@ -632,30 +662,113 @@ async function realSearches(chromium) {
   for (const slot of SEARCHES) {
     let chosen = null;
     for (const query of slot.queries) {
-      const r = await searchOnce(chromium, query);
-      if (!r.problems.length) { chosen = r; break; }
-      console.log(`  "${query}": not used — ${r.problems.slice(0, 3).join('; ')}`);
+      const r = await searchOnce(chromium, query.text);
+      let entry = null;
+      if (!r.problems.length) {
+        entry = {
+          slot: slot.slot,
+          query: r.query,
+          interpret: r.interpret,
+          search: r.search,
+          shown: r.found.map(({ name, retailer, href, src, width, height }) => ({ name: name.trim(), retailer, href, photo: src, width, height }))
+        };
+        r.problems = await vouch(chromium, entry, searches);
+      }
+      if (!r.problems.length) { chosen = entry; break; }
+      console.log(`  "${query.text}": not used — ${r.problems.slice(0, 3).join('; ')}${r.problems.length > 3 ? ` (+${r.problems.length - 3} more)` : ''}`);
     }
     if (!chosen) {
-      if (slot.required) fail(`No query for the "${slot.slot}" search returned enough real products with photos. Try other queries in SEARCHES.`);
-      console.log(`  the "${slot.slot}" search is left out: none of its queries returned enough real products`);
+      if (slot.required) fail(`No query for the "${slot.slot}" search returned enough real products that all pass. Try other queries in scripts/demo-plan.js.`);
+      console.log(`  the "${slot.slot}" search is left out: none of its queries passed`);
       continue;
     }
-    const hosts = new Set(chosen.found.map((f) => hostOf(f.href)));
-    console.log(`  "${chosen.query}": ${chosen.found.length} real products from ${hosts.size} retailer(s); every photo loaded`);
-    const entry = {
-      slot: slot.slot,
-      query: chosen.query,
-      interpret: chosen.interpret,
-      search: chosen.search,
-      shown: chosen.found.map(({ name, retailer, href, src, width, height }) => ({ name: name.trim(), retailer, href, photo: src, width, height }))
-    };
-    /* every search is checked: a later one may have to make up visits an
-       earlier one could not get */
-    await checkRetailers(chromium, entry, knownBad);
-    searches.push(entry);
+    const hosts = new Set(chosen.shown.map((f) => hostOf(f.href)));
+    console.log(`  "${chosen.query}": ${chosen.shown.length} real products from ${hosts.size} retailer(s); the first ${chosen.verified.length} all checked`);
+    /* every search that opens products is checked: a later one may have
+       to make up visits an earlier one could not get */
+    if (slotOf(slot.slot).open) await checkRetailers(chromium, chosen, knownBad);
+    searches.push(chosen);
   }
   return { searchedAt: new Date().toISOString(), productSource: process.env.PRODUCT_SOURCE, searches };
+}
+
+/* The gate a saved search answers to: its slot's query of the same words. */
+function gateFor(entry) {
+  const slot = SEARCHES.find((x) => x.slot === entry.slot);
+  return slot && slot.queries.find((x) => sameQuery(x.text, entry.query));
+}
+
+/* Everything a recording needs to be true of the products that can come
+   into view, checked before anything is recorded — live, and again on
+   every replay, since a listing's photo can change after it was saved:
+
+     - each is what its search asked for (demo-plan.js satisfies: the
+       garment, the designer, the budget)
+     - each links to an https product page and is one the API returned
+     - each photo is a real photograph (fynd-demo/scripts/photos.mjs: a
+       raster photo, at least 320px wide, with real detail — not drawn
+       artwork, a placeholder or a thumbnail), downloaded from the very
+       address the card showed
+     - a changed request (mode 'edit') really brings different products
+
+   Returns the problems; none, and `entry.verified` lists the products
+   that may be on camera. */
+async function vouch(chromium, entry, before) {
+  const gate = gateFor(entry);
+  if (!gate) return [`"${entry.query}" is not one of the searches in scripts/demo-plan.js`];
+  const records = ((entry.search && entry.search.response) || {}).products || [];
+  const problems = [];
+  const browser = await chromium.launch({ executablePath: chromePath() });
+  const context = await browser.newContext();
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'fynd-demo-photo-'));
+  try {
+    for (const [i, card] of entry.shown.slice(0, ON_CAMERA).entries()) {
+      const who = `#${i + 1} "${card.name.slice(0, 60)}"`;
+      const rec = records.find((r) => r.productUrl === card.href);
+      if (!rec) { problems.push(`${who} is not one of the products the search returned`); continue; }
+      if (!secure(card.href)) problems.push(`${who} links to ${card.href}, not an https product page`);
+      const unmet = satisfies(rec, gate);
+      if (unmet) problems.push(`${who}: ${unmet}`);
+      const photo = await photoProblemAt(context, card.photo, path.join(scratch, String(i)));
+      if (photo) problems.push(`${who}: its photo ${photo}`);
+    }
+  } finally {
+    await browser.close();
+    fs.rmSync(scratch, { recursive: true, force: true });
+  }
+  const spec = slotOf(entry.slot);
+  if (spec.mode === 'edit') {
+    const prev = before[before.length - 1];
+    if (!prev) problems.push('there is no earlier request to change');
+    else {
+      const change = changedEnough(prev.shown.slice(0, 8).map((x) => x.href), entry.shown.map((x) => x.href));
+      if (!change.ok) problems.push(`changing "${prev.query}" to "${entry.query}" brought only ${change.fresh} new product(s) into view`);
+      entry.editedFrom = prev.query;
+    }
+  }
+  entry.verified = problems.length ? [] : entry.shown.slice(0, ON_CAMERA).map((x) => x.href);
+  return problems;
+}
+
+/* https only. DEMO_TEST_ORIGIN names the one plain-http origin the
+   recorder's own test serves its stand-in shop from; it is never set
+   for a real recording. */
+const secure = (u) => /^https:\/\//.test(String(u)) || Boolean(process.env.DEMO_TEST_ORIGIN && String(u).startsWith(process.env.DEMO_TEST_ORIGIN));
+
+/* the real-photo test, on the file the card's own address serves */
+let photosModule = null;
+async function photoProblemAt(context, url, base) {
+  if (!secure(url)) return `is not served over https (${url})`;
+  if (!photosModule) photosModule = await import(require('url').pathToFileURL(path.join(REPO, 'fynd-demo', 'scripts', 'photos.mjs')).href);
+  const res = await context.request.get(url, { timeout: 20000, headers: { Accept: 'image/avif,image/webp,image/png,image/jpeg,*/*' } })
+    .catch((err) => ({ ok: () => false, status: () => err.message.split('\n')[0] }));
+  if (!res.ok()) return `could not be downloaded (${res.status()})`;
+  const type = (res.headers()['content-type'] || '').split(';')[0].trim();
+  const ext = { 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp', 'image/avif': '.avif' }[type];
+  if (!ext) return `is not a photograph (${type || 'no type'})`;
+  const file = `${base}${ext}`;
+  fs.writeFileSync(file, await res.body());
+  return photosModule.photoProblem(file);
 }
 
 /* Off camera: which of a search's products lead to a usable retailer
@@ -670,7 +783,8 @@ async function checkRetailers(chromium, search, knownBad) {
   const usable = new Set();
   const asked = new Set();
   let tried = 0;
-  for (const item of search.shown) {
+  /* only products that may be on camera are ever clicked */
+  for (const item of search.shown.slice(0, ON_CAMERA)) {
     if (usable.size >= CHECK_WANT || tried >= CHECK_LIMIT) break;
     const host = hostOf(item.href);
     if (!/^https?:\/\//.test(item.href) || asked.has(host)) continue;
@@ -760,7 +874,7 @@ async function record(chromium, shot, rawDir, stillsDir) {
      for as long as it is spoken */
   const speak = async (key) => {
     const line = NARRATION_LINES && NARRATION_LINES[key];
-    const text = line ? line.text : key;
+    const text = line ? line.caption || line.text : key;
     const start = now();
     voice.push({ key, start });
     cues.push({ text, start, end: start + (line ? line.duration + 0.35 : 2.5) });
@@ -771,13 +885,10 @@ async function record(chromium, shot, rawDir, stillsDir) {
      finished video, its words in that page's strip */
   const speakOn = async (tab, key, visitIndex) => {
     const line = NARRATION_LINES[key];
+    const text = line.caption || line.text;
     voice.push({ key, visit: visitIndex, offset: 0.15 });
-    cues.push({ text: line.text, visit: visitIndex, offset: 0.15, length: line.duration + 0.3 });
-    await tab.evaluate((t) => window.demo && window.demo.say(t), line.text).catch(() => {});
-  };
-  const caption = async (text, ms) => {
-    cues.push({ text, start: now(), end: now() + ms / 1000 });
-    await page.evaluate((t) => window.demo.say(t), text);
+    cues.push({ text, visit: visitIndex, offset: 0.15, length: line.duration + 0.3 });
+    await tab.evaluate((t) => window.demo && window.demo.say(t), text).catch(() => {});
   };
   const hush = () => page.evaluate(() => window.demo.hush());
 
@@ -809,7 +920,7 @@ async function record(chromium, shot, rawDir, stillsDir) {
     const dy = target.y - from.y;
     const dist = Math.hypot(dx, dy);
     if (dist < 1) return;
-    const duration = ms || Math.min(1100, 380 + dist * 0.9) * rand.between(0.9, 1.12);
+    const duration = ms || Math.min(950, 320 + dist * 0.75) * rand.between(0.9, 1.12);
     const bend = rand.between(-0.18, 0.18) * dist;
     const nx = -dy / dist;
     const ny = dx / dist;
@@ -903,8 +1014,8 @@ async function record(chromium, shot, rawDir, stillsDir) {
     const flick = shot.touch && Math.abs(pixels) > viewH * 0.5;
     await scrollGesture(pixels, point);
     /* a flick glides on after the finger lifts; wait for the glide */
-    if (flick) await wait(500);
-    await settle(flick ? 7 : 3);
+    if (flick) await wait(380);
+    await settle(flick ? 5 : 3);
   }
 
   async function scrollGesture(pixels, point) {
@@ -997,8 +1108,31 @@ async function record(chromium, shot, rawDir, stillsDir) {
       if (Math.abs(more) < 6) break;
       await scrollBy(more);
     }
-    await wait(rand.between(350, 600));
+    await wait(rand.between(200, 350));
     return true;
+  }
+
+  /* a look at a product or two without opening it: the pointer rests on
+     the photo, the way a person stops on something and moves on. On a
+     phone, a pause and a small scroll. */
+  async function lookAt(candidates, count) {
+    for (let k = 0; k < count && candidates.length; k += 1) {
+      const c = candidates[Math.floor(rand.next() * Math.min(candidates.length, 4))];
+      const sel = cardSel(c.i);
+      const r = await page.evaluate((s2) => {
+        const el = document.querySelector(s2);
+        const b = el && el.getBoundingClientRect();
+        return b && { top: b.top, bottom: b.bottom };
+      }, sel);
+      /* only something already in view: looking is not scrolling */
+      if (!r || r.top < 60 || r.bottom > viewH - 10) continue;
+      if (shot.touch) {
+        await wait(rand.between(500, 800));
+      } else {
+        await moveTo(spotIn(await box(`${sel} .item-media`), 0.5, 0.45));
+        await wait(rand.between(400, 650));
+      }
+    }
   }
 
   /* --- the homepage --------------------------------------------------- */
@@ -1006,7 +1140,7 @@ async function record(chromium, shot, rawDir, stillsDir) {
   if (!shot.touch) await page.mouse.move(at.x, at.y);
   await wait(450);
   marks.start = now();
-  await wait(rand.between(600, 800));
+  await wait(rand.between(250, 400));
 
   /* DEMO_DEBUG=1 prints when each step happened, to find slack */
   const beat = (label) => { if (process.env.DEMO_DEBUG) (marks.beats = marks.beats || []).push(`${now().toFixed(1)} ${label}`); };
@@ -1014,7 +1148,6 @@ async function record(chromium, shot, rawDir, stillsDir) {
   const opened = new Set();       /* shops shown successfully */
   const bad = new Set();          /* shops that blocked or failed */
   let retailerSaid = false;
-  let browseSaid = false;
   /* successful retailer visits owed by the end of search n */
   const owed = (n) => api.saved.searches.slice(0, n + 1).reduce((sum, x) => sum + (slotOf(x.slot).open || 0), 0);
   marks.results = [];
@@ -1035,24 +1168,9 @@ async function record(chromium, shot, rawDir, stillsDir) {
     beat('box '+(n+1));
     /* --- into the box ------------------------------------------------- */
 
-    if (n === 0) {
-      const field = await box('#ask');
-      const spot = { x: field.x + Math.min(160, field.width * 0.3) + rand.between(-20, 20), y: field.y + field.height / 2 };
-      if (shot.touch) {
-        await wait(rand.between(200, 400));
-        await tap(spot);
-      } else {
-        await moveTo(spot);
-        await wait(rand.between(120, 220));
-        await click();
-      }
-      await page.focus('#ask');
-    } else {
-      /* starting again: back up to the box, and its own × clears it —
-         the page hides the old results and puts the cursor in the box */
-      if (spec.before) await saying(spec.before);
-      /* swipe or wheel back up until the box is really in view: a
-         scroll can fall short, so it is measured again after each one */
+    /* back up to the box: a scroll can fall short, so it is measured
+       again after each one, until the box sits in the upper part */
+    const backToBox = async () => {
       const aim = rand.between(60, 110);
       for (let i = 0; i < 5; i += 1) {
         const form = await page.evaluate(() => {
@@ -1061,11 +1179,69 @@ async function record(chromium, shot, rawDir, stillsDir) {
           return { top: f.top, head: header ? header.getBoundingClientRect().height : 0 };
         });
         const up = form.top - (form.head + aim);
-        /* anywhere in the upper part of the screen will do */
         if (form.top >= form.head + 8 && form.top <= viewH * 0.45) break;
         await scrollBy(up);
       }
-      await wait(rand.between(150, 280));
+      await wait(rand.between(100, 180));
+    };
+    const edit = spec.mode === 'edit' ? editFor(saved.editedFrom || api.saved.searches[n - 1].query, saved.query) : null;
+
+    if (n === 0) {
+      /* the question first, over the homepage; then into the box */
+      const [hook, describe] = spec.lines.opening || [];
+      if (hook) {
+        await saying(hook);
+        if (!shot.touch) {
+          /* a hand resting on the mouse: a small drift while listening */
+          await moveTo({ x: at.x - rand.between(40, 90), y: at.y - rand.between(20, 50) }, rand.between(1300, 1700));
+        }
+        await finishLine(rand.between(120, 220));
+      }
+      if (describe) await saying(describe);
+      const field = await box('#ask');
+      const spot = { x: field.x + Math.min(160, field.width * 0.3) + rand.between(-20, 20), y: field.y + field.height / 2 };
+      if (shot.touch) {
+        await wait(rand.between(500, 800));
+        await tap(spot);
+      } else {
+        await moveTo(spot, rand.between(1000, 1300));
+        await wait(rand.between(120, 220));
+        await click();
+      }
+      await page.focus('#ask');
+    } else if (edit) {
+      /* changing one detail: back up to the request, a click at the end of
+         it, the old ending deleted a key at a time, the new one typed */
+      if (spec.lines.before) await saying(spec.lines.before);
+      await backToBox();
+      const end = await page.evaluate(() => {
+        const el = document.getElementById('ask');
+        const cs = getComputedStyle(el);
+        const c = document.createElement('canvas').getContext('2d');
+        c.font = `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+        const r = el.getBoundingClientRect();
+        const x = r.left + parseFloat(cs.paddingLeft) + c.measureText(el.value).width;
+        return { x: Math.min(x + 4, r.right - 8), y: r.top + Math.min(r.height / 2, parseFloat(cs.lineHeight) || 24) };
+      });
+      if (shot.touch) await tap(end);
+      else {
+        await moveTo(end);
+        await wait(rand.between(120, 220));
+        await click();
+      }
+      await page.focus('#ask');
+      await page.keyboard.press('End');
+      await wait(rand.between(250, 400));
+      for (let i = 0; i < edit.erase; i += 1) {
+        await page.keyboard.press('Backspace');
+        await wait(rand.between(110, 170));
+      }
+      await wait(rand.between(150, 260));
+    } else {
+      /* starting again: back up to the box, and its own × clears it —
+         the page hides the old results and puts the cursor in the box */
+      if (spec.lines.before) await saying(spec.lines.before);
+      await backToBox();
       /* the × that clears the box; measured once the page has stopped,
          and pressed again if the box did not empty */
       for (let tryClear = 0; ; tryClear += 1) {
@@ -1076,8 +1252,8 @@ async function record(chromium, shot, rawDir, stillsDir) {
           await wait(rand.between(120, 220));
           await click();
         }
-        await wait(rand.between(250, 400));
-        await settle();
+        await wait(rand.between(120, 200));
+        await settle(2);
         const left2 = await page.evaluate(() => document.getElementById('ask').value);
         if (!left2) break;
         if (tryClear >= 1) {
@@ -1100,13 +1276,16 @@ async function record(chromium, shot, rawDir, stillsDir) {
     beat('typing '+(n+1));
     /* --- the request --------------------------------------------------- */
 
-    if (spec.typing) {
-      await finishLine(0);
-      await saying(spec.typing);
-    }
+    /* the line about the request starts the moment the one before it is
+       over — part-way through the typing if need be, as a person talks
+       while they type */
     const typedFrom = Date.now();
-    /* a little quicker the second and third time: the box is familiar */
-    await typeLikeAPerson(saved.query, n === 0 ? 92 : 84);
+    const typing = typeLikeAPerson(edit ? edit.type : saved.query, n === 0 ? 80 : 58);
+    if (spec.lines.typing) {
+      await finishLine(0);
+      await saying(spec.lines.typing);
+    }
+    await typing;
     /* what is in the box is exactly the request, nothing left over */
     const inBox = await page.evaluate(() => document.getElementById('ask').value);
     if (inBox !== saved.query) fail(`The search box says "${inBox}", not "${saved.query}".`);
@@ -1119,14 +1298,19 @@ async function record(chromium, shot, rawDir, stillsDir) {
     beat('search '+(n+1));
     /* --- search -------------------------------------------------------- */
 
-    const go = spotIn(await box('#ask-form button[type=submit]'));
+    /* the first time, the Search button; after that, on a computer,
+       Enter — the site submits on it, and someone who has searched once
+       already knows. On a phone, a tap on Search every time. */
     if (shot.touch) {
       await wait(rand.between(150, 300));
-      await tap(go);
-    } else {
-      await moveTo(go);
+      await tap(spotIn(await box('#ask-form button[type=submit]')));
+    } else if (n === 0) {
+      await moveTo(spotIn(await box('#ask-form button[type=submit]')));
       await wait(rand.between(120, 220));
       await click();
+    } else {
+      await wait(rand.between(120, 240));
+      await page.keyboard.press('Enter');
     }
     await finishLine(0);
 
@@ -1135,7 +1319,7 @@ async function record(chromium, shot, rawDir, stillsDir) {
 
     await page.waitForSelector('#results .grid .item-card', { timeout: 20000 });
     /* the page scrolls itself to the results; let that land */
-    await wait(400);
+    await wait(120);
     const shown = await checkResults(page);
     const problems = verdict(shown);
     if (problems.length) fail(`On camera, the results for "${saved.query}" were not all real and loaded:\n  - ${problems.join('\n  - ')}`);
@@ -1143,12 +1327,14 @@ async function record(chromium, shot, rawDir, stillsDir) {
     beat(`results ${n + 1}`);
     await still(`results-${n + 1}`);
 
-    if (spec.results) await saying(spec.results);
+    if (spec.lines.results) await saying(spec.lines.results);
 
     /* how many retailer visits this search still owes: its own share,
        plus whatever earlier searches could not get */
     const want = Math.max(0, owed(n) - opened.size);
-    const cards = await cardsOnScreen();
+    /* only products checked before recording are ever reached for */
+    const verified = new Set(saved.verified || []);
+    const cards = (await cardsOnScreen()).filter((c) => verified.has(c.href));
     const verdicts = Object.fromEntries(saved.shown.filter((x) => x.check).map((x) => [x.href, x.check.kind]));
     const firstChoice = want ? chooseNext(cards, { used: opened, bad, verdicts, row: 0 }) : null;
 
@@ -1158,10 +1344,10 @@ async function record(chromium, shot, rawDir, stillsDir) {
       if (!shot.touch) {
         const first = await box(`${cardSel(firstChoice.i)} .item-media`);
         await moveTo({ x: first.x + first.width * rand.between(0.7, 1.15), y: first.y + first.height * rand.between(0.55, 0.75) },
-          rand.between(1000, 1300));
+          rand.between(850, 1050));
       }
       await finishLine(rand.between(100, 200));
-    } else if (!spec.results) {
+    } else if (!spec.lines.results && !spec.lines.before) {
       /* the last search: a look at one of the results, and that is all */
       if (!shot.touch) {
         const a = await box(`${cardSel(Math.min(1, cards.length - 1))} .item-media`);
@@ -1174,21 +1360,20 @@ async function record(chromium, shot, rawDir, stillsDir) {
     } else {
       /* nothing to open this time: a look at what came back while the
          line is said — over one product, a slight scroll, over another */
+      /* the new products first: the pointer goes to one that was not
+         there before, rests, and on to another */
       if (!shot.touch) {
-        const a = await box(`${cardSel(Math.min(1, cards.length - 1))} .item-media`);
-        await moveTo(spotIn(a, 0.5, 0.5), rand.between(800, 1000));
-        await wait(rand.between(250, 400));
+        const a = await box(`${cardSel(0)} .item-media`);
+        await moveTo(spotIn(a, 0.5, 0.5), rand.between(600, 750));
+        await wait(rand.between(200, 300));
+        const other = await box(`${cardSel(Math.min(cards.length - 1, 2))} .item-media`);
+        await moveTo(spotIn(other, 0.5, 0.5), rand.between(450, 600));
       } else {
         await wait(rand.between(500, 700));
+        await scrollBy(viewH * rand.between(0.16, 0.24));
       }
-      await scrollBy(viewH * rand.between(0.16, 0.24));
-      await wait(rand.between(200, 350));
-      if (!shot.touch) {
-        const other = await box(`${cardSel(Math.min(cards.length - 1, 2))} .item-media`);
-        await moveTo(spotIn(other, 0.5, 0.5));
-      }
-      await finishLine(150);
-      await wait(rand.between(150, 300));
+      await finishLine(100);
+      await wait(rand.between(100, 180));
     }
 
     /* --- products, at their retailers ---------------------------------
@@ -1210,23 +1395,19 @@ async function record(chromium, shot, rawDir, stillsDir) {
       const approach = now();
       beat(`try ${pick.host}`);
 
-      if (spec.browse && !browseSaid) {
-        browseSaid = true;
-        await saying(spec.browse);
-      } else if (n > 0 && attempts === 1) {
-        /* a slight scroll, to see what else came back */
-        await scrollBy(viewH * rand.between(0.15, 0.22));
-        await wait(rand.between(250, 400));
-      }
+      /* not straight to it: comparing, in the first search, a look at
+         another product first, a moment on it, and then the one actually
+         chosen; later, the person knows how this works */
+      if (n === 0 && got === 0) await lookAt(cards.filter((c) => c.i !== pick.i), 1);
       await bringIntoView(sel);
 
       const media = await box(`${sel} .item-media`);
       const spot = spotIn(media, 0.5, 0.45);
       if (!shot.touch) {
         await moveTo(spot);
-        await wait(rand.between(300, 550));       /* looking at it */
+        await wait(rand.between(250, 450));       /* looking at it */
       } else {
-        await wait(rand.between(450, 700));
+        await wait(rand.between(400, 600));
       }
       await finishLine(100);
       await still(`product-${visits.length + 1}`);
@@ -1247,7 +1428,7 @@ async function record(chromium, shot, rawDir, stillsDir) {
       const visit = await visitRetailer({
         context, page, href: card.href,
         /* long enough for the line, when this is the page it is said on */
-        holdMs: narrate ? Math.max(2200, NARRATION_LINES.retailer.duration * 1000 + 450) : rand.between(2000, 2200),
+        holdMs: narrate ? Math.max(2000, NARRATION_LINES.retailer.duration * 1000 + 300) : rand.between(1400, 1600),
         click: () => (shot.touch ? tap(spot) : click()),
         onLoaded: async (tab) => {
           if (narrate) {
@@ -1272,7 +1453,7 @@ async function record(chromium, shot, rawDir, stillsDir) {
       if (visit.kind === 'loaded') {
         opened.add(visit.host);
         got += 1;
-        await wait(rand.between(250, 400));     /* back on Fynd, a beat */
+        await wait(rand.between(200, 320));     /* back on Fynd, a beat */
       } else {
         bad.add(visit.host);
         await wait(rand.between(100, 200));
@@ -1281,14 +1462,26 @@ async function record(chromium, shot, rawDir, stillsDir) {
     if (got < want) console.log(`  ${shot.kind}: "${saved.query}" — ${got} of ${want} retailer visit(s) after ${attempts} attempt(s)`);
   }
 
-  /* --- the end: still on Fynd's results -------------------------------- */
+  /* --- the end: back on Fynd's results; the closing card follows ------ */
 
-  await caption(CAPTION_END, 1500);
+  /* whatever is still being said is said to the end */
+  const saidUntil = Math.max(0, ...voice.filter((x) => x.visit == null).map((x) => x.start + NARRATION_LINES[x.key].duration));
+  await wait((saidUntil - now()) * 1000 + 200);
   await still('end');
-  await wait(1500);
+  await wait(rand.between(600, 800));
   await hush();
-  await wait(200);
   marks.end = now();
+
+  /* Every product that was on camera has to be one checked before
+     recording: the page itself noted each card that came into view. */
+  const seen = await page.evaluate(() => (window.demoSeen ? window.demoSeen() : null));
+  if (!seen) fail('The page did not report which products were on camera.');
+  const vouched = new Set(api.saved.searches.flatMap((x) => x.verified || []));
+  const unvouched = seen.filter((href) => !vouched.has(href));
+  if (unvouched.length) {
+    fail(`The ${shot.kind} recording showed ${unvouched.length} product(s) that were not checked before recording:\n  - ${unvouched.slice(0, 6).join('\n  - ')}`);
+  }
+  console.log(`  ${shot.kind}: ${seen.length} product(s) on camera, every one checked`);
 
   const mainVideo = stillsDir ? null : page.video();
   await context.close();
@@ -1331,14 +1524,16 @@ const durationCommand = (file, probe = FFPROBE) => probeCommand(file, 'format=du
 function durationProblem(seconds) {
   if (!Number.isFinite(seconds)) return 'has no readable length';
   if (seconds < DURATION.min || seconds > DURATION.max) {
-    return `runs ${seconds.toFixed(1)}s, outside the allowed ${DURATION.min}–${DURATION.max}s`;
+    return `runs ${seconds.toFixed(1)}s, outside the allowed ${DURATION.min}–${DURATION.max}s`
+      + (seconds > DURATION.max ? ' (--no-refine leaves out the "$120" change, six or seven seconds)' : '');
   }
   return null;
 }
 function durationNote(seconds) {
-  return Number.isFinite(seconds) && seconds >= DURATION.min && seconds < DURATION.targetMin
-    ? `runs ${seconds.toFixed(1)}s, under the usual ${DURATION.targetMin}–${DURATION.max}s — was a search or a retailer visit left out?`
-    : null;
+  if (!Number.isFinite(seconds) || seconds < DURATION.min || seconds > DURATION.max) return null;
+  if (seconds < DURATION.targetMin) return `runs ${seconds.toFixed(1)}s, under the usual ${DURATION.targetMin}–${DURATION.targetMax}s — was a search or a retailer visit left out?`;
+  if (seconds > DURATION.targetMax) return `runs ${seconds.toFixed(1)}s, a little over the ${DURATION.targetMin}–${DURATION.targetMax}s target (kept: up to ${DURATION.max}s is allowed)`;
+  return null;
 }
 
 /* a finished video is only kept if it really is one: picture at the
@@ -1465,28 +1660,50 @@ function build(shot, take, outDir) {
   voiceInputs.forEach((f) => inputs.push('-i', f));
   const firstVoice = files.length;
 
+  /* the closing card and the music bed */
+  const cardInput = inputs.length / 2;
+  inputs.push('-loop', '1', '-framerate', '30', '-t', String(END_SECONDS), '-i', take.card);
+  const musicInput = cardInput + 1;
+  inputs.push('-i', MUSIC);
+  const fadeAt = total - END_FADE;
+  const length = total + END_SECONDS - END_FADE;
+
   const vf = segments.map((s, i) => `[${s.input}:v]trim=start=${s.from.toFixed(3)}:end=${s.to.toFixed(3)},setpts=(PTS-STARTPTS)/${s.rate.toFixed(5)},`
     + `fps=30,scale=${W}:${H}:force_original_aspect_ratio=decrease,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2:white,setsar=1[s${i}]`).join(';');
-  const concat = `${segments.map((_, i) => `[s${i}]`).join('')}concat=n=${segments.length}:v=1:a=0[v]`;
-  const af = take.voice.map((line, i) => `[${firstVoice + i}:a]adelay=${Math.round(placeOf(line) * 1000)}:all=1[a${i}]`).join(';');
-  const mix = take.voice.length
-    ? `;${af};${take.voice.map((_, i) => `[a${i}]`).join('')}amix=inputs=${take.voice.length}:normalize=0,apad,atrim=end=${total.toFixed(3)}[a]`
-    : `;anullsrc=r=48000:cl=mono,atrim=end=${total.toFixed(3)}[a]`;
+  const concat = `${segments.map((_, i) => `[s${i}]`).join('')}concat=n=${segments.length}:v=1:a=0,format=yuv420p,settb=1/30[rec]`;
+  /* Fynd's results dissolve into the closing card */
+  const card = `[${cardInput}:v]scale=${W}:${H},fps=30,setsar=1,format=yuv420p,settb=1/30[card];`
+    + `[rec][card]xfade=transition=fade:duration=${END_FADE}:offset=${fadeAt.toFixed(3)}[v]`;
+  /* The voice, each line where it was said, in the middle of a stereo
+     field (each side at -3 dB, so a -18 LUFS line stays -18). The music
+     under it, trimmed to the film, in softly and faded out with the card,
+     and ducked under the voice by the voice itself: a sidechain
+     compressor pulls it down about 6–8 dB while anyone is speaking and
+     lets it back up gently afterwards. */
+  const af = take.voice.map((line, i) => `[${firstVoice + i}:a]pan=stereo|c0=0.7071*c0|c1=0.7071*c0,adelay=${Math.round(placeOf(line) * 1000)}:all=1[a${i}]`).join(';');
+  const voiceBus = take.voice.length
+    ? `${af};${take.voice.map((_, i) => `[a${i}]`).join('')}amix=inputs=${take.voice.length}:normalize=0,apad,atrim=end=${length.toFixed(3)},asplit=2[vox][key]`
+    : `anullsrc=r=48000:cl=stereo,atrim=end=${length.toFixed(3)},asplit=2[vox][key]`;
+  const music = `[${musicInput}:a]aresample=48000,atrim=end=${length.toFixed(3)},afade=t=in:d=1.2,`
+    + `afade=t=out:st=${(length - 3).toFixed(3)}:d=3[bed];[bed][key]sidechaincompress=threshold=0.03:ratio=5:attack=25:release=450:knee=4[ducked]`;
+  const mix = `;${voiceBus};${music};[vox][ducked]amix=inputs=2:normalize=0[a]`;
 
   const master = path.join(os.tmpdir(), `${shot.name}-master.mkv`);
-  run([...inputs, '-filter_complex', `${vf};${concat}${mix}`, '-map', '[v]', '-map', '[a]',
+  run([...inputs, '-filter_complex', `${vf};${concat};${card}${mix}`, '-map', '[v]', '-map', '[a]',
     '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '10', '-pix_fmt', 'yuv420p',
-    '-c:a', 'pcm_s16le', '-ar', '48000', '-ac', '1', master]);
+    '-c:a', 'pcm_s16le', '-ar', '48000', '-ac', '2', master]);
+  /* the music must never compete with the voice: measured on the mix */
+  checkMix(master, take.voice.map((line) => [placeOf(line), placeOf(line) + NARRATION_LINES[line.key].duration]), length);
 
   const mp4 = path.join(outDir, `${shot.name}.mp4`);
   const webm = path.join(outDir, `${shot.name}.webm`);
   const poster = path.join(outDir, `${shot.name}-poster.jpg`);
   console.log(`  encoding ${shot.name}.mp4…`);
   run(['-i', master, '-c:v', 'libx264', '-profile:v', 'high', '-preset', 'veryslow', '-crf', String(shot.h264),
-    '-g', '60', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '96k', '-ac', '1', '-movflags', '+faststart', mp4]);
+    '-g', '60', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '128k', '-ac', '2', '-movflags', '+faststart', mp4]);
   console.log(`  encoding ${shot.name}.webm…`);
   run(['-i', master, '-c:v', 'libvpx-vp9', '-crf', String(shot.vp9), '-b:v', '0', '-row-mt', '1',
-    '-deadline', 'good', '-cpu-used', '2', '-pix_fmt', 'yuv420p', '-c:a', 'libopus', '-b:a', '64k', '-ac', '1', webm]);
+    '-deadline', 'good', '-cpu-used', '2', '-pix_fmt', 'yuv420p', '-c:a', 'libopus', '-b:a', '96k', '-ac', '2', webm]);
   /* the poster: the real results, a moment after they arrive */
   run(['-ss', (at([].concat(m.results)[0]) + 1.2).toFixed(3), '-i', master, '-frames:v', '1', '-q:v', '3', poster]);
   fs.unlinkSync(master);
@@ -1496,11 +1713,12 @@ function build(shot, take, outDir) {
     const start = onVisit(c.visit, c.offset || 0);
     return start == null ? null : { ...c, start, end: Math.min(total, start + c.length) };
   }).filter(Boolean);
-  writeTrack(path.join(outDir, `${shot.name}.vtt`), cues, total);
+  cues.push({ text: END_LINE, start: fadeAt + END_FADE, end: length });
+  writeTrack(path.join(outDir, `${shot.name}.vtt`), cues, length);
   for (const f of [mp4, webm]) checkVideo(f, W, H);
   const size = (p) => `${(fs.statSync(p).size / 1024).toFixed(0)} KB`;
-  console.log(`  ${shot.name}: ${total.toFixed(1)}s — mp4 ${size(mp4)}, webm ${size(webm)}, poster ${size(poster)}`);
-  return total;
+  console.log(`  ${shot.name}: ${length.toFixed(1)}s — mp4 ${size(mp4)}, webm ${size(webm)}, poster ${size(poster)}`);
+  return length;
 }
 
 /* The captions track: the narration, word for word, and the closing
@@ -1519,6 +1737,64 @@ function writeTrack(file, cues, length) {
     .map((c, i, all) => ({ ...c, end: i + 1 < all.length ? Math.min(c.end, all[i + 1].start - 0.05) : c.end }));
   const body = sorted.map(({ text, start, end }, i) => `${i + 1}\n${clock(start)} --> ${clock(end)} line:8%\n${text}`).join('\n\n');
   fs.writeFileSync(file, `WEBVTT\n\n${body}\n`);
+}
+
+/* The voice over the music, measured on the finished mix: every line at
+   about -18 LUFS and at least MIX.margin LU over the music on its own
+   (the longest stretch where nobody speaks, before the closing fade). A
+   mix where the music competes with the voice is refused. */
+const MIX = { voice: -18, voiceRange: 3, margin: 8 };
+function loudness(file, from, length) {
+  const out = require('child_process').spawnSync(FFMPEG, ['-hide_banner', '-nostats', '-ss', from.toFixed(3), '-t', length.toFixed(3), '-i', file,
+    '-vn', '-af', 'ebur128', '-f', 'null', '-'], { encoding: 'utf8' }).stderr || '';
+  const all = [...out.matchAll(/I:\s+(-?[\d.]+) LUFS/g)];
+  return all.length ? Number(all[all.length - 1][1]) : NaN;
+}
+function quietestGap(spans, length) {
+  const sorted = [...spans].sort((a, b) => a[0] - b[0]);
+  let best = null;
+  let from = 1.5;   /* after the music has come in */
+  for (const [a, b] of sorted.concat([[length - 3.5, length]])) {
+    const gap = [from + 0.6, a - 0.4];
+    if (gap[1] - gap[0] > (best ? best[1] - best[0] : 0.8)) best = gap;
+    from = Math.max(from, b);
+  }
+  return best;
+}
+function checkMix(file, spans, length) {
+  const gap = quietestGap(spans, length);
+  const problems = [];
+  const music = gap ? loudness(file, gap[0], gap[1] - gap[0]) : NaN;
+  for (const [a, b] of spans) {
+    const voice = loudness(file, a, b - a);
+    if (Math.abs(voice - MIX.voice) > MIX.voiceRange) problems.push(`a line at ${a.toFixed(1)}s is ${voice.toFixed(1)} LUFS, not about ${MIX.voice}`);
+    if (Number.isFinite(music) && voice - music < MIX.margin) problems.push(`the music is within ${(voice - music).toFixed(1)} LU of the line at ${a.toFixed(1)}s`);
+  }
+  if (problems.length) throw new Error(`The mix is not right:\n  - ${problems.join('\n  - ')}`);
+  console.log(`  mix: voice about ${MIX.voice} LUFS, music alone ${Number.isFinite(music) ? music.toFixed(1) : 'n/a'} LUFS — every line at least ${MIX.margin} LU over it`);
+}
+
+/* The closing card: the line and the Fynd mark, in the site's own type
+   and the site's own mark (its stylesheet and font), on white. It is the
+   film's, not the page's — a card, not a page dressed up. */
+async function endCard(chromium, shot, dir) {
+  const browser = await chromium.launch({ executablePath: chromePath() });
+  const page = await browser.newPage({ viewport: { width: shot.width, height: shot.height }, deviceScaleFactor: shot.dpr });
+  await page.goto(`${ORIGIN}/index.html`, { waitUntil: 'load' });
+  await page.setContent(`<!doctype html><html><head><meta charset="utf-8">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="${ORIGIN}/assets/styles.css">
+    <style>html,body{margin:0;height:100%;background:#fff}
+      .end{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:${shot.touch ? 22 : 26}px;text-align:center;padding:0 24px}
+      .end p{margin:0;font-family:Inter,-apple-system,sans-serif;font-weight:700;color:#111;letter-spacing:-.03em;line-height:1.12;font-size:${shot.touch ? 30 : 40}px}
+      .end .brand{transform:scale(${shot.touch ? 1.25 : 1.35});pointer-events:none}</style></head>
+    <body><div class="end"><p>${END_LINE.replace('. ', '.<br>')}</p>
+    <span class="brand"><span class="brand-mark">F</span><span class="brand-word">Fynd</span></span></div></body></html>`, { waitUntil: 'load' });
+  await page.evaluate(() => document.fonts.ready);
+  const file = path.join(dir, `${shot.name}-end.png`);
+  await page.screenshot({ path: file });
+  await browser.close();
+  return file;
 }
 
 /* The note under the video says what it is: a real search, and when it
@@ -1555,14 +1831,17 @@ async function main() {
   const hadEnv = loadEnv();
   FFMPEG = findFfmpeg();
   FFPROBE = ffprobeFor(FFMPEG);
+  /* the real-photo test decodes with the same ffmpeg */
+  if (!process.env.FFMPEG_PATH) process.env.FFMPEG_PATH = FFMPEG;
   /* in-memory metering only: never production KV */
   ['KV_REST_API_URL', 'KV_REST_API_TOKEN', 'KV_URL', 'UPSTASH_REDIS_REST_URL', 'UPSTASH_REDIS_REST_TOKEN']
     .forEach((k) => { delete process.env[k]; });
 
   if (!NARRATION_LINES) fail('assets/demo/narration/manifest.json is missing. Run scripts/demo-narration.py.');
-  const needed = [...new Set(SEARCHES.flatMap((x) => [x.typing, x.before, x.results, x.browse]).filter(Boolean).concat('retailer'))];
+  const needed = [...new Set(SEARCHES.flatMap((x) => [...(x.lines.opening || []), x.lines.typing, x.lines.before, x.lines.results]).filter(Boolean).concat('retailer'))];
   const missingLines = needed.filter((k) => !NARRATION_LINES[k]);
   if (missingLines.length) fail(`The narration has no ${missingLines.join(', ')} line. Run scripts/demo-narration.py.`);
+  if (!STILLS && !fs.existsSync(MUSIC)) fail(`The music bed is missing (${path.relative(REPO, MUSIC)}). Make it with fynd-demo/scripts/music.py --bars=27.`);
   if (!STILLS) {
     try { execFileSync(FFMPEG, ['-hide_banner', '-version'], { stdio: 'ignore' }); } catch (err) { fail(`ffmpeg was not found at ${FFMPEG}. Install it, or set FFMPEG_PATH.`); }
     /* checked now, not after two recordings: the encode needs it */
@@ -1578,13 +1857,24 @@ async function main() {
       const file = typeof REPLAY === 'string' ? path.resolve(REPLAY) : SEARCH_FILE;
       if (!fs.existsSync(file)) fail(`No saved search at ${path.relative(REPO, file)}. Run without --replay first.`);
       api.saved = asSearches(JSON.parse(fs.readFileSync(file, 'utf8')));
+      /* searches the plan leaves out this time (--no-refine) are not recorded */
+      api.saved.searches = api.saved.searches.filter((x) => SEARCHES.some((y) => y.slot === x.slot));
       console.log(`Replaying the real searches of ${api.saved.searchedAt}: ${api.saved.searches.map((x) => `"${x.query}" (${x.shown.length})`).join(', ')}`);
       /* retailers change their minds: a saved search without checks, or
          --recheck, asks them again before recording */
-      if (!arg('no-check') && (arg('recheck') || api.saved.searches.some((x) => !x.shown.some((y) => y.check)))) {
+      /* every product that may be on camera is checked again: listings
+         change, and a saved search is only as good as it is today */
+      const kept = [];
+      for (const x of api.saved.searches) {
+        const problems = await vouch(chromium, x, kept);
+        if (problems.length) fail(`The saved search "${x.query}" no longer passes:\n  - ${problems.join('\n  - ')}\nRun without --replay for fresh results.`);
+        kept.push(x);
+      }
+      if (!arg('no-check') && (arg('recheck') || api.saved.searches.some((x) => slotOf(x.slot).open && !x.shown.some((y) => y.check)))) {
         console.log('Checking which retailers answer…');
         const knownBad = new Set();
         for (const x of api.saved.searches) {
+          if (!slotOf(x.slot).open) continue;
           x.shown.forEach((y) => { delete y.check; });
           await checkRetailers(chromium, x, knownBad);
         }
@@ -1604,7 +1894,9 @@ async function main() {
     const takes = [];
     for (const shot of SHOTS) {
       console.log(`Recording ${shot.kind}…`);
-      takes.push([shot, await record(chromium, shot, rawDir, stillsDir)]);
+      const take = await record(chromium, shot, rawDir, stillsDir);
+      take.card = await endCard(chromium, shot, stillsDir || rawDir);
+      takes.push([shot, take]);
     }
     server.close();
 
@@ -1650,5 +1942,5 @@ async function main() {
    starting anything */
 if (require.main === module) main();
 
-module.exports = { ffprobeFor, durationCommand, planCut, SEARCHES, DURATION, durationProblem, durationNote };
+module.exports = { ffprobeFor, durationCommand, planCut, SEARCHES, DURATION, durationProblem, durationNote, quietestGap, MIN_VISITS, ON_CAMERA };
 

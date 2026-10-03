@@ -18,6 +18,8 @@
         'blocked' the page arrived but is a block: Access Denied, a bot
                   check, a CAPTCHA, a 401/403/429 — read from its status,
                   its title and its text (classifyPage, below).
+        'moved'   the page arrived, but on another site than the
+                  product's own shop (a redirect away from it).
         'unusable' the page arrived with nothing a shopper could use: an
                   error status, or next to no content.
                   Neither is ever shown — a block page is not the shop.
@@ -31,6 +33,8 @@
    ========================================================= */
 
 'use strict';
+
+const { sameShop } = require('./demo-plan');
 
 /* each limit on its own, so no single wait can block the whole run */
 const LIMITS = {
@@ -172,7 +176,9 @@ async function visitRetailer({ context, page, click, href, holdMs, onLoaded, lim
 
   if (loaded) {
     visit.domAt = Date.now();
-    const verdict = await classifyPage(tab);
+    let verdict = await classifyPage(tab);
+    /* still on the product's own shop, or it is not the product the card linked to */
+    if (verdict.kind === 'loaded' && !sameShop(href, tab.url())) verdict = { kind: 'moved', reason: `redirected to ${hostOf(tab.url())}` };
     if (verdict.kind !== 'loaded') {
       visit.kind = verdict.kind;
       visit.reason = verdict.reason;
@@ -204,6 +210,7 @@ async function checkRetailer(context, url, limits) {
   try {
     const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: lim.tab + lim.dom });
     result = await classifyPage(page);
+    if (result.kind === 'loaded' && !sameShop(url, page.url())) result = { kind: 'moved', reason: `redirected to ${hostOf(page.url())}` };
     if (result.kind === 'loaded' && response && response.status() >= 400) {
       result = { kind: [401, 403, 429].includes(response.status()) ? 'blocked' : 'unusable', reason: `HTTP ${response.status()}` };
     }

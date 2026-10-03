@@ -44,28 +44,42 @@ OUT = os.path.join(REPO, 'assets', 'demo', 'narration')
 
 VOICE = 'af_heart'
 SPEAKER_ID = 3          # af_heart in kokoro-multi-lang-v1_0
-MAX_GAP = 0.30          # seconds; anything longer reads as a recited pause
-LOUDNESS = -20          # LUFS: talking, not announcing
+MAX_GAP = 0.25          # seconds; anything longer reads as a recited pause
+LOUDNESS = -18          # LUFS: the voice, always above the music bed (-29)
 
-# What is said, and when, in the order it happens on screen, with the
-# speed each is said at. The keys are what scripts/record-demo.js asks for.
-# The lines after the first search do not name a query, so the recorder can
-# use whichever real queries the product source answers well.
+# What is said, in the order it happens on screen: (key, what the voice
+# is given, what the caption says, speed). The keys are what
+# scripts/record-demo.js asks for. Only the first search is named out
+# loud; the others are narrated without naming the query, so the
+# recorder can use whichever real query the product source answers well.
 LINES = [
+    # the homepage, before anything is typed
+    ('hook', 'Ever know exactly what you want but not where to find it?',
+     'Ever know exactly what you want, but not where to find it?', 1.00),
+    # into the search box
+    ('describe', 'Instead of checking a bunch of stores I can just describe it.',
+     'Instead of checking a bunch of stores, I can just describe it.', 1.00),
     # typing the first search
-    ('looking', 'I\u2019m looking for a black oversized hoodie under eighty dollars.', 1.00),
-    # its results arrive
-    ('options', 'And Fynd gives me a few different options to compare.', 1.02),
-    # the pointer goes through them
-    ('browse', 'I can look through them and open whichever one I like.', 0.97),
-    # the retailer's page is on screen
-    ('retailer', 'That takes me straight to the retailer.', 1.00),
-    # starting the second search
-    ('different', 'Let me try something completely different.', 1.03),
-    # its results arrive
-    ('results', 'And now I get a whole different set of results.', 0.99),
-    # typing a brand or designer search
-    ('brand', 'I can search for a specific brand too.', 1.02),
+    ('hoodie', 'I need a black oversized hoodie but I don\u2019t want to spend more than eighty dollars.',
+     'I need a black oversized hoodie, but I don\u2019t want to spend more than $80.', 1.02),
+    # looking through what came back
+    ('stores', 'And these are all coming from different stores.',
+     'And these are all coming from different stores.', 0.98),
+    # on the first retailer page
+    ('retailer', 'Then I can open the exact product at the store selling it.',
+     'Then I can open the exact product at the store selling it.', 1.00),
+    # changing one detail of the request
+    ('refine', 'And I can change the details without rebuilding a bunch of filters.',
+     'And I can change the details without rebuilding a bunch of filters.', 1.02),
+    # starting something completely different
+    ('different', 'Or maybe I\u2019m looking for something completely different.',
+     'Or maybe I\u2019m looking for something completely different.', 1.00),
+    # a designer
+    ('designer', 'I can even get more specific and search for a particular designer.',
+     'I can even get more specific and search for a particular designer.', 1.02),
+    # a request with several details at once
+    ('sentence', 'I don\u2019t need any filters for this. I can say the whole thing in one sentence.',
+     'I don\u2019t need any filters for this. I can say the whole thing in one sentence.', 1.02),
 ]
 
 
@@ -99,7 +113,10 @@ def main():
 
     manifest = {'voice': f'Kokoro v1.0 {VOICE}', 'loudness': LOUDNESS, 'lines': {}}
     failures = []
-    for key, text, speed in LINES:
+    recognizer = whisper()
+    for key, text, caption, speed in LINES:
+        if ',' in text:
+            failures.append(f'{key}: a comma inside the spoken line becomes a pause; reword it')
         # "Fynd" is said "find", and spelled that way for the voice: as
         # written, the model swallows its last consonant ("Fin gives…").
         # The caption keeps the name as it is written.
@@ -109,15 +126,23 @@ def main():
         target = os.path.join(OUT, f'{key}.wav')
         finish(raw.name, target)
         os.unlink(raw.name)
+        level = exact_level(target, LOUDNESS)
         gap = longest_gap(target)
-        manifest['lines'][key] = {'text': text, 'file': f'{key}.wav', 'duration': round(duration(target), 3),
-                                  'speed': speed, 'longestGap': round(gap, 2)}
-        print(f'  {key:10s} {manifest["lines"][key]["duration"]:.2f}s  gap {gap:.2f}s  {text}')
+        manifest['lines'][key] = {'text': text, 'caption': caption, 'file': f'{key}.wav', 'duration': round(duration(target), 3),
+                                  'speed': speed, 'longestGap': round(gap, 2), 'lufs': round(level, 1)}
+        print(f'  {key:10s} {manifest["lines"][key]["duration"]:.2f}s  {level:.1f} LUFS  gap {gap:.2f}s  {text}')
+        if recognizer:
+            heard = recognizer(target)
+            print(f'  {"":10s} heard: {heard}')
+            if words(heard) != words(text.replace('Fynd', 'Find')):
+                failures.append(f'{key}: transcribed as "{heard}"')
         if gap > MAX_GAP:
             failures.append(f'{key}: a {gap:.2f}s pause inside the line')
+        if abs(level - LOUDNESS) > 0.5:
+            failures.append(f'{key}: {level:.1f} LUFS, not {LOUDNESS}')
 
     if failures:
-        sys.exit('Lines with recited pauses — reword them:\n  ' + '\n  '.join(failures))
+        sys.exit('The narration is not usable:\n  ' + '\n  '.join(failures))
 
     with open(os.path.join(OUT, 'manifest.json'), 'w') as f:
         json.dump(manifest, f, indent=2, ensure_ascii=False)
@@ -157,6 +182,58 @@ def longest_gap(path):
         run = run + 1 if q else 0
         longest = max(longest, run)
     return longest * 0.02
+
+
+def measure(path):
+    out = subprocess.run(['ffmpeg', '-hide_banner', '-nostats', '-i', path, '-af', 'ebur128=peak=true', '-f', 'null', '-'],
+                         capture_output=True, text=True).stderr
+    import re
+    return float(re.findall(r'I:\s+(-?[\d.]+) LUFS', out)[-1])
+
+
+def exact_level(path, target):
+    """loudnorm's single pass undershoots on a clip this short. Measure it
+    and apply the exact gain; the few consonant peaks that would then pass
+    -1.5 dBFS are caught by a fast, gentle limiter (nothing else is
+    compressed). Measured again and nudged until it is within 0.2 LU."""
+    for _ in range(4):
+        lufs = measure(path)
+        if abs(lufs - target) <= 0.2:
+            break
+        tmp = path + '.tmp.wav'
+        subprocess.run(['ffmpeg', '-y', '-hide_banner', '-loglevel', 'error', '-i', path,
+                        '-af', f'volume={target - lufs:.2f}dB,alimiter=limit=0.84:attack=3:release=60:level=disabled',
+                        '-ar', '48000', '-c:a', 'pcm_s16le', tmp], check=True)
+        os.replace(tmp, path)
+    return measure(path)
+
+
+def words(s):
+    import re
+    s = s.lower().replace('\u2019', "'").replace('$80', 'eighty dollars')
+    return re.sub(r"[^a-z' ]+", ' ', s).split()
+
+
+def whisper():
+    """With WHISPER_DIR set to a sherpa-onnx Whisper model, every clip is
+    transcribed back and must say what it was asked to say."""
+    d = os.environ.get('WHISPER_DIR')
+    if not d:
+        return None
+    import sherpa_onnx
+    import soundfile as sf
+    name = os.path.basename(d.rstrip('/')).replace('sherpa-onnx-whisper-', '')
+    rec = sherpa_onnx.OfflineRecognizer.from_whisper(
+        encoder=os.path.join(d, f'{name}-encoder.int8.onnx'), decoder=os.path.join(d, f'{name}-decoder.int8.onnx'),
+        tokens=os.path.join(d, f'{name}-tokens.txt'), language='en', task='transcribe', num_threads=4)
+
+    def transcribe(path):
+        a, sr = sf.read(path, dtype='float32')
+        st = rec.create_stream()
+        st.accept_waveform(sr, a)
+        rec.decode_stream(st)
+        return st.result.text.strip()
+    return transcribe
 
 
 def duration(path):

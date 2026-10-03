@@ -28,6 +28,7 @@ Needs numpy and ffmpeg.
 """
 
 import os
+import sys
 import re
 import subprocess
 import tempfile
@@ -37,11 +38,18 @@ import numpy as np
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(ROOT, 'public', 'audio', 'music', 'bed.wav')
+# python3 scripts/music.py --bars=27 --out=../assets/demo/music/bed.wav makes
+# the longer bed the screen recording plays under itself (the recorder
+# trims it to the video and fades it out)
+ARGS = dict(a[2:].split('=', 1) for a in sys.argv[1:] if a.startswith('--') and '=' in a)
+if 'out' in ARGS:
+    OUT = os.path.abspath(ARGS['out'])
 RATE = 48000
 BPM = 90
 BEAT = 60 / BPM
 BAR = 4 * BEAT
-LENGTH = 32.0
+BAR_COUNT = int(ARGS.get('bars', 12))
+LENGTH = BAR_COUNT * 4 * 60 / 90     # 12 bars at 90 BPM = exactly 32.0s
 TARGET = -29.0          # LUFS integrated: the middle of -30..-27
 
 rng = np.random.default_rng(20261003)
@@ -60,7 +68,8 @@ CHORDS = {
     'Bb': (46, [57, 60, 62, 65]),    # Bbmaj9 (no root): A C D F over Bb
     'C': (36, [55, 57, 62, 64]),     # C6/9:  G A D E over C
 }
-BARS = ['F', 'Dm', 'Bb', 'C'] * 2 + ['F', 'Dm', 'Bb', 'F']
+# the progression round and round; the last bar comes home to F
+BARS = (['F', 'Dm', 'Bb', 'C'] * BAR_COUNT)[:BAR_COUNT - 1] + ['F']
 
 
 def lowpass_fast(x, cutoff):
@@ -185,7 +194,7 @@ def build():
         if not last:
             place(low, start + 2.5 * BEAT, bass(hz((root - 12 if root > 44 else root) + 7), 0.9, 0.18))
         # shaker on the off-beats, bars 2-11, with a little swing
-        if 1 <= b <= 10:
+        if 1 <= b <= len(BARS) - 2:
             for i in range(8):
                 swing = 0.045 if i % 2 else 0.0
                 vel = (0.5 if i % 2 else 0.28) * rng.uniform(0.75, 1.0)

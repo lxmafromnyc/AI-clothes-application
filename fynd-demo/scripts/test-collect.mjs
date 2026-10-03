@@ -108,7 +108,7 @@ const saved = (bagRows) => ({
   searches: [
     search('everyday', 'black oversized hoodie under $80', hoodies),
     search('different', 'cream linen midi dress for summer', dresses),
-    search('brand', 'vintage Prada bag under $500', bagRows)
+    search('designer', 'vintage Prada bag under $500', bagRows)
   ]
 });
 /* the collector runs as its own process; this one keeps serving the shop */

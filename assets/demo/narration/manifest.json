@@ -1,55 +1,87 @@
 {
   "voice": "Kokoro v1.0 af_heart",
-  "loudness": -20,
+  "loudness": -18,
   "lines": {
-    "looking": {
-      "text": "I’m looking for a black oversized hoodie under eighty dollars.",
-      "file": "looking.wav",
-      "duration": 3.057,
+    "hook": {
+      "text": "Ever know exactly what you want but not where to find it?",
+      "caption": "Ever know exactly what you want, but not where to find it?",
+      "file": "hook.wav",
+      "duration": 2.694,
       "speed": 1.0,
-      "longestGap": 0.1
+      "longestGap": 0.12,
+      "lufs": -18.2
     },
-    "options": {
-      "text": "And Fynd gives me a few different options to compare.",
-      "file": "options.wav",
-      "duration": 2.841,
+    "describe": {
+      "text": "Instead of checking a bunch of stores I can just describe it.",
+      "caption": "Instead of checking a bunch of stores, I can just describe it.",
+      "file": "describe.wav",
+      "duration": 2.757,
+      "speed": 1.0,
+      "longestGap": 0.08,
+      "lufs": -18.1
+    },
+    "hoodie": {
+      "text": "I need a black oversized hoodie but I don’t want to spend more than eighty dollars.",
+      "caption": "I need a black oversized hoodie, but I don’t want to spend more than $80.",
+      "file": "hoodie.wav",
+      "duration": 3.754,
       "speed": 1.02,
-      "longestGap": 0.2
+      "longestGap": 0.08,
+      "lufs": -18.0
     },
-    "browse": {
-      "text": "I can look through them and open whichever one I like.",
-      "file": "browse.wav",
-      "duration": 2.62,
-      "speed": 0.97,
-      "longestGap": 0.18
+    "stores": {
+      "text": "And these are all coming from different stores.",
+      "caption": "And these are all coming from different stores.",
+      "file": "stores.wav",
+      "duration": 2.197,
+      "speed": 0.98,
+      "longestGap": 0.06,
+      "lufs": -18.0
     },
     "retailer": {
-      "text": "That takes me straight to the retailer.",
+      "text": "Then I can open the exact product at the store selling it.",
+      "caption": "Then I can open the exact product at the store selling it.",
       "file": "retailer.wav",
-      "duration": 1.733,
+      "duration": 2.856,
       "speed": 1.0,
-      "longestGap": 0.04
+      "longestGap": 0.12,
+      "lufs": -18.0
+    },
+    "refine": {
+      "text": "And I can change the details without rebuilding a bunch of filters.",
+      "caption": "And I can change the details without rebuilding a bunch of filters.",
+      "file": "refine.wav",
+      "duration": 3.479,
+      "speed": 1.02,
+      "longestGap": 0.1,
+      "lufs": -18.0
     },
     "different": {
-      "text": "Let me try something completely different.",
+      "text": "Or maybe I’m looking for something completely different.",
+      "caption": "Or maybe I’m looking for something completely different.",
       "file": "different.wav",
-      "duration": 2.015,
-      "speed": 1.03,
-      "longestGap": 0.1
+      "duration": 2.794,
+      "speed": 1.0,
+      "longestGap": 0.1,
+      "lufs": -18.0
     },
-    "results": {
-      "text": "And now I get a whole different set of results.",
-      "file": "results.wav",
-      "duration": 2.445,
-      "speed": 0.99,
-      "longestGap": 0.16
-    },
-    "brand": {
-      "text": "I can search for a specific brand too.",
-      "file": "brand.wav",
-      "duration": 2.046,
+    "designer": {
+      "text": "I can even get more specific and search for a particular designer.",
+      "caption": "I can even get more specific and search for a particular designer.",
+      "file": "designer.wav",
+      "duration": 3.285,
       "speed": 1.02,
-      "longestGap": 0.08
+      "longestGap": 0.18,
+      "lufs": -18.0
+    },
+    "sentence": {
+      "text": "I don’t need any filters for this. I can say the whole thing in one sentence.",
+      "caption": "I don’t need any filters for this. I can say the whole thing in one sentence.",
+      "file": "sentence.wav",
+      "duration": 3.693,
+      "speed": 1.02,
+      "longestGap": 0.16,
+      "lufs": -18.0
     }
   }
 }

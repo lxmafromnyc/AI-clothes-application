@@ -14,7 +14,7 @@ export const PUBLIC = path.join(ROOT, 'public');
 
 /* the three searches the film is made of, by the slot the recorder
    saved them under */
-export const SLOTS = { everyday: 'hoodie', different: 'dress', brand: 'bag' };
+export const SLOTS = { everyday: 'hoodie', different: 'dress', designer: 'bag', brand: 'bag' };
 
 /* assets/app.js formatPrice: cents kept, whole amounts whole */
 export function formatPrice(value) {
