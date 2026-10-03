@@ -101,23 +101,18 @@
     <div class="results" id="results" hidden></div>
   </div>
 
-  <!-- One search, end to end, straight under the box it happens in:
-       describe it, Fynd understands it, Fynd finds it, open it at the
-       retailer. Silent, with the same four lines as captions.
+  <!-- One search, start to finish, straight under the box it happens
+       in: describe it, search, the results, one opened at its retailer.
+       Twenty seconds, silent, one short caption at a time. It steps
+       aside the moment a real search starts (assets/app.js), because the
+       results take its place.
 
        The recording answers from a stand-in product source, so the
-       listings in it are samples rather than live stock. The video says
-       so on every frame and the note under it says so in words: the
+       listings in it are samples rather than live stock. Its results are
+       marked as sample data and the note under it says so in words: the
        same rule the interface holds to for a sample row. -->
-  <section class="section section--flush" id="demo" aria-labelledby="demo-title">
+  <section class="section section--flush demo" id="demo" aria-label="Demo: one search, start to finish">
     <div class="container">
-      <div class="section-head">
-        <div>
-          <h2 id="demo-title">See it in action</h2>
-          <p>One search, start to finish, in about 25 seconds. No sound needed.</p>
-        </div>
-      </div>
-
       <figure class="demo-figure" id="demo-figure">
         <div class="demo-stage">
           <!-- preload="none": not one byte of video is fetched until
@@ -132,7 +127,7 @@
             data-poster="assets/demo/fynd-demo-poster.jpg"
             preload="none" muted loop playsinline controls
             aria-describedby="demo-note"
-            aria-label="Screen recording of Fynd: black oversized hoodie under $80 is typed into the search box, Fynd reads it as black, oversized, hoodie, under $80, four hoodies come back with their prices and retailers, and one opens on the retailer’s site.">
+            aria-label="Screen recording of Fynd: black oversized hoodie under $80 is typed into the search box, matching hoodies come back with their prices and retailers, and one of them is opened at its retailer.">
             <!-- WebM first: the smaller file, and the one a Chromium built
                  without proprietary codecs can play. Safari falls
                  through to the H.264. -->
@@ -175,9 +170,13 @@
           </button>
         </div>
 
+        <!-- What the recording is, written by scripts/record-demo.js each
+             time it makes one, so the words always match the video. -->
         <figcaption class="demo-note" id="demo-note">
+          <!-- demo-note -->
           <span class="status status--sample">Product demo</span>
           The listings are samples from a stand-in product source. The interface and the retailer links are real.
+          <!-- /demo-note -->
         </figcaption>
       </figure>
     </div>
