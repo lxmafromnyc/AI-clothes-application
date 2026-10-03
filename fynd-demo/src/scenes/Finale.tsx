@@ -22,7 +22,7 @@ export const Finale: React.FC<{ layout: Layout; frame: number; mosaic: Product[]
   const y0 = (H - (rows * tileH + (rows - 1) * gap)) / 2;
   const out = ease(frame, BEAT.finalText - 10, BEAT.finalText + 2);
   const text = uiSpring(frame, BEAT.finalText - 2, 14);
-  const mark = uiSpring(frame, BEAT.finalText + 4, 14);
+  const mark = uiSpring(frame, BEAT.finalText + 8, 12);
   return (
     <>
       {mosaic.map((p, i) => {

@@ -7,7 +7,8 @@ Checks a rendered film against what it was meant to be:
     starts (cross-correlation of each line's own clip against the mixed
     track: within one frame)
   - captions inside the film, never overlapping
-  - overall loudness
+  - the voice at about -18 LUFS, the music alone at about -27, and every
+    line at least 8 LU over the music
 
     python3 scripts/verify.py out/fynd-demo.mp4 [out/fynd-demo.vtt]
 
@@ -98,12 +99,33 @@ def main():
         if text != line['caption']:
             problems.append(f'caption {text!r} is not the line {line["caption"]!r}')
 
-    loud = subprocess.run(['ffmpeg', '-hide_banner', '-nostats', '-i', film, '-vn', '-af', 'ebur128', '-f', 'null', '-'],
-                          capture_output=True, text=True).stderr
-    m = re.findall(r'I:\s+(-?[\d.]+) LUFS', loud)
-    if m:
-        print(f'  loudness {m[-1]} LUFS integrated')
+    print(f'  whole mix   {lufs(film):.1f} LUFS integrated')
+
+    # the music must never compete with the speech: each line, heard in the
+    # mix, against the music alone (a stretch between the last line and the
+    # closing fade, where nothing else plays)
+    beats = [(start, start + line['durationInFrames'] / FPS) for line, (start, _, _) in zip(voice, cs)]
+    music_from = beats[-1][1] + 0.6
+    music_alone = lufs(film, music_from, 1.0)
+    print(f'  music alone {music_alone:.1f} LUFS ({music_from:.1f}-{music_from + 1:.1f}s)')
+    if not -32 <= music_alone <= -25:
+        problems.append(f'the music alone is {music_alone:.1f} LUFS, outside -32..-25')
+    for line, (a, b) in zip(voice, beats):
+        speech = lufs(film, a, b - a)
+        margin = speech - music_alone
+        print(f'  {line["id"]:12s} {speech:6.1f} LUFS in the mix, {margin:4.1f} LU over the music')
+        if not -21 <= speech <= -15:
+            problems.append(f'"{line["id"]}" is {speech:.1f} LUFS in the mix, not about -18')
+        if margin < 8:
+            problems.append(f'the music is within {margin:.1f} LU of "{line["id"]}"')
     return finish(problems)
+
+
+def lufs(path, start=None, length=None):
+    cut = ['-ss', f'{start:.3f}', '-t', f'{length:.3f}'] if start is not None else []
+    out = subprocess.run(['ffmpeg', '-hide_banner', '-nostats', *cut, '-i', path, '-vn', '-af', 'ebur128', '-f', 'null', '-'],
+                         capture_output=True, text=True).stderr
+    return float(re.findall(r'I:\s+(-?[\d.]+) LUFS', out)[-1])
 
 
 def finish(problems):

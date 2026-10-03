@@ -18,6 +18,11 @@ export type FilmProps = {
 };
 
 /* a fixture may link to http example pages; real products link to https */
+const PHOTO = /^products\/[\w.-]+\.(jpe?g|png|webp|avif)$/i;
+export const MIN_PHOTO_WIDTH = 320;
+export const hostOf = (url: string) => {
+  try { return new URL(url).hostname.replace(/^www\d?\./, ''); } catch (e) { return ''; }
+};
 const LINK = /^https?:\/\//;
 const HTTPS = /^https:\/\//;
 
@@ -34,6 +39,14 @@ export function validate(data: Captured, dataset: Dataset): string[] {
       if (!p.price) problems.push(`${who} has no price`);
       if (!(dataset === 'real' ? HTTPS : LINK).test(p.url)) problems.push(`${who} has no real product link`);
       if (!p.image) problems.push(`${who} has no photo`);
+      if (dataset === 'real') {
+        /* a real photo: downloaded by npm run collect from the URL the page
+           showed, a raster photograph, big enough, with its fingerprint */
+        if (!PHOTO.test(p.image)) problems.push(`${who}'s photo is not a downloaded product photograph (${p.image})`);
+        if (!p.photoUrl || !HTTPS.test(p.photoUrl)) problems.push(`${who} has no record of where its photo came from`);
+        if (!(p.imageWidth >= MIN_PHOTO_WIDTH)) problems.push(`${who}'s photo is ${p.imageWidth}px wide, under ${MIN_PHOTO_WIDTH}`);
+        if (!p.sha256) problems.push(`${who}'s photo has no fingerprint; run npm run collect again`);
+      }
     }
   }
   for (const id of ['hoodie', 'dress', 'bag']) if (!data.searches.some((s) => s.id === id)) problems.push(`no "${id}" search`);
@@ -43,6 +56,18 @@ export function validate(data: Captured, dataset: Dataset): string[] {
   if (hosts.size < 3) problems.push('products A, B and C must come from three different retailers');
   if (!(dataset === 'real' ? HTTPS : LINK).test(data.retailer.url)) problems.push('the retailer has no real URL');
   if (data.retailer.productId !== data.choose[2]) problems.push('the retailer is not product C\'s');
+  const c = byId.get(data.choose[2]);
+  if (c && c.url !== data.retailer.url) problems.push('the retailer URL is not the one Fynd returned for product C');
+  if (data.retailer.host !== hostOf(data.retailer.url)) problems.push(`the retailer host "${data.retailer.host}" is not the URL's own`);
+  /* a page is shown only if it loaded, and a page that loaded is shown */
+  const shots = Object.values(data.retailer.screenshots).filter(Boolean);
+  if (data.retailer.loaded && shots.length < 2) problems.push('the retailer page is marked loaded but its screenshots are missing');
+  if (!data.retailer.loaded && shots.length) problems.push('the retailer page did not load, yet screenshots are named for it');
+  if (data.retailer.loaded !== (data.retailer.outcome === 'loaded')) problems.push('the retailer outcome and loaded flag disagree');
+  if (dataset === 'real' && data.retailer.loaded) {
+    for (const f of shots) if (!/^retailer\/[\w-]+\.png$/.test(f as string)) problems.push(`retailer screenshot ${f} was not captured by npm run collect`);
+    if (!data.retailer.sha256) problems.push('the retailer screenshots have no fingerprints; run npm run collect again');
+  }
   for (const id of data.mosaic) if (!byId.has(id)) problems.push(`mosaic product ${id} is not in any search`);
   return problems;
 }

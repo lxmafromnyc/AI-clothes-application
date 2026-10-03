@@ -1,8 +1,10 @@
 /* 1 — Describe (0.0–5.0s)
 
-   The Fynd homepage as it is. The camera leans in a little toward the
-   box; a pointer comes in, clicks into it, hides while the request is
-   typed (as a real one does), comes back and presses Search. On a phone
+   The hook first, alone on white: "Looking for something specific?"
+   (0.0–1.2s). Then straight into the Fynd homepage as it is, the camera
+   settling onto the box; a pointer clicks into it, hides while the
+   request is typed (as a real one does) — "Just describe it." comes up
+   quietly above the heading — comes back and presses Search. On a phone
    there is no pointer: two taps. */
 import React from 'react';
 import { color, ui, type Layout } from '../styles/tokens';
@@ -18,11 +20,36 @@ import { SceneLabel } from '../components/SceneLabel';
 const EXAMPLES = ['linen shirt for a summer wedding', 'white sneakers under $120', 'wool coat for winter'];
 const PLACEHOLDER = 'black oversized hoodie under $80'; /* the site's own placeholder */
 
-/* the camera for this scene: a slow lean toward the box */
+/* the camera for this scene: the page arrives a touch close on the box
+   and settles, then a slow lean */
 export function describeView(layout: Layout, frame: number): View {
   const L = homeLayout(layout);
-  return zoomAbout(layout, centre(L.card), mix(1, 1.025, ease(frame, 0, 150)));
+  const s = frame < 70 ? mix(1.06, 1.025, ease(frame, BEAT.pageIn, 70)) : mix(1.025, 1.035, ease(frame, 70, 150));
+  return zoomAbout(layout, centre(L.card), s);
 }
+
+/* how far the homepage has come up under the hook */
+export const pageIn = (frame: number) => ease(frame, BEAT.pageIn, BEAT.pageIn + 9);
+
+/* the hook: the film's first words, on their own */
+const Hook: React.FC<{ layout: Layout; frame: number }> = ({ layout, frame }) => {
+  if (frame >= BEAT.pageIn) return null;
+  const desktop = layout === 'desktop';
+  const L = homeLayout(layout);
+  const inn = ease(frame, 0, 8);
+  const out = ease(frame, BEAT.hookOut, BEAT.pageIn);
+  return (
+    <div
+      style={{
+        position: 'absolute', left: 0, width: L.W, top: L.H * (desktop ? 0.45 : 0.42), textAlign: 'center',
+        transform: `translateY(calc(-50% + ${(1 - inn) * 6 - out * 10}px))`, opacity: inn * (1 - out),
+        fontSize: desktop ? 40 : 28, lineHeight: 1.15, fontWeight: 600, letterSpacing: desktop ? -1.0 : -0.6, color: color.text
+      }}
+    >
+      {desktop ? 'Looking for something specific?' : <>Looking for<br />something specific?</>}
+    </div>
+  );
+};
 
 export const Hero: React.FC<{ layout: Layout; text: string; caret: boolean; focus: number; pressed: number; heroOpacity?: number; cardOpacity?: number; textOpacity?: number }> = ({ layout, text, caret, focus, pressed, heroOpacity = 1, cardOpacity = 1, textOpacity = 1 }) => {
   const L = homeLayout(layout);
@@ -74,11 +101,12 @@ export const Describe: React.FC<{ layout: Layout; frame: number; query: string; 
   const pressed = Math.max(0, 1 - Math.abs(frame - (BEAT.searchClick + 1)) / 4);
 
   /* the scene hands over to Understand: the page goes, the request stays */
-  const heroOpacity = 1 - ease(frame, 145, 154);
-  const cardOpacity = 1 - ease(frame, 148, 157);
+  const arrive = pageIn(frame);
+  const heroOpacity = arrive * (1 - ease(frame, 145, 154));
+  const cardOpacity = arrive * (1 - ease(frame, 148, 157));
 
   /* the film's label, in the open space above the heading */
-  const labelOpacity = fadeInOut(frame, BEAT.labelIn, BEAT.labelIn + 12, 126, 140);
+  const labelOpacity = fadeInOut(frame, BEAT.labelIn, BEAT.labelIn + 14, 126, 140);
   const labelY = desktop ? Math.round((ui.desktop.header + L.h1.y) / 2) - 10 : Math.round((ui.mobile.header + L.h1.y) / 2) - 10;
 
   /* the pointer, in screen space through the same camera */
@@ -89,10 +117,10 @@ export const Describe: React.FC<{ layout: Layout; frame: number; query: string; 
   let shape: PointerShape = 'arrow';
   let pOpacity = 0;
   if (frame >= BEAT.cursorIn && frame < BEAT.fieldClick + 10) {
-    const t = ease(frame, BEAT.cursorIn, BEAT.fieldClick - 2);
+    const t = ease(frame, BEAT.cursorIn, BEAT.fieldClick - 1);
     p = pathPoint(enter, field, t);
     shape = t > 0.85 ? 'text' : 'arrow';
-    pOpacity = ease(frame, BEAT.cursorIn, BEAT.cursorIn + 5) * (1 - ease(frame, BEAT.fieldClick + 4, BEAT.fieldClick + 10));
+    pOpacity = arrive * (1 - ease(frame, BEAT.fieldClick + 4, BEAT.fieldClick + 10));
   } else if (frame >= BEAT.toSearch - 4) {
     const t = ease(frame, BEAT.toSearch, BEAT.searchClick - 3);
     const rest = { x: field.x + 40, y: field.y + 26 };
@@ -112,7 +140,8 @@ export const Describe: React.FC<{ layout: Layout; frame: number; query: string; 
         <Hero layout={layout} text={query.slice(0, count)} caret={caret} focus={focus} pressed={pressed} heroOpacity={heroOpacity} cardOpacity={cardOpacity} textOpacity={frame >= 150 ? 0 : 1} />
         {/* from 5.0s the request is carried by Understand, from this exact spot */}
       </div>
-      <SceneLabel text="Describe what you’re looking for." x={L.W / 2} y={labelY} opacity={labelOpacity} size={desktop ? 15 : 14} />
+      <Hook layout={layout} frame={frame} />
+      <SceneLabel text="Just describe it." x={L.W / 2} y={labelY} opacity={labelOpacity} size={desktop ? 15 : 14} />
       {desktop ? (
         <Pointer x={p.x} y={p.y} shape={shape} opacity={pOpacity} pressed={Math.min(1, clickPress)} />
       ) : (

@@ -12,10 +12,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';
-import { PUBLIC, REPO, attributesFrom, cardLines, formatPrice, localInterpreter } from './shared.mjs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { PUBLIC, REPO, ROOT, attributesFrom, cardLines, formatPrice, localInterpreter } from './shared.mjs';
+import { photoProblem } from './photos.mjs';
 import { loadTs, vtt } from './timeline.mjs';
 
-const { SCENES, BEAT, TOTAL, FPS, VOICE_AT, placeVoice, soundCues } = await loadTs('src/data/timeline.ts');
+const { SCENES, BEAT, TOTAL, FPS, VOICE_AT, MUSIC, placeVoice, soundCues, musicVolume } = await loadTs('src/data/timeline.ts');
 const { validate } = await loadTs('src/data/load.ts');
 const { typedFrames, typedCount } = await loadTs('src/lib/typing.ts');
 
@@ -34,7 +36,7 @@ test('five scenes, end to end, as locked', () => {
   ]);
 });
 test('every beat in order (one may start as another ends), inside the film', () => {
-  const order = ['labelIn', 'fieldClick', 'typeTo', 'searchClick', 'loadingFrom', 'queryLift', 'attrsFrom', 'compressFrom', 'compressTo', 'gridFull',
+  const order = ['hookOut', 'pageIn', 'fieldClick', 'labelIn', 'typeTo', 'searchClick', 'loadingFrom', 'queryLift', 'attrsFrom', 'compressFrom', 'compressTo', 'gridFull',
     'labelFrom', 'driftFrom', 'driftTo', 'emphasisA', 'emphasisB', 'emphasisC', 'emphasisEnd', 'bagFrom', 'returnTo', 'aMove', 'aHover', 'bMove', 'bHover',
     'cMove', 'cHover', 'click', 'handoff', 'frameIn', 'page', 'frameOut', 'mosaic', 'finalText', 'end'];
   for (let i = 1; i < order.length; i += 1) assert.ok(BEAT[order[i - 1]] <= BEAT[order[i]], `${order[i - 1]} (${BEAT[order[i - 1]]}) before ${order[i]} (${BEAT[order[i]]})`);
@@ -42,7 +44,8 @@ test('every beat in order (one may start as another ends), inside the film', () 
 });
 test('beats land where the locked timeline puts them', () => {
   const at = (s) => Math.round(s * FPS);
-  assert.equal(BEAT.labelIn, at(0.5)); assert.equal(BEAT.fieldClick, at(1.2)); assert.equal(BEAT.typeTo, at(4.0)); assert.equal(BEAT.searchClick, at(4.6));
+  /* the hook holds the first 1.2s alone; then straight into the box */
+  assert.ok(BEAT.hookOut >= at(1.0) && BEAT.pageIn <= at(1.2), 'the hook is alone for 0.0–1.2s, then the page'); assert.ok(BEAT.fieldClick <= at(1.4)); assert.ok(BEAT.labelIn <= at(2.0)); assert.equal(BEAT.typeTo, at(4.0)); assert.equal(BEAT.searchClick, at(4.6));
   assert.equal(BEAT.attrsFrom, at(5.5)); assert.equal(BEAT.compressFrom, at(6.8)); assert.equal(BEAT.resultsIn, at(7.6));
   assert.equal(BEAT.driftFrom, at(9.5)); assert.equal(BEAT.emphasisA, at(12.0)); assert.equal(BEAT.dressFrom, at(13.5)); assert.equal(BEAT.bagFrom, at(15.0));
   assert.equal(BEAT.aMove, at(17.3)); assert.equal(BEAT.bMove, at(19.2)); assert.equal(BEAT.cMove, at(20.8)); assert.equal(BEAT.click, at(22.4)); assert.equal(BEAT.handoff, at(23.0));
@@ -66,7 +69,7 @@ test('a line too long for its scene is refused', () => {
 test('no line is said before what it describes is on screen', () => {
   const beats = placeVoice(voice);
   const at = Object.fromEntries(beats.map((b) => [b.id, b.startFrame]));
-  assert.ok(at.looking >= BEAT.labelIn && at.looking < BEAT.typeTo);
+  assert.ok(at.looking >= BEAT.pageIn && at.looking < BEAT.typeTo);
   assert.ok(at.understands >= BEAT.queryLift);
   assert.ok(at.brings >= BEAT.gridFull);
   assert.ok(at.compare >= BEAT.returnTo);
@@ -86,6 +89,17 @@ test('captions follow the voice and never overlap', () => {
   });
   assert.ok(cues[cues.length - 1].end <= TOTAL / FPS);
 });
+test('the lines are the ones written for the film', () => {
+  assert.deepEqual(voice.map((v) => v.caption), [
+    'Looking for a black oversized hoodie under $80?',
+    'Fynd understands what you’re looking for.',
+    'And it brings back matching products from different retailers.',
+    'I can compare them and open the one I like.',
+    'And that takes me straight to the retailer.'
+  ]);
+  assert.equal(voice[0].spoken, 'Looking for a black oversized hoodie under eighty dollars?');
+  for (const v of voice) assert.ok(v.longestGap <= 0.25, `${v.id}: a ${v.longestGap}s pause`);
+});
 test('captions name Fynd as it is written; the voice is given "Find"', () => {
   for (const v of voice) assert.ok(!/\bFind\b/.test(v.caption), v.caption);
   assert.ok(voice.some((v) => /Fynd/.test(v.caption)));
@@ -96,11 +110,21 @@ console.log('real data only');
 const fixture = JSON.parse(fs.readFileSync(path.join(PUBLIC, 'data', 'captured.fixture.json'), 'utf8'));
 test('the fixture is fine for a preview', () => assert.deepEqual(validate(fixture, 'fixture'), []));
 test('the fixture is refused as a final', () => assert.match(validate(fixture, 'real').join('\n'), /not real/));
+/* the fixture, reshaped as real collected data would be */
 const real = (() => {
   const d = clone(fixture);
   d.source = 'real';
-  for (const s of d.searches) for (const p of s.products) p.url = p.url.replace('http:', 'https:');
+  for (const s of d.searches) {
+    for (const p of s.products) {
+      p.url = p.url.replace('http:', 'https:');
+      p.image = `products/${p.id}.jpg`;
+      p.photoUrl = `https://images.example.com/${p.id}.jpg`;
+      p.sha256 = 'f'.repeat(64);
+    }
+  }
   d.retailer.url = d.retailer.url.replace('http:', 'https:');
+  d.retailer.screenshots = { desktop: 'retailer/desktop.png', mobile: 'retailer/mobile.png' };
+  d.retailer.sha256 = { 'retailer/desktop.png': 'a', 'retailer/mobile.png': 'b' };
   return d;
 })();
 test('well-formed real data passes', () => assert.deepEqual(validate(real, 'real'), []));
@@ -116,6 +140,20 @@ refuses('A, B and C from fewer than three shops', (d) => { const h = d.searches[
 refuses('a retailer page that is not C\'s', (d) => { d.retailer.productId = d.choose[0]; }, /not product C/);
 refuses('a chosen product that is not a hoodie result', (d) => { d.choose[0] = d.searches[1].products[0].id; }, /not a hoodie result/);
 refuses('a missing search', (d) => { d.searches = d.searches.filter((s) => s.id !== 'bag'); }, /no "bag" search/);
+refuses('a drawn or placeholder image (SVG)', (d) => { d.searches[0].products[2].image = 'fixture/hoodie-3.svg'; }, /not a downloaded product photograph/);
+refuses('a photo with no record of where it came from', (d) => { delete d.searches[1].products[1].photoUrl; }, /no record of where its photo came from/);
+refuses('a photo too small to be sharp', (d) => { d.searches[2].products[0].imageWidth = 240; }, /240px wide/);
+refuses('a photo without its fingerprint', (d) => { delete d.searches[0].products[0].sha256; }, /no fingerprint/);
+refuses('a retailer URL that is not the one Fynd returned', (d) => { d.retailer.url = 'https://other.example.com/p'; d.retailer.host = 'other.example.com'; }, /not the one Fynd returned/);
+refuses('a retailer host that is not the URL\'s', (d) => { d.retailer.host = 'nicer-name.com'; }, /is not the URL's own/);
+refuses('a page shown though it did not load', (d) => { d.retailer.loaded = false; d.retailer.outcome = 'blocked'; }, /did not load, yet screenshots/);
+refuses('a page marked loaded with nothing captured', (d) => { d.retailer.screenshots = { desktop: null, mobile: null }; }, /screenshots are missing/);
+refuses('a retailer page not captured by the collector', (d) => { d.retailer.screenshots.desktop = 'fixture/retailer-desktop.svg'; }, /not captured by npm run collect/);
+test('a page that did not load is fine as a handoff', () => {
+  const d = clone(real);
+  d.retailer.loaded = false; d.retailer.outcome = 'blocked'; d.retailer.screenshots = { desktop: null, mobile: null }; delete d.retailer.sha256;
+  assert.deepEqual(validate(d, 'real'), []);
+});
 refuses('a mosaic product from nowhere', (d) => { d.mosaic.push('made-up'); }, /mosaic product made-up/);
 
 console.log('typing and sound');
@@ -136,6 +174,49 @@ test('one key sound per character, each cue a file', () => {
 test('no hover ticks on the phone, where nothing hovers', () => {
   assert.ok(soundCues(typed, 'desktop').some((c) => c.sound === 'hover'));
   assert.ok(!soundCues(typed, 'mobile').some((c) => c.sound === 'hover'));
+});
+
+console.log('real photographs');
+{
+  const dir = path.join(ROOT, 'out', 'photo-check');
+  fs.mkdirSync(dir, { recursive: true });
+  const make = (name, lavfi) => {
+    const f = path.join(dir, name);
+    execFileSync(process.env.FFMPEG_PATH || 'ffmpeg', ['-y', '-loglevel', 'error', '-f', 'lavfi', '-i', lavfi, '-frames:v', '1', f]);
+    return f;
+  };
+  const detailed = make('detailed.jpg', 'testsrc2=s=600x750');
+  test('a detailed raster photograph passes', () => assert.equal(photoProblem(detailed), null));
+  test('a flat colour tile is refused', () => assert.ok(photoProblem(make('flat.png', 'color=c=0x2b2b2e:s=600x750'))));
+  test('a smooth gradient placeholder is refused', () => assert.match(photoProblem(make('gradient.jpg', 'gradients=s=600x750:c0=0x2b2b2e:c1=0x4a4a50:seed=1')), /placeholder/));
+  test('a thumbnail too small to be sharp is refused', () => assert.match(photoProblem(make('small.jpg', 'testsrc2=s=200x250')), /200px wide/));
+  test('drawn artwork (SVG) is refused', () => assert.match(photoProblem(path.join(PUBLIC, 'fixture', 'hoodie-1.svg')), /not a photograph/));
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+
+console.log('music');
+test('the music bed exists and sits at about -27 LUFS', () => {
+  const file = path.join(PUBLIC, MUSIC.file);
+  assert.ok(fs.existsSync(file), 'run python3 scripts/music.py');
+  const out = spawnSync(process.env.FFMPEG_PATH || 'ffmpeg', ['-hide_banner', '-nostats', '-i', file, '-af', 'ebur128', '-f', 'null', '-'], { encoding: 'utf8' }).stderr;
+  const lufs = Number([...out.matchAll(/I:\s+(-?[\d.]+) LUFS/g)].pop()[1]);
+  assert.ok(lufs <= -26 && lufs >= -31, `${lufs} LUFS`);
+});
+test('the music ducks under every line and is full between them', () => {
+  const beats = placeVoice(voice);
+  for (const b of beats) {
+    const mid = b.startFrame + Math.floor(b.durationInFrames / 2);
+    assert.ok(musicVolume(mid, beats) <= MUSIC.duck + 0.01, `${b.id}: ${musicVolume(mid, beats)}`);
+    assert.ok(musicVolume(b.startFrame, beats) <= MUSIC.duck + 0.01, `${b.id} starts ducked`);
+  }
+  assert.ok(musicVolume(BEAT.dressFrom, beats) > 0.95, 'full between lines');
+});
+test('the music comes in softly and is gone by the last frame', () => {
+  const beats = placeVoice(voice);
+  assert.equal(musicVolume(0, beats), 0);
+  assert.ok(musicVolume(MUSIC.fadeIn, beats) > 0.95);
+  assert.ok(musicVolume(TOTAL - 1, beats) < 0.01);
+  assert.ok(musicVolume(BEAT.finalText, beats) < musicVolume(BEAT.mosaic - 30, beats));
 });
 
 console.log('the site’s own wording');

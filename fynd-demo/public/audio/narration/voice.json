@@ -2,10 +2,10 @@
   {
     "id": "looking",
     "file": "audio/narration/looking.wav",
-    "durationInFrames": 92,
-    "seconds": 3.058,
-    "caption": "I’m looking for a black oversized hoodie under $80.",
-    "spoken": "I’m looking for a black oversized hoodie under eighty dollars.",
+    "durationInFrames": 88,
+    "seconds": 2.909,
+    "caption": "Looking for a black oversized hoodie under $80?",
+    "spoken": "Looking for a black oversized hoodie under eighty dollars?",
     "speed": 1.0,
     "longestGap": 0.1
   },
@@ -13,40 +13,40 @@
     "id": "understands",
     "file": "audio/narration/understands.wav",
     "durationInFrames": 60,
-    "seconds": 1.979,
-    "caption": "Fynd understands what you’re asking for.",
-    "spoken": "Fynd understands what you’re asking for.",
+    "seconds": 1.97,
+    "caption": "Fynd understands what you’re looking for.",
+    "spoken": "Fynd understands what you’re looking for.",
     "speed": 1.0,
     "longestGap": 0.08
   },
   {
     "id": "brings",
     "file": "audio/narration/brings.wav",
-    "durationInFrames": 98,
-    "seconds": 3.263,
-    "caption": "And Fynd brings back matching products from different retailers.",
-    "spoken": "And Fynd brings back matching products from different retailers.",
+    "durationInFrames": 87,
+    "seconds": 2.885,
+    "caption": "And it brings back matching products from different retailers.",
+    "spoken": "And it brings back matching products from different retailers.",
     "speed": 0.98,
-    "longestGap": 0.1
+    "longestGap": 0.08
   },
   {
     "id": "compare",
     "file": "audio/narration/compare.wav",
-    "durationInFrames": 80,
-    "seconds": 2.655,
-    "caption": "I can compare the options and open the one I want.",
-    "spoken": "I can compare the options and open the one I want.",
+    "durationInFrames": 70,
+    "seconds": 2.307,
+    "caption": "I can compare them and open the one I like.",
+    "spoken": "I can compare them and open the one I like.",
     "speed": 0.97,
-    "longestGap": 0.08
+    "longestGap": 0.18
   },
   {
     "id": "straight",
     "file": "audio/narration/straight.wav",
-    "durationInFrames": 54,
-    "seconds": 1.792,
-    "caption": "And I can go straight to the retailer.",
-    "spoken": "And I can go straight to the retailer.",
+    "durationInFrames": 55,
+    "seconds": 1.825,
+    "caption": "And that takes me straight to the retailer.",
+    "spoken": "And that takes me straight to the retailer.",
     "speed": 1.0,
-    "longestGap": 0.06
+    "longestGap": 0.04
   }
 ]

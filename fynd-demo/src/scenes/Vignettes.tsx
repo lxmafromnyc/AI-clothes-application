@@ -3,11 +3,11 @@
    Each is its own results page as the site draws it: its heading, the
    request it answers, and its first real products. */
 import React from 'react';
-import { color, type Layout } from '../styles/tokens';
+import { color, ui, type Layout } from '../styles/tokens';
 import { BEAT } from '../data/timeline';
 import { ease, mix, uiSpring } from '../lib/motion';
 import { resultsLayout } from '../lib/layout';
-import { restView, viewTransform, zoomAbout } from '../lib/camera';
+import { clampView, placeY, restView, viewTransform, zoomAbout } from '../lib/camera';
 import { ProductCard } from '../components/ProductCard';
 import { ResultsHead } from '../components/ResultsHead';
 import type { Search } from '../data/types';
@@ -16,7 +16,10 @@ const Vignette: React.FC<{ layout: Layout; frame: number; from: number; to: numb
   if (frame < from || frame >= to + 12) return null;
   const R = resultsLayout(layout);
   const rest = restView(layout);
-  const view = zoomAbout(layout, { x: rest.cx, y: R.gridTop + 120 }, mix(1, 1.03, ease(frame, from, to)));
+  /* close on the photographs, the heading kept just under the site header */
+  const view = layout === 'desktop'
+    ? placeY(layout, clampView(layout, { s: mix(1.12, 1.16, ease(frame, from, to)), cx: rest.cx, cy: 0 }), R.h2.y, ui.desktop.header + 16)
+    : zoomAbout(layout, { x: rest.cx, y: R.gridTop + 120 }, mix(1, 1.03, ease(frame, from, to)));
   const out = exit ? 1 - ease(frame, to, to + 8) : 1;
   const ground = ease(frame, from, from + 5) * out;
   const content = ease(frame, from + 3, from + 9) * (exit ? 1 - ease(frame, to - 2, to + 3) : 1);

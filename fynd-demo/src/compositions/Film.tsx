@@ -12,7 +12,7 @@ import { ease } from '../lib/motion';
 import { Stage } from '../components/Stage';
 import { Header } from '../components/Header';
 import { BurnedCaption, Soundtrack } from '../components/Soundtrack';
-import { Describe } from '../scenes/Describe';
+import { Describe, pageIn } from '../scenes/Describe';
 import { Understand } from '../scenes/Understand';
 import { Products } from '../scenes/Products';
 import { Vignettes } from '../scenes/Vignettes';
@@ -38,7 +38,7 @@ export const Film: React.FC<FilmLayoutProps> = ({ layout, offset = 0, data, voic
   const mosaic = useMemo(() => data.mosaic.map((id) => productById(data, id)), [data]);
   const product = productById(data, chosen[2]);
 
-  const headerOpacity = 1 - ease(frame, BEAT.frameIn, BEAT.frameIn + 16);
+  const headerOpacity = pageIn(frame) * (1 - ease(frame, BEAT.frameIn, BEAT.frameIn + 16));
   const caption = beats.find((b) => frame >= b.startFrame && frame < b.startFrame + b.durationInFrames + 8);
 
   return (

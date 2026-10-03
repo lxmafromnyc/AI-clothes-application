@@ -1,12 +1,16 @@
-/* The sound: every voice line where the timeline puts it, and the few
-   quiet effects on the same clock. Nothing else — no music. */
+/* The sound: every voice line where the timeline puts it, the few quiet
+   effects on the same clock, and the music bed underneath, ducked under
+   the voice (timeline.ts musicVolume). */
 import React from 'react';
 import { Audio, Sequence, staticFile } from 'remotion';
 import type { VoiceBeat } from '../data/types';
-import type { Cue } from '../data/timeline';
+import { MUSIC, TOTAL, musicVolume, type Cue } from '../data/timeline';
 
 export const Soundtrack: React.FC<{ voice: VoiceBeat[]; cues: Cue[]; offset?: number }> = ({ voice, cues, offset = 0 }) => (
   <>
+    <Sequence from={-offset} durationInFrames={TOTAL} layout="none">
+      <Audio src={staticFile(MUSIC.file)} volume={(f) => musicVolume(f, voice)} />
+    </Sequence>
     {voice.map((v) => (
       <Sequence key={v.id} from={v.startFrame - offset} durationInFrames={v.durationInFrames + 6} layout="none">
         <Audio src={staticFile(v.audio)} />

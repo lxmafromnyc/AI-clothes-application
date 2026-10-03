@@ -22,10 +22,12 @@ export type SceneId = keyof typeof SCENES;
 /* frames are absolute (from the start of the film) */
 export const BEAT = {
   /* 1 — Describe */
-  labelIn: 15,              /* 0.5s  "Describe what you're looking for." */
-  cursorIn: 15,             /* 0.5s  cursor enters */
-  fieldClick: 36,           /* 1.2s */
-  typeFrom: 36,             /* 1.2–4.0s */
+  hookOut: 30,              /* 0.0–1.2s "Looking for something specific?" alone, gone by 1.2s */
+  pageIn: 36,               /* 1.2–1.47s then the homepage, never under the hook */
+  cursorIn: 30,             /* 1.0s  cursor enters */
+  fieldClick: 42,           /* 1.4s  straight into the box */
+  typeFrom: 42,             /* 1.4–4.0s */
+  labelIn: 50,              /* 1.7s  "Just describe it." */
   typeTo: 120,
   toSearch: 120,            /* 4.0s  cursor to Search */
   searchClick: 138,         /* 4.6s */
@@ -72,7 +74,7 @@ export const BEAT = {
 /* where each line is said: inside its scene, after what it describes has
    started on screen */
 export const VOICE_AT: Record<string, { scene: SceneId; frame: number }> = {
-  looking: { scene: 'describe', frame: 30 },      /* while the request is typed */
+  looking: { scene: 'describe', frame: 40 },      /* as the request is typed */
   understands: { scene: 'understand', frame: 160 },
   brings: { scene: 'results', frame: 262 },
   compare: { scene: 'choose', frame: 522 },
@@ -97,17 +99,38 @@ export type Cue = { at: number; sound: string; volume: number };
 /* a phone has no hover, so no hover ticks */
 export function soundCues(typedFrames: number[], layout: 'desktop' | 'mobile' = 'desktop'): Cue[] {
   const cues: Cue[] = [
-    ...typedFrames.map((at, i) => ({ at, sound: `key-${i % 4}`, volume: 0.22 })),
-    { at: BEAT.fieldClick, sound: 'click', volume: 0.35 },
-    { at: BEAT.searchClick, sound: 'click', volume: 0.45 },
-    { at: BEAT.attrsFrom + 12, sound: 'confirm', volume: 0.30 },
-    { at: BEAT.gridFull, sound: 'arrive', volume: 0.28 },
-    { at: BEAT.dressFrom, sound: 'arrive', volume: 0.16 },
-    { at: BEAT.bagFrom, sound: 'arrive', volume: 0.16 },
-    { at: BEAT.aHover, sound: 'hover', volume: 0.18 },
-    { at: BEAT.bHover, sound: 'hover', volume: 0.18 },
-    { at: BEAT.cHover, sound: 'hover', volume: 0.18 },
-    { at: BEAT.click, sound: 'select', volume: 0.42 }
+    ...typedFrames.map((at, i) => ({ at, sound: `key-${i % 4}`, volume: 0.13 })),
+    { at: BEAT.fieldClick, sound: 'click', volume: 0.24 },
+    { at: BEAT.searchClick, sound: 'click', volume: 0.30 },
+    { at: BEAT.attrsFrom + 12, sound: 'confirm', volume: 0.18 },
+    { at: BEAT.gridFull, sound: 'arrive', volume: 0.16 },
+    { at: BEAT.dressFrom, sound: 'arrive', volume: 0.09 },
+    { at: BEAT.bagFrom, sound: 'arrive', volume: 0.09 },
+    { at: BEAT.aHover, sound: 'hover', volume: 0.10 },
+    { at: BEAT.bHover, sound: 'hover', volume: 0.10 },
+    { at: BEAT.cHover, sound: 'hover', volume: 0.10 },
+    { at: BEAT.click, sound: 'select', volume: 0.28 }
   ];
   return layout === 'mobile' ? cues.filter((c) => c.sound !== 'hover') : cues;
+}
+
+/* The music bed: in softly under the hook, ducked about 6 dB whenever a
+   line is being said (eased in just ahead of the voice, eased out after
+   it), and faded to nothing by the last frame. The bed file itself is
+   made at -27 LUFS (scripts/music.py), so it sits around -27 between
+   lines and around -33 under them; the voice is at -18. */
+export const MUSIC = { file: 'audio/music/bed.wav', duck: 0.5, attack: 8, release: 14, fadeIn: 24, fadeOutFrom: 900 } as const;
+
+export function musicVolume(frame: number, beats: VoiceBeat[]): number {
+  const smooth = (t: number) => { const x = Math.min(1, Math.max(0, t)); return x * x * (3 - 2 * x); };
+  let duck = 0;
+  for (const b of beats) {
+    const end = b.startFrame + b.durationInFrames;
+    const into = smooth((frame - (b.startFrame - MUSIC.attack)) / MUSIC.attack);
+    const out = 1 - smooth((frame - end) / MUSIC.release);
+    duck = Math.max(duck, Math.min(into, out));
+  }
+  const fadeIn = smooth(frame / MUSIC.fadeIn);
+  const fadeOut = 1 - smooth((frame - MUSIC.fadeOutFrom) / (TOTAL - MUSIC.fadeOutFrom));
+  return (1 - (1 - MUSIC.duck) * duck) * fadeIn * fadeOut;
 }

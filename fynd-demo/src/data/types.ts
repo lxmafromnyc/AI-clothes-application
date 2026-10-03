@@ -13,6 +13,8 @@ export type Product = {
   imageWidth: number;
   imageHeight: number;
   url: string;          /* the real product link */
+  photoUrl?: string;    /* where the photo was downloaded from (real data) */
+  sha256?: string;      /* the photo's fingerprint at collection (real data) */
 };
 
 export type Attribute = { label: string; value: string };
@@ -36,6 +38,7 @@ export type Retailer = {
   screenshots: { desktop: string | null; mobile: string | null };
   loaded: boolean;
   outcome: string;      /* 'loaded', 'blocked', 'slow', … */
+  sha256?: Record<string, string>;   /* each screenshot's fingerprint (real data) */
   checkedAt: string;
 };
 

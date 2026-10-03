@@ -29,7 +29,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
+import { createHash } from 'node:crypto';
 import { PUBLIC, REPO, SLOTS, attributesFrom, cardLines, formatPrice, localInterpreter, writeJson } from './shared.mjs';
+import { MIN_WIDTH, photoProblem } from './photos.mjs';
 
 const args = Object.fromEntries(process.argv.slice(2).map((a) => {
   const m = /^--([^=]+)(?:=(.*))?$/.exec(a);
@@ -41,10 +43,11 @@ const { classifyPage, hostOf } = require(path.join(REPO, 'scripts', 'demo-retail
 
 /* how many photos per search the film can show */
 const NEED = { hoodie: 12, dress: 7, bag: 7 };
-/* film size: a grid card is 376px wide in the 1920 frame and C grows to
-   400; under MIN a photo would be blurred, under SHARP it is softened */
-const MIN_WIDTH = 320;
+/* film size: a grid card is 376px wide in the 1920 frame and grows to
+   about 470 in scene 3; under MIN_WIDTH (photos.mjs) a photo is refused,
+   under SHARP it is kept with a note that it will be a little soft */
 const SHARP_WIDTH = 470;
+const sha256 = (file) => createHash('sha256').update(fs.readFileSync(path.join(PUBLIC, file))).digest('hex');
 const ROWS_FOR_CHOICE = 8;
 
 function playwright() {
@@ -135,6 +138,9 @@ for (const id of ['hoodie', 'dress', 'bag']) {
     const w = got.size ? got.size.w : item.width;
     const h = got.size ? got.size.h : item.height;
     if (w < MIN_WIDTH) fail(`${who}: its photo is ${w}px wide — too small to be sharp in the film (needs ${MIN_WIDTH}+).`);
+    /* a real photograph, not a drawing, a placeholder or a blank tile */
+    const problem = photoProblem(path.join(PUBLIC, got.file));
+    if (problem) fail(`${who}: its photo ${problem}: ${item.photo}\n  Every product in the film must have a real photograph; run npm run demo:record for fresh results.`);
     if (w < SHARP_WIDTH) warnings.push(`${who}: photo ${w}px wide; it will be slightly soft at full size`);
     const lines = cardLines(item.rec);
     products.push({
@@ -148,6 +154,7 @@ for (const id of ['hoodie', 'dress', 'bag']) {
       imageHeight: h,
       url: item.href,
       photoUrl: item.photo,
+      sha256: sha256(got.file),
       check: item.check ? item.check.kind : null
     });
   }
@@ -202,6 +209,8 @@ for (const p of candidates) {
   if (r.kind === 'loaded') { c = p; page = r; break; }
 }
 if (!c) {
+  /* half a capture (one shape loaded, the other not) is not kept */
+  for (const f of fs.readdirSync(path.join(PUBLIC, 'retailer'))) fs.rmSync(path.join(PUBLIC, 'retailer', f));
   c = candidates[0] || firstOfShop[0];
   warnings.push(`no retailer page loaded; the film will show the handoff to ${c.url}`);
 }
@@ -232,6 +241,7 @@ const data = {
     screenshots: { desktop: page ? page.shots.desktop || null : null, mobile: page ? page.shots.mobile || null : null },
     loaded: Boolean(page),
     outcome: page ? 'loaded' : 'not loaded',
+    ...(page ? { sha256: Object.fromEntries(Object.values(page.shots).map((f) => [f, sha256(f)])) } : {}),
     checkedAt: new Date().toISOString()
   },
   mosaic

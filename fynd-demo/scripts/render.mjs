@@ -10,6 +10,7 @@
    npm run preview             half-size MP4s from the fixture, in out/preview/,
                                stamped PREVIEW · FIXTURE DATA
    options: --only=desktop|mobile  --scale=0.5  --frames=0-149  --burn-captions
+            --check   only check the data and photos; render nothing
 
    The same bundle, props and settings every time: the output depends on
    the data, the narration and the code, nothing else. */
@@ -17,7 +18,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { bundle } from '@remotion/bundler';
 import { renderMedia, renderStill, selectComposition } from '@remotion/renderer';
+import { createHash } from 'node:crypto';
 import { REPO, ROOT, writeJson } from './shared.mjs';
+import { photoProblem } from './photos.mjs';
 import { loadTs, vtt } from './timeline.mjs';
 
 const args = Object.fromEntries(process.argv.slice(2).map((a) => {
@@ -41,11 +44,28 @@ const { validate } = await loadTs('src/data/load.ts');
 const problems = validate(data, dataset);
 if (problems.length) fail(`The data is not fit to render:\n  - ${problems.join('\n  - ')}`);
 if (dataset === 'real') {
-  const missing = data.searches.flatMap((s) => s.products).map((p) => p.image)
-    .concat(Object.values(data.retailer.screenshots).filter(Boolean))
-    .filter((f) => !fs.existsSync(path.join(ROOT, 'public', f)));
-  if (missing.length) fail(`Files the data names are missing from public/: ${missing.slice(0, 5).join(', ')}`);
+  /* every product photo must be the real photograph collected for it:
+     a raster photo with real detail, unchanged since npm run collect */
+  const fingerprint = (f) => createHash('sha256').update(fs.readFileSync(path.join(ROOT, 'public', f))).digest('hex');
+  const bad = [];
+  for (const s of data.searches) {
+    for (const p of s.products) {
+      const file = path.join(ROOT, 'public', p.image);
+      const problem = photoProblem(file);
+      if (problem) bad.push(`"${s.query}" ${p.name}: photo ${problem}`);
+      else if (fingerprint(p.image) !== p.sha256) bad.push(`"${s.query}" ${p.name}: photo ${p.image} has changed since it was collected`);
+    }
+  }
+  /* the retailer page, if one is shown, is the page that was captured */
+  for (const f of Object.values(data.retailer.screenshots).filter(Boolean)) {
+    if (!fs.existsSync(path.join(ROOT, 'public', f))) bad.push(`retailer screenshot ${f} is missing`);
+    else if (!data.retailer.sha256 || fingerprint(f) !== data.retailer.sha256[f]) bad.push(`retailer screenshot ${f} has changed since it was captured`);
+  }
+  if (bad.length) fail(`Not everything in the film is the real material as collected; nothing was rendered:\n  - ${bad.join('\n  - ')}`);
+  console.log(`Checked ${data.searches.reduce((n, s) => n + s.products.length, 0)} product photos: all real, all as collected.`);
+  console.log(`Retailer: ${data.retailer.loaded ? `page captured from ${data.retailer.url}` : `page did not load; the film shows the handoff to ${data.retailer.url}`}`);
 }
+if (args.check) { console.log('\nThe data is fit to render.'); process.exit(0); }
 const voiceFile = path.join(ROOT, 'public', 'audio', 'narration', 'voice.json');
 if (!fs.existsSync(voiceFile)) fail('Run npm run narration first.');
 const voice = JSON.parse(fs.readFileSync(voiceFile, 'utf8'));

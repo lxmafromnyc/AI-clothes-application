@@ -55,6 +55,9 @@ scripts/
   make-fixture.mjs     a clearly labelled stand-in, for previews only
   narration.py         the voice (Kokoro, the recorder's settings) → public/audio/narration/
   sfx.mjs              synthesized effects → public/audio/sfx/
+  music.py             the music bed → public/audio/music/bed.wav
+  photos.mjs           is this file a real product photograph?
+  verify.py            checks a rendered film: sync, levels
   render.mjs           finals (real data only) and previews
   stills.mjs           full-size frames at every beat, with a contact sheet
   check.mjs            npm test
@@ -67,11 +70,20 @@ The UI is laid out at the site's real CSS width (1440 or 390) and zoomed to the 
 
 | Scene | Time | Frames | Voice |
 |---|---|---|---|
-| 1 Describe | 0.0–5.0s | 0–150 | "I'm looking for a black oversized hoodie under eighty dollars." |
-| 2 Understand | 5.0–8.5s | 150–255 | "Fynd understands what you're asking for." |
-| 3 Matching products | 8.5–16.5s | 255–495 | "And Fynd brings back matching products from different retailers." |
-| 4 Compare and choose | 16.5–25.5s | 495–765 | "I can compare the options and open the one I want." |
-| 5 Retailer | 25.5–32.0s | 765–960 | "And I can go straight to the retailer." |
+| 1 Describe | 0.0–5.0s | 0–150 | "Looking for a black oversized hoodie under eighty dollars?" |
+| 2 Understand | 5.0–8.5s | 150–255 | "Fynd understands what you're looking for." |
+| 3 Matching products | 8.5–16.5s | 255–495 | "And it brings back matching products from different retailers." |
+| 4 Compare and choose | 16.5–25.5s | 495–765 | "I can compare them and open the one I like." |
+| 5 Retailer | 25.5–32.0s | 765–960 | "And that takes me straight to the retailer." |
+
+The film opens on its hook, alone on white: **"Looking for something specific?"**
+(0.0–1.2s). Then it goes straight into the Fynd homepage and the search box. As the
+request is typed, **"Just describe it."** comes up quietly above the heading.
+
+In scene 3 the photographs are the hero. The camera holds the whole grid for a
+moment, then moves in slowly until the products fill most of the frame. The two
+other searches (the linen dress, the Prada bag) are cut in for 1.5s each, framed
+just as close.
 
 Every beat is a frame number in `src/data/timeline.ts`. The narration is placed
 against those beats; it never moves them. If a line is too long for its scene,
@@ -81,37 +93,76 @@ against those beats; it never moves them. If a line is too long for its scene,
 
 - `npm run collect` takes every product field from the API reply the real search
   got, and writes it the way the site writes it (`assets/app.js`).
-- Photos are downloaded from the exact URLs the page showed. Anything that is not
-  an image, or is under 320px wide, is refused.
+- Photos are downloaded from the exact URLs the page showed, and each one must be a
+  real photograph (`scripts/photos.mjs`). That means a raster photo, decodable,
+  at least 320px wide, with real detail in it. SVG, drawn artwork, flat colour tiles,
+  gradients and thumbnails are refused, and the collection stops.
+- Each photo's SHA-256 is recorded. A final render re-checks every product photo,
+  and refuses to render if any fails the photo check or has changed since collection.
+  The same applies to the retailer screenshots.
 - What Fynd read from the request comes from the saved `/api/interpret` reply. If the
   page read it locally, it comes from the site's own local interpreter instead.
 - A, B and C come from the first two rows, from three different shops. C's page is
   opened for real. If the recorder's `classifyPage` says it loaded (not a block or a
   bot check), it is captured at desktop and phone width.
-- If no page loads, the film shows the handoff: the product and its real address.
-  **A retailer page is never drawn.**
-- `src/data/load.ts` refuses to render a final from anything not marked real, or
-  with a missing price, photo, link or shop, or with A/B/C not from three shops.
+- If no page loads, the film shows the handoff: the product, "Opening", and the real
+  host and path. **A retailer page is never drawn.**
+- `src/data/load.ts` refuses to render a final in any of these cases:
+  - the data is not marked real;
+  - a product is missing a price, photo, https link or shop;
+  - a photo has no source URL or fingerprint;
+  - A, B and C are not from three different shops;
+  - the retailer URL is not the one Fynd returned for C;
+  - the host shown is not that URL's own;
+  - the page is shown as loaded when it did not load, or the other way round.
 - The preview fixture says FIXTURE on every photo, and the film stamps
   PREVIEW · FIXTURE DATA on every frame made from it.
 
 ### Sound
 
-The five voice lines (Kokoro v1.0 `af_heart`) are made the way the recorder's are:
+Three layers, at three levels:
+
+| Layer | Level | Source |
+|---|---|---|
+| Voice | about −18 LUFS | `npm run narration` |
+| Music | about −27 LUFS between lines, about −33 under them | `npm run music` |
+| Effects | very quiet | `npm run sfx` |
+
+**Voice.** The five lines (Kokoro v1.0 `af_heart`) are made the way the recorder's
+are, at −18 LUFS:
 - no commas inside a line;
-- trimmed and evened to −20 LUFS;
-- no pause over 0.3s;
+- no pause over 0.25s (none after "Looking for");
 - each one transcribed back with Whisper and required to match.
 
-"Fynd" is spelled "Find" for the voice only.
+"Fynd" is spelled "Find" for the voice only. The first line is a question, and its
+pitch rises at the end.
 
-The effects are synthesized and seeded: soft keys (one per typed character, from the
-same schedule that draws the text), a click, a two-note confirm, a breath of air as
-results arrive, a hover tick and a choosing click. There is no music.
+**Music.** A calm, warm instrumental bed, written and synthesized in
+`scripts/music.py`, so there is no licence to clear and it is identical on every run:
+- 90 BPM, 12 bars = exactly 32.0s;
+- a soft pad, a light electric-piano pattern, a round low bass, a brushed shaker;
+- no drums, no vocals, no lead.
+
+The film ducks it about 6 dB under every line, eased in just ahead of the voice
+(`musicVolume` in `src/data/timeline.ts`). It comes in softly under the hook and
+fades to nothing by the last frame.
+
+**Effects.** Synthesized and seeded, and kept very quiet:
+- soft keys, one per typed character, from the same schedule that draws the text;
+- a click, a two-note confirm, a breath of air as results arrive;
+- a hover tick (desktop only) and a choosing click.
 
 ```sh
 KOKORO_DIR=/path/to/kokoro-multi-lang-v1_0 WHISPER_DIR=/path/to/sherpa-onnx-whisper-base.en npm run narration
+npm run music
 ```
+
+After a render, `npm run verify -- out/fynd-demo.mp4` checks the result:
+- the length and frame rate;
+- that each line is heard on its caption's frame;
+- the voice level;
+- the music level on its own;
+- that every line is at least 8 LU over the music.
 
 ## Reviewing
 

@@ -55,10 +55,13 @@ export function productsCamera(layout: Layout, frame: number, chosen: number[]):
   const desktop = layout === 'desktop';
   const rest = restView(layout);
   const abc = union(chosen.map((i) => R.cardRect(i)));
+  /* the photographs are the scene: the whole grid for a moment, then one
+     slow, continuous move in until they fill most of the frame, drifting
+     along the row */
   const drift: View = desktop
-    ? clampView(layout, { s: 1.18, cx: 1440, cy: R.gridTop + R.cardH / 2 })
-    : { s: 1.1, cx: 195, cy: rest.cy + 70 };
-  const mark = frameRect(layout, abc, desktop ? { pad: 36, max: 1.18, min: 0.95 } : { pad: 14, max: 1.1, min: 0.82 });
+    ? clampView(layout, { s: 1.26, cx: 1440, cy: R.gridTop + R.mediaH * 0.58 })
+    : clampView(layout, { s: 1.12, cx: 195, cy: rest.cy + 86 });
+  const mark = frameRect(layout, abc, desktop ? { pad: 30, max: 1.26, min: 0.95 } : { pad: 14, max: 1.12, min: 0.82 });
   const keys: Array<[number, View]> = [
     [BEAT.driftFrom, rest],
     [BEAT.driftTo, drift],
@@ -110,7 +113,7 @@ export const Products: React.FC<{ layout: Layout; frame: number; search: Search;
   const clip = Math.min(1, Math.max(0, (h2.y - ui[layout].header - 2) / 10)) * Math.min(1, Math.max(0, (h2.x + 2) / 10));
   const headIn = ease(frame, BEAT.resultsIn, BEAT.resultsIn + 12) * clip;
   const queryIn = ease(frame, BEAT.resultsIn, BEAT.resultsIn + 10) * clip;
-  const label = fadeInOut(frame, BEAT.labelFrom, BEAT.labelFrom + 12, BEAT.labelTo - 12, BEAT.labelTo);
+  const label = fadeInOut(frame, BEAT.labelFrom, BEAT.labelFrom + 12, BEAT.labelTo - 12, BEAT.labelTo) * clip;
 
   return (
     <>

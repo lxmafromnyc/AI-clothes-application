@@ -13,7 +13,8 @@
     "typecheck": "tsc --noEmit",
     "test": "node scripts/check.mjs",
     "stills": "node scripts/stills.mjs",
-    "verify": "python3 scripts/verify.py"
+    "verify": "python3 scripts/verify.py",
+    "music": "python3 scripts/music.py"
   },
   "dependencies": {
     "@fontsource/inter": "5.3.0",
