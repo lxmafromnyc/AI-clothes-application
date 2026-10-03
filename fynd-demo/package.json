@@ -11,7 +11,7 @@
     "preview": "node scripts/render.mjs --preview",
     "render": "node scripts/render.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "node scripts/check.mjs",
+    "test": "node scripts/check.mjs && node scripts/test-collect.mjs",
     "stills": "node scripts/stills.mjs",
     "verify": "python3 scripts/verify.py",
     "music": "python3 scripts/music.py"

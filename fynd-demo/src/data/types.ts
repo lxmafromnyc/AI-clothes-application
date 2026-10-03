@@ -14,6 +14,8 @@ export type Product = {
   imageHeight: number;
   url: string;          /* the real product link */
   photoUrl?: string;    /* where the photo was downloaded from (real data) */
+  listedPhotoUrl?: string;   /* the photo the card showed, when a larger one of the same listing was used */
+  photoSource?: string; /* which of the listing's photos it is */
   sha256?: string;      /* the photo's fingerprint at collection (real data) */
 };
 
@@ -49,6 +51,7 @@ export type Captured = {
   choose: [string, string, string];   /* products A, B, C, from the hoodie search */
   retailer: Retailer;
   mosaic: string[];     /* product ids, from all three searches */
+  skipped?: Array<{ search: string; index: number; name: string; url: string; why: string }>;   /* results left out */
 };
 
 export type VoiceLine = {

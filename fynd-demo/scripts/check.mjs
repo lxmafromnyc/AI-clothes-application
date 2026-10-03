@@ -15,6 +15,7 @@ import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { PUBLIC, REPO, ROOT, attributesFrom, cardLines, formatPrice, localInterpreter } from './shared.mjs';
 import { photoProblem } from './photos.mjs';
+import { fullSizeRenditions } from './photo-source.mjs';
 import { loadTs, vtt } from './timeline.mjs';
 
 const { SCENES, BEAT, TOTAL, FPS, VOICE_AT, MUSIC, placeVoice, soundCues, musicVolume } = await loadTs('src/data/timeline.ts');
@@ -114,6 +115,7 @@ test('the fixture is refused as a final', () => assert.match(validate(fixture, '
 const real = (() => {
   const d = clone(fixture);
   d.source = 'real';
+  for (const p of d.searches.find((s) => s.id === 'bag').products) p.name = `Prada ${p.name}`;
   for (const s of d.searches) {
     for (const p of s.products) {
       p.url = p.url.replace('http:', 'https:');
@@ -154,6 +156,7 @@ test('a page that did not load is fine as a handoff', () => {
   d.retailer.loaded = false; d.retailer.outcome = 'blocked'; d.retailer.screenshots = { desktop: null, mobile: null }; delete d.retailer.sha256;
   assert.deepEqual(validate(d, 'real'), []);
 });
+refuses('a non-Prada product in the Prada search', (d) => { const p = d.searches.find((s) => s.id === 'bag').products[1]; p.brand = 'Gucci'; p.name = 'Jackie 1961 bag'; }, /not a Prada product/);
 refuses('a mosaic product from nowhere', (d) => { d.mosaic.push('made-up'); }, /mosaic product made-up/);
 
 console.log('typing and sound');
@@ -193,6 +196,22 @@ console.log('real photographs');
   test('drawn artwork (SVG) is refused', () => assert.match(photoProblem(path.join(PUBLIC, 'fixture', 'hoodie-1.svg')), /not a photograph/));
   fs.rmSync(dir, { recursive: true, force: true });
 }
+
+test('a photo too small for the film is looked for at its full size on the same server, never asked for bigger', () => {
+  const eq = (url, want) => assert.deepEqual(fullSizeRenditions(url), want, url);
+  eq('https://cdn.shop.com/p/bag.jpg?width=194&height=243&format=webp', ['https://cdn.shop.com/p/bag.jpg?format=webp']);
+  eq('https://shop.com/cdn/shop/files/bag_200x.jpg?v=1', ['https://shop.com/cdn/shop/files/bag.jpg?v=1']);
+  eq('https://m.media-amazon.com/images/I/81abc._AC_SX200_.jpg', ['https://m.media-amazon.com/images/I/81abc.jpg']);
+  eq('https://i.ebayimg.com/images/g/AbC/s-l225.jpg', ['https://i.ebayimg.com/images/g/AbC/s-l1600.jpg']);
+  eq('https://res.cloudinary.com/x/image/upload/w_200,h_250,c_fill/v1/bag.jpg', ['https://res.cloudinary.com/x/image/upload/v1/bag.jpg']);
+  eq('https://cdn.shop.com/p/bag.jpg', []);
+  for (const u of ['https://cdn.shop.com/p/bag.jpg?width=194', 'https://shop.com/cdn/bag_200x.jpg']) {
+    for (const r of fullSizeRenditions(u)) {
+      assert.equal(new URL(r).hostname, new URL(u).hostname, 'same server');
+      assert.ok(!/[?&](w|width|wid)=\d{3,}/.test(r), 'never asks for a bigger size');
+    }
+  }
+});
 
 console.log('music');
 test('the music bed exists and sits at about -29 LUFS', () => {

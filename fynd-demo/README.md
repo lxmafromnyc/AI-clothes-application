@@ -28,7 +28,7 @@ cd fynd-demo
 npm install
 npm run collect
 
-# 3. check, then render
+# 3. check (the collector's own test runs against a local stand-in shop), then render
 npm test
 npm run render                 # → out/fynd-demo.{mp4,webm,vtt}, out/fynd-demo-poster.jpg, and the -mobile set
 npm run render -- --publish    # the same, then copied into ../assets/demo/ for the site
@@ -97,6 +97,24 @@ against those beats; it never moves them. If a line is too long for its scene,
   real photograph (`scripts/photos.mjs`). That means a raster photo, decodable,
   at least 320px wide, with real detail in it. SVG, drawn artwork, flat colour tiles,
   gradients and thumbnails are refused, and the collection stops.
+- When a card's photo is under 320px, the collector looks for a larger real photo of
+  **the same listing only** (`scripts/photo-source.mjs`), in this order:
+  1. the same photo at its full size, from the same server: the size the CDN was
+     asked for (`?width=194`, Shopify `_200x`, Amazon `._SX200_`, eBay `s-l225`,
+     Cloudinary `w_200`) is taken out of the address, and a bigger size is never
+     asked for;
+  2. the product record's own photo;
+  3. the photos the listing's own page declares. Only those Fynd's catalogue gates
+     accept, unchanged, are used: https, not a logo, and proven to be this product's.
+
+  Each candidate must pass the same real-photo test. The product's name, price,
+  link and shop are never changed, and the photo actually used and the card's
+  original are both recorded (`photoUrl`, `listedPhotoUrl`, `photoSource`). If no
+  real photo of 320px+ exists, the product is left out, recorded under `skipped`
+  in `captured.json`, and the next result takes its place. Nothing is upscaled,
+  redrawn or swapped for another product.
+- The Prada search shows only results that name Prada. Each search needs enough
+  results that pass every gate (hoodie 8, dress 4, bag 4), or the collection stops.
 - Each photo's SHA-256 is recorded. A final render re-checks every product photo,
   and refuses to render if any fails the photo check or has changed since collection.
   The same applies to the retailer screenshots.

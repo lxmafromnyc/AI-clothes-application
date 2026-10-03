@@ -50,6 +50,12 @@ export function validate(data: Captured, dataset: Dataset): string[] {
     }
   }
   for (const id of ['hoodie', 'dress', 'bag']) if (!data.searches.some((s) => s.id === id)) problems.push(`no "${id}" search`);
+  /* the Prada search shows Prada: every product in it says so itself */
+  const bag = data.searches.find((s) => s.id === 'bag');
+  if (dataset === 'real' && bag) {
+    for (const p of bag.products) if (!/\bprada\b/i.test(`${p.brand} ${p.name}`)) problems.push(`"${bag.query}" → ${p.id} ("${p.name}") is not a Prada product`);
+    if (bag.products.length < 4) problems.push(`"${bag.query}" has fewer than four products to show`);
+  }
   const hoodie = data.searches.find((s) => s.id === 'hoodie');
   for (const id of data.choose) if (!hoodie || !hoodie.products.some((p) => p.id === id)) problems.push(`chosen product ${id} is not a hoodie result`);
   const hosts = new Set(data.choose.map((id) => byId.get(id)?.retailer));
