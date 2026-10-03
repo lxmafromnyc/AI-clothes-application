@@ -204,6 +204,10 @@ const MIN_LOADING_MS = 700;
    the first pass, and how long the retailer's tab stays on camera */
 const PROBE_PRODUCTS = 8;
 const RETAILER_MS = 2100;
+/* how much of that hold the video shows: the page is still checked at
+   the end of the whole hold, after the video has moved on, so nothing
+   shown can be a page that failed */
+const RETAILER_SHOWN_MS = 1800;
 
 /* The one test a retailer page is held to, off camera and on alike: it
    arrives within RETAILER_LOAD_MS, is itself RETAILER_SETTLE_MS later,
@@ -569,9 +573,9 @@ function overlay(touch) {
    page itself: enough products, every one a real listing, every photo a
    real photograph that actually loaded. Returns what it found, so a
    failure can say exactly which product it was. */
-async function checkResults(page) {
-  return page.evaluate(async () => {
-    const deadline = Date.now() + 25000;
+async function checkResults(page, { settle = true } = {}) {
+  return page.evaluate(async (waitForPhotos) => {
+    const deadline = waitForPhotos ? Date.now() + 25000 : 0;
     const cards = () => [...document.querySelectorAll('#results .grid .item-card')];
     const settled = () => cards().every((c) => {
       const img = c.querySelector('.item-media img');
@@ -599,7 +603,7 @@ async function checkResults(page) {
         loaded: Boolean(img && img.complete && img.naturalWidth > 0)
       };
     });
-  });
+  }, settle);
 }
 
 function verdict(found) {
@@ -1218,7 +1222,7 @@ async function record(chromium, shot, rawDir, stillsDir) {
     await wait(50);
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
     await page.evaluate(([x, y]) => window.demo.touchAt(x, y, false), [p.x + drift, p.y - pixels]);
-    await wait(500);
+    await wait(300);
   }
 
   async function press(point) {
@@ -1289,9 +1293,13 @@ async function record(chromium, shot, rawDir, stillsDir) {
       && document.querySelector('#results .grid .item-card'), null, { timeout: 20000 });
     /* the page scrolls itself to the results; let that land */
     await wait(first ? 500 : 400);
-    const onScreen = await checkResults(page);
-    const problems = verdict(onScreen);
-    if (problems.length) fail(`On camera, the results for "${s.query}" were not all real and loaded:\n  - ${problems.join('\n  - ')}`);
+    /* The check that every product on camera is real and every photo
+       loaded runs while the results are looked at and the retailer's
+       page is open, rather than holding the camera on a still page: it
+       is answered below, off camera, and a failure stops the run with
+       nothing written, exactly as before. */
+    const proof = checkResults(page).catch((err) => ({ error: err }));
+    const onScreen = await checkResults(page, { settle: false });
     marks[`results${n}`] = now();
 
     if (first) {
@@ -1344,7 +1352,7 @@ async function record(chromium, shot, rawDir, stillsDir) {
       if (!(await inView()).has(pick)) {
         const r = await page.locator(`${card} .item-media`).boundingBox();
         await scrollBy(Math.max(80, r.y + r.height - viewH + 60));
-        await wait(rand.between(250, 400));
+        await wait(rand.between(150, 250));
       }
       const media = await box(`${card} .item-media`);
       const cardSpot = spotIn(media, 0.5, 0.45);
@@ -1361,7 +1369,7 @@ async function record(chromium, shot, rawDir, stillsDir) {
       } else if (shot.touch) {
         /* no pointer to watch travel on a phone: the look before the tap
            is the beat that shows the choice */
-        await wait(rand.between(650, 850));
+        await wait(rand.between(500, 650));
       } else {
         await moveTo(cardSpot);
         await wait(rand.between(150, 260));
@@ -1396,7 +1404,8 @@ async function record(chromium, shot, rawDir, stillsDir) {
 
       if (result.ok) {
         cut.push({ src: 'main', from: segFrom, to: clickedAt + 0.25 });
-        cut.push({ src: 'tab', tab: tabs.length, born, from: Math.max(born, (result.shownAt - pageBorn) / 1000 - 0.15), to: gone });
+        const arrived = (result.shownAt - pageBorn) / 1000;
+        cut.push({ src: 'tab', tab: tabs.length, born, gone, from: Math.max(born, arrived - 0.15), to: Math.min(gone, arrived + RETAILER_SHOWN_MS / 1000) });
         tabs.push(video);
         used.add(hostOf(landed) || hostOf(chosen.href));
         picks.push({ search: n + 1, query: s.query, ...pickedOf(chosen), opened: landed, shown: true, attempt });
@@ -1414,6 +1423,15 @@ async function record(chromium, shot, rawDir, stillsDir) {
         segFrom = now();
       }
     }
+
+    /* --- the photo check's answer, off camera ------------------------- */
+
+    const waitedFrom = Date.now();
+    const proved = await proof;
+    if (proved.error) fail(`On camera, the results for "${s.query}" could not be checked: ${proved.error.message}`);
+    const problems = verdict(proved);
+    if (process.env.DEMO_DEBUG) console.log(`  ${shot.name} search ${n + 1}: the photo check answered ${Date.now() - waitedFrom}ms after the retailer's page`);
+    if (problems.length) fail(`On camera, the results for "${s.query}" were not all real and loaded:\n  - ${problems.join('\n  - ')}`);
 
     /* --- back to the top of Fynd, off camera --------------------------- */
 
@@ -1487,7 +1505,9 @@ function lengthOf(file) {
 function cutMap(cut, k, tabLens = []) {
   const pieces = cut.map((c) => {
     if (c.src === 'main') return { ...c, input: 0, start: c.from * k, end: c.to * k };
-    const tabWall = Math.max(0.01, c.to - c.born);
+    /* the tab's video runs from `born` to `gone`; the piece shown may
+       end before it does */
+    const tabWall = Math.max(0.01, (c.gone || c.to) - c.born);
     const kt = (tabLens[c.tab] || tabWall) / tabWall;
     return { ...c, input: 1 + c.tab, start: (c.from - c.born) * kt, end: Math.min(tabLens[c.tab] || Infinity, (c.to - c.born) * kt) };
   }).filter((p) => p.end > p.start);
@@ -1753,5 +1773,5 @@ async function main() {
    starting anything */
 if (require.main === module) main();
 
-module.exports = { LIMITS, withDeadline, probeRetailers, preflightRetailers, retailerShows, handoffAllowed, visitRetailer, RETAILER_LOAD_MS, RETAILER_SETTLE_MS, MAX_HANDOFFS, ffprobeFor, durationCommand, SEARCHES, requestsFor, instability, howFound, recordingReport, RETRY_DELAYS_MS, loadEnv, MIN_PRODUCTS, verdict, fitness, pickProduct, budgetOf, priceOf, mentionOf, cutMap, savedProblem, narrationNeeded };
+module.exports = { RETAILER_MS, RETAILER_SHOWN_MS, LIMITS, withDeadline, probeRetailers, preflightRetailers, retailerShows, handoffAllowed, visitRetailer, RETAILER_LOAD_MS, RETAILER_SETTLE_MS, MAX_HANDOFFS, ffprobeFor, durationCommand, SEARCHES, requestsFor, instability, howFound, recordingReport, RETRY_DELAYS_MS, loadEnv, MIN_PRODUCTS, verdict, fitness, pickProduct, budgetOf, priceOf, mentionOf, cutMap, savedProblem, narrationNeeded };
 

@@ -30,7 +30,7 @@ const {
   budgetOf, priceOf, mentionOf, cutMap, savedProblem, narrationNeeded,
   requestsFor, instability, howFound, recordingReport, RETRY_DELAYS_MS, loadEnv,
   handoffAllowed, visitRetailer, RETAILER_LOAD_MS, MAX_HANDOFFS,
-  LIMITS, withDeadline, probeRetailers, preflightRetailers
+  LIMITS, withDeadline, probeRetailers, preflightRetailers, RETAILER_MS, RETAILER_SHOWN_MS
 } = require('./record-demo');
 const http = require('http');
 const store = require('../api/_store');
@@ -499,6 +499,25 @@ test('Fynd, retailer, Fynd: lengths add up and lines land where they were said',
   assert.ok(Math.abs(at(14.6) - 10.8) < 1e-9);
   assert.ok(Math.abs(at(20) - (10.8 + 4.5)) < 1e-9);
   assert.ok(Math.abs(at(99) - total) < 1e-9);
+});
+
+test('the video shows less of a retailer page than the check holds it for, never more', () => {
+  assert.strictEqual(LIMITS.hold, RETAILER_MS, 'the check still holds for the full time');
+  assert.ok(RETAILER_SHOWN_MS <= RETAILER_MS);
+  assert.ok(RETAILER_SHOWN_MS >= 1500, `a retailer page needs time to be seen (${RETAILER_SHOWN_MS}ms)`);
+});
+
+test('a retailer piece that ends before its tab closed is cut at its own end, on the tab clock', () => {
+  /* the tab's video runs 3s of wall clock (born 10, gone 13) in 2.7s of
+     video; only 10.5–12.3 is shown */
+  const { pieces, total, at } = cutMap([
+    { src: 'main', from: 0, to: 10 },
+    { src: 'tab', tab: 0, born: 10, gone: 13, from: 10.5, to: 12.3 },
+    { src: 'main', from: 13.5, to: 20 }
+  ], 1, [2.7]);
+  assert.ok(Math.abs(pieces[1].start - 0.45) < 1e-9 && Math.abs(pieces[1].end - 2.07) < 1e-9, `${pieces[1].start}–${pieces[1].end}`);
+  assert.ok(Math.abs(total - (10 + 1.62 + 6.5)) < 1e-9, `total ${total}`);
+  assert.ok(Math.abs(at(12.8) - 11.62) < 1e-9, 'the rest of the hold is cut');
 });
 
 test('a retailer tab that was not shown leaves a plain cut between two Fynd pieces', () => {

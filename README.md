@@ -1720,8 +1720,12 @@ main thread, say), is a failed retailer: excluded, and the next one is checked.
 The preflight says so line by line: `mobile preflight 3/16: checking
 shop.example`, then `mobile preflight 3/16: timed out — excluded: shop.example
 (…)` or `passed — shop.example`. The video shows the retailer's
-tab for about two seconds once the page has arrived; the wait for it to arrive
-is cut. The recording report lists, per search and per layout, the product and
+tab for 1.8 seconds once the page has arrived; the wait for it to arrive is cut,
+and the page is still checked at the end of the full 2.1-second hold, after the
+video has moved on, so nothing shown can be a page that failed. The check that
+every product on camera is real and every photo loaded runs while the results
+are looked at and the retailer's page is open, rather than holding the camera
+on a still page; a failure still stops the run with nothing written. The recording report lists, per search and per layout, the product and
 retailer opened, any product the preflight left out, and any click that was cut,
 and ends by saying whether every click reached its retailer. The note under the
 video on the
