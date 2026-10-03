@@ -1,0 +1,98 @@
+{
+  "searchedAt": "2026-10-03T01:44:31.333Z",
+  "searches": [
+    {
+      "query": "black oversized hoodie under $80",
+      "products": 8,
+      "retailers": [
+        "hm.com",
+        "oldnavy.gap.com",
+        "hollisterco.com",
+        "abercrombie.com",
+        "uniqlo.com",
+        "gap.com",
+        "nordstrom.com"
+      ]
+    },
+    {
+      "query": "cream linen midi dress for summer",
+      "products": 12,
+      "retailers": [
+        "gap.com",
+        "marinelayer.com",
+        "quince.com",
+        "loft.com",
+        "abercrombie.com",
+        "zara.com",
+        "visibleartshop.com",
+        "freepeople.com",
+        "madewell.com",
+        "dissh.com"
+      ]
+    },
+    {
+      "query": "vintage Prada bag under $500",
+      "products": 12,
+      "retailers": [
+        "mercari.com",
+        "fatherofvintage.com",
+        "grailed.com",
+        "poshmark.com",
+        "ebay.com",
+        "depop.com"
+      ]
+    }
+  ],
+  "recordings": [
+    {
+      "file": "fynd-demo.mp4",
+      "seconds": 61.2,
+      "opened": [
+        {
+          "search": "black oversized hoodie under $80",
+          "product": "Old Navy Men's Rotation Hoodie",
+          "retailer": "oldnavy.gap.com",
+          "url": "https://oldnavy.gap.com/browse/product.do?pid=788637022&vid=2&tid=onns000009#pdp-page-content"
+        },
+        {
+          "search": "black oversized hoodie under $80",
+          "product": "UNIQLO Men's Sweat Oversized Pullover Hoodie",
+          "retailer": "uniqlo.com",
+          "url": "https://www.uniqlo.com/us/en/products/E471808-000/00?colorDisplayCode=09&sizeDisplayCode=003&srsltid=AU7gw4XDvSzeCe0GTbh5l9v6Z2zLo7RNC14ImsqGp4H6oMMRWAIf3TyIHCY"
+        },
+        {
+          "search": "cream linen midi dress for summer",
+          "product": "Women's Linen-Blend Midi Shirtdress by Gap",
+          "retailer": "gap.com",
+          "url": "https://www.gap.com/browse/product.do?pid=830644002&vid=1&tid=gpns000044#pdp-page-content"
+        }
+      ],
+      "skipped": []
+    },
+    {
+      "file": "fynd-demo-mobile.mp4",
+      "seconds": 65.5,
+      "opened": [
+        {
+          "search": "black oversized hoodie under $80",
+          "product": "Old Navy Men's Rotation Hoodie",
+          "retailer": "oldnavy.gap.com",
+          "url": "https://oldnavy.gap.com/browse/product.do?pid=788637022&vid=2&tid=onns000009#pdp-page-content"
+        },
+        {
+          "search": "black oversized hoodie under $80",
+          "product": "UNIQLO Men's Sweat Oversized Pullover Hoodie",
+          "retailer": "uniqlo.com",
+          "url": "https://www.uniqlo.com/us/en/products/E471808-000/00?colorDisplayCode=09&sizeDisplayCode=003&srsltid=AU7gw4XDvSzeCe0GTbh5l9v6Z2zLo7RNC14ImsqGp4H6oMMRWAIf3TyIHCY"
+        },
+        {
+          "search": "cream linen midi dress for summer",
+          "product": "Women's Linen-Blend Midi Shirtdress by Gap",
+          "retailer": "gap.com",
+          "url": "https://www.gap.com/browse/product.do?pid=830644002&vid=1&tid=gpns000044#pdp-page-content"
+        }
+      ],
+      "skipped": []
+    }
+  ]
+}

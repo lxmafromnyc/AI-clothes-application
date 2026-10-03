@@ -43,7 +43,7 @@ page, the examples, the steps and the retailer labels.
 
 | Page | File | What it does |
 | --- | --- | --- |
-| Home | `index.html` | States the value proposition, carries the search itself directly under the headline, shows one search happening in the demo video directly under the search, and then how Fynd works and what an answer looks like |
+| Home | `index.html` | States the value proposition, carries the search itself directly under the headline, shows Fynd being used in the demo video directly under the search, and then how Fynd works and what an answer looks like |
 | Find Clothes | `find-clothes.html` | The same search, with nothing else on the page |
 | Discover | `discover.html` | Browse the catalogue, filtered by style |
 | Pricing | `pricing.html` | The three plans, which one you are on, and the way to change it |
@@ -123,7 +123,7 @@ assets/products.js      data layer: normalises any source into one schema
 assets/catalog.js       demo product source, replaceable by a real feed
 assets/demo-video.js    lazy-loads the landing page demo, and decides autoplay
 assets/demo/            the demo recording: two shapes, two codecs, two posters
-scripts/record-demo.js  records the demo from a real search, end to end
+scripts/record-demo.js  records the demo from four real searches, end to end
 scripts/demo-narration.py  speaks the demo's narration lines
 assets/interpret.js     sends the request to the endpoint; local fallback
 assets/app.js           rendering and page behaviour
@@ -1614,18 +1614,57 @@ garment categories fall back to neutral artwork rather than breaking.
 ## The demo video
 
 The landing page carries a short screen recording directly under the search
-(`#demo` in `index.html`): a person using Fynd for the first time, with a calm
-narration. It is compact, narrower than the page, and steps aside as soon as a
+(`#demo` in `index.html`): a person using Fynd for four genuinely different
+shopping problems, one after another, with a calm narration, in about 55
+seconds. The point it makes: instead of searching store after store, describe
+whatever you are after and Fynd finds the products. It steps aside as soon as a
 real search starts, because the results take its place.
 
-| | On screen | Narration / caption |
+| | Request typed | Narration / caption |
 | --- | --- | --- |
-| Homepage | the page as visitors get it; a moment before anything happens | — |
-| Describe | the pointer goes to the box and the request is typed, at a person's pace | "I'm looking for a black oversized hoodie, under eighty dollars." |
-| Search | Search is clicked; the site's own "Searching…" state | — |
-| Results | the real products: photos, brands, names, prices, retailers; a small scroll | "Fynd finds matching products from different retailers." |
-| Retailer | the pointer settles on one product and clicks it; the retailer's own page opens in the new tab | "And I can open the product directly at the retailer." |
-| End | back on Fynd | Describe what you want. Fynd finds it. |
+| Everyday | "black oversized hoodie under $80" | "I'm looking for a black oversized hoodie, under eighty dollars." · "Fynd finds matching products from different retailers." · "And I can open the product directly at the retailer." |
+| Another category | "lightweight jacket for fall under $150" | "Something completely different works the same way." |
+| Hard to find | "BAPE shark hoodie under $400" | "Even something specific that's hard to find." |
+| A particular style | "sage green linen midi dress under $120" | "Or the exact style and color I have in mind." |
+| End | back on Fynd | "No more searching store after store. Describe it, and Fynd finds it." |
+
+Each search: the request is typed at a person's pace, the site's own
+"Searching…" state, the real results, and one product opened at its retailer —
+the retailer's own page, in the new tab the link opens. A different retailer
+each time wherever the results allow. The video cuts from the retailer's tab
+straight to the search box for the next request, so the scroll back up the page
+is never watched.
+
+Product sources have bad minutes — offer lookups aborted at the time budget, a
+search that times out — and a page that comes back one product short for that
+reason says nothing about the request. So each slot, in `SEARCHES` at the top of
+`scripts/record-demo.js`, gets its answer in this order:
+
+1. its request, exactly as written;
+2. the same request again, up to twice, after 3 s and then 7 s — only when the
+   search endpoint's own diagnostics say the source was unsteady (offer or
+   seller lookups aborted or failed, lookups out of time, the search out of
+   time, a 5xx). A retry forgets the cached search and the allowance, and keeps
+   the offers the provider really answered, so its time goes on the ones it did
+   not. A search that simply found too little is not retried;
+3. equivalent wordings of the same shopping intent, each with the same retries:
+   for the hoodie, "black oversized pullover hoodie under $80", "black oversized
+   hooded sweatshirt under $80" and "black baggy hoodie under $80". The
+   narration stays as it is;
+4. for the later three slots only, an alternative piece that is the same kind
+   of problem (Levi's 501s and a Ralph Lauren cable knit behind the BAPE hoodie;
+   a black satin slip dress and a vintage Burberry trench behind the linen
+   dress). The later slots' narration names no request, so it is true
+   whichever one runs.
+
+Every attempt is held to every check below; nothing is lowered along the way,
+and the minimum stays at four products. If no attempt passes, nothing is
+written, and the run lists every attempt and why it was not used.
+
+Every run ends with a recording report, printed and written to
+`assets/demo/demo-report.json`: for each search, what was meant, what was typed,
+whether it needed a retry or an equivalent wording (and why), and the product
+and retailer each recording opened, then the finished lengths.
 
 The words are spoken and shown in a thin strip along the bottom edge, so the
 video reads the same with the sound off, and the same lines are its captions
@@ -1636,34 +1675,71 @@ track. No music, no overlays on the page, no drawn products.
 `scripts/record-demo.js` serves this repository locally, points the page at the
 repository's own `/api/interpret` and `/api/search` handlers, and runs them with
 your `.env` — the same code and the same product source the live site uses. The
-products in the video are the real listings that search returns, with their real
-photographs, prices and retailer links.
+products in the video are the real listings those searches return, with their
+real photographs, prices and retailer links.
 
 The script refuses to record anything less. Before a frame is recorded it
-checks, in the page itself, that at least four products came back, that every
+checks, in the page itself, for every search: that at least four products came
+back, that they are four different products and not one repeated, that every
 one is a real listing with a retailer link, and that every photograph actually
-loaded at product-photo size. A sample row, drawn placeholder artwork or a photo
-that fails to load stops the run, names the product, and writes nothing. The
-same check runs again on camera.
+loaded at product-photo size. A request that names a brand (BAPE, Levi's, Ralph
+Lauren, Burberry) is only used when at least four of its results are that brand,
+and only one of those is ever clicked. Each product's retailer page is opened
+off camera, under the same test the camera applies (below); a page that blocks
+automated browsers, errors, comes up blank or arrives too slowly is noted, and
+only products whose page did open are ever clicked. The same
+photo checks run again on camera.
 
-The search is made once, off camera, and saved to `assets/demo/demo-search.json`.
-Both recordings — desktop and the phone layout — are made from that one saved
-answer, so they show the same products, and `--replay` re-records from it
+The searches are made once, off camera, and saved to
+`assets/demo/demo-search.json`, with any request that was passed over and why.
+Both recordings — desktop and the phone layout — are made from those saved
+answers, so they show the same products, and `--replay` re-records from them
 without searching again. The "Searching…" state on camera is the page's own,
-held to at most 1.8 seconds. The recording keeps its metering in memory (KV
-settings are dropped from the process), so it never touches production state.
+held to about a second and a half. Each search starts from an untouched
+allowance in the in-memory usage store (KV settings are dropped from the
+process), so the recording never touches production state.
 
-When the product is clicked, the link opens the retailer's page in a new tab as
-it would for anyone, and the video shows that tab for a moment. A retailer page
-that blocks automated browsers, or does not arrive within a few seconds, is left
-out rather than shown blank. The note under the video on the homepage is
-rewritten by the script with the date of the search, since prices and stock
-move on after a recording.
+Every click in the video reaches its retailer's page on camera. A retailer page
+is held to one test wherever it is checked — in the first pass, in a preflight
+just before each recording, and on camera: it arrives within 6 seconds, is not a
+block, challenge, error or blank page a moment later, and is still itself after
+being held for about two seconds. The preflight opens every candidate page again
+in a tab shaped like the recording's own (a phone's, for the phone layout), and
+only products that passed both the first pass and the preflight may be clicked,
+preferring a retailer not yet shown in the video. If a page still does not show
+when its product is clicked, that click is cut from the video, the shop is not
+tried again anywhere in the run, and another verified product from the same
+search is taken — the search itself is kept. If no product in a search reaches
+its page within three tries, nothing is written.
+
+No retailer can stall a recording. Every step of a retailer check has a hard
+limit — navigation, the page appearing, each read of the page, opening and
+closing its tab — and so does each whole check (12 s) and each whole run of
+checks. A page that runs out of time, or stops responding (a script holding its
+main thread, say), is a failed retailer: excluded, and the next one is checked.
+The preflight says so line by line: `mobile preflight 3/16: checking
+shop.example`, then `mobile preflight 3/16: timed out — excluded: shop.example
+(…)` or `passed — shop.example`. The video shows the retailer's
+tab for 1.8 seconds once the page has arrived; the wait for it to arrive is cut,
+and the page is still checked at the end of the full 2.1-second hold, after the
+video has moved on, so nothing shown can be a page that failed. The check that
+every product on camera is real and every photo loaded runs while the results
+are looked at and the retailer's page is open, rather than holding the camera
+on a still page; a failure still stops the run with nothing written. The recording report lists, per search and per layout, the product and
+retailer opened, any product the preflight left out, and any click that was cut,
+and ends by saying whether every click reached its retailer. The note under the
+video on the
+homepage, and the video's label, are rewritten by the script with the requests
+and the date of the searches, since prices and stock move on after a
+recording. The script prints the finished length and says so if it falls
+outside 50–60 seconds.
 
 ### Recording it
 
-On a machine with network access and your `.env` (`PRODUCT_SOURCE` and its key;
-`OPENAI_API_KEY` for the AI interpreter):
+On a machine with network access and your `.env.local` or `.env`
+(`PRODUCT_SOURCE` and its key; `OPENAI_API_KEY` for the AI interpreter). Both
+are read, `.env.local` first, so a value there wins; `--env=FILE` reads one file
+instead:
 
 ```sh
 npm install                       # Playwright
@@ -1675,7 +1751,7 @@ Then watch both videos — with sound, without sound, and without reading the
 captions — and commit `assets/demo/` and `index.html`.
 
 ```sh
-node scripts/record-demo.js --replay        # re-record from the saved search
+node scripts/record-demo.js --replay        # re-record from the saved searches
 node scripts/record-demo.js --only=mobile   # one shape (or --only=desktop)
 node scripts/record-demo.js --stills        # a PNG at every beat, no video
 ```
@@ -1693,7 +1769,7 @@ npm run demo:record
 
 `node scripts/test-record-demo.js` checks those paths offline. The pointer paths,
 typing rhythm and pauses come from a seeded generator, the narration is fixed,
-and the saved search pins the products, so the same inputs give the same video.
+and the saved searches pin the products, so the same inputs give the same video.
 
 How it moves: the pointer travels on gentle curves, slow at both ends, with a
 small overshoot on long moves, and takes the shape the page asks for — arrow,
@@ -1705,7 +1781,7 @@ own when headless, which is the only reason one is drawn.
 
 ### The narration
 
-Three short lines in `assets/demo/narration/`, spoken by Kokoro v1.0 (voice
+The lines in `assets/demo/narration/`, spoken by Kokoro v1.0 (voice
 `af_heart`), a neural text-to-speech model run offline through sherpa-onnx, then
 trimmed and brought to one loudness. They are committed, so recording needs no
 speech model. `scripts/demo-narration.py` makes them again if a line changes:
@@ -1728,7 +1804,8 @@ more than one shop; otherwise the shorter line is used.
 | `fynd-demo-mobile.mp4` / `.webm` | 800 × 1440 (400 × 720 at 2×), with narration | 1023px and under |
 | `fynd-demo{,-mobile}-poster.jpg` | | the real results, shown before playback |
 | `fynd-demo{,-mobile}.vtt` | | the narration as captions, timed to the video |
-| `demo-search.json` | | the real search both recordings were made from |
+| `demo-search.json` | | the real searches both recordings were made from, with every attempt each took |
+| `demo-report.json` | | the recording report: attempts, retries, equivalents, products and retailers opened, lengths |
 | `narration/*.wav`, `narration/manifest.json` | | the spoken lines |
 
 The narrow one is the site's real mobile layout, driven in a phone-shaped window

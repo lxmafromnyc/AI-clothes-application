@@ -213,4 +213,12 @@ const driver = () => (redisConfig() ? 'redis' : 'memory');
 /* Tests own the memory driver's contents; nothing in api/ calls this. */
 const reset = () => memory.clear();
 
-module.exports = { get, set, setIfAbsent, takeOnce, remove, add, readNumber, durable, driver, reset };
+/* The same, for some keys only: scripts/record-demo.js drops the cached
+   searches and the usage counters between two attempts at one search,
+   and keeps the offers the provider really answered. Memory only;
+   nothing in api/ calls this. */
+const forget = (test) => {
+  for (const key of [...memory.keys()]) if (test(key)) memory.delete(key);
+};
+
+module.exports = { get, set, setIfAbsent, takeOnce, remove, add, readNumber, durable, driver, reset, forget };

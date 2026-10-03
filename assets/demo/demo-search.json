@@ -1,0 +1,1970 @@
+{
+  "version": 3,
+  "searchedAt": "2026-10-03T22:43:03.995Z",
+  "productSource": "openwebninja",
+  "searches": [
+    {
+      "slot": "everyday",
+      "line": "looking",
+      "intended": "black oversized hoodie under $80",
+      "query": "black oversized hoodie under $80",
+      "kind": "exact",
+      "mention": null,
+      "howFound": "passed first time",
+      "attempts": [
+        {
+          "query": "black oversized hoodie under $80",
+          "kind": "exact",
+          "of": "black oversized hoodie under $80",
+          "try": 1,
+          "verified": 8,
+          "passed": true,
+          "unsteady": "2 offer lookup(s) aborted or failed; the offer lookups ran out of time"
+        }
+      ],
+      "interpret": {
+        "request": {
+          "query": "black oversized hoodie under $80",
+          "vocabulary": {
+            "categories": [
+              "knit",
+              "shirt",
+              "trousers",
+              "tee",
+              "jacket",
+              "dress",
+              "skirt",
+              "coat",
+              "sneaker",
+              "shorts"
+            ],
+            "colors": [
+              "Neutral",
+              "White",
+              "Black",
+              "Bright",
+              "Pastel",
+              "Blue",
+              "Earth",
+              "Green"
+            ],
+            "occasions": [
+              "Work",
+              "Everyday",
+              "Weekend",
+              "Evening",
+              "Active"
+            ],
+            "fits": [
+              "Regular",
+              "Slim",
+              "Relaxed",
+              "Oversized"
+            ],
+            "brands": [
+              "UNIQLO",
+              "J.Crew",
+              "L.L.Bean",
+              "Northfold",
+              "Halden",
+              "Coveworks",
+              "Atlas Supply",
+              "Rue Nine",
+              "Terrace",
+              "Kinfield",
+              "Solstice",
+              "Gap"
+            ],
+            "styles": [
+              "Minimal",
+              "Classic",
+              "Sporty",
+              "Streetwear",
+              "Bohemian",
+              "Bold"
+            ]
+          }
+        },
+        "status": 200,
+        "ms": 3220,
+        "response": {
+          "source": "openai",
+          "query": "black oversized hoodie under $80",
+          "preferences": {
+            "categories": [
+              "knit"
+            ],
+            "colors": [
+              "Black"
+            ],
+            "occasions": [],
+            "fits": [
+              "Oversized"
+            ],
+            "brands": [],
+            "styles": [],
+            "maxPrice": 80,
+            "minPrice": null,
+            "season": null,
+            "gender": null,
+            "keywords": [
+              "hoodie"
+            ],
+            "garments": [
+              "hoodie"
+            ],
+            "descriptors": []
+          },
+          "usage": {
+            "plan": "free",
+            "metric": "aiTokens",
+            "limit": 20000,
+            "used": 543,
+            "remaining": 19457,
+            "period": "day",
+            "resetsAt": "2026-10-04T00:00:00.000Z"
+          }
+        }
+      },
+      "search": {
+        "request": {
+          "intent": {
+            "categories": [
+              "knit"
+            ],
+            "colors": [
+              "Black"
+            ],
+            "occasions": [],
+            "fits": [
+              "Oversized"
+            ],
+            "brands": [],
+            "styles": [],
+            "garments": [
+              "hoodie"
+            ],
+            "descriptors": [],
+            "maxPrice": 80,
+            "minPrice": null,
+            "season": null,
+            "gender": null,
+            "keywords": [
+              "hoodie"
+            ]
+          },
+          "limit": 12,
+          "attachments": []
+        },
+        "status": 200,
+        "ms": 8952,
+        "response": {
+          "source": "openwebninja",
+          "products": [
+            {
+              "id": "catalogid:18363354346199912784,productid:14171439916448950249,gpcid:5342339702370366754,headlineOfferDocid:3630498381848496077,rds:PC_11810213187969747806|PROD_PC_11810213187969747806,imageDocid:16733057757712156348,mid:576462524654828763,pvt:a,pvf:",
+              "name": "Men's Abercrombie & Fitch hoodie",
+              "price": 44.99,
+              "currency": "USD",
+              "imageUrl": "https://encrypted-tbn0.gstatic.com/shopping?q=tbn:ANd9GcQwPr3fAjHRoeysMnDhMTq6bHNXA51-00ozbNbZ5NbIf2FMJSaRBycdwVlYyj44YLYCIDOekycxU0QPHngqmXXgSaC-__S4L6PvLy3QD7hOOSeQev1cLk0Ii1A",
+              "productUrl": "https://www.abercrombie.com/shop/us/p/essential-popover-hoodie-61980823?seq=40&source=googleshopping",
+              "retailer": "Abercrombie & Fitch",
+              "category": "",
+              "colors": [],
+              "sizes": []
+            },
+            {
+              "id": "catalogid:9646648008090666744,productid:2642452057162026195,gpcid:10056307296718063068,headlineOfferDocid:15965006656030920260,rds:,imageDocid:1659727119253087450,mid:576462893763236324,pvt:a,pvf:",
+              "name": "Men's Hollister Baggy Cinch Hoodie in Washed Black",
+              "price": 21.99,
+              "currency": "USD",
+              "imageUrl": "https://encrypted-tbn2.gstatic.com/shopping?q=tbn:ANd9GcSUNywastx8lOvMJhZ8Qaywx48AJeiE5UqDjZubjR3nXYShK1H-e0P0x9lDY5oJgtWNvcjEip8Lwrumfcl6w7MOeMJz7nDK",
+              "productUrl": "https://www.hollisterco.com/shop/us/p/baggy-cinch-hoodie-61630319?seq=07&utm_source=googleshopping",
+              "retailer": "Hollister Co - Official",
+              "category": "",
+              "colors": [],
+              "sizes": []
+            },
+            {
+              "id": "catalogid:3751342043793420283,productid:3756868619184450754,gpcid:11145042484186515184,headlineOfferDocid:530340473179162501,rds:PC_11145042484186515184|PROD_PC_11145042484186515184,imageDocid:1391843330319988382,mid:576462877521134669,pvt:a,pvf:",
+              "name": "Drop Shoulder Hoodie",
+              "price": 59.99,
+              "currency": "USD",
+              "imageUrl": "https://encrypted-tbn2.gstatic.com/shopping?q=tbn:ANd9GcTZkBWkciaOkAJeZL6oD0QYxT-uXVhDzYMh_JqSou7Jhor8BKsjGDE-pXCZCSG79WAHca9SXqe1D_mLkeydiKUmM7LUp_XFZmE_P6CRwAFA7D4yiEMhdu6IcQ",
+              "productUrl": "https://hourscollection.com/products/drop-shoulder-hoodie-black-2?variant=32691186008112&country=US&currency=USD&utm_medium=product_sync&utm_source=google&utm_content=sag_organic&utm_campaign=sag_organic&srsltid=AU7gw4WAm8TF2zn2TAV1R-0sjJRVCqQnMuM0eVUwbs63gg6FvRss6WlXT0s",
+              "retailer": "Hours",
+              "category": "",
+              "colors": [],
+              "sizes": []
+            },
+            {
+              "id": "catalogid:16797105034657766130,productid:1295021582999385336,gpcid:16281433377887722314,headlineOfferDocid:16269758025726987855,rds:PC_16281433377887722314|PROD_PC_16281433377887722314,imageDocid:2208960836562614352,mid:576462891250716083,pvt:a,pvf:",
+              "name": "Old Navy Men's Rotation Hoodie",
+              "price": 39.99,
+              "currency": "USD",
+              "imageUrl": "https://encrypted-tbn0.gstatic.com/shopping?q=tbn:ANd9GcQSBZCBDPrl631QP5hnFCFRNGXbyRXgH2bEoFoQGObr6Z3Ros8n0pTV-RkgICA0kpjGlKFoRMCe6MmLjo6rdgkAALKD0vbSAVJ9uyvAeg76R7vQMXO8Ju1OTg",
+              "productUrl": "https://oldnavy.gap.com/browse/product.do?pid=564240002&vid=1&tid=onns000009",
+              "retailer": "Old Navy",
+              "category": "",
+              "colors": [],
+              "sizes": []
+            },
+            {
+              "id": "catalogid:7036534861340490267,productid:18314149912936281442,gpcid:2295181045567956313,headlineOfferDocid:15683364086891583688,rds:PC_8335033299035452132|PROD_PC_8335033299035452132,imageDocid:14386831370357250545,mid:576462895460752955,pvt:a,pvf:",
+              "name": "Men H&M Loose Fit Hoodie",
+              "price": 17.99,
+              "currency": "USD",
+              "imageUrl": "https://encrypted-tbn1.gstatic.com/shopping?q=tbn:ANd9GcTate1pVYLGp4J3Taq6bS-trgouCJiBPXyvElQF1CUWiECIOmkzhRll0McQRiqEPtBLnk7RozH2iC6k6Mu8cXPBISE1t_tSjwv90wzun2u5nR5dToU9Kcnd",
+              "productUrl": "https://www2.hm.com/en_us/productpage.0970819001.html?srsltid=AU7gw4XztoP1XfKY1YLoiW8DvD5HwTQrF3K4N6GUj80TRmcHbSzXU-qcN-I",
+              "retailer": "H&M",
+              "category": "",
+              "colors": [],
+              "sizes": []
+            },
+            {
+              "id": "catalogid:9637351160892156569,productid:8507847511599035059,gpcid:8356852094083360520,headlineOfferDocid:8698470566176172082,rds:,imageDocid:8692311073149151488,mid:576462886180507682,pvt:a,pvf:",
+              "name": "Aeropostale Mens' Cloud Soft Boxy Pullover Hoodie",
+              "price": 28.48,
+              "currency": "USD",
+              "imageUrl": "https://encrypted-tbn0.gstatic.com/shopping?q=tbn:ANd9GcR5IiBgCf4ImVdIPgAy8ayAGxx-aA8LNSaTKuwDoB9ct5JYHtqb02D4UTQlZoNVzPM092TRWWVRwSAg2qr33XDkYlTKwYtwet0pMomLlfSnIpSU7BBqd_kz8_Y",
+              "productUrl": "https://www.aeropostale.com/cloud-soft-boxy-pullover-hoodie/0095540822.html?redirect=false?redirect=false&utm_source=google&utm_medium=organic&utm_campaign=organicshopping&srsltid=AU7gw4XduehiG3UwRoOraf3e7-aM9BFIH4RCjxJ3xdZqEvuVZ-5D6DYj2hI",
+              "retailer": "Aeropostale.com",
+              "category": "",
+              "colors": [],
+              "sizes": []
+            },
+            {
+              "id": "catalogid:275697966824569674,productid:677803597092668881,gpcid:5698662894033018531,headlineOfferDocid:10666855327672288454,rds:PC_5698662894033018531|PROD_PC_5698662894033018531,imageDocid:17551549754568111717,mid:576462803841239992,pvt:a,pvf:",
+              "name": "Threads 4 Thought Men's Marcel Oversize Fleece Hoodie",
+              "price": 78,
+              "currency": "USD",
+              "imageUrl": "https://encrypted-tbn1.gstatic.com/shopping?q=tbn:ANd9GcTs5T8jy6ORsEIaJvBMF3ES3NMmdDlsju_-dYUeBea10AHrReDKRbAIpq4fsZsTfjRIEHUgMAxQRNXAuAcamHJTdKgAguaewg",
+              "productUrl": "https://www.nordstrom.com/s/threads-4-thought-marcel-oversize-fleece-hoodie/8052380?color=black&size=medium&utm_source=google&utm_medium=organic&utm_campaign=seo_shopping&srsltid=AU7gw4XWVObPM7FoIpu523i1X0BbSmU67KzVJmtNxE4qO9lc48zD-pGXKaA",
+              "retailer": "Nordstrom",
+              "category": "",
+              "colors": [],
+              "sizes": []
+            },
+            {
+              "id": "catalogid:7154722216752987092,productid:4971289456638757032,gpcid:13579695387386895416,headlineOfferDocid:9447403596408285893,rds:,imageDocid:16696574547805582102,mid:576462889187604745,pvt:a,pvf:",
+              "name": "Lifestyle Oversized Hoodie",
+              "price": 48,
+              "currency": "USD",
+              "imageUrl": "https://encrypted-tbn2.gstatic.com/shopping?q=tbn:ANd9GcSOyQnrg2AP9ueo8PXAsrKo-Yk0DW5vn7jZABviPTF3Yud0nn7CI1XU9lSUqD_-pqvlO6WLVIE1aZEklXZMQiZrFPFai-n_0eDRtSruYHtz6HEOxZXGk2dE",
+              "productUrl": "https://us.aybl.com/products/lifestyle-oversized-hoodie-black?currency=USD&country=US&utm_source=google&utm_medium=cpc&utm_campaign=Google%20Shopping&stkn=2484e932fcf1",
+              "retailer": "AYBL",
+              "category": "",
+              "colors": [],
+              "sizes": []
+            }
+          ],
+          "returned": 24,
+          "rejected": {
+            "missing-price": 16
+          },
+          "diagnostics": {
+            "returnedByProvider": 24,
+            "searchShape": null,
+            "searchMs": 2892,
+            "normalized": 24,
+            "withInlineLink": 0,
+            "offers": {
+              "neededOfferLookup": 24,
+              "lookupsMade": 10,
+              "lookupsFailed": 2,
+              "lookupsEmpty": 0,
+              "resolvedFromOffers": 8,
+              "noDirectLinkInOffers": 0,
+              "budgetExpired": true,
+              "cacheHits": 0,
+              "negativeCacheHits": 0,
+              "noProductId": 0,
+              "offersShape": null,
+              "skippedUnfit": {},
+              "candidates": 24,
+              "lookupCeiling": 20,
+              "ceilingReached": false,
+              "verified": 8,
+              "targetMet": false
+            },
+            "offersMs": 6014,
+            "withAnyLink": 8,
+            "droppedOverBudget": 0,
+            "reachedGate": 24,
+            "provider": "openwebninja",
+            "fellBackFrom": null,
+            "verified": 8,
+            "removedAsAnotherGarment": 0,
+            "rejected": {
+              "missing-price": 16
+            },
+            "cache": {
+              "enabled": true,
+              "driver": "memory",
+              "searchCache": {
+                "hit": 0,
+                "miss": 1,
+                "stored": 1,
+                "coalesced": 0
+              },
+              "offerCache": {
+                "hit": 0,
+                "miss": 10,
+                "negativeHit": 0,
+                "stored": 8,
+                "negativeStored": 0
+              },
+              "providerRequestsAvoided": 0,
+              "servedFromCache": false
+            },
+            "timing": {
+              "budgetMs": 9000,
+              "totalMs": 8952,
+              "deadlineExpired": false
+            }
+          },
+          "attachments": {
+            "received": 0,
+            "used": 0,
+            "reason": null
+          },
+          "usage": {
+            "plan": "free",
+            "metric": "searches",
+            "limit": 1,
+            "used": 1,
+            "remaining": 0,
+            "period": "day",
+            "resetsAt": "2026-10-04T00:00:00.000Z"
+          }
+        }
+      },
+      "shown": [
+        {
+          "name": "Men's Abercrombie & Fitch hoodie",
+          "brand": "Abercrombie & Fitch",
+          "price": "$44.99",
+          "retailer": "abercrombie.com",
+          "href": "https://www.abercrombie.com/shop/us/p/essential-popover-hoodie-61980823?seq=40&source=googleshopping",
+          "photo": "https://encrypted-tbn0.gstatic.com/shopping?q=tbn:ANd9GcQwPr3fAjHRoeysMnDhMTq6bHNXA51-00ozbNbZ5NbIf2FMJSaRBycdwVlYyj44YLYCIDOekycxU0QPHngqmXXgSaC-__S4L6PvLy3QD7hOOSeQev1cLk0Ii1A",
+          "width": 1200,
+          "height": 1200,
+          "retailerOk": false,
+          "retailerWhy": "blank page"
+        },
+        {
+          "name": "Men's Hollister Baggy Cinch Hoodie in Washed Black",
+          "brand": "Hollister Co - Official",
+          "price": "$21.99",
+          "retailer": "hollisterco.com",
+          "href": "https://www.hollisterco.com/shop/us/p/baggy-cinch-hoodie-61630319?seq=07&utm_source=googleshopping",
+          "photo": "https://encrypted-tbn2.gstatic.com/shopping?q=tbn:ANd9GcSUNywastx8lOvMJhZ8Qaywx48AJeiE5UqDjZubjR3nXYShK1H-e0P0x9lDY5oJgtWNvcjEip8Lwrumfcl6w7MOeMJz7nDK",
+          "width": 800,
+          "height": 1000,
+          "retailerOk": false,
+          "retailerWhy": "blank page"
+        },
+        {
+          "name": "Drop Shoulder Hoodie",
+          "brand": "Hours",
+          "price": "$59.99",
+          "retailer": "hourscollection.com",
+          "href": "https://hourscollection.com/products/drop-shoulder-hoodie-black-2?variant=32691186008112&country=US&currency=USD&utm_medium=product_sync&utm_source=google&utm_content=sag_organic&utm_campaign=sag_organic&srsltid=AU7gw4WAm8TF2zn2TAV1R-0sjJRVCqQnMuM0eVUwbs63gg6FvRss6WlXT0s",
+          "photo": "https://encrypted-tbn2.gstatic.com/shopping?q=tbn:ANd9GcTZkBWkciaOkAJeZL6oD0QYxT-uXVhDzYMh_JqSou7Jhor8BKsjGDE-pXCZCSG79WAHca9SXqe1D_mLkeydiKUmM7LUp_XFZmE_P6CRwAFA7D4yiEMhdu6IcQ",
+          "width": 1080,
+          "height": 1200,
+          "retailerOk": false,
+          "retailerWhy": "blocked (\"Just a moment...\")"
+        },
+        {
+          "name": "Old Navy Men's Rotation Hoodie",
+          "brand": "Old Navy",
+          "price": "$39.99",
+          "retailer": "oldnavy.gap.com",
+          "href": "https://oldnavy.gap.com/browse/product.do?pid=564240002&vid=1&tid=onns000009",
+          "photo": "https://encrypted-tbn0.gstatic.com/shopping?q=tbn:ANd9GcQSBZCBDPrl631QP5hnFCFRNGXbyRXgH2bEoFoQGObr6Z3Ros8n0pTV-RkgICA0kpjGlKFoRMCe6MmLjo6rdgkAALKD0vbSAVJ9uyvAeg76R7vQMXO8Ju1OTg",
+          "width": 1082,
+          "height": 1200,
+          "retailerOk": true
+        },
+        {
+          "name": "Men H&M Loose Fit Hoodie",
+          "brand": "H&M",
+          "price": "$17.99",
+          "retailer": "hm.com",
+          "href": "https://www2.hm.com/en_us/productpage.0970819001.html?srsltid=AU7gw4XztoP1XfKY1YLoiW8DvD5HwTQrF3K4N6GUj80TRmcHbSzXU-qcN-I",
+          "photo": "https://encrypted-tbn1.gstatic.com/shopping?q=tbn:ANd9GcTate1pVYLGp4J3Taq6bS-trgouCJiBPXyvElQF1CUWiECIOmkzhRll0McQRiqEPtBLnk7RozH2iC6k6Mu8cXPBISE1t_tSjwv90wzun2u5nR5dToU9Kcnd",
+          "width": 533,
+          "height": 792,
+          "retailerOk": false,
+          "retailerWhy": "blocked (\"Access Denied\")"
+        },
+        {
+          "name": "Aeropostale Mens' Cloud Soft Boxy Pullover Hoodie",
+          "brand": "Aeropostale.com",
+          "price": "$28.48",
+          "retailer": "aeropostale.com",
+          "href": "https://www.aeropostale.com/cloud-soft-boxy-pullover-hoodie/0095540822.html?redirect=false?redirect=false&utm_source=google&utm_medium=organic&utm_campaign=organicshopping&srsltid=AU7gw4XduehiG3UwRoOraf3e7-aM9BFIH4RCjxJ3xdZqEvuVZ-5D6DYj2hI",
+          "photo": "https://encrypted-tbn0.gstatic.com/shopping?q=tbn:ANd9GcR5IiBgCf4ImVdIPgAy8ayAGxx-aA8LNSaTKuwDoB9ct5JYHtqb02D4UTQlZoNVzPM092TRWWVRwSAg2qr33XDkYlTKwYtwet0pMomLlfSnIpSU7BBqd_kz8_Y",
+          "width": 1200,
+          "height": 1200,
+          "retailerOk": false,
+          "retailerWhy": "blocked (\"Access Denied\")"
+        },
+        {
+          "name": "Threads 4 Thought Men's Marcel Oversize Fleece Hoodie",
+          "brand": "Nordstrom",
+          "price": "$78",
+          "retailer": "nordstrom.com",
+          "href": "https://www.nordstrom.com/s/threads-4-thought-marcel-oversize-fleece-hoodie/8052380?color=black&size=medium&utm_source=google&utm_medium=organic&utm_campaign=seo_shopping&srsltid=AU7gw4XWVObPM7FoIpu523i1X0BbSmU67KzVJmtNxE4qO9lc48zD-pGXKaA",
+          "photo": "https://encrypted-tbn1.gstatic.com/shopping?q=tbn:ANd9GcTs5T8jy6ORsEIaJvBMF3ES3NMmdDlsju_-dYUeBea10AHrReDKRbAIpq4fsZsTfjRIEHUgMAxQRNXAuAcamHJTdKgAguaewg",
+          "width": 500,
+          "height": 767,
+          "retailerOk": false,
+          "retailerWhy": "blank page"
+        },
+        {
+          "name": "Lifestyle Oversized Hoodie",
+          "brand": "AYBL",
+          "price": "$48",
+          "retailer": "us.aybl.com",
+          "href": "https://us.aybl.com/products/lifestyle-oversized-hoodie-black?currency=USD&country=US&utm_source=google&utm_medium=cpc&utm_campaign=Google%20Shopping&stkn=2484e932fcf1",
+          "photo": "https://encrypted-tbn2.gstatic.com/shopping?q=tbn:ANd9GcSOyQnrg2AP9ueo8PXAsrKo-Yk0DW5vn7jZABviPTF3Yud0nn7CI1XU9lSUqD_-pqvlO6WLVIE1aZEklXZMQiZrFPFai-n_0eDRtSruYHtz6HEOxZXGk2dE",
+          "width": 636,
+          "height": 636,
+          "retailerOk": true
+        }
+      ]
+    },
+    {
+      "slot": "category",
+      "line": "different",
+      "intended": "lightweight jacket for fall under $150",
+      "query": "lightweight jacket for fall under $150",
+      "kind": "exact",
+      "mention": null,
+      "howFound": "passed first time",
+      "attempts": [
+        {
+          "query": "lightweight jacket for fall under $150",
+          "kind": "exact",
+          "of": "lightweight jacket for fall under $150",
+          "try": 1,
+          "verified": 11,
+          "passed": true,
+          "unsteady": "1 offer lookup(s) aborted or failed; the offer lookups ran out of time"
+        }
+      ],
+      "interpret": {
+        "request": {
+          "query": "lightweight jacket for fall under $150",
+          "vocabulary": {
+            "categories": [
+              "knit",
+              "shirt",
+              "trousers",
+              "tee",
+              "jacket",
+              "dress",
+              "skirt",
+              "coat",
+              "sneaker",
+              "shorts"
+            ],
+            "colors": [
+              "Neutral",
+              "White",
+              "Black",
+              "Bright",
+              "Pastel",
+              "Blue",
+              "Earth",
+              "Green"
+            ],
+            "occasions": [
+              "Work",
+              "Everyday",
+              "Weekend",
+              "Evening",
+              "Active"
+            ],
+            "fits": [
+              "Regular",
+              "Slim",
+              "Relaxed",
+              "Oversized"
+            ],
+            "brands": [
+              "UNIQLO",
+              "J.Crew",
+              "L.L.Bean",
+              "Northfold",
+              "Halden",
+              "Coveworks",
+              "Atlas Supply",
+              "Rue Nine",
+              "Terrace",
+              "Kinfield",
+              "Solstice",
+              "Gap"
+            ],
+            "styles": [
+              "Minimal",
+              "Classic",
+              "Sporty",
+              "Streetwear",
+              "Bohemian",
+              "Bold"
+            ]
+          }
+        },
+        "status": 200,
+        "ms": 2110,
+        "response": {
+          "source": "openai",
+          "query": "lightweight jacket for fall under $150",
+          "preferences": {
+            "categories": [
+              "jacket"
+            ],
+            "colors": [],
+            "occasions": [],
+            "fits": [],
+            "brands": [],
+            "styles": [],
+            "maxPrice": 150,
+            "minPrice": null,
+            "season": "fall",
+            "gender": null,
+            "keywords": [
+              "lightweight"
+            ],
+            "garments": [
+              "jacket"
+            ],
+            "descriptors": [
+              "lightweight"
+            ]
+          },
+          "usage": {
+            "plan": "free",
+            "metric": "aiTokens",
+            "limit": 20000,
+            "used": 528,
+            "remaining": 19472,
+            "period": "day",
+            "resetsAt": "2026-10-04T00:00:00.000Z"
+          }
+        }
+      },
+      "search": {
+        "request": {
+          "intent": {
+            "categories": [
+              "jacket"
+            ],
+            "colors": [],
+            "occasions": [],
+            "fits": [],
+            "brands": [],
+            "styles": [],
+            "garments": [
+              "jacket"
+            ],
+            "descriptors": [
+              "lightweight"
+            ],
+            "maxPrice": 150,
+            "minPrice": null,
+            "season": "fall",
+            "gender": null,
+            "keywords": [
+              "lightweight"
+            ]
+          },
+          "limit": 12,
+          "attachments": []
+        },
+        "status": 200,
+        "ms": 7965,
+        "response": {
+          "source": "openwebninja",
+          "products": [
+            {
+              "id": "catalogid:9281894030706510249,productid:554989991481730700,gpcid:18367607543125753497,headlineOfferDocid:7064232494586576198,rds:,imageDocid:4813373273785308301,mid:576462895457330107,pvt:a,pvf:",
+              "name": "Men's Luxe Touch Full Zip Jacket",
+              "price": 60,
+              "currency": "USD",
+              "imageUrl": "https://encrypted-tbn1.gstatic.com/shopping?q=tbn:ANd9GcRFbC9KiX-69Ov4F9QRDC93KW3Ho6LelH265C5cTDa4wwNu3hdjfeebfognzL_P2PcUqdRPQA3HuxculUCRa5l0OTOYDEn-zcdo3AzuHReZf5ErLjT4Xf-7QA",
+              "productUrl": "https://bananarepublicfactory.gapfactory.com/browse/product.do?pid=1176093001&vid=1&tid=bfns000001",
+              "retailer": "Banana Republic Factory",
+              "category": "",
+              "colors": [],
+              "sizes": []
+            },
+            {
+              "id": "catalogid:3804493127840117551,productid:17900981866046520620,gpcid:6130520420251258661,headlineOfferDocid:298292113579114867,rds:PC_6130520420251258661|PROD_PC_6130520420251258661,imageDocid:5331710516111930787,mid:576462453791517662,pvt:a,pvf:",
+              "name": "Houdini Jacket Patagonia Men's",
+              "price": 119,
+              "currency": "USD",
+              "imageUrl": "https://encrypted-tbn3.gstatic.com/shopping?q=tbn:ANd9GcRBWTq0WR9uHmSlQd085cTaPZuuw5CMoH7xVNk0v8NmKmv9KE2ZpJyZEhVJg7Io1mgFTV4hwg03QEUv2ljoLF3xISPqUmFF1papuWRYAk_3TowMfUe0BeQ7iBc",
+              "productUrl": "https://www.rei.com/product/143470/patagonia-houdini-jacket-mens?sku=1434700386&CAWELAID=120217890020993447",
+              "retailer": "REI",
+              "category": "",
+              "colors": [],
+              "sizes": []
+            },
+            {
+              "id": "catalogid:6372835331322170159,productid:1729069713785517024,gpcid:7854860717324197136,headlineOfferDocid:10190460523853569939,rds:PC_2283085208287225394|PROD_PC_2283085208287225394,imageDocid:8333818107567092637,mid:,pvt:a,pvf:",
+              "name": "Columbia Men's Watertight II Jacket",
+              "price": 70,
+              "currency": "USD",
+              "imageUrl": "https://encrypted-tbn1.gstatic.com/shopping?q=tbn:ANd9GcR2USFyQzTZy2MGdJJ23PHNrPSqs6hKFYsc38ivQYAYH8rPamZH8MudiXSbELvHzdTegNbhhmzX63lNQzioR2TmY1KWti_T81JBYAul0VZmp5pnpScHt5W0aS0",
+              "productUrl": "https://www.sportsbasement.com/products/watertight-ii-jacket-5?srsltid=AU7gw4VbrooY-ohyP0l-K6YEUJTROkrKMmyRaBJMmWJzFjzW3aJZ5_8uzZQ",
+              "retailer": "Sports Basement",
+              "category": "",
+              "colors": [],
+              "sizes": []
+            },
+            {
+              "id": "catalogid:,productid:14607243583711096350,gpcid:,headlineOfferDocid:14607243583711096350,rds:,imageDocid:2463829495286540606,mid:,pvt:a,pvf:",
+              "name": "Men's Luxe Touch Full Zip Jacket Black Regular Size M",
+              "price": 60,
+              "currency": "USD",
+              "imageUrl": "https://encrypted-tbn2.gstatic.com/shopping?q=tbn:ANd9GcT3-83_igxBPTr6pqkqRNQgWZDrnBTkvSdre8dUvmJcDu3olgVZUg8K7j5z3wkm2X4yP1moEDWFe_jbpy8mQVTjHDDQsQkBPRRUOk4L4Vl5YMZTkgZOevR_Dw",
+              "productUrl": "https://bananarepublicfactory.gapfactory.com/browse/product.do?pid=1176093011&vid=1&tid=bfns000001",
+              "retailer": "Banana Republic Factory",
+              "category": "",
+              "colors": [],
+              "sizes": []
+            },
+            {
+              "id": "catalogid:8462820783534375957,productid:18400083607597358315,gpcid:12885202844434350603,headlineOfferDocid:15214208772923911494,rds:PC_12885202844434350603|PROD_PC_12885202844434350603,imageDocid:9690773214072658778,mid:576462567020015857,pvt:a,pvf:",
+              "name": "Old Navy Women's Belted Utility Jacket",
+              "price": 35,
+              "currency": "USD",
+              "imageUrl": "https://encrypted-tbn2.gstatic.com/shopping?q=tbn:ANd9GcRQ1CYATbAHrzrGoQY2jcjgHzKAIQwQt_ECXQ11YFoUfxuVbfnyWunNAVzyLXm223UkLh2UfxPHhCo4oB-Fyk2EJvQApWXmQnQ0yxHrzh_43dXxdU8O9tTg4A",
+              "productUrl": "https://oldnavy.gap.com/browse/product.do?pid=904895012&vid=3&tid=onns000009",
+              "retailer": "Old Navy",
+              "category": "",
+              "colors": [],
+              "sizes": []
+            },
+            {
+              "id": "catalogid:14355406381778900279,productid:6585886121851710195,gpcid:8870616477571752846,headlineOfferDocid:17792206753030196895,rds:PC_8870616477571752846|PROD_PC_8870616477571752846,imageDocid:11452818327583709942,mid:576462764525907181,pvt:a,pvf:",
+              "name": "REI Co-op Men's Rainier Rain Jacket",
+              "price": 99.95,
+              "currency": "USD",
+              "imageUrl": "https://encrypted-tbn2.gstatic.com/shopping?q=tbn:ANd9GcTgzp9g4tFMbDmdhSi7aNzHL-bPGgHRRKRBtgFfEBU5_HpUYjRm-QQCPwe3XlQi8qS2AE_TtgIndsjgz6tXPhaFAKTTgQgrkKxzDK9WCn6lu_R6FZzJxpH0zbk",
+              "productUrl": "https://www.rei.com/product/227570/rei-co-op-rainier-rain-jacket-mens?sku=2275700087&CAWELAID=120217890020847526",
+              "retailer": "REI",
+              "category": "",
+              "colors": [],
+              "sizes": []
+            },
+            {
+              "id": "catalogid:1740781108313283217,productid:9455817506591450818,gpcid:11171159273982909870,headlineOfferDocid:696966727079940208,rds:PC_11171159273982909870|PROD_PC_11171159273982909870,imageDocid:6629500653048403540,mid:576462531113464399,pvt:a,pvf:",
+              "name": "UNIQLO Men's Zip-Up Blouson Jacket",
+              "price": 49.9,
+              "currency": "USD",
+              "imageUrl": "https://encrypted-tbn0.gstatic.com/shopping?q=tbn:ANd9GcRBRDp8J7hFeB3nd71Tb0Pva8A3oxnGWizRxMZQl0E6Rhm5bl0gYcvPKPrbWOEL3jz6xmlR0lYBNO4g4g5OxY1krXdKhuS4",
+              "productUrl": "https://www.uniqlo.com/us/en/products/E484249-000/00?colorDisplayCode=67&sizeDisplayCode=002&srsltid=AU7gw4WAF2phlL1UEE6kuZHerB_ak7HtUYBVkAFdLoD1ptg708FVh2WkBaU",
+              "retailer": "Uniqlo",
+              "category": "",
+              "colors": [],
+              "sizes": []
+            },
+            {
+              "id": "catalogid:17717290333501675152,productid:647915434311326710,gpcid:1775659249574929189,headlineOfferDocid:6020651548684495426,rds:PC_12418650689409670258|PROD_PC_12418650689409670258,imageDocid:540753427493275518,mid:576462913477822266,pvt:a,pvf:",
+              "name": "Dickies Men's Eisenhower Unlined Jacket",
+              "price": 47.99,
+              "currency": "USD",
+              "imageUrl": "https://encrypted-tbn2.gstatic.com/shopping?q=tbn:ANd9GcROy84qawPwIJ8aVFhYryFNn2cRwRddzAh3XZftzbhqD8j7T5jQPTeFhZ-ESoFJWihTTz8dllPDq9KM2ubwAUmuJ9UVWLcM",
+              "productUrl": "https://www.kohls.com/product/prd-7646616/mens-dickies-unlined-eisenhower-jacket.jsp?skuid=62522593&CID=seo_offers&utm_campaign=SAG&utm_medium=organic&utm_source=google&utm_product=62522593",
+              "retailer": "Kohl's",
+              "category": "",
+              "colors": [],
+              "sizes": []
+            },
+            {
+              "id": "catalogid:5657194570981789470,productid:16958437690226628059,gpcid:6474861277146939338,headlineOfferDocid:2531122234576432072,rds:PC_6474861277146939338|PROD_PC_6474861277146939338,imageDocid:10326749316396535033,mid:576462888989593183,pvt:a,pvf:",
+              "name": "Levi's Women's Relaxed Bomber Jacket",
+              "price": 69.99,
+              "currency": "USD",
+              "imageUrl": "https://encrypted-tbn1.gstatic.com/shopping?q=tbn:ANd9GcQETCzFFBrfgDKHEMlhP6Xnj9RC2NiS3h9p2XfWgC0UMysJR_M0eXp2aUgo7xjDWP0NhWoBwMCciNkhktqDbaKEWplQWhyYie8PNrHM5iC8hIo_OZp3UUhdlQ",
+              "productUrl": "https://www.macys.com/shop/product/levis-womens-lightweight-bomber-jacket?ID=26658993&pla_country=US&CAGPSPN=pla&swatchColor=Blue&swatchSize=L",
+              "retailer": "Macy's",
+              "category": "",
+              "colors": [],
+              "sizes": []
+            },
+            {
+              "id": "catalogid:5181695431364891239,productid:13479018115064575284,gpcid:14779720457961412642,headlineOfferDocid:8385911449326736331,rds:PC_14779720457961412642|PROD_PC_14779720457961412642,imageDocid:8337023171123879092,mid:576462896385937550,pvt:a,pvf:",
+              "name": "Men's Lightweight Packable Jacket",
+              "price": 24.99,
+              "currency": "USD",
+              "imageUrl": "https://encrypted-tbn0.gstatic.com/shopping?q=tbn:ANd9GcQUSsFG-QbT_lndOFfT5GoFigS1qxaTVCaj1dwS-lETa84F5HRWgsOVs6f7QUafXoKGUvWt5KMtkWazk_aj8RNnaOYqXrKCyw",
+              "productUrl": "https://www.32degrees.com/products/mens-lightweight-recycled-poly-fill-packable-jacket?variant=43276983107673&country=US&currency=USD&utm_medium=product_sync&utm_source=google&utm_content=sag_organic&utm_campaign=sag_organic&srsltid=AU7gw4Xb0o6XdvWL5xkXXNehc7ElxKJozOMFUVe9grWV-nAEpFUIsKXHFjI",
+              "retailer": "32 Degrees",
+              "category": "",
+              "colors": [],
+              "sizes": []
+            },
+            {
+              "id": "catalogid:12080916434188500278,productid:15141835510135587933,gpcid:7601869908140988779,headlineOfferDocid:16340131889244251410,rds:PC_7601869908140988779|PROD_PC_7601869908140988779,imageDocid:17239002584742787711,mid:576462895436377046,pvt:a,pvf:",
+              "name": "Women's Knit Twill Cropped Jacket",
+              "price": 70,
+              "currency": "USD",
+              "imageUrl": "https://encrypted-tbn3.gstatic.com/shopping?q=tbn:ANd9GcRIXMRWUb5ifBywn_U1cxcjKG6i1CUg9y11bGgTDT38YYFJUC5CzgYR-N1YxJykbLP4gQLfT81MtpwNqwtVumrISDkFEv2nhn2QKgzkvDvE91LqaUNwY3rNtg",
+              "productUrl": "https://bananarepublicfactory.gapfactory.com/browse/product.do?pid=1176837011&vid=1&tid=bfns000001",
+              "retailer": "Banana Republic Factory",
+              "category": "",
+              "colors": [],
+              "sizes": []
+            }
+          ],
+          "returned": 24,
+          "rejected": {
+            "missing-price": 13
+          },
+          "diagnostics": {
+            "returnedByProvider": 24,
+            "searchShape": null,
+            "searchMs": 1945,
+            "normalized": 24,
+            "withInlineLink": 0,
+            "offers": {
+              "neededOfferLookup": 24,
+              "lookupsMade": 12,
+              "lookupsFailed": 1,
+              "lookupsEmpty": 0,
+              "resolvedFromOffers": 11,
+              "noDirectLinkInOffers": 0,
+              "budgetExpired": true,
+              "cacheHits": 0,
+              "negativeCacheHits": 0,
+              "noProductId": 0,
+              "offersShape": null,
+              "skippedUnfit": {},
+              "candidates": 24,
+              "lookupCeiling": 20,
+              "ceilingReached": false,
+              "verified": 11,
+              "targetMet": false
+            },
+            "offersMs": 6010,
+            "withAnyLink": 11,
+            "droppedOverBudget": 0,
+            "reachedGate": 24,
+            "provider": "openwebninja",
+            "fellBackFrom": null,
+            "verified": 11,
+            "removedAsAnotherGarment": 0,
+            "rejected": {
+              "missing-price": 13
+            },
+            "cache": {
+              "enabled": true,
+              "driver": "memory",
+              "searchCache": {
+                "hit": 0,
+                "miss": 1,
+                "stored": 1,
+                "coalesced": 0
+              },
+              "offerCache": {
+                "hit": 0,
+                "miss": 12,
+                "negativeHit": 0,
+                "stored": 11,
+                "negativeStored": 0
+              },
+              "providerRequestsAvoided": 0,
+              "servedFromCache": false
+            },
+            "timing": {
+              "budgetMs": 9000,
+              "totalMs": 7965,
+              "deadlineExpired": false
+            }
+          },
+          "attachments": {
+            "received": 0,
+            "used": 0,
+            "reason": null
+          },
+          "usage": {
+            "plan": "free",
+            "metric": "searches",
+            "limit": 1,
+            "used": 1,
+            "remaining": 0,
+            "period": "day",
+            "resetsAt": "2026-10-04T00:00:00.000Z"
+          }
+        }
+      },
+      "shown": [
+        {
+          "name": "Men's Luxe Touch Full Zip Jacket",
+          "brand": "Banana Republic Factory",
+          "price": "$60",
+          "retailer": "bananarepublicfactory.gapfactory.com",
+          "href": "https://bananarepublicfactory.gapfactory.com/browse/product.do?pid=1176093001&vid=1&tid=bfns000001",
+          "photo": "https://encrypted-tbn1.gstatic.com/shopping?q=tbn:ANd9GcRFbC9KiX-69Ov4F9QRDC93KW3Ho6LelH265C5cTDa4wwNu3hdjfeebfognzL_P2PcUqdRPQA3HuxculUCRa5l0OTOYDEn-zcdo3AzuHReZf5ErLjT4Xf-7QA",
+          "width": 1117,
+          "height": 1200,
+          "retailerOk": true
+        },
+        {
+          "name": "Houdini Jacket Patagonia Men's",
+          "brand": "REI",
+          "price": "$119",
+          "retailer": "rei.com",
+          "href": "https://www.rei.com/product/143470/patagonia-houdini-jacket-mens?sku=1434700386&CAWELAID=120217890020993447",
+          "photo": "https://encrypted-tbn3.gstatic.com/shopping?q=tbn:ANd9GcRBWTq0WR9uHmSlQd085cTaPZuuw5CMoH7xVNk0v8NmKmv9KE2ZpJyZEhVJg7Io1mgFTV4hwg03QEUv2ljoLF3xISPqUmFF1papuWRYAk_3TowMfUe0BeQ7iBc",
+          "width": 828,
+          "height": 1200,
+          "retailerOk": false,
+          "retailerWhy": "did not arrive within 6s"
+        },
+        {
+          "name": "Columbia Men's Watertight II Jacket",
+          "brand": "Sports Basement",
+          "price": "$70",
+          "retailer": "sportsbasement.com",
+          "href": "https://www.sportsbasement.com/products/watertight-ii-jacket-5?srsltid=AU7gw4VbrooY-ohyP0l-K6YEUJTROkrKMmyRaBJMmWJzFjzW3aJZ5_8uzZQ",
+          "photo": "https://encrypted-tbn1.gstatic.com/shopping?q=tbn:ANd9GcR2USFyQzTZy2MGdJJ23PHNrPSqs6hKFYsc38ivQYAYH8rPamZH8MudiXSbELvHzdTegNbhhmzX63lNQzioR2TmY1KWti_T81JBYAul0VZmp5pnpScHt5W0aS0",
+          "width": 732,
+          "height": 1200,
+          "retailerOk": true
+        },
+        {
+          "name": "Men's Luxe Touch Full Zip Jacket Black Regular Size M",
+          "brand": "Banana Republic Factory",
+          "price": "$60",
+          "retailer": "bananarepublicfactory.gapfactory.com",
+          "href": "https://bananarepublicfactory.gapfactory.com/browse/product.do?pid=1176093011&vid=1&tid=bfns000001",
+          "photo": "https://encrypted-tbn2.gstatic.com/shopping?q=tbn:ANd9GcT3-83_igxBPTr6pqkqRNQgWZDrnBTkvSdre8dUvmJcDu3olgVZUg8K7j5z3wkm2X4yP1moEDWFe_jbpy8mQVTjHDDQsQkBPRRUOk4L4Vl5YMZTkgZOevR_Dw",
+          "width": 1200,
+          "height": 1200,
+          "retailerOk": true
+        },
+        {
+          "name": "Old Navy Women's Belted Utility Jacket",
+          "brand": "Old Navy",
+          "price": "$35",
+          "retailer": "oldnavy.gap.com",
+          "href": "https://oldnavy.gap.com/browse/product.do?pid=904895012&vid=3&tid=onns000009",
+          "photo": "https://encrypted-tbn2.gstatic.com/shopping?q=tbn:ANd9GcRQ1CYATbAHrzrGoQY2jcjgHzKAIQwQt_ECXQ11YFoUfxuVbfnyWunNAVzyLXm223UkLh2UfxPHhCo4oB-Fyk2EJvQApWXmQnQ0yxHrzh_43dXxdU8O9tTg4A",
+          "width": 1020,
+          "height": 1200,
+          "retailerOk": true
+        },
+        {
+          "name": "REI Co-op Men's Rainier Rain Jacket",
+          "brand": "REI",
+          "price": "$99.95",
+          "retailer": "rei.com",
+          "href": "https://www.rei.com/product/227570/rei-co-op-rainier-rain-jacket-mens?sku=2275700087&CAWELAID=120217890020847526",
+          "photo": "https://encrypted-tbn2.gstatic.com/shopping?q=tbn:ANd9GcTgzp9g4tFMbDmdhSi7aNzHL-bPGgHRRKRBtgFfEBU5_HpUYjRm-QQCPwe3XlQi8qS2AE_TtgIndsjgz6tXPhaFAKTTgQgrkKxzDK9WCn6lu_R6FZzJxpH0zbk",
+          "width": 1071,
+          "height": 1200,
+          "retailerOk": false,
+          "retailerWhy": "did not arrive within 6s"
+        },
+        {
+          "name": "UNIQLO Men's Zip-Up Blouson Jacket",
+          "brand": "Uniqlo",
+          "price": "$49.90",
+          "retailer": "uniqlo.com",
+          "href": "https://www.uniqlo.com/us/en/products/E484249-000/00?colorDisplayCode=67&sizeDisplayCode=002&srsltid=AU7gw4WAF2phlL1UEE6kuZHerB_ak7HtUYBVkAFdLoD1ptg708FVh2WkBaU",
+          "photo": "https://encrypted-tbn0.gstatic.com/shopping?q=tbn:ANd9GcRBRDp8J7hFeB3nd71Tb0Pva8A3oxnGWizRxMZQl0E6Rhm5bl0gYcvPKPrbWOEL3jz6xmlR0lYBNO4g4g5OxY1krXdKhuS4",
+          "width": 900,
+          "height": 1200,
+          "retailerOk": true
+        },
+        {
+          "name": "Dickies Men's Eisenhower Unlined Jacket",
+          "brand": "Kohl's",
+          "price": "$47.99",
+          "retailer": "kohls.com",
+          "href": "https://www.kohls.com/product/prd-7646616/mens-dickies-unlined-eisenhower-jacket.jsp?skuid=62522593&CID=seo_offers&utm_campaign=SAG&utm_medium=organic&utm_source=google&utm_product=62522593",
+          "photo": "https://encrypted-tbn2.gstatic.com/shopping?q=tbn:ANd9GcROy84qawPwIJ8aVFhYryFNn2cRwRddzAh3XZftzbhqD8j7T5jQPTeFhZ-ESoFJWihTTz8dllPDq9KM2ubwAUmuJ9UVWLcM",
+          "width": 800,
+          "height": 800,
+          "retailerOk": false,
+          "retailerWhy": "blocked (\"Access Denied\")"
+        },
+        {
+          "name": "Levi's Women's Relaxed Bomber Jacket",
+          "brand": "Macy's",
+          "price": "$69.99",
+          "retailer": "macys.com",
+          "href": "https://www.macys.com/shop/product/levis-womens-lightweight-bomber-jacket?ID=26658993&pla_country=US&CAGPSPN=pla&swatchColor=Blue&swatchSize=L",
+          "photo": "https://encrypted-tbn1.gstatic.com/shopping?q=tbn:ANd9GcQETCzFFBrfgDKHEMlhP6Xnj9RC2NiS3h9p2XfWgC0UMysJR_M0eXp2aUgo7xjDWP0NhWoBwMCciNkhktqDbaKEWplQWhyYie8PNrHM5iC8hIo_OZp3UUhdlQ",
+          "width": 849,
+          "height": 1200,
+          "retailerOk": false,
+          "retailerWhy": "not opened"
+        },
+        {
+          "name": "Men's Lightweight Packable Jacket",
+          "brand": "32 Degrees",
+          "price": "$24.99",
+          "retailer": "32degrees.com",
+          "href": "https://www.32degrees.com/products/mens-lightweight-recycled-poly-fill-packable-jacket?variant=43276983107673&country=US&currency=USD&utm_medium=product_sync&utm_source=google&utm_content=sag_organic&utm_campaign=sag_organic&srsltid=AU7gw4Xb0o6XdvWL5xkXXNehc7ElxKJozOMFUVe9grWV-nAEpFUIsKXHFjI",
+          "photo": "https://encrypted-tbn0.gstatic.com/shopping?q=tbn:ANd9GcQUSsFG-QbT_lndOFfT5GoFigS1qxaTVCaj1dwS-lETa84F5HRWgsOVs6f7QUafXoKGUvWt5KMtkWazk_aj8RNnaOYqXrKCyw",
+          "width": 800,
+          "height": 1000,
+          "retailerOk": false,
+          "retailerWhy": "not opened"
+        },
+        {
+          "name": "Women's Knit Twill Cropped Jacket",
+          "brand": "Banana Republic Factory",
+          "price": "$70",
+          "retailer": "bananarepublicfactory.gapfactory.com",
+          "href": "https://bananarepublicfactory.gapfactory.com/browse/product.do?pid=1176837011&vid=1&tid=bfns000001",
+          "photo": "https://encrypted-tbn3.gstatic.com/shopping?q=tbn:ANd9GcRIXMRWUb5ifBywn_U1cxcjKG6i1CUg9y11bGgTDT38YYFJUC5CzgYR-N1YxJykbLP4gQLfT81MtpwNqwtVumrISDkFEv2nhn2QKgzkvDvE91LqaUNwY3rNtg",
+          "width": 1200,
+          "height": 1200,
+          "retailerOk": false,
+          "retailerWhy": "not opened"
+        }
+      ]
+    },
+    {
+      "slot": "hard-to-find",
+      "line": "specific",
+      "intended": "BAPE shark hoodie under $400",
+      "query": "BAPE shark hoodie under $400",
+      "kind": "exact",
+      "mention": "bape|bathing ape",
+      "howFound": "passed first time",
+      "attempts": [
+        {
+          "query": "BAPE shark hoodie under $400",
+          "kind": "exact",
+          "of": "BAPE shark hoodie under $400",
+          "try": 1,
+          "verified": 11,
+          "passed": true,
+          "unsteady": "1 offer lookup(s) aborted or failed; the offer lookups ran out of time"
+        }
+      ],
+      "interpret": {
+        "request": {
+          "query": "BAPE shark hoodie under $400",
+          "vocabulary": {
+            "categories": [
+              "knit",
+              "shirt",
+              "trousers",
+              "tee",
+              "jacket",
+              "dress",
+              "skirt",
+              "coat",
+              "sneaker",
+              "shorts"
+            ],
+            "colors": [
+              "Neutral",
+              "White",
+              "Black",
+              "Bright",
+              "Pastel",
+              "Blue",
+              "Earth",
+              "Green"
+            ],
+            "occasions": [
+              "Work",
+              "Everyday",
+              "Weekend",
+              "Evening",
+              "Active"
+            ],
+            "fits": [
+              "Regular",
+              "Slim",
+              "Relaxed",
+              "Oversized"
+            ],
+            "brands": [
+              "UNIQLO",
+              "J.Crew",
+              "L.L.Bean",
+              "Northfold",
+              "Halden",
+              "Coveworks",
+              "Atlas Supply",
+              "Rue Nine",
+              "Terrace",
+              "Kinfield",
+              "Solstice",
+              "Gap"
+            ],
+            "styles": [
+              "Minimal",
+              "Classic",
+              "Sporty",
+              "Streetwear",
+              "Bohemian",
+              "Bold"
+            ]
+          }
+        },
+        "status": 200,
+        "ms": 3975,
+        "response": {
+          "source": "openai",
+          "query": "BAPE shark hoodie under $400",
+          "preferences": {
+            "categories": [
+              "knit"
+            ],
+            "colors": [],
+            "occasions": [],
+            "fits": [],
+            "brands": [],
+            "styles": [
+              "Streetwear"
+            ],
+            "maxPrice": 400,
+            "minPrice": null,
+            "season": null,
+            "gender": null,
+            "keywords": [
+              "BAPE",
+              "shark",
+              "hoodie"
+            ],
+            "garments": [
+              "hoodie"
+            ],
+            "descriptors": []
+          },
+          "usage": {
+            "plan": "free",
+            "metric": "aiTokens",
+            "limit": 20000,
+            "used": 625,
+            "remaining": 19375,
+            "period": "day",
+            "resetsAt": "2026-10-04T00:00:00.000Z"
+          }
+        }
+      },
+      "search": {
+        "request": {
+          "intent": {
+            "categories": [
+              "knit"
+            ],
+            "colors": [],
+            "occasions": [],
+            "fits": [],
+            "brands": [],
+            "styles": [
+              "Streetwear"
+            ],
+            "garments": [
+              "hoodie"
+            ],
+            "descriptors": [],
+            "maxPrice": 400,
+            "minPrice": null,
+            "season": null,
+            "gender": null,
+            "keywords": [
+              "BAPE",
+              "shark",
+              "hoodie"
+            ]
+          },
+          "limit": 12,
+          "attachments": []
+        },
+        "status": 200,
+        "ms": 7322,
+        "response": {
+          "source": "openwebninja",
+          "products": [
+            {
+              "id": "catalogid:,productid:9305053014937795359,gpcid:,headlineOfferDocid:9305053014937795359,rds:PC_7412298745934055558|PROD_PC_7412298745934055558,imageDocid:2316575739165734045,mid:,pvt:a,pvf:",
+              "name": "Bape Color Camo Shark Full Zip Hoodie Black Grey",
+              "price": 247,
+              "currency": "USD",
+              "imageUrl": "https://encrypted-tbn1.gstatic.com/shopping?q=tbn:ANd9GcQoNI-K6sJpE1te7VTcRNbRtxBW8e19V5AstnqPfPxpRp0snxc",
+              "productUrl": "https://bape-store.com/product/bape-color-camo-shark-full-zip-hoodie-black-grey/?attribute_pa_size=m",
+              "retailer": "Bape-Store.com",
+              "category": "",
+              "colors": [],
+              "sizes": []
+            },
+            {
+              "id": "catalogid:,productid:14010574070138969228,gpcid:,headlineOfferDocid:14010574070138969228,rds:,imageDocid:14407856432738460316,mid:,pvt:a,pvf:",
+              "name": "Bape Split 1st Camo Shark Full Zip Hoodie Black",
+              "price": 217,
+              "currency": "USD",
+              "imageUrl": "https://encrypted-tbn0.gstatic.com/shopping?q=tbn:ANd9GcQEE78zGMQAjd3QgTAdbkJ3LNfHdb22hibnCLxhOmMVXyE8jZsZY7zeP4eIbMB_UJA1UpGq5Cn3fXkQV3oeRbl9IKQZige_FhgVvKCgC3PDnd7w9gcBvCWSXQ",
+              "productUrl": "https://bape-store.com/product/bape-split-1st-camo-shark-full-zip-hoodie-black/?attribute_pa_size=l",
+              "retailer": "Bape-Store.com",
+              "category": "",
+              "colors": [],
+              "sizes": []
+            },
+            {
+              "id": "catalogid:,productid:7244054456329156067,gpcid:,headlineOfferDocid:7244054456329156067,rds:PC_562437118316003721|PROD_PC_562437118316003721,imageDocid:13269306979272552440,mid:,pvt:a,pvf:",
+              "name": "Bape Color Camo Shark Full Zip Hoodie Blue",
+              "price": 252,
+              "currency": "USD",
+              "imageUrl": "https://encrypted-tbn0.gstatic.com/shopping?q=tbn:ANd9GcTEl5XpOnofEvU07hrPZAqrSnQr7FE5bvjjNquCMguMurEceTjL_5dGZ9x6QXqpmZoHaF8Q59DCeYyBsQSmD_KD-N3QKAx-HQhxLuWCakT0kqUAIZ6VbpR7Uw",
+              "productUrl": "https://bape-store.com/product/bape-color-camo-shark-full-zip-hoodie-blue/?attribute_pa_size=s",
+              "retailer": "Bape-Store.com",
+              "category": "",
+              "colors": [],
+              "sizes": []
+            },
+            {
+              "id": "catalogid:,productid:10044103517756303977,gpcid:,headlineOfferDocid:10044103517756303977,rds:,imageDocid:9201400174749656942,mid:,pvt:a,pvf:",
+              "name": "BAPE Shark Full-Zip Hoodie | Iconic Ape Head Streetwear Essential",
+              "price": 99,
+              "currency": "USD",
+              "imageUrl": "https://encrypted-tbn2.gstatic.com/shopping?q=tbn:ANd9GcTaIDavY9pF15qa7JsgaVFTOHbLM-nMbEsEgVrAfldUah113UHZFxhs6xianFfWg02skffXhIUrl-MDvG15_WjOhOHWN5hgqw",
+              "productUrl": "https://kbimaison.com/products/bape-hoodie-104",
+              "retailer": "kbimaison.com",
+              "category": "",
+              "colors": [],
+              "sizes": []
+            },
+            {
+              "id": "catalogid:,productid:3772730351643893336,gpcid:,headlineOfferDocid:3772730351643893336,rds:,imageDocid:3456814677649788143,mid:,pvt:a,pvf:",
+              "name": "Bape Split 1st Camo Shark Full Zip Hoodie Grey",
+              "price": 292,
+              "currency": "USD",
+              "imageUrl": "https://encrypted-tbn3.gstatic.com/shopping?q=tbn:ANd9GcQrJ3PTL9KBgAn9cH5_SOzBlZ1TyFvNIyrVz6bnIvBN23Jwu7QR7fDkrGCodHhx0GcFiGPwP5UcsZQx8xjnvEjkNMDPJ4cB4Ejf3bM_onzMfz7JzrzPXrzW",
+              "productUrl": "https://bape-store.com/product/bape-split-1st-camo-shark-full-zip-hoodie-grey/?attribute_pa_size=m",
+              "retailer": "Bape-Store.com",
+              "category": "",
+              "colors": [],
+              "sizes": []
+            },
+            {
+              "id": "catalogid:,productid:1937399210038352800,gpcid:,headlineOfferDocid:1937399210038352800,rds:PC_6194546153818342425|PROD_PC_6194546153818342425,imageDocid:1484100879634880989,mid:,pvt:a,pvf:",
+              "name": "A Bathing Ape (BAPE) Full-Zip Shark Camo Hoodie Collection Camo Gray-XL",
+              "price": 69.15,
+              "currency": "USD",
+              "imageUrl": "https://encrypted-tbn1.gstatic.com/shopping?q=tbn:ANd9GcTuB6Dhq1trCcXcCB3W2t_1HwlighgUTpr3cM8RwrvEnrR653W-U6mHFohadPjL2ljaOUfC-ycAMJHprGuyRMJkLM3--GvodEmVttqP8r6IvrY7xof0fQiIXg",
+              "productUrl": "https://www.techwear-x.com/products/a-bathing-ape-bape-full-zip-shark-camo-hoodie-collection?variant=73ff024f-93c5-4634-b0b5-cf0b138c21b5&srsltid=AU7gw4WggHjyAywmxTXbbQTUovyNQx68G5icTzu-FnGWVS6gUlxwLXnMwdM",
+              "retailer": "techwear-x.com",
+              "category": "",
+              "colors": [],
+              "sizes": []
+            },
+            {
+              "id": "catalogid:,productid:8217849054874674769,gpcid:,headlineOfferDocid:8217849054874674769,rds:PC_919396412845227621|PROD_PC_919396412845227621,imageDocid:13866447904588823514,mid:,pvt:a,pvf:",
+              "name": "Bape Split City Camo Shark Full Zip Hoodie Black White",
+              "price": 286,
+              "currency": "USD",
+              "imageUrl": "https://encrypted-tbn2.gstatic.com/shopping?q=tbn:ANd9GcQLQ84aIXhdnAwQ1lYpebGOHzpY85ds2rPKm2_7PGHjwHxC1oc",
+              "productUrl": "https://bape-store.com/product/bape-split-city-camo-shark-full-zip-hoodie-black-white/?attribute_pa_size=m",
+              "retailer": "Bape-Store.com",
+              "category": "",
+              "colors": [],
+              "sizes": []
+            },
+            {
+              "id": "catalogid:,productid:10671280453688451922,gpcid:,headlineOfferDocid:10671280453688451922,rds:,imageDocid:496685878973935722,mid:,pvt:a,pvf:",
+              "name": "BAPE Double-hat Big ABC Camo Shark Hoodie",
+              "price": 49.99,
+              "currency": "USD",
+              "imageUrl": "https://encrypted-tbn2.gstatic.com/shopping?q=tbn:ANd9GcQgplheAU_Am_uIgGoiugIDvVefiwhLYpolH96aimOXxQWSQDMpcVEzcCfAiLDkRsQBrkMum0Wbz9GV-oVMonA0CO9WZaqC5A",
+              "productUrl": "https://breezeshare.com/products/bape-double-hat-big-abc-camo-shark-hoodie",
+              "retailer": "breezeshare.com",
+              "category": "",
+              "colors": [],
+              "sizes": []
+            },
+            {
+              "id": "catalogid:,productid:2309362737547634934,gpcid:,headlineOfferDocid:2309362737547634934,rds:,imageDocid:13977112935241141300,mid:,pvt:a,pvf:",
+              "name": "A Bathing Ape (BAPE) Full-Zip Shark Camo Hoodie Collection Spot Pocket-L",
+              "price": 69.15,
+              "currency": "USD",
+              "imageUrl": "https://encrypted-tbn0.gstatic.com/shopping?q=tbn:ANd9GcQaD5zBBPrj84KTRp79Axs8nOx_DnlMMcmFagvF7wEBX7zLzfE-StECHNSP70ftaRL6A86rHONADIBNIs2fbMSF5zOq9wgf0DmBbtp3qZ2xHMqAff7T68oz",
+              "productUrl": "https://www.techwear-x.com/products/a-bathing-ape-bape-full-zip-shark-camo-hoodie-collection?variant=65537569-e37e-46b1-88be-9f60a2f8761c&srsltid=AU7gw4WlSaKpwpt08InV4grkyIxPEpAwv7Yjga0I6_zT23-2WMZBDlGhWyU",
+              "retailer": "techwear-x.com",
+              "category": "",
+              "colors": [],
+              "sizes": []
+            },
+            {
+              "id": "catalogid:,productid:11174303168836036605,gpcid:,headlineOfferDocid:11174303168836036605,rds:,imageDocid:7013053444931324468,mid:,pvt:a,pvf:",
+              "name": "Bape x CR7 Life Logo Shark Full Zip Hoodie",
+              "price": 118,
+              "currency": "USD",
+              "imageUrl": "https://encrypted-tbn0.gstatic.com/shopping?q=tbn:ANd9GcSjxELbluwiOmWiLcBQF0xh8CzWRtXazuWvb-BQWd2wB9c2M0g0",
+              "productUrl": "https://www.jacketcraze.com/product/bape-x-cr7-life-logo-shark-full-zip-hoodie/",
+              "retailer": "Jacket Craze",
+              "category": "",
+              "colors": [],
+              "sizes": []
+            },
+            {
+              "id": "catalogid:,productid:10789723860164900308,gpcid:,headlineOfferDocid:10789723860164900308,rds:,imageDocid:17045725385303468790,mid:,pvt:a,pvf:",
+              "name": "A Bathing Ape (BAPE) Full-Zip Shark Camo Hoodie Collection Black Skull-S",
+              "price": 69.15,
+              "currency": "USD",
+              "imageUrl": "https://encrypted-tbn2.gstatic.com/shopping?q=tbn:ANd9GcT8Bo-uvL9e0SO7vnKrlAvJMaEEwxgZJUpwHZ9AurA95W5pf5jdVkK1uW7A4c4NODKvtYaLAnOeVjZQZoQSWkzbEffZouihApsj-ZpPIIuG1JpkWD4aUUOq",
+              "productUrl": "https://www.techwear-x.com/products/a-bathing-ape-bape-full-zip-shark-camo-hoodie-collection?variant=c1f05588-e542-45c2-b396-9e44d2198cee&srsltid=AU7gw4UKpUxX15sf1D1Seu2AH3SND99kO7fmcrookM9iVO6GUoyonhFuasQ",
+              "retailer": "techwear-x.com",
+              "category": "",
+              "colors": [],
+              "sizes": []
+            }
+          ],
+          "returned": 24,
+          "rejected": {
+            "missing-price": 13
+          },
+          "diagnostics": {
+            "returnedByProvider": 24,
+            "searchShape": null,
+            "searchMs": 1301,
+            "normalized": 24,
+            "withInlineLink": 0,
+            "offers": {
+              "neededOfferLookup": 24,
+              "lookupsMade": 12,
+              "lookupsFailed": 1,
+              "lookupsEmpty": 0,
+              "resolvedFromOffers": 11,
+              "noDirectLinkInOffers": 0,
+              "budgetExpired": true,
+              "cacheHits": 0,
+              "negativeCacheHits": 0,
+              "noProductId": 0,
+              "offersShape": null,
+              "skippedUnfit": {},
+              "candidates": 24,
+              "lookupCeiling": 20,
+              "ceilingReached": false,
+              "verified": 11,
+              "targetMet": false
+            },
+            "offersMs": 6012,
+            "withAnyLink": 11,
+            "droppedOverBudget": 0,
+            "reachedGate": 24,
+            "provider": "openwebninja",
+            "fellBackFrom": null,
+            "verified": 11,
+            "removedAsAnotherGarment": 0,
+            "rejected": {
+              "missing-price": 13
+            },
+            "cache": {
+              "enabled": true,
+              "driver": "memory",
+              "searchCache": {
+                "hit": 0,
+                "miss": 1,
+                "stored": 1,
+                "coalesced": 0
+              },
+              "offerCache": {
+                "hit": 0,
+                "miss": 12,
+                "negativeHit": 0,
+                "stored": 11,
+                "negativeStored": 0
+              },
+              "providerRequestsAvoided": 0,
+              "servedFromCache": false
+            },
+            "timing": {
+              "budgetMs": 9000,
+              "totalMs": 7322,
+              "deadlineExpired": false
+            }
+          },
+          "attachments": {
+            "received": 0,
+            "used": 0,
+            "reason": null
+          },
+          "usage": {
+            "plan": "free",
+            "metric": "searches",
+            "limit": 1,
+            "used": 1,
+            "remaining": 0,
+            "period": "day",
+            "resetsAt": "2026-10-04T00:00:00.000Z"
+          }
+        }
+      },
+      "shown": [
+        {
+          "name": "Bape Color Camo Shark Full Zip Hoodie Black Grey",
+          "brand": "Bape-Store.com",
+          "price": "$247",
+          "retailer": "bape-store.com",
+          "href": "https://bape-store.com/product/bape-color-camo-shark-full-zip-hoodie-black-grey/?attribute_pa_size=m",
+          "photo": "https://encrypted-tbn1.gstatic.com/shopping?q=tbn:ANd9GcQoNI-K6sJpE1te7VTcRNbRtxBW8e19V5AstnqPfPxpRp0snxc",
+          "width": 800,
+          "height": 800,
+          "retailerOk": true
+        },
+        {
+          "name": "Bape Split 1st Camo Shark Full Zip Hoodie Black",
+          "brand": "Bape-Store.com",
+          "price": "$217",
+          "retailer": "bape-store.com",
+          "href": "https://bape-store.com/product/bape-split-1st-camo-shark-full-zip-hoodie-black/?attribute_pa_size=l",
+          "photo": "https://encrypted-tbn0.gstatic.com/shopping?q=tbn:ANd9GcQEE78zGMQAjd3QgTAdbkJ3LNfHdb22hibnCLxhOmMVXyE8jZsZY7zeP4eIbMB_UJA1UpGq5Cn3fXkQV3oeRbl9IKQZige_FhgVvKCgC3PDnd7w9gcBvCWSXQ",
+          "width": 1191,
+          "height": 1200,
+          "retailerOk": true
+        },
+        {
+          "name": "Bape Color Camo Shark Full Zip Hoodie Blue",
+          "brand": "Bape-Store.com",
+          "price": "$252",
+          "retailer": "bape-store.com",
+          "href": "https://bape-store.com/product/bape-color-camo-shark-full-zip-hoodie-blue/?attribute_pa_size=s",
+          "photo": "https://encrypted-tbn0.gstatic.com/shopping?q=tbn:ANd9GcTEl5XpOnofEvU07hrPZAqrSnQr7FE5bvjjNquCMguMurEceTjL_5dGZ9x6QXqpmZoHaF8Q59DCeYyBsQSmD_KD-N3QKAx-HQhxLuWCakT0kqUAIZ6VbpR7Uw",
+          "width": 1104,
+          "height": 1200,
+          "retailerOk": true
+        },
+        {
+          "name": "BAPE Shark Full-Zip Hoodie | Iconic Ape Head Streetwear Essential",
+          "brand": "kbimaison.com",
+          "price": "$99",
+          "retailer": "kbimaison.com",
+          "href": "https://kbimaison.com/products/bape-hoodie-104",
+          "photo": "https://encrypted-tbn2.gstatic.com/shopping?q=tbn:ANd9GcTaIDavY9pF15qa7JsgaVFTOHbLM-nMbEsEgVrAfldUah113UHZFxhs6xianFfWg02skffXhIUrl-MDvG15_WjOhOHWN5hgqw",
+          "width": 225,
+          "height": 225,
+          "retailerOk": true
+        },
+        {
+          "name": "Bape Split 1st Camo Shark Full Zip Hoodie Grey",
+          "brand": "Bape-Store.com",
+          "price": "$292",
+          "retailer": "bape-store.com",
+          "href": "https://bape-store.com/product/bape-split-1st-camo-shark-full-zip-hoodie-grey/?attribute_pa_size=m",
+          "photo": "https://encrypted-tbn3.gstatic.com/shopping?q=tbn:ANd9GcQrJ3PTL9KBgAn9cH5_SOzBlZ1TyFvNIyrVz6bnIvBN23Jwu7QR7fDkrGCodHhx0GcFiGPwP5UcsZQx8xjnvEjkNMDPJ4cB4Ejf3bM_onzMfz7JzrzPXrzW",
+          "width": 921,
+          "height": 1000,
+          "retailerOk": true
+        },
+        {
+          "name": "A Bathing Ape (BAPE) Full-Zip Shark Camo Hoodie Collection Camo Gray-XL",
+          "brand": "techwear-x.com",
+          "price": "$69.15",
+          "retailer": "techwear-x.com",
+          "href": "https://www.techwear-x.com/products/a-bathing-ape-bape-full-zip-shark-camo-hoodie-collection?variant=73ff024f-93c5-4634-b0b5-cf0b138c21b5&srsltid=AU7gw4WggHjyAywmxTXbbQTUovyNQx68G5icTzu-FnGWVS6gUlxwLXnMwdM",
+          "photo": "https://encrypted-tbn1.gstatic.com/shopping?q=tbn:ANd9GcTuB6Dhq1trCcXcCB3W2t_1HwlighgUTpr3cM8RwrvEnrR653W-U6mHFohadPjL2ljaOUfC-ycAMJHprGuyRMJkLM3--GvodEmVttqP8r6IvrY7xof0fQiIXg",
+          "width": 1000,
+          "height": 1200,
+          "retailerOk": false,
+          "retailerWhy": "blocked (\"Just a moment...\")"
+        },
+        {
+          "name": "Bape Split City Camo Shark Full Zip Hoodie Black White",
+          "brand": "Bape-Store.com",
+          "price": "$286",
+          "retailer": "bape-store.com",
+          "href": "https://bape-store.com/product/bape-split-city-camo-shark-full-zip-hoodie-black-white/?attribute_pa_size=m",
+          "photo": "https://encrypted-tbn2.gstatic.com/shopping?q=tbn:ANd9GcQLQ84aIXhdnAwQ1lYpebGOHzpY85ds2rPKm2_7PGHjwHxC1oc",
+          "width": 1110,
+          "height": 1110,
+          "retailerOk": true
+        },
+        {
+          "name": "BAPE Double-hat Big ABC Camo Shark Hoodie",
+          "brand": "breezeshare.com",
+          "price": "$49.99",
+          "retailer": "breezeshare.com",
+          "href": "https://breezeshare.com/products/bape-double-hat-big-abc-camo-shark-hoodie",
+          "photo": "https://encrypted-tbn2.gstatic.com/shopping?q=tbn:ANd9GcQgplheAU_Am_uIgGoiugIDvVefiwhLYpolH96aimOXxQWSQDMpcVEzcCfAiLDkRsQBrkMum0Wbz9GV-oVMonA0CO9WZaqC5A",
+          "width": 225,
+          "height": 225,
+          "retailerOk": true
+        },
+        {
+          "name": "A Bathing Ape (BAPE) Full-Zip Shark Camo Hoodie Collection Spot Pocket-L",
+          "brand": "techwear-x.com",
+          "price": "$69.15",
+          "retailer": "techwear-x.com",
+          "href": "https://www.techwear-x.com/products/a-bathing-ape-bape-full-zip-shark-camo-hoodie-collection?variant=65537569-e37e-46b1-88be-9f60a2f8761c&srsltid=AU7gw4WlSaKpwpt08InV4grkyIxPEpAwv7Yjga0I6_zT23-2WMZBDlGhWyU",
+          "photo": "https://encrypted-tbn0.gstatic.com/shopping?q=tbn:ANd9GcQaD5zBBPrj84KTRp79Axs8nOx_DnlMMcmFagvF7wEBX7zLzfE-StECHNSP70ftaRL6A86rHONADIBNIs2fbMSF5zOq9wgf0DmBbtp3qZ2xHMqAff7T68oz",
+          "width": 1000,
+          "height": 1200,
+          "retailerOk": false,
+          "retailerWhy": "not opened"
+        },
+        {
+          "name": "Bape x CR7 Life Logo Shark Full Zip Hoodie",
+          "brand": "Jacket Craze",
+          "price": "$118",
+          "retailer": "jacketcraze.com",
+          "href": "https://www.jacketcraze.com/product/bape-x-cr7-life-logo-shark-full-zip-hoodie/",
+          "photo": "https://encrypted-tbn0.gstatic.com/shopping?q=tbn:ANd9GcSjxELbluwiOmWiLcBQF0xh8CzWRtXazuWvb-BQWd2wB9c2M0g0",
+          "width": 600,
+          "height": 750,
+          "retailerOk": false,
+          "retailerWhy": "not opened"
+        },
+        {
+          "name": "A Bathing Ape (BAPE) Full-Zip Shark Camo Hoodie Collection Black Skull-S",
+          "brand": "techwear-x.com",
+          "price": "$69.15",
+          "retailer": "techwear-x.com",
+          "href": "https://www.techwear-x.com/products/a-bathing-ape-bape-full-zip-shark-camo-hoodie-collection?variant=c1f05588-e542-45c2-b396-9e44d2198cee&srsltid=AU7gw4UKpUxX15sf1D1Seu2AH3SND99kO7fmcrookM9iVO6GUoyonhFuasQ",
+          "photo": "https://encrypted-tbn2.gstatic.com/shopping?q=tbn:ANd9GcT8Bo-uvL9e0SO7vnKrlAvJMaEEwxgZJUpwHZ9AurA95W5pf5jdVkK1uW7A4c4NODKvtYaLAnOeVjZQZoQSWkzbEffZouihApsj-ZpPIIuG1JpkWD4aUUOq",
+          "width": 1000,
+          "height": 1200,
+          "retailerOk": false,
+          "retailerWhy": "not opened"
+        }
+      ]
+    },
+    {
+      "slot": "particular",
+      "line": "particular",
+      "intended": "sage green linen midi dress under $120",
+      "query": "sage green linen midi dress under $120",
+      "kind": "exact",
+      "mention": null,
+      "howFound": "passed first time",
+      "attempts": [
+        {
+          "query": "sage green linen midi dress under $120",
+          "kind": "exact",
+          "of": "sage green linen midi dress under $120",
+          "try": 1,
+          "verified": 12,
+          "passed": true
+        }
+      ],
+      "interpret": {
+        "request": {
+          "query": "sage green linen midi dress under $120",
+          "vocabulary": {
+            "categories": [
+              "knit",
+              "shirt",
+              "trousers",
+              "tee",
+              "jacket",
+              "dress",
+              "skirt",
+              "coat",
+              "sneaker",
+              "shorts"
+            ],
+            "colors": [
+              "Neutral",
+              "White",
+              "Black",
+              "Bright",
+              "Pastel",
+              "Blue",
+              "Earth",
+              "Green"
+            ],
+            "occasions": [
+              "Work",
+              "Everyday",
+              "Weekend",
+              "Evening",
+              "Active"
+            ],
+            "fits": [
+              "Regular",
+              "Slim",
+              "Relaxed",
+              "Oversized"
+            ],
+            "brands": [
+              "UNIQLO",
+              "J.Crew",
+              "L.L.Bean",
+              "Northfold",
+              "Halden",
+              "Coveworks",
+              "Atlas Supply",
+              "Rue Nine",
+              "Terrace",
+              "Kinfield",
+              "Solstice",
+              "Gap"
+            ],
+            "styles": [
+              "Minimal",
+              "Classic",
+              "Sporty",
+              "Streetwear",
+              "Bohemian",
+              "Bold"
+            ]
+          }
+        },
+        "status": 200,
+        "ms": 2327,
+        "response": {
+          "source": "openai",
+          "query": "sage green linen midi dress under $120",
+          "preferences": {
+            "categories": [
+              "dress"
+            ],
+            "colors": [
+              "Green"
+            ],
+            "occasions": [],
+            "fits": [],
+            "brands": [],
+            "styles": [],
+            "maxPrice": 120,
+            "minPrice": null,
+            "season": null,
+            "gender": null,
+            "keywords": [
+              "sage",
+              "linen",
+              "midi"
+            ],
+            "garments": [
+              "dress"
+            ],
+            "descriptors": [
+              "linen",
+              "midi"
+            ]
+          },
+          "usage": {
+            "plan": "free",
+            "metric": "aiTokens",
+            "limit": 20000,
+            "used": 542,
+            "remaining": 19458,
+            "period": "day",
+            "resetsAt": "2026-10-04T00:00:00.000Z"
+          }
+        }
+      },
+      "search": {
+        "request": {
+          "intent": {
+            "categories": [
+              "dress"
+            ],
+            "colors": [
+              "Green"
+            ],
+            "occasions": [],
+            "fits": [],
+            "brands": [],
+            "styles": [],
+            "garments": [
+              "dress"
+            ],
+            "descriptors": [
+              "linen",
+              "midi"
+            ],
+            "maxPrice": 120,
+            "minPrice": null,
+            "season": null,
+            "gender": null,
+            "keywords": [
+              "sage",
+              "linen",
+              "midi"
+            ]
+          },
+          "limit": 12,
+          "attachments": []
+        },
+        "status": 200,
+        "ms": 5359,
+        "response": {
+          "source": "openwebninja",
+          "products": [
+            {
+              "id": "catalogid:14315204070435789307,productid:4888045572971821409,gpcid:16511654413844015023,headlineOfferDocid:15633885060146674356,rds:PC_16511654413844015023|PROD_PC_16511654413844015023,imageDocid:11740540511064193083,mid:576462770300560255,pvt:a,pvf:",
+              "name": "Petal & Pup Women's Dresses Petal Pup Piper Dress",
+              "price": 79,
+              "currency": "USD",
+              "imageUrl": "https://encrypted-tbn3.gstatic.com/shopping?q=tbn:ANd9GcRREv-uHl7Gx5VTFoVy1E6kkEwQ-OP7-ai6FJmSEmbSJGS014I7dZxQHeBD5nMETpbQCf10w9VvQtHek66tkaEWD7xWJcmo94KOT45cKr8Z-DdjDPQA2L9w",
+              "productUrl": "https://www.nordstrom.com/s/piper-button-front-midi-dress/7753179?color=sage&size=12&utm_source=google&utm_medium=organic&utm_campaign=seo_shopping&srsltid=AU7gw4UiVKCHYfru5BKfAAPlAGJVetkiwAOEL3FcVpkuT4tDtIXIKNtn9Ns",
+              "retailer": "Nordstrom",
+              "category": "",
+              "colors": [],
+              "sizes": []
+            },
+            {
+              "id": "catalogid:5278122422495373336,productid:3714810514125386942,gpcid:911575582712010849,headlineOfferDocid:14048576149484517440,rds:,imageDocid:11501784376960718660,mid:576462567022120270,pvt:a,pvf:",
+              "name": "Woman Zara Linen Strappy Midi Dress",
+              "price": 69.9,
+              "currency": "USD",
+              "imageUrl": "https://encrypted-tbn0.gstatic.com/shopping?q=tbn:ANd9GcRVygVC5NwtfmvbmfSDogXTLEO1B1FE_gv2kR_7Cc82rRYa3wUCIRsb8S1izEOo-wY_evssHPcGsWWwQ2YVDOJ9U3vxwozFp4_44LgN5pOri_Uw_Gf_dWBJ3Sk",
+              "productUrl": "https://www.zara.com/us/en/linen-strappy-midi-dress-p07232712.html?v1=577244092",
+              "retailer": "Zara USA",
+              "category": "",
+              "colors": [],
+              "sizes": []
+            },
+            {
+              "id": "catalogid:13766828717326801144,productid:5877844244911241393,gpcid:1102843909915341628,headlineOfferDocid:2736246818323534595,rds:PC_1102843909915341628|PROD_PC_1102843909915341628,imageDocid:5282539558179996284,mid:576462823163608791,pvt:a,pvf:",
+              "name": "Women's Quince 100% European Linen Scoop Neck Midi Dress",
+              "price": 84,
+              "currency": "USD",
+              "imageUrl": "https://encrypted-tbn0.gstatic.com/shopping?q=tbn:ANd9GcSuwDO5THLUSzA_Qog-7jXJH-GtfivfePeSLV_BokfYOy7v1_oSYkmePpqF5sZREJ5UgpFlfi6l2MBSY4ksHsr8A9AKfDrT",
+              "productUrl": "https://www.quince.com/women/100-european-linen-scoop-neck-midi-dress?color=martini-olive&size=l&srsltid=AU7gw4Vqajje1WCHPHBhxazxB1SEFSHOrnS081V4_qgwXmo7ueScyrD3Vdc",
+              "retailer": "Quince",
+              "category": "",
+              "colors": [],
+              "sizes": []
+            },
+            {
+              "id": "catalogid:4813776470952579668,productid:1615538227958568426,gpcid:11093162136509157646,headlineOfferDocid:737594835947856996,rds:,imageDocid:13083656554811574380,mid:576462895435356265,pvt:a,pvf:",
+              "name": "Women Sleeveless Linen Look Midi Dress Crew Neck Loose Shift Dress with Side Pockets Casual Vacation Sundress",
+              "price": 45.95,
+              "currency": "USD",
+              "imageUrl": "https://encrypted-tbn0.gstatic.com/shopping?q=tbn:ANd9GcR4Nxb0GroDEDepCiNl8gkMnSgWmsh942wVntj6TS2hHYrrWmsmGMn3ATUGfQHq-PeaQHr6oOM4oFm63mmUcgiUsOSSZk3g1A",
+              "productUrl": "https://www.target.com/p/women-sleeveless-linen-look-midi-dress-crew-neck-loose-shift-dress-with-side-pockets-casual-vacation-sundress-green-xl/-/A-1012397257?TCID=OGS&AFID=google&CPNG=Women+-+Target+Plus&adgroup=303-9&srsltid=AU7gw4U2JtM2JS-r6F63kUiATJNa_Ubv-WqondyoJkSj4gCPszMcud7_Wig",
+              "retailer": "Target",
+              "category": "",
+              "colors": [],
+              "sizes": []
+            },
+            {
+              "id": "catalogid:2153261732586579906,productid:7139693172755888713,gpcid:6540171219713041179,headlineOfferDocid:11331335159942033634,rds:PC_6540171219713041179|PROD_PC_6540171219713041179,imageDocid:11397581182510300165,mid:576462877686483589,pvt:a,pvf:",
+              "name": "ASOS Design midi dress Women",
+              "price": 44.99,
+              "currency": "USD",
+              "imageUrl": "https://encrypted-tbn1.gstatic.com/shopping?q=tbn:ANd9GcRgm0reU1ia71AuRqNxfE4D_CJvao6DZdGB2c2cuK25NmnXSMCDvXEVnIqmx-gObAxYqmwGmaAbuW14b1FF8FNI8LS-636v",
+              "productUrl": "https://www.asos.com/us/asos-design/asos-design-linen-twist-shoulder-detail-midi-dress-with-ruching-in-pale-green/prd/207838254?affid=26521&freelisting=yes",
+              "retailer": "ASOS",
+              "category": "",
+              "colors": [],
+              "sizes": []
+            },
+            {
+              "id": "catalogid:10661189686349625638,productid:15442823956912158740,gpcid:3779733593891045094,headlineOfferDocid:12545743008707755288,rds:,imageDocid:3667311339147819611,mid:576462879843926970,pvt:a,pvf:",
+              "name": "Light Green Linen Cotton Midi Dress Vintage A-Line Button Front",
+              "price": 75.65,
+              "currency": "USD",
+              "imageUrl": "https://encrypted-tbn3.gstatic.com/shopping?q=tbn:ANd9GcTL1zmPK-LLCzem6cDbWr0ESgA3Q4dw8B9kR7ExgCxwtGkfU6jSNl3NMlHZJa6bj2QeXNXL0P1PaysD75ZajLPmc3vWglotQkcS5Pt_B96UK20v7fwGLnlOfw",
+              "productUrl": "https://www.etsy.com/listing/4445844615/sage-green-linen-cotton-midi-dress?gpla=1&gao=1&",
+              "retailer": "Etsy - Ylistyle",
+              "category": "",
+              "colors": [],
+              "sizes": []
+            },
+            {
+              "id": "catalogid:12775973980666734235,productid:14566833598827734808,gpcid:6955329152051197612,headlineOfferDocid:11981906684650238469,rds:PC_6955329152051197612|PROD_PC_6955329152051197612,imageDocid:12235933015395967764,mid:576462816234889290,pvt:a,pvf:",
+              "name": "Petal & Pup Women's Dresses Petal And Pup Apollo Dress",
+              "price": 70,
+              "currency": "USD",
+              "imageUrl": "https://encrypted-tbn0.gstatic.com/shopping?q=tbn:ANd9GcQJG32zlm55o5E_2feghKKIeJJn2LHF77JRmvR4E__QMfri3adcL_DNurCE10r67aEQCd4tFo2TcCrgWZYGqPpYkvt4QvN1",
+              "productUrl": "https://poshmark.com/listing/Petal-pup-sage-cut-out-open-front-linen-midi-dress-nwot-680c453b325187f2a93a3c68?srsltid=AU7gw4Xh3BI4CC-R6cn3yLvYr9gFWqSX5tIgaPOIvQ2exAM7Lc_S9Ugz3ew#utm_source=gdm_unpaid",
+              "retailer": "Poshmark",
+              "category": "",
+              "colors": [],
+              "sizes": []
+            },
+            {
+              "id": "catalogid:5910804766644465117,productid:6077136002746643544,gpcid:6311877539842895659,headlineOfferDocid:6580443331046288236,rds:,imageDocid:14077273094489449018,mid:576462880777576735,pvt:a,pvf:",
+              "name": "Women's Fiophy 100% Linen Dresses Square Neck Sleeveless Spaghetti Strap Summer Casual Midi Dress with Slit",
+              "price": 59.99,
+              "currency": "USD",
+              "imageUrl": "https://encrypted-tbn2.gstatic.com/shopping?q=tbn:ANd9GcSLwcrwJ8MV_-rFNGK4-eWzfy5OZb5K8_bvnXeK4Iggub_4q2kgxNbnXpytXBSKkCTvJ_hkZzoDzXCDakmPC5Gv0MAGSXQGhDwKUyZ3LRmqFK2Zn994hpjRGA",
+              "productUrl": "https://www.walmart.com/ip/Fiophy-100-Linen-Dresses-Square-Neck-Sleeveless-Spaghetti-Strap-Summer-Casual-Midi-Dress-with-Slit-Green-L/21043154883?wmlspartner=wlpa&selectedSellerId=101460448&veh=seo_fpl&cn=google",
+              "retailer": "Walmart - FIOPHY",
+              "category": "",
+              "colors": [],
+              "sizes": []
+            },
+            {
+              "id": "catalogid:7867878545036969890,productid:3454341601242901891,gpcid:15688145474426461478,headlineOfferDocid:151468607371909185,rds:,imageDocid:14889737229652521512,mid:576462518463961738,pvt:a,pvf:",
+              "name": "Simon Jersey Women's Linen Blend V-neck Dress",
+              "price": 45.45,
+              "currency": "USD",
+              "imageUrl": "https://encrypted-tbn0.gstatic.com/shopping?q=tbn:ANd9GcSZXubY6iKxBfeqmphfgwTvDJKRxJ6fik9fhOFRBPn3ivlkhRtNVHKETKVVV61nNstnrj8fRInn55dBHu2bx6sxzsIPhw8Ks2pV5as-639lJIakSN_CUCHg",
+              "productUrl": "https://www.simonjersey.com/simon-jersey-womens-linen-blend-v-neck-dress-sage-p1543/s53017?cid=USD&vs_vat=ex&glCurrency=USD&glCountry=US&utm_source=google&utm_medium=surfaces&utm_campaign=shopping%20feed&utm_content=free%20google%20shopping%20clicks&srsltid=AU7gw4WPV3Pk8tfaxH9nZBp6YcukhjtZw1Pj-CPMLsAwlAqfDqv4wux7Cuo",
+              "retailer": "Simon Jersey",
+              "category": "",
+              "colors": [],
+              "sizes": []
+            },
+            {
+              "id": "catalogid:12723974161222326232,productid:17168803728993847093,gpcid:13776516965598781680,headlineOfferDocid:4458287344854606790,rds:PC_13776516965598781680|PROD_PC_13776516965598781680,imageDocid:4768982034033038348,mid:576462563945211021,pvt:a,pvf:",
+              "name": "Sage Green Fit and Flare Midi Dress in Cotton-Linen Blend with Ruffled Sleeves 3319",
+              "price": 79,
+              "currency": "USD",
+              "imageUrl": "https://encrypted-tbn0.gstatic.com/shopping?q=tbn:ANd9GcRl27ltzzSADPXY8pPDxtZHzPRaJneZv5_FXngVBeEYPux1HSrqqHYHyLad0IIPrCp8d6JfbDpphMvnJHYDWSbKDwA4_s4vMCnyH0C524_rapJGK7EYYy2WGA",
+              "productUrl": "https://shopxiaolizi.com/products/sage-green-cotton-linen-fit-and-flare-midi-dress-ruffled-long-sleeves-3319?variant=45204548059206&country=US&currency=USD&utm_medium=product_sync&utm_source=google&utm_content=sag_organic&utm_campaign=sag_organic&srsltid=AU7gw4UGu7sEYB5ADh2wI_Iyxd1X0za6eLH031GObqr5f_nC3Brj4j-Gnis",
+              "retailer": "XiaoLizi",
+              "category": "",
+              "colors": [],
+              "sizes": []
+            },
+            {
+              "id": "catalogid:,productid:8038830344018422523,gpcid:,headlineOfferDocid:8038830344018422523,rds:,imageDocid:2683402253479498290,mid:,pvt:a,pvf:",
+              "name": "The Savannah Linen Midi Dress Medium / Sage",
+              "price": 84,
+              "currency": "USD",
+              "imageUrl": "https://encrypted-tbn2.gstatic.com/shopping?q=tbn:ANd9GcQkHBhE4RIn2SPKCkJ0MCtC2hQrovbafCFyUThjRwRhEGa3Bd6OCLQ1ONB6l3F0s-rQ0voxmLPhtFSMdLZHHXjA1g9HogdIkDED3jA3N8xSf2e6Gb-zNz1f",
+              "productUrl": "https://www.shoppetwelve.com/products/the-savannah-linen-midi-dress?variant=47439204024546&country=US&currency=USD&utm_medium=product_sync&utm_source=google&utm_content=sag_organic&utm_campaign=sag_organic&srsltid=AU7gw4X9oS6X9KWVLchq1GgEdv1bjfHkwsbcaqgf-IcQ5eRz_IxVctEx_ZY",
+              "retailer": "Shoppe Twelve",
+              "category": "",
+              "colors": [],
+              "sizes": []
+            },
+            {
+              "id": "catalogid:12228600057800873120,productid:7554122721319683889,gpcid:,headlineOfferDocid:13109791734363413511,rds:,imageDocid:5232951580437584208,mid:,pvt:a,pvf:",
+              "name": "Sage Green Linen Look Midi Dress, Sleeveless Button Front, Minimalist Summer Style",
+              "price": 76.3,
+              "currency": "USD",
+              "imageUrl": "https://encrypted-tbn0.gstatic.com/shopping?q=tbn:ANd9GcQkmnPtQ01wVcHmpU1mVYpANGwv3DXHborjV_zF9Iv6teTOEkcUr3sq590R2wsDHhDUIHchPpJo0lIYX_8Vf6yJ8hQF3v9I9S1sGj1H4O0f1RYIAAaMorjIlw",
+              "productUrl": "https://www.etsy.com/listing/4582954680/green-midi-dress-sleeveless-button-front?gpla=1&gao=1&",
+              "retailer": "Etsy - Seller",
+              "category": "",
+              "colors": [],
+              "sizes": []
+            }
+          ],
+          "returned": 24,
+          "rejected": {
+            "missing-price": 12
+          },
+          "diagnostics": {
+            "returnedByProvider": 24,
+            "searchShape": null,
+            "searchMs": 1082,
+            "normalized": 24,
+            "withInlineLink": 0,
+            "offers": {
+              "neededOfferLookup": 24,
+              "lookupsMade": 12,
+              "lookupsFailed": 0,
+              "lookupsEmpty": 0,
+              "resolvedFromOffers": 12,
+              "noDirectLinkInOffers": 0,
+              "budgetExpired": false,
+              "cacheHits": 0,
+              "negativeCacheHits": 0,
+              "noProductId": 0,
+              "offersShape": null,
+              "skippedUnfit": {},
+              "candidates": 24,
+              "lookupCeiling": 20,
+              "ceilingReached": false,
+              "verified": 12,
+              "targetMet": true
+            },
+            "offersMs": 4274,
+            "withAnyLink": 12,
+            "droppedOverBudget": 0,
+            "reachedGate": 24,
+            "provider": "openwebninja",
+            "fellBackFrom": null,
+            "verified": 12,
+            "removedAsAnotherGarment": 0,
+            "rejected": {
+              "missing-price": 12
+            },
+            "cache": {
+              "enabled": true,
+              "driver": "memory",
+              "searchCache": {
+                "hit": 0,
+                "miss": 1,
+                "stored": 1,
+                "coalesced": 0
+              },
+              "offerCache": {
+                "hit": 0,
+                "miss": 12,
+                "negativeHit": 0,
+                "stored": 12,
+                "negativeStored": 0
+              },
+              "providerRequestsAvoided": 0,
+              "servedFromCache": false
+            },
+            "timing": {
+              "budgetMs": 9000,
+              "totalMs": 5359,
+              "deadlineExpired": false
+            }
+          },
+          "attachments": {
+            "received": 0,
+            "used": 0,
+            "reason": null
+          },
+          "usage": {
+            "plan": "free",
+            "metric": "searches",
+            "limit": 1,
+            "used": 1,
+            "remaining": 0,
+            "period": "day",
+            "resetsAt": "2026-10-04T00:00:00.000Z"
+          }
+        }
+      },
+      "shown": [
+        {
+          "name": "Petal & Pup Women's Dresses Petal Pup Piper Dress",
+          "brand": "Nordstrom",
+          "price": "$79",
+          "retailer": "nordstrom.com",
+          "href": "https://www.nordstrom.com/s/piper-button-front-midi-dress/7753179?color=sage&size=12&utm_source=google&utm_medium=organic&utm_campaign=seo_shopping&srsltid=AU7gw4UiVKCHYfru5BKfAAPlAGJVetkiwAOEL3FcVpkuT4tDtIXIKNtn9Ns",
+          "photo": "https://encrypted-tbn3.gstatic.com/shopping?q=tbn:ANd9GcRREv-uHl7Gx5VTFoVy1E6kkEwQ-OP7-ai6FJmSEmbSJGS014I7dZxQHeBD5nMETpbQCf10w9VvQtHek66tkaEWD7xWJcmo94KOT45cKr8Z-DdjDPQA2L9w",
+          "width": 399,
+          "height": 767,
+          "retailerOk": false,
+          "retailerWhy": "blank page"
+        },
+        {
+          "name": "Woman Zara Linen Strappy Midi Dress",
+          "brand": "Zara USA",
+          "price": "$69.90",
+          "retailer": "zara.com",
+          "href": "https://www.zara.com/us/en/linen-strappy-midi-dress-p07232712.html?v1=577244092",
+          "photo": "https://encrypted-tbn0.gstatic.com/shopping?q=tbn:ANd9GcRVygVC5NwtfmvbmfSDogXTLEO1B1FE_gv2kR_7Cc82rRYa3wUCIRsb8S1izEOo-wY_evssHPcGsWWwQ2YVDOJ9U3vxwozFp4_44LgN5pOri_Uw_Gf_dWBJ3Sk",
+          "width": 1002,
+          "height": 1200,
+          "retailerOk": false,
+          "retailerWhy": "blocked (\"Access Denied\")"
+        },
+        {
+          "name": "Women's Quince 100% European Linen Scoop Neck Midi Dress",
+          "brand": "Quince",
+          "price": "$84",
+          "retailer": "quince.com",
+          "href": "https://www.quince.com/women/100-european-linen-scoop-neck-midi-dress?color=martini-olive&size=l&srsltid=AU7gw4Vqajje1WCHPHBhxazxB1SEFSHOrnS081V4_qgwXmo7ueScyrD3Vdc",
+          "photo": "https://encrypted-tbn0.gstatic.com/shopping?q=tbn:ANd9GcSuwDO5THLUSzA_Qog-7jXJH-GtfivfePeSLV_BokfYOy7v1_oSYkmePpqF5sZREJ5UgpFlfi6l2MBSY4ksHsr8A9AKfDrT",
+          "width": 1200,
+          "height": 1200,
+          "retailerOk": true
+        },
+        {
+          "name": "Women Sleeveless Linen Look Midi Dress Crew Neck Loose Shift Dress with Side Pockets Casual Vacation Sundress",
+          "brand": "Target",
+          "price": "$45.95",
+          "retailer": "target.com",
+          "href": "https://www.target.com/p/women-sleeveless-linen-look-midi-dress-crew-neck-loose-shift-dress-with-side-pockets-casual-vacation-sundress-green-xl/-/A-1012397257?TCID=OGS&AFID=google&CPNG=Women+-+Target+Plus&adgroup=303-9&srsltid=AU7gw4U2JtM2JS-r6F63kUiATJNa_Ubv-WqondyoJkSj4gCPszMcud7_Wig",
+          "photo": "https://encrypted-tbn0.gstatic.com/shopping?q=tbn:ANd9GcR4Nxb0GroDEDepCiNl8gkMnSgWmsh942wVntj6TS2hHYrrWmsmGMn3ATUGfQHq-PeaQHr6oOM4oFm63mmUcgiUsOSSZk3g1A",
+          "width": 400,
+          "height": 400,
+          "retailerOk": true
+        },
+        {
+          "name": "ASOS Design midi dress Women",
+          "brand": "ASOS",
+          "price": "$44.99",
+          "retailer": "asos.com",
+          "href": "https://www.asos.com/us/asos-design/asos-design-linen-twist-shoulder-detail-midi-dress-with-ruching-in-pale-green/prd/207838254?affid=26521&freelisting=yes",
+          "photo": "https://encrypted-tbn1.gstatic.com/shopping?q=tbn:ANd9GcRgm0reU1ia71AuRqNxfE4D_CJvao6DZdGB2c2cuK25NmnXSMCDvXEVnIqmx-gObAxYqmwGmaAbuW14b1FF8FNI8LS-636v",
+          "width": 870,
+          "height": 1110,
+          "retailerOk": false,
+          "retailerWhy": "blocked (\"Access Denied\")"
+        },
+        {
+          "name": "Light Green Linen Cotton Midi Dress Vintage A-Line Button Front",
+          "brand": "Etsy - Ylistyle",
+          "price": "$75.65",
+          "retailer": "etsy.com",
+          "href": "https://www.etsy.com/listing/4445844615/sage-green-linen-cotton-midi-dress?gpla=1&gao=1&",
+          "photo": "https://encrypted-tbn3.gstatic.com/shopping?q=tbn:ANd9GcTL1zmPK-LLCzem6cDbWr0ESgA3Q4dw8B9kR7ExgCxwtGkfU6jSNl3NMlHZJa6bj2QeXNXL0P1PaysD75ZajLPmc3vWglotQkcS5Pt_B96UK20v7fwGLnlOfw",
+          "width": 533,
+          "height": 646,
+          "retailerOk": false,
+          "retailerWhy": "HTTP 403"
+        },
+        {
+          "name": "Petal & Pup Women's Dresses Petal And Pup Apollo Dress",
+          "brand": "Poshmark",
+          "price": "$70",
+          "retailer": "poshmark.com",
+          "href": "https://poshmark.com/listing/Petal-pup-sage-cut-out-open-front-linen-midi-dress-nwot-680c453b325187f2a93a3c68?srsltid=AU7gw4Xh3BI4CC-R6cn3yLvYr9gFWqSX5tIgaPOIvQ2exAM7Lc_S9Ugz3ew#utm_source=gdm_unpaid",
+          "photo": "https://encrypted-tbn0.gstatic.com/shopping?q=tbn:ANd9GcQJG32zlm55o5E_2feghKKIeJJn2LHF77JRmvR4E__QMfri3adcL_DNurCE10r67aEQCd4tFo2TcCrgWZYGqPpYkvt4QvN1",
+          "width": 1000,
+          "height": 1000,
+          "retailerOk": true
+        },
+        {
+          "name": "Women's Fiophy 100% Linen Dresses Square Neck Sleeveless Spaghetti Strap Summer Casual Midi Dress with Slit",
+          "brand": "Walmart - FIOPHY",
+          "price": "$59.99",
+          "retailer": "walmart.com",
+          "href": "https://www.walmart.com/ip/Fiophy-100-Linen-Dresses-Square-Neck-Sleeveless-Spaghetti-Strap-Summer-Casual-Midi-Dress-with-Slit-Green-L/21043154883?wmlspartner=wlpa&selectedSellerId=101460448&veh=seo_fpl&cn=google",
+          "photo": "https://encrypted-tbn2.gstatic.com/shopping?q=tbn:ANd9GcSLwcrwJ8MV_-rFNGK4-eWzfy5OZb5K8_bvnXeK4Iggub_4q2kgxNbnXpytXBSKkCTvJ_hkZzoDzXCDakmPC5Gv0MAGSXQGhDwKUyZ3LRmqFK2Zn994hpjRGA",
+          "width": 1602,
+          "height": 2000,
+          "retailerOk": true
+        },
+        {
+          "name": "Simon Jersey Women's Linen Blend V-neck Dress",
+          "brand": "Simon Jersey",
+          "price": "$45.45",
+          "retailer": "simonjersey.com",
+          "href": "https://www.simonjersey.com/simon-jersey-womens-linen-blend-v-neck-dress-sage-p1543/s53017?cid=USD&vs_vat=ex&glCurrency=USD&glCountry=US&utm_source=google&utm_medium=surfaces&utm_campaign=shopping%20feed&utm_content=free%20google%20shopping%20clicks&srsltid=AU7gw4WPV3Pk8tfaxH9nZBp6YcukhjtZw1Pj-CPMLsAwlAqfDqv4wux7Cuo",
+          "photo": "https://encrypted-tbn0.gstatic.com/shopping?q=tbn:ANd9GcSZXubY6iKxBfeqmphfgwTvDJKRxJ6fik9fhOFRBPn3ivlkhRtNVHKETKVVV61nNstnrj8fRInn55dBHu2bx6sxzsIPhw8Ks2pV5as-639lJIakSN_CUCHg",
+          "width": 1000,
+          "height": 1200,
+          "retailerOk": false,
+          "retailerWhy": "not opened"
+        },
+        {
+          "name": "Sage Green Fit and Flare Midi Dress in Cotton-Linen Blend with Ruffled Sleeves 3319",
+          "brand": "XiaoLizi",
+          "price": "$79",
+          "retailer": "shopxiaolizi.com",
+          "href": "https://shopxiaolizi.com/products/sage-green-cotton-linen-fit-and-flare-midi-dress-ruffled-long-sleeves-3319?variant=45204548059206&country=US&currency=USD&utm_medium=product_sync&utm_source=google&utm_content=sag_organic&utm_campaign=sag_organic&srsltid=AU7gw4UGu7sEYB5ADh2wI_Iyxd1X0za6eLH031GObqr5f_nC3Brj4j-Gnis",
+          "photo": "https://encrypted-tbn0.gstatic.com/shopping?q=tbn:ANd9GcRl27ltzzSADPXY8pPDxtZHzPRaJneZv5_FXngVBeEYPux1HSrqqHYHyLad0IIPrCp8d6JfbDpphMvnJHYDWSbKDwA4_s4vMCnyH0C524_rapJGK7EYYy2WGA",
+          "width": 562,
+          "height": 584,
+          "retailerOk": false,
+          "retailerWhy": "not opened"
+        },
+        {
+          "name": "The Savannah Linen Midi Dress Medium / Sage",
+          "brand": "Shoppe Twelve",
+          "price": "$84",
+          "retailer": "shoppetwelve.com",
+          "href": "https://www.shoppetwelve.com/products/the-savannah-linen-midi-dress?variant=47439204024546&country=US&currency=USD&utm_medium=product_sync&utm_source=google&utm_content=sag_organic&utm_campaign=sag_organic&srsltid=AU7gw4X9oS6X9KWVLchq1GgEdv1bjfHkwsbcaqgf-IcQ5eRz_IxVctEx_ZY",
+          "photo": "https://encrypted-tbn2.gstatic.com/shopping?q=tbn:ANd9GcQkHBhE4RIn2SPKCkJ0MCtC2hQrovbafCFyUThjRwRhEGa3Bd6OCLQ1ONB6l3F0s-rQ0voxmLPhtFSMdLZHHXjA1g9HogdIkDED3jA3N8xSf2e6Gb-zNz1f",
+          "width": 533,
+          "height": 684,
+          "retailerOk": false,
+          "retailerWhy": "not opened"
+        },
+        {
+          "name": "Sage Green Linen Look Midi Dress, Sleeveless Button Front, Minimalist Summer Style",
+          "brand": "Etsy - Seller",
+          "price": "$76.30",
+          "retailer": "etsy.com",
+          "href": "https://www.etsy.com/listing/4582954680/green-midi-dress-sleeveless-button-front?gpla=1&gao=1&",
+          "photo": "https://encrypted-tbn0.gstatic.com/shopping?q=tbn:ANd9GcQkmnPtQ01wVcHmpU1mVYpANGwv3DXHborjV_zF9Iv6teTOEkcUr3sq590R2wsDHhDUIHchPpJo0lIYX_8Vf6yJ8hQF3v9I9S1sGj1H4O0f1RYIAAaMorjIlw",
+          "width": 1024,
+          "height": 1200,
+          "retailerOk": false,
+          "retailerWhy": "not opened"
+        }
+      ]
+    }
+  ]
+}

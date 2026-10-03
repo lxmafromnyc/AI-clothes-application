@@ -2,7 +2,7 @@
 """
 Fynd - the demo video's narration
 
-Speaks the three short lines the demo video is narrated with, in a calm
+Speaks the short lines the demo video is narrated with, in a calm
 conversational voice, and writes them to assets/demo/narration/ with a
 manifest that scripts/record-demo.js reads to place each line against the
 recording.
@@ -40,11 +40,20 @@ SPEED = 0.94            # a touch under 1: unhurried, not slow
 # what scripts/record-demo.js asks for. "found-one" stands in for "found"
 # when every result comes from the same retailer, so the line is never
 # claiming something the screen does not show.
+#
+# Only the first line names a request. The later searches can fall back
+# to another request when the first one does not come back with enough
+# real, verifiable products (see SEARCHES in scripts/record-demo.js), so
+# their lines say what kind of problem it is, and the box shows the words.
 LINES = [
     ('looking', 'I’m looking for a black oversized hoodie, under eighty dollars.'),
     ('found', 'Fynd finds matching products from different retailers.'),
     ('found-one', 'Fynd finds matching products.'),
     ('open', 'And I can open the product directly at the retailer.'),
+    ('different', 'Something completely different works the same way.'),
+    ('specific', 'Even something specific that’s hard to find.'),
+    ('particular', 'Or the exact style and color I have in mind.'),
+    ('close', 'No more searching store after store. Describe it, and Fynd finds it.'),
 ]
 
 
