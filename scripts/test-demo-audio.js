@@ -84,10 +84,35 @@ test('every line is at -19 LUFS, its peaks held at least 12 dB under full scale'
   }
 });
 
+const wordsOf = (text) => (text.match(/[A-Za-z’'$0-9]+/g) || []).map((w) => w.toLowerCase().replace(/’/g, "'"));
+
 test('each line keeps its caption word for word, and says "Fynd" as "Find"', () => {
   for (const [key, line] of Object.entries(manifest.lines)) {
     assert.ok(line.text && line.spoken, key);
-    assert.strictEqual(line.spoken.replace(/\bFind\b/g, 'Fynd'), line.text, key);
+    /* the words, not the punctuation: a pause can be written one way
+       for the voice and another for the reader */
+    assert.deepStrictEqual(wordsOf(line.spoken.replace(/\bFind\b/g, 'Fynd')), wordsOf(line.text), key);
+  }
+});
+
+test('every line given a delivery is still heard back word for word', () => {
+  const delivered = Object.entries(manifest.lines).filter(([, l]) => l.delivery);
+  assert.ok(delivered.length >= 9, 'the film\'s lines are there');
+  for (const [key, line] of delivered) {
+    const said = wordsOf(line.spoken).flatMap((w) => (w === 'okay' ? ['o', 'k'] : [w]));
+    assert.deepStrictEqual(wordsOf(line.heard), said, `${key} was heard as "${line.heard}"`);
+  }
+});
+
+test('every delivered line knows where each of its words is, in order, inside the clip', () => {
+  for (const [key, line] of Object.entries(manifest.lines).filter(([, l]) => l.delivery)) {
+    assert.ok(line.onset >= 0 && line.onset < 0.6, `${key} onset ${line.onset}`);
+    assert.strictEqual(line.words.length, wordsOf(line.spoken).length, key);
+    line.words.forEach((w, i) => {
+      assert.ok(w.at >= line.onset - 0.05 && w.at < line.duration, `${key}: "${w.word}" at ${w.at}`);
+      if (i) assert.ok(w.at >= line.words[i - 1].at, `${key}: "${w.word}" before the word ahead of it`);
+    });
+    if (line.parts.length > 1) line.parts.forEach((p, i) => i && assert.ok(p.at >= line.parts[i - 1].end, `${key}: parts overlap`));
   }
 });
 
@@ -219,6 +244,90 @@ test('the mix is stereo: the music is wide, the voice is centred', () => {
   let same = true;
   for (let i = 5 * SR; i < 6 * SR; i += 101) if (Math.abs(ml[i] - mr[i]) > 1e-4) { same = false; break; }
   assert.ok(!same, 'the music is mono');
+});
+
+console.log('\nthe film\'s score');
+
+const Film = require('./demo-film');
+const Score = require('./demo-score');
+const films = ['desktop', 'mobile'].map((k) => Film.filmTimeline(new Film.Film(k, Film.facts())));
+
+for (const tl of films) {
+  const p = Score.planScore(tl);
+  const m = tl.marks;
+  const cueAt = (anchor, what) => p.cues.filter((c) => c.anchor === anchor && (!what || c.what.startsWith(what)));
+
+  test(`${tl.video}: every musical event is placed on a named moment of the picture`, () => {
+    assert.ok(p.cues.length >= 40, `${p.cues.length} cues`);
+    for (const c of p.cues) {
+      assert.ok(c.anchor && Number.isFinite(c.anchorAt), JSON.stringify(c));
+      assert.ok(c.at >= 0 && c.at <= tl.duration, `${c.what} at ${c.at}`);
+      /* on the moment, or (a swell) cresting on it, never seconds off */
+      assert.ok(Math.abs(c.at - c.anchorAt) <= 0.25, `${c.what} is ${(c.at - c.anchorAt).toFixed(2)} s from "${c.anchor}"`);
+    }
+  });
+
+  test(`${tl.video}: Search, the results, the choice and the store each have their musical moment, on the frame`, () => {
+    m.searches.forEach((s, k) => {
+      const n = k + 1;
+      const search = cueAt(`search ${n}: Search pressed`);
+      assert.ok(search.length && Math.abs(search[0].at - s.submit) < 0.001, `search ${n}: nothing on Search`);
+      const lift = cueAt(`search ${n}: results appear`, 'chord');
+      assert.ok(lift.length && Math.abs(lift[0].at - s.results) < 0.001, `search ${n}: the lift is not on the results`);
+      const chosen = cueAt(`search ${n}: product chosen`);
+      assert.ok(chosen.length && chosen[0].at - s.select >= 0 && chosen[0].at - s.select <= 0.03, `search ${n}: the choice`);
+      const store = cueAt(`search ${n}: the store's page opens`, 'chord');
+      assert.ok(store.length && Math.abs(store[0].at - s.handoff) < 0.001, `search ${n}: the store`);
+    });
+  });
+
+  test(`${tl.video}: it goes quiet while each search runs, and BAPE is its one high point`, () => {
+    const level = (t) => {
+      let k = 0;
+      while (k < p.level.length - 2 && p.level[k + 1][0] <= t) k += 1;
+      return p.level[k][1];
+    };
+    m.searches.forEach((s, k) => {
+      /* a search that takes a moment is waited for in near-silence */
+      if (k !== 2 && s.results - s.submit >= 0.45) assert.ok(level(s.results - 0.1) <= 0.25, `search ${k + 1} is not hushed before its results`);
+    });
+    const peak = Math.max(...p.level.map((x) => x[1]));
+    const at = p.level.find((x) => x[1] === peak)[0];
+    const bape = m.searches[2];
+    assert.ok(at >= bape.results && at <= bape.select, `the high point is at ${at}`);
+    assert.ok(level(bape.submit - 0.2) <= 0.25, 'BAPE is not hushed while it is typed');
+  });
+
+  test(`${tl.video}: under the last line it is one quiet chord; it comes home as the last word is said`, () => {
+    const close = p.chords.find((c) => c.name === 'Dclose');
+    const home = p.chords.find((c) => c.name === 'Dhome');
+    const finale = tl.lines.find((l) => l.key === 'finale');
+    assert.ok(close && Math.abs(close.from - m.close.start) < 0.001);
+    assert.ok(home && home.from - finale.ends >= 0 && home.from - finale.ends <= 0.15, 'the resolution is not on the last word');
+    const last = p.glass.filter((g) => g.at > finale.ends).pop();
+    assert.ok(Math.abs(last.at - m.close.mark) < 0.001, 'the last note is not on the mark');
+  });
+}
+
+test('the film’s mix: from silence, back to silence on the last frame, the voice clear over the score', () => {
+  const tl = films[0];
+  const mixed = A.render(tl, manifest);
+  const L = mixed.left;
+  assert.ok(rmsDb(L, 0, 0.15 * SR) < -80, 'it does not start from silence');
+  assert.ok(rmsDb(L, L.length - 0.02 * SR, L.length) < -60, `the last frame is not silent: ${rmsDb(L, L.length - 0.02 * SR, L.length).toFixed(1)} dB`);
+  near(mixed.report.voiceLufs, A.TARGET_LUFS, 0.1, 'voice');
+  assert.ok(A.truePeak([mixed.left, mixed.right]) <= A.CEILING_DBTP + 0.05);
+  /* during every line, the voice well over the music — weighted the way
+     loudness is (BS.1770), so a low pad is not counted as masking */
+  const voice = A.kWeight(mixed.stems.voice[0]);
+  const music = A.kWeight(mixed.stems.music[0]);
+  for (const l of tl.lines) {
+    const a = (l.speech + 0.3) * SR;
+    const b = (l.ends - 0.1) * SR;
+    const gap = rmsDb(voice, a, b) - rmsDb(music, a, b);
+    assert.ok(gap >= 12, `${l.key}: the voice only ${gap.toFixed(1)} dB over the music`);
+  }
+  assert.ok(mixed.cues.length >= 40, 'the cues come back with the mix');
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

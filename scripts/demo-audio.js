@@ -52,6 +52,11 @@
    It reads assets/demo/<video>.timeline.json — when each line is said,
    and when each search is made, answered and opened — and the narration
    clips in assets/demo/narration/.
+
+   The homepage film (scripts/demo-film.js) has a score of its own,
+   written to the film's marks: scripts/demo-score.js. This file mixes
+   it — the voice, its ducking, the sound design, the level and the
+   ceiling — exactly as it mixes the recorder's.
    ========================================================= */
 
 'use strict';
@@ -340,55 +345,9 @@ const CYCLES = [
   ['IV', 'vi', 'Ia', 'V']
 ];
 
-/* The film (scripts/demo-film.js) is scored more quietly than the
-   recording: the opening almost silent, a soft chord and air; a little
-   harmonic motion as the first request is typed; the smallest lift when
-   results arrive, a tiny accent when one is chosen, a restrained change
-   at each store; BAPE the high point, only slightly; and an ending that
-   breathes and lets go — three notes, not a chord. */
-function planFilm(tl) {
-  const end = tl.duration;
-  const chords = [];
-  const notes = [];
-  const searches = tl.searches;
-  const close = closeAt(tl);
-  searches.forEach((s, i) => {
-    const cycle = CYCLES[i % CYCLES.length];
-    const next = searches[i + 1] ? searches[i + 1].typing : close;
-    const from = i === 0 ? 0 : s.typing;
-    const bape = s.stage === 'dark';
-    chords.push({ name: cycle[0], from, to: s.searched });
-    chords.push({ name: cycle[1], from: s.searched, to: s.results });
-    chords.push({ name: cycle[2], from: s.results, to: s.retailer[0] });
-    chords.push({ name: cycle[3], from: s.retailer[0], to: next });
-    const lift = CHORDS[cycle[2]];
-    [lift[3] + 12, lift[4] + 12, lift[5] + 12].forEach((m, k) => notes.push({ midi: m, at: s.results + 0.2 + k * 0.26 + k * k * 0.02, vel: (bape ? 0.5 : 0.42) - k * 0.07, pan: [-0.35, 0.3, -0.1][k] }));
-    /* the choice: one small, high note */
-    notes.push({ midi: lift[5] + 24, at: s.select + 0.02, vel: 0.22, pan: 0.15 });
-    /* the store: the chord turns, and one note of light */
-    notes.push({ midi: CHORDS[cycle[3]][4] + 24, at: s.retailer[0] + 0.12, vel: 0.3, pan: 0.38 });
-    /* BAPE: the title arrives with two quiet notes, a fifth apart */
-    if (bape) [[81, 0.42], [88, 0.72]].forEach(([m, dt]) => notes.push({ midi: m, at: s.searched + dt, vel: 0.3, pan: m === 81 ? -0.2 : 0.25 }));
-  });
-  chords.push({ name: 'home', from: close - 0.4, to: end + 4 });
-  [[76, 0.5, 0.3], [73, 1.45, 0.26], [74, 2.6, 0.3]].forEach(([m, dt, v], k) => notes.push({ midi: m, at: close + dt, vel: v, pan: [0.25, -0.2, 0][k] }));
-
-  const points = [[0, 0.12], [1.5, 0.18], [3.5, 0.24]];
-  searches.forEach((s) => {
-    const bape = s.stage === 'dark';
-    points.push([s.typing, 0.3], [s.searched, bape ? 0.62 : 0.44], [s.results - 0.05, bape ? 0.8 : 0.5],
-      [s.results + 0.6, bape ? 0.92 : 0.64], [s.select, bape ? 0.9 : 0.66], [s.retailer[0], bape ? 0.95 : 0.72], [s.retailer[1], bape ? 0.6 : 0.5]);
-  });
-  points.push([close, 0.5], [end, 0.3]);
-  points.sort((a, b) => a[0] - b[0]);
-  const searching = searches.map((s) => [s.searched, s.results]);
-  return { chords, notes, points, searching, close, end };
-}
-
 /* what the music does when, from the timeline: chord regions, the notes
    it plays, and how much it is doing (0 to 1) at every moment */
 function plan(timeline) {
-  if (timeline.film) return planFilm(timeline);
   const end = timeline.duration;
   const chords = [];
   const notes = [];
@@ -625,16 +584,16 @@ function airSwell(out, from, dur, amp, rand) {
 function sfx(tl, n, rand) {
   const out = [new Float32Array(n), new Float32Array(n)];
   for (const s of tl.searches) {
-    for (const k of s.keys || []) keyTick(out, k, 0.13 * (0.7 + rand() * 0.45), rand, (rand() - 0.5) * 0.3);
-    tock(out, s.searched, 0.095);
+    /* the keys: there, but only just */
+    for (const k of s.keys || []) keyTick(out, k, 0.075 * (0.7 + rand() * 0.45), rand, (rand() - 0.5) * 0.3);
+    /* Search pressed: a small, rounded tock */
+    tock(out, s.searched, 0.08);
     /* the choice: a click — down, and a softer up */
-    keyTick(out, s.select, 0.2, rand, 0.05);
-    keyTick(out, s.select + 0.085, 0.11, rand, 0.05);
-    airSwell(out, s.results - 0.15, 0.9, 0.011, rand);
-    airSwell(out, s.retailer[0] - 0.1, 1.1, 0.018, rand);
-    if (s.stage === 'dark') airSwell(out, s.searched - 0.05, 1.3, 0.015, rand);
+    keyTick(out, s.select, 0.17, rand, 0.05);
+    keyTick(out, s.select + 0.085, 0.09, rand, 0.05);
+    /* the store's page opening: a breath of air as the frame opens */
+    airSwell(out, s.retailer[0] - 0.05, 0.95, 0.012, rand);
   }
-  airSwell(out, 3.2, 1.6, 0.012, rand);
   return out;
 }
 
@@ -652,7 +611,13 @@ function placeVoice(timeline, manifest, n) {
     const at = line.key === 'close' ? closeAt(timeline) : line.at;
     const start = Math.round(at * SR);
     for (let i = 0; i < clip.length && start + i < n; i += 1) voice[start + i] += clip[i];
-    spans.push({ key: line.key, text: meta.text, at, end: at + clip.length / SR, parts: sentencesOf(meta.text, clip, at) });
+    /* a line with a breath before it is said from its onset; a line
+       recorded in parts knows where each part is */
+    const said = at + (meta.onset || 0);
+    const parts = meta.parts && meta.parts.length > 1
+      ? meta.parts.map((p) => ({ text: p.text, at: at + p.at, end: at + p.end }))
+      : sentencesOf(meta.text, clip, at);
+    spans.push({ key: line.key, text: meta.text, at: said, end: at + clip.length / SR, parts });
   }
   return { voice, spans };
 }
@@ -725,13 +690,18 @@ function render(timeline, manifest) {
     bodyL: buf(), bodyR: buf(), brightL: buf(), brightR: buf(),
     notesL: buf(), notesR: buf(), airL: buf(), airR: buf()
   };
-  for (const region of p.chords) padRegion(region, buses, n, rand);
-  for (const nt of p.notes) note(nt, buses, n);
-  air(p, buses, n, rand);
+  const scored = Boolean(timeline.film && timeline.marks);
+  if (!scored) {
+    for (const region of p.chords) padRegion(region, buses, n, rand);
+    for (const nt of p.notes) note(nt, buses, n);
+    air(p, buses, n, rand);
+  }
 
   const intensity = curve(p.points, n);
   const { voice, spans } = placeVoice(timeline, manifest, n);
   const duck = duckCurve(spans, n);
+  /* the film: its own score, written to its marks (scripts/demo-score.js) */
+  const film = scored ? require('./demo-score').scoreFilm(timeline, duck, { reverb }) : null;
 
   /* the music's shape over the whole video: in softly from silence over
      the first 1.8 s, out to silence over the last 2.4 s */
@@ -761,12 +731,17 @@ function render(timeline, manifest) {
     sendL[i] = (buses.bodyL[i] * body * 0.55 + buses.brightL[i] * bright * 0.6 + buses.notesL[i] * notes * 1.6 + buses.airL[i] * airy * 0.3) * s;
     sendR[i] = (buses.bodyR[i] * body * 0.55 + buses.brightR[i] * bright * 0.6 + buses.notesR[i] * notes * 1.6 + buses.airR[i] * airy * 0.3) * s;
   }
-  const [wetL, wetR] = reverb(sendL, sendR, { room: 0.88, damp: 0.5, predelay: 0.028 });
-  for (let i = 0; i < n; i += 1) {
-    /* the reverb tail is shaped with everything else, so the end is silence */
-    const s = 1 - smoothstep(i / SR, p.end - 1.2, p.end - 0.02);
-    musicL[i] += wetL[i] * 0.9 * s;
-    musicR[i] += wetR[i] * 0.9 * s;
+  if (film) {
+    musicL.set(film.L);
+    musicR.set(film.R);
+  } else {
+    const [wetL, wetR] = reverb(sendL, sendR, { room: 0.88, damp: 0.5, predelay: 0.028 });
+    for (let i = 0; i < n; i += 1) {
+      /* the reverb tail is shaped with everything else, so the end is silence */
+      const s = 1 - smoothstep(i / SR, p.end - 1.2, p.end - 0.02);
+      musicL[i] += wetL[i] * 0.9 * s;
+      musicR[i] += wetR[i] * 0.9 * s;
+    }
   }
 
   /* room for the words: the music, and only the music, a little lower
@@ -820,6 +795,7 @@ function render(timeline, manifest) {
       music: [musicL.map((v) => v * musicGain * gain), musicR.map((v) => v * musicGain * gain)],
       sfx: [fx[0].map((v) => v * gain), fx[1].map((v) => v * gain)]
     },
+    cues: film ? film.cues : [],
     report: {
       voiceLufs: round(voiceLufs + 20 * Math.log10(gain)),
       musicBelowVoiceLU: MUSIC_BELOW_VOICE_LU,
@@ -902,7 +878,7 @@ function renderTo(timeline, file, { stemsDir = null } = {}) {
     writeWav(path.join(stemsDir, `${timeline.video}-music.wav`), ...mix.stems.music);
     writeWav(path.join(stemsDir, `${timeline.video}-sfx.wav`), ...mix.stems.sfx);
   }
-  return { ...mix.report, captions: captions(mix.spans, timeline.duration) };
+  return { ...mix.report, cues: mix.cues, captions: captions(mix.spans, timeline.duration) };
 }
 
 /* the encodes for the web: AAC stereo 160 kb/s in the MP4, Opus stereo
@@ -953,6 +929,6 @@ function main() {
 if (require.main === module) main();
 
 module.exports = {
-  SR, TARGET_LUFS, CEILING_DBTP, CLOSE_LEAD_S, MUSIC_BELOW_VOICE_LU, DUCK_DB,
-  render, renderTo, remux, captions, plan, duckCurve, pausesIn, sentencesOf, integratedLoudness, truePeak, limit, readWav, writeWav, closeAt
+  reverb, SR, TARGET_LUFS, CEILING_DBTP, CLOSE_LEAD_S, MUSIC_BELOW_VOICE_LU, DUCK_DB,
+  render, renderTo, remux, captions, plan, duckCurve, pausesIn, sentencesOf, integratedLoudness, truePeak, limit, readWav, writeWav, closeAt, kWeight
 };

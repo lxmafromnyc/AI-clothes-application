@@ -78,65 +78,713 @@
       "text": "Ever know exactly what you want, but not where to find it?",
       "spoken": "Ever know exactly what you want, but not where to find it?",
       "pace": [
-        0.92
+        0.96
       ],
       "file": "hook.wav",
-      "duration": 2.832
+      "duration": 3.273,
+      "onset": 0.38,
+      "delivery": [
+        {
+          "shift": 0.4,
+          "range": 1.2,
+          "end": [
+            "question",
+            3.0
+          ],
+          "end_span": 0.5,
+          "accents": {
+            "exactly": {
+              "st": 2.0,
+              "stretch": 1.1,
+              "db": 1.2
+            },
+            "where": {
+              "st": 1.6,
+              "db": 1.0
+            }
+          }
+        }
+      ],
+      "parts": [
+        {
+          "text": "Ever know exactly what you want, but not where to find it?",
+          "at": 0.38,
+          "end": 3.233
+        }
+      ],
+      "words": [
+        {
+          "word": "Ever",
+          "at": 0.38
+        },
+        {
+          "word": "know",
+          "at": 0.6
+        },
+        {
+          "word": "exactly",
+          "at": 0.8
+        },
+        {
+          "word": "what",
+          "at": 1.46
+        },
+        {
+          "word": "you",
+          "at": 1.62
+        },
+        {
+          "word": "want,",
+          "at": 1.82
+        },
+        {
+          "word": "but",
+          "at": 2.06
+        },
+        {
+          "word": "not",
+          "at": 2.22
+        },
+        {
+          "word": "where",
+          "at": 2.42
+        },
+        {
+          "word": "to",
+          "at": 2.62
+        },
+        {
+          "word": "find",
+          "at": 2.78
+        },
+        {
+          "word": "it?",
+          "at": 3.1
+        }
+      ],
+      "breath": 0.28,
+      "heard": "ever know exactly what you want but not where to find it"
     },
     "describe": {
-      "text": "With Fynd, you just describe it.",
-      "spoken": "With Find, you just describe it.",
+      "text": "So, with Fynd? You just describe it.",
+      "spoken": "So, with Find? You just describe it.",
       "pace": [
-        0.94
+        1.0
       ],
       "file": "describe.wav",
-      "duration": 1.734
-    },
-    "results": {
-      "text": "It searches real stores, and brings back what matches.",
-      "spoken": "It searches real stores, and brings back what matches.",
-      "pace": [
-        0.97
+      "duration": 2.3,
+      "onset": 0.04,
+      "delivery": [
+        {
+          "shift": 0.0,
+          "range": 1.28,
+          "end": [
+            "fall",
+            0.6
+          ],
+          "accents": {
+            "Find": {
+              "st": 1.2
+            },
+            "describe": {
+              "st": 2.0,
+              "stretch": 1.08,
+              "db": 1.0
+            }
+          }
+        }
       ],
-      "file": "results.wav",
-      "duration": 2.862
+      "parts": [
+        {
+          "text": "So, with Fynd? You just describe it.",
+          "at": 0.04,
+          "end": 2.26
+        }
+      ],
+      "words": [
+        {
+          "word": "So,",
+          "at": 0.04
+        },
+        {
+          "word": "with",
+          "at": 0.3
+        },
+        {
+          "word": "Find?",
+          "at": 0.54
+        },
+        {
+          "word": "You",
+          "at": 0.98
+        },
+        {
+          "word": "just",
+          "at": 1.22
+        },
+        {
+          "word": "describe",
+          "at": 1.42
+        },
+        {
+          "word": "it.",
+          "at": 2.068
+        }
+      ],
+      "heard": "so with find you just describe it"
     },
     "pick": {
-      "text": "Pick one, and you’re right at the store.",
-      "spoken": "Pick one, and you’re right at the store.",
+      "text": "Pick one, and you’re right there at the store.",
+      "spoken": "Pick one, and you’re right there at the store.",
+      "pace": [
+        1.0
+      ],
+      "file": "pick.wav",
+      "duration": 2.019,
+      "onset": 0.04,
+      "delivery": [
+        {
+          "shift": 0.5,
+          "range": 1.25,
+          "end": [
+            "fall",
+            0.8
+          ],
+          "accents": {
+            "one": {
+              "st": 1.5
+            },
+            "right": {
+              "st": 1.8,
+              "db": 1.0
+            }
+          }
+        }
+      ],
+      "parts": [
+        {
+          "text": "Pick one, and you’re right there at the store.",
+          "at": 0.04,
+          "end": 1.979
+        }
+      ],
+      "words": [
+        {
+          "word": "Pick",
+          "at": 0.04
+        },
+        {
+          "word": "one,",
+          "at": 0.26
+        },
+        {
+          "word": "and",
+          "at": 0.54
+        },
+        {
+          "word": "you’re",
+          "at": 0.7
+        },
+        {
+          "word": "right",
+          "at": 0.94
+        },
+        {
+          "word": "there",
+          "at": 1.14
+        },
+        {
+          "word": "at",
+          "at": 1.34
+        },
+        {
+          "word": "the",
+          "at": 1.5
+        },
+        {
+          "word": "store.",
+          "at": 1.62
+        }
+      ],
+      "heard": "pick one and you're right there at the store"
+    },
+    "rare": {
+      "text": "Okay — now something that’s actually hard to find.",
+      "spoken": "Okay, now something that’s actually hard to find.",
       "pace": [
         0.95
       ],
-      "file": "pick.wav",
-      "duration": 1.82
-    },
-    "rare": {
-      "text": "Even the pieces that are hard to find.",
-      "spoken": "Even the pieces that are hard to find.",
-      "pace": [
-        0.92
-      ],
       "file": "rare.wav",
-      "duration": 2.069
+      "duration": 3.118,
+      "onset": 0.34,
+      "delivery": [
+        {
+          "shift": 1.0,
+          "range": 1.45,
+          "end": [
+            "lift",
+            0.6
+          ],
+          "accents": {
+            "now": {
+              "st": 1.4
+            },
+            "actually": {
+              "st": 2.2,
+              "stretch": 1.08,
+              "db": 1.2
+            },
+            "hard": {
+              "st": 2.8,
+              "stretch": 1.14,
+              "db": 1.5
+            }
+          }
+        }
+      ],
+      "parts": [
+        {
+          "text": "Okay — now something that’s actually hard to find.",
+          "at": 0.34,
+          "end": 3.078
+        }
+      ],
+      "words": [
+        {
+          "word": "Okay,",
+          "at": 0.34
+        },
+        {
+          "word": "now",
+          "at": 0.88
+        },
+        {
+          "word": "something",
+          "at": 1.16
+        },
+        {
+          "word": "that’s",
+          "at": 1.52
+        },
+        {
+          "word": "actually",
+          "at": 1.8
+        },
+        {
+          "word": "hard",
+          "at": 2.275
+        },
+        {
+          "word": "to",
+          "at": 2.549
+        },
+        {
+          "word": "find.",
+          "at": 2.749
+        }
+      ],
+      "breath": 0.24,
+      "heard": "o k now something that's actually hard to find"
     },
     "exact": {
-      "text": "Down to the exact color and fabric.",
-      "spoken": "Down to the exact color and fabric.",
+      "text": "Right down to the exact color, and even the fabric.",
+      "spoken": "Right down to the exact color, and even the fabric.",
       "pace": [
-        0.94
+        0.98
       ],
       "file": "exact.wav",
-      "duration": 1.989
+      "duration": 2.656,
+      "onset": 0.04,
+      "delivery": [
+        {
+          "shift": 0.8,
+          "range": 1.3,
+          "end": [
+            "lift",
+            0.8
+          ],
+          "accents": {
+            "exact": {
+              "st": 2.2,
+              "stretch": 1.08,
+              "db": 1.2
+            },
+            "even": {
+              "st": 1.6,
+              "db": 1.0
+            },
+            "fabric": {
+              "st": 1.6,
+              "stretch": 1.06,
+              "db": 1.0
+            }
+          }
+        }
+      ],
+      "parts": [
+        {
+          "text": "Right down to the exact color, and even the fabric.",
+          "at": 0.04,
+          "end": 2.616
+        }
+      ],
+      "words": [
+        {
+          "word": "Right",
+          "at": 0.04
+        },
+        {
+          "word": "down",
+          "at": 0.3
+        },
+        {
+          "word": "to",
+          "at": 0.5
+        },
+        {
+          "word": "the",
+          "at": 0.62
+        },
+        {
+          "word": "exact",
+          "at": 0.74
+        },
+        {
+          "word": "color,",
+          "at": 1.258
+        },
+        {
+          "word": "and",
+          "at": 1.578
+        },
+        {
+          "word": "even",
+          "at": 1.738
+        },
+        {
+          "word": "the",
+          "at": 1.938
+        },
+        {
+          "word": "fabric.",
+          "at": 2.098
+        }
+      ],
+      "heard": "right down to the exact color and even the fabric"
     },
     "finale": {
       "text": "Describe what you want. Fynd finds it.",
       "spoken": "Describe what you want. Find finds it.",
       "pace": [
-        0.94,
-        0.88
+        0.95,
+        0.9
       ],
       "file": "finale.wav",
-      "duration": 3.048
+      "duration": 3.416,
+      "onset": 0.36,
+      "delivery": [
+        {
+          "shift": 0.2,
+          "range": 1.22,
+          "end": [
+            "level",
+            0.7
+          ],
+          "accents": {
+            "Describe": {
+              "st": 1.2
+            },
+            "want": {
+              "st": 1.4,
+              "db": 0.8
+            }
+          }
+        },
+        {
+          "shift": -0.2,
+          "range": 1.25,
+          "end": [
+            "fall",
+            1.4
+          ],
+          "accents": {
+            "finds": {
+              "st": 2.0,
+              "stretch": 1.08,
+              "db": 1.2
+            }
+          }
+        }
+      ],
+      "parts": [
+        {
+          "text": "Describe what you want.",
+          "at": 0.36,
+          "end": 1.637
+        },
+        {
+          "text": "Fynd finds it.",
+          "at": 2.187,
+          "end": 3.376
+        }
+      ],
+      "words": [
+        {
+          "word": "Describe",
+          "at": 0.36
+        },
+        {
+          "word": "what",
+          "at": 0.9
+        },
+        {
+          "word": "you",
+          "at": 1.06
+        },
+        {
+          "word": "want.",
+          "at": 1.34
+        },
+        {
+          "word": "Find",
+          "at": 2.187
+        },
+        {
+          "word": "finds",
+          "at": 2.607
+        },
+        {
+          "word": "it.",
+          "at": 3.125
+        }
+      ],
+      "breath": 0.26,
+      "heard": "describe what you want find finds it"
+    },
+    "look": {
+      "text": "And look — it searches real stores, and brings back what actually matches.",
+      "spoken": "And look! It searches real stores, and brings back what actually matches.",
+      "pace": [
+        1.04
+      ],
+      "file": "look.wav",
+      "duration": 4.446,
+      "onset": 0.32,
+      "delivery": [
+        {
+          "shift": 1.6,
+          "range": 1.35,
+          "end": [
+            "lift",
+            1.2
+          ],
+          "accents": {
+            "look": {
+              "st": 2.6,
+              "stretch": 1.12,
+              "db": 1.5
+            },
+            "real": {
+              "st": 1.8,
+              "db": 1.0
+            },
+            "actually": {
+              "st": 2.0,
+              "stretch": 1.06,
+              "db": 1.0
+            }
+          }
+        }
+      ],
+      "parts": [
+        {
+          "text": "And look — it searches real stores, and brings back what actually matches.",
+          "at": 0.32,
+          "end": 4.406
+        }
+      ],
+      "words": [
+        {
+          "word": "And",
+          "at": 0.32
+        },
+        {
+          "word": "look!",
+          "at": 0.46
+        },
+        {
+          "word": "It",
+          "at": 0.908
+        },
+        {
+          "word": "searches",
+          "at": 1.108
+        },
+        {
+          "word": "real",
+          "at": 1.588
+        },
+        {
+          "word": "stores,",
+          "at": 1.908
+        },
+        {
+          "word": "and",
+          "at": 2.348
+        },
+        {
+          "word": "brings",
+          "at": 2.508
+        },
+        {
+          "word": "back",
+          "at": 2.868
+        },
+        {
+          "word": "what",
+          "at": 3.148
+        },
+        {
+          "word": "actually",
+          "at": 3.348
+        },
+        {
+          "word": "matches.",
+          "at": 3.857
+        }
+      ],
+      "breath": 0.22,
+      "heard": "and look it searches real stores and brings back what actually matches"
+    },
+    "switch": {
+      "text": "Something totally different? Same idea.",
+      "spoken": "Something totally different? Same idea.",
+      "pace": [
+        1.04,
+        1.0
+      ],
+      "file": "switch.wav",
+      "duration": 2.486,
+      "onset": 0.04,
+      "delivery": [
+        {
+          "shift": 0.3,
+          "range": 1.4,
+          "end": [
+            "rise",
+            1.6
+          ],
+          "accents": {
+            "totally": {
+              "st": 2.6,
+              "stretch": 1.12,
+              "db": 1.5
+            }
+          }
+        },
+        {
+          "shift": 0.3,
+          "range": 1.3,
+          "end": [
+            "lift",
+            0.8
+          ],
+          "accents": {
+            "Same": {
+              "st": 1.6,
+              "db": 1.0
+            }
+          }
+        }
+      ],
+      "parts": [
+        {
+          "text": "Something totally different?",
+          "at": 0.04,
+          "end": 1.431
+        },
+        {
+          "text": "Same idea.",
+          "at": 1.591,
+          "end": 2.446
+        }
+      ],
+      "words": [
+        {
+          "word": "Something",
+          "at": 0.04
+        },
+        {
+          "word": "totally",
+          "at": 0.42
+        },
+        {
+          "word": "different?",
+          "at": 0.913
+        },
+        {
+          "word": "Same",
+          "at": 1.591
+        },
+        {
+          "word": "idea.",
+          "at": 1.891
+        }
+      ],
+      "heard": "something totally different same idea"
+    },
+    "there": {
+      "text": "Oh, there it is.",
+      "spoken": "Oh, there it is.",
+      "pace": [
+        0.94
+      ],
+      "file": "there.wav",
+      "duration": 1.104,
+      "onset": 0.04,
+      "delivery": [
+        {
+          "shift": 0.2,
+          "range": 1.18,
+          "end": [
+            "fall",
+            1.0
+          ],
+          "accents": {
+            "there": {
+              "st": 1.4,
+              "stretch": 1.1,
+              "db": 1.2
+            }
+          }
+        }
+      ],
+      "parts": [
+        {
+          "text": "Oh, there it is.",
+          "at": 0.04,
+          "end": 1.064
+        }
+      ],
+      "words": [
+        {
+          "word": "Oh,",
+          "at": 0.04
+        },
+        {
+          "word": "there",
+          "at": 0.26
+        },
+        {
+          "word": "it",
+          "at": 0.524
+        },
+        {
+          "word": "is.",
+          "at": 0.724
+        }
+      ],
+      "heard": "oh there it is"
     }
   }
 }

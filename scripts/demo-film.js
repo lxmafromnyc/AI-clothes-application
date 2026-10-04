@@ -203,12 +203,30 @@ function insetRect(r, f = 0) {
 }
 const photoRect = (k) => insetRect(PHOTOS[k].rect, PHOTOS[k].inset);
 
-/* the opening question, set where each part of it is said (seconds
-   into the line) */
+/* the opening question, each line of type set on the word it starts
+   with, as that word is said */
 const HOOK = {
-  wide: [['Ever know exactly what you want,', 0.05], ['but not where to find it?', 1.45]],
-  portrait: [['Ever know exactly', 0.05], ['what you want,', 0.55], ['but not where', 1.45], ['to find it?', 1.85]]
+  wide: [['Ever know exactly what you want,', 'Ever'], ['but not where to find it?', 'but']],
+  portrait: [['Ever know exactly', 'Ever'], ['what you want,', 'what'], ['but not where', 'but'], ['to find it?', 'to']]
 };
+
+/* The narration's own timing, from its manifest: where in each clip the
+   speech starts (after a breath, if it has one) and where each word
+   falls. Lines are placed by when their words should be heard. */
+let manifestCache = null;
+function narration() {
+  if (!manifestCache) manifestCache = JSON.parse(fs.readFileSync(path.join(DEMO, 'narration', 'manifest.json'), 'utf8'));
+  return manifestCache;
+}
+const onsetOf = (key) => narration().lines[key].onset || 0;
+const durationOf = (key) => narration().lines[key].duration;
+/* seconds into the clip at which `word` (its nth time) is said */
+function wordIn(key, word, nth = 0) {
+  const bare = (w) => w.toLowerCase().replace(/[^a-z’']/g, '');
+  const hits = (narration().lines[key].words || []).filter((w) => bare(w.word) === bare(word));
+  if (!hits[nth]) throw new Error(`the "${key}" line has no word "${word}"`);
+  return hits[nth].at;
+}
 
 /* the words each request is made of, for the type that lifts out of it */
 const WORDS = [
@@ -409,8 +427,12 @@ function plan(fmtKey) {
   const vo = [];
   const events = [];
   let t = D.open;
-  vo.push({ key: 'hook', at: 0.75 });
-  events.push({ type: 'open', at: 0 }, { type: 'reveal', at: 3.5 });
+  /* a line, placed so its speech starts at `speech` */
+  const say = (key, speech) => vo.push({ key, at: speech - onsetOf(key) });
+  /* a line, placed so `word` is heard at `when` */
+  const sayOn = (key, word, when) => vo.push({ key, at: when - wordIn(key, word) });
+  say('hook', 0.6);
+  events.push({ type: 'open', at: 0 }, { type: 'reveal', at: 3.55 });
 
   fmt.searches.forEach((s, k) => {
     const shot = { k, s };
@@ -445,37 +467,35 @@ function plan(fmtKey) {
     events.push({ type: 'typing', at: shot.start }, { type: 'submit', at: shot.submit },
       { type: 'results', at: shot.revealStart }, { type: 'select', at: shot.click },
       { type: 'store', at: shot.handoff }, { type: 'return', at: shot.storeEnd }, { type: 'search', at: shot.start, k });
+    /* what is said, and the moment on screen it answers to */
     if (k === 0) {
-      vo.push({ key: 'describe', at: shot.start + 0.75 });
-      vo.push({ key: 'results', at: shot.liveStart + 0.1 });
-      vo.push({ key: 'pick', at: shot.click + 0.12 });
+      say('describe', shot.start + 0.35);                 /* as the typing starts */
+      say('look', shot.revealStart + 0.25);               /* as the cards rise */
+      say('pick', shot.click + 0.08);                     /* on the press */
     }
-    if (k === 2) vo.push({ key: 'rare', at: shot.submit + 0.45 });
-    if (k === 3) vo.push({ key: 'exact', at: shot.revealStart + 0.25 });
+    if (k === 1) sayOn('switch', 'Same', shot.revealStart + 0.05); /* "Same idea." as the jackets arrive */
+    if (k === 2) {
+      say('rare', shot.start + 0.3);                      /* "hard to find" as the dark stage opens */
+      say('there', shot.revealStart + 0.6);               /* once the listings have risen out of it */
+    }
+    if (k === 3) sayOn('exact', 'color', shot.lastKey + 0.24 + 0.1); /* "color" as "Sage green" appears */
     t = shot.end + 0.02;
   });
   const close = { start: t + 0.05 };
   close.end = close.start + D.close;
-  vo.push({ key: 'finale', at: close.start + FINALE_LEAD });
+  say('finale', close.start + FINALE_LEAD);
   events.push({ type: 'close', at: close.start });
-  return { fmt, shots, close, vo, events, finaleSplit: finaleSplit(), duration: Math.round(close.end * FPS) / FPS };
+  const finaleAt = vo[vo.length - 1].at;
+  return {
+    fmt, shots, close, vo, events,
+    /* where, in the close, "Fynd finds it." begins: the word "Fynd" */
+    finaleSplit: finaleAt + wordIn('finale', 'Find') - close.start,
+    duration: Math.round(close.end * FPS) / FPS
+  };
 }
 
-/* the closing line starts this long into the close */
+/* the closing line's speech starts this long into the close */
 const FINALE_LEAD = 0.25;
-
-/* where, in the close, "Fynd finds it." begins: the end of the pause
-   between the closing line's two sentences */
-function finaleSplit() {
-  try {
-    const { readWav, pausesIn } = require('./demo-audio');
-    const manifest = JSON.parse(fs.readFileSync(path.join(DEMO, 'narration', 'manifest.json'), 'utf8'));
-    const pauses = pausesIn(readWav(path.join(DEMO, 'narration', manifest.lines.finale.file)));
-    return (pauses.length ? pauses[0].to : 1.95) + FINALE_LEAD;
-  } catch (err) {
-    return 2.2;
-  }
-}
 
 /* ---------------------------------------------------------
    The film
@@ -623,7 +643,8 @@ class Film {
     const fadeIn = at(t, 0.05, 1.6, EASE.soft);
     const away = at(t, 3.4, 4.75, EASE.inOut);
     /* while the question is asked, the field steps back behind it */
-    const ask = this.edit.vo.find((l) => l.key === 'hook').at;
+    const hookAt = this.edit.vo.find((l) => l.key === 'hook').at;
+    const ask = hookAt + onsetOf('hook');
     const glow = at(t, ask - 0.3, ask + 0.5, EASE.soft) * (1 - at(t, 3.35, 3.9, EASE.inOut));
     for (const c of this.cloud) {
       const sc = (portrait ? 0.95 : 1) * c.scale * (1 + 0.04 * at(t, 0, 4.8, EASE.linear)) * (1 - 0.08 * away);
@@ -663,8 +684,9 @@ class Film {
       ctx.fillRect(0, 0, W, H);
       ctx.restore();
     }
-    lines.forEach(([text, from], i) => {
-      const p = at(t, ask + from, ask + from + 0.7, EASE.out);
+    lines.forEach(([text, word], i) => {
+      const from = hookAt + wordIn('hook', word) - 0.05;
+      const p = at(t, from, from + 0.7, EASE.out);
       if (p <= 0 || leave >= 1) return;
       rise(ctx, text, W / 2, top + i * lead - leave * 18, { size, weight: 600, spacing: -size * 0.02, align: 'center', p, alpha: 1 - leave, color: '#111' });
     });
@@ -1380,7 +1402,14 @@ function filmTimeline(film) {
     duration: e.duration,
     source: 'Written by scripts/demo-film.js: the film cut from the session in assets/demo/footage/.',
     film: true,
-    lines: e.vo.map((v) => ({ key: v.key, at: Number(v.at.toFixed(3)) })),
+    /* each line: where its clip is laid, where its speech starts and
+       where it ends */
+    lines: e.vo.map((v) => ({
+      key: v.key,
+      at: Number(v.at.toFixed(3)),
+      speech: Number((v.at + onsetOf(v.key)).toFixed(3)),
+      ends: Number((v.at + durationOf(v.key) - 0.04).toFixed(3))
+    })),
     events: e.events.map((ev) => ({ ...ev, at: Number(ev.at.toFixed(3)) })),
     searches: e.shots.map((s) => ({
       typing: Number(s.start.toFixed(3)),
@@ -1392,7 +1421,97 @@ function filmTimeline(film) {
       keys: keysOf(s),
       stage: s.k === 2 ? 'dark' : 'light'
     })),
-    close: Number(e.close.start.toFixed(3))
+    close: Number(e.close.start.toFixed(3)),
+    marks: marksOf(film)
+  };
+}
+
+/* the keystrokes the film shows for a search, in film time */
+function keysOf(film, shot) {
+  const keysFile = path.join(FOOTAGE, `${film.fmt.name}.keys.json`);
+  const sessionKeys = fs.existsSync(keysFile) ? JSON.parse(fs.readFileSync(keysFile, 'utf8')).keys : [];
+  return (sessionKeys[shot.k] || [])
+    .map((k) => k + shot.dType + (shot.s.hold && k >= shot.s.hold.at ? shot.holdDur : 0))
+    .filter((t) => t >= shot.start && t < shot.submit);
+}
+
+/* when each word of the request is complete in the box: the keystrokes
+   share out the request's characters in order (the footage shows a key
+   where the text visibly grows, a little fewer than the characters) */
+function typedWords(film, shot) {
+  const keys = keysOf(film, shot);
+  const query = film.data[shot.k].query;
+  if (!keys.length) return [];
+  /* only the part of the request typed on screen */
+  const shown = keys.length / (keysOf({ fmt: film.fmt }, { ...shot, start: -Infinity }).length || keys.length);
+  const from = Math.round(query.length * (1 - shown));
+  const ends = [];
+  const re = /\S+/g;
+  let m;
+  while ((m = re.exec(query))) {
+    const end = m.index + m[0].length;
+    if (end <= from) continue;
+    const i = Math.min(keys.length - 1, Math.max(0, Math.ceil(((end - from) / (query.length - from)) * keys.length) - 1));
+    ends.push(keys[i]);
+  }
+  return ends;
+}
+
+/* Every moment the picture moves on, by name, for the score to be
+   written against: what the film does, and exactly when. */
+function marksOf(film) {
+  const e = film.edit;
+  const r = (x) => Number(x.toFixed(3));
+  const hook = e.vo.find((v) => v.key === 'hook');
+  const c = e.close;
+  const t2 = c.start + e.finaleSplit;
+  return {
+    hook: r(hook.at + onsetOf('hook')),
+    reveal: 3.55,
+    page: 4.0,
+    searches: e.shots.map((s) => {
+      const k = s.k;
+      /* as in kinetic(): the words start 0.24 s after the last key */
+      const w0 = s.lastKey + 0.24;
+      const cards = film.tileRects(s.s, true).map((card, i) => {
+        const desk = film.fmt.W > film.fmt.H;
+        const order = desk ? i : (i % 2) + Math.floor(i / 2) * 1.4;
+        return r(s.revealStart + order * (k === 3 ? 0.11 : 0.08));
+      }).sort((a, b) => a - b);
+      return {
+        start: r(s.start),
+        /* the first key that shows, and the key that completes each word
+           of the request as it is typed into the box */
+        firstKey: r(keysOf(film, s)[0] ?? s.start),
+        typedWords: typedWords(film, s).map(r),
+        lastKey: r(s.lastKey),
+        /* the request's words lifting out as type */
+        words: k === 0 ? WORDS[0].map((_, i) => r(w0 + i * 0.1 + 0.08)) : k === 3 ? WORDS[3].map((_, i) => r(w0 + i * 0.15 + 0.1)) : [],
+        submit: r(s.submit),
+        /* BAPE: the dark stage, its title's letters, the title leaving */
+        stage: k === 2 ? { open: r(s.submit - 0.04), letters: [...WORDS[2].title].map((_, i) => r(s.submit + 0.4 + i * 0.07)), out: r(s.revealStart - 0.45) } : null,
+        results: r(s.revealStart),
+        cards,
+        live: r(s.liveStart),
+        select: r(s.click),
+        hero: r(s.heroStart),
+        heroIn: r(s.heroEnd),
+        handoff: r(s.handoff),
+        storeOpen: r(s.handoff + D.handoff),
+        storeEnd: r(s.storeEnd)
+      };
+    }),
+    close: {
+      start: r(c.start),
+      line1: r(c.start + 0.28),
+      queries: [0, 1, 2, 3].map((i) => r(c.start + 0.28 + 0.45 + i * 0.09)),
+      line2: r(t2),
+      products: [0, 1, 2, 3].map((i) => r(t2 + 0.25 + i * 0.08)),
+      gather: r(c.end - 2.2),
+      mark: r(c.end - 1.78),
+      white: r(c.end - 0.6),
+      end: r(c.end)
+    }
   };
 }
 
@@ -1424,7 +1543,9 @@ function publish(film, master, out) {
   fs.mkdirSync(out, { recursive: true });
   for (const f of Object.values(files)) fs.copyFileSync(f, path.join(out, path.basename(f)));
   fs.writeFileSync(path.join(out, `${name}.vtt`), mix.captions);
-  fs.writeFileSync(path.join(out, `${name}.timeline.json`), `${JSON.stringify(timeline, null, 2)}\n`);
+  /* the timeline, with the score's cues: every musical event and the
+     moment of the picture it belongs to */
+  fs.writeFileSync(path.join(out, `${name}.timeline.json`), `${JSON.stringify({ ...timeline, music: mix.cues }, null, 2)}\n`);
   fs.rmSync(stage, { recursive: true, force: true });
   console.log(`  ${name}: ${mix.lufs} LUFS integrated, true peak ${mix.truePeakDbtp} dBTP, voice ${mix.voiceLufs} LUFS, limiter ${mix.limiterMaxReductionDb} dB at most`);
   return mix;
@@ -1471,4 +1592,4 @@ async function main() {
 
 if (require.main === module) main().catch((err) => { console.error(err); process.exit(1); });
 
-module.exports = { Footage, FORMATS, PHOTOS, WORDS, D, FPS, plan, facts, bezier, EASE, viewOf, filmTimeline, publish, finaleSplit, insetRect, Film };
+module.exports = { Footage, FORMATS, PHOTOS, WORDS, D, FPS, plan, facts, bezier, EASE, viewOf, filmTimeline, publish, insetRect, narration, wordIn, onsetOf, Film };

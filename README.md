@@ -127,6 +127,8 @@ scripts/record-demo.js  records the demo from four real searches, end to end
 scripts/demo-narration.py  speaks the demo's narration lines
 scripts/demo-audio.js   the demo's score and mix: composed to each video's timeline
 scripts/demo-film.js    cuts the homepage film from the recorded session
+scripts/demo-score.js   the film's score, every event on a moment of the picture
+scripts/demo_voice.py   the narration's delivery: register, accents, endings, breaths
 assets/interpret.js     sends the request to the endpoint; local fallback
 assets/app.js           rendering and page behaviour
 assets/styles.css       colour tokens, design tokens and all shared components
@@ -1633,10 +1635,10 @@ a store is drawn.
 | | Request typed | What the film does | Narration / caption |
 | --- | --- | --- | --- |
 | Opening | | a quiet field of the session's own product photographs drifts in depth; the real search field opens out of it and the homepage resolves around it | "Ever know exactly what you want, but not where to find it?" |
-| Everyday | "black oversized hoodie under $80" | the request is typed for real; its words lift out of the page as type (BLACK / OVERSIZED / HOODIE / UNDER $80) and release on Search; the real results rise into place; the chosen card lifts, becomes the subject with its brand, name and price, and its frame opens onto the store's own page | "With Fynd, you just describe it." · "It searches real stores, and brings back what matches." · "Pick one, and you're right at the store." |
-| Another category | "lightweight jacket for fall under $150" | the hoodie grid stays, ghosted, under the real search field floating above it; on Search the grid re-forms as jackets | |
-| Hard to find | "BAPE shark hoodie under $400" | close on the field; a dark stage opens from the Search button, BAPE; the real results rise out of it; the listing on black; its store | "Even the pieces that are hard to find." |
-| A particular style | "sage green linen midi dress under $120" | softer: the request's attributes in quiet type, the results settling, the dress, its store | "Down to the exact color and fabric." |
+| Everyday | "black oversized hoodie under $80" | the request is typed for real; its words lift out of the page as type (BLACK / OVERSIZED / HOODIE / UNDER $80) and release on Search; the real results rise into place; the chosen card lifts, becomes the subject with its brand, name and price, and its frame opens onto the store's own page | "So, with Fynd? You just describe it." · "And look — it searches real stores, and brings back what actually matches." · "Pick one, and you're right there at the store." |
+| Another category | "lightweight jacket for fall under $150" | the hoodie grid stays, ghosted, under the real search field floating above it; on Search the grid re-forms as jackets | "Something totally different? Same idea." |
+| Hard to find | "BAPE shark hoodie under $400" | close on the field; a dark stage opens from the Search button, BAPE; the real results rise out of it; the listing on black; its store | "Okay — now something that's actually hard to find." · "Oh, there it is." |
+| A particular style | "sage green linen midi dress under $120" | softer: the request's attributes in quiet type, the results settling, the dress, its store | "Right down to the exact color, and even the fabric." |
 | Close | | the four requests as they were typed, then the four products they found, then the mark, then white | "Describe what you want. Fynd finds it." |
 
 ### The film
@@ -1859,17 +1861,51 @@ stressed vowels that stand far above the rest held by a look-ahead limiter.
 They are committed, so recording needs no speech model.
 `scripts/demo-narration.py` makes them again if a line changes:
 
+The film's lines are given a delivery as well as words — someone showing a
+friend something they have found useful: curious at the question, a lift when
+the products appear, easy about the store, a little playful at the jacket,
+leaning in for the hard one, pleased when it turns up, sure at the end. A voice
+model on its own says every line in the same register with the same melody, so
+`scripts/demo_voice.py` reshapes each recording's pitch and timing — never its
+words — with Praat's PSOLA (through parselmouth), which keeps the voice's own
+timbre: each line gets its register, how far its melody moves, a rise and a
+touch more time on the words it leans on ("exactly", "look", "totally",
+"hard", "finds"), and its own ending — the question rises, a line that leads on
+lifts, the last line settles. A short, soft breath comes before a line that
+starts a new thought. Where every word falls is found with an offline speech
+recogniser (a small sherpa-onnx zipformer), so an accent lands on its word,
+and the manifest records each word's time: the film sets the opening question's
+second line on "but", "Fynd finds it." on "Find", and lays "exact color" where
+"Sage green" lifts out.
+
+The voice never says a line exactly the same way twice, so each film line is
+recorded like a session: six takes, each given its delivery and then heard back
+by the recogniser; of the takes in which every word is still clear, the one
+whose melody moves most is kept, and what was heard is written to the manifest
+(the tests hold every film line to it, word for word). Hearing the lines back is
+how two phrasings were changed: "So with Fynd, you just describe it" lost its
+"d" into "you" and was heard as "fine", so the line is now "So, with Fynd? You
+just describe it."; and "and the fabric" came out as "in the fabric", so it is
+now "and even the fabric".
+
 ```sh
-pip install sherpa-onnx soundfile numpy
+pip install sherpa-onnx soundfile numpy scipy praat-parselmouth
 # kokoro-multi-lang-v1_0.tar.bz2 from
-# https://github.com/k2-fsa/sherpa-onnx/releases/tag/tts-models, unpacked
-KOKORO_DIR=/path/to/kokoro-multi-lang-v1_0 python3 scripts/demo-narration.py
+# https://github.com/k2-fsa/sherpa-onnx/releases/tag/tts-models, and
+# sherpa-onnx-zipformer-small-en-2023-06-26.tar.bz2 from .../tag/asr-models, unpacked
+KOKORO_DIR=/path/to/kokoro-multi-lang-v1_0 ASR_DIR=/path/to/sherpa-onnx-zipformer-small-en-2023-06-26 \
+  python3 scripts/demo-narration.py --only=hook,describe,look,pick,switch,rare,there,exact,finale
 ```
 
-The film uses `hook`, `describe`, `results`, `pick`, `rare`, `exact` and
-`finale`. The recorder's own lines stay for its raw session videos, where
-"from different retailers" is only said when the products on screen link to
-more than one shop; otherwise the shorter line is used.
+`--only` remakes just those lines and keeps every other line in the manifest as
+it is. The film uses `hook`, `describe`, `look`, `pick`, `switch`, `rare`,
+`there`, `exact` and `finale`, each placed by when its words should be heard:
+"And look" as the first cards rise, "Pick one" on the press, "Same idea" as the
+jackets arrive, "hard to find" as BAPE's dark stage opens, "Oh, there it is"
+once its listings have risen. The recorder's own lines stay for its raw
+session videos, where "from different retailers" is only said when the
+products on screen link to more than one shop; otherwise the shorter line is
+used.
 
 ### The music and the mix
 
@@ -1895,15 +1931,37 @@ last line is laid in 0.4 s before the cut back to Fynd, so it can finish with
 music still under it. The captions are written from where each line is actually
 spoken.
 
-For the film, the score follows the film's own timeline instead
-(`planFilm`): almost nothing under the opening question; a lift as each set of
-results arrives; a single soft note when a product is chosen; a change of
-colour as its store opens; the BAPE reveal the one modest high point; and a
-calm resolution home that ends in silence, with no flourish. A little sound
-design sits under it, all quiet and all from the edit: a soft tick at every
-keystroke the film shows, a low tock on Search, a click on the chosen card, and
-a breath of air under the larger transitions — ducked under the voice like the
-music.
+The film has a score of its own, `scripts/demo-score.js`, written to the
+film's marks — every moment the picture moves on, by name, from
+`scripts/demo-film.js`: the search field opening, each key and each typed word,
+the request lifting out as type, Search, every card landing, the choice, the
+store's page opening and finishing opening, BAPE's dark stage and title, the
+last word of the narration, the mark. Warm and quiet and a little futuristic:
+an analog-style pad (three detuned saws a note through a soft low-pass that
+opens as the film lifts and closes as it settles), soft FM glass tones into a
+ping-pong echo and a long dark space, a sub under the bigger moments, high air,
+and — for the jacket only — a soft pluck pulse while it is typed. No beat, no
+melody to follow, no loop.
+
+Nothing moves because a bar line came round: near-silence before the question;
+the chord opens (a Lydian colour) as the field opens; a cooler chord on the
+first key, a soft note as each word of the request is typed and the same figure
+an octave up as the words lift out as type; a low pulse on Search, then
+near-silence while it searches; the harmony lifts with the results, a note on
+each card as it lands; one small note on the choice; the chord turns as the
+store's page opens, air cresting as it finishes; BAPE almost silent and dark
+while it is typed, a deep swell as the dark stage opens, its one high point as
+the listings rise, then room for "Oh, there it is"; one quiet chord under
+"Describe what you want."; home once the last word is said, its last note on
+the mark, silent by the last frame. Each event is a cue naming the moment it
+belongs to, written into the timeline (`music`), and the tests hold the cues to
+their moments and the voice at least 12 dB (loudness-weighted) over the music
+during every line.
+
+A little sound design sits under it, all from the edit and almost not there: a
+soft tick at every keystroke the film shows, a rounded tock on Search, a click on
+the chosen card, and a breath of air as a store's page opens — ducked under the
+voice like the music.
 
 Every recording writes its timeline beside the video, so the sound can be made
 again without recording again — the video streams are copied, not re-encoded:
@@ -1911,7 +1969,7 @@ again without recording again — the video streams are copied, not re-encoded:
 ```sh
 node scripts/demo-audio.js --remix                 # both videos
 node scripts/demo-audio.js --remix --stems=DIR     # and the voice and music stems, to listen to
-node scripts/test-demo-audio.js                    # the checks: loudness, ducking, captions
+node scripts/test-demo-audio.js                    # the checks: loudness, ducking, captions, the score's sync
 ```
 
 ### What it writes
@@ -1922,7 +1980,7 @@ node scripts/test-demo-audio.js                    # the checks: loudness, ducki
 | `fynd-demo-mobile.mp4` / `.webm` | 800 × 1440 (400 × 720 at 2×), with narration and score, stereo | 1023px and under |
 | `fynd-demo{,-mobile}-poster.jpg` | | the real results, shown before playback |
 | `fynd-demo{,-mobile}.vtt` | | the narration as captions, timed to where it is spoken |
-| `fynd-demo{,-mobile}.timeline.json` | | the film's timeline: when each line is said, each key typed and each search made, answered, chosen and opened; what the score is written to |
+| `fynd-demo{,-mobile}.timeline.json` | | the film's timeline: where each line is laid and when its speech starts and ends, each key typed, every named moment of the picture (`marks`) the score is written to, and the score's cues (`music`) |
 | `footage/fynd-demo{,-mobile}.session.mp4` / `.session.json` | | the recorded session the film is cut from (video only), and its timeline |
 | `footage/fynd-demo{,-mobile}.keys.json` | | the keystrokes in that footage |
 | `demo-search.json` | | the real searches both recordings were made from, with every attempt each took |

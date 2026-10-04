@@ -132,6 +132,33 @@ for (const key of ['desktop', 'mobile']) {
       '"Fynd finds it." is set where it is said');
   });
 
+  test(`${fmt.name}: every line is said just after the moment it is about — never before it`, () => {
+    const tl = F.filmTimeline(new F.Film(key, F.facts()));
+    const line = (k) => tl.lines.find((l) => l.key === k);
+    const m = tl.marks;
+    const after = (k, moment, within, what) => {
+      const d = line(k).speech - moment;
+      assert.ok(d >= -0.02 && d <= within, `"${k}" starts ${d.toFixed(2)} s after ${what}`);
+    };
+    const wordAt = (k, w) => line(k).at + F.wordIn(k, w);
+    after('hook', 0, 1.0, 'the film starts');
+    after('describe', m.searches[0].start, 0.8, 'the homepage is up');
+    after('look', m.searches[0].results, 0.6, 'the first results appear');
+    after('pick', m.searches[0].select, 0.3, 'the product is chosen');
+    after('switch', m.searches[1].start, 1.2, 'the jacket search begins');
+    assert.ok(Math.abs(wordAt('switch', 'Same') - m.searches[1].results) < 0.15, '"Same idea." is not with the jackets arriving');
+    after('rare', m.searches[2].start, 0.6, 'the BAPE search begins');
+    after('there', m.searches[2].results + 0.3, 0.6, 'the BAPE listings have risen');
+    after('finale', m.close.start, 0.5, 'the close begins');
+    /* "...at the store" heard as the store opens; "...hard to find" as
+       the dark stage opens; "color" as "Sage green" lifts out */
+    assert.ok(Math.abs(wordAt('pick', 'store') - m.searches[0].handoff) < 0.6, '"store" is not with the store');
+    assert.ok(Math.abs(wordAt('rare', 'hard') - m.searches[2].submit) < 0.6, '"hard to find" is not with the dark stage');
+    assert.ok(Math.abs(wordAt('exact', 'color') - m.searches[3].words[0]) < 0.15, '"color" is not with "Sage green"');
+    /* the closing type changes on the word "Fynd" */
+    assert.ok(Math.abs(m.close.line2 - wordAt('finale', 'Find')) < 0.01, '"Fynd finds it." is not set on its word');
+  });
+
   test(`${fmt.name}: the keystrokes the sound follows fall while each request is being typed`, () => {
     const film = new F.Film(key, F.facts());
     const tl = F.filmTimeline(film);

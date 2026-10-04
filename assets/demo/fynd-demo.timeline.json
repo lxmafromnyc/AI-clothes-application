@@ -6,31 +6,57 @@
   "lines": [
     {
       "key": "hook",
-      "at": 0.75
+      "at": 0.22,
+      "speech": 0.6,
+      "ends": 3.453
     },
     {
       "key": "describe",
-      "at": 5.65
+      "at": 5.21,
+      "speech": 5.25,
+      "ends": 7.47
     },
     {
-      "key": "results",
-      "at": 14.65
+      "key": "look",
+      "at": 13.48,
+      "speech": 13.8,
+      "ends": 17.886
     },
     {
       "key": "pick",
-      "at": 18.558
+      "at": 18.478,
+      "speech": 18.518,
+      "ends": 20.457
+    },
+    {
+      "key": "switch",
+      "at": 23.029,
+      "speech": 23.069,
+      "ends": 25.475
     },
     {
       "key": "rare",
-      "at": 32.97
+      "at": 29.78,
+      "speech": 30.12,
+      "ends": 32.858
+    },
+    {
+      "key": "there",
+      "at": 35.38,
+      "speech": 35.42,
+      "ends": 36.444
     },
     {
       "key": "exact",
-      "at": 44.91
+      "at": 41.675,
+      "speech": 41.715,
+      "ends": 44.291
     },
     {
       "key": "finale",
-      "at": 51.05
+      "at": 50.69,
+      "speech": 51.05,
+      "ends": 54.066
     }
   ],
   "events": [
@@ -40,7 +66,7 @@
     },
     {
       "type": "reveal",
-      "at": 3.5
+      "at": 3.55
     },
     {
       "type": "typing",
@@ -295,5 +321,628 @@
       "stage": "light"
     }
   ],
-  "close": 50.8
+  "close": 50.8,
+  "marks": {
+    "hook": 0.6,
+    "reveal": 3.55,
+    "page": 4,
+    "searches": [
+      {
+        "start": 4.9,
+        "firstKey": 6.4,
+        "typedWords": [
+          7.267,
+          8.667,
+          9.433,
+          10.4,
+          10.967
+        ],
+        "lastKey": 10.967,
+        "words": [
+          11.287,
+          11.387,
+          11.487,
+          11.587
+        ],
+        "submit": 12.8,
+        "stage": null,
+        "results": 13.55,
+        "cards": [
+          13.55,
+          13.63,
+          13.71,
+          13.79
+        ],
+        "live": 14.55,
+        "select": 18.438,
+        "hero": 18.488,
+        "heroIn": 19.388,
+        "handoff": 19.938,
+        "storeOpen": 20.888,
+        "storeEnd": 21.98
+      },
+      {
+        "start": 22,
+        "firstKey": 22.008,
+        "typedWords": [
+          22.267,
+          22.784,
+          23.5,
+          23.967
+        ],
+        "lastKey": 23.967,
+        "words": [],
+        "submit": 24.37,
+        "stage": null,
+        "results": 24.57,
+        "cards": [
+          24.57,
+          24.65,
+          24.73,
+          24.81
+        ],
+        "live": 25.57,
+        "select": 26.458,
+        "hero": 26.508,
+        "heroIn": 27.408,
+        "handoff": 27.858,
+        "storeOpen": 28.808,
+        "storeEnd": 29.8
+      },
+      {
+        "start": 29.82,
+        "firstKey": 29.887,
+        "typedWords": [
+          30.487,
+          31.187,
+          32.153
+        ],
+        "lastKey": 32.153,
+        "words": [],
+        "submit": 32.52,
+        "stage": {
+          "open": 32.48,
+          "letters": [
+            32.92,
+            32.99,
+            33.06,
+            33.13
+          ],
+          "out": 34.37
+        },
+        "results": 34.82,
+        "cards": [
+          34.82,
+          34.9,
+          34.98,
+          35.06
+        ],
+        "live": 35.82,
+        "select": 36.624,
+        "hero": 36.674,
+        "heroIn": 37.574,
+        "handoff": 38.524,
+        "storeOpen": 39.474,
+        "storeEnd": 40.64
+      },
+      {
+        "start": 40.66,
+        "firstKey": 40.693,
+        "typedWords": [
+          40.693,
+          41.493,
+          42.138,
+          42.593
+        ],
+        "lastKey": 42.593,
+        "words": [
+          42.933,
+          43.083,
+          43.233,
+          43.383
+        ],
+        "submit": 44.16,
+        "stage": null,
+        "results": 44.66,
+        "cards": [
+          44.66,
+          44.77,
+          44.88,
+          44.99
+        ],
+        "live": 45.66,
+        "select": 47.086,
+        "hero": 47.136,
+        "heroIn": 48.036,
+        "handoff": 48.586,
+        "storeOpen": 49.536,
+        "storeEnd": 50.73
+      }
+    ],
+    "close": {
+      "start": 50.8,
+      "line1": 51.08,
+      "queries": [
+        51.53,
+        51.62,
+        51.71,
+        51.8
+      ],
+      "line2": 52.877,
+      "products": [
+        53.127,
+        53.207,
+        53.287,
+        53.367
+      ],
+      "gather": 54.8,
+      "mark": 55.22,
+      "white": 56.4,
+      "end": 57
+    }
+  },
+  "music": [
+    {
+      "at": 0.22,
+      "what": "chord Dopen, from silence",
+      "anchor": "film start",
+      "anchorAt": 0
+    },
+    {
+      "at": 3.55,
+      "what": "chord Glyd",
+      "anchor": "search field opens",
+      "anchorAt": 3.55
+    },
+    {
+      "at": 3.55,
+      "what": "glass 81",
+      "anchor": "search field opens",
+      "anchorAt": 3.55
+    },
+    {
+      "at": 3.55,
+      "what": "sub swell",
+      "anchor": "search field opens",
+      "anchorAt": 3.55
+    },
+    {
+      "at": 3.55,
+      "what": "air swell peaks",
+      "anchor": "search field opens",
+      "anchorAt": 3.55
+    },
+    {
+      "at": 4,
+      "what": "glass 85",
+      "anchor": "the homepage appears around it",
+      "anchorAt": 4
+    },
+    {
+      "at": 6.4,
+      "what": "chord Bm11",
+      "anchor": "first request: the first key",
+      "anchorAt": 6.4
+    },
+    {
+      "at": 7.287,
+      "what": "glass 66",
+      "anchor": "first request: word 1 typed",
+      "anchorAt": 7.267
+    },
+    {
+      "at": 8.687,
+      "what": "glass 69",
+      "anchor": "first request: word 2 typed",
+      "anchorAt": 8.667
+    },
+    {
+      "at": 9.453,
+      "what": "glass 71",
+      "anchor": "first request: word 3 typed",
+      "anchorAt": 9.433
+    },
+    {
+      "at": 10.42,
+      "what": "glass 74",
+      "anchor": "first request: word 4 typed",
+      "anchorAt": 10.4
+    },
+    {
+      "at": 10.987,
+      "what": "glass 76",
+      "anchor": "first request: word 5 typed",
+      "anchorAt": 10.967
+    },
+    {
+      "at": 11.287,
+      "what": "glass 78",
+      "anchor": "hoodie word \"1\" lifts out",
+      "anchorAt": 11.287
+    },
+    {
+      "at": 11.387,
+      "what": "glass 81",
+      "anchor": "hoodie word \"2\" lifts out",
+      "anchorAt": 11.387
+    },
+    {
+      "at": 11.487,
+      "what": "glass 83",
+      "anchor": "hoodie word \"3\" lifts out",
+      "anchorAt": 11.487
+    },
+    {
+      "at": 11.587,
+      "what": "glass 86",
+      "anchor": "hoodie word \"4\" lifts out",
+      "anchorAt": 11.587
+    },
+    {
+      "at": 12.8,
+      "what": "low pulse on Search",
+      "anchor": "search 1: Search pressed",
+      "anchorAt": 12.8
+    },
+    {
+      "at": 12.98,
+      "what": "near-silence while it searches",
+      "anchor": "search 1: Search pressed",
+      "anchorAt": 12.8
+    },
+    {
+      "at": 13.55,
+      "what": "chord Dmaj9",
+      "anchor": "search 1: results appear",
+      "anchorAt": 13.55
+    },
+    {
+      "at": 13.55,
+      "what": "sub under the lift",
+      "anchor": "search 1: results appear",
+      "anchorAt": 13.55
+    },
+    {
+      "at": 13.59,
+      "what": "glass 81",
+      "anchor": "search 1: card 1 lands",
+      "anchorAt": 13.55
+    },
+    {
+      "at": 13.67,
+      "what": "glass 85",
+      "anchor": "search 1: card 2 lands",
+      "anchorAt": 13.63
+    },
+    {
+      "at": 13.75,
+      "what": "glass 88",
+      "anchor": "search 1: card 3 lands",
+      "anchorAt": 13.71
+    },
+    {
+      "at": 13.8,
+      "what": "air swell peaks",
+      "anchor": "search 1: results appear",
+      "anchorAt": 13.55
+    },
+    {
+      "at": 13.83,
+      "what": "glass 90",
+      "anchor": "search 1: card 4 lands",
+      "anchorAt": 13.79
+    },
+    {
+      "at": 18.448,
+      "what": "glass 93",
+      "anchor": "search 1: product chosen",
+      "anchorAt": 18.438
+    },
+    {
+      "at": 19.938,
+      "what": "chord G9",
+      "anchor": "search 1: the store's page opens",
+      "anchorAt": 19.938
+    },
+    {
+      "at": 19.958,
+      "what": "glass 74",
+      "anchor": "search 1: the store's page opens",
+      "anchorAt": 19.938
+    },
+    {
+      "at": 20.888,
+      "what": "air swell crests as the page finishes opening",
+      "anchor": "search 1: the store's page is open",
+      "anchorAt": 20.888
+    },
+    {
+      "at": 22,
+      "what": "chord Asus",
+      "anchor": "the jacket: typing starts",
+      "anchorAt": 22
+    },
+    {
+      "at": 22.12,
+      "what": "pluck pulse begins",
+      "anchor": "the jacket: typing starts",
+      "anchorAt": 22
+    },
+    {
+      "at": 24.32,
+      "what": "pluck pulse stops",
+      "anchor": "the jacket: Search",
+      "anchorAt": 24.37
+    },
+    {
+      "at": 24.37,
+      "what": "low pulse on Search",
+      "anchor": "search 2: Search pressed",
+      "anchorAt": 24.37
+    },
+    {
+      "at": 24.57,
+      "what": "chord Aadd9",
+      "anchor": "search 2: results appear",
+      "anchorAt": 24.57
+    },
+    {
+      "at": 24.57,
+      "what": "sub under the lift",
+      "anchor": "search 2: results appear",
+      "anchorAt": 24.57
+    },
+    {
+      "at": 24.82,
+      "what": "air swell peaks",
+      "anchor": "search 2: results appear",
+      "anchorAt": 24.57
+    },
+    {
+      "at": 26.468,
+      "what": "glass 93",
+      "anchor": "search 2: product chosen",
+      "anchorAt": 26.458
+    },
+    {
+      "at": 27.858,
+      "what": "chord DF",
+      "anchor": "search 2: the store's page opens",
+      "anchorAt": 27.858
+    },
+    {
+      "at": 27.878,
+      "what": "glass 76",
+      "anchor": "search 2: the store's page opens",
+      "anchorAt": 27.858
+    },
+    {
+      "at": 28.808,
+      "what": "air swell crests as the page finishes opening",
+      "anchor": "search 2: the store's page is open",
+      "anchorAt": 28.808
+    },
+    {
+      "at": 29.82,
+      "what": "chord Bdark",
+      "anchor": "BAPE: typing starts",
+      "anchorAt": 29.82
+    },
+    {
+      "at": 32.52,
+      "what": "deep swell: the dark stage opens",
+      "anchor": "search 3: Search pressed",
+      "anchorAt": 32.52
+    },
+    {
+      "at": 33.25,
+      "what": "glass 90",
+      "anchor": "BAPE title complete",
+      "anchorAt": 33.25
+    },
+    {
+      "at": 34.37,
+      "what": "drops back as the title leaves",
+      "anchor": "BAPE title leaves",
+      "anchorAt": 34.37
+    },
+    {
+      "at": 34.82,
+      "what": "chord Gbig",
+      "anchor": "search 3: results appear",
+      "anchorAt": 34.82
+    },
+    {
+      "at": 34.82,
+      "what": "sub under the lift",
+      "anchor": "search 3: results appear",
+      "anchorAt": 34.82
+    },
+    {
+      "at": 34.86,
+      "what": "glass 79",
+      "anchor": "search 3: card 1 lands",
+      "anchorAt": 34.82
+    },
+    {
+      "at": 34.94,
+      "what": "glass 83",
+      "anchor": "search 3: card 2 lands",
+      "anchorAt": 34.9
+    },
+    {
+      "at": 35.02,
+      "what": "glass 86",
+      "anchor": "search 3: card 3 lands",
+      "anchorAt": 34.98
+    },
+    {
+      "at": 35.07,
+      "what": "air swell peaks",
+      "anchor": "search 3: results appear",
+      "anchorAt": 34.82
+    },
+    {
+      "at": 35.1,
+      "what": "glass 90",
+      "anchor": "search 3: card 4 lands",
+      "anchorAt": 35.06
+    },
+    {
+      "at": 36.634,
+      "what": "glass 95",
+      "anchor": "search 3: product chosen",
+      "anchorAt": 36.624
+    },
+    {
+      "at": 38.524,
+      "what": "chord Aopen",
+      "anchor": "search 3: the store's page opens",
+      "anchorAt": 38.524
+    },
+    {
+      "at": 38.544,
+      "what": "glass 74",
+      "anchor": "search 3: the store's page opens",
+      "anchorAt": 38.524
+    },
+    {
+      "at": 39.474,
+      "what": "air swell crests as the page finishes opening",
+      "anchor": "search 3: the store's page is open",
+      "anchorAt": 39.474
+    },
+    {
+      "at": 40.66,
+      "what": "chord Gsoft",
+      "anchor": "the dress: typing starts",
+      "anchorAt": 40.66
+    },
+    {
+      "at": 42.933,
+      "what": "glass 83",
+      "anchor": "dress word \"1\" lifts out",
+      "anchorAt": 42.933
+    },
+    {
+      "at": 43.083,
+      "what": "glass 86",
+      "anchor": "dress word \"2\" lifts out",
+      "anchorAt": 43.083
+    },
+    {
+      "at": 43.233,
+      "what": "glass 88",
+      "anchor": "dress word \"3\" lifts out",
+      "anchorAt": 43.233
+    },
+    {
+      "at": 43.383,
+      "what": "glass 90",
+      "anchor": "dress word \"4\" lifts out",
+      "anchorAt": 43.383
+    },
+    {
+      "at": 44.16,
+      "what": "low pulse on Search",
+      "anchor": "search 4: Search pressed",
+      "anchorAt": 44.16
+    },
+    {
+      "at": 44.34,
+      "what": "near-silence while it searches",
+      "anchor": "search 4: Search pressed",
+      "anchorAt": 44.16
+    },
+    {
+      "at": 44.66,
+      "what": "chord Dmaj9b",
+      "anchor": "search 4: results appear",
+      "anchorAt": 44.66
+    },
+    {
+      "at": 44.66,
+      "what": "sub under the lift",
+      "anchor": "search 4: results appear",
+      "anchorAt": 44.66
+    },
+    {
+      "at": 44.91,
+      "what": "air swell peaks",
+      "anchor": "search 4: results appear",
+      "anchorAt": 44.66
+    },
+    {
+      "at": 47.096,
+      "what": "glass 93",
+      "anchor": "search 4: product chosen",
+      "anchorAt": 47.086
+    },
+    {
+      "at": 48.586,
+      "what": "chord Em9",
+      "anchor": "search 4: the store's page opens",
+      "anchorAt": 48.586
+    },
+    {
+      "at": 48.606,
+      "what": "glass 76",
+      "anchor": "search 4: the store's page opens",
+      "anchorAt": 48.586
+    },
+    {
+      "at": 49.536,
+      "what": "air swell crests as the page finishes opening",
+      "anchor": "search 4: the store's page is open",
+      "anchorAt": 49.536
+    },
+    {
+      "at": 50.8,
+      "what": "chord Dclose",
+      "anchor": "the close begins",
+      "anchorAt": 50.8
+    },
+    {
+      "at": 50.8,
+      "what": "music simplifies under the last line",
+      "anchor": "the close begins",
+      "anchorAt": 50.8
+    },
+    {
+      "at": 54.126,
+      "what": "chord Dhome",
+      "anchor": "the last word is said",
+      "anchorAt": 54.126
+    },
+    {
+      "at": 54.126,
+      "what": "sub: home",
+      "anchor": "the last word is said",
+      "anchorAt": 54.066
+    },
+    {
+      "at": 54.146,
+      "what": "glass 81",
+      "anchor": "the last word is said",
+      "anchorAt": 54.066
+    },
+    {
+      "at": 54.9,
+      "what": "glass 78",
+      "anchor": "the products gather to the mark",
+      "anchorAt": 54.8
+    },
+    {
+      "at": 55.22,
+      "what": "glass 74",
+      "anchor": "the mark appears",
+      "anchorAt": 55.22
+    },
+    {
+      "at": 57,
+      "what": "silence",
+      "anchor": "last frame",
+      "anchorAt": 57
+    }
+  ]
 }
