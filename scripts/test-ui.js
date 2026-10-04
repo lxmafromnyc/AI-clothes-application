@@ -35,7 +35,9 @@ try {
 const TYPES = {
   '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml',
   /* the landing page's demo video, its poster and its captions */
-  '.mp4': 'video/mp4', '.webm': 'video/webm', '.jpg': 'image/jpeg', '.vtt': 'text/vtt'
+  '.mp4': 'video/mp4', '.webm': 'video/webm', '.jpg': 'image/jpeg', '.vtt': 'text/vtt',
+  /* Inter, for the layout tests that measure type (see openMeter) */
+  '.woff2': 'font/woff2'
 };
 const searchRequests = [];
 const billingRequests = [];
@@ -987,6 +989,11 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
 
   /* Opens a search page with the stub counter in a given state, and waits
      for the meter to have drawn what the server said. */
+  const INTER_FILES = path.join(REPO, 'node_modules', '@fontsource', 'inter', 'files');
+  const INTER_AVAILABLE = [400, 500, 600, 700].every((w) => fs.existsSync(path.join(INTER_FILES, `inter-latin-${w}-normal.woff2`)));
+  const INTER_CSS = [400, 500, 600, 700].map((w) => `@font-face { font-family: 'Inter'; font-weight: ${w}; font-display: block;
+    src: url(http://127.0.0.1:${PORT}/node_modules/@fontsource/inter/files/inter-latin-${w}-normal.woff2) format('woff2'); }`).join('\n');
+
   const openMeter = async (state, options) => {
     const settings = options || {};
     ledger = Object.assign({ mode: 'ok', extra: {} }, state);
@@ -996,10 +1003,26 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
       window.FINDWEAR_SEARCH_API = 'http://127.0.0.1:8899/api/search';
     });
     await page.route((url) => !String(url).includes('127.0.0.1'), (route) => route.abort());
+    /* Layout is only worth asserting in the face people actually get:
+       Inter is a little wider than the fallback this browser would use,
+       and the difference is a wrapped line on a small phone. The
+       stylesheet's Google Fonts request is answered with the same Inter
+       from @fontsource (a devDependency) when it is installed. */
+    if (settings.inter && INTER_AVAILABLE) {
+      await page.route('https://fonts.googleapis.com/**', (route) => route.fulfill({ status: 200, contentType: 'text/css', body: INTER_CSS }));
+    }
     await page.goto(`http://127.0.0.1:${PORT}/${settings.file || 'index.html'}`, { waitUntil: 'domcontentloaded' });
     if (!settings.pending) await page.waitForSelector('#search-meter:not([data-state="pending"])', { timeout: 10000 });
+    if (settings.inter && INTER_AVAILABLE) {
+      await page.evaluate(() => document.fonts.ready);
+      assert.ok(await page.evaluate(() => document.fonts.check('13px Inter')), 'Inter did not load');
+    }
+    /* the bar animates to its width; layout is read once it has arrived */
+    await page.waitForTimeout(350);
     return page;
   };
+
+  if (!INTER_AVAILABLE) console.log('  (Inter is not installed — run npm ci; layout tests use the fallback face)');
 
   /* Everything the meter says, and what it did to the box. */
   const meterOf = (page) => page.evaluate(() => {
@@ -1257,45 +1280,86 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     await page.close();
   });
 
-  await test('the box stays the focus: the meter is small, quiet and under it', async () => {
-    const page = await openMeter({ planId: 'pro', used: 40, extra: { signedIn: true } }, { viewport: { width: 1440, height: 900 } });
-    const g = await page.evaluate(() => {
-      const box = (sel) => document.querySelector(sel).getBoundingClientRect();
-      return {
-        card: box('#ask-form'), meter: box('#search-meter'), track: box('.search-meter-track'),
-        meterSize: parseFloat(getComputedStyle(document.querySelector('.search-meter')).fontSize),
-        askSize: parseFloat(getComputedStyle(document.getElementById('ask')).fontSize)
-      };
-    });
-    assert.ok(g.meter.top >= g.card.bottom, 'under the box');
-    assert.ok(g.meter.top - g.card.bottom <= 16, 'directly under it');
-    assert.ok(g.meter.height <= 22, `one line (${g.meter.height}px)`);
-    assert.ok(g.meterSize < g.askSize * 0.75, 'far smaller type than the box');
-    assert.ok(g.track.height <= 4, 'a hairline bar');
-    await page.close();
+  /* The geometry the meter is drawn to, per width: the bar's length,
+     whether it shares the count's row, and the gap between them. */
+  const meterGeometry = (page) => page.evaluate(() => {
+    const box = (sel) => {
+      const n = document.querySelector(sel);
+      return n && getComputedStyle(n).display !== 'none' && !n.hidden ? n.getBoundingClientRect() : null;
+    };
+    const link = document.querySelector('.search-meter-out a');
+    return {
+      card: box('#ask-form'), meter: box('#search-meter'), track: box('.search-meter-track'),
+      count: box('.search-meter-count'), left: box('.search-meter-left'), out: box('.search-meter-out'),
+      button: box('#ask-form button[type="submit"]'), examples: box('#ask-examples'),
+      linkPieces: link ? link.getClientRects().length : 0,
+      meterSize: parseFloat(getComputedStyle(document.querySelector('.search-meter')).fontSize),
+      askSize: parseFloat(getComputedStyle(document.getElementById('ask')).fontSize),
+      pageWidth: document.documentElement.scrollWidth, viewport: window.innerWidth
+    };
   });
 
-  for (const viewport of [{ width: 390, height: 844 }, { width: 360, height: 740 }]) {
-    for (const [label, state] of [['nearly out', { planId: 'pro', used: 85 }], ['at zero', { planId: 'free', used: 1 }]]) {
-      await test(`on a ${viewport.width}px phone, ${label}, the meter sits under the box without crowding it`, async () => {
-        const page = await openMeter(Object.assign({ extra: { signedIn: state.planId !== 'free' } }, state), { viewport });
-        const g = await page.evaluate(() => {
-          const box = (sel) => document.querySelector(sel).getBoundingClientRect();
-          return {
-            card: box('#ask-form'), meter: box('#search-meter'), line: box('.search-meter-line'),
-            button: box('#ask-form button[type="submit"]'), examples: box('#ask-examples'),
-            pageWidth: document.documentElement.scrollWidth, viewport: window.innerWidth
-          };
-        });
+  for (const width of [1440, 1024]) {
+    await test(`at ${width}px the meter is easy to see and still secondary to the box`, async () => {
+      const page = await openMeter({ planId: 'pro', used: 40, extra: { signedIn: true } }, { viewport: { width, height: 900 }, inter: true });
+      const g = await meterGeometry(page);
+      assert.strictEqual(g.pageWidth, g.viewport, 'no sideways scroll');
+      assert.ok(g.meter.top >= g.card.bottom && g.meter.top - g.card.bottom <= 16, 'directly under the box');
+      assert.ok(g.meter.height <= 22, `one line (${g.meter.height}px)`);
+      /* larger than it was, by design: a 6px bar, 144px long */
+      assert.strictEqual(g.track.height, 6, `the bar is 6px thick (${g.track.height}px)`);
+      assert.strictEqual(g.track.width, 144, `the bar is 144px long (${g.track.width}px)`);
+      assert.ok(Math.abs((g.track.top + g.track.height / 2) - (g.count.top + g.count.height / 2)) <= 2, 'the bar sits level with the count');
+      assert.strictEqual(Math.round(g.count.left - g.track.right), 12, 'and 12px from it');
+      /* and still secondary: the box's type, height and width dwarf it */
+      assert.ok(g.meterSize < g.askSize * 0.75, 'far smaller type than the box');
+      assert.ok(g.track.height * 6 <= g.button.height, 'a bar much thinner than the Search button is tall');
+      assert.ok(g.track.width <= g.card.width * 0.25, 'and a fraction of the box’s width');
+      await page.close();
+    });
+  }
+
+  /* The widest counts the meter can show — the Pro "nearly out" line in
+     bold, a three-figure Max line, and the zero line with its link — at
+     every phone width the layout has to hold. */
+  const WIDEST = [
+    ['nearly out', { planId: 'pro', used: 85 }],
+    ['half way on Max', { planId: 'max', used: 250 }],
+    ['at zero', { planId: 'free', used: 1 }]
+  ];
+  for (const width of [360, 375, 390, 480]) {
+    for (const [label, state] of WIDEST) {
+      await test(`on a ${width}px phone, ${label}, the meter fits under the box without awkward wrapping`, async () => {
+        const page = await openMeter(Object.assign({ extra: { signedIn: state.planId !== 'free' } }, state),
+          { viewport: { width, height: 844 }, inter: true });
+        const g = await meterGeometry(page);
         assert.strictEqual(g.pageWidth, g.viewport, 'no sideways scroll');
         assert.ok(g.meter.top >= g.card.bottom && g.meter.top - g.card.bottom <= 14, 'directly under the box');
-        assert.ok(g.line.left >= 0 && g.line.right <= g.viewport, 'inside the screen');
-        assert.ok(g.line.height <= 22, `the counter stays on one line (${g.line.height}px)`);
-        assert.ok(g.meter.height <= 44, `two lines at most (${g.meter.height}px)`);
+        [g.track, g.count, g.left, g.out].filter(Boolean).forEach((r) => {
+          assert.ok(r.left >= 0 && r.right <= g.viewport, 'everything inside the screen');
+        });
+        /* the count and what is left read as one line */
+        assert.ok(g.count.height <= 21, `the count is on one line (${g.count.height}px)`);
+        if (g.left) {
+          assert.ok(g.left.height <= 21, 'what is left is on one line');
+          assert.ok(Math.abs(g.left.top - g.count.top) < 2, 'beside the count, not wrapped under it');
+        }
+        if (g.out) assert.strictEqual(g.linkPieces, 1, '"See plans" is never split across lines');
+        assert.strictEqual(g.track.height, 6, 'the bar is 6px thick');
+        if (width <= 479) {
+          /* no room beside the count: the bar has its own row, centred, above it */
+          assert.strictEqual(g.track.width, 168, `a 168px bar (${g.track.width}px)`);
+          assert.ok(g.track.bottom <= g.count.top, 'the bar sits above the count');
+          assert.ok(Math.abs((g.track.left + g.track.right) / 2 - g.viewport / 2) <= 2, 'centred');
+        } else {
+          assert.strictEqual(g.track.width, 120, `a 120px bar (${g.track.width}px)`);
+          assert.ok(Math.abs((g.track.top + g.track.height / 2) - (g.count.top + g.count.height / 2)) <= 2, 'level with the count');
+        }
         assert.ok(g.examples.top >= g.meter.bottom, 'the examples move down rather than overlap');
         /* the box keeps its phone layout: the button full width underneath */
         assert.ok(g.button.width >= g.card.width - 24, 'the Search button is still full width');
         assert.ok(Math.abs(g.button.height - 50) <= 1, 'and its full height');
+        assert.ok(g.track.width <= g.card.width * 0.6, 'the bar stays well short of the box’s width');
         await page.close();
       });
     }

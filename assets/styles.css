@@ -391,10 +391,10 @@ strong { font-weight: 600; }
 .search-meter[data-state="pending"] { visibility: hidden; }
 .search-meter-line {
   display: flex; flex-wrap: wrap; align-items: center; justify-content: center;
-  gap: 2px 8px;
+  gap: 2px 12px;
   min-height: 20px;
 }
-.search-meter-track { flex: none; width: 88px; height: 4px; border-radius: var(--r-pill); background: var(--color-surface-3); overflow: hidden; }
+.search-meter-track { flex: none; width: 144px; height: 6px; border-radius: var(--r-pill); background: var(--color-surface-3); overflow: hidden; }
 .search-meter-fill { display: block; width: 0; height: 100%; border-radius: var(--r-pill); background: var(--color-text-muted); transition: width .3s var(--ease); }
 .search-meter-count, .search-meter-left { font-variant-numeric: tabular-nums; }
 .search-meter-left::before { content: "\00B7"; margin-right: 8px; }
@@ -404,7 +404,7 @@ strong { font-weight: 600; }
 .search-meter[data-state="low"] .search-meter-fill,
 .search-meter[data-state="empty"] .search-meter-fill { background: var(--color-text); }
 .search-meter-out { margin-top: 2px; color: var(--color-text); font-weight: 500; }
-.search-meter-out a { color: var(--color-text); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
+.search-meter-out a { color: var(--color-text); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; white-space: nowrap; }
 .search-meter-out a:hover { color: var(--color-text-2); }
 .auth-card .form-error { margin: 4px 0 14px; }
 
@@ -761,9 +761,10 @@ a.item-card:hover .item-name { text-decoration: underline; text-underline-offset
   .ask-examples { margin-top: 16px; }
   .examples-label { width: 100%; margin: 0 0 2px; }
 
-  /* the meter stays one short line under the full-width button */
+  /* the meter stays one line under the full-width button */
   .search-meter { margin-top: 10px; }
-  .search-meter-track { width: 56px; }
+  .search-meter-line { column-gap: 10px; }
+  .search-meter-track { width: 120px; }
 
   .section-head h2, .results-head h2 { font-size: 24px; }
   .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px var(--gap); }
@@ -796,6 +797,13 @@ a.item-card:hover .item-name { text-decoration: underline; text-underline-offset
   .item-name { font-size: 13.5px; }
   .item-price { font-size: 14.5px; }
   .attachment-name { max-width: 15ch; }
+
+  /* A small phone has no room for a full-length bar beside the longest
+     count, so the bar takes its own row, centred, directly above it, and
+     the count stays on one line. The row is reserved before the numbers
+     arrive, so nothing moves when they do. */
+  .search-meter-line { row-gap: 8px; min-height: 34px; }
+  .search-meter-track { width: 168px; margin-inline: calc(50% - 84px); }
 }
 
 @media (prefers-reduced-motion: reduce) {
