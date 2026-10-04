@@ -1639,9 +1639,11 @@ function build(shot, take, outDir) {
 const attr = (t) => String(t).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
 const listed = (items) => (items.length < 2 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`);
 
-function describeOnPage(saved) {
-  const file = path.join(REPO, 'index.html');
-  const html = fs.readFileSync(file, 'utf8');
+/* index.html with the note and the labels describing `saved`; null when
+   the note's markers are missing. The new text goes in through replacer
+   functions, never replacement strings: the requests carry prices, and
+   "$150" in a replacement string would be read as "$1" and "50". */
+function pageWithDemo(html, saved) {
   const when = new Date(saved.searchedAt);
   const date = Number.isNaN(when.getTime()) ? 'recently'
     : when.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
@@ -1651,15 +1653,22 @@ function describeOnPage(saved) {
           <span class="status status--live">Real search</span>
           ${count} real searches, recorded on Fynd on ${date}. Prices and availability may have changed since. Turn the sound on for the narration.
           <!-- /demo-note -->`;
-  let next = html.replace(/<!-- demo-note -->[\s\S]*?<!-- \/demo-note -->/, note);
-  if (next === html && !html.includes(note)) {
+  const markers = /<!-- demo-note -->[\s\S]*?<!-- \/demo-note -->/;
+  if (!markers.test(html)) return null;
+  const label = `A film of a real Fynd session: ${count.toLowerCase()} different requests are typed into the search box in turn — ${listed(queries.map((q) => `“${q}”`))}. Each time, real products come back with their photos, prices and retailers, and one of them is opened on its retailer’s own page.`;
+  return html
+    .replace(markers, () => note)
+    .replace(/(<video class="demo-video" id="demo-video"[^>]*?aria-label=")[^"]*(")/, (m, open, close) => `${open}${attr(label)}${close}`)
+    .replace(/(<section class="section section--flush demo" id="demo" aria-label=")[^"]*(")/, (m, open, close) => `${open}Demo: ${count.toLowerCase()} real searches, start to finish${close}`);
+}
+
+function describeOnPage(saved) {
+  const file = path.join(REPO, 'index.html');
+  const next = pageWithDemo(fs.readFileSync(file, 'utf8'), saved);
+  if (next === null) {
     console.log('  note: the demo-note markers were not found in index.html; update the note under the video by hand');
     return;
   }
-  const label = `Screen recording of Fynd: ${count.toLowerCase()} different requests are typed into the search box in turn — ${listed(queries.map((q) => `“${q}”`))}. Each time, real products come back with their photos, prices and retailers, and one of them is opened at its retailer.`;
-  next = next
-    .replace(/(<video class="demo-video" id="demo-video"[^>]*?aria-label=")[^"]*(")/, `$1${attr(label)}$2`)
-    .replace(/(<section class="section section--flush demo" id="demo" aria-label=")[^"]*(")/, `$1Demo: ${count.toLowerCase()} real searches, start to finish$2`);
   fs.writeFileSync(file, next);
   console.log('  updated the note and the video\'s label in index.html');
 }
@@ -1814,5 +1823,5 @@ async function main() {
    starting anything */
 if (require.main === module) main();
 
-module.exports = { challengeIn, timelineOf, RETAILER_MS, RETAILER_SHOWN_MS, LIMITS, withDeadline, probeRetailers, preflightRetailers, retailerShows, handoffAllowed, visitRetailer, RETAILER_LOAD_MS, RETAILER_SETTLE_MS, MAX_HANDOFFS, ffprobeFor, durationCommand, SEARCHES, requestsFor, instability, howFound, recordingReport, RETRY_DELAYS_MS, loadEnv, MIN_PRODUCTS, verdict, fitness, pickProduct, budgetOf, priceOf, mentionOf, cutMap, savedProblem, narrationNeeded };
+module.exports = { challengeIn, timelineOf, RETAILER_MS, RETAILER_SHOWN_MS, LIMITS, withDeadline, probeRetailers, preflightRetailers, retailerShows, handoffAllowed, visitRetailer, RETAILER_LOAD_MS, RETAILER_SETTLE_MS, MAX_HANDOFFS, ffprobeFor, durationCommand, SEARCHES, requestsFor, instability, howFound, recordingReport, RETRY_DELAYS_MS, loadEnv, MIN_PRODUCTS, verdict, fitness, pickProduct, budgetOf, priceOf, mentionOf, cutMap, savedProblem, narrationNeeded, pageWithDemo };
 

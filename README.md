@@ -122,10 +122,11 @@ assets/account-ui.js    draws the account page and the sign-in flow
 assets/products.js      data layer: normalises any source into one schema
 assets/catalog.js       demo product source, replaceable by a real feed
 assets/demo-video.js    lazy-loads the landing page demo, and decides autoplay
-assets/demo/            the demo recording: two shapes, two codecs, two posters
+assets/demo/            the demo film: two shapes, two codecs, two posters; the session in footage/
 scripts/record-demo.js  records the demo from four real searches, end to end
 scripts/demo-narration.py  speaks the demo's narration lines
 scripts/demo-audio.js   the demo's score and mix: composed to each video's timeline
+scripts/demo-film.js    cuts the homepage film from the recorded session
 assets/interpret.js     sends the request to the endpoint; local fallback
 assets/app.js           rendering and page behaviour
 assets/styles.css       colour tokens, design tokens and all shared components
@@ -966,6 +967,7 @@ node scripts/test-catalog-prices.js  # the catalogue price extractor's gates
 node scripts/test-ui.js        # the interface, its palette and its contrast
 node scripts/record-demo.js    # re-records the landing page demo video
 node scripts/test-demo-audio.js     # the demo's sound: loudness, ducking, captions
+node scripts/test-demo-film.js      # the demo film: length, order, every store frame real
 node scripts/test-e2e.js       # the whole sign-in flow, in a real browser
 ```
 
@@ -1615,27 +1617,85 @@ garment categories fall back to neutral artwork rather than breaking.
 
 ## The demo video
 
-The landing page carries a short screen recording directly under the search
-(`#demo` in `index.html`): a person using Fynd for four genuinely different
-shopping problems, one after another, with a calm narration, in about 55
-seconds. The point it makes: instead of searching store after store, describe
-whatever you are after and Fynd finds the products. It steps aside as soon as a
-real search starts, because the results take its place.
+The landing page carries a short film directly under the search (`#demo` in
+`index.html`): Fynd used for four genuinely different shopping problems, one
+after another, with a calm narration, in about 55 seconds. The point it makes:
+you know what you want but not where to find it — describe it, and Fynd finds
+it. It steps aside as soon as a real search starts, because the results take
+its place.
 
-| | Request typed | Narration / caption |
-| --- | --- | --- |
-| Everyday | "black oversized hoodie under $80" | "I'm looking for a black oversized hoodie, under eighty dollars." · "Fynd finds matching products from different retailers." · "And I can open the product directly at the retailer." |
-| Another category | "lightweight jacket for fall under $150" | "Something completely different works the same way." |
-| Hard to find | "BAPE shark hoodie under $400" | "Even something specific that's hard to find." |
-| A particular style | "sage green linen midi dress under $120" | "Or the exact style and color I have in mind." |
-| End | back on Fynd | "No more searching store after store. Describe it, and Fynd finds it." |
+The film is cut from one real recorded session (below). Every request, result,
+photograph, price, retailer and retailer page in it is from that session; what
+the film adds is what an editor and a motion designer add — framing, timing,
+type, and how one moment becomes the next. Nothing in it that looks like Fynd or
+a store is drawn.
 
-Each search: the request is typed at a person's pace, the site's own
-"Searching…" state, the real results, and one product opened at its retailer —
-the retailer's own page, in the new tab the link opens. A different retailer
-each time wherever the results allow. The video cuts from the retailer's tab
-straight to the search box for the next request, so the scroll back up the page
-is never watched.
+| | Request typed | What the film does | Narration / caption |
+| --- | --- | --- | --- |
+| Opening | | a quiet field of the session's own product photographs drifts in depth; the real search field opens out of it and the homepage resolves around it | "Ever know exactly what you want, but not where to find it?" |
+| Everyday | "black oversized hoodie under $80" | the request is typed for real; its words lift out of the page as type (BLACK / OVERSIZED / HOODIE / UNDER $80) and release on Search; the real results rise into place; the chosen card lifts, becomes the subject with its brand, name and price, and its frame opens onto the store's own page | "With Fynd, you just describe it." · "It searches real stores, and brings back what matches." · "Pick one, and you're right at the store." |
+| Another category | "lightweight jacket for fall under $150" | the hoodie grid stays, ghosted, under the real search field floating above it; on Search the grid re-forms as jackets | |
+| Hard to find | "BAPE shark hoodie under $400" | close on the field; a dark stage opens from the Search button, BAPE; the real results rise out of it; the listing on black; its store | "Even the pieces that are hard to find." |
+| A particular style | "sage green linen midi dress under $120" | softer: the request's attributes in quiet type, the results settling, the dress, its store | "Down to the exact color and fabric." |
+| Close | | the four requests as they were typed, then the four products they found, then the mark, then white | "Describe what you want. Fynd finds it." |
+
+### The film
+
+`scripts/demo-film.js` draws it, frame by frame, with a Skia canvas
+(`@napi-rs/canvas`, Inter from `@fontsource/inter`) from the session footage
+in `assets/demo/footage/`, and pipes the frames to ffmpeg. The camera is gentle
+(pushes of a few per cent; the BAPE close-up is the strongest), moves are eased
+on cubic-Bézier curves, and anything that moves is drawn with true motion blur:
+several renders inside the frame's shutter, averaged. Mostly cuts and
+dissolves; no glitches, whip pans or fake 3D. Holds — a moment kept on screen a
+little longer so a word can be read — freeze a real frame; they never invent
+one.
+
+What it holds itself to, checked by `node scripts/test-demo-film.js`:
+
+- 50 to 60 seconds, both shapes; the four requests, in order, each typed,
+  searched, answered, one chosen and opened, one after the other;
+- every frame of a store page comes from that store's window in the session,
+  and stops at the last frame of the store's own page (`stores[k].until`,
+  measured: the session logs leaving a few frames after the page has gone);
+  the recording report says each of those pages was verified on camera, with
+  no challenge or block page;
+- the large product photographs are the phone session's own results frames
+  (twice the pixels, and no pointer over them);
+- the narration never overlaps and ends before the film does, and the closing
+  type changes on the word it is set to.
+
+Two notes on the phone film. The phone's Target page was still loading when it
+was filmed, so the phone film shows the same Target page from the same
+session's desktop recording. The Gap and Old Navy pages squeeze their product
+titles into a one-letter column at that width; the frame starts just right of
+it. Target's store-location bar (a delivery postcode) is kept out of frame in
+both films.
+
+The moments the cut is built on — the last key, the frame Search was pressed,
+the first live results, the click, each store's window — are measured from the
+session and written in `FORMATS` at the top of the script, with the keystrokes
+the sound follows in `footage/*.keys.json` (each frame where the typed text
+grows). A new recording is a new session: copy its videos (video only) and
+timelines into `assets/demo/footage/` as `*.session.mp4` / `*.session.json`,
+measure those moments again, and cut it.
+
+```sh
+node scripts/demo-film.js                    # both films, finished, into assets/demo
+node scripts/demo-film.js --only=mobile      # one
+node scripts/demo-film.js --stills=12,36.5   # PNG frames, to look at
+node scripts/demo-film.js --master=DIR       # the picture only, to review
+node scripts/demo-film.js --from-master=DIR  # finish from that picture
+node scripts/test-demo-film.js               # the checks above
+```
+
+### The session
+
+The session the film is cut from is recorded by `scripts/record-demo.js`: each
+search, the request is typed at a person's pace, the site's own "Searching…"
+state, the real results, and one product opened at its retailer — the
+retailer's own page, in the new tab the link opens. A different retailer each
+time wherever the results allow.
 
 Product sources have bad minutes — offer lookups aborted at the time budget, a
 search that times out — and a page that comes back one product short for that
@@ -1750,8 +1810,9 @@ npx playwright install chromium   # the browser it records with
 npm run demo:record               # = node scripts/record-demo.js
 ```
 
-Then watch both videos — with sound, without sound, and without reading the
-captions — and commit `assets/demo/` and `index.html`.
+Then cut the film from the new session (**The film**, above), watch both films —
+with sound, without sound, and without reading the captions — and commit
+`assets/demo/` and `index.html`.
 
 ```sh
 node scripts/record-demo.js --replay        # re-record from the saved searches
@@ -1786,9 +1847,10 @@ own when headless, which is the only reason one is drawn.
 
 The lines in `assets/demo/narration/`, spoken by Kokoro v1.0 (voice
 `af_heart`), a neural text-to-speech model run offline through sherpa-onnx. Each
-line has its own pace, so seven lines never share one cadence, and a sentence is
+line has its own pace, so the lines never share one cadence, and a sentence is
 never cut in two (a synthetic voice drops its pitch at the end of anything it is
-given); the closing line is two sentences with a breath between them. "Fynd" is
+given); the closing line is two sentences with a breath between them, and its
+captions are two cues, each where it is heard. "Fynd" is
 spoken as "Find" — the voice has no entry for the brand and would guess — while
 the captions keep "Fynd". Each line is finished the way a voice recorded close to
 a good microphone is: a high-pass, a little body, its slight glassiness eased, a
@@ -1804,7 +1866,9 @@ pip install sherpa-onnx soundfile numpy
 KOKORO_DIR=/path/to/kokoro-multi-lang-v1_0 python3 scripts/demo-narration.py
 ```
 
-"From different retailers" is only said when the products on screen link to
+The film uses `hook`, `describe`, `results`, `pick`, `rare`, `exact` and
+`finale`. The recorder's own lines stay for its raw session videos, where
+"from different retailers" is only said when the products on screen link to
 more than one shop; otherwise the shorter line is used.
 
 ### The music and the mix
@@ -1831,6 +1895,16 @@ last line is laid in 0.4 s before the cut back to Fynd, so it can finish with
 music still under it. The captions are written from where each line is actually
 spoken.
 
+For the film, the score follows the film's own timeline instead
+(`planFilm`): almost nothing under the opening question; a lift as each set of
+results arrives; a single soft note when a product is chosen; a change of
+colour as its store opens; the BAPE reveal the one modest high point; and a
+calm resolution home that ends in silence, with no flourish. A little sound
+design sits under it, all quiet and all from the edit: a soft tick at every
+keystroke the film shows, a low tock on Search, a click on the chosen card, and
+a breath of air under the larger transitions — ducked under the voice like the
+music.
+
 Every recording writes its timeline beside the video, so the sound can be made
 again without recording again — the video streams are copied, not re-encoded:
 
@@ -1848,7 +1922,9 @@ node scripts/test-demo-audio.js                    # the checks: loudness, ducki
 | `fynd-demo-mobile.mp4` / `.webm` | 800 × 1440 (400 × 720 at 2×), with narration and score, stereo | 1023px and under |
 | `fynd-demo{,-mobile}-poster.jpg` | | the real results, shown before playback |
 | `fynd-demo{,-mobile}.vtt` | | the narration as captions, timed to where it is spoken |
-| `fynd-demo{,-mobile}.timeline.json` | | when each line is said and each search typed, made, answered and opened: what the score is written to |
+| `fynd-demo{,-mobile}.timeline.json` | | the film's timeline: when each line is said, each key typed and each search made, answered, chosen and opened; what the score is written to |
+| `footage/fynd-demo{,-mobile}.session.mp4` / `.session.json` | | the recorded session the film is cut from (video only), and its timeline |
+| `footage/fynd-demo{,-mobile}.keys.json` | | the keystrokes in that footage |
 | `demo-search.json` | | the real searches both recordings were made from, with every attempt each took |
 | `demo-report.json` | | the recording report: attempts, retries, equivalents, products and retailers opened, lengths |
 | `narration/*.wav`, `narration/manifest.json` | | the spoken lines |

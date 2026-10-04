@@ -340,9 +340,55 @@ const CYCLES = [
   ['IV', 'vi', 'Ia', 'V']
 ];
 
+/* The film (scripts/demo-film.js) is scored more quietly than the
+   recording: the opening almost silent, a soft chord and air; a little
+   harmonic motion as the first request is typed; the smallest lift when
+   results arrive, a tiny accent when one is chosen, a restrained change
+   at each store; BAPE the high point, only slightly; and an ending that
+   breathes and lets go — three notes, not a chord. */
+function planFilm(tl) {
+  const end = tl.duration;
+  const chords = [];
+  const notes = [];
+  const searches = tl.searches;
+  const close = closeAt(tl);
+  searches.forEach((s, i) => {
+    const cycle = CYCLES[i % CYCLES.length];
+    const next = searches[i + 1] ? searches[i + 1].typing : close;
+    const from = i === 0 ? 0 : s.typing;
+    const bape = s.stage === 'dark';
+    chords.push({ name: cycle[0], from, to: s.searched });
+    chords.push({ name: cycle[1], from: s.searched, to: s.results });
+    chords.push({ name: cycle[2], from: s.results, to: s.retailer[0] });
+    chords.push({ name: cycle[3], from: s.retailer[0], to: next });
+    const lift = CHORDS[cycle[2]];
+    [lift[3] + 12, lift[4] + 12, lift[5] + 12].forEach((m, k) => notes.push({ midi: m, at: s.results + 0.2 + k * 0.26 + k * k * 0.02, vel: (bape ? 0.5 : 0.42) - k * 0.07, pan: [-0.35, 0.3, -0.1][k] }));
+    /* the choice: one small, high note */
+    notes.push({ midi: lift[5] + 24, at: s.select + 0.02, vel: 0.22, pan: 0.15 });
+    /* the store: the chord turns, and one note of light */
+    notes.push({ midi: CHORDS[cycle[3]][4] + 24, at: s.retailer[0] + 0.12, vel: 0.3, pan: 0.38 });
+    /* BAPE: the title arrives with two quiet notes, a fifth apart */
+    if (bape) [[81, 0.42], [88, 0.72]].forEach(([m, dt]) => notes.push({ midi: m, at: s.searched + dt, vel: 0.3, pan: m === 81 ? -0.2 : 0.25 }));
+  });
+  chords.push({ name: 'home', from: close - 0.4, to: end + 4 });
+  [[76, 0.5, 0.3], [73, 1.45, 0.26], [74, 2.6, 0.3]].forEach(([m, dt, v], k) => notes.push({ midi: m, at: close + dt, vel: v, pan: [0.25, -0.2, 0][k] }));
+
+  const points = [[0, 0.12], [1.5, 0.18], [3.5, 0.24]];
+  searches.forEach((s) => {
+    const bape = s.stage === 'dark';
+    points.push([s.typing, 0.3], [s.searched, bape ? 0.62 : 0.44], [s.results - 0.05, bape ? 0.8 : 0.5],
+      [s.results + 0.6, bape ? 0.92 : 0.64], [s.select, bape ? 0.9 : 0.66], [s.retailer[0], bape ? 0.95 : 0.72], [s.retailer[1], bape ? 0.6 : 0.5]);
+  });
+  points.push([close, 0.5], [end, 0.3]);
+  points.sort((a, b) => a[0] - b[0]);
+  const searching = searches.map((s) => [s.searched, s.results]);
+  return { chords, notes, points, searching, close, end };
+}
+
 /* what the music does when, from the timeline: chord regions, the notes
    it plays, and how much it is doing (0 to 1) at every moment */
 function plan(timeline) {
+  if (timeline.film) return planFilm(timeline);
   const end = timeline.duration;
   const chords = [];
   const notes = [];
@@ -382,6 +428,7 @@ function plan(timeline) {
 }
 
 const closeAt = (timeline) => {
+  if (timeline.close !== undefined) return timeline.close;
   const line = timeline.lines.find((l) => l.key === 'close');
   return line ? Math.max(0, line.at - CLOSE_LEAD_S) : timeline.duration - 4.5;
 };
@@ -519,6 +566,79 @@ function air(p, buses, n, rand) {
 }
 
 /* ---------------------------------------------------------
+   Sound design, for the film: almost not there
+   --------------------------------------------------------- */
+
+/* A soft key: a few milliseconds of filtered noise and the faintest
+   thump, each a little different. Placed on the frames where the typed
+   text actually grows. */
+function keyTick(out, at, amp, rand, pan) {
+  const start = Math.round(at * SR);
+  const len = Math.round(0.03 * SR);
+  let hp = 0; let lp = 0; let lp2 = 0;
+  const a = Math.exp(-2 * Math.PI * 1200 / SR);
+  const b = Math.exp(-2 * Math.PI * (3200 + rand() * 1200) / SR);
+  const body = 150 + rand() * 60;
+  const gl = Math.cos((pan + 1) * Math.PI / 4); const gr = Math.sin((pan + 1) * Math.PI / 4);
+  for (let i = 0; i < len && start + i < out[0].length; i += 1) {
+    const t = i / SR;
+    const n = rand() * 2 - 1;
+    hp = a * hp + (1 - a) * n;
+    lp = b * lp + (1 - b) * (n - hp);
+    lp2 = b * lp2 + (1 - b) * lp;
+    const v = amp * (lp2 * 2.6 * Math.exp(-t / 0.0045) + 0.35 * Math.sin(2 * Math.PI * body * t) * Math.exp(-t / 0.009));
+    out[0][start + i] += v * gl; out[1][start + i] += v * gr;
+  }
+}
+
+/* Search pressed: a small, rounded tock */
+function tock(out, at, amp) {
+  const start = Math.round(at * SR);
+  const len = Math.round(0.09 * SR);
+  for (let i = 0; i < len && start + i < out[0].length; i += 1) {
+    const t = i / SR;
+    const f = 760 * (1 - 0.12 * Math.min(1, t / 0.03));
+    const v = amp * Math.sin(2 * Math.PI * f * t) * Math.exp(-t / 0.018) * Math.min(1, t / 0.0015);
+    out[0][start + i] += v; out[1][start + i] += v;
+  }
+}
+
+/* A moment moving: a breath of air under a transition, rising and falling */
+function airSwell(out, from, dur, amp, rand) {
+  const start = Math.round(from * SR);
+  const len = Math.round(dur * SR);
+  const hp = Math.exp(-2 * Math.PI * 1800 / SR); const lo = Math.exp(-2 * Math.PI * 6500 / SR);
+  const st = [{ h: 0, l: 0, l2: 0 }, { h: 0, l: 0, l2: 0 }];
+  for (let i = 0; i < len && start + i < out[0].length; i += 1) {
+    const e = Math.sin(Math.PI * i / len) ** 2;
+    for (let c = 0; c < 2; c += 1) {
+      const n = rand() * 2 - 1;
+      const f = st[c];
+      f.h = hp * f.h + (1 - hp) * n;
+      f.l = lo * f.l + (1 - lo) * (n - f.h);
+      f.l2 = lo * f.l2 + (1 - lo) * f.l;
+      out[c][start + i] += amp * e * f.l2 * 3;
+    }
+  }
+}
+
+function sfx(tl, n, rand) {
+  const out = [new Float32Array(n), new Float32Array(n)];
+  for (const s of tl.searches) {
+    for (const k of s.keys || []) keyTick(out, k, 0.13 * (0.7 + rand() * 0.45), rand, (rand() - 0.5) * 0.3);
+    tock(out, s.searched, 0.095);
+    /* the choice: a click — down, and a softer up */
+    keyTick(out, s.select, 0.2, rand, 0.05);
+    keyTick(out, s.select + 0.085, 0.11, rand, 0.05);
+    airSwell(out, s.results - 0.15, 0.9, 0.011, rand);
+    airSwell(out, s.retailer[0] - 0.1, 1.1, 0.018, rand);
+    if (s.stage === 'dark') airSwell(out, s.searched - 0.05, 1.3, 0.015, rand);
+  }
+  airSwell(out, 3.2, 1.6, 0.012, rand);
+  return out;
+}
+
+/* ---------------------------------------------------------
    The voice
    --------------------------------------------------------- */
 
@@ -532,9 +652,41 @@ function placeVoice(timeline, manifest, n) {
     const at = line.key === 'close' ? closeAt(timeline) : line.at;
     const start = Math.round(at * SR);
     for (let i = 0; i < clip.length && start + i < n; i += 1) voice[start + i] += clip[i];
-    spans.push({ key: line.key, text: meta.text, at, end: at + clip.length / SR });
+    spans.push({ key: line.key, text: meta.text, at, end: at + clip.length / SR, parts: sentencesOf(meta.text, clip, at) });
   }
   return { voice, spans };
+}
+
+/* Where, in a clip, each pause between sentences ends: the voice going
+   quiet for 0.3 s or more, after its first 0.6 s. */
+function pausesIn(clip) {
+  const win = Math.round(0.02 * SR);
+  const ends = [];
+  let quietFrom = -1;
+  for (let i = Math.round(0.6 * SR); i + win < clip.length; i += win) {
+    let e = 0;
+    for (let j = i; j < i + win; j += 1) e += clip[j] * clip[j];
+    const quiet = Math.sqrt(e / win) < 0.004;
+    if (quiet && quietFrom < 0) quietFrom = i;
+    if (!quiet && quietFrom >= 0) {
+      if ((i - quietFrom) / SR >= 0.3) ends.push({ from: quietFrom / SR, to: i / SR });
+      quietFrom = -1;
+    }
+  }
+  return ends;
+}
+
+/* a line of more than one sentence, timed sentence by sentence when its
+   pauses can be heard; otherwise as one */
+function sentencesOf(text, clip, at) {
+  const sentences = text.match(/[^.?!]+[.?!]+/g) || [text];
+  const pauses = pausesIn(clip);
+  if (sentences.length < 2 || pauses.length !== sentences.length - 1) return null;
+  return sentences.map((sentence, i) => ({
+    text: sentence.trim(),
+    at: at + (i ? pauses[i - 1].to - 0.05 : 0),
+    end: at + (i < pauses.length ? pauses[i].from : clip.length / SR)
+  }));
 }
 
 /* How far the music sits down at every moment: falling over 0.35 s
@@ -644,6 +796,17 @@ function render(timeline, manifest) {
     outL[i] = voiceL[i] + musicL[i] * musicGain;
     outR[i] = voiceR[i] + musicR[i] * musicGain;
   }
+  /* the film's sound design, a few dB lower again under the voice */
+  const fx = timeline.film ? sfx(timeline, n, seeded(4242)) : [buf(), buf()];
+  if (timeline.film) {
+    const under = dbToGain(-4);
+    for (let i = 0; i < n; i += 1) {
+      const g = 1 + duck[i] * (under - 1);
+      fx[0][i] *= g; fx[1][i] *= g;
+      outL[i] += fx[0][i];
+      outR[i] += fx[1][i];
+    }
+  }
 
   /* the master: the voice to -16 LUFS, then a true-peak ceiling */
   const gain = dbToGain(TARGET_LUFS - voiceLufs);
@@ -654,7 +817,8 @@ function render(timeline, manifest) {
     left: outL, right: outR, spans,
     stems: {
       voice: [voiceL.map((v) => v * gain), voiceR.map((v) => v * gain)],
-      music: [musicL.map((v) => v * musicGain * gain), musicR.map((v) => v * musicGain * gain)]
+      music: [musicL.map((v) => v * musicGain * gain), musicR.map((v) => v * musicGain * gain)],
+      sfx: [fx[0].map((v) => v * gain), fx[1].map((v) => v * gain)]
     },
     report: {
       voiceLufs: round(voiceLufs + 20 * Math.log10(gain)),
@@ -705,13 +869,13 @@ function limit(L, R, ceiling) {
 
 function captions(spans, length) {
   const clock = (s) => {
-    const t = clamp(s, 0, length);
-    const mm = String(Math.floor(t / 60)).padStart(2, '0');
-    const ss = String(Math.floor(t % 60)).padStart(2, '0');
-    const ms = String(Math.round((t % 1) * 1000)).padStart(3, '0').slice(0, 3);
+    const total = Math.round(clamp(s, 0, length) * 1000);
+    const mm = String(Math.floor(total / 60000)).padStart(2, '0');
+    const ss = String(Math.floor(total / 1000) % 60).padStart(2, '0');
+    const ms = String(total % 1000).padStart(3, '0');
     return `00:${mm}:${ss}.${ms}`;
   };
-  const sorted = [...spans].sort((a, b) => a.at - b.at);
+  const sorted = [...spans].flatMap((s) => s.parts || [s]).sort((a, b) => a.at - b.at);
   const cues = sorted.map((s, i) => {
     const next = sorted[i + 1];
     const end = Math.min(s.end + 0.3, next ? next.at - 0.05 : length);
@@ -736,6 +900,7 @@ function renderTo(timeline, file, { stemsDir = null } = {}) {
     fs.mkdirSync(stemsDir, { recursive: true });
     writeWav(path.join(stemsDir, `${timeline.video}-voice.wav`), ...mix.stems.voice);
     writeWav(path.join(stemsDir, `${timeline.video}-music.wav`), ...mix.stems.music);
+    writeWav(path.join(stemsDir, `${timeline.video}-sfx.wav`), ...mix.stems.sfx);
   }
   return { ...mix.report, captions: captions(mix.spans, timeline.duration) };
 }
@@ -789,5 +954,5 @@ if (require.main === module) main();
 
 module.exports = {
   SR, TARGET_LUFS, CEILING_DBTP, CLOSE_LEAD_S, MUSIC_BELOW_VOICE_LU, DUCK_DB,
-  render, renderTo, remux, captions, plan, duckCurve, integratedLoudness, truePeak, limit, readWav, writeWav, closeAt
+  render, renderTo, remux, captions, plan, duckCurve, pausesIn, sentencesOf, integratedLoudness, truePeak, limit, readWav, writeWav, closeAt
 };

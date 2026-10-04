@@ -1,9 +1,12 @@
 {
   "scripts": {
     "demo:record": "node scripts/record-demo.js",
-    "demo:replay": "node scripts/record-demo.js --replay"
+    "demo:replay": "node scripts/record-demo.js --replay",
+    "demo:film": "node scripts/demo-film.js"
   },
   "devDependencies": {
+    "@fontsource/inter": "^5.3.0",
+    "@napi-rs/canvas": "^1.0.10",
     "playwright": "^1.63.0"
   }
 }

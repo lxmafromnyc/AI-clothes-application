@@ -73,6 +73,24 @@ LINES = [
      'say': [('Or the exact style and color I have in mind.', 0.96)]},
     {'key': 'close', 'text': 'No more searching store after store. Describe it, and Fynd finds it.',
      'say': [('No more searching store after store.', 1.0), 0.32, ('Describe it, and Find finds it.', 0.9)]},
+
+    # The film (scripts/demo-film.js) is narrated more sparingly than the
+    # recording it is cut from: a question first, then a few quiet lines,
+    # and long stretches where the picture speaks for itself.
+    {'key': 'hook', 'text': 'Ever know exactly what you want, but not where to find it?',
+     'say': [('Ever know exactly what you want, but not where to find it?', 0.92)]},
+    {'key': 'describe', 'text': 'With Fynd, you just describe it.',
+     'say': [('With Find, you just describe it.', 0.94)]},
+    {'key': 'results', 'text': 'It searches real stores, and brings back what matches.',
+     'say': [('It searches real stores, and brings back what matches.', 0.97)]},
+    {'key': 'pick', 'text': 'Pick one, and you’re right at the store.',
+     'say': [('Pick one, and you’re right at the store.', 0.95)]},
+    {'key': 'rare', 'text': 'Even the pieces that are hard to find.',
+     'say': [('Even the pieces that are hard to find.', 0.92)]},
+    {'key': 'exact', 'text': 'Down to the exact color and fabric.',
+     'say': [('Down to the exact color and fabric.', 0.94)]},
+    {'key': 'finale', 'text': 'Describe what you want. Fynd finds it.',
+     'say': [('Describe what you want.', 0.94), 0.62, ('Find finds it.', 0.88)]},
 ]
 
 def main():

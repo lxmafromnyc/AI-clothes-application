@@ -1,73 +1,309 @@
 {
   "video": "fynd-demo-mobile",
-  "duration": 50.626,
-  "source": "Written by scripts/record-demo.js as it made the recording.",
+  "duration": 55.06666666666667,
+  "source": "Written by scripts/demo-film.js: the film cut from the session in assets/demo/footage/.",
+  "film": true,
   "lines": [
     {
-      "key": "looking",
-      "at": 1.108
+      "key": "hook",
+      "at": 0.75
     },
     {
-      "key": "found",
-      "at": 7.352
+      "key": "describe",
+      "at": 5.65
     },
     {
-      "key": "open",
-      "at": 10.615
+      "key": "results",
+      "at": 12.42
     },
     {
-      "key": "different",
-      "at": 14.064
+      "key": "pick",
+      "at": 16.352
     },
     {
-      "key": "specific",
-      "at": 24.652
+      "key": "rare",
+      "at": 30.299
     },
     {
-      "key": "particular",
-      "at": 34.271
+      "key": "exact",
+      "at": 42.506
     },
     {
-      "key": "close",
-      "at": 45.897
+      "key": "finale",
+      "at": 49.119
+    }
+  ],
+  "events": [
+    {
+      "type": "open",
+      "at": 0
+    },
+    {
+      "type": "reveal",
+      "at": 3.5
+    },
+    {
+      "type": "typing",
+      "at": 4.9
+    },
+    {
+      "type": "submit",
+      "at": 10.57
+    },
+    {
+      "type": "results",
+      "at": 11.32
+    },
+    {
+      "type": "select",
+      "at": 16.232
+    },
+    {
+      "type": "store",
+      "at": 17.732
+    },
+    {
+      "type": "return",
+      "at": 19.703
+    },
+    {
+      "type": "search",
+      "at": 4.9,
+      "k": 0
+    },
+    {
+      "type": "typing",
+      "at": 19.723
+    },
+    {
+      "type": "submit",
+      "at": 21.693
+    },
+    {
+      "type": "results",
+      "at": 21.893
+    },
+    {
+      "type": "select",
+      "at": 23.645
+    },
+    {
+      "type": "store",
+      "at": 25.045
+    },
+    {
+      "type": "return",
+      "at": 27.399
+    },
+    {
+      "type": "search",
+      "at": 19.723,
+      "k": 1
+    },
+    {
+      "type": "typing",
+      "at": 27.419
+    },
+    {
+      "type": "submit",
+      "at": 29.849
+    },
+    {
+      "type": "results",
+      "at": 32.149
+    },
+    {
+      "type": "select",
+      "at": 33.861
+    },
+    {
+      "type": "store",
+      "at": 35.761
+    },
+    {
+      "type": "return",
+      "at": 38.106
+    },
+    {
+      "type": "search",
+      "at": 27.419,
+      "k": 2
+    },
+    {
+      "type": "typing",
+      "at": 38.126
+    },
+    {
+      "type": "submit",
+      "at": 41.756
+    },
+    {
+      "type": "results",
+      "at": 42.256
+    },
+    {
+      "type": "select",
+      "at": 45.155
+    },
+    {
+      "type": "store",
+      "at": 46.655
+    },
+    {
+      "type": "return",
+      "at": 48.799
+    },
+    {
+      "type": "search",
+      "at": 38.126,
+      "k": 3
+    },
+    {
+      "type": "close",
+      "at": 48.869
     }
   ],
   "searches": [
     {
-      "typing": 0.46,
-      "searched": 5.475,
-      "results": 7.352,
+      "typing": 4.9,
+      "searched": 10.57,
+      "results": 11.32,
+      "select": 16.232,
       "retailer": [
-        11.762,
-        13.933
-      ]
+        17.732,
+        19.703
+      ],
+      "hero": 16.282,
+      "keys": [
+        5.367,
+        5.533,
+        5.633,
+        5.733,
+        5.8,
+        6,
+        6.133,
+        6.233,
+        6.367,
+        6.467,
+        6.6,
+        6.667,
+        6.8,
+        6.933,
+        7.167,
+        7.267,
+        7.367,
+        7.467,
+        7.567,
+        7.667,
+        7.933,
+        8,
+        8.133,
+        8.233,
+        8.367,
+        8.633,
+        8.867,
+        9
+      ],
+      "stage": "light"
     },
     {
-      "typing": 14.064,
-      "searched": 18.961,
-      "results": 20.816,
+      "typing": 19.723,
+      "searched": 21.693,
+      "results": 21.893,
+      "select": 23.645,
       "retailer": [
-        21.952,
-        24.506
-      ]
+        25.045,
+        27.399
+      ],
+      "hero": 23.695,
+      "keys": [
+        19.756,
+        19.856,
+        19.923,
+        20.023,
+        20.134,
+        20.245,
+        20.356,
+        20.456,
+        20.523,
+        20.656,
+        20.723,
+        20.923,
+        21.039,
+        21.156,
+        21.323
+      ],
+      "stage": "light"
     },
     {
-      "typing": 24.652,
-      "searched": 28.544,
-      "results": 30.429,
+      "typing": 27.419,
+      "searched": 29.849,
+      "results": 32.149,
+      "select": 33.861,
       "retailer": [
-        31.562,
-        34.107
-      ]
+        35.761,
+        38.106
+      ],
+      "hero": 33.911,
+      "keys": [
+        27.419,
+        27.519,
+        27.586,
+        27.703,
+        27.819,
+        27.886,
+        27.986,
+        28.052,
+        28.119,
+        28.219,
+        28.335,
+        28.452,
+        28.519,
+        28.619,
+        28.686,
+        28.819,
+        28.935,
+        29.052,
+        29.252,
+        29.319,
+        29.419
+      ],
+      "stage": "dark"
     },
     {
-      "typing": 34.271,
-      "searched": 38.846,
-      "results": 40.714,
+      "typing": 38.126,
+      "searched": 41.756,
+      "results": 42.256,
+      "select": 45.155,
       "retailer": [
-        43.849,
-        45.897
-      ]
+        46.655,
+        48.799
+      ],
+      "hero": 45.205,
+      "keys": [
+        38.159,
+        38.226,
+        38.359,
+        38.526,
+        38.626,
+        38.726,
+        38.826,
+        38.926,
+        39.042,
+        39.159,
+        39.293,
+        39.359,
+        39.426,
+        39.526,
+        39.626,
+        39.726,
+        39.826,
+        39.926,
+        40.026,
+        40.093
+      ],
+      "stage": "light"
     }
-  ]
+  ],
+  "close": 48.869
 }

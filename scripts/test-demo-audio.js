@@ -176,13 +176,31 @@ test('the captions follow the voice, in order, never overlapping', () => {
   const vtt = A.captions(mix.spans, timeline.duration);
   const times = [...vtt.matchAll(/(\d\d):(\d\d):(\d\d)\.(\d\d\d) --> (\d\d):(\d\d):(\d\d)\.(\d\d\d)/g)]
     .map((m) => [(+m[2]) * 60 + (+m[3]) + (+m[4]) / 1000, (+m[6]) * 60 + (+m[7]) + (+m[8]) / 1000]);
-  assert.strictEqual(times.length, 3);
+  /* the closing line is two sentences, and gets a cue for each */
+  assert.strictEqual(times.length, 4);
   times.forEach(([s, e], i) => {
     assert.ok(e > s, `cue ${i + 1} ends before it starts`);
     if (times[i + 1]) assert.ok(e <= times[i + 1][0], `cue ${i + 1} overlaps the next`);
   });
   assert.ok(vtt.includes('Fynd finds matching products from different retailers.'));
+  assert.ok(vtt.includes('No more searching store after store.\n') && vtt.includes('Describe it, and Fynd finds it.\n'));
   near(times[2][0], 15.2 - A.CLOSE_LEAD_S, 0.002, 'the last line is laid in just before the cut');
+});
+
+test('a line of two sentences is captioned sentence by sentence, each where it is heard', () => {
+  const clip = A.readWav(path.join(NARRATION, manifest.lines.finale.file));
+  const parts = A.sentencesOf(manifest.lines.finale.text, clip, 10);
+  assert.deepStrictEqual(parts.map((p) => p.text), ['Describe what you want.', 'Fynd finds it.']);
+  const [pause] = A.pausesIn(clip);
+  assert.ok(pause.to - pause.from >= 0.3, 'the pause between them');
+  assert.ok(parts[0].end <= parts[1].at && parts[1].at >= 10 + pause.from, 'the second waits for the pause');
+  /* a one-sentence line stays whole */
+  assert.strictEqual(A.sentencesOf('Pick one.', A.readWav(path.join(NARRATION, manifest.lines.pick.file)), 0), null);
+});
+
+test('caption times never round up into the next second wrongly', () => {
+  const vtt = A.captions([{ text: 'x', at: 1.9996, end: 2.5 }], 10);
+  assert.ok(vtt.includes('00:00:02.000 -->'), vtt);
 });
 
 test('the same timeline gives the same sound, bit for bit', () => {
