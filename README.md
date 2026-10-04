@@ -72,6 +72,21 @@ request — a keyword match is never presented as an AI reading.
 no server at all. Signing in, subscribing and the usage meters need the
 functions in `api/`, and the page says plainly when they are not reachable.
 
+To run the pages and the functions together, use `npx vercel dev` and open
+`http://localhost:3000`. A page served from `localhost`, `127.0.0.1` or
+`[::1]` talks to the `api/` beside it rather than the production URL in the
+meta tag — production only answers its own published origins, so from
+localhost it refuses every call. The search meter under the box then reads
+the local `/api/account`:
+
+- No `.env.local` at all is enough for an anonymous visitor: the free
+  allowance, counted in memory (`0 / 1 search used today · 1 left`).
+- Signing in needs `AUTH_SECRET` (16 characters or more) in `.env.local`.
+- If `.env.local` names a KV or Upstash store (`KV_REST_API_URL` /
+  `KV_REST_API_TOKEN`, often brought in by `vercel env pull`), it must be
+  reachable from your machine: when it is not, `/api/account` answers 500
+  and the meter stays hidden. Remove both lines to fall back to memory.
+
 ## Structure
 
 ```

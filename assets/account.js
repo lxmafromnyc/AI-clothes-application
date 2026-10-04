@@ -46,8 +46,18 @@
 
   const REQUEST_TIMEOUT = 15000;
 
+  /* Served from this machine, the page uses the API beside it rather than
+     production, which refuses a localhost origin — the same rule as
+     assets/interpret.js, so the account and the searches it meters are
+     read from one backend. */
+  const LOCAL_HOST = /^(localhost|127\.0\.0\.1|\[::1\])$/;
+
   function base() {
     if (global.FINDWEAR_API) return String(global.FINDWEAR_API);
+    const where = global.location;
+    if (where && /^https?:$/.test(where.protocol) && LOCAL_HOST.test(where.hostname)) {
+      return `${where.origin}/api/interpret`;
+    }
     const tag = global.document && global.document.querySelector('meta[name="findwear-api"]');
     const href = tag && tag.getAttribute('content');
     return href ? href.trim() : '/api/interpret';

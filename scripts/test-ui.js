@@ -1310,6 +1310,48 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     });
   }
 
+  /* Local development: `vercel dev` serves the pages and api/ from one
+     localhost origin. The meta tag names production, which refuses a
+     localhost origin, so the page has to use the API beside it — with no
+     override set, the way a developer actually opens it. */
+  await test('served from localhost, the meter reads the local /api/account with no override', async () => {
+    ledger = { planId: 'pro', used: 12, mode: 'ok', extra: { signedIn: true } };
+    const page = await browser.newPage();
+    const asked = [];
+    page.on('request', (r) => { if (r.url().includes('/api/')) asked.push(r.url()); });
+    await page.route((url) => !String(url).startsWith(`http://localhost:${PORT}/`), (route) => route.abort());
+    await page.goto(`http://localhost:${PORT}/index.html`, { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('#search-meter:not([data-state="pending"])', { timeout: 10000 });
+    const m = await meterOf(page);
+    assert.strictEqual(m.count, '12 / 100 searches used this month');
+    assert.strictEqual(m.left, '88 left');
+    assert.ok(asked.includes(`http://localhost:${PORT}/api/account`), asked.join(', '));
+    assert.ok(!asked.some((u) => u.includes('vercel.app')), 'production is never asked from localhost');
+    /* and the searches it meters go to the same backend */
+    const endpoints = await page.evaluate(() => [window.Interpreter.endpoint(), window.ProductSearch.endpoint(), window.Account.endpoint('account')]);
+    assert.deepStrictEqual(endpoints, [`http://localhost:${PORT}/api/interpret`, `http://localhost:${PORT}/api/search`, `http://localhost:${PORT}/api/account`]);
+    await page.close();
+  });
+
+  await test('served from anywhere else, the pages still use the deployment the meta tag names', async () => {
+    const page = await browser.newPage();
+    await page.route('http://fynd.test/**', (route) => {
+      const file = path.join(REPO, new URL(route.request().url()).pathname.replace(/^\/+/, '') || 'index.html');
+      if (!fs.existsSync(file)) return route.fulfill({ status: 404, body: '' });
+      return route.fulfill({ status: 200, contentType: TYPES[path.extname(file)] || 'application/octet-stream', body: fs.readFileSync(file) });
+    });
+    await page.route((url) => !String(url).startsWith('http://fynd.test/'), (route) => route.abort());
+    await page.goto('http://fynd.test/index.html', { waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => window.Interpreter && window.ProductSearch && window.Account);
+    const endpoints = await page.evaluate(() => [window.Interpreter.endpoint(), window.ProductSearch.endpoint(), window.Account.endpoint('account')]);
+    assert.deepStrictEqual(endpoints, [
+      'https://ai-clothes-application.vercel.app/api/interpret',
+      'https://ai-clothes-application.vercel.app/api/search',
+      'https://ai-clothes-application.vercel.app/api/account'
+    ]);
+    await page.close();
+  });
+
   ledger = null;
 
   console.log('\ntypography and text styling');

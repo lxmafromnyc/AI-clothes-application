@@ -25,8 +25,25 @@
   const DEFAULT_ENDPOINT = '/api/interpret';
   const REQUEST_TIMEOUT = 12000;
 
+  /* A page served from this machine — `vercel dev`, or any local server
+     in front of api/ — talks to the functions beside it. The meta tag
+     names the production deployment, and production answers only its own
+     published origins (api/_cors.js), so from localhost every call to it
+     was a 403 the page could not even read. assets/account.js holds the
+     same rule, so the account, the interpreter and the search all count
+     against one backend. */
+  const LOCAL_HOST = /^(localhost|127\.0\.0\.1|\[::1\])$/;
+
+  function localEndpoint() {
+    const where = global.location;
+    if (!where || !/^https?:$/.test(where.protocol) || !LOCAL_HOST.test(where.hostname)) return null;
+    return `${where.origin}/api/interpret`;
+  }
+
   function endpoint() {
     if (global.FINDWEAR_API) return String(global.FINDWEAR_API);
+    const local = localEndpoint();
+    if (local) return local;
     const tag = global.document && global.document.querySelector('meta[name="findwear-api"]');
     const href = tag && tag.getAttribute('content');
     return href ? href.trim() : DEFAULT_ENDPOINT;
