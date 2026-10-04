@@ -68,11 +68,75 @@
       "text": "No more searching store after store. Describe it, and Fynd finds it.",
       "spoken": "No more searching store after store. Describe it, and Find finds it.",
       "pace": [
-        1.0,
+        1,
         0.9
       ],
       "file": "close.wav",
       "duration": 4.227
+    },
+    "hook": {
+      "text": "Ever know exactly what you want, but not where to find it?",
+      "spoken": "Ever know exactly what you want, but not where to find it?",
+      "pace": [
+        0.92
+      ],
+      "file": "hook.wav",
+      "duration": 2.832
+    },
+    "describe": {
+      "text": "With Fynd, you just describe it.",
+      "spoken": "With Find, you just describe it.",
+      "pace": [
+        0.94
+      ],
+      "file": "describe.wav",
+      "duration": 1.734
+    },
+    "results": {
+      "text": "It searches real stores, and brings back what matches.",
+      "spoken": "It searches real stores, and brings back what matches.",
+      "pace": [
+        0.97
+      ],
+      "file": "results.wav",
+      "duration": 2.862
+    },
+    "pick": {
+      "text": "Pick one, and you’re right at the store.",
+      "spoken": "Pick one, and you’re right at the store.",
+      "pace": [
+        0.95
+      ],
+      "file": "pick.wav",
+      "duration": 1.82
+    },
+    "rare": {
+      "text": "Even the pieces that are hard to find.",
+      "spoken": "Even the pieces that are hard to find.",
+      "pace": [
+        0.92
+      ],
+      "file": "rare.wav",
+      "duration": 2.069
+    },
+    "exact": {
+      "text": "Down to the exact color and fabric.",
+      "spoken": "Down to the exact color and fabric.",
+      "pace": [
+        0.94
+      ],
+      "file": "exact.wav",
+      "duration": 1.989
+    },
+    "finale": {
+      "text": "Describe what you want. Fynd finds it.",
+      "spoken": "Describe what you want. Find finds it.",
+      "pace": [
+        0.94,
+        0.88
+      ],
+      "file": "finale.wav",
+      "duration": 3.048
     }
   }
 }

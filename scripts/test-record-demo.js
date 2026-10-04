@@ -31,7 +31,7 @@ const {
   requestsFor, instability, howFound, recordingReport, RETRY_DELAYS_MS, loadEnv,
   handoffAllowed, visitRetailer, RETAILER_LOAD_MS, MAX_HANDOFFS,
   LIMITS, withDeadline, probeRetailers, preflightRetailers, RETAILER_MS, RETAILER_SHOWN_MS,
-  challengeIn, timelineOf
+  challengeIn, timelineOf, pageWithDemo
 } = require('./record-demo');
 const http = require('http');
 const store = require('../api/_store');
@@ -679,6 +679,19 @@ const savedRun = () => ({
     slot: s.slot, line: s.line, query: s.candidates[s.candidates.length - 1].query, search: { status: 200 },
     shown: [{ href: 'https://shop.example/p', retailerOk: true }]
   }))
+});
+
+test('the page\'s note and labels take prices as written: "$150" is not read as a back-reference', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  const queries = ['black oversized hoodie under $80', 'lightweight jacket for fall under $150', 'BAPE shark hoodie under $400', 'sage green linen midi dress under $120'];
+  const saved = { searchedAt: '2026-10-01T12:00:00Z', searches: queries.map((query) => ({ query })) };
+  const next = pageWithDemo(html, saved);
+  assert.ok(next, 'the markers are on the page');
+  const video = /<video class="demo-video" id="demo-video"[^>]*>/.exec(next)[0];
+  assert.strictEqual((next.match(/<video /g) || []).length, 1, 'one video element');
+  for (const q of queries) assert.ok(video.includes(`“${q}”`), `the label names “${q}”`);
+  assert.strictEqual(pageWithDemo(next, saved), next, 'running it again changes nothing');
+  assert.strictEqual(pageWithDemo('<p>no markers</p>', saved), null);
 });
 
 test('a whole run replays, including one that used an equivalent wording', () => {

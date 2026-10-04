@@ -1,0 +1,73 @@
+{
+  "video": "fynd-demo-mobile",
+  "duration": 50.626,
+  "source": "Written by scripts/record-demo.js as it made the recording.",
+  "lines": [
+    {
+      "key": "looking",
+      "at": 1.108
+    },
+    {
+      "key": "found",
+      "at": 7.352
+    },
+    {
+      "key": "open",
+      "at": 10.615
+    },
+    {
+      "key": "different",
+      "at": 14.064
+    },
+    {
+      "key": "specific",
+      "at": 24.652
+    },
+    {
+      "key": "particular",
+      "at": 34.271
+    },
+    {
+      "key": "close",
+      "at": 45.897
+    }
+  ],
+  "searches": [
+    {
+      "typing": 0.46,
+      "searched": 5.475,
+      "results": 7.352,
+      "retailer": [
+        11.762,
+        13.933
+      ]
+    },
+    {
+      "typing": 14.064,
+      "searched": 18.961,
+      "results": 20.816,
+      "retailer": [
+        21.952,
+        24.506
+      ]
+    },
+    {
+      "typing": 24.652,
+      "searched": 28.544,
+      "results": 30.429,
+      "retailer": [
+        31.562,
+        34.107
+      ]
+    },
+    {
+      "typing": 34.271,
+      "searched": 38.846,
+      "results": 40.714,
+      "retailer": [
+        43.849,
+        45.897
+      ]
+    }
+  ]
+}
