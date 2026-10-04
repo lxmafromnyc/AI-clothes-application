@@ -75,6 +75,29 @@ process.env.EMAIL_FROM = 'Fynd <hello@fynd.e2e>';
 
 const store = require('../api/_store');
 const users = require('../api/_users');
+const usage = require('../api/_usage');
+
+/* The product source is the one thing behind /api/search that is not
+   ours, so it is the one thing stood in for: a source that answers with
+   one real-shaped listing, or fails the way a provider outage does.
+   Everything in front of it — the plan, the check, the count, the 429,
+   the reply's usage — is the real api/search.js against the real store. */
+const productSource = require('../api/_providers/product-source');
+let sourceMode = 'ok';
+productSource.registerProvider({
+  name: 'e2e-source',
+  configured: () => true,
+  async search() {
+    if (sourceMode === 'fail') throw new Error('e2e-source responded 500: upstream unavailable');
+    return [{
+      title: 'Black Oversized Hoodie', price: 68,
+      imageUrl: 'https://shop.example.com/img/hoodie.jpg',
+      productUrl: 'https://shop.example.com/p/black-oversized-hoodie',
+      retailer: 'Example'
+    }];
+  }
+});
+process.env.PRODUCT_SOURCE = 'e2e-source';
 
 /* ---------------------------------------------------------
    Google and the mailbox, answered in-process
@@ -152,7 +175,8 @@ const HANDLERS = {
   '/api/google-start': require('../api/google-start'),
   '/api/google-callback': require('../api/google-callback'),
   '/api/checkout': require('../api/checkout'),
-  '/api/portal': require('../api/portal')
+  '/api/portal': require('../api/portal'),
+  '/api/search': require('../api/search')
 };
 
 /* Vercel's handlers answer with res.status().json(); a bare Node
@@ -201,9 +225,9 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  /* the interpreter and the product search are not what this suite is
-     about; answered so the pages behave normally */
-  if (url.pathname === '/api/interpret' || url.pathname === '/api/search') {
+  /* the interpreter is not what this suite is about; answered so the
+     pages behave normally. The product search is the real handler above. */
+  if (url.pathname === '/api/interpret') {
     res.setHeader('Content-Type', 'application/json');
     return res.end(JSON.stringify({ source: null, products: [], preferences: {} }));
   }
@@ -229,6 +253,7 @@ async function test(name, fn) {
   inbox.length = 0;
   pendingCodes.clear();
   googleClaims = {};
+  sourceMode = 'ok';
   try {
     await fn();
     passed += 1;
@@ -723,6 +748,167 @@ const linkFromInbox = (pattern) => {
     });
     assert.strictEqual(payload.plan.id, 'free');
     assert.strictEqual(payload.emailVerified, false);
+    await context.close();
+  });
+
+  console.log('\nthe search meter, against the real counters');
+
+  /* What the meter under the box says, and whether the box is usable. */
+  const meterOf = (page) => page.evaluate(() => {
+    const root = document.getElementById('search-meter');
+    const text = (sel) => {
+      const n = root.querySelector(sel);
+      return n && !n.hidden ? n.textContent.trim() : null;
+    };
+    const link = root.querySelector('.search-meter-out a');
+    return {
+      state: root.dataset.state,
+      count: text('.search-meter-count'),
+      left: text('.search-meter-left'),
+      out: text('.search-meter-out'),
+      plans: link ? link.getAttribute('href') : null,
+      submitDisabled: document.querySelector('#ask-form button[type="submit"]').disabled,
+      inputDisabled: document.getElementById('ask').disabled
+    };
+  });
+
+  /* What the server itself says, asked from the same browser — the same
+     cookies, so the same subject. */
+  const serverSearches = (page) => page.evaluate(async () => {
+    const response = await fetch('/api/account', { credentials: 'include' });
+    return (await response.json()).usage.searches;
+  });
+
+  const openHome = async (page) => {
+    await open(page, 'index.html');
+    await page.waitForSelector('#search-meter:not([data-state="pending"])');
+  };
+
+  const searchFor = async (page, text) => {
+    await page.fill('#ask', text || 'black oversized hoodie');
+    await page.click('#ask-form button[type="submit"]');
+    await page.waitForSelector('#results .results-head h2:not(.thinking)');
+  };
+
+  /* a real Stripe subscription, as the webhook would have stored it */
+  const makePro = async (email) => {
+    const user = await users.byEmail(email);
+    const { user: saved } = await users.applySubscription(user, {
+      id: 'sub_e2e', status: 'active', priceId: process.env.STRIPE_PRICE_PRO,
+      currentPeriodEnd: Math.floor(Date.now() / 1000) + 86400 * 30, updatedAt: Math.floor(Date.now() / 1000)
+    });
+    assert.strictEqual(saved.plan, 'pro');
+    return saved;
+  };
+
+  await test('an anonymous visitor sees the free allowance the server counts for them', async () => {
+    const context = await openContext();
+    const page = await context.newPage();
+    await openHome(page);
+    const m = await meterOf(page);
+    const server = await serverSearches(page);
+    assert.deepStrictEqual([server.plan, server.limit, server.used, server.period], ['free', 1, 0, 'day']);
+    assert.strictEqual(m.state, 'normal');
+    assert.strictEqual(m.count, '0 / 1 search used today');
+    assert.strictEqual(m.left, '1 left');
+    assert.strictEqual(m.submitDisabled, false);
+    await context.close();
+  });
+
+  await test('a real search is counted by the server, and the meter follows it without a reload', async () => {
+    const context = await openContext();
+    const page = await context.newPage();
+    await openHome(page);
+    await page.evaluate(() => { window.__sameDocument = true; });
+    await searchFor(page);
+
+    assert.strictEqual(await page.$$eval('#results .item-card', (ns) => ns.length), 1, 'the search found its listing');
+    const m = await meterOf(page);
+    assert.strictEqual(await page.evaluate(() => window.__sameDocument), true, 'no reload');
+    assert.strictEqual(m.state, 'empty');
+    assert.strictEqual(m.count, '1 / 1 search used today');
+    assert.ok(/^No searches remaining\. Resets at .+\. See plans$/.test(m.out), m.out);
+    assert.strictEqual(m.plans, 'pricing.html');
+    assert.strictEqual(m.submitDisabled, true);
+    assert.strictEqual(m.inputDisabled, true);
+
+    /* the page and the server agree, and keep agreeing after a reload */
+    const server = await serverSearches(page);
+    assert.deepStrictEqual([server.used, server.remaining], [1, 0]);
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('#search-meter[data-state="empty"]');
+    assert.strictEqual((await meterOf(page)).count, '1 / 1 search used today');
+    await context.close();
+  });
+
+  await test('a search the product source fails is not counted, and the meter does not move', async () => {
+    const context = await openContext();
+    const page = await context.newPage();
+    await openHome(page);
+    sourceMode = 'fail';
+    await searchFor(page);
+    assert.ok(/unavailable/i.test(await page.textContent('#results h2')), 'the outage is reported');
+    await page.waitForTimeout(300);
+
+    const m = await meterOf(page);
+    assert.strictEqual(m.state, 'normal');
+    assert.strictEqual(m.count, '0 / 1 search used today');
+    assert.strictEqual(m.submitDisabled, false, 'the allowance is still there to use');
+    assert.strictEqual((await serverSearches(page)).used, 0, 'the server charged nothing');
+    await context.close();
+  });
+
+  await test('a signed-in Pro account counts down its monthly allowance', async () => {
+    const context = await openContext();
+    const page = await context.newPage();
+    await signUpThroughTheUI(page, { name: 'Ada', email: 'ada@e2e.test', password: PASSWORD });
+    await page.waitForSelector('#panel-account:not([hidden])');
+    const user = await makePro('ada@e2e.test');
+    await usage.record(`user:${user.id}`, 'pro', 'searches', 97);
+
+    await openHome(page);
+    let m = await meterOf(page);
+    assert.strictEqual(m.state, 'low');
+    assert.strictEqual(m.count, '97 / 100 searches used this month');
+    assert.strictEqual(m.left, '3 left');
+
+    await searchFor(page);
+    m = await meterOf(page);
+    assert.strictEqual(m.count, '98 / 100 searches used this month');
+    assert.strictEqual(m.left, '2 left');
+    assert.strictEqual((await usage.meter(`user:${user.id}`, 'pro', 'searches')).used, 98, 'the counter the meter shows');
+    await context.close();
+  });
+
+  await test('a page whose last search was spent elsewhere is corrected by the real refusal', async () => {
+    const context = await openContext();
+    const page = await context.newPage();
+    await openHome(page);
+    assert.strictEqual((await meterOf(page)).left, '1 left');
+
+    /* the same visitor spends their search in another tab */
+    const device = (await context.cookies()).find((c) => c.name === 'fynd_device');
+    assert.ok(device, 'the server counts this visitor by their device cookie');
+    await usage.record(`dev_${device.value}`, 'free', 'searches', 1);
+
+    await searchFor(page);
+    assert.ok(/no searches left/i.test(await page.textContent('#results h2')), 'the server refused it');
+    const m = await meterOf(page);
+    assert.strictEqual(m.state, 'empty');
+    assert.strictEqual(m.count, '1 / 1 search used today');
+    assert.strictEqual(m.submitDisabled, true);
+    await context.close();
+  });
+
+  await test('See plans at zero leads to the existing upgrade path', async () => {
+    const context = await openContext();
+    const page = await context.newPage();
+    await openHome(page);
+    await searchFor(page);
+    await page.click('#search-meter .search-meter-out a');
+    await page.waitForURL(/pricing\.html/);
+    await page.waitForSelector('.plan-banner:not([hidden])');
+    assert.strictEqual((await page.textContent('.plan-card[data-plan="pro"] [data-plan-action]')).trim(), 'Get Pro');
     await context.close();
   });
 

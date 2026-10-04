@@ -67,6 +67,9 @@ const planCatalogue = () => [
 
 const accountReply = (over) => {
   const planId = (over && over.planId) || 'free';
+  /* searches counted so far this period; 1 — the free allowance spent —
+     unless a test says otherwise */
+  const searchesUsed = over && over.searchesUsed !== undefined ? over.searchesUsed : 1;
   const plan = planCatalogue().find((p) => p.id === planId);
   const period = planId === 'free' ? 'day' : 'month';
   const usageOf = (metric, used) => ({
@@ -81,7 +84,7 @@ const accountReply = (over) => {
     plan: Object.assign({}, plan, { limits: PLAN_LIMITS[planId] }),
     plans: planCatalogue(),
     subscription: null,
-    usage: { aiTokens: usageOf('aiTokens', 1200), searches: usageOf('searches', 1) },
+    usage: { aiTokens: usageOf('aiTokens', 1200), searches: usageOf('searches', searchesUsed) },
     billing: { enabled: true, testMode: true, webhookConfigured: true, portal: false },
     accounts: { enabled: true },
     storage: { durable: true }
@@ -89,6 +92,48 @@ const accountReply = (over) => {
 };
 
 let accountState = accountReply({});
+
+/* A stand-in for the server's searches counter, for the search meter
+   tests. While it is set, /api/account reports it, and /api/search
+   spends it the way api/search.js does: checked before the source is
+   asked, counted only once the source has answered, and a 429 carrying
+   the counter when nothing is left.
+
+     planId   free | pro | max
+     used     searches counted so far this period
+     mode     ok | empty | fail (the source errors: 502) |
+              not-configured (503) | account-down (no /api/account)
+     extra    merged into the account reply, as accountReply's own */
+let ledger = null;
+let interpretCalls = 0;
+
+const searchesState = (planId, used) => {
+  const limit = PLAN_LIMITS[planId].searches;
+  return {
+    metric: 'searches', plan: planId, period: planId === 'free' ? 'day' : 'month',
+    limit, used, remaining: Math.max(0, limit - used), resetsAt: '2099-01-01T00:00:00.000Z'
+  };
+};
+
+/* what api/search.js answers when the ledger is in play; null when it is not */
+function ledgerSearch() {
+  if (!ledger) return null;
+  if (ledger.mode === 'not-configured') return { status: 503, body: { error: 'No product source is configured.', source: null } };
+  const before = searchesState(ledger.planId, ledger.used);
+  if (before.remaining <= 0) {
+    return { status: 429, body: { error: 'You have used your free allowance for now.', reason: 'over-limit',
+      usage: Object.assign({ allowed: false }, before), upgrade: ledger.planId !== 'max' } };
+  }
+  if (ledger.mode === 'fail') return { status: 502, body: { error: 'The product source is unavailable right now.', source: 'openwebninja' } };
+  ledger.used += 1;
+  const products = ledger.mode === 'empty' ? [] : [{
+    id: '1', name: 'Champion Hoodie', price: 68, currency: 'USD',
+    imageUrl: searchPhoto, productUrl: 'https://www.nordstrom.com/s/hoodie/1',
+    retailer: 'Nordstrom', category: '', colors: [], sizes: []
+  }];
+  return { status: 200, body: { source: 'openwebninja', products, returned: products.length, rejected: {},
+    attachments: { received: 0, used: 0 }, usage: searchesState(ledger.planId, ledger.used) } };
+}
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
@@ -102,6 +147,8 @@ const server = http.createServer((req, res) => {
       res.setHeader('Content-Type', 'application/json');
       if (url.pathname === '/api/checkout') return res.end(JSON.stringify({ url: 'https://checkout.stripe.test/session', plan: parsed.plan }));
       if (url.pathname === '/api/portal') return res.end(JSON.stringify({ url: 'https://billing.stripe.test/portal' }));
+      if (ledger && ledger.mode === 'account-down') { res.statusCode = 404; return res.end('{}'); }
+      if (ledger) return res.end(JSON.stringify(accountReply({ planId: ledger.planId, searchesUsed: ledger.used, extra: ledger.extra })));
       return res.end(JSON.stringify(accountState));
     });
   }
@@ -113,11 +160,14 @@ const server = http.createServer((req, res) => {
       const parsed = (() => { try { return JSON.parse(body); } catch (e) { return {}; } })();
       res.setHeader('Content-Type', 'application/json');
       if (url.pathname === '/api/interpret') {
+        interpretCalls += 1;
         return res.end(JSON.stringify({ source: 'openai', query: 'q', preferences: {
           categories: ['hoodie'], colors: ['Black'], fits: [], occasions: [], brands: [], styles: [],
           keywords: [], maxPrice: null, minPrice: null, season: null, gender: null } }));
       }
       searchRequests.push(parsed);
+      const counted = ledgerSearch();
+      if (counted) { res.statusCode = counted.status; return res.end(JSON.stringify(counted.body)); }
       res.end(JSON.stringify({ source: 'openwebninja', products: [{
         id: '1', name: 'Champion Hoodie', price: 68, currency: 'USD',
         imageUrl: searchPhoto, productUrl: 'https://www.nordstrom.com/s/hoodie/1',
@@ -327,7 +377,13 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     return page;
   };
 
+  /* The search page reads the shopper's searches from /api/account and
+     disables the box once the server says none are left. These tests are
+     about a shopper who can search, so the stub says they have one. */
+  const searchable = () => { accountState = accountReply({ searchesUsed: 0 }); };
+
   const open = async () => {
+    searchable();
     const page = await openPage('find-clothes.html');
     /* interact only once the control is actually wired */
     await page.waitForFunction(() => window.Attachments && document.getElementById('attachments'));
@@ -927,6 +983,335 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     });
   });
 
+  console.log('\nthe search meter');
+
+  /* Opens a search page with the stub counter in a given state, and waits
+     for the meter to have drawn what the server said. */
+  const openMeter = async (state, options) => {
+    const settings = options || {};
+    ledger = Object.assign({ mode: 'ok', extra: {} }, state);
+    const page = await browser.newPage(settings.viewport ? { viewport: settings.viewport } : undefined);
+    await page.addInitScript(() => {
+      window.FINDWEAR_API = 'http://127.0.0.1:8899/api/interpret';
+      window.FINDWEAR_SEARCH_API = 'http://127.0.0.1:8899/api/search';
+    });
+    await page.route((url) => !String(url).includes('127.0.0.1'), (route) => route.abort());
+    await page.goto(`http://127.0.0.1:${PORT}/${settings.file || 'index.html'}`, { waitUntil: 'domcontentloaded' });
+    if (!settings.pending) await page.waitForSelector('#search-meter:not([data-state="pending"])', { timeout: 10000 });
+    return page;
+  };
+
+  /* Everything the meter says, and what it did to the box. */
+  const meterOf = (page) => page.evaluate(() => {
+    const root = document.getElementById('search-meter');
+    const shown = (sel) => {
+      const n = root.querySelector(sel);
+      return n && !n.hidden && getComputedStyle(n).display !== 'none' ? n.textContent.trim() : null;
+    };
+    const link = root.querySelector('.search-meter-out a');
+    /* the width the meter set, not a frame of the animation towards it */
+    const fill = parseFloat(root.querySelector('.search-meter-fill').style.width) || 0;
+    return {
+      state: root.dataset.state,
+      visible: getComputedStyle(root).visibility !== 'hidden',
+      count: shown('.search-meter-count'),
+      left: shown('.search-meter-left'),
+      out: shown('.search-meter-out'),
+      plans: link ? link.getAttribute('href') : null,
+      filled: Math.round(fill),
+      submitDisabled: document.querySelector('#ask-form button[type="submit"]').disabled,
+      inputDisabled: document.getElementById('ask').disabled,
+      examplesDisabled: Array.from(document.querySelectorAll('#ask-examples .example')).every((b) => b.disabled)
+    };
+  });
+
+  /* Types a request and submits it the way a shopper does, then waits for
+     the outcome to be drawn. */
+  const searchFor = async (page, text) => {
+    await page.fill('#ask', text || 'black hoodie');
+    await page.click('#ask-form button[type="submit"]');
+    await page.waitForSelector('#results .results-head h2:not(.thinking)', { timeout: 10000 });
+  };
+
+  const accountReads = () => billingRequests.filter((r) => r.path === '/api/account').length;
+
+  await test('a free visitor sees the daily allowance the server holds', async () => {
+    const page = await openMeter({ planId: 'free', used: 0 });
+    const m = await meterOf(page);
+    assert.strictEqual(m.state, 'normal');
+    assert.ok(m.visible);
+    assert.strictEqual(m.count, '0 / 1 search used today');
+    assert.strictEqual(m.left, '1 left');
+    assert.strictEqual(m.out, null);
+    assert.strictEqual(m.filled, 0);
+    assert.strictEqual(m.submitDisabled, false);
+    assert.strictEqual(m.inputDisabled, false);
+    await page.close();
+  });
+
+  await test('a signed-in Pro account sees its monthly allowance', async () => {
+    const page = await openMeter({ planId: 'pro', used: 12, extra: { signedIn: true, user: { email: 'a@b.co' } } });
+    const m = await meterOf(page);
+    assert.strictEqual(m.state, 'normal');
+    assert.strictEqual(m.count, '12 / 100 searches used this month');
+    assert.strictEqual(m.left, '88 left');
+    assert.strictEqual(m.filled, 12);
+    assert.strictEqual(m.submitDisabled, false);
+    await page.close();
+  });
+
+  await test('100% remaining: an empty bar, everything left', async () => {
+    const page = await openMeter({ planId: 'pro', used: 0, extra: { signedIn: true } });
+    const m = await meterOf(page);
+    assert.deepStrictEqual([m.state, m.count, m.left, m.filled, m.submitDisabled],
+      ['normal', '0 / 100 searches used this month', '100 left', 0, false]);
+    await page.close();
+  });
+
+  await test('50% remaining: a half bar, still quiet', async () => {
+    const page = await openMeter({ planId: 'pro', used: 50, extra: { signedIn: true } });
+    const m = await meterOf(page);
+    assert.deepStrictEqual([m.state, m.count, m.left, m.filled, m.submitDisabled],
+      ['normal', '50 / 100 searches used this month', '50 left', 50, false]);
+    const weight = await page.$eval('.search-meter-left', (n) => getComputedStyle(n).fontWeight);
+    assert.strictEqual(weight, '400', 'half left is not yet worth raising');
+    await page.close();
+  });
+
+  await test('nearly out: the remainder is set in stronger type, with no warning colour', async () => {
+    const page = await openMeter({ planId: 'pro', used: 85, extra: { signedIn: true } });
+    const m = await meterOf(page);
+    assert.deepStrictEqual([m.state, m.count, m.left, m.submitDisabled],
+      ['low', '85 / 100 searches used this month', '15 left', false]);
+    const look = await page.evaluate(() => {
+      const probe = document.createElement('span');
+      document.body.appendChild(probe);
+      const rgb = (token) => { probe.style.color = `var(${token})`; return getComputedStyle(probe).color; };
+      const left = getComputedStyle(document.querySelector('.search-meter-left'));
+      const fill = getComputedStyle(document.querySelector('.search-meter-fill')).backgroundColor;
+      const out = { weight: left.fontWeight, ink: left.color === rgb('--color-text'),
+        warned: [rgb('--color-warning'), rgb('--color-warning-ink')].includes(fill) || [rgb('--color-warning'), rgb('--color-warning-ink')].includes(left.color) };
+      probe.remove();
+      return out;
+    });
+    assert.strictEqual(look.weight, '600');
+    assert.ok(look.ink, 'the remainder is set in full-strength ink');
+    assert.ok(!look.warned, 'no warning colour');
+    await page.close();
+  });
+
+  await test('0% remaining: the box is disabled and the way to more is offered', async () => {
+    const page = await openMeter({ planId: 'free', used: 1 });
+    const m = await meterOf(page);
+    assert.strictEqual(m.state, 'empty');
+    assert.strictEqual(m.count, '1 / 1 search used today');
+    assert.strictEqual(m.left, null, 'nothing left is said once, below');
+    assert.ok(/^No searches remaining\. Resets at .+\. See plans$/.test(m.out), m.out);
+    assert.strictEqual(m.plans, 'pricing.html');
+    assert.strictEqual(m.filled, 100);
+    assert.strictEqual(m.submitDisabled, true);
+    assert.strictEqual(m.inputDisabled, true);
+    assert.strictEqual(m.examplesDisabled, true);
+    assert.strictEqual(await page.$eval('#ask', (n) => n.getAttribute('aria-describedby')), 'search-meter',
+      'a screen reader is told why the box is disabled');
+    await page.close();
+  });
+
+  await test('at zero nothing is sent: not by the button, an example, or the form itself', async () => {
+    const page = await openMeter({ planId: 'free', used: 1 });
+    const searchesBefore = searchRequests.length;
+    const interpretBefore = interpretCalls;
+    await page.click('#ask-form button[type="submit"]', { force: true });
+    await page.click('#ask-examples .example', { force: true });
+    await page.evaluate(() => {
+      document.getElementById('ask').value = 'black hoodie';
+      document.getElementById('ask-form').requestSubmit();
+    });
+    await page.waitForTimeout(300);
+    assert.strictEqual(searchRequests.length, searchesBefore, 'no search was sent');
+    assert.strictEqual(interpretCalls, interpretBefore, 'no interpretation was spent on a search that cannot run');
+    assert.strictEqual(await page.$eval('#results', (n) => n.hidden), true);
+    await page.close();
+  });
+
+  await test('Max at zero is told when it resets, and is not sold a bigger plan that does not exist', async () => {
+    const page = await openMeter({ planId: 'max', used: 500, extra: { signedIn: true } });
+    const m = await meterOf(page);
+    assert.strictEqual(m.state, 'empty');
+    assert.strictEqual(m.count, '500 / 500 searches used this month');
+    assert.ok(/^No searches remaining\. Resets on .+\.$/.test(m.out), m.out);
+    assert.strictEqual(m.plans, null);
+    assert.strictEqual(m.submitDisabled, true);
+    await page.close();
+  });
+
+  await test('a search the server counts moves the meter at once, without a reload', async () => {
+    const page = await openMeter({ planId: 'pro', used: 12, extra: { signedIn: true } });
+    await page.evaluate(() => { window.__sameDocument = true; });
+    const readsBefore = accountReads();
+    await searchFor(page);
+    const m = await meterOf(page);
+    assert.strictEqual(ledger.used, 13, 'the server counted one');
+    assert.strictEqual(m.count, '13 / 100 searches used this month');
+    assert.strictEqual(m.left, '87 left');
+    assert.strictEqual(m.filled, 13);
+    assert.strictEqual(await page.evaluate(() => window.__sameDocument), true, 'no reload');
+    assert.strictEqual(accountReads(), readsBefore, 'the count came with the answer — no second round trip');
+    await page.close();
+  });
+
+  await test('a search that verified nothing still counts, because the server counts it', async () => {
+    const page = await openMeter({ planId: 'pro', used: 12, mode: 'empty', extra: { signedIn: true } });
+    await searchFor(page);
+    assert.strictEqual(ledger.used, 13);
+    assert.strictEqual((await meterOf(page)).count, '13 / 100 searches used this month');
+    await page.close();
+  });
+
+  await test('the free search spends the allowance and the box closes behind it', async () => {
+    const page = await openMeter({ planId: 'free', used: 0 });
+    await searchFor(page);
+    const m = await meterOf(page);
+    assert.strictEqual(ledger.used, 1);
+    assert.strictEqual(m.state, 'empty');
+    assert.strictEqual(m.count, '1 / 1 search used today');
+    assert.strictEqual(m.plans, 'pricing.html');
+    assert.strictEqual(m.submitDisabled, true);
+    /* and the results it paid for are on screen */
+    assert.strictEqual(await page.$$eval('#results .item-card', (ns) => ns.length), 1);
+    await page.close();
+  });
+
+  await test('a search the product source fails is not deducted', async () => {
+    const page = await openMeter({ planId: 'pro', used: 12, mode: 'fail', extra: { signedIn: true } });
+    const readsBefore = accountReads();
+    await searchFor(page);
+    await page.waitForTimeout(300);
+    const m = await meterOf(page);
+    assert.strictEqual(ledger.used, 12, 'the server counted nothing');
+    assert.strictEqual(m.count, '12 / 100 searches used this month');
+    assert.strictEqual(m.left, '88 left');
+    assert.strictEqual(m.submitDisabled, false);
+    assert.ok(accountReads() > readsBefore, 'with no count in the answer, the meter asked the server again');
+    await page.close();
+  });
+
+  await test('with no product source connected, nothing is deducted', async () => {
+    const page = await openMeter({ planId: 'free', used: 0, mode: 'not-configured' });
+    await searchFor(page);
+    await page.waitForTimeout(300);
+    const m = await meterOf(page);
+    assert.strictEqual(ledger.used, 0);
+    assert.strictEqual(m.count, '0 / 1 search used today');
+    assert.strictEqual(m.submitDisabled, false);
+    await page.close();
+  });
+
+  await test('a page whose count went stale is corrected by the server’s refusal', async () => {
+    const page = await openMeter({ planId: 'pro', used: 99, extra: { signedIn: true } });
+    assert.strictEqual((await meterOf(page)).left, '1 left');
+    /* the last search is spent somewhere else — another tab, another device */
+    ledger.used = 100;
+    await searchFor(page);
+    const m = await meterOf(page);
+    assert.strictEqual(m.state, 'empty');
+    assert.strictEqual(m.count, '100 / 100 searches used this month');
+    assert.strictEqual(m.plans, 'pricing.html');
+    assert.strictEqual(m.submitDisabled, true);
+    await page.close();
+  });
+
+  await test('the box opens again as soon as the server says the allowance is back', async () => {
+    const page = await openMeter({ planId: 'free', used: 1 });
+    assert.strictEqual((await meterOf(page)).submitDisabled, true);
+    ledger.used = 0;   /* the day rolled over */
+    await page.evaluate(() => window.SearchMeter.refresh());
+    const m = await meterOf(page);
+    assert.strictEqual(m.state, 'normal');
+    assert.strictEqual(m.count, '0 / 1 search used today');
+    assert.strictEqual(m.submitDisabled, false);
+    assert.strictEqual(m.inputDisabled, false);
+    await page.close();
+  });
+
+  await test('with no account endpoint there is no meter and no invented count, and search still works', async () => {
+    const page = await openMeter({ planId: 'pro', used: 7, mode: 'account-down', extra: { signedIn: true } }, { pending: true });
+    await page.waitForTimeout(500);
+    let m = await meterOf(page);
+    assert.strictEqual(m.state, 'pending');
+    assert.strictEqual(m.visible, false, 'nothing is drawn until the server has said something');
+    assert.strictEqual(m.submitDisabled, false);
+    await searchFor(page);
+    /* the search's own answer carries the server's counter, and that —
+       exactly that — is what is drawn */
+    m = await meterOf(page);
+    assert.strictEqual(ledger.used, 8);
+    assert.strictEqual(m.count, '8 / 100 searches used this month');
+    await page.close();
+  });
+
+  await test('the meter is on the search page too, reading the same counter', async () => {
+    const page = await openMeter({ planId: 'pro', used: 3, extra: { signedIn: true } }, { file: 'find-clothes.html' });
+    const m = await meterOf(page);
+    assert.strictEqual(m.count, '3 / 100 searches used this month');
+    await page.close();
+  });
+
+  await test('the box stays the focus: the meter is small, quiet and under it', async () => {
+    const page = await openMeter({ planId: 'pro', used: 40, extra: { signedIn: true } }, { viewport: { width: 1440, height: 900 } });
+    const g = await page.evaluate(() => {
+      const box = (sel) => document.querySelector(sel).getBoundingClientRect();
+      return {
+        card: box('#ask-form'), meter: box('#search-meter'), track: box('.search-meter-track'),
+        meterSize: parseFloat(getComputedStyle(document.querySelector('.search-meter')).fontSize),
+        askSize: parseFloat(getComputedStyle(document.getElementById('ask')).fontSize)
+      };
+    });
+    assert.ok(g.meter.top >= g.card.bottom, 'under the box');
+    assert.ok(g.meter.top - g.card.bottom <= 16, 'directly under it');
+    assert.ok(g.meter.height <= 22, `one line (${g.meter.height}px)`);
+    assert.ok(g.meterSize < g.askSize * 0.75, 'far smaller type than the box');
+    assert.ok(g.track.height <= 4, 'a hairline bar');
+    await page.close();
+  });
+
+  for (const viewport of [{ width: 390, height: 844 }, { width: 360, height: 740 }]) {
+    for (const [label, state] of [['nearly out', { planId: 'pro', used: 85 }], ['at zero', { planId: 'free', used: 1 }]]) {
+      await test(`on a ${viewport.width}px phone, ${label}, the meter sits under the box without crowding it`, async () => {
+        const page = await openMeter(Object.assign({ extra: { signedIn: state.planId !== 'free' } }, state), { viewport });
+        const g = await page.evaluate(() => {
+          const box = (sel) => document.querySelector(sel).getBoundingClientRect();
+          return {
+            card: box('#ask-form'), meter: box('#search-meter'), line: box('.search-meter-line'),
+            button: box('#ask-form button[type="submit"]'), examples: box('#ask-examples'),
+            pageWidth: document.documentElement.scrollWidth, viewport: window.innerWidth
+          };
+        });
+        assert.strictEqual(g.pageWidth, g.viewport, 'no sideways scroll');
+        assert.ok(g.meter.top >= g.card.bottom && g.meter.top - g.card.bottom <= 14, 'directly under the box');
+        assert.ok(g.line.left >= 0 && g.line.right <= g.viewport, 'inside the screen');
+        assert.ok(g.line.height <= 22, `the counter stays on one line (${g.line.height}px)`);
+        assert.ok(g.meter.height <= 44, `two lines at most (${g.meter.height}px)`);
+        assert.ok(g.examples.top >= g.meter.bottom, 'the examples move down rather than overlap');
+        /* the box keeps its phone layout: the button full width underneath */
+        assert.ok(g.button.width >= g.card.width - 24, 'the Search button is still full width');
+        assert.ok(Math.abs(g.button.height - 50) <= 1, 'and its full height');
+        await page.close();
+      });
+    }
+  }
+
+  for (const [label, state] of [['nearly out', { planId: 'pro', used: 85 }], ['at zero', { planId: 'free', used: 1 }]]) {
+    await test(`every piece of text on the home page, ${label}, is set in a palette ink, and is legible`, async () => {
+      const page = await openMeter(state);
+      const problems = await textStyleProblems(page, await resolveInks(page));
+      assert.deepStrictEqual(problems, [], `\n        ${problems.join('\n        ')}`);
+      await page.close();
+    });
+  }
+
+  ledger = null;
+
   console.log('\ntypography and text styling');
 
   const PAGES = ['index.html', 'find-clothes.html', 'discover.html', 'about.html', 'pricing.html', 'account.html'];
@@ -935,6 +1320,9 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
      catalogue, so cards, badges and pills are audited too, not just the
      static shell */
   const settled = async (file) => {
+    /* the search pages as a shopper with a search left sees them; the
+       spent state is audited with the search meter */
+    if (file === 'index.html' || file === 'find-clothes.html') searchable();
     const page = await openPage(file);
     const built = {
       'discover.html': '.item-card',

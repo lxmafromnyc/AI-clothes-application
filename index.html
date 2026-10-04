@@ -86,6 +86,19 @@
         </p>
       </form>
 
+      <!-- The live searches the plan has used and has left, as the server
+           counts them — drawn by assets/search-meter.js from /api/account
+           and from each search's own reply. Invisible until the server
+           has answered; nothing here is counted in the browser. -->
+      <div class="search-meter" id="search-meter" data-state="pending">
+        <p class="search-meter-line">
+          <span class="search-meter-track" aria-hidden="true"><span class="search-meter-fill"></span></span>
+          <span class="search-meter-count"></span>
+          <span class="search-meter-left"></span>
+        </p>
+        <p class="search-meter-out" hidden></p>
+      </div>
+
       <p class="ask-examples" id="ask-examples">
         <span class="examples-label">Try</span>
         <button type="button" class="example">linen shirt for a summer wedding</button>
@@ -243,6 +256,8 @@
 <script src="assets/search.js"></script>
 <script src="assets/attachments.js"></script>
 <script src="assets/catalog.js"></script>
+<script src="assets/account.js"></script>
+<script src="assets/search-meter.js"></script>
 <script src="assets/app.js"></script>
 <script src="assets/demo-video.js" defer></script>
 </body>

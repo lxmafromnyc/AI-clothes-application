@@ -346,6 +346,10 @@ function orderFacet(counts, key) {
   }
 
   async function search(query, attached) {
+    /* The server's last word was that this plan has nothing left, so the
+       box is disabled under the meter that says so. Nothing is sent: the
+       server would only refuse it. */
+    if (typeof SearchMeter !== 'undefined' && SearchMeter.exhausted()) return;
     error.classList.remove('show');
     error.textContent = '';
     input.removeAttribute('aria-invalid');
@@ -369,6 +373,10 @@ function orderFacet(counts, key) {
     const found = typeof ProductSearch === 'undefined'
       ? { source: null, products: [], notice: null }
       : await ProductSearch.find(outcome.preferences, undefined, attached);
+
+    /* the meter moves to the count the server sent with this answer, or
+       re-reads it when the answer carried none */
+    if (typeof SearchMeter !== 'undefined') SearchMeter.afterSearch(found);
 
     if (found.products.length) renderProducts(found, outcome);
     /* The sample catalogue stands in only when nothing is connected. Once

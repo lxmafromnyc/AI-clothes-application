@@ -374,6 +374,38 @@ strong { font-weight: 600; }
 .form-error.show { display: block; }
 #attachment-error:empty { display: none; }
 #attachment-error { display: block; font-weight: 400; }
+
+/* At zero the box stands down: the button reads as unavailable rather
+   than as a call to action, and the examples stop offering themselves. */
+.ask-actions .btn-primary:disabled { background: var(--color-surface-2); border-color: var(--color-surface-2); color: var(--color-text-2); cursor: default; transition: none; }
+.ask-card textarea:disabled { color: var(--color-text-muted); cursor: default; }
+.ask-card.is-spent .attach-btn { cursor: default; }
+.ask-card.is-spent .attach-btn:hover { background: transparent; color: var(--color-text-muted); }
+
+/* ---------- the search meter ----------
+   Searches used and left, under the box. Smaller and quieter than
+   anything around it: muted type and a hairline bar. Nearly out, the
+   remainder is set in full-strength ink; at zero, one plain line says so
+   and where to go. No warning colour at any point. */
+.search-meter { margin-top: 12px; font-size: 13px; line-height: 20px; color: var(--color-text-muted); }
+.search-meter[data-state="pending"] { visibility: hidden; }
+.search-meter-line {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: center;
+  gap: 2px 8px;
+  min-height: 20px;
+}
+.search-meter-track { flex: none; width: 88px; height: 4px; border-radius: var(--r-pill); background: var(--color-surface-3); overflow: hidden; }
+.search-meter-fill { display: block; width: 0; height: 100%; border-radius: var(--r-pill); background: var(--color-text-muted); transition: width .3s var(--ease); }
+.search-meter-count, .search-meter-left { font-variant-numeric: tabular-nums; }
+.search-meter-left::before { content: "\00B7"; margin-right: 8px; }
+.search-meter-left[hidden] { display: none; }
+.search-meter[data-state="low"] .search-meter-left { color: var(--color-text); font-weight: 600; }
+.search-meter[data-state="low"] .search-meter-left::before { color: var(--color-text-muted); font-weight: 400; }
+.search-meter[data-state="low"] .search-meter-fill,
+.search-meter[data-state="empty"] .search-meter-fill { background: var(--color-text); }
+.search-meter-out { margin-top: 2px; color: var(--color-text); font-weight: 500; }
+.search-meter-out a { color: var(--color-text); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
+.search-meter-out a:hover { color: var(--color-text-2); }
 .auth-card .form-error { margin: 4px 0 14px; }
 
 /* a few things you could type, one click each */
@@ -392,6 +424,8 @@ strong { font-weight: 600; }
   transition: background var(--fast) var(--ease), border-color var(--fast) var(--ease);
 }
 .example:hover { background: var(--color-accent-soft); border-color: var(--color-accent-soft); }
+.example:disabled { color: var(--color-text-muted); cursor: default; }
+.example:disabled:hover { background: var(--color-surface); border-color: var(--color-border); }
 
 /* ---------- how it works ---------- */
 
@@ -726,6 +760,10 @@ a.item-card:hover .item-name { text-decoration: underline; text-underline-offset
 
   .ask-examples { margin-top: 16px; }
   .examples-label { width: 100%; margin: 0 0 2px; }
+
+  /* the meter stays one short line under the full-width button */
+  .search-meter { margin-top: 10px; }
+  .search-meter-track { width: 56px; }
 
   .section-head h2, .results-head h2 { font-size: 24px; }
   .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px var(--gap); }
