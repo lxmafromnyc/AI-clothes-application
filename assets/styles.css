@@ -552,6 +552,11 @@ a.item-card:hover .item-name { text-decoration: underline; text-underline-offset
 .discover-ideas-head .link-btn { margin-right: -4px; }
 .discover-chips { display: flex; flex-wrap: wrap; gap: 8px; }
 .idea { display: inline-flex; align-items: center; max-width: 100%; }
+/* an idea the catalogue cannot answer is words, not a control */
+.idea--note { border-style: dashed; color: var(--color-text-muted); cursor: default; }
+.idea--note:hover { background: var(--color-surface); border-color: var(--color-border); }
+.discover-caption { margin-top: 10px; font-size: 13px; color: var(--color-text-muted); }
+.discover-panel .discover-caption { margin-top: 0; }
 
 .discover-block { padding-top: calc(var(--section) * .75); }
 .discover-block .section-head { margin-bottom: 22px; align-items: flex-end; }
@@ -592,18 +597,32 @@ button.head-link { border: 0; background: none; padding: 8px 0; cursor: pointer;
   cursor: pointer;
   transition: background var(--fast) var(--ease), border-color var(--fast) var(--ease), color var(--fast) var(--ease);
 }
-a.pill { display: inline-flex; align-items: center; white-space: nowrap; }
+span.pill { display: inline-flex; align-items: center; white-space: nowrap; }
 .pill:hover { border-color: var(--color-text-muted); color: var(--color-text); }
+.pill[aria-pressed="true"] { background: var(--color-primary); border-color: var(--color-primary); color: var(--color-text-on-primary); }
+/* nothing in the catalogue to match yet: shown, never pressable */
+.pill--unavailable, .pill--unavailable:hover { border-color: var(--color-border); color: var(--color-text-muted); cursor: default; }
+
+/* the filtered catalogue, under the index */
+.discover-results { padding-top: 36px; scroll-margin-top: calc(var(--header) + 16px); }
+.discover-results[hidden] { display: none; }
+.results-bar { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.results-count { font-size: 22px; letter-spacing: -.02em; }
+.results-bar .link-btn { margin-right: -4px; }
+.active-filters { display: flex; flex-wrap: wrap; gap: 8px; list-style: none; margin: 12px 0 24px; }
 
 /* ways in: a quiet card per direction, a few exact requests under it */
 .edit-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--gap); list-style: none; }
 .edit-card { display: flex; flex-direction: column; min-width: 0; padding: 20px; border: 1px solid var(--color-border); border-radius: var(--r-lg); }
 .edit-title { margin-top: 4px; font-size: 18px; letter-spacing: -.02em; }
-.edit-title a:hover { text-decoration: underline; text-underline-offset: 4px; text-decoration-color: var(--color-border-strong); }
+.edit-apply { padding: 0; border: 0; background: none; font: inherit; color: inherit; text-align: left; cursor: pointer; }
+.edit-title .edit-apply:hover { text-decoration: underline; text-underline-offset: 4px; text-decoration-color: var(--color-border-strong); }
 .edit-note { margin-top: 4px; font-size: 14px; color: var(--color-text-muted); }
 .edit-more { display: grid; gap: 2px; margin-top: auto; padding-top: 14px; list-style: none; }
-.edit-more a { display: inline-block; padding: 3px 0; font-size: 14px; color: var(--color-accent-ink); }
-.edit-more a:hover { text-decoration: underline; text-underline-offset: 3px; }
+.edit-apply--more, .edit-idea { display: inline-block; padding: 3px 0; font-size: 14px; }
+.edit-apply--more { color: var(--color-accent-ink); }
+.edit-apply--more:hover { text-decoration: underline; text-underline-offset: 3px; }
+.edit-idea { color: var(--color-text-muted); }
 
 /* a shelf is one row of the product grid at every width, and its
    head keeps the link beside the title rather than under it */

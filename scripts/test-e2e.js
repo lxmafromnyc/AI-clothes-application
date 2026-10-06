@@ -110,9 +110,20 @@ function idTokenFor(nonce, claims) {
 
 let googleClaims = {};
 
+/* Every outbound call to a product source or an AI provider, so a test
+   can say none was made. */
+const PROVIDER = /openwebninja|openai\.com|serper\.dev|serpapi\.com|generativelanguage\.googleapis\.com|api\.etsy\.com/i;
+const providerCalls = [];
+
 const realFetch = global.fetch;
 global.fetch = async (url, options) => {
   const href = String(url);
+  if (PROVIDER.test(href)) providerCalls.push(href);
+  /* the product source answers a real search, in-process, with nothing
+     found — the search still happened, so it is still counted */
+  if (href.startsWith('https://api.openwebninja.com/')) {
+    return { ok: true, status: 200, json: async () => ({ status: 'OK', data: { products: [] } }), text: async () => '' };
+  }
   const body = (options && options.body) || '';
   const reply = (payload, ok) => ({ ok: ok !== false, status: ok === false ? 400 : 200, json: async () => payload });
 
@@ -152,7 +163,11 @@ const HANDLERS = {
   '/api/google-start': require('../api/google-start'),
   '/api/google-callback': require('../api/google-callback'),
   '/api/checkout': require('../api/checkout'),
-  '/api/portal': require('../api/portal')
+  '/api/portal': require('../api/portal'),
+  /* the search and the AI reader, so a search made in a test is a real,
+     metered one — and so a page that should never make one is caught */
+  '/api/search': require('../api/search'),
+  '/api/interpret': require('../api/interpret')
 };
 
 /* Vercel's handlers answer with res.status().json(); a bare Node
@@ -169,6 +184,9 @@ function adapt(res) {
 }
 
 const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml' };
+
+/* every API endpoint the browser reached, in order */
+const apiHits = [];
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, ORIGIN);
@@ -187,6 +205,7 @@ const server = http.createServer(async (req, res) => {
     return res.end();
   }
 
+  if (url.pathname.startsWith('/api/')) apiHits.push(url.pathname);
   const handler = HANDLERS[url.pathname];
 
   if (handler) {
@@ -675,6 +694,65 @@ const linkFromInbox = (pattern) => {
     await page.waitForSelector('.meter');
     const after = await page.$$eval('.meter-value', (ns) => ns.map((n) => n.textContent.trim()));
     assert.strictEqual(after[1], '1 of 1 used');
+    await context.close();
+  });
+
+  await test('exploring Discover end to end spends no search, no AI and no provider call', async () => {
+    const context = await openContext();
+    const page = await context.newPage();
+    await signUpThroughTheUI(page, { name: 'Ada', email: 'ada@e2e.test', password: PASSWORD });
+    await page.waitForSelector('#panel-account:not([hidden])');
+    const user = await users.byEmail('ada@e2e.test');
+    const usage = require('../api/_usage');
+    const used = async () => {
+      const now = await usage.summary(`user:${user.id}`, 'free', ['searches', 'aiTokens']);
+      return { searches: now.searches.used, aiTokens: now.aiTokens.used };
+    };
+    assert.deepStrictEqual(await used(), { searches: 0, aiTokens: 0 });
+
+    /* the retailers' photo hosts are not reachable from here; each
+       catalogue photo is answered with a real JPEG, as a CDN would, so
+       Discover has its proved rows to filter */
+    const photos = new Set(require('./audit-catalog').readCatalogue().map((r) => r.imageUrl).filter(Boolean));
+    const jpeg = fs.readFileSync(path.join(REPO, 'assets', 'demo', 'fynd-demo-mobile-poster.jpg'));
+    await page.route((u) => photos.has(String(u)), (route) => route.fulfill({ status: 200, contentType: 'image/jpeg', body: jpeg }));
+
+    apiHits.length = 0;
+    providerCalls.length = 0;
+    await open(page, 'discover.html');
+    await page.waitForSelector('.shelf .item-card', { timeout: 10000 });
+
+    let clicks = 0;
+    const tabs = await page.$$eval('.tab', (ns) => ns.length);
+    for (let t = 0; t < tabs; t++) {
+      await page.click(`.tab >> nth=${t}`);
+      const pills = await page.$$eval('#discover-panel button.pill', (ns) => ns.length);
+      for (let i = 0; i < pills; i++) { await page.click(`#discover-panel button.pill >> nth=${i}`); clicks += 1; }
+      if (await page.isVisible('#results-clear')) await page.click('#results-clear');
+    }
+    const ideas = await page.$$eval('#discover-ideas button.idea', (ns) => ns.length);
+    for (let i = 0; i < ideas; i++) { await page.click(`#discover-ideas button.idea >> nth=${i}`); clicks += 1; }
+    const ways = await page.$$eval('#discover-edits .edit-apply', (ns) => ns.length);
+    for (let i = 0; i < ways; i++) { await page.click(`#discover-edits .edit-apply >> nth=${i}`); clicks += 1; }
+    await page.click('#results-clear');
+    await page.waitForTimeout(300);
+
+    assert.ok(clicks >= 50, `only ${clicks} filters were used`);
+    assert.deepStrictEqual(apiHits.filter((p) => p === '/api/search' || p === '/api/interpret'), [], 'Discover reached a search endpoint');
+    assert.deepStrictEqual(providerCalls, [], 'Discover reached a product source or AI provider');
+    assert.ok(/discover\.html$/.test(page.url()), `Discover left the page for ${page.url()}`);
+    assert.deepStrictEqual(await used(), { searches: 0, aiTokens: 0 }, 'Discover spent from the plan');
+
+    /* The control: one real search from the search page is seen by the
+       same counters and spends from the same meter — so the zeros above
+       are Discover's, not blind instruments. */
+    await open(page, 'find-clothes.html');
+    await page.fill('#ask', 'black oversized hoodie');
+    await page.click('button[type=submit]');
+    await page.waitForSelector('#results h2:not(.thinking)', { timeout: 15000 });
+    assert.ok(apiHits.includes('/api/search'), 'the search page did not reach /api/search, so the check above proves nothing');
+    assert.ok(providerCalls.length > 0, 'the search did not reach the product source');
+    assert.strictEqual((await used()).searches, 1, 'a real search was not counted, so the zero above proves nothing');
     await context.close();
   });
 

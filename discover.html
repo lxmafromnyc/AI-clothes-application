@@ -41,12 +41,12 @@
 
   <!-- Every section below is drawn by assets/app.js from the lists in
        assets/discover-data.js; this file holds only where each one goes.
-       Choosing anything here opens find-clothes.html with that request,
-       so Discover runs on the same search as the rest of the site. -->
+       Discover filters the catalogue already on the page. Nothing here
+       searches, calls a product source or spends a search. -->
   <div class="container">
     <header class="page-head page-head--discover">
       <h1>Discover</h1>
-      <p>Clothing, shoes, bags, jewelry and watches &mdash; browse by what it is, how it looks, where it&rsquo;s going or what it costs. Every idea opens a real search.</p>
+      <p>Clothing, shoes, bags, jewelry and watches &mdash; browse by what it is, how it looks, where it&rsquo;s going or what it costs. Every filter works on Fynd&rsquo;s own catalogue, instantly, without using a search.</p>
     </header>
 
     <section class="discover-ideas" aria-labelledby="ideas-title">
@@ -55,6 +55,7 @@
         <button class="link-btn" type="button" id="ideas-shuffle">Show other ideas</button>
       </div>
       <p class="discover-chips" id="discover-ideas"></p>
+      <p class="discover-caption" id="ideas-caption"></p>
     </section>
 
     <section class="discover-block" aria-labelledby="index-title">
@@ -66,6 +67,14 @@
       </div>
       <div class="discover-tabs" role="tablist" aria-label="Browse by" id="discover-tabs"></div>
       <div class="discover-panel" id="discover-panel" role="tabpanel"></div>
+      <div class="discover-results" id="discover-results" hidden>
+        <div class="results-bar">
+          <h2 class="results-count" id="results-count" aria-live="polite"></h2>
+          <button class="link-btn" type="button" id="results-clear">Clear all</button>
+        </div>
+        <ul class="active-filters" id="active-filters" aria-label="Active filters"></ul>
+        <div id="results-body"></div>
+      </div>
     </section>
 
     <div id="discover-shelves-a"></div>

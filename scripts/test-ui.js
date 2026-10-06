@@ -784,10 +784,11 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
 
   console.log('\ndiscover');
 
-  /* Discover is a set of starting points, and each one is a request
-     handed to the search page. These hold it to that: it offers a lot,
-     across many directions, spends nothing by being opened, shows only
-     catalogue rows as products, and every starting point really runs. */
+  /* Discover is a filter over the catalogue already on the page. These
+     hold it to that: it offers a lot, across many directions; every
+     filter answers from the catalogue's own proved fields, in place;
+     and none of it — however much of it is used — searches, reads with
+     the AI, calls a product source, spends a search, or leaves the page. */
   const openDiscover = async (width, options) => {
     const page = await openPage('discover.html', Object.assign({ photos: true }, options || {},
       width ? { viewport: { width, height: 900 } } : {}));
@@ -807,46 +808,197 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
   const rowFor = (href) => CATALOGUE.find((r) => r.productUrl === href);
   const hostOf = (url) => new URL(url).hostname.replace(/^www\d?\./, '');
 
-  const handedQuery = (href) => new URL(href, 'http://x').searchParams.get('q');
+  /* what the filtered catalogue shows */
+  const resultCards = (page) => page.$$eval('#results-body .item-card', (cards) => cards.map((c) => ({
+    href: c.getAttribute('href'),
+    seller: c.querySelector('.item-retailer').textContent.trim(),
+    name: c.querySelector('.item-name').textContent.trim()
+  })));
+  const pillIn = (page, tab, label) => page.click(`.tab:has-text("${tab}")`)
+    .then(() => page.click(`#discover-panel button.pill:text-is("${label}")`));
 
-  await test('Discover browses many directions, and every starting point is a request for the search page', async () => {
+  /* Every request a Discover page makes, sorted by what it would cost.
+     A product source or an AI provider is never reached from a browser —
+     those calls are made by /api/search and /api/interpret — but they are
+     listed anyway, so a change that ever added one fails here too. */
+  const COSTLY = {
+    'OpenWeb Ninja': (u) => /openwebninja/i.test(u.hostname),
+    OpenAI: (u) => /(^|\.)openai\.com$/i.test(u.hostname),
+    Serper: (u) => /(^|\.)serper\.dev$/i.test(u.hostname),
+    SerpApi: (u) => /(^|\.)serpapi\.com$/i.test(u.hostname),
+    Gemini: (u) => /generativelanguage\.googleapis\.com$/i.test(u.hostname),
+    '/api/search': (u) => u.pathname === '/api/search',
+    '/api/interpret': (u) => u.pathname === '/api/interpret',
+    'any other /api/': (u) => u.pathname.startsWith('/api/') && !['/api/search', '/api/interpret'].includes(u.pathname)
+  };
+  const watchRequests = (page) => {
+    const tally = Object.fromEntries(Object.keys(COSTLY).map((k) => [k, 0]));
+    const seen = [];
+    page.on('request', (req) => {
+      const u = new URL(req.url());
+      for (const [name, is] of Object.entries(COSTLY)) {
+        if (is(u)) { tally[name] += 1; seen.push(`${name}: ${req.url()}`); }
+      }
+    });
+    return { tally, seen };
+  };
+
+  await test('Discover browses many directions, and no part of it links to or opens the search', async () => {
     const page = await openDiscover();
     const tabs = await page.$$eval('.tab', (ns) => ns.map((n) => n.textContent.trim()));
     ['Category', 'Style', 'Occasion', 'Season', 'Price', 'Colour', 'Material', 'Fit', 'Trends', 'Brands']
       .forEach((one) => assert.ok(tabs.includes(one), `Browse by should offer ${one}: ${tabs.join(', ')}`));
-
-    const queries = new Set();
+    let points = 0;
     for (let i = 0; i < tabs.length; i++) {
       await page.click(`.tab >> nth=${i}`);
-      const hrefs = await page.$$eval('#discover-panel a', (ns) => ns.map((n) => n.getAttribute('href')));
-      assert.ok(hrefs.length >= 10, `${tabs[i]} offers only ${hrefs.length} starting points`);
-      hrefs.forEach((href) => {
-        assert.ok(href.startsWith('find-clothes.html?q='), `${tabs[i]}: ${href} is not a search`);
-        const q = handedQuery(href);
-        assert.ok(q && q.trim().length > 1, `${tabs[i]}: ${href} carries no request`);
-        queries.add(q);
-      });
-      assert.strictEqual(await page.$$eval('#discover-panel .item-card', (ns) => ns.length), 0, 'the index lists ideas, not products');
+      points += await page.$$eval('#discover-panel .pill', (ns) => ns.length);
     }
-    assert.ok(queries.size >= 200, `only ${queries.size} distinct starting points`);
-
-    /* the rest of the page hands over the same way */
-    const elsewhere = await page.$$eval('.idea, .edit-card a, .shelf .head-link', (ns) => ns.map((n) => n.getAttribute('href')));
-    assert.ok(elsewhere.length >= 30, `${elsewhere.length} other starting points`);
-    elsewhere.forEach((href) => assert.ok(href.startsWith('find-clothes.html?q=') && handedQuery(href), href));
+    assert.ok(points >= 200, `only ${points} starting points`);
+    /* no link anywhere in Discover goes to the search, or carries a query */
+    const links = await page.$$eval('main a[href]', (ns) => ns.map((n) => n.getAttribute('href')));
+    const searching = links.filter((h) => /find-clothes|index\.html|[?&]q=/.test(h));
+    assert.deepStrictEqual(searching, [], 'Discover links into the search');
+    /* and the only links are the products' own retailer listings */
+    links.forEach((h) => assert.ok(rowFor(h), `${h} is not a catalogue listing`));
     await page.close();
   });
 
-  await test('opening Discover spends no searches, and neither does browsing it', async () => {
+  await test('exploring every Discover filter makes no product-search, AI or /api request and never leaves the page', async () => {
     searchRequests.length = 0;
     interpretRequests.length = 0;
     const page = await openDiscover();
-    for (const tab of await page.$$('.tab')) await tab.click();
-    await page.click('#ideas-shuffle');
-    await page.click('#edits-shuffle');
+    const { tally, seen } = watchRequests(page);
+    const start = page.url();
+    let navigations = 0;
+    page.on('framenavigated', (frame) => { if (frame === page.mainFrame()) navigations += 1; });
+    let clicks = 0;
+    const press = async (selector) => { await page.click(selector); clicks += 1; };
+
+    /* every filter in every direction, each pressed on, then all cleared */
+    const tabs = await page.$$eval('.tab', (ns) => ns.length);
+    for (let t = 0; t < tabs; t++) {
+      await press(`.tab >> nth=${t}`);
+      const pills = await page.$$eval('#discover-panel button.pill', (ns) => ns.length);
+      for (let p = 0; p < pills; p++) await press(`#discover-panel button.pill >> nth=${p}`);
+      if (await page.isVisible('#results-clear')) await press('#results-clear');
+    }
+    /* the unavailable ones are pressed too, and must do nothing */
+    await press('.tab:has-text("Season")');
+    for (const off of (await page.$$('#discover-panel .pill--unavailable')).slice(0, 5)) { await off.click(); clicks += 1; }
+    assert.strictEqual(await page.$eval('#discover-results', (n) => n.hidden), true, 'an unavailable filter applied something');
+
+    /* every idea, every way in and every shelf, across shuffles */
+    for (let turn = 0; turn < 3; turn++) {
+      for (const sel of ['#discover-ideas button.idea', '#discover-edits .edit-apply']) {
+        const n = await page.$$eval(sel, (ns) => ns.length);
+        for (let i = 0; i < n; i++) await press(`${sel} >> nth=${i}`);
+      }
+      await press('#results-clear');
+      const shelves = await page.$$eval('.shelf [data-apply]', (ns) => ns.length);
+      for (let i = 0; i < shelves; i++) {
+        await press(`.shelf [data-apply] >> nth=${i}`);
+        await press('#results-clear');
+      }
+      await press('#ideas-shuffle');
+      await press('#edits-shuffle');
+    }
+    /* and chips removed one at a time */
+    await press('#discover-ideas button.idea >> nth=0');
+    while (await page.$('#active-filters [data-remove]')) await press('#active-filters [data-remove] >> nth=0');
     await page.waitForTimeout(300);
-    assert.strictEqual(searchRequests.length, 0, 'Discover must not search on its own');
-    assert.strictEqual(interpretRequests.length, 0, 'Discover must not spend AI tokens on its own');
+
+    assert.ok(clicks >= 100, `only ${clicks} interactions were made`);
+    assert.deepStrictEqual(seen, [], `Discover made costly requests:\n${seen.join('\n')}`);
+    Object.entries(tally).forEach(([name, n]) => assert.strictEqual(n, 0, `${name} requests = ${n}`));
+    assert.strictEqual(searchRequests.length, 0, 'the search endpoint was reached');
+    assert.strictEqual(interpretRequests.length, 0, 'the AI reader was reached');
+    assert.strictEqual(page.url(), start, 'Discover left the page');
+    assert.strictEqual(navigations, 0, 'Discover navigated');
+    await page.close();
+  });
+
+  await test('a filter narrows the catalogue in place, and the count is the cards shown', async () => {
+    const page = await openDiscover();
+    const shelvable = CATALOGUE.filter((r) => audit.auditRow(r).shelvable);
+
+    await pillIn(page, 'Category', 'Sweaters');
+    let cards = await resultCards(page);
+    assert.ok(cards.length > 0, 'Sweaters matched nothing');
+    cards.forEach((c) => assert.ok(/sweater/i.test(c.name), `${c.name} is not a sweater by its own name`));
+    assert.strictEqual(await page.textContent('#results-count'), `${cards.length} ${cards.length === 1 ? 'result' : 'results'}`);
+    assert.strictEqual(await page.$$eval('.shelf', (n) => n.filter((s) => s.offsetParent).length), 0, 'the shelves stay up under a filter');
+
+    /* another direction narrows further: both must hold */
+    await pillIn(page, 'Price', 'Anything under $100');
+    cards = await resultCards(page);
+    cards.forEach((c) => {
+      const row = rowFor(c.href);
+      assert.ok(/sweater/i.test(c.name));
+      assert.ok(row.price != null && row.price < 100, `${row.id} is not under $100: ${row.price}`);
+    });
+
+    /* a direction with nothing in common answers honestly */
+    await pillIn(page, 'Material', 'Linen');
+    assert.strictEqual(await page.textContent('#results-count'), 'No matching products');
+    assert.strictEqual(await page.$$eval('#results-body .item-card', (n) => n.length), 0);
+
+    /* removing a chip widens it again; clearing brings the shelves back */
+    await page.click('#active-filters [data-remove*="Linen"]');
+    assert.ok((await resultCards(page)).length > 0);
+    await page.click('#results-clear');
+    assert.strictEqual(await page.$eval('#discover-results', (n) => n.hidden), true);
+    assert.ok(await page.$$eval('.shelf', (n) => n.filter((s) => s.offsetParent).length) > 0, 'the shelves did not come back');
+
+    /* under $100 is every proved row with a proved price under 100 */
+    await pillIn(page, 'Price', 'Anything under $100');
+    /* copied out of the catalogue's own context, so the arrays compare */
+    const want = [...shelvable.filter((r) => r.price != null && r.price < 100).map((r) => r.productUrl)].sort();
+    assert.deepStrictEqual((await resultCards(page)).map((c) => c.href).sort(), want);
+    await page.close();
+  });
+
+  await test('every Discover filter shows only proved catalogue rows that really match it', async () => {
+    const page = await openDiscover();
+    const tabs = await page.$$eval('.tab', (ns) => ns.map((n) => n.textContent.trim()));
+    for (const tab of tabs) {
+      await page.click(`.tab:has-text("${tab}")`);
+      const labels = await page.$$eval('#discover-panel button.pill', (ns) => ns.map((n) => n.textContent.trim()));
+      for (const label of labels) {
+        await page.click('#results-clear').catch(() => {});
+        await page.click(`#discover-panel button.pill:text-is("${label}")`);
+        const cards = await resultCards(page);
+        assert.ok(cards.length > 0, `${tab}/${label} is offered but matches nothing`);
+        for (const c of cards) {
+          const row = rowFor(c.href);
+          assert.ok(row && audit.auditRow(row).shelvable, `${tab}/${label} shows ${c.href}, not a proved row`);
+          if (tab === 'Brands') assert.strictEqual(row.brand, label, `${tab}/${label} shows ${row.id}`);
+          if (['Category', 'Colour', 'Material', 'Fit', 'Trends'].includes(tab)) {
+            assert.ok(audit.bare(row.name).length > 0);
+          }
+        }
+      }
+    }
+    await page.close();
+  });
+
+  await test('a dimension the catalogue cannot answer is shown, never applied — and the colour tags are not read', async () => {
+    const page = await openDiscover();
+    await page.click('.tab:has-text("Season")');
+    assert.strictEqual(await page.$$eval('#discover-panel button.pill', (n) => n.length), 0, 'a season filter claims to work');
+    assert.ok(await page.$$eval('#discover-panel .pill--unavailable', (n) => n.length) >= 10);
+
+    /* the catalogue's colour tags call several rows Black; no product's
+       own name says black, so Black cannot be pressed */
+    assert.ok(CATALOGUE.some((r) => (r.colors || []).includes('Black')), 'the premise: some row is tagged Black');
+    await page.click('.tab:has-text("Colour")');
+    assert.strictEqual(await page.$$eval('#discover-panel button.pill:text-is("Black")', (n) => n.length), 0);
+    assert.strictEqual(await page.$$eval('#discover-panel .pill--unavailable:has-text("Black")', (n) => n.length), 1);
+    await page.click('#discover-panel button.pill:text-is("White")');
+    for (const c of await resultCards(page)) assert.ok(/\bwhite\b/i.test(c.name), `${c.name} does not say white`);
+
+    /* an idea that the catalogue cannot answer is words, not a control */
+    const notes = await page.$$eval('.idea--note', (ns) => ns.map((n) => n.tagName));
+    notes.forEach((tag) => assert.strictEqual(tag, 'SPAN'));
     await page.close();
   });
 
@@ -879,31 +1031,6 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     });
     const distinct = new Set(everyCard.map((c) => c.href)).size;
     assert.ok(distinct >= Math.min(rows.length, everyCard.length) * 0.75, `${distinct} different pieces across ${everyCard.length} cards`);
-  });
-
-  await test('choosing a starting point on Discover runs that search, once', async () => {
-    searchRequests.length = 0;
-    interpretRequests.length = 0;
-    const page = await openDiscover();
-    await page.click('.tab:has-text("Brands")');
-    const pill = page.locator('#discover-panel a.pill').first();
-    const asked = handedQuery(await pill.getAttribute('href'));
-    await pill.click();
-    await page.waitForURL(/find-clothes\.html/);
-    await page.waitForSelector('.item-card', { timeout: 10000 });
-
-    assert.strictEqual(interpretRequests.length, 1);
-    assert.strictEqual(interpretRequests[0].query, asked, 'the interpreter reads the request Discover handed over');
-    assert.strictEqual(searchRequests.length, 1, 'one choice, one search');
-    assert.strictEqual(await page.$eval('#ask', (n) => n.value), asked, 'the request is in the box, as if typed');
-    assert.ok(/Results for/.test(await page.$eval('.results-query', (n) => n.textContent)));
-    assert.strictEqual(new URL(page.url()).searchParams.get('q'), null, 'the request leaves the address once it has run');
-
-    /* reloading does not spend another search */
-    await page.reload({ waitUntil: 'domcontentloaded' });
-    await page.waitForTimeout(500);
-    assert.strictEqual(searchRequests.length, 1, 'a reload must not search again');
-    await page.close();
   });
 
   await test('the Browse by tabs follow the arrow keys', async () => {
