@@ -454,7 +454,16 @@ module.exports = async function handler(req, res) {
        what it did verify. */
     console.error('Product source failed', provider.name, `${Date.now() - startedAt}ms`, err && err.message,
       err && err.fellBackFrom ? `(after ${err.fellBackFrom.provider} refused: ${err.fellBackFrom.reason})` : '');
-    return res.status(502).json({ error: 'The product source is unavailable right now.', source: provider.name });
+    /* A source that answered too slowly for the budget is told apart
+       from one that failed: both left nothing to verify, so both are a
+       502, but "unavailable" for a source that was merely slow sends
+       whoever reads it looking for an outage that is not there. */
+    const late = timedOut(err);
+    return res.status(502).json({
+      error: late ? 'The product source did not answer in time.' : 'The product source is unavailable right now.',
+      reason: late ? 'timeout' : 'failed',
+      source: provider.name
+    });
   }
 
   /* The search happened — from the provider or from the cache — whatever

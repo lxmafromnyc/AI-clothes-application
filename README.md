@@ -649,6 +649,7 @@ roughly 770 shopper searches a month rather than 10,000. Two knobs bound it:
 | --- | --- | --- |
 | `OPENWEBNINJA_RESOLVE_OFFERS` | on | `off` skips the lookups entirely — cheaper, and almost everything is then dropped for having no retailer link |
 | `OPENWEBNINJA_OFFER_BUDGET_MS` | 6000 | total wall-clock budget for the lookups; whatever resolved by then is what shows |
+| `OPENWEBNINJA_OFFER_LOOKUP_TIMEOUT_MS` | 2500 | the most one lookup may take; a straggler is dropped and its worker moves on to the next candidate, so slow sellers cannot empty a page the others would fill |
 
 #### Which records are worth a lookup
 
