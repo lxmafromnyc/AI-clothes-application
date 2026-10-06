@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Discover — Fynd</title>
-<meta name="description" content="Browse anything you can wear — clothing, shoes, bags, jewelry and watches — by category, style, occasion, season, price, colour, material, fit, trend and brand.">
+<meta name="description" content="Discover clothing by the kind of thing you are looking for: tops, bottoms, outerwear, one-pieces, comfort and shoes.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23111111'/><text x='16' y='23' font-family='Helvetica,Arial,sans-serif' font-size='19' font-weight='700' fill='white' text-anchor='middle'>F</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -39,34 +39,24 @@
 
 <main id="main">
 
-  <!-- Every section below is drawn by assets/app.js from the lists in
-       assets/discover-data.js; this file holds only where each one goes.
-       Discover filters the catalogue already on the page. Nothing here
-       searches, calls a product source or spends a search. -->
+  <!-- Drawn by assets/app.js from assets/discover-data.js. Discover
+       filters the catalogue already on the page: nothing here searches,
+       calls a product source or spends a search. -->
   <div class="container">
     <header class="page-head page-head--discover">
       <h1>Discover</h1>
-      <p>Clothing, shoes, bags, jewelry and watches &mdash; browse by what it is, how it looks, where it&rsquo;s going or what it costs. Every filter works on Fynd&rsquo;s own catalogue, instantly, without using a search.</p>
+      <p>Discover clothing by the kind of thing you&rsquo;re looking for. Every category filters Fynd&rsquo;s own catalogue, instantly, without using a search.</p>
     </header>
 
-    <section class="discover-ideas" aria-labelledby="ideas-title">
-      <div class="discover-ideas-head">
-        <h2 class="discover-label" id="ideas-title">Try asking</h2>
-        <button class="link-btn" type="button" id="ideas-shuffle">Show other ideas</button>
-      </div>
-      <p class="discover-chips" id="discover-ideas"></p>
-      <p class="discover-caption" id="ideas-caption"></p>
-    </section>
-
-    <section class="discover-block" aria-labelledby="index-title">
+    <section class="discover-block discover-block--first" aria-labelledby="index-title">
       <div class="section-head">
         <div>
-          <h2 id="index-title">Browse by</h2>
-          <p id="index-count">Pick a direction, then a starting point.</p>
+          <h2 id="index-title">Browse by category</h2>
+          <p id="index-count">Tops, bottoms, outerwear, one-pieces, comfort and shoes.</p>
         </div>
       </div>
-      <div class="discover-tabs" role="tablist" aria-label="Browse by" id="discover-tabs"></div>
-      <div class="discover-panel" id="discover-panel" role="tabpanel"></div>
+      <div class="discover-tabs" role="group" aria-label="Categories" id="discover-tabs"></div>
+      <div class="discover-panel" id="discover-panel" hidden></div>
       <div class="discover-results" id="discover-results" hidden>
         <div class="results-bar">
           <h2 class="results-count" id="results-count" aria-live="polite"></h2>
@@ -77,20 +67,7 @@
       </div>
     </section>
 
-    <div id="discover-shelves-a"></div>
-
-    <section class="discover-block" aria-labelledby="edits-title">
-      <div class="section-head">
-        <div>
-          <h2 id="edits-title">Ways in</h2>
-          <p>A price, a colour, a fabric, a trip, a mood. Start from whichever is on your mind.</p>
-        </div>
-        <button class="link-btn head-link" type="button" id="edits-shuffle">Show other ways in</button>
-      </div>
-      <ul class="edit-grid" id="discover-edits"></ul>
-    </section>
-
-    <div id="discover-shelves-b"></div>
+    <div id="discover-shelves"></div>
 
     <p class="sr-only" id="discover-status" role="status" aria-live="polite"></p>
   </div>

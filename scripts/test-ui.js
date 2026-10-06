@@ -814,8 +814,30 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     seller: c.querySelector('.item-retailer').textContent.trim(),
     name: c.querySelector('.item-name').textContent.trim()
   })));
-  const pillIn = (page, tab, label) => page.click(`.tab:has-text("${tab}")`)
-    .then(() => page.click(`#discover-panel button.pill:text-is("${label}")`));
+  const pickCategory = (page, label) => page.click(`#discover-tabs button:text-is("${label}")`);
+  const pickSub = (page, label) => page.click(`#discover-panel button.pill:text-is("${label}")`);
+
+  /* Discover's six categories, read from its own data file, and an
+     independent reading of which proved rows each one holds: whole
+     words of the product's own name, a plural matching its singular.
+     The page has to agree with this, not with itself. */
+  const DISCOVER_DATA = (() => {
+    const sandbox = {};
+    require('vm').runInNewContext(`${fs.readFileSync(path.join(REPO, 'assets', 'discover-data.js'), 'utf8')}\n;this.d = DISCOVER;`, sandbox);
+    return JSON.parse(JSON.stringify(sandbox.d));
+  })();
+  const SHELVABLE = CATALOGUE.filter((r) => audit.auditRow(r).shelvable);
+  const nameOf = (r) => ` ${String(r.name).toLowerCase().replace(/\bt[\s-]?shirt(s?)\b/g, 'tshirt$1').replace(/[^a-z0-9]+/g, ' ')} `;
+  const wordRe = (word) => {
+    const exact = word.startsWith('=');
+    const parts = word.replace(/^=/, '').toLowerCase().replace(/\bt[\s-]?shirt(s?)\b/g, 'tshirt$1').split(/[^a-z0-9]+/).filter(Boolean)
+      .map((w) => (exact ? w : `${w.replace(/(es|s)$/, '')}(?:s|es)?`));
+    return new RegExp(` ${parts.join(' ')} `);
+  };
+  const says = (r, words) => words.some((w) => wordRe(w).test(nameOf(r)));
+  /* copied out of the catalogue's own context, so the arrays compare */
+  const expectedIn = (category, sub) => [...SHELVABLE
+    .filter((r) => says(r, category.words) && (!sub || says(r, sub.words))).map((r) => r.productUrl)].sort();
 
   /* Every request a Discover page makes, sorted by what it would cost.
      A product source or an AI provider is never reached from a browser —
@@ -843,27 +865,129 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     return { tally, seen };
   };
 
-  await test('Discover browses many directions, and no part of it links to or opens the search', async () => {
+  await test('Discover is six categories, and nothing else to navigate by', async () => {
     const page = await openDiscover();
-    const tabs = await page.$$eval('.tab', (ns) => ns.map((n) => n.textContent.trim()));
-    ['Category', 'Style', 'Occasion', 'Season', 'Price', 'Colour', 'Material', 'Fit', 'Trends', 'Brands']
-      .forEach((one) => assert.ok(tabs.includes(one), `Browse by should offer ${one}: ${tabs.join(', ')}`));
-    let points = 0;
-    for (let i = 0; i < tabs.length; i++) {
-      await page.click(`.tab >> nth=${i}`);
-      points += await page.$$eval('#discover-panel .pill', (ns) => ns.length);
+    const shown = await page.$$eval('#discover-tabs > *', (ns) => ns.map((n) => n.textContent.trim()));
+    assert.deepStrictEqual(shown, ['Tops', 'Bottoms', 'Outerwear', 'One-Piece', 'Comfort', 'Shoes']);
+    assert.deepStrictEqual(DISCOVER_DATA.categories.map((c) => c.label), shown, 'the page draws the data file');
+    /* the old directions, ideas and ways in are gone */
+    for (const gone of ['Style', 'Occasion', 'Season', 'Weather', 'Price', 'Colour', 'Material', 'Fit', 'Trends', 'Brands']) {
+      assert.ok(!shown.includes(gone), `${gone} is still a direction`);
     }
-    assert.ok(points >= 200, `only ${points} starting points`);
-    /* no link anywhere in Discover goes to the search, or carries a query */
+    for (const id of ['#discover-ideas', '#discover-edits', '#ideas-shuffle', '#edits-shuffle']) {
+      assert.strictEqual(await page.$(id), null, `${id} is still on the page`);
+    }
+    /* nothing disabled is left behind, and no link goes to the search */
+    assert.strictEqual(await page.$$eval('main [aria-disabled], main .pill--unavailable, main button[disabled]', (n) => n.length), 0);
     const links = await page.$$eval('main a[href]', (ns) => ns.map((n) => n.getAttribute('href')));
-    const searching = links.filter((h) => /find-clothes|index\.html|[?&]q=/.test(h));
-    assert.deepStrictEqual(searching, [], 'Discover links into the search');
-    /* and the only links are the products' own retailer listings */
     links.forEach((h) => assert.ok(rowFor(h), `${h} is not a catalogue listing`));
     await page.close();
   });
 
-  await test('exploring every Discover filter makes no product-search, AI or /api request and never leaves the page', async () => {
+  await test('each category filters to exactly the proved rows its name words place in it', async () => {
+    const page = await openDiscover();
+    for (const category of DISCOVER_DATA.categories) {
+      await pickCategory(page, category.label);
+      const got = [...(await resultCards(page)).map((c) => c.href)].sort();
+      assert.deepStrictEqual(got, expectedIn(category), `${category.label} shows the wrong products`);
+      const n = got.length;
+      assert.strictEqual(await page.textContent('#results-count'), n ? `${n} ${n === 1 ? 'result' : 'results'}` : 'No matching products');
+      assert.strictEqual(await page.$eval('#discover-tabs [aria-pressed="true"]', (b) => b.textContent.trim()), category.label);
+      assert.strictEqual(await page.$eval('#discover-shelves', (n) => n.hidden), true, 'the shelves stay up under a filter');
+    }
+    /* the words are whole words: a short-sleeve tee is not shorts, and
+       a t-shirt or sweatshirt is not a button-down shirt */
+    await pickCategory(page, 'Bottoms');
+    (await resultCards(page)).forEach((c) => assert.ok(!/t-shirt/i.test(c.name), `${c.name} is not a bottom`));
+    await pickCategory(page, 'Tops');
+    await pickSub(page, 'Button-down shirts');
+    (await resultCards(page)).forEach((c) => assert.ok(!/t-shirt|sweatshirt|hoodie/i.test(c.name), `${c.name} is not a button-down`));
+    await page.close();
+  });
+
+  await test('every supported subcategory filters locally to exactly its proved rows', async () => {
+    const page = await openDiscover();
+    let checked = 0;
+    for (const category of DISCOVER_DATA.categories) {
+      for (const sub of category.subcategories) {
+        const want = expectedIn(category, sub);
+        if (!want.length) continue;
+        await page.click('#results-clear').catch(() => {});
+        await pickCategory(page, category.label);
+        await pickSub(page, sub.label);
+        const got = [...(await resultCards(page)).map((c) => c.href)].sort();
+        assert.deepStrictEqual(got, want, `${category.label} / ${sub.label}`);
+        for (const href of got) assert.ok(audit.auditRow(rowFor(href)).shelvable, `${href} is not a proved row`);
+        checked += 1;
+      }
+    }
+    assert.ok(checked >= 6, `only ${checked} subcategories were supported`);
+    await page.close();
+  });
+
+  await test('a subcategory the catalogue cannot support is not drawn at all, never falsely enabled', async () => {
+    const page = await openDiscover();
+    for (const category of DISCOVER_DATA.categories) {
+      await pickCategory(page, category.label);
+      const drawn = await page.$$eval('#discover-panel button.pill', (ns) => ns.map((n) => n.textContent.trim()));
+      for (const sub of category.subcategories) {
+        const supported = expectedIn(category, sub).length > 0;
+        assert.strictEqual(drawn.includes(sub.label), supported,
+          `${category.label} / ${sub.label} is ${supported ? 'missing' : 'drawn without a product to match'}`);
+      }
+      /* the panel is only its "All" pill and the supported ones */
+      const extra = drawn.filter((d) => d !== category.all && !category.subcategories.some((s) => s.label === d));
+      assert.deepStrictEqual(extra, [], `${category.label} draws ${extra.join(', ')}`);
+    }
+    /* the premise, so this test cannot pass vacuously */
+    const unsupported = DISCOVER_DATA.categories.flatMap((c) => c.subcategories.filter((s) => !expectedIn(c, s).length).map((s) => s.label));
+    assert.ok(unsupported.includes('Trench coats') && unsupported.includes('Boots'), `unsupported today: ${unsupported.join(', ')}`);
+    await page.close();
+  });
+
+  await test('subcategories combine, chips remove one at a time, and clearing restores the catalogue', async () => {
+    const page = await openDiscover();
+    const tops = DISCOVER_DATA.categories.find((c) => c.id === 'tops');
+    const tees = tops.subcategories.find((s) => s.label === 'T-shirts');
+    const shirts = tops.subcategories.find((s) => s.label === 'Button-down shirts');
+    await pickCategory(page, 'Tops');
+    const all = (await resultCards(page)).length;
+    await pickSub(page, 'T-shirts');
+    assert.deepStrictEqual([...(await resultCards(page)).map((c) => c.href)].sort(), expectedIn(tops, tees));
+    /* two subcategories are alternatives: either one */
+    await pickSub(page, 'Button-down shirts');
+    const both = [...new Set(expectedIn(tops, tees).concat(expectedIn(tops, shirts)))].sort();
+    assert.deepStrictEqual([...(await resultCards(page)).map((c) => c.href)].sort(), both);
+    assert.deepStrictEqual(await page.$$eval('#active-filters button', (n) => n.map((b) => b.textContent.replace('×', '').replace('(remove)', '').trim())),
+      ['Tops', 'T-shirts', 'Button-down shirts']);
+    /* a chip removed widens it again; "All tops" is the whole category */
+    await page.click('#active-filters [data-remove="T-shirts"]');
+    assert.deepStrictEqual([...(await resultCards(page)).map((c) => c.href)].sort(), expectedIn(tops, shirts));
+    await pickSub(page, tops.all);
+    assert.strictEqual((await resultCards(page)).length, all);
+    /* choosing the chosen category again, or Clear all, restores the shelves */
+    await pickCategory(page, 'Tops');
+    assert.strictEqual(await page.$eval('#discover-results', (n) => n.hidden), true);
+    await pickCategory(page, 'Outerwear');
+    await pickSub(page, 'Jackets');
+    await page.click('#results-clear');
+    assert.strictEqual(await page.$eval('#discover-results', (n) => n.hidden), true);
+    assert.strictEqual(await page.$eval('#discover-panel', (n) => n.hidden), true);
+    assert.strictEqual(await page.$$eval('#discover-tabs [aria-pressed="true"]', (n) => n.length), 0);
+    assert.ok(await page.$$eval('.shelf', (n) => n.filter((s) => s.offsetParent).length) > 0, 'the shelves did not come back');
+    /* a shelf's See all is that shelf's category, and its count is true */
+    const shelf = await page.$eval('.shelf', (n) => ({
+      title: n.querySelector('h2').textContent.trim(),
+      total: Number(n.querySelector('button[data-category]').textContent.replace(/\D+/g, ''))
+    }));
+    await page.click('.shelf button[data-category] >> nth=0');
+    assert.ok(!(await page.$eval('#discover-results', (n) => n.hidden)), 'See all applied nothing');
+    assert.strictEqual(await page.$eval('#discover-tabs [aria-pressed="true"]', (b) => b.textContent.trim()), shelf.title);
+    assert.strictEqual((await resultCards(page)).length, shelf.total, 'See all promised a different number');
+    await page.close();
+  });
+
+  await test('exploring every category and subcategory makes no product-search, AI or /api request and never leaves the page', async () => {
     searchRequests.length = 0;
     interpretRequests.length = 0;
     const page = await openDiscover();
@@ -874,40 +998,23 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     let clicks = 0;
     const press = async (selector) => { await page.click(selector); clicks += 1; };
 
-    /* every filter in every direction, each pressed on, then all cleared */
-    const tabs = await page.$$eval('.tab', (ns) => ns.length);
-    for (let t = 0; t < tabs; t++) {
-      await press(`.tab >> nth=${t}`);
-      const pills = await page.$$eval('#discover-panel button.pill', (ns) => ns.length);
-      for (let p = 0; p < pills; p++) await press(`#discover-panel button.pill >> nth=${p}`);
-      if (await page.isVisible('#results-clear')) await press('#results-clear');
-    }
-    /* the unavailable ones are pressed too, and must do nothing */
-    await press('.tab:has-text("Season")');
-    for (const off of (await page.$$('#discover-panel .pill--unavailable')).slice(0, 5)) { await off.click(); clicks += 1; }
-    assert.strictEqual(await page.$eval('#discover-results', (n) => n.hidden), true, 'an unavailable filter applied something');
-
-    /* every idea, every way in and every shelf, across shuffles */
-    for (let turn = 0; turn < 3; turn++) {
-      for (const sel of ['#discover-ideas button.idea', '#discover-edits .edit-apply']) {
-        const n = await page.$$eval(sel, (ns) => ns.length);
-        for (let i = 0; i < n; i++) await press(`${sel} >> nth=${i}`);
+    for (let round = 0; round < 3; round++) {
+      for (let c = 0; c < DISCOVER_DATA.categories.length; c++) {
+        await press(`#discover-tabs button >> nth=${c}`);
+        const pills = await page.$$eval('#discover-panel button.pill', (ns) => ns.length);
+        for (let p = 0; p < pills; p++) await press(`#discover-panel button.pill >> nth=${p}`);
+        while (await page.$('#active-filters [data-remove]')) await press('#active-filters [data-remove] >> nth=0');
       }
       await press('#results-clear');
-      const shelves = await page.$$eval('.shelf [data-apply]', (ns) => ns.length);
+      const shelves = await page.$$eval('.shelf button[data-category]', (ns) => ns.length);
       for (let i = 0; i < shelves; i++) {
-        await press(`.shelf [data-apply] >> nth=${i}`);
+        await press(`.shelf button[data-category] >> nth=${i}`);
         await press('#results-clear');
       }
-      await press('#ideas-shuffle');
-      await press('#edits-shuffle');
     }
-    /* and chips removed one at a time */
-    await press('#discover-ideas button.idea >> nth=0');
-    while (await page.$('#active-filters [data-remove]')) await press('#active-filters [data-remove] >> nth=0');
     await page.waitForTimeout(300);
 
-    assert.ok(clicks >= 100, `only ${clicks} interactions were made`);
+    assert.ok(clicks >= 60, `only ${clicks} interactions were made`);
     assert.deepStrictEqual(seen, [], `Discover made costly requests:\n${seen.join('\n')}`);
     Object.entries(tally).forEach(([name, n]) => assert.strictEqual(n, 0, `${name} requests = ${n}`));
     assert.strictEqual(searchRequests.length, 0, 'the search endpoint was reached');
@@ -917,88 +1024,20 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     await page.close();
   });
 
-  await test('a filter narrows the catalogue in place, and the count is the cards shown', async () => {
+  await test('the normal search still runs after Discover, and is the only thing that searches', async () => {
+    searchRequests.length = 0;
+    interpretRequests.length = 0;
     const page = await openDiscover();
-    const shelvable = CATALOGUE.filter((r) => audit.auditRow(r).shelvable);
-
-    await pillIn(page, 'Category', 'Sweaters');
-    let cards = await resultCards(page);
-    assert.ok(cards.length > 0, 'Sweaters matched nothing');
-    cards.forEach((c) => assert.ok(/sweater/i.test(c.name), `${c.name} is not a sweater by its own name`));
-    assert.strictEqual(await page.textContent('#results-count'), `${cards.length} ${cards.length === 1 ? 'result' : 'results'}`);
-    assert.strictEqual(await page.$$eval('.shelf', (n) => n.filter((s) => s.offsetParent).length), 0, 'the shelves stay up under a filter');
-
-    /* another direction narrows further: both must hold */
-    await pillIn(page, 'Price', 'Anything under $100');
-    cards = await resultCards(page);
-    cards.forEach((c) => {
-      const row = rowFor(c.href);
-      assert.ok(/sweater/i.test(c.name));
-      assert.ok(row.price != null && row.price < 100, `${row.id} is not under $100: ${row.price}`);
-    });
-
-    /* a direction with nothing in common answers honestly */
-    await pillIn(page, 'Material', 'Linen');
-    assert.strictEqual(await page.textContent('#results-count'), 'No matching products');
-    assert.strictEqual(await page.$$eval('#results-body .item-card', (n) => n.length), 0);
-
-    /* removing a chip widens it again; clearing brings the shelves back */
-    await page.click('#active-filters [data-remove*="Linen"]');
-    assert.ok((await resultCards(page)).length > 0);
+    await pickCategory(page, 'Tops');
     await page.click('#results-clear');
-    assert.strictEqual(await page.$eval('#discover-results', (n) => n.hidden), true);
-    assert.ok(await page.$$eval('.shelf', (n) => n.filter((s) => s.offsetParent).length) > 0, 'the shelves did not come back');
-
-    /* under $100 is every proved row with a proved price under 100 */
-    await pillIn(page, 'Price', 'Anything under $100');
-    /* copied out of the catalogue's own context, so the arrays compare */
-    const want = [...shelvable.filter((r) => r.price != null && r.price < 100).map((r) => r.productUrl)].sort();
-    assert.deepStrictEqual((await resultCards(page)).map((c) => c.href).sort(), want);
-    await page.close();
-  });
-
-  await test('every Discover filter shows only proved catalogue rows that really match it', async () => {
-    const page = await openDiscover();
-    const tabs = await page.$$eval('.tab', (ns) => ns.map((n) => n.textContent.trim()));
-    for (const tab of tabs) {
-      await page.click(`.tab:has-text("${tab}")`);
-      const labels = await page.$$eval('#discover-panel button.pill', (ns) => ns.map((n) => n.textContent.trim()));
-      for (const label of labels) {
-        await page.click('#results-clear').catch(() => {});
-        await page.click(`#discover-panel button.pill:text-is("${label}")`);
-        const cards = await resultCards(page);
-        assert.ok(cards.length > 0, `${tab}/${label} is offered but matches nothing`);
-        for (const c of cards) {
-          const row = rowFor(c.href);
-          assert.ok(row && audit.auditRow(row).shelvable, `${tab}/${label} shows ${c.href}, not a proved row`);
-          if (tab === 'Brands') assert.strictEqual(row.brand, label, `${tab}/${label} shows ${row.id}`);
-          if (['Category', 'Colour', 'Material', 'Fit', 'Trends'].includes(tab)) {
-            assert.ok(audit.bare(row.name).length > 0);
-          }
-        }
-      }
-    }
-    await page.close();
-  });
-
-  await test('a dimension the catalogue cannot answer is shown, never applied — and the colour tags are not read', async () => {
-    const page = await openDiscover();
-    await page.click('.tab:has-text("Season")');
-    assert.strictEqual(await page.$$eval('#discover-panel button.pill', (n) => n.length), 0, 'a season filter claims to work');
-    assert.ok(await page.$$eval('#discover-panel .pill--unavailable', (n) => n.length) >= 10);
-
-    /* the catalogue's colour tags call several rows Black; no product's
-       own name says black, so Black cannot be pressed */
-    assert.ok(CATALOGUE.some((r) => (r.colors || []).includes('Black')), 'the premise: some row is tagged Black');
-    await page.click('.tab:has-text("Colour")');
-    assert.strictEqual(await page.$$eval('#discover-panel button.pill:text-is("Black")', (n) => n.length), 0);
-    assert.strictEqual(await page.$$eval('#discover-panel .pill--unavailable:has-text("Black")', (n) => n.length), 1);
-    await page.click('#discover-panel button.pill:text-is("White")');
-    for (const c of await resultCards(page)) assert.ok(/\bwhite\b/i.test(c.name), `${c.name} does not say white`);
-
-    /* an idea that the catalogue cannot answer is words, not a control */
-    const notes = await page.$$eval('.idea--note', (ns) => ns.map((n) => n.tagName));
-    notes.forEach((tag) => assert.strictEqual(tag, 'SPAN'));
+    assert.strictEqual(searchRequests.length, 0);
+    await page.goto(`http://127.0.0.1:${PORT}/find-clothes.html`, { waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => window.Attachments && document.getElementById('attachments'));
+    await page.fill('#ask', 'black oversized hoodie');
+    await page.click('button[type=submit]');
+    await page.waitForSelector('#results .item-card', { timeout: 10000 });
+    assert.strictEqual(searchRequests.length, 1, 'the search page did not search');
+    assert.strictEqual(interpretRequests.length, 1, 'the search page did not read the request');
     await page.close();
   });
 
@@ -1016,7 +1055,11 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
       return { rows, shelves };
     })();
     const { rows, shelves } = catalogue;
-    assert.ok(shelves.length >= 4, `${shelves.length} shelves drawn`);
+    /* a shelf for exactly the categories that can fill a row of four,
+       in their own order */
+    const fillable = DISCOVER_DATA.categories.filter((c) => expectedIn(c).length >= 4).map((c) => c.label);
+    assert.deepStrictEqual(shelves.map((one) => one.title), fillable, 'the wrong shelves are drawn');
+    assert.ok(shelves.length >= 3, `${shelves.length} shelves drawn`);
     const everyCard = shelves.flatMap((s) => s.cards);
     everyCard.forEach((card) => {
       const row = rows.find((r) => r.url === card.href);
@@ -1033,17 +1076,15 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     assert.ok(distinct >= Math.min(rows.length, everyCard.length) * 0.75, `${distinct} different pieces across ${everyCard.length} cards`);
   });
 
-  await test('the Browse by tabs follow the arrow keys', async () => {
+  await test('the categories and subcategories work from the keyboard', async () => {
     const page = await openDiscover();
-    await page.focus('.tab[aria-selected="true"]');
-    await page.keyboard.press('ArrowRight');
-    assert.strictEqual(await page.$eval('.tab[aria-selected="true"]', (n) => n.textContent.trim()), 'Style');
-    assert.strictEqual(await page.evaluate(() => document.activeElement.textContent.trim()), 'Style');
-    assert.strictEqual(await page.$eval('#discover-panel', (n) => n.getAttribute('aria-labelledby')), 'tab-style');
-    await page.keyboard.press('End');
-    assert.strictEqual(await page.$eval('.tab[aria-selected="true"]', (n) => n.textContent.trim()), 'Brands');
-    await page.keyboard.press('ArrowRight');
-    assert.strictEqual(await page.$eval('.tab[aria-selected="true"]', (n) => n.textContent.trim()), 'Category');
+    await page.focus('#discover-tabs button >> nth=0');
+    await page.keyboard.press('Enter');
+    assert.strictEqual(await page.$eval('#discover-tabs [aria-pressed="true"]', (b) => b.textContent.trim()), 'Tops');
+    await page.focus('#discover-panel button.pill:text-is("T-shirts")');
+    await page.keyboard.press(' ');
+    assert.strictEqual(await page.$eval('#discover-panel button.pill:text-is("T-shirts")', (b) => b.getAttribute('aria-pressed')), 'true');
+    assert.ok((await resultCards(page)).length > 0);
     await page.close();
   });
 
@@ -1177,12 +1218,13 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
 
   await test('with no photos reachable at all, Discover shelves nothing rather than artwork', async () => {
     const page = await openPage('discover.html', { photos: true, fail: [...CATALOGUE_PHOTOS] });
-    await page.waitForSelector('#discover-panel .pill');
+    await page.waitForSelector('#discover-tabs > *');
     await page.waitForTimeout(1500);
     assert.strictEqual(await page.$$eval('.shelf', (n) => n.length), 0);
     assert.strictEqual(await page.$$eval('main svg.silhouette', (n) => n.length), 0);
-    /* the rest of Discover is all still there */
-    assert.ok(await page.$$eval('.edit-card', (n) => n.length) > 0);
+    /* the six categories are still all there, each saying it holds nothing */
+    assert.strictEqual(await page.$$eval('#discover-tabs > *', (n) => n.length), 6);
+    assert.strictEqual(await page.$$eval('#discover-tabs button', (n) => n.length), 0, 'a category offers products it cannot show');
     await page.close();
   });
 

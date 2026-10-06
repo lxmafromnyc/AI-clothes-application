@@ -722,19 +722,22 @@ const linkFromInbox = (pattern) => {
     await open(page, 'discover.html');
     await page.waitForSelector('.shelf .item-card', { timeout: 10000 });
 
+    /* every category and every subcategory it offers, three times over */
     let clicks = 0;
-    const tabs = await page.$$eval('.tab', (ns) => ns.length);
-    for (let t = 0; t < tabs; t++) {
-      await page.click(`.tab >> nth=${t}`);
-      const pills = await page.$$eval('#discover-panel button.pill', (ns) => ns.length);
-      for (let i = 0; i < pills; i++) { await page.click(`#discover-panel button.pill >> nth=${i}`); clicks += 1; }
-      if (await page.isVisible('#results-clear')) await page.click('#results-clear');
+    for (let round = 0; round < 3; round++) {
+      const categories = await page.$$eval('#discover-tabs button', (ns) => ns.length);
+      for (let c = 0; c < categories; c++) {
+        await page.click(`#discover-tabs button >> nth=${c}`); clicks += 1;
+        const pills = await page.$$eval('#discover-panel button.pill', (ns) => ns.length);
+        for (let i = 0; i < pills; i++) { await page.click(`#discover-panel button.pill >> nth=${i}`); clicks += 1; }
+      }
+      await page.click('#results-clear');
+      const shelves = await page.$$eval('.shelf button[data-category]', (ns) => ns.length);
+      for (let i = 0; i < shelves; i++) {
+        await page.click(`.shelf button[data-category] >> nth=${i}`); clicks += 1;
+        await page.click('#results-clear');
+      }
     }
-    const ideas = await page.$$eval('#discover-ideas button.idea', (ns) => ns.length);
-    for (let i = 0; i < ideas; i++) { await page.click(`#discover-ideas button.idea >> nth=${i}`); clicks += 1; }
-    const ways = await page.$$eval('#discover-edits .edit-apply', (ns) => ns.length);
-    for (let i = 0; i < ways; i++) { await page.click(`#discover-edits .edit-apply >> nth=${i}`); clicks += 1; }
-    await page.click('#results-clear');
     await page.waitForTimeout(300);
 
     assert.ok(clicks >= 50, `only ${clicks} filters were used`);

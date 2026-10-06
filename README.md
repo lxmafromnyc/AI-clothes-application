@@ -45,7 +45,7 @@ page, the examples, the steps and the retailer labels.
 | --- | --- | --- |
 | Home | `index.html` | States the value proposition, carries the search itself directly under the headline, shows Fynd being used in the demo video directly under the search, and then how Fynd works and what an answer looks like |
 | Find Clothes | `find-clothes.html` | The same search, with nothing else on the page |
-| Discover | `discover.html` | Browse the catalogue by category, style, occasion, price, colour, material, fit, trend or brand. Every filter works in the page and never searches |
+| Discover | `discover.html` | Browse the catalogue by kind (tops, bottoms, outerwear, one-pieces, comfort and shoes), filtered in the page without a search |
 | Pricing | `pricing.html` | The three plans, which one you are on, and the way to change it |
 | Account | `account.html` | Sign in with Google or email; your plan, usage and subscription |
 | About | `about.html` | What the site does and what it takes into account |
@@ -129,7 +129,7 @@ scripts/demo-audio.js   the demo's score and mix: composed to each video's timel
 scripts/demo-film.js    cuts the homepage film from the recorded session
 assets/interpret.js     sends the request to the endpoint; local fallback
 assets/app.js           rendering and page behaviour
-assets/discover-data.js what Discover offers: directions, ideas, ways in, shelves
+assets/discover-data.js Discover's six categories, and the words that place a product
 scripts/audit-catalog.js     re-proves every field a catalogue card shows
 scripts/test-catalog-audit.js  offline test of that audit, and of the shipped catalogue
 scripts/validate-discover-photos.js  Discover with the retailers' real photos
@@ -1621,80 +1621,68 @@ garment categories fall back to neutral artwork rather than breaking.
 
 ## Discover
 
-Discover is for when you don't know what to search for yet. It is a filter
-over the catalogue that is already on the page, and it never searches:
+Discover is clothing by the kind of thing you're looking for, in six
+categories:
+
+| Category | Subcategories it may offer |
+| --- | --- |
+| Tops | T-shirts, Button-down shirts, Tanks & camisoles |
+| Bottoms | Jeans, Trousers, Leggings & joggers |
+| Outerwear | Blazers, Trench coats, Jackets, Sweaters & cardigans |
+| One-Piece | Dresses, Jumpsuits, Rompers, Overalls |
+| Comfort | Underwear, Bras & bralettes, Loungewear, Sweat sets |
+| Shoes | Sneakers, Loafers & flats, Boots |
+
+Choose a category and the catalogue already on the page is filtered to it,
+with a count or *No matching products*. Choose one or more of its
+subcategories to narrow it; several are alternatives (T-shirts or button-down
+shirts). Each choice shows as a removable chip, and *Clear all* restores the
+shelves. With no filter chosen, the page shows a shelf for each category the
+catalogue can fill with four products, each with *See all*.
+
+Discover never searches:
 
 * no part of it calls `/api/search`, `/api/interpret` or any product or AI
   provider (OpenWeb Ninja, Serper, SerpApi, OpenAI, Gemini)
 * nothing builds a query or opens the search page
 * nothing spends from the shopper's plan
 
-Every pill, idea, way in and "See all" applies a filter to `Products.all()`,
-and the cards update in place, with a count (*8 results*) or *No matching
-products*. A shopper can use every filter on the page without spending a
-search or a provider credit. The Search page is the only place a live search
-happens.
+The Search page is the only place a live search happens.
 
-Everything on the page is drawn by `assets/app.js` from one data object,
-`DISCOVER` in `assets/discover-data.js`. Adding a new way to browse means
-adding an entry there:
+### How a product is placed
 
-| List | What it is |
-| --- | --- |
-| `dimensions` | The *Browse by* index: Category, Style, Occasion, Season (with weather), Price, Colour, Material, Fit, Trends and Brands, each in groups. An entry is a label, `[label, filter]`, or `[label, filter, chip]`, where `chip` names the entry on its own when it is a filter chip. Brands also lists every proved brand the catalogue holds |
-| `ideas` | *Try asking*: a phrase, or `{ text, filters }` where every word of the phrase is answered by the named index entries |
-| `edits` | *Ways in*: a kicker, a title, the filters the title applies, and three more specific ideas, each a phrase or `[phrase, filters]` |
-| `shelves` | The page before any filter: catalogue rows grouped by index entries. Each shelf's *See all* applies them |
+Only by words its own proved name states (`assets/discover-data.js`), matched
+as whole words with plurals:
 
-### What a filter may read
+* "Shirts" is not "T-shirt" or "sweatshirt".
+* "Shorts" is not "short sleeve".
+* Button-down shirts are those the name calls button-down, button-up or
+  button-front, or an oxford or camp shirt, which are button-front by
+  definition.
 
-A filter reads only fields that are proved, or that are the catalogue's own
-filing. Entries chosen in one direction are alternatives (Hoodies or
-Sweaters), and every direction chosen must hold (Sweaters, and under $100).
+A product can sit in two categories when its name puts it in both: a hoodie is
+a top, and comfortwear; sweatpants are bottoms, and comfortwear. No other field
+is read: not colour, material, style, brand or price.
 
-| Filter | Reads |
-| --- | --- |
-| Category, Colour, Material, Fit, Trends | Words the product's own name states, whole-word, with plurals. "Shirts" is not "T-shirt", and "Shorts" is not "short sleeve" |
-| Price | The product's proved price; a product with no proved price never matches one. "Under $100" means less than $100 |
-| Brands | The product's proved brand |
-| Style, Occasion | Fynd's own catalogue style and occasion tags |
+A subcategory is drawn only when the catalogue holds a product it matches. One
+that matches nothing is left off the page entirely, not shown disabled, and
+appears by itself once a product it fits is added. A category with nothing in
+it would be shown as a plain label rather than a control.
 
-The catalogue's colour tags are not read for filtering. They were drafted with
-the sample rows, and some contradict the products' own photos. A colour
-filter matches only a colour the product's name states, so *Black* has nothing
-to match today.
+Only proved rows are ever shown. A row must be `identified`, meaning its name,
+and its brand if it has one, are tied to its listing (see below). Its photo
+must also really arrive: the browser loads each photo exactly as the card will,
+and a photo that fails, or comes back smaller than 200px, keeps its row off
+Discover. Drawn artwork never stands in for a photo here.
 
-An entry the catalogue cannot answer is never made to look like a filter:
-
-* **No data at all:** the dimension shows its entries as unavailable pills that
-  cannot be pressed, with a note saying why. Season and weather are like this.
-* **No match yet:** an entry whose filter matches nothing in today's catalogue
-  is shown the same way, until there is a product it matches.
-* **Ideas and ways in:** these are only controls when their filters answer
-  every word and match something. Otherwise they are plain words.
-
-Only proved rows are ever shown, the same rule the shelves follow. A row must
-be `identified`, meaning its name, and its brand if it has one, are tied to
-its listing (see below). Its photo must also really arrive: the browser loads
-each photo exactly as the card will, and a photo that fails, or comes back
-smaller than 200px (a tracking pixel or "no image" stub), keeps its row off
-Discover. Drawn artwork never stands in for a photo here. If a shown photo
-fails later, the page is drawn again without it.
-
-A shelf the catalogue cannot fill with four rows is not drawn. Of the shelves
-it can fill, the six shown are the set whose cards show the most different
-pieces, with ties broken by today's order. The ideas, ways in and shelves are
-put in an order seeded by the date, so the page changes from day to day but
-stays the same within a day. The two *Show other* buttons page through the
-rest of each pool.
-
-`scripts/test-ui.js` uses every filter, idea, way in and shelf, across
-shuffles, more than a hundred interactions. It fails on any request to
-`/api/`, OpenWeb Ninja, OpenAI, Serper, SerpApi or Gemini, and on any
-navigation. `scripts/test-e2e.js` does the same against the real handlers as a
-signed-in user, and checks the server's own search and AI-token counters are
-still at zero. As a control, it then runs one real search from the Search page
-and sees it counted.
+`scripts/test-ui.js` holds Discover to all of this. It works out each
+category's and subcategory's products independently and requires the page to
+show exactly those. It uses every category, subcategory and shelf several
+times, and fails on any request to `/api/`, OpenWeb Ninja, OpenAI, Serper,
+SerpApi or Gemini, or any navigation. `scripts/test-e2e.js` does the same
+against the real handlers as a signed-in user, and checks the server's search
+and AI-token counters stay at zero. As a control, it then runs one real search
+from the Search page and sees it counted.
 
 ### What a catalogue card may claim
 
