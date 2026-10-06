@@ -1711,9 +1711,23 @@ proxy when there is one, and checks Discover at 1440, 1024, 768, 390, 375 and
 * the brand and link are the ones the audit proves
 * the page never scrolls sideways
 
-Screenshots (`artifacts/ui-validation/discover-real-<width>.png`) are kept only
-when every check passes. Where the image hosts cannot be reached, it fails and
-names them.
+It also loads the photo of every product that can appear on a shelf, not just
+today's six shelves. Each product is reported as a real photo or as failed, and
+it checks that every failed product is kept off the shelves.
+
+```sh
+npx vercel dev                                                # with .env.local
+node scripts/validate-discover-photos.js --url=http://localhost:3000
+```
+
+Without `--url` it serves this checkout itself. Screenshots are kept only when
+every check passes:
+
+* `artifacts/ui-validation/discover-real-<width>.png`
+* `discover-real-photos.png`, every checked photo beside its product, for a
+  person to confirm they match
+
+Where the image hosts cannot be reached, it fails and names them.
 
 ## The demo video
 
