@@ -492,7 +492,9 @@ a.item-card { color: inherit; }
 }
 /* a packshot on white takes the tile's light grey, so every card keeps
    its shape on the white page */
-.item-media img { width: 100%; height: 100%; object-fit: cover; mix-blend-mode: multiply; transition: transform .4s var(--ease); }
+/* pinned to the tile, so the photo always fills exactly 4:5 and is
+   cropped, never stretched and never letterboxed, whatever its own shape */
+.item-media img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; mix-blend-mode: multiply; transition: transform .4s var(--ease); }
 .item-media svg.silhouette { width: 56%; height: 56%; color: var(--color-artwork); }
 a.item-card:hover .item-media img { transform: scale(1.03); }
 

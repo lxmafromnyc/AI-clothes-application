@@ -69,9 +69,12 @@ function media(item, badge) {
    gate drops the ones that do not, so this path only ever runs on live
    results. Without a category the drawn garment is the default one,
    which is the same artwork a category-less catalogue row would get. */
-function bindImageFallback(root) {
+function bindImageFallback(root, onFail) {
   root.querySelectorAll('img[data-fallback]').forEach((img) => {
     img.addEventListener('error', () => {
+      /* a page that must never show artwork in place of a photo (the
+         Discover shelves) takes the failure itself */
+      if (onFail && onFail(img.dataset.fallback)) return;
       const item = Products.byId(img.dataset.fallback) || { category: '' };
       img.outerHTML = artSvg(item);
     }, { once: true });
@@ -115,8 +118,11 @@ function productCard(item) {
   const linked = Boolean(item.productUrl);
   const tag = linked ? 'a' : 'article';
   const attrs = linked ? ` href="${esc(item.productUrl)}" target="_blank" rel="noopener noreferrer"` : '';
-  const seller = item.brand || item.retailer || '';
-  const where = linked ? soldAt(item, seller) : '';
+  const named = item.brand || item.retailer || '';
+  const where = linked ? soldAt(item, named) : '';
+  /* a maker nobody established is left unsaid, never guessed: the top
+     line then names where it is sold, and is not said twice */
+  const seller = named || where;
   const price = formatPrice(item.price);
 
   return `<${tag} class="item-card"${attrs}>
@@ -125,7 +131,7 @@ function productCard(item) {
       <p class="item-retailer">${esc(seller)}</p>
       <h3 class="item-name">${esc(item.name)}</h3>
       <p class="item-price${price ? '' : ' item-price--none'}">${price || 'Price at retailer'}</p>
-      ${where ? `<p class="item-seller">${esc(where)}</p>` : ''}
+      ${where && where !== seller ? `<p class="item-seller">${esc(where)}</p>` : ''}
       ${linked ? '<span class="sr-only">(opens in a new tab)</span>' : ''}
     </div>
   </${tag}>`;
@@ -494,7 +500,8 @@ const SKELETON = `<div class="skeleton-card">
 
    The product cards are the catalogue rows the rest of the site shows,
    drawn by the same productCard, grouped onto shelves by what each row
-   actually is. A shelf the catalogue cannot fill is not drawn.
+   actually is. Only rows whose every field is proved, and whose photo
+   really loads, are shelved; a shelf they cannot fill is not drawn.
 
    What is offered changes from day to day — the ideas, the ways in and
    the shelves are each put in an order seeded by the date — and the two
@@ -656,11 +663,15 @@ const searchHref = (query) => `${SEARCH_PAGE}?q=${encodeURIComponent(query)}`;
      repeated when a shelf cannot be filled without them, so the page
      shows as much of the catalogue, and as many different things, as it
      can. */
+  /* who a piece is from, for variety's sake: its brand, or the store it
+     is sold at when no brand is known */
+  const maker = (item) => item.brand || soldAt(item, '');
+
   function fill(candidates, shown) {
     const picked = [];
     const kinds = new Set();
     const brands = new Set();
-    const cost = (item) => (shown.has(item.id) ? 4 : 0) + (kinds.has(item.category) ? 2 : 0) + (brands.has(item.brand) ? 1 : 0);
+    const cost = (item) => (shown.has(item.id) ? 4 : 0) + (kinds.has(item.category) ? 2 : 0) + (brands.has(maker(item)) ? 1 : 0);
     const pool = candidates.slice();
     while (picked.length < SHELF_SIZE && pool.length) {
       let best = 0;
@@ -668,9 +679,62 @@ const searchHref = (query) => `${SEARCH_PAGE}?q=${encodeURIComponent(query)}`;
       const [item] = pool.splice(best, 1);
       picked.push(item);
       kinds.add(item.category);
-      brands.add(item.brand);
+      brands.add(maker(item));
     }
     return picked;
+  }
+
+  /* The most different pieces a set of shelves can show between them: a
+     card slot per place on each shelf, and each row matched to at most
+     one slot (augmenting paths; a few dozen of each, so it is instant).
+     Rows are tried in today's order, so which of several equally good
+     answers is shown changes from day to day. */
+  function match(shelves) {
+    const slots = shelves.flatMap((one, at) => Array.from({ length: SHELF_SIZE }, () => at));
+    const holder = new Map();
+    const placed = new Array(slots.length).fill(null);
+    const place = (slot, tried) => shelves[slots[slot]].candidates.some((item) => {
+      if (tried.has(item.id)) return false;
+      tried.add(item.id);
+      const other = holder.get(item.id);
+      if (other !== undefined && !place(other, tried)) return false;
+      placed[slot] = item;
+      holder.set(item.id, slot);
+      return true;
+    });
+    slots.forEach((_, slot) => place(slot, new Set()));
+    return { distinct: holder.size, placed, slots };
+  }
+
+  /* every way of choosing k of the n shelves the catalogue can fill */
+  function* choices(n, k, from = 0, taken = []) {
+    if (taken.length === k) { yield taken; return; }
+    for (let i = from; i <= n - (k - taken.length); i++) yield* choices(n, k, i + 1, taken.concat(i));
+  }
+
+  /* Today's shelves: of the sets of SHELVES_SHOWN the catalogue can fill,
+     the one that shows the most different pieces, and among those the
+     one nearest today's order. Each shelf gets its matched rows, is
+     topped up (repeating only when it must) and put in an order that
+     starts with different kinds from different makers, since a phone
+     shows only the first two. */
+  function arrange(fillable) {
+    let best = null;
+    for (const set of choices(fillable.length, Math.min(SHELVES_SHOWN, fillable.length))) {
+      const shelves = set.map((i) => fillable[i]);
+      const result = match(shelves);
+      const rank = set.reduce((sum, i) => sum + i, 0);
+      if (!best || result.distinct > best.result.distinct || (result.distinct === best.result.distinct && rank < best.rank)) {
+        best = { shelves, result, rank };
+      }
+    }
+    if (!best) return [];
+    const shown = new Set(best.result.placed.filter(Boolean).map((item) => item.id));
+    return best.shelves.map((one, at) => {
+      const own = best.result.placed.filter((item, slot) => item && best.result.slots[slot] === at);
+      const more = fill(one.candidates.filter((item) => !own.includes(item)), shown).slice(0, SHELF_SIZE - own.length);
+      return { shelf: one.shelf, picked: fill(own.concat(more), new Set()) };
+    });
   }
 
   const shelfHtml = ({ shelf, picked }, n) => `<section class="discover-block shelf" aria-labelledby="shelf-${n}">
@@ -685,26 +749,66 @@ const searchHref = (query) => `${SEARCH_PAGE}?q=${encodeURIComponent(query)}`;
       <div class="grid shelf-grid">${picked.map(productCard).join('')}</div>
     </section>`;
 
-  function paintShelves() {
-    if (!shelvesA || !shelvesB) return;
-    const rows = shuffled(Products.all(), DAY + 2);
-    const shown = new Set();
-    const drawn = [];
-    for (const shelf of shuffled(DISCOVER.shelves, DAY + 3)) {
-      if (drawn.length >= SHELVES_SHOWN) break;
-      const candidates = rows.filter((item) => belongs(item, shelf.match || {}));
-      if (candidates.length < SHELF_SIZE) continue;
-      const picked = fill(candidates, shown);
-      picked.forEach((item) => shown.add(item.id));
-      drawn.push({ shelf, picked });
+  /* Only a row whose card is true in every field, and whose photograph
+     really arrives, goes on a shelf.
+
+     `identified` says the row's name and brand were tied to its listing
+     (scripts/audit-catalog.js re-proves every such note). The photo is
+     asked of the browser exactly as the card will ask for it — the same
+     address, sent with no referrer — and a photo that fails, or comes
+     back too small to be a product photograph (a tracking pixel, a
+     "no image" stub), keeps its row off the shelves. A shelf never holds
+     drawn artwork standing in for a photo: if a shelved photo fails
+     later, the shelves are drawn again without it. */
+  const MIN_PHOTO = 200;
+  const PHOTO_WAIT = 10000;
+  const photos = new Map();
+
+  function photoArrives(item) {
+    if (!photos.has(item.id)) {
+      photos.set(item.id, new Promise((resolve) => {
+        const probe = new Image();
+        const settle = (ok) => {
+          clearTimeout(timer);
+          probe.onload = probe.onerror = null;
+          resolve(ok);
+        };
+        const timer = setTimeout(() => settle(false), PHOTO_WAIT);
+        probe.referrerPolicy = 'no-referrer';
+        probe.onload = () => settle(probe.naturalWidth >= MIN_PHOTO && probe.naturalHeight >= MIN_PHOTO);
+        probe.onerror = () => settle(false);
+        probe.src = item.imageUrl;
+      }));
     }
+    return photos.get(item.id);
+  }
+
+  const lostPhoto = (id) => {
+    photos.set(id, Promise.resolve(false));
+    paintShelves();
+    return true;
+  };
+
+  let painting = 0;
+  async function paintShelves() {
+    if (!shelvesA || !shelvesB) return;
+    const turn = ++painting;
+    const provable = Products.all().filter((item) => item.identified && item.productUrl && item.imageUrl);
+    const arrived = await Promise.all(provable.map(photoArrives));
+    /* the store changed, or a photo failed, while this one was waiting */
+    if (turn !== painting) return;
+    const rows = shuffled(provable.filter((_, i) => arrived[i]), DAY + 2);
+    const today = shuffled(DISCOVER.shelves, DAY + 3)
+      .map((shelf) => ({ shelf, candidates: rows.filter((item) => belongs(item, shelf.match || {})) }))
+      .filter((one) => one.candidates.length >= SHELF_SIZE);
+    const drawn = arrange(today);
     /* half the shelves before the ways in and half after, so the
        photographs and the words take turns down the page */
     const half = Math.ceil(drawn.length / 2);
     shelvesA.innerHTML = drawn.slice(0, half).map((one, i) => shelfHtml(one, i)).join('');
     shelvesB.innerHTML = drawn.slice(half).map((one, i) => shelfHtml(one, i + half)).join('');
-    bindImageFallback(shelvesA);
-    bindImageFallback(shelvesB);
+    bindImageFallback(shelvesA, lostPhoto);
+    bindImageFallback(shelvesB, lostPhoto);
   }
 
   paintIdeas();

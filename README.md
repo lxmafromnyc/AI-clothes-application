@@ -130,6 +130,9 @@ scripts/demo-film.js    cuts the homepage film from the recorded session
 assets/interpret.js     sends the request to the endpoint; local fallback
 assets/app.js           rendering and page behaviour
 assets/discover-data.js what Discover offers: directions, ideas, ways in, shelves
+scripts/audit-catalog.js     re-proves every field a catalogue card shows
+scripts/test-catalog-audit.js  offline test of that audit, and of the shipped catalogue
+scripts/validate-discover-photos.js  Discover with the retailers' real photos
 assets/styles.css       colour tokens, design tokens and all shared components
 ```
 
@@ -1642,12 +1645,20 @@ Three rules hold it together:
   browsing the page never calls the interpreter or the product source. Only
   choosing something does, and only once: the request is removed from the
   address after it runs, so reloading or going Back does not search again.
-* **Its products are real rows, never made up.** Shelf cards are the same
-  catalogue rows the home page shows, drawn by the same `productCard`. A
-  shelf the catalogue cannot fill with four rows is not drawn. Within a shelf,
-  rows of a kind and brand the shelf does not have yet come first, and a row is
-  repeated only when a shelf cannot be filled without it. The breadth beyond
-  the catalogue, such as bags, jewelry and watches, comes from live search.
+* **Its products are real rows, and every field on a shelf card is proved.**
+  Shelf cards are the same catalogue rows the home page shows, drawn by the
+  same `productCard`. A row is shelved only when it is `identified`, meaning
+  its name, and its brand if it has one, are tied to its listing (see below),
+  and when its photo really arrives. The browser loads each photo exactly as
+  the card will, and a photo that fails, or comes back smaller than 200px
+  (a tracking pixel or "no image" stub), keeps its row off the shelves. A
+  shelf never shows drawn artwork in place of a photo. If a shelved photo
+  fails later, the shelves are drawn again without it, and with no photos
+  reachable at all, no shelf is drawn. A shelf the catalogue cannot fill with
+  four rows is not drawn. Of the shelves it can fill, the six shown are the
+  set whose cards show the most different pieces, with ties broken by today's
+  order. The breadth beyond the catalogue, such as bags, jewelry and watches,
+  comes from live search.
 * **Every request names something.** A price on its own gives the product source
   no phrase to search for (see `api/_providers/query.js`), so price entries
   always name a piece too: *jackets under $100*, not *under $100*.
@@ -1655,6 +1666,54 @@ Three rules hold it together:
 The ideas, ways in and shelves are put in an order seeded by the date, so the
 page changes from day to day but stays the same within a day. The two *Show
 other* buttons page through the rest of each pool.
+
+### What a catalogue card may claim
+
+`scripts/audit-catalog.js` re-proves every field a card shows, for every row,
+from the row itself. Run it on its own to see each row's verdict
+(`node scripts/audit-catalog.js`):
+
+| Field | Proved by |
+| --- | --- |
+| Photo | `catalogRowIdentity` in `fetch-catalog-images.js`: its `imageEvidence`, or the listing's code in the photo's own URL |
+| Price | `catalogRowPrice` in `fetch-catalog-prices.js`: a linked row may carry a price only with `priceEvidence` |
+| Name | `identity.name`: the title in the store's own product record, the product's own URL slug word for word, or the listing tools that verified the row |
+| Brand | `identity.brand`: the store's photo of the product filed under the brand's name, the product's URL slug opening with it, or the verifying tools |
+| Link | An http(s) listing whose URL names a product by code or handle |
+
+A brand nothing proves is `null`. It is never guessed, and the store a listing
+is on is not taken to be its maker. The card then names the store's address on
+its top line, which is what the card already does for a source that names no
+brand. A row whose name nothing ties to its listing keeps no `identity` note,
+and Discover does not shelve it.
+
+The `sample-` rows were drafted as invented products, with invented brands
+like "Northfold" and "Halden" and demo prices. They were later tied to real
+listings and photos by `fetch-catalog-images.js --discover`, which kept the
+invented name, brand and price. They have since been corrected from what each
+row's own evidence says. `scripts/fixtures/catalog-as-drafted.js` keeps the
+drafted version, only so the discovery tool's tests can run against the rows
+they were written around (via `FYND_CATALOG`). The shipped catalogue is never
+written by those tests.
+
+### Checking the real photographs
+
+The interface tests stand a local JPEG in for every retailer photo, so they
+can run anywhere. `scripts/validate-discover-photos.js` does the opposite. It
+lets the browser reach the retailers' own image hosts, through the sandbox
+proxy when there is one, and checks Discover at 1440, 1024, 768, 390, 375 and
+360px. For every shelf card it checks that:
+
+* the photo is the row's own verified photo and really loaded, at
+  product-photo size
+* no artwork stands in for it
+* it fills its 4:5 tile by cropping
+* the brand and link are the ones the audit proves
+* the page never scrolls sideways
+
+Screenshots (`artifacts/ui-validation/discover-real-<width>.png`) are kept only
+when every check passes. Where the image hosts cannot be reached, it fails and
+names them.
 
 ## The demo video
 

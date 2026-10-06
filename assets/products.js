@@ -22,6 +22,10 @@
      fits        string[]      matching vocabulary
      colors      string[]      colour families
      sizes       string[]      available sizes
+     identified  boolean       the source recorded how the name (and the
+                               brand, when there is one) were tied to the
+                               listing; see `identity` in assets/catalog.js
+                               and scripts/audit-catalog.js
 
    ---------------------------------------------------------
    Source records
@@ -41,6 +45,11 @@
      fits        fit | fits
      colors      color | colors | colour | colours
      sizes       size | sizes
+     identified  identity      { name, brand } — how each was established
+
+   A brand may be absent (null) on a row that links to a listing: an
+   unknown maker is left unsaid rather than guessed, and the card names
+   where it is sold instead.
 
    Anything unrecognised is ignored rather than throwing, so one malformed
    record cannot take down a page of results.
@@ -103,21 +112,26 @@
 
     const name = toText(first(raw, ['name', 'title', 'productName']));
     const brand = toText(first(raw, ['brand', 'retailer', 'vendor']));
-    if (!name || !brand) return null; // a product without these cannot be shown
+    const productUrl = toUrl(first(raw, ['productUrl', 'url', 'link']));
+    /* a product needs a name, and something to say who it is from: its
+       brand, or failing that the listing it links to */
+    if (!name || (!brand && !productUrl)) return null;
+    const identity = raw.identity && typeof raw.identity === 'object' ? raw.identity : {};
 
     const product = {
       id: toText(first(raw, ['id', 'sku', 'productId'])),
       name,
       brand,
       price: toPrice(first(raw, ['price', 'currentPrice'])),
-      productUrl: toUrl(first(raw, ['productUrl', 'url', 'link'])),
+      productUrl,
       imageUrl: toUrl(first(raw, ['imageUrl', 'image', 'image_url', 'thumbnail'])),
       category: toText(first(raw, ['category', 'type', 'productType'])).toLowerCase(),
       styles: toList(first(raw, ['styles', 'style'])),
       occasions: toList(first(raw, ['occasions', 'occasion'])),
       fits: toList(first(raw, ['fits', 'fit'])),
       colors: toList(first(raw, ['colors', 'color', 'colours', 'colour'])),
-      sizes: toList(first(raw, ['sizes', 'size']))
+      sizes: toList(first(raw, ['sizes', 'size'])),
+      identified: Boolean(identity.name && (!brand || identity.brand))
     };
     if (!product.id) product.id = derivedId(product);
     return product;
@@ -151,7 +165,7 @@
       fits: collect('fits'),
       colors: collect('colors'),
       sizes: collect('sizes'),
-      brands: products.reduce((m, p) => m.set(p.brand, (m.get(p.brand) || 0) + 1), new Map()),
+      brands: products.reduce((m, p) => (p.brand ? m.set(p.brand, (m.get(p.brand) || 0) + 1) : m), new Map()),
       maxPrice: products.reduce((max, p) => (p.price != null && p.price > max ? p.price : max), 0)
     };
   }

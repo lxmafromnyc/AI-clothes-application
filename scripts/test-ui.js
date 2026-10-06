@@ -91,6 +91,24 @@ const accountReply = (over) => {
 
 let accountState = accountReply({});
 
+/* the catalogue, as Discover shelves it, and what its photos are */
+const audit = require('./audit-catalog');
+const CATALOGUE_SOURCE = fs.readFileSync(path.join(REPO, 'assets', 'catalog.js'), 'utf8');
+const CATALOGUE = audit.readCatalogue(CATALOGUE_SOURCE);
+const CATALOGUE_PHOTOS = new Set(CATALOGUE.map((r) => r.imageUrl).filter(Boolean));
+const STAND_IN_PHOTO = fs.readFileSync(path.join(REPO, 'assets', 'demo', 'fynd-demo-mobile-poster.jpg'));
+const WIDE_PHOTO = fs.readFileSync(path.join(REPO, 'assets', 'demo', 'fynd-demo-poster.jpg'));
+const PIXEL = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=', 'base64');
+
+/* the catalogue source with one row's field set to something else */
+const withRowField = (id, field, value) => {
+  const start = CATALOGUE_SOURCE.indexOf(`id: '${id}',`);
+  const end = CATALOGUE_SOURCE.indexOf('\n  }', start);
+  const block = CATALOGUE_SOURCE.slice(start, end)
+    .replace(new RegExp(`(\\n\\s*)${field}: [^\\n]*,`), `$1${field}: ${JSON.stringify(value)},`);
+  return CATALOGUE_SOURCE.slice(0, start) + block + CATALOGUE_SOURCE.slice(end);
+};
+
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
 
@@ -315,8 +333,16 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     process.exit(0);
   }
 
-  const openPage = async (file) => {
+  /* `photos` stands in for the retailers' image hosts, which this
+     environment cannot reach. Each catalogue photo URL is answered with
+     a real JPEG from this repository — what a working CDN does — unless
+     the test names it in `fail` (the request errors) or `stub` (a 1×1
+     image comes back, the shape of a tracking pixel or a "no image"
+     placeholder). Everything else off this origin is still cut. */
+  const openPage = async (file, options) => {
+    const opts = options || {};
     const page = await browser.newPage();
+    if (opts.viewport) await page.setViewportSize(opts.viewport);
     await page.addInitScript(() => {
       window.FINDWEAR_API = 'http://127.0.0.1:8899/api/interpret';
       window.FINDWEAR_SEARCH_API = 'http://127.0.0.1:8899/api/search';
@@ -324,7 +350,21 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     /* Anything off this origin is unreachable in this environment, and a
        stylesheet still loading blocks the scripts under it from running.
        Cutting external requests makes the page deterministic. */
-    await page.route((url) => !String(url).includes('127.0.0.1'), (route) => route.abort());
+    await page.route((url) => !String(url).includes('127.0.0.1'), (route) => {
+      const url = route.request().url();
+      if (opts.photos && CATALOGUE_PHOTOS.has(url)) {
+        if ((opts.fail || []).includes(url)) return route.abort();
+        if ((opts.stub || []).includes(url)) return route.fulfill({ status: 200, contentType: 'image/png', body: PIXEL });
+        if ((opts.wide || []).includes(url)) return route.fulfill({ status: 200, contentType: 'image/jpeg', body: WIDE_PHOTO });
+        return route.fulfill({ status: 200, contentType: 'image/jpeg', body: STAND_IN_PHOTO });
+      }
+      return route.abort();
+    });
+    if (opts.catalogue) {
+      /* a catalogue the test has altered, served in place of the real one */
+      await page.route(/\/assets\/catalog\.js$/, (route) =>
+        route.fulfill({ status: 200, contentType: 'text/javascript', body: opts.catalogue }));
+    }
     await page.goto(`http://127.0.0.1:${PORT}/${file}`, { waitUntil: 'domcontentloaded' });
     return page;
   };
@@ -748,12 +788,24 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
      handed to the search page. These hold it to that: it offers a lot,
      across many directions, spends nothing by being opened, shows only
      catalogue rows as products, and every starting point really runs. */
-  const openDiscover = async (width) => {
-    const page = await openPage('discover.html');
-    if (width) await page.setViewportSize({ width, height: 900 });
+  const openDiscover = async (width, options) => {
+    const page = await openPage('discover.html', Object.assign({ photos: true }, options || {},
+      width ? { viewport: { width, height: 900 } } : {}));
     await page.waitForSelector('.shelf .item-card', { timeout: 10000 });
     return page;
   };
+
+  /* what each shelf card says, against the catalogue row it links to */
+  const shelfCards = (page) => page.$$eval('.shelf .item-card', (cards) => cards.map((c) => ({
+    href: c.getAttribute('href'),
+    seller: c.querySelector('.item-retailer').textContent.trim(),
+    name: c.querySelector('.item-name').textContent.trim(),
+    where: c.querySelector('.item-seller') ? c.querySelector('.item-seller').textContent.trim() : null,
+    img: c.querySelector('.item-media img') ? c.querySelector('.item-media img').getAttribute('src') : null,
+    artwork: Boolean(c.querySelector('.item-media svg.silhouette'))
+  })));
+  const rowFor = (href) => CATALOGUE.find((r) => r.productUrl === href);
+  const hostOf = (url) => new URL(url).hostname.replace(/^www\d?\./, '');
 
   const handedQuery = (href) => new URL(href, 'http://x').searchParams.get('q');
 
@@ -887,6 +939,141 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
       rows.forEach((n) => assert.strictEqual(n, 1, `${width}px: a shelf runs to ${n} rows`));
       await page.close();
     }
+  });
+
+  console.log('\ndiscover shelves: every card is the product it links to');
+
+  await test('every shelf card names the brand its row proves, or where it is sold — never an invented maker', async () => {
+    const page = await openDiscover();
+    const cards = await shelfCards(page);
+    assert.ok(cards.length >= 12, `${cards.length} shelf cards`);
+    for (const card of cards) {
+      const row = rowFor(card.href);
+      assert.ok(row, `${card.href} is not a catalogue listing`);
+      const verdict = audit.auditRow(row);
+      assert.ok(verdict.shelvable, `${row.id} is shelved but fails its audit: ${verdict.problems.join('; ')}`);
+      if (verdict.checks.brand.shown) {
+        assert.strictEqual(card.seller, row.brand, `${row.id} shows "${card.seller}"`);
+      } else {
+        assert.strictEqual(card.seller, hostOf(row.productUrl), `${row.id} has no proved brand, so the card names the store`);
+        assert.strictEqual(card.where, null, `${row.id} names its store twice`);
+      }
+      assert.strictEqual(card.name, row.name);
+    }
+    /* none of the brands the rows were drafted with survives anywhere */
+    const drafted = ['Northfold', 'Halden', 'Coveworks', 'Atlas Supply', 'Rue Nine', 'Terrace', 'Kinfield', 'Solstice'];
+    const text = await page.$eval('main', (n) => n.textContent);
+    drafted.forEach((name) => assert.ok(!text.includes(name), `"${name}" is still on Discover`));
+    await page.close();
+  });
+
+  await test('a shelf product with a mismatched or unproved brand is kept off Discover', async () => {
+    /* a brand nothing on the row proves */
+    const unproved = withRowField('sample-rue-nine-slip-midi-dress', 'brand', 'Rue Nine');
+    /* a brand whose cited evidence names someone else */
+    const mismatched = withRowField('sample-halden-merino-crew-knit', 'brand', 'Halden');
+    for (const [id, catalogue, label] of [
+      ['sample-rue-nine-slip-midi-dress', unproved, 'unproved'],
+      ['sample-halden-merino-crew-knit', mismatched, 'mismatched']
+    ]) {
+      const row = audit.readCatalogue(catalogue).find((r) => r.id === id);
+      assert.strictEqual(audit.auditRow(row).shelvable, false, `the audit lets a ${label} brand through`);
+      if (label === 'mismatched') {
+        /* The row still cites evidence, so the browser — which reads the
+           note, as it reads imageEvidence — would take it. What stops it
+           shipping is the catalogue invariant in test-catalog-audit.js:
+           every row the browser would shelve passes this audit. */
+        assert.strictEqual(audit.claimsIdentity(row), true);
+        continue;
+      }
+      const page = await openDiscover(null, { catalogue });
+      const hrefs = (await shelfCards(page)).map((c) => c.href);
+      assert.ok(!hrefs.includes(row.productUrl), `a row with a ${label} brand was shelved`);
+      /* the browser makes the same call from the same note */
+      assert.strictEqual(await page.evaluate((u) => Products.all().find((p) => p.productUrl === u).identified, row.productUrl), false);
+      await page.close();
+    }
+  });
+
+  await test('a row whose name is not tied to its listing is never shelved', async () => {
+    const page = await openDiscover();
+    const hrefs = (await shelfCards(page)).map((c) => c.href);
+    const unnamed = CATALOGUE.filter((r) => !audit.auditName(r).ok);
+    assert.ok(unnamed.length > 0, 'the catalogue is expected to hold rows whose names are unproved');
+    unnamed.forEach((r) => assert.ok(!hrefs.includes(r.productUrl), `${r.id} was shelved`));
+    await page.close();
+  });
+
+  await test('every shelf photo is its row’s own verified photo, really loaded, never artwork', async () => {
+    /* half the photos come back tall and half wide, so a tile that only
+       looked right for one shape would show it */
+    const wide = [...CATALOGUE_PHOTOS].filter((_, i) => i % 2);
+    const page = await openDiscover(null, { wide });
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    await page.waitForFunction(() => [...document.querySelectorAll('.shelf .item-media img')]
+      .every((i) => i.complete), null, { timeout: 10000 });
+    const cards = await shelfCards(page);
+    for (const card of cards) {
+      const row = rowFor(card.href);
+      assert.strictEqual(card.artwork, false, `${row.id} shows drawn artwork on a shelf`);
+      assert.strictEqual(card.img, row.imageUrl, `${row.id} shows a photo that is not its own`);
+      assert.ok(audit.auditPhoto(row).ok, `${row.id}'s photo is not tied to its listing`);
+    }
+    const shapes = await page.$$eval('.shelf .item-media img', (imgs) => imgs.map((i) => ({
+      loaded: i.complete && i.naturalWidth > 0,
+      fit: getComputedStyle(i).objectFit,
+      box: i.getBoundingClientRect().width / i.getBoundingClientRect().height
+    })));
+    shapes.forEach((s) => {
+      assert.ok(s.loaded, 'a shelf photo did not load');
+      assert.strictEqual(s.fit, 'cover', 'a photo is stretched to its tile rather than cropped');
+      assert.ok(Math.abs(s.box - 0.8) < 0.02, `a photo tile is ${s.box.toFixed(3)}, not 4:5`);
+    });
+    await page.close();
+  });
+
+  await test('a photo that fails, or is a 1×1 stub, keeps its row off the shelves — artwork does not count', async () => {
+    const shelvable = CATALOGUE.filter((r) => audit.auditRow(r).shelvable);
+    const failing = shelvable.slice(0, 4).map((r) => r.imageUrl);
+    const stubbed = shelvable.slice(4, 7).map((r) => r.imageUrl);
+    const page = await openDiscover(null, { fail: failing, stub: stubbed });
+    await page.waitForTimeout(300);
+    const cards = await shelfCards(page);
+    assert.ok(cards.length > 0, 'the rows with working photos are still shelved');
+    cards.forEach((c) => {
+      assert.ok(!failing.includes(rowFor(c.href).imageUrl), `${rowFor(c.href).id} was shelved with a failed photo`);
+      assert.ok(!stubbed.includes(rowFor(c.href).imageUrl), `${rowFor(c.href).id} was shelved with a stub for a photo`);
+    });
+    assert.strictEqual(await page.$$eval('.shelf svg.silhouette', (n) => n.length), 0, 'artwork stood in for a photo');
+    await page.close();
+  });
+
+  await test('with no photos reachable at all, Discover shelves nothing rather than artwork', async () => {
+    const page = await openPage('discover.html', { photos: true, fail: [...CATALOGUE_PHOTOS] });
+    await page.waitForSelector('#discover-panel .pill');
+    await page.waitForTimeout(1500);
+    assert.strictEqual(await page.$$eval('.shelf', (n) => n.length), 0);
+    assert.strictEqual(await page.$$eval('main svg.silhouette', (n) => n.length), 0);
+    /* the rest of Discover is all still there */
+    assert.ok(await page.$$eval('.edit-card', (n) => n.length) > 0);
+    await page.close();
+  });
+
+  await test('every shelf card links to its row’s own listing', async () => {
+    const page = await openDiscover();
+    const cards = await shelfCards(page);
+    for (const card of cards) {
+      const row = rowFor(card.href);
+      assert.ok(row, `${card.href} is not a catalogue listing`);
+      assert.ok(audit.auditLink(row).ok, `${row.id}: ${audit.auditLink(row).why}`);
+      assert.ok(/^https:\/\//.test(card.href), `${card.href} is not a secure listing link`);
+    }
+    const targets = await page.$$eval('.shelf a.item-card', (as) => as.map((a) => [a.target, a.rel]));
+    targets.forEach(([target, rel]) => {
+      assert.strictEqual(target, '_blank');
+      assert.ok(/noopener/.test(rel));
+    });
+    await page.close();
   });
 
   console.log('\nthe billing interface');
@@ -1084,7 +1271,8 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
      catalogue, so cards, badges and pills are audited too, not just the
      static shell */
   const settled = async (file) => {
-    const page = await openPage(file);
+    /* Discover only shelves rows whose photos arrive */
+    const page = await openPage(file, { photos: file === 'discover.html' });
     const built = {
       'discover.html': '.item-card',
       /* both billing pages draw themselves from /api/account, so the
