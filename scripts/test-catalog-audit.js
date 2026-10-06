@@ -72,6 +72,17 @@ test('enough rows are shelvable for Discover to fill its shelves', () => {
   assert.ok(shelvable.length >= 16, `${shelvable.length} shelvable rows`);
 });
 
+test('a photo that failed in a real browser is not shipped on any row', () => {
+  /* found by scripts/validate-discover-photos.js against the live hosts */
+  const failedLive = [
+    'https://www.eileenfisher.com/dw/image/v2/BGKB_PRD/on/demandware.static/-/Sites-ef-main-catalog/default/dw287f7711/images/S6YFF-S4429M-349.jpg?sw=525&sh=700&sfrm=png&q=90'
+  ];
+  for (const row of rows) assert.ok(!failedLive.includes(row.imageUrl), `${row.id} still carries a photo that failed to load`);
+  const skirt = rows.find((r) => r.id === 'sample-solstice-ribbed-knit-skirt');
+  assert.strictEqual(audit.auditRow(skirt).shelvable, false, 'a row with no working photo is not shelvable');
+  assert.strictEqual(skirt.imageEvidence, undefined, 'no evidence is kept for a photo that is gone');
+});
+
 console.log('\nwhat the audit refuses');
 
 test('a brand with no evidence is refused, and the browser does not shelve it', () => {

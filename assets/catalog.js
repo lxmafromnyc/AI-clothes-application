@@ -56,6 +56,12 @@
    fails to load, keeps the drawn artwork, and that is the honest state
    rather than a placeholder.
 
+   A photo that no longer loads is taken off its row the same way. The
+   Eileen Fisher ribbed knit skirt's photo (S6YFF-S4429M-349 on
+   www.eileenfisher.com) failed scripts/validate-discover-photos.js in a
+   real browser, so the row keeps its listing and its name and has no
+   photo, which keeps it off Discover's shelves.
+
    imageEvidence records HOW a photo was tied to its product, and only
    where the URL cannot say so itself. UNIQLO and J.Crew carry their
    listing's code in the image URL, so the URL is its own evidence and no
@@ -263,8 +269,7 @@ const DEMO_PRODUCTS = [
     identity: { name: 'url-slug', slug: 'ribbed-knit-skirt' },
     price: null,
     productUrl: 'https://www.eileenfisher.com/ribbed-knit-skirt/S6YFF-S4429.html?srsltid=AU7gw4Ub_fkSYiZTUDeGul3YpjXy_2Mq6NscwEKq2O1U1caaAHDnPrmY',
-    imageUrl: 'https://www.eileenfisher.com/dw/image/v2/BGKB_PRD/on/demandware.static/-/Sites-ef-main-catalog/default/dw287f7711/images/S6YFF-S4429M-349.jpg?sw=525&sh=700&sfrm=png&q=90',
-    imageEvidence: { via: 'json-ld-sku', sku: 's6yff-s4429' },
+    imageUrl: null,
     category: 'skirt',
     style: ['Minimal', 'Bohemian'],
     occasion: ['Everyday', 'Work'],
