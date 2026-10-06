@@ -343,15 +343,21 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     const opts = options || {};
     const page = await browser.newPage();
     if (opts.viewport) await page.setViewportSize(opts.viewport);
-    await page.addInitScript(() => {
-      window.FINDWEAR_API = 'http://127.0.0.1:8899/api/interpret';
-      window.FINDWEAR_SEARCH_API = 'http://127.0.0.1:8899/api/search';
-    });
+    /* apiOverride: false leaves the page to find its API the way a real
+       visitor's page does — from its own origin and its meta tag */
+    if (opts.apiOverride !== false) {
+      await page.addInitScript(() => {
+        window.FINDWEAR_API = 'http://127.0.0.1:8899/api/interpret';
+        window.FINDWEAR_SEARCH_API = 'http://127.0.0.1:8899/api/search';
+      });
+    }
     /* Anything off this origin is unreachable in this environment, and a
        stylesheet still loading blocks the scripts under it from running.
        Cutting external requests makes the page deterministic. */
     await page.route((url) => !String(url).includes('127.0.0.1'), (route) => {
       const url = route.request().url();
+      /* a test may answer another origin itself (the meta tag's deployment) */
+      if (opts.offOrigin && opts.offOrigin(route, url)) return undefined;
       if (opts.photos && CATALOGUE_PHOTOS.has(url)) {
         if ((opts.fail || []).includes(url)) return route.abort();
         if ((opts.stub || []).includes(url)) return route.fulfill({ status: 200, contentType: 'image/png', body: PIXEL });
@@ -1257,6 +1263,136 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
       { timeout: 10000 });
     return page;
   };
+
+  /* What /api/account answers, cut down to the fields the billing
+     state is about: the pricing page must read these and nothing else
+     to decide whether plans can be bought. */
+  const MINIMAL_BILLING_ON = () => ({
+    signedIn: false,
+    billing: { enabled: true, testMode: false, webhookConfigured: true },
+    plans: [{ id: 'free', purchasable: false }, { id: 'pro', purchasable: true }, { id: 'max', purchasable: true }]
+  });
+  const pricingSays = (page) => page.evaluate(() => ({
+    note: document.getElementById('deployment-note').hidden ? '' : document.getElementById('deployment-note').textContent.trim(),
+    body: document.body.textContent,
+    buttons: Object.fromEntries([...document.querySelectorAll('.plan-card[data-plan]')].map((card) => {
+      const b = card.querySelector('[data-plan-action]');
+      return [card.dataset.plan, { text: b.textContent.trim(), disabled: b.disabled, action: b.dataset.action || null }];
+    })),
+    current: [...document.querySelectorAll('.plan-card--current')].map((c) => c.dataset.plan)
+  }));
+  /* the page has drawn from the server's answer: the banner is up and
+     the buttons are no longer the markup's own */
+  const drawn = (page) => page.waitForFunction(() => !document.getElementById('plan-banner').hidden
+    && document.querySelector('.plan-card[data-plan="free"] [data-plan-action]').textContent.trim() !== 'Always free', null, { timeout: 10000 });
+
+  await test('billing enabled with Pro and Max purchasable: no "not connected", and both can be bought', async () => {
+    accountState = MINIMAL_BILLING_ON();
+    const page = await openPage('pricing.html');
+    await drawn(page);
+    const seen = await pricingSays(page);
+    assert.ok(!/Billing is not connected to this copy of the site/.test(seen.body), `the page says billing is disconnected: ${seen.note}`);
+    assert.ok(!/no payment provider configured/.test(seen.body), seen.note);
+    for (const plan of ['pro', 'max']) {
+      assert.notStrictEqual(seen.buttons[plan].text, 'Not available yet', `${plan} is marked unavailable`);
+      assert.strictEqual(seen.buttons[plan].disabled, false, `${plan} cannot be pressed`);
+    }
+    assert.strictEqual(seen.buttons.pro.text, 'Get Pro');
+    assert.strictEqual(seen.buttons.max.text, 'Get Max');
+    /* signed out: buying still starts with an account, as the backend requires */
+    assert.strictEqual(seen.buttons.pro.action, 'sign-in-first');
+    assert.strictEqual(seen.buttons.max.action, 'sign-in-first');
+    /* Free is still the current plan */
+    assert.deepStrictEqual(seen.current, ['free']);
+    assert.strictEqual(seen.buttons.free.text, 'Your plan');
+    await page.close();
+    accountState = accountReply({});
+  });
+
+  await test('billing truly off: the warning stays, and Pro and Max are not offered', async () => {
+    accountState = Object.assign(MINIMAL_BILLING_ON(), { billing: { enabled: false, testMode: false, webhookConfigured: false } });
+    const page = await openPage('pricing.html');
+    await drawn(page);
+    const seen = await pricingSays(page);
+    assert.ok(/no payment provider configured/.test(seen.note), seen.note);
+    for (const plan of ['pro', 'max']) {
+      assert.strictEqual(seen.buttons[plan].text, 'Not available yet');
+      assert.strictEqual(seen.buttons[plan].disabled, true);
+    }
+    await page.close();
+    accountState = accountReply({});
+  });
+
+  await test('a plan the server marks not purchasable stays unavailable even with billing on', async () => {
+    accountState = Object.assign(MINIMAL_BILLING_ON(), {
+      plans: [{ id: 'free', purchasable: false }, { id: 'pro', purchasable: true }, { id: 'max', purchasable: false }]
+    });
+    const page = await openPage('pricing.html');
+    await drawn(page);
+    const seen = await pricingSays(page);
+    assert.strictEqual(seen.buttons.pro.text, 'Get Pro');
+    assert.strictEqual(seen.buttons.max.text, 'Not available yet');
+    assert.ok(!/not connected/.test(seen.body));
+    await page.close();
+    accountState = accountReply({});
+  });
+
+  await test('the pricing page asks /api/account at its own origin, not the deployment its meta tag names', async () => {
+    accountState = MINIMAL_BILLING_ON();
+    billingRequests.length = 0;
+    const remote = [];
+    const page = await openPage('pricing.html', {
+      apiOverride: false,
+      offOrigin: (route, url) => {
+        if (/vercel\.app\/api\//.test(url)) { remote.push(url); route.abort(); return true; }
+        return false;
+      }
+    });
+    await drawn(page);
+    const seen = await pricingSays(page);
+    /* counted by this origin's own server, so nothing can be missed */
+    assert.ok(billingRequests.some((r) => r.path === '/api/account'), 'this origin\u2019s /api/account was not asked');
+    assert.deepStrictEqual(remote, [], `the production deployment was asked: ${remote.join(', ')}`);
+    assert.ok(!/not connected/.test(seen.body), seen.note);
+    assert.strictEqual(seen.buttons.pro.text, 'Get Pro');
+    await page.close();
+    accountState = accountReply({});
+  });
+
+  await test('a copy of the pages with no API beside it still reaches the deployment its meta tag names', async () => {
+    const remote = [];
+    const page = await openPage('pricing.html', {
+      apiOverride: false,
+      offOrigin: (route, url) => {
+        if (/^https:\/\/ai-clothes-application\.vercel\.app\/api\/account/.test(url)) {
+          remote.push(url);
+          route.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': `http://127.0.0.1:${PORT}`, 'access-control-allow-credentials': 'true' }, body: JSON.stringify(MINIMAL_BILLING_ON()) });
+          return true;
+        }
+        return false;
+      }
+    });
+    /* this origin plays a static host: no /api here */
+    await page.route(`http://127.0.0.1:${PORT}/api/**`, (route) => route.fulfill({ status: 404, body: 'not found' }));
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await drawn(page);
+    const seen = await pricingSays(page);
+    assert.strictEqual(remote.length >= 1, true, 'the meta tag’s deployment was not asked');
+    assert.ok(!/not connected/.test(seen.body), seen.note);
+    assert.strictEqual(seen.buttons.max.text, 'Get Max');
+    await page.close();
+  });
+
+  await test('with no account API anywhere, the page still says billing is not connected', async () => {
+    const page = await openPage('pricing.html', { apiOverride: false });
+    await page.route(`http://127.0.0.1:${PORT}/api/**`, (route) => route.fulfill({ status: 404, body: 'not found' }));
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('#deployment-note:not([hidden])', { timeout: 10000 });
+    const seen = await pricingSays(page);
+    assert.ok(/Billing is not connected to this copy of the site/.test(seen.note), seen.note);
+    assert.strictEqual(seen.buttons.pro.text, 'Not available yet');
+    await page.close();
+  });
 
   await test('the pricing page shows all three plans with their prices', async () => {
     const page = await openBilling('pricing.html');

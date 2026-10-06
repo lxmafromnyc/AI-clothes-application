@@ -193,6 +193,14 @@ This is the only place the endpoint is configured. Change it here if the
 deployment URL ever changes; `window.FINDWEAR_API` overrides it at runtime if
 you need to point somewhere else without editing the file.
 
+The account calls (`/api/account`, `/api/auth`, `/api/checkout`,
+`/api/portal`) ask the page's own origin first. A page served by the app
+itself, on the deployment or under `npx vercel dev`, talks to the API beside
+it, which is the one its session cookie belongs to. The tag's deployment is
+asked only when the page's origin has no API, as on GitHub Pages: a static host
+answers 404 to the GET, or 405 to a POST. `window.FINDWEAR_API`, when set,
+still overrides both.
+
 **4. Verify the whole chain.**
 
 ```sh

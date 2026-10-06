@@ -87,17 +87,25 @@
   /* Two things a deployment can be wrong about that a shopper deserves
      to be told before they type a card number, and one an operator
      deserves to be told before they trust what they are looking at. */
+  /* Read straight off what /api/account said, and only that. "Not
+     connected" is said only when there was no answer at all; an answer
+     that leaves a field out is not a reason to claim more than it says,
+     and never a reason to stop drawing the rest of the page. */
+  const billingOf = (state) => (state && state.billing && typeof state.billing === 'object' ? state.billing : {});
+
   function deploymentNote(state) {
     if (!state) {
       return { text: 'Billing is not connected to this copy of the site, so plans cannot be changed here.', tone: 'warn' };
     }
-    if (!state.billing.enabled) {
+    const billing = billingOf(state);
+    if (billing.enabled !== true) {
       return { text: 'This deployment has no payment provider configured, so the paid plans cannot be bought here yet.', tone: 'warn' };
     }
-    if (state.billing.testMode) {
+    if (billing.testMode === true) {
       return { text: 'Stripe is in test mode on this deployment. Checkout works end to end, no real card is charged, and no money moves.', tone: null };
     }
-    if (!state.storage.durable) {
+    /* warned only when the server SAYS storage is not durable */
+    if (state.storage && state.storage.durable === false) {
       return { text: 'This deployment has no database configured, so accounts and subscriptions are held in memory and will not survive a restart.', tone: 'warn' };
     }
     return { text: '', tone: null };
@@ -109,15 +117,19 @@
     const cards = Array.from(doc.querySelectorAll('.plan-card[data-plan]'));
     if (!cards.length) return;
 
-    const currentId = state ? state.plan.id : 'free';
+    const currentId = state && state.plan && state.plan.id ? state.plan.id : 'free';
     const signedIn = Boolean(state && state.signedIn);
-    const canBuy = Boolean(state && state.billing.enabled);
+    const canBuy = billingOf(state).enabled === true;
+    const plans = state && Array.isArray(state.plans) ? state.plans : [];
     const holdsSubscription = Boolean(state && state.subscription
       && ['active', 'trialing'].indexOf(state.subscription.status) >= 0);
 
     cards.forEach((card) => {
       const planId = card.dataset.plan;
-      const known = state ? state.plans.find((p) => p.id === planId) : null;
+      const known = plans.find((p) => p && p.id === planId) || null;
+      /* the server's name for the plan, or the card's own heading */
+      const heading = card.querySelector('.plan-name');
+      const name = (known && known.name) || (heading ? heading.textContent.trim() : planId);
       const isCurrent = planId === currentId;
 
       card.classList.toggle('plan-card--current', isCurrent);
@@ -141,7 +153,8 @@
         return;
       }
 
-      if (!canBuy || (known && !known.purchasable)) {
+      /* the server's word on each plan decides: purchasable is buyable */
+      if (!canBuy || !known || known.purchasable !== true) {
         button.disabled = true;
         button.className = 'btn btn-secondary';
         button.textContent = 'Not available yet';
@@ -154,7 +167,7 @@
       if (holdsSubscription) {
         button.disabled = false;
         button.className = 'btn btn-secondary';
-        button.textContent = `Switch to ${known ? known.name : planId}`;
+        button.textContent = `Switch to ${name}`;
         button.dataset.action = 'portal';
         return;
       }
@@ -163,7 +176,7 @@
       button.className = 'btn btn-primary';
       /* "Get" for somebody on Free, "Upgrade" once there is something
          to upgrade from */
-      button.textContent = `${currentId === 'free' ? 'Get' : 'Upgrade to'} ${known ? known.name : planId}`;
+      button.textContent = `${currentId === 'free' ? 'Get' : 'Upgrade to'} ${name}`;
       button.dataset.action = signedIn ? 'checkout' : 'sign-in-first';
     });
   }
@@ -180,16 +193,16 @@
     if (!planName || !detail || !actions) return;
 
     wrap.hidden = false;
-    planName.textContent = state ? state.plan.name : 'Free';
+    planName.textContent = state && state.plan && state.plan.name ? state.plan.name : 'Free';
 
     const lines = [];
     if (!state || !state.signedIn) {
       lines.push('You are not signed in. Free is metered per browser; an account is what a subscription attaches to.');
     } else {
-      lines.push(state.user.email);
+      if (state.user && state.user.email) lines.push(state.user.email);
       const sub = state.subscription;
       if (sub && sub.cancelAtPeriodEnd && sub.currentPeriodEnd) {
-        lines.push(`Cancels on ${longDate(sub.currentPeriodEnd)}. You keep ${state.plan.name} until then.`);
+        lines.push(`Cancels on ${longDate(sub.currentPeriodEnd)}. You keep ${state.plan && state.plan.name ? state.plan.name : 'your plan'} until then.`);
       } else if (sub && sub.status === 'active' && sub.currentPeriodEnd) {
         lines.push(`Renews on ${longDate(sub.currentPeriodEnd)}.`);
       } else if (sub && sub.status === 'trialing' && sub.currentPeriodEnd) {
@@ -203,14 +216,14 @@
        the plan, the invoices and the cancellation already live. */
     const page = doc.body.dataset.page || '';
     const buttons = [];
-    if (state && state.billing.portal) {
+    if (billingOf(state).portal) {
       buttons.push('<button class="btn btn-secondary" type="button" data-action="portal">Manage subscription</button>');
     }
     if (state && !state.signedIn && page !== 'account') {
       buttons.push('<a class="btn btn-primary" href="account.html">Sign in</a>');
     } else if (state && state.signedIn && page !== 'account') {
       buttons.push('<a class="btn btn-secondary" href="account.html">Your account</a>');
-    } else if (state && state.signedIn && state.plan.id === 'free') {
+    } else if (state && state.signedIn && (!state.plan || state.plan.id === 'free')) {
       buttons.push('<a class="btn btn-primary" href="pricing.html">See plans</a>');
     }
     actions.innerHTML = buttons.join('');
@@ -222,13 +235,14 @@
     const wrap = $('usage-meters');
     if (!wrap) return;
 
-    if (!state) {
+    const usageOf = state && state.usage && typeof state.usage === 'object' ? state.usage : null;
+    if (!usageOf || !Object.keys(usageOf).length) {
       wrap.innerHTML = '<p class="plan-banner-detail">Usage is not available on this copy of the site.</p>';
       return;
     }
 
-    wrap.innerHTML = Object.keys(state.usage).map((metric) => {
-      const usage = state.usage[metric];
+    wrap.innerHTML = Object.keys(usageOf).map((metric) => {
+      const usage = usageOf[metric];
       const share = usage.limit > 0 ? Math.min(100, Math.round((usage.used / usage.limit) * 100)) : 0;
       const spent = usage.remaining === 0;
       return `<div class="meter">
