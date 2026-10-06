@@ -45,7 +45,7 @@ page, the examples, the steps and the retailer labels.
 | --- | --- | --- |
 | Home | `index.html` | States the value proposition, carries the search itself directly under the headline, shows Fynd being used in the demo video directly under the search, and then how Fynd works and what an answer looks like |
 | Find Clothes | `find-clothes.html` | The same search, with nothing else on the page |
-| Discover | `discover.html` | Browse the catalogue, filtered by style |
+| Discover | `discover.html` | Browse anything you can wear — by category, style, occasion, season, price, colour, material, fit, trend or brand — where every starting point opens a real search, with shelves of catalogue rows between |
 | Pricing | `pricing.html` | The three plans, which one you are on, and the way to change it |
 | Account | `account.html` | Sign in with Google or email; your plan, usage and subscription |
 | About | `about.html` | What the site does and what it takes into account |
@@ -129,6 +129,7 @@ scripts/demo-audio.js   the demo's score and mix: composed to each video's timel
 scripts/demo-film.js    cuts the homepage film from the recorded session
 assets/interpret.js     sends the request to the endpoint; local fallback
 assets/app.js           rendering and page behaviour
+assets/discover-data.js what Discover offers: directions, ideas, ways in, shelves
 assets/styles.css       colour tokens, design tokens and all shared components
 ```
 
@@ -1611,9 +1612,49 @@ Products.load('/api/products.json');   // a URL returning JSON
 Products.load(() => queryDatabase());  // a function or promise
 ```
 
-The interface subscribes to the store, so filter options, Discover pills and the
-matching vocabulary all rebuild from whatever arrives. Unfamiliar colours and
+The interface subscribes to the store, so the Discover shelves and the matching
+vocabulary all rebuild from whatever arrives. Unfamiliar colours and
 garment categories fall back to neutral artwork rather than breaking.
+
+## Discover
+
+Discover is for when you don't know what to search for yet. It is a page of
+starting points, and each one is a request: choosing one opens
+`find-clothes.html?q=<request>`, and the search page runs that request exactly as
+if it had been typed. There is no second search system. The interpreter,
+`/api/search`, product verification and the plan's usage limits apply as they
+do everywhere else.
+
+Everything on the page is drawn by `assets/app.js` from one data object,
+`DISCOVER` in `assets/discover-data.js`, so adding a new way to browse means
+adding an entry there:
+
+| List | What it is |
+| --- | --- |
+| `dimensions` | The *Browse by* index: Category, Style, Occasion, Season, Price, Colour, Material, Fit, Trends and Brands, each in groups (Category runs from hoodies to watches, through shoes, bags and jewelry). An entry is a label, or a `[label, request]` pair when the request should say more than the label does |
+| `ideas` | Whole requests worded the way people ask, like *gold jewelry under $100*. Twelve are shown at a time, eight on a small phone |
+| `edits` | *Ways in*: a mix of a price, a colour, a fabric, a trip and a mood, each with its own request and three more specific ones. Eight are shown at a time |
+| `shelves` | Catalogue rows grouped by what they really are: price, category, style, occasion, fit or colour. A shelf describes which rows belong on it and holds no products itself |
+
+Three rules hold it together:
+
+* **Discover spends nothing on its own.** Searches are metered, so opening or
+  browsing the page never calls the interpreter or the product source. Only
+  choosing something does, and only once: the request is removed from the
+  address after it runs, so reloading or going Back does not search again.
+* **Its products are real rows, never made up.** Shelf cards are the same
+  catalogue rows the home page shows, drawn by the same `productCard`. A
+  shelf the catalogue cannot fill with four rows is not drawn. Within a shelf,
+  rows of a kind and brand the shelf does not have yet come first, and a row is
+  repeated only when a shelf cannot be filled without it. The breadth beyond
+  the catalogue, such as bags, jewelry and watches, comes from live search.
+* **Every request names something.** A price on its own gives the product source
+  no phrase to search for (see `api/_providers/query.js`), so price entries
+  always name a piece too: *jackets under $100*, not *under $100*.
+
+The ideas, ways in and shelves are put in an order seeded by the date, so the
+page changes from day to day but stays the same within a day. The two *Show
+other* buttons page through the rest of each pool.
 
 ## The demo video
 

@@ -140,26 +140,6 @@ const SKELETON = `<div class="skeleton-card">
   <div class="skeleton-line skeleton-line--short"></div>
 </div>`;
 
-/* ---------- filter controls ----------
-   Built from the values present in the data, so a new source brings its
-   own styles, colours and brands without any markup changes. Known values
-   keep a deliberate order; anything unfamiliar is appended alphabetically. */
-
-const FACET_ORDER = {
-  styles: ['Minimal', 'Classic', 'Streetwear', 'Sporty', 'Bohemian', 'Bold'],
-  colors: ['Neutral', 'Black', 'White', 'Blue', 'Green', 'Earth', 'Pastel', 'Bright'],
-  occasions: ['Everyday', 'Work', 'Evening', 'Weekend', 'Active'],
-  fits: ['Slim', 'Regular', 'Relaxed', 'Oversized']
-};
-
-function orderFacet(counts, key) {
-  const preferred = FACET_ORDER[key] || [];
-  const present = [...counts.keys()];
-  const known = preferred.filter((v) => counts.has(v));
-  const rest = present.filter((v) => !preferred.includes(v)).sort((a, b) => a.localeCompare(b));
-  return known.concat(rest);
-}
-
 /* ---------- mobile navigation ---------- */
 (function nav() {
   const toggle = document.querySelector('.nav-toggle');
@@ -442,6 +422,27 @@ function orderFacet(counts, key) {
     });
   }
 
+  /* A request handed over in the address — find-clothes.html?q=… — is
+     how Discover opens a search. It runs exactly as if it had been typed
+     and submitted, once the catalogue is in the store (the interpreter
+     is handed the catalogue's vocabulary), and is then taken out of the
+     address so that reloading the page, or coming Back to it, does not
+     spend another search from the shopper's allowance. */
+  const handed = new URLSearchParams(window.location.search).get('q');
+  if (handed && handed.trim()) {
+    const address = new URL(window.location.href);
+    address.searchParams.delete('q');
+    window.history.replaceState(window.history.state, '', address.pathname + address.search + address.hash);
+    let ran = false;
+    Products.subscribe(() => {
+      if (ran) return;
+      ran = true;
+      input.value = handed.trim().slice(0, Number(input.getAttribute('maxlength')) || 400);
+      grow();
+      search(input.value);
+    });
+  }
+
   reset.addEventListener('click', () => {
     input.value = '';
     input.style.height = '';
@@ -480,45 +481,236 @@ function orderFacet(counts, key) {
   });
 })();
 
-/* ---------- discover ---------- */
+/* ---------- discover ----------
+   Drawn entirely from DISCOVER in assets/discover-data.js, so a new way
+   to browse is a new entry there and no change here.
+
+   Discover never runs a search itself. Searches are metered against the
+   shopper's plan, and a page that spent them just by being opened would
+   be spending the shopper's allowance on things they never asked for.
+   Every starting point is a link to the search page carrying a request
+   (find-clothes.html?q=…), and choosing it runs that request exactly as
+   if it had been typed.
+
+   The product cards are the catalogue rows the rest of the site shows,
+   drawn by the same productCard, grouped onto shelves by what each row
+   actually is. A shelf the catalogue cannot fill is not drawn.
+
+   What is offered changes from day to day — the ideas, the ways in and
+   the shelves are each put in an order seeded by the date — and the two
+   shuffle buttons page through the rest of each pool. Within a day the
+   page is stable, so it reads the same on a second visit. */
+const SEARCH_PAGE = 'find-clothes.html';
+const searchHref = (query) => `${SEARCH_PAGE}?q=${encodeURIComponent(query)}`;
+
 (function discover() {
-  const grid = document.getElementById('discover-grid');
-  if (!grid || typeof Products === 'undefined') return;
+  const panel = document.getElementById('discover-panel');
+  if (!panel || typeof DISCOVER === 'undefined') return;
 
-  const pillBar = document.querySelector('.filter-pills');
-  const count = document.getElementById('filter-count');
-  let active = 'All';
+  const tabs = document.getElementById('discover-tabs');
+  const ideas = document.getElementById('discover-ideas');
+  const edits = document.getElementById('discover-edits');
+  const status = document.getElementById('discover-status');
+  const DAY = Math.floor(Date.now() / 864e5);
 
-  function paint() {
-    const items = active === 'All'
-      ? Products.all()
-      : Products.all().filter((i) => i.styles.includes(active));
-    count.textContent = `${items.length} ${items.length === 1 ? 'piece' : 'pieces'}`;
-    const note = document.getElementById('discover-note');
-    if (note) note.innerHTML = sampleNote(items);
-    grid.innerHTML = items.map(productCard).join('');
-    bindImageFallback(grid);
+  /* a small seeded generator (mulberry32), so an order is the same all
+     day and different the next */
+  function seeded(seed) {
+    let t = seed >>> 0;
+    return () => {
+      t = (t + 0x6D2B79F5) >>> 0;
+      let r = Math.imul(t ^ (t >>> 15), 1 | t);
+      r ^= r + Math.imul(r ^ (r >>> 7), 61 | r);
+      return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  function shuffled(list, seed) {
+    const rand = seeded(seed);
+    const out = list.slice();
+    for (let i = out.length - 1; i > 0; i--) {
+      const j = Math.floor(rand() * (i + 1));
+      [out[i], out[j]] = [out[j], out[i]];
+    }
+    return out;
   }
 
-  if (pillBar) {
-    pillBar.addEventListener('click', (e) => {
-      const pill = e.target.closest('.pill');
-      if (!pill) return;
-      active = pill.dataset.style;
-      pillBar.querySelectorAll('.pill').forEach((p) => p.setAttribute('aria-pressed', String(p === pill)));
-      paint();
+  /* the turn-th run of `size` items through a pool, wrapping at the end,
+     so pressing shuffle walks through everything before repeating */
+  const windowOf = (pool, size, turn) =>
+    Array.from({ length: Math.min(size, pool.length) }, (_, i) => pool[(turn * size + i) % pool.length]);
+
+  const announce = (text) => { if (status) status.textContent = text; };
+
+  /* An index entry is a label, or a [label, request] pair; a bare label
+     is made into a request by its dimension's template. */
+  const entryOf = (dimension, entry) => {
+    const [label, query] = Array.isArray(entry) ? entry : [entry, null];
+    return { label, query: query || dimension.query.replace('{label}', label.toLowerCase()) };
+  };
+
+  /* ---------- try asking ---------- */
+  const IDEAS_SHOWN = 12;
+  const ideaPool = shuffled(DISCOVER.ideas, DAY);
+  let ideaTurn = 0;
+  function paintIdeas() {
+    if (!ideas) return;
+    ideas.innerHTML = windowOf(ideaPool, IDEAS_SHOWN, ideaTurn)
+      .map((q) => `<a class="idea" href="${esc(searchHref(q))}">${esc(q)}</a>`).join('');
+  }
+  const ideasShuffle = document.getElementById('ideas-shuffle');
+  if (ideasShuffle) {
+    ideasShuffle.addEventListener('click', () => {
+      ideaTurn += 1;
+      paintIdeas();
+      announce('Showing other ideas.');
     });
   }
 
-  Products.subscribe(() => {
-    if (pillBar) {
-      const styles = ['All'].concat(orderFacet(Products.facets().styles, 'styles'));
-      if (!styles.includes(active)) active = 'All';
-      pillBar.innerHTML = styles.map((s) =>
-        `<button class="pill" type="button" data-style="${esc(s)}" aria-pressed="${s === active}">${esc(s)}</button>`).join('');
-    }
-    paint();
+  /* ---------- browse by ---------- */
+  const dimensions = DISCOVER.dimensions;
+  let current = dimensions[0].id;
+
+  const startingPoints = dimensions.reduce((n, d) => n + d.groups.reduce((m, g) => m + g.entries.length, 0), 0);
+  const count = document.getElementById('index-count');
+  if (count) count.textContent = `${startingPoints} starting points across ${dimensions.length} directions. Each one opens a search.`;
+
+  tabs.innerHTML = dimensions.map((d) =>
+    `<button class="tab" type="button" role="tab" id="tab-${esc(d.id)}" aria-controls="discover-panel" data-dimension="${esc(d.id)}">${esc(d.label)}</button>`).join('');
+
+  function paintPanel() {
+    const dimension = dimensions.find((d) => d.id === current);
+    tabs.querySelectorAll('.tab').forEach((tab) => {
+      const on = tab.dataset.dimension === current;
+      tab.setAttribute('aria-selected', String(on));
+      tab.tabIndex = on ? 0 : -1;
+    });
+    panel.setAttribute('aria-labelledby', `tab-${current}`);
+    panel.innerHTML = dimension.groups.map((group) => `<div class="index-group">
+        <h3 class="index-label">${esc(group.label)}</h3>
+        <ul class="index-pills">${group.entries.map((e) => entryOf(dimension, e))
+          .map(({ label, query }) => `<li><a class="pill" href="${esc(searchHref(query))}">${esc(label)}</a></li>`).join('')}</ul>
+      </div>`).join('');
+  }
+
+  function choose(tab, focus) {
+    if (!tab) return;
+    current = tab.dataset.dimension;
+    paintPanel();
+    if (focus) tab.focus();
+  }
+  tabs.addEventListener('click', (e) => choose(e.target.closest('.tab')));
+
+  /* the arrow keys move along the tabs, as a tab list is expected to */
+  tabs.addEventListener('keydown', (e) => {
+    const all = [...tabs.querySelectorAll('.tab')];
+    const at = all.findIndex((t) => t.dataset.dimension === current);
+    const to = { ArrowRight: at + 1, ArrowLeft: at - 1, Home: 0, End: all.length - 1 }[e.key];
+    if (to === undefined) return;
+    e.preventDefault();
+    choose(all[(to + all.length) % all.length], true);
   });
+
+  /* ---------- ways in ---------- */
+  const EDITS_SHOWN = 8;
+  const editPool = shuffled(DISCOVER.edits, DAY + 1);
+  let editTurn = 0;
+  function paintEdits() {
+    if (!edits) return;
+    edits.innerHTML = windowOf(editPool, EDITS_SHOWN, editTurn).map((edit) => `<li class="edit-card">
+        <p class="eyebrow">${esc(edit.kicker)}</p>
+        <h3 class="edit-title"><a href="${esc(searchHref(edit.query))}">${esc(edit.title)}</a></h3>
+        ${edit.note ? `<p class="edit-note">${esc(edit.note)}</p>` : ''}
+        <ul class="edit-more">${(edit.more || []).map((q) =>
+          `<li><a href="${esc(searchHref(q))}">${esc(q)}</a></li>`).join('')}</ul>
+      </li>`).join('');
+  }
+  const editsShuffle = document.getElementById('edits-shuffle');
+  if (editsShuffle) {
+    editsShuffle.addEventListener('click', () => {
+      editTurn += 1;
+      paintEdits();
+      announce('Showing other ways in.');
+    });
+  }
+
+  /* ---------- shelves of real catalogue rows ---------- */
+  const SHELF_SIZE = 4;
+  const SHELVES_SHOWN = 6;
+  const shelvesA = document.getElementById('discover-shelves-a');
+  const shelvesB = document.getElementById('discover-shelves-b');
+
+  const anyOf = (values, wanted) => !wanted || !wanted.length
+    || wanted.some((w) => (values || []).some((v) => String(v).toLowerCase() === String(w).toLowerCase()));
+
+  /* a price rule needs a known price: an unpriced row is never put on a
+     shelf that promises a price */
+  function belongs(item, match) {
+    if (match.maxPrice != null && !(item.price != null && item.price <= match.maxPrice)) return false;
+    if (match.minPrice != null && !(item.price != null && item.price >= match.minPrice)) return false;
+    return anyOf([item.category], match.categories) && anyOf(item.styles, match.styles)
+      && anyOf(item.occasions, match.occasions) && anyOf(item.fits, match.fits) && anyOf(item.colors, match.colors);
+  }
+
+  /* Fills one shelf, best first: a row no earlier shelf has shown, of a
+     kind and from a brand this shelf does not have yet. Rows are only
+     repeated when a shelf cannot be filled without them, so the page
+     shows as much of the catalogue, and as many different things, as it
+     can. */
+  function fill(candidates, shown) {
+    const picked = [];
+    const kinds = new Set();
+    const brands = new Set();
+    const cost = (item) => (shown.has(item.id) ? 4 : 0) + (kinds.has(item.category) ? 2 : 0) + (brands.has(item.brand) ? 1 : 0);
+    const pool = candidates.slice();
+    while (picked.length < SHELF_SIZE && pool.length) {
+      let best = 0;
+      for (let i = 1; i < pool.length; i++) if (cost(pool[i]) < cost(pool[best])) best = i;
+      const [item] = pool.splice(best, 1);
+      picked.push(item);
+      kinds.add(item.category);
+      brands.add(item.brand);
+    }
+    return picked;
+  }
+
+  const shelfHtml = ({ shelf, picked }, n) => `<section class="discover-block shelf" aria-labelledby="shelf-${n}">
+      <div class="section-head">
+        <div>
+          <p class="eyebrow">${esc(shelf.kicker)}</p>
+          <h2 id="shelf-${n}">${esc(shelf.title)}</h2>
+        </div>
+        <a class="head-link" href="${esc(searchHref(shelf.query))}">Search more<span class="sr-only">: ${esc(shelf.title)}</span></a>
+      </div>
+      ${sampleNote(picked)}
+      <div class="grid shelf-grid">${picked.map(productCard).join('')}</div>
+    </section>`;
+
+  function paintShelves() {
+    if (!shelvesA || !shelvesB) return;
+    const rows = shuffled(Products.all(), DAY + 2);
+    const shown = new Set();
+    const drawn = [];
+    for (const shelf of shuffled(DISCOVER.shelves, DAY + 3)) {
+      if (drawn.length >= SHELVES_SHOWN) break;
+      const candidates = rows.filter((item) => belongs(item, shelf.match || {}));
+      if (candidates.length < SHELF_SIZE) continue;
+      const picked = fill(candidates, shown);
+      picked.forEach((item) => shown.add(item.id));
+      drawn.push({ shelf, picked });
+    }
+    /* half the shelves before the ways in and half after, so the
+       photographs and the words take turns down the page */
+    const half = Math.ceil(drawn.length / 2);
+    shelvesA.innerHTML = drawn.slice(0, half).map((one, i) => shelfHtml(one, i)).join('');
+    shelvesB.innerHTML = drawn.slice(half).map((one, i) => shelfHtml(one, i + half)).join('');
+    bindImageFallback(shelvesA);
+    bindImageFallback(shelvesB);
+  }
+
+  paintIdeas();
+  paintPanel();
+  paintEdits();
+  if (typeof Products !== 'undefined') Products.subscribe(paintShelves);
 })();
 
 /* ---------- data source ----------

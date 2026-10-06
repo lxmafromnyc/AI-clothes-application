@@ -38,6 +38,7 @@ const TYPES = {
   '.mp4': 'video/mp4', '.webm': 'video/webm', '.jpg': 'image/jpeg', '.vtt': 'text/vtt'
 };
 const searchRequests = [];
+const interpretRequests = [];
 const billingRequests = [];
 
 /* The photo the stubbed /api/search hands back. Off-origin by default,
@@ -113,6 +114,7 @@ const server = http.createServer((req, res) => {
       const parsed = (() => { try { return JSON.parse(body); } catch (e) { return {}; } })();
       res.setHeader('Content-Type', 'application/json');
       if (url.pathname === '/api/interpret') {
+        interpretRequests.push(parsed);
         return res.end(JSON.stringify({ source: 'openai', query: 'q', preferences: {
           categories: ['hoodie'], colors: ['Black'], fits: [], occasions: [], brands: [], styles: [],
           keywords: [], maxPrice: null, minPrice: null, season: null, gender: null } }));
@@ -738,6 +740,153 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
       href: 'https://www.nordstrom.com/s/hoodie/1'
     }, 'the card still says what the search returned');
     await page.close();
+  });
+
+  console.log('\ndiscover');
+
+  /* Discover is a set of starting points, and each one is a request
+     handed to the search page. These hold it to that: it offers a lot,
+     across many directions, spends nothing by being opened, shows only
+     catalogue rows as products, and every starting point really runs. */
+  const openDiscover = async (width) => {
+    const page = await openPage('discover.html');
+    if (width) await page.setViewportSize({ width, height: 900 });
+    await page.waitForSelector('.shelf .item-card', { timeout: 10000 });
+    return page;
+  };
+
+  const handedQuery = (href) => new URL(href, 'http://x').searchParams.get('q');
+
+  await test('Discover browses many directions, and every starting point is a request for the search page', async () => {
+    const page = await openDiscover();
+    const tabs = await page.$$eval('.tab', (ns) => ns.map((n) => n.textContent.trim()));
+    ['Category', 'Style', 'Occasion', 'Season', 'Price', 'Colour', 'Material', 'Fit', 'Trends', 'Brands']
+      .forEach((one) => assert.ok(tabs.includes(one), `Browse by should offer ${one}: ${tabs.join(', ')}`));
+
+    const queries = new Set();
+    for (let i = 0; i < tabs.length; i++) {
+      await page.click(`.tab >> nth=${i}`);
+      const hrefs = await page.$$eval('#discover-panel a', (ns) => ns.map((n) => n.getAttribute('href')));
+      assert.ok(hrefs.length >= 10, `${tabs[i]} offers only ${hrefs.length} starting points`);
+      hrefs.forEach((href) => {
+        assert.ok(href.startsWith('find-clothes.html?q='), `${tabs[i]}: ${href} is not a search`);
+        const q = handedQuery(href);
+        assert.ok(q && q.trim().length > 1, `${tabs[i]}: ${href} carries no request`);
+        queries.add(q);
+      });
+      assert.strictEqual(await page.$$eval('#discover-panel .item-card', (ns) => ns.length), 0, 'the index lists ideas, not products');
+    }
+    assert.ok(queries.size >= 200, `only ${queries.size} distinct starting points`);
+
+    /* the rest of the page hands over the same way */
+    const elsewhere = await page.$$eval('.idea, .edit-card a, .shelf .head-link', (ns) => ns.map((n) => n.getAttribute('href')));
+    assert.ok(elsewhere.length >= 30, `${elsewhere.length} other starting points`);
+    elsewhere.forEach((href) => assert.ok(href.startsWith('find-clothes.html?q=') && handedQuery(href), href));
+    await page.close();
+  });
+
+  await test('opening Discover spends no searches, and neither does browsing it', async () => {
+    searchRequests.length = 0;
+    interpretRequests.length = 0;
+    const page = await openDiscover();
+    for (const tab of await page.$$('.tab')) await tab.click();
+    await page.click('#ideas-shuffle');
+    await page.click('#edits-shuffle');
+    await page.waitForTimeout(300);
+    assert.strictEqual(searchRequests.length, 0, 'Discover must not search on its own');
+    assert.strictEqual(interpretRequests.length, 0, 'Discover must not spend AI tokens on its own');
+    await page.close();
+  });
+
+  await test('Discover shelves show catalogue rows only, without repeating themselves', async () => {
+    const catalogue = await (async () => {
+      const page = await openDiscover();
+      const rows = await page.evaluate(() => Products.all().map((p) => ({ url: p.productUrl, name: p.name, category: p.category })));
+      const shelves = await page.$$eval('.shelf', (ns) => ns.map((shelf) => ({
+        title: shelf.querySelector('h2').textContent.trim(),
+        cards: [...shelf.querySelectorAll('.item-card')].map((c) => ({
+          href: c.getAttribute('href'), name: c.querySelector('.item-name').textContent.trim()
+        }))
+      })));
+      await page.close();
+      return { rows, shelves };
+    })();
+    const { rows, shelves } = catalogue;
+    assert.ok(shelves.length >= 4, `${shelves.length} shelves drawn`);
+    const everyCard = shelves.flatMap((s) => s.cards);
+    everyCard.forEach((card) => {
+      const row = rows.find((r) => r.url === card.href);
+      assert.ok(row, `${card.name} (${card.href}) is not a catalogue row`);
+      assert.strictEqual(row.name, card.name);
+    });
+    shelves.forEach((shelf) => {
+      const names = shelf.cards.map((c) => c.href);
+      assert.strictEqual(new Set(names).size, names.length, `${shelf.title} repeats a piece`);
+      const kinds = new Set(shelf.cards.map((c) => rows.find((r) => r.url === c.href).category));
+      assert.ok(kinds.size >= 2, `${shelf.title} is ${kinds.size} kind of thing`);
+    });
+    const distinct = new Set(everyCard.map((c) => c.href)).size;
+    assert.ok(distinct >= Math.min(rows.length, everyCard.length) * 0.75, `${distinct} different pieces across ${everyCard.length} cards`);
+  });
+
+  await test('choosing a starting point on Discover runs that search, once', async () => {
+    searchRequests.length = 0;
+    interpretRequests.length = 0;
+    const page = await openDiscover();
+    await page.click('.tab:has-text("Brands")');
+    const pill = page.locator('#discover-panel a.pill').first();
+    const asked = handedQuery(await pill.getAttribute('href'));
+    await pill.click();
+    await page.waitForURL(/find-clothes\.html/);
+    await page.waitForSelector('.item-card', { timeout: 10000 });
+
+    assert.strictEqual(interpretRequests.length, 1);
+    assert.strictEqual(interpretRequests[0].query, asked, 'the interpreter reads the request Discover handed over');
+    assert.strictEqual(searchRequests.length, 1, 'one choice, one search');
+    assert.strictEqual(await page.$eval('#ask', (n) => n.value), asked, 'the request is in the box, as if typed');
+    assert.ok(/Results for/.test(await page.$eval('.results-query', (n) => n.textContent)));
+    assert.strictEqual(new URL(page.url()).searchParams.get('q'), null, 'the request leaves the address once it has run');
+
+    /* reloading does not spend another search */
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForTimeout(500);
+    assert.strictEqual(searchRequests.length, 1, 'a reload must not search again');
+    await page.close();
+  });
+
+  await test('the Browse by tabs follow the arrow keys', async () => {
+    const page = await openDiscover();
+    await page.focus('.tab[aria-selected="true"]');
+    await page.keyboard.press('ArrowRight');
+    assert.strictEqual(await page.$eval('.tab[aria-selected="true"]', (n) => n.textContent.trim()), 'Style');
+    assert.strictEqual(await page.evaluate(() => document.activeElement.textContent.trim()), 'Style');
+    assert.strictEqual(await page.$eval('#discover-panel', (n) => n.getAttribute('aria-labelledby')), 'tab-style');
+    await page.keyboard.press('End');
+    assert.strictEqual(await page.$eval('.tab[aria-selected="true"]', (n) => n.textContent.trim()), 'Brands');
+    await page.keyboard.press('ArrowRight');
+    assert.strictEqual(await page.$eval('.tab[aria-selected="true"]', (n) => n.textContent.trim()), 'Category');
+    await page.close();
+  });
+
+  await test('Discover fits every width without scrolling sideways', async () => {
+    for (const width of [1440, 1280, 1024, 820, 768, 480, 390, 375, 360]) {
+      const page = await openDiscover(width);
+      const over = await page.evaluate(() => {
+        const edge = document.documentElement.clientWidth;
+        const wide = document.documentElement.scrollWidth > edge;
+        const out = [...document.querySelectorAll('main *')]
+          .filter((n) => getComputedStyle(n).display !== 'none')
+          .filter((n) => { const r = n.getBoundingClientRect(); return r.width && (r.right > edge + 0.5 || r.left < -0.5); })
+          .map((n) => n.className || n.tagName);
+        return { wide, out: out.slice(0, 5) };
+      });
+      assert.ok(!over.wide && !over.out.length, `${width}px overflows: ${over.out.join(', ')}`);
+      /* a shelf is one row at every width */
+      const rows = await page.$$eval('.shelf-grid', (grids) => grids.map((g) =>
+        new Set([...g.querySelectorAll('.item-card')].filter((c) => c.offsetParent).map((c) => Math.round(c.getBoundingClientRect().top))).size));
+      rows.forEach((n) => assert.strictEqual(n, 1, `${width}px: a shelf runs to ${n} rows`));
+      await page.close();
+    }
   });
 
   console.log('\nthe billing interface');

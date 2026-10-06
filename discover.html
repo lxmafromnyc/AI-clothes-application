@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Discover — Fynd</title>
-<meta name="description" content="Browse clothes by style — minimal, classic, streetwear, sporty, bohemian and bold.">
+<meta name="description" content="Browse anything you can wear — clothing, shoes, bags, jewelry and watches — by category, style, occasion, season, price, colour, material, fit, trend and brand.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23111111'/><text x='16' y='23' font-family='Helvetica,Arial,sans-serif' font-size='19' font-weight='700' fill='white' text-anchor='middle'>F</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -39,20 +39,51 @@
 
 <main id="main">
 
+  <!-- Every section below is drawn by assets/app.js from the lists in
+       assets/discover-data.js; this file holds only where each one goes.
+       Choosing anything here opens find-clothes.html with that request,
+       so Discover runs on the same search as the rest of the site. -->
   <div class="container">
-    <header class="page-head">
+    <header class="page-head page-head--discover">
       <h1>Discover</h1>
-      <p>Browse the catalogue by style if you would rather look than describe.</p>
+      <p>Clothing, shoes, bags, jewelry and watches &mdash; browse by what it is, how it looks, where it&rsquo;s going or what it costs. Every idea opens a real search.</p>
     </header>
 
-    <section class="section section--flush">
-      <div class="filter-bar">
-        <div class="filter-pills" role="group" aria-label="Filter by style"></div>
-        <span class="filter-count" id="filter-count" aria-live="polite"></span>
+    <section class="discover-ideas" aria-labelledby="ideas-title">
+      <div class="discover-ideas-head">
+        <h2 class="discover-label" id="ideas-title">Try asking</h2>
+        <button class="link-btn" type="button" id="ideas-shuffle">Show other ideas</button>
       </div>
-      <div id="discover-note"></div>
-      <div class="grid" id="discover-grid"></div>
+      <p class="discover-chips" id="discover-ideas"></p>
     </section>
+
+    <section class="discover-block" aria-labelledby="index-title">
+      <div class="section-head">
+        <div>
+          <h2 id="index-title">Browse by</h2>
+          <p id="index-count">Pick a direction, then a starting point.</p>
+        </div>
+      </div>
+      <div class="discover-tabs" role="tablist" aria-label="Browse by" id="discover-tabs"></div>
+      <div class="discover-panel" id="discover-panel" role="tabpanel"></div>
+    </section>
+
+    <div id="discover-shelves-a"></div>
+
+    <section class="discover-block" aria-labelledby="edits-title">
+      <div class="section-head">
+        <div>
+          <h2 id="edits-title">Ways in</h2>
+          <p>A price, a colour, a fabric, a trip, a mood. Start from whichever is on your mind.</p>
+        </div>
+        <button class="link-btn head-link" type="button" id="edits-shuffle">Show other ways in</button>
+      </div>
+      <ul class="edit-grid" id="discover-edits"></ul>
+    </section>
+
+    <div id="discover-shelves-b"></div>
+
+    <p class="sr-only" id="discover-status" role="status" aria-live="polite"></p>
   </div>
 
 </main>
@@ -80,6 +111,7 @@
 
 <script src="assets/products.js"></script>
 <script src="assets/catalog.js"></script>
+<script src="assets/discover-data.js"></script>
 <script src="assets/app.js"></script>
 </body>
 </html>
