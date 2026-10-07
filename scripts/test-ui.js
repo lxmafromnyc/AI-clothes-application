@@ -793,10 +793,10 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
       if (where === 'detail') assert.ok(/^(Results for|Looking for) /.test(text), `an unexpected detail: "${text}"`);
       assert.ok(!/[{}[\]]|concept|intent|preferences|api\b|json/i.test(own), `${where} exposed internals: "${text}"`);
     }
-    /* "something nice for dinner" names nothing, so nothing is claimed */
+    /* "something nice for dinner" names no garment, colour or shoe, so
+       none is claimed: "dressy" — read from "nice" — is the most it says */
     const dinner = seen.filter((line) => line.query === 'something nice for dinner' && line.where === 'detail').map((line) => line.text);
-    assert.ok(dinner.every((text) => !/^Looking for/.test(text)), dinner.join(' | '));
-    assert.ok(dinner.every((text) => !/dress|black|heel/i.test(text.replace('something nice for dinner', ''))));
+    assert.ok(dinner.every((text) => !/\bdress(es)?\b|\bblack\b|\bheels?\b/i.test(text.replace('something nice for dinner', ''))), dinner.join(' | '));
   });
 
   await test('a fast or cached search goes straight to its results, held up by nothing', async () => {

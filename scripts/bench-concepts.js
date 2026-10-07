@@ -88,8 +88,8 @@ const CASES = [
 
 function grade(title, [, , strong, ok, wrong]) {
   if (wrong && wrong.test(title)) return 0;
-  if (strong.test(title)) return 2;
-  if (ok.test(title)) return 1;
+  if (strong && strong.test(title)) return 2;
+  if (ok && ok.test(title)) return 1;
   return 0;
 }
 
@@ -165,9 +165,14 @@ function stubFetch(calls) {
   };
 }
 
+/* what the garment filter removes after the gate, as opposed to what the
+   gate itself refuses */
+const FILTER_REASONS = new Set(['contradicts-the-requested-garment', 'ruled-out-by-the-request']);
+
 /* ---------- one run, against one checkout ---------- */
 
-async function run(root) {
+async function run(root, cases) {
+  const list = cases || CASES;
   Object.assign(process.env, { OPENWEBNINJA_API_KEY: 'bench', OPENAI_API_KEY: 'bench', FYND_CACHE: 'off' });
   ['PRODUCT_SOURCE', 'SERPER_API_KEY', 'SERPAPI_API_KEY', 'AI_PROVIDER'].forEach((key) => { delete process.env[key]; });
   const from = (file) => require(path.join(root, file));
@@ -191,8 +196,9 @@ async function run(root) {
   const out = { root, readings: {} };
   for (const [name, read] of Object.entries(readings)) {
     out.readings[name] = [];
-    for (const one of CASES) {
+    for (const one of list) {
       const [category, query] = one;
+      const expect = one[5] || {};
       cache.reset();
       const calls = { search: 0, offers: 0, model: 0, other: 0, asked: [] };
       const realFetch = global.fetch;
@@ -208,12 +214,22 @@ async function run(root) {
       }
       const shown = found.products.slice(0, SHOWN);
       const grades = shown.map((p) => grade(p.name, one));
+      const phrase = queryFrom(intent);
+      const removed = Array.isArray(found.semanticRemoved) ? found.semanticRemoved : [];
       out.readings[name].push({
         category,
         query,
         asked: calls.asked,
-        phrase: queryFrom(intent),
+        phrase,
         garments: intent.garments,
+        /* the reading itself went wrong: the phrase asked for what the
+           request ruled out, or missed what it plainly asked for */
+        falseReading: (expect.phraseNot && expect.phraseNot.test(phrase) ? 1 : 0) + (expect.phraseHas && !expect.phraseHas.test(phrase) ? 1 : 0),
+        /* a result the request ruled out, or one over a stated budget */
+        hardViolations: shown.filter((p) => (expect.shownNot && expect.shownNot.test(p.name)) || (intent.maxPrice && p.price > intent.maxPrice)).length,
+        /* products the garment filter removed that the request would
+           have accepted */
+        removedRelevant: removed.filter((r) => grade(r.name, one) > 0).length,
         shown: shown.map((p) => p.name),
         grades,
         relevant: grades.filter((g) => g > 0).length,
@@ -224,13 +240,13 @@ async function run(root) {
         reachedGate: found.records.length,
         /* passed the gate: what is shown, plus what the garment filter
            then removed */
-        verified: found.products.length + (found.rejected['contradicts-the-requested-garment'] || 0),
-        rejectedByGate: Object.entries(found.rejected || {}).filter(([k]) => k !== 'contradicts-the-requested-garment').reduce((sum, [, n]) => sum + n, 0),
-        removedAsAnotherGarment: found.rejected['contradicts-the-requested-garment'] || 0,
+        verified: found.products.length + removed.length,
+        rejectedByGate: Object.entries(found.rejected || {}).filter(([k]) => !FILTER_REASONS.has(k)).reduce((sum, [, n]) => sum + n, 0),
+        removedAsAnotherGarment: removed.length,
         /* why the gate refused what it refused: a record the capped
            lookups never reached has no link, which is not a record the
            gate judged and failed */
-        gateReasons: Object.fromEntries(Object.entries(found.rejected || {}).filter(([k]) => k !== 'contradicts-the-requested-garment'))
+        gateReasons: Object.fromEntries(Object.entries(found.rejected || {}).filter(([k]) => !FILTER_REASONS.has(k)))
       });
     }
   }
@@ -308,4 +324,4 @@ if (require.main === module) {
   main().catch((err) => { console.error(err); process.exit(1); });
 }
 
-module.exports = { CASES, grade, searchPool, run, compare };
+module.exports = { CASES, grade, searchPool, run, compare, SHOWN };

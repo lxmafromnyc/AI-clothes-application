@@ -68,6 +68,8 @@ const { withoutContradictions } = require('./_providers/garment-filter');
 /* the refusal a verified product is counted under when it is plainly a
    different garment from the one asked for */
 const GARMENT_CONTRADICTION = 'contradicts-the-requested-garment';
+/* ...and when it is a garment the request said it did not want */
+const RULED_OUT = 'ruled-out-by-the-request';
 const { readListings } = require('./_providers/retailer-page');
 const { queryFrom, shapeConcepts } = require('./_providers/query');
 const { rankByIntent } = require('./_providers/relevance');
@@ -379,7 +381,10 @@ async function findProducts(provider, intent, limit, stats, deadline) {
      why. */
   const filtered = withoutContradictions(products, intent);
   const refusedAll = Object.assign({}, rejected);
-  if (filtered.removed.length) refusedAll[GARMENT_CONTRADICTION] = filtered.removed.length;
+  const contradicted = filtered.removed.filter((one) => one.kind !== 'ruled-out').length;
+  const excluded = filtered.removed.length - contradicted;
+  if (contradicted) refusedAll[GARMENT_CONTRADICTION] = contradicted;
+  if (excluded) refusedAll[RULED_OUT] = excluded;
 
   /* Last, and only ever reordering: a DESCRIPTIVE request ("something
      like a hoodie but cleaner") was searched with concepts the shopper

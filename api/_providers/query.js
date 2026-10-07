@@ -94,9 +94,13 @@ function queryFrom(intent) {
    of each, and short. A caller can already put any word it likes in
    `keywords`, so nothing here is new reach — but nothing here grows the
    search phrase without bound either. */
-const CONCEPT_MODES = new Set(['comparative', 'hybrid', 'described', 'context', 'open']);
-const CONCEPT_SIGNALS = new Set(['polished', 'minimal', 'cozy', 'casual', 'vintage', 'affordable', 'relaxed', 'fitted', 'short']);
-const CONCEPT_LISTS = { alternatives: 6, search: 3, signals: 9, fit: 3, context: 4, beside: 12, avoid: 12, colors: 4, extra: 3 };
+const CONCEPT_MODES = new Set(['comparative', 'hybrid', 'described', 'context', 'open', 'plain']);
+const CONCEPT_SIGNALS = new Set(['polished', 'minimal', 'cozy', 'casual', 'vintage', 'affordable', 'relaxed', 'fitted', 'short', 'straight', 'regular', 'warm']);
+const CONCEPT_LISTS = {
+  alternatives: 6, search: 3, signals: 12, fit: 3, context: 4, relations: 4, beside: 12, avoid: 12, colors: 4, extra: 3,
+  excluded: 6, without: 24, drop: 16, properties: 4, ambiguous: 3, terms: 10
+};
+const CONCEPT_TEXT = ['anchor', 'style', 'occasion', 'gender'];
 const MAX_CONCEPT_CHARS = 40;
 const MAX_CONCEPT_WORDS = 12;
 const QUERY_CONCEPTS = 3;
@@ -109,11 +113,8 @@ const shortText = (value) => {
 
 function shapeConcepts(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
-  const out = {
-    mode: CONCEPT_MODES.has(text(raw.mode)) ? text(raw.mode) : null,
-    anchor: shortText(raw.anchor) || null,
-    style: shortText(raw.style) || null
-  };
+  const out = { mode: CONCEPT_MODES.has(text(raw.mode)) ? text(raw.mode) : null };
+  for (const field of CONCEPT_TEXT) out[field] = shortText(raw[field]) || null;
   for (const [field, most] of Object.entries(CONCEPT_LISTS)) {
     const seen = [];
     for (const value of listOf(raw[field])) {
@@ -126,7 +127,7 @@ function shapeConcepts(raw) {
     out[field] = seen;
   }
   /* a reading with nothing in it to search for or to take out is no reading */
-  if (!out.mode || !(out.alternatives.length || out.context.length)) return null;
+  if (!out.mode || !(out.mode === 'plain' || out.alternatives.length || out.context.length || out.terms.length || out.without.length)) return null;
   return out;
 }
 
@@ -137,32 +138,66 @@ const describesSetting = (term, concepts) => {
   return own.length > 0 && own.every((word) => concepts.beside.includes(word));
 };
 
+/* a term the request ruled out: "skinny" in "pants that aren't skinny",
+   "black" in "a dress that isn't black". Whoever else read the request —
+   the model included — nothing ruled out is ever asked for. */
+const ruledOut = (term, concepts) => {
+  const own = text(term).toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  return own.length > 0 && own.some((word) => concepts.without.includes(word) || concepts.excluded.includes(word));
+};
+
 function conceptQuery(i, concepts) {
   const parts = [];
-  if (text(i.gender)) parts.push(i.gender);
+  const gender = text(i.gender) || concepts.gender;
+  if (gender) parts.push(gender);
   /* colour: the shopper's own words when the reader found them, else the
      interpreter's colours less the catalogue's families — and never a
-     colour that belongs to the garment it is worn with */
+     colour that belongs to the garment it is worn with, or that the
+     request ruled out */
   const colours = concepts.colors.length
     ? concepts.colors
-    : listOf(i.colors).filter((c) => !COLOUR_FAMILIES.has(text(c).toLowerCase()) && !describesSetting(c, concepts));
-  const descriptors = listOf(i.descriptors).filter((d) => !describesSetting(d, concepts));
-  parts.push(...colours, ...listOf(i.brands), ...descriptors, ...concepts.fit);
+    : listOf(i.colors).filter((c) => !COLOUR_FAMILIES.has(text(c).toLowerCase()) && !describesSetting(c, concepts) && !ruledOut(c, concepts));
+  const brands = listOf(i.brands).filter((b) => !ruledOut(b, concepts));
+  const descriptors = listOf(i.descriptors).filter((d) => !describesSetting(d, concepts) && !ruledOut(d, concepts));
+
+  /* A plain reading carries its own words, already cleaned of the
+     talking and the ruled out, in the shopper's order. Only what the
+     interpreter knew and the reader did not — a colour or brand it has
+     no word for — is added to them. */
+  if (concepts.mode === 'plain') {
+    const own = new Set(concepts.terms.join(' ').split(' '));
+    const missing = (term) => !text(term).toLowerCase().split(/[^a-z0-9]+/).filter(Boolean).every((w) => own.has(w));
+    return dedupe([].concat(gender ? [gender] : [], colours.filter(missing), brands.filter(missing), concepts.terms), concepts);
+  }
+
+  parts.push(...colours, ...brands, ...descriptors, ...concepts.properties, ...concepts.fit);
   if (concepts.style) parts.push(concepts.style);
+  if (concepts.occasion) parts.push(concepts.occasion);
 
   /* a garment the shopper named as the thing, and the kinds of it the
      reader put first, go in; garments named only as a setting never do */
   const searched = concepts.search.length ? concepts.search : concepts.alternatives;
   parts.push(...searched.slice(0, QUERY_CONCEPTS));
-  if (!searched.length) parts.push(...listOf(i.garments));
-  parts.push(...concepts.extra.slice(0, 1));
+  /* no concept: the shopper's own leftover word goes before their
+     garment, as they would say it — "cute top", not "top cute" */
+  if (!searched.length) parts.push(...concepts.extra.slice(0, 1), ...listOf(i.garments));
+  else parts.push(...concepts.extra.slice(0, 1));
+  return dedupe(parts, concepts);
+}
 
+function dedupe(parts, concepts) {
   const words = new Set();
   const terms = [];
   const context = new Set(concepts.context);
-  for (const part of parts) {
+  const wordsOf = (term) => text(term).toLowerCase().split(/[^a-z0-9$]+/).filter(Boolean);
+  /* a modifier a later concept already carries is said once, inside it:
+     not "heavyweight heavyweight shirt" */
+  const said = parts.map(wordsOf);
+  const carriedLater = (at) => said[at].length > 0 && said.slice(at + 1).some((later) => later.length > said[at].length && said[at].every((w) => later.includes(w)));
+  for (const [at, part] of parts.entries()) {
+    if (carriedLater(at)) continue;
     const term = text(part).toLowerCase();
-    if (!term || term.length < 2 || context.has(term)) continue;
+    if (!term || term.length < 2 || context.has(term) || ruledOut(term, concepts)) continue;
     const own = term.split(/[^a-z0-9$]+/).filter(Boolean);
     if (own.length && own.every((word) => words.has(word))) continue;
     if (terms.length && words.size + own.length > MAX_CONCEPT_WORDS) break;

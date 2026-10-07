@@ -32,6 +32,13 @@
      likely means (intent.concepts.alternatives): those are garments the
      request asked for in other words.
 
+   And one removal of a different kind, before any of that: a listing
+   that IS a garment the request ruled out — a coat for "something warm
+   but not a coat", a hoodie for "like a hoodie without the hood" — is
+   removed whatever else it is (intent.concepts.drop). A fit, colour or
+   material ruled out ("not skinny", "isn't black") removes nothing: those
+   are ranked last, by _providers/relevance.js.
+
    Nothing else is removed. A listing the reader cannot read, one it
    calls unproven ("Short Jacket" for a puffer) and one that is only
    pending a detail all stay, where the provider put them. Nothing is
@@ -88,9 +95,34 @@ function requestedGarments(intent) {
      Only ever widening — another garment to be measured against can only
      keep a result, never remove one. */
   const concepts = i.concepts && typeof i.concepts === 'object' ? i.concepts : null;
-  if (concepts) listOf(concepts.alternatives).forEach((one) => add(one));
+  if (concepts) {
+    listOf(concepts.alternatives).forEach((one) => add(one));
+    /* and the everyday words that cover more than the shop word they are
+       filed under: a person asking for "a shirt" in their own words means
+       a tee as often as a button-up, and a "pullover" is any top pulled
+       over the head. Only for a request in a person's own words — one in
+       shop words is held to them as it always was. */
+    const said = listOf(i.keywords).concat(listOf(i.descriptors), listOf(concepts.terms), listOf(concepts.extra)).join(' ').toLowerCase();
+    /* only when the reading chose no concept of its own: "a clean white
+       shirt that looks expensive" was read as an oxford, not a tee */
+    const chose = listOf(concepts.alternatives).some((one) => one !== 'shirt');
+    if (listOf(i.garments).includes('shirt') && !chose && !/button|oxford|dress shirt|collar|flannel/.test(said)) add('t-shirt');
+    if (listOf(i.garments).includes('sweater') && /pullover/.test(said)) add('sweatshirt');
+  }
   return wanted;
 }
+
+/* what the request ruled out, as the words a listing that IS one would
+   carry: "coat" and "parka" for "not a coat", "hood" and "hoodie" for
+   "without the hood" */
+function ruledOutWords(intent) {
+  const concepts = intent && intent.concepts && typeof intent.concepts === 'object' ? intent.concepts : null;
+  return concepts ? listOf(concepts.drop).map((w) => text(w).toLowerCase()).filter(Boolean) : [];
+}
+
+const titleWords = (title) => new Set(String(title || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().split(/\s+/)
+  .map((w) => (w.length > 3 && /s$/.test(w) && !/ss$/.test(w) ? w.slice(0, -1) : w)));
+const names = (title, word) => { const own = titleWords(title); return word.split(' ').every((w) => own.has(w.replace(/s$/, '')) || own.has(w)); };
 
 /* A type the result is a kind of: puffer within jacket and coat, hoodie
    within sweatshirt. */
@@ -127,20 +159,24 @@ function withoutContradictions(products, intent) {
   try {
     wanted = requestedGarments(intent);
   } catch (err) {
-    return { products: list, removed: [], checked: false };
+    wanted = [];
   }
-  if (!wanted.length) return { products: list, removed: [], checked: false };
+  const ruledOut = ruledOutWords(intent);
+  if (!wanted.length && !ruledOut.length) return { products: list, removed: [], checked: false };
 
   const kept = [];
   const removed = [];
   list.forEach((product, at) => {
     const title = text(product && product.name);
+    const entry = (why, kind) => ({ name: title, retailer: product.retailer || product.brand || null, productUrl: product.productUrl, position: at + 1, why, kind });
+    /* first what the shopper said they do not want: a listing that IS a
+       garment they ruled out goes, whatever else it is */
+    const named = title ? ruledOut.find((word) => names(title, word)) : null;
+    if (named) { removed.push(entry(`the request ruled out "${named}"`, 'ruled-out')); return; }
+    if (!wanted.length) { kept.push(product); return; }
     const reasons = title ? wanted.map((phrase) => contradiction(phrase, title)) : [null];
-    if (reasons.every(Boolean)) {
-      removed.push({ name: title, retailer: product.retailer || product.brand || null, productUrl: product.productUrl, position: at + 1, why: reasons[0] });
-    } else {
-      kept.push(product);
-    }
+    if (reasons.every(Boolean)) removed.push(entry(reasons[0], 'contradiction'));
+    else kept.push(product);
   });
   return { products: kept, removed, checked: true };
 }

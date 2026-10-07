@@ -228,16 +228,28 @@ async function main() {
   console.log('\n  — ambiguity is not turned into certainty\n');
 
   await test('"something nice for dinner" gets no garment, colour or shoe it did not ask for', () => {
-    assert.strictEqual(read('something nice for dinner'), null);
+    const c = read('something nice for dinner');
+    /* read as what it says — a dressy something for dinner — and nothing more */
+    assert.strictEqual(c.mode, 'plain');
+    assert.deepStrictEqual(c.alternatives, []);
+    assert.ok(!/dress\b|black|heel/.test(JSON.stringify(c)), JSON.stringify(c));
     const intent = local('something nice for dinner');
     const said = JSON.stringify(intent).toLowerCase();
-    for (const stereotype of ['dress', 'black', 'heel']) assert.ok(!said.includes(stereotype), `${stereotype} was invented`);
-    assert.ok(!/dress|black|heel/.test(queryFrom(intent)));
+    /* a word, not a substring: "dressy" — read from "nice" — is a style, not a dress */
+    for (const stereotype of [/\bdress(es)?\b/, /\bblack\b/, /\bheels?\b/]) assert.ok(!stereotype.test(said), `${stereotype} was invented`);
+    assert.ok(!/\bdress(es)?\b|\bblack\b|\bheels?\b/.test(queryFrom(intent)), queryFrom(intent));
   });
 
-  await test('a description no table covers is left exactly as it was rather than rewritten on a guess', () => {
-    for (const query of ['comfortable running shoes', 'chill pants for lounging', 'a dress for warm weather', 'black thing for the office']) {
-      assert.strictEqual(read(query), null, query);
+  await test('a description no table covers is searched as what it says, never rewritten into a garment it did not name', () => {
+    /* in shop words already: left exactly as it was */
+    assert.strictEqual(read('a dress for warm weather'), null);
+    /* described, but nothing tabled: the talk comes out, nothing goes in */
+    const cases = { 'comfortable running shoes': 'comfortable running shoes', 'chill pants for lounging': 'lounging pants', 'black thing for the office': 'black office outfit' };
+    for (const [query, asked] of Object.entries(cases)) {
+      const c = read(query);
+      assert.strictEqual(c.mode, 'plain', query);
+      assert.deepStrictEqual(c.alternatives, [], `${query} was given a garment it did not name`);
+      assert.strictEqual(phrase(query), asked, query);
     }
   });
 
@@ -597,11 +609,13 @@ async function main() {
     assert.strictEqual(says('something cozy I can wear with jeans'), 'Looking for cozy sweaters, sweatshirts or cardigans to wear with jeans');
     assert.strictEqual(says('that short jacket thing people wear over shirts'), 'Looking for cropped jackets, overshirts or shirt jackets to wear over shirts');
     assert.strictEqual(says('something comfy to wear with my baggy black jeans'), 'Looking for cozy sweaters, sweatshirts or cardigans to wear with jeans');
-    assert.strictEqual(says('a white tee to wear under a blazer'), 'Looking for white t-shirts to wear under blazers');
+    assert.strictEqual(says('a white tee to wear under a blazer'), 'Looking for white tees to wear under blazers');
   });
 
   await test('a request with nothing understood about it gets nothing said about it', () => {
-    assert.strictEqual(says('something nice for dinner'), null);
+    /* "nice" and "dinner" are understood, and said as they were meant */
+    assert.strictEqual(says('something nice for dinner'), 'Looking for dressy dinner pieces');
+    assert.strictEqual(says('something like what my mom wears'), null);
     assert.strictEqual(Interpreter.describe(null, ''), null);
     assert.strictEqual(Interpreter.describe(Interpreter.EMPTY(), 'anything'), null);
   });

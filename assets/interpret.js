@@ -201,6 +201,14 @@
     { anchor: 't-shirt', signals: ['polished'], concepts: ['heavyweight tee', 'knit polo', 'mock neck tee'] },
     { anchor: 'sweatpants', signals: ['polished'], concepts: ['tailored joggers', 'pull on trousers', 'knit trousers'], style: null },
     { anchor: 'jeans', signals: ['polished'], concepts: ['trouser jeans', 'tailored jeans'], style: null },
+    { anchor: 'trousers', signals: ['polished', 'cozy'], concepts: ['pull on trousers', 'stretch trousers', 'tailored trousers'], style: null },
+    { anchor: 'trousers', signals: ['straight'], concepts: ['straight leg pants', 'relaxed trousers', 'wide leg pants'], style: null },
+    { anchor: 'trousers', signals: ['regular'], concepts: ['straight leg pants', 'tailored trousers'], style: null },
+    { anchor: 'jeans', signals: ['straight'], concepts: ['straight leg jeans', 'relaxed jeans', 'wide leg jeans'], style: null },
+    { anchor: 'jeans', signals: ['regular'], concepts: ['straight leg jeans', 'slim jeans'], style: null },
+    { anchor: 'jeans', signals: ['relaxed'], concepts: ['baggy jeans', 'relaxed jeans', 'wide leg jeans'], style: null },
+    { anchor: 'jacket', signals: ['relaxed', 'minimal'], concepts: ['relaxed jacket', 'overshirt', 'chore jacket'], style: 'minimal' },
+    { anchor: 'cardigan', signals: ['polished'], concepts: ['knit blazer', 'sweater jacket', 'structured cardigan'], style: null },
     { anchor: 'trousers', signals: ['relaxed', 'polished'], concepts: ['wide leg trousers', 'relaxed trousers', 'pleated trousers'], style: null },
     { anchor: 'trousers', signals: ['relaxed'], concepts: ['wide leg trousers', 'relaxed trousers'], style: null },
     { anchor: 'trousers', signals: ['polished'], concepts: ['tailored trousers', 'pleated trousers'], style: null },
@@ -208,7 +216,7 @@
     { anchor: 'shorts', signals: ['polished'], concepts: ['tailored shorts', 'pleated shorts'], style: null },
     { anchor: 'dress', signals: ['minimal', 'casual'], concepts: ['shift dress', 't-shirt dress', 'shirt dress'], style: 'casual', avoid: ['gown', 'sequin dress', 'cocktail dress'] },
     { anchor: 'dress', signals: ['casual'], concepts: ['t-shirt dress', 'shirt dress', 'knit dress'], style: 'casual', avoid: ['gown', 'sequin dress', 'cocktail dress'] },
-    { anchor: 'dress', signals: ['minimal'], concepts: ['shift dress', 'column dress', 'slip dress'], style: 'simple' },
+    { anchor: 'dress', signals: ['minimal'], concepts: ['shift dress', 'sheath dress', 'column dress'], style: 'simple' },
     { anchor: 'dress', signals: ['cozy'], concepts: ['sweater dress', 'knit dress'], style: 'cozy' },
     { anchor: 'jacket', signals: ['short'], concepts: ['cropped jacket'] },
     { anchor: 'jacket', signals: ['polished'], concepts: ['tailored jacket', 'blazer'], style: null },
@@ -238,7 +246,7 @@
     sweatshirt: ['crewneck sweatshirt', 'hoodie'],
     sweater: ['knit pullover', 'cardigan'],
     cardigan: ['knit jacket', 'sweater'],
-    jacket: ['overshirt', 'light jacket'],
+    jacket: ['overshirt', 'shirt jacket', 'light jacket'],
     blazer: ['tailored jacket', 'unstructured blazer'],
     bomber: ['varsity jacket', 'harrington jacket'],
     puffer: ['quilted jacket', 'padded jacket'],
@@ -285,6 +293,8 @@
      garment ("that short jacket thing people wear over shirts"). */
   const SETTINGS = [
     { relation: 'over', family: 'top', anchor: 'jacket', concepts: ['overshirt', 'shirt jacket'] },
+    /* a hoodie is bulky: what goes over it is a roomy outer layer, not a cardigan */
+    { relation: 'over', garment: ['hoodie', 'sweatshirt', 'sweater'], concepts: ['denim jacket', 'chore jacket', 'puffer vest'] },
     { relation: 'over', family: 'top', concepts: ['overshirt', 'shirt jacket', 'cardigan', 'light jacket'] },
     { relation: 'over', family: 'dress', concepts: ['cardigan', 'cropped jacket', 'shrug'] },
     { relation: 'under', family: 'outer', concepts: ['knit top', 'fitted tee'] },
@@ -304,6 +314,101 @@
   const OPEN = [
     { signal: 'cozy', concepts: ['sweater', 'sweatshirt', 'cardigan'], style: 'cozy' }
   ];
+
+  /* What a garment is like compared with itself: "a shirt but heavier",
+     "the same vibe as a sweatshirt but thinner", "not a hoodie, something
+     warmer". The word a shop uses for the difference, and what it most
+     likely makes of the garment. A garment no entry covers is searched
+     as the shop word and the garment: "heavyweight cardigan". */
+  const PROPERTY_WORDS = {
+    heavier: 'heavyweight', thicker: 'heavyweight', heavy: 'heavyweight', thick: 'heavyweight', chunkier: 'chunky',
+    thinner: 'lightweight', lighter: 'lightweight', thin: 'lightweight', lightweight: 'lightweight',
+    warmer: 'warm', warm: 'warm', longer: 'longline', softer: 'soft', stretchier: 'stretch', stretchy: 'stretch',
+    breathable: 'breathable'
+  };
+  /* the comparative forms: a request that says one is describing */
+  const COMPARATIVE = new Set(['heavier', 'thicker', 'chunkier', 'thinner', 'lighter', 'warmer', 'longer', 'softer', 'stretchier', 'looser', 'tighter', 'shorter', 'nicer', 'cleaner', 'simpler', 'dressier', 'cheaper']);
+  const PROPERTIES = [
+    { anchor: ['shirt', 't-shirt'], property: 'heavyweight', concepts: ['heavyweight shirt', 'heavyweight tee', 'overshirt'] },
+    { anchor: ['sweatshirt', 'hoodie'], property: 'lightweight', concepts: ['lightweight sweatshirt', 'long sleeve tee', 'french terry sweatshirt'] },
+    { anchor: ['jacket'], property: 'lightweight', concepts: ['lightweight jacket', 'overshirt', 'shirt jacket'] },
+    { anchor: ['jacket', 'coat'], property: 'warm', concepts: ['insulated jacket', 'fleece jacket', 'quilted jacket'] },
+    { anchor: ['sweater', 'cardigan'], property: 'lightweight', concepts: ['fine knit sweater', 'lightweight sweater'] },
+    { anchor: null, property: 'warm', concepts: ['sweater', 'fleece jacket', 'overshirt'], style: 'warm' }
+  ];
+
+  /* Parts of a garment a request can rule out. Ruling out the hood of a
+     hoodie leaves a sweatshirt; ruling out sleeves leaves a tank. */
+  const FEATURES = {
+    hood: { without: ['hood', 'hooded', 'hoodie', 'hoody'], garment: 'hoodie', becomes: ['crewneck sweatshirt', 'pullover sweatshirt', 'knit pullover'] },
+    hoods: 'hood',
+    sleeves: { without: ['long sleeve', 'short sleeve', 'sleeve'], becomes: ['tank top', 'sleeveless top', 'camisole'] },
+    sleeve: 'sleeves',
+    logo: { without: ['logo', 'graphic', 'print', 'printed'], signal: 'minimal' },
+    logos: 'logo', branding: 'logo', graphic: 'logo', graphics: 'logo', print: 'logo', prints: 'logo',
+    zip: { without: ['zip', 'zip up', 'zipper'] }, zipper: 'zip',
+    buttons: { without: ['button'] }, button: 'buttons',
+    pockets: { without: ['pocket'] }, collar: { without: ['collar'] }
+  };
+  const feature = (word) => { const f = FEATURES[word]; return typeof f === 'string' ? FEATURES[f] : f; };
+
+  /* a fit ruled out, and what that leaves: "not skinny" is straight or
+     relaxed, "not too baggy" is a regular, straight fit */
+  const NEGATED_FIT = { skinny: 'straight', slim: 'straight', tight: 'relaxed', fitted: 'relaxed', clingy: 'relaxed', bodycon: 'relaxed', baggy: 'regular', loose: 'regular', oversized: 'regular', wide: null, cropped: null, flared: null };
+  const MATERIAL_WORDS = ['faux leather', 'leather', 'wool', 'polyester', 'denim', 'silk', 'satin', 'linen', 'cotton', 'fleece', 'suede', 'velvet', 'nylon', 'cashmere', 'corduroy', 'fur', 'acrylic'];
+  /* what a ruled-out garment or material is called on a listing */
+  const RULED_OUT_AS = {
+    coat: ['coat', 'overcoat', 'topcoat', 'peacoat', 'parka', 'trench'], jeans: ['jean', 'jeans'], hoodie: ['hoodie', 'hoody', 'hooded'],
+    leather: ['leather', 'moto', 'biker'], 'faux leather': ['leather'], dress: ['dress', 'gown'], sneakers: ['sneaker', 'trainer']
+  };
+  const SHADES = new Set(['dark', 'light', 'bright', 'pale', 'muted', 'loud', 'neon']);
+  const NEGATORS = new Set(['not', 'no', 'without', 'never', 'nothing', 'except', 'minus', 'hates', 'hate', 'less']);
+  const NEGATOR_PAIRS = [['other', 'than'], ['anything', 'but'], ['instead', 'of'], ['rather', 'than']];
+  /* passed over between "not" and what it rules out: "don't want to look
+     too dressed up", "not really a jacket", "isn't super tight" */
+  const PASS_NEGATED = new Set(['too', 'so', 'as', 'super', 'very', 'that', 'overly', 'crazy', 'really', 'insanely', 'ridiculously', 'all', 'quite', 'a', 'an', 'the', 'any', 'much', 'actually', 'even', 'exactly', 'be', 'being', 'it', 'my', 'your', 'his', 'her', 'want', 'wanna', 'to', 'look', 'looking', 'seem', 'feel', 'for']);
+  const UNSURE = new Set(['really', 'quite', 'exactly']);
+
+  /* "fitted arms" is a sleeve, not a fit */
+  const BODY_PARTS = new Set(['arm', 'arms', 'sleeve', 'sleeves', 'waist', 'waistband', 'cuff', 'cuffs', 'ankle', 'ankles', 'shoulder', 'shoulders', 'hips', 'chest', 'neck']);
+
+  /* how a thing should LOOK, which is not what it costs or how old it is */
+  const LOOKS = [
+    ['old looking', 'vintage'], ['older looking', 'vintage'], ['looks old', 'vintage'], ['look old', 'vintage'],
+    ['expensive looking', 'polished'], ['looks expensive', 'polished'], ['look expensive', 'polished'], ['pricey looking', 'polished'],
+    ['high end', 'polished'], ['luxe', 'polished'], ['luxury looking', 'polished'], ['looks professional', 'polished'],
+    ['look professional', 'polished'], ['professional', 'polished']
+  ];
+  /* what an occasion is called in a shop */
+  const OCCASIONS = [
+    ['going out', 'going out'], ['night out', 'going out'], ['clubbing', 'going out'], ['club', 'going out'], ['party', 'going out'],
+    ['date night', 'date night'], ['date', 'date night'], ['wedding', 'wedding guest'], ['job interview', 'office'],
+    ['interview', 'office'], ['work', 'office'], ['office', 'office'], ['gym', 'workout'], ['workout', 'workout'],
+    ['vacation', 'vacation'], ['beach', 'vacation'], ['holiday', 'vacation']
+  ];
+  /* styles people name by who wears them */
+  const TRIBES = {
+    skater: 'skater style', skaters: 'skater style', skate: 'skate', streetwear: 'streetwear', preppy: 'preppy', y2k: 'y2k',
+    grunge: 'grunge', boho: 'boho', bohemian: 'boho', athleisure: 'athleisure', workwear: 'workwear', gorpcore: 'gorpcore',
+    techwear: 'techwear', western: 'western', coquette: 'coquette', cottagecore: 'cottagecore', '70s': '70s', '80s': '80s', '90s': '90s'
+  };
+  /* who it is for, when the request says so: "for my dad", "my boyfriend wants" */
+  const RECIPIENTS = {
+    dad: 'men', father: 'men', husband: 'men', boyfriend: 'men', brother: 'men', son: 'men', grandpa: 'men', him: 'men',
+    mom: 'women', mum: 'women', mother: 'women', wife: 'women', girlfriend: 'women', sister: 'women', daughter: 'women', grandma: 'women', her: 'women'
+  };
+  const GENDER_OF = { men: 'men', mens: 'men', man: 'men', guy: 'men', guys: 'men', boys: 'men', women: 'women', womens: 'women', woman: 'women', ladies: 'women', lady: 'women', girls: 'women' };
+  /* "i want like a jacket": a "like" that compares only after these */
+  const LIKE_LEADS = new Set(['something', 'anything', 'one', 'look', 'looks', 'looking', 'feel', 'feels', 'is', 'thats', 'kinda', 'sorta', 'just', 'more', 'bit', 'similar', 'but', 'vibe', 'style']);
+  /* words that say a person is talking, not naming a product */
+  const CONVERSATIONAL = new Set(('want wanna need needs looking idk kinda sorta something anything thing things stuff really maybe same vibe vibes ' +
+    'can could would please find show give help but thats which who people wear wears wearing goes im me my you your he she his ' +
+    'her hey so um uh just like some outfit clothes kind sort basically honestly literally ' +
+    'cousin cousins friend friends family aunt uncle niece nephew coworker coworkers boss').split(' '));
+  /* vague words a shop never titles anything with, dropped from a plain search */
+  const UNSHOPPABLE = new Set(('nice nicer clean cleaner sloppy polished smarter refined sharper fancier chill lowkey easygoing laidback ' +
+    'put together grown up look looks good').split(' '));
+
 
   /* What the garment should be like. `vague` marks the words that say
      the shopper is describing rather than naming — a shop never titles
@@ -332,7 +437,7 @@
      the shopper ruled out, read as what they want instead. A word with
      no opposite here is only taken out of the request. */
   const NEGATED = {
-    formal: ['casual'], dressy: ['casual'], fancy: ['casual'], stuffy: ['casual'], fussy: ['casual'],
+    formal: ['casual'], dressy: ['casual'], dressed: ['casual'], fancy: ['casual'], stuffy: ['casual'], fussy: ['casual'], overdressed: ['casual'],
     expensive: ['affordable'], pricey: ['affordable'], pricy: ['affordable'], costly: ['affordable'],
     tight: ['relaxed'], clingy: ['relaxed'], fitted: ['relaxed'], skinny: ['relaxed'],
     loud: ['minimal'], flashy: ['minimal'], busy: ['minimal'], extra: ['minimal'],
@@ -347,7 +452,9 @@
   /* the word a signal puts in the search phrase when no entry names one.
      "affordable" puts none: "cheap" in a search phrase brings back junk,
      and a budget the shopper did not state is not invented. */
-  const STYLE_WORD = { polished: 'dressy', minimal: 'minimal', cozy: 'cozy', casual: 'casual', vintage: 'vintage style' };
+  /* the signals whose plain word is itself what a shop titles things with */
+  const SHOP_STYLE = new Set(['casual', 'minimal', 'vintage']);
+  const STYLE_WORD = { polished: 'dressy', minimal: 'minimal', cozy: 'cozy', casual: 'casual', vintage: 'vintage style', warm: 'warm' };
 
   const COLOUR_WORDS = ['off white', 'black', 'white', 'cream', 'ivory', 'beige', 'tan', 'camel', 'brown', 'chocolate', 'khaki', 'olive', 'green', 'sage', 'navy', 'blue', 'grey', 'gray', 'charcoal', 'red', 'burgundy', 'maroon', 'pink', 'purple', 'lilac', 'lavender', 'yellow', 'orange', 'rust', 'gold', 'silver'];
 
@@ -359,7 +466,7 @@
   const ADJECTIVES = new Set(['favorite', 'favourite', 'fav', 'old', 'new', 'dark', 'light', 'wash', 'washed', 'high', 'rise', 'waisted', 'leg', 'mom', 'dad', 'ripped', 'straight', 'wide', 'skinny', 'baggy', 'loose', 'cropped', 'long', 'short', 'denim', 'white', 'black', 'blue', 'grey', 'gray', 'navy', 'cream', 'beige', 'brown', 'tan', 'khaki', 'olive', 'green', 'red', 'pink']);
   const PASSED_OVER = (token) => DETERMINER.has(token) || ADJECTIVES.has(token);
   const RELATION = { with: 'with', match: 'with', matches: 'with', matching: 'with', alongside: 'with', pair: 'with', over: 'over', under: 'under', underneath: 'under', beneath: 'under' };
-  const REFERENCE = [['kind', 'of', 'like'], ['sort', 'of', 'like'], ['similar', 'to'], ['like'], ['resembles'], ['resembling'], ['alternative', 'to'], ['instead', 'of'], ['version', 'of'], ['between'], ['and']];
+  const REFERENCE = [['kind', 'of', 'like'], ['sort', 'of', 'like'], ['same', 'vibe', 'as'], ['same', 'feel', 'as'], ['vibe', 'as'], ['same', 'as'], ['similar', 'to'], ['close', 'to'], ['inspired', 'by'], ['like'], ['resembles'], ['resembling'], ['alternative', 'to'], ['version', 'of'], ['between'], ['and']];
   const GENDER_WORDS = new Set(['men', 'mens', 'man', 'women', 'womens', 'woman', 'ladies', 'lady', 'unisex', 'girls', 'boys', 'guy', 'guys']);
 
   const GARMENT_PHRASES = [
@@ -368,6 +475,136 @@
   ].sort((a, b) => b.word.split(' ').length - a.word.split(' ').length || b.word.length - a.word.length);
 
   const DESCRIPTOR_WORDS = new Set(DESCRIPTORS.flatMap(([name, words]) => [name, ...words]).flatMap((w) => w.split(/[\s-]+/)));
+
+  /* ---------- what a person types, made readable ----------
+
+     Before anything is read, the request is put into one plain form:
+     contractions opened ("aren't" is "are not", so the "not" can be
+     seen), shorthand and slang said in shop words ("trackies" are track
+     pants, "kicks" are sneakers), and plain misspellings of the words
+     this reader knows corrected ("hoddie", "sweter", "jeens").
+
+     Corrections are conservative on purpose. A word is only corrected
+     when it is a known misspelling, or when it is six letters or longer,
+     is not a word this reader already knows, and is one edit away from
+     exactly ONE garment, fit or material word. "Dressed" is not a typo
+     of "dresses", "heather" grey is not "leather", and a short word is
+     never guessed at: "boat" is not a coat. */
+
+  const CONTRACTIONS = {
+    arent: 'are not', isnt: 'is not', dont: 'do not', doesnt: 'does not', didnt: 'did not', wasnt: 'was not',
+    werent: 'were not', wont: 'will not', cant: 'can not', couldnt: 'could not', wouldnt: 'would not',
+    shouldnt: 'should not', aint: 'is not', havent: 'have not', hasnt: 'has not'
+  };
+  const SHORTHAND = {
+    idk: '', tbh: '', ngl: '', imo: '', lol: '', rn: '', pls: 'please', plz: 'please', u: 'you', ur: 'your',
+    sth: 'something', smth: 'something', smthn: 'something', somethin: 'something', bc: 'because', cuz: 'because',
+    trackies: 'track pants', trackie: 'track pants', sweats: 'sweatpants', kicks: 'sneakers', sneaks: 'sneakers',
+    jorts: 'denim shorts', shacket: 'shirt jacket', shackets: 'shirt jackets', quarterzip: 'quarter zip', qzip: 'quarter zip',
+    halfzip: 'half zip', pjs: 'pajamas', tux: 'tuxedo', bf: 'boyfriend', gf: 'girlfriend', fav: 'favourite', fave: 'favourite'
+  };
+  const TYPOS = {
+    hoddie: 'hoodie', hodie: 'hoodie', hoodi: 'hoodie', hooide: 'hoodie', hoodey: 'hoodie', hoodys: 'hoodies',
+    sweter: 'sweater', sweatter: 'sweater', swetter: 'sweater', sweather: 'sweater', swaeter: 'sweater', sweaterr: 'sweater',
+    sweatshrit: 'sweatshirt', sweatshrt: 'sweatshirt', swetshirt: 'sweatshirt', sweetshirt: 'sweatshirt', sweatshirtt: 'sweatshirt',
+    jaket: 'jacket', jackit: 'jacket', jakcet: 'jacket', jacekt: 'jacket', jackt: 'jacket',
+    jeens: 'jeans', jeanz: 'jeans', jenas: 'jeans', pnats: 'pants', pnts: 'pants', pantz: 'pants', pans: 'pants',
+    trowsers: 'trousers', trousres: 'trousers', trouers: 'trousers', shrit: 'shirt', shirtt: 'shirt', sihrt: 'shirt', tshrit: 'tshirt',
+    dres: 'dress', dresss: 'dress', dreess: 'dress', drss: 'dress', skrit: 'skirt', skirtt: 'skirt', sweaters: 'sweaters',
+    blak: 'black', balck: 'black', blck: 'black', blakc: 'black', whte: 'white', wite: 'white', whtie: 'white', whit: 'white',
+    gery: 'grey', gry: 'grey', navey: 'navy', beig: 'beige', biege: 'beige', brwon: 'brown', bronw: 'brown', burgandy: 'burgundy',
+    cardigen: 'cardigan', cardigon: 'cardigan', cardign: 'cardigan', blazor: 'blazer', blaser: 'blazer',
+    sneekers: 'sneakers', sneakrs: 'sneakers', snekers: 'sneakers', legings: 'leggings', leggins: 'leggings',
+    ovesized: 'oversized', oversied: 'oversized', oversizd: 'oversized', baggie: 'baggy', bagy: 'baggy', skiny: 'skinny',
+    skinnie: 'skinny', tite: 'tight', fited: 'fitted', croped: 'cropped', crooped: 'cropped', cozey: 'cozy', comfey: 'comfy',
+    comfi: 'comfy', vintge: 'vintage', vintag: 'vintage', lether: 'leather', leathr: 'leather', denium: 'denim',
+    cashmire: 'cashmere', corderoy: 'corduroy', courdoroy: 'corduroy', linnen: 'linen', pufer: 'puffer', weding: 'wedding',
+    sleve: 'sleeve', sleves: 'sleeves', womans: 'womens', womens: 'womens'
+  };
+  /* the words a misspelling may be corrected TO */
+  const CORRECTABLE = [
+    'hoodie', 'hoodies', 'sweater', 'sweaters', 'sweatshirt', 'sweatshirts', 'jacket', 'jackets', 'cardigan', 'cardigans',
+    'blazer', 'blazers', 'puffer', 'bomber', 'trousers', 'leggings', 'sneakers', 'trainers', 'chinos', 'joggers', 'blouse',
+    'blouses', 'jumper', 'pullover', 'overcoat', 'sandals', 'loafers', 'tshirt', 'dresses', 'skirts', 'shirts',
+    'oversized', 'relaxed', 'skinny', 'fitted', 'cropped', 'leather', 'cotton', 'corduroy', 'cashmere', 'fleece', 'velvet',
+    'vintage', 'wedding', 'turtleneck', 'crewneck'
+  ];
+  /* words that look like a misspelling of one of those, and are not */
+  const NOT_A_TYPO = new Set(('dressed dresser heather feather weather packet racket pocket rocket socket locket buffer puffed ' +
+    'bombed comber somber glazer blazed goodie goodies sweeter button bottom sitting fitting fitter knitted sleeve sleeves sleeved ' +
+    'fleeced dropped chopped flamed loader loaders trainee vandal jumped bumper people shoots loggers logger dollar dollars collar ' +
+    'popular skater skates slater hooded hooked hooped mellow fellow yellow sliver golden colder weeding sweats shirty shorts ' +
+    'sports skirted blouson sneaky leathery cottony relaxing related fitness shifts trousered heathered cropper').split(' '));
+
+  const PREAMBLE = /^(?:(?:hey|hi|hello|so|um|uh|ok|okay|yo|please|plz)\s+|(?:can|could|would) you (?:please )?(?:help me )?(?:find|show|get|recommend|suggest)(?: me)?\s+|(?:please )?(?:help me )?(?:find|show|get|give|recommend|suggest)(?: me)?\s+|(?:i am|im|i m|we are) (?:looking for|searching for|after|trying to find|shopping for)\s+|(?:looking for|searching for|shopping for)\s+|i (?:want|need|would like|wanna)(?: to (?:buy|find|get))?\s+)/;
+  const PREAMBLE_SEEN = /^\s*(hey|hi|hello|so|um|uh|ok|okay|yo|please|plz|can you|could you|would you|help me|find|show|get|give|recommend|suggest|i am|i'm|im|we are|looking for|searching for|shopping for|i want|i need|i would like|i wanna)\b/;
+
+  /* the optimal-string-alignment distance, capped: is `a` one edit from `b` */
+  function oneEditApart(a, b) {
+    if (a === b || Math.abs(a.length - b.length) > 1) return false;
+    let i = 0;
+    while (i < a.length && i < b.length && a[i] === b[i]) i += 1;
+    if (a.length === b.length) {
+      if (a.slice(i + 1) === b.slice(i + 1)) return true;
+      return a[i] === b[i + 1] && a[i + 1] === b[i] && a.slice(i + 2) === b.slice(i + 2);
+    }
+    const [longer, shorter] = a.length > b.length ? [a, b] : [b, a];
+    return longer.slice(i + 1) === shorter.slice(i);
+  }
+
+  let knownWords = null;
+  function known() {
+    if (knownWords) return knownWords;
+    knownWords = new Set([
+      ...GARMENTS.flatMap(([, ws]) => ws.flatMap((w) => w.split(' '))),
+      ...EXTRA_ANCHORS.flatMap(([, ws]) => ws),
+      ...DESCRIPTORS.flatMap(([name, ws]) => [name, ...ws]).flatMap((w) => w.split(/[\s-]+/)),
+      ...SIGNALS.flatMap(([, , phrases]) => phrases).flatMap((w) => w.split(' ')),
+      ...COLOUR_WORDS.flatMap((w) => w.split(' ')),
+      ...FILLER, ...CORRECTABLE, ...NOT_A_TYPO
+    ]);
+    return knownWords;
+  }
+
+  function correct(token) {
+    if (Object.prototype.hasOwnProperty.call(TYPOS, token)) return TYPOS[token];
+    if (token.length < 6 || /\d/.test(token) || known().has(token)) return token;
+    const near = CORRECTABLE.filter((word) => oneEditApart(token, word));
+    return near.length === 1 ? near[0] : token;
+  }
+
+  /* the request in one plain form, and the words that were changed */
+  function normalize(query) {
+    const changed = [];
+    let text = String(query || '').toLowerCase()
+      .replace(/\bw\/o\b/g, ' without ').replace(/\bw\//g, ' with ').replace(/&/g, ' and ')
+      .replace(/n['‘’]t\b/g, 'nt')
+      .replace(/['‘’]/g, ' ')
+      .replace(/\b1\s*\/\s*4\b/g, 'quarter').replace(/\b1\s*\/\s*2\b/g, 'half')
+      .replace(/[^a-z0-9$\s-]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    text = text.split(' ').map((token) => {
+      const bare = token.replace(/^-+|-+$/g, '');
+      let out = bare;
+      if (Object.prototype.hasOwnProperty.call(CONTRACTIONS, bare)) out = CONTRACTIONS[bare];
+      else if (Object.prototype.hasOwnProperty.call(SHORTHAND, bare)) out = SHORTHAND[bare];
+      else if (/^[a-z]+$/.test(bare)) out = correct(bare);
+      if (out !== bare) changed.push([bare, out]);
+      return out;
+    }).filter(Boolean).join(' ');
+    /* "find me", "i'm looking for", "can you show me": how a request is
+       asked, not what it asks for. Taken off the front, so a request in
+       shop words behind them is read as exactly that */
+    let before;
+    do {
+      before = text;
+      text = text.replace(PREAMBLE, '').trim();
+    } while (text !== before && text);
+    if (!text) text = before;
+    if (text.length < String(query || '').trim().length && !changed.length && PREAMBLE_SEEN.test(String(query || '').toLowerCase())) changed.push(['preamble', '']);
+    return { text, changed };
+  }
 
   const words = (text) => text.split(' ').filter(Boolean);
   const unique = (list) => list.filter((one, at) => one && list.indexOf(one) === at);
@@ -381,21 +618,46 @@
     return own.some((word) => said.includes(` ${word.replace(/-/g, ' ')} `)) || said.includes(` ${anchor} `);
   }
 
-  function readConcepts(query) {
-    let text = ` ${String(query || '').toLowerCase()
-      .replace(/\b1\s*\/\s*4\b/g, 'quarter').replace(/\b1\s*\/\s*2\b/g, 'half')
-      .replace(/[‘’']/g, '')
-      .replace(/[‐-―-]+/g, ' ')
-      .replace(/[^a-z0-9$\s]+/g, ' ')
-      .replace(/\bon top of\b/g, 'over')
-      .replace(/\s+/g, ' ')
-      .trim()} `;
-    if (!text.trim()) return null;
-    const consumed = new Set();
-    const tokens = words(text);
-    const markWords = (phrase) => words(phrase).forEach((w) => consumed.add(w));
+  /* The words of a request that are ruled out, and what each rules out:
+     "not skinny", "without the hood", "but not a coat", "isn't black",
+     "he hates logos". A garment named after "not really" is not ruled out
+     but compared with: "a jacket that isn't really a jacket". Shared by
+     the concept reader and the page's local reader, so the two cannot
+     disagree about what was ruled out. */
+  function negationsIn(tokens, mentions) {
+    const out = { at: new Set(), garments: [], unsure: [], features: [], fits: [], colors: [], materials: [], shades: [], signals: [], properties: [] };
+    for (let i = 0; i < tokens.length; i += 1) {
+      let after = -1;
+      if (NEGATORS.has(tokens[i])) after = i + 1;
+      else if (NEGATOR_PAIRS.some(([a, b]) => tokens[i] === a && tokens[i + 1] === b)) after = i + 2;
+      if (after === -1) continue;
+      /* "no" as a whole answer, "not sure": nothing is ruled out */
+      let j = after;
+      let unsure = false;
+      while (j < tokens.length && j < after + 4 && PASS_NEGATED.has(tokens[j])) { if (UNSURE.has(tokens[j])) unsure = true; j += 1; }
+      const word = tokens[j];
+      if (!word) continue;
+      const span = (to) => { for (let k = i; k <= to; k += 1) out.at.add(k); };
+      const mention = mentions.find((m) => m.at === j);
+      if (mention) {
+        if (unsure) { out.unsure.push(mention.name); mention.unsure = true; }
+        else { out.garments.push(mention.name); mention.ruledOut = true; }
+        span(mention.end - 1);
+        continue;
+      }
+      const material = MATERIAL_WORDS.find((m) => tokens.slice(j, j + m.split(' ').length).join(' ') === m);
+      if (feature(word)) { out.features.push(word); span(j); }
+      else if (Object.prototype.hasOwnProperty.call(NEGATED_FIT, word)) { out.fits.push(word); if (NEGATED_FIT[word]) out.signals.push(NEGATED_FIT[word]); span(j); }
+      else if (Object.prototype.hasOwnProperty.call(NEGATED, word)) { out.signals.push(...NEGATED[word]); if (/^(heavy|bulky|thick)$/.test(word)) out.properties.push('lightweight'); span(j); }
+      else if (/^(heavy|thick|bulky)$/.test(word)) { out.properties.push('lightweight'); span(j); }
+      else if (COLOUR_WORDS.includes(word)) { out.colors.push(word); span(j); }
+      else if (SHADES.has(word)) { out.shades.push(word); span(j); }
+      else if (material) { out.materials.push(material); span(j + material.split(' ').length - 1); }
+    }
+    return out;
+  }
 
-    /* the garments, where each stands, and how each is named */
+  function mentionsIn(tokens) {
     const taken = new Array(tokens.length).fill(false);
     const mentions = [];
     for (const phrase of GARMENT_PHRASES) {
@@ -407,11 +669,32 @@
         mentions.push({ name: phrase.name, at, end: at + size });
       }
     }
-    mentions.sort((a, b) => a.at - b.at);
+    return mentions.sort((a, b) => a.at - b.at);
+  }
 
-    let vague = false;
+  function readConcepts(query) {
+    const plainText = normalize(query).text.replace(/[‐-―-]+/g, ' ').replace(/\bon top of\b/g, 'over').replace(/\s+/g, ' ').trim();
+    if (!plainText) return null;
+    let text = ` ${plainText} `;
+    const consumed = new Set();
+    const tokens = words(plainText);
+    const markWords = (phrase) => words(phrase).forEach((w) => consumed.add(w));
+    const phraseAt = (phrase) => {
+      const own = words(phrase);
+      for (let at = 0; at + own.length <= tokens.length; at += 1) if (tokens.slice(at, at + own.length).join(' ') === phrase) return at;
+      return -1;
+    };
+
+    /* the garments, where each stands, and what was ruled out */
+    const mentions = mentionsIn(tokens);
+    const ruled = negationsIn(tokens, mentions);
+    let vague = ruled.at.size > 0;
+
     const settingWords = new Set();
     for (const mention of mentions) {
+      for (let k = mention.at; k < mention.end; k += 1) consumed.add(tokens[k]);
+      if (mention.ruledOut) { mention.role = 'ruled-out'; continue; }
+      if (mention.unsure) { mention.role = 'reference'; continue; }
       let back = mention.at - 1;
       /* "with my favourite black jeans": what stands between the garment
          and the word that says how it is named is passed over */
@@ -432,33 +715,77 @@
              being compared with it, and only when a pair is being read */
           if (phrase[0] === 'and' && !mentions.some((m) => m !== mention && m.end <= mention.at)) break;
           if (phrase[0] === 'and' && !/\bbetween\b|\bthing\b|\bhalf\b|\bcross\b|\bhybrid\b|\bmix\b/.test(text)) break;
+          /* "i want like a jacket", "idk like a loose clean jacket": a
+             "like" that only fills a pause compares nothing. It compares
+             after "something", "looks", "feels", after another garment,
+             or opening a request that goes on to say how it differs */
+          if (phrase.length === 1 && phrase[0] === 'like') {
+            const lead = tokens[start - 1];
+            const afterGarment = mentions.some((m) => m.end === start);
+            const opening = start === 0 && /\b(but|more|less|without|except)\b/.test(text);
+            if (!(LIKE_LEADS.has(lead) || afterGarment || opening)) break;
+          }
           mention.role = 'reference';
           break;
         }
       }
       if (THING.has(tokens[mention.end])) { mention.thing = true; vague = true; }
-      for (let k = mention.at; k < mention.end; k += 1) consumed.add(tokens[k]);
     }
-    /* a garment named both as the thing and as the setting stays the thing */
-    const targets = unique(mentions.filter((m) => m.role === 'target').map((m) => m.name));
+    const unsureNames = new Set(mentions.filter((m) => m.unsure).map((m) => m.name));
+    /* a garment named both as the thing and as the setting stays the
+       thing; one the shopper doubts ("isn't really a jacket") is only
+       compared with */
+    const targets = unique(mentions.filter((m) => m.role === 'target').map((m) => m.name)).filter((n) => !unsureNames.has(n));
     const references = unique(mentions.filter((m) => m.role === 'reference').map((m) => m.name)).filter((n) => !targets.includes(n));
     const settings = mentions.filter((m) => m.role === 'context' && !targets.includes(m.name) && !references.includes(m.name));
     if (references.length || settings.length) vague = true;
 
-    /* what it should be like — read with the settings taken out, since
-       "baggy" in "with my baggy jeans" describes the jeans */
-    if (settingWords.size) text = ` ${tokens.map((token, at) => (settingWords.has(at) ? '|' : token)).join(' ')} `;
-    /* the ruled-out first, then the rest */
+    /* everything below reads the request with the settings and the
+       ruled-out words taken out: "baggy" in "with my baggy jeans"
+       describes the jeans, and "skinny" in "not skinny" describes nothing
+       the shopper wants */
+    const blanked = new Set([...settingWords, ...ruled.at]);
+    /* "fitted arms" is a sleeve, not a fit */
+    tokens.forEach((token, at) => { if (BODY_PARTS.has(token) && at > 0 && FIT_WORD[tokens[at - 1]]) { blanked.add(at - 1); blanked.add(at); } });
+    text = ` ${tokens.map((token, at) => (blanked.has(at) ? '|' : token)).join(' ')} `;
+
     const signals = [];
+    const vagueSignals = new Set();
     const fit = [];
-    const add = (signal) => { if (!signals.includes(signal)) signals.push(signal); };
-    text = text.replace(NEGATION, (whole, intensifiers, word) => {
-      if (!Object.prototype.hasOwnProperty.call(NEGATED, word)) return whole;
-      NEGATED[word].forEach(add);
-      if (NEGATED[word].length) vague = true;
-      markWords(whole);
-      return ' ';
+    const add = (signal, isVague) => { if (!signals.includes(signal)) signals.push(signal); if (isVague) vagueSignals.add(signal); };
+    ruled.signals.forEach((signal) => add(signal, true));
+    if (ruled.features.some((f) => feature(f).signal)) ruled.features.forEach((f) => { if (feature(f).signal) add(feature(f).signal, true); });
+
+    /* how it should look, which is not what it costs */
+    for (const [phrase, signal] of LOOKS) {
+      if (!new RegExp(`(^|\\s)${phrase}(?=\\s|$)`).test(text)) continue;
+      add(signal, true);
+      vague = true;
+      markWords(phrase);
+      text = text.replace(new RegExp(`(^|\\s)${phrase}(?=\\s|$)`, 'g'), '$1 ');
+    }
+    let occasion = null;
+    for (const [phrase, said] of OCCASIONS) {
+      if (occasion || !new RegExp(`(^|\\s)${phrase}(?=\\s|$)`).test(text)) continue;
+      occasion = said;
+      markWords(phrase);
+    }
+    const tribe = tokens.map((token) => TRIBES[token]).find(Boolean) || null;
+    if (tribe) tokens.forEach((token) => { if (TRIBES[token]) consumed.add(token); });
+
+    const properties = [];
+    tokens.forEach((token, at) => {
+      if (blanked.has(at) || !PROPERTY_WORDS[token]) return;
+      /* "warm weather" is a season, "light blue" a colour */
+      if (/^(weather|days|climate|season|temps|temperatures|wash)$/.test(tokens[at + 1] || '')) return;
+      if (token === 'heavy' && tokens[at + 1] === 'weight') return;
+      properties.push(PROPERTY_WORDS[token]);
+      consumed.add(token);
+      if (COMPARATIVE.has(token)) vague = true;
     });
+    ruled.properties.forEach((p) => properties.push(p));
+    if (properties.includes('warm')) add('warm', false);
+
     const entries = SIGNALS.flatMap(([signal, isVague, phrases]) => phrases.map((phrase) => ({ signal, isVague, phrase })))
       .sort((a, b) => b.phrase.length - a.phrase.length);
     const hit = new Set();
@@ -468,7 +795,7 @@
       /* "short sleeve" is a sleeve, not a short garment; "soft pink" is a colour */
       if (signal === 'short' && new RegExp(`\\b${phrase} sleeve`).test(text)) continue;
       if (phrase === 'soft' && new RegExp(`\\bsoft (${COLOUR_WORDS.join('|')})\\b`).test(text)) continue;
-      add(signal);
+      add(signal, isVague);
       if (isVague) vague = true;
       if (signal === 'relaxed' || signal === 'fitted') fit.push(FIT_WORD[phrase] || phrase);
       markWords(phrase);
@@ -478,15 +805,35 @@
        "cleaner" is both polished and minimal */
     hit.forEach((phrase) => { text = text.replace(new RegExp(`(^|\\s)${phrase}(?=\\s|$)`, 'g'), '$1 '); });
 
+    /* "oversized but fitted": a contradiction is not settled by picking
+       one; neither is searched, and the ranking does not hold to either */
+    const ambiguous = [];
+    const loose = fit.some((f) => /relaxed|oversized|baggy/.test(f));
+    const close = fit.some((f) => /slim|skinny|bodycon/.test(f));
+    if (loose && close) { ambiguous.push('fit'); fit.length = 0; }
+
     const colors = [];
     tokens.forEach((token, at) => {
       const colour = token === 'off' && tokens[at + 1] === 'white' ? 'off white' : token;
-      if (!COLOUR_WORDS.includes(colour) || settingWords.has(at) || colors.includes(colour)) return;
+      if (!COLOUR_WORDS.includes(colour) || blanked.has(at) || colors.includes(colour)) return;
       colors.push(colour);
       markWords(colour);
     });
+    /* "black but not too dark": the colour stands, but it is not held to */
+    if (colors.length && ruled.shades.length) ambiguous.push('colour');
+
+    /* who it is for */
+    let gender = null;
+    tokens.forEach((token, at) => {
+      if (GENDER_OF[token] && !gender) gender = GENDER_OF[token];
+      if (!RECIPIENTS[token] || gender) return;
+      const said = tokens.slice(Math.max(0, at - 2), at).join(' ');
+      if (/\bfor( my| our)?$/.test(said) || /^(wants|needs|likes|loves|would|hates)$/.test(tokens[at + 1] || '')) gender = RECIPIENTS[token];
+    });
 
     const named = targets.concat(references);
+    const talking = tokens.some((token, at) => !blanked.has(at) && CONVERSATIONAL.has(token));
+    if (talking || ruled.at.size || properties.length && tokens.some((t) => COMPARATIVE.has(t))) vague = true;
     if (!named.length && VAGUE_NOUN.test(text) && signals.length) vague = true;
     if (!vague) return null;
 
@@ -496,9 +843,16 @@
     let alternatives = [];
     let avoid = [];
     let style;
-    const fits = (entry) => entry.signals.every((s) => signals.includes(s));
+    const fits = (entry) => entry.signals.every((sig) => signals.includes(sig))
+      /* a rule is about how a thing was DESCRIBED: "casual" or "minimal"
+         said in so many words is a shop word to search, not a reason to
+         swap the garment */
+      && !entry.signals.every((sig) => SHOP_STYLE.has(sig) && !vagueSignals.has(sig));
     const described = (garment) => DESCRIBED.filter((entry) => entry.anchor === garment && fits(entry))
       .sort((a, b) => b.signals.length - a.signals.length)[0];
+    const property = properties[0] || null;
+    const propertyRule = (garment) => (property ? PROPERTIES.find((rule) => rule.property === property && (rule.anchor ? rule.anchor.includes(garment) : !garment)) : null);
+    const featureOut = ruled.features.map(feature).find((f) => f.becomes);
 
     const hybrid = named.length >= 2 && (references.length || mentions.some((m) => m.thing) || /\bbetween\b|\bhalf\b|\bcross\b|\bhybrid\b/.test(text))
       ? HYBRIDS.find((entry) => entry.pair.every((g) => named.includes(g)))
@@ -517,7 +871,17 @@
       anchor = narrowed ? references[0] : targets[0] || references[0];
       mode = uncertain ? 'comparative' : 'described';
       const entry = described(anchor);
-      if (entry) {
+      const byProperty = propertyRule(anchor);
+      if (featureOut && (!featureOut.garment || featureOut.garment === anchor || !targets.length)) {
+        /* "a hoodie without the hood" is a sweatshirt; what was ruled out
+           is no longer the garment, even as a comparison */
+        alternatives = featureOut.becomes.slice();
+        if (featureOut.garment === anchor) { mode = 'comparative'; anchor = null; }
+      } else if (byProperty) {
+        alternatives = byProperty.concepts.slice();
+      } else if (property && property !== 'warm') {
+        alternatives = [`${property} ${anchor}`];
+      } else if (entry) {
         alternatives = entry.concepts.slice();
         avoid = (entry.avoid || []).slice();
         /* an entry may say "no style word": its concepts already carry it */
@@ -529,48 +893,100 @@
         const rule = SETTINGS.find((one) => one.relation === setting.relation && one.family === FAMILY[setting.name] && one.anchor === anchor);
         if (rule) alternatives = alternatives.concat(rule.concepts);
       }
-      /* Nothing known about this garment described this way, and nothing
-         worn with it to take out of the search: there is no concept to
-         offer, so the request goes the way it always went rather than
-         being rewritten on a guess. */
-      if (!alternatives.length && !settings.length) return null;
-      /* the garment asked for stays a concept: a minimal hoodie answers
-         "like a hoodie but cleaner", only after what it was compared to */
-      if (!alternatives.includes(anchor)) alternatives.push(anchor);
-      /* a request that NAMES its garment is held to it: what is a kind of
-         that garment comes first, everything else after */
-      if (mode === 'described') {
-        alternatives = alternatives.filter((name) => kindOf(name, anchor)).concat(alternatives.filter((name) => !kindOf(name, anchor)));
+      if (alternatives.length) {
+        /* the garment asked for stays a concept: a minimal hoodie answers
+           "like a hoodie but cleaner", only after what it was compared to */
+        if (anchor && !alternatives.includes(anchor)) alternatives.push(anchor);
+        /* a request that NAMES its garment is held to it: what is a kind of
+           that garment comes first, everything else after */
+        if (mode === 'described') {
+          alternatives = alternatives.filter((name) => kindOf(name, anchor)).concat(alternatives.filter((name) => !kindOf(name, anchor)));
+        }
+      } else if (!settings.length) {
+        /* nothing known about this garment described this way: it is
+           searched as what it says, with the talking taken out */
+        mode = 'plain';
       }
     } else if (settings.length) {
       mode = 'context';
       const setting = settings[0];
-      const rule = SETTINGS.find((one) => !one.anchor && one.relation === setting.relation && one.family === FAMILY[setting.name] && (!one.signal || signals.includes(one.signal)));
+      const rule = SETTINGS.find((one) => !one.anchor && one.garment && one.relation === setting.relation && one.garment.includes(setting.name))
+        || SETTINGS.find((one) => !one.anchor && !one.garment && one.relation === setting.relation && one.family === FAMILY[setting.name] && (!one.signal || signals.includes(one.signal)));
       if (rule) { alternatives = rule.concepts.slice(); if ('style' in rule) style = rule.style; }
     } else {
       mode = 'open';
-      const rule = OPEN.find((one) => signals.includes(one.signal));
+      const byProperty = propertyRule(null);
+      const rule = byProperty || OPEN.find((one) => signals.includes(one.signal));
       /* "something nice for dinner": no garment, and no signal that
-         points at one. Broad was what was asked, so broad is what is
-         searched — the request goes the way it always went, with no
-         garment, colour or occasion added to it. */
-      if (!rule) return null;
-      alternatives = rule.concepts.slice();
-      if ('style' in rule) style = rule.style;
+         points at one. It is searched as what it says, with no garment,
+         colour or shoe added to it. */
+      if (rule) {
+        alternatives = rule.concepts.slice();
+        if ('style' in rule) style = rule.style;
+      } else {
+        mode = 'plain';
+      }
     }
     if (style === undefined) {
-      const signal = signals.find((s) => STYLE_WORD[s]);
+      const signal = signals.find((sig) => STYLE_WORD[sig]);
       style = signal ? STYLE_WORD[signal] : null;
     }
+    if (tribe && !style) style = tribe;
 
     /* what is left of the request that a search engine could still use:
        "dinner", "festival", a word nothing above knows */
     const extra = [];
     tokens.forEach((token, at) => {
-      if (settingWords.has(at) || consumed.has(token) || FILLER.has(token) || GENDER_WORDS.has(token) || DESCRIPTOR_WORDS.has(token)) return;
+      if (blanked.has(at) || consumed.has(token) || FILLER.has(token) || CONVERSATIONAL.has(token) || UNSHOPPABLE.has(token)) return;
+      if (GENDER_OF[token] || RECIPIENTS[token] || DESCRIPTOR_WORDS.has(token)) return;
       if (token.length < 3 || /\d/.test(token) || token.includes('$')) return;
       if (!extra.includes(token)) extra.push(token);
     });
+
+    /* A plain reading: the request as said, with the talking, the ruled
+       out and the settings taken out, shop words for the rest ("heavier"
+       is heavyweight, "skaters" is skater style), and the garment last:
+       "i want a shirt thats kinda oversized" is "oversized shirt". */
+    let terms = [];
+    if (mode === 'plain') {
+      const garmentAt = new Set(mentions.filter((m) => m.role === 'target' || m.role === 'reference').flatMap((m) => Array.from({ length: m.end - m.at }, (x, k) => m.at + k)));
+      const kept = [];
+      const garmentWords = [];
+      const occasionAt = occasion ? OCCASIONS.filter(([, said]) => said === occasion).map(([phrase]) => phraseAt(phrase)).find((at) => at !== -1) : -1;
+      /* "long sleeve", "wide leg", "high waisted" are one thing each */
+      const joined = new Map();
+      DESCRIPTORS.forEach(([name, ws]) => ws.filter((w) => w.includes(' ')).forEach((w) => {
+        const at = phraseAt(w);
+        if (at !== -1 && !blanked.has(at)) joined.set(at, { term: name, size: w.split(' ').length });
+      }));
+      let skipTo = -1;
+      tokens.forEach((token, at) => {
+        if (at < skipTo) return;
+        if (joined.has(at)) { kept.push(joined.get(at).term); skipTo = at + joined.get(at).size; return; }
+        if (blanked.has(at)) return;
+        if (garmentAt.has(at)) { garmentWords.push(token); return; }
+        if (at === occasionAt) { kept.push(occasion); return; }
+        if (TRIBES[token]) { kept.push(TRIBES[token]); return; }
+        if (PROPERTY_WORDS[token] && properties.length) { kept.push(PROPERTY_WORDS[token]); return; }
+        if (FILLER.has(token) && !COLOUR_WORDS.includes(token) && !FIT_WORD[token]) return;
+        if (CONVERSATIONAL.has(token) || UNSHOPPABLE.has(token) || GENDER_OF[token] || RECIPIENTS[token]) return;
+        if (consumed.has(token) && !COLOUR_WORDS.includes(token) && !FIT_WORD[token] && !hit.has(token) && !DESCRIPTOR_WORDS.has(token)) return;
+        if (hit.has(token) && !SIGNALS.some(([, isVague, phrases]) => !isVague && phrases.includes(token)) && !/^(comfy|comfortable|cozy|cosy|soft|simple|plain|basic|casual|cute|warm|elegant|dressy|classy|elevated)$/.test(token)) return;
+        if (/\d/.test(token) || token.includes('$') || token.length < 2) return;
+        /* "oversized but fitted": neither side of a contradiction is searched */
+        if (ambiguous.includes('fit') && FIT_WORD[token]) return;
+        kept.push(token);
+      });
+      ruled.properties.forEach((p) => kept.push(p));
+      /* all talk and nothing to search ("something like what my mom
+         wears"): the reading says so, and the search is as broad as the
+         request — never the talk itself, which would find mom jeans */
+      if (!garmentWords.length && signals.length && STYLE_WORD[signals[0]] && !kept.includes(STYLE_WORD[signals[0]])) kept.unshift(STYLE_WORD[signals[0]]);
+      /* with no garment at all, the search stays on clothes */
+      if (!garmentWords.length && (occasion || tribe)) kept.push('outfit');
+      terms = unique(kept.concat(garmentWords)).slice(0, 10);
+      anchor = targets[0] || null;
+    }
 
     alternatives = unique(alternatives.map(concept)).slice(0, 6);
     /* what goes into the search phrase: for a request that named its
@@ -580,6 +996,16 @@
     const search = mode === 'described'
       ? alternatives.filter((name) => kindOf(name, anchor)).slice(0, 3)
       : alternatives.slice(0, 3);
+
+    /* what a listing must not be, in the words a listing would use */
+    const ruledOutGarments = unique(ruled.garments.concat(featureOut && featureOut.garment ? [featureOut.garment] : []));
+    const without = unique([
+      ...ruledOutGarments.flatMap((g) => RULED_OUT_AS[g] || (GARMENTS.find(([n]) => n === g) || [null, [g]])[1].filter((w) => !w.includes(' '))),
+      ...ruled.features.flatMap((f) => feature(f).without),
+      ...ruled.fits.map((f) => (f === 'tight' ? 'tight' : f)),
+      ...ruled.colors,
+      ...ruled.materials.flatMap((m) => RULED_OUT_AS[m] || [m])
+    ]);
 
     return {
       mode,
@@ -601,7 +1027,23 @@
         .filter((word) => !DETERMINER.has(word))),
       avoid: unique(avoid.map(concept)),
       colors,
-      extra: extra.slice(0, 3)
+      extra: extra.slice(0, 3),
+      /* what the request rules out: the garments, and every word a listing
+         that is one of them, or has the feature, fit, colour or material
+         ruled out, would carry */
+      excluded: ruledOutGarments,
+      without,
+      /* the words that make a listing BE what was ruled out — a coat for
+         "not a coat", a hoodie for "without the hood" — as opposed to
+         only having a fit or colour that was: those are ranked down,
+         these are removed */
+      drop: unique(ruledOutGarments.flatMap((g) => RULED_OUT_AS[g] || (GARMENTS.find(([n]) => n === g) || [null, [g]])[1].filter((w) => !w.includes(' ')))),
+      properties: unique(properties),
+      occasion,
+      gender,
+      ambiguous,
+      /* a plain reading's own search words, in order */
+      terms
     };
   }
 
@@ -683,8 +1125,15 @@
   /* the concepts as one phrase: "wide-leg, relaxed or pleated trousers"
      when they share a garment, "overshirts, shirt jackets or chore
      jackets" when they do not */
-  function conceptsSaid(names) {
-    const said = names.map((name) => SAID_AS[name] || name);
+  const COMPOUNDS = /\b(straight|wide|long|short|zip|pull|low|mock|top|crew|v|high|quarter|half) (leg|sleeve|up|on|top|neck|handle|waisted|zip)\b/g;
+  const hyphenate = (phrase) => String(phrase).replace(COMPOUNDS, '$1-$2').replace(/\b(vintage|skater) style\b/g, '$1-style');
+  const OCCASION_SAID = { 'going out': 'for going out', 'date night': 'for a date night', 'wedding guest': 'for a wedding', office: 'for work', workout: 'for working out', vacation: 'for a vacation' };
+
+  function conceptsSaid(given) {
+    /* the bare garment adds nothing beside kinds of it: not "tailored
+       trousers or trousers" */
+    const names = given.length > 1 ? given.filter((name) => !given.some((other) => other !== name && other.endsWith(` ${name}`))) : given;
+    const said = names.map((name) => hyphenate(SAID_AS[name] || name));
     const heads = said.map((one) => one.split(' ').pop());
     if (said.length > 1 && heads.every((head) => head === heads[0])) {
       const kinds = unique(said.map((one) => one.split(' ').slice(0, -1).join(' ')).filter(Boolean));
@@ -715,10 +1164,26 @@
     parts.push(...ownColours);
 
     let thing;
-    if (c && list(c.alternatives).length) {
+    if (c && c.mode === 'plain') {
+      /* a plain reading says what it will search, in the shopper's own
+         words, with the garment — if there is one — said as many */
+      const occasions = list(c.terms).filter((t) => OCCASION_SAID[t]);
+      const terms = list(c.terms).filter((t) => t !== 'outfit' && !OCCASION_SAID[t]);
+      if (!terms.length && !occasions.length && !priceSaid(p)) return null;
+      const last = terms[terms.length - 1];
+      const garment = last && (GARMENTS.some(([, ws]) => ws.includes(last)) || EXTRA_ANCHORS.some(([, ws]) => ws.includes(last)));
+      const shown = terms.map((t) => hyphenate(SAID_AS[t] || t.replace(/-/g, ' ')));
+      if (garment) shown[shown.length - 1] = garmentSaid(GARMENT_NAME[last] || last, ` ${last} `);
+      if (last === 'gift') shown[shown.length - 1] = 'gifts';
+      parts.splice(0);
+      if (genderSaid(p.gender || c.gender)) parts.push(genderSaid(p.gender || c.gender));
+      parts.push(...shown.filter((t) => !parts.includes(t)));
+      thing = garment || last === 'gift' ? '' : 'pieces';
+      if (occasions.length) thing = `${thing ? `${thing} ` : ''}${OCCASION_SAID[occasions[0]]}`.trim();
+    } else if (c && list(c.alternatives).length) {
       const names = list(c.search).length ? list(c.search) : list(c.alternatives).slice(0, 3);
       thing = conceptsSaid(names);
-      const style = c.style ? (SAID_AS[c.style] || c.style) : '';
+      const style = c.style ? hyphenate(SAID_AS[c.style] || c.style) : '';
       if (style && !thing.includes(style)) parts.push(style);
       list(c.fit).forEach((word) => { if (!thing.includes(word)) parts.push(word); });
     } else {
@@ -747,29 +1212,48 @@
     }
 
     const price = priceSaid(p);
-    if (!thing) {
+    if (!thing && !(c && c.mode === 'plain' && parts.length)) {
       /* nothing about WHAT: only say what is known about it, if anything */
       if (!parts.length && !price) return null;
       thing = 'pieces';
     }
-    let sentence = `Looking for ${unique(parts).concat(thing).join(' ')}`;
+    let sentence = `Looking for ${unique(parts).concat(thing ? [thing] : []).join(' ')}`;
     if (price) sentence += ` ${price}`;
     if (c && list(c.context).length) {
       const relations = list(c.relations);
       const settings = list(c.context).map((name, at) => `to wear ${relations[at] || 'with'} ${plural(name)}`);
       sentence += ` ${settings.join(' and ')}`;
     }
+    /* and what was ruled out, said as ruled out — never as wanted */
+    if (c) {
+      const without = list(c.without);
+      const hood = without.includes('hood');
+      const not = list(c.excluded).filter((g) => !(hood && g === 'hoodie')).map(plural)
+        .concat(without.filter((w) => /^(skinny|slim|tight|baggy|loose|oversized|cropped|fitted|bodycon)$/.test(w)))
+        .concat(without.filter((w) => COLOUR_WORDS.includes(w)))
+        .concat(without.filter((w) => /^(leather|wool|polyester|denim|silk|satin|linen|cotton|fleece|suede|velvet|nylon|fur)$/.test(w)));
+      const lacking = (hood ? ['hoods'] : []).concat(without.includes('logo') ? ['logos'] : [])
+        .concat(without.includes('sleeve') ? ['sleeves'] : []).concat(without.includes('zip') ? ['zips'] : []);
+      if (not.length) sentence += `, not ${either(unique(not))}`;
+      if (lacking.length) sentence += `${not.length ? ' and' : ','} without ${either(unique(lacking))}`;
+    }
     return sentence;
   }
+
+  /* each word a garment is said with, to the garment it names */
+  const GARMENT_NAME = Object.fromEntries(GARMENTS.flatMap(([name, ws]) => ws.map((w) => [w, name])));
 
   /* The garments a request is ABOUT: the ones it names, less the ones it
      names only as what they are worn with ("with jeans"), which are not
      what the shopper is buying. With no concepts, exactly readGarments. */
   function garmentsWanted(query) {
-    const read = readGarments(query);
+    /* read as normalised — "hoddie" is a hoodie — which for a request in
+       shop words changes nothing at all */
+    const read = readGarments(normalize(query).text);
     const concepts = readConcepts(query);
-    if (!concepts || !concepts.context.length) return Object.assign(read, { concepts });
-    const keep = read.garments.filter((g) => !concepts.context.includes(g));
+    const notWanted = concepts ? concepts.context.concat(concepts.excluded || []) : [];
+    if (!concepts || !notWanted.length) return Object.assign(read, { concepts });
+    const keep = read.garments.filter((g) => !notWanted.includes(g));
     const categories = [];
     GARMENTS.forEach(([name, , cats]) => { if (keep.includes(name)) cats.forEach((c) => { if (!categories.includes(c)) categories.push(c); }); });
     return { garments: keep, descriptors: read.descriptors, categories, concepts };
@@ -834,9 +1318,13 @@
     const vocab = vocabulary || {};
 
     /* what the shopper ruled out is not what they asked for: "not too
-       formal" is not an evening occasion, and "nothing tight" is not a
-       slim fit */
-    const asked = text.replace(NEGATION, (whole, intensifiers, word) => (Object.prototype.hasOwnProperty.call(NEGATED, word) ? ' ' : whole));
+       formal" is not an evening occasion, "nothing tight" is not a slim
+       fit, and "isn't black" is not black. Read from the same plain form
+       and the same negation reader the concepts are. */
+    const plain = normalize(query).text;
+    const plainTokens = words(plain.replace(/[\u2010-\u2015-]+/g, ' '));
+    const ruledOut = negationsIn(plainTokens, mentionsIn(plainTokens)).at;
+    const asked = ` ${plainTokens.filter((token, at) => !ruledOut.has(at)).join(' ')} `;
     const collect = (group, target, within) => {
       Object.keys(group).forEach((value) => {
         if (group[value].some((word) => has(within || asked, word))) target.push(value);
@@ -871,7 +1359,9 @@
     HINTS.seasons.forEach((s) => { if (has(text, s)) prefs.season = s; });
     HINTS.genders.forEach((g) => { if (has(text, g) && !prefs.gender) prefs.gender = g; });
 
-    prefs.keywords = String(query).toLowerCase()
+    /* the words as typed, or as corrected when a word was corrected */
+    const corrected = normalize(query).changed.length ? plain : String(query);
+    prefs.keywords = corrected.toLowerCase()
       .replace(/[^a-z0-9\s$-]/g, ' ')
       .split(/\s+/)
       .filter((w) => w.length > 2);
@@ -990,5 +1480,5 @@
      served interpreter reads it. */
   const lexicon = Object.freeze({ GARMENTS, DESCRIPTORS, HINTS, EXTRA_ANCHORS, COLOUR_WORDS });
 
-  global.Interpreter = { interpret, localInterpret, readGarments, readConcepts, garmentsWanted, describe, shape, EMPTY, endpoint, FALLBACK_REASON, lexicon };
+  global.Interpreter = { interpret, localInterpret, readGarments, readConcepts, garmentsWanted, normalize, describe, shape, EMPTY, endpoint, FALLBACK_REASON, lexicon };
 })(typeof window !== 'undefined' ? window : globalThis);

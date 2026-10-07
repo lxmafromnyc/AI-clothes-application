@@ -132,6 +132,9 @@ api/_providers/query.js the one search phrase every provider is asked
 api/_providers/relevance.js  the order a descriptive request's results are shown in
 scripts/test-concepts.js       offline test of descriptive requests, end to end
 scripts/bench-concepts.js      before/after benchmark of descriptive requests
+scripts/test-messy.js          offline test of messy, negative and misspelled requests
+scripts/bench-messy.js         before/after benchmark of 88 messy requests
+scripts/bench-messy-live.js    the same kind of requests against the real keys
 assets/app.js           rendering and page behaviour
 assets/styles.css       colour tokens, design tokens and all shared components
 ```
@@ -438,8 +441,39 @@ What it holds to:
   added to a product, and the internal score is never shown. A request that
   names its garment in shop words keeps the provider's order.
 
+People also type badly: misspelled, in slang, in fragments, around what they do
+not want. So before anything is read, the request is put in one plain form
+(`normalize`): contractions are opened ("aren't" is "are not", so the "not" can be
+seen), shorthand and slang are said in shop words ("trackies", "kicks"), plain
+misspellings of known words are corrected ("hoddie", "jeens", "sweter") — but a
+word that only looks like one ("dressed", "heather", "boat") is left alone — and
+"find me" or "I'm looking for" comes off the front. Then what the request rules
+out is read before anything else:
+
+| The request | Read as | Asked of the provider |
+| --- | --- | --- |
+| pants that aren't skinny | trousers; not skinny | `straight leg pants relaxed trousers wide leg pants` |
+| something warm but not a coat | warm; not a coat | `warm sweater fleece jacket overshirt` |
+| something like a hoodie without the hood | a hoodie with no hood is a sweatshirt | `crewneck sweatshirt pullover sweatshirt knit pullover` |
+| a shirt but heavier | a heavyweight shirt | `heavyweight shirt` |
+| jacket that isn't really a jacket | compared with a jacket, not ruling one out | `overshirt shirt jacket light jacket` |
+| i want a shirt thats kinda oversized | the talk taken out | `oversized shirt` |
+| blak hoddie | black hoodie | `black hoodie` |
+
+A garment ruled out is never the target and never searched, and a listing that
+*is* one is removed after the gate (counted as `ruled-out-by-the-request`). A
+fit, colour, material or logo ruled out is never searched, and listings that
+have it rank below everything that does not. "Oversized but fitted" holds to
+neither side. "Expensive-looking" is a look, never a price. A request that is
+only talk ("something like what my mom wears") is searched as broadly as it
+was asked, never as the talk itself.
+
 `/api/interpret` attaches the reading as `concepts`, only when there is one, so
-the reply for an exact request is unchanged. `node scripts/test-concepts.js`
+the reply for an exact request is unchanged. `node scripts/test-messy.js` holds
+the messy-input behaviour; `node scripts/bench-messy.js` measures it before and
+after on 88 deliberately difficult requests, and
+`node --env-file=.env.local scripts/bench-messy-live.js` checks a dozen of them
+against the real interpreter and provider, product by product. `node scripts/test-concepts.js`
 holds all of this; `node scripts/bench-concepts.js` measures it before and after
 against a fixed pool of listings (see the script for how).
 
@@ -1022,6 +1056,8 @@ The rest of the suites, all offline except the two that drive a browser:
 ```sh
 node scripts/bench-offer-resolution.js  # what one search costs the provider
 node scripts/test-concepts.js  # descriptive requests: what they mean, and what must not change
+node scripts/test-messy.js     # misspelled, slang, negative and conversational requests
+node scripts/bench-messy.js --compare before.json after.json  # 88 messy requests, before and after
 node scripts/bench-concepts.js --compare before.json after.json  # descriptive requests, before and after
 node scripts/test-cache.js     # the search and offer caches, and what they may not change
 node scripts/test-gemini.js    # the Gemini interpreter, and what did not change

@@ -111,7 +111,28 @@ const SIGNAL_TITLES = {
   vintage: { yes: ['vintage', 'retro', 'vintage style', 'vintage inspired'], no: [] },
   relaxed: { yes: ['relaxed', 'wide', 'loose', 'baggy', 'oversized', 'barrel', 'palazzo', 'slouchy', 'flowy', 'boxy'], no: ['skinny', 'slim', 'fitted', 'bodycon', 'tight', 'compression', 'legging'] },
   fitted: { yes: ['slim', 'skinny', 'fitted', 'bodycon'], no: ['oversized', 'baggy', 'relaxed', 'loose'] },
-  short: { yes: ['cropped', 'crop', 'short'], no: ['longline', 'long line', 'maxi'] }
+  short: { yes: ['cropped', 'crop', 'short'], no: ['longline', 'long line', 'maxi'] },
+  /* what "not skinny" and "not too baggy" leave */
+  straight: { yes: ['straight', 'relaxed', 'wide', 'regular'], no: ['skinny', 'legging', 'bodycon', 'slim'] },
+  regular: { yes: ['straight', 'regular', 'tailored'], no: ['baggy', 'palazzo', 'wide', 'oversized', 'skinny'] },
+  warm: { yes: ['fleece', 'sherpa', 'wool', 'insulated', 'lined', 'quilted', 'knit', 'thermal', 'cashmere', 'puffer', 'teddy'], no: ['linen', 'mesh', 'sheer', 'tank', 'camisole'] }
+};
+
+/* what a listing says about how heavy it is */
+const PROPERTY_TITLES = {
+  heavyweight: { yes: ['heavyweight', 'heavy', 'thick', 'chunky', 'heavy twill'], no: ['lightweight', 'thin', 'sheer'] },
+  lightweight: { yes: ['lightweight', 'light', 'thin', 'french terry', 'fine knit', 'long sleeve tee'], no: ['heavyweight', 'heavy', 'sherpa', 'fleece', 'puffer', 'padded', 'insulated', 'chunky'] },
+  warm: { yes: ['fleece', 'sherpa', 'wool', 'insulated', 'lined', 'quilted', 'knit', 'thermal', 'cashmere', 'puffer', 'teddy'], no: ['linen', 'mesh', 'sheer', 'tank', 'camisole'] }
+};
+
+/* what a listing for an occasion is called */
+const OCCASION_TITLES = {
+  'going out': ['going out', 'satin', 'mini', 'party', 'corset'],
+  'date night': ['satin', 'slip', 'going out'],
+  'wedding guest': ['wedding', 'guest'],
+  office: ['tailored', 'trouser', 'blazer', 'oxford', 'button down', 'pleated', 'straight leg'],
+  workout: ['performance', 'athletic', 'legging', 'jogger', 'track'],
+  vacation: ['linen', 'sundress', 'swim']
 };
 
 const GENDER_TITLES = {
@@ -155,9 +176,14 @@ function scoreOf(product, intent, prepared) {
   const titleWords = new Set(tokens(`${title} ${(product && product.category) || ''}`));
   let score = 0;
 
+  /* 0. what the request ruled out. Said by the shopper, so it outweighs
+     everything else: a "not skinny" request never shows skinny jeans
+     above anything it does want */
+  if (prepared.without.some((phrase) => says(titleWords, phrase))) score -= 60;
+
   /* 1. hard constraints, as the product's own fields state them */
   const colours = prepared.colours;
-  if (colours.length) {
+  if (colours.length && !prepared.ambiguous.includes('colour')) {
     const shown = new Set(tokens(`${title} ${listOf(product.colors).join(' ')}`));
     if (colours.some((c) => says(shown, c))) score += 40;
     else if (prepared.otherColours.some((c) => says(shown, c))) score -= 40;
@@ -179,12 +205,39 @@ function scoreOf(product, intent, prepared) {
   });
   if (matched !== -1) score += Math.max(30 - 4 * matched, 12);
   if (prepared.anchorIsTarget && anchorTitles(prepared.anchor).some((phrase) => says(titleWords, phrase))) score += 10;
+  /* a plain reading has no concepts: its own words are the evidence, and
+     a listing that carries none of them but a colour is another thing
+     entirely — a black backpack for "black thing long sleeve" */
+  if (prepared.terms.length) {
+    const own = prepared.terms.filter((term) => !prepared.colours.includes(term) && !/^(women|men|womens|mens)$/.test(term));
+    const hits = own.filter((term) => says(titleWords, term)).length;
+    if (own.length) score += hits ? Math.min(hits * 10, 30) : -45;
+  }
+  /* a garment named only as the setting, shown as if it were the thing:
+     jeans for "something to wear with jeans" */
+  if (matched === -1 && prepared.context.some((name) => anchorTitles(name).some((phrase) => says(titleWords, phrase)))) score -= 30;
   if (matched === -1 && prepared.avoid.some((phrase) => says(titleWords, phrase))) score -= 30;
 
-  /* 3 and 4. silhouette, then style */
+  /* 3 and 4. silhouette, then style, then what it is like and for */
+  for (const property of prepared.properties) {
+    const evidence = PROPERTY_TITLES[property];
+    if (!evidence) continue;
+    if (evidence.yes.some((phrase) => says(titleWords, phrase))) score += 8;
+    if (evidence.no.some((phrase) => says(titleWords, phrase))) score -= 10;
+  }
+  if (prepared.occasion && (OCCASION_TITLES[prepared.occasion] || []).some((phrase) => says(titleWords, phrase))) score += 6;
+  /* a style named by who wears it ("skater style") shows in the word
+     itself; "vintage style" only in a listing that says it is a style,
+     not in one that IS vintage */
+  if (prepared.style) {
+    const styleSaid = prepared.style === 'vintage style' ? ['vintage style', 'vintage inspired', 'retro'] : [prepared.style, prepared.style.replace(/ style$/, '')];
+    if (styleSaid.some((phrase) => says(titleWords, phrase))) score += 4;
+  }
   for (const signal of prepared.signals) {
     const evidence = SIGNAL_TITLES[signal];
     if (!evidence) continue;
+    /* "oversized but fitted": neither fit is held to */
+    if (prepared.ambiguous.includes('fit') && /^(relaxed|fitted|straight|regular)$/.test(signal)) continue;
     const weight = signal === 'relaxed' || signal === 'fitted' || signal === 'short' ? 12 : 6;
     if (evidence.yes.some((phrase) => says(titleWords, phrase))) score += weight;
     if (evidence.no.some((phrase) => says(titleWords, phrase))) score -= weight === 12 ? 12 : 15;
@@ -196,7 +249,7 @@ function scoreOf(product, intent, prepared) {
      comparison is with the other listings the same search found. */
   if (prepared.affordable && typeof product.price === 'number' && prepared.priceSpan > 0) {
     score += 5 * (1 - (product.price - prepared.minPrice) / prepared.priceSpan);
-    if (prepared.medianPrice && product.price > 2 * prepared.medianPrice) score -= 15;
+    if (prepared.medianPrice && product.price > 2 * prepared.medianPrice) score -= 25;
   }
   return score;
 }
@@ -207,8 +260,9 @@ function prepare(intent, products) {
   const beside = listOf(c.beside);
   const colours = listOf(c.colors).length
     ? listOf(c.colors)
-    : listOf(intent.colors).map((one) => one.toLowerCase()).filter((one) => (COLOUR_WORDS || []).includes(one) && !beside.includes(one));
-  const gender = /\bwom[ae]n|\bladies|\bfemale/i.test(intent.gender || '') ? 'women' : /\bm[ae]n\b|\bmens\b|\bmale\b/i.test(intent.gender || '') ? 'men' : null;
+    : listOf(intent.colors).map((one) => one.toLowerCase()).filter((one) => (COLOUR_WORDS || []).includes(one) && !beside.includes(one) && !listOf(c.without).includes(one));
+  const said = intent.gender || c.gender || '';
+  const gender = /\bwom[ae]n|\bladies|\bfemale/i.test(said) ? 'women' : /\bm[ae]n\b|\bmens\b|\bmale\b/i.test(said) ? 'men' : null;
   const concepts = listOf(c.alternatives);
   const prices = products.map((p) => p && p.price).filter((n) => typeof n === 'number' && Number.isFinite(n));
   const minPrice = prices.length ? Math.min(...prices) : 0;
@@ -224,9 +278,16 @@ function prepare(intent, products) {
     anchor: c.anchor || null,
     /* a garment the shopper named as what they want is itself the
        strongest evidence; one they compared against is only a concept */
-    anchorIsTarget: c.mode === 'described' && Boolean(c.anchor),
+    anchorIsTarget: (c.mode === 'described' || c.mode === 'plain') && Boolean(c.anchor),
     avoid: listOf(c.avoid),
     signals: listOf(c.signals),
+    without: listOf(c.without),
+    context: listOf(c.context),
+    properties: listOf(c.properties),
+    occasion: typeof c.occasion === 'string' ? c.occasion : null,
+    style: typeof c.style === 'string' ? c.style : null,
+    terms: listOf(c.terms),
+    ambiguous: listOf(c.ambiguous),
     affordable: listOf(c.signals).includes('affordable'),
     minPrice,
     medianPrice,
@@ -267,7 +328,15 @@ function lookupOrder(records, intent) {
   const as = list.map((record) => ({ name: record && record.title, brand: record && record.brand }));
   const ranked = rankByIntent(as, intent);
   if (!ranked.applied) return list;
-  return ranked.products.map((one) => list[as.indexOf(one)]);
+  /* and a record the garment filter would remove once it had a link — a
+     hoodie for "oversized shirt", a coat for "not a coat" — is looked up
+     last: a lookup spent on it is a product that could never be shown */
+  let removable = new Set();
+  try {
+    removable = new Set(require('./garment-filter').withoutContradictions(as, intent).removed.map((one) => as[one.position - 1]));
+  } catch (err) { /* no filter, no reordering for it */ }
+  const order = ranked.products.filter((one) => !removable.has(one)).concat(ranked.products.filter((one) => removable.has(one)));
+  return order.map((one) => list[as.indexOf(one)]);
 }
 
 /* one product's score, for a test or a probe; 0 for a request without concepts */
