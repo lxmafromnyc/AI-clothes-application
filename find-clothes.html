@@ -61,6 +61,12 @@
           <span>Drop to attach</span>
         </div>
 
+        <!-- A hairline along the bottom edge of the box while a search is
+             running (assets/app.js marks the form with its stage). Purely
+             visual: the stage is said in words under the box and to
+             screen readers. -->
+        <span class="ask-progress" aria-hidden="true"><span class="ask-progress-line"></span></span>
+
         <div class="ask-actions">
           <button class="icon-btn" type="button" id="reset-form" aria-label="Clear search">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>

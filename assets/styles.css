@@ -345,6 +345,28 @@ strong { font-weight: 600; }
 .ask-dropveil svg { width: 20px; height: 20px; }
 .ask-card.is-dragover .ask-dropveil { display: flex; }
 
+/* While a search is running the box itself shows it: a hairline along its
+   bottom edge, just inside the border and clipped to its rounded corners.
+   It is the full width of the box at every stage — it says the box is at
+   work, not how far along it is — and pulses quietly until the answer is
+   in, then goes at once. It lies in the box's own bottom padding, so it
+   takes no room, covers no text and no button, and the box keeps its
+   size whether it is there or not. */
+.ask-progress {
+  position: absolute; inset: 0; z-index: 1;
+  display: none;
+  border-radius: calc(var(--r-lg) - 1px);
+  overflow: hidden;
+  pointer-events: none;
+}
+.ask-card[data-stage] .ask-progress { display: block; }
+.ask-progress-line {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  height: 2px;
+  background: var(--color-accent);
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
 .attachments, .form-error, .attachment-note { grid-column: 1 / -1; }
 .attachments { list-style: none; display: flex; flex-wrap: wrap; gap: 8px; padding: 8px 0 6px; }
 .attachments[hidden] { display: none; }
@@ -463,9 +485,8 @@ strong { font-weight: 600; }
    on a phone, where a description wraps — so nothing below moves when a
    stage changes. On a wide screen that is exactly the size of the
    results heading that replaces it, so the products arrive where the
-   placeholders stood. The hairline sits in the margin the heading
-   already has. A new line fades in; nothing slides, spins or glows. */
-.search-progress { position: relative; }
+   placeholders stood. The moving part is the hairline in the search box
+   above. A new line fades in; nothing slides, spins or glows. */
 .search-progress h2 { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .search-progress .results-query {
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 1; overflow: hidden;
@@ -475,19 +496,6 @@ strong { font-weight: 600; }
 .search-progress h2 .stage-text { color: var(--color-text-muted); }
 .stage-text { display: inline; animation: stage-in .24s var(--ease) both; }
 @keyframes stage-in { from { opacity: 0; } to { opacity: 1; } }
-
-.stage-bar {
-  position: absolute; left: 0; bottom: -16px;
-  width: min(240px, 100%); height: 2px;
-  border-radius: var(--r-pill); background: var(--color-surface-3); overflow: hidden;
-}
-.stage-bar-fill {
-  display: block; height: 100%; width: 34%;
-  border-radius: inherit; background: var(--color-primary);
-  transition: width .5s var(--ease);
-  animation: pulse 1.6s ease-in-out infinite;
-}
-.search-progress[data-stage="searching"] .stage-bar-fill { width: 67%; }
 
 .notice {
   margin: 0 0 24px; padding: 14px 16px;
@@ -798,5 +806,5 @@ a.item-card:hover .item-name { text-decoration: underline; text-underline-offset
   html { scroll-behavior: auto; }
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
   /* a search in progress holds still: the stage is said, not shown moving */
-  .stage-text, .stage-bar-fill, .skeleton-card { animation: none; }
+  .stage-text, .ask-progress-line, .skeleton-card { animation: none; }
 }

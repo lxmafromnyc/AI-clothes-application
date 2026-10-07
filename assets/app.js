@@ -361,14 +361,15 @@ function orderFacet(counts, key) {
 
      There is no timer anywhere in this. A stage lasts exactly as long as
      the request behind it, so a fast or cached search goes straight to
-     its results, and a slow one keeps its current line on screen with
-     the hairline quietly pulsing under it — never a new message invented
-     to fill the wait. Results, an empty answer or an error replace all
-     of it the moment they arrive.
+     its results, and a slow one keeps its current line on screen, with
+     a hairline quietly pulsing along the bottom of the search box — never
+     a new message invented to fill the wait. Results, an empty answer or
+     an error replace all of it the moment they arrive.
 
-     The heading and the line under it keep their size from one stage to
-     the next, and the hairline sits in the margin the results heading
-     already has, so nothing on the page moves while it changes. */
+     The words are under the box, where the results will be; the hairline
+     is in the box, marked by the stage on the form. Both keep their size
+     from one stage to the next, so nothing on the page moves while it
+     changes. */
   const STAGES = {
     understanding: 'Understanding your request',
     searching: 'Finding matching products'
@@ -378,6 +379,7 @@ function orderFacet(counts, key) {
     const head = results.querySelector('.search-progress');
     if (!head) return;
     head.dataset.stage = stage;
+    form.dataset.stage = stage;
     const line = document.createElement('span');
     line.className = 'stage-text';
     line.textContent = STAGES[stage];
@@ -399,10 +401,35 @@ function orderFacet(counts, key) {
     results.innerHTML = `<div class="results-head search-progress" data-stage="understanding">
         <h2 class="thinking"></h2>
         <p class="results-query">Results for <q>${esc(query)}</q></p>
-        <div class="stage-bar" aria-hidden="true"><span class="stage-bar-fill"></span></div>
       </div>
       <div class="grid" aria-hidden="true">${SKELETON.repeat(4)}</div>`;
     showStage('understanding');
+  }
+
+  /* the search has answered, failed or been dropped: the box stops
+     working at once */
+  function endProgress() {
+    results.removeAttribute('aria-busy');
+    delete form.dataset.stage;
+  }
+
+  /* Smooth unless the shopper has asked for less motion. */
+  const scrolling = () => (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth');
+
+  /* While a search runs, the box doing the work and the words saying what
+     it is doing are both on screen: the page moves only as far as it must
+     to bring the stage line up, and never so far that the box goes under
+     the header. The results are brought up when they arrive. */
+  const header = document.querySelector('.site-header');
+  const MARGIN = 16;
+  function keepBoxInView() {
+    const head = results.querySelector('.search-progress');
+    if (!head) return;
+    const top = header ? header.getBoundingClientRect().bottom : 0;
+    const room = form.getBoundingClientRect().top - top - MARGIN;
+    const below = head.getBoundingClientRect().bottom + MARGIN - window.innerHeight;
+    const by = Math.min(Math.max(below, 0), room);
+    if (by) window.scrollBy({ top: by, behavior: scrolling() });
   }
 
   /* the search a newer one has replaced, or "Start over" has dropped,
@@ -421,7 +448,7 @@ function orderFacet(counts, key) {
     results.hidden = false;
     asked = query;
     showProgress(query);
-    results.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    keepBoxInView();
 
     let outcome = null;
     let found;
@@ -443,7 +470,7 @@ function orderFacet(counts, key) {
       found = { state: 'unavailable', source: null, products: [], notice: null };
     }
     if (run !== latest) return;
-    results.removeAttribute('aria-busy');
+    endProgress();
     outcome = outcome || { source: 'local', notice: null, preferences: Interpreter.EMPTY() };
 
     if (found.products.length) renderProducts(found, outcome);
@@ -453,6 +480,7 @@ function orderFacet(counts, key) {
        rows, however clearly they are labelled. */
     else if (found.state === 'not-configured') render(outcome.preferences, outcome, found);
     else renderNothing(found, outcome);
+    results.scrollIntoView({ behavior: scrolling(), block: 'start' });
   }
 
   /* Files dropped on the card or chosen with the button. Held here
@@ -528,7 +556,7 @@ function orderFacet(counts, key) {
     /* a search still running when the shopper starts over answers into
        nothing */
     latest += 1;
-    results.removeAttribute('aria-busy');
+    endProgress();
     /* starting over drops the attachments too, and hands back the
        object URLs their thumbnails were holding */
     if (attachments) attachments.clear();

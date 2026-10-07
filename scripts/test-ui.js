@@ -621,6 +621,34 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     await page.keyboard.press('Enter');
   };
 
+  /* the hairline in the search box: whether the shopper can see it, and
+     the stage the box is marked with */
+  const boxLine = (page) => page.evaluate(() => {
+    const form = document.getElementById('ask-form');
+    const line = form.querySelector('.ask-progress-line');
+    const box = line.getBoundingClientRect();
+    return {
+      stage: form.dataset.stage || null,
+      shown: getComputedStyle(form.querySelector('.ask-progress')).display !== 'none' && box.width > 0 && box.height > 0
+    };
+  });
+
+  /* what the box looked like at the very moment the progress left the
+     results area — caught by an observer, so a line that lingered after
+     the answer, even briefly, is seen */
+  const watchEnd = (page) => page.evaluate(() => {
+    window.__boxAtEnd = undefined;
+    new MutationObserver(() => {
+      if (window.__boxAtEnd !== undefined || document.querySelector('#results .search-progress')) return;
+      const form = document.getElementById('ask-form');
+      window.__boxAtEnd = {
+        stage: form.dataset.stage || null,
+        display: getComputedStyle(form.querySelector('.ask-progress')).display
+      };
+    }).observe(document.getElementById('results'), { subtree: true, childList: true });
+  });
+  const boxAtEnd = (page) => page.evaluate(() => window.__boxAtEnd);
+
   await test('submitting shows the first stage at once, before anything has answered', async () => {
     reset();
     const interpret = deferred();
@@ -633,7 +661,8 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     assert.strictEqual(now.detail, 'Results for black oversized hoodie under $80', 'the request as typed, until it has been read (the quotes are the <q>\'s own)');
     assert.strictEqual(now.busy, 'true');
     assert.strictEqual(now.status, 'Understanding your request.');
-    assert.ok(await page.$('#results .stage-bar'), 'no progress hairline');
+    assert.deepStrictEqual(await boxLine(page), { stage: 'understanding', shown: true }, 'the search box shows no hairline');
+    assert.ok(!(await page.$('#results .stage-bar')), 'a second hairline under the results heading');
     interpret.release();
     await page.waitForSelector('.item-card');
     await page.close();
@@ -659,6 +688,7 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     assert.strictEqual(now.detail, 'Looking for black oversized hoodies under $80');
     assert.strictEqual(now.status, 'Looking for black oversized hoodies under $80. Finding matching products.');
     assert.strictEqual(searchRequests.length, 1, 'the search stage is showing, so the search must have been sent');
+    assert.deepStrictEqual(await boxLine(page), { stage: 'searching', shown: true }, 'the hairline left the box during the search');
     /* and it holds that line for as long as the search is open: no
        message is invented to fill the wait */
     await page.waitForTimeout(1200);
@@ -708,8 +738,13 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     const page = await open();
     await submit(page, 'black oversized hoodie');
     await page.waitForSelector('#results .search-progress[data-stage="searching"]');
+    await watchEnd(page);
     search.release();
     await page.waitForSelector('.item-card');
+    /* gone from the box in the same moment the results replaced the
+       placeholders, not a beat later */
+    assert.deepStrictEqual(await boxAtEnd(page), { stage: null, display: 'none' }, 'the hairline outlived the search');
+    assert.deepStrictEqual(await boxLine(page), { stage: null, shown: false });
     const after = await page.evaluate(() => ({
       progress: Boolean(document.querySelector('#results .search-progress, #results .stage-bar, #results .thinking, #results .skeleton-card')),
       busy: document.getElementById('results').hasAttribute('aria-busy'),
@@ -728,8 +763,11 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
       const page = await open();
       await submit(page, 'black oversized hoodie');
       await page.waitForSelector('#results .search-progress[data-stage="searching"]');
+      await watchEnd(page);
       search.release();
       await page.waitForFunction(() => !document.querySelector('#results .search-progress'), null, { timeout: 10000 });
+      assert.deepStrictEqual(await boxAtEnd(page), { stage: null, display: 'none' }, `${why}: the hairline outlived the failure`);
+      assert.deepStrictEqual(await boxLine(page), { stage: null, shown: false }, why);
       const after = await page.evaluate(() => ({
         stuck: Boolean(document.querySelector('#results .stage-bar, #results .thinking')),
         busy: document.getElementById('results').hasAttribute('aria-busy'),
@@ -800,10 +838,19 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
   await test('a fast or cached search goes straight to its results, held up by nothing', async () => {
     reset();
     const page = await open();
+    await watchEnd(page);
     const started = Date.now();
     await submit(page, 'black oversized hoodie under $80');
     await page.waitForSelector('.item-card');
     const shown = Date.now();
+    /* the hairline goes with the placeholders, and nothing eases it out */
+    assert.deepStrictEqual(await boxAtEnd(page), { stage: null, display: 'none' });
+    const lingers = await page.evaluate(() => {
+      const wrap = getComputedStyle(document.querySelector('#ask-form .ask-progress'));
+      const line = getComputedStyle(document.querySelector('#ask-form .ask-progress-line'));
+      return { transition: wrap.transitionDuration, delay: line.animationDelay };
+    });
+    assert.deepStrictEqual(lingers, { transition: '0s', delay: '0s' });
     const reply = stubs.log.filter((e) => e.path === '/api/search' && e.event === 'reply').pop();
     assert.ok(reply, 'the search never answered');
     assert.ok(shown - reply.at < 400, `results took ${shown - reply.at}ms to appear after the search answered`);
@@ -830,6 +877,30 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     await page.waitForTimeout(500);
     assert.strictEqual(await page.$eval('.results-query', (n) => n.textContent.trim()), 'Results for something cozy I can wear with jeans');
     assert.ok(!(await page.$('#results .search-progress')));
+    assert.deepStrictEqual(await boxLine(page), { stage: null, shown: false }, 'the late answer brought the hairline back');
+    await page.close();
+  });
+
+  await test('a replaced search that answers late leaves the running search\'s hairline alone', async () => {
+    reset();
+    const first = deferred();
+    const second = deferred();
+    stubs.interpret = { hold: first.held, reply: reading('red dress') };
+    const page = await open();
+    await submit(page, 'red dress');
+    await page.waitForSelector('#ask-form[data-stage="understanding"]');
+    stubs.interpret = { reply: reading('something cozy I can wear with jeans') };
+    stubs.search = { hold: second.held };
+    await submit(page, 'something cozy I can wear with jeans');
+    await page.waitForSelector('#ask-form[data-stage="searching"]');
+    /* the first search's reading comes back now, to nothing */
+    first.release();
+    await page.waitForTimeout(500);
+    assert.deepStrictEqual(await boxLine(page), { stage: 'searching', shown: true }, 'the replaced search cleared the running one\'s hairline');
+    assert.strictEqual((await stageOf(page)).detail, 'Looking for cozy sweaters, sweatshirts or cardigans to wear with jeans');
+    second.release();
+    await page.waitForSelector('.item-card');
+    assert.deepStrictEqual(await boxLine(page), { stage: null, shown: false });
     await page.close();
   });
 
@@ -864,10 +935,10 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
   const motionOf = (page) => page.evaluate(() => {
     const css = (sel) => getComputedStyle(document.querySelector(sel));
     return {
-      bar: css('#results .stage-bar-fill').animationName,
+      bar: css('#ask-form .ask-progress-line').animationName,
       line: css('#results .stage-text').animationName,
       skeleton: css('#results .skeleton-card').animationName,
-      grow: parseFloat(css('#results .stage-bar-fill').transitionDuration)
+      opacity: css('#ask-form .ask-progress-line').opacity
     };
   });
 
@@ -899,8 +970,9 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     await submit(still, 'black oversized hoodie');
     await still.waitForSelector('#results .search-progress[data-stage="searching"]');
     const reduced = await motionOf(still);
-    assert.deepStrictEqual({ bar: reduced.bar, line: reduced.line, skeleton: reduced.skeleton }, { bar: 'none', line: 'none', skeleton: 'none' });
-    assert.ok(reduced.grow < 0.001, `the hairline still animates its width: ${reduced.grow}s`);
+    assert.deepStrictEqual(reduced, { bar: 'none', line: 'none', skeleton: 'none', opacity: '1' });
+    /* still there, and still in the box: held still, not taken away */
+    assert.deepStrictEqual(await boxLine(still), { stage: 'searching', shown: true });
     /* still, and still legible: every line in a palette ink */
     const problems = await textStyleProblems(still, await resolveInks(still));
     assert.deepStrictEqual(problems, [], `\n        ${problems.join('\n        ')}`);
@@ -934,6 +1006,161 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     }
   });
 
+  /* Where everything in the search box is, in page coordinates, so a
+     scroll is not mistaken for something moving. */
+  const boxGeometry = (page) => page.evaluate(() => {
+    const at = (el) => {
+      const r = el.getBoundingClientRect();
+      return { top: r.top + window.scrollY, bottom: r.bottom + window.scrollY, left: r.left, right: r.right, width: r.width, height: r.height, viewTop: r.top, viewBottom: r.bottom };
+    };
+    const form = document.getElementById('ask-form');
+    const head = document.querySelector('#results .search-progress');
+    return {
+      form: at(form),
+      inner: form.clientWidth,
+      border: parseFloat(getComputedStyle(form).borderBottomWidth),
+      line: at(form.querySelector('.ask-progress-line')),
+      shown: getComputedStyle(form.querySelector('.ask-progress')).display !== 'none',
+      text: at(document.getElementById('ask')),
+      button: at(form.querySelector('button[type=submit]')),
+      clear: at(document.getElementById('reset-form')),
+      attach: at(form.querySelector('.attach-btn')),
+      header: document.querySelector('.site-header').getBoundingClientRect().bottom,
+      stage: head ? at(head) : null,
+      viewport: window.innerHeight,
+      overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth
+    };
+  });
+
+  /* the page has finished bringing what it scrolls to into view: the
+     scroll position has held still for a few frames' worth of time */
+  const scrollSettled = (page) => page.evaluate(() => { window.__settle = null; }).then(() => page.waitForFunction(() => {
+    const y = Math.round(window.scrollY);
+    const now = performance.now();
+    const last = window.__settle;
+    if (!last || last.y !== y) { window.__settle = { y, since: now }; return false; }
+    return now - last.since > 300;
+  }, null, { polling: 50, timeout: 5000 }));
+
+  const SEARCH_WIDTHS = [
+    { width: 1440, height: 900 }, { width: 1280, height: 900 }, { width: 768, height: 1024 }, { width: 767, height: 1024 },
+    { width: 480, height: 860 }, { width: 390, height: 844 }, { width: 375, height: 812 }
+  ];
+
+  await test('the hairline lies along the bottom edge of the search box, inside it, through both stages, at every width', async () => {
+    /* long enough to wrap onto more lines on a phone, where the box stacks */
+    const query = 'something cozy I can wear with jeans for a weekend away';
+    const runs = SEARCH_WIDTHS.map((viewport) => ['find-clothes.html', viewport])
+      .concat([['index.html', { width: 1280, height: 900 }], ['index.html', { width: 390, height: 844 }]]);
+    for (const [file, viewport] of runs) {
+      const where = `${file} at ${viewport.width}px`;
+      reset();
+      const interpret = deferred();
+      const search = deferred();
+      stubs.interpret = { hold: interpret.held, reply: reading(query) };
+      stubs.search = { hold: search.held };
+      const page = file === 'find-clothes.html' ? await open() : await openPage(file);
+      if (file !== 'find-clothes.html') await page.waitForFunction(() => window.Attachments && document.getElementById('attachments'));
+      await page.setViewportSize(viewport);
+      await page.fill('#ask', query);
+      const before = await boxGeometry(page);
+      assert.strictEqual(before.shown, false, `${where}: a hairline before any search`);
+      await page.focus('#ask');
+      await page.keyboard.press('Enter');
+
+      const lines = [];
+      for (const stage of ['understanding', 'searching']) {
+        if (stage === 'searching') interpret.release();
+        await page.waitForSelector(`#results .search-progress[data-stage="${stage}"]`);
+        await scrollSettled(page);
+        const g = await boxGeometry(page);
+        const at = `${where}, ${stage}`;
+        assert.strictEqual(g.shown, true, `${at}: no hairline`);
+        assert.deepStrictEqual(await boxLine(page), { stage, shown: true }, at);
+
+        /* flush with the bottom edge, just inside the border */
+        const gap = g.form.viewBottom - g.border - g.line.viewBottom;
+        assert.ok(Math.abs(gap) <= 0.5, `${at}: the hairline is ${gap.toFixed(2)}px off the box's bottom edge`);
+        assert.ok(g.line.height > 0 && g.line.height <= 2, `${at}: the hairline is ${g.line.height}px thick`);
+        /* the usable width of the box, and not a pixel outside it */
+        assert.ok(Math.abs(g.line.width - g.inner) <= 0.5, `${at}: the hairline is ${g.line.width}px across a ${g.inner}px box`);
+        assert.ok(g.line.left >= g.form.left && g.line.right <= g.form.right, `${at}: the hairline sticks out of the box`);
+        /* over nothing: the words, the Search button and the small buttons
+           all end above it */
+        for (const part of ['text', 'button', 'clear', 'attach']) {
+          if (!g[part].height) continue;
+          assert.ok(g[part].bottom <= g.line.top + 0.5, `${at}: the hairline overlaps the ${part} (${g[part].bottom} > ${g.line.top})`);
+        }
+        /* the box keeps its size and place, and so does its button */
+        for (const part of ['form', 'button', 'text']) {
+          for (const side of ['top', 'left', 'width', 'height']) {
+            assert.ok(Math.abs(g[part][side] - before[part][side]) <= 0.5, `${at}: the ${part}'s ${side} moved from ${before[part][side]} to ${g[part][side]}`);
+          }
+        }
+        if (viewport.width <= 767) assert.ok(g.button.top >= g.text.bottom, `${at}: the box did not stack`);
+        assert.strictEqual(g.overflow, 0, `${at}: the page scrolls sideways`);
+        /* on screen while it works: the box below the header, and the
+           words saying what it is doing above the fold */
+        assert.ok(g.form.viewTop >= g.header && g.line.viewBottom <= g.viewport, `${at}: the box is off screen (${g.form.viewTop}..${g.line.viewBottom}, header ${g.header}, viewport ${g.viewport})`);
+        assert.ok(g.stage.viewTop >= g.header && g.stage.viewBottom <= g.viewport, `${at}: the stage line is off screen (${g.stage.viewTop}..${g.stage.viewBottom})`);
+        lines.push(g.line.width);
+      }
+      /* the same full line at both stages: it says the box is working,
+         not how far along it is */
+      assert.strictEqual(lines[0], lines[1], `${where}: the hairline changed length between stages`);
+
+      search.release();
+      await page.waitForSelector('.item-card');
+      const after = await boxGeometry(page);
+      assert.strictEqual(after.shown, false, `${where}: the hairline stayed after the results`);
+      for (const side of ['top', 'left', 'width', 'height']) {
+        assert.ok(Math.abs(after.form[side] - before.form[side]) <= 0.5, `${where}: the box's ${side} changed after the search`);
+      }
+      assert.strictEqual(after.overflow, 0, `${where}: the results scroll sideways`);
+      /* and the results are brought up, as they always were */
+      await page.waitForFunction(() => {
+        const card = document.querySelector('.item-card').getBoundingClientRect();
+        return card.top >= 0 && card.top < window.innerHeight;
+      }, null, { timeout: 5000 });
+      await page.close();
+    }
+  });
+
+  await test('the hairline is decoration: hidden from assistive technology, with the stage still said in words', async () => {
+    for (const file of ['find-clothes.html', 'index.html']) {
+      reset();
+      const search = deferred();
+      stubs.search = { hold: search.held };
+      const page = await openPage(file);
+      await page.waitForFunction(() => window.Attachments && document.getElementById('attachments'));
+      const markup = await page.evaluate(() => {
+        const wrap = document.querySelector('#ask-form > .ask-progress');
+        return wrap && {
+          hidden: wrap.getAttribute('aria-hidden'),
+          text: wrap.textContent.trim(),
+          focusable: wrap.querySelectorAll('a, button, input, [tabindex]').length,
+          role: wrap.getAttribute('role'),
+          live: wrap.closest('[aria-live]') !== null
+        };
+      });
+      assert.deepStrictEqual(markup, { hidden: 'true', text: '', focusable: 0, role: null, live: false }, file);
+      await submit(page, 'black oversized hoodie');
+      await page.waitForSelector('#ask-form[data-stage="searching"]');
+      const said = await page.evaluate(() => ({
+        status: document.getElementById('search-status').textContent.trim(),
+        heading: document.querySelector('#results .search-progress h2').textContent.trim(),
+        formBusy: document.getElementById('ask-form').getAttribute('aria-busy')
+      }));
+      assert.ok(/Finding matching products\.$/.test(said.status), `${file}: ${said.status}`);
+      assert.strictEqual(said.heading, 'Finding matching products', file);
+      /* the box stays usable while it works: nothing marks it busy */
+      assert.strictEqual(said.formBusy, null, file);
+      search.release();
+      await page.waitForSelector('.item-card');
+      await page.close();
+    }
+  });
+
   await test('"Start over" during a search leaves nothing behind', async () => {
     reset();
     const search = deferred();
@@ -946,6 +1173,7 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     await page.waitForTimeout(500);
     const after = await page.evaluate(() => ({ hidden: document.getElementById('results').hidden, html: document.getElementById('results').innerHTML, busy: document.getElementById('results').hasAttribute('aria-busy') }));
     assert.deepStrictEqual(after, { hidden: true, html: '', busy: false });
+    assert.deepStrictEqual(await boxLine(page), { stage: null, shown: false }, 'the hairline stayed after "Start over"');
     await page.close();
   });
 

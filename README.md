@@ -381,12 +381,17 @@ when something actually happened:
 the page cannot see where one ends and the other begins, and it does not
 pretend to with a timed "verifying" step. There is no timer in any of it: a
 fast or cached search goes straight to its results, a slow one keeps its line
-on screen over a quietly pulsing hairline, and results, an empty answer or an
-error replace it the moment they arrive. Nothing claims a count of shops or
-products. A garment named only as the setting ("with jeans") is said as the
-setting. The lines keep their size between stages, so the page does not move.
-The screen-reader status announces each stage, focus stays where the shopper
-left it, and with reduced motion nothing moves at all.
+on screen while a hairline pulses quietly along the bottom edge of the search
+box, and results, an empty answer or an error replace both the moment they
+arrive. The hairline is the full width of the box at both stages, so it says
+the box is working, not how far along it is; it lies inside the box's border
+and padding, so the box keeps its size. While the search runs, the page keeps
+the box and the stage line in view, and brings the results up when they come.
+Nothing claims a count of shops or products. A garment named only as the
+setting ("with jeans") is said as the setting. The lines keep their size
+between stages, so the page does not move. The screen-reader status announces
+each stage (the hairline itself is hidden from assistive technology), focus
+stays where the shopper left it, and with reduced motion nothing moves at all.
 
 If the interpreter fails, the frontend reads the request locally instead and
 shows a notice saying so, naming the reason: no interpreter connected, deployed
