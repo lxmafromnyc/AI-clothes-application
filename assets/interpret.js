@@ -590,6 +590,9 @@
       fit: unique(fit).slice(0, 3),
       style,
       context: unique(settings.map((m) => m.name)),
+      /* how each setting was named, in the same order: worn "with",
+         "over" or "under" it */
+      relations: unique(settings.map((m) => m.name)).map((name) => settings.find((m) => m.name === name).relation),
       /* the words that describe a setting rather than the thing wanted:
          "my baggy black jeans". Nothing downstream may take a colour, a
          fit or a descriptor from them. */
@@ -600,6 +603,163 @@
       colors,
       extra: extra.slice(0, 3)
     };
+  }
+
+  /* ---------- what the page says it is looking for ----------
+
+     While a search runs, the page says in plain words what Fynd took the
+     request to mean: "Looking for black oversized hoodies under $80",
+     "Looking for cozy sweaters, sweatshirts or cardigans to wear with
+     jeans". It is read off the reading itself — the preferences the
+     search is about to be sent with — so it can only ever say what was
+     understood, never more: no field it does not have, no count of shops,
+     nothing about how the search is carried out. A garment named only as
+     the setting is said as the setting ("to wear with jeans"), never as
+     the thing being looked for.
+
+     null when the reading holds nothing worth saying ("something nice for
+     dinner" names no garment, colour or budget): the page then says only
+     what it is doing, not what it understood. */
+
+  const ALREADY_PLURAL = new Set(['jeans', 'trousers', 'pants', 'shorts', 'leggings', 'sneakers', 'chinos', 'sweatpants', 'joggers', 'boots', 'heels', 'sandals', 'loafers', 'trainers', 'slacks']);
+  /* how a concept reads in a sentence: "quarter zip pullover" is what a
+     shop titles it, "quarter-zip" is what a person says */
+  const SAID_AS = {
+    'quarter zip pullover': 'quarter-zip', 'wide leg trousers': 'wide-leg trousers', 'wide leg pants': 'wide-leg pants',
+    'top handle bag': 'top-handle bag', 'zip up hoodie': 'zip-up hoodie', 'zip up sweatshirt': 'zip-up sweatshirt',
+    'pull on trousers': 'pull-on trousers', 'low top sneakers': 'low-top sneakers', 'mock neck tee': 'mock-neck tee',
+    'straight leg pants': 'straight-leg pants', 'long sleeve tee': 'long-sleeve tee', 'vintage style': 'vintage-style'
+  };
+  const SAID_COLOUR = new Set(COLOUR_WORDS);
+  const STYLE_SAID = ['vintage', 'retro', 'minimal', 'minimalist', 'casual'];
+  const FIT_SAID = ['oversized', 'loose', 'baggy', 'relaxed', 'slim', 'fitted', 'skinny', 'cropped'];
+  const QUALIFIER_SAID = [['quarter zip', 'quarter-zip'], ['half zip', 'half-zip'], ['zip up', 'zip-up'], ['crew neck', 'crew-neck'], ['crewneck', 'crewneck']];
+
+  /* the garment in the shopper's own word: "pants" rather than the
+     trousers it is filed as, "pullovers" rather than sweaters */
+  function garmentSaid(name, spaced) {
+    const entry = GARMENTS.find(([one]) => one === name);
+    const words = entry ? entry[1] : [name];
+    const word = words.slice().sort((a, b) => b.length - a.length).find((w) => spaced.includes(` ${w} `));
+    if (!word) return plural(name);
+    const shown = word === 't shirt' ? 't-shirt' : word === 't shirts' ? 't-shirts' : word;
+    const last = word.split(' ').pop();
+    const alreadyMany = ALREADY_PLURAL.has(last)
+      || (/es$/.test(word) && words.includes(word.slice(0, -2)))
+      || (/s$/.test(word) && words.includes(word.slice(0, -1)));
+    return alreadyMany ? shown : plural(shown);
+  }
+
+  function plural(phrase) {
+    const words = String(phrase).split(' ');
+    const last = words.pop();
+    let many = last;
+    if (ALREADY_PLURAL.has(last)) many = last;
+    else if (/(s|x|z|ch|sh)$/.test(last)) many = `${last}es`;
+    else if (/[^aeiou]y$/.test(last)) many = `${last.slice(0, -1)}ies`;
+    else if (/f$/.test(last)) many = `${last.slice(0, -1)}ves`;
+    else many = `${last}s`;
+    return words.concat(many).join(' ');
+  }
+
+  /* "a", "a or b", "a, b or c" */
+  const either = (list) => (list.length < 2 ? list.join('') : `${list.slice(0, -1).join(', ')} or ${list[list.length - 1]}`);
+
+  function priceSaid(prefs) {
+    const money = (n) => `$${Number.isInteger(n) ? n : Number(n).toFixed(2)}`;
+    if (prefs.minPrice && prefs.maxPrice) return `between ${money(prefs.minPrice)} and ${money(prefs.maxPrice)}`;
+    if (prefs.maxPrice) return `under ${money(prefs.maxPrice)}`;
+    if (prefs.minPrice) return `over ${money(prefs.minPrice)}`;
+    return '';
+  }
+
+  function genderSaid(gender) {
+    const g = String(gender || '').toLowerCase();
+    if (/\bwom[ae]n|\bladies|\bgirls/.test(g)) return 'women\u2019s';
+    if (/\bm[ae]n\b|\bmens\b|\bmen\u2019s|\bmen's|\bboys|\bguys/.test(g)) return 'men\u2019s';
+    return '';
+  }
+
+  /* the concepts as one phrase: "wide-leg, relaxed or pleated trousers"
+     when they share a garment, "overshirts, shirt jackets or chore
+     jackets" when they do not */
+  function conceptsSaid(names) {
+    const said = names.map((name) => SAID_AS[name] || name);
+    const heads = said.map((one) => one.split(' ').pop());
+    if (said.length > 1 && heads.every((head) => head === heads[0])) {
+      const kinds = unique(said.map((one) => one.split(' ').slice(0, -1).join(' ')).filter(Boolean));
+      return kinds.length ? `${either(kinds)} ${plural(heads[0])}` : plural(heads[0]);
+    }
+    return either(said.map(plural));
+  }
+
+  function describe(prefs, query) {
+    const p = prefs && typeof prefs === 'object' ? prefs : {};
+    const c = p.concepts && typeof p.concepts === 'object' ? p.concepts : null;
+    const list = (v) => (Array.isArray(v) ? v.filter((x) => typeof x === 'string' && x.trim()).map((x) => x.trim()) : []);
+    const text = ` ${String(query || '').toLowerCase().replace(/[^a-z0-9$\s-]+/g, ' ').replace(/\s+/g, ' ')} `;
+    const spaced = text.replace(/-/g, ' ');
+    const beside = new Set(c ? list(c.beside) : []);
+    const inQuery = (word) => text.includes(` ${word} `) && !beside.has(word);
+
+    /* colour in the shopper's own words where the reading has a colour */
+    const colours = c && list(c.colors).length
+      ? list(c.colors)
+      : (list(p.colors).length ? COLOUR_WORDS.filter(inQuery) : []);
+    const ownColours = colours.length ? colours
+      : list(p.colors).map((x) => x.toLowerCase()).filter((x) => SAID_COLOUR.has(x) && !beside.has(x));
+
+    const parts = [];
+    const gender = genderSaid(p.gender);
+    if (gender) parts.push(gender);
+    parts.push(...ownColours);
+
+    let thing;
+    if (c && list(c.alternatives).length) {
+      const names = list(c.search).length ? list(c.search) : list(c.alternatives).slice(0, 3);
+      thing = conceptsSaid(names);
+      const style = c.style ? (SAID_AS[c.style] || c.style) : '';
+      if (style && !thing.includes(style)) parts.push(style);
+      list(c.fit).forEach((word) => { if (!thing.includes(word)) parts.push(word); });
+    } else {
+      /* what it is like, in the order the shopper said it: "loose black
+         pants", "black oversized hoodies" */
+      const modifiers = [];
+      parts.splice(gender ? 1 : 0);
+      ownColours.forEach((word) => modifiers.push(word));
+      FIT_SAID.filter(inQuery).forEach((word) => modifiers.push(word));
+      if (!FIT_SAID.some(inQuery)) list(p.fits).map((x) => x.toLowerCase()).filter((x) => x !== 'regular').forEach((word) => modifiers.push(word));
+      STYLE_SAID.filter(inQuery).forEach((word) => modifiers.push(word));
+      list(p.brands).forEach((word) => modifiers.push(word));
+      list(p.descriptors).filter((d) => !beside.has(d)).forEach((d) => modifiers.push(d));
+      QUALIFIER_SAID.filter(([words]) => spaced.includes(` ${words} `)).forEach(([, shown]) => modifiers.push(shown));
+      const at = (word) => { const i = spaced.indexOf(` ${word.toLowerCase().replace(/-/g, ' ')} `); return i === -1 ? Infinity : i; };
+      unique(modifiers).map((word, order) => ({ word, order, where: at(word) }))
+        .sort((a, b) => (a.where - b.where) || (a.order - b.order))
+        .forEach(({ word }) => parts.push(word));
+      const garments = list(p.garments);
+      if (garments.length) {
+        thing = either(garments.slice(0, 2).map((g) => garmentSaid(g, spaced)));
+      } else {
+        const anchor = EXTRA_ANCHORS.find(([, words]) => words.some(inQuery));
+        thing = anchor ? plural(anchor[0]) : '';
+      }
+    }
+
+    const price = priceSaid(p);
+    if (!thing) {
+      /* nothing about WHAT: only say what is known about it, if anything */
+      if (!parts.length && !price) return null;
+      thing = 'pieces';
+    }
+    let sentence = `Looking for ${unique(parts).concat(thing).join(' ')}`;
+    if (price) sentence += ` ${price}`;
+    if (c && list(c.context).length) {
+      const relations = list(c.relations);
+      const settings = list(c.context).map((name, at) => `to wear ${relations[at] || 'with'} ${plural(name)}`);
+      sentence += ` ${settings.join(' and ')}`;
+    }
+    return sentence;
   }
 
   /* The garments a request is ABOUT: the ones it names, less the ones it
@@ -830,5 +990,5 @@
      served interpreter reads it. */
   const lexicon = Object.freeze({ GARMENTS, DESCRIPTORS, HINTS, EXTRA_ANCHORS, COLOUR_WORDS });
 
-  global.Interpreter = { interpret, localInterpret, readGarments, readConcepts, garmentsWanted, shape, EMPTY, endpoint, FALLBACK_REASON, lexicon };
+  global.Interpreter = { interpret, localInterpret, readGarments, readConcepts, garmentsWanted, describe, shape, EMPTY, endpoint, FALLBACK_REASON, lexicon };
 })(typeof window !== 'undefined' ? window : globalThis);

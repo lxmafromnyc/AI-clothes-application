@@ -573,6 +573,53 @@ async function main() {
     assert.strictEqual(a.rejected['missing-image-url'], 1);
   });
 
+  console.log('\n  — what the page says it is looking for while a search runs\n');
+
+  const says = (query, vocab) => Interpreter.describe(Interpreter.localInterpret(query, vocab || {}), query);
+
+  await test('an exact request is said back in the shopper\'s own words, budget included', () => {
+    assert.strictEqual(says('black oversized hoodie under $80'), 'Looking for black oversized hoodies under $80');
+    assert.strictEqual(says('cream linen midi dress for summer'), 'Looking for cream linen midi dresses');
+    assert.strictEqual(says('vintage Prada bag under $500', { brands: ['Prada'] }), 'Looking for vintage Prada bags under $500');
+    assert.strictEqual(says('loose black pants'), 'Looking for loose black pants');
+    assert.strictEqual(says("women's black blazer under $150"), 'Looking for women\u2019s black blazers under $150');
+    assert.strictEqual(says('$50-$100 jeans'), 'Looking for jeans between $50 and $100');
+  });
+
+  await test('a descriptive request is said as the concepts it was read as', () => {
+    assert.strictEqual(says('something like a hoodie but cleaner'), 'Looking for minimal quarter-zips, crewneck sweatshirts or knit pullovers');
+    assert.strictEqual(says('a shirt that looks like a jacket'), 'Looking for overshirts, shirt jackets or chore jackets');
+    assert.strictEqual(says('loose black pants that look nice'), 'Looking for black wide-leg, relaxed or pleated trousers');
+    assert.strictEqual(says('a bag that looks vintage but not crazy expensive'), 'Looking for vintage-style shoulder or top-handle bags');
+  });
+
+  await test('a garment named only as the setting is said as the setting, never as the thing looked for', () => {
+    assert.strictEqual(says('something cozy I can wear with jeans'), 'Looking for cozy sweaters, sweatshirts or cardigans to wear with jeans');
+    assert.strictEqual(says('that short jacket thing people wear over shirts'), 'Looking for cropped jackets, overshirts or shirt jackets to wear over shirts');
+    assert.strictEqual(says('something comfy to wear with my baggy black jeans'), 'Looking for cozy sweaters, sweatshirts or cardigans to wear with jeans');
+    assert.strictEqual(says('a white tee to wear under a blazer'), 'Looking for white t-shirts to wear under blazers');
+  });
+
+  await test('a request with nothing understood about it gets nothing said about it', () => {
+    assert.strictEqual(says('something nice for dinner'), null);
+    assert.strictEqual(Interpreter.describe(null, ''), null);
+    assert.strictEqual(Interpreter.describe(Interpreter.EMPTY(), 'anything'), null);
+  });
+
+  await test('what is said is never more than was read: no counts, no internals, no invented budget', () => {
+    for (const query of ['black oversized hoodie under $80', 'something like a hoodie but cleaner', 'something cozy I can wear with jeans', 'a bag that looks vintage but not crazy expensive', 'a dress that\'s simple but not too formal', 'navy quarter zip pullover']) {
+      const line = says(query) || '';
+      assert.ok(!/[{}[\]]|concept|intent|undefined|null|neutral|earth|pastel/i.test(line), line);
+      assert.ok(!/\d/.test(line.replace(/\$\d+(\.\d+)?/g, '')), `a number that is not a price: ${line}`);
+      const prices = (line.match(/\$\d+/g) || []);
+      prices.forEach((price) => assert.ok(query.includes(price), `${price} was never stated`));
+    }
+    /* a colour family the catalogue files under is never said as a
+       colour: the shopper's own word is, when they used one */
+    assert.strictEqual(Interpreter.describe({ colors: ['Neutral'], garments: ['coat'] }, 'a beige coat'), 'Looking for beige coats');
+    assert.strictEqual(Interpreter.describe({ colors: ['Neutral'], garments: ['coat'] }, 'a coat in a muted tone'), 'Looking for coats');
+  });
+
   console.log('\n  — the response, and what stays out of scope\n');
 
   await test('/api/search answers a descriptive request with verified products only, says it reordered, and meters one search', async () => {

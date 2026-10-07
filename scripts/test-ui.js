@@ -90,6 +90,15 @@ const accountReply = (over) => {
 
 let accountState = accountReply({});
 
+/* What the search-progress tests do to the two endpoints. Each may HOLD
+   its reply until the test releases it — so a stage can be looked at
+   while the request behind it is really still open, rather than caught
+   on a timer — answer with a reply of its own, fail with a status, or
+   drop the connection. Unset, both answer at once, as they always have.
+   `log` records when each request arrived and when its reply was sent. */
+const stubs = { interpret: null, search: null, log: [] };
+const deferred = () => { let release; const held = new Promise((r) => { release = r; }); return { held, release }; };
+
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
 
@@ -112,17 +121,27 @@ const server = http.createServer((req, res) => {
     return req.on('end', () => {
       const parsed = (() => { try { return JSON.parse(body); } catch (e) { return {}; } })();
       res.setHeader('Content-Type', 'application/json');
+      const stub = url.pathname === '/api/interpret' ? stubs.interpret : stubs.search;
+      stubs.log.push({ path: url.pathname, event: 'request', at: Date.now() });
+      if (url.pathname === '/api/search') searchRequests.push(parsed);
+      const answer = async () => {
+        if (stub && stub.hold) await stub.hold;
+        stubs.log.push({ path: url.pathname, event: 'reply', at: Date.now() });
+        if (stub && stub.drop) return res.destroy();
+        if (stub && stub.status) { res.statusCode = stub.status; return res.end(JSON.stringify({ error: 'stubbed failure' })); }
+        if (stub && stub.reply) return res.end(JSON.stringify(stub.reply));
+        return null;
+      };
       if (url.pathname === '/api/interpret') {
-        return res.end(JSON.stringify({ source: 'openai', query: 'q', preferences: {
+        return answer().then((done) => done || res.end(JSON.stringify({ source: 'openai', query: 'q', preferences: {
           categories: ['hoodie'], colors: ['Black'], fits: [], occasions: [], brands: [], styles: [],
-          keywords: [], maxPrice: null, minPrice: null, season: null, gender: null } }));
+          keywords: [], maxPrice: null, minPrice: null, season: null, gender: null } })));
       }
-      searchRequests.push(parsed);
-      res.end(JSON.stringify({ source: 'openwebninja', products: [{
+      return answer().then((done) => done || res.end(JSON.stringify({ source: 'openwebninja', products: [{
         id: '1', name: 'Champion Hoodie', price: 68, currency: 'USD',
         imageUrl: searchPhoto, productUrl: 'https://www.nordstrom.com/s/hoodie/1',
         retailer: 'Nordstrom', category: '', colors: [], sizes: []
-      }], returned: 1, rejected: {}, attachments: { received: (parsed.attachments || []).length, used: 0 } }));
+      }], returned: 1, rejected: {}, attachments: { received: (parsed.attachments || []).length, used: 0 } })));
     });
   }
 
@@ -556,6 +575,383 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     assert.ok(/do not change your results/i.test(note), note);
     await page.close();
   });
+
+  console.log('\na search in progress');
+
+  /* The page's own reader, run here, is what the stubbed interpreter
+     answers with: the preferences — concepts and all — a real reading of
+     that request produces. */
+  require(path.join(REPO, 'assets', 'interpret.js'));
+  const reader = globalThis.Interpreter;
+  const reading = (query) => ({ source: 'openai', query, preferences: reader.localInterpret(query, {}) });
+
+  const STAGE_TEXT = ['Understanding your request', 'Finding matching products'];
+  /* the kind of claim no stage may make, because the page cannot know it */
+  const INVENTED = /\d+\s*(stores?|shops?|retailers?|sites?|sources?|products|listings|brands)|thousands|millions|hundreds|scanning|the (whole )?(internet|web)|comparing|analy[sz]ing|\d+%/i;
+
+  const reset = () => { stubs.interpret = null; stubs.search = null; stubs.log.length = 0; searchRequests.length = 0; };
+
+  /* every line the progress area and the screen-reader status ever held,
+     recorded as it changes, so a line shown for a moment is still seen */
+  const recordLines = (page) => page.evaluate(() => {
+    window.__lines = [];
+    const note = () => {
+      const h = document.querySelector('#results .search-progress h2');
+      const q = document.querySelector('#results .search-progress .results-query');
+      if (h) window.__lines.push({ where: 'heading', text: h.textContent.trim() });
+      if (q) window.__lines.push({ where: 'detail', text: q.textContent.trim() });
+      window.__lines.push({ where: 'status', text: document.getElementById('search-status').textContent.trim() });
+    };
+    new MutationObserver(note).observe(document.getElementById('results'), { subtree: true, childList: true, characterData: true, attributes: true });
+    new MutationObserver(note).observe(document.getElementById('search-status'), { subtree: true, childList: true, characterData: true });
+  });
+
+  const stageOf = (page) => page.evaluate(() => {
+    const head = document.querySelector('#results .search-progress');
+    return head ? {
+      stage: head.dataset.stage,
+      heading: head.querySelector('h2').textContent.trim(),
+      detail: head.querySelector('.results-query').textContent.trim(),
+      busy: document.getElementById('results').getAttribute('aria-busy'),
+      status: document.getElementById('search-status').textContent.trim()
+    } : null;
+  });
+
+  const submit = async (page, query) => {
+    await page.fill('#ask', query);
+    await page.focus('#ask');
+    await page.keyboard.press('Enter');
+  };
+
+  await test('submitting shows the first stage at once, before anything has answered', async () => {
+    reset();
+    const interpret = deferred();
+    stubs.interpret = { hold: interpret.held, reply: reading('black oversized hoodie under $80') };
+    const page = await open();
+    await submit(page, 'black oversized hoodie under $80');
+    await page.waitForSelector('#results .search-progress[data-stage="understanding"]');
+    const now = await stageOf(page);
+    assert.strictEqual(now.heading, 'Understanding your request');
+    assert.strictEqual(now.detail, 'Results for black oversized hoodie under $80', 'the request as typed, until it has been read (the quotes are the <q>\'s own)');
+    assert.strictEqual(now.busy, 'true');
+    assert.strictEqual(now.status, 'Understanding your request.');
+    assert.ok(await page.$('#results .stage-bar'), 'no progress hairline');
+    interpret.release();
+    await page.waitForSelector('.item-card');
+    await page.close();
+  });
+
+  await test('the second stage begins only when the reading is back and the product search is sent, and says what was understood', async () => {
+    reset();
+    const interpret = deferred();
+    const search = deferred();
+    stubs.interpret = { hold: interpret.held, reply: reading('black oversized hoodie under $80') };
+    stubs.search = { hold: search.held };
+    const page = await open();
+    await submit(page, 'black oversized hoodie under $80');
+    await page.waitForSelector('#results .search-progress');
+    /* the interpreter has not answered: nothing may claim the search has started */
+    await page.waitForTimeout(400);
+    assert.strictEqual((await stageOf(page)).stage, 'understanding');
+    assert.strictEqual(searchRequests.length, 0);
+    interpret.release();
+    await page.waitForSelector('#results .search-progress[data-stage="searching"]');
+    const now = await stageOf(page);
+    assert.strictEqual(now.heading, 'Finding matching products');
+    assert.strictEqual(now.detail, 'Looking for black oversized hoodies under $80');
+    assert.strictEqual(now.status, 'Looking for black oversized hoodies under $80. Finding matching products.');
+    assert.strictEqual(searchRequests.length, 1, 'the search stage is showing, so the search must have been sent');
+    /* and it holds that line for as long as the search is open: no
+       message is invented to fill the wait */
+    await page.waitForTimeout(1200);
+    assert.deepStrictEqual(await stageOf(page), now);
+    search.release();
+    await page.waitForSelector('.item-card');
+    await page.close();
+  });
+
+  await test('a descriptive request shows the concepts Fynd took it to mean', async () => {
+    reset();
+    const search = deferred();
+    stubs.interpret = { reply: reading('something like a hoodie but cleaner') };
+    stubs.search = { hold: search.held };
+    const page = await open();
+    await submit(page, 'something like a hoodie but cleaner');
+    await page.waitForSelector('#results .search-progress[data-stage="searching"]');
+    assert.strictEqual((await stageOf(page)).detail, 'Looking for minimal quarter-zips, crewneck sweatshirts or knit pullovers');
+    search.release();
+    await page.waitForSelector('.item-card');
+    await page.close();
+  });
+
+  await test('a garment named only as the setting is shown as the setting, never as what is searched for', async () => {
+    reset();
+    const search = deferred();
+    stubs.interpret = { reply: reading('something cozy I can wear with jeans') };
+    stubs.search = { hold: search.held };
+    const page = await open();
+    await submit(page, 'something cozy I can wear with jeans');
+    await page.waitForSelector('#results .search-progress[data-stage="searching"]');
+    const { detail } = await stageOf(page);
+    assert.strictEqual(detail, 'Looking for cozy sweaters, sweatshirts or cardigans to wear with jeans');
+    const target = detail.split(' to wear ')[0];
+    assert.ok(!/jean/i.test(target), `jeans shown as the target: ${detail}`);
+    /* and the search it is waiting on was not sent for jeans either */
+    assert.deepStrictEqual(searchRequests[0].intent.garments, []);
+    search.release();
+    await page.waitForSelector('.item-card');
+    await page.close();
+  });
+
+  await test('the progress is gone the moment results arrive', async () => {
+    reset();
+    const search = deferred();
+    stubs.search = { hold: search.held };
+    const page = await open();
+    await submit(page, 'black oversized hoodie');
+    await page.waitForSelector('#results .search-progress[data-stage="searching"]');
+    search.release();
+    await page.waitForSelector('.item-card');
+    const after = await page.evaluate(() => ({
+      progress: Boolean(document.querySelector('#results .search-progress, #results .stage-bar, #results .thinking, #results .skeleton-card')),
+      busy: document.getElementById('results').hasAttribute('aria-busy'),
+      heading: document.querySelector('.results-head h2').textContent.trim(),
+      status: document.getElementById('search-status').textContent.trim()
+    }));
+    assert.deepStrictEqual(after, { progress: false, busy: false, heading: '1 piece found', status: '1 piece found.' });
+    await page.close();
+  });
+
+  await test('a failed search replaces the progress with the existing error, and the way to try again', async () => {
+    for (const [why, failure] of [['a 502', { status: 502 }], ['a dropped connection', { drop: true }], ['no service at all', { status: 404 }]]) {
+      reset();
+      const search = deferred();
+      stubs.search = Object.assign({ hold: search.held }, failure);
+      const page = await open();
+      await submit(page, 'black oversized hoodie');
+      await page.waitForSelector('#results .search-progress[data-stage="searching"]');
+      search.release();
+      await page.waitForFunction(() => !document.querySelector('#results .search-progress'), null, { timeout: 10000 });
+      const after = await page.evaluate(() => ({
+        stuck: Boolean(document.querySelector('#results .stage-bar, #results .thinking')),
+        busy: document.getElementById('results').hasAttribute('aria-busy'),
+        heading: document.querySelector('.results-head h2').textContent.trim(),
+        again: Boolean(document.querySelector('#results a[href="#search"]'))
+      }));
+      assert.strictEqual(after.stuck, false, why);
+      assert.strictEqual(after.busy, false, why);
+      if (failure.status === 404) {
+        /* nothing connected: the sample catalogue, labelled, as before */
+        assert.ok(/picked for you|No matches yet/.test(after.heading), `${why}: ${after.heading}`);
+      } else {
+        assert.strictEqual(after.heading, 'Product search unavailable', why);
+        assert.ok(after.again, `${why}: no way to try again`);
+      }
+      await page.close();
+    }
+  });
+
+  await test('an interpreter that fails still moves on to the search, read locally, and says so', async () => {
+    reset();
+    const search = deferred();
+    stubs.interpret = { status: 500 };
+    stubs.search = { hold: search.held };
+    const page = await open();
+    await submit(page, 'loose black pants that look nice');
+    await page.waitForSelector('#results .search-progress[data-stage="searching"]');
+    assert.strictEqual((await stageOf(page)).detail, 'Looking for black wide-leg, relaxed or pleated trousers');
+    search.release();
+    await page.waitForSelector('.item-card');
+    assert.ok(/local keyword match/.test(await page.$eval('#results .notice', (n) => n.textContent)));
+    await page.close();
+  });
+
+  await test('no stage ever claims a count, a scale or work the page cannot see', async () => {
+    const seen = [];
+    for (const query of ['black oversized hoodie under $80', 'something like a hoodie but cleaner', 'something cozy I can wear with jeans', 'a bag that looks vintage but not crazy expensive', 'something nice for dinner']) {
+      reset();
+      const search = deferred();
+      stubs.interpret = { reply: reading(query) };
+      stubs.search = { hold: search.held };
+      const page = await open();
+      await recordLines(page);
+      await submit(page, query);
+      await page.waitForSelector('#results .search-progress[data-stage="searching"]');
+      search.release();
+      await page.waitForSelector('.item-card');
+      seen.push(...(await page.evaluate(() => window.__lines)).map((line) => Object.assign(line, { query })));
+      await page.close();
+    }
+    const progress = seen.filter((line) => line.where !== 'status' || !/found\.$/.test(line.text));
+    for (const { where, text, query } of progress) {
+      if (!text) continue;
+      const own = text.replace(query, "");
+      assert.ok(!INVENTED.test(own), `${where} said "${text}"`);
+      /* a number is only ever a price the shopper gave */
+      assert.ok(!/\d/.test(own.replace(/\$\d+(\.\d+)?/g, '')), `${where} said "${text}"`);
+      if (where === 'heading') assert.ok(STAGE_TEXT.includes(text), `an unexpected stage: "${text}"`);
+      if (where === 'detail') assert.ok(/^(Results for|Looking for) /.test(text), `an unexpected detail: "${text}"`);
+      assert.ok(!/[{}[\]]|concept|intent|preferences|api\b|json/i.test(own), `${where} exposed internals: "${text}"`);
+    }
+    /* "something nice for dinner" names nothing, so nothing is claimed */
+    const dinner = seen.filter((line) => line.query === 'something nice for dinner' && line.where === 'detail').map((line) => line.text);
+    assert.ok(dinner.every((text) => !/^Looking for/.test(text)), dinner.join(' | '));
+    assert.ok(dinner.every((text) => !/dress|black|heel/i.test(text.replace('something nice for dinner', ''))));
+  });
+
+  await test('a fast or cached search goes straight to its results, held up by nothing', async () => {
+    reset();
+    const page = await open();
+    const started = Date.now();
+    await submit(page, 'black oversized hoodie under $80');
+    await page.waitForSelector('.item-card');
+    const shown = Date.now();
+    const reply = stubs.log.filter((e) => e.path === '/api/search' && e.event === 'reply').pop();
+    assert.ok(reply, 'the search never answered');
+    assert.ok(shown - reply.at < 400, `results took ${shown - reply.at}ms to appear after the search answered`);
+    assert.ok(shown - started < 2000, `a search that answered at once took ${shown - started}ms`);
+    /* and nothing in the page's progress code waits on a clock */
+    const app = fs.readFileSync(path.join(REPO, 'assets', 'app.js'), 'utf8');
+    const progressCode = app.slice(app.indexOf('while a search runs'), app.indexOf('Files dropped on the card'));
+    assert.ok(progressCode.length > 500, 'the progress code moved');
+    assert.ok(!/setTimeout|setInterval|requestAnimationFrame|\.sleep|delay\(/.test(progressCode), 'the progress code waits on a timer');
+    await page.close();
+  });
+
+  await test('a search replaced by a newer one never paints over it', async () => {
+    reset();
+    const first = deferred();
+    stubs.interpret = { hold: first.held, reply: reading('red dress') };
+    const page = await open();
+    await submit(page, 'red dress');
+    await page.waitForSelector('#results .search-progress');
+    stubs.interpret = { reply: reading('something cozy I can wear with jeans') };
+    await submit(page, 'something cozy I can wear with jeans');
+    await page.waitForSelector('.item-card');
+    first.release();
+    await page.waitForTimeout(500);
+    assert.strictEqual(await page.$eval('.results-query', (n) => n.textContent.trim()), 'Results for something cozy I can wear with jeans');
+    assert.ok(!(await page.$('#results .search-progress')));
+    await page.close();
+  });
+
+  await test('keyboard focus stays where the shopper left it, through every stage and after', async () => {
+    reset();
+    const search = deferred();
+    stubs.search = { hold: search.held };
+    const page = await open();
+    await submit(page, 'black oversized hoodie');
+    await page.waitForSelector('#results .search-progress[data-stage="searching"]');
+    assert.strictEqual(await page.evaluate(() => document.activeElement.id), 'ask');
+    search.release();
+    await page.waitForSelector('.item-card');
+    assert.strictEqual(await page.evaluate(() => document.activeElement.id), 'ask');
+
+    /* and from the Search button, pressed with the keyboard */
+    reset();
+    const again = deferred();
+    stubs.search = { hold: again.held };
+    await page.fill('#ask', 'black oversized hoodie');
+    await page.focus('#ask-form button[type=submit]');
+    await page.keyboard.press('Enter');
+    await page.waitForSelector('#results .search-progress[data-stage="searching"]');
+    const onButton = () => page.evaluate(() => document.activeElement === document.querySelector('#ask-form button[type=submit]'));
+    assert.ok(await onButton(), 'focus left the Search button while searching');
+    again.release();
+    await page.waitForSelector('.item-card');
+    assert.ok(await onButton(), 'focus left the Search button when the results came');
+    await page.close();
+  });
+
+  const motionOf = (page) => page.evaluate(() => {
+    const css = (sel) => getComputedStyle(document.querySelector(sel));
+    return {
+      bar: css('#results .stage-bar-fill').animationName,
+      line: css('#results .stage-text').animationName,
+      skeleton: css('#results .skeleton-card').animationName,
+      grow: parseFloat(css('#results .stage-bar-fill').transitionDuration)
+    };
+  });
+
+  await test('the progress moves quietly, and holds still for anyone who asks for reduced motion', async () => {
+    reset();
+    const search = deferred();
+    stubs.search = { hold: search.held };
+    const moving = await open();
+    await submit(moving, 'black oversized hoodie');
+    await moving.waitForSelector('#results .search-progress[data-stage="searching"]');
+    const normal = await motionOf(moving);
+    assert.strictEqual(normal.bar, 'pulse');
+    assert.strictEqual(normal.line, 'stage-in');
+    search.release();
+    await moving.close();
+
+    reset();
+    const held = deferred();
+    stubs.search = { hold: held.held };
+    const still = await browser.newPage();
+    await still.emulateMedia({ reducedMotion: 'reduce' });
+    await still.addInitScript(() => {
+      window.FINDWEAR_API = 'http://127.0.0.1:8899/api/interpret';
+      window.FINDWEAR_SEARCH_API = 'http://127.0.0.1:8899/api/search';
+    });
+    await still.route((url) => !String(url).includes('127.0.0.1'), (route) => route.abort());
+    await still.goto(`http://127.0.0.1:${PORT}/find-clothes.html`, { waitUntil: 'domcontentloaded' });
+    await still.waitForFunction(() => window.Attachments && document.getElementById('attachments'));
+    await submit(still, 'black oversized hoodie');
+    await still.waitForSelector('#results .search-progress[data-stage="searching"]');
+    const reduced = await motionOf(still);
+    assert.deepStrictEqual({ bar: reduced.bar, line: reduced.line, skeleton: reduced.skeleton }, { bar: 'none', line: 'none', skeleton: 'none' });
+    assert.ok(reduced.grow < 0.001, `the hairline still animates its width: ${reduced.grow}s`);
+    /* still, and still legible: every line in a palette ink */
+    const problems = await textStyleProblems(still, await resolveInks(still));
+    assert.deepStrictEqual(problems, [], `\n        ${problems.join('\n        ')}`);
+    held.release();
+    await still.waitForSelector('.item-card');
+    await still.close();
+  });
+
+  await test('changing stage moves nothing on the page, on a wide screen or a phone', async () => {
+    for (const viewport of [{ width: 1280, height: 900 }, { width: 375, height: 800 }]) {
+      reset();
+      const interpret = deferred();
+      const search = deferred();
+      stubs.interpret = { hold: interpret.held, reply: reading('something cozy I can wear with jeans') };
+      stubs.search = { hold: search.held };
+      const page = await open();
+      await page.setViewportSize(viewport);
+      await submit(page, 'something cozy I can wear with jeans');
+      await page.waitForSelector('#results .search-progress[data-stage="understanding"]');
+      const gridTop = () => page.evaluate(() => Math.round(document.querySelector('#results .grid').getBoundingClientRect().top + window.scrollY));
+      const before = await gridTop();
+      interpret.release();
+      await page.waitForSelector('#results .search-progress[data-stage="searching"]');
+      assert.strictEqual(await gridTop(), before, `${viewport.width}px: the products' place moved when the stage changed`);
+      const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+      assert.strictEqual(overflow, 0, `${viewport.width}px: the progress overflows the screen`);
+      search.release();
+      await page.waitForSelector('.item-card');
+      if (viewport.width >= 768) assert.strictEqual(await gridTop(), before, 'on a wide screen the products arrive where the placeholders stood');
+      await page.close();
+    }
+  });
+
+  await test('"Start over" during a search leaves nothing behind', async () => {
+    reset();
+    const search = deferred();
+    stubs.search = { hold: search.held };
+    const page = await open();
+    await submit(page, 'black oversized hoodie');
+    await page.waitForSelector('#results .search-progress[data-stage="searching"]');
+    await page.click('#reset-form');
+    search.release();
+    await page.waitForTimeout(500);
+    const after = await page.evaluate(() => ({ hidden: document.getElementById('results').hidden, html: document.getElementById('results').innerHTML, busy: document.getElementById('results').hasAttribute('aria-busy') }));
+    assert.deepStrictEqual(after, { hidden: true, html: '', busy: false });
+    await page.close();
+  });
+
+  reset();
 
   console.log('\nproduct photos');
 

@@ -456,6 +456,39 @@ strong { font-weight: 600; }
 .skeleton-line--short { width: 70%; margin-top: 8px; }
 @keyframes pulse { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
 
+/* ---------- a search in progress ----------
+   Two quiet lines where the results heading will be: what Fynd is doing,
+   and what it understood. Each keeps to one size whatever it says — the
+   heading to a line, the line under it to one on a wide screen and two
+   on a phone, where a description wraps — so nothing below moves when a
+   stage changes. On a wide screen that is exactly the size of the
+   results heading that replaces it, so the products arrive where the
+   placeholders stood. The hairline sits in the margin the heading
+   already has. A new line fades in; nothing slides, spins or glows. */
+.search-progress { position: relative; }
+.search-progress h2 { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.search-progress .results-query {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 1; overflow: hidden;
+  line-height: 1.55; min-height: 1.55em;
+}
+.search-progress .stage-text { color: var(--color-text-2); }
+.search-progress h2 .stage-text { color: var(--color-text-muted); }
+.stage-text { display: inline; animation: stage-in .24s var(--ease) both; }
+@keyframes stage-in { from { opacity: 0; } to { opacity: 1; } }
+
+.stage-bar {
+  position: absolute; left: 0; bottom: -16px;
+  width: min(240px, 100%); height: 2px;
+  border-radius: var(--r-pill); background: var(--color-surface-3); overflow: hidden;
+}
+.stage-bar-fill {
+  display: block; height: 100%; width: 34%;
+  border-radius: inherit; background: var(--color-primary);
+  transition: width .5s var(--ease);
+  animation: pulse 1.6s ease-in-out infinite;
+}
+.search-progress[data-stage="searching"] .stage-bar-fill { width: 67%; }
+
 .notice {
   margin: 0 0 24px; padding: 14px 16px;
   border: 1px solid var(--color-border); border-radius: var(--r);
@@ -728,6 +761,7 @@ a.item-card:hover .item-name { text-decoration: underline; text-underline-offset
   .examples-label { width: 100%; margin: 0 0 2px; }
 
   .section-head h2, .results-head h2 { font-size: 24px; }
+  .search-progress .results-query { -webkit-line-clamp: 2; min-height: calc(2 * 1.55em); }
   .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px var(--gap); }
   .signal-list { grid-template-columns: minmax(0, 1fr); }
   .page-head { padding: 40px 0 28px; }
@@ -763,4 +797,6 @@ a.item-card:hover .item-name { text-decoration: underline; text-underline-offset
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+  /* a search in progress holds still: the stage is said, not shown moving */
+  .stage-text, .stage-bar-fill, .skeleton-card { animation: none; }
 }

@@ -366,6 +366,25 @@ scripts keep working.
   rendered, badged with the retailer, linking to its page
 ```
 
+While that runs, the page says what is actually happening, and changes only
+when something actually happened:
+
+| From | Until | The page says |
+| --- | --- | --- |
+| the search is sent | the request has been read | **Understanding your request**, over the request as typed |
+| the reading is back and the product search is sent | that search answers | **Finding matching products**, over what was understood: "Looking for black oversized hoodies under $80", "Looking for cozy sweaters, sweatshirts or cardigans to wear with jeans" |
+
+`/api/search` finds the products and verifies each one in a single request, so
+the page cannot see where one ends and the other begins, and it does not
+pretend to with a timed "verifying" step. There is no timer in any of it: a
+fast or cached search goes straight to its results, a slow one keeps its line
+on screen over a quietly pulsing hairline, and results, an empty answer or an
+error replace it the moment they arrive. Nothing claims a count of shops or
+products. A garment named only as the setting ("with jeans") is said as the
+setting. The lines keep their size between stages, so the page does not move.
+The screen-reader status announces each stage, focus stays where the shopper
+left it, and with reduced motion nothing moves at all.
+
 If the interpreter fails, the frontend reads the request locally instead and
 shows a notice saying so, naming the reason: no interpreter connected, deployed
 without a key, unreachable, or an unusable reply.
@@ -1011,7 +1030,7 @@ node scripts/test-stripe.js    # payments and subscriptions
 node scripts/test-auth.js      # accounts, sessions, tokens, OAuth
 node scripts/test-catalog-images.js  # the catalogue image extractor's gates
 node scripts/test-catalog-prices.js  # the catalogue price extractor's gates
-node scripts/test-ui.js        # the interface, its palette and its contrast
+node scripts/test-ui.js        # the interface, its palette, its contrast, and a search in progress
 node scripts/record-demo.js    # re-records the landing page demo video
 node scripts/test-demo-audio.js     # the demo's sound: loudness, ducking, captions
 node scripts/test-demo-film.js      # the demo film: length, order, every store frame real

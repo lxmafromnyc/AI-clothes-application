@@ -345,30 +345,106 @@ function orderFacet(counts, key) {
     if (status) status.textContent = text;
   }
 
+  /* ---------- while a search runs ----------
+     What the page says while it waits is what is actually happening, and
+     it changes only when something actually happened:
+
+       understanding   from the moment the search is sent until the
+                       request has been read (/api/interpret, or the
+                       local reader when that cannot answer)
+       searching       from the moment the reading is back and the
+                       product search is sent, until it answers. That
+                       one request finds the products AND checks each
+                       one through the verification gate, so it is one
+                       stage: the page cannot see where one ends and the
+                       other begins, and does not pretend to.
+
+     There is no timer anywhere in this. A stage lasts exactly as long as
+     the request behind it, so a fast or cached search goes straight to
+     its results, and a slow one keeps its current line on screen with
+     the hairline quietly pulsing under it — never a new message invented
+     to fill the wait. Results, an empty answer or an error replace all
+     of it the moment they arrive.
+
+     The heading and the line under it keep their size from one stage to
+     the next, and the hairline sits in the margin the results heading
+     already has, so nothing on the page moves while it changes. */
+  const STAGES = {
+    understanding: 'Understanding your request',
+    searching: 'Finding matching products'
+  };
+
+  function showStage(stage, detail) {
+    const head = results.querySelector('.search-progress');
+    if (!head) return;
+    head.dataset.stage = stage;
+    const line = document.createElement('span');
+    line.className = 'stage-text';
+    line.textContent = STAGES[stage];
+    head.querySelector('h2').replaceChildren(line);
+    /* what Fynd understood, once it has understood something; the
+       request as typed until then */
+    if (detail) {
+      const said = head.querySelector('.results-query');
+      const words = document.createElement('span');
+      words.className = 'stage-text';
+      words.textContent = detail;
+      said.replaceChildren(words);
+    }
+    announce(detail ? `${detail}. ${STAGES[stage]}.` : `${STAGES[stage]}.`);
+  }
+
+  function showProgress(query) {
+    results.setAttribute('aria-busy', 'true');
+    results.innerHTML = `<div class="results-head search-progress" data-stage="understanding">
+        <h2 class="thinking"></h2>
+        <p class="results-query">Results for <q>${esc(query)}</q></p>
+        <div class="stage-bar" aria-hidden="true"><span class="stage-bar-fill"></span></div>
+      </div>
+      <div class="grid" aria-hidden="true">${SKELETON.repeat(4)}</div>`;
+    showStage('understanding');
+  }
+
+  /* the search a newer one has replaced, or "Start over" has dropped,
+     answers into nothing: it never paints over what is on screen now */
+  let latest = 0;
+
   async function search(query, attached) {
+    const run = ++latest;
     error.classList.remove('show');
     error.textContent = '';
     input.removeAttribute('aria-invalid');
-    announce('Searching\u2026');
     /* the sample row on the home page steps aside: once a real search is
        running, the page has something better to put in that space */
     if (preview) preview.hidden = true;
     if (demo) demo.hidden = true;
     results.hidden = false;
     asked = query;
-    results.innerHTML = `<div class="results-head">
-        <h2 class="thinking">Searching\u2026</h2>
-        <p class="results-query">Results for <q>${esc(query)}</q></p>
-      </div>
-      <div class="grid">${SKELETON.repeat(4)}</div>`;
+    showProgress(query);
     results.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
-    const outcome = await Interpreter.interpret(query, vocabulary());
+    let outcome = null;
+    let found;
+    try {
+      outcome = await Interpreter.interpret(query, vocabulary());
+      if (run !== latest) return;
 
-    /* real products first; the sample catalogue only when no source answers */
-    const found = typeof ProductSearch === 'undefined'
-      ? { source: null, products: [], notice: null }
-      : await ProductSearch.find(outcome.preferences, undefined, attached);
+      /* real products first; the sample catalogue only when no source answers */
+      if (typeof ProductSearch === 'undefined') {
+        found = { source: null, products: [], notice: null };
+      } else {
+        showStage('searching', Interpreter.describe ? Interpreter.describe(outcome.preferences, query) : null);
+        found = await ProductSearch.find(outcome.preferences, undefined, attached);
+      }
+    } catch (err) {
+      /* neither call is meant to throw — each answers with a state — but
+         if something does, the search is over and says so, rather than
+         leaving the last stage on screen */
+      found = { state: 'unavailable', source: null, products: [], notice: null };
+    }
+    if (run !== latest) return;
+    results.removeAttribute('aria-busy');
+    outcome = outcome || { source: 'local', notice: null, preferences: Interpreter.EMPTY() };
 
     if (found.products.length) renderProducts(found, outcome);
     /* The sample catalogue stands in only when nothing is connected. Once
@@ -449,6 +525,10 @@ function orderFacet(counts, key) {
     error.textContent = '';
     input.removeAttribute('aria-invalid');
     announce('');
+    /* a search still running when the shopper starts over answers into
+       nothing */
+    latest += 1;
+    results.removeAttribute('aria-busy');
     /* starting over drops the attachments too, and hands back the
        object URLs their thumbnails were holding */
     if (attachments) attachments.clear();
