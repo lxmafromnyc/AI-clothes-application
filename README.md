@@ -1578,7 +1578,7 @@ stripe trigger customer.subscription.deleted
         |
         v
   /api/account now says Pro, and /api/search and /api/interpret meter
-  against 75 searches and 1,000,000 tokens a month
+  against 100 searches and 1,000,000 tokens a month
 ```
 
 ### Duplicate deliveries, and events that arrive out of order
