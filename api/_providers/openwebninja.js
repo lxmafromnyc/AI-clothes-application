@@ -581,6 +581,8 @@ async function offersFor(productId, region, timeout) {
    and kept. */
 let gateModule = null;
 const gate = () => (gateModule || (gateModule = require('./product-source')));
+let relevanceModule = null;
+const relevance = () => (relevanceModule || (relevanceModule = require('./relevance')));
 
 /* A stand-in offer, used only to ask the gate a question: given a
    perfect price, retailer and link, would this record be shown? It is
@@ -712,9 +714,17 @@ async function resolveMissingOffers(records, wanted, region, stats, intent, cach
   const own = Date.now() + budget;
   const deadline = requestDeadline ? Math.min(own, requestDeadline) : own;
 
-  /* The candidates, in the order the source ranked them. */
+  /* The candidates, in the order the source ranked them — or, for a
+     descriptive request ("something like a hoodie but cleaner"), in the
+     order of how plainly each record's own title is what it most likely
+     means (see relevance.js). The source was asked a phrase the shopper
+     never typed, so its order is for that phrase; the lookups below are
+     capped, and spending them on the best candidates first is what
+     decides which products can be shown at all. The same records, the
+     same ceiling, the same budget: nothing is looked up that would not
+     have been a candidate anyway. */
   const pending = [];
-  for (const record of records) {
+  for (const record of relevance().lookupOrder(records, intent)) {
     if (record.productUrl || !record.sku) continue;
     const unfit = unfitReason(record);
     if (unfit) {

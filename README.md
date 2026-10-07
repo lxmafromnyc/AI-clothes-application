@@ -127,7 +127,11 @@ scripts/record-demo.js  records the demo from four real searches, end to end
 scripts/demo-narration.py  speaks the demo's narration lines
 scripts/demo-audio.js   the demo's score and mix: composed to each video's timeline
 scripts/demo-film.js    cuts the homepage film from the recorded session
-assets/interpret.js     sends the request to the endpoint; local fallback
+assets/interpret.js     sends the request to the endpoint; local fallback; reads descriptive requests
+api/_providers/query.js the one search phrase every provider is asked
+api/_providers/relevance.js  the order a descriptive request's results are shown in
+scripts/test-concepts.js       offline test of descriptive requests, end to end
+scripts/bench-concepts.js      before/after benchmark of descriptive requests
 assets/app.js           rendering and page behaviour
 assets/styles.css       colour tokens, design tokens and all shared components
 ```
@@ -378,6 +382,47 @@ The sample catalogue stands in only when nothing is connected at all. Once a
 product source is configured, a failed or empty search says so plainly: a
 deployment that can sell things must never pad the page with demo rows, however
 clearly they are labelled. No product is ever invented to fill the gap.
+
+### Requests that describe rather than name
+
+Shoppers often cannot name what they want: "something like a hoodie but
+cleaner", "a shirt that looks like a jacket", "something cozy I can wear with
+jeans". Searching those words finds hoodies, shirts and jeans — the wrong thing
+each time. So every request is read a second time, deterministically and from
+tables (`readConcepts` in `assets/interpret.js`), for how it names its garments:
+
+| The request | Read as | Asked of the provider |
+| --- | --- | --- |
+| something like a hoodie but cleaner | compared with a hoodie; polished, minimal | `minimal quarter zip pullover crewneck sweatshirt knit pullover` |
+| a shirt that looks like a jacket | a shirt crossed with a jacket | `overshirt shirt jacket chore jacket` |
+| loose black pants that look nice | trousers; black; relaxed; polished | `black relaxed wide leg trousers pleated trousers` |
+| something cozy I can wear with jeans | jeans only the setting; cozy | `cozy sweater sweatshirt cardigan` |
+| that short jacket thing people wear over shirts | a jacket, unsure of the name; shirts the setting | `cropped jacket overshirt shirt jacket` |
+| black oversized hoodie under $80 | not descriptive | exactly what it was asked before |
+
+What it holds to:
+
+- **Stated constraints stay strict.** Colour, budget, brand and gender are the
+  shopper's, and a colour or fit that describes the setting ("with my baggy
+  black jeans") is never taken for the thing wanted. "Not crazy expensive"
+  prefers cheaper results; it never becomes a budget nobody stated.
+- **Signals are soft.** "Cleaner", "cozy", "not too formal" order the results;
+  they never filter them.
+- **No guessing.** A request no table covers — "something nice for dinner" —
+  is searched exactly as it always was: no dress, no black, no heels.
+- **One search.** The concepts make one readable phrase — the strongest concept
+  and at most two more — for one provider request, through the same fallback,
+  cache, deadline and gate.
+- **Ordering, not facts.** For a descriptive request, the verified products are
+  put in order of how plainly each one's own title is what was meant, and the
+  adapter's capped offer lookups are spent on those candidates first. Nothing is
+  added to a product, and the internal score is never shown. A request that
+  names its garment in shop words keeps the provider's order.
+
+`/api/interpret` attaches the reading as `concepts`, only when there is one, so
+the reply for an exact request is unchanged. `node scripts/test-concepts.js`
+holds all of this; `node scripts/bench-concepts.js` measures it before and after
+against a fixed pool of listings (see the script for how).
 
 ### Worth knowing
 
@@ -957,6 +1002,8 @@ The rest of the suites, all offline except the two that drive a browser:
 
 ```sh
 node scripts/bench-offer-resolution.js  # what one search costs the provider
+node scripts/test-concepts.js  # descriptive requests: what they mean, and what must not change
+node scripts/bench-concepts.js --compare before.json after.json  # descriptive requests, before and after
 node scripts/test-cache.js     # the search and offer caches, and what they may not change
 node scripts/test-gemini.js    # the Gemini interpreter, and what did not change
 node scripts/test-serpapi.js   # the SerpApi adapter, its links and its costs

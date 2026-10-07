@@ -169,6 +169,12 @@ function normalizeIntent(intent) {
     out[field] = Number.isFinite(n) && n > 0 ? Math.round(n * 100) / 100 : null;
   }
 
+  /* A descriptive request's concepts change the phrase the provider is
+     asked, so they are part of the search. Only when present: a request
+     with none keys exactly as it always did, so no entry already stored
+     is orphaned by their arriving. */
+  if (i.concepts && typeof i.concepts === 'object') out.concepts = i.concepts;
+
   return out;
 }
 

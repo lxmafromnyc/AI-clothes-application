@@ -69,7 +69,8 @@ const { withoutContradictions } = require('./_providers/garment-filter');
    different garment from the one asked for */
 const GARMENT_CONTRADICTION = 'contradicts-the-requested-garment';
 const { readListings } = require('./_providers/retailer-page');
-const { queryFrom } = require('./_providers/query');
+const { queryFrom, shapeConcepts } = require('./_providers/query');
+const { rankByIntent } = require('./_providers/relevance');
 const { timedOut } = require('./_providers/deadline');
 const { handledPreflight } = require('./_cors');
 const { envReport } = require('./_env-report');
@@ -117,7 +118,11 @@ function shapeIntent(raw) {
     maxPrice: asNumber(i.maxPrice),
     minPrice: asNumber(i.minPrice),
     season: typeof i.season === 'string' ? i.season.trim() : null,
-    gender: typeof i.gender === 'string' ? i.gender.trim() : null
+    gender: typeof i.gender === 'string' ? i.gender.trim() : null,
+    /* what a descriptive request most likely means, held to its shape;
+       null for a request that named its garment in shop words, which is
+       then searched exactly as it always was */
+    concepts: shapeConcepts(i.concepts)
   };
 }
 
@@ -376,9 +381,20 @@ async function findProducts(provider, intent, limit, stats, deadline) {
   const refusedAll = Object.assign({}, rejected);
   if (filtered.removed.length) refusedAll[GARMENT_CONTRADICTION] = filtered.removed.length;
 
+  /* Last, and only ever reordering: a DESCRIPTIVE request ("something
+     like a hoodie but cleaner") was searched with concepts the shopper
+     never typed, so its verified products are put in order of how
+     plainly each one's own title is what the request most likely means
+     (see _providers/relevance.js). A request that named its garment in
+     shop words is shown in the provider's order, exactly as before. The
+     same products either way: nothing is added, removed or rewritten. */
+  const ordered = rankByIntent(filtered.products, intent);
+
   return {
     records: payload.records,
-    products: filtered.products,
+    products: ordered.products,
+    /* whether the order above is ours or the provider's */
+    reordered: ordered.applied,
     rejected: refusedAll,
     /* which verified products were removed, where each stood among them,
        and why — for the benchmark and the server; the browser gets the count */
@@ -482,6 +498,9 @@ module.exports = async function handler(req, res) {
     /* verified, and then removed as plainly a different garment: a count,
        never a title */
     removedAsAnotherGarment: Array.isArray(found.semanticRemoved) ? found.semanticRemoved.length : 0,
+    /* whether a descriptive request's results were put in the order of
+       what it most likely means: a yes or no, never a score */
+    reorderedByIntent: Boolean(found.reordered),
     rejected,
     cache: cache.report(cacheStats, { servedFromCache: found.servedFromCache }),
     /* where the time went, so "the page is short" and "the source was

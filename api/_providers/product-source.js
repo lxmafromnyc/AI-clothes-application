@@ -22,6 +22,11 @@
      { categories, colors, occasions, fits, brands, styles,
        maxPrice, minPrice, season, gender, keywords }
 
+   plus, for a request that describes its garment rather than naming it,
+   `concepts` (see api/_providers/query.js). An adapter that builds its
+   phrase with queryFrom() gets that for nothing; one that does not can
+   ignore it, and is asked exactly what it was asked before.
+
    `search` returns an array of raw records in whatever shape the upstream
    source uses. Field names are mapped below, so an adapter does not need
    to reshape anything itself. It must never invent a value: if the source

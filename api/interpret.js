@@ -194,6 +194,17 @@ module.exports = async function handler(req, res) {
    model read the rest: a model constrained to the catalogue's filing
    says "knit" for a hoodie, and the shopper said "hoodie".
 
+   So is what a DESCRIPTIVE request most likely means — "something like
+   a hoodie but cleaner", "a shirt that looks like a jacket" — and which
+   of the garments it names are only what it is worn with ("with
+   jeans"), which are taken out of the garments it is about. That
+   reading is deterministic and tabled (readConcepts in
+   assets/interpret.js), so it is the same whichever model read the
+   rest, the same on the page's local fallback, and it cannot add a
+   colour, a budget or a brand the shopper did not state. A request that
+   is not descriptive gets no `concepts` at all, and nothing downstream
+   changes for it.
+
    So is a budget stated in so many words. The prompt says "under $50"
    means maxPrice 50, and gemini-3.6-flash at minimal thinking still
    answered "a green oversized hoodie under $80" with maxPrice null.
@@ -265,13 +276,19 @@ async function interpretQuery({ query, vocabulary }) {
 }
 
 /* the page's own garment vocabulary: assets/interpret.js registers its
-   reader on the global object, in a function exactly as in a browser */
+   reader on the global object, in a function exactly as in a browser.
+   The garments are the ones the request is ABOUT — a garment it names
+   only as what the wanted one is worn with is not one of them — and the
+   concepts are what a descriptive request most likely means. Absent
+   rather than null when there are none, as a product's brand is: a
+   request that named its garment in shop words is answered with exactly
+   the object it always was. */
 function garmentsIn(query) {
   require('../assets/interpret.js');
-  const reader = globalThis.Interpreter && globalThis.Interpreter.readGarments;
+  const reader = globalThis.Interpreter && globalThis.Interpreter.garmentsWanted;
   if (typeof reader !== 'function') return { garments: [], descriptors: [] };
-  const { garments, descriptors } = reader(query);
-  return { garments, descriptors };
+  const { garments, descriptors, concepts } = reader(query);
+  return concepts ? { garments, descriptors, concepts } : { garments, descriptors };
 }
 
 /* The budget a request states outright: "under $80", "below $80", "up

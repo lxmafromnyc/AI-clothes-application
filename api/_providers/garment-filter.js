@@ -28,6 +28,10 @@
        each type), so "black jacket" never loses its puffers, though the
        reader, asked strictly, calls them a different type.
 
+   * and not when it is one of the concepts a descriptive request most
+     likely means (intent.concepts.alternatives): those are garments the
+     request asked for in other words.
+
    Nothing else is removed. A listing the reader cannot read, one it
    calls unproven ("Short Jacket" for a puffer) and one that is only
    pending a detail all stay, where the provider put them. Nothing is
@@ -78,6 +82,13 @@ function requestedGarments(intent) {
   add(queryFrom(i));
   listOf(i.garments).forEach((one) => add(one));
   listOf(i.keywords).forEach((one) => add(one, (read) => families.has(read.family)));
+  /* and what a descriptive request most likely means: a crewneck
+     sweatshirt is not a hoodie, but it is what "something like a hoodie
+     but cleaner" asked for, so it is not removed as a different garment.
+     Only ever widening — another garment to be measured against can only
+     keep a result, never remove one. */
+  const concepts = i.concepts && typeof i.concepts === 'object' ? i.concepts : null;
+  if (concepts) listOf(concepts.alternatives).forEach((one) => add(one));
   return wanted;
 }
 
