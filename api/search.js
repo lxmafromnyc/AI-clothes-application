@@ -21,7 +21,7 @@
 
    Metering
      A live search spends product-search quota, so each one is counted
-     against the caller's plan — 1 a day on Free, 100 a month on Pro,
+     against the caller's plan — 3 a day on Free, 100 a month on Pro,
      500 on Max. The plan is read from the stored user record, which is
      derived from a Stripe subscription; nothing in the request can
      change it. A caller with none left gets a 429 saying when theirs

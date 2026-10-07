@@ -683,7 +683,7 @@ const linkFromInbox = (pattern) => {
     })));
     assert.deepStrictEqual(meters.map((m) => m.label), ['AI tokens', 'Live product searches']);
     assert.strictEqual(meters[0].value, '0 of 20,000 used');
-    assert.strictEqual(meters[1].value, '0 of 1 used');
+    assert.strictEqual(meters[1].value, '0 of 3 used');
     assert.strictEqual((await page.textContent('#banner-plan')).trim(), 'Free');
 
     /* the server counts a search, and the page reflects it on reload */
@@ -693,7 +693,7 @@ const linkFromInbox = (pattern) => {
     await page.reload({ waitUntil: 'domcontentloaded' });
     await page.waitForSelector('.meter');
     const after = await page.$$eval('.meter-value', (ns) => ns.map((n) => n.textContent.trim()));
-    assert.strictEqual(after[1], '1 of 1 used');
+    assert.strictEqual(after[1], '1 of 3 used');
     await context.close();
   });
 
