@@ -53,11 +53,9 @@ let searchPhoto = DEAD_PROVIDER_PHOTO;
    that it renders what the server said and decides nothing itself — so
    the test drives it the only way anything can: by changing the
    server's answer. */
-const PLAN_LIMITS = {
-  free: { aiTokens: 20000, searches: 1 },
-  pro: { aiTokens: 1000000, searches: 100 },
-  max: { aiTokens: 5000000, searches: 500 }
-};
+/* the limits come from the server's own plan table, so the stub can
+   never promise an allowance the server does not give */
+const PLAN_LIMITS = Object.fromEntries(Object.values(require('../api/_plans').PLANS).map((plan) => [plan.id, plan.limits]));
 
 const planCatalogue = () => [
   { id: 'free', name: 'Free', amount: 0, interval: null, period: 'day', limits: PLAN_LIMITS.free, tagline: 'Try it out, every day.', features: [], purchasable: false },
@@ -1161,6 +1159,17 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     await page.close();
   });
 
+  await test('the pricing page offers Free 3 live searches a day, and Pro and Max what they always did', async () => {
+    const page = await openBilling('pricing.html');
+    const features = await page.$$eval('.plan-card', (ns) => Object.fromEntries(ns.map((n) => [n.dataset.plan,
+      Array.from(n.querySelectorAll('.plan-features li')).map((li) => li.textContent.trim())])));
+    assert.ok(features.free.includes('3 live product searches a day'), features.free.join(' | '));
+    assert.ok(!features.free.some((f) => /\b1 live product search\b/.test(f)), 'the old allowance is still on the page');
+    assert.ok(features.pro.includes('100 live product searches a month'), features.pro.join(' | '));
+    assert.ok(features.max.includes('500 live product searches a month'), features.max.join(' | '));
+    await page.close();
+  });
+
   await test('the plan the server named is the one marked current', async () => {
     const page = await openBilling('pricing.html', { planId: 'pro', extra: { signedIn: true, user: { email: 'a@b.co' } } });
     const current = await page.$$eval('.plan-card--current', (ns) => ns.map((n) => n.dataset.plan));
@@ -1245,7 +1254,39 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     assert.strictEqual(meters.length, 2);
     assert.deepStrictEqual(meters.map((m) => m.label), ['AI tokens', 'Live product searches']);
     assert.strictEqual(meters[0].value, '1,200 of 20,000 used');
-    assert.strictEqual(meters[1].value, '1 of 1 used');
+    assert.strictEqual(meters[1].value, '1 of 3 used');
+    await page.close();
+  });
+
+  await test('the account page shows the Free allowance as 3 live searches a day', async () => {
+    const page = await openBilling('account.html');
+    const searches = await page.$$eval('.meter', (ns) => ns.map((n) => ({
+      label: n.querySelector('.meter-label').textContent.trim(),
+      value: n.querySelector('.meter-value').textContent.trim(),
+      reset: n.querySelector('.meter-reset').textContent.trim()
+    })).find((m) => m.label === 'Live product searches'));
+    assert.ok(searches.value.endsWith('of 3 used'), searches.value);
+    /* counted by the day: it comes back at a time, not on a date */
+    assert.ok(/^Resets at /.test(searches.reset), searches.reset);
+    await page.close();
+  });
+
+  await test('browsing and filtering Discover spends no live search', async () => {
+    stubs.log.length = 0;
+    searchRequests.length = 0;
+    const page = await openPage('discover.html');
+    await page.waitForSelector('.filter-pills .pill');
+    const pills = await page.$$eval('.filter-pills .pill', (ns) => ns.map((n) => n.dataset.style));
+    assert.ok(pills.length > 1, 'no filters to try');
+    for (const style of pills.concat(['All'])) {
+      await page.click(`.filter-pills .pill[data-style="${style}"]`);
+      await page.waitForFunction((s) => document.querySelector(`.filter-pills .pill[data-style="${s}"]`).getAttribute('aria-pressed') === 'true', style);
+    }
+    await page.waitForTimeout(300);
+    assert.deepStrictEqual(stubs.log.filter((e) => e.path === '/api/search' || e.path === '/api/interpret'), [],
+      'a Discover filter reached the search or the interpreter');
+    assert.strictEqual(searchRequests.length, 0);
+    assert.ok(await page.$$eval('#discover-grid .item-card', (ns) => ns.length) > 0, 'Discover shows nothing to browse');
     await page.close();
   });
 

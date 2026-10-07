@@ -307,7 +307,7 @@ const planOf = async (userId) => (await users.byId(userId)).plan;
   console.log('\nplans and entitlement');
 
   await test('the three plans carry the limits the pricing page promises', () => {
-    assert.deepStrictEqual(plans.planOf('free').limits, { aiTokens: 20000, searches: 1 });
+    assert.deepStrictEqual(plans.planOf('free').limits, { aiTokens: 20000, searches: 3 });
     assert.deepStrictEqual(plans.planOf('pro').limits, { aiTokens: 1000000, searches: 100 });
     assert.deepStrictEqual(plans.planOf('max').limits, { aiTokens: 5000000, searches: 500 });
     assert.strictEqual(plans.planOf('free').period, 'day');
@@ -543,7 +543,7 @@ const planOf = async (userId) => (await users.byId(userId)).plan;
     const { res } = await callEndpoint(accountEndpoint, { jar, method: 'GET' });
     assert.strictEqual(res.payload.plan.id, 'free');
     assert.strictEqual(res.payload.subscription, null);
-    assert.deepStrictEqual(res.payload.usage.searches.limit, 1);
+    assert.deepStrictEqual(res.payload.usage.searches.limit, 3);
   });
 
   /* =========================================================
@@ -613,7 +613,7 @@ const planOf = async (userId) => (await users.byId(userId)).plan;
     const { jar, user, completed, created } = await completeCheckout('pro');
 
     const before = await callEndpoint(accountEndpoint, { jar, method: 'GET' });
-    assert.strictEqual(before.res.payload.usage.searches.limit, 1);
+    assert.strictEqual(before.res.payload.usage.searches.limit, 3);
     assert.strictEqual(before.res.payload.usage.aiTokens.limit, 20000);
     assert.strictEqual(before.res.payload.usage.searches.period, 'day');
 
@@ -811,7 +811,7 @@ const planOf = async (userId) => (await users.byId(userId)).plan;
     assert.strictEqual(res.payload.plan.id, 'free', 'a card that stopped working stops the allowance');
     assert.strictEqual(res.payload.subscription.status, 'past_due');
     assert.strictEqual(res.payload.subscription.latestInvoiceStatus, 'payment_failed');
-    assert.strictEqual(res.payload.usage.searches.limit, 1);
+    assert.strictEqual(res.payload.usage.searches.limit, 3);
   });
 
   await test('a past_due subscription that is paid restores the plan', async () => {
@@ -1072,24 +1072,80 @@ const planOf = async (userId) => (await users.byId(userId)).plan;
 
   console.log('\nusage limits follow the subscription');
 
-  await test('the free allowance is one search a day, and the second is refused', async () => {
-    const { jar, user } = await signedUpUser();
-    const subject = `user:${user.id}`;
+  /* The provider answering, so every search the quota lets through is
+     a search that ran and is charged: /api/search only counts a search
+     the product source answered. One listing with its retailer link
+     already on it, so no offer lookup is needed. */
+  const withProvider = async (fn) => {
+    const outer = global.fetch;
+    let searched = 0;
+    global.fetch = async (url, options) => {
+      const href = String(url);
+      if (!href.startsWith('https://api.openwebninja.com/')) return outer(url, options);
+      searched += 1;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ status: 'OK', data: [{
+          product_id: `p${searched}`,
+          product_title: 'Essential Hoodie Black',
+          product_photos: ['https://img.example-cdn.com/hoodie.jpg'],
+          offer: { store_name: 'Example Shop', price: '$48.00', offer_page_url: `https://shop.example.com/products/hoodie-${searched}` }
+        }] })
+      };
+    };
+    try { return await fn(() => searched); } finally { global.fetch = outer; }
+  };
+  /* a different request each time, so no answer comes from the cache —
+     though a cached answer is still a metered search */
+  const searchFor = (jar, n) => callEndpoint(searchEndpoint, { jar, body: { intent: { garments: ['hoodie'], keywords: [`try-${n}`] } } });
 
-    const limit = plans.limitFor('free', plans.SEARCHES);
-    for (let i = 1; i <= limit; i += 1) {
-      const state = await usage.check(subject, 'free', plans.SEARCHES);
-      assert.strictEqual(state.allowed, true, `search ${i} should be allowed`);
-      await usage.record(subject, 'free', plans.SEARCHES, 1);
-    }
+  await test('the free allowance is three live searches a day: the first three are answered, the fourth is refused', async () => {
+    assert.strictEqual(plans.limitFor('free', plans.SEARCHES), 3);
+    const { jar } = await signedUpUser();
 
-    assert.strictEqual((await usage.check(subject, 'free', plans.SEARCHES)).allowed, false);
+    await withProvider(async (providerSearches) => {
+      for (let n = 1; n <= 3; n += 1) {
+        const { res } = await searchFor(jar, n);
+        assert.strictEqual(res.statusCode, 200, `search ${n} should be answered`);
+        assert.strictEqual(res.payload.products.length, 1, `search ${n} should come back with its listing`);
+        assert.deepStrictEqual([res.payload.usage.used, res.payload.usage.limit, res.payload.usage.remaining], [n, 3, 3 - n]);
+      }
 
-    const { res } = await callEndpoint(searchEndpoint, { jar, body: { intent: { categories: ['hoodie'] } } });
-    assert.strictEqual(res.statusCode, 429);
-    assert.strictEqual(res.payload.reason, 'over-limit');
-    assert.strictEqual(res.payload.usage.limit, 1);
-    assert.strictEqual(res.payload.upgrade, true);
+      const fourth = await searchFor(jar, 4);
+      assert.strictEqual(fourth.res.statusCode, 429, 'the fourth search is over the Free allowance');
+      assert.strictEqual(fourth.res.payload.reason, 'over-limit');
+      assert.strictEqual(fourth.res.payload.usage.limit, 3);
+      assert.strictEqual(fourth.res.payload.usage.used, 3);
+      assert.strictEqual(fourth.res.payload.upgrade, true);
+      assert.strictEqual(providerSearches(), 3, 'a refused search never reaches the provider');
+    });
+
+    const { res } = await callEndpoint(accountEndpoint, { jar, method: 'GET' });
+    assert.deepStrictEqual(
+      [res.payload.usage.searches.limit, res.payload.usage.searches.used, res.payload.usage.searches.remaining, res.payload.usage.searches.period],
+      [3, 3, 0, 'day']);
+  });
+
+  await test('an anonymous visitor gets the same three searches a day, and the fourth is refused', async () => {
+    const first = await callEndpoint(accountEndpoint, { method: 'GET' });
+    assert.strictEqual(first.res.payload.usage.searches.limit, 3);
+    const jar = first.jar;
+
+    await withProvider(async (providerSearches) => {
+      for (let n = 1; n <= 3; n += 1) {
+        const { res } = await searchFor(jar, n);
+        assert.strictEqual(res.statusCode, 200, `search ${n} should be answered`);
+      }
+      const fourth = await searchFor(jar, 4);
+      assert.strictEqual(fourth.res.statusCode, 429);
+      assert.strictEqual(fourth.res.payload.reason, 'over-limit');
+      assert.strictEqual(providerSearches(), 3);
+    });
+
+    const after = await callEndpoint(accountEndpoint, { jar, method: 'GET' });
+    assert.strictEqual(after.res.payload.usage.searches.used, 3);
+    assert.strictEqual(after.res.payload.usage.searches.remaining, 0);
   });
 
   await test('the same account on Pro is not refused at the free allowance', async () => {
@@ -1138,7 +1194,7 @@ const planOf = async (userId) => (await users.byId(userId)).plan;
 
     const { res } = await callEndpoint(accountEndpoint, { jar, method: 'GET' });
     assert.strictEqual(res.payload.plan.id, 'free');
-    assert.strictEqual(res.payload.usage.searches.limit, 1);
+    assert.strictEqual(res.payload.usage.searches.limit, 3);
     assert.strictEqual(res.payload.usage.aiTokens.limit, 20000);
     assert.strictEqual(res.payload.usage.searches.period, 'day');
   });

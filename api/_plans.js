@@ -61,12 +61,12 @@ const PLANS = {
        reads as a trial of the product, where a monthly one reads as a
        wall you hit on the 3rd. */
     period: 'day',
-    limits: { [AI_TOKENS]: 20000, [SEARCHES]: 1 },
+    limits: { [AI_TOKENS]: 20000, [SEARCHES]: 3 },
     priceEnv: null,
     tagline: 'Try it out, every day.',
     features: [
       '20,000 AI tokens a day',
-      '1 live product search a day',
+      '3 live product searches a day',
       'Real listings, prices and retailer links',
       'No card, no account required'
     ]
