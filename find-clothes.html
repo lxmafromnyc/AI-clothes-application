@@ -51,7 +51,7 @@
         <label class="sr-only" for="ask">Describe the clothes you are looking for</label>
         <div class="ask-field">
           <svg class="ask-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.8-3.8"/></svg>
-          <textarea id="ask" name="ask" rows="1" maxlength="400" placeholder="black oversized hoodie under $80"></textarea>
+          <textarea id="ask" name="ask" rows="1" maxlength="400" placeholder="black oversized hoodie under $80" aria-describedby="ask-usage"></textarea>
         </div>
 
         <!-- Shown only while a file is over the box. The file button is
@@ -88,6 +88,11 @@
         <p class="attachment-note" id="attachment-note" hidden>
           Fynd does not read attachments yet. They are sent with your search, but they do not change your results.
         </p>
+
+        <!-- How many live searches are left, exactly as /api/account last
+             counted them for this account or, signed out, this browser.
+             Empty until it has said; written by assets/app.js. -->
+        <p class="ask-usage" id="ask-usage"></p>
       </form>
 
       <p class="ask-examples" id="ask-examples">
@@ -131,6 +136,7 @@
 <script src="assets/products.js"></script>
 <script src="assets/interpret.js"></script>
 <script src="assets/search.js"></script>
+<script src="assets/account.js"></script>
 <script src="assets/attachments.js"></script>
 <script src="assets/catalog.js"></script>
 <script src="assets/app.js"></script>

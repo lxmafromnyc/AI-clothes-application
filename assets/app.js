@@ -432,6 +432,69 @@ function orderFacet(counts, key) {
     if (by) window.scrollBy({ top: by, behavior: scrolling() });
   }
 
+  /* ---------- how many live searches are left ----------
+     Said under the words in the box before anything is typed, exactly as
+     /api/account last counted it: for the account, or signed out, for
+     this browser. Nothing here knows a plan's limit or subtracts a
+     search; when the account cannot be read the line says nothing rather
+     than a guess.
+
+     While a search runs the line is empty — the count it held is about
+     to be out of date, and the hairline is what the box shows. When the
+     search is over the account is read again and the new count takes its
+     place, said once to screen readers after what the search found. */
+  const usageLine = document.getElementById('ask-usage');
+  const PERIOD_SAID = { day: 'today', month: 'this month' };
+  let usageAsked = 0;
+  let usageShown = false;
+  let usageSaid = null;
+
+  function usageText(account) {
+    const searches = account && account.usage && account.usage.searches;
+    const left = searches && searches.remaining;
+    if (!Number.isInteger(left) || left < 0) return null;
+    const period = PERIOD_SAID[searches.period] ? ` ${PERIOD_SAID[searches.period]}` : '';
+    if (left === 0) return `No live searches left${period}`;
+    return `${left.toLocaleString('en-US')} ${left === 1 ? 'search' : 'searches'} left${period}`;
+  }
+
+  function showUsage(text) {
+    if (!usageLine) return;
+    usageLine.textContent = text || '';
+    if (text) usageShown = true;
+    /* the row is held for a count; a box that never gets one goes back
+       to its own size, and one that has had one keeps the room, so a
+       failed re-read moves nothing */
+    usageLine.hidden = !text && !usageShown;
+  }
+
+  /* the count on screen is about to be out of date: say nothing until
+     the server has counted again, and drop any reading already asked for */
+  function forgetUsage() {
+    usageAsked += 1;
+    if (usageLine) usageLine.textContent = '';
+  }
+
+  async function readUsage(afterSearch) {
+    if (!usageLine) return;
+    const ask = ++usageAsked;
+    let text = null;
+    try {
+      const answer = typeof Account === 'undefined' ? null : await Account.load();
+      text = answer && answer.ok ? usageText(answer.data) : null;
+    } catch (err) { text = null; }
+    if (ask !== usageAsked || form.dataset.stage) return;
+    showUsage(text);
+    if (afterSearch && text && usageSaid && text !== usageSaid) announce(`${status ? status.textContent : ''} ${text}.`.trim());
+    if (text) usageSaid = text;
+  }
+
+  /* a search that was replaced or dropped may still have been counted;
+     once nothing else is running, the count is read again, quietly */
+  function readUsageIfIdle() {
+    if (!form.dataset.stage) readUsage(false);
+  }
+
   /* the search a newer one has replaced, or "Start over" has dropped,
      answers into nothing: it never paints over what is on screen now */
   let latest = 0;
@@ -448,13 +511,14 @@ function orderFacet(counts, key) {
     results.hidden = false;
     asked = query;
     showProgress(query);
+    forgetUsage();
     keepBoxInView();
 
     let outcome = null;
     let found;
     try {
       outcome = await Interpreter.interpret(query, vocabulary());
-      if (run !== latest) return;
+      if (run !== latest) return readUsageIfIdle();
 
       /* real products first; the sample catalogue only when no source answers */
       if (typeof ProductSearch === 'undefined') {
@@ -469,7 +533,7 @@ function orderFacet(counts, key) {
          leaving the last stage on screen */
       found = { state: 'unavailable', source: null, products: [], notice: null };
     }
-    if (run !== latest) return;
+    if (run !== latest) return readUsageIfIdle();
     endProgress();
     outcome = outcome || { source: 'local', notice: null, preferences: Interpreter.EMPTY() };
 
@@ -481,6 +545,7 @@ function orderFacet(counts, key) {
     else if (found.state === 'not-configured') render(outcome.preferences, outcome, found);
     else renderNothing(found, outcome);
     results.scrollIntoView({ behavior: scrolling(), block: 'start' });
+    readUsage(true);
   }
 
   /* Files dropped on the card or chosen with the button. Held here
@@ -567,6 +632,9 @@ function orderFacet(counts, key) {
     input.focus();
     form.scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
+
+  /* what is left, before anything is typed */
+  readUsage(false);
 })();
 
 /* ---------- what a result looks like ----------

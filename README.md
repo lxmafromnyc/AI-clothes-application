@@ -1413,6 +1413,17 @@ upgrading starts the monthly allowance at zero rather than inheriting a
 day's use — somebody who upgrades is buying the month, not the remainder
 of an afternoon.
 
+The search box says what is left before anything is typed — "3 searches left
+today", "97 searches left this month", "No live searches left today" — in a
+small muted line under the words. It is exactly `usage.searches.remaining`
+and `usage.searches.period` from `/api/account`, for the account or, signed
+out, for the browser; the page knows no plan's limit and subtracts nothing.
+While a search runs the line gives way to the progress hairline; when the
+search is over the page reads `/api/account` again and shows the server's new
+count, and a screen reader hears it once after the results. If the account
+cannot be read, no number is shown. Discover never calls `/api/search`, so it
+never moves the count.
+
 Fynd never sees a card. The shopper types their card on Stripe's own
 pages, and changing a card, switching plan, downloading an invoice and
 cancelling all happen in Stripe's billing portal. There is no billing
