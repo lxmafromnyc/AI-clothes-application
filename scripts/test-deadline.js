@@ -537,7 +537,7 @@ async function main() {
     });
     const { res } = await post({ intent: INTENT, limit: 12 });
     assert.strictEqual(res.statusCode, 502);
-    assert.deepStrictEqual(res.body, { error: 'The product source did not answer in time.', reason: 'timeout', source: 'openwebninja' });
+    assert.deepStrictEqual(res.body, { error: 'The product source did not answer in time.', reason: 'timeout', kind: 'timeout', upstreamStatus: null, source: 'openwebninja' });
   });
 
   await testAsync('a source that errors is a 502 that says it failed, with no products', async () => {
@@ -547,13 +547,100 @@ async function main() {
     });
     const { res } = await post({ intent: INTENT, limit: 12 });
     assert.strictEqual(res.statusCode, 502);
-    assert.deepStrictEqual(res.body, { error: 'The product source is unavailable right now.', reason: 'failed', source: 'openwebninja' });
+    assert.deepStrictEqual(res.body, { error: 'The product source is unavailable right now.', reason: 'failed', kind: 'server-error', upstreamStatus: 500, source: 'openwebninja' });
+  });
+
+  await testAsync('a refused key is a 502 that names the refusal and its status, and nothing from the source', async () => {
+    installFetch({
+      search: () => ({ answer: { ok: false, status: 403, json: async () => ({}), text: async () => '{"message":"You are not subscribed to this API."}' }, delay: 5 }),
+      offers: () => ({ answer: okResponse(offersPayload([])), delay: 0 })
+    });
+    const { res } = await post({ intent: INTENT, limit: 12 });
+    assert.strictEqual(res.statusCode, 502);
+    assert.deepStrictEqual(res.body, { error: 'The product source is unavailable right now.', reason: 'failed', kind: 'invalid-key', upstreamStatus: 403, source: 'openwebninja' });
+    assert.ok(!JSON.stringify(res.body).includes('subscribed'), 'the source\'s own message reached the browser');
+  });
+
+  await testAsync('a connection that fails is a 502 that says it was the network, with no status', async () => {
+    installFetch({
+      search: () => ({ error: 'fetch failed' }),
+      offers: () => ({ answer: okResponse(offersPayload([])), delay: 0 })
+    });
+    const { res } = await post({ intent: INTENT, limit: 12 });
+    assert.strictEqual(res.statusCode, 502);
+    assert.deepStrictEqual({ reason: res.body.reason, kind: res.body.kind, upstreamStatus: res.body.upstreamStatus }, { reason: 'failed', kind: 'network', upstreamStatus: null });
   });
 
   await testAsync('a provider timeout says so in its own words', async () => {
     installFetch({ search: () => ({ answer: HANG }), offers: () => ({ answer: HANG }) });
     await assert.rejects(() => provider.search(INTENT, { limit: 4, deadline: Date.now() + 300 }),
       (err) => /OpenWeb Ninja did not answer within \d+ms \(timed out\)/.test(err.message));
+  });
+
+  console.log('\nthe request the search makes is the one the probe makes');
+
+  const withEnv = async (vars, fn) => {
+    const saved = Object.fromEntries(Object.keys(vars).map((k) => [k, process.env[k]]));
+    Object.entries(vars).forEach(([k, v]) => { if (v === undefined) delete process.env[k]; else process.env[k] = v; });
+    try { return await fn(); } finally {
+      Object.entries(saved).forEach(([k, v]) => { if (v === undefined) delete process.env[k]; else process.env[k] = v; });
+    }
+  };
+
+  await testAsync('the search sends exactly the request searchRequest builds — the one the probe sends', async () => {
+    const state = installFetch({
+      search: () => ({ answer: okResponse(envelope([withInlineLink(1)])), delay: 0 }),
+      offers: () => ({ answer: okResponse(offersPayload([])), delay: 0 })
+    });
+    for (const intent of [INTENT, { garments: ['hoodie'], colors: ['Grey'], fits: ['Relaxed'], keywords: ['baggy', 'cozy'] }, { keywords: ['linen', 'shirt'], minPrice: 20, maxPrice: 60 }]) {
+      state.urls.length = 0;
+      cache.reset();
+      await provider.search(intent, { limit: 12 });
+      const built = provider.searchRequest(intent, { limit: 12 });
+      assert.strictEqual(state.urls[0], `${built.url}?${built.params}`);
+    }
+  });
+
+  await testAsync('a key pasted with quotes, spaces or a newline is sent clean; an empty one is not a key', async () => {
+    const seen = [];
+    global.fetch = (url, options) => { seen.push(options.headers['x-api-key']); return Promise.resolve(okResponse(envelope([withInlineLink(1)]))); };
+    for (const raw of ['"the-key"', "  'the-key'  ", 'the-key\n', ' the-key ']) {
+      await withEnv({ OPENWEBNINJA_API_KEY: raw }, async () => {
+        cache.reset();
+        assert.strictEqual(provider.configured(), true);
+        await provider.search(INTENT, { limit: 1 });
+      });
+    }
+    assert.deepStrictEqual(seen, ['the-key', 'the-key', 'the-key', 'the-key']);
+    for (const raw of ['', '   ', '""']) {
+      await withEnv({ OPENWEBNINJA_API_KEY: raw }, async () => assert.strictEqual(provider.configured(), false, JSON.stringify(raw)));
+    }
+  });
+
+  await testAsync('the country and language are sent as the two-letter codes the API takes, and never guessed', async () => {
+    const cases = [
+      [{}, 'us', 'en'],
+      [{ OPENWEBNINJA_COUNTRY: ' US ', OPENWEBNINJA_LANGUAGE: 'en-US' }, 'us', 'en'],
+      [{ OPENWEBNINJA_COUNTRY: '"gb"', OPENWEBNINJA_LANGUAGE: 'FR' }, 'gb', 'fr'],
+      [{ OPENWEBNINJA_COUNTRY: 'United States', OPENWEBNINJA_LANGUAGE: 'English' }, 'us', 'en']
+    ];
+    const warn = console.warn;
+    const warnings = [];
+    console.warn = (...a) => warnings.push(a.join(' '));
+    try {
+      for (const [vars, country, language] of cases) {
+        await withEnv(Object.assign({ OPENWEBNINJA_COUNTRY: undefined, OPENWEBNINJA_LANGUAGE: undefined }, vars), async () => {
+          const built = provider.searchRequest(INTENT, { limit: 12 });
+          assert.deepStrictEqual([built.params.get('country'), built.params.get('language')], [country, language], JSON.stringify(vars));
+          /* the cache files the answer under the region actually asked */
+          const context = provider.cacheContext();
+          assert.deepStrictEqual([context.country, context.language], [country, language]);
+        });
+      }
+    } finally { console.warn = warn; }
+    /* a value that is not a code is named, not silently replaced */
+    assert.ok(warnings.some((w) => /OPENWEBNINJA_COUNTRY is not a two-letter code/.test(w)), warnings.join(' | '));
+    assert.ok(warnings.some((w) => /OPENWEBNINJA_LANGUAGE is not a two-letter code/.test(w)), warnings.join(' | '));
   });
 
   console.log(`\n${passed} passed, ${failures.length} failed`);

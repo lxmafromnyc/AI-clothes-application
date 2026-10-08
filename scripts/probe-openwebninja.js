@@ -197,7 +197,7 @@ async function reportPhotos(results, site) {
 }
 
 async function main() {
-  if (!process.env.OPENWEBNINJA_API_KEY) {
+  if (!provider.configured()) {
     console.error('OPENWEBNINJA_API_KEY is not set. Export it and run again.');
     process.exit(2);
   }
@@ -211,14 +211,19 @@ async function main() {
      keywords so the adapter builds its query exactly as it would live */
   const intent = { categories: [], colors: [], fits: [], styles: [], brands: [], occasions: [], keywords: query.split(/\s+/) };
 
-  console.log(`query    : ${provider.queryFrom(intent)}`);
-  console.log(`endpoint : ${provider.SEARCH_URL}`);
+  /* The request /api/search itself would make for these words — the
+     adapter's own builder, with its own reading of the key, country and
+     language — so a probe that works means the search's request works.
+     It used to send a request of its own (country and language fixed,
+     limit 10), which could succeed where the search's failed. */
+  const request = provider.searchRequest(intent, { limit: 12 });
+  console.log(`request  : GET ${request.url}?${request.params}`);
+  console.log('           (x-api-key sent as a header; never printed)');
 
-  /* call the endpoint directly so the raw envelope can be inspected,
-     rather than only what the adapter kept */
-  const params = new URLSearchParams({ q: provider.queryFrom(intent), country: 'us', language: 'en', limit: '10', sort_by: 'BEST_MATCH' });
-  const response = await fetch(`${provider.SEARCH_URL}?${params}`, {
-    headers: { 'x-api-key': process.env.OPENWEBNINJA_API_KEY, Accept: 'application/json' }
+  /* called directly so the raw envelope can be inspected, rather than
+     only what the adapter kept */
+  const response = await fetch(`${request.url}?${request.params}`, {
+    headers: { 'x-api-key': provider.apiKey(), Accept: 'application/json' }
   });
 
   console.log(`status   : ${response.status} ${response.statusText}`);
@@ -260,14 +265,14 @@ async function main() {
 
   const needing = records.filter((r) => !r.productUrl).length;
   console.log(`\n--- resolving offers for ${needing} of ${records.length} records ---`);
-  const region = { country: 'us', language: 'en' };
+  const region = provider.region();
 
   if (needing) {
     const sample = records.find((r) => !r.productUrl && r.sku);
     if (sample) {
       const offers = provider.resultsFrom(await (async () => {
-        const params = new URLSearchParams({ product_id: sample.sku, country: 'us', language: 'en' });
-        const res = await fetch(`${provider.OFFERS_URL}?${params}`, { headers: { 'x-api-key': process.env.OPENWEBNINJA_API_KEY, Accept: 'application/json' } });
+        const params = new URLSearchParams({ product_id: sample.sku, country: region.country, language: region.language });
+        const res = await fetch(`${provider.OFFERS_URL}?${params}`, { headers: { 'x-api-key': provider.apiKey(), Accept: 'application/json' } });
         console.log(`  GET /product-offers?product_id=${sample.sku} -> ${res.status}`);
         return res.ok ? res.json() : {};
       })());

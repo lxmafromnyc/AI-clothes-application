@@ -62,7 +62,7 @@
 
 'use strict';
 
-const { getProvider, verifyAll, providerChain, outOfSearches, linkless } = require('./_providers/product-source');
+const { getProvider, verifyAll, providerChain, outOfSearches, linkless, failureKind } = require('./_providers/product-source');
 const { withoutContradictions } = require('./_providers/garment-filter');
 
 /* the refusal a verified product is counted under when it is plainly a
@@ -473,7 +473,11 @@ module.exports = async function handler(req, res) {
        search produced nothing usable at all, and a search that came back
        with something and then ran short of time is answered below with
        what it did verify. */
+    /* A network failure's message is only "fetch failed"; what failed is
+       on its cause, so the cause's code is logged with it. */
+    const cause = err && err.cause ? (err.cause.code || err.cause.message || '') : '';
     console.error('Product source failed', provider.name, `${Date.now() - startedAt}ms`, err && err.message,
+      cause ? `(cause: ${String(cause).slice(0, 120)})` : '',
       err && err.fellBackFrom ? `(after ${err.fellBackFrom.provider} refused: ${err.fellBackFrom.reason})` : '');
     /* A source that answered too slowly for the budget is told apart
        from one that failed: both left nothing to verify, so both are a
@@ -483,6 +487,13 @@ module.exports = async function handler(req, res) {
     return res.status(502).json({
       error: late ? 'The product source did not answer in time.' : 'The product source is unavailable right now.',
       reason: late ? 'timeout' : 'failed',
+      /* Which failure, so it can be read off the browser's own network
+         panel: the kind (invalid-key, bad-request, rate-limited,
+         server-error, network, timeout, ...) and the status the source
+         answered with, when it answered at all. A status and a word —
+         never the source's message, a URL or a key. */
+      kind: failureKind(err),
+      upstreamStatus: Number.isInteger(err && err.status) ? err.status : null,
       source: provider.name
     });
   }

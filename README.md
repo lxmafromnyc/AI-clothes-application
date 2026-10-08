@@ -423,6 +423,21 @@ product source is configured, a failed or empty search says so plainly: a
 deployment that can sell things must never pad the page with demo rows, however
 clearly they are labelled. No product is ever invented to fill the gap.
 
+A `502` says which failure it was, so it can be read straight off the
+browser's network panel: `reason` is `timeout` or `failed`, `kind` is the
+failure's class (`invalid-key`, `bad-request`, `rate-limited-or-credits`,
+`server-error`, `network`, `timeout`, `other`) and `upstreamStatus` is the
+status the source answered with, or `null` when it never answered. The
+source's own message, URLs and keys stay in the server log.
+
+The OpenWeb Ninja key, country and language are read in one place
+(`api/_providers/openwebninja.js`): the key is trimmed and unquoted, and the
+region is sent as the two-letter codes the API takes (` US ` → `us`, `en-US` →
+`en`; a value that is not a code is named in a warning and the default used).
+`scripts/probe-openwebninja.js` sends the request the adapter's own
+`searchRequest()` builds, so a probe that works means `/api/search`'s request
+works with the same environment.
+
 ### Requests that describe rather than name
 
 Shoppers often cannot name what they want: "something like a hoodie but
