@@ -107,6 +107,7 @@ scripts/verify-api.sh          checks a deployed interpreter endpoint
 scripts/verify-search.sh       checks a deployed search endpoint
 scripts/verify-billing.sh      checks a deployed billing setup
 scripts/probe-openwebninja.js  prints the provider's live response fields
+scripts/diagnose-search.js     replays the browser's exact /api/search call; on a 502, prints what threw
 scripts/bench-interpreters.js  OpenAI against Gemini, on twenty requests
 scripts/test-gemini.js         offline test of the Gemini interpreter
 scripts/test-pipeline.js       offline test of the whole server pipeline
@@ -911,6 +912,25 @@ It prints the response envelope's keys, every key on the first product and on
 that product's offer, the record the adapter maps out of it, and the gate's
 verdict for the batch — enough to see at a glance which alias to add if a name
 differs.
+
+The probe calls the provider directly with the words as typed. It does not go
+through what a browser's search goes through — the page's reading of the
+request, `/api/search`'s intent, its query, the cache, the offer lookups, the
+gate and the garment filter — so a probe that works and a search that fails
+are not a contradiction. To see the browser's search, run:
+
+```sh
+node --env-file=.env.local scripts/diagnose-search.js "a baggy hoodie thats light grey and its cozy"
+node --env-file=.env.local scripts/diagnose-search.js --server http://localhost:3000 "..."
+```
+
+It builds the body the page sends with the page's own code (as it does when
+`/api/interpret` is not configured), runs it through the real handler, lists
+every provider request with its status, and on a 502 prints the exception the
+search threw: name, message, cause and stack. With `--server` it also posts the
+same body to a running local server, so a server whose environment differs
+from `.env.local` shows up as the server failing where the script does not. It
+prints no key, cookie or header value.
 
 ### Etsy (kept, unused)
 
