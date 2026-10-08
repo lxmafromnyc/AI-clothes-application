@@ -131,6 +131,10 @@
                             expires is what gets shown. Cut short when the
                             whole request's deadline arrives first — see
                             search({ deadline }) and api/search.js.
+     OPENWEBNINJA_OFFER_LOOKUP_TIMEOUT_MS
+                            the most one lookup may take, default 2500.
+                            A straggler is dropped and its worker moves
+                            on to the next candidate.
      FYND_CACHE             set to "off" to disable the offer cache, and
                             the search cache with it. This adapter then
                             behaves exactly as it did before either
@@ -140,6 +144,7 @@
 'use strict';
 
 const cache = require('../_cache');
+const { fetchWithin, timedOut } = require('./deadline');
 
 const API_ROOT = 'https://api.openwebninja.com/realtime-product-search/v2';
 const SEARCH_URL = `${API_ROOT}/search`;
@@ -175,6 +180,19 @@ const OFFER_RESERVE_MS = 2000;
    with a millisecond left; it had 15 seconds to answer in, so it
    sometimes still did. Bounded to the deadline, it cannot. */
 const MIN_LOOKUP_WINDOW_MS = 250;
+
+/* The most one offer lookup may take, inside whatever the deadline
+   leaves. A seller answers in a few hundred milliseconds
+   (scripts/bench-offer-resolution.js models 150–600ms); one still
+   pending after this is a straggler. Without a cap of its own, each
+   lookup was given the whole of the remaining budget, so four
+   stragglers at the head of the list held all four workers until the
+   deadline and the candidates behind them were never asked — a search
+   whose other products would have verified answered with none. Capped,
+   a straggler is dropped and its worker moves on to the next candidate.
+   OPENWEBNINJA_OFFER_LOOKUP_TIMEOUT_MS overrides it. */
+const DEFAULT_LOOKUP_TIMEOUT_MS = 2500;
+const lookupTimeout = () => Number(process.env.OPENWEBNINJA_OFFER_LOOKUP_TIMEOUT_MS) || DEFAULT_LOOKUP_TIMEOUT_MS;
 
 /* How far past its target one search may keep looking for products it
    can actually show. Aiming at shown products rather than at resolved
@@ -518,20 +536,15 @@ async function apiGet(url, params, timeout) {
   const key = process.env.OPENWEBNINJA_API_KEY;
   if (!key) throw new Error('OPENWEBNINJA_API_KEY is not set');
 
+  /* Through the shared helper, so a call cut off by the clock fails with
+     an error that SAYS it timed out (deadline.js), not the runtime's
+     bare "This operation was aborted" — which read exactly like any
+     other failure in the log and in the answer. A spent budget still
+     refuses before a connection is opened. */
   const ms = timeout === undefined ? REQUEST_TIMEOUT : timeout;
-  if (ms <= 0) throw new Error('The time budget for this search ran out before the request was made');
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), ms);
-  let response;
-  try {
-    response = await fetch(`${url}?${params.toString()}`, {
-      headers: { 'x-api-key': key, Accept: 'application/json' },
-      signal: controller.signal
-    });
-  } finally {
-    clearTimeout(timer);
-  }
+  const response = await fetchWithin('OpenWeb Ninja', `${url}?${params.toString()}`, {
+    headers: { 'x-api-key': key, Accept: 'application/json' }
+  }, ms);
 
   if (!response.ok) {
     const detail = await response.text().catch(() => '');
@@ -553,7 +566,7 @@ async function offersFor(productId, region, timeout) {
     return { offers, failed: false, shape: offers.length ? null : shapeOf(payload) };
   } catch (err) {
     console.warn('Offer lookup failed for product', String(productId), err && err.message);
-    return { offers: [], failed: true, shape: null };
+    return { offers: [], failed: true, timedOut: timedOut(err), shape: null };
   }
 }
 
@@ -652,7 +665,11 @@ async function lookupFor(record, region, tally, cacheStats, timeout) {
 
   tally.lookupsMade += 1;
   const result = await offersFor(record.sku, region, timeout);
-  if (result.failed) { tally.lookupsFailed += 1; return null; }
+  if (result.failed) {
+    tally.lookupsFailed += 1;
+    if (result.timedOut) tally.lookupsTimedOut += 1;
+    return null;
+  }
   if (!result.offers.length) {
     tally.lookupsEmpty += 1;
     /* one sample is enough to see whether parsing is the problem */
@@ -686,6 +703,8 @@ async function resolveMissingOffers(records, wanted, region, stats, intent, cach
   tally.neededOfferLookup = records.filter((r) => !r.productUrl).length;
   tally.lookupsMade = 0;
   tally.lookupsFailed = 0;
+  /* of those, the ones the clock cut off rather than the seller refused */
+  tally.lookupsTimedOut = 0;
   tally.lookupsEmpty = 0;
   tally.resolvedFromOffers = 0;
   /* offers came back, but not one carried a usable retailer link — the
@@ -773,10 +792,10 @@ async function resolveMissingOffers(records, wanted, region, stats, intent, cach
         next += 1;
         inFlight += 1;
 
-        /* aborted AT the deadline rather than after its own full
-           allowance: a lookup still in flight when the time runs out is
-           dropped, not waited for */
-        lookupFor(record, region, tally, cacheTally, legTimeout(deadline))
+        /* aborted at its own cap, or AT the deadline if that comes
+           first: a straggler is dropped, not waited for, and its worker
+           takes the next candidate */
+        lookupFor(record, region, tally, cacheTally, Math.min(legTimeout(deadline), lookupTimeout()))
           .then((commerce) => {
             if (!commerce) return;
             /* all three together, from the one offer they came from */

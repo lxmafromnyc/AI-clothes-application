@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Discover — Fynd</title>
-<meta name="description" content="Browse clothes by style — minimal, classic, streetwear, sporty, bohemian and bold.">
+<meta name="description" content="Discover clothing by the kind of thing you are looking for: tops, bottoms, outerwear, one-pieces, comfort and shoes.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23111111'/><text x='16' y='23' font-family='Helvetica,Arial,sans-serif' font-size='19' font-weight='700' fill='white' text-anchor='middle'>F</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -39,20 +39,37 @@
 
 <main id="main">
 
+  <!-- Drawn by assets/app.js from assets/discover-data.js. Discover
+       filters the catalogue already on the page: nothing here searches,
+       calls a product source or spends a search. -->
   <div class="container">
-    <header class="page-head">
+    <header class="page-head page-head--discover">
       <h1>Discover</h1>
-      <p>Browse the catalogue by style if you would rather look than describe.</p>
+      <p>Discover clothing by the kind of thing you&rsquo;re looking for. Every category filters Fynd&rsquo;s own catalogue, instantly, without using a search.</p>
     </header>
 
-    <section class="section section--flush">
-      <div class="filter-bar">
-        <div class="filter-pills" role="group" aria-label="Filter by style"></div>
-        <span class="filter-count" id="filter-count" aria-live="polite"></span>
+    <section class="discover-block discover-block--first" aria-labelledby="index-title">
+      <div class="section-head">
+        <div>
+          <h2 id="index-title">Browse by category</h2>
+          <p id="index-count">Tops, bottoms, outerwear, one-pieces, comfort and shoes.</p>
+        </div>
       </div>
-      <div id="discover-note"></div>
-      <div class="grid" id="discover-grid"></div>
+      <div class="discover-tabs" role="group" aria-label="Categories" id="discover-tabs"></div>
+      <div class="discover-panel" id="discover-panel" hidden></div>
+      <div class="discover-results" id="discover-results" hidden>
+        <div class="results-bar">
+          <h2 class="results-count" id="results-count" aria-live="polite"></h2>
+          <button class="link-btn" type="button" id="results-clear">Clear all</button>
+        </div>
+        <ul class="active-filters" id="active-filters" aria-label="Active filters"></ul>
+        <div id="results-body"></div>
+      </div>
     </section>
+
+    <div id="discover-shelves"></div>
+
+    <p class="sr-only" id="discover-status" role="status" aria-live="polite"></p>
   </div>
 
 </main>
@@ -80,6 +97,7 @@
 
 <script src="assets/products.js"></script>
 <script src="assets/catalog.js"></script>
+<script src="assets/discover-data.js"></script>
 <script src="assets/app.js"></script>
 </body>
 </html>

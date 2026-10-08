@@ -45,7 +45,9 @@ function vocabulary() {
     colors: [...new Set(catalogue.flatMap((p) => p.colors))],
     occasions: [...new Set(catalogue.flatMap((p) => p.occasions))],
     fits: [...new Set(catalogue.flatMap((p) => p.fits))],
-    brands: [...new Set(catalogue.map((p) => p.brand))],
+    /* as Products.facets() gives them to the page: a row with no known
+       brand contributes none, so the empty string is never a brand */
+    brands: [...new Set(catalogue.map((p) => p.brand).filter(Boolean))],
     styles: [...new Set(catalogue.flatMap((p) => p.styles))]
   };
 }
@@ -58,9 +60,12 @@ const rankOf = (query, id) => search(query).findIndex((one) => idOf(one) === id)
 console.log('\n  — descriptors decide between garments of one kind\n');
 
 test('"cropped puffer jacket" is the cropped puffer, not the cheaper cropped track jacket', () => {
+  /* the rows carry the names their listings give them; neither has a
+     proved price any more, so "whatever the price" is held by the
+     synthetic pair in the next test, which sets one */
   const shown = names(search('cropped puffer jacket'));
-  assert.strictEqual(shown[0], 'Cropped Puffer', shown.join(' | '));
-  assert.ok(shown.indexOf('Cropped Track Jacket') > 0);
+  assert.strictEqual(shown[0], 'Cropped Faux Fur Hood Padded Puffer Jacket', shown.join(' | '));
+  assert.ok(shown.indexOf('Cropped Track Jacket - White') > 0);
 });
 
 test('a full match on the request’s own words is not capped level with a bare category match', () => {
@@ -92,7 +97,7 @@ test('a t-shirt is a tee, not a tee and a shirt', () => {
 
 test('a top may be a shirt-cut top as well as a tee', () => {
   assert.deepStrictEqual([...Interpreter.localInterpret('tencel wrap top', VOCAB).categories].sort(), ['shirt', 'tee']);
-  assert.strictEqual(search('tencel wrap top')[0].name, 'Tencel Wrap Top');
+  assert.strictEqual(search('tencel wrap top')[0].name, 'Tencel Wrap Top - Honeydew');
 });
 
 console.log('\n  — garments and descriptors, as the shopper said them\n');

@@ -1,4 +1,22 @@
 /* =========================================================
+   TEST FIXTURE — not the catalogue the site ships.
+
+   assets/catalog.js as it stood before its rows were corrected from
+   their listings' own evidence (see scripts/audit-catalog.js). The
+   `sample-` rows here still carry the invented brands, generic names
+   and demo prices they were drafted with.
+
+   scripts/test-catalog-images.js runs fetch-catalog-images.js against a
+   copy of this file (via FYND_CATALOG), because its discovery tests
+   were written around these drafted rows: retailers stubbed to sell a
+   "Fleece Sweatpant", a "Tailored Wool Coat". What the tool does with a
+   row does not depend on whether the row is the shipped one, and the
+   tests about what ships still read assets/catalog.js itself.
+
+   Nothing in the interface loads this file.
+   ========================================================= */
+
+/* =========================================================
    Fynd — demo product source
 
    Source records in the shape a real feed supplies. Nothing here is
@@ -42,11 +60,8 @@
    trusted, the same way imageEvidence is — the recorded sku has to
    match a code in the row's own productUrl.
 
-   A row that links to a listing carries a price only with that
-   evidence. The demo prices the `sample-` rows were drafted with were
-   never read off the listings those rows were later tied to, so they
-   are null: the card says "Price at retailer" rather than a figure the
-   retailer never published.
+   The sample rows' prices are the demo's own. They link to nothing, so
+   nothing claims they were read from a retailer.
 
    imageUrl carries a photo on the rows where one was verified, and null
    everywhere else. A photo gets here one way only: read off the listing
@@ -55,12 +70,6 @@
    before it is written. A product whose imageUrl is null, or whose photo
    fails to load, keeps the drawn artwork, and that is the honest state
    rather than a placeholder.
-
-   A photo that no longer loads is taken off its row the same way. The
-   Eileen Fisher ribbed knit skirt's photo (S6YFF-S4429M-349 on
-   www.eileenfisher.com) failed scripts/validate-discover-photos.js in a
-   real browser, so the row keeps its listing and its name and has no
-   photo, which keeps it off Discover's shelves.
 
    imageEvidence records HOW a photo was tied to its product, and only
    where the URL cannot say so itself. UNIQLO and J.Crew carry their
@@ -77,25 +86,8 @@
    made-up URL does. It is bookkeeping only — assets/products.js builds
    an explicit record, so this field never reaches the interface.
 
-   Every row now links to a real listing. The `sample-` ids are history:
-   those rows began as invented demo products (with invented brands —
-   "Northfold", "Halden" and the rest) and were later tied to real
-   listings by scripts/fetch-catalog-images.js --discover, which proved
-   the listing and the photo but left the invented name, brand and price
-   in place. They have since been corrected from the evidence each row
-   carries, and nothing else:
-
-     identity records HOW the name and the brand were tied to the
-     listing — the store's own product record title, the product's own
-     URL slug, or the listing tools that verified the row. It is
-     re-proved by scripts/audit-catalog.js, never trusted.
-
-     brand is null where nothing the row carries names the maker. The
-     store a listing is on is not taken to be its maker, and the card
-     then names the store's address instead of a brand.
-
-     A row whose name nothing ties to its listing keeps no identity note,
-     and Discover does not shelve it.
+   The three rows carrying a productUrl are real listings. The rest are
+   sample rows that exist to give the demo a catalogue to search.
 
    colors is empty on a row whose colour nothing established, the same
    way sizes is empty on every real listing: an unknown is left unsaid
@@ -107,7 +99,6 @@ const DEMO_PRODUCTS = [
     id: 'uniqlo-merino-crew',
     name: "Men's Extra Fine Merino Crew Neck Long-Sleeve Sweater",
     brand: 'UNIQLO',
-    identity: { name: 'listing', brand: 'listing' },
     price: 7.9,
     priceEvidence: { via: 'datalayer-variant-price', productId: 'E429066-000', l1Id: '438783', l2Id: '05437392', communicationCode: '429066-03-003-000', currency: 'USD' },
     productUrl: 'https://www.uniqlo.com/us/en/products/E429066-000/00',
@@ -123,7 +114,6 @@ const DEMO_PRODUCTS = [
     id: 'jcrew-broken-in-oxford',
     name: 'Broken-in organic cotton oxford shirt',
     brand: 'J.Crew',
-    identity: { name: 'listing', brand: 'listing' },
     price: 98,
     priceEvidence: { via: 'dom-variant-scope', code: 'AU763', variant: 'productPriceSelectColors-CX449NA6434' },
     productUrl: 'https://www.jcrew.com/p/mens/categories/clothing/shirts/broken-in-oxford/broken-in-organic-cotton-oxford-shirt/AU763',
@@ -139,7 +129,6 @@ const DEMO_PRODUCTS = [
     id: 'llbean-venturestretch-chino',
     name: "Men's VentureStretch Commuter Chinos",
     brand: 'L.L.Bean',
-    identity: { name: 'listing', brand: 'listing' },
     price: 84.95,
     priceEvidence: { via: 'json-ld-offer', sku: '129244' },
     productUrl: 'https://www.llbean.com/llb/shop/129244',
@@ -154,10 +143,9 @@ const DEMO_PRODUCTS = [
   },
   {
     id: 'sample-northfold-boxy-cotton-tee',
-    name: 'Organic Cotton Boxy Tee',
-    brand: null,
-    identity: { name: 'product-record' },
-    price: null,
+    name: 'Boxy Cotton Tee',
+    brand: 'Northfold',
+    price: 42,
     productUrl: 'https://wearsubset.com/products/organic-cotton-boxy-tee?srsltid=AU7gw4VU8pNLuGolbILYNgecKPD4BIvVVtl-A5l71-yA1M4g172usK9h',
     imageUrl: 'https://cdn.shopify.com/s/files/1/0055/2416/0563/files/Boxy-Tee-Graphite-LOOK5_0003-hero.jpg?v=1746817885',
     imageEvidence: { via: 'product-record', handle: 'organic-cotton-boxy-tee', productId: '7737442697408', title: 'Organic Cotton Boxy Tee' },
@@ -170,10 +158,9 @@ const DEMO_PRODUCTS = [
   },
   {
     id: 'sample-halden-merino-crew-knit',
-    name: 'Mens Merino Crew Sweater',
-    brand: 'Unbound Merino',
-    identity: { name: 'product-record', brand: 'image-asset' },
-    price: null,
+    name: 'Merino Crew Knit',
+    brand: 'Halden',
+    price: 128,
     productUrl: 'https://unboundmerino.com/products/mens-merino-crew-sweater',
     imageUrl: 'https://cdn.shopify.com/s/files/1/1491/5166/files/Unbound-Merino-Men-Sweater-Heather-Oat-1.jpg?v=1773773474',
     imageEvidence: { via: 'product-record', handle: 'mens-merino-crew-sweater', productId: '7455170003038', title: 'Mens Merino Crew Sweater' },
@@ -187,8 +174,8 @@ const DEMO_PRODUCTS = [
   {
     id: 'sample-coveworks-wide-leg-trouser',
     name: 'Wide Leg Trouser',
-    brand: null,
-    price: null,
+    brand: 'Coveworks',
+    price: 96,
     productUrl: 'https://www.llbean.com/llb/shop/5827403',
     imageUrl: 'https://cdni.llbean.net/is/image/wim/526340_1151_41?hei=1095&wid=950&resMode=sharp2&defaultImage=llbprod/5827403_0_44',
     imageEvidence: { via: 'json-ld-sku', sku: '5827403' },
@@ -201,10 +188,9 @@ const DEMO_PRODUCTS = [
   },
   {
     id: 'sample-atlas-supply-cropped-track-jacket',
-    name: 'Cropped Track Jacket - White',
-    brand: 'Telfar',
-    identity: { name: 'product-record', brand: 'image-asset' },
-    price: null,
+    name: 'Cropped Track Jacket',
+    brand: 'Atlas Supply',
+    price: 88,
     productUrl: 'https://telfar.net/products/cropped-track-jacket-white-2025',
     imageUrl: 'https://cdn.shopify.com/s/files/1/0880/7204/files/TELFAR-CROPPED-TRACK-JACKET-WHITE-FRONT.jpg?v=1774384320',
     imageEvidence: { via: 'product-record', source: 'embedded-react-router', handle: 'cropped-track-jacket-white-2025', productId: '7689314336867', title: 'Cropped Track Jacket - White' },
@@ -217,10 +203,9 @@ const DEMO_PRODUCTS = [
   },
   {
     id: 'sample-rue-nine-slip-midi-dress',
-    name: 'Blue Floral Ruched Slip Midi Dress',
-    brand: null,
-    identity: { name: 'product-record' },
-    price: null,
+    name: 'Slip Midi Dress',
+    brand: 'Rue Nine',
+    price: 145,
     productUrl: 'https://www.rihoas.com/products/blue-floral-ruched-slip-midi-dress',
     imageUrl: 'https://cdn.shopify.com/s/files/1/0578/4594/0376/files/women_s-woven-polyester-midi-dresses-dresses-2pagqh.jpg?v=1754906851',
     imageEvidence: { via: 'product-record', handle: 'blue-floral-ruched-slip-midi-dress', productId: '9034050502869', title: 'Blue Floral Ruched Slip Midi Dress' },
@@ -233,10 +218,9 @@ const DEMO_PRODUCTS = [
   },
   {
     id: 'sample-terrace-washed-denim-jacket',
-    name: 'Stone Wash Denim Jacket',
-    brand: null,
-    identity: { name: 'product-record' },
-    price: null,
+    name: 'Washed Denim Jacket',
+    brand: 'Terrace',
+    price: 118,
     productUrl: 'https://stetson.com/products/stone-wash-denim-jacket-blue?srsltid=AU7gw4XcGn901df4E_sNvEiaMpW7wpp9igT2ueoLeMFarF1tA-u6PhPK',
     imageUrl: 'https://cdn.shopify.com/s/files/1/0357/2432/9005/files/11-097-0119-4036-BU_Blue_1_1aa77471-5252-459e-9b17-ad6819311fe5.jpg?v=1774989535',
     imageEvidence: { via: 'product-record', handle: 'stone-wash-denim-jacket-blue', productId: '8402035179565', title: 'Stone Wash Denim Jacket' },
@@ -250,8 +234,8 @@ const DEMO_PRODUCTS = [
   {
     id: 'sample-kinfield-poplin-shirt',
     name: 'Poplin Shirt',
-    brand: null,
-    price: null,
+    brand: 'Kinfield',
+    price: 74,
     productUrl: 'https://bananarepublic.gap.com/browse/product.do?pid=899539012',
     imageUrl: 'https://bananarepublic.gap.com/webcontent/0062/367/599/cn62367599.jpg',
     imageEvidence: { via: 'json-ld-sku', sku: '899539012' },
@@ -265,11 +249,11 @@ const DEMO_PRODUCTS = [
   {
     id: 'sample-solstice-ribbed-knit-skirt',
     name: 'Ribbed Knit Skirt',
-    brand: null,
-    identity: { name: 'url-slug', slug: 'ribbed-knit-skirt' },
-    price: null,
+    brand: 'Solstice',
+    price: 68,
     productUrl: 'https://www.eileenfisher.com/ribbed-knit-skirt/S6YFF-S4429.html?srsltid=AU7gw4Ub_fkSYiZTUDeGul3YpjXy_2Mq6NscwEKq2O1U1caaAHDnPrmY',
-    imageUrl: null,
+    imageUrl: 'https://www.eileenfisher.com/dw/image/v2/BGKB_PRD/on/demandware.static/-/Sites-ef-main-catalog/default/dw287f7711/images/S6YFF-S4429M-349.jpg?sw=525&sh=700&sfrm=png&q=90',
+    imageEvidence: { via: 'json-ld-sku', sku: 's6yff-s4429' },
     category: 'skirt',
     style: ['Minimal', 'Bohemian'],
     occasion: ['Everyday', 'Work'],
@@ -281,8 +265,7 @@ const DEMO_PRODUCTS = [
     id: 'sample-atlas-supply-oversized-hoodie',
     name: 'Adult Heavyweight Oversized Hoodie',
     brand: 'Gap',
-    identity: { name: 'listing', brand: 'listing' },
-    price: null,
+    price: 79,
     productUrl: 'https://www.gap.com/browse/product.do?pid=821270112',
     imageUrl: 'https://www.gap.com/webcontent/0059/629/253/cn59629253.jpg',
     imageEvidence: { via: 'json-ld-sku', sku: '821270112' },
@@ -295,10 +278,9 @@ const DEMO_PRODUCTS = [
   },
   {
     id: 'sample-halden-tailored-wool-coat',
-    name: 'Valentina Tailored Wool Coat',
-    brand: null,
-    identity: { name: 'product-record' },
-    price: null,
+    name: 'Tailored Wool Coat',
+    brand: 'Halden',
+    price: 298,
     productUrl: 'https://bernardofashions.com/products/valentina-tailored-wool-coat-cream',
     imageUrl: 'https://cdn.shopify.com/s/files/1/2256/4723/files/BER25660B579_CREAM-095.jpg?v=1789401832',
     imageEvidence: { via: 'product-record', handle: 'valentina-tailored-wool-coat-cream', productId: '10372403822913', title: 'Valentina Tailored Wool Coat' },
@@ -312,8 +294,8 @@ const DEMO_PRODUCTS = [
   {
     id: 'sample-coveworks-cargo-utility-pant',
     name: 'Cargo Utility Pant',
-    brand: null,
-    price: null,
+    brand: 'Coveworks',
+    price: 92,
     productUrl: 'https://bananarepublicfactory.gapfactory.com/browse/product.do?pid=1178135011',
     imageUrl: 'https://bananarepublicfactory.gapfactory.com/webcontent/0062/964/878/cn62964878.jpg',
     imageEvidence: { via: 'json-ld-sku', sku: '1178135011' },
@@ -326,10 +308,9 @@ const DEMO_PRODUCTS = [
   },
   {
     id: 'sample-rue-nine-silk-column-dress',
-    name: 'Bella Silk and Wool Column Gown',
-    brand: null,
-    identity: { name: 'product-record' },
-    price: null,
+    name: 'Silk Column Dress',
+    brand: 'Rue Nine',
+    price: 245,
     productUrl: 'https://alexiamaria.com/products/bella-silk-and-wool-column-gown-with-removable-bow-belt?srsltid=AU7gw4XJqg9X-ZIKpm7JAgbIN_a6Eio1I6_Or0Up-_a3uXZPNIqyDGv0',
     imageUrl: 'https://cdn.shopify.com/s/files/1/1464/2224/files/Screenshot2025-11-20at11.16.16PM.png?v=1763698523',
     imageEvidence: { via: 'product-record', handle: 'bella-silk-and-wool-column-gown-with-removable-bow-belt', productId: '7027432128685', title: 'Bella Silk and Wool Column Gown' },
@@ -342,10 +323,9 @@ const DEMO_PRODUCTS = [
   },
   {
     id: 'sample-northfold-court-sneaker',
-    name: 'Court Sneakers in Leather',
-    brand: null,
-    identity: { name: 'url-slug', slug: 'court-sneakers-in-leather' },
-    price: null,
+    name: 'Court Sneaker',
+    brand: 'Northfold',
+    price: 110,
     productUrl: 'https://www.jcrew.com/p/mens/categories/shoes/exclusives/court-sneakers-in-leather/AQ226?srsltid=AU7gw4WOorKw0-jR9hhjIH0FvJXdsW2bNwg0vyA_eM5iKia9wmBhJsyG',
     imageUrl: 'https://www.jcrew.com/s7-img-facade/AQ226_WT0002',
     category: 'sneaker',
@@ -358,9 +338,8 @@ const DEMO_PRODUCTS = [
   {
     id: 'sample-terrace-linen-camp-shirt',
     name: 'Linen Camp Shirt',
-    brand: null,
-    identity: { name: 'product-record' },
-    price: null,
+    brand: 'Terrace',
+    price: 64,
     productUrl: 'https://mackweldon.com/products/linen-camp-shirt?srsltid=AU7gw4X7OzEMCGfGc7jkVK7Bnta_IOxHxc6gKKzZ_lCLzAQyNcGHx35y',
     imageUrl: 'https://cdn.shopify.com/s/files/1/0078/6825/2273/files/Linen-Camp-Shirt_Bright-White_M01Y11-BW-135.png?v=1777649425',
     imageEvidence: { via: 'product-record', handle: 'linen-camp-shirt', productId: '7638452011121', title: 'Linen Camp Shirt' },
@@ -373,10 +352,9 @@ const DEMO_PRODUCTS = [
   },
   {
     id: 'sample-atlas-supply-performance-short',
-    name: 'Mens Performance Shorts',
-    brand: null,
-    identity: { name: 'product-record' },
-    price: null,
+    name: 'Performance Short',
+    brand: 'Atlas Supply',
+    price: 48,
     productUrl: 'https://capellisport.com/products/mens-performance-shorts?srsltid=AU7gw4WqMaU_bpCVQMl3d0uTNNH-Y6UgDifROG8JYlCi1bE3YZ0UMsN7',
     imageUrl: 'https://cdn.shopify.com/s/files/1/0516/8994/7309/files/AGA-1496XRED_ae53fcad-234a-478a-9676-175d7bcb1bda.jpg?v=1760714195',
     imageEvidence: { via: 'product-record', handle: 'mens-performance-shorts', productId: '8742623838437', title: 'Mens Performance Shorts' },
@@ -389,10 +367,9 @@ const DEMO_PRODUCTS = [
   },
   {
     id: 'sample-solstice-colour-block-knit',
-    name: 'Mens Color-Block Sweater',
-    brand: null,
-    identity: { name: 'product-record' },
-    price: null,
+    name: 'Colour Block Knit',
+    brand: 'Solstice',
+    price: 132,
     productUrl: 'https://eleven-six.co/products/mens-color-block-sweater?srsltid=AU7gw4WGDQODGOSiafrMv6X2m7kPJvcxN-MUAnNMpUkUs2DPvujXjbkS',
     imageUrl: 'https://cdn.shopify.com/s/files/1/0572/5490/3962/products/IMG_2600.png?v=1641930352',
     imageEvidence: { via: 'product-record', handle: 'mens-color-block-sweater', productId: '7546803880166', title: 'MENS COLOR-BLOCK SWEATER' },
@@ -406,8 +383,8 @@ const DEMO_PRODUCTS = [
   {
     id: 'sample-kinfield-pleated-midi-skirt',
     name: 'Pleated Midi Skirt',
-    brand: null,
-    price: null,
+    brand: 'Kinfield',
+    price: 86,
     productUrl: 'https://bananarepublicfactory.gapfactory.com/browse/product.do?pid=844341011',
     imageUrl: 'https://bananarepublicfactory.gapfactory.com/webcontent/0060/549/353/cn60549353.jpg',
     imageEvidence: { via: 'json-ld-sku', sku: '844341011' },
@@ -420,9 +397,8 @@ const DEMO_PRODUCTS = [
   },
   {
     id: 'sample-terrace-straight-leg-jean',
-    name: 'AE Super High-Waisted Straight Jean',
-    brand: 'AE',
-    identity: { name: 'url-slug', slug: 'ae-super-high-waisted-straight-jean', brand: 'url-slug' },
+    name: 'Straight Leg Jean',
+    brand: 'Terrace',
     price: 34.97,
     priceEvidence: { via: 'json-ld-offer', sku: '0435_5141_953' },
     productUrl: 'https://www.ae.com/us/en/p/women/jeans/high-waisted-jeans/ae-super-high-waisted-straight-jean/0435_5141_953',
@@ -436,10 +412,9 @@ const DEMO_PRODUCTS = [
   },
   {
     id: 'sample-coveworks-cropped-puffer',
-    name: 'Cropped Faux Fur Hood Padded Puffer Jacket',
-    brand: null,
-    identity: { name: 'product-record' },
-    price: null,
+    name: 'Cropped Puffer',
+    brand: 'Coveworks',
+    price: 189,
     productUrl: 'https://fibflx.com/products/cropped-faux-fur-chood-padded-puffer-jacket?srsltid=AU7gw4V_Tfv48bjT4BL1VCBriL8LF_W0m-gZJH9jhPeJIEbCp17OqEjv',
     imageUrl: 'https://cdn.shopify.com/s/files/1/0610/4707/9155/files/cropped-faux-fur_hood-padded-puffer-jacket-sahara-beige-01.jpg?v=1767082780',
     imageEvidence: { via: 'product-record', handle: 'cropped-faux-fur-chood-padded-puffer-jacket', productId: '9342652842227', title: 'Cropped Faux Fur Hood Padded Puffer Jacket' },
@@ -452,9 +427,8 @@ const DEMO_PRODUCTS = [
   },
   {
     id: 'sample-rue-nine-tencel-wrap-top',
-    name: 'Tencel Wrap Top - Honeydew',
-    brand: null,
-    identity: { name: 'url-slug', slug: 'tencel-wrap-top-honeydew' },
+    name: 'Tencel Wrap Top',
+    brand: 'Rue Nine',
     price: null,
     productUrl: 'https://veiled.com/products/tencel-wrap-top-honeydew?variant=43101716512873&country=US&currency=USD&utm_medium=product_sync&utm_source=google&utm_content=sag_organic&utm_campaign=sag_organic&srsltid=AU7gw4Uu2rEWUo23KDmHE4DivU0Zue0jGJ5JV4CrVcTGYhSkXVo9iLcuf-Q',
     imageUrl: 'https://veiled.com/cdn/shop/files/tencel-wrap-top-honeydew-426317.jpg?v=1782343347&width=2048',
@@ -468,9 +442,8 @@ const DEMO_PRODUCTS = [
   },
   {
     id: 'sample-northfold-heavyweight-pocket-tee',
-    name: "Men's Heavyweight Cotton Short Sleeve Pocket T-Shirt",
-    brand: null,
-    identity: { name: 'url-slug', slug: 'mens-heavyweight-cotton-short-sleeve-pocket-t-shirt' },
+    name: 'Heavyweight Pocket Tee',
+    brand: 'Northfold',
     price: 18.09,
     priceEvidence: { via: 'json-ld-offer', sku: '194531993198' },
     productUrl: 'https://www.redkap.com/mens-heavyweight-cotton-short-sleeve-pocket-t-shirt/194531993198.html?srsltid=AU7gw4VWLZtSflcDGY2huezglCdOv2SuqDf52KPc3Gr-a-5yfM9MYP6PoU0',
@@ -486,9 +459,8 @@ const DEMO_PRODUCTS = [
   {
     id: 'sample-halden-double-breasted-blazer',
     name: 'Double Breasted Blazer',
-    brand: null,
-    identity: { name: 'product-record' },
-    price: null,
+    brand: 'Halden',
+    price: 210,
     productUrl: 'https://www.joesjeans.com/products/double-breasted-blazer-true-navy?srsltid=AU7gw4UrhqQVneqyCYiH3q4-5lAbyTD9lki6nGtax9bJ1ShmIoWfSzet',
     imageUrl: 'https://cdn.shopify.com/s/files/1/0029/1232/1571/files/jmfadb9044_true_navy_a.jpg?v=1776441921',
     imageEvidence: { via: 'product-record', handle: 'double-breasted-blazer-true-navy', productId: '7403915116587', title: 'DOUBLE BREASTED BLAZER' },
@@ -501,9 +473,8 @@ const DEMO_PRODUCTS = [
   },
   {
     id: 'sample-solstice-printed-maxi-dress',
-    name: 'Squareneck Sleeveless Maxi Dress',
-    brand: null,
-    identity: { name: 'url-slug', slug: 'squareneck-sleeveless-maxi-dress' },
+    name: 'Printed Maxi Dress',
+    brand: 'Solstice',
     price: 84.99,
     priceEvidence: { via: 'json-ld-offer', sku: 'oa377' },
     productUrl: 'https://www.madewell.com/p/womens/clothing/dresses/linen-dresses/squareneck-sleeveless-maxi-dress/OA377/?ccode=PP8103&size=10&source=googlePLA&srsltid=AU7gw4VISrbWeiA609m1ju9BRqmEmwk8o8dLCPXdCL_5gaD1h-zzcA8xFQ0',
@@ -517,9 +488,8 @@ const DEMO_PRODUCTS = [
   },
   {
     id: 'sample-kinfield-fleece-sweatpant',
-    name: 'Ultrafleece Straight Leg Sweatpants',
-    brand: null,
-    identity: { name: 'url-slug', slug: 'ultrafleece-straight-leg-sweatpants' },
+    name: 'Fleece Sweatpant',
+    brand: 'Kinfield',
     price: 69.95,
     priceEvidence: { via: 'json-ld-offer', sku: '0892669' },
     productUrl: 'https://www.garageclothing.com/us/us/p/ultrafleece-straight-leg-sweatpants/0892669.html?srsltid=AU7gw4UDkr_A3xD106Yb4vyGxb75TfpU0clPMV3MNGw40IFFryItIVl8AG4',

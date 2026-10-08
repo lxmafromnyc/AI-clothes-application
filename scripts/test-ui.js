@@ -38,6 +38,7 @@ const TYPES = {
   '.mp4': 'video/mp4', '.webm': 'video/webm', '.jpg': 'image/jpeg', '.vtt': 'text/vtt'
 };
 const searchRequests = [];
+const interpretRequests = [];
 const billingRequests = [];
 
 /* The photo the stubbed /api/search hands back. Off-origin by default,
@@ -106,6 +107,24 @@ const chargeSearch = () => {
 };
 const deferred = () => { let release; const held = new Promise((r) => { release = r; }); return { held, release }; };
 
+/* the catalogue, as Discover shelves it, and what its photos are */
+const audit = require('./audit-catalog');
+const CATALOGUE_SOURCE = fs.readFileSync(path.join(REPO, 'assets', 'catalog.js'), 'utf8');
+const CATALOGUE = audit.readCatalogue(CATALOGUE_SOURCE);
+const CATALOGUE_PHOTOS = new Set(CATALOGUE.map((r) => r.imageUrl).filter(Boolean));
+const STAND_IN_PHOTO = fs.readFileSync(path.join(REPO, 'assets', 'demo', 'fynd-demo-mobile-poster.jpg'));
+const WIDE_PHOTO = fs.readFileSync(path.join(REPO, 'assets', 'demo', 'fynd-demo-poster.jpg'));
+const PIXEL = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=', 'base64');
+
+/* the catalogue source with one row's field set to something else */
+const withRowField = (id, field, value) => {
+  const start = CATALOGUE_SOURCE.indexOf(`id: '${id}',`);
+  const end = CATALOGUE_SOURCE.indexOf('\n  }', start);
+  const block = CATALOGUE_SOURCE.slice(start, end)
+    .replace(new RegExp(`(\\n\\s*)${field}: [^\\n]*,`), `$1${field}: ${JSON.stringify(value)},`);
+  return CATALOGUE_SOURCE.slice(0, start) + block + CATALOGUE_SOURCE.slice(end);
+};
+
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
 
@@ -150,6 +169,7 @@ const server = http.createServer((req, res) => {
         return null;
       };
       if (url.pathname === '/api/interpret') {
+        interpretRequests.push(parsed);
         return answer().then((done) => done || res.end(JSON.stringify({ source: 'openai', query: 'q', preferences: {
           categories: ['hoodie'], colors: ['Black'], fits: [], occasions: [], brands: [], styles: [],
           keywords: [], maxPrice: null, minPrice: null, season: null, gender: null } })));
@@ -355,16 +375,44 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     process.exit(0);
   }
 
-  const openPage = async (file) => {
+  /* `photos` stands in for the retailers' image hosts, which this
+     environment cannot reach. Each catalogue photo URL is answered with
+     a real JPEG from this repository — what a working CDN does — unless
+     the test names it in `fail` (the request errors) or `stub` (a 1×1
+     image comes back, the shape of a tracking pixel or a "no image"
+     placeholder). Everything else off this origin is still cut. */
+  const openPage = async (file, options) => {
+    const opts = options || {};
     const page = await browser.newPage();
-    await page.addInitScript(() => {
-      window.FINDWEAR_API = 'http://127.0.0.1:8899/api/interpret';
-      window.FINDWEAR_SEARCH_API = 'http://127.0.0.1:8899/api/search';
-    });
+    if (opts.viewport) await page.setViewportSize(opts.viewport);
+    /* apiOverride: false leaves the page to find its API the way a real
+       visitor's page does — from its own origin and its meta tag */
+    if (opts.apiOverride !== false) {
+      await page.addInitScript(() => {
+        window.FINDWEAR_API = 'http://127.0.0.1:8899/api/interpret';
+        window.FINDWEAR_SEARCH_API = 'http://127.0.0.1:8899/api/search';
+      });
+    }
     /* Anything off this origin is unreachable in this environment, and a
        stylesheet still loading blocks the scripts under it from running.
        Cutting external requests makes the page deterministic. */
-    await page.route((url) => !String(url).includes('127.0.0.1'), (route) => route.abort());
+    await page.route((url) => !String(url).includes('127.0.0.1'), (route) => {
+      const url = route.request().url();
+      /* a test may answer another origin itself (the meta tag's deployment) */
+      if (opts.offOrigin && opts.offOrigin(route, url)) return undefined;
+      if (opts.photos && CATALOGUE_PHOTOS.has(url)) {
+        if ((opts.fail || []).includes(url)) return route.abort();
+        if ((opts.stub || []).includes(url)) return route.fulfill({ status: 200, contentType: 'image/png', body: PIXEL });
+        if ((opts.wide || []).includes(url)) return route.fulfill({ status: 200, contentType: 'image/jpeg', body: WIDE_PHOTO });
+        return route.fulfill({ status: 200, contentType: 'image/jpeg', body: STAND_IN_PHOTO });
+      }
+      return route.abort();
+    });
+    if (opts.catalogue) {
+      /* a catalogue the test has altered, served in place of the real one */
+      await page.route(/\/assets\/catalog\.js$/, (route) =>
+        route.fulfill({ status: 200, contentType: 'text/javascript', body: opts.catalogue }));
+    }
     await page.goto(`http://127.0.0.1:${PORT}/${file}`, { waitUntil: 'domcontentloaded' });
     return page;
   };
@@ -1206,6 +1254,22 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
 
   console.log('\nlive searches left, in the search box');
 
+  /* every category Discover offers and every subcategory under it, then
+     back to the shelves: the whole of Discover, used once */
+  const browseAllOfDiscover = async (page) => {
+    await page.waitForSelector('.shelf .item-card', { timeout: 10000 });
+    let used = 0;
+    const tabs = await page.$$eval('#discover-tabs button', (ns) => ns.length);
+    for (let c = 0; c < tabs; c++) {
+      await page.click(`#discover-tabs button >> nth=${c}`); used += 1;
+      const pills = await page.$$eval('#discover-panel button.pill', (ns) => ns.length);
+      for (let p = 0; p < pills; p++) { await page.click(`#discover-panel button.pill >> nth=${p}`); used += 1; }
+      while (await page.$('#active-filters [data-remove]')) await page.click('#active-filters [data-remove] >> nth=0');
+    }
+    await page.click('#results-clear');
+    return used;
+  };
+
   const SIGNED_IN = { signedIn: true, user: { id: 'usr_1', email: 'ada@example.test', name: 'Ada', emailVerified: true } };
 
   /* the count in words, and whether the allowance — words and bar — is
@@ -1472,13 +1536,8 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     await usageSays(before, '3 searches left today');
     await before.close();
 
-    const discover = await openPage('discover.html');
-    await discover.waitForSelector('.filter-pills .pill');
-    const pills = await discover.$$eval('.filter-pills .pill', (ns) => ns.map((n) => n.dataset.style));
-    for (const style of pills.concat(['All'])) {
-      await discover.click(`.filter-pills .pill[data-style="${style}"]`);
-      await discover.waitForFunction((st) => document.querySelector(`.filter-pills .pill[data-style="${st}"]`).getAttribute('aria-pressed') === 'true', style);
-    }
+    const discover = await openPage('discover.html', { photos: true });
+    await browseAllOfDiscover(discover);
     await discover.close();
     assert.deepStrictEqual(stubs.log.filter((e) => e.path === '/api/search' || e.path === '/api/interpret'), [], 'Discover reached a live endpoint');
     assert.strictEqual(accountState.usage.searches.used, 0, 'Discover was counted as a search');
@@ -1950,6 +2009,469 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     await page.close();
   });
 
+  console.log('\ndiscover');
+
+  /* Discover is a filter over the catalogue already on the page. These
+     hold it to that: it offers a lot, across many directions; every
+     filter answers from the catalogue's own proved fields, in place;
+     and none of it — however much of it is used — searches, reads with
+     the AI, calls a product source, spends a search, or leaves the page. */
+  const openDiscover = async (width, options) => {
+    const page = await openPage('discover.html', Object.assign({ photos: true }, options || {},
+      width ? { viewport: { width, height: 900 } } : {}));
+    await page.waitForSelector('.shelf .item-card', { timeout: 10000 });
+    return page;
+  };
+
+  /* what each shelf card says, against the catalogue row it links to */
+  const shelfCards = (page) => page.$$eval('.shelf .item-card', (cards) => cards.map((c) => ({
+    href: c.getAttribute('href'),
+    seller: c.querySelector('.item-retailer').textContent.trim(),
+    name: c.querySelector('.item-name').textContent.trim(),
+    where: c.querySelector('.item-seller') ? c.querySelector('.item-seller').textContent.trim() : null,
+    img: c.querySelector('.item-media img') ? c.querySelector('.item-media img').getAttribute('src') : null,
+    artwork: Boolean(c.querySelector('.item-media svg.silhouette'))
+  })));
+  const rowFor = (href) => CATALOGUE.find((r) => r.productUrl === href);
+  const hostOf = (url) => new URL(url).hostname.replace(/^www\d?\./, '');
+
+  /* what the filtered catalogue shows */
+  const resultCards = (page) => page.$$eval('#results-body .item-card', (cards) => cards.map((c) => ({
+    href: c.getAttribute('href'),
+    seller: c.querySelector('.item-retailer').textContent.trim(),
+    name: c.querySelector('.item-name').textContent.trim()
+  })));
+  const pickCategory = (page, label) => page.click(`#discover-tabs button:text-is("${label}")`);
+  const pickSub = (page, label) => page.click(`#discover-panel button.pill:text-is("${label}")`);
+
+  /* Discover's six categories, read from its own data file, and an
+     independent reading of which proved rows each one holds: whole
+     words of the product's own name, a plural matching its singular.
+     The page has to agree with this, not with itself. */
+  const DISCOVER_DATA = (() => {
+    const sandbox = {};
+    require('vm').runInNewContext(`${fs.readFileSync(path.join(REPO, 'assets', 'discover-data.js'), 'utf8')}\n;this.d = DISCOVER;`, sandbox);
+    return JSON.parse(JSON.stringify(sandbox.d));
+  })();
+  const SHELVABLE = CATALOGUE.filter((r) => audit.auditRow(r).shelvable);
+  const nameOf = (r) => ` ${String(r.name).toLowerCase().replace(/\bt[\s-]?shirt(s?)\b/g, 'tshirt$1').replace(/[^a-z0-9]+/g, ' ')} `;
+  const wordRe = (word) => {
+    const exact = word.startsWith('=');
+    const parts = word.replace(/^=/, '').toLowerCase().replace(/\bt[\s-]?shirt(s?)\b/g, 'tshirt$1').split(/[^a-z0-9]+/).filter(Boolean)
+      .map((w) => (exact ? w : `${w.replace(/(es|s)$/, '')}(?:s|es)?`));
+    return new RegExp(` ${parts.join(' ')} `);
+  };
+  const says = (r, words) => words.some((w) => wordRe(w).test(nameOf(r)));
+  /* copied out of the catalogue's own context, so the arrays compare */
+  const expectedIn = (category, sub) => [...SHELVABLE
+    .filter((r) => says(r, category.words) && (!sub || says(r, sub.words))).map((r) => r.productUrl)].sort();
+
+  /* Every request a Discover page makes, sorted by what it would cost.
+     A product source or an AI provider is never reached from a browser —
+     those calls are made by /api/search and /api/interpret — but they are
+     listed anyway, so a change that ever added one fails here too. */
+  const COSTLY = {
+    'OpenWeb Ninja': (u) => /openwebninja/i.test(u.hostname),
+    OpenAI: (u) => /(^|\.)openai\.com$/i.test(u.hostname),
+    Serper: (u) => /(^|\.)serper\.dev$/i.test(u.hostname),
+    SerpApi: (u) => /(^|\.)serpapi\.com$/i.test(u.hostname),
+    Gemini: (u) => /generativelanguage\.googleapis\.com$/i.test(u.hostname),
+    '/api/search': (u) => u.pathname === '/api/search',
+    '/api/interpret': (u) => u.pathname === '/api/interpret',
+    'any other /api/': (u) => u.pathname.startsWith('/api/') && !['/api/search', '/api/interpret'].includes(u.pathname)
+  };
+  const watchRequests = (page) => {
+    const tally = Object.fromEntries(Object.keys(COSTLY).map((k) => [k, 0]));
+    const seen = [];
+    page.on('request', (req) => {
+      const u = new URL(req.url());
+      for (const [name, is] of Object.entries(COSTLY)) {
+        if (is(u)) { tally[name] += 1; seen.push(`${name}: ${req.url()}`); }
+      }
+    });
+    return { tally, seen };
+  };
+
+  await test('Discover is six categories, and nothing else to navigate by', async () => {
+    const page = await openDiscover();
+    const shown = await page.$$eval('#discover-tabs > *', (ns) => ns.map((n) => n.textContent.trim()));
+    assert.deepStrictEqual(shown, ['Tops', 'Bottoms', 'Outerwear', 'One-Piece', 'Comfort', 'Shoes']);
+    assert.deepStrictEqual(DISCOVER_DATA.categories.map((c) => c.label), shown, 'the page draws the data file');
+    /* the old directions, ideas and ways in are gone */
+    for (const gone of ['Style', 'Occasion', 'Season', 'Weather', 'Price', 'Colour', 'Material', 'Fit', 'Trends', 'Brands']) {
+      assert.ok(!shown.includes(gone), `${gone} is still a direction`);
+    }
+    for (const id of ['#discover-ideas', '#discover-edits', '#ideas-shuffle', '#edits-shuffle']) {
+      assert.strictEqual(await page.$(id), null, `${id} is still on the page`);
+    }
+    /* nothing disabled is left behind, and no link goes to the search */
+    assert.strictEqual(await page.$$eval('main [aria-disabled], main .pill--unavailable, main button[disabled]', (n) => n.length), 0);
+    const links = await page.$$eval('main a[href]', (ns) => ns.map((n) => n.getAttribute('href')));
+    links.forEach((h) => assert.ok(rowFor(h), `${h} is not a catalogue listing`));
+    await page.close();
+  });
+
+  await test('each category filters to exactly the proved rows its name words place in it', async () => {
+    const page = await openDiscover();
+    for (const category of DISCOVER_DATA.categories) {
+      await pickCategory(page, category.label);
+      const got = [...(await resultCards(page)).map((c) => c.href)].sort();
+      assert.deepStrictEqual(got, expectedIn(category), `${category.label} shows the wrong products`);
+      const n = got.length;
+      assert.strictEqual(await page.textContent('#results-count'), n ? `${n} ${n === 1 ? 'result' : 'results'}` : 'No matching products');
+      assert.strictEqual(await page.$eval('#discover-tabs [aria-pressed="true"]', (b) => b.textContent.trim()), category.label);
+      assert.strictEqual(await page.$eval('#discover-shelves', (n) => n.hidden), true, 'the shelves stay up under a filter');
+    }
+    /* the words are whole words: a short-sleeve tee is not shorts, and
+       a t-shirt or sweatshirt is not a button-down shirt */
+    await pickCategory(page, 'Bottoms');
+    (await resultCards(page)).forEach((c) => assert.ok(!/t-shirt/i.test(c.name), `${c.name} is not a bottom`));
+    await pickCategory(page, 'Tops');
+    await pickSub(page, 'Button-down shirts');
+    (await resultCards(page)).forEach((c) => assert.ok(!/t-shirt|sweatshirt|hoodie/i.test(c.name), `${c.name} is not a button-down`));
+    await page.close();
+  });
+
+  await test('every supported subcategory filters locally to exactly its proved rows', async () => {
+    const page = await openDiscover();
+    let checked = 0;
+    for (const category of DISCOVER_DATA.categories) {
+      for (const sub of category.subcategories) {
+        const want = expectedIn(category, sub);
+        if (!want.length) continue;
+        await page.click('#results-clear').catch(() => {});
+        await pickCategory(page, category.label);
+        await pickSub(page, sub.label);
+        const got = [...(await resultCards(page)).map((c) => c.href)].sort();
+        assert.deepStrictEqual(got, want, `${category.label} / ${sub.label}`);
+        for (const href of got) assert.ok(audit.auditRow(rowFor(href)).shelvable, `${href} is not a proved row`);
+        checked += 1;
+      }
+    }
+    assert.ok(checked >= 6, `only ${checked} subcategories were supported`);
+    await page.close();
+  });
+
+  await test('a subcategory the catalogue cannot support is not drawn at all, never falsely enabled', async () => {
+    const page = await openDiscover();
+    for (const category of DISCOVER_DATA.categories) {
+      await pickCategory(page, category.label);
+      const drawn = await page.$$eval('#discover-panel button.pill', (ns) => ns.map((n) => n.textContent.trim()));
+      for (const sub of category.subcategories) {
+        const supported = expectedIn(category, sub).length > 0;
+        assert.strictEqual(drawn.includes(sub.label), supported,
+          `${category.label} / ${sub.label} is ${supported ? 'missing' : 'drawn without a product to match'}`);
+      }
+      /* the panel is only its "All" pill and the supported ones */
+      const extra = drawn.filter((d) => d !== category.all && !category.subcategories.some((s) => s.label === d));
+      assert.deepStrictEqual(extra, [], `${category.label} draws ${extra.join(', ')}`);
+    }
+    /* the premise, so this test cannot pass vacuously */
+    const unsupported = DISCOVER_DATA.categories.flatMap((c) => c.subcategories.filter((s) => !expectedIn(c, s).length).map((s) => s.label));
+    assert.ok(unsupported.includes('Trench coats') && unsupported.includes('Boots'), `unsupported today: ${unsupported.join(', ')}`);
+    await page.close();
+  });
+
+  await test('subcategories combine, chips remove one at a time, and clearing restores the catalogue', async () => {
+    const page = await openDiscover();
+    const tops = DISCOVER_DATA.categories.find((c) => c.id === 'tops');
+    const tees = tops.subcategories.find((s) => s.label === 'T-shirts');
+    const shirts = tops.subcategories.find((s) => s.label === 'Button-down shirts');
+    await pickCategory(page, 'Tops');
+    const all = (await resultCards(page)).length;
+    await pickSub(page, 'T-shirts');
+    assert.deepStrictEqual([...(await resultCards(page)).map((c) => c.href)].sort(), expectedIn(tops, tees));
+    /* two subcategories are alternatives: either one */
+    await pickSub(page, 'Button-down shirts');
+    const both = [...new Set(expectedIn(tops, tees).concat(expectedIn(tops, shirts)))].sort();
+    assert.deepStrictEqual([...(await resultCards(page)).map((c) => c.href)].sort(), both);
+    assert.deepStrictEqual(await page.$$eval('#active-filters button', (n) => n.map((b) => b.textContent.replace('×', '').replace('(remove)', '').trim())),
+      ['Tops', 'T-shirts', 'Button-down shirts']);
+    /* a chip removed widens it again; "All tops" is the whole category */
+    await page.click('#active-filters [data-remove="T-shirts"]');
+    assert.deepStrictEqual([...(await resultCards(page)).map((c) => c.href)].sort(), expectedIn(tops, shirts));
+    await pickSub(page, tops.all);
+    assert.strictEqual((await resultCards(page)).length, all);
+    /* choosing the chosen category again, or Clear all, restores the shelves */
+    await pickCategory(page, 'Tops');
+    assert.strictEqual(await page.$eval('#discover-results', (n) => n.hidden), true);
+    await pickCategory(page, 'Outerwear');
+    await pickSub(page, 'Jackets');
+    await page.click('#results-clear');
+    assert.strictEqual(await page.$eval('#discover-results', (n) => n.hidden), true);
+    assert.strictEqual(await page.$eval('#discover-panel', (n) => n.hidden), true);
+    assert.strictEqual(await page.$$eval('#discover-tabs [aria-pressed="true"]', (n) => n.length), 0);
+    assert.ok(await page.$$eval('.shelf', (n) => n.filter((s) => s.offsetParent).length) > 0, 'the shelves did not come back');
+    /* a shelf's See all is that shelf's category, and its count is true */
+    const shelf = await page.$eval('.shelf', (n) => ({
+      title: n.querySelector('h2').textContent.trim(),
+      total: Number(n.querySelector('button[data-category]').textContent.replace(/\D+/g, ''))
+    }));
+    await page.click('.shelf button[data-category] >> nth=0');
+    assert.ok(!(await page.$eval('#discover-results', (n) => n.hidden)), 'See all applied nothing');
+    assert.strictEqual(await page.$eval('#discover-tabs [aria-pressed="true"]', (b) => b.textContent.trim()), shelf.title);
+    assert.strictEqual((await resultCards(page)).length, shelf.total, 'See all promised a different number');
+    await page.close();
+  });
+
+  await test('exploring every category and subcategory makes no product-search, AI or /api request and never leaves the page', async () => {
+    searchRequests.length = 0;
+    interpretRequests.length = 0;
+    const page = await openDiscover();
+    const { tally, seen } = watchRequests(page);
+    const start = page.url();
+    let navigations = 0;
+    page.on('framenavigated', (frame) => { if (frame === page.mainFrame()) navigations += 1; });
+    let clicks = 0;
+    const press = async (selector) => { await page.click(selector); clicks += 1; };
+
+    for (let round = 0; round < 3; round++) {
+      for (let c = 0; c < DISCOVER_DATA.categories.length; c++) {
+        await press(`#discover-tabs button >> nth=${c}`);
+        const pills = await page.$$eval('#discover-panel button.pill', (ns) => ns.length);
+        for (let p = 0; p < pills; p++) await press(`#discover-panel button.pill >> nth=${p}`);
+        while (await page.$('#active-filters [data-remove]')) await press('#active-filters [data-remove] >> nth=0');
+      }
+      await press('#results-clear');
+      const shelves = await page.$$eval('.shelf button[data-category]', (ns) => ns.length);
+      for (let i = 0; i < shelves; i++) {
+        await press(`.shelf button[data-category] >> nth=${i}`);
+        await press('#results-clear');
+      }
+    }
+    await page.waitForTimeout(300);
+
+    assert.ok(clicks >= 60, `only ${clicks} interactions were made`);
+    assert.deepStrictEqual(seen, [], `Discover made costly requests:\n${seen.join('\n')}`);
+    Object.entries(tally).forEach(([name, n]) => assert.strictEqual(n, 0, `${name} requests = ${n}`));
+    assert.strictEqual(searchRequests.length, 0, 'the search endpoint was reached');
+    assert.strictEqual(interpretRequests.length, 0, 'the AI reader was reached');
+    assert.strictEqual(page.url(), start, 'Discover left the page');
+    assert.strictEqual(navigations, 0, 'Discover navigated');
+    await page.close();
+  });
+
+  await test('the normal search still runs after Discover, and is the only thing that searches', async () => {
+    searchRequests.length = 0;
+    interpretRequests.length = 0;
+    const page = await openDiscover();
+    await pickCategory(page, 'Tops');
+    await page.click('#results-clear');
+    assert.strictEqual(searchRequests.length, 0);
+    await page.goto(`http://127.0.0.1:${PORT}/find-clothes.html`, { waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => window.Attachments && document.getElementById('attachments'));
+    await page.fill('#ask', 'black oversized hoodie');
+    await page.click('button[type=submit]');
+    await page.waitForSelector('#results .item-card', { timeout: 10000 });
+    assert.strictEqual(searchRequests.length, 1, 'the search page did not search');
+    assert.strictEqual(interpretRequests.length, 1, 'the search page did not read the request');
+    await page.close();
+  });
+
+  await test('Discover shelves show catalogue rows only, without repeating themselves', async () => {
+    const catalogue = await (async () => {
+      const page = await openDiscover();
+      const rows = await page.evaluate(() => Products.all().map((p) => ({ url: p.productUrl, name: p.name, category: p.category })));
+      const shelves = await page.$$eval('.shelf', (ns) => ns.map((shelf) => ({
+        title: shelf.querySelector('h2').textContent.trim(),
+        cards: [...shelf.querySelectorAll('.item-card')].map((c) => ({
+          href: c.getAttribute('href'), name: c.querySelector('.item-name').textContent.trim()
+        }))
+      })));
+      await page.close();
+      return { rows, shelves };
+    })();
+    const { rows, shelves } = catalogue;
+    /* a shelf for exactly the categories that can fill a row of four,
+       in their own order */
+    const fillable = DISCOVER_DATA.categories.filter((c) => expectedIn(c).length >= 4).map((c) => c.label);
+    assert.deepStrictEqual(shelves.map((one) => one.title), fillable, 'the wrong shelves are drawn');
+    assert.ok(shelves.length >= 3, `${shelves.length} shelves drawn`);
+    const everyCard = shelves.flatMap((s) => s.cards);
+    everyCard.forEach((card) => {
+      const row = rows.find((r) => r.url === card.href);
+      assert.ok(row, `${card.name} (${card.href}) is not a catalogue row`);
+      assert.strictEqual(row.name, card.name);
+    });
+    shelves.forEach((shelf) => {
+      const names = shelf.cards.map((c) => c.href);
+      assert.strictEqual(new Set(names).size, names.length, `${shelf.title} repeats a piece`);
+      const kinds = new Set(shelf.cards.map((c) => rows.find((r) => r.url === c.href).category));
+      assert.ok(kinds.size >= 2, `${shelf.title} is ${kinds.size} kind of thing`);
+    });
+    const distinct = new Set(everyCard.map((c) => c.href)).size;
+    assert.ok(distinct >= Math.min(rows.length, everyCard.length) * 0.75, `${distinct} different pieces across ${everyCard.length} cards`);
+  });
+
+  await test('the categories and subcategories work from the keyboard', async () => {
+    const page = await openDiscover();
+    await page.focus('#discover-tabs button >> nth=0');
+    await page.keyboard.press('Enter');
+    assert.strictEqual(await page.$eval('#discover-tabs [aria-pressed="true"]', (b) => b.textContent.trim()), 'Tops');
+    await page.focus('#discover-panel button.pill:text-is("T-shirts")');
+    await page.keyboard.press(' ');
+    assert.strictEqual(await page.$eval('#discover-panel button.pill:text-is("T-shirts")', (b) => b.getAttribute('aria-pressed')), 'true');
+    assert.ok((await resultCards(page)).length > 0);
+    await page.close();
+  });
+
+  await test('Discover fits every width without scrolling sideways', async () => {
+    for (const width of [1440, 1280, 1024, 820, 768, 480, 390, 375, 360]) {
+      const page = await openDiscover(width);
+      const over = await page.evaluate(() => {
+        const edge = document.documentElement.clientWidth;
+        const wide = document.documentElement.scrollWidth > edge;
+        const out = [...document.querySelectorAll('main *')]
+          .filter((n) => getComputedStyle(n).display !== 'none')
+          .filter((n) => { const r = n.getBoundingClientRect(); return r.width && (r.right > edge + 0.5 || r.left < -0.5); })
+          .map((n) => n.className || n.tagName);
+        return { wide, out: out.slice(0, 5) };
+      });
+      assert.ok(!over.wide && !over.out.length, `${width}px overflows: ${over.out.join(', ')}`);
+      /* a shelf is one row at every width */
+      const rows = await page.$$eval('.shelf-grid', (grids) => grids.map((g) =>
+        new Set([...g.querySelectorAll('.item-card')].filter((c) => c.offsetParent).map((c) => Math.round(c.getBoundingClientRect().top))).size));
+      rows.forEach((n) => assert.strictEqual(n, 1, `${width}px: a shelf runs to ${n} rows`));
+      await page.close();
+    }
+  });
+
+  console.log('\ndiscover shelves: every card is the product it links to');
+
+  await test('every shelf card names the brand its row proves, or where it is sold — never an invented maker', async () => {
+    const page = await openDiscover();
+    const cards = await shelfCards(page);
+    assert.ok(cards.length >= 12, `${cards.length} shelf cards`);
+    for (const card of cards) {
+      const row = rowFor(card.href);
+      assert.ok(row, `${card.href} is not a catalogue listing`);
+      const verdict = audit.auditRow(row);
+      assert.ok(verdict.shelvable, `${row.id} is shelved but fails its audit: ${verdict.problems.join('; ')}`);
+      if (verdict.checks.brand.shown) {
+        assert.strictEqual(card.seller, row.brand, `${row.id} shows "${card.seller}"`);
+      } else {
+        assert.strictEqual(card.seller, hostOf(row.productUrl), `${row.id} has no proved brand, so the card names the store`);
+        assert.strictEqual(card.where, null, `${row.id} names its store twice`);
+      }
+      assert.strictEqual(card.name, row.name);
+    }
+    /* none of the brands the rows were drafted with survives anywhere */
+    const drafted = ['Northfold', 'Halden', 'Coveworks', 'Atlas Supply', 'Rue Nine', 'Terrace', 'Kinfield', 'Solstice'];
+    const text = await page.$eval('main', (n) => n.textContent);
+    drafted.forEach((name) => assert.ok(!text.includes(name), `"${name}" is still on Discover`));
+    await page.close();
+  });
+
+  await test('a shelf product with a mismatched or unproved brand is kept off Discover', async () => {
+    /* a brand nothing on the row proves */
+    const unproved = withRowField('sample-rue-nine-slip-midi-dress', 'brand', 'Rue Nine');
+    /* a brand whose cited evidence names someone else */
+    const mismatched = withRowField('sample-halden-merino-crew-knit', 'brand', 'Halden');
+    for (const [id, catalogue, label] of [
+      ['sample-rue-nine-slip-midi-dress', unproved, 'unproved'],
+      ['sample-halden-merino-crew-knit', mismatched, 'mismatched']
+    ]) {
+      const row = audit.readCatalogue(catalogue).find((r) => r.id === id);
+      assert.strictEqual(audit.auditRow(row).shelvable, false, `the audit lets a ${label} brand through`);
+      if (label === 'mismatched') {
+        /* The row still cites evidence, so the browser — which reads the
+           note, as it reads imageEvidence — would take it. What stops it
+           shipping is the catalogue invariant in test-catalog-audit.js:
+           every row the browser would shelve passes this audit. */
+        assert.strictEqual(audit.claimsIdentity(row), true);
+        continue;
+      }
+      const page = await openDiscover(null, { catalogue });
+      const hrefs = (await shelfCards(page)).map((c) => c.href);
+      assert.ok(!hrefs.includes(row.productUrl), `a row with a ${label} brand was shelved`);
+      /* the browser makes the same call from the same note */
+      assert.strictEqual(await page.evaluate((u) => Products.all().find((p) => p.productUrl === u).identified, row.productUrl), false);
+      await page.close();
+    }
+  });
+
+  await test('a row whose name is not tied to its listing is never shelved', async () => {
+    const page = await openDiscover();
+    const hrefs = (await shelfCards(page)).map((c) => c.href);
+    const unnamed = CATALOGUE.filter((r) => !audit.auditName(r).ok);
+    assert.ok(unnamed.length > 0, 'the catalogue is expected to hold rows whose names are unproved');
+    unnamed.forEach((r) => assert.ok(!hrefs.includes(r.productUrl), `${r.id} was shelved`));
+    await page.close();
+  });
+
+  await test('every shelf photo is its row’s own verified photo, really loaded, never artwork', async () => {
+    /* half the photos come back tall and half wide, so a tile that only
+       looked right for one shape would show it */
+    const wide = [...CATALOGUE_PHOTOS].filter((_, i) => i % 2);
+    const page = await openDiscover(null, { wide });
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    await page.waitForFunction(() => [...document.querySelectorAll('.shelf .item-media img')]
+      .every((i) => i.complete), null, { timeout: 10000 });
+    const cards = await shelfCards(page);
+    for (const card of cards) {
+      const row = rowFor(card.href);
+      assert.strictEqual(card.artwork, false, `${row.id} shows drawn artwork on a shelf`);
+      assert.strictEqual(card.img, row.imageUrl, `${row.id} shows a photo that is not its own`);
+      assert.ok(audit.auditPhoto(row).ok, `${row.id}'s photo is not tied to its listing`);
+    }
+    const shapes = await page.$$eval('.shelf .item-media img', (imgs) => imgs.map((i) => ({
+      loaded: i.complete && i.naturalWidth > 0,
+      fit: getComputedStyle(i).objectFit,
+      box: i.getBoundingClientRect().width / i.getBoundingClientRect().height
+    })));
+    shapes.forEach((s) => {
+      assert.ok(s.loaded, 'a shelf photo did not load');
+      assert.strictEqual(s.fit, 'cover', 'a photo is stretched to its tile rather than cropped');
+      assert.ok(Math.abs(s.box - 0.8) < 0.02, `a photo tile is ${s.box.toFixed(3)}, not 4:5`);
+    });
+    await page.close();
+  });
+
+  await test('a photo that fails, or is a 1×1 stub, keeps its row off the shelves — artwork does not count', async () => {
+    const shelvable = CATALOGUE.filter((r) => audit.auditRow(r).shelvable);
+    const failing = shelvable.slice(0, 4).map((r) => r.imageUrl);
+    const stubbed = shelvable.slice(4, 7).map((r) => r.imageUrl);
+    const page = await openDiscover(null, { fail: failing, stub: stubbed });
+    await page.waitForTimeout(300);
+    const cards = await shelfCards(page);
+    assert.ok(cards.length > 0, 'the rows with working photos are still shelved');
+    cards.forEach((c) => {
+      assert.ok(!failing.includes(rowFor(c.href).imageUrl), `${rowFor(c.href).id} was shelved with a failed photo`);
+      assert.ok(!stubbed.includes(rowFor(c.href).imageUrl), `${rowFor(c.href).id} was shelved with a stub for a photo`);
+    });
+    assert.strictEqual(await page.$$eval('.shelf svg.silhouette', (n) => n.length), 0, 'artwork stood in for a photo');
+    await page.close();
+  });
+
+  await test('with no photos reachable at all, Discover shelves nothing rather than artwork', async () => {
+    const page = await openPage('discover.html', { photos: true, fail: [...CATALOGUE_PHOTOS] });
+    await page.waitForSelector('#discover-tabs > *');
+    await page.waitForTimeout(1500);
+    assert.strictEqual(await page.$$eval('.shelf', (n) => n.length), 0);
+    assert.strictEqual(await page.$$eval('main svg.silhouette', (n) => n.length), 0);
+    /* the six categories are still all there, each saying it holds nothing */
+    assert.strictEqual(await page.$$eval('#discover-tabs > *', (n) => n.length), 6);
+    assert.strictEqual(await page.$$eval('#discover-tabs button', (n) => n.length), 0, 'a category offers products it cannot show');
+    await page.close();
+  });
+
+  await test('every shelf card links to its row’s own listing', async () => {
+    const page = await openDiscover();
+    const cards = await shelfCards(page);
+    for (const card of cards) {
+      const row = rowFor(card.href);
+      assert.ok(row, `${card.href} is not a catalogue listing`);
+      assert.ok(audit.auditLink(row).ok, `${row.id}: ${audit.auditLink(row).why}`);
+      assert.ok(/^https:\/\//.test(card.href), `${card.href} is not a secure listing link`);
+    }
+    const targets = await page.$$eval('.shelf a.item-card', (as) => as.map((a) => [a.target, a.rel]));
+    targets.forEach(([target, rel]) => {
+      assert.strictEqual(target, '_blank');
+      assert.ok(/noopener/.test(rel));
+    });
+    await page.close();
+  });
+
   console.log('\nthe billing interface');
 
   /* Opens a billing page with the stub answering a particular account
@@ -1962,6 +2484,136 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
       { timeout: 10000 });
     return page;
   };
+
+  /* What /api/account answers, cut down to the fields the billing
+     state is about: the pricing page must read these and nothing else
+     to decide whether plans can be bought. */
+  const MINIMAL_BILLING_ON = () => ({
+    signedIn: false,
+    billing: { enabled: true, testMode: false, webhookConfigured: true },
+    plans: [{ id: 'free', purchasable: false }, { id: 'pro', purchasable: true }, { id: 'max', purchasable: true }]
+  });
+  const pricingSays = (page) => page.evaluate(() => ({
+    note: document.getElementById('deployment-note').hidden ? '' : document.getElementById('deployment-note').textContent.trim(),
+    body: document.body.textContent,
+    buttons: Object.fromEntries([...document.querySelectorAll('.plan-card[data-plan]')].map((card) => {
+      const b = card.querySelector('[data-plan-action]');
+      return [card.dataset.plan, { text: b.textContent.trim(), disabled: b.disabled, action: b.dataset.action || null }];
+    })),
+    current: [...document.querySelectorAll('.plan-card--current')].map((c) => c.dataset.plan)
+  }));
+  /* the page has drawn from the server's answer: the banner is up and
+     the buttons are no longer the markup's own */
+  const drawn = (page) => page.waitForFunction(() => !document.getElementById('plan-banner').hidden
+    && document.querySelector('.plan-card[data-plan="free"] [data-plan-action]').textContent.trim() !== 'Always free', null, { timeout: 10000 });
+
+  await test('billing enabled with Pro and Max purchasable: no "not connected", and both can be bought', async () => {
+    accountState = MINIMAL_BILLING_ON();
+    const page = await openPage('pricing.html');
+    await drawn(page);
+    const seen = await pricingSays(page);
+    assert.ok(!/Billing is not connected to this copy of the site/.test(seen.body), `the page says billing is disconnected: ${seen.note}`);
+    assert.ok(!/no payment provider configured/.test(seen.body), seen.note);
+    for (const plan of ['pro', 'max']) {
+      assert.notStrictEqual(seen.buttons[plan].text, 'Not available yet', `${plan} is marked unavailable`);
+      assert.strictEqual(seen.buttons[plan].disabled, false, `${plan} cannot be pressed`);
+    }
+    assert.strictEqual(seen.buttons.pro.text, 'Get Pro');
+    assert.strictEqual(seen.buttons.max.text, 'Get Max');
+    /* signed out: buying still starts with an account, as the backend requires */
+    assert.strictEqual(seen.buttons.pro.action, 'sign-in-first');
+    assert.strictEqual(seen.buttons.max.action, 'sign-in-first');
+    /* Free is still the current plan */
+    assert.deepStrictEqual(seen.current, ['free']);
+    assert.strictEqual(seen.buttons.free.text, 'Your plan');
+    await page.close();
+    accountState = accountReply({});
+  });
+
+  await test('billing truly off: the warning stays, and Pro and Max are not offered', async () => {
+    accountState = Object.assign(MINIMAL_BILLING_ON(), { billing: { enabled: false, testMode: false, webhookConfigured: false } });
+    const page = await openPage('pricing.html');
+    await drawn(page);
+    const seen = await pricingSays(page);
+    assert.ok(/no payment provider configured/.test(seen.note), seen.note);
+    for (const plan of ['pro', 'max']) {
+      assert.strictEqual(seen.buttons[plan].text, 'Not available yet');
+      assert.strictEqual(seen.buttons[plan].disabled, true);
+    }
+    await page.close();
+    accountState = accountReply({});
+  });
+
+  await test('a plan the server marks not purchasable stays unavailable even with billing on', async () => {
+    accountState = Object.assign(MINIMAL_BILLING_ON(), {
+      plans: [{ id: 'free', purchasable: false }, { id: 'pro', purchasable: true }, { id: 'max', purchasable: false }]
+    });
+    const page = await openPage('pricing.html');
+    await drawn(page);
+    const seen = await pricingSays(page);
+    assert.strictEqual(seen.buttons.pro.text, 'Get Pro');
+    assert.strictEqual(seen.buttons.max.text, 'Not available yet');
+    assert.ok(!/not connected/.test(seen.body));
+    await page.close();
+    accountState = accountReply({});
+  });
+
+  await test('the pricing page asks /api/account at its own origin, not the deployment its meta tag names', async () => {
+    accountState = MINIMAL_BILLING_ON();
+    billingRequests.length = 0;
+    const remote = [];
+    const page = await openPage('pricing.html', {
+      apiOverride: false,
+      offOrigin: (route, url) => {
+        if (/vercel\.app\/api\//.test(url)) { remote.push(url); route.abort(); return true; }
+        return false;
+      }
+    });
+    await drawn(page);
+    const seen = await pricingSays(page);
+    /* counted by this origin's own server, so nothing can be missed */
+    assert.ok(billingRequests.some((r) => r.path === '/api/account'), 'this origin\u2019s /api/account was not asked');
+    assert.deepStrictEqual(remote, [], `the production deployment was asked: ${remote.join(', ')}`);
+    assert.ok(!/not connected/.test(seen.body), seen.note);
+    assert.strictEqual(seen.buttons.pro.text, 'Get Pro');
+    await page.close();
+    accountState = accountReply({});
+  });
+
+  await test('a copy of the pages with no API beside it still reaches the deployment its meta tag names', async () => {
+    const remote = [];
+    const page = await openPage('pricing.html', {
+      apiOverride: false,
+      offOrigin: (route, url) => {
+        if (/^https:\/\/ai-clothes-application\.vercel\.app\/api\/account/.test(url)) {
+          remote.push(url);
+          route.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': `http://127.0.0.1:${PORT}`, 'access-control-allow-credentials': 'true' }, body: JSON.stringify(MINIMAL_BILLING_ON()) });
+          return true;
+        }
+        return false;
+      }
+    });
+    /* this origin plays a static host: no /api here */
+    await page.route(`http://127.0.0.1:${PORT}/api/**`, (route) => route.fulfill({ status: 404, body: 'not found' }));
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await drawn(page);
+    const seen = await pricingSays(page);
+    assert.strictEqual(remote.length >= 1, true, 'the meta tag’s deployment was not asked');
+    assert.ok(!/not connected/.test(seen.body), seen.note);
+    assert.strictEqual(seen.buttons.max.text, 'Get Max');
+    await page.close();
+  });
+
+  await test('with no account API anywhere, the page still says billing is not connected', async () => {
+    const page = await openPage('pricing.html', { apiOverride: false });
+    await page.route(`http://127.0.0.1:${PORT}/api/**`, (route) => route.fulfill({ status: 404, body: 'not found' }));
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('#deployment-note:not([hidden])', { timeout: 10000 });
+    const seen = await pricingSays(page);
+    assert.ok(/Billing is not connected to this copy of the site/.test(seen.note), seen.note);
+    assert.strictEqual(seen.buttons.pro.text, 'Not available yet');
+    await page.close();
+  });
 
   await test('the pricing page shows all three plans with their prices', async () => {
     const page = await openBilling('pricing.html');
@@ -2090,19 +2742,14 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
   await test('browsing and filtering Discover spends no live search', async () => {
     stubs.log.length = 0;
     searchRequests.length = 0;
-    const page = await openPage('discover.html');
-    await page.waitForSelector('.filter-pills .pill');
-    const pills = await page.$$eval('.filter-pills .pill', (ns) => ns.map((n) => n.dataset.style));
-    assert.ok(pills.length > 1, 'no filters to try');
-    for (const style of pills.concat(['All'])) {
-      await page.click(`.filter-pills .pill[data-style="${style}"]`);
-      await page.waitForFunction((s) => document.querySelector(`.filter-pills .pill[data-style="${s}"]`).getAttribute('aria-pressed') === 'true', style);
-    }
+    const page = await openPage('discover.html', { photos: true });
+    const used = await browseAllOfDiscover(page);
+    assert.ok(used > 1, 'no filters to try');
     await page.waitForTimeout(300);
     assert.deepStrictEqual(stubs.log.filter((e) => e.path === '/api/search' || e.path === '/api/interpret'), [],
       'a Discover filter reached the search or the interpreter');
     assert.strictEqual(searchRequests.length, 0);
-    assert.ok(await page.$$eval('#discover-grid .item-card', (ns) => ns.length) > 0, 'Discover shows nothing to browse');
+    assert.ok(await page.$$eval('.shelf .item-card', (ns) => ns.length) > 0, 'Discover shows nothing to browse');
     await page.close();
   });
 
@@ -2188,7 +2835,8 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
      catalogue, so cards, badges and pills are audited too, not just the
      static shell */
   const settled = async (file) => {
-    const page = await openPage(file);
+    /* Discover only shelves rows whose photos arrive */
+    const page = await openPage(file, { photos: file === 'discover.html' });
     const built = {
       'discover.html': '.item-card',
       /* the search pages read the live searches left from /api/account;

@@ -36,18 +36,29 @@ const path = require('path');
 const vm = require('vm');
 const { promisify } = require('util');
 const execFile = promisify(require('child_process').execFile);
+
+/* The catalogue as shipped, read once before any test can write to
+   anything. A test of what the shipped catalogue says reads this. */
+const SHIPPED = path.join(__dirname, '..', 'assets', 'catalog.js');
+const SHIPPED_CATALOG = fs.readFileSync(SHIPPED, 'utf8');
+
+/* The tool itself is run against a working copy of the catalogue as it
+   was drafted (scripts/fixtures/catalog-as-drafted.js): its discovery
+   tests stub retailers around those rows' names. Runs write into this
+   copy and restore it; the shipped file is never written. Set before
+   the tool is loaded, because it reads FYND_CATALOG once. */
+const CATALOG = path.join(os.tmpdir(), `fynd-catalog-images-${process.pid}.js`);
+fs.writeFileSync(CATALOG, fs.readFileSync(path.join(__dirname, 'fixtures', 'catalog-as-drafted.js')));
+process.env.FYND_CATALOG = CATALOG;
+process.on('exit', () => fs.rmSync(CATALOG, { force: true }));
+
 const extractor = require('./fetch-catalog-images');
 /* named for what it is, because the async section below already
    binds `source` to the catalogue file's text */
 const productSource = require('../api/_providers/product-source');
 
 const SCRIPT = path.join(__dirname, 'fetch-catalog-images.js');
-const CATALOG = path.join(__dirname, '..', 'assets', 'catalog.js');
 
-/* The catalogue as shipped, read once before any test can write to it.
-   A test of what the shipped catalogue says reads this, never the file
-   as some earlier test may have left it mid-run. */
-const SHIPPED_CATALOG = fs.readFileSync(CATALOG, 'utf8');
 
 /* Every discovery report these tests write lives here, and --report
    points the script at it. Nothing touches the default path beside the
@@ -828,10 +839,17 @@ function walledRetailer() {
   const { source, rows } = extractor.readCatalog();
 
   test('the catalogue reads as rows, with the linked ones carrying a productUrl', () => {
-    assert.ok(rows.length >= 3, 'the catalogue has rows');
-    const linked = rows.filter((r) => r.productUrl);
+    const shipped = evaluate(SHIPPED_CATALOG);
+    assert.ok(shipped.length >= 3, 'the catalogue has rows');
+    const linked = shipped.filter((r) => r.productUrl);
     assert.ok(linked.length >= 3, 'three rows link to a real listing');
-    assert.ok(linked.every((r) => r.id && r.name && r.brand), 'a linked row is identifiable');
+    /* identifiable by its id and its name; a brand it carries has to be
+       one its listing proves, and an unknown maker is null, not guessed */
+    assert.ok(linked.every((r) => r.id && r.name), 'a linked row is identifiable');
+    for (const row of linked) {
+      const brand = require('./audit-catalog').auditBrand(row);
+      assert.ok(brand.ok, `${row.id}: ${brand.why}`);
+    }
   });
 
   test('writing a photo fills one field and leaves the rest of the row alone', () => {
@@ -1850,7 +1868,7 @@ function walledRetailer() {
   test('every catalogue row names a garment the gate can read', () => {
     /* a row the gate cannot read is a row discovery can never fill, so
        this is the vocabulary's own coverage test */
-    for (const row of extractor.readCatalog().rows) {
+    for (const row of evaluate(SHIPPED_CATALOG)) {
       const reading = extractor.readGarment(row.name, { sizes: row.sizes, fallback: row.category });
       assert.ok(reading.type, `${row.id} — "${row.name}" reads as no garment`);
       assert.ok(reading.family, `${row.id} — "${row.name}" reads as no family`);
@@ -4295,7 +4313,7 @@ function walledRetailer() {
   });
 
   test('the shipped catalogue carries no site asset', () => {
-    for (const row of extractor.readCatalog().rows) {
+    for (const row of evaluate(SHIPPED_CATALOG)) {
       if (!row.imageUrl || !row.productUrl) continue;
       assert.strictEqual(extractor.siteAsset(row.imageUrl, row.productUrl), null, `${row.id}: ${row.imageUrl}`);
     }

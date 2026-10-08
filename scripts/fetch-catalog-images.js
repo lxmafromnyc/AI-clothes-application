@@ -109,7 +109,11 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-const CATALOG = path.join(__dirname, '..', 'assets', 'catalog.js');
+/* FYND_CATALOG points the tool at another catalogue file — its tests use
+   a fixture copy, so a run they make never touches the shipped one */
+const CATALOG = process.env.FYND_CATALOG
+  ? path.resolve(process.env.FYND_CATALOG)
+  : path.join(__dirname, '..', 'assets', 'catalog.js');
 
 /* Where a --discover run leaves what it proved, so --write can put it
    into the catalogue without asking the internet a second time. It is a
