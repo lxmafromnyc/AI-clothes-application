@@ -433,58 +433,101 @@ function orderFacet(counts, key) {
   }
 
   /* ---------- how many live searches are left ----------
-     Said under the words in the box before anything is typed, exactly as
+     Shown at the bottom of the box before anything is typed, exactly as
      /api/account last counted it: for the account, or signed out, for
-     this browser. Nothing here knows a plan's limit or subtracts a
-     search; when the account cannot be read the line says nothing rather
+     this browser. A bar shows what remains of the allowance — the
+     server's remaining over the server's limit — and the words under it
+     say the count. Nothing here knows a plan's limit or subtracts a
+     search; when the account cannot be read, neither is shown rather
      than a guess.
 
-     While a search runs the line is empty — the count it held is about
-     to be out of date, and the hairline is what the box shows. When the
+     While a search runs both are empty — the count they held is about to
+     be out of date, and the hairline is what the box shows. When the
      search is over the account is read again and the new count takes its
      place, said once to screen readers after what the search found. */
+  const allowance = document.getElementById('ask-allowance');
   const usageLine = document.getElementById('ask-usage');
+  const meter = document.getElementById('ask-meter');
   const PERIOD_SAID = { day: 'today', month: 'this month' };
+  /* an allowance this small is drawn a step a search; a larger one is one
+     smooth fill, never a row of slivers */
+  const STEPS_UP_TO = 10;
   let usageAsked = 0;
-  let usageShown = false;
+  let allowanceShown = false;
   let usageSaid = null;
 
-  function usageText(account) {
+  function allowanceOf(account) {
     const searches = account && account.usage && account.usage.searches;
     const left = searches && searches.remaining;
     if (!Number.isInteger(left) || left < 0) return null;
     const period = PERIOD_SAID[searches.period] ? ` ${PERIOD_SAID[searches.period]}` : '';
-    if (left === 0) return `No live searches left${period}`;
-    return `${left.toLocaleString('en-US')} ${left === 1 ? 'search' : 'searches'} left${period}`;
+    const text = left === 0
+      ? `No live searches left${period}`
+      : `${left.toLocaleString('en-US')} ${left === 1 ? 'search' : 'searches'} left${period}`;
+    /* the bar is a share of the allowance; without one, the words stand alone */
+    const limit = Number.isInteger(searches.limit) && searches.limit > 0 ? searches.limit : null;
+    return { text, left, limit };
   }
 
-  function showUsage(text) {
-    if (!usageLine) return;
-    usageLine.textContent = text || '';
-    if (text) usageShown = true;
-    /* the row is held for a count; a box that never gets one goes back
+  function drawMeter(reading) {
+    if (!meter) return;
+    meter.replaceChildren();
+    delete meter.dataset.level;
+    if (!reading || !reading.limit) return;
+    const share = Math.min(1, reading.left / reading.limit);
+    meter.dataset.level = share === 0 ? 'none' : share <= 0.34 ? 'low' : share <= 0.67 ? 'medium' : 'high';
+    if (reading.limit <= STEPS_UP_TO) {
+      for (let step = 0; step < reading.limit; step += 1) {
+        const piece = document.createElement('span');
+        piece.className = step < reading.left ? 'ask-meter-step is-left' : 'ask-meter-step';
+        meter.appendChild(piece);
+      }
+      return;
+    }
+    const track = document.createElement('span');
+    track.className = 'ask-meter-track';
+    if (share > 0) {
+      const fill = document.createElement('span');
+      fill.className = 'ask-meter-fill';
+      fill.style.setProperty('--share', share);
+      track.appendChild(fill);
+    }
+    meter.appendChild(track);
+  }
+
+  function showAllowance(reading) {
+    if (!allowance) return;
+    usageLine.textContent = reading ? reading.text : '';
+    drawMeter(reading);
+    allowance.classList.toggle('is-shown', Boolean(reading));
+    if (reading) allowanceShown = true;
+    /* the space is held for a count; a box that never gets one goes back
        to its own size, and one that has had one keeps the room, so a
        failed re-read moves nothing */
-    usageLine.hidden = !text && !usageShown;
+    allowance.hidden = !reading && !allowanceShown;
   }
 
-  /* the count on screen is about to be out of date: say nothing until
+  /* the count on screen is about to be out of date: show nothing until
      the server has counted again, and drop any reading already asked for */
   function forgetUsage() {
     usageAsked += 1;
-    if (usageLine) usageLine.textContent = '';
+    if (!allowance) return;
+    usageLine.textContent = '';
+    drawMeter(null);
+    allowance.classList.remove('is-shown');
   }
 
   async function readUsage(afterSearch) {
-    if (!usageLine) return;
+    if (!allowance) return;
     const ask = ++usageAsked;
-    let text = null;
+    let reading = null;
     try {
       const answer = typeof Account === 'undefined' ? null : await Account.load();
-      text = answer && answer.ok ? usageText(answer.data) : null;
-    } catch (err) { text = null; }
+      reading = answer && answer.ok ? allowanceOf(answer.data) : null;
+    } catch (err) { reading = null; }
     if (ask !== usageAsked || form.dataset.stage) return;
-    showUsage(text);
+    showAllowance(reading);
+    const text = reading && reading.text;
     if (afterSearch && text && usageSaid && text !== usageSaid) announce(`${status ? status.textContent : ''} ${text}.`.trim());
     if (text) usageSaid = text;
   }

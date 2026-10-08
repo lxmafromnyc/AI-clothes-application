@@ -238,7 +238,13 @@ const resolveInks = (page) => page.evaluate((tokens) => {
   return out;
 }, INK_TOKENS);
 
-const textStyleProblems = (page, inks) => page.evaluate((allowed) => {
+/* A fade still running is measured where it ends, not halfway: the audit
+   waits for every finite animation and transition on the page to finish.
+   Endless ones — a pulsing placeholder — are what they are at any moment. */
+const finishedMoving = (page) => page.waitForFunction(() => document.getAnimations()
+  .every((a) => a.playState !== 'running' || !a.effect || a.effect.getTiming().iterations === Infinity));
+
+const textStyleProblems = async (page, inks) => { await finishedMoving(page); return page.evaluate((allowed) => {
   const SKIP = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE']);
   const problems = [];
 
@@ -323,7 +329,7 @@ const textStyleProblems = (page, inks) => page.evaluate((allowed) => {
     }
   }
   return problems;
-}, inks);
+}, inks); };
 
 /* Placeholders are not text nodes, so they are checked on their own. */
 const placeholderColours = (page) => page.$$eval('[placeholder]', (ns) => ns.map((n) => {
@@ -1202,13 +1208,16 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
 
   const SIGNED_IN = { signedIn: true, user: { id: 'usr_1', email: 'ada@example.test', name: 'Ada', emailVerified: true } };
 
+  /* the count in words, and whether the allowance — words and bar — is
+     on screen at all */
   const usageOf = (page) => page.evaluate(() => {
+    const block = document.getElementById('ask-allowance');
     const el = document.getElementById('ask-usage');
-    const css = getComputedStyle(el);
+    const css = getComputedStyle(block);
     return {
       text: el.textContent.trim(),
-      hidden: el.hidden,
-      visible: !el.hidden && css.display !== 'none' && css.visibility !== 'hidden' && el.getBoundingClientRect().height > 0 && el.textContent.trim() !== ''
+      hidden: block.hidden,
+      visible: !block.hidden && css.display !== 'none' && css.visibility !== 'hidden' && el.getBoundingClientRect().height > 0 && el.textContent.trim() !== ''
     };
   });
 
@@ -1216,6 +1225,34 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     .catch(async () => { throw new Error(`the box says "${(await usageOf(page)).text}", not "${text}"`); });
 
   const accountReads = () => stubs.log.filter((e) => e.path === '/api/account' && e.event === 'request').length;
+
+  /* the allowance bar as drawn: how many steps, how much of its width is
+     filled, in what colour, and what each colour is in the palette */
+  const meterOf = (page) => page.evaluate(() => {
+    const meter = document.getElementById('ask-meter');
+    const box = meter.getBoundingClientRect();
+    const steps = [...meter.querySelectorAll('.ask-meter-step')];
+    const fill = meter.querySelector('.ask-meter-fill');
+    const filled = steps.length ? steps.filter((n) => n.classList.contains('is-left')) : (fill ? [fill] : []);
+    const probe = document.createElement('span');
+    document.body.appendChild(probe);
+    const token = (name) => { probe.style.color = `var(${name})`; return getComputedStyle(probe).color; };
+    const palette = Object.fromEntries(['--color-accent', '--color-accent-ink', '--color-primary', '--color-surface-3', '--color-warning', '--color-success']
+      .map((name) => [token(name), name]));
+    probe.remove();
+    const colour = (n) => palette[getComputedStyle(n).backgroundColor] || getComputedStyle(n).backgroundColor;
+    return {
+      steps: steps.length,
+      smooth: Boolean(meter.querySelector('.ask-meter-track')),
+      share: box.width ? filled.reduce((sum, n) => sum + n.getBoundingClientRect().width, 0) / box.width : 0,
+      ink: filled.length ? [...new Set(filled.map(colour))] : [],
+      track: [...new Set([...meter.querySelectorAll('.ask-meter-step:not(.is-left), .ask-meter-track')].map(colour))],
+      level: meter.dataset.level || null,
+      ariaHidden: meter.getAttribute('aria-hidden'),
+      text: meter.textContent,
+      drawn: meter.children.length > 0
+    };
+  });
 
   await test('a Free shopper sees the live searches left before typing anything, in the box\'s quiet metadata', async () => {
     reset();
@@ -1247,6 +1284,69 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     assert.deepStrictEqual(stubs.log.filter((e) => e.path !== '/api/account'), []);
     assert.strictEqual(accountState.usage.searches.used, 0);
     await page.close();
+  });
+
+  await test('the bar shows what is left of the Free allowance, a step a search, from the server\'s own count', async () => {
+    const expected = [
+      /* left, share of the bar filled, ink */
+      [3, 1, 'high', '--color-accent'],
+      [2, 2 / 3, 'medium', '--color-accent-ink'],
+      [1, 1 / 3, 'low', '--color-primary'],
+      [0, 0, 'none', null]
+    ];
+    for (const [left, share, level, ink] of expected) {
+      reset();
+      accountState = accountReply({ searchesUsed: 3 - left });
+      const page = await open();
+      await usageSays(page, left ? `${left} ${left === 1 ? 'search' : 'searches'} left today` : 'No live searches left today');
+      const bar = await meterOf(page);
+      assert.strictEqual(bar.steps, 3, `${left} left: ${bar.steps} steps for a three-search allowance`);
+      /* the gaps between steps are the only thing between the fill and the share */
+      assert.ok(Math.abs(bar.share - share) <= 0.03, `${left} left: ${bar.share.toFixed(3)} of the bar is filled, not ${share.toFixed(3)}`);
+      assert.strictEqual(bar.level, level, `${left} left`);
+      assert.deepStrictEqual(bar.ink, ink ? [ink] : [], `${left} left: filled in ${bar.ink}`);
+      assert.deepStrictEqual(bar.track, left === 3 ? [] : ['--color-surface-3'], `${left} left: the empty steps are ${bar.track}`);
+      await page.close();
+    }
+    accountState = accountReply({});
+  });
+
+  await test('Pro and Max are one smooth fill of remaining over limit — and the bar follows the server\'s limit, not Free\'s', async () => {
+    const cases = [
+      /* state, smooth?, steps, share, level */
+      [{ planId: 'pro', searchesUsed: 3, extra: SIGNED_IN }, true, 0, 97 / 100, 'high'],
+      [{ planId: 'max', searchesUsed: 3, extra: SIGNED_IN }, true, 0, 497 / 500, 'high'],
+      [{ planId: 'pro', searchesUsed: 50, extra: SIGNED_IN }, true, 0, 50 / 100, 'medium'],
+      [{ planId: 'pro', searchesUsed: 80, extra: SIGNED_IN }, true, 0, 20 / 100, 'low'],
+      [{ planId: 'max', searchesUsed: 500, extra: SIGNED_IN }, true, 0, 0, 'none']
+    ];
+    for (const [state, smooth, steps, share, level] of cases) {
+      reset();
+      accountState = accountReply(state);
+      const page = await open();
+      await page.waitForFunction(() => document.getElementById('ask-usage').textContent.trim());
+      const bar = await meterOf(page);
+      const what = `${state.planId} with ${accountState.usage.searches.remaining} of ${accountState.usage.searches.limit}`;
+      assert.strictEqual(bar.smooth, smooth, `${what}: not one smooth fill`);
+      assert.strictEqual(bar.steps, steps, `${what}: drawn as ${bar.steps} slivers`);
+      assert.ok(Math.abs(bar.share - share) <= 0.01, `${what}: ${bar.share.toFixed(3)} filled, not ${share.toFixed(3)}`);
+      assert.strictEqual(bar.level, level, what);
+      await page.close();
+    }
+    /* whatever allowance the server reports is the one drawn: five
+       searches are five steps, forty are a smooth fill */
+    for (const [limit, remaining, steps, share] of [[5, 2, 5, 2 / 5], [40, 10, 0, 10 / 40]]) {
+      reset();
+      accountState = accountReply({ searchesUsed: 0 });
+      accountState.usage.searches = Object.assign({}, accountState.usage.searches, { limit, used: limit - remaining, remaining });
+      const page = await open();
+      await usageSays(page, `${remaining} searches left today`);
+      const bar = await meterOf(page);
+      assert.strictEqual(bar.steps, steps, `${remaining} of ${limit}: ${bar.steps} steps`);
+      assert.ok(Math.abs(bar.share - share) <= 0.03, `${remaining} of ${limit}: ${bar.share.toFixed(3)} filled`);
+      await page.close();
+    }
+    accountState = accountReply({});
   });
 
   await test('the count is the account\'s own: signed-in Free, Pro and Max, in the period the server counts it', async () => {
@@ -1289,6 +1389,7 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     await submit(page, 'black oversized hoodie under $80');
     await page.waitForSelector('#ask-form[data-stage="understanding"]');
     assert.deepStrictEqual(await usageOf(page), { text: '', hidden: false, visible: false }, 'the count stayed beside the hairline');
+    assert.strictEqual((await meterOf(page)).drawn, false, 'the allowance bar stayed beside the hairline');
     assert.deepStrictEqual(await boxLine(page), { stage: 'understanding', shown: true });
     stubs.interpret = null;
     interpret.release();
@@ -1301,6 +1402,8 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     await usageSays(page, '2 searches left today');
     assert.ok(accountReads() > readsBefore, 'the new count was not read from the account');
     assert.deepStrictEqual(await boxLine(page), { stage: null, shown: false });
+    const after = await meterOf(page);
+    assert.ok(after.steps === 3 && Math.abs(after.share - 2 / 3) <= 0.03, `the bar came back at ${after.share.toFixed(3)}`);
 
     /* a search the server did not count leaves the count where it was:
        the page takes nothing off by itself */
@@ -1308,6 +1411,15 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     await submit(page, 'white sneakers');
     await page.waitForFunction(() => !document.querySelector('#results .search-progress') && document.querySelector('.item-card'));
     await usageSays(page, '2 searches left today');
+    assert.ok(Math.abs((await meterOf(page)).share - 2 / 3) <= 0.03, 'an uncounted search moved the bar');
+
+    /* nor does a search that failed before it was counted */
+    stubs.search = { status: 502 };
+    await submit(page, 'grey hoodie');
+    await page.waitForFunction(() => /unavailable/i.test((document.querySelector('.results-head h2') || {}).textContent || ''));
+    await usageSays(page, '2 searches left today');
+    assert.ok(Math.abs((await meterOf(page)).share - 2 / 3) <= 0.03, 'a failed search moved the bar');
+    stubs.search = null;
 
     /* and a count that moved elsewhere — another tab, another device —
        is the one shown */
@@ -1320,6 +1432,7 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     another.release();
     await page.waitForSelector('.item-card');
     await usageSays(page, '1 search left today');
+    assert.ok(Math.abs((await meterOf(page)).share - 1 / 3) <= 0.03, 'the bar does not follow the server');
     await page.close();
     accountState = accountReply({});
   });
@@ -1366,6 +1479,7 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
 
     const after = await open();
     await usageSays(after, '3 searches left today');
+    assert.ok((await meterOf(after)).share > 0.95, 'Discover emptied the bar');
     await after.close();
     accountState = accountReply({});
   });
@@ -1403,10 +1517,11 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
       accountState = accountReply({ searchesUsed: 0 });
       stubs.account = failure;
       const page = await open();
-      await page.waitForFunction(() => document.getElementById('ask-usage').hidden, null, { timeout: 5000 })
+      await page.waitForFunction(() => document.getElementById('ask-allowance').hidden, null, { timeout: 5000 })
         .catch(() => { throw new Error(`${why}: the row was not given up`); });
       const shown = await usageOf(page);
       assert.deepStrictEqual(shown, { text: '', hidden: true, visible: false }, why);
+      assert.strictEqual((await meterOf(page)).drawn, false, `${why}: a bar was drawn without a count`);
       await page.close();
     }
 
@@ -1427,6 +1542,7 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     assert.ok(stubs.log.filter((e) => e.path === '/api/account' && e.event === 'reply').length > answered, 'the account was not read again');
     await page.waitForTimeout(300);
     assert.deepStrictEqual(await usageOf(page), { text: '', hidden: false, visible: false }, 'a stale or guessed count after a failed re-read');
+    assert.strictEqual((await meterOf(page)).drawn, false, 'a stale or guessed bar after a failed re-read');
     assert.strictEqual(await page.$eval('#ask-form', (n) => n.getBoundingClientRect().height), height, 'the box changed size');
     await page.close();
     accountState = accountReply({});
@@ -1440,8 +1556,12 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     const words = range.getBoundingClientRect();
     const box = (node) => { const r = node.getBoundingClientRect(); return { top: r.top, bottom: r.bottom, left: r.left, right: r.right, width: r.width, height: r.height }; };
     const form = document.getElementById('ask-form');
+    const css = getComputedStyle(form);
     return {
       words: box({ getBoundingClientRect: () => words }),
+      bar: box(document.getElementById('ask-meter')),
+      button: box(form.querySelector('button[type=submit]')),
+      content: { left: form.getBoundingClientRect().left + parseFloat(css.borderLeftWidth) + parseFloat(css.paddingLeft) },
       row: box(el),
       lineHeight: parseFloat(getComputedStyle(el).lineHeight),
       clipped: el.scrollWidth > el.clientWidth,
@@ -1486,6 +1606,17 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
       assert.ok(g.words.left >= g.form.left && g.words.right <= g.form.right && g.words.bottom <= g.form.bottom - g.border, `${where}: the count is outside the box`);
       for (const part of g.parts) assert.ok(!overlap(g.words, part), `${where}: the count runs into ${part.name}`);
       assert.strictEqual(g.overflow, 0, `${where}: the page scrolls sideways`);
+      /* the bar: thin, inside the box, above the words, over nothing, and
+         as wide as the control — from the box's content edge to the end of
+         the Search button, or the button's own width where it stacks */
+      assert.ok(g.bar.height >= 3 && g.bar.height <= 6, `${where}: the bar is ${g.bar.height}px thick`);
+      assert.ok(g.bar.left >= g.form.left && g.bar.right <= g.form.right && g.bar.bottom <= g.form.bottom - g.border, `${where}: the bar is outside the box`);
+      assert.ok(g.bar.bottom <= g.words.top, `${where}: the bar runs into the count`);
+      for (const part of g.parts) assert.ok(!overlap(g.bar, part), `${where}: the bar runs into ${part.name}`);
+      assert.ok(Math.abs(g.bar.right - g.button.right) <= 1, `${where}: the bar ends at ${g.bar.right}, the button at ${g.button.right}`);
+      const start = width <= 767 ? g.button.left : g.content.left;
+      assert.ok(Math.abs(g.bar.left - start) <= 1, `${where}: the bar starts at ${g.bar.left}, not ${start}`);
+      assert.ok(g.bar.width >= 0.6 * g.form.width, `${where}: the bar is ${g.bar.width}px of a ${g.form.width}px box`);
 
       await page.focus('#ask');
       await page.keyboard.press('Enter');
@@ -1528,6 +1659,10 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     /* part of the field's description, and not a live region of its own,
        so it is never said twice */
     assert.deepStrictEqual(wiring, { describes: true, hidden: false, live: null });
+    /* the bar is a picture of those words: hidden from assistive
+       technology, with nothing in it to read */
+    const bar = await meterOf(page);
+    assert.deepStrictEqual({ hidden: bar.ariaHidden, text: bar.text }, { hidden: 'true', text: '' });
 
     await submit(page, 'black oversized hoodie');
     await page.waitForSelector('.item-card');
@@ -1546,6 +1681,40 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     assert.ok(!/searches? left/.test(said), `an unchanged count was announced: "${said}"`);
     assert.strictEqual(await page.evaluate(() => document.activeElement.id), 'ask', 'focus moved');
     await page.close();
+    accountState = accountReply({});
+  });
+
+  await test('the allowance comes back with a short fade, and at once for anyone who asks for reduced motion', async () => {
+    const fadeOf = (page) => page.evaluate(() => {
+      const css = getComputedStyle(document.getElementById('ask-allowance'));
+      return { fade: parseFloat(css.transitionDuration), opacity: css.opacity, animated: [...document.querySelectorAll('#ask-meter *')].some((n) => getComputedStyle(n).animationName !== 'none') };
+    });
+    reset();
+    accountState = accountReply({ searchesUsed: 0 });
+    const moving = await open();
+    await usageSays(moving, '3 searches left today');
+    const normal = await fadeOf(moving);
+    assert.ok(normal.fade > 0 && normal.fade <= 0.3, `the allowance fades in over ${normal.fade}s`);
+    /* the bar itself never moves: it is a level, not an activity */
+    assert.strictEqual(normal.animated, false);
+    await moving.close();
+
+    reset();
+    const still = await browser.newPage();
+    await still.emulateMedia({ reducedMotion: 'reduce' });
+    await still.addInitScript(() => {
+      window.FINDWEAR_API = 'http://127.0.0.1:8899/api/interpret';
+      window.FINDWEAR_SEARCH_API = 'http://127.0.0.1:8899/api/search';
+    });
+    await still.route((url) => !String(url).includes('127.0.0.1'), (route) => route.abort());
+    await still.goto(`http://127.0.0.1:${PORT}/find-clothes.html`, { waitUntil: 'domcontentloaded' });
+    await still.waitForFunction(() => window.Attachments && document.getElementById('attachments'));
+    await usageSays(still, '3 searches left today');
+    const reduced = await fadeOf(still);
+    assert.ok(reduced.fade < 0.001, `the allowance still fades: ${reduced.fade}s`);
+    assert.strictEqual(reduced.opacity, '1');
+    assert.strictEqual(reduced.animated, false);
+    await still.close();
     accountState = accountReply({});
   });
 
@@ -1569,7 +1738,10 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     assert.ok(code.length > 400, 'the count\'s code moved');
     assert.ok(!/setTimeout|setInterval|requestAnimationFrame|\.sleep|delay\(/.test(code), 'the count waits on a timer');
     /* it repeats what the server counted; it never works a count out */
-    assert.ok(!/\.limit\b|\.used\b|\b(left|remaining)\s*[-+]=?\s*[\w(]|\b(3|100|500)\b/.test(code), 'the page works out the count itself');
+    assert.ok(!/\.used\b|\blimit\s*-|\b(left|remaining)\s*[-+]=?\s*[\w(]|\b(3|100|500)\b/.test(code), 'the page works out the count itself');
+    /* the words are the server's remaining, and the bar is the server's
+       remaining over the server's limit */
+    assert.ok(/searches\.remaining/.test(code) && /searches\.limit/.test(code), 'the allowance is not read from the server');
     accountState = accountReply({});
   });
 

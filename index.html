@@ -92,9 +92,15 @@
         </p>
 
         <!-- How many live searches are left, exactly as /api/account last
-             counted them for this account or, signed out, this browser.
-             Empty until it has said; written by assets/app.js. -->
-        <p class="ask-usage" id="ask-usage"></p>
+             counted them for this account or, signed out, this browser:
+             a bar of what remains of the allowance, and the count in
+             words. Empty until the server has said; written by
+             assets/app.js. The bar is a picture of the words, so only
+             the words reach assistive technology. -->
+        <div class="ask-allowance" id="ask-allowance">
+          <span class="ask-meter" id="ask-meter" aria-hidden="true"></span>
+          <p class="ask-usage" id="ask-usage"></p>
+        </div>
       </form>
 
       <p class="ask-examples" id="ask-examples">
