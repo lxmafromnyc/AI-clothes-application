@@ -615,14 +615,20 @@ const bodyOf = (call) => JSON.parse(call.options.body);
         return r;
       }
     ));
+    /* Shaped — the string split, the non-strings and blanks dropped, the
+       negative budget refused — and then held to "a black hoodie": its
+       colour stands; the white, the $80 and "women" were never said, so
+       none of them is kept (api/_reading.js). The filing is the model's:
+       with a garment named it never reaches the search, so it is left as
+       it came. */
     assert.deepStrictEqual(res.payload.preferences, {
       categories: ['knit', 'shirt'],
-      colors: ['Black', 'White'],
+      colors: ['Black'],
       occasions: [], fits: [], brands: [], styles: [],
-      maxPrice: 80,
+      maxPrice: null,
       minPrice: null,
       season: null,
-      gender: 'women',
+      gender: null,
       keywords: [],
       /* read from "a black hoodie" itself, not from the junk reply */
       garments: ['hoodie'],
@@ -635,10 +641,11 @@ const bodyOf = (call) => JSON.parse(call.options.body);
   console.log('\na budget the shopper states is read whichever model answered');
 
   /* What gemini-3.6-flash actually answered "find me a green oversized
-     hoodie under $80" with: everything right but the budget. Every field
-     but the two prices is filled, so the tests below also show that
-     reading the budget from the words leaves the model's reading of the
-     rest exactly as it was. */
+     hoodie under $80" with: the right garment, colour and fit, no
+     budget — and a brand, a style, a season, a gender and an occasion
+     nobody asked for. The tests below show the budget read from the
+     words, what the shopper said kept exactly as the model read it, and
+     every invention taken out (api/_reading.js). */
   const PRICELESS = {
     categories: ['knit'], colors: ['Green'], occasions: ['Everyday'], fits: ['Oversized'],
     brands: ['UNIQLO'], styles: ['Minimal'], maxPrice: null, minPrice: null,
@@ -672,14 +679,16 @@ const bodyOf = (call) => JSON.parse(call.options.body);
       assert.strictEqual(read.gemini.minPrice, expected.minPrice, 'minPrice');
       assert.deepStrictEqual(read.gemini, read.openai,
         'the same reply must produce the same intent whichever model returned it');
-      /* the rest of the reading is the model's, untouched */
+      /* what the shopper said is the model's reading, untouched */
       assert.deepStrictEqual(read.gemini.categories, ['knit']);
       assert.deepStrictEqual(read.gemini.colors, ['Green']);
       assert.deepStrictEqual(read.gemini.fits, ['Oversized']);
-      assert.deepStrictEqual(read.gemini.brands, ['UNIQLO']);
-      assert.deepStrictEqual(read.gemini.styles, ['Minimal']);
-      assert.strictEqual(read.gemini.season, 'fall');
-      assert.strictEqual(read.gemini.gender, 'women');
+      /* what they did not say is not kept, from either model */
+      assert.deepStrictEqual(read.gemini.brands, []);
+      assert.deepStrictEqual(read.gemini.styles, []);
+      assert.deepStrictEqual(read.gemini.occasions, []);
+      assert.strictEqual(read.gemini.season, null);
+      assert.strictEqual(read.gemini.gender, null);
       assert.deepStrictEqual(read.gemini.garments, ['hoodie']);
       assert.deepStrictEqual(read.gemini.descriptors, []);
       assert.deepStrictEqual(Object.keys(read.gemini), INTENT_KEYS, 'the intent schema is unchanged');

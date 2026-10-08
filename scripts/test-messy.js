@@ -273,7 +273,8 @@ async function main() {
     const cases = {
       'i want a shirt thats kinda oversized': 'oversized shirt',
       'women black thing long sleeve cheap': 'women black long-sleeve',
-      'something like what skaters wear': 'skater style outfit',
+      /* a style is worn as clothing: "skater style outfit" finds costumes */
+      'something like what skaters wear': 'skater style clothing',
       'dress for going out but casual': 'going out casual dress',
       'gift for my dad': 'men gift'
     };

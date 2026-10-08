@@ -355,6 +355,9 @@
   /* a fit ruled out, and what that leaves: "not skinny" is straight or
      relaxed, "not too baggy" is a regular, straight fit */
   const NEGATED_FIT = { skinny: 'straight', slim: 'straight', tight: 'relaxed', fitted: 'relaxed', clingy: 'relaxed', bodycon: 'relaxed', baggy: 'regular', loose: 'regular', oversized: 'regular', wide: null, cropped: null, flared: null };
+  /* how people say a size that shops call a fit: "not huge" rules out the
+     oversized cut, not the word "huge", which no listing carries */
+  const SIZE_FIT = { huge: 'oversized', massive: 'oversized', giant: 'oversized', enormous: 'oversized' };
   const MATERIAL_WORDS = ['faux leather', 'leather', 'wool', 'polyester', 'denim', 'silk', 'satin', 'linen', 'cotton', 'fleece', 'suede', 'velvet', 'nylon', 'cashmere', 'corduroy', 'fur', 'acrylic'];
   /* what a ruled-out garment or material is called on a listing */
   const RULED_OUT_AS = {
@@ -418,7 +421,7 @@
      it always took. Longest phrase first, so "looks vintage" is read
      before "vintage". */
   const SIGNALS = [
-    ['polished', true, ['look nice', 'looks nice', 'look good', 'looks good', 'put together', 'grown up', 'more polished', 'polished', 'nicer', 'nice', 'elevated', 'dressier', 'dressy', 'smarter', 'refined', 'classy', 'classier', 'sharper', 'sophisticated', 'elegant', 'fancier', 'more formal', 'less sloppy']],
+    ['polished', true, ['look nice', 'looks nice', 'look good', 'looks good', 'put together', 'grown up', 'more polished', 'polished', 'nicer', 'nice', 'elevated', 'dressier', 'dressy', 'smarter', 'refined', 'classy', 'classier', 'sharper', 'sophisticated', 'elegant', 'fancier', 'more formal', 'less sloppy', 'more structured', 'structured']],
     ['polished', true, ['cleaner', 'clean']],
     ['minimal', true, ['cleaner', 'clean', 'simple', 'simpler', 'plain', 'basic', 'understated', 'subtle', 'no logo', 'no logos', 'without logos', 'without a logo']],
     ['minimal', false, ['minimal', 'minimalist']],
@@ -635,26 +638,40 @@
       let j = after;
       let unsure = false;
       while (j < tokens.length && j < after + 4 && PASS_NEGATED.has(tokens[j])) { if (UNSURE.has(tokens[j])) unsure = true; j += 1; }
-      const word = tokens[j];
-      if (!word) continue;
       const span = (to) => { for (let k = i; k <= to; k += 1) out.at.add(k); };
+      /* "not huge or sloppy", "no logos or graphics": what one "not"
+         rules out runs on through an "or" */
+      while (j < tokens.length) {
+        const end = ruleOut(j, unsure);
+        if (end === -1) break;
+        span(end);
+        if ((tokens[end + 1] === 'or' || tokens[end + 1] === 'nor') && tokens[end + 2]) j = end + 2;
+        else break;
+      }
+    }
+    return out;
+
+    /* one ruled-out thing starting at j: where it ends, or -1 */
+    function ruleOut(j, unsure) {
+      const word = tokens[j];
+      if (!word) return -1;
       const mention = mentions.find((m) => m.at === j);
       if (mention) {
         if (unsure) { out.unsure.push(mention.name); mention.unsure = true; }
         else { out.garments.push(mention.name); mention.ruledOut = true; }
-        span(mention.end - 1);
-        continue;
+        return mention.end - 1;
       }
       const material = MATERIAL_WORDS.find((m) => tokens.slice(j, j + m.split(' ').length).join(' ') === m);
-      if (feature(word)) { out.features.push(word); span(j); }
-      else if (Object.prototype.hasOwnProperty.call(NEGATED_FIT, word)) { out.fits.push(word); if (NEGATED_FIT[word]) out.signals.push(NEGATED_FIT[word]); span(j); }
-      else if (Object.prototype.hasOwnProperty.call(NEGATED, word)) { out.signals.push(...NEGATED[word]); if (/^(heavy|bulky|thick)$/.test(word)) out.properties.push('lightweight'); span(j); }
-      else if (/^(heavy|thick|bulky)$/.test(word)) { out.properties.push('lightweight'); span(j); }
-      else if (COLOUR_WORDS.includes(word)) { out.colors.push(word); span(j); }
-      else if (SHADES.has(word)) { out.shades.push(word); span(j); }
-      else if (material) { out.materials.push(material); span(j + material.split(' ').length - 1); }
+      if (feature(word)) { out.features.push(word); return j; }
+      if (Object.prototype.hasOwnProperty.call(NEGATED_FIT, word)) { out.fits.push(word); if (NEGATED_FIT[word]) out.signals.push(NEGATED_FIT[word]); return j; }
+      if (SIZE_FIT[word]) { out.fits.push(SIZE_FIT[word]); return j; }
+      if (Object.prototype.hasOwnProperty.call(NEGATED, word)) { out.signals.push(...NEGATED[word]); if (/^(heavy|bulky|thick)$/.test(word)) out.properties.push('lightweight'); return j; }
+      if (/^(heavy|thick|bulky)$/.test(word)) { out.properties.push('lightweight'); return j; }
+      if (COLOUR_WORDS.includes(word)) { out.colors.push(word); return j; }
+      if (SHADES.has(word)) { out.shades.push(word); return j; }
+      if (material) { out.materials.push(material); return j + material.split(' ').length - 1; }
+      return -1;
     }
-    return out;
   }
 
   function mentionsIn(tokens) {
@@ -815,9 +832,14 @@
     const colors = [];
     tokens.forEach((token, at) => {
       const colour = token === 'off' && tokens[at + 1] === 'white' ? 'off white' : token;
-      if (!COLOUR_WORDS.includes(colour) || blanked.has(at) || colors.includes(colour)) return;
-      colors.push(colour);
-      markWords(colour);
+      if (!COLOUR_WORDS.includes(colour) || blanked.has(at)) return;
+      /* "light grey", "dark green": the shade is part of the colour asked
+         for, and is said with it */
+      const shade = at > 0 && SHADES.has(tokens[at - 1]) && !blanked.has(at - 1) ? `${tokens[at - 1]} ` : '';
+      const named = `${shade}${colour}`;
+      if (colors.includes(named) || colors.includes(colour)) return;
+      colors.push(named);
+      markWords(named);
     });
     /* "black but not too dark": the colour stands, but it is not held to */
     if (colors.length && ruled.shades.length) ambiguous.push('colour');
@@ -982,8 +1004,11 @@
          wears"): the reading says so, and the search is as broad as the
          request — never the talk itself, which would find mom jeans */
       if (!garmentWords.length && signals.length && STYLE_WORD[signals[0]] && !kept.includes(STYLE_WORD[signals[0]])) kept.unshift(STYLE_WORD[signals[0]]);
-      /* with no garment at all, the search stays on clothes */
-      if (!garmentWords.length && (occasion || tribe)) kept.push('outfit');
+      /* with no garment at all, the search stays on clothes: an occasion
+         is dressed for with an outfit, but a style is worn as clothing —
+         "skater style outfit" finds costumes */
+      if (!garmentWords.length && occasion) kept.push('outfit');
+      else if (!garmentWords.length && tribe) kept.push('clothing');
       terms = unique(kept.concat(garmentWords)).slice(0, 10);
       anchor = targets[0] || null;
     }
@@ -1478,7 +1503,16 @@
      can mark them in the search field as they are typed. Marking is all
      it is used for: nothing here changes what a search sends or how the
      served interpreter reads it. */
-  const lexicon = Object.freeze({ GARMENTS, DESCRIPTORS, HINTS, EXTRA_ANCHORS, COLOUR_WORDS });
+  /* every shop term the concept tables can search for: what a garment
+     is called on a listing, for the server to recognise one when a
+     model names it (api/_reading.js) */
+  const CONCEPT_TERMS = [...new Set([]
+    .concat(...DESCRIBED.map((d) => d.concepts || []))
+    .concat(...Object.values(NEIGHBOURS))
+    .concat(...HYBRIDS.map((h) => h.concepts || []))
+    .concat(...SETTINGS.map((s) => s.concepts || []))
+    .concat(...OPEN.map((o) => o.concepts || [])))];
+  const lexicon = Object.freeze({ GARMENTS, DESCRIPTORS, HINTS, EXTRA_ANCHORS, COLOUR_WORDS, CONCEPT_TERMS });
 
   global.Interpreter = { interpret, localInterpret, readGarments, readConcepts, garmentsWanted, normalize, describe, shape, EMPTY, endpoint, FALLBACK_REASON, lexicon };
 })(typeof window !== 'undefined' ? window : globalThis);

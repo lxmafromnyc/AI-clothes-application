@@ -363,9 +363,11 @@ async function main() {
     assert.ok(served.ok);
     assert.deepStrictEqual(served.preferences.concepts, read('something cozy I can wear with jeans'));
     assert.deepStrictEqual(served.preferences.garments, []);
-    /* the model's own reading is kept as it came, and the phrase is built
-       from the concepts, so its "trousers" and "jeans" are not searched */
-    assert.deepStrictEqual(served.preferences.categories, ['trousers']);
+    /* the model filed the request under the jeans it is worn with; a
+       filing for a garment named only as the setting is not kept
+       (api/_reading.js), and the phrase is built from the concepts, so
+       neither "trousers" nor "jeans" is searched */
+    assert.deepStrictEqual(served.preferences.categories, []);
     const q = queryFrom(shapeIntent(served.preferences));
     assert.ok(!/jean|trouser/.test(q), q);
   });

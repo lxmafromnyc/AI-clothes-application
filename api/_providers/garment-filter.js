@@ -33,11 +33,17 @@
      request asked for in other words.
 
    And one removal of a different kind, before any of that: a listing
-   that IS a garment the request ruled out — a coat for "something warm
-   but not a coat", a hoodie for "like a hoodie without the hood" — is
-   removed whatever else it is (intent.concepts.drop). A fit, colour or
-   material ruled out ("not skinny", "isn't black") removes nothing: those
-   are ranked last, by _providers/relevance.js.
+   that IS what the request ruled out is removed whatever else it is — a
+   coat for "something warm but not a coat", a hoodie for "like a hoodie
+   without the hood" (intent.concepts.drop), and a listing that carries a
+   fit, colour, feature or material the request ruled out in so many
+   words: "Skinny Jeans" for "pants that aren't skinny", "Big Logo Hoodie"
+   for "hoodie with no logo", "Black Midi Dress" for "a dress that isn't
+   black" (intent.concepts.without). An exclusion the shopper stated is a
+   constraint, not a preference: ranked last, it would still be shown
+   whenever the page is short. Only the words a listing would carry are
+   ever in that list; "not too fancy" puts nothing there and removes
+   nothing.
 
    Nothing else is removed. A listing the reader cannot read, one it
    calls unproven ("Short Jacket" for a puffer) and one that is only
@@ -117,7 +123,9 @@ function requestedGarments(intent) {
    "without the hood" */
 function ruledOutWords(intent) {
   const concepts = intent && intent.concepts && typeof intent.concepts === 'object' ? intent.concepts : null;
-  return concepts ? listOf(concepts.drop).map((w) => text(w).toLowerCase()).filter(Boolean) : [];
+  if (!concepts) return [];
+  const words = listOf(concepts.drop).concat(listOf(concepts.without)).map((w) => text(w).toLowerCase()).filter(Boolean);
+  return [...new Set(words)];
 }
 
 const titleWords = (title) => new Set(String(title || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().split(/\s+/)

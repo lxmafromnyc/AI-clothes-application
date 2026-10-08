@@ -52,14 +52,21 @@ const REPO = path.join(__dirname, '..');
 
 /* ---------- 1. the body, built by the page's own code ---------- */
 
-let pageLoaded = false;
+let pageLoaded = null;
+/* The page's scripts, in page order. catalog.js declares its rows as a
+   top-level const, which a browser shares between scripts and Node's
+   require does not, so it is run as the page runs it and the rows are
+   loaded exactly as assets/app.js loads them. */
 function loadPage() {
-  if (pageLoaded) return;
-  for (const file of ['products.js', 'catalog.js', 'interpret.js', 'search.js']) {
-    const at = path.join(REPO, 'assets', file);
-    if (fs.existsSync(at)) require(at);
+  if (pageLoaded) return pageLoaded;
+  require(path.join(REPO, 'assets', 'products.js'));
+  const catalogue = path.join(REPO, 'assets', 'catalog.js');
+  if (fs.existsSync(catalogue)) {
+    require('vm').runInThisContext(`${fs.readFileSync(catalogue, 'utf8')}\n;globalThis.__fyndDemoProducts = typeof DEMO_PRODUCTS === 'undefined' ? [] : DEMO_PRODUCTS;`, { filename: catalogue });
   }
-  pageLoaded = true;
+  for (const file of ['interpret.js', 'search.js']) require(path.join(REPO, 'assets', file));
+  pageLoaded = Promise.resolve(globalThis.Products.load(globalThis.__fyndDemoProducts || []));
+  return pageLoaded;
 }
 
 /* exactly what assets/app.js hands the interpreter */
@@ -77,7 +84,7 @@ function vocabulary() {
 }
 
 async function browserBody(query) {
-  loadPage();
+  await loadPage();
   const realFetch = globalThis.fetch;
   let posted = null;
   globalThis.FINDWEAR_API = 'http://local.invalid/api/interpret';
@@ -298,4 +305,10 @@ async function main() {
 
 if (require.main === module) main().catch((err) => { console.error(err && err.stack); process.exit(1); });
 
-module.exports = { browserBody, diagnose, describe };
+/* the vocabulary the page sends the interpreter, for the live benchmark */
+async function pageVocabulary() {
+  await loadPage();
+  return vocabulary();
+}
+
+module.exports = { browserBody, diagnose, describe, pageVocabulary };

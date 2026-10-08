@@ -185,7 +185,8 @@ function scoreOf(product, intent, prepared) {
   const colours = prepared.colours;
   if (colours.length && !prepared.ambiguous.includes('colour')) {
     const shown = new Set(tokens(`${title} ${listOf(product.colors).join(' ')}`));
-    if (colours.some((c) => says(shown, c))) score += 40;
+    /* matched on the colour itself: "light grey" asked, "Heather Grey" shown */
+    if (colours.some((c) => says(shown, tokens(c).slice(-1).join(' ')))) score += 40;
     else if (prepared.otherColours.some((c) => says(shown, c))) score -= 40;
   }
   if (prepared.gender) {
