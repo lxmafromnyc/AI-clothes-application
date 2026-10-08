@@ -135,7 +135,7 @@ scripts/test-concepts.js       offline test of descriptive requests, end to end
 scripts/bench-concepts.js      before/after benchmark of descriptive requests
 scripts/test-messy.js          offline test of messy, negative and misspelled requests
 scripts/bench-messy.js         before/after benchmark of 88 messy requests
-scripts/bench-messy-live.js    66 graded requests through the real live path; compares checkouts
+scripts/bench-messy-live.js    74 graded requests through the real live path; compares checkouts
 api/_reading.js                the model's reading, held to the shopper's words
 scripts/test-reading.js        offline test of that: inventions, roles, exact requests unchanged
 assets/app.js           rendering and page behaviour
@@ -427,10 +427,20 @@ clearly they are labelled. No product is ever invented to fill the gap.
 
 A `502` says which failure it was, so it can be read straight off the
 browser's network panel: `reason` is `timeout` or `failed`, `kind` is the
-failure's class (`invalid-key`, `bad-request`, `rate-limited-or-credits`,
-`server-error`, `network`, `timeout`, `other`) and `upstreamStatus` is the
-status the source answered with, or `null` when it never answered. The
-source's own message, URLs and keys stay in the server log.
+failure's class (`invalid-key`, `bad-request`, `rate-limited`,
+`credits-exhausted`, `rate-limited-or-credits`, `server-error`, `network`,
+`timeout`, `bad-response` for a 200 that is not JSON, `other`) and
+`upstreamStatus` is the status the source answered with, or `null` when it
+never answered. The source's own message, URLs and keys stay in the server log.
+
+Only the source can produce a `502`. An offer lookup that fails, times out or
+answers nonsense costs that one product its link and nothing else: the search
+answers `200` with whatever did verify. A cache or session store that cannot
+be reached is a cache miss. A fault of Fynd's own after the source answered —
+in the verification gate, the garment filter or the ranking — is a `500` with
+`reason: "internal"` and the `stage`, never "the product source is
+unavailable". A cached entry of another shape (written by another version into
+the same store) is a miss, not a product without its link.
 
 The OpenWeb Ninja key, country and language are read in one place
 (`api/_providers/openwebninja.js`): the key is trimmed and unquoted, and the
@@ -564,7 +574,7 @@ Everything ruled out — garments, and modifiers like *skinny*, *logo* or
 
 #### Measuring it live
 
-`scripts/bench-messy-live.js` puts 58 messy requests and 8 plain ones — the
+`scripts/bench-messy-live.js` puts 66 messy requests and 8 plain ones — the
 brief's own fifteen, misspellings, fragments, slang, contradictions, filler and
 "not"/"with" requests — through the real path: the page's reader exactly as the
 browser runs it, the served interpreter, `/api/search`'s intent, the product
@@ -582,7 +592,7 @@ node --env-file=.env.local scripts/bench-messy-live.js --roots before=../fynd-be
 
 Each request is graded by the same rules whichever checkout answered it:
 interpretation (target, exclusions, stated constraints kept, nothing invented),
-relevant@4 and @8, clearly wrong in the top 8, hard-constraint violations
+relevant@4 and @8, strong matches and clearly wrong in the top 8, hard-constraint violations
 (budget, stated colour or gender contradicted, anything ruled out shown),
 products the filter removed that were plainly what was asked, provider searches,
 offer lookups and latency. What "plainly" means is written beside each request

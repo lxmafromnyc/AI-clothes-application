@@ -2,7 +2,7 @@
 /* =========================================================
    Fynd — messy-input LIVE benchmark
 
-   Sixty-odd requests the way people really type them — vague,
+   Seventy-odd requests the way people really type them — vague,
    misspelled, half-finished, slangy, contradicting themselves,
    "but not a coat", "to wear with jeans" — and a few plain ones as a
    control, put through the real live path:
@@ -39,6 +39,8 @@
                      kept, and nothing they did not state was added
      relevant@4/@8   of the first 4 / 8 products shown, how many plainly
                      are what was asked (an empty slot counts as not)
+     strong@8        of the first 8, how many are that and also say every
+                     stated colour and the request's other details
      wrong@8         of the first 8, how many are plainly wrong: another
                      garment, something ruled out, another colour or the
                      other gender from the one stated
@@ -81,13 +83,15 @@ const HERE = path.resolve(__dirname, '..');
    colours   colour families stated (anything else in the reading is invented)
    maxPrice / minPrice / gender / brands   stated, so they must be kept
    relevant  a title plainly what was asked (a list means all of them)
+   strong    a relevant title that also says the rest of what was asked:
+             every stated colour, and this pattern when given
    wrong     a title plainly not
 */
 const CASES = [
   /* the requests from the brief, verbatim */
   { q: 'idk i want one of those light grey hoodies thats kinda baggy and relaxed but still fits good not huge or sloppy',
     target: /hood/, colours: ['grey'], mayRule: /huge|sloppy|oversiz|baggy/,
-    relevant: [/hood/], wrong: /\b(pants|jogger|shorts|t-?shirt|tee|jacket|coat)\b/ },
+    relevant: [/hood/], strong: /relaxed|baggy|loose|boxy/, wrong: /\b(pants|jogger|shorts|t-?shirt|tee|jacket|coat)\b/ },
   { q: 'hoodie but nicer',
     target: /hood|sweatshirt|sweater|knit|zip|crew/,
     relevant: /hood|sweatshirt|knit|sweater|quarter.?zip|half.?zip|cardigan|crew ?neck|pullover/,
@@ -107,7 +111,7 @@ const CASES = [
     relevant: /pant|trouser|chino|slack|jean/, wrong: /\b(skinny|shorts|leggings?|skirt|dress)\b/ },
   { q: 'shirt but heavier',
     target: /heavy|flannel|overshirt|oxford|twill|shirt|tee/,
-    relevant: [/shirt|tee\b|shacket/, /heavy|flannel|overshirt|oxford|twill|canvas|chamois|thick|brushed|wool|corduroy|denim|shacket|\d{3} ?gsm|\boz\b|waffle|thermal/],
+    relevant: [/shirt|tee\b|shacket/, /heavy|flannel|overshirt|oxford|twill|canvas|chamois|thick|brushed|wool|corduroy|denim|shacket|\d{3} ?gsm|\boz\b|waffle|thermal/], strong: /heavy ?weight|heavy|thick|\d{3} ?gsm/,
     wrong: /\b(coat|pants|dress|shorts|jeans|tank|sheer|lightweight)\b/ },
   { q: 'something cozy to wear with jeans',
     target: /sweater|knit|cardigan|hood|sweatshirt|fleece|pullover|jumper|crew|flannel|turtleneck/,
@@ -131,7 +135,7 @@ const CASES = [
     wrong: (t) => /\b(coat|parka|trench|overcoat|pants|dress|jeans)\b/.test(t) || (/\bshirts?\b/.test(t) && !/jacket|shacket|overshirt/.test(t)) },
   { q: 'loose black pants that look nice',
     target: /pants|trousers|slacks|chinos?/, colours: ['black'],
-    relevant: /pant|trouser|slack|chino|palazzo|culotte/, wrong: /\b(skinny|leggings?|shorts|jeggings?)\b/ },
+    relevant: /pant|trouser|slack|chino|palazzo|culotte/, strong: /wide|relaxed|loose|baggy|pleated|palazzo|straight/, wrong: /\b(skinny|leggings?|shorts|jeggings?)\b/ },
   { q: 'simple black dress not fancy',
     target: /dress/, colours: ['black'], exclude: /\b(sequin\w*|gown|evening|formal|beaded|embellished)\b/, mayRule: /fancy|formal|sequin|evening|gown|cocktail|embellish|beaded|party/,
     notAsked: /fancy|formal|sequin|evening/,
@@ -229,6 +233,24 @@ const CASES = [
     relevant: [/denim|jean|trucker/, /jacket|trucker/], wrong: /\b(cropped|crop|shorts|skirt)\b/ },
   { q: 'somthing to wear to a wedding as a guest thats not a suit', target: /dress|blazer|jumpsuit|trouser|shirt|sport coat|outfit|guest/, notAsked: /\bsuits?\b/, exclude: /\bsuits?\b/, mayRule: /tux|bridal|white/,
     relevant: /dress|blazer|sport ?coat|jumpsuit|trousers?|dress shirt|slacks|skirt|blouse/, wrong: /\b(suits?|bridal|wedding dress|tuxedo|hoodie|sweatpants|shorts)\b/ },
+
+  /* the brief's required phrasings, and word order, contractions and
+     negations of more than one word */
+  { q: 'something like a hoodie but cleaner', target: /hood|sweatshirt|zip|crew|pullover|knit|minimal/,
+    relevant: /hood|sweatshirt|quarter.?zip|half.?zip|crew ?neck|pullover|knit/, strong: /minimal|clean|plain|essential|basic|premium|heavyweight|zip/, wrong: /\b(graphic|logo|pants|shorts|dress|t-?shirt)\b/ },
+  { q: "pants that aren't skinny", target: /pant|trouser|chino|jean|slack/, notAsked: /skinny/, exclude: /\bskinny\b/, mayRule: /slim|legging|jegging/,
+    relevant: /pant|trouser|chino|slack|jean/, wrong: /\b(skinny|shorts|leggings?|skirt)\b/ },
+  { q: 'hoodie without the hood', target: /sweatshirt|crew|pullover|sweater/, notAsked: /\bhood(ie|y|ed)?s?\b/, exclude: /\bhood(ie|y|ed)?s?\b/,
+    relevant: /sweatshirt|crew ?neck|pullover|sweater/, wrong: /\b(hood(ie|y|ed)?s?|pants|shorts|jacket)\b/ },
+  { q: 'hoodie grey baggy light', target: /hood/, colours: ['grey'], relevant: /hood/, strong: /relaxed|baggy|loose|oversized|boxy/, wrong: /\b(pants|jogger|shorts|t-?shirt|jacket|coat)\b/ },
+  { q: "i don't want skinny jeans", target: /jean|denim/, notAsked: /skinny/, exclude: /\bskinny\b/, mayRule: /slim|jegging/,
+    relevant: /jean|denim/, wrong: /\b(skinny|jeggings?|shorts|jacket|skirt)\b/ },
+  { q: 'skinny jeans but not too tight', target: /jean|denim/, notAsked: /baggy|relaxed|wide/, mayRule: /tight/,
+    relevant: /jean|denim/, strong: /skinny|slim/, wrong: /\b(baggy|wide|relaxed|shorts|jacket|skirt)\b/ },
+  { q: 'a coat thats not too long or too heavy', target: /coat|jacket|trench|mac/, notAsked: /heavy|long/, mayRule: /long|heavy|heavyweight|longline|maxi/,
+    relevant: /coat|jacket|trench|mac|parka/, strong: /light|short|cropped|mid/, wrong: /\b(longline|maxi|heavyweight|pants|dress|shirt)\b/ },
+  { q: 'not into logos, hoodie', target: /hood|sweatshirt|minimal|zip|crew|pullover/, notAsked: /logo|into/, exclude: /\b(logos?|graphics?)\b/, mayRule: /print/,
+    relevant: /hood|sweatshirt|pullover/, wrong: /\b(logos?|graphics?|pants|shorts)\b/ },
 
   /* the plain requests, as a control: these must read and search exactly as before */
   { q: 'red dress', set: 'exact', target: /red/, colours: ['red'], relevant: /dress/, wrong: /\b(pants|shorts|top|shoes?)\b/ },
@@ -385,13 +407,16 @@ function gradeProduct(c, product) {
   const under = c.minPrice != null && product.price < c.minPrice;
   const wrong = excluded || colour || gender || matches(c.wrong, title);
   const relevant = !wrong && matches(c.relevant, title);
+  /* plainly what was asked, and says so about every detail stated */
+  const statesColours = (c.colours || []).every((family) => FAMILIES[family] && FAMILIES[family].test(title));
+  const strong = relevant && statesColours && (!c.strong || matches(c.strong, title));
   const hard = [];
   if (excluded) hard.push('ruled out');
   if (colour) hard.push('another colour');
   if (gender) hard.push('the other gender');
   if (over) hard.push(`over the stated $${c.maxPrice}`);
   if (under) hard.push(`under the stated $${c.minPrice}`);
-  return { relevant, wrong, excluded, hard };
+  return { relevant, strong, wrong, excluded, hard };
 }
 
 function grade(c, observed) {
@@ -403,6 +428,7 @@ function grade(c, observed) {
     reading,
     relevantAt4: top(4).filter((p) => p.relevant).length / 4,
     relevantAt8: top(8).filter((p) => p.relevant).length / 8,
+    strongAt8: top(8).filter((p) => p.strong).length,
     wrongAt8: top(8).filter((p) => p.wrong).length,
     hardViolations: products.reduce((n, p) => n + p.hard.length, 0),
     exclusionViolations: products.filter((p) => p.excluded).length,
@@ -595,6 +621,7 @@ function summarise(rows) {
     constraintsCorrect: mean(g((r) => (r.graded.reading.constraintsOk ? 1 : 0))),
     relevantAt4: mean(g((r) => r.graded.relevantAt4)),
     relevantAt8: mean(g((r) => r.graded.relevantAt8)),
+    strongAt8: sum(g((r) => r.graded.strongAt8)),
     wrongAt8: sum(g((r) => r.graded.wrongAt8)),
     hardViolations: sum(g((r) => r.graded.hardViolations)),
     exclusionViolations: sum(g((r) => r.graded.exclusionViolations)),
@@ -633,6 +660,7 @@ function differences(cases, byRoot, before, after) {
       sameQuery: a.observed.asked === b.observed.asked,
       sharedTop8: shared,
       relevantAt8: [a.graded.relevantAt8, b.graded.relevantAt8],
+      strongAt8: [a.graded.strongAt8, b.graded.strongAt8],
       wrongAt8: [a.graded.wrongAt8, b.graded.wrongAt8],
       correct: [a.graded.reading.correct, b.graded.reading.correct],
       score: (b.graded.relevantAt8 - a.graded.relevantAt8) - (b.graded.wrongAt8 - a.graded.wrongAt8) / 8
@@ -694,6 +722,7 @@ function print(out) {
   line('  constraints kept, none invented', (s) => p0(s.constraintsCorrect));
   line('relevant@4 (mean)', (s) => f2(s.relevantAt4));
   line('relevant@8 (mean)', (s) => f2(s.relevantAt8));
+  line('strong matches in top 8 (total)', (s) => s.strongAt8);
   line('clearly wrong in top 8 (total)', (s) => s.wrongAt8);
   line('hard-constraint violations', (s) => s.hardViolations);
   line('  of which ruled-out shown', (s) => s.exclusionViolations);
@@ -717,7 +746,7 @@ function print(out) {
       console.log(`\n${row.case.q}\n  ${o.interpreter}${o.understood ? ` (${o.understood.by})` : ''} · asked "${o.asked}" · ${o.providerSearches} search, ${o.offerLookups} lookups · ${o.verified} verified · ${o.totalMs}ms`
         + ` · r@4 ${f2(g.relevantAt4)} r@8 ${f2(g.relevantAt8)} wrong ${g.wrongAt8}${o.failed ? ` · FAILED ${o.failed.message}` : ''}`);
       if (g.reading.notes.length) console.log(`  reading: ${g.reading.notes.join('; ')}`);
-      g.products.slice(0, 8).forEach((p, i) => console.log(`   ${i + 1}. ${p.relevant ? '✓' : p.wrong ? '✗' : '·'} ${p.name} — $${p.price} at ${p.retailer}${p.hard.length ? `   !! ${p.hard.join(', ')}` : ''}`));
+      g.products.slice(0, 8).forEach((p, i) => console.log(`   ${i + 1}. ${p.strong ? '★' : p.relevant ? '✓' : p.wrong ? '✗' : '·'} ${p.name} — $${p.price} at ${p.retailer}${p.hard.length ? `   !! ${p.hard.join(', ')}` : ''}`));
       g.removed.forEach((r) => console.log(`   − removed #${r.position} ${r.relevant ? '(WRONGLY) ' : ''}${r.name} — ${r.why}`));
     });
   }

@@ -183,6 +183,7 @@ async function askServer(server, body) {
       reason: answer && answer.reason ? answer.reason : null,
       kind: answer && answer.kind ? answer.kind : null,
       upstreamStatus: answer && answer.upstreamStatus ? answer.upstreamStatus : null,
+      stage: answer && answer.stage ? answer.stage : null,
       products: answer && Array.isArray(answer.products) ? answer.products.length : null
     };
   } catch (err) {
@@ -232,6 +233,7 @@ async function diagnose(query, givenBody, options) {
     reason: answer.reason || null,
     kind: answer.kind || null,
     upstreamStatus: answer.upstreamStatus || null,
+    stage: answer.stage || null,
     products: Array.isArray(answer.products) ? answer.products.length : null,
     funnel: answer.diagnostics ? {
       returnedByProvider: d.returnedByProvider, reachedGate: d.reachedGate, verified: d.verified,
@@ -272,9 +274,9 @@ function print(r) {
   console.log(`\n=== ${r.query}`);
   console.log(`interpreter: ${r.interpreter}`);
   console.log(`body sent to /api/search:\n  ${JSON.stringify(r.body)}`);
-  if (r.server) console.log(`running server: ${r.server.status === null ? `unreachable ${JSON.stringify(r.server.threw)}` : `${r.server.status} in ${r.server.ms}ms${r.server.error ? ` — ${JSON.stringify({ error: r.server.error, reason: r.server.reason, kind: r.server.kind, upstreamStatus: r.server.upstreamStatus })}` : ` — ${r.server.products} products`}`}`);
+  if (r.server) console.log(`running server: ${r.server.status === null ? `unreachable ${JSON.stringify(r.server.threw)}` : `${r.server.status} in ${r.server.ms}ms${r.server.error ? ` — ${JSON.stringify({ error: r.server.error, reason: r.server.reason, kind: r.server.kind, upstreamStatus: r.server.upstreamStatus, stage: r.server.stage })}` : ` — ${r.server.products} products`}`}`);
   const h = r.handler;
-  console.log(`handler: ${h.status} in ${h.ms}ms${h.error ? ` — ${JSON.stringify({ error: h.error, reason: h.reason, kind: h.kind, upstreamStatus: h.upstreamStatus })}` : ` — ${h.products} products`}`);
+  console.log(`handler: ${h.status} in ${h.ms}ms${h.error ? ` — ${JSON.stringify({ error: h.error, reason: h.reason, kind: h.kind, upstreamStatus: h.upstreamStatus, stage: h.stage })}` : ` — ${h.products} products`}`);
   if (h.funnel) console.log(`funnel: ${JSON.stringify(h.funnel)}`);
   for (const c of r.upstream) console.log(`  upstream ${c.status === null ? 'THREW' : c.status} ${c.ms}ms ${c.where}${c.q ? ` q=${JSON.stringify(c.q)}` : ''}${c.threw ? ` ${JSON.stringify(c.threw)}` : ''}`);
   for (const line of r.serverLog) console.log(`  server ${line}`);

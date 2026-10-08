@@ -207,7 +207,7 @@ async function searchWithFallback(primary, intent, limit, stats, deadline) {
       if (refused && err && typeof err === 'object' && !err.fellBackFrom) {
         try { err.fellBackFrom = refused; } catch (ignored) { /* a frozen error is reported as it came */ }
       }
-      if (!outOfSearches(err) || at + 1 >= chain.length) throw err;
+      if (!outOfSearches(err) || (err && err.internal) || at + 1 >= chain.length) throw err;
       refused = { provider: provider.name, reason: said.slice(0, 200) };
       console.warn('Product source out of searches; falling back.', provider.name, '->', chain[at + 1].name);
     }
@@ -332,6 +332,20 @@ async function recordsFrom(provider, intent, limit, deadline) {
   return { records, diagnostics };
 }
 
+/* A stage of the search that runs on what the provider already answered:
+   the gate, the garment filter, the ranking. If one of these throws, the
+   provider is not at fault and must not be reported as unavailable — a
+   bug of ours reading as "the product source is unavailable right now"
+   sends whoever reads it after an outage that is not there. So the error
+   is marked as ours, and says which stage. */
+function ownStage(stage, run) {
+  try {
+    return run();
+  } catch (err) {
+    throw Object.assign(new Error(`Fynd's ${stage} stage failed: ${err && err.message ? err.message : err}`), { internal: true, stage, cause: err });
+  }
+}
+
 async function findProducts(provider, intent, limit, stats, deadline) {
   /* whatever this adapter says changes its results beyond the intent */
   const context = typeof provider.cacheContext === 'function' ? provider.cacheContext() : {};
@@ -359,7 +373,7 @@ async function findProducts(provider, intent, limit, stats, deadline) {
     delete funnel.cache;
   }
 
-  const { products, rejected } = verifyAll(payload.records, { retailer: provider.defaultRetailer });
+  const { products, rejected } = ownStage('verification', () => verifyAll(payload.records, { retailer: provider.defaultRetailer }));
 
   /* Stored only here, and only because the gate has just produced real
      products out of these records. A search that verified nothing is not
@@ -379,7 +393,7 @@ async function findProducts(provider, intent, limit, stats, deadline) {
      _providers/garment-filter.js). The order is the provider's, less
      those. Counted with the gate's own refusals, so a thinner page says
      why. */
-  const filtered = withoutContradictions(products, intent);
+  const filtered = ownStage('garment filter', () => withoutContradictions(products, intent));
   const refusedAll = Object.assign({}, rejected);
   const contradicted = filtered.removed.filter((one) => one.kind !== 'ruled-out').length;
   const excluded = filtered.removed.length - contradicted;
@@ -393,7 +407,7 @@ async function findProducts(provider, intent, limit, stats, deadline) {
      (see _providers/relevance.js). A request that named its garment in
      shop words is shown in the provider's order, exactly as before. The
      same products either way: nothing is added, removed or rewritten. */
-  const ordered = rankByIntent(filtered.products, intent);
+  const ordered = ownStage('ranking', () => rankByIntent(filtered.products, intent));
 
   return {
     records: payload.records,
@@ -467,6 +481,20 @@ module.exports = async function handler(req, res) {
   try {
     found = await searchWithFallback(provider, intent, limit, cacheStats, deadline);
   } catch (err) {
+    /* A stage of ours failed on an answer the provider did give: that is
+       not the source being unavailable, and is not reported as if it
+       were. A 500, naming the stage — never the provider's records, the
+       request or a key. */
+    if (err && err.internal) {
+      console.error('Search failed inside Fynd', provider.name, `${Date.now() - startedAt}ms`, `stage: ${err.stage}`, err.message,
+        err.cause && err.cause.stack ? String(err.cause.stack).split('\n').slice(1, 3).join(' | ').trim() : '');
+      return res.status(500).json({
+        error: 'The search failed inside Fynd.',
+        reason: 'internal',
+        stage: err.stage,
+        source: provider.name
+      });
+    }
     /* Only the search itself can reach here. An offer lookup that fails
        or runs out of time leaves its own record without a link, and the
        gate drops that one record — never the search. So a 502 means the

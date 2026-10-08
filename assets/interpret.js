@@ -379,8 +379,10 @@
   const PASS_NEGATED = new Set(['too', 'so', 'as', 'super', 'very', 'that', 'overly', 'crazy', 'really', 'insanely', 'ridiculously', 'all', 'quite', 'a', 'an', 'the', 'any', 'much', 'actually', 'even', 'exactly', 'be', 'being', 'it', 'my', 'your', 'his', 'her', 'want', 'wanna', 'to', 'look', 'looking', 'seem', 'feel', 'for']);
   /* after "not", a word that says how sure or how keen, not what: "not
      sure", "not into", "not a fan of" rule nothing out */
-  const NOT_RULED = new Set(('sure certain into fan picky bothered fussed worried interested necessarily needed required ' +
-    'important matter mind bad great good big huge-fan many lot something anything everything everyone sure-yet yet').split(' '));
+  const NOT_RULED = new Set(('sure certain picky bothered fussed worried interested necessarily needed required ' +
+    'important matter mind bad great good many lot something anything everything everyone yet').split(' '));
+  /* "not into logos", "not a big fan of graphics": how keen, and then what */
+  const KEEN = new Set(['into', 'big', 'huge', 'fan', 'of']);
   /* two words ruled out as one, and what else a listing calls them */
   const NEGATED_PHRASES = { 'see through': ['see through', 'sheer'], 'high waisted': ['high waisted', 'high waist'], 'low rise': ['low rise'], 'off shoulder': ['off shoulder'] };
   const UNSURE = new Set(['really', 'quite', 'exactly']);
@@ -656,7 +658,7 @@
       /* "no" as a whole answer, "not sure": nothing is ruled out */
       let j = after;
       let unsure = false;
-      while (j < tokens.length && j < after + 4 && PASS_NEGATED.has(tokens[j])) { if (UNSURE.has(tokens[j])) unsure = true; j += 1; }
+      while (j < tokens.length && j < after + 5 && (PASS_NEGATED.has(tokens[j]) || keen(j))) { if (UNSURE.has(tokens[j])) unsure = true; j += 1; }
       const span = (to) => { for (let k = i; k <= to; k += 1) out.at.add(k); };
       /* "not huge or sloppy", "no logos or graphics": what one "not"
          rules out runs on through an "or" */
@@ -664,11 +666,25 @@
         const end = ruleOut(j, unsure);
         if (end === -1) break;
         span(end);
-        if ((tokens[end + 1] === 'or' || tokens[end + 1] === 'nor') && tokens[end + 2]) j = end + 2;
-        else break;
+        if ((tokens[end + 1] === 'or' || tokens[end + 1] === 'nor') && tokens[end + 2]) {
+          /* "not too long or too heavy": the "too" again is passed over */
+          j = end + 2;
+          while (j < tokens.length - 1 && PASS_NEGATED.has(tokens[j])) j += 1;
+        } else break;
       }
     }
     return out;
+
+    /* "into" before what is ruled out, and "big fan of" / "huge fan of" —
+       but "huge" alone is a size: "not huge or sloppy" */
+    function keen(j) {
+      const word = tokens[j];
+      if (!KEEN.has(word) || !tokens[j + 1]) return false;
+      if (word === 'big' || word === 'huge') return tokens[j + 1] === 'fan';
+      if (word === 'fan') return tokens[j + 1] === 'of';
+      if (word === 'of') return tokens[j - 1] === 'fan';
+      return true;
+    }
 
     /* one ruled-out thing starting at j: where it ends, or -1 */
     function ruleOut(j, unsure) {
@@ -828,7 +844,17 @@
     const vagueSignals = new Set();
     const fit = [];
     const add = (signal, isVague) => { if (!signals.includes(signal)) signals.push(signal); if (isVague) vagueSignals.add(signal); };
-    ruled.signals.forEach((signal) => add(signal, true));
+    /* "skinny jeans but not too tight", "loose but not too baggy": a fit
+       the request asks for, and the same side of it not overdone. That
+       softens the fit; it does not turn it into the other one */
+    const CLOSE_FIT = new Set(['skinny', 'slim', 'fitted', 'tight', 'bodycon', 'clingy']);
+    const LOOSE_FIT = new Set(['loose', 'baggy', 'oversized', 'relaxed', 'wide', 'roomy', 'slouchy']);
+    const statedFits = tokens.filter((token, at) => !ruled.at.has(at));
+    const saysClose = statedFits.some((t) => CLOSE_FIT.has(t));
+    const saysLoose = statedFits.some((t) => LOOSE_FIT.has(t));
+    const softened = new Set(ruled.fits.filter((f) => (saysClose && CLOSE_FIT.has(f)) || (saysLoose && LOOSE_FIT.has(f)))
+      .flatMap((f) => [NEGATED_FIT[f]].concat(NEGATED[f] || [])).filter(Boolean));
+    ruled.signals.filter((signal) => !softened.has(signal)).forEach((signal) => add(signal, true));
     if (ruled.features.some((f) => feature(f).signal)) ruled.features.forEach((f) => { if (feature(f).signal) add(feature(f).signal, true); });
 
     /* how it should look, which is not what it costs */

@@ -111,6 +111,11 @@ async function main() {
       removed: [{ name: 'Black Wide Leg Trousers' }, { name: 'Black Skinny Pants' }]
     });
     assert.strictEqual(g.relevantAt4, 0.25);
+    /* strong: relevant and saying the stated black */
+    assert.strictEqual(g.strongAt8, 1);
+    assert.ok(!bench.gradeProduct(c, { name: 'Wide Leg Pants', price: 40 }).strong, 'a title that does not say black is not a strong match');
+    assert.ok(bench.gradeProduct(caseFor('shirt but heavier'), { name: 'Heavyweight Flannel Shirt', price: 40 }).strong);
+    assert.ok(!bench.gradeProduct(caseFor('shirt but heavier'), { name: 'Oxford Shirt', price: 40 }).strong);
     assert.strictEqual(g.relevantAt8, 0.125);
     assert.strictEqual(g.wrongAt8, 1);
     assert.strictEqual(g.exclusionViolations, 1);

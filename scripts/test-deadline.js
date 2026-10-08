@@ -571,6 +571,69 @@ async function main() {
     assert.deepStrictEqual({ reason: res.body.reason, kind: res.body.kind, upstreamStatus: res.body.upstreamStatus }, { reason: 'failed', kind: 'network', upstreamStatus: null });
   });
 
+  await testAsync('a source that answers 200 with a page that is not JSON is a 502 that says so', async () => {
+    installFetch({
+      search: () => ({ answer: { ok: true, status: 200, json: async () => JSON.parse('<!doctype html>'), text: async () => '<!doctype html>' }, delay: 0 }),
+      offers: () => ({ answer: okResponse(offersPayload([])), delay: 0 })
+    });
+    const { res } = await post({ intent: INTENT, limit: 12 });
+    assert.strictEqual(res.statusCode, 502);
+    assert.deepStrictEqual({ reason: res.body.reason, kind: res.body.kind }, { reason: 'failed', kind: 'bad-response' });
+  });
+
+  await testAsync('a failure of ours after the source answered is a 500 that names the stage, never "the source is unavailable"', async () => {
+    const relevance = require('../api/_providers/relevance');
+    const real = relevance.rankByIntent;
+    relevance.rankByIntent = () => { throw new TypeError("Cannot read properties of undefined (reading 'length')"); };
+    delete require.cache[require.resolve('../api/search')];
+    const fresh = require('../api/search');
+    const error = console.error;
+    const logged = [];
+    console.error = (...a) => logged.push(a.join(' '));
+    try {
+      installFetch({
+        search: () => ({ answer: okResponse(envelope([withInlineLink(1), withInlineLink(2)])), delay: 0 }),
+        offers: () => ({ answer: okResponse(offersPayload([])), delay: 0 })
+      });
+      const res = mockRes();
+      await fresh({ method: 'POST', headers: { host: 'ai-clothes-application.vercel.app', origin: 'https://lxmafromnyc.github.io' }, body: { intent: INTENT, limit: 12 }, on: () => {} }, res);
+      assert.strictEqual(res.statusCode, 500);
+      assert.deepStrictEqual(res.body, { error: 'The search failed inside Fynd.', reason: 'internal', stage: 'ranking', source: 'openwebninja' });
+      assert.ok(logged.some((line) => /Search failed inside Fynd .*stage: ranking/.test(line)), logged.join(' | '));
+      assert.ok(!logged.some((line) => /Product source failed/.test(line)), 'reported as the source failing');
+    } finally {
+      console.error = error;
+      relevance.rankByIntent = real;
+      delete require.cache[require.resolve('../api/search')];
+      require('../api/search');
+    }
+  });
+
+  await testAsync('a cached offer of another shape is a miss: the lookup is made and the product keeps its link', async () => {
+    const store = require('../api/_store');
+    const region = provider.cacheContext();
+    const record = needsLookup(7);
+    const key = cache.offerKey({ provider: 'openwebninja', productId: record.product_id, country: region.country, language: region.language, store: record.store_name });
+    await store.set(key, { expiresAt: Date.now() + 600000, commerce: 'from another version' }, { ttlSeconds: 600 });
+    assert.strictEqual(await cache.readOffer(key, cache.counters()), null);
+    await store.set(key, { expiresAt: Date.now() + 600000 }, { ttlSeconds: 600 });
+    assert.strictEqual(await cache.readOffer(key, cache.counters()), null);
+    /* a real negative entry and a real offer still read as they always did */
+    await store.set(key, { expiresAt: Date.now() + 600000, none: true, reason: 'no-offers' }, { ttlSeconds: 600 });
+    assert.deepStrictEqual(await cache.readOffer(key, cache.counters()), { none: true, reason: 'no-offers' });
+    await store.set(key, { expiresAt: Date.now() + 600000, commerce: { price: 70, retailer: 'Arket', productUrl: 'https://www.arket.com/p/7' } }, { ttlSeconds: 600 });
+    assert.strictEqual((await cache.readOffer(key, cache.counters())).commerce.productUrl, 'https://www.arket.com/p/7');
+  });
+
+  await testAsync('a cached search whose records are not records is a miss, not half an hour of nothing', async () => {
+    const store = require('../api/_store');
+    const key = cache.searchKey({ provider: 'openwebninja', intent: INTENT, limit: 12, context: {} });
+    await store.set(key, { expiresAt: Date.now() + 600000, records: [null, 7, 'x'] }, { ttlSeconds: 600 });
+    assert.strictEqual(await cache.readSearch(key, cache.counters()), null);
+    await store.set(key, { expiresAt: Date.now() + 600000, records: [{ title: 'A Hoodie' }] }, { ttlSeconds: 600 });
+    assert.deepStrictEqual((await cache.readSearch(key, cache.counters())).records, [{ title: 'A Hoodie' }]);
+  });
+
   await testAsync('a provider timeout says so in its own words', async () => {
     installFetch({ search: () => ({ answer: HANG }), offers: () => ({ answer: HANG }) });
     await assert.rejects(() => provider.search(INTENT, { limit: 4, deadline: Date.now() + 300 }),
