@@ -358,6 +358,62 @@ async function main() {
     assert.deepStrictEqual(filtered('linen shirt for summer', ['Linen Shirt White', 'Linen Tee White']).products.map((p) => p.name), ['Linen Shirt White']);
   });
 
+  console.log('\nwhat a live dry run of the benchmark found');
+
+  const words = (q) => new Set(q.split(/[^a-z0-9$]+/).filter(Boolean));
+
+  await test('"not ripped", "not see through", "no florals", "aren\'t chunky": never searched, always ruled out', () => {
+    const cases = {
+      'baggy jeans but not ripped': { gone: ['ripped', 'distressed'], out: ['ripped', 'distressed'], kept: 'Baggy Wide Leg Jeans', removed: 'Ripped Baggy Jeans' },
+      'white button up but not see through': { gone: ['see', 'through', 'sheer'], out: ['see through', 'sheer'], kept: 'White Oxford Button Up Shirt', removed: 'Sheer White Button Up Shirt' },
+      'cute summer dress no florals': { gone: ['florals', 'floral'], out: ['floral'], kept: 'Linen Midi Dress', removed: 'Floral Midi Dress' },
+      'white sneakers that arent chunky': { gone: ['chunky', 'that', 'are', 'not'], out: ['chunky'], kept: 'White Leather Sneakers', removed: 'Chunky White Sneakers' }
+    };
+    for (const [query, c] of Object.entries(cases)) {
+      const asked = words(phrase(query));
+      c.gone.forEach((w) => assert.ok(!asked.has(w), `${query}: asked "${phrase(query)}"`));
+      c.out.forEach((w) => assert.ok(local(query).concepts.without.includes(w), `${query}: without ${local(query).concepts.without}`));
+      assert.deepStrictEqual(filtered(query, [c.kept, c.removed]).products.map((p) => p.name), [c.kept], query);
+    }
+    /* "see through" goes as one: a listing that only says "through" stays */
+    assert.deepStrictEqual(filtered('white button up but not see through', ['Walk Through Button Up Shirt']).products.length, 1);
+  });
+
+  await test('"not sure", "not into", "not a fan": nothing is ruled out by how keen the shopper is', () => {
+    assert.ok(!words(phrase('not sure what i want maybe a jacket')).has('sure'), phrase('not sure what i want maybe a jacket'));
+    const c = local('not sure what i want maybe a jacket').concepts;
+    assert.ok(!c || !c.without.length, c && c.without.join(','));
+  });
+
+  await test('"the kind of shoes you wear with suits": the suit is the setting, and says which shoes', () => {
+    const asked = phrase('can u find me the kind of shoes you wear with suits');
+    assert.ok(!words(asked).has('suit') && !words(asked).has('suits'), asked);
+    assert.ok(/dress shoes|oxford/.test(asked), asked);
+    /* and a suit ruled out is not searched, and points at no garment */
+    const guest = phrase('somthing to wear to a wedding as a guest thats not a suit');
+    assert.ok(!words(guest).has('suit') && !words(guest).has('somthing') && !words(guest).has('dress'), guest);
+    assert.ok(words(guest).has('wedding'), guest);
+  });
+
+  await test('"jackets like the ones in top gun": a name pointed at is not a garment, and not searched', () => {
+    const asked = phrase('jackets like the ones in top gun');
+    assert.strictEqual(asked, 'jackets');
+    assert.deepStrictEqual(local('jackets like the ones in top gun').garments, ['jacket']);
+    assert.deepStrictEqual(local('jackets like the ones in top gun').concepts.ambiguous, ['reference']);
+  });
+
+  await test('thinking noises and common slips: "umm", "somthing", "jumpr", "cardagin", "buton"', () => {
+    assert.strictEqual(phrase('umm a top to go with my wide leg trousers'), 'top');
+    assert.ok(words(phrase('jumpr that isnt itchy')).has('jumper'), phrase('jumpr that isnt itchy'));
+    assert.ok(words(phrase('cardagin for work')).has('cardigan'), phrase('cardagin for work'));
+    assert.ok(words(phrase('wite buton up shirt')).has('button'), phrase('wite buton up shirt'));
+  });
+
+  await test('denim is a cloth, not a colour: "vintage denim jacket" is not searched as blue', () => {
+    assert.ok(!words(phrase('vintage looking denim jacket but not cropped')).has('blue'), phrase('vintage looking denim jacket but not cropped'));
+    assert.ok(!words(phrase('vintage looking denim jacket but not cropped')).has('cropped'));
+  });
+
   console.log(`\n${passed} passed, ${failures.length} failed`);
   if (failures.length) process.exit(1);
 }

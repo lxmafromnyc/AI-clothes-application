@@ -143,7 +143,11 @@ const describesSetting = (term, concepts) => {
    the model included — nothing ruled out is ever asked for. */
 const ruledOut = (term, concepts) => {
   const own = text(term).toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
-  return own.length > 0 && own.some((word) => concepts.without.includes(word) || concepts.excluded.includes(word));
+  if (!own.length) return false;
+  if (own.some((word) => concepts.without.includes(word) || concepts.excluded.includes(word))) return true;
+  /* a phrase ruled out as one: "see through" */
+  const said = ` ${own.join(' ')} `;
+  return concepts.without.some((phrase) => phrase.includes(' ') && said.includes(` ${phrase.toLowerCase()} `));
 };
 
 function conceptQuery(i, concepts) {

@@ -257,8 +257,10 @@ async function main() {
 
   /* what the base commit asked for these, captured before the change */
   const EXACT = {
-    'black oversized hoodie under $80': { local: 'black oversized hoodie under $80', served: 'hoodie' },
-    'cream linen midi dress for summer': { local: 'white linen midi dress cream for summer', served: 'linen midi dress' },
+    /* served by a model that answered nothing: the colour the shopper
+       typed is still searched (api/_reading.js), and nothing else is added */
+    'black oversized hoodie under $80': { local: 'black oversized hoodie under $80', served: 'black hoodie' },
+    'cream linen midi dress for summer': { local: 'white linen midi dress cream for summer', served: 'cream linen midi dress' },
     'vintage Prada bag under $500': { local: 'vintage prada bag under $500', served: '' }
   };
 

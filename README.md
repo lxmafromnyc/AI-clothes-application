@@ -135,7 +135,9 @@ scripts/test-concepts.js       offline test of descriptive requests, end to end
 scripts/bench-concepts.js      before/after benchmark of descriptive requests
 scripts/test-messy.js          offline test of messy, negative and misspelled requests
 scripts/bench-messy.js         before/after benchmark of 88 messy requests
-scripts/bench-messy-live.js    the same kind of requests against the real keys
+scripts/bench-messy-live.js    66 graded requests through the real live path; compares checkouts
+api/_reading.js                the model's reading, held to the shopper's words
+scripts/test-reading.js        offline test of that: inventions, roles, exact requests unchanged
 assets/app.js           rendering and page behaviour
 assets/discover-data.js Discover's six categories, and the words that place a product
 scripts/audit-catalog.js     re-proves every field a catalogue card shows
@@ -501,14 +503,91 @@ neither side. "Expensive-looking" is a look, never a price. A request that is
 only talk ("something like what my mom wears") is searched as broadly as it
 was asked, never as the talk itself.
 
+Anything else after a "not" that a listing could be titled with is ruled out as
+itself and as what the page's descriptors call it: "not ripped" rules out
+*ripped* and *distressed*, "not see through" rules out *see through* and *sheer*
+as one phrase, "no florals", "aren't chunky". "Not sure", "not into" and "not a
+fan" rule out nothing. A name the request points at — "jackets like the ones in
+top gun" — is neither a garment nor a search word. Thinking noises ("umm",
+"uh", "fr") are dropped wherever they appear.
+
 `/api/interpret` attaches the reading as `concepts`, only when there is one, so
 the reply for an exact request is unchanged. `node scripts/test-messy.js` holds
 the messy-input behaviour; `node scripts/bench-messy.js` measures it before and
-after on 88 deliberately difficult requests, and
-`node --env-file=.env.local scripts/bench-messy-live.js` checks a dozen of them
-against the real interpreter and provider, product by product. `node scripts/test-concepts.js`
+after on 88 deliberately difficult requests. `node scripts/test-concepts.js`
 holds all of this; `node scripts/bench-concepts.js` measures it before and after
 against a fixed pool of listings (see the script for how).
+
+### The model's reading, held to the words
+
+The tables above are deterministic, and blind outside what they list. The served
+interpreter is not blind, and is not trustworthy either: asked to read "something
+nice for dinner" a model will happily answer *black dress, heels, women*. So the
+two are used for what each is good at, in three layers, with one model call and
+one provider search per request, exactly as before:
+
+1. **The page's reader** (`assets/interpret.js`) puts the request in plain form
+   and reads what it can: the garments and the role each plays — wanted,
+   compared to, worn with, ruled out — and the shopper's own colours, fits and
+   exclusions.
+2. **The model** (`api/interpret.js`) answers the flat fields as it always did,
+   plus a `reading`: what is wanted (`want`, up to three `alternatives`), what it
+   is compared to (`comparedTo`), worn with (`wornWith`) and not wanted
+   (`avoid`), and its fit, material, style and occasion.
+3. **`api/_reading.js`** holds every part of that to the shopper's words before
+   any of it is used:
+   - a colour, brand, budget, gender, season, style or occasion is kept only
+     when the request says it ("cheap" is not a budget, "denim" is not blue);
+     a colour the shopper typed that the model filed under a catalogue family
+     ("Bright" for red) is searched as typed;
+   - a garment is kept only when the words name it or point at one (a sleeve,
+     a hood, "what skaters wear", "over shirts"); a mood or an occasion never
+     does, and neither does a garment the request rules out;
+   - what it is worn with or compared to is never searched; an `avoid` needs a
+     negation in the words; nothing ruled out is ever searched;
+   - a misspelling the model corrected counts as the shopper's word when it is
+     one slip from a word typed (two in a long word), and the word typed is not
+     itself a word the tables know — "jumpr" is a jumper, "boat" is never boots.
+
+   Then the two readings are reconciled. A request in shop words with no
+   concepts is an **exact** search and is answered exactly as before. Where the
+   tables understood the request, their reading stands and the model adds only
+   exclusions and settings. Where the tables knew the garment but not what the
+   comparison or the named reference asks for ("a cardigan but more structured",
+   "jackets like the ones in top gun"), the model's kinds of that garment are
+   searched. Where the tables found nothing, the model's checked reading is the
+   reading. `understood.by` says which: `exact`, `reader`, `reader+model` or
+   `model`, with what was refused and what was kept.
+
+Everything ruled out — garments, and modifiers like *skinny*, *logo* or
+*see through* — is enforced after the gate as well as kept out of the search.
+
+#### Measuring it live
+
+`scripts/bench-messy-live.js` puts 58 messy requests and 8 plain ones — the
+brief's own fifteen, misspellings, fragments, slang, contradictions, filler and
+"not"/"with" requests — through the real path: the page's reader exactly as the
+browser runs it, the served interpreter, `/api/search`'s intent, the product
+source with its offer lookups, cache and deadlines, the gate, the filter and the
+ranking. No stubs: a run costs one model call, one provider search and its
+capped offer lookups per request, per checkout.
+
+```sh
+# one checkout
+node --env-file=.env.local scripts/bench-messy-live.js
+# two, on the same requests, interleaved: before and after a change
+git worktree add ../fynd-before <commit>
+node --env-file=.env.local scripts/bench-messy-live.js --roots before=../fynd-before,after=. --out live.json
+```
+
+Each request is graded by the same rules whichever checkout answered it:
+interpretation (target, exclusions, stated constraints kept, nothing invented),
+relevant@4 and @8, clearly wrong in the top 8, hard-constraint violations
+(budget, stated colour or gender contradicted, anything ruled out shown),
+products the filter removed that were plainly what was asked, provider searches,
+offer lookups and latency. What "plainly" means is written beside each request
+as patterns on the product title; a title that does not say is counted neither
+way. `--reader local` measures the page's local fallback instead of the model.
 
 ### Worth knowing
 
@@ -1110,6 +1189,8 @@ The rest of the suites, all offline except the two that drive a browser:
 node scripts/bench-offer-resolution.js  # what one search costs the provider
 node scripts/test-concepts.js  # descriptive requests: what they mean, and what must not change
 node scripts/test-messy.js     # misspelled, slang, negative and conversational requests
+node scripts/test-reading.js   # the model's reading held to the shopper's words
+node scripts/test-bench-messy-live.js  # the live benchmark's grading, and a stand-in run end to end
 node scripts/bench-messy.js --compare before.json after.json  # 88 messy requests, before and after
 node scripts/bench-concepts.js --compare before.json after.json  # descriptive requests, before and after
 node scripts/test-cache.js     # the search and offer caches, and what they may not change

@@ -146,7 +146,67 @@ async function main() {
     const r = await readWith('green oversized hoodie', answer({ colors: ['Green', 'Black'], styles: ['Minimal'], occasions: ['Everyday'], season: 'fall', fits: ['Oversized'], keywords: ['hoodie'] }));
     assert.deepStrictEqual([r.prefs.colors, r.prefs.styles, r.prefs.occasions, r.prefs.season, r.prefs.fits], [['Green'], [], [], null, ['Oversized']]);
     const said = await readWith('simple grey hoodie for school this fall', answer({ colors: ['Neutral'], styles: ['Minimal'], occasions: ['Everyday'], season: 'fall', keywords: ['hoodie'] }));
-    assert.deepStrictEqual([said.prefs.colors, said.prefs.styles, said.prefs.occasions, said.prefs.season], [['Neutral'], ['Minimal'], ['Everyday'], 'fall']);
+    /* "Neutral" stood for the grey the shopper typed, and no shop titles
+       anything "neutral": the grey is what is kept, and searched */
+    assert.deepStrictEqual([said.prefs.colors, said.prefs.styles, said.prefs.occasions, said.prefs.season], [['grey'], ['Minimal'], ['Everyday'], 'fall']);
+    assert.ok(asks(said.asked, 'grey'), said.asked);
+  });
+
+  await test('a colour the shopper typed is searched even when the model filed it under a family, and only then', async () => {
+    /* the model put red under "Bright", which the search cannot use */
+    const red = await readWith('red dress', answer({ categories: ['dress'], colors: ['Bright'], keywords: ['dress'] }, { want: 'dress' }));
+    assert.strictEqual(red.asked, 'red dress');
+    assert.deepStrictEqual(red.understood.added, ['stated colour the model left out, kept as typed: red']);
+    /* "navy" is not "blue" */
+    const navy = await readWith('navy chinos', answer({ categories: ['trousers'], colors: ['Blue'], keywords: ['chinos'] }, { want: 'chinos' }));
+    assert.ok(asks(navy.asked, 'navy') && !asks(navy.asked, 'blue'), navy.asked);
+    /* where the model's answer carries the colour, the phrase is exactly what it was */
+    const carried = await readWith('red dress', answer({ categories: ['dress'], colors: ['Bright'], keywords: ['red', 'dress'] }, { want: 'dress' }));
+    assert.deepStrictEqual(carried.prefs.colors, ['Bright']);
+    assert.deepStrictEqual(carried.understood.added, []);
+    /* never the colour of what it is worn with, and never one ruled out */
+    const setting = await readWith('a top to wear with my black jeans', answer({ categories: ['tee'], keywords: ['top'] }, { want: 'top', wornWith: ['jeans'] }));
+    assert.ok(!asks(setting.asked, 'black'), setting.asked);
+    const notBlack = await readWith('a dress that isnt black', answer({ categories: ['dress'], keywords: ['dress'] }, { want: 'dress', avoid: ['black'] }));
+    assert.ok(!asks(notBlack.asked, 'black'), notBlack.asked);
+  });
+
+  await test('a misspelling the model corrected is the shopper\'s word; a word typed right is never "corrected" into a garment', async () => {
+    /* "parkka" is in no table; the model read it as parka */
+    const parka = await readWith('warm parkka for winter', answer({ categories: ['coat'], season: 'winter', keywords: ['parka'] }, { want: 'parka' }));
+    assert.ok(asks(parka.asked, 'parka'), parka.asked);
+    /* "jumpr": the tables read it now, and the model's filing stands with it */
+    const jumper = await readWith('jumpr that isnt itchy', answer({ categories: ['knit'], keywords: ['jumper'] }, { want: 'jumper', avoid: ['itchy'] }));
+    assert.ok(asks(jumper.asked, 'jumper') && !asks(jumper.asked, 'itchy'), jumper.asked);
+    /* "boat shoes" is not boots, whatever the model says */
+    const boat = await readWith('boat shoes', answer({ categories: ['shoes'], keywords: ['boots'] }, { want: 'boots' }));
+    assert.ok(!asks(boat.asked, 'boots'), boat.asked);
+  });
+
+  await test('a name pointed at is the model\'s to read, as kinds of the garment named', async () => {
+    const r = await readWith('jackets like the ones in top gun', answer({ categories: ['jacket'], keywords: ['jacket', 'top gun'] }, { want: 'bomber jacket', alternatives: ['flight jacket', 'aviator sunglasses', 'leather bomber jacket'] }));
+    assert.ok(asks(r.asked, 'bomber') || asks(r.asked, 'flight'), r.asked);
+    assert.ok(!asks(r.asked, 'gun') && !asks(r.asked, 'top') && !asks(r.asked, 'sunglasses'), r.asked);
+  });
+
+  await test('"see through" is ruled out as one phrase, from the model too', async () => {
+    const r = await readWith('white button up but not see through', answer({ categories: ['shirt'], colors: ['White'], keywords: ['button up', 'shirt'] }, { want: 'button up shirt', avoid: ['see through'] }));
+    assert.ok(!asks(r.asked, 'see') && !asks(r.asked, 'through'), r.asked);
+    assert.ok(r.intent.concepts.without.includes('see through'), r.intent.concepts.without.join(','));
+    assert.ok(!r.intent.concepts.without.includes('through'), r.intent.concepts.without.join(','));
+  });
+
+  await test('"denim" is a cloth: the model\'s "Blue" for a denim jacket is not kept', async () => {
+    const r = await readWith('vintage denim jacket', answer({ categories: ['jacket'], colors: ['Blue'], keywords: ['vintage', 'denim', 'jacket'] }, { want: 'denim jacket' }));
+    assert.deepStrictEqual(r.prefs.colors, []);
+    assert.ok(!asks(r.asked, 'blue'), r.asked);
+  });
+
+  await test('"something to wear to a wedding that isn\'t a suit": a ruled-out garment points at nothing, so no dress is invented', async () => {
+    const r = await readWith('somthing to wear to a wedding as a guest thats not a suit', answer(
+      { occasions: ['Evening'], keywords: ['wedding', 'guest'] }, { alternatives: ['dress', 'blazer', 'jumpsuit'], avoid: ['suit'], occasion: 'wedding guest' }));
+    assert.ok(!asks(r.asked, 'dress') && !asks(r.asked, 'suit'), r.asked);
+    assert.ok(asks(r.asked, 'wedding'), r.asked);
   });
 
   console.log('\nwhat is wanted, compared to, worn with and ruled out');

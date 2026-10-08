@@ -124,6 +124,9 @@ function evidence(query) {
   const typed = (raw.match(/\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?/g) || []).map((n) => Number(n.replace(/,/g, '')));
   const negated = new Set();
   const related = new Set();
+  /* every word in a relation's scope, the passed-over ones too: the
+     black of "with my black jeans" */
+  const setting = new Set();
   for (let at = 0; at < tokens.length; at += 1) {
     const here = tokens[at];
     const pair = NEGATOR_PAIRS.some(([a, b]) => here === a && tokens[at + 1] === b);
@@ -142,19 +145,59 @@ function evidence(query) {
       for (let next = at + 1; next < tokens.length && taken < 3; next += 1) {
         const word = tokens[next];
         if (word === ',' || NEGATORS.has(word)) break;
+        setting.add(word);
         if (RELATION_SKIP.has(word)) continue;
         related.add(stem(word));
         taken += 1;
       }
     }
   }
-  return { text: words.join(' '), words, stems, negated, related, typed };
+  return { text: words.join(' '), words, stems, negated, related, setting, typed };
 }
 
-/* every content word of a term was said */
+/* A word the model wrote that the shopper misspelt: "jumper" for
+   "jumpr", "cardigan" for "cardagin". Close enough to one word typed —
+   one slip in a short word, two in a long one, same first letter — and
+   the typed word is not itself a word the tables know, so "boat" is
+   never taken as "boot". Only ever a word the model offered: nothing
+   here reads a garment into the request on its own. */
+function slips(a, b, most) {
+  if (Math.abs(a.length - b.length) > most) return most + 1;
+  let prev2 = null;
+  let prev = Array.from({ length: b.length + 1 }, (x, j) => j);
+  for (let i = 1; i <= a.length; i += 1) {
+    const row = [i];
+    for (let j = 1; j <= b.length; j += 1) {
+      row[j] = Math.min(prev[j] + 1, row[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      if (prev2 && i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) row[j] = Math.min(row[j], prev2[j - 2] + 1);
+    }
+    prev2 = prev;
+    prev = row;
+  }
+  return prev[b.length];
+}
+function misspelt(word, ev) {
+  const w = String(word || '').toLowerCase();
+  if (w.length < 5 || !/^[a-z]+$/.test(w)) return false;
+  const most = w.length >= 7 ? 2 : 1;
+  return ev.words.some((typed) => typed.length >= 4 && typed[0] === w[0] && typed !== w && !known(typed)
+    && slips(typed, w, most) <= most);
+}
+let KNOWN = null;
+function known(word) {
+  if (!KNOWN) {
+    KNOWN = new Set([...GENERIC, ...NEGATORS, ...PASS, ...BOUNDARY, ...RELATIONS, ...RELATION_SKIP, ...GARMENT_CUES]);
+    for (const table of [COLOUR_EVIDENCE, FIT_EVIDENCE, STYLE_EVIDENCE, OCCASION_EVIDENCE, GENDER_EVIDENCE]) {
+      for (const list of Object.values(table)) list.forEach((w) => KNOWN.add(w));
+    }
+  }
+  return KNOWN.has(word) || garmentNouns().has(stem(word));
+}
+
+/* every content word of a term was said, or misspelt */
 const said = (term, ev) => {
   const own = wordsOf(term).filter((w) => !GENERIC.has(w));
-  return own.length > 0 && own.every((w) => ev.stems.has(stem(w)));
+  return own.length > 0 && own.every((w) => ev.stems.has(stem(w)) || misspelt(w, ev));
 };
 /* any word of a term was ruled out */
 const ruledOut = (term, ev) => wordsOf(term).some((w) => ev.negated.has(stem(w)));
@@ -246,7 +289,12 @@ const GARMENT_CUES = new Set(('sleeve sleeves sleeveless collar collared neck ne
   'skater skaters skate goth goths punk punks preppy hiker hikers runner runners nurse nurses chef chefs cowboy cowboys ' +
   'golfer golfers cyclist cyclists surfer surfers rapper rappers lumberjack lumberjacks gamer gamers ' +
   'over under underneath layer layering').split(' '));
-const pointsAtGarment = (ev) => ev.words.some((w) => GARMENT_CUES.has(w)) || [...garmentNouns().keys()].some((n) => ev.stems.has(n));
+/* A garment the request rules out points at nothing wanted: "something
+   for a wedding that isn't a suit" names no garment it wants. A garment
+   the model read out of a misspelling ("jumpr") points as the word would. */
+const pointsAtGarment = (ev, terms) => ev.words.some((w) => GARMENT_CUES.has(w) && !ev.negated.has(stem(w)))
+  || [...garmentNouns().keys()].some((n) => ev.stems.has(n) && !ev.negated.has(n))
+  || (terms || []).some((t) => { const last = wordsOf(t).slice(-1)[0]; return last && garmentOf(last) && !ev.stems.has(stem(last)) && misspelt(last, ev); });
 
 /* ---------- the flat fields ---------- */
 
@@ -256,7 +304,8 @@ const COLOUR_EVIDENCE = {
   neutral: ['grey', 'gray', 'charcoal', 'beige', 'cream', 'ivory', 'tan', 'khaki', 'oatmeal', 'ecru', 'stone', 'taupe', 'heather', 'neutral', 'nude', 'sand', 'camel', 'off', 'silver'],
   earth: ['brown', 'chocolate', 'camel', 'rust', 'olive', 'khaki', 'tan', 'earth', 'earthy', 'mocha', 'coffee', 'terracotta', 'mustard', 'burgundy', 'maroon'],
   green: ['green', 'sage', 'olive', 'forest', 'emerald', 'mint', 'khaki'],
-  blue: ['blue', 'navy', 'cobalt', 'teal', 'turquoise', 'sky', 'indigo', 'denim'],
+  /* not "denim": a denim jacket is a cloth, and comes in black */
+  blue: ['blue', 'navy', 'cobalt', 'teal', 'turquoise', 'sky', 'indigo'],
   pastel: ['pastel', 'lilac', 'lavender', 'mint', 'blush', 'peach', 'baby', 'pale', 'light'],
   bright: ['bright', 'red', 'pink', 'yellow', 'orange', 'purple', 'neon', 'fuchsia', 'magenta', 'coral', 'hot', 'gold'],
   red: ['red', 'burgundy', 'maroon', 'crimson', 'scarlet', 'wine'],
@@ -327,6 +376,22 @@ const ruledOutFamily = (family, table, ev) => {
   const words = table[String(family || '').toLowerCase()] || [family];
   return words.some((w) => ev.negated.has(stem(w)));
 };
+
+/* the colours a request states, as typed: "light grey", "navy". Not one
+   ruled out ("not black"), and not one that only describes what it is
+   worn with ("with my black jeans"). */
+function statedColours(ev) {
+  const { lexicon } = reader();
+  const colours = new Set(lexicon.COLOUR_WORDS || []);
+  const out = [];
+  ev.words.forEach((word, at) => {
+    if (!colours.has(word) || ev.negated.has(stem(word)) || ev.setting.has(word)) return;
+    const before = ev.words[at - 1];
+    const named = before === 'light' || before === 'dark' || before === 'pale' ? `${before} ${word}` : word;
+    if (!out.includes(named)) out.push(named);
+  });
+  return out;
+}
 
 const brandSaid = (brand, ev) => {
   const want = String(brand || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
@@ -419,10 +484,25 @@ const FAMILY_OUT = {
 function reconcile(query, flat, rawReading, table) {
   const ev = evidence(query);
   const rejected = [];
+  const added = [];
   const out = Object.assign({}, flat);
 
   /* the flat fields: only what the words say */
   out.colors = keep(flat.colors || [], (c) => evidenced(c, COLOUR_EVIDENCE, ev), rejected, 'colour not said');
+  /* and what the words say, kept. The model files a colour under the
+     catalogue's families — "Bright" for red, "Blue" for navy — and a
+     family is not a word a shop titles anything with, so "red dress"
+     could reach the search as "dress". A colour the shopper typed that
+     the model's answer carries nowhere is searched as typed, in place of
+     the family that stood for it. Where the answer does carry it, nothing
+     changes. */
+  for (const colour of statedColours(ev)) {
+    const word = colour.split(' ').pop();
+    const carried = out.colors.concat(flat.keywords || []).some((v) => wordsOf(v).includes(word) || (word === 'grey' && wordsOf(v).includes('gray')) || (word === 'gray' && wordsOf(v).includes('grey')));
+    if (carried) continue;
+    out.colors = out.colors.filter((c) => !(COLOUR_EVIDENCE[String(c).toLowerCase()] || []).includes(word)).concat([colour]);
+    added.push(`stated colour the model left out, kept as typed: ${colour}`);
+  }
   out.brands = keep(flat.brands || [], (b) => brandSaid(b, ev) && !ruledOut(b, ev), rejected, 'brand not said');
   out.gender = flat.gender && evidenced(flat.gender, GENDER_EVIDENCE, ev) ? flat.gender : null;
   if (flat.gender && !out.gender) rejected.push(`gender not said: ${flat.gender}`);
@@ -466,7 +546,7 @@ function reconcile(query, flat, rawReading, table) {
   const by = !concepts ? 'exact' : concepts.fromModel ? 'model' : model && model.used ? 'reader+model' : 'reader';
   if (concepts) delete concepts.fromModel;
 
-  return { preferences: out, understood: { by, rejected } };
+  return { preferences: out, understood: { by, rejected, added } };
 }
 
 /* each part of the model's reading, held to the words */
@@ -501,6 +581,13 @@ function checkReading(reading, ev, rejected) {
 
 const unique = (list) => [...new Set(list.filter(Boolean))];
 const conceptWords = (term) => wordsOf(term).map(stem);
+/* a kind of the garment: "bomber jacket" of jacket, whichever name the
+   lexicon files it under */
+const sameGarment = (term, anchor) => {
+  if (garmentOf(term) === anchor) return true;
+  const last = wordsOf(term).slice(-1)[0];
+  return Boolean(last) && aliasStems(anchor).includes(stem(last));
+};
 
 /* what the model read, put into the concepts the rest of the search
    already understands */
@@ -510,7 +597,8 @@ function mergeConcepts(table, model, ev, prefs) {
      words point at a garment and the model named one — "something to
      keep my neck warm" is a scarf — the model's checked reading is the
      sharper one, and the tables' exclusions and colours stay with it. */
-  const modelNames = model && (model.want || model.alternatives.length) && pointsAtGarment(ev);
+  const modelTerms = model ? [model.want].concat(model.alternatives).filter(Boolean) : [];
+  const modelNames = model && modelTerms.length && pointsAtGarment(ev, modelTerms);
   const tableKnows = table && (table.mode !== 'plain' || table.anchor || (table.search || []).length)
     && !(table.mode === 'open' && modelNames);
 
@@ -526,6 +614,9 @@ function mergeConcepts(table, model, ev, prefs) {
         extraOut.excluded.push(garment);
         extraOut.without.push(...family);
         extraOut.drop.push(...family);
+      } else if (words.length > 1) {
+        /* "see through" is one thing: a listing that says "through" is not it */
+        extraOut.without.push(words.join(' '));
       } else {
         extraOut.without.push(...words);
       }
@@ -554,8 +645,15 @@ function mergeConcepts(table, model, ev, prefs) {
     ? model.alternatives.concat(model.want ? [model.want] : []).filter((term) => garmentOf(term) === table.anchor
       && wordsOf(term).some((w) => !garmentNouns().has(stem(w)) && !GENERIC.has(w) && ev.stems.has(stem(w))))
     : [];
-  if (comparedHere || sharper.length) {
-    const kinds = comparedHere ? unique(model.alternatives.concat(model.want ? [model.want] : [])).slice(0, 4) : unique(sharper).slice(0, 3);
+  /* "jackets like the ones in top gun": the table knew the garment and
+     that a name was pointed at, and cannot know what the name means. The
+     model's kinds of that same garment — "bomber jacket", "flight
+     jacket" — are what the name asks for. Never another garment. */
+  const cited = model && table && table.anchor && !comparedHere && !sharper.length && (table.ambiguous || []).includes('reference')
+    ? unique([model.want].concat(model.alternatives)).filter((term) => term && sameGarment(term, table.anchor))
+    : [];
+  if (comparedHere || sharper.length || cited.length) {
+    const kinds = comparedHere ? unique(model.alternatives.concat(model.want ? [model.want] : [])).slice(0, 4) : unique(sharper.length ? sharper : cited).slice(0, 3);
     model.used = true;
     return Object.assign({}, table, {
       mode: comparedHere ? 'comparative' : 'described',
@@ -582,6 +680,7 @@ function mergeConcepts(table, model, ev, prefs) {
       /* the setting is not the thing searched for */
       merged.search = table.search.filter((t) => !settings.includes(garmentOf(t)));
       merged.alternatives = table.alternatives.filter((t) => !settings.includes(garmentOf(t)));
+      merged.terms = (table.terms || []).filter((t) => !settings.includes(garmentOf(t)));
       if (settings.includes(table.anchor)) merged.anchor = null;
       prefs.garments = prefs.garments.filter((g) => !settings.includes(g));
     }
