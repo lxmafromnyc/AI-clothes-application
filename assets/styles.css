@@ -368,19 +368,22 @@ strong { font-weight: 600; }
 }
 
 /* How many live searches are left, at the bottom of the box: a thin bar
-   of what remains of the allowance, and under it the count in words, in
-   the muted ink at the size of the box's other notes. The bar is seen
-   before the words are read, and both stay quieter than the field and
-   its button.
+   of what remains of the allowance, and beside it the count in words,
+   in the muted ink at the size of the box's other notes — on one row,
+   so the box stays compact. The bar runs from the box's content edge
+   and is seen before the words are read; the words sit under the
+   Search button, the thing that spends them. Both stay quieter than
+   the field and its button. On a phone, where the button is full
+   width, the bar is as wide as the button and the words are centred
+   under it.
 
    The bar is the allowance, not a progress line: it is inset from the
    box's edges on its own light track, rounded at its ends, and it holds
    still. A small allowance is drawn one step a search, so three
    searches read as three; a large one is one smooth fill, never a
-   hundred slivers. Its ink deepens a little as the allowance runs down
-   — the accent, then its deeper ink, then the primary ink — and an
-   allowance with nothing left is the bare track. No warning colour, at
-   any count.
+   hundred slivers. Whatever is left is the accent blue, at every count;
+   the shrinking fill is the signal, and an allowance with nothing left
+   is the bare track. No warning colour, ever.
 
    The space is held from the first paint, so the box does not grow when
    the count arrives, and is given up only when there is no count to show
@@ -389,16 +392,16 @@ strong { font-weight: 600; }
    a short fade, which reduced motion turns off. */
 .ask-allowance { display: none; }
 .js .ask-allowance {
-  display: block;
+  display: flex; align-items: center; gap: 16px;
   grid-column: 1 / -1;
-  margin: 8px 0 2px;
+  margin: 6px 0 -2px;
   opacity: 0;
   transition: opacity .2s var(--ease);
 }
 .js .ask-allowance.is-shown { opacity: 1; }
 .js .ask-allowance[hidden] { display: none; }
 
-.ask-meter { display: flex; gap: 4px; height: 4px; }
+.ask-meter { flex: 1 1 auto; min-width: 0; display: flex; gap: 4px; height: 4px; }
 .ask-meter-step,
 .ask-meter-track {
   flex: 1 1 0; min-width: 0; height: 100%;
@@ -408,14 +411,15 @@ strong { font-weight: 600; }
 .ask-meter-track { overflow: hidden; }
 .ask-meter-fill { display: block; width: calc(var(--share) * 100%); height: 100%; min-width: 4px; border-radius: var(--r-pill); }
 .ask-meter-step.is-left,
-.ask-meter-fill { background: var(--meter-ink); }
-.ask-meter[data-level="high"] { --meter-ink: var(--color-accent); }
-.ask-meter[data-level="medium"] { --meter-ink: var(--color-accent-ink); }
-.ask-meter[data-level="low"] { --meter-ink: var(--color-primary); }
+.ask-meter-fill { background: var(--color-accent); }
 
+/* one width for every daily count, so the bar is the same length at 3, 2,
+   1 and none, and only its fill changes */
 .ask-usage {
+  flex: none;
+  min-width: 13em;
   min-height: 18px;
-  margin-top: 6px;
+  text-align: right;
   font-size: 13px; line-height: 18px;
   color: var(--color-text-muted);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -819,8 +823,8 @@ a.item-card:hover .item-name { text-decoration: underline; text-underline-offset
   .ask-actions .attach-btn { grid-row: 1; grid-column: 3; }
   .ask-actions .btn-primary { grid-row: 2; grid-column: 1 / -1; width: 100%; height: 50px; }
   /* under the button, as wide as it, with the words centred beneath */
-  .js .ask-allowance { margin: 8px 0 0; }
-  .ask-usage { text-align: center; }
+  .js .ask-allowance { display: block; margin: 8px 0 0; }
+  .ask-usage { margin-top: 6px; text-align: center; }
 
   .ask-examples { margin-top: 16px; }
   .examples-label { width: 100%; margin: 0 0 2px; }

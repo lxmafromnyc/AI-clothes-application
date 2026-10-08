@@ -1247,7 +1247,7 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
       share: box.width ? filled.reduce((sum, n) => sum + n.getBoundingClientRect().width, 0) / box.width : 0,
       ink: filled.length ? [...new Set(filled.map(colour))] : [],
       track: [...new Set([...meter.querySelectorAll('.ask-meter-step:not(.is-left), .ask-meter-track')].map(colour))],
-      level: meter.dataset.level || null,
+      width: box.width,
       ariaHidden: meter.getAttribute('aria-hidden'),
       text: meter.textContent,
       drawn: meter.children.length > 0
@@ -1286,15 +1286,18 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     await page.close();
   });
 
-  await test('the bar shows what is left of the Free allowance, a step a search, from the server\'s own count', async () => {
+  await test('the bar shows what is left of the Free allowance, a step a search, in the accent blue, from the server\'s own count', async () => {
+    /* the shrinking fill is the signal: whatever is left is the accent
+       blue at every count, and nothing left is the bare grey track */
     const expected = [
       /* left, share of the bar filled, ink */
-      [3, 1, 'high', '--color-accent'],
-      [2, 2 / 3, 'medium', '--color-accent-ink'],
-      [1, 1 / 3, 'low', '--color-primary'],
-      [0, 0, 'none', null]
+      [3, 1, '--color-accent'],
+      [2, 2 / 3, '--color-accent'],
+      [1, 1 / 3, '--color-accent'],
+      [0, 0, null]
     ];
-    for (const [left, share, level, ink] of expected) {
+    const widths = [];
+    for (const [left, share, ink] of expected) {
       reset();
       accountState = accountReply({ searchesUsed: 3 - left });
       const page = await open();
@@ -1303,24 +1306,26 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
       assert.strictEqual(bar.steps, 3, `${left} left: ${bar.steps} steps for a three-search allowance`);
       /* the gaps between steps are the only thing between the fill and the share */
       assert.ok(Math.abs(bar.share - share) <= 0.03, `${left} left: ${bar.share.toFixed(3)} of the bar is filled, not ${share.toFixed(3)}`);
-      assert.strictEqual(bar.level, level, `${left} left`);
       assert.deepStrictEqual(bar.ink, ink ? [ink] : [], `${left} left: filled in ${bar.ink}`);
       assert.deepStrictEqual(bar.track, left === 3 ? [] : ['--color-surface-3'], `${left} left: the empty steps are ${bar.track}`);
+      widths.push(bar.width);
       await page.close();
     }
+    /* one bar, the same length at every count, so only its fill changes */
+    assert.ok(Math.max(...widths) - Math.min(...widths) <= 0.5, `the bar changes length with the count: ${widths.join(', ')}`);
     accountState = accountReply({});
   });
 
   await test('Pro and Max are one smooth fill of remaining over limit — and the bar follows the server\'s limit, not Free\'s', async () => {
     const cases = [
-      /* state, smooth?, steps, share, level */
-      [{ planId: 'pro', searchesUsed: 3, extra: SIGNED_IN }, true, 0, 97 / 100, 'high'],
-      [{ planId: 'max', searchesUsed: 3, extra: SIGNED_IN }, true, 0, 497 / 500, 'high'],
-      [{ planId: 'pro', searchesUsed: 50, extra: SIGNED_IN }, true, 0, 50 / 100, 'medium'],
-      [{ planId: 'pro', searchesUsed: 80, extra: SIGNED_IN }, true, 0, 20 / 100, 'low'],
-      [{ planId: 'max', searchesUsed: 500, extra: SIGNED_IN }, true, 0, 0, 'none']
+      /* state, smooth?, steps, share */
+      [{ planId: 'pro', searchesUsed: 3, extra: SIGNED_IN }, true, 0, 97 / 100],
+      [{ planId: 'max', searchesUsed: 3, extra: SIGNED_IN }, true, 0, 497 / 500],
+      [{ planId: 'pro', searchesUsed: 50, extra: SIGNED_IN }, true, 0, 50 / 100],
+      [{ planId: 'pro', searchesUsed: 80, extra: SIGNED_IN }, true, 0, 20 / 100],
+      [{ planId: 'max', searchesUsed: 500, extra: SIGNED_IN }, true, 0, 0]
     ];
-    for (const [state, smooth, steps, share, level] of cases) {
+    for (const [state, smooth, steps, share] of cases) {
       reset();
       accountState = accountReply(state);
       const page = await open();
@@ -1330,7 +1335,8 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
       assert.strictEqual(bar.smooth, smooth, `${what}: not one smooth fill`);
       assert.strictEqual(bar.steps, steps, `${what}: drawn as ${bar.steps} slivers`);
       assert.ok(Math.abs(bar.share - share) <= 0.01, `${what}: ${bar.share.toFixed(3)} filled, not ${share.toFixed(3)}`);
-      assert.strictEqual(bar.level, level, what);
+      assert.deepStrictEqual(bar.ink, share ? ['--color-accent'] : [], `${what}: filled in ${bar.ink}`);
+      assert.deepStrictEqual(bar.track, ['--color-surface-3'], what);
       await page.close();
     }
     /* whatever allowance the server reports is the one drawn: five
@@ -1606,17 +1612,30 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
       assert.ok(g.words.left >= g.form.left && g.words.right <= g.form.right && g.words.bottom <= g.form.bottom - g.border, `${where}: the count is outside the box`);
       for (const part of g.parts) assert.ok(!overlap(g.words, part), `${where}: the count runs into ${part.name}`);
       assert.strictEqual(g.overflow, 0, `${where}: the page scrolls sideways`);
-      /* the bar: thin, inside the box, above the words, over nothing, and
-         as wide as the control — from the box's content edge to the end of
-         the Search button, or the button's own width where it stacks */
+      /* the bar: thin, inside the box, over nothing, and clearly visible */
       assert.ok(g.bar.height >= 3 && g.bar.height <= 6, `${where}: the bar is ${g.bar.height}px thick`);
       assert.ok(g.bar.left >= g.form.left && g.bar.right <= g.form.right && g.bar.bottom <= g.form.bottom - g.border, `${where}: the bar is outside the box`);
-      assert.ok(g.bar.bottom <= g.words.top, `${where}: the bar runs into the count`);
+      assert.ok(!overlap(g.bar, g.words), `${where}: the bar runs into the count`);
       for (const part of g.parts) assert.ok(!overlap(g.bar, part), `${where}: the bar runs into ${part.name}`);
-      assert.ok(Math.abs(g.bar.right - g.button.right) <= 1, `${where}: the bar ends at ${g.bar.right}, the button at ${g.button.right}`);
-      const start = width <= 767 ? g.button.left : g.content.left;
-      assert.ok(Math.abs(g.bar.left - start) <= 1, `${where}: the bar starts at ${g.bar.left}, not ${start}`);
-      assert.ok(g.bar.width >= 0.6 * g.form.width, `${where}: the bar is ${g.bar.width}px of a ${g.form.width}px box`);
+      if (width <= 767) {
+        /* stacked under the full-width button: as wide as it, the words
+           under the bar */
+        assert.ok(Math.abs(g.bar.left - g.button.left) <= 1 && Math.abs(g.bar.right - g.button.right) <= 1, `${where}: the bar runs ${g.bar.left}–${g.bar.right}, the button ${g.button.left}–${g.button.right}`);
+        assert.ok(g.bar.bottom <= g.words.top, `${where}: the bar is not above the count`);
+        /* the allowance adds a short band under the button, no more */
+        assert.ok(g.form.bottom - g.button.bottom <= 50, `${where}: ${g.form.bottom - g.button.bottom}px of box under the button`);
+      } else {
+        /* a compact box, with one row for the allowance: the bar from the
+           box's content edge, the words beside it ending under the Search
+           button */
+        assert.ok(g.form.height >= 80 && g.form.height <= 90, `${where}: the box is ${g.form.height}px tall`);
+        assert.ok(Math.abs(g.bar.left - g.content.left) <= 1, `${where}: the bar starts at ${g.bar.left}, not ${g.content.left}`);
+        assert.ok(Math.abs(g.words.right - g.button.right) <= 1, `${where}: the count ends at ${g.words.right}, the button at ${g.button.right}`);
+        assert.ok(g.bar.right <= g.words.left - 8, `${where}: the bar runs up to the count`);
+        const middle = (r) => (r.top + r.bottom) / 2;
+        assert.ok(Math.abs(middle(g.bar) - middle(g.words)) <= 2, `${where}: the bar and the count are not on one row`);
+        assert.ok(g.bar.width >= 0.5 * g.form.width, `${where}: the bar is ${g.bar.width}px of a ${g.form.width}px box`);
+      }
 
       await page.focus('#ask');
       await page.keyboard.press('Enter');

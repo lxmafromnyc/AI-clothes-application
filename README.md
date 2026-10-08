@@ -1414,16 +1414,18 @@ day's use — somebody who upgrades is buying the month, not the remainder
 of an afternoon.
 
 The search box shows what is left before anything is typed: a thin bar of
-what remains of the allowance, and under it the count in words — "3 searches
+what remains of the allowance, and beside it the count in words — "3 searches
 left today", "97 searches left this month", "No live searches left today".
-The words are exactly `usage.searches.remaining` and `usage.searches.period`
-from `/api/account`, for the account or, signed out, for the browser, and the
-bar is `remaining / limit` from the same answer; the page knows no plan's
-limit and subtracts nothing. An allowance of up to ten is drawn one step a
-search, so Free's three read as three; a larger one is a single smooth fill.
-The bar's ink deepens a little as the allowance runs down (accent, its deeper
-ink, then the primary ink), an empty allowance is the bare track, and no
-count is ever shown in a warning colour. The bar is decoration
+On a wide screen they share one row at the bottom of the box, which keeps it
+compact; on a phone the bar is as wide as the Search button with the words
+centred under it. The words are exactly `usage.searches.remaining` and
+`usage.searches.period` from `/api/account`, for the account or, signed out,
+for the browser, and the bar is `remaining / limit` from the same answer; the
+page knows no plan's limit and subtracts nothing. An allowance of up to ten is
+drawn one step a search, so Free's three read as three; a larger one is a
+single smooth fill. Whatever is left is the accent blue at every count — the
+shrinking fill is the signal — an empty allowance is the bare grey track, and
+no count is ever shown in a warning colour. The bar is decoration
 (`aria-hidden`); the words are what assistive technology reads.
 
 The bar is a level, not an activity: it holds still, inset on its own track.

@@ -472,10 +472,8 @@ function orderFacet(counts, key) {
   function drawMeter(reading) {
     if (!meter) return;
     meter.replaceChildren();
-    delete meter.dataset.level;
     if (!reading || !reading.limit) return;
     const share = Math.min(1, reading.left / reading.limit);
-    meter.dataset.level = share === 0 ? 'none' : share <= 0.34 ? 'low' : share <= 0.67 ? 'medium' : 'high';
     if (reading.limit <= STEPS_UP_TO) {
       for (let step = 0; step < reading.limit; step += 1) {
         const piece = document.createElement('span');
