@@ -135,7 +135,7 @@ scripts/test-concepts.js       offline test of descriptive requests, end to end
 scripts/bench-concepts.js      before/after benchmark of descriptive requests
 scripts/test-messy.js          offline test of messy, negative and misspelled requests
 scripts/bench-messy.js         before/after benchmark of 88 messy requests
-scripts/bench-messy-live.js    74 graded requests through the real live path; compares checkouts
+scripts/bench-messy-live.js    81 graded requests through the real live path; compares checkouts
 api/_reading.js                the model's reading, held to the shopper's words
 scripts/test-reading.js        offline test of that: inventions, roles, exact requests unchanged
 assets/app.js           rendering and page behaviour
@@ -574,7 +574,7 @@ Everything ruled out — garments, and modifiers like *skinny*, *logo* or
 
 #### Measuring it live
 
-`scripts/bench-messy-live.js` puts 66 messy requests and 8 plain ones — the
+`scripts/bench-messy-live.js` puts 73 messy requests and 8 plain ones — the
 brief's own fifteen, misspellings, fragments, slang, contradictions, filler and
 "not"/"with" requests — through the real path: the page's reader exactly as the
 browser runs it, the served interpreter, `/api/search`'s intent, the product

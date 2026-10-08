@@ -843,7 +843,11 @@
     const signals = [];
     const vagueSignals = new Set();
     const fit = [];
-    const add = (signal, isVague) => { if (!signals.includes(signal)) signals.push(signal); if (isVague) vagueSignals.add(signal); };
+    /* the signals the request states, as opposed to ones read only off
+       what it rules out: "not sloppy" leans polished, but "dressy" is not
+       something the shopper said, and is never their whole search */
+    const stated = new Set();
+    const add = (signal, isVague, fromNot) => { if (!signals.includes(signal)) signals.push(signal); if (isVague) vagueSignals.add(signal); if (!fromNot) stated.add(signal); };
     /* "skinny jeans but not too tight", "loose but not too baggy": a fit
        the request asks for, and the same side of it not overdone. That
        softens the fit; it does not turn it into the other one */
@@ -854,7 +858,7 @@
     const saysLoose = statedFits.some((t) => LOOSE_FIT.has(t));
     const softened = new Set(ruled.fits.filter((f) => (saysClose && CLOSE_FIT.has(f)) || (saysLoose && LOOSE_FIT.has(f)))
       .flatMap((f) => [NEGATED_FIT[f]].concat(NEGATED[f] || [])).filter(Boolean));
-    ruled.signals.filter((signal) => !softened.has(signal)).forEach((signal) => add(signal, true));
+    ruled.signals.filter((signal) => !softened.has(signal)).forEach((signal) => add(signal, true, true));
     if (ruled.features.some((f) => feature(f).signal)) ruled.features.forEach((f) => { if (feature(f).signal) add(feature(f).signal, true); });
 
     /* how it should look, which is not what it costs */
@@ -1088,12 +1092,14 @@
       /* all talk and nothing to search ("something like what my mom
          wears"): the reading says so, and the search is as broad as the
          request — never the talk itself, which would find mom jeans */
-      if (!garmentWords.length && signals.length && STYLE_WORD[signals[0]] && !kept.includes(STYLE_WORD[signals[0]])) kept.unshift(STYLE_WORD[signals[0]]);
+      const lead = signals.find((sig) => STYLE_WORD[sig] && stated.has(sig));
+      if (!garmentWords.length && lead && !kept.includes(STYLE_WORD[lead])) kept.unshift(STYLE_WORD[lead]);
       /* with no garment at all, the search stays on clothes: an occasion
          is dressed for with an outfit, but a style is worn as clothing —
-         "skater style outfit" finds costumes */
+         "skater style outfit" finds costumes, and a style word on its own
+         ("minimal") is read by a shop as anything at all */
       if (!garmentWords.length && occasion) kept.push('outfit');
-      else if (!garmentWords.length && tribe) kept.push('clothing');
+      else if (!garmentWords.length && (tribe || (kept.length && kept.every((term) => Object.values(STYLE_WORD).includes(term))))) kept.push('clothing');
       terms = unique(kept.concat(garmentWords)).slice(0, 10);
       anchor = targets[0] || null;
     }

@@ -432,6 +432,35 @@ async function main() {
     assert.ok(!loose.has('slim') && !loose.has('skinny') && !loose.has('baggy'), phrase('loose jeans but not too baggy'));
   });
 
+  await test('the brief\'s thirteen: what is searched, and what never is', () => {
+    const cases = [
+      ['hoodie but nicer', ['hoodie'], ['nicer']],
+      ['something comfy but not sloppy', ['sweater'], ['sloppy', 'dressy']],
+      ['black pants loose', ['black'], []],
+      ['that jacket shirt thing', ['overshirt'], ['thing']],
+      ['dress for going out but casual', ['dress', 'casual'], ['for', 'but']],
+      ['something like a hoodie without the hood', ['sweatshirt'], ['hoodie', 'hood']],
+      ['i want a shirt thats kinda oversized', ['oversized', 'shirt'], ['kinda', 'thats', 'want']],
+      ['pants that arent skinny', ['pants'], ['skinny']],
+      ['something warm but not a coat', ['sweater'], ['coat']],
+      ['cute top to wear with jeans', ['top'], ['jeans']],
+      ['not too tight', [], ['tight', 'relaxed']],
+      ['not into logos', ['minimal'], ['logos', 'into']],
+      ['not huge or sloppy', [], ['huge', 'sloppy', 'dressy', 'oversized']]
+    ];
+    for (const [query, has, never] of cases) {
+      const asked = words(phrase(query));
+      has.forEach((w) => assert.ok(asked.has(w), `${query}: asked "${phrase(query)}", missing ${w}`));
+      never.forEach((w) => assert.ok(!asked.has(w), `${query}: asked "${phrase(query)}", has ${w}`));
+    }
+    /* what each rules out is still enforced on the results */
+    assert.ok(local('not too tight').concepts.without.includes('tight'));
+    assert.ok(local('not huge or sloppy').concepts.without.includes('oversized'));
+    assert.ok(local('not into logos').concepts.without.includes('logo'));
+    assert.deepStrictEqual(local('something warm but not a coat').concepts.excluded, ['coat']);
+    assert.deepStrictEqual(local('cute top to wear with jeans').concepts.context, ['jeans']);
+  });
+
   await test('denim is a cloth, not a colour: "vintage denim jacket" is not searched as blue', () => {
     assert.ok(!words(phrase('vintage looking denim jacket but not cropped')).has('blue'), phrase('vintage looking denim jacket but not cropped'));
     assert.ok(!words(phrase('vintage looking denim jacket but not cropped')).has('cropped'));

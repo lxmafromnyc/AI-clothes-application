@@ -252,6 +252,22 @@ const CASES = [
   { q: 'not into logos, hoodie', target: /hood|sweatshirt|minimal|zip|crew|pullover/, notAsked: /logo|into/, exclude: /\b(logos?|graphics?)\b/, mayRule: /print/,
     relevant: /hood|sweatshirt|pullover/, wrong: /\b(logos?|graphics?|pants|shorts)\b/ },
 
+  /* the brief's second list */
+  { q: 'something comfy but not sloppy', target: /sweater|sweatshirt|cardigan|knit|hood|fleece|jogger|lounge|cozy|comfy/, notAsked: /sloppy|dressy/, mayRule: /sloppy/,
+    relevant: /sweater|sweatshirt|cardigan|knit|hood|fleece|jogger|lounge|pullover/, wrong: /\b(heels?|blazer|suit|gown|sequin\w*|tuxedo)\b/ },
+  { q: 'black pants loose', target: /pant|trouser|slack|chino/, colours: ['black'],
+    relevant: /pant|trouser|slack|chino/, strong: /wide|relaxed|loose|baggy|straight|pleated/, wrong: /\b(skinny|leggings?|shorts)\b/ },
+  { q: 'i want a shirt thats kinda oversized', target: /shirt/, notAsked: /\b(want|kinda|thats)\b/,
+    relevant: /shirt/, strong: /oversized|boxy|relaxed|loose/, wrong: /\b(slim|skinny|fitted|pants|dress)\b/ },
+  { q: 'cute top to wear with jeans', target: /top|blouse|shirt|tee|cami|knit/, notAsked: /\bjeans?\b/,
+    relevant: /top|blouse|shirt|tee|cami|bodysuit|tank|knit|sweater/, wrong: /\b(jeans?|pants|shorts|skirt|dress)\b/ },
+  { q: 'not too tight', target: /./, notAsked: /tight|relaxed|baggy/, mayRule: /tight/,
+    relevant: /./, wrong: /\b(tight|bodycon|skinny|compression)\b/ },
+  { q: 'not into logos', target: /./, notAsked: /logo|into/, exclude: /\b(logos?|graphics?)\b/, mayRule: /print|brand/,
+    relevant: /./, wrong: /\b(logos?|graphics?)\b/ },
+  { q: 'not huge or sloppy', target: /./, notAsked: /huge|sloppy|dressy|oversized/, mayRule: /oversiz|huge|sloppy|baggy/,
+    relevant: /./, wrong: /\b(oversized|baggy)\b/ },
+
   /* the plain requests, as a control: these must read and search exactly as before */
   { q: 'red dress', set: 'exact', target: /red/, colours: ['red'], relevant: /dress/, wrong: /\b(pants|shorts|top|shoes?)\b/ },
   { q: 'black oversized hoodie under $80', set: 'exact', target: /hood/, colours: ['black'], maxPrice: 80, relevant: /hood/, wrong: /\b(pants|shorts|jacket|t-?shirt)\b/ },
