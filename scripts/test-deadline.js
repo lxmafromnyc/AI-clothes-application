@@ -646,6 +646,36 @@ async function main() {
     assert.strictEqual(after.res.body.usage.used, 1, `the 502 was not counted: ${JSON.stringify(after.res.body.usage)}`);
   });
 
+  console.log('\nthe seller links live lookups carry now');
+
+  await testAsync('sellers whose links are written relative to Google: the shops\' own pages are shown, everything else still refused', async () => {
+    process.env.FYND_REQUEST_BUDGET_MS = '1500';
+    const four = Array.from({ length: 4 }, (_, i) => needsLookup(i));
+    const links = [
+      (i) => `/url?q=https%3A%2F%2Fwww.arket.com%2Fen%2Fproduct%2Fknit-cardigan-${i}&sa=U`,
+      (i) => `//www.arket.com/en/product/knit-cardigan-${i}`,
+      () => '/shopping/product/123',
+      (i) => `www.arket.com/en/product/knit-cardigan-${i}`
+    ];
+    installFetch({
+      search: () => ({ answer: okResponse(envelope(four)), delay: 5 }),
+      offers: (i) => ({ answer: okResponse(offersPayload([Object.assign(sellerOffer(i), { offer_page_url: links[i](i) })])), delay: 5 })
+    });
+    const { res } = await post({ intent: INTENT, limit: 4 });
+    assert.strictEqual(res.statusCode, 200, JSON.stringify(res.body));
+    assert.deepStrictEqual(res.body.products.map((p) => p.productUrl).sort(),
+      ['https://www.arket.com/en/product/knit-cardigan-0', 'https://www.arket.com/en/product/knit-cardigan-1']);
+    res.body.products.forEach((p) => {
+      assert.strictEqual(p.price, 70, 'the seller\'s own price, from the offer the link came from');
+      assert.ok(/^https:\/\/img\.example-cdn\.com\//.test(p.imageUrl), 'the product\'s own photo');
+    });
+    const offers = res.body.diagnostics.offers;
+    assert.strictEqual(offers.noDirectLinkInOffers, 2, 'Google\'s own page and the schemeless link are no link');
+    assert.deepStrictEqual(offers.offerLinkKinds, { 'relative-google': 1, schemeless: 1 });
+    assert.deepStrictEqual(offers.offerLinkFields, { offer_page_url: 2 });
+    assert.ok(!JSON.stringify(res.body.diagnostics).includes('/shopping/product/123'), 'a link is never echoed');
+  });
+
   console.log('\na total failure is still a failure, and says which kind');
 
   await testAsync('a search that never answers is a 502 that says it timed out', async () => {

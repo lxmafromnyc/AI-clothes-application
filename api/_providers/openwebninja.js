@@ -328,6 +328,9 @@ const text = (v) => (v === undefined || v === null ? '' : String(v).trim());
 
 /* one phrase for every adapter: see _providers/query.js */
 const { queryFrom } = require('./query');
+/* the one rule for reading a shop's own address out of a Google link,
+   shared with the Serper adapter rather than copied from it */
+const { retailerUrl } = require('./serper');
 
 /* -----------------------------------------------------------
    Reading one product record
@@ -450,9 +453,38 @@ function offerFrom(product) {
    unless that object yields a real retailer URL, because a price and a
    shop name with no link to the thing being priced is not a product we
    can honestly show. */
+/* Google Shopping's own origin: what a link it wrote relative to itself
+   ("/url?q=…") is relative to. */
+const GOOGLE_ORIGIN = 'https://www.google.com';
+const RELATIVE_OR_PROTOCOL_RELATIVE = /^(\/|(https?:)?\/\/)/i;
+
+/* The seller's own address out of one offer's link, or null.
+
+   An absolute link to a shop is taken as it is (looksDirect). Live
+   /product-offers answers stopped carrying those: on 9 October every
+   one of 30 seller links production read failed to parse as an
+   absolute address at all. So a link written relative to Google
+   ("/url?q=…") or without its scheme ("//shop.com/…"), or an absolute
+   Google forwarder, is read the way the Serper adapter already reads
+   Google's links (retailerUrl): resolved against Google's origin, and
+   then only a shop's own absolute address that Google forwards to can
+   come out of it — never a Google page, never anything built from a
+   domain. Anything else is still no link, and the gate still decides
+   whether what does come out may be shown. */
+function offerUrl(value) {
+  const raw = text(value);
+  if (!raw) return null;
+  const direct = looksDirect(raw);
+  if (direct) return direct;
+  if (!RELATIVE_OR_PROTOCOL_RELATIVE.test(raw)) return null;
+  let absolute;
+  try { absolute = new URL(raw, GOOGLE_ORIGIN).href; } catch (err) { return null; }
+  return retailerUrl(absolute);
+}
+
 function commerceFrom(source) {
   if (!source || typeof source !== 'object') return null;
-  const productUrl = looksDirect(firstOf(source, OFFER_URL_KEYS));
+  const productUrl = offerUrl(firstOf(source, OFFER_URL_KEYS));
   if (!productUrl) return null;
 
   const priceSource = firstOf(source, OFFER_PRICE_KEYS);
@@ -519,21 +551,28 @@ function toRecord(product) {
   return record;
 }
 
-/* Why a seller's link could not be used, as a kind and never the URL:
-   absent, not a web address, Google's own page, or a Google forwarding
-   link that carries a shop's address inside it. Diagnostics only — the
-   rule for what may be shown is looksDirect's, unchanged. */
+/* Why a seller's link could not be used, as a kind and never the URL —
+   and from which field it came. Diagnostics only: the rule for what may
+   be shown is offerUrl's, and the gate's after it. */
 function linkKind(offer) {
-  const raw = text(firstOf(offer, OFFER_URL_KEYS));
-  if (!raw) return 'missing';
-  let url;
-  try { url = new URL(raw); } catch (err) { return 'unparseable'; }
-  if (url.protocol !== 'https:' && url.protocol !== 'http:') return 'not-http';
-  if (!GOOGLE_HOST.test(url.hostname)) return 'direct';
-  for (const value of url.searchParams.values()) {
-    if (/^https?:\/\//i.test(value)) return 'google-forwarder';
-  }
-  return 'google';
+  const field = OFFER_URL_KEYS.find((key) => text(offer && offer[key]));
+  const raw = field ? text(offer[field]) : '';
+  if (!raw) return { kind: 'missing', field: null };
+  const kind = (() => {
+    if (/^[a-z][a-z0-9+.-]*:/i.test(raw) && !/^https?:/i.test(raw)) return 'not-http';
+    if (!/^https?:/i.test(raw) && !RELATIVE_OR_PROTOCOL_RELATIVE.test(raw)) {
+      return /^[\w-]+(\.[\w-]+)+(\/|$)/.test(raw) ? 'schemeless' : 'unparseable';
+    }
+    let url;
+    try { url = new URL(raw, GOOGLE_ORIGIN); } catch (err) { return 'unparseable'; }
+    const form = /^https?:/i.test(raw) ? '' : raw.startsWith('//') ? 'protocol-relative-' : 'relative-';
+    if (!GOOGLE_HOST.test(url.hostname)) return `${form}direct`;
+    for (const value of url.searchParams.values()) {
+      if (/^(https?:)?\/\//i.test(value)) return `${form}google-forwarder`;
+    }
+    return `${form}google`;
+  })();
+  return { kind, field };
 }
 
 /* Prefers the offer from the shop the search result named, so the card
@@ -802,7 +841,12 @@ async function lookupFor(record, region, tally, cacheStats, timeout, options) {
     tally.noDirectLinkInOffers += 1;
     /* what the sellers' links were instead, by kind — never the URL */
     const kinds = tally.offerLinkKinds || (tally.offerLinkKinds = {});
-    result.offers.slice(0, 20).forEach((offer) => { const kind = linkKind(offer); kinds[kind] = (kinds[kind] || 0) + 1; });
+    const fields = tally.offerLinkFields || (tally.offerLinkFields = {});
+    result.offers.slice(0, 20).forEach((offer) => {
+      const { kind, field } = linkKind(offer);
+      kinds[kind] = (kinds[kind] || 0) + 1;
+      if (field) fields[field] = (fields[field] || 0) + 1;
+    });
     await cache.writeOfferMiss(key, 'no-direct-link', cacheStats);
     return null;
   }
@@ -1158,6 +1202,8 @@ module.exports = {
   toRecord,
   queryFrom,
   looksDirect,
+  offerUrl,
+  linkKind,
   commerceFrom,
   inlineCommerce,
   pickOffer,
