@@ -1076,9 +1076,11 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     await submit(still, 'black oversized hoodie');
     await still.waitForSelector('#results .search-progress[data-stage="searching"]');
     const reduced = await motionOf(still);
-    assert.deepStrictEqual(reduced, { bar: 'none', line: 'none', skeleton: 'none', opacity: '1' });
+    assert.deepStrictEqual(reduced, { bar: 'none', line: 'none', skeleton: 'none', opacity: '1' }, `reduced motion still moves: ${JSON.stringify(reduced)}`);
     /* still there, and still in the box: held still, not taken away */
-    assert.deepStrictEqual(await boxLine(still), { stage: 'searching', shown: true });
+    await still.waitForFunction(() => getComputedStyle(document.querySelector('#ask-form .ask-progress')).visibility === 'visible', null, { timeout: 2000 }).catch(() => {});
+    const line = await boxLine(still);
+    assert.deepStrictEqual(line, { stage: 'searching', shown: true }, `the still line is not in the box: ${JSON.stringify(line)}`);
     /* still, and still legible: every line in a palette ink */
     const problems = await textStyleProblems(still, await resolveInks(still));
     assert.deepStrictEqual(problems, [], `\n        ${problems.join('\n        ')}`);
