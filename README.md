@@ -652,6 +652,19 @@ so in its first line — 1 when the judged checkout crashed, showed something
 ruled out or made more than one provider search per request, and 0 otherwise.
 A request the route answered from Serper after OpenWeb Ninja refused for want of
 searches is counted as a fallback, not as a second search of ours.
+`.github/workflows/live-validation.yml` runs the same checks on GitHub's
+runners, which can reach the providers and the deployments when a sandbox
+cannot. Its first job holds no key: it posts the page's request to production
+and to the commit's Vercel preview (one search each, inside the anonymous Free
+allowance) and prints the answer's diagnostics and `x-vercel-id`. Its second
+job runs the probe, the diagnostic and the 107-request benchmark in process,
+main at `9507da1` against the commit, with `OPENWEBNINJA_API_KEY` and
+`OPENAI_API_KEY` from the repository's Actions secrets — and without them says
+so and runs nothing. Each record is printed to the job log one line per request
+and checked for the keys before it is uploaded. The benchmark is never pointed
+at a deployment: a cookieless caller is metered at three searches a day, and
+previews sit behind Vercel Authentication.
+
 `scripts/diagnose-search.js --server` says whether the running server answered
 as the diagnostic's own process does with the same environment, and exits 1
 when either did not answer 200.
