@@ -737,6 +737,46 @@ test('pickOffer falls back to the first seller with a usable link', () => {
   assert.strictEqual(chosen.retailer, 'target.com');
 });
 
+/* The link shapes live /product-offers answers carry since early October:
+   every one of 30 seller links production read on 9 October failed to
+   parse as an absolute address. Each is read by the Serper adapter's
+   own rule for Google links, and refused unless a shop's own address
+   comes out of it. */
+[
+  ['a link written relative to Google, forwarding to the shop', '/url?q=https%3A%2F%2Fwww.target.com%2Fp%2Faf1%2F-%2FA-123&sa=U', 'https://www.target.com/p/af1/-/A-123'],
+  ['a protocol-relative link to the shop', '//www.target.com/p/af1/-/A-123', 'https://www.target.com/p/af1/-/A-123'],
+  ['an absolute Google forwarder', 'https://www.google.com/url?url=https://www.target.com/p/af1/-/A-123', 'https://www.target.com/p/af1/-/A-123']
+].forEach(([label, link, expected]) => {
+  test(`a seller's ${label} gives the shop's own page, with that seller's price`, () => {
+    const chosen = provider.pickOffer([offer('target.com', '$91.00', link)], 'target.com');
+    assert.ok(chosen, `${link} gave no link`);
+    assert.strictEqual(chosen.productUrl, expected);
+    assert.strictEqual(chosen.price, 91, 'the price is the one on the offer the link came from');
+    assert.strictEqual(chosen.retailer, 'target.com');
+  });
+});
+
+[
+  ['Google\'s own product page, written relative to it', '/shopping/product/123?prds=x'],
+  ['a relative forwarder that forwards back to Google', '/url?q=https://www.google.com/search?q=af1'],
+  ['a forwarder carrying something that is not an address', '/url?q=target.com/p/1'],
+  ['a link with no scheme, which is not guessed at', 'www.target.com/p/af1/-/A-123'],
+  ['a javascript: link', 'javascript:alert(1)'],
+  ['a relative path that is not Google\'s forwarder', '/p/af1/-/A-123']
+].forEach(([label, link]) => {
+  test(`a seller's ${label} is still no link`, () => {
+    assert.strictEqual(provider.pickOffer([offer('target.com', '$91.00', link)], 'target.com'), null);
+  });
+});
+
+test('the diagnostics name a link\'s kind and field, never the link', () => {
+  assert.deepStrictEqual(provider.linkKind({ offer_page_url: '/url?q=https://www.target.com/p/1' }), { kind: 'relative-google-forwarder', field: 'offer_page_url' });
+  assert.deepStrictEqual(provider.linkKind({ link: '//www.target.com/p/1' }), { kind: 'protocol-relative-direct', field: 'link' });
+  assert.deepStrictEqual(provider.linkKind({ offer_page_url: 'www.target.com/p/1' }), { kind: 'schemeless', field: 'offer_page_url' });
+  assert.deepStrictEqual(provider.linkKind({ offer_page_url: '/shopping/product/1' }), { kind: 'relative-google', field: 'offer_page_url' });
+  assert.deepStrictEqual(provider.linkKind({ price: '$1' }), { kind: 'missing', field: null });
+});
+
 test('pickOffer returns nothing when no seller has a real link', () => {
   assert.strictEqual(provider.pickOffer([
     offer('a.com', '$1.00', 'https://www.google.com/search?q=x'),
