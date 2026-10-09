@@ -98,6 +98,17 @@ jobs:
             echo "::endgroup::"
           done
 
+      - name: OpenWeb Ninja's connection, timed without a key (DNS, TCP, TLS, first byte of a refused request)
+        run: |
+          # no key is sent, so each request is refused at once: what is left
+          # is the cost of reaching the API at all, apart from its processing
+          for path in search product-offers; do
+            for i in 1 2 3; do
+              curl -s -o /dev/null -m 20 -w "$path #$i: HTTP %{http_code}  dns %{time_namelookup}s  tcp %{time_connect}s  tls %{time_appconnect}s  first-byte %{time_starttransfer}s  total %{time_total}s\n" \
+                "https://api.openwebninja.com/realtime-product-search/v2/$path?q=hoodie&product_id=x&country=us&language=en" || echo "$path #$i: no answer"
+            done
+          done
+
       - name: The page's two requests, through the benchmark
         env:
           PREVIEW_URL: ${{ steps.preview.outputs.url }}
@@ -168,6 +179,22 @@ jobs:
           set +e
           node scripts/probe-openwebninja.js "$QUERY" 2>&1 | tee bench-results/live-1/probe.txt
           echo "probe exit: ${PIPESTATUS[0]}" | tee -a bench-results/live-1/probe.txt
+
+      - name: /product-offers phases, one at a time and four at once (connect, TLS, first byte, total)
+        if: steps.keys.outputs.ready == 'true'
+        run: |
+          set +e
+          umask 077
+          printf 'x-api-key: %s\n' "$OPENWEBNINJA_API_KEY" > "$RUNNER_TEMP/own-header"
+          base=https://api.openwebninja.com/realtime-product-search/v2
+          fmt='HTTP %{http_code}  tcp %{time_connect}s  tls %{time_appconnect}s  first-byte %{time_starttransfer}s  total %{time_total}s'
+          curl -s -m 30 -H @"$RUNNER_TEMP/own-header" -o search.json -w "search: $fmt\n" "$base/search?q=black+hoodie&country=us&language=en&limit=12&sort_by=BEST_MATCH"
+          node -e 'const j=require("./search.json"); const d=Array.isArray(j.data)?j.data:[]; console.log("records:", d.length, "with an offer object:", d.filter(p=>p.offer).length, "with a top-level price:", d.filter(p=>p.price).length); require("fs").writeFileSync("ids.txt", d.slice(0,4).map(p=>p.product_id).filter(Boolean).join("\n"))' || true
+          echo "-- one at a time"
+          while read -r id; do curl -s -m 30 -H @"$RUNNER_TEMP/own-header" -o /dev/null -w "offers: $fmt\n" --get --data-urlencode "product_id=$id" -d country=us -d language=en "$base/product-offers"; done < ids.txt
+          echo "-- four at once"
+          while read -r id; do curl -s -m 30 -H @"$RUNNER_TEMP/own-header" -o /dev/null -w "offers: $fmt\n" --get --data-urlencode "product_id=$id" -d country=us -d language=en "$base/product-offers" & done < ids.txt; wait
+          rm -f "$RUNNER_TEMP/own-header" search.json ids.txt
 
       - name: How long /product-offers really takes, with the per-lookup cap lifted (diagnostic only)
         if: steps.keys.outputs.ready == 'true'
