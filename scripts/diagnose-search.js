@@ -83,7 +83,14 @@ function vocabulary() {
   };
 }
 
-async function browserBody(query) {
+/* The body the page posts to /api/search for these words. By default the
+   page reads them with its local reader, as it does when /api/interpret
+   is not configured. With { served: true } /api/interpret is answered by
+   the served interpreter in this process (api/interpret.js, with this
+   environment's key), exactly as its handler answers — so the body is
+   the one the browser posts when the interpreter is on. */
+async function browserBody(query, options) {
+  const served = Boolean(options && options.served);
   await loadPage();
   const realFetch = globalThis.fetch;
   let posted = null;
@@ -92,13 +99,28 @@ async function browserBody(query) {
   globalThis.fetch = async (url, init) => {
     const href = String(url);
     const reply = (status, body) => ({ ok: status < 400, status, json: async () => body, text: async () => JSON.stringify(body) });
-    if (href.endsWith('/api/interpret')) return reply(503, { error: 'Interpreter is not configured.' });
+    if (href.endsWith('/api/interpret')) {
+      const configured = process.env.AI_PROVIDER || process.env.OPENAI_API_KEY;
+      if (!served || !configured) return reply(503, { error: 'Interpreter is not configured.' });
+      const asked = JSON.parse(init.body);
+      /* the model call itself goes out on the real fetch */
+      globalThis.fetch = realFetch;
+      let reading;
+      try {
+        reading = await require(path.join(REPO, 'api', 'interpret')).interpretQuery({ query: asked.query, vocabulary: asked.vocabulary || {} });
+      } finally {
+        globalThis.fetch = captured;
+      }
+      if (!reading.ok) return reply(502, { error: 'The interpreter is unavailable right now.' });
+      return reply(200, { source: reading.source, query: asked.query, preferences: reading.preferences });
+    }
     if (href.endsWith('/api/search')) {
       posted = JSON.parse(init.body);
       return reply(599, { error: 'captured' });
     }
     throw new Error(`the page made an unexpected request: ${href}`);
   };
+  const captured = globalThis.fetch;
   try {
     const outcome = await globalThis.Interpreter.interpret(query, vocabulary());
     await globalThis.ProductSearch.find(outcome.preferences, undefined, []);

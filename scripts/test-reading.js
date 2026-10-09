@@ -209,6 +209,15 @@ async function main() {
     assert.ok(asks(r.asked, 'wedding'), r.asked);
   });
 
+  await test('a model that splits run-together words, or reads an abbreviation, is reading what was typed', async () => {
+    const merged = await readWith('blackhoodie', answer({ categories: ['knit'], colors: ['Black'], keywords: ['black', 'hoodie'] }, { want: 'hoodie' }));
+    assert.strictEqual(merged.asked, 'black hoodie');
+    assert.deepStrictEqual(merged.understood.rejected, []);
+    const short = await readWith('blk tee w/o logo', answer({ categories: ['tee'], colors: ['Black'], keywords: ['black', 'tee'] }, { want: 't-shirt', avoid: ['logo'] }));
+    assert.ok(asks(short.asked, 'black') && asks(short.asked, 'tee') && !asks(short.asked, 'logo'), short.asked);
+    assert.deepStrictEqual(short.understood.rejected, []);
+  });
+
   console.log('\nwhat is wanted, compared to, worn with and ruled out');
 
   await test('"something cozy to wear with jeans": jeans is the setting, never the search', async () => {

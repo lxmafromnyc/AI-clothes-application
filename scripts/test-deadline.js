@@ -706,6 +706,151 @@ async function main() {
     assert.ok(warnings.some((w) => /OPENWEBNINJA_LANGUAGE is not a two-letter code/.test(w)), warnings.join(' | '));
   });
 
+  console.log('\nthe probe runs the route: the same effective request, deadline and answer');
+
+  const probeModule = require('./probe-openwebninja');
+  const { browserBody } = require('./diagnose-search');
+
+  /* a stand-in OpenWeb Ninja that records every request whole —
+     headers included, compared here and never printed — and answers
+     each as `plan` says */
+  const recorder = (plan) => {
+    const seen = [];
+    global.fetch = (url, options) => {
+      const u = new URL(String(url));
+      seen.push({ path: u.pathname, params: Object.fromEntries(u.searchParams.entries()), headers: Object.assign({}, options && options.headers), at: Date.now() });
+      return plan(u, options);
+    };
+    return seen;
+  };
+  const answering = (u) => Promise.resolve(u.pathname.endsWith('/product-offers')
+    ? okResponse(offersPayload([sellerOffer(u.searchParams.get('product_id'))]))
+    : okResponse(envelope([withInlineLink(1), needsLookup(2), withInlineLink(3), needsLookup(4)])));
+  const routeAnswer = async (body) => {
+    const res = mockRes();
+    await handler({ method: 'POST', headers: { host: 'ai-clothes-application.vercel.app', origin: 'https://lxmafromnyc.github.io', 'content-type': 'application/json' }, body, on: () => {} }, res);
+    return res;
+  };
+
+  await testAsync('for the same body and environment, the probe and /api/search send identical requests to the provider', async () => {
+    const messy = (await browserBody('pants that arent skinny')).body;
+    const bodies = [
+      { intent: INTENT, limit: 12 },
+      messy,
+      { intent: { garments: ['hoodie'], colors: ['Grey'], keywords: ['hoodie'], minPrice: 30, maxPrice: 90 }, limit: 24 },
+      { intent: { keywords: ['linen', 'shirt'] }, limit: 3 }
+    ];
+    const envs = [{}, { OPENWEBNINJA_COUNTRY: ' GB ', OPENWEBNINJA_LANGUAGE: 'en-GB', OPENWEBNINJA_API_KEY: '"quoted-key"' }];
+    let compared = 0;
+    const warn = console.warn;
+    console.warn = () => {};
+    try {
+    for (const env of envs) {
+      for (const body of bodies) {
+        await withEnv(env, async () => {
+          cache.reset();
+          const viaRoute = recorder(answering);
+          const res = await routeAnswer(body);
+          cache.reset();
+          const viaProbe = recorder(answering);
+          const probed = await probeModule.probe({ body, photos: false });
+          const label = `${JSON.stringify(env)} ${JSON.stringify(body.intent).slice(0, 60)}`;
+          assert.strictEqual(res.statusCode, 200, label);
+          assert.strictEqual(probed.status, 200, label);
+          assert.deepStrictEqual(viaProbe.map((c) => [c.path, c.params]), viaRoute.map((c) => [c.path, c.params]), `${label}: a different request`);
+          assert.deepStrictEqual(viaProbe.map((c) => c.headers), viaRoute.map((c) => c.headers), `${label}: different headers`);
+          assert.ok(viaRoute.every((c) => c.headers['x-api-key'] === provider.apiKey()), `${label}: not this environment's key`);
+          /* and the answer the browser gets is the answer the probe reports */
+          assert.deepStrictEqual(probed.answer.products, res.body.products, `${label}: different products`);
+          assert.deepStrictEqual(probed.answer.rejected, res.body.rejected, `${label}: different refusals`);
+          assert.ok(probed.calls.every((c) => c.keyIsThisEnvironments), label);
+          if (res.body.products.length) compared += 1;
+        });
+      }
+    }
+    } finally {
+      console.warn = warn;
+    }
+    /* the products compared were real verified products, not two empty lists */
+    assert.ok(compared >= 2, `${compared} cases verified anything`);
+  });
+
+  await testAsync('the probe gives the /search leg the route\'s own timeout, and is cut off at the same moment', async () => {
+    process.env.FYND_REQUEST_BUDGET_MS = '600';
+    const hang = (u, options) => new Promise((resolve, reject) => {
+      const signal = options && options.signal;
+      if (signal) signal.addEventListener('abort', () => reject(Object.assign(new Error('This operation was aborted'), { name: 'AbortError' })));
+    });
+    try {
+      cache.reset();
+      let started = Date.now();
+      const viaRoute = recorder(hang);
+      const res = await routeAnswer({ intent: INTENT, limit: 12 });
+      const routeMs = Date.now() - started;
+      cache.reset();
+      started = Date.now();
+      recorder(hang);
+      const probed = await probeModule.probe({ body: { intent: INTENT, limit: 12 }, photos: false });
+      const probeMs = Date.now() - started;
+      assert.strictEqual(res.statusCode, 502);
+      assert.strictEqual(probed.status, 502);
+      assert.deepStrictEqual(probed.answer, res.body);
+      assert.strictEqual(res.body.reason, 'timeout');
+      assert.strictEqual(probed.plannedSearchTimeoutMs <= 600 && probed.plannedSearchTimeoutMs >= 500, true, `${probed.plannedSearchTimeoutMs}`);
+      assert.ok(probed.calls[0].abortedAfterMs !== null, 'the probe\'s request was not cut off by the clock');
+      assert.ok(Math.abs(routeMs - probeMs) < 150, `route ${routeMs}ms, probe ${probeMs}ms`);
+      assert.strictEqual(viaRoute.length, 1);
+    } finally {
+      delete process.env.FYND_REQUEST_BUDGET_MS;
+    }
+  });
+
+  await testAsync('every provider failure reads the same from the probe as from /api/search', async () => {
+    const replies = {
+      'invalid key': () => Promise.resolve({ ok: false, status: 401, json: async () => ({}), text: async () => '{"message":"Invalid API key"}' }),
+      'not subscribed': () => Promise.resolve({ ok: false, status: 403, json: async () => ({}), text: async () => '{"message":"You are not subscribed to this API."}' }),
+      'bad request': () => Promise.resolve({ ok: false, status: 400, json: async () => ({}), text: async () => '{"message":"Invalid value for country"}' }),
+      'rate limited': () => Promise.resolve({ ok: false, status: 429, json: async () => ({}), text: async () => '{"message":"Too many requests"}' }),
+      'server error': () => Promise.resolve({ ok: false, status: 503, json: async () => ({}), text: async () => 'down' }),
+      'not JSON': () => Promise.resolve({ ok: true, status: 200, json: async () => JSON.parse('<html>'), text: async () => '<html>' }),
+      network: () => Promise.reject(Object.assign(new TypeError('fetch failed'), { cause: { code: 'ENOTFOUND' } }))
+    };
+    const error = console.error;
+    console.error = () => {};
+    try {
+      for (const [name, reply] of Object.entries(replies)) {
+        cache.reset();
+        recorder(reply);
+        const res = await routeAnswer({ intent: INTENT, limit: 12 });
+        cache.reset();
+        recorder(reply);
+        const probed = await probeModule.probe({ body: { intent: INTENT, limit: 12 }, photos: false });
+        assert.strictEqual(res.statusCode, 502, name);
+        assert.strictEqual(probed.status, 502, name);
+        assert.deepStrictEqual(probed.answer, res.body, name);
+        assert.strictEqual(probed.failure.kind, res.body.kind, name);
+      }
+    } finally {
+      console.error = error;
+    }
+  });
+
+  await testAsync('by default the probe searches what the page would post, not the raw words', async () => {
+    cache.reset();
+    const seen = recorder(answering);
+    await probeModule.probe({ query: 'black oversized hoodie under $80', photos: false });
+    const page = (await browserBody('black oversized hoodie under $80')).body;
+    const built = provider.searchRequest(require('../api/search').shapeIntent(page.intent), { limit: page.limit });
+    assert.deepStrictEqual(seen[0].params, Object.fromEntries(built.params.entries()));
+    assert.strictEqual(seen[0].params.max_price, '80', 'the stated budget never reached the provider');
+    /* the old behaviour is still there, and says what it is */
+    cache.reset();
+    const raw = recorder(answering);
+    const old = await probeModule.probe({ query: 'black oversized hoodie under $80', keywords: true, photos: false });
+    assert.strictEqual(old.input, 'the raw words as keywords');
+    assert.strictEqual(raw[0].params.max_price, undefined);
+  });
+
   console.log(`\n${passed} passed, ${failures.length} failed`);
   if (failures.length) process.exit(1);
 }

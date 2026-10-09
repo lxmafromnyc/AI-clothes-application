@@ -9,17 +9,24 @@
    check them against a real call.
 
    Usage
-     OPENWEBNINJA_API_KEY=... node scripts/probe-openwebninja.js "black oversized hoodie"
+     node --env-file=.env.local scripts/probe-openwebninja.js "black oversized hoodie"
+       [--local]            the page's local reading even if OPENAI_API_KEY is set
+       [--body body.json]   the exact body the browser posted (from its network panel)
+       [--keywords]         the raw words as keywords, as the probe used to send them
+       [--budget-ms N]      a request budget other than /api/search's own
+       [--no-photos] [--json] [--site https://...]
 
-   It prints, for one live search:
-     1. the response envelope's top-level keys
-     2. every key on the first product, and on that product's offer
-     3. the record the adapter maps out of it
-     4. the verdict the verification gate reaches, for the whole batch
-     5. the PHOTOS: which field each one came from, whether the URL
+   It runs /api/search's own search (runSearch in api/search.js) on the
+   body the page would post, under the route's own deadline, and prints:
+     1. every request sent to OpenWeb Ninja: path, parameters, header
+        names, status, time, and whether the clock aborted it
+     2. the response envelope's top-level keys, every key on the first
+        product and on its offer, and the record the adapter maps out
+     3. what /api/search would answer: the status, and the verified
+        products or the failure's kind and upstream status
+     4. the PHOTOS: which field each one came from, whether the URL
         answers with an actual image, whether it answers differently
-        when a referrer is sent, whether it is signed or expiring, and
-        how many of the batch have a photo that can be shown at all
+        when a referrer is sent, whether it is signed or expiring
 
    Nothing is written anywhere. No API key is printed, and no photo URL
    is printed whole: a signed URL carries its signature in the query, so
@@ -29,7 +36,6 @@
 'use strict';
 
 const provider = require('../api/_providers/openwebninja');
-const { verifyAll } = require('../api/_providers/product-source');
 
 const keysOf = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? Object.keys(v) : []);
 
@@ -196,115 +202,205 @@ async function reportPhotos(results, site) {
   console.log('');
 }
 
+/* ---------------------------------------------------------
+   The probe: /api/search's own search, watched
+   ---------------------------------------------------------
+   It used to send a /search request of its own and look the offers up
+   its own way: the same builder, but not the same request — the raw
+   words as keywords where the route has the page's reading of them (a
+   different q, no max_price), no deadline where the route has one, its
+   own offer lookups where the route caps and orders them. A probe that
+   worked therefore said little about the route.
+
+   Now it runs runSearch() from api/search.js — the route's search,
+   everything but the shopper's allowance — on the body the page would
+   post, under the route's own deadline, and watches every request that
+   goes to OpenWeb Ninja on the way: path, parameters, the NAMES of the
+   headers (whether the key sent is the one this environment holds, as a
+   yes or no), status, time, and whether the clock aborted it. The raw
+   /search envelope is read from that same response, so there is still
+   one provider search, not two. */
+
+const { runSearch, shapeIntent, requestBudget } = require('../api/search');
+const { getProvider, failureKind } = require('../api/_providers/product-source');
+const { envReport } = require('../api/_env-report');
+
+const PROVIDER_HOST = 'api.openwebninja.com';
+
+/* every request to the provider, with nothing secret in it */
+function watchProvider() {
+  const real = global.fetch;
+  const calls = [];
+  const seen = { envelope: null };
+  global.fetch = async (input, init) => {
+    const href = String(input && input.url ? input.url : input);
+    let url;
+    try { url = new URL(href); } catch (err) { return real(input, init); }
+    if (url.hostname !== PROVIDER_HOST) return real(input, init);
+    const headers = (init && init.headers) || {};
+    const call = {
+      method: (init && init.method) || 'GET',
+      path: url.pathname,
+      params: Object.fromEntries(url.searchParams.entries()),
+      headerNames: Object.keys(headers).map((h) => h.toLowerCase()).sort(),
+      /* a yes or no, never the key */
+      keyIsThisEnvironments: headers['x-api-key'] === provider.apiKey(),
+      status: null,
+      ms: null,
+      abortedAfterMs: null,
+      error: null
+    };
+    calls.push(call);
+    const startedAt = Date.now();
+    const signal = init && init.signal;
+    if (signal) signal.addEventListener('abort', () => { call.abortedAfterMs = Date.now() - startedAt; });
+    try {
+      const response = await real(input, init);
+      call.status = response.status;
+      call.ms = Date.now() - startedAt;
+      if (/\/search$/.test(url.pathname) && response.ok && !seen.envelope) {
+        try { seen.envelope = await response.clone().json(); } catch (err) { seen.envelope = { unreadable: String(err && err.message).slice(0, 80) }; }
+      }
+      return response;
+    } catch (err) {
+      call.ms = Date.now() - startedAt;
+      const cause = err && err.cause ? (err.cause.code || '') : '';
+      call.error = `${err && err.name === 'AbortError' ? 'aborted' : String(err && err.message).split('\n')[0].slice(0, 80)}${cause ? ` (${cause})` : ''}`;
+      throw err;
+    }
+  };
+  return { calls, seen, restore: () => { global.fetch = real; } };
+}
+
+/* The body the route is given: as the page would post it (its own
+   reader, or the served interpreter when it is configured here), a body
+   copied from the browser, or — only when asked — the raw words. */
+async function bodyFor(o) {
+  if (o.body) return { body: o.body, input: 'the body given' };
+  if (o.keywords) return { body: { intent: { keywords: o.query.split(/\s+/).filter(Boolean) }, limit: 12 }, input: 'the raw words as keywords' };
+  const { browserBody } = require('./diagnose-search');
+  const read = await browserBody(o.query, { served: !o.local });
+  return { body: read.body, input: `the page's ${read.interpreter} reading` };
+}
+
+/* Runs the probe and says what happened; prints nothing. */
+async function probe(options) {
+  const o = Object.assign({ query: 'black oversized hoodie' }, options || {});
+  const source = getProvider();
+  if (source.name !== provider.name) throw new Error(`the configured product source is ${source.name}, not OpenWeb Ninja`);
+  if (!source.configured()) throw new Error('OPENWEBNINJA_API_KEY is not set in this environment');
+
+  const { body, input } = await bodyFor(o);
+  const intent = shapeIntent(body && body.intent);
+  const budgetMs = Number(o.budgetMs) > 0 ? Number(o.budgetMs) : requestBudget();
+  const startedAt = Date.now();
+  const deadline = startedAt + budgetMs;
+  const plannedSearchTimeoutMs = provider.searchLegTimeout(deadline);
+
+  const watch = watchProvider();
+  let outcome;
+  try {
+    outcome = await runSearch(body, { provider: source, startedAt, budgetMs, deadline });
+  } finally {
+    watch.restore();
+  }
+  const answer = outcome.status === 200 ? outcome.compose(null) : outcome.body;
+  return {
+    input,
+    body,
+    intent,
+    budgetMs,
+    plannedSearchTimeoutMs,
+    calls: watch.calls,
+    envelope: watch.seen.envelope,
+    status: outcome.status,
+    answer,
+    /* the failure as /api/search classifies it, when there was one */
+    failure: outcome.status === 200 ? null : { kind: failureKind(outcome.error), upstreamStatus: outcome.body.upstreamStatus === undefined ? null : outcome.body.upstreamStatus, stage: outcome.body.stage || null }
+  };
+}
+
+function flags(argv) {
+  const value = (flag) => { const at = argv.indexOf(flag); return at === -1 ? null : argv[at + 1]; };
+  const valued = new Set(['--site', '--body', '--budget-ms']);
+  const words = argv.filter((a, i) => !a.startsWith('--') && !valued.has(argv[i - 1]));
+  const file = value('--body');
+  return {
+    query: words.join(' ') || 'black oversized hoodie',
+    body: file ? JSON.parse(require('fs').readFileSync(file, 'utf8')) : null,
+    keywords: argv.includes('--keywords'),
+    local: argv.includes('--local'),
+    budgetMs: value('--budget-ms'),
+    photos: !argv.includes('--no-photos'),
+    json: argv.includes('--json'),
+    site: value('--site') || 'https://ai-clothes-application.vercel.app'
+  };
+}
+
 async function main() {
+  const o = flags(process.argv.slice(2));
   if (!provider.configured()) {
-    console.error('OPENWEBNINJA_API_KEY is not set. Export it and run again.');
+    console.error('OPENWEBNINJA_API_KEY is not set. Run with: node --env-file=.env.local scripts/probe-openwebninja.js "..."');
+    console.error(`env: ${JSON.stringify(envReport())}`);
     process.exit(2);
   }
+  const r = await probe(o);
+  if (o.json) {
+    console.log(JSON.stringify(Object.assign({}, r, { envelope: r.envelope ? { keys: keysOf(r.envelope) } : null }), null, 2));
+    process.exit(r.status === 200 ? 0 : 1);
+  }
 
-  /* flags are not search words: --site takes a value, and neither it nor
-     its value belongs in the query the provider is asked */
-  const argv = process.argv.slice(2);
-  const words = argv.filter((a, i) => !a.startsWith('--') && !(argv[i - 1] === '--site'));
-  const query = words.join(' ') || 'black oversized hoodie';
-  /* a probe stands in for the interpreter: the words are treated as
-     keywords so the adapter builds its query exactly as it would live */
-  const intent = { categories: [], colors: [], fits: [], styles: [], brands: [], occasions: [], keywords: query.split(/\s+/) };
-
-  /* The request /api/search itself would make for these words — the
-     adapter's own builder, with its own reading of the key, country and
-     language — so a probe that works means the search's request works.
-     It used to send a request of its own (country and language fixed,
-     limit 10), which could succeed where the search's failed. */
-  const request = provider.searchRequest(intent, { limit: 12 });
-  console.log(`request  : GET ${request.url}?${request.params}`);
-  console.log('           (x-api-key sent as a header; never printed)');
-
-  /* called directly so the raw envelope can be inspected, rather than
-     only what the adapter kept */
-  const response = await fetch(`${request.url}?${request.params}`, {
-    headers: { 'x-api-key': provider.apiKey(), Accept: 'application/json' }
+  console.log(`input    : ${r.input}${o.body ? '' : ` of "${o.query}"`}`);
+  console.log(`env      : ${JSON.stringify(envReport())}  (states only, never values)`);
+  console.log(`deadline : ${r.budgetMs}ms budget; the /search leg was given ${r.plannedSearchTimeoutMs}ms`);
+  r.calls.forEach((c, i) => {
+    const params = Object.entries(c.params).map(([k, v]) => `${k}=${v}`).join('&');
+    console.log(`request ${i + 1}: ${c.method} ${c.path}?${params}`);
+    console.log(`           headers: ${c.headerNames.join(', ')} (x-api-key ${c.keyIsThisEnvironments ? 'is' : 'is NOT'} this environment's OPENWEBNINJA_API_KEY; never printed)`);
+    console.log(`           -> ${c.status === null ? `no answer: ${c.error}` : c.status} in ${c.ms}ms${c.abortedAfterMs !== null ? ` (aborted by the clock after ${c.abortedAfterMs}ms)` : ''}`);
   });
+  const searches = r.calls.filter((c) => /\/search$/.test(c.path)).length;
+  console.log(`provider : ${searches} search, ${r.calls.length - searches} offer lookups`);
 
-  console.log(`status   : ${response.status} ${response.statusText}`);
-  if (!response.ok) {
-    console.error(await response.text().catch(() => ''));
+  if (r.status !== 200) {
+    console.log(`\n/api/search would answer: ${r.status} ${JSON.stringify(r.answer)}`);
     process.exit(1);
   }
 
-  const payload = await response.json();
-  console.log(`\nenvelope keys: ${keysOf(payload).join(', ')}`);
-
-  const results = provider.resultsFrom(payload);
-  console.log(`products returned: ${results.length}`);
-  if (!results.length) {
-    console.log('\nNo products in the payload. The envelope above is what came back —');
-    console.log('if the list lives under a key the adapter does not read, resultsFrom() needs it.');
-    return;
-  }
-
-  const first = results[0];
-  dump('product[0]', first);
-
-  const offer = provider.offerFrom(first);
-  if (offer) dump('product[0] offer', offer);
-  else console.log('\n--- product[0] offer ---\n  NONE FOUND. offerFrom() did not recognise an offer on this product.');
-
-  console.log('\n--- adapter mapping of product[0] ---');
-  console.log(JSON.stringify(provider.toRecord(first), null, 2));
-
-  /* the search endpoint returns Google's product view, so this shows
-     whether a retailer link is obtainable and from where */
-  const inline = provider.inlineCommerce(first);
-  console.log('\n--- can this record supply a retailer link on its own? ---');
-  console.log(inline ? `  yes: ${inline.retailer} -> ${inline.productUrl}`
-                     : '  no. product_page_url is Google\'s, so /product-offers is needed.');
-
-  const records = results.map(provider.toRecord).filter(Boolean);
-  records.forEach((r, i) => { r.retailerHint = String((results[i] && results[i].store_name) || ''); });
-
-  const needing = records.filter((r) => !r.productUrl).length;
-  console.log(`\n--- resolving offers for ${needing} of ${records.length} records ---`);
-  const region = provider.region();
-
-  if (needing) {
-    const sample = records.find((r) => !r.productUrl && r.sku);
-    if (sample) {
-      const offers = provider.resultsFrom(await (async () => {
-        const params = new URLSearchParams({ product_id: sample.sku, country: region.country, language: region.language });
-        const res = await fetch(`${provider.OFFERS_URL}?${params}`, { headers: { 'x-api-key': provider.apiKey(), Accept: 'application/json' } });
-        console.log(`  GET /product-offers?product_id=${sample.sku} -> ${res.status}`);
-        return res.ok ? res.json() : {};
-      })());
-      console.log(`  offers returned: ${offers.length}`);
-      if (offers.length) dump('offer[0]', offers[0]);
-      else console.log('  NONE. No seller links are obtainable for this product.');
-    }
-  }
-
-  await provider.resolveMissingOffers(records, records.length, region);
-  records.forEach((r) => { delete r.retailerHint; });
-
-  const { products, rejected } = verifyAll(records, { retailer: provider.defaultRetailer });
-
-  console.log('\n--- verification gate, whole batch ---');
-  console.log(`  passed  : ${products.length} / ${records.length}`);
-  console.log(`  rejected: ${Object.keys(rejected).length ? JSON.stringify(rejected) : 'none'}`);
-
-  if (products.length) {
-    console.log('\n--- first verified product as the browser would receive it ---');
-    console.log(JSON.stringify(products[0], null, 2));
+  const payload = r.envelope;
+  const results = payload ? provider.resultsFrom(payload) : [];
+  if (payload) {
+    console.log(`\nenvelope keys: ${keysOf(payload).join(', ')}`);
+    console.log(`products returned: ${results.length}`);
   } else {
-    console.log('\nNothing passed the gate. The reasons above name the missing or');
-    console.log('unusable field for each record — compare them with product[0] to see');
-    console.log('which alias the adapter is missing.');
+    console.log('\n(answered from the search cache: no envelope was fetched)');
+  }
+  if (results.length) {
+    dump('product[0]', results[0]);
+    const offer = provider.offerFrom(results[0]);
+    if (offer) dump('product[0] offer', offer);
+    else console.log('\n--- product[0] offer ---\n  NONE FOUND. offerFrom() did not recognise an offer on this product.');
+    console.log('\n--- adapter mapping of product[0] ---');
+    console.log(JSON.stringify(provider.toRecord(results[0]), null, 2));
+    const inline = provider.inlineCommerce(results[0]);
+    console.log('\n--- can this record supply a retailer link on its own? ---');
+    console.log(inline ? `  yes: ${inline.retailer} -> ${inline.productUrl}` : '  no. product_page_url is Google\'s, so /product-offers is needed.');
+  }
+
+  const a = r.answer;
+  console.log(`\n/api/search would answer: 200 with ${a.products.length} verified products (of ${a.returned} the source returned)`);
+  console.log(`  rejected: ${Object.keys(a.rejected || {}).length ? JSON.stringify(a.rejected) : 'none'}`);
+  console.log(`  offers  : ${JSON.stringify((a.diagnostics && a.diagnostics.offers) || null)}`);
+  if (a.products.length) {
+    console.log('\n--- first verified product as the browser would receive it ---');
+    console.log(JSON.stringify(a.products[0], null, 2));
+  } else {
+    console.log('\nNothing passed the gate. The reasons above name the missing or unusable field for each record.');
   }
 
   /* the question the gate cannot answer: not whether a URL is there,
      but whether it answers with a picture */
-  const site = (process.argv.includes('--site') ? process.argv[process.argv.indexOf('--site') + 1] : '')
-    || 'https://ai-clothes-application.vercel.app';
-  await reportPhotos(results, site);
+  if (o.photos && results.length) await reportPhotos(results, o.site);
 }
 
 /* Run as a script; required as a module by scripts/test-pipeline.js, so
@@ -313,4 +409,4 @@ if (require.main === module) {
   main().catch((err) => { console.error(err && err.message); process.exit(1); });
 }
 
-module.exports = { describeUrl, photoCandidates, SIGNING_KEY };
+module.exports = { describeUrl, photoCandidates, SIGNING_KEY, probe, watchProvider, flags };

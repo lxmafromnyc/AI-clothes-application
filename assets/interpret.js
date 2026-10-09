@@ -522,7 +522,10 @@
     halfzip: 'half zip', pjs: 'pajamas', tux: 'tuxedo', bf: 'boyfriend', gf: 'girlfriend', fav: 'favourite', fave: 'favourite',
     /* the sounds a person types while thinking, anywhere in the request */
     um: '', umm: '', ummm: '', uh: '', uhh: '', uhm: '', hmm: '', hmmm: '', fr: '', frfr: '',
-    somthing: 'something', sumthing: 'something', smthing: 'something', somethng: 'something', someting: 'something'
+    somthing: 'something', sumthing: 'something', smthing: 'something', somethng: 'something', someting: 'something',
+    /* how shops and shoppers shorten things */
+    blk: 'black', wht: 'white', nvy: 'navy', brn: 'brown', gry: 'grey', wmns: 'womens', wmn: 'womens', womns: 'womens',
+    mns: 'mens', lng: 'long', slv: 'sleeve', slvs: 'sleeves', sz: 'size', cardi: 'cardigan', cardis: 'cardigans', jkt: 'jacket'
   };
   const TYPOS = {
     hoddie: 'hoodie', hodie: 'hoodie', hoodi: 'hoodie', hooide: 'hoodie', hoodey: 'hoodie', hoodys: 'hoodies',
@@ -594,7 +597,39 @@
     if (Object.prototype.hasOwnProperty.call(TYPOS, token)) return TYPOS[token];
     if (token.length < 6 || /\d/.test(token) || known().has(token)) return token;
     const near = CORRECTABLE.filter((word) => oneEditApart(token, word));
-    return near.length === 1 ? near[0] : token;
+    return near.length === 1 ? near[0] : unmerge(token);
+  }
+
+  /* "blackhoodie", "widelegjeans", "oversizedtee": words run together,
+     split back into the words a shop titles things with — only when the
+     whole is not a word the tables know, and every part is a garment,
+     colour, fit, cut or cloth word. Never a filler or a relation word: a
+     "overshirt" is not "over shirt". */
+  let partWords = null;
+  function unmerge(token) {
+    /* a tracksuit, jumpsuit or playsuit is one garment, never a suit */
+    if (token.length < 7 || !/^[a-z]+$/.test(token) || /suits?$/.test(token)) return token;
+    if (!partWords) {
+      partWords = new Set([
+        ...GARMENTS.flatMap(([name, ws]) => [name, ...ws]),
+        ...EXTRA_ANCHORS.flatMap(([name, ws]) => [name, ...ws]),
+        ...DESCRIPTORS.flatMap(([name, ws]) => [name, ...ws]).flatMap((w) => w.split(/[\s-]+/)),
+        ...COLOUR_WORDS, ...MATERIAL_WORDS, ...Object.keys(FIT_WORD), 'tee', 'tshirt'
+      ].filter((w) => /^[a-z]{3,}$/.test(w) && !FILLER.has(w) && !RELATION[w]));
+    }
+    /* the fewest parts, at most three, each one a word above */
+    const best = new Array(token.length + 1).fill(null);
+    best[0] = [];
+    for (let end = 3; end <= token.length; end += 1) {
+      for (let start = Math.max(0, end - 12); start <= end - 3; start += 1) {
+        const part = token.slice(start, end);
+        if (!best[start] || !partWords.has(part)) continue;
+        const parts = best[start].concat([part]);
+        if (parts.length <= 3 && (!best[end] || parts.length < best[end].length)) best[end] = parts;
+      }
+    }
+    const parts = best[token.length];
+    return parts && parts.length > 1 ? parts.join(' ') : token;
   }
 
   /* the request in one plain form, and the words that were changed */
@@ -1460,8 +1495,11 @@
     };
     collect(HINTS.fits, prefs.fits);
     collect(HINTS.occasions, prefs.occasions);
-    collect(HINTS.colors, prefs.colors);
     const read = garmentsWanted(query);
+    /* the colour of what it is worn with is not the colour asked for:
+       "a belt that goes with brown boots" is not a brown belt */
+    const beside = new Set(read.concepts ? read.concepts.beside : []);
+    collect(HINTS.colors, prefs.colors, ` ${plainTokens.filter((token, at) => !ruledOut.has(at) && !beside.has(token)).join(' ')} `);
     prefs.garments = read.garments;
     prefs.descriptors = read.descriptors;
     prefs.categories = read.categories;
@@ -1479,13 +1517,15 @@
       prefs.maxPrice = Number(between[2]);
     }
 
-    /* brands the catalogue carries, matched by name */
+    /* brands the catalogue carries, matched by name — as a whole word:
+       "AE" is not in "aesthetic" */
     (vocab.brands || []).forEach((brand) => {
-      if (text.includes(String(brand).toLowerCase())) prefs.brands.push(brand);
+      if (has(text, String(brand).toLowerCase())) prefs.brands.push(brand);
     });
 
     HINTS.seasons.forEach((s) => { if (has(text, s)) prefs.season = s; });
-    HINTS.genders.forEach((g) => { if (has(text, g) && !prefs.gender) prefs.gender = g; });
+    /* read from the plain form, so "wmns" and "womans" say who it is for */
+    HINTS.genders.forEach((g) => { if (has(` ${plain} `, g) && !prefs.gender) prefs.gender = g; });
 
     /* the words as typed, or as corrected when a word was corrected */
     const corrected = normalize(query).changed.length ? plain : String(query);

@@ -436,6 +436,146 @@ function withoutSamples(funnel) {
   return Object.assign({}, funnel, { organic: Object.assign({}, funnel.organic, { pages }) });
 }
 
+/* The page size a request asks for, held to what the endpoint serves. */
+const limitOf = (raw) => Math.min(Math.max(Number(raw) || DEFAULT_LIMIT, 1), MAX_LIMIT);
+
+/* The search a request runs, from its body to the answer the browser is
+   sent — everything /api/search does except checking and charging the
+   shopper's allowance. The handler below wraps exactly this, and so does
+   scripts/probe-openwebninja.js, so a probe that works or fails has run
+   the route's own request, deadline, cache, gate, filter and ranking —
+   not a copy of them.
+
+   Returns { status, body } for an answer that is final as it stands (a
+   failure), or { status: 200, found, compose } for a search that
+   happened: `compose(usage)` builds the 200 body, read at the moment it
+   is called so its timing includes whatever the caller did in between. */
+async function runSearch(body, options) {
+  const o = options || {};
+  const provider = o.provider || getProvider();
+  const startedAt = o.startedAt || Date.now();
+  const budgetMs = o.budgetMs || requestBudget();
+  const deadline = o.deadline || startedAt + budgetMs;
+  const b = body && typeof body === 'object' ? body : {};
+  const intent = shapeIntent(b.intent);
+  const attachments = shapeAttachments(b.attachments);
+  const limit = limitOf(b.limit);
+
+  const cacheStats = cache.counters();
+
+  let found;
+  try {
+    found = await searchWithFallback(provider, intent, limit, cacheStats, deadline);
+  } catch (err) {
+    /* A stage of ours failed on an answer the provider did give: that is
+       not the source being unavailable, and is not reported as if it
+       were. A 500, naming the stage — never the provider's records, the
+       request or a key. */
+    if (err && err.internal) {
+      console.error('Search failed inside Fynd', provider.name, `${Date.now() - startedAt}ms`, `stage: ${err.stage}`, err.message,
+        err.cause && err.cause.stack ? String(err.cause.stack).split('\n').slice(1, 3).join(' | ').trim() : '');
+      return {
+        status: 500,
+        error: err,
+        body: { error: 'The search failed inside Fynd.', reason: 'internal', stage: err.stage, source: provider.name }
+      };
+    }
+    /* Only the search itself can reach here. An offer lookup that fails
+       or runs out of time leaves its own record without a link, and the
+       gate drops that one record — never the search. So a 502 means the
+       search produced nothing usable at all, and a search that came back
+       with something and then ran short of time is answered below with
+       what it did verify. */
+    /* A network failure's message is only "fetch failed"; what failed is
+       on its cause, so the cause's code is logged with it. */
+    const cause = err && err.cause ? (err.cause.code || err.cause.message || '') : '';
+    console.error('Product source failed', provider.name, `${Date.now() - startedAt}ms`, err && err.message,
+      cause ? `(cause: ${String(cause).slice(0, 120)})` : '',
+      err && err.fellBackFrom ? `(after ${err.fellBackFrom.provider} refused: ${err.fellBackFrom.reason})` : '');
+    /* A source that answered too slowly for the budget is told apart
+       from one that failed: both left nothing to verify, so both are a
+       502, but "unavailable" for a source that was merely slow sends
+       whoever reads it looking for an outage that is not there. */
+    const late = timedOut(err);
+    return {
+      status: 502,
+      error: err,
+      body: {
+        error: late ? 'The product source did not answer in time.' : 'The product source is unavailable right now.',
+        reason: late ? 'timeout' : 'failed',
+        /* Which failure, so it can be read off the browser's own network
+           panel: the kind (invalid-key, bad-request, rate-limited,
+           server-error, network, timeout, ...) and the status the source
+           answered with, when it answered at all. A status and a word —
+           never the source's message, a URL or a key. */
+        kind: failureKind(err),
+        upstreamStatus: Number.isInteger(err && err.status) ? err.status : null,
+        source: provider.name
+      }
+    };
+  }
+
+  const compose = (usage) => {
+    const { records, products, rejected } = found;
+
+    /* An adapter may carry a stage-by-stage account of what it did. Without
+       one, a search that returns nothing looks identical whether the source
+       had no stock, the records could not be parsed, the links could not be
+       obtained, or the budget filter took them all.
+
+       `cache` is always present, on every answer, so "this was free" and
+       "this cost us fourteen requests" are never a guess. It carries
+       counts and nothing else: no key, no digest, nothing a record or an
+       intent was stored under. */
+    const diagnostics = Object.assign({}, withoutSamples(found.funnel) || {}, {
+      reachedGate: records.length,
+      /* which source answered, and from which one it fell back and why */
+      provider: found.provider || provider.name,
+      fellBackFrom: found.fellBackFrom || null,
+      verified: products.length,
+      /* verified, and then removed as plainly a different garment: a count,
+         never a title */
+      removedAsAnotherGarment: Array.isArray(found.semanticRemoved) ? found.semanticRemoved.length : 0,
+      /* whether a descriptive request's results were put in the order of
+         what it most likely means: a yes or no, never a score */
+      reorderedByIntent: Boolean(found.reordered),
+      rejected,
+      cache: cache.report(cacheStats, { servedFromCache: found.servedFromCache }),
+      /* where the time went, so "the page is short" and "the source was
+         slow" are never the same question. Milliseconds and nothing else:
+         no key, no term, nothing out of a record. */
+      timing: {
+        budgetMs,
+        totalMs: Date.now() - startedAt,
+        deadlineExpired: Date.now() >= deadline
+      }
+    });
+
+    if (!products.length) {
+      /* server log only; counts and key names, never a value from a record */
+      console.warn('Search verified nothing.', JSON.stringify(diagnostics));
+    }
+
+    return {
+      /* the source that actually answered: the fallback, when it was used */
+      source: found.provider || provider.name,
+      products: products.slice(0, limit),
+      /* how many the source returned that could not be verified, and why —
+         so a badly behaved provider shows up instead of silently thinning */
+      returned: Array.isArray(records) ? records.length : 0,
+      rejected,
+      diagnostics,
+      /* said out loud so an attachment is never mistaken for something
+         that shaped these results. It did not. */
+      attachments: { received: attachments.length, used: 0, reason: attachments.length ? 'Attachments are not read yet.' : null },
+      /* so the meter on screen moves without a second round trip */
+      usage
+    };
+  };
+
+  return { status: 200, found, intent, limit, compose };
+}
+
 module.exports = async function handler(req, res) {
   /* answers the preflight, and refuses an origin that is not allowed */
   if (handledPreflight(req, res)) return;
@@ -471,121 +611,14 @@ module.exports = async function handler(req, res) {
   if (blocked) return meter.overLimit(res, state);
 
   const body = await readBody(req);
-  const intent = shapeIntent(body.intent);
-  const attachments = shapeAttachments(body.attachments);
-  const limit = Math.min(Math.max(Number(body.limit) || DEFAULT_LIMIT, 1), MAX_LIMIT);
-
-  const cacheStats = cache.counters();
-
-  let found;
-  try {
-    found = await searchWithFallback(provider, intent, limit, cacheStats, deadline);
-  } catch (err) {
-    /* A stage of ours failed on an answer the provider did give: that is
-       not the source being unavailable, and is not reported as if it
-       were. A 500, naming the stage — never the provider's records, the
-       request or a key. */
-    if (err && err.internal) {
-      console.error('Search failed inside Fynd', provider.name, `${Date.now() - startedAt}ms`, `stage: ${err.stage}`, err.message,
-        err.cause && err.cause.stack ? String(err.cause.stack).split('\n').slice(1, 3).join(' | ').trim() : '');
-      return res.status(500).json({
-        error: 'The search failed inside Fynd.',
-        reason: 'internal',
-        stage: err.stage,
-        source: provider.name
-      });
-    }
-    /* Only the search itself can reach here. An offer lookup that fails
-       or runs out of time leaves its own record without a link, and the
-       gate drops that one record — never the search. So a 502 means the
-       search produced nothing usable at all, and a search that came back
-       with something and then ran short of time is answered below with
-       what it did verify. */
-    /* A network failure's message is only "fetch failed"; what failed is
-       on its cause, so the cause's code is logged with it. */
-    const cause = err && err.cause ? (err.cause.code || err.cause.message || '') : '';
-    console.error('Product source failed', provider.name, `${Date.now() - startedAt}ms`, err && err.message,
-      cause ? `(cause: ${String(cause).slice(0, 120)})` : '',
-      err && err.fellBackFrom ? `(after ${err.fellBackFrom.provider} refused: ${err.fellBackFrom.reason})` : '');
-    /* A source that answered too slowly for the budget is told apart
-       from one that failed: both left nothing to verify, so both are a
-       502, but "unavailable" for a source that was merely slow sends
-       whoever reads it looking for an outage that is not there. */
-    const late = timedOut(err);
-    return res.status(502).json({
-      error: late ? 'The product source did not answer in time.' : 'The product source is unavailable right now.',
-      reason: late ? 'timeout' : 'failed',
-      /* Which failure, so it can be read off the browser's own network
-         panel: the kind (invalid-key, bad-request, rate-limited,
-         server-error, network, timeout, ...) and the status the source
-         answered with, when it answered at all. A status and a word —
-         never the source's message, a URL or a key. */
-      kind: failureKind(err),
-      upstreamStatus: Number.isInteger(err && err.status) ? err.status : null,
-      source: provider.name
-    });
-  }
+  const outcome = await runSearch(body, { provider, startedAt, budgetMs, deadline });
+  if (outcome.status !== 200) return res.status(outcome.status).json(outcome.body);
 
   /* The search happened — from the provider or from the cache — whatever
      the gate then makes of the records: the quota was spent either way,
      and it is the shopper's one search either way. */
   const after = await meter.spend(identity, SEARCHES, 1);
-
-  const { records, products, rejected } = found;
-
-  /* An adapter may carry a stage-by-stage account of what it did. Without
-     one, a search that returns nothing looks identical whether the source
-     had no stock, the records could not be parsed, the links could not be
-     obtained, or the budget filter took them all.
-
-     `cache` is always present, on every answer, so "this was free" and
-     "this cost us fourteen requests" are never a guess. It carries
-     counts and nothing else: no key, no digest, nothing a record or an
-     intent was stored under. */
-  const diagnostics = Object.assign({}, withoutSamples(found.funnel) || {}, {
-    reachedGate: records.length,
-    /* which source answered, and from which one it fell back and why */
-    provider: found.provider || provider.name,
-    fellBackFrom: found.fellBackFrom || null,
-    verified: products.length,
-    /* verified, and then removed as plainly a different garment: a count,
-       never a title */
-    removedAsAnotherGarment: Array.isArray(found.semanticRemoved) ? found.semanticRemoved.length : 0,
-    /* whether a descriptive request's results were put in the order of
-       what it most likely means: a yes or no, never a score */
-    reorderedByIntent: Boolean(found.reordered),
-    rejected,
-    cache: cache.report(cacheStats, { servedFromCache: found.servedFromCache }),
-    /* where the time went, so "the page is short" and "the source was
-       slow" are never the same question. Milliseconds and nothing else:
-       no key, no term, nothing out of a record. */
-    timing: {
-      budgetMs,
-      totalMs: Date.now() - startedAt,
-      deadlineExpired: Date.now() >= deadline
-    }
-  });
-
-  if (!products.length) {
-    /* server log only; counts and key names, never a value from a record */
-    console.warn('Search verified nothing.', JSON.stringify(diagnostics));
-  }
-
-  return res.status(200).json({
-    /* the source that actually answered: the fallback, when it was used */
-    source: found.provider || provider.name,
-    products: products.slice(0, limit),
-    /* how many the source returned that could not be verified, and why —
-       so a badly behaved provider shows up instead of silently thinning */
-    returned: Array.isArray(records) ? records.length : 0,
-    rejected,
-    diagnostics,
-    /* said out loud so an attachment is never mistaken for something
-       that shaped these results. It did not. */
-    attachments: { received: attachments.length, used: 0, reason: attachments.length ? 'Attachments are not read yet.' : null },
-    /* so the meter on screen moves without a second round trip */
-    usage: meter.report(after || state)
-  });
+  return res.status(200).json(outcome.compose(meter.report(after || state)));
 };
 
 module.exports.shapeIntent = shapeIntent;
@@ -600,3 +633,7 @@ module.exports.searchWithFallback = searchWithFallback;
 /* the endpoint's own budget and page size, for scripts/bench-live.js */
 module.exports.requestBudget = requestBudget;
 module.exports.DEFAULT_LIMIT = DEFAULT_LIMIT;
+/* the route's search without the allowance around it, for
+   scripts/probe-openwebninja.js and scripts/bench-messy-live.js */
+module.exports.runSearch = runSearch;
+module.exports.limitOf = limitOf;

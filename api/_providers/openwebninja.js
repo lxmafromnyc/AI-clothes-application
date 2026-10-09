@@ -176,6 +176,15 @@ const unquote = (value) => {
 
 const apiKey = () => unquote(process.env.OPENWEBNINJA_API_KEY);
 
+/* The headers every call sends: the key as a header, never in the query
+   string. One place, so the probe and the search cannot send different
+   ones. */
+const requestHeaders = () => ({ 'x-api-key': apiKey(), Accept: 'application/json' });
+
+/* How long the /search leg of a search may take, given the request's
+   deadline: short of it by the reserve the offer lookups need. */
+const searchLegTimeout = (deadline) => legTimeout(deadline, OFFER_RESERVE_MS);
+
 const warned = new Set();
 function code(variable, fallback, pattern) {
   const raw = unquote(process.env[variable]);
@@ -602,7 +611,7 @@ async function apiGet(url, params, timeout) {
      refuses before a connection is opened. */
   const ms = timeout === undefined ? REQUEST_TIMEOUT : timeout;
   const response = await fetchWithin('OpenWeb Ninja', `${url}?${params.toString()}`, {
-    headers: { 'x-api-key': key, Accept: 'application/json' }
+    headers: requestHeaders()
   }, ms);
 
   if (!response.ok) {
@@ -914,7 +923,7 @@ async function search(intent, options) {
      reserve is the window the offer phase needs to turn records into
      products that can actually be shown. */
   const searchStartedAt = Date.now();
-  const payload = await apiGet(request.url, request.params, legTimeout(deadline, OFFER_RESERVE_MS));
+  const payload = await apiGet(request.url, request.params, searchLegTimeout(deadline));
   const searchMs = Date.now() - searchStartedAt;
   const products = resultsFrom(payload);
 
@@ -994,6 +1003,8 @@ module.exports = {
   region,
   /* the key as every request sends it, for the probe; never printed */
   apiKey,
+  requestHeaders,
+  searchLegTimeout,
   /* read by /api/search when it keys the search-result cache */
   cacheContext,
   /* exported for tests and for scripts/probe-openwebninja.js */

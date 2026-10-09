@@ -135,7 +135,8 @@ scripts/test-concepts.js       offline test of descriptive requests, end to end
 scripts/bench-concepts.js      before/after benchmark of descriptive requests
 scripts/test-messy.js          offline test of messy, negative and misspelled requests
 scripts/bench-messy.js         before/after benchmark of 88 messy requests
-scripts/bench-messy-live.js    81 graded requests through the real live path; compares checkouts
+scripts/bench-messy-queries.js the benchmark's 107 requests: ids, types, intents and grading rules
+scripts/bench-messy-live.js    runs them through the real route, live; compares checkouts
 api/_reading.js                the model's reading, held to the shopper's words
 scripts/test-reading.js        offline test of that: inventions, roles, exact requests unchanged
 assets/app.js           rendering and page behaviour
@@ -446,9 +447,19 @@ The OpenWeb Ninja key, country and language are read in one place
 (`api/_providers/openwebninja.js`): the key is trimmed and unquoted, and the
 region is sent as the two-letter codes the API takes (` US ` → `us`, `en-US` →
 `en`; a value that is not a code is named in a warning and the default used).
-`scripts/probe-openwebninja.js` sends the request the adapter's own
-`searchRequest()` builds, so a probe that works means `/api/search`'s request
-works with the same environment.
+`scripts/probe-openwebninja.js` runs `/api/search`'s own search —
+`runSearch()` in `api/search.js`, everything the route does except check and
+charge the shopper's allowance — on the body the page would post for the
+words given (or a body copied from the browser with `--body`), under the
+route's own deadline. It prints every request that reaches OpenWeb Ninja: path,
+parameters, header names (and whether the key sent is this environment's, as a
+yes or no), status, time, and whether the clock cut it off; then the answer
+`/api/search` would give, a failure classified exactly as the route classifies
+it. `scripts/test-deadline.js` holds that equivalence: for the same body and
+environment the probe and the route send identical requests, are cut off at the
+same moment, and answer every provider failure identically. So a probe that
+works with an environment means `/api/search` works with it; when one works and
+the other fails, the two processes are not reading the same environment.
 
 ### Requests that describe rather than name
 
@@ -574,30 +585,49 @@ Everything ruled out — garments, and modifiers like *skinny*, *logo* or
 
 #### Measuring it live
 
-`scripts/bench-messy-live.js` puts 73 messy requests and 8 plain ones — the
-brief's own fifteen, misspellings, fragments, slang, contradictions, filler and
-"not"/"with" requests — through the real path: the page's reader exactly as the
-browser runs it, the served interpreter, `/api/search`'s intent, the product
-source with its offer lookups, cache and deadlines, the gate, the filter and the
-ranking. No stubs: a run costs one model call, one provider search and its
-capped offer lookups per request, per checkout.
+`scripts/bench-messy-queries.js` holds the requests, version-controlled: 99
+messy ones and 8 plain ones as a control group. Every one has a stable id
+(`M001`…, `P001`…), a type (misspelling, merged words, abbreviation, fragment,
+natural language, several attributes, synonym, contradiction, size, negation,
+worn-with, comparison, reference, slang, contraction, word order,
+conversational, no-result, plain), its intent in words, and the rules it is
+graded by. Three are requests nothing honest can answer ("cashmere sweater
+under $5"): for those, zero products is the right answer.
+
+`scripts/bench-messy-live.js` puts them through the real path. In process (the
+default), each checkout runs in a process of its own: the page's own scripts
+read the request as the browser does, the page's call to `/api/interpret` goes
+to that checkout's real handler (which answers 503 when no interpreter is
+configured, and the page reads the request locally), and the body the page
+posts goes to that checkout's real `/api/search` handler — allowance, provider,
+offer lookups, cache, deadline, gate, filter, ranking — for the HTTP status and
+JSON the browser would get. Each request is a new anonymous visitor, and the
+cache and allowance counters are kept in memory unless `--store env` is given,
+so a run never writes into a configured Redis. With `--servers`, the page's two
+requests go over HTTP to running servers instead (`vercel dev`, or a
+deployment), with whatever environment they run with.
 
 ```sh
-# one checkout
-node --env-file=.env.local scripts/bench-messy-live.js
-# two, on the same requests, interleaved: before and after a change
-git worktree add ../fynd-before <commit>
-node --env-file=.env.local scripts/bench-messy-live.js --roots before=../fynd-before,after=. --out live.json
+# this checkout against main, on the same requests, interleaved
+git worktree add ../fynd-main origin/main
+node --env-file=.env.local scripts/bench-messy-live.js --roots before=../fynd-main,after=.
+# against running servers
+node scripts/bench-messy-live.js --servers after=http://localhost:3005
 ```
 
-Each request is graded by the same rules whichever checkout answered it:
-interpretation (target, exclusions, stated constraints kept, nothing invented),
-relevant@4 and @8, strong matches and clearly wrong in the top 8, hard-constraint violations
-(budget, stated colour or gender contradicted, anything ruled out shown),
-products the filter removed that were plainly what was asked, provider searches,
-offer lookups and latency. What "plainly" means is written beside each request
-as patterns on the product title; a title that does not say is counted neither
-way. `--reader local` measures the page's local fallback instead of the model.
+Each run writes `results.json` (every request: HTTP status, latencies, the
+failure's kind if any, the phrase asked, provider searches and offer lookups,
+the products shown and how each was graded) and `summary.md` to
+`bench-results/` (ignored by git). Each request is graded by the same rules
+whichever checkout answered it: interpretation (target, exclusions, stated
+constraints kept, nothing invented), relevant@4 and @8, strong matches and
+clearly wrong in the top 8, hard-constraint violations (budget, stated colour
+or gender contradicted, anything ruled out shown), products the filter removed
+that were plainly what was asked, results missing where some were expected,
+provider searches, offer lookups and latency. What "plainly" means is written
+beside each request as patterns on the product title; a title that does not say
+is counted neither way. `--reader local` measures the page's local fallback
+instead of the model.
 
 ### Worth knowing
 
@@ -1200,7 +1230,7 @@ node scripts/bench-offer-resolution.js  # what one search costs the provider
 node scripts/test-concepts.js  # descriptive requests: what they mean, and what must not change
 node scripts/test-messy.js     # misspelled, slang, negative and conversational requests
 node scripts/test-reading.js   # the model's reading held to the shopper's words
-node scripts/test-bench-messy-live.js  # the live benchmark's grading, and a stand-in run end to end
+node scripts/test-bench-messy-live.js  # the benchmark's requests and grading, and stand-in runs through the real handlers
 node scripts/bench-messy.js --compare before.json after.json  # 88 messy requests, before and after
 node scripts/bench-concepts.js --compare before.json after.json  # descriptive requests, before and after
 node scripts/test-cache.js     # the search and offer caches, and what they may not change

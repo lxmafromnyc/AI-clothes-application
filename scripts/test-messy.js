@@ -461,6 +461,33 @@ async function main() {
     assert.deepStrictEqual(local('cute top to wear with jeans').concepts.context, ['jeans']);
   });
 
+  await test('words run together are split into the words shops use; real compound words are left whole', () => {
+    assert.strictEqual(phrase('blackhoodie'), 'black hoodie');
+    assert.strictEqual(phrase('widelegjeans'), 'wide-leg jeans');
+    assert.ok(words(phrase('oversizedtee')).has('oversized'), phrase('oversizedtee'));
+    assert.strictEqual(I.normalize('tracksuit').text, 'tracksuit', 'a tracksuit was read as a suit');
+    assert.strictEqual(I.normalize('highwaisted trenchcoat').text, 'high waisted trench coat');
+    for (const whole of ['overshirt', 'sweatshirt', 'turtleneck', 'handbag', 'waterproof jacket', 'heavyweight tee', 'lightweight jacket', 'jumpsuit', 'playsuit']) {
+      assert.ok(!/\bover shirt\b|\bsweat shirt\b|\bturtle neck\b|\bhand bag\b|\bwater proof\b|\bheavy weight\b|\blight weight\b/.test(I.normalize(whole).text), `${whole} -> ${I.normalize(whole).text}`);
+    }
+  });
+
+  await test('shop abbreviations are read as the words they stand for', () => {
+    assert.strictEqual(phrase('blk tee w/o logo'), 'black tee');
+    assert.ok(local('blk tee w/o logo').concepts.without.includes('logo'));
+    assert.strictEqual(phrase('mens lng slv shirt'), 'mens long-sleeve shirt');
+    assert.ok(words(phrase('pls find me a cute cardi')).has('cardigan'), phrase('pls find me a cute cardi'));
+    assert.ok(/^women/.test(local('wmns crop top').gender), String(local('wmns crop top').gender));
+  });
+
+  await test('a brand is matched as a whole word, and the colour of what it is worn with is not the colour asked for', () => {
+    const vocab = { brands: ['AE', 'UNIQLO'], colors: ['Earth', 'Black'] };
+    assert.deepStrictEqual(I.localInterpret('clean girl aesthetic top', vocab).brands, []);
+    assert.deepStrictEqual(I.localInterpret('ae jeans', vocab).brands, ['AE']);
+    assert.deepStrictEqual(I.localInterpret('need a belt that goes with brown boots', vocab).colors, []);
+    assert.deepStrictEqual(I.localInterpret('brown belt', vocab).colors, ['Earth']);
+  });
+
   await test('denim is a cloth, not a colour: "vintage denim jacket" is not searched as blue', () => {
     assert.ok(!words(phrase('vintage looking denim jacket but not cropped')).has('blue'), phrase('vintage looking denim jacket but not cropped'));
     assert.ok(!words(phrase('vintage looking denim jacket but not cropped')).has('cropped'));

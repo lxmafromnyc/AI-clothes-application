@@ -122,53 +122,146 @@ async function main() {
     assert.strictEqual(g.wronglyRemoved, 1);
   });
 
-  await test('there are at least fifty messy requests, the brief\'s fifteen among them, and every one is graded', () => {
-    const messy = bench.CASES.filter((c) => (c.set || 'messy') === 'messy');
-    assert.ok(messy.length >= 50, `${messy.length}`);
+  console.log('\nthe requests');
+
+  await test('every request has a stable id, a type and an intent; at least fifty distinct messy ones, and the plain control group', () => {
+    const { QUERIES, TYPES } = require('./bench-messy-queries');
+    const ids = QUERIES.map((c) => c.id);
+    assert.strictEqual(new Set(ids).size, ids.length, 'an id is used twice');
+    assert.ok(ids.every((id) => /^[MP]\d{3}$/.test(id)), 'an id is not M### or P###');
+    const texts = QUERIES.map((c) => c.q.trim().toLowerCase());
+    assert.strictEqual(new Set(texts).size, texts.length, 'a request is in twice');
+    const messy = QUERIES.filter((c) => c.set === 'messy');
+    const plain = QUERIES.filter((c) => c.set === 'plain');
+    assert.ok(messy.length >= 50, `${messy.length} messy`);
+    assert.strictEqual(plain.length, 8);
+    assert.ok(messy.every((c) => c.id.startsWith('M')) && plain.every((c) => c.id.startsWith('P') && c.type === 'plain'));
+    for (const c of QUERIES) {
+      assert.ok(TYPES.includes(c.type), `${c.id}: type ${c.type}`);
+      assert.ok(typeof c.intent === 'string' && c.intent.length > 3, `${c.id}: no intent`);
+      assert.ok(c.target instanceof RegExp && (c.relevant instanceof RegExp || Array.isArray(c.relevant) || typeof c.relevant === 'function'), `${c.id}: no criteria`);
+    }
+    /* what the brief asked the set to cover */
+    for (const type of ['misspelling', 'merged-words', 'abbreviation', 'fragment', 'natural-language', 'multi-attribute', 'synonym', 'contradiction', 'size', 'no-result', 'negation', 'worn-with', 'comparison']) {
+      assert.ok(messy.some((c) => c.type === type), `no ${type} request`);
+    }
     for (const q of ['hoodie but nicer', 'something warm but not a coat', 'that jacket shirt thing', 'shirt but heavier', 'something cozy to wear with jeans', 'something skaters would wear', 'women black thing long sleeve cheap']) {
       assert.ok(caseFor(q), q);
     }
-    for (const c of bench.CASES) assert.ok(c.target && c.relevant, c.q);
+  });
+
+  await test('a request nothing honest can answer is right only when nothing is shown', () => {
+    const c = bench.CASES.find((x) => x.id === 'M097');
+    assert.strictEqual(bench.grade(c, { asked: 'cashmere sweater', intent: { maxPrice: 5 }, products: [] }).noneCorrect, true);
+    const shown = bench.grade(c, { asked: 'cashmere sweater', intent: { maxPrice: 5 }, products: [{ name: 'Cashmere Sweater', price: 89 }] });
+    assert.strictEqual(shown.noneCorrect, false);
+    assert.ok(shown.hardViolations >= 1, 'an $89 sweater for "under $5" is not a violation');
+    /* and a request that should find things is not judged on that */
+    assert.strictEqual(bench.grade(caseFor('blak hoddie'), { asked: 'black hoodie', intent: { colors: ['Black'] }, products: [] }).noneCorrect, null);
   });
 
   console.log('\nthe run, end to end, with stand-ins for the two services');
 
-  await test('two checkouts answer the same requests, one provider search each, every product graded', () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fynd-bench-live-'));
-    const standIn = path.join(dir, 'stand-in.js');
-    const out = path.join(dir, 'out.json');
-    fs.writeFileSync(standIn, STAND_IN);
-    const repo = path.join(__dirname, '..');
+  const repo = path.join(__dirname, '..');
+  const runBench = (dir, args, env) => {
     try {
-      execFileSync(process.execPath, ['-r', standIn, path.join(__dirname, 'bench-messy-live.js'),
-        '--roots', `one=${repo},two=${repo}`, '--only', 'black pants but not skinny|something cozy to wear with jeans|red dress', '--json', '--out', out],
-      { stdio: ['ignore', 'pipe', 'pipe'], env: Object.assign({}, process.env, { OPENAI_API_KEY: '', OPENWEBNINJA_API_KEY: '' }) });
+      execFileSync(process.execPath, args, { stdio: ['ignore', 'pipe', 'pipe'], env: Object.assign({}, process.env, { OPENAI_API_KEY: '', OPENWEBNINJA_API_KEY: '' }, env || {}) });
     } catch (err) {
       /* exit 1 is the benchmark judging the results, which a stand-in
          answering "Skinny ..." for a request that ruled skinny out earns */
       if (err.status !== 1) throw new Error(String(err.stderr || err.message));
     }
-    const result = JSON.parse(fs.readFileSync(out, 'utf8'));
+    return {
+      results: JSON.parse(fs.readFileSync(path.join(dir, 'results.json'), 'utf8')),
+      summary: fs.readFileSync(path.join(dir, 'summary.md'), 'utf8')
+    };
+  };
+
+  await test('in process: each request goes through the real /api/interpret and /api/search handlers, and is recorded with its HTTP status', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fynd-bench-live-'));
+    const standIn = path.join(dir, 'stand-in.js');
+    fs.writeFileSync(standIn, STAND_IN);
+    const out = path.join(dir, 'out');
+    const { results, summary } = runBench(out, ['-r', standIn, path.join(__dirname, 'bench-messy-live.js'),
+      '--roots', `one=${repo},two=${repo}`, '--only', 'M005|M007|P001', '--out-dir', out, '--json']);
     fs.rmSync(dir, { recursive: true, force: true });
+    assert.strictEqual(results.mode, 'in-process');
+    assert.strictEqual(results.store, 'memory');
+    assert.deepStrictEqual(results.results.map((r) => r.id), ['M005', 'M007', 'P001']);
     for (const name of ['one', 'two']) {
-      const rows = result.byRoot[name];
-      assert.strictEqual(rows.length, 3);
-      for (const row of rows) {
-        assert.ok(row.observed, row.error);
-        assert.strictEqual(row.observed.interpreter, 'openai');
-        assert.strictEqual(row.observed.providerSearches, 1, row.case.q);
-        assert.strictEqual(row.observed.interpreterCalls, 1, row.case.q);
-        assert.ok(row.observed.verified > 0, row.case.q);
-        assert.ok(row.graded && typeof row.graded.relevantAt8 === 'number');
+      for (const row of results.results) {
+        const o = row[name];
+        assert.ok(!o.crashed, `${row.id}: ${o.crashed}`);
+        assert.strictEqual(o.status, 200, `${row.id}: HTTP ${o.status}`);
+        assert.strictEqual(o.interpretStatus, 200, `${row.id}: /api/interpret ${o.interpretStatus}`);
+        assert.strictEqual(o.interpreter, 'openai');
+        assert.strictEqual(o.providerSearches, 1, row.id);
+        assert.strictEqual(o.interpreterCalls, 1, row.id);
+        assert.strictEqual(o.askedFrom, 'wire');
+        assert.ok(o.verified > 0, row.id);
+        assert.ok(typeof o.totalMs === 'number' && typeof o.searchMs === 'number');
+        assert.ok(o.graded && typeof o.graded.relevantAt8 === 'number');
       }
-      assert.strictEqual(result.summary[name].providerSearchesMax, 1);
+      assert.strictEqual(results.summary[name].providerSearchesMax, 1);
+      assert.deepStrictEqual(results.summary[name].httpStatuses, { 200: 3 });
     }
     /* the same checkout twice asks the same thing */
-    assert.deepStrictEqual(result.compared.map((d) => d.sameQuery), [true, true, true]);
-    /* and the skinny listing the stand-in sent was taken out by the filter, not shown */
-    const skinny = result.byRoot.one[0];
-    assert.ok(!skinny.observed.products.some((p) => /skinny/i.test(p.name)), skinny.observed.products.map((p) => p.name).join(' | '));
-    assert.ok(skinny.observed.removed.some((r) => /skinny/i.test(r.name)));
+    assert.deepStrictEqual(results.compared.map((d) => d.sameQuery), [true, true, true]);
+    /* the skinny listing the stand-in sent was removed by the filter, not shown — and the record says so */
+    const skinny = results.results[0].one;
+    assert.ok(!skinny.products.some((p) => /skinny/i.test(p.name)), skinny.products.map((p) => p.name).join(' | '));
+    assert.ok(skinny.removed.some((r) => /skinny/i.test(r.name)));
+    /* and nothing secret was written */
+    assert.ok(!/sk-stand-in|stand-in-key/.test(JSON.stringify(results)), 'a key reached the record');
+    assert.ok(/## Every request — one/.test(summary) && /\| M005 \|/.test(summary), 'the summary has no per-request table');
+  });
+
+  await test('against a running server: the page\'s two requests go over HTTP, and its answer is recorded as it came', async () => {
+    const http = require('http');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fynd-bench-server-'));
+    const standIn = path.join(dir, 'stand-in.js');
+    fs.writeFileSync(standIn, STAND_IN);
+    /* the server is this process: the real handlers, behind the stand-ins */
+    const saved = { fetch: global.fetch, openai: process.env.OPENAI_API_KEY, own: process.env.OPENWEBNINJA_API_KEY };
+    require(standIn);
+    const handlers = { '/api/search': require('../api/search'), '/api/interpret': require('../api/interpret') };
+    const server = http.createServer((req, res) => {
+      const handler = handlers[new URL(req.url, 'http://x').pathname];
+      res.status = (code) => { res.statusCode = code; return res; };
+      res.json = (body) => { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(body)); return res; };
+      if (!handler) return res.status(404).json({ error: 'not found' });
+      Promise.resolve(handler(req, res)).catch((err) => res.status(500).json({ error: String(err && err.message) }));
+    });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const out = path.join(dir, 'out');
+    try {
+      const run = () => new Promise((resolve, reject) => {
+        const child = require('child_process').execFile(process.execPath, [path.join(__dirname, 'bench-messy-live.js'),
+          '--servers', `local=http://127.0.0.1:${server.address().port}`, '--only', 'M005|P001', '--out-dir', out, '--json'],
+        { env: Object.assign({}, process.env, { OPENAI_API_KEY: '', OPENWEBNINJA_API_KEY: '' }) }, (err) => (err && err.code !== 1 ? reject(err) : resolve()));
+        child.stdin && child.stdin.end();
+      });
+      await run();
+    } finally {
+      server.close();
+      global.fetch = saved.fetch;
+      if (saved.openai === undefined) delete process.env.OPENAI_API_KEY; else process.env.OPENAI_API_KEY = saved.openai;
+      if (saved.own === undefined) delete process.env.OPENWEBNINJA_API_KEY; else process.env.OPENWEBNINJA_API_KEY = saved.own;
+    }
+    const results = JSON.parse(fs.readFileSync(path.join(out, 'results.json'), 'utf8'));
+    fs.rmSync(dir, { recursive: true, force: true });
+    assert.strictEqual(results.mode, 'servers');
+    for (const row of results.results) {
+      const o = row.local;
+      assert.ok(!o.crashed, `${row.id}: ${o.crashed}`);
+      assert.strictEqual(o.status, 200, `${row.id}: HTTP ${o.status}`);
+      assert.strictEqual(o.interpretStatus, 200);
+      assert.strictEqual(o.providerCallsSeenBy, "the server's diagnostics");
+      assert.strictEqual(o.providerSearches, 1);
+      assert.strictEqual(o.askedFrom, 'built from the posted body');
+      assert.strictEqual(o.removed, null);
+      assert.ok(o.verified > 0, row.id);
+    }
   });
 
   console.log(`\n${passed} passed, ${failures.length} failed`);

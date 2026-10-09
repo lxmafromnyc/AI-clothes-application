@@ -555,9 +555,10 @@ function checkReading(reading, ev, rejected) {
     if (!raw) return false;
     /* "skinny pants" for "pants that aren't skinny": what was ruled out
        comes off the term, and what is left is judged */
-    const kept = wordsOf(raw).filter((w) => !ev.negated.has(stem(w)));
-    const term = kept.join(' ');
-    if (term !== raw) rejected.push(`ruled-out word taken off: ${raw} -> ${term || '(nothing)'}`);
+    const all = wordsOf(raw);
+    const kept = all.filter((w) => !ev.negated.has(stem(w)));
+    const term = kept.length === all.length ? raw : kept.join(' ');
+    if (kept.length !== all.length) rejected.push(`ruled-out word taken off: ${raw} -> ${term || '(nothing)'}`);
     if (!term) return false;
     const garment = garmentOf(term);
     if (!garment) { rejected.push(`not a garment: ${term}`); return false; }
