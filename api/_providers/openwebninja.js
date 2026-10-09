@@ -1007,18 +1007,22 @@ async function resolveMissingOffers(records, wanted, region, stats, intent, cach
 
         const lookup = { controller: new AbortController(), holdsWorker: true, pastCap: false, settled: false };
         open.add(lookup);
-        /* the worker goes back at the cap, or at the deadline if that
-           comes first; the request runs on to the deadline */
-        const capTimer = setTimeout(() => {
+        /* the worker goes back at the cap, and the request runs on to
+           the deadline. Only a cap shorter than what is left of the
+           budget is armed: one that would fire with the deadline is the
+           deadline, and a lookup it ends has timed out, not outlived
+           its cap — counted once, whichever timer the clock runs first */
+        const window = legTimeout(deadline);
+        const capTimer = cap < window ? setTimeout(() => {
           if (!lookup.holdsWorker) return;
           lookup.holdsWorker = false;
           lookup.pastCap = true;
           tally.lookupsPastCap += 1;
           inFlight -= 1;
           pump();
-        }, Math.min(legTimeout(deadline), cap));
+        }, cap) : null;
 
-        lookupFor(record, region, tally, cacheTally, legTimeout(deadline), {
+        lookupFor(record, region, tally, cacheTally, window, {
           signal: lookup.controller.signal,
           timings,
           onSettle: () => { lookup.settled = true; },
@@ -1043,7 +1047,7 @@ async function resolveMissingOffers(records, wanted, region, stats, intent, cach
              and leave the pool with a worker it never gets back */
           .catch(() => {})
           .then(() => {
-            clearTimeout(capTimer);
+            if (capTimer) clearTimeout(capTimer);
             open.delete(lookup);
             if (lookup.holdsWorker) { lookup.holdsWorker = false; inFlight -= 1; }
             pump();

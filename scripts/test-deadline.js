@@ -616,6 +616,26 @@ async function main() {
     assert.ok(elapsed < 1000, `answered when full, not at the 3s deadline (${elapsed}ms)`);
   });
 
+  await testAsync('a lookup the deadline ends has timed out, not outlived its cap: counted the same every run', async () => {
+    /* the cap (2.5s by default) is longer than the whole budget, so the
+       deadline is what ends each lookup — and the count must not depend
+       on which of two timers the clock happens to run first */
+    process.env.FYND_REQUEST_BUDGET_MS = '500';
+    const four = Array.from({ length: 4 }, (_, i) => needsLookup(i));
+    const counts = [];
+    for (let run = 0; run < 3; run += 1) {
+      cache.reset();
+      installFetch({
+        search: () => ({ answer: okResponse(envelope(four)), delay: 5 }),
+        offers: () => ({ answer: HANG })
+      });
+      const { res } = await post({ intent: INTENT, limit: 4 });
+      const offers = res.body.diagnostics.offers;
+      counts.push([offers.lookupsPastCap, offers.lookupsTimedOut === offers.lookupsMade]);
+    }
+    assert.deepStrictEqual(counts, [[0, true], [0, true], [0, true]]);
+  });
+
   await testAsync('no seller answers before the deadline: a 502 that says so, with the tally, and not charged', async () => {
     process.env.FYND_REQUEST_BUDGET_MS = '700';
     const six = Array.from({ length: 6 }, (_, i) => needsLookup(i));
