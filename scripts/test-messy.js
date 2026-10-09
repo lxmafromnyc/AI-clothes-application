@@ -514,6 +514,20 @@ async function main() {
     assert.ok(!((read('i want an actual hood') || {}).without || []).includes('hood'));
   });
 
+  await test('"I don\'t want one with a hood": the hood is ruled out and never searched; "I want a hoodie" is unchanged', () => {
+    const c = read("I don't want one with a hood.");
+    assert.ok(c.without.includes('hood') && c.drop.includes('hoodie'), JSON.stringify(c.without));
+    assert.ok(!/hood/.test(phrase("I don't want one with a hood.")), phrase("I don't want one with a hood."));
+    const cozy = 'something cozy, i dont want one with a hood';
+    assert.ok(!/hood/.test(phrase(cozy)), phrase(cozy));
+    assert.strictEqual(says(cozy), 'Looking for cozy sweaters, sweatshirts or cardigans, without hoods');
+    /* asked for, not ruled out */
+    assert.strictEqual(read('I want a hoodie'), null);
+    assert.deepStrictEqual(local('I want a hoodie').garments, ['hoodie']);
+    assert.strictEqual(phrase('I want a hoodie'), 'hoodie');
+    assert.ok(/hood/.test(phrase('i want one with a hood')), phrase('i want one with a hood'));
+  });
+
   await test('"tryna", "sumthin" and "rlly" are said in plain words, and none reaches the provider', () => {
     assert.strictEqual(I.normalize('tryna find sumthin rlly cozy').text, 'trying to find something really cozy');
     assert.ok(!/tryna|sumthin|rlly/.test(phrase(COZY)), phrase(COZY));

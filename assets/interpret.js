@@ -695,7 +695,7 @@
       /* "no" as a whole answer, "not sure": nothing is ruled out */
       let j = after;
       let unsure = false;
-      while (j < tokens.length && j < after + 5 && (PASS_NEGATED.has(tokens[j]) || keen(j))) { if (UNSURE.has(tokens[j])) unsure = true; j += 1; }
+      while (j < tokens.length && j < after + 5 && (PASS_NEGATED.has(tokens[j]) || keen(j) || oneWith(j))) { if (UNSURE.has(tokens[j])) unsure = true; j += 1; }
       const span = (to) => { for (let k = i; k <= to; k += 1) out.at.add(k); };
       /* "not huge or sloppy", "no logos or graphics": what one "not"
          rules out runs on through an "or" */
@@ -711,6 +711,13 @@
       }
     }
     return out;
+
+    /* "don't want one with a hood": the one is the garment wanted, and
+       what it comes with is what is ruled out */
+    function oneWith(j) {
+      if (tokens[j] === 'one' || tokens[j] === 'ones') return tokens[j + 1] === 'with';
+      return tokens[j] === 'with' && (tokens[j - 1] === 'one' || tokens[j - 1] === 'ones');
+    }
 
     /* "into" before what is ruled out, and "big fan of" / "huge fan of" —
        but "huge" alone is a size: "not huge or sloppy" */
