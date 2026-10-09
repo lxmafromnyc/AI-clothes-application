@@ -1556,6 +1556,16 @@ function twoEndpointStub(searchPayload, offersByProductId) {
     assert.ok(r.notice && !/sample/i.test(r.notice), 'the notice must not promise sample items');
   });
 
+  await testAsync('prices not confirmed in time is said as that, not as an outage or as "nothing matched"', async () => {
+    const late = await clientAnswer(async () => jsonResponse(502, { error: 'The product source did not confirm any prices in time.', reason: 'timeout', stage: 'offers' }));
+    assert.strictEqual(late.state, 'unavailable');
+    assert.strictEqual(late.products.length, 0);
+    assert.ok(/could not confirm their prices in time/.test(late.notice), late.notice);
+    /* any other 502 keeps the plain notice */
+    const other = await clientAnswer(async () => jsonResponse(502, { error: 'The product source is unavailable right now.', reason: 'failed' }));
+    assert.ok(!/prices in time/.test(other.notice) && /failed/.test(other.notice), other.notice);
+  });
+
   await testAsync('an unreachable endpoint is "unavailable" rather than assumed unconfigured', async () => {
     const r = await clientAnswer(async () => { throw new Error('network down'); });
     assert.strictEqual(r.state, 'unavailable');
