@@ -1302,7 +1302,7 @@ jobs, the Node suites and the browser suites (in Playwright's Chromium). The
 same command runs them anywhere:
 
 ```sh
-npm ci && npx playwright install chromium   # once
+npm ci && npx playwright install chromium   # once; ffmpeg on the PATH too
 npm test                                    # every required suite
 node scripts/ci-tests.js node               # or one group: node | browser
 ```

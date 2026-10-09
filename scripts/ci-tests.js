@@ -25,7 +25,9 @@
 
    Usage:
      node scripts/ci-tests.js                 the required suites, both groups
-     node scripts/ci-tests.js node            no browser needed
+     node scripts/ci-tests.js node            no browser needed: npm ci, and ffmpeg on
+                                                the PATH (test-demo-film unpacks the
+                                                recorded session with it)
      node scripts/ci-tests.js browser         needs Playwright's Chromium:
                                                 npm ci && npx playwright install chromium
                                                 (or CHROME_PATH and PLAYWRIGHT_PATH naming others)

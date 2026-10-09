@@ -8,7 +8,7 @@
 # reach a key: nothing here calls a paid API or spends a provider
 # credit. The live checks are live-validation.yml's, run by hand.
 #
-# node      the suites that need no browser
+# node      the suites that need no browser (ffmpeg for test-demo-film)
 # browser   the interface, end-to-end and browser-path suites, in
 #           Playwright's Chromium
 #
@@ -47,6 +47,10 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci --no-audit --no-fund
+      - name: Install ffmpeg
+        # test-demo-film unpacks the recorded session with it to draw a
+        # frame; the runner image does not carry it
+        run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends ffmpeg
       - name: Run the Node suites
         run: node scripts/ci-tests.js node
 
