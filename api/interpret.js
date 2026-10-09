@@ -44,6 +44,7 @@ const interpreters = require('./_interpreters');
 const { envReport } = require('./_env-report');
 const meter = require('./_meter');
 const { AI_TOKENS } = require('./_plans');
+const { reconcile } = require('./_reading');
 
 const OPENAI_URL = 'https://api.openai.com/v1/chat/completions';
 const DEFAULT_MODEL = 'gpt-4o-mini';
@@ -62,8 +63,11 @@ const acceptsTemperature = (model) =>
    constrained to the vocabulary the catalogue actually uses, which is sent
    with the request, so the interpretation can be matched directly. */
 const SYSTEM_PROMPT = `You interpret shopping requests for a clothing finder.
+Shoppers write badly: misspelled, vague, chatty, comparing one thing to
+another, saying what they do NOT want. Work out what they mean. Never add
+a fact they did not give.
 
-Read the shopper's request and return ONLY a JSON object with these keys:
+Return ONLY a JSON object with these keys:
   categories  array of garment kinds, e.g. ["shirt"]
   colors      array of colour families
   occasions   array of occasions
@@ -75,6 +79,21 @@ Read the shopper's request and return ONLY a JSON object with these keys:
   season      string or null, e.g. "fall"
   gender      string or null, e.g. "women"
   keywords    array of any other meaningful words from the request
+  reading     object, what they mean:
+    want          the garment they want, in plain shop words, or null
+                  if they never say or clearly imply one
+    alternatives  up to 3 plain shop names for what they most likely
+                  mean, best first; only when the request is vague,
+                  comparative or describes rather than names
+    comparedTo    a garment they compare it to, or null
+    wornWith      garments named only as what it is worn with, over or
+                  under
+    avoid         what they do NOT want: garments, fits, colours,
+                  features, materials
+    fit           fit or silhouette words they asked for
+    material      materials they asked for
+    style         at most 2 style words in shop terms
+    occasion      what it is for, or null
 
 Rules:
 - Where a vocabulary list is supplied for a field, choose only from that
@@ -82,9 +101,25 @@ Rules:
   fit; "school" maps to an everyday occasion; "grey" maps to the nearest
   colour family present.
 - Leave an array empty and a value null when the request does not say.
-  Never guess a budget that was not stated.
+  Never add a colour, brand, budget, gender or size that was not stated.
+  "cheap" is not a budget.
 - "under $50" means maxPrice 50. "$50-$80" means minPrice 50, maxPrice 80.
-- Return the JSON object only, with no explanation.`;
+- What they compare to, wear it with or rule out is never what they want:
+  "something cozy to wear with jeans" wants a top, not jeans.
+- Anything after "not", "no", "without", "isn't", "aren't" goes in avoid
+  and nowhere else: "not skinny" is never a skinny fit.
+- Read misspellings and slang as the words meant ("hoddie" is hoodie).
+- Keep alternatives few and common. Do not list synonyms of one thing.
+
+Example: "black pants but not skinny" ->
+{"categories":["trousers"],"colors":["Black"],"occasions":[],"fits":[],
+"brands":[],"styles":[],"maxPrice":null,"minPrice":null,"season":null,
+"gender":null,"keywords":["black","pants"],"reading":{"want":"pants",
+"alternatives":["straight leg pants","wide leg pants"],"comparedTo":null,
+"wornWith":[],"avoid":["skinny"],"fit":[],"material":[],"style":[],
+"occasion":null}}
+
+Return the JSON object only, with no explanation.`;
 
 /* the model is asked for arrays, but tolerate a bare string too */
 function asArray(v) {
@@ -194,6 +229,17 @@ module.exports = async function handler(req, res) {
    model read the rest: a model constrained to the catalogue's filing
    says "knit" for a hoodie, and the shopper said "hoodie".
 
+   So is what a DESCRIPTIVE request most likely means — "something like
+   a hoodie but cleaner", "a shirt that looks like a jacket" — and which
+   of the garments it names are only what it is worn with ("with
+   jeans"), which are taken out of the garments it is about. That
+   reading is deterministic and tabled (readConcepts in
+   assets/interpret.js), so it is the same whichever model read the
+   rest, the same on the page's local fallback, and it cannot add a
+   colour, a budget or a brand the shopper did not state. A request that
+   is not descriptive gets no `concepts` at all, and nothing downstream
+   changes for it.
+
    So is a budget stated in so many words. The prompt says "under $50"
    means maxPrice 50, and gemini-3.6-flash at minimal thinking still
    answered "a green oversized hoodie under $80" with maxPrice null.
@@ -203,7 +249,15 @@ module.exports = async function handler(req, res) {
 async function interpretQuery({ query, vocabulary }) {
   const alternative = interpreters.getInterpreter();
   const key = process.env.OPENAI_API_KEY;
-  const read = (raw) => Object.assign(shapePreferences(raw), garmentsIn(query), pricesIn(query));
+  /* every answer, whichever model gave it, is held to the shopper's own
+     words and reconciled with the page's own reading (api/_reading.js);
+     a budget spelled out in the request has the last word */
+  const read = (raw) => {
+    const checked = reconcile(query, shapePreferences(raw), raw && raw.reading, tableReading(query));
+    lastUnderstood = checked.understood;
+    return Object.assign(checked.preferences, pricesIn(query));
+  };
+  let lastUnderstood = null;
   try {
     if (alternative) {
       const reading = await alternative.interpret({ query, vocabulary, systemPrompt: SYSTEM_PROMPT });
@@ -212,7 +266,8 @@ async function interpretQuery({ query, vocabulary }) {
         console.error(`Interpreter (${alternative.name}) failed:`, reading.reason, reading.status || '', reading.detail || '');
         return { ok: false, reason: reading.reason === 'unparseable' ? 'unparseable' : 'unavailable', source: alternative.name };
       }
-      return { ok: true, source: alternative.name, preferences: read(reading.raw), tokens: reading.tokens };
+      const preferences = read(reading.raw);
+      return { ok: true, source: alternative.name, preferences, understood: lastUnderstood, tokens: reading.tokens };
     }
 
     const model = process.env.OPENAI_MODEL || DEFAULT_MODEL;
@@ -257,21 +312,26 @@ async function interpretQuery({ query, vocabulary }) {
     }
 
     const spent = payload.usage && Number(payload.usage.total_tokens);
-    return { ok: true, source: 'openai', preferences: read(parsed), tokens: Number.isFinite(spent) ? spent : 0 };
+    const preferences = read(parsed);
+    return { ok: true, source: 'openai', preferences, understood: lastUnderstood, tokens: Number.isFinite(spent) ? spent : 0 };
   } catch (err) {
     console.error('Interpreter error', err && err.message);
     return { ok: false, reason: 'unavailable', source: alternative ? alternative.name : 'openai' };
   }
 }
 
-/* the page's own garment vocabulary: assets/interpret.js registers its
-   reader on the global object, in a function exactly as in a browser */
-function garmentsIn(query) {
+/* the page's own reading of the words: assets/interpret.js registers its
+   reader on the global object, in a function exactly as in a browser.
+   The garments are the ones the request is ABOUT — a garment it names
+   only as what the wanted one is worn with is not one of them — and the
+   concepts are what a descriptive request most likely means, absent when
+   there are none: a request that named its garment in shop words is
+   answered with exactly the object it always was. */
+function tableReading(query) {
   require('../assets/interpret.js');
-  const reader = globalThis.Interpreter && globalThis.Interpreter.readGarments;
+  const reader = globalThis.Interpreter && globalThis.Interpreter.garmentsWanted;
   if (typeof reader !== 'function') return { garments: [], descriptors: [] };
-  const { garments, descriptors } = reader(query);
-  return { garments, descriptors };
+  return reader(query);
 }
 
 /* The budget a request states outright: "under $80", "below $80", "up

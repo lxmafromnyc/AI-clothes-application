@@ -107,6 +107,7 @@ scripts/verify-api.sh          checks a deployed interpreter endpoint
 scripts/verify-search.sh       checks a deployed search endpoint
 scripts/verify-billing.sh      checks a deployed billing setup
 scripts/probe-openwebninja.js  prints the provider's live response fields
+scripts/diagnose-search.js     replays the browser's exact /api/search call; on a 502, prints what threw
 scripts/bench-interpreters.js  OpenAI against Gemini, on twenty requests
 scripts/test-gemini.js         offline test of the Gemini interpreter
 scripts/test-pipeline.js       offline test of the whole server pipeline
@@ -127,7 +128,17 @@ scripts/record-demo.js  records the demo from four real searches, end to end
 scripts/demo-narration.py  speaks the demo's narration lines
 scripts/demo-audio.js   the demo's score and mix: composed to each video's timeline
 scripts/demo-film.js    cuts the homepage film from the recorded session
-assets/interpret.js     sends the request to the endpoint; local fallback
+assets/interpret.js     sends the request to the endpoint; local fallback; reads descriptive requests
+api/_providers/query.js the one search phrase every provider is asked
+api/_providers/relevance.js  the order a descriptive request's results are shown in
+scripts/test-concepts.js       offline test of descriptive requests, end to end
+scripts/bench-concepts.js      before/after benchmark of descriptive requests
+scripts/test-messy.js          offline test of messy, negative and misspelled requests
+scripts/bench-messy.js         before/after benchmark of 88 messy requests
+scripts/bench-messy-queries.js the benchmark's 107 requests: ids, types, intents and grading rules
+scripts/bench-messy-live.js    runs them through the real route, live; compares checkouts
+api/_reading.js                the model's reading, held to the shopper's words
+scripts/test-reading.js        offline test of that: inventions, roles, exact requests unchanged
 assets/app.js           rendering and page behaviour
 assets/discover-data.js Discover's six categories, and the words that place a product
 scripts/audit-catalog.js     re-proves every field a catalogue card shows
@@ -374,6 +385,30 @@ scripts keep working.
   rendered, badged with the retailer, linking to its page
 ```
 
+While that runs, the page says what is actually happening, and changes only
+when something actually happened:
+
+| From | Until | The page says |
+| --- | --- | --- |
+| the search is sent | the request has been read | **Understanding your request**, over the request as typed |
+| the reading is back and the product search is sent | that search answers | **Finding matching products**, over what was understood: "Looking for black oversized hoodies under $80", "Looking for cozy sweaters, sweatshirts or cardigans to wear with jeans" |
+
+`/api/search` finds the products and verifies each one in a single request, so
+the page cannot see where one ends and the other begins, and it does not
+pretend to with a timed "verifying" step. There is no timer in any of it: a
+fast or cached search goes straight to its results, a slow one keeps its line
+on screen while a hairline pulses quietly along the bottom edge of the search
+box, and results, an empty answer or an error replace both the moment they
+arrive. The hairline is the full width of the box at both stages, so it says
+the box is working, not how far along it is; it lies inside the box's border
+and padding, so the box keeps its size. While the search runs, the page keeps
+the box and the stage line in view, and brings the results up when they come.
+Nothing claims a count of shops or products. A garment named only as the
+setting ("with jeans") is said as the setting. The lines keep their size
+between stages, so the page does not move. The screen-reader status announces
+each stage (the hairline itself is hidden from assistive technology), focus
+stays where the shopper left it, and with reduced motion nothing moves at all.
+
 If the interpreter fails, the frontend reads the request locally instead and
 shows a notice saying so, naming the reason: no interpreter connected, deployed
 without a key, unreachable, or an unusable reply.
@@ -391,15 +426,255 @@ product source is configured, a failed or empty search says so plainly: a
 deployment that can sell things must never pad the page with demo rows, however
 clearly they are labelled. No product is ever invented to fill the gap.
 
-An offer lookup that fails or times out costs that one product its link and
-nothing else: the search answers `200` with whatever did verify. The one
-exception is a search in which NOTHING verified because the lookups ran out of
-time — the source returned products, every one needed a seller's price and
-link, and not one lookup came back usable before the deadline. That is a `502`
-with `reason: "timeout"`, `stage: "offers"` and the same counts a `200` would
-carry, the page says the prices could not be confirmed in time, and it is not
-charged. A search whose lookups answered in time and showed nothing usable is
-still an honest empty `200`.
+A `502` says which failure it was, so it can be read straight off the
+browser's network panel: `reason` is `timeout` or `failed`, `kind` is the
+failure's class (`invalid-key`, `bad-request`, `rate-limited`,
+`credits-exhausted`, `rate-limited-or-credits`, `server-error`, `network`,
+`timeout`, `bad-response` for a 200 that is not JSON, `other`) and
+`upstreamStatus` is the status the source answered with, or `null` when it
+never answered. The source's own message, URLs and keys stay in the server log.
+
+Only the source can produce a `502`. An offer lookup that fails, times out or
+answers nonsense costs that one product its link and nothing else: the search
+answers `200` with whatever did verify. The one exception is a search in which
+NOTHING verified because the lookups ran out of time — the source returned
+products, every one needed a seller's price and link, and not one lookup came
+back usable before the deadline. That is a `502` with `reason: "timeout"`,
+`stage: "offers"` and the same counts a `200` would carry, and the page says
+the prices could not be confirmed in time; it is not charged. A search whose
+lookups answered in time and showed nothing usable is still an honest empty
+`200`. A cache or session store that cannot
+be reached is a cache miss. A fault of Fynd's own after the source answered —
+in the verification gate, the garment filter or the ranking — is a `500` with
+`reason: "internal"` and the `stage`, never "the product source is
+unavailable". A cached entry of another shape (written by another version into
+the same store) is a miss, not a product without its link.
+
+The OpenWeb Ninja key, country and language are read in one place
+(`api/_providers/openwebninja.js`): the key is trimmed and unquoted, and the
+region is sent as the two-letter codes the API takes (` US ` → `us`, `en-US` →
+`en`; a value that is not a code is named in a warning and the default used).
+`scripts/probe-openwebninja.js` runs `/api/search`'s own search —
+`runSearch()` in `api/search.js`, everything the route does except check and
+charge the shopper's allowance — on the body the page would post for the
+words given (or a body copied from the browser with `--body`), under the
+route's own deadline. It prints every request that reaches OpenWeb Ninja — and
+Serper, when OpenWeb Ninja says its searches are spent and the route falls back
+to it: source, path, parameters, header names (and whether the key sent is this
+environment's, as a yes or no), status, time, and whether the clock cut it off;
+then the answer `/api/search` would give, a failure classified exactly as the
+route classifies it, and which source refused when it fell back.
+`scripts/test-deadline.js` holds that equivalence: for the same body and
+environment the probe and the route send identical requests, are cut off at the
+same moment, answer every provider failure identically, fall back to Serper
+with the same requests and answer, give the same 502 when the fallback is spent
+too, and — with no OpenWeb Ninja key — neither asks anything (the route answers
+503, the probe refuses to run). So a probe that
+works with an environment means `/api/search` works with it; when one works and
+the other fails, the two processes are not reading the same environment.
+
+### Requests that describe rather than name
+
+Shoppers often cannot name what they want: "something like a hoodie but
+cleaner", "a shirt that looks like a jacket", "something cozy I can wear with
+jeans". Searching those words finds hoodies, shirts and jeans — the wrong thing
+each time. So every request is read a second time, deterministically and from
+tables (`readConcepts` in `assets/interpret.js`), for how it names its garments:
+
+| The request | Read as | Asked of the provider |
+| --- | --- | --- |
+| something like a hoodie but cleaner | compared with a hoodie; polished, minimal | `minimal quarter zip pullover crewneck sweatshirt knit pullover` |
+| a shirt that looks like a jacket | a shirt crossed with a jacket | `overshirt shirt jacket chore jacket` |
+| loose black pants that look nice | trousers; black; relaxed; polished | `black relaxed wide leg trousers pleated trousers` |
+| something cozy I can wear with jeans | jeans only the setting; cozy | `cozy sweater sweatshirt cardigan` |
+| that short jacket thing people wear over shirts | a jacket, unsure of the name; shirts the setting | `cropped jacket overshirt shirt jacket` |
+| black oversized hoodie under $80 | not descriptive | exactly what it was asked before |
+
+What it holds to:
+
+- **Stated constraints stay strict.** Colour, budget, brand and gender are the
+  shopper's, and a colour or fit that describes the setting ("with my baggy
+  black jeans") is never taken for the thing wanted. "Not crazy expensive"
+  prefers cheaper results; it never becomes a budget nobody stated.
+- **Signals are soft.** "Cleaner", "cozy", "not too formal" order the results;
+  they never filter them.
+- **No guessing.** A request no table covers — "something nice for dinner" —
+  is searched exactly as it always was: no dress, no black, no heels.
+- **One search.** The concepts make one readable phrase — the strongest concept
+  and at most two more — for one provider request, through the same fallback,
+  cache, deadline and gate.
+- **Ordering, not facts.** For a descriptive request, the verified products are
+  put in order of how plainly each one's own title is what was meant, and the
+  adapter's capped offer lookups are spent on those candidates first. Nothing is
+  added to a product, and the internal score is never shown. A request that
+  names its garment in shop words keeps the provider's order.
+
+People also type badly: misspelled, in slang, in fragments, around what they do
+not want. So before anything is read, the request is put in one plain form
+(`normalize`): contractions are opened ("aren't" is "are not", so the "not" can be
+seen), shorthand and slang are said in shop words ("trackies", "kicks"), plain
+misspellings of known words are corrected ("hoddie", "jeens", "sweter") — but a
+word that only looks like one ("dressed", "heather", "boat") is left alone — and
+"find me" or "I'm looking for" comes off the front. Then what the request rules
+out is read before anything else:
+
+| The request | Read as | Asked of the provider |
+| --- | --- | --- |
+| pants that aren't skinny | trousers; not skinny | `straight leg pants relaxed trousers wide leg pants` |
+| something warm but not a coat | warm; not a coat | `warm sweater fleece jacket overshirt` |
+| something like a hoodie without the hood | a hoodie with no hood is a sweatshirt | `crewneck sweatshirt pullover sweatshirt knit pullover` |
+| a shirt but heavier | a heavyweight shirt | `heavyweight shirt` |
+| jacket that isn't really a jacket | compared with a jacket, not ruling one out | `overshirt shirt jacket light jacket` |
+| i want a shirt thats kinda oversized | the talk taken out | `oversized shirt` |
+| blak hoddie | black hoodie | `black hoodie` |
+
+A garment ruled out is never the target and never searched, and a listing that
+*is* one is removed after the gate (counted as `ruled-out-by-the-request`). A
+fit, colour, material or logo ruled out is never searched, and listings that
+have it rank below everything that does not. "Oversized but fitted" holds to
+neither side. "Expensive-looking" is a look, never a price. A request that is
+only talk ("something like what my mom wears") is searched as broadly as it
+was asked, never as the talk itself.
+
+Anything else after a "not" that a listing could be titled with is ruled out as
+itself and as what the page's descriptors call it: "not ripped" rules out
+*ripped* and *distressed*, "not see through" rules out *see through* and *sheer*
+as one phrase, "no florals", "aren't chunky". "Not sure", "not into" and "not a
+fan" rule out nothing. A name the request points at — "jackets like the ones in
+top gun" — is neither a garment nor a search word. Thinking noises ("umm",
+"uh", "fr") are dropped wherever they appear.
+
+`/api/interpret` attaches the reading as `concepts`, only when there is one, so
+the reply for an exact request is unchanged. `node scripts/test-messy.js` holds
+the messy-input behaviour; `node scripts/bench-messy.js` measures it before and
+after on 88 deliberately difficult requests. `node scripts/test-concepts.js`
+holds all of this; `node scripts/bench-concepts.js` measures it before and after
+against a fixed pool of listings (see the script for how).
+
+### The model's reading, held to the words
+
+The tables above are deterministic, and blind outside what they list. The served
+interpreter is not blind, and is not trustworthy either: asked to read "something
+nice for dinner" a model will happily answer *black dress, heels, women*. So the
+two are used for what each is good at, in three layers, with one model call and
+one provider search per request, exactly as before:
+
+1. **The page's reader** (`assets/interpret.js`) puts the request in plain form
+   and reads what it can: the garments and the role each plays — wanted,
+   compared to, worn with, ruled out — and the shopper's own colours, fits and
+   exclusions.
+2. **The model** (`api/interpret.js`) answers the flat fields as it always did,
+   plus a `reading`: what is wanted (`want`, up to three `alternatives`), what it
+   is compared to (`comparedTo`), worn with (`wornWith`) and not wanted
+   (`avoid`), and its fit, material, style and occasion.
+3. **`api/_reading.js`** holds every part of that to the shopper's words before
+   any of it is used:
+   - a colour, brand, budget, gender, season, style or occasion is kept only
+     when the request says it ("cheap" is not a budget, "denim" is not blue);
+     a colour the shopper typed that the model filed under a catalogue family
+     ("Bright" for red) is searched as typed;
+   - a garment is kept only when the words name it or point at one (a sleeve,
+     a hood, "what skaters wear", "over shirts"); a mood or an occasion never
+     does, and neither does a garment the request rules out;
+   - what it is worn with or compared to is never searched; an `avoid` needs a
+     negation in the words; nothing ruled out is ever searched;
+   - a misspelling the model corrected counts as the shopper's word when it is
+     one slip from a word typed (two in a long word), and the word typed is not
+     itself a word the tables know — "jumpr" is a jumper, "boat" is never boots.
+
+   Then the two readings are reconciled. A request in shop words with no
+   concepts is an **exact** search and is answered exactly as before. Where the
+   tables understood the request, their reading stands and the model adds only
+   exclusions and settings. Where the tables knew the garment but not what the
+   comparison or the named reference asks for ("a cardigan but more structured",
+   "jackets like the ones in top gun"), the model's kinds of that garment are
+   searched. Where the tables found nothing, the model's checked reading is the
+   reading. `understood.by` says which: `exact`, `reader`, `reader+model` or
+   `model`, with what was refused and what was kept.
+
+Everything ruled out — garments, and modifiers like *skinny*, *logo* or
+*see through* — is enforced after the gate as well as kept out of the search.
+
+#### Measuring it live
+
+`scripts/bench-messy-queries.js` holds the requests, version-controlled: 99
+messy ones and 8 plain ones as a control group. Every one has a stable id
+(`M001`…, `P001`…), a type (misspelling, merged words, abbreviation, fragment,
+natural language, several attributes, synonym, contradiction, size, negation,
+worn-with, comparison, reference, slang, contraction, word order,
+conversational, no-result, plain), its intent in words, and the rules it is
+graded by. Three are requests nothing honest can answer ("cashmere sweater
+under $5"): for those, zero products is the right answer.
+
+`scripts/bench-messy-live.js` puts them through the real path. In process (the
+default), each checkout runs in a process of its own: the page's own scripts
+read the request as the browser does, the page's call to `/api/interpret` goes
+to that checkout's real handler (which answers 503 when no interpreter is
+configured, and the page reads the request locally), and the body the page
+posts goes to that checkout's real `/api/search` handler — allowance, provider,
+offer lookups, cache, deadline, gate, filter, ranking — for the HTTP status and
+JSON the browser would get. Each request is a new anonymous visitor, and the
+cache and allowance counters are kept in memory unless `--store env` is given,
+so a run never writes into a configured Redis. With `--servers`, the page's two
+requests go over HTTP to running servers instead (`vercel dev`, or a
+deployment), with whatever environment they run with.
+
+```sh
+# this checkout against main, on the same requests, interleaved
+git worktree add ../fynd-main origin/main
+node --env-file=.env.local scripts/bench-messy-live.js --roots before=../fynd-main,after=.
+# against running servers
+node scripts/bench-messy-live.js --servers after=http://localhost:3005
+```
+
+Each run writes `results.json` (every request: HTTP status, latencies, the
+failure's kind if any, the phrase asked, provider searches by source and offer
+lookups, whether the route fell back, the products shown and how each was
+graded) and `summary.md` to `bench-results/` (ignored by git). The summary
+counts every dataset request as attempted, completed (200), failed, rate-limited
+or skipped (left out by `--only`, `--set` or `--types`); says how each metric is
+measured — relevance is graded automatically from patterns written before any
+run, and no manual relevance judgment is made; and picks representative
+successes and failures, with each kind of failure counted by kind of request. Each request is graded by the same rules
+whichever checkout answered it: interpretation (target, exclusions, stated
+constraints kept, nothing invented), relevant@4 and @8, strong matches and
+clearly wrong in the top 8, hard-constraint violations (budget, stated colour
+or gender contradicted, anything ruled out shown), products the filter removed
+that were plainly what was asked, results missing where some were expected,
+provider searches, offer lookups and latency. What "plainly" means is written
+beside each request as patterns on the product title; a title that does not say
+is counted neither way. `--reader local` measures the page's local fallback
+instead of the model.
+
+Every failure is recorded as whose it is — `environment` (503: nothing
+configured), `provider` (502, with its kind), `fynd` (500, with the stage) or
+`allowance` (429) — and none is ever counted as a search. A 502 that is
+rate-limited, a server error, a network failure or a timeout is tried again
+once after a pause (`--retries`, `--retry-delay-ms`); a refused key, a bad
+request or spent credits never are. The record names each checkout's
+configuration as states (provider configured or not, interpreter configured or
+not, which store), never values. The run exits 2 when no search succeeded on a
+checkout — the record then measures interpretation only, and its summary says
+so in its first line — 1 when the judged checkout crashed, showed something
+ruled out or made more than one provider search per request, and 0 otherwise.
+A request the route answered from Serper after OpenWeb Ninja refused for want of
+searches is counted as a fallback, not as a second search of ours.
+`.github/workflows/live-validation.yml` runs the same checks on GitHub's
+runners, which can reach the providers and the deployments when a sandbox
+cannot. Its first job holds no key: it posts the page's request to production
+and to the commit's Vercel preview (one search each, inside the anonymous Free
+allowance) and prints the answer's diagnostics and `x-vercel-id`. Its second
+job runs the probe, the diagnostic and the 107-request benchmark in process,
+main at `9507da1` against the commit, with `OPENWEBNINJA_API_KEY` and
+`OPENAI_API_KEY` from the repository's Actions secrets — and without them says
+so and runs nothing. Each record is printed to the job log one line per request
+and checked for the keys before it is uploaded. The benchmark is never pointed
+at a deployment: a cookieless caller is metered at three searches a day, and
+previews sit behind Vercel Authentication.
+
+`scripts/diagnose-search.js --server` says whether the running server answered
+as the diagnostic's own process does with the same environment, and exits 1
+when either did not answer 200.
 
 ### Worth knowing
 
@@ -832,6 +1107,25 @@ that product's offer, the record the adapter maps out of it, and the gate's
 verdict for the batch — enough to see at a glance which alias to add if a name
 differs.
 
+The probe calls the provider directly with the words as typed. It does not go
+through what a browser's search goes through — the page's reading of the
+request, `/api/search`'s intent, its query, the cache, the offer lookups, the
+gate and the garment filter — so a probe that works and a search that fails
+are not a contradiction. To see the browser's search, run:
+
+```sh
+node --env-file=.env.local scripts/diagnose-search.js "a baggy hoodie thats light grey and its cozy"
+node --env-file=.env.local scripts/diagnose-search.js --server http://localhost:3000 "..."
+```
+
+It builds the body the page sends with the page's own code (as it does when
+`/api/interpret` is not configured), runs it through the real handler, lists
+every provider request with its status, and on a 502 prints the exception the
+search threw: name, message, cause and stack. With `--server` it also posts the
+same body to a running local server, so a server whose environment differs
+from `.env.local` shows up as the server failing where the script does not. It
+prints no key, cookie or header value.
+
 ### Etsy (kept, unused)
 
 `api/_providers/etsy.js` still works and is still registered, but production
@@ -980,6 +1274,12 @@ The rest of the suites, all offline except the two that drive a browser:
 
 ```sh
 node scripts/bench-offer-resolution.js  # what one search costs the provider
+node scripts/test-concepts.js  # descriptive requests: what they mean, and what must not change
+node scripts/test-messy.js     # misspelled, slang, negative and conversational requests
+node scripts/test-reading.js   # the model's reading held to the shopper's words
+node scripts/test-bench-messy-live.js  # the benchmark's requests and grading, and stand-in runs through the real handlers
+node scripts/bench-messy.js --compare before.json after.json  # 88 messy requests, before and after
+node scripts/bench-concepts.js --compare before.json after.json  # descriptive requests, before and after
 node scripts/test-cache.js     # the search and offer caches, and what they may not change
 node scripts/test-gemini.js    # the Gemini interpreter, and what did not change
 node scripts/test-serpapi.js   # the SerpApi adapter, its links and its costs
@@ -987,12 +1287,41 @@ node scripts/test-stripe.js    # payments and subscriptions
 node scripts/test-auth.js      # accounts, sessions, tokens, OAuth
 node scripts/test-catalog-images.js  # the catalogue image extractor's gates
 node scripts/test-catalog-prices.js  # the catalogue price extractor's gates
-node scripts/test-ui.js        # the interface, its palette and its contrast
+node scripts/test-ui.js        # the interface, its palette, its contrast, and a search in progress
 node scripts/record-demo.js    # re-records the landing page demo video
 node scripts/test-demo-audio.js     # the demo's sound: loudness, ducking, captions
 node scripts/test-demo-film.js      # the demo film: length, order, every store frame real
 node scripts/test-e2e.js       # the whole sign-in flow, in a real browser
 ```
+
+#### Continuous integration
+
+Every pull request into `main`, and every push to `main`, runs
+`.github/workflows/ci.yml`: the suites named in `scripts/ci-tests.js`, in two
+jobs, the Node suites and the browser suites (in Playwright's Chromium). The
+same command runs them anywhere:
+
+```sh
+npm ci && npx playwright install chromium   # once; ffmpeg on the PATH too
+npm test                                    # every required suite
+node scripts/ci-tests.js node               # or one group: node | browser
+```
+
+Every suite is offline and keyless. It stubs its own network,
+`scripts/ci-offline.js` refuses any connection off the machine, and each suite
+starts with a clean environment, so a key in your shell never reaches a test;
+the workflow references no secret. A suite passes only when it exits 0 and
+reports a count with nothing failed and nothing skipped. A browser suite that
+skips itself because Chromium would not start is a failure, not a pass. A new
+`scripts/test-*.js` has to be added to a group, or to `NOT_RUN` with its
+reason, or the run stops.
+
+`test-catalog-prices` is not a required check. It already fails one test on
+`main` (checked at `2bac8c1`): "the live shape: the endpoint the page asks
+answers instead" expects `49.9` and reads `undefined`. That is an existing
+issue, to be investigated on its own. CI still runs the suite, last, in a step
+that cannot fail the job, and reports its result as a warning. It moves back
+into the browser group once it passes.
 
 Against a live deployment, with the request the interpreter produces for
 "black oversized hoodie under $80":
@@ -1329,6 +1658,28 @@ upgrading starts the monthly allowance at zero rather than inheriting a
 day's use — somebody who upgrades is buying the month, not the remainder
 of an afternoon.
 
+The search box shows what is left before anything is typed: a thin bar of
+what remains of the allowance, and beside it the count in words — "3 searches
+left today", "97 searches left this month", "No live searches left today".
+On a wide screen they share one row at the bottom of the box, which keeps it
+compact; on a phone the bar is as wide as the Search button with the words
+centred under it. The words are exactly `usage.searches.remaining` and
+`usage.searches.period` from `/api/account`, for the account or, signed out,
+for the browser, and the bar is `remaining / limit` from the same answer; the
+page knows no plan's limit and subtracts nothing. An allowance of up to ten is
+drawn one step a search, so Free's three read as three; a larger one is a
+single smooth fill. Whatever is left is the accent blue at every count — the
+shrinking fill is the signal — an empty allowance is the bare grey track, and
+no count is ever shown in a warning colour. The bar is decoration
+(`aria-hidden`); the words are what assistive technology reads.
+
+The bar is a level, not an activity: it holds still, inset on its own track.
+While a search runs it and the words give way to the progress hairline along
+the box's edge; when the search is over the page reads `/api/account` again
+and shows the server's new count, and a screen reader hears it once after the
+results. If the account cannot be read, neither bar nor number is shown.
+Discover never calls `/api/search`, so it never moves the count.
+
 Fynd never sees a card. The shopper types their card on Stripe's own
 pages, and changing a card, switching plan, downloading an invoice and
 cancelling all happen in Stripe's billing portal. There is no billing
@@ -1499,7 +1850,7 @@ stripe trigger customer.subscription.deleted
         |
         v
   /api/account now says Pro, and /api/search and /api/interpret meter
-  against 75 searches and 1,000,000 tokens a month
+  against 100 searches and 1,000,000 tokens a month
 ```
 
 ### Duplicate deliveries, and events that arrive out of order

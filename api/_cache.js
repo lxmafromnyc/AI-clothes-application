@@ -169,6 +169,12 @@ function normalizeIntent(intent) {
     out[field] = Number.isFinite(n) && n > 0 ? Math.round(n * 100) / 100 : null;
   }
 
+  /* A descriptive request's concepts change the phrase the provider is
+     asked, so they are part of the search. Only when present: a request
+     with none keys exactly as it always did, so no entry already stored
+     is orphaned by their arriving. */
+  if (i.concepts && typeof i.concepts === 'object') out.concepts = i.concepts;
+
   return out;
 }
 
@@ -316,7 +322,10 @@ async function write(key, entry, ttlSeconds) {
    what this hit just saved. */
 async function readSearch(key, stats) {
   const entry = await read(key);
-  if (!entry || !Array.isArray(entry.records)) {
+  /* an entry whose records are not records — written by another version
+     of this code into the same store — is a miss, not an empty answer
+     served for half an hour */
+  if (!entry || !Array.isArray(entry.records) || !entry.records.every((r) => r && typeof r === 'object' && !Array.isArray(r))) {
     if (stats) stats.searchCache.miss += 1;
     return null;
   }
@@ -344,7 +353,11 @@ async function writeSearch(key, payload, stats) {
    about. Every hit is one /product-offers request not made. */
 async function readOffer(key, stats) {
   const entry = await read(key);
-  if (!entry) {
+  /* an offer is only an offer with a link: anything else under the key
+     (another version's shape, a half-written entry) is a miss, and the
+     lookup is made, rather than a product silently losing its link */
+  const usable = entry && (entry.none === true || (entry.commerce && typeof entry.commerce === 'object' && typeof entry.commerce.productUrl === 'string' && entry.commerce.productUrl));
+  if (!usable) {
     if (stats) stats.offerCache.miss += 1;
     return null;
   }

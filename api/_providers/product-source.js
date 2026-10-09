@@ -22,6 +22,11 @@
      { categories, colors, occasions, fits, brands, styles,
        maxPrice, minPrice, season, gender, keywords }
 
+   plus, for a request that describes its garment rather than naming it,
+   `concepts` (see api/_providers/query.js). An adapter that builds its
+   phrase with queryFrom() gets that for nothing; one that does not can
+   ignore it, and is asked exactly what it was asked before.
+
    `search` returns an array of raw records in whatever shape the upstream
    source uses. Field names are mapped below, so an adapter does not need
    to reshape anything itself. It must never invent a value: if the source
@@ -377,6 +382,9 @@ const FAILURE_KINDS = [
   ['not-configured', /is not set\b/i],
   ['timeout', /did not answer within|ran out before the request was made|timed? ?out/i],
   ['bad-request', /\b(400|404|422)\b|bad request|unsupported|missing .{0,20}parameter/i],
+  /* it answered 200 with something that is not JSON: an HTML error page
+     from a gateway, a truncated body */
+  ['bad-response', /is not valid JSON|Unexpected (token|end of JSON)|JSON\.parse|invalid json/i],
   ['server-error', /\b5\d\d\b/],
   ['network', /fetch failed|ECONN|ENOTFOUND|EAI_AGAIN|socket|network/i],
   ['rate-limited-or-credits', /\b429\b/]

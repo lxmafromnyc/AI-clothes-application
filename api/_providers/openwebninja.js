@@ -159,6 +159,74 @@ const REQUEST_TIMEOUT = 15000;
 const API_LIMIT_MAX = 120;
 const OVERFETCH = 2;
 
+/* ---------- what the environment says, read one way ----------
+   The key, the country and the language are read here and nowhere else,
+   so the search, the offer lookups, the cache's context and the probe
+   all send exactly the same thing. A value pasted into a dashboard can
+   carry what a shell or an .env parser would have taken off — a
+   trailing newline, a space, a pair of quotes — and the API would
+   refuse the request it made while a probe run from a clean .env file
+   succeeded. So the key is trimmed and unquoted, and the region is
+   read as the two-letter codes the API takes ("US " -> us, "en-US" ->
+   en). A region value that is not a code at all is not guessed at: the
+   default is used and the variable is named in a warning, once. */
+const unquote = (value) => {
+  const trimmed = String(value == null ? '' : value).trim();
+  const quoted = /^(["'])(.*)\1$/.exec(trimmed);
+  return quoted ? quoted[2].trim() : trimmed;
+};
+
+const apiKey = () => unquote(process.env.OPENWEBNINJA_API_KEY);
+
+/* The headers every call sends: the key as a header, never in the query
+   string. One place, so the probe and the search cannot send different
+   ones. */
+const requestHeaders = () => ({ 'x-api-key': apiKey(), Accept: 'application/json' });
+
+/* How long the /search leg of a search may take, given the request's
+   deadline: short of it by the reserve the offer lookups need. */
+const searchLegTimeout = (deadline) => legTimeout(deadline, OFFER_RESERVE_MS);
+
+const warned = new Set();
+function code(variable, fallback, pattern) {
+  const raw = unquote(process.env[variable]);
+  if (!raw) return fallback;
+  const read = pattern.exec(raw.toLowerCase());
+  if (read) return read[1];
+  if (!warned.has(variable)) {
+    warned.add(variable);
+    console.warn(`${variable} is not a two-letter code (${JSON.stringify(raw.slice(0, 20))}); using "${fallback}".`);
+  }
+  return fallback;
+}
+
+function region() {
+  return {
+    country: code('OPENWEBNINJA_COUNTRY', 'us', /^([a-z]{2})$/),
+    language: code('OPENWEBNINJA_LANGUAGE', 'en', /^([a-z]{2})(?:[-_][a-z]{2,4})?$/)
+  };
+}
+
+/* The one /search request, as /api/search makes it. Exported so the
+   probe sends this request rather than one of its own: a probe that
+   works then means the search's own request works. */
+function searchRequest(intent, options) {
+  const wanted = Math.min(Math.max(Number(options && options.limit) || 12, 1), 100);
+  const where = region();
+  const params = new URLSearchParams({
+    q: queryFrom(intent) || 'clothing',
+    country: where.country,
+    language: where.language,
+    limit: String(Math.min(wanted * OVERFETCH, API_LIMIT_MAX)),
+    sort_by: 'BEST_MATCH'
+  });
+  /* The shopper's stated budget is passed to the source so the filtering
+     happens where the catalogue is, not after the fact. */
+  if (intent && intent.minPrice) params.set('min_price', String(intent.minPrice));
+  if (intent && intent.maxPrice) params.set('max_price', String(intent.maxPrice));
+  return { url: SEARCH_URL, params, wanted, region: where };
+}
+
 /* Offer lookups cost one request each, so they are bounded three ways:
    only products that need one are looked up, only until enough records
    have a link, and only until the wall-clock budget runs out. Whatever
@@ -600,7 +668,7 @@ function legTimeout(deadline, reserve) {
    deadline is aborted AT the deadline instead of running its own full
    allowance well past it. */
 async function apiGet(url, params, timeout, options) {
-  const key = process.env.OPENWEBNINJA_API_KEY;
+  const key = apiKey();
   if (!key) throw new Error('OPENWEBNINJA_API_KEY is not set');
   /* `options.signal` cancels the call (the search no longer needs it);
      `options.timing` is filled with how long the response headers and
@@ -615,14 +683,16 @@ async function apiGet(url, params, timeout, options) {
      refuses before a connection is opened. */
   const ms = timeout === undefined ? REQUEST_TIMEOUT : timeout;
   const response = await fetchWithin('OpenWeb Ninja', `${url}?${params.toString()}`, {
-    headers: { 'x-api-key': key, Accept: 'application/json' },
+    headers: requestHeaders(),
     signal: o.signal
   }, ms);
   if (o.timing) o.timing.headersMs = Date.now() - startedAt;
 
   if (!response.ok) {
     const detail = await response.text().catch(() => '');
-    throw new Error(`OpenWeb Ninja responded ${response.status}: ${detail.slice(0, 200)}`);
+    /* the status rides on the error, so /api/search can say which
+       refusal it was without reading it back out of a message */
+    throw Object.assign(new Error(`OpenWeb Ninja responded ${response.status}: ${detail.slice(0, 200)}`), { status: response.status });
   }
   const body = await response.json();
   if (o.timing) o.timing.totalMs = Date.now() - startedAt;
@@ -673,6 +743,8 @@ async function offersFor(productId, region, timeout, options) {
    and kept. */
 let gateModule = null;
 const gate = () => (gateModule || (gateModule = require('./product-source')));
+let relevanceModule = null;
+const relevance = () => (relevanceModule || (relevanceModule = require('./relevance')));
 
 /* A stand-in offer, used only to ask the gate a question: given a
    perfect price, retailer and link, would this record be shown? It is
@@ -828,9 +900,17 @@ async function resolveMissingOffers(records, wanted, region, stats, intent, cach
   const own = Date.now() + budget;
   const deadline = requestDeadline ? Math.min(own, requestDeadline) : own;
 
-  /* The candidates, in the order the source ranked them. */
+  /* The candidates, in the order the source ranked them — or, for a
+     descriptive request ("something like a hoodie but cleaner"), in the
+     order of how plainly each record's own title is what it most likely
+     means (see relevance.js). The source was asked a phrase the shopper
+     never typed, so its order is for that phrase; the lookups below are
+     capped, and spending them on the best candidates first is what
+     decides which products can be shown at all. The same records, the
+     same ceiling, the same budget: nothing is looked up that would not
+     have been a candidate anyway. */
   const pending = [];
-  for (const record of records) {
+  for (const record of relevance().lookupOrder(records, intent)) {
     if (record.productUrl || !record.sku) continue;
     const unfit = unfitReason(record);
     if (unfit) {
@@ -927,18 +1007,22 @@ async function resolveMissingOffers(records, wanted, region, stats, intent, cach
 
         const lookup = { controller: new AbortController(), holdsWorker: true, pastCap: false, settled: false };
         open.add(lookup);
-        /* the worker goes back at the cap, or at the deadline if that
-           comes first; the request runs on to the deadline */
-        const capTimer = setTimeout(() => {
+        /* the worker goes back at the cap, and the request runs on to
+           the deadline. Only a cap shorter than what is left of the
+           budget is armed: one that would fire with the deadline is the
+           deadline, and a lookup it ends has timed out, not outlived
+           its cap — counted once, whichever timer the clock runs first */
+        const window = legTimeout(deadline);
+        const capTimer = cap < window ? setTimeout(() => {
           if (!lookup.holdsWorker) return;
           lookup.holdsWorker = false;
           lookup.pastCap = true;
           tally.lookupsPastCap += 1;
           inFlight -= 1;
           pump();
-        }, Math.min(legTimeout(deadline), cap));
+        }, cap) : null;
 
-        lookupFor(record, region, tally, cacheTally, legTimeout(deadline), {
+        lookupFor(record, region, tally, cacheTally, window, {
           signal: lookup.controller.signal,
           timings,
           onSettle: () => { lookup.settled = true; },
@@ -963,7 +1047,7 @@ async function resolveMissingOffers(records, wanted, region, stats, intent, cach
              and leave the pool with a worker it never gets back */
           .catch(() => {})
           .then(() => {
-            clearTimeout(capTimer);
+            if (capTimer) clearTimeout(capTimer);
             open.delete(lookup);
             if (lookup.holdsWorker) { lookup.holdsWorker = false; inFlight -= 1; }
             pump();
@@ -1007,7 +1091,8 @@ async function resolveMissingOffers(records, wanted, region, stats, intent, cach
 }
 
 async function search(intent, options) {
-  const wanted = Math.min(Math.max(Number(options && options.limit) || 12, 1), 100);
+  const request = searchRequest(intent, options);
+  const wanted = request.wanted;
   /* When the caller sets a deadline, every request this search makes is
      bounded by what is left of it. Without one nothing changes: each
      call keeps its own full allowance, which is what the probes and
@@ -1016,30 +1101,14 @@ async function search(intent, options) {
   /* what the offer cache saved this search, reported alongside the
      funnel so a cheap search and an expensive one are told apart */
   const cacheStats = cache.counters();
-  const region = {
-    country: process.env.OPENWEBNINJA_COUNTRY || 'us',
-    language: process.env.OPENWEBNINJA_LANGUAGE || 'en'
-  };
-
-  const params = new URLSearchParams({
-    q: queryFrom(intent) || 'clothing',
-    country: region.country,
-    language: region.language,
-    limit: String(Math.min(wanted * OVERFETCH, API_LIMIT_MAX)),
-    sort_by: 'BEST_MATCH'
-  });
-
-  /* The shopper's stated budget is passed to the source so the filtering
-     happens where the catalogue is, not after the fact. */
-  if (intent && intent.minPrice) params.set('min_price', String(intent.minPrice));
-  if (intent && intent.maxPrice) params.set('max_price', String(intent.maxPrice));
+  const where = request.region;
 
   /* Capped so one slow search cannot spend the whole budget: the
      reserve is the window the offer phase needs to turn records into
      products that can actually be shown. */
   const searchStartedAt = Date.now();
   const searchTiming = {};
-  const payload = await apiGet(SEARCH_URL, params, legTimeout(deadline, OFFER_RESERVE_MS), { timing: searchTiming });
+  const payload = await apiGet(request.url, request.params, searchLegTimeout(deadline), { timing: searchTiming });
   const searchMs = Date.now() - searchStartedAt;
   const products = resultsFrom(payload);
 
@@ -1080,7 +1149,7 @@ async function search(intent, options) {
      The intent goes with them so a record already over the shopper's
      ceiling is not looked up only to be dropped for its price. */
   const offersStartedAt = Date.now();
-  diagnostics.offers = await resolveMissingOffers(records, wanted, region, {}, intent, cacheStats, deadline);
+  diagnostics.offers = await resolveMissingOffers(records, wanted, where, {}, intent, cacheStats, deadline);
   diagnostics.offersMs = Date.now() - offersStartedAt;
 
   records.forEach((r) => { delete r.retailerHint; });
@@ -1107,11 +1176,7 @@ async function search(intent, options) {
    The budget and the concurrency are deliberately absent: they change
    how long a search may spend, not what a record means. */
 function cacheContext() {
-  return {
-    country: process.env.OPENWEBNINJA_COUNTRY || 'us',
-    language: process.env.OPENWEBNINJA_LANGUAGE || 'en',
-    offers: offersEnabled() ? 'on' : 'off'
-  };
+  return Object.assign(region(), { offers: offersEnabled() ? 'on' : 'off' });
 }
 
 function withinBudget(record, intent) {
@@ -1127,8 +1192,14 @@ module.exports = {
      spanning many stores has no single retailer to fall back on, and
      naming one would attribute a product to the wrong shop. */
   defaultRetailer: null,
-  configured: () => Boolean(process.env.OPENWEBNINJA_API_KEY),
+  configured: () => Boolean(apiKey()),
   search,
+  searchRequest,
+  region,
+  /* the key as every request sends it, for the probe; never printed */
+  apiKey,
+  requestHeaders,
+  searchLegTimeout,
   /* read by /api/search when it keys the search-result cache */
   cacheContext,
   /* exported for tests and for scripts/probe-openwebninja.js */

@@ -80,7 +80,7 @@ const accountReply = (over) => {
     plan: Object.assign({}, plan, { limits: PLAN_LIMITS[planId] }),
     plans: planCatalogue(),
     subscription: null,
-    usage: { aiTokens: usageOf('aiTokens', 1200), searches: usageOf('searches', 1) },
+    usage: { aiTokens: usageOf('aiTokens', 1200), searches: usageOf('searches', over && Number.isInteger(over.searchesUsed) ? over.searchesUsed : 1) },
     billing: { enabled: true, testMode: true, webhookConfigured: true, portal: false },
     accounts: { enabled: true },
     storage: { durable: true }
@@ -88,6 +88,24 @@ const accountReply = (over) => {
 };
 
 let accountState = accountReply({});
+
+/* What the search-progress tests do to the two endpoints. Each may HOLD
+   its reply until the test releases it — so a stage can be looked at
+   while the request behind it is really still open, rather than caught
+   on a timer — answer with a reply of its own, fail with a status, or
+   drop the connection. Unset, both answer at once, as they always have.
+   `log` records when each request arrived and when its reply was sent. */
+const stubs = { interpret: null, search: null, account: null, charge: false, log: [] };
+
+/* The server's own meter, as /api/search keeps it: an answered search is
+   counted against the account /api/account then reports. On only when a
+   test turns it on, so every other test sees the account it set up. */
+const chargeSearch = () => {
+  const searches = accountState.usage.searches;
+  searches.used += 1;
+  searches.remaining = Math.max(0, searches.limit - searches.used);
+};
+const deferred = () => { let release; const held = new Promise((r) => { release = r; }); return { held, release }; };
 
 /* the catalogue, as Discover shelves it, and what its photos are */
 const audit = require('./audit-catalog');
@@ -113,12 +131,20 @@ const server = http.createServer((req, res) => {
   if (['/api/account', '/api/auth', '/api/checkout', '/api/portal'].includes(url.pathname)) {
     let body = '';
     req.on('data', (d) => { body += d; });
-    return req.on('end', () => {
+    return req.on('end', async () => {
       const parsed = (() => { try { return JSON.parse(body); } catch (e) { return {}; } })();
       billingRequests.push({ path: url.pathname, body: parsed });
       res.setHeader('Content-Type', 'application/json');
       if (url.pathname === '/api/checkout') return res.end(JSON.stringify({ url: 'https://checkout.stripe.test/session', plan: parsed.plan }));
       if (url.pathname === '/api/portal') return res.end(JSON.stringify({ url: 'https://billing.stripe.test/portal' }));
+      /* /api/account may be held, fail with a status, or drop, like the
+         two search endpoints below */
+      const stub = url.pathname === '/api/account' ? stubs.account : null;
+      if (url.pathname === '/api/account') stubs.log.push({ path: url.pathname, event: 'request', at: Date.now() });
+      if (stub && stub.hold) await stub.hold;
+      if (url.pathname === '/api/account') stubs.log.push({ path: url.pathname, event: 'reply', at: Date.now() });
+      if (stub && stub.drop) return res.destroy();
+      if (stub && stub.status) { res.statusCode = stub.status; return res.end(JSON.stringify({ error: 'stubbed failure' })); }
       return res.end(JSON.stringify(accountState));
     });
   }
@@ -129,18 +155,30 @@ const server = http.createServer((req, res) => {
     return req.on('end', () => {
       const parsed = (() => { try { return JSON.parse(body); } catch (e) { return {}; } })();
       res.setHeader('Content-Type', 'application/json');
+      const stub = url.pathname === '/api/interpret' ? stubs.interpret : stubs.search;
+      stubs.log.push({ path: url.pathname, event: 'request', at: Date.now() });
+      if (url.pathname === '/api/search') searchRequests.push(parsed);
+      const answer = async () => {
+        if (stub && stub.hold) await stub.hold;
+        stubs.log.push({ path: url.pathname, event: 'reply', at: Date.now() });
+        if (stub && stub.drop) return res.destroy();
+        if (stub && stub.status) { res.statusCode = stub.status; return res.end(JSON.stringify({ error: 'stubbed failure' })); }
+        /* an answered search is what the server counts */
+        if (url.pathname === '/api/search' && stubs.charge) chargeSearch();
+        if (stub && stub.reply) return res.end(JSON.stringify(stub.reply));
+        return null;
+      };
       if (url.pathname === '/api/interpret') {
         interpretRequests.push(parsed);
-        return res.end(JSON.stringify({ source: 'openai', query: 'q', preferences: {
+        return answer().then((done) => done || res.end(JSON.stringify({ source: 'openai', query: 'q', preferences: {
           categories: ['hoodie'], colors: ['Black'], fits: [], occasions: [], brands: [], styles: [],
-          keywords: [], maxPrice: null, minPrice: null, season: null, gender: null } }));
+          keywords: [], maxPrice: null, minPrice: null, season: null, gender: null } })));
       }
-      searchRequests.push(parsed);
-      res.end(JSON.stringify({ source: 'openwebninja', products: [{
+      return answer().then((done) => done || res.end(JSON.stringify({ source: 'openwebninja', products: [{
         id: '1', name: 'Champion Hoodie', price: 68, currency: 'USD',
         imageUrl: searchPhoto, productUrl: 'https://www.nordstrom.com/s/hoodie/1',
         retailer: 'Nordstrom', category: '', colors: [], sizes: []
-      }], returned: 1, rejected: {}, attachments: { received: (parsed.attachments || []).length, used: 0 } }));
+      }], returned: 1, rejected: {}, attachments: { received: (parsed.attachments || []).length, used: 0 } })));
     });
   }
 
@@ -220,7 +258,13 @@ const resolveInks = (page) => page.evaluate((tokens) => {
   return out;
 }, INK_TOKENS);
 
-const textStyleProblems = (page, inks) => page.evaluate((allowed) => {
+/* A fade still running is measured where it ends, not halfway: the audit
+   waits for every finite animation and transition on the page to finish.
+   Endless ones — a pulsing placeholder — are what they are at any moment. */
+const finishedMoving = (page) => page.waitForFunction(() => document.getAnimations()
+  .every((a) => a.playState !== 'running' || !a.effect || a.effect.getTiming().iterations === Infinity));
+
+const textStyleProblems = async (page, inks) => { await finishedMoving(page); return page.evaluate((allowed) => {
   const SKIP = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE']);
   const problems = [];
 
@@ -305,7 +349,7 @@ const textStyleProblems = (page, inks) => page.evaluate((allowed) => {
     }
   }
   return problems;
-}, inks);
+}, inks); };
 
 /* Placeholders are not text nodes, so they are checked on their own. */
 const placeholderColours = (page) => page.$$eval('[placeholder]', (ns) => ns.map((n) => {
@@ -602,6 +646,1185 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     assert.ok(/do not change your results/i.test(note), note);
     await page.close();
   });
+
+  console.log('\na search in progress');
+
+  /* The page's own reader, run here, is what the stubbed interpreter
+     answers with: the preferences — concepts and all — a real reading of
+     that request produces. */
+  require(path.join(REPO, 'assets', 'interpret.js'));
+  const reader = globalThis.Interpreter;
+  const reading = (query) => ({ source: 'openai', query, preferences: reader.localInterpret(query, {}) });
+
+  const STAGE_TEXT = ['Understanding your request', 'Finding matching products'];
+  /* the kind of claim no stage may make, because the page cannot know it */
+  const INVENTED = /\d+\s*(stores?|shops?|retailers?|sites?|sources?|products|listings|brands)|thousands|millions|hundreds|scanning|the (whole )?(internet|web)|comparing|analy[sz]ing|\d+%/i;
+
+  const reset = () => { stubs.interpret = null; stubs.search = null; stubs.account = null; stubs.charge = false; stubs.log.length = 0; searchRequests.length = 0; };
+
+  /* every line the progress area and the screen-reader status ever held,
+     recorded as it changes, so a line shown for a moment is still seen */
+  const recordLines = (page) => page.evaluate(() => {
+    window.__lines = [];
+    const note = () => {
+      const h = document.querySelector('#results .search-progress h2');
+      const q = document.querySelector('#results .search-progress .results-query');
+      if (h) window.__lines.push({ where: 'heading', text: h.textContent.trim() });
+      if (q) window.__lines.push({ where: 'detail', text: q.textContent.trim() });
+      window.__lines.push({ where: 'status', text: document.getElementById('search-status').textContent.trim() });
+    };
+    new MutationObserver(note).observe(document.getElementById('results'), { subtree: true, childList: true, characterData: true, attributes: true });
+    new MutationObserver(note).observe(document.getElementById('search-status'), { subtree: true, childList: true, characterData: true });
+  });
+
+  const stageOf = (page) => page.evaluate(() => {
+    const head = document.querySelector('#results .search-progress');
+    return head ? {
+      stage: head.dataset.stage,
+      heading: head.querySelector('h2').textContent.trim(),
+      detail: head.querySelector('.results-query').textContent.trim(),
+      busy: document.getElementById('results').getAttribute('aria-busy'),
+      status: document.getElementById('search-status').textContent.trim()
+    } : null;
+  });
+
+  const submit = async (page, query) => {
+    await page.fill('#ask', query);
+    await page.focus('#ask');
+    await page.keyboard.press('Enter');
+  };
+
+  /* the hairline in the search box: whether the shopper can see it, and
+     the stage the box is marked with */
+  const boxLine = (page) => page.evaluate(() => {
+    const form = document.getElementById('ask-form');
+    const line = form.querySelector('.ask-progress-line');
+    const box = line.getBoundingClientRect();
+    return {
+      stage: form.dataset.stage || null,
+      shown: getComputedStyle(form.querySelector('.ask-progress')).display !== 'none' && box.width > 0 && box.height > 0
+    };
+  });
+
+  /* what the box looked like at the very moment the progress left the
+     results area — caught by an observer, so a line that lingered after
+     the answer, even briefly, is seen */
+  const watchEnd = (page) => page.evaluate(() => {
+    window.__boxAtEnd = undefined;
+    new MutationObserver(() => {
+      if (window.__boxAtEnd !== undefined || document.querySelector('#results .search-progress')) return;
+      const form = document.getElementById('ask-form');
+      window.__boxAtEnd = {
+        stage: form.dataset.stage || null,
+        display: getComputedStyle(form.querySelector('.ask-progress')).display
+      };
+    }).observe(document.getElementById('results'), { subtree: true, childList: true });
+  });
+  const boxAtEnd = (page) => page.evaluate(() => window.__boxAtEnd);
+
+  await test('submitting shows the first stage at once, before anything has answered', async () => {
+    reset();
+    const interpret = deferred();
+    stubs.interpret = { hold: interpret.held, reply: reading('black oversized hoodie under $80') };
+    const page = await open();
+    await submit(page, 'black oversized hoodie under $80');
+    await page.waitForSelector('#results .search-progress[data-stage="understanding"]');
+    const now = await stageOf(page);
+    assert.strictEqual(now.heading, 'Understanding your request');
+    assert.strictEqual(now.detail, 'Results for black oversized hoodie under $80', 'the request as typed, until it has been read (the quotes are the <q>\'s own)');
+    assert.strictEqual(now.busy, 'true');
+    assert.strictEqual(now.status, 'Understanding your request.');
+    assert.deepStrictEqual(await boxLine(page), { stage: 'understanding', shown: true }, 'the search box shows no hairline');
+    assert.ok(!(await page.$('#results .stage-bar')), 'a second hairline under the results heading');
+    interpret.release();
+    await page.waitForSelector('.item-card');
+    await page.close();
+  });
+
+  await test('the second stage begins only when the reading is back and the product search is sent, and says what was understood', async () => {
+    reset();
+    const interpret = deferred();
+    const search = deferred();
+    stubs.interpret = { hold: interpret.held, reply: reading('black oversized hoodie under $80') };
+    stubs.search = { hold: search.held };
+    const page = await open();
+    await submit(page, 'black oversized hoodie under $80');
+    await page.waitForSelector('#results .search-progress');
+    /* the interpreter has not answered: nothing may claim the search has started */
+    await page.waitForTimeout(400);
+    assert.strictEqual((await stageOf(page)).stage, 'understanding');
+    assert.strictEqual(searchRequests.length, 0);
+    interpret.release();
+    await page.waitForSelector('#results .search-progress[data-stage="searching"]');
+    const now = await stageOf(page);
+    assert.strictEqual(now.heading, 'Finding matching products');
+    assert.strictEqual(now.detail, 'Looking for black oversized hoodies under $80');
+    assert.strictEqual(now.status, 'Looking for black oversized hoodies under $80. Finding matching products.');
+    assert.strictEqual(searchRequests.length, 1, 'the search stage is showing, so the search must have been sent');
+    assert.deepStrictEqual(await boxLine(page), { stage: 'searching', shown: true }, 'the hairline left the box during the search');
+    /* and it holds that line for as long as the search is open: no
+       message is invented to fill the wait */
+    await page.waitForTimeout(1200);
+    assert.deepStrictEqual(await stageOf(page), now);
+    search.release();
+    await page.waitForSelector('.item-card');
+    await page.close();
+  });
+
+  await test('a descriptive request shows the concepts Fynd took it to mean', async () => {
+    reset();
+    const search = deferred();
+    stubs.interpret = { reply: reading('something like a hoodie but cleaner') };
+    stubs.search = { hold: search.held };
+    const page = await open();
+    await submit(page, 'something like a hoodie but cleaner');
+    await page.waitForSelector('#results .search-progress[data-stage="searching"]');
+    assert.strictEqual((await stageOf(page)).detail, 'Looking for minimal quarter-zips, crewneck sweatshirts or knit pullovers');
+    search.release();
+    await page.waitForSelector('.item-card');
+    await page.close();
+  });
+
+  await test('a garment named only as the setting is shown as the setting, never as what is searched for', async () => {
+    reset();
+    const search = deferred();
+    stubs.interpret = { reply: reading('something cozy I can wear with jeans') };
+    stubs.search = { hold: search.held };
+    const page = await open();
+    await submit(page, 'something cozy I can wear with jeans');
+    await page.waitForSelector('#results .search-progress[data-stage="searching"]');
+    const { detail } = await stageOf(page);
+    assert.strictEqual(detail, 'Looking for cozy sweaters, sweatshirts or cardigans to wear with jeans');
+    const target = detail.split(' to wear ')[0];
+    assert.ok(!/jean/i.test(target), `jeans shown as the target: ${detail}`);
+    /* and the search it is waiting on was not sent for jeans either */
+    assert.deepStrictEqual(searchRequests[0].intent.garments, []);
+    search.release();
+    await page.waitForSelector('.item-card');
+    await page.close();
+  });
+
+  await test('the progress is gone the moment results arrive', async () => {
+    reset();
+    const search = deferred();
+    stubs.search = { hold: search.held };
+    const page = await open();
+    await submit(page, 'black oversized hoodie');
+    await page.waitForSelector('#results .search-progress[data-stage="searching"]');
+    await watchEnd(page);
+    search.release();
+    await page.waitForSelector('.item-card');
+    /* gone from the box in the same moment the results replaced the
+       placeholders, not a beat later */
+    assert.deepStrictEqual(await boxAtEnd(page), { stage: null, display: 'none' }, 'the hairline outlived the search');
+    assert.deepStrictEqual(await boxLine(page), { stage: null, shown: false });
+    const after = await page.evaluate(() => ({
+      progress: Boolean(document.querySelector('#results .search-progress, #results .stage-bar, #results .thinking, #results .skeleton-card')),
+      busy: document.getElementById('results').hasAttribute('aria-busy'),
+      heading: document.querySelector('.results-head h2').textContent.trim(),
+      status: document.getElementById('search-status').textContent.trim()
+    }));
+    assert.deepStrictEqual(after, { progress: false, busy: false, heading: '1 piece found', status: '1 piece found.' });
+    await page.close();
+  });
+
+  await test('a failed search replaces the progress with the existing error, and the way to try again', async () => {
+    for (const [why, failure] of [['a 502', { status: 502 }], ['a dropped connection', { drop: true }], ['no service at all', { status: 404 }]]) {
+      reset();
+      const search = deferred();
+      stubs.search = Object.assign({ hold: search.held }, failure);
+      const page = await open();
+      await submit(page, 'black oversized hoodie');
+      await page.waitForSelector('#results .search-progress[data-stage="searching"]');
+      await watchEnd(page);
+      search.release();
+      await page.waitForFunction(() => !document.querySelector('#results .search-progress'), null, { timeout: 10000 });
+      assert.deepStrictEqual(await boxAtEnd(page), { stage: null, display: 'none' }, `${why}: the hairline outlived the failure`);
+      assert.deepStrictEqual(await boxLine(page), { stage: null, shown: false }, why);
+      const after = await page.evaluate(() => ({
+        stuck: Boolean(document.querySelector('#results .stage-bar, #results .thinking')),
+        busy: document.getElementById('results').hasAttribute('aria-busy'),
+        heading: document.querySelector('.results-head h2').textContent.trim(),
+        again: Boolean(document.querySelector('#results a[href="#search"]'))
+      }));
+      assert.strictEqual(after.stuck, false, why);
+      assert.strictEqual(after.busy, false, why);
+      if (failure.status === 404) {
+        /* nothing connected: the sample catalogue, labelled, as before */
+        assert.ok(/picked for you|No matches yet/.test(after.heading), `${why}: ${after.heading}`);
+      } else {
+        assert.strictEqual(after.heading, 'Product search unavailable', why);
+        assert.ok(after.again, `${why}: no way to try again`);
+      }
+      await page.close();
+    }
+  });
+
+  await test('an interpreter that fails still moves on to the search, read locally, and says so', async () => {
+    reset();
+    const search = deferred();
+    stubs.interpret = { status: 500 };
+    stubs.search = { hold: search.held };
+    const page = await open();
+    await submit(page, 'loose black pants that look nice');
+    await page.waitForSelector('#results .search-progress[data-stage="searching"]');
+    assert.strictEqual((await stageOf(page)).detail, 'Looking for black wide-leg, relaxed or pleated trousers');
+    search.release();
+    await page.waitForSelector('.item-card');
+    assert.ok(/local keyword match/.test(await page.$eval('#results .notice', (n) => n.textContent)));
+    await page.close();
+  });
+
+  await test('no stage ever claims a count, a scale or work the page cannot see', async () => {
+    const seen = [];
+    for (const query of ['black oversized hoodie under $80', 'something like a hoodie but cleaner', 'something cozy I can wear with jeans', 'a bag that looks vintage but not crazy expensive', 'something nice for dinner']) {
+      reset();
+      const search = deferred();
+      stubs.interpret = { reply: reading(query) };
+      stubs.search = { hold: search.held };
+      const page = await open();
+      await recordLines(page);
+      await submit(page, query);
+      await page.waitForSelector('#results .search-progress[data-stage="searching"]');
+      search.release();
+      await page.waitForSelector('.item-card');
+      seen.push(...(await page.evaluate(() => window.__lines)).map((line) => Object.assign(line, { query })));
+      await page.close();
+    }
+    const progress = seen.filter((line) => line.where !== 'status' || !/found\.$/.test(line.text));
+    for (const { where, text, query } of progress) {
+      if (!text) continue;
+      const own = text.replace(query, "");
+      assert.ok(!INVENTED.test(own), `${where} said "${text}"`);
+      /* a number is only ever a price the shopper gave */
+      assert.ok(!/\d/.test(own.replace(/\$\d+(\.\d+)?/g, '')), `${where} said "${text}"`);
+      if (where === 'heading') assert.ok(STAGE_TEXT.includes(text), `an unexpected stage: "${text}"`);
+      if (where === 'detail') assert.ok(/^(Results for|Looking for) /.test(text), `an unexpected detail: "${text}"`);
+      assert.ok(!/[{}[\]]|concept|intent|preferences|api\b|json/i.test(own), `${where} exposed internals: "${text}"`);
+    }
+    /* "something nice for dinner" names no garment, colour or shoe, so
+       none is claimed: "dressy" — read from "nice" — is the most it says */
+    const dinner = seen.filter((line) => line.query === 'something nice for dinner' && line.where === 'detail').map((line) => line.text);
+    assert.ok(dinner.every((text) => !/\bdress(es)?\b|\bblack\b|\bheels?\b/i.test(text.replace('something nice for dinner', ''))), dinner.join(' | '));
+  });
+
+  await test('a fast or cached search goes straight to its results, held up by nothing', async () => {
+    reset();
+    const page = await open();
+    await watchEnd(page);
+    const started = Date.now();
+    await submit(page, 'black oversized hoodie under $80');
+    await page.waitForSelector('.item-card');
+    const shown = Date.now();
+    /* the hairline goes with the placeholders, and nothing eases it out */
+    assert.deepStrictEqual(await boxAtEnd(page), { stage: null, display: 'none' });
+    const lingers = await page.evaluate(() => {
+      const wrap = getComputedStyle(document.querySelector('#ask-form .ask-progress'));
+      const line = getComputedStyle(document.querySelector('#ask-form .ask-progress-line'));
+      return { transition: wrap.transitionDuration, delay: line.animationDelay };
+    });
+    assert.deepStrictEqual(lingers, { transition: '0s', delay: '0s' });
+    const reply = stubs.log.filter((e) => e.path === '/api/search' && e.event === 'reply').pop();
+    assert.ok(reply, 'the search never answered');
+    assert.ok(shown - reply.at < 400, `results took ${shown - reply.at}ms to appear after the search answered`);
+    assert.ok(shown - started < 2000, `a search that answered at once took ${shown - started}ms`);
+    /* and nothing in the page's progress code waits on a clock */
+    const app = fs.readFileSync(path.join(REPO, 'assets', 'app.js'), 'utf8');
+    const progressCode = app.slice(app.indexOf('while a search runs'), app.indexOf('Files dropped on the card'));
+    assert.ok(progressCode.length > 500, 'the progress code moved');
+    assert.ok(!/setTimeout|setInterval|requestAnimationFrame|\.sleep|delay\(/.test(progressCode), 'the progress code waits on a timer');
+    await page.close();
+  });
+
+  await test('a search replaced by a newer one never paints over it', async () => {
+    reset();
+    const first = deferred();
+    stubs.interpret = { hold: first.held, reply: reading('red dress') };
+    const page = await open();
+    await submit(page, 'red dress');
+    await page.waitForSelector('#results .search-progress');
+    stubs.interpret = { reply: reading('something cozy I can wear with jeans') };
+    await submit(page, 'something cozy I can wear with jeans');
+    await page.waitForSelector('.item-card');
+    first.release();
+    await page.waitForTimeout(500);
+    assert.strictEqual(await page.$eval('.results-query', (n) => n.textContent.trim()), 'Results for something cozy I can wear with jeans');
+    assert.ok(!(await page.$('#results .search-progress')));
+    assert.deepStrictEqual(await boxLine(page), { stage: null, shown: false }, 'the late answer brought the hairline back');
+    await page.close();
+  });
+
+  await test('a replaced search that answers late leaves the running search\'s hairline alone', async () => {
+    reset();
+    const first = deferred();
+    const second = deferred();
+    stubs.interpret = { hold: first.held, reply: reading('red dress') };
+    const page = await open();
+    await submit(page, 'red dress');
+    await page.waitForSelector('#ask-form[data-stage="understanding"]');
+    stubs.interpret = { reply: reading('something cozy I can wear with jeans') };
+    stubs.search = { hold: second.held };
+    await submit(page, 'something cozy I can wear with jeans');
+    await page.waitForSelector('#ask-form[data-stage="searching"]');
+    /* the first search's reading comes back now, to nothing */
+    first.release();
+    await page.waitForTimeout(500);
+    assert.deepStrictEqual(await boxLine(page), { stage: 'searching', shown: true }, 'the replaced search cleared the running one\'s hairline');
+    assert.strictEqual((await stageOf(page)).detail, 'Looking for cozy sweaters, sweatshirts or cardigans to wear with jeans');
+    second.release();
+    await page.waitForSelector('.item-card');
+    assert.deepStrictEqual(await boxLine(page), { stage: null, shown: false });
+    await page.close();
+  });
+
+  await test('keyboard focus stays where the shopper left it, through every stage and after', async () => {
+    reset();
+    const search = deferred();
+    stubs.search = { hold: search.held };
+    const page = await open();
+    await submit(page, 'black oversized hoodie');
+    await page.waitForSelector('#results .search-progress[data-stage="searching"]');
+    assert.strictEqual(await page.evaluate(() => document.activeElement.id), 'ask');
+    search.release();
+    await page.waitForSelector('.item-card');
+    assert.strictEqual(await page.evaluate(() => document.activeElement.id), 'ask');
+
+    /* and from the Search button, pressed with the keyboard */
+    reset();
+    const again = deferred();
+    stubs.search = { hold: again.held };
+    await page.fill('#ask', 'black oversized hoodie');
+    await page.focus('#ask-form button[type=submit]');
+    await page.keyboard.press('Enter');
+    await page.waitForSelector('#results .search-progress[data-stage="searching"]');
+    const onButton = () => page.evaluate(() => document.activeElement === document.querySelector('#ask-form button[type=submit]'));
+    assert.ok(await onButton(), 'focus left the Search button while searching');
+    again.release();
+    await page.waitForSelector('.item-card');
+    assert.ok(await onButton(), 'focus left the Search button when the results came');
+    await page.close();
+  });
+
+  const motionOf = (page) => page.evaluate(() => {
+    const css = (sel) => getComputedStyle(document.querySelector(sel));
+    return {
+      bar: css('#ask-form .ask-progress-line').animationName,
+      line: css('#results .stage-text').animationName,
+      skeleton: css('#results .skeleton-card').animationName,
+      opacity: css('#ask-form .ask-progress-line').opacity
+    };
+  });
+
+  await test('the progress moves quietly, and holds still for anyone who asks for reduced motion', async () => {
+    reset();
+    const search = deferred();
+    stubs.search = { hold: search.held };
+    const moving = await open();
+    await submit(moving, 'black oversized hoodie');
+    await moving.waitForSelector('#results .search-progress[data-stage="searching"]');
+    const normal = await motionOf(moving);
+    assert.strictEqual(normal.bar, 'pulse');
+    assert.strictEqual(normal.line, 'stage-in');
+    search.release();
+    await moving.close();
+
+    reset();
+    const held = deferred();
+    stubs.search = { hold: held.held };
+    const still = await browser.newPage();
+    await still.emulateMedia({ reducedMotion: 'reduce' });
+    await still.addInitScript(() => {
+      window.FINDWEAR_API = 'http://127.0.0.1:8899/api/interpret';
+      window.FINDWEAR_SEARCH_API = 'http://127.0.0.1:8899/api/search';
+    });
+    await still.route((url) => !String(url).includes('127.0.0.1'), (route) => route.abort());
+    await still.goto(`http://127.0.0.1:${PORT}/find-clothes.html`, { waitUntil: 'domcontentloaded' });
+    await still.waitForFunction(() => window.Attachments && document.getElementById('attachments'));
+    await submit(still, 'black oversized hoodie');
+    await still.waitForSelector('#results .search-progress[data-stage="searching"]');
+    const reduced = await motionOf(still);
+    assert.deepStrictEqual(reduced, { bar: 'none', line: 'none', skeleton: 'none', opacity: '1' });
+    /* still there, and still in the box: held still, not taken away */
+    assert.deepStrictEqual(await boxLine(still), { stage: 'searching', shown: true });
+    /* still, and still legible: every line in a palette ink */
+    const problems = await textStyleProblems(still, await resolveInks(still));
+    assert.deepStrictEqual(problems, [], `\n        ${problems.join('\n        ')}`);
+    held.release();
+    await still.waitForSelector('.item-card');
+    await still.close();
+  });
+
+  await test('changing stage moves nothing on the page, on a wide screen or a phone', async () => {
+    for (const viewport of [{ width: 1280, height: 900 }, { width: 375, height: 800 }]) {
+      reset();
+      const interpret = deferred();
+      const search = deferred();
+      stubs.interpret = { hold: interpret.held, reply: reading('something cozy I can wear with jeans') };
+      stubs.search = { hold: search.held };
+      const page = await open();
+      await page.setViewportSize(viewport);
+      await submit(page, 'something cozy I can wear with jeans');
+      await page.waitForSelector('#results .search-progress[data-stage="understanding"]');
+      const gridTop = () => page.evaluate(() => Math.round(document.querySelector('#results .grid').getBoundingClientRect().top + window.scrollY));
+      const before = await gridTop();
+      interpret.release();
+      await page.waitForSelector('#results .search-progress[data-stage="searching"]');
+      assert.strictEqual(await gridTop(), before, `${viewport.width}px: the products' place moved when the stage changed`);
+      const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+      assert.strictEqual(overflow, 0, `${viewport.width}px: the progress overflows the screen`);
+      search.release();
+      await page.waitForSelector('.item-card');
+      if (viewport.width >= 768) assert.strictEqual(await gridTop(), before, 'on a wide screen the products arrive where the placeholders stood');
+      await page.close();
+    }
+  });
+
+  /* Where everything in the search box is, in page coordinates, so a
+     scroll is not mistaken for something moving. */
+  const boxGeometry = (page) => page.evaluate(() => {
+    const at = (el) => {
+      const r = el.getBoundingClientRect();
+      return { top: r.top + window.scrollY, bottom: r.bottom + window.scrollY, left: r.left, right: r.right, width: r.width, height: r.height, viewTop: r.top, viewBottom: r.bottom };
+    };
+    const form = document.getElementById('ask-form');
+    const head = document.querySelector('#results .search-progress');
+    return {
+      form: at(form),
+      inner: form.clientWidth,
+      border: parseFloat(getComputedStyle(form).borderBottomWidth),
+      line: at(form.querySelector('.ask-progress-line')),
+      shown: getComputedStyle(form.querySelector('.ask-progress')).display !== 'none',
+      text: at(document.getElementById('ask')),
+      button: at(form.querySelector('button[type=submit]')),
+      clear: at(document.getElementById('reset-form')),
+      attach: at(form.querySelector('.attach-btn')),
+      header: document.querySelector('.site-header').getBoundingClientRect().bottom,
+      stage: head ? at(head) : null,
+      viewport: window.innerHeight,
+      overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth
+    };
+  });
+
+  /* the page has finished bringing what it scrolls to into view: the
+     scroll position has held still for a few frames' worth of time */
+  const scrollSettled = (page) => page.evaluate(() => { window.__settle = null; }).then(() => page.waitForFunction(() => {
+    const y = Math.round(window.scrollY);
+    const now = performance.now();
+    const last = window.__settle;
+    if (!last || last.y !== y) { window.__settle = { y, since: now }; return false; }
+    return now - last.since > 300;
+  }, null, { polling: 50, timeout: 5000 }));
+
+  const SEARCH_WIDTHS = [
+    { width: 1440, height: 900 }, { width: 1280, height: 900 }, { width: 768, height: 1024 }, { width: 767, height: 1024 },
+    { width: 480, height: 860 }, { width: 390, height: 844 }, { width: 375, height: 812 }
+  ];
+
+  await test('the hairline lies along the bottom edge of the search box, inside it, through both stages, at every width', async () => {
+    /* long enough to wrap onto more lines on a phone, where the box stacks */
+    const query = 'something cozy I can wear with jeans for a weekend away';
+    const runs = SEARCH_WIDTHS.map((viewport) => ['find-clothes.html', viewport])
+      .concat([['index.html', { width: 1280, height: 900 }], ['index.html', { width: 390, height: 844 }]]);
+    for (const [file, viewport] of runs) {
+      const where = `${file} at ${viewport.width}px`;
+      reset();
+      const interpret = deferred();
+      const search = deferred();
+      stubs.interpret = { hold: interpret.held, reply: reading(query) };
+      stubs.search = { hold: search.held };
+      const page = file === 'find-clothes.html' ? await open() : await openPage(file);
+      if (file !== 'find-clothes.html') await page.waitForFunction(() => window.Attachments && document.getElementById('attachments'));
+      await page.setViewportSize(viewport);
+      await page.fill('#ask', query);
+      const before = await boxGeometry(page);
+      assert.strictEqual(before.shown, false, `${where}: a hairline before any search`);
+      await page.focus('#ask');
+      await page.keyboard.press('Enter');
+
+      const lines = [];
+      for (const stage of ['understanding', 'searching']) {
+        if (stage === 'searching') interpret.release();
+        await page.waitForSelector(`#results .search-progress[data-stage="${stage}"]`);
+        await scrollSettled(page);
+        const g = await boxGeometry(page);
+        const at = `${where}, ${stage}`;
+        assert.strictEqual(g.shown, true, `${at}: no hairline`);
+        assert.deepStrictEqual(await boxLine(page), { stage, shown: true }, at);
+
+        /* flush with the bottom edge, just inside the border */
+        const gap = g.form.viewBottom - g.border - g.line.viewBottom;
+        assert.ok(Math.abs(gap) <= 0.5, `${at}: the hairline is ${gap.toFixed(2)}px off the box's bottom edge`);
+        assert.ok(g.line.height > 0 && g.line.height <= 2, `${at}: the hairline is ${g.line.height}px thick`);
+        /* the usable width of the box, and not a pixel outside it */
+        assert.ok(Math.abs(g.line.width - g.inner) <= 0.5, `${at}: the hairline is ${g.line.width}px across a ${g.inner}px box`);
+        assert.ok(g.line.left >= g.form.left && g.line.right <= g.form.right, `${at}: the hairline sticks out of the box`);
+        /* over nothing: the words, the Search button and the small buttons
+           all end above it */
+        for (const part of ['text', 'button', 'clear', 'attach']) {
+          if (!g[part].height) continue;
+          assert.ok(g[part].bottom <= g.line.top + 0.5, `${at}: the hairline overlaps the ${part} (${g[part].bottom} > ${g.line.top})`);
+        }
+        /* the box keeps its size and place, and so does its button */
+        for (const part of ['form', 'button', 'text']) {
+          for (const side of ['top', 'left', 'width', 'height']) {
+            assert.ok(Math.abs(g[part][side] - before[part][side]) <= 0.5, `${at}: the ${part}'s ${side} moved from ${before[part][side]} to ${g[part][side]}`);
+          }
+        }
+        if (viewport.width <= 767) assert.ok(g.button.top >= g.text.bottom, `${at}: the box did not stack`);
+        assert.strictEqual(g.overflow, 0, `${at}: the page scrolls sideways`);
+        /* on screen while it works: the box below the header, and the
+           words saying what it is doing above the fold */
+        assert.ok(g.form.viewTop >= g.header && g.line.viewBottom <= g.viewport, `${at}: the box is off screen (${g.form.viewTop}..${g.line.viewBottom}, header ${g.header}, viewport ${g.viewport})`);
+        assert.ok(g.stage.viewTop >= g.header && g.stage.viewBottom <= g.viewport, `${at}: the stage line is off screen (${g.stage.viewTop}..${g.stage.viewBottom})`);
+        lines.push(g.line.width);
+      }
+      /* the same full line at both stages: it says the box is working,
+         not how far along it is */
+      assert.strictEqual(lines[0], lines[1], `${where}: the hairline changed length between stages`);
+
+      search.release();
+      await page.waitForSelector('.item-card');
+      const after = await boxGeometry(page);
+      assert.strictEqual(after.shown, false, `${where}: the hairline stayed after the results`);
+      for (const side of ['top', 'left', 'width', 'height']) {
+        assert.ok(Math.abs(after.form[side] - before.form[side]) <= 0.5, `${where}: the box's ${side} changed after the search`);
+      }
+      assert.strictEqual(after.overflow, 0, `${where}: the results scroll sideways`);
+      /* and the results are brought up, as they always were */
+      await page.waitForFunction(() => {
+        const card = document.querySelector('.item-card').getBoundingClientRect();
+        return card.top >= 0 && card.top < window.innerHeight;
+      }, null, { timeout: 5000 });
+      await page.close();
+    }
+  });
+
+  await test('the hairline is decoration: hidden from assistive technology, with the stage still said in words', async () => {
+    for (const file of ['find-clothes.html', 'index.html']) {
+      reset();
+      const search = deferred();
+      stubs.search = { hold: search.held };
+      const page = await openPage(file);
+      await page.waitForFunction(() => window.Attachments && document.getElementById('attachments'));
+      const markup = await page.evaluate(() => {
+        const wrap = document.querySelector('#ask-form > .ask-progress');
+        return wrap && {
+          hidden: wrap.getAttribute('aria-hidden'),
+          text: wrap.textContent.trim(),
+          focusable: wrap.querySelectorAll('a, button, input, [tabindex]').length,
+          role: wrap.getAttribute('role'),
+          live: wrap.closest('[aria-live]') !== null
+        };
+      });
+      assert.deepStrictEqual(markup, { hidden: 'true', text: '', focusable: 0, role: null, live: false }, file);
+      await submit(page, 'black oversized hoodie');
+      await page.waitForSelector('#ask-form[data-stage="searching"]');
+      const said = await page.evaluate(() => ({
+        status: document.getElementById('search-status').textContent.trim(),
+        heading: document.querySelector('#results .search-progress h2').textContent.trim(),
+        formBusy: document.getElementById('ask-form').getAttribute('aria-busy')
+      }));
+      assert.ok(/Finding matching products\.$/.test(said.status), `${file}: ${said.status}`);
+      assert.strictEqual(said.heading, 'Finding matching products', file);
+      /* the box stays usable while it works: nothing marks it busy */
+      assert.strictEqual(said.formBusy, null, file);
+      search.release();
+      await page.waitForSelector('.item-card');
+      await page.close();
+    }
+  });
+
+  await test('"Start over" during a search leaves nothing behind', async () => {
+    reset();
+    const search = deferred();
+    stubs.search = { hold: search.held };
+    const page = await open();
+    await submit(page, 'black oversized hoodie');
+    await page.waitForSelector('#results .search-progress[data-stage="searching"]');
+    await page.click('#reset-form');
+    search.release();
+    await page.waitForTimeout(500);
+    const after = await page.evaluate(() => ({ hidden: document.getElementById('results').hidden, html: document.getElementById('results').innerHTML, busy: document.getElementById('results').hasAttribute('aria-busy') }));
+    assert.deepStrictEqual(after, { hidden: true, html: '', busy: false });
+    assert.deepStrictEqual(await boxLine(page), { stage: null, shown: false }, 'the hairline stayed after "Start over"');
+    await page.close();
+  });
+
+  reset();
+
+  console.log('\nlive searches left, in the search box');
+
+  /* every category Discover offers and every subcategory under it, then
+     back to the shelves: the whole of Discover, used once */
+  const browseAllOfDiscover = async (page) => {
+    await page.waitForSelector('.shelf .item-card', { timeout: 10000 });
+    let used = 0;
+    const tabs = await page.$$eval('#discover-tabs button', (ns) => ns.length);
+    for (let c = 0; c < tabs; c++) {
+      await page.click(`#discover-tabs button >> nth=${c}`); used += 1;
+      const pills = await page.$$eval('#discover-panel button.pill', (ns) => ns.length);
+      for (let p = 0; p < pills; p++) { await page.click(`#discover-panel button.pill >> nth=${p}`); used += 1; }
+      while (await page.$('#active-filters [data-remove]')) await page.click('#active-filters [data-remove] >> nth=0');
+    }
+    await page.click('#results-clear');
+    return used;
+  };
+
+  const SIGNED_IN = { signedIn: true, user: { id: 'usr_1', email: 'ada@example.test', name: 'Ada', emailVerified: true } };
+
+  /* the count in words, and whether the allowance — words and bar — is
+     on screen at all */
+  const usageOf = (page) => page.evaluate(() => {
+    const block = document.getElementById('ask-allowance');
+    const el = document.getElementById('ask-usage');
+    const css = getComputedStyle(block);
+    return {
+      text: el.textContent.trim(),
+      hidden: block.hidden,
+      visible: !block.hidden && css.display !== 'none' && css.visibility !== 'hidden' && el.getBoundingClientRect().height > 0 && el.textContent.trim() !== ''
+    };
+  });
+
+  const usageSays = (page, text) => page.waitForFunction((t) => document.getElementById('ask-usage').textContent.trim() === t, text, { timeout: 5000 })
+    .catch(async () => { throw new Error(`the box says "${(await usageOf(page)).text}", not "${text}"`); });
+
+  const accountReads = () => stubs.log.filter((e) => e.path === '/api/account' && e.event === 'request').length;
+
+  /* the allowance bar as drawn: how many steps, how much of its width is
+     filled, in what colour, and what each colour is in the palette */
+  const meterOf = (page) => page.evaluate(() => {
+    const meter = document.getElementById('ask-meter');
+    const box = meter.getBoundingClientRect();
+    const steps = [...meter.querySelectorAll('.ask-meter-step')];
+    const fill = meter.querySelector('.ask-meter-fill');
+    const filled = steps.length ? steps.filter((n) => n.classList.contains('is-left')) : (fill ? [fill] : []);
+    const probe = document.createElement('span');
+    document.body.appendChild(probe);
+    const token = (name) => { probe.style.color = `var(${name})`; return getComputedStyle(probe).color; };
+    const palette = Object.fromEntries(['--color-accent', '--color-accent-ink', '--color-primary', '--color-surface-3', '--color-warning', '--color-success']
+      .map((name) => [token(name), name]));
+    probe.remove();
+    const colour = (n) => palette[getComputedStyle(n).backgroundColor] || getComputedStyle(n).backgroundColor;
+    return {
+      steps: steps.length,
+      smooth: Boolean(meter.querySelector('.ask-meter-track')),
+      share: box.width ? filled.reduce((sum, n) => sum + n.getBoundingClientRect().width, 0) / box.width : 0,
+      ink: filled.length ? [...new Set(filled.map(colour))] : [],
+      track: [...new Set([...meter.querySelectorAll('.ask-meter-step:not(.is-left), .ask-meter-track')].map(colour))],
+      width: box.width,
+      ariaHidden: meter.getAttribute('aria-hidden'),
+      text: meter.textContent,
+      drawn: meter.children.length > 0
+    };
+  });
+
+  await test('a Free shopper sees the live searches left before typing anything, in the box\'s quiet metadata', async () => {
+    reset();
+    accountState = accountReply({ searchesUsed: 0 });
+    const page = await open();
+    await usageSays(page, '3 searches left today');
+    const inks = await resolveInks(page);
+    const shown = await page.evaluate(() => {
+      const el = document.getElementById('ask-usage');
+      const css = getComputedStyle(el);
+      return {
+        inBox: el.closest('#ask-form') !== null,
+        typed: document.getElementById('ask').value,
+        size: parseFloat(css.fontSize),
+        field: parseFloat(getComputedStyle(document.getElementById('ask')).fontSize),
+        weight: css.fontWeight,
+        color: css.color,
+        status: document.getElementById('search-status').textContent
+      };
+    });
+    assert.ok(shown.inBox, 'the count is not in the search box');
+    assert.strictEqual(shown.typed, '');
+    assert.strictEqual(inks[shown.color], '--color-text-muted', `the count is set in ${shown.color}, not the muted ink`);
+    assert.ok(shown.size <= 14 && shown.size < shown.field, `the count (${shown.size}px) competes with the field (${shown.field}px)`);
+    assert.strictEqual(shown.weight, '400');
+    /* read, not announced: nothing is said to a screen reader on arrival */
+    assert.strictEqual(shown.status, '');
+    /* and reading it spent nothing */
+    assert.deepStrictEqual(stubs.log.filter((e) => e.path !== '/api/account'), []);
+    assert.strictEqual(accountState.usage.searches.used, 0);
+    await page.close();
+  });
+
+  await test('the bar shows what is left of the Free allowance, a step a search, in the accent blue, from the server\'s own count', async () => {
+    /* the shrinking fill is the signal: whatever is left is the accent
+       blue at every count, and nothing left is the bare grey track */
+    const expected = [
+      /* left, share of the bar filled, ink */
+      [3, 1, '--color-accent'],
+      [2, 2 / 3, '--color-accent'],
+      [1, 1 / 3, '--color-accent'],
+      [0, 0, null]
+    ];
+    const widths = [];
+    for (const [left, share, ink] of expected) {
+      reset();
+      accountState = accountReply({ searchesUsed: 3 - left });
+      const page = await open();
+      await usageSays(page, left ? `${left} ${left === 1 ? 'search' : 'searches'} left today` : 'No live searches left today');
+      const bar = await meterOf(page);
+      assert.strictEqual(bar.steps, 3, `${left} left: ${bar.steps} steps for a three-search allowance`);
+      /* the gaps between steps are the only thing between the fill and the share */
+      assert.ok(Math.abs(bar.share - share) <= 0.03, `${left} left: ${bar.share.toFixed(3)} of the bar is filled, not ${share.toFixed(3)}`);
+      assert.deepStrictEqual(bar.ink, ink ? [ink] : [], `${left} left: filled in ${bar.ink}`);
+      assert.deepStrictEqual(bar.track, left === 3 ? [] : ['--color-surface-3'], `${left} left: the empty steps are ${bar.track}`);
+      widths.push(bar.width);
+      await page.close();
+    }
+    /* one bar, the same length at every count, so only its fill changes */
+    assert.ok(Math.max(...widths) - Math.min(...widths) <= 0.5, `the bar changes length with the count: ${widths.join(', ')}`);
+    accountState = accountReply({});
+  });
+
+  await test('Pro and Max are one smooth fill of remaining over limit — and the bar follows the server\'s limit, not Free\'s', async () => {
+    const cases = [
+      /* state, smooth?, steps, share */
+      [{ planId: 'pro', searchesUsed: 3, extra: SIGNED_IN }, true, 0, 97 / 100],
+      [{ planId: 'max', searchesUsed: 3, extra: SIGNED_IN }, true, 0, 497 / 500],
+      [{ planId: 'pro', searchesUsed: 50, extra: SIGNED_IN }, true, 0, 50 / 100],
+      [{ planId: 'pro', searchesUsed: 80, extra: SIGNED_IN }, true, 0, 20 / 100],
+      [{ planId: 'max', searchesUsed: 500, extra: SIGNED_IN }, true, 0, 0]
+    ];
+    for (const [state, smooth, steps, share] of cases) {
+      reset();
+      accountState = accountReply(state);
+      const page = await open();
+      await page.waitForFunction(() => document.getElementById('ask-usage').textContent.trim());
+      const bar = await meterOf(page);
+      const what = `${state.planId} with ${accountState.usage.searches.remaining} of ${accountState.usage.searches.limit}`;
+      assert.strictEqual(bar.smooth, smooth, `${what}: not one smooth fill`);
+      assert.strictEqual(bar.steps, steps, `${what}: drawn as ${bar.steps} slivers`);
+      assert.ok(Math.abs(bar.share - share) <= 0.01, `${what}: ${bar.share.toFixed(3)} filled, not ${share.toFixed(3)}`);
+      assert.deepStrictEqual(bar.ink, share ? ['--color-accent'] : [], `${what}: filled in ${bar.ink}`);
+      assert.deepStrictEqual(bar.track, ['--color-surface-3'], what);
+      await page.close();
+    }
+    /* whatever allowance the server reports is the one drawn: five
+       searches are five steps, forty are a smooth fill */
+    for (const [limit, remaining, steps, share] of [[5, 2, 5, 2 / 5], [40, 10, 0, 10 / 40]]) {
+      reset();
+      accountState = accountReply({ searchesUsed: 0 });
+      accountState.usage.searches = Object.assign({}, accountState.usage.searches, { limit, used: limit - remaining, remaining });
+      const page = await open();
+      await usageSays(page, `${remaining} searches left today`);
+      const bar = await meterOf(page);
+      assert.strictEqual(bar.steps, steps, `${remaining} of ${limit}: ${bar.steps} steps`);
+      assert.ok(Math.abs(bar.share - share) <= 0.03, `${remaining} of ${limit}: ${bar.share.toFixed(3)} filled`);
+      await page.close();
+    }
+    accountState = accountReply({});
+  });
+
+  await test('the count is the account\'s own: signed-in Free, Pro and Max, in the period the server counts it', async () => {
+    const cases = [
+      [{ planId: 'free', searchesUsed: 1, extra: SIGNED_IN }, '2 searches left today'],
+      [{ planId: 'free', searchesUsed: 2 }, '1 search left today'],
+      [{ planId: 'pro', searchesUsed: 3, extra: SIGNED_IN }, '97 searches left this month'],
+      [{ planId: 'max', searchesUsed: 3, extra: SIGNED_IN }, '497 searches left this month']
+    ];
+    for (const [state, said] of cases) {
+      for (const file of ['find-clothes.html', 'index.html']) {
+        reset();
+        accountState = accountReply(state);
+        const page = await openPage(file);
+        await usageSays(page, said);
+        await page.close();
+      }
+    }
+    /* the page knows no plan's limit: whatever the server counts, in
+       whatever period, is what it says */
+    reset();
+    accountState = accountReply({ searchesUsed: 0 });
+    accountState.usage.searches = Object.assign({}, accountState.usage.searches, { limit: 7, used: 2, remaining: 5, period: 'month' });
+    const page = await open();
+    await usageSays(page, '5 searches left this month');
+    await page.close();
+    accountState = accountReply({});
+  });
+
+  await test('starting a search hands the box to the hairline; the answer brings back the count the server now holds', async () => {
+    reset();
+    accountState = accountReply({ searchesUsed: 0 });
+    stubs.charge = true;
+    const interpret = deferred();
+    const search = deferred();
+    stubs.interpret = { hold: interpret.held, reply: reading('black oversized hoodie under $80') };
+    stubs.search = { hold: search.held };
+    const page = await open();
+    await usageSays(page, '3 searches left today');
+    await submit(page, 'black oversized hoodie under $80');
+    await page.waitForSelector('#ask-form[data-stage="understanding"]');
+    assert.deepStrictEqual(await usageOf(page), { text: '', hidden: false, visible: false }, 'the count stayed beside the hairline');
+    assert.strictEqual((await meterOf(page)).drawn, false, 'the allowance bar stayed beside the hairline');
+    assert.deepStrictEqual(await boxLine(page), { stage: 'understanding', shown: true });
+    stubs.interpret = null;
+    interpret.release();
+    await page.waitForSelector('#ask-form[data-stage="searching"]');
+    assert.strictEqual((await usageOf(page)).visible, false);
+    assert.deepStrictEqual(await boxLine(page), { stage: 'searching', shown: true });
+    const readsBefore = accountReads();
+    search.release();
+    await page.waitForSelector('.item-card');
+    await usageSays(page, '2 searches left today');
+    assert.ok(accountReads() > readsBefore, 'the new count was not read from the account');
+    assert.deepStrictEqual(await boxLine(page), { stage: null, shown: false });
+    const after = await meterOf(page);
+    assert.ok(after.steps === 3 && Math.abs(after.share - 2 / 3) <= 0.03, `the bar came back at ${after.share.toFixed(3)}`);
+
+    /* a search the server did not count leaves the count where it was:
+       the page takes nothing off by itself */
+    stubs.charge = false;
+    await submit(page, 'white sneakers');
+    await page.waitForFunction(() => !document.querySelector('#results .search-progress') && document.querySelector('.item-card'));
+    await usageSays(page, '2 searches left today');
+    assert.ok(Math.abs((await meterOf(page)).share - 2 / 3) <= 0.03, 'an uncounted search moved the bar');
+
+    /* nor does a search that failed before it was counted */
+    stubs.search = { status: 502 };
+    await submit(page, 'grey hoodie');
+    await page.waitForFunction(() => /unavailable/i.test((document.querySelector('.results-head h2') || {}).textContent || ''));
+    await usageSays(page, '2 searches left today');
+    assert.ok(Math.abs((await meterOf(page)).share - 2 / 3) <= 0.03, 'a failed search moved the bar');
+    stubs.search = null;
+
+    /* and a count that moved elsewhere — another tab, another device —
+       is the one shown */
+    const another = deferred();
+    stubs.search = { hold: another.held };
+    await submit(page, 'linen shirt');
+    await page.waitForSelector('#ask-form[data-stage="searching"]');
+    accountState.usage.searches.used = 2;
+    accountState.usage.searches.remaining = 1;
+    another.release();
+    await page.waitForSelector('.item-card');
+    await usageSays(page, '1 search left today');
+    assert.ok(Math.abs((await meterOf(page)).share - 1 / 3) <= 0.03, 'the bar does not follow the server');
+    await page.close();
+    accountState = accountReply({});
+  });
+
+  await test('between the answer and the account\'s new count, the box shows no count at all, and keeps its size', async () => {
+    reset();
+    accountState = accountReply({ searchesUsed: 0 });
+    stubs.charge = true;
+    const page = await open();
+    await usageSays(page, '3 searches left today');
+    const height = await page.$eval('#ask-form', (n) => n.getBoundingClientRect().height);
+    const recount = deferred();
+    stubs.account = { hold: recount.held };
+    await submit(page, 'black oversized hoodie');
+    await page.waitForSelector('.item-card');
+    await page.waitForFunction(() => document.querySelector('#ask-form').dataset.stage === undefined);
+    assert.deepStrictEqual(await usageOf(page), { text: '', hidden: false, visible: false }, 'the old count came back before the new one');
+    assert.strictEqual(await page.$eval('#ask-form', (n) => n.getBoundingClientRect().height), height);
+    recount.release();
+    await usageSays(page, '2 searches left today');
+    assert.strictEqual(await page.$eval('#ask-form', (n) => n.getBoundingClientRect().height), height);
+    await page.close();
+    accountState = accountReply({});
+  });
+
+  await test('Discover spends no live search and leaves the count where it was', async () => {
+    reset();
+    accountState = accountReply({ searchesUsed: 0 });
+    stubs.charge = true;
+    const before = await open();
+    await usageSays(before, '3 searches left today');
+    await before.close();
+
+    const discover = await openPage('discover.html', { photos: true });
+    await browseAllOfDiscover(discover);
+    await discover.close();
+    assert.deepStrictEqual(stubs.log.filter((e) => e.path === '/api/search' || e.path === '/api/interpret'), [], 'Discover reached a live endpoint');
+    assert.strictEqual(accountState.usage.searches.used, 0, 'Discover was counted as a search');
+
+    const after = await open();
+    await usageSays(after, '3 searches left today');
+    assert.ok((await meterOf(after)).share > 0.95, 'Discover emptied the bar');
+    await after.close();
+    accountState = accountReply({});
+  });
+
+  await test('with no live searches left the box says so plainly, typing still works, and the limit answer is the existing one', async () => {
+    reset();
+    accountState = accountReply({ searchesUsed: 3 });
+    const page = await open();
+    await usageSays(page, 'No live searches left today');
+    const inks = await resolveInks(page);
+    const color = await page.$eval('#ask-usage', (n) => getComputedStyle(n).color);
+    assert.strictEqual(inks[color], '--color-text-muted', 'the limit is shown as a warning');
+    const control = await page.evaluate(() => ({
+      disabled: document.getElementById('ask').disabled || document.getElementById('ask').readOnly,
+      button: document.querySelector('#ask-form button[type=submit]').disabled
+    }));
+    assert.deepStrictEqual(control, { disabled: false, button: false }, 'the box was locked');
+    stubs.search = { status: 429 };
+    await submit(page, 'black oversized hoodie');
+    await page.waitForFunction(() => /No searches left/.test((document.querySelector('.results-head h2') || {}).textContent || ''));
+    await usageSays(page, 'No live searches left today');
+    await page.close();
+
+    reset();
+    accountState = accountReply({ planId: 'pro', searchesUsed: 100, extra: SIGNED_IN });
+    const pro = await open();
+    await usageSays(pro, 'No live searches left this month');
+    await pro.close();
+    accountState = accountReply({});
+  });
+
+  await test('when the account cannot be read, no number is shown — never a guess', async () => {
+    for (const [why, failure] of [['not deployed', { status: 404 }], ['a server error', { status: 500 }], ['a dropped connection', { drop: true }]]) {
+      reset();
+      accountState = accountReply({ searchesUsed: 0 });
+      stubs.account = failure;
+      const page = await open();
+      await page.waitForFunction(() => document.getElementById('ask-allowance').hidden, null, { timeout: 5000 })
+        .catch(() => { throw new Error(`${why}: the row was not given up`); });
+      const shown = await usageOf(page);
+      assert.deepStrictEqual(shown, { text: '', hidden: true, visible: false }, why);
+      assert.strictEqual((await meterOf(page)).drawn, false, `${why}: a bar was drawn without a count`);
+      await page.close();
+    }
+
+    /* a re-read that fails after a good one says nothing, rather than
+       leaving the count from before the search on screen */
+    reset();
+    accountState = accountReply({ searchesUsed: 0 });
+    stubs.charge = true;
+    const page = await open();
+    await usageSays(page, '3 searches left today');
+    const height = await page.$eval('#ask-form', (n) => n.getBoundingClientRect().height);
+    stubs.account = { status: 500 };
+    const answered = stubs.log.filter((e) => e.path === '/api/account' && e.event === 'reply').length;
+    await submit(page, 'black oversized hoodie');
+    await page.waitForSelector('.item-card');
+    /* the re-read has been refused, and the page has had time to hear it */
+    for (let i = 0; i < 50 && stubs.log.filter((e) => e.path === '/api/account' && e.event === 'reply').length === answered; i += 1) await page.waitForTimeout(50);
+    assert.ok(stubs.log.filter((e) => e.path === '/api/account' && e.event === 'reply').length > answered, 'the account was not read again');
+    await page.waitForTimeout(300);
+    assert.deepStrictEqual(await usageOf(page), { text: '', hidden: false, visible: false }, 'a stale or guessed count after a failed re-read');
+    assert.strictEqual((await meterOf(page)).drawn, false, 'a stale or guessed bar after a failed re-read');
+    assert.strictEqual(await page.$eval('#ask-form', (n) => n.getBoundingClientRect().height), height, 'the box changed size');
+    await page.close();
+    accountState = accountReply({});
+  });
+
+  /* where the count's own words are, as drawn */
+  const usageGeometry = (page) => page.evaluate(() => {
+    const el = document.getElementById('ask-usage');
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const words = range.getBoundingClientRect();
+    const box = (node) => { const r = node.getBoundingClientRect(); return { top: r.top, bottom: r.bottom, left: r.left, right: r.right, width: r.width, height: r.height }; };
+    const form = document.getElementById('ask-form');
+    const css = getComputedStyle(form);
+    return {
+      words: box({ getBoundingClientRect: () => words }),
+      bar: box(document.getElementById('ask-meter')),
+      button: box(form.querySelector('button[type=submit]')),
+      content: { left: form.getBoundingClientRect().left + parseFloat(css.borderLeftWidth) + parseFloat(css.paddingLeft) },
+      row: box(el),
+      lineHeight: parseFloat(getComputedStyle(el).lineHeight),
+      clipped: el.scrollWidth > el.clientWidth,
+      form: box(form),
+      border: parseFloat(getComputedStyle(form).borderBottomWidth),
+      parts: ['ask', 'reset-form'].map((id) => document.getElementById(id))
+        .concat([form.querySelector('.attach-btn'), form.querySelector('button[type=submit]')])
+        .filter((node) => node.getBoundingClientRect().height > 0)
+        .map((node) => Object.assign({ name: node.id || node.className || node.tagName }, box(node))),
+      overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth
+    };
+  });
+  const overlap = (a, b) => a.left < b.right - 0.5 && b.left < a.right - 0.5 && a.top < b.bottom - 0.5 && b.top < a.bottom - 0.5;
+
+  await test('the count fits on one line in the box, beside nothing, at every width — and the box never changes size for it', async () => {
+    const widths = [1440, 1280, 1024, 820, 768, 767, 480, 390, 375];
+    const runs = widths.map((width) => ['find-clothes.html', width]).concat([['index.html', 1280], ['index.html', 390]]);
+    for (const [file, width] of runs) {
+      const where = `${file} at ${width}px`;
+      reset();
+      /* the longest thing it says */
+      accountState = accountReply({ planId: 'max', searchesUsed: 3, extra: SIGNED_IN });
+      stubs.charge = true;
+      const first = deferred();
+      stubs.account = { hold: first.held };
+      const search = deferred();
+      stubs.search = { hold: search.held };
+      const page = await openPage(file);
+      await page.waitForFunction(() => window.Attachments && document.getElementById('attachments'));
+      await page.setViewportSize({ width, height: width < 768 ? 860 : 900 });
+      await page.fill('#ask', 'black oversized hoodie under $80');
+      const waiting = await boxGeometry(page);
+      first.release();
+      await usageSays(page, '497 searches left this month');
+      const idle = await boxGeometry(page);
+      for (const side of ['top', 'left', 'width', 'height']) {
+        assert.ok(Math.abs(idle.form[side] - waiting.form[side]) <= 0.5, `${where}: the box's ${side} changed when the count arrived (${waiting.form[side]} → ${idle.form[side]})`);
+      }
+      const g = await usageGeometry(page);
+      assert.ok(g.words.height <= g.lineHeight + 0.5 && g.row.height <= g.lineHeight + 0.5, `${where}: the count wraps (${g.row.height}px)`);
+      assert.strictEqual(g.clipped, false, `${where}: the count is cut off`);
+      assert.ok(g.words.left >= g.form.left && g.words.right <= g.form.right && g.words.bottom <= g.form.bottom - g.border, `${where}: the count is outside the box`);
+      for (const part of g.parts) assert.ok(!overlap(g.words, part), `${where}: the count runs into ${part.name}`);
+      assert.strictEqual(g.overflow, 0, `${where}: the page scrolls sideways`);
+      /* the bar: thin, inside the box, over nothing, and clearly visible */
+      assert.ok(g.bar.height >= 3 && g.bar.height <= 6, `${where}: the bar is ${g.bar.height}px thick`);
+      assert.ok(g.bar.left >= g.form.left && g.bar.right <= g.form.right && g.bar.bottom <= g.form.bottom - g.border, `${where}: the bar is outside the box`);
+      assert.ok(!overlap(g.bar, g.words), `${where}: the bar runs into the count`);
+      for (const part of g.parts) assert.ok(!overlap(g.bar, part), `${where}: the bar runs into ${part.name}`);
+      if (width <= 767) {
+        /* stacked under the full-width button: as wide as it, the words
+           under the bar */
+        assert.ok(Math.abs(g.bar.left - g.button.left) <= 1 && Math.abs(g.bar.right - g.button.right) <= 1, `${where}: the bar runs ${g.bar.left}–${g.bar.right}, the button ${g.button.left}–${g.button.right}`);
+        assert.ok(g.bar.bottom <= g.words.top, `${where}: the bar is not above the count`);
+        /* the allowance adds a short band under the button, no more */
+        assert.ok(g.form.bottom - g.button.bottom <= 50, `${where}: ${g.form.bottom - g.button.bottom}px of box under the button`);
+      } else {
+        /* a compact box, with one row for the allowance: the bar from the
+           box's content edge, the words beside it ending under the Search
+           button */
+        assert.ok(g.form.height >= 80 && g.form.height <= 90, `${where}: the box is ${g.form.height}px tall`);
+        assert.ok(Math.abs(g.bar.left - g.content.left) <= 1, `${where}: the bar starts at ${g.bar.left}, not ${g.content.left}`);
+        assert.ok(Math.abs(g.words.right - g.button.right) <= 1, `${where}: the count ends at ${g.words.right}, the button at ${g.button.right}`);
+        assert.ok(g.bar.right <= g.words.left - 8, `${where}: the bar runs up to the count`);
+        const middle = (r) => (r.top + r.bottom) / 2;
+        assert.ok(Math.abs(middle(g.bar) - middle(g.words)) <= 2, `${where}: the bar and the count are not on one row`);
+        assert.ok(g.bar.width >= 0.5 * g.form.width, `${where}: the bar is ${g.bar.width}px of a ${g.form.width}px box`);
+      }
+
+      await page.focus('#ask');
+      await page.keyboard.press('Enter');
+      await page.waitForSelector('#ask-form[data-stage="searching"]');
+      const during = await boxGeometry(page);
+      assert.strictEqual((await usageOf(page)).visible, false, `${where}: the count is on screen with the hairline`);
+      assert.strictEqual(during.shown, true, `${where}: no hairline`);
+      for (const side of ['top', 'left', 'width', 'height']) {
+        assert.ok(Math.abs(during.form[side] - idle.form[side]) <= 0.5, `${where}: the box's ${side} changed when the search started`);
+      }
+      search.release();
+      await page.waitForSelector('.item-card');
+      await usageSays(page, '496 searches left this month');
+      const after = await boxGeometry(page);
+      for (const side of ['top', 'left', 'width', 'height']) {
+        assert.ok(Math.abs(after.form[side] - idle.form[side]) <= 0.5, `${where}: the box's ${side} changed after the search`);
+      }
+      assert.strictEqual(after.overflow, 0, `${where}: the results scroll sideways`);
+      await page.close();
+    }
+    accountState = accountReply({});
+  });
+
+  await test('screen readers hear the count with the field, and once more, briefly, when a search changes it', async () => {
+    reset();
+    accountState = accountReply({ searchesUsed: 0 });
+    stubs.charge = true;
+    const page = await open();
+    await usageSays(page, '3 searches left today');
+    const wiring = await page.evaluate(() => {
+      const field = document.getElementById('ask');
+      const ids = (field.getAttribute('aria-describedby') || '').split(/\s+/);
+      const el = document.getElementById('ask-usage');
+      return {
+        describes: ids.includes('ask-usage'),
+        hidden: el.closest('[aria-hidden="true"]') !== null,
+        live: el.getAttribute('aria-live') || el.getAttribute('role') || null
+      };
+    });
+    /* part of the field's description, and not a live region of its own,
+       so it is never said twice */
+    assert.deepStrictEqual(wiring, { describes: true, hidden: false, live: null });
+    /* the bar is a picture of those words: hidden from assistive
+       technology, with nothing in it to read */
+    const bar = await meterOf(page);
+    assert.deepStrictEqual({ hidden: bar.ariaHidden, text: bar.text }, { hidden: 'true', text: '' });
+
+    await submit(page, 'black oversized hoodie');
+    await page.waitForSelector('.item-card');
+    await usageSays(page, '2 searches left today');
+    await page.waitForFunction(() => document.getElementById('search-status').textContent.trim() === '1 piece found. 2 searches left today.', null, { timeout: 5000 })
+      .catch(async () => { throw new Error(`said "${await page.$eval('#search-status', (n) => n.textContent)}"`); });
+    assert.strictEqual(await page.evaluate(() => document.activeElement.id), 'ask', 'focus moved');
+
+    /* a search that was not counted changes nothing, so nothing more is said */
+    stubs.search = { status: 502 };
+    await submit(page, 'white sneakers');
+    await page.waitForFunction(() => /unavailable/i.test((document.querySelector('.results-head h2') || {}).textContent || ''));
+    await usageSays(page, '2 searches left today');
+    await page.waitForTimeout(300);
+    const said = await page.$eval('#search-status', (n) => n.textContent);
+    assert.ok(!/searches? left/.test(said), `an unchanged count was announced: "${said}"`);
+    assert.strictEqual(await page.evaluate(() => document.activeElement.id), 'ask', 'focus moved');
+    await page.close();
+    accountState = accountReply({});
+  });
+
+  await test('the allowance comes back with a short fade, and at once for anyone who asks for reduced motion', async () => {
+    const fadeOf = (page) => page.evaluate(() => {
+      const css = getComputedStyle(document.getElementById('ask-allowance'));
+      return { fade: parseFloat(css.transitionDuration), opacity: css.opacity, animated: [...document.querySelectorAll('#ask-meter *')].some((n) => getComputedStyle(n).animationName !== 'none') };
+    });
+    reset();
+    accountState = accountReply({ searchesUsed: 0 });
+    const moving = await open();
+    await usageSays(moving, '3 searches left today');
+    const normal = await fadeOf(moving);
+    assert.ok(normal.fade > 0 && normal.fade <= 0.3, `the allowance fades in over ${normal.fade}s`);
+    /* the bar itself never moves: it is a level, not an activity */
+    assert.strictEqual(normal.animated, false);
+    await moving.close();
+
+    reset();
+    const still = await browser.newPage();
+    await still.emulateMedia({ reducedMotion: 'reduce' });
+    await still.addInitScript(() => {
+      window.FINDWEAR_API = 'http://127.0.0.1:8899/api/interpret';
+      window.FINDWEAR_SEARCH_API = 'http://127.0.0.1:8899/api/search';
+    });
+    await still.route((url) => !String(url).includes('127.0.0.1'), (route) => route.abort());
+    await still.goto(`http://127.0.0.1:${PORT}/find-clothes.html`, { waitUntil: 'domcontentloaded' });
+    await still.waitForFunction(() => window.Attachments && document.getElementById('attachments'));
+    await usageSays(still, '3 searches left today');
+    const reduced = await fadeOf(still);
+    assert.ok(reduced.fade < 0.001, `the allowance still fades: ${reduced.fade}s`);
+    assert.strictEqual(reduced.opacity, '1');
+    assert.strictEqual(reduced.animated, false);
+    await still.close();
+    accountState = accountReply({});
+  });
+
+  await test('the count waits on the account and nothing else: no timer, and no arithmetic of its own', async () => {
+    reset();
+    accountState = accountReply({ searchesUsed: 0 });
+    const held = deferred();
+    stubs.account = { hold: held.held };
+    const page = await open();
+    await page.waitForTimeout(300);
+    assert.strictEqual((await usageOf(page)).text, '', 'a count before the account answered');
+    held.release();
+    await usageSays(page, '3 searches left today');
+    const shown = Date.now();
+    const reply = stubs.log.filter((e) => e.path === '/api/account' && e.event === 'reply').pop();
+    assert.ok(shown - reply.at < 400, `the count took ${shown - reply.at}ms to appear after the account answered`);
+    await page.close();
+
+    const app = fs.readFileSync(path.join(REPO, 'assets', 'app.js'), 'utf8');
+    const code = app.slice(app.indexOf('how many live searches are left'), app.indexOf('let latest = 0'));
+    assert.ok(code.length > 400, 'the count\'s code moved');
+    assert.ok(!/setTimeout|setInterval|requestAnimationFrame|\.sleep|delay\(/.test(code), 'the count waits on a timer');
+    /* it repeats what the server counted; it never works a count out */
+    assert.ok(!/\.used\b|\blimit\s*-|\b(left|remaining)\s*[-+]=?\s*[\w(]|\b(3|100|500)\b/.test(code), 'the page works out the count itself');
+    /* the words are the server's remaining, and the bar is the server's
+       remaining over the server's limit */
+    assert.ok(/searches\.remaining/.test(code) && /searches\.limit/.test(code), 'the allowance is not read from the server');
+    accountState = accountReply({});
+  });
+
+  reset();
+  accountState = accountReply({});
 
   console.log('\nproduct photos');
 
@@ -1519,19 +2742,14 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
   await test('browsing and filtering Discover spends no live search', async () => {
     stubs.log.length = 0;
     searchRequests.length = 0;
-    const page = await openPage('discover.html');
-    await page.waitForSelector('.filter-pills .pill');
-    const pills = await page.$$eval('.filter-pills .pill', (ns) => ns.map((n) => n.dataset.style));
-    assert.ok(pills.length > 1, 'no filters to try');
-    for (const style of pills.concat(['All'])) {
-      await page.click(`.filter-pills .pill[data-style="${style}"]`);
-      await page.waitForFunction((s) => document.querySelector(`.filter-pills .pill[data-style="${s}"]`).getAttribute('aria-pressed') === 'true', style);
-    }
+    const page = await openPage('discover.html', { photos: true });
+    const used = await browseAllOfDiscover(page);
+    assert.ok(used > 1, 'no filters to try');
     await page.waitForTimeout(300);
     assert.deepStrictEqual(stubs.log.filter((e) => e.path === '/api/search' || e.path === '/api/interpret'), [],
       'a Discover filter reached the search or the interpreter');
     assert.strictEqual(searchRequests.length, 0);
-    assert.ok(await page.$$eval('#discover-grid .item-card', (ns) => ns.length) > 0, 'Discover shows nothing to browse');
+    assert.ok(await page.$$eval('.shelf .item-card', (ns) => ns.length) > 0, 'Discover shows nothing to browse');
     await page.close();
   });
 
@@ -1621,6 +2839,10 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     const page = await openPage(file, { photos: file === 'discover.html' });
     const built = {
       'discover.html': '.item-card',
+      /* the search pages read the live searches left from /api/account;
+         the audit waits for the count so its ink is checked too */
+      'index.html': '#ask-usage:not(:empty)',
+      'find-clothes.html': '#ask-usage:not(:empty)',
       /* both billing pages draw themselves from /api/account, so the
          audit has to wait for the answer or it walks an empty shell */
       'pricing.html': '.plan-banner:not([hidden])',

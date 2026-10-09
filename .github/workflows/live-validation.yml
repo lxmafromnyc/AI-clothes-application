@@ -1,0 +1,275 @@
+# Fynd — live search validation, run where the providers and the
+# deployments can be reached.
+#
+# deployments  The page's own request to /api/search on production
+#              (main) and on this commit's Vercel preview, with the keys
+#              those deployments already hold. This job holds no key of
+#              its own. One search on each, inside the Free allowance of
+#              an anonymous caller (3 a day, metered on address and user
+#              agent): enough to read a 502's reason, kind and upstream
+#              status, and the x-vercel-id to find the request in Vercel's
+#              logs. Never enough for the 107-request benchmark, which is
+#              not attempted here.
+#
+# benchmark    The probe, the diagnostic against the preview, and the
+#              107-request benchmark in process — main at 9507da1 against
+#              this commit, the real handlers, a memory store — with
+#              OPENWEBNINJA_API_KEY and OPENAI_API_KEY from this
+#              repository's Actions secrets. Without them it says so and
+#              stops; it never runs on stand-ins.
+#
+# Runs when this file changes on the branch, or by hand. Nothing it
+# writes contains a key: the scripts print states, never values, and the
+# record is checked for the key before it is uploaded.
+
+name: Live search validation
+
+on:
+  push:
+    branches: [claude/sweet-mendel-a9h21n]
+    paths: [.github/workflows/live-validation.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  deployments: read
+
+concurrency:
+  group: live-validation
+  cancel-in-progress: false
+
+env:
+  QUERY: a baggy hoodie thats light grey and its cozy
+  PLAIN_QUERY: black hoodie
+  PRODUCTION_URL: https://ai-clothes-application.vercel.app
+  BASELINE: 9507da1842518ecfcc772e7d15f014d5cea7e787
+
+jobs:
+  deployments:
+    name: /api/search on the deployments
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      preview: ${{ steps.preview.outputs.url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Find this commit's Vercel preview
+        id: preview
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          url=''
+          for i in $(seq 1 40); do
+            id=$(gh api "repos/${{ github.repository }}/deployments?sha=${{ github.sha }}&environment=Preview" --jq '.[0].id // empty')
+            if [ -n "$id" ]; then
+              url=$(gh api "repos/${{ github.repository }}/deployments/$id/statuses" --jq '[.[] | select(.state=="success")][0].environment_url // empty')
+              [ -n "$url" ] && break
+            fi
+            sleep 15
+          done
+          echo "preview: ${url:-none found within 10 minutes}"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+
+      - name: The page's request, as curl sends it
+        env:
+          PREVIEW_URL: ${{ steps.preview.outputs.url }}
+        run: |
+          node -e "require('./scripts/diagnose-search').browserBody(process.env.QUERY, { served: false }).then((r) => process.stdout.write(JSON.stringify(r.body)))" > body.json
+          node -e "require('./scripts/diagnose-search').browserBody(process.env.PLAIN_QUERY, { served: false }).then((r) => process.stdout.write(JSON.stringify(r.body)))" > plain.json
+          echo "body: $(cat body.json)"
+          echo "plain body: $(cat plain.json)"
+          # the plain request on production only: is an empty page this request's, or every search's?
+          for target in "production=$PRODUCTION_URL=body.json" "preview=$PREVIEW_URL=body.json" "production-plain=$PRODUCTION_URL=plain.json"; do
+            name=${target%%=*}; rest=${target#*=}; url=${rest%=*}; file=${rest##*=}
+            echo "::group::$name ${url:-(no URL)}"
+            if [ -n "$url" ]; then
+              rm -f answer.json headers.txt
+              status=$(curl -sS -o answer.json -D headers.txt -w '%{http_code}' -m 30 -X POST -H 'Content-Type: application/json' --data @"$file" "$url/api/search" || true)
+              echo "HTTP ${status:-000}"
+              grep -iE '^(x-vercel-id|x-vercel-cache|date):' headers.txt 2>/dev/null || true
+              node -e "const b=JSON.parse(require('fs').readFileSync('answer.json','utf8')); if (Array.isArray(b.products)) b.products = b.products.length + ' products'; console.log(JSON.stringify(b, null, 2))" 2>/dev/null || head -c 600 answer.json 2>/dev/null || echo '(no answer body)'
+              # every product shown: its shop, price, link and photo, and whether the link opens
+              node -e '
+                let b; try { b = JSON.parse(require("fs").readFileSync("answer.json", "utf8")); } catch (e) { process.exit(0); }
+                const list = Array.isArray(b.products) ? b.products : [];
+                const google = /(^|\.)google\./i;
+                list.forEach((p, i) => {
+                  let host = "?", https = false;
+                  try { const u = new URL(p.productUrl); host = u.hostname; https = u.protocol === "https:"; } catch (e) {}
+                  console.log(`product ${i + 1}: ${String(p.name || "").slice(0, 60)} | ${p.price} ${p.currency || ""} | ${p.retailer} | link ${p.productUrl} | https ${https} | google ${google.test(host)} | photo https ${/^https:/.test(p.imageUrl || "")}`);
+                });
+                require("fs").writeFileSync("links.txt", list.map((p) => p.productUrl).filter(Boolean).map((l) => l + "\n").join(""));
+              ' || true
+              if [ -s links.txt ]; then
+                while read -r link; do
+                  curl -s -o /dev/null -m 15 -L -A "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36" \
+                    -w "link opens: HTTP %{http_code} after %{num_redirects} redirects, at %{url_effective}\n" "$link" || echo "link opens: no answer ($link)"
+                done < links.txt
+              fi
+              rm -f links.txt
+            fi
+            echo "::endgroup::"
+          done
+
+      - name: OpenWeb Ninja's connection, timed without a key (DNS, TCP, TLS, first byte of a refused request)
+        run: |
+          # no key is sent, so each request is refused at once: what is left
+          # is the cost of reaching the API at all, apart from its processing
+          for path in search product-offers; do
+            for i in 1 2 3; do
+              curl -s -o /dev/null -m 20 -w "$path #$i: HTTP %{http_code}  dns %{time_namelookup}s  tcp %{time_connect}s  tls %{time_appconnect}s  first-byte %{time_starttransfer}s  total %{time_total}s\n" \
+                "https://api.openwebninja.com/realtime-product-search/v2/$path?q=hoodie&product_id=x&country=us&language=en" || echo "$path #$i: no answer"
+            done
+          done
+
+      - name: The page's two requests, through the benchmark
+        env:
+          PREVIEW_URL: ${{ steps.preview.outputs.url }}
+        run: |
+          git worktree add --detach ../fynd-main "$BASELINE"
+          servers="before=$PRODUCTION_URL"
+          [ -n "$PREVIEW_URL" ] && servers="$servers,after=$PREVIEW_URL"
+          set +e
+          node scripts/bench-messy-live.js --servers "$servers" --roots before=../fynd-main,after=. \
+            --only "$QUERY" --retries 0 --out-dir deployment-check --json
+          echo "benchmark exit: $?"
+          cat deployment-check/summary.md
+
+      - name: The record, one line per request (read back from the log)
+        if: always()
+        run: |
+          node -e '
+            const r = require("./deployment-check/results.json");
+            console.log("BEGIN-RESULTS " + JSON.stringify({ dataset: r.dataset, checkouts: r.checkouts.map((c) => ({ name: c.name, server: c.server, config: c.config })), summary: r.summary }));
+            for (const row of r.results) for (const c of r.checkouts) {
+              const o = row[c.name] || {};
+              const g = o.graded;
+              console.log("ROW " + JSON.stringify({ id: row.id, type: row.type, checkout: c.name, status: o.status, failure: o.failure, attempts: o.attempts, interpreter: o.interpreter, searchMs: o.searchMs, totalMs: o.totalMs, asked: o.asked, providerSearches: o.providerSearches, offerLookups: o.offerLookups, fellBack: o.fellBack, verified: o.verified, graded: g && { relevantAt8: g.relevantAt8, strongAt8: g.strongAt8, wrongAt8: g.wrongAt8, hardViolations: g.hardViolations, correct: g.reading.correct, notes: g.reading.notes, noneCorrect: g.noneCorrect }, top: (o.products || []).slice(0, 3).map((p) => [p.name, p.price, p.retailer]) }));
+            }
+            console.log("END-RESULTS");'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deployment-check
+          path: |
+            deployment-check/
+            body.json
+            plain.json
+
+  benchmark:
+    name: probe, diagnostic and the 107-request benchmark
+    needs: deployments
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      OPENWEBNINJA_API_KEY: ${{ secrets.OPENWEBNINJA_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      PREVIEW_URL: ${{ needs.deployments.outputs.preview }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Which keys this job holds (states, never values)
+        id: keys
+        run: |
+          for v in OPENWEBNINJA_API_KEY OPENAI_API_KEY; do
+            if [ -n "${!v}" ]; then echo "$v: set"; else echo "$v: NOT set"; fi
+          done
+          if [ -n "$OPENWEBNINJA_API_KEY" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::OPENWEBNINJA_API_KEY is not a repository Actions secret, so nothing below can search. Not run, and not reported as run."
+          fi
+
+      - name: Probe
+        if: steps.keys.outputs.ready == 'true'
+        run: |
+          mkdir -p bench-results/live-1
+          set +e
+          node scripts/probe-openwebninja.js "$QUERY" 2>&1 | tee bench-results/live-1/probe.txt
+          echo "probe exit: ${PIPESTATUS[0]}" | tee -a bench-results/live-1/probe.txt
+
+      - name: /product-offers phases, one at a time and four at once (connect, TLS, first byte, total)
+        if: steps.keys.outputs.ready == 'true'
+        run: |
+          set +e
+          umask 077
+          printf 'x-api-key: %s\n' "$OPENWEBNINJA_API_KEY" > "$RUNNER_TEMP/own-header"
+          base=https://api.openwebninja.com/realtime-product-search/v2
+          fmt='HTTP %{http_code}  tcp %{time_connect}s  tls %{time_appconnect}s  first-byte %{time_starttransfer}s  total %{time_total}s'
+          curl -s -m 30 -H @"$RUNNER_TEMP/own-header" -o search.json -w "search: $fmt\n" "$base/search?q=black+hoodie&country=us&language=en&limit=12&sort_by=BEST_MATCH"
+          node -e 'const j=require("./search.json"); const d=Array.isArray(j.data)?j.data:[]; console.log("records:", d.length, "with an offer object:", d.filter(p=>p.offer).length, "with a top-level price:", d.filter(p=>p.price).length); require("fs").writeFileSync("ids.txt", d.slice(0,4).map(p=>p.product_id).filter(Boolean).join("\n"))' || true
+          echo "-- one at a time"
+          while read -r id; do curl -s -m 30 -H @"$RUNNER_TEMP/own-header" -o /dev/null -w "offers: $fmt\n" --get --data-urlencode "product_id=$id" -d country=us -d language=en "$base/product-offers"; done < ids.txt
+          echo "-- four at once"
+          while read -r id; do curl -s -m 30 -H @"$RUNNER_TEMP/own-header" -o /dev/null -w "offers: $fmt\n" --get --data-urlencode "product_id=$id" -d country=us -d language=en "$base/product-offers" & done < ids.txt; wait
+          rm -f "$RUNNER_TEMP/own-header" search.json ids.txt
+
+      - name: How long /product-offers really takes, with the per-lookup cap lifted (diagnostic only)
+        if: steps.keys.outputs.ready == 'true'
+        env:
+          # lifted for this one probe run only, so each lookup's own time is
+          # measured instead of being cut at 2500ms; the route is unchanged
+          OPENWEBNINJA_OFFER_LOOKUP_TIMEOUT_MS: '20000'
+        run: |
+          set +e
+          node scripts/probe-openwebninja.js --no-photos --budget-ms 30000 "$QUERY" 2>&1 | grep -E '^(deadline|request|           ->|provider|/api/search would answer)' | tee bench-results/live-1/offers-latency.txt
+          echo "probe exit: ${PIPESTATUS[0]}" | tee -a bench-results/live-1/offers-latency.txt
+
+      - name: Diagnostic against this commit's preview
+        if: steps.keys.outputs.ready == 'true' && env.PREVIEW_URL != ''
+        run: |
+          set +e
+          node scripts/diagnose-search.js --server "$PREVIEW_URL" "$QUERY" 2>&1 | tee bench-results/live-1/diagnose.txt
+          echo "diagnose exit: ${PIPESTATUS[0]}" | tee -a bench-results/live-1/diagnose.txt
+
+      - name: Benchmark, main against this commit
+        if: steps.keys.outputs.ready == 'true'
+        run: |
+          git worktree add --detach ../fynd-main "$BASELINE"
+          set +e
+          node scripts/bench-messy-live.js --roots before=../fynd-main,after=. --out-dir bench-results/live-1
+          echo "benchmark exit: $?" | tee bench-results/live-1/exit.txt
+          cat bench-results/live-1/summary.md
+
+      - name: No key in the record
+        if: steps.keys.outputs.ready == 'true'
+        run: |
+          for v in OPENWEBNINJA_API_KEY OPENAI_API_KEY; do
+            value="${!v}"
+            if [ -n "$value" ] && grep -rqF -- "$value" bench-results/live-1; then
+              echo "::error::$v appears in the record; not uploading it"
+              rm -rf bench-results/live-1
+              exit 1
+            fi
+          done
+          echo "no key found in bench-results/live-1"
+
+      - name: The record, one line per request (read back from the log, after the key check)
+        if: steps.keys.outputs.ready == 'true'
+        run: |
+          node -e '
+            const r = require("./bench-results/live-1/results.json");
+            console.log("BEGIN-RESULTS " + JSON.stringify({ dataset: r.dataset, checkouts: r.checkouts.map((c) => ({ name: c.name, server: c.server, config: c.config })), summary: r.summary }));
+            for (const row of r.results) for (const c of r.checkouts) {
+              const o = row[c.name] || {};
+              const g = o.graded;
+              console.log("ROW " + JSON.stringify({ id: row.id, type: row.type, checkout: c.name, status: o.status, failure: o.failure, attempts: o.attempts, interpreter: o.interpreter, searchMs: o.searchMs, totalMs: o.totalMs, asked: o.asked, providerSearches: o.providerSearches, offerLookups: o.offerLookups, fellBack: o.fellBack, verified: o.verified, graded: g && { relevantAt8: g.relevantAt8, strongAt8: g.strongAt8, wrongAt8: g.wrongAt8, hardViolations: g.hardViolations, correct: g.reading.correct, notes: g.reading.notes, noneCorrect: g.noneCorrect }, top: (o.products || []).slice(0, 3).map((p) => [p.name, p.price, p.retailer]) }));
+            }
+            console.log("END-RESULTS");'
+
+      - uses: actions/upload-artifact@v4
+        if: steps.keys.outputs.ready == 'true'
+        with:
+          name: live-1
+          path: bench-results/live-1/

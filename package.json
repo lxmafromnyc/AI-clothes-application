@@ -1,5 +1,6 @@
 {
   "scripts": {
+    "test": "node scripts/ci-tests.js",
     "demo:record": "node scripts/record-demo.js",
     "demo:replay": "node scripts/record-demo.js --replay",
     "demo:film": "node scripts/demo-film.js"

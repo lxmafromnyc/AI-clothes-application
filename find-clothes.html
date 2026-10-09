@@ -51,7 +51,7 @@
         <label class="sr-only" for="ask">Describe the clothes you are looking for</label>
         <div class="ask-field">
           <svg class="ask-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.8-3.8"/></svg>
-          <textarea id="ask" name="ask" rows="1" maxlength="400" placeholder="black oversized hoodie under $80"></textarea>
+          <textarea id="ask" name="ask" rows="1" maxlength="400" placeholder="black oversized hoodie under $80" aria-describedby="ask-usage"></textarea>
         </div>
 
         <!-- Shown only while a file is over the box. The file button is
@@ -60,6 +60,12 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 15v3a2 2 0 002 2h12a2 2 0 002-2v-3"/></svg>
           <span>Drop to attach</span>
         </div>
+
+        <!-- A hairline along the bottom edge of the box while a search is
+             running (assets/app.js marks the form with its stage). Purely
+             visual: the stage is said in words under the box and to
+             screen readers. -->
+        <span class="ask-progress" aria-hidden="true"><span class="ask-progress-line"></span></span>
 
         <div class="ask-actions">
           <button class="icon-btn" type="button" id="reset-form" aria-label="Clear search">
@@ -82,6 +88,17 @@
         <p class="attachment-note" id="attachment-note" hidden>
           Fynd does not read attachments yet. They are sent with your search, but they do not change your results.
         </p>
+
+        <!-- How many live searches are left, exactly as /api/account last
+             counted them for this account or, signed out, this browser:
+             a bar of what remains of the allowance, and the count in
+             words. Empty until the server has said; written by
+             assets/app.js. The bar is a picture of the words, so only
+             the words reach assistive technology. -->
+        <div class="ask-allowance" id="ask-allowance">
+          <span class="ask-meter" id="ask-meter" aria-hidden="true"></span>
+          <p class="ask-usage" id="ask-usage"></p>
+        </div>
       </form>
 
       <p class="ask-examples" id="ask-examples">
@@ -125,6 +142,7 @@
 <script src="assets/products.js"></script>
 <script src="assets/interpret.js"></script>
 <script src="assets/search.js"></script>
+<script src="assets/account.js"></script>
 <script src="assets/attachments.js"></script>
 <script src="assets/catalog.js"></script>
 <script src="assets/app.js"></script>

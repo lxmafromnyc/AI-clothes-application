@@ -616,6 +616,26 @@ async function main() {
     assert.ok(elapsed < 1000, `answered when full, not at the 3s deadline (${elapsed}ms)`);
   });
 
+  await testAsync('a lookup the deadline ends has timed out, not outlived its cap: counted the same every run', async () => {
+    /* the cap (2.5s by default) is longer than the whole budget, so the
+       deadline is what ends each lookup — and the count must not depend
+       on which of two timers the clock happens to run first */
+    process.env.FYND_REQUEST_BUDGET_MS = '500';
+    const four = Array.from({ length: 4 }, (_, i) => needsLookup(i));
+    const counts = [];
+    for (let run = 0; run < 3; run += 1) {
+      cache.reset();
+      installFetch({
+        search: () => ({ answer: okResponse(envelope(four)), delay: 5 }),
+        offers: () => ({ answer: HANG })
+      });
+      const { res } = await post({ intent: INTENT, limit: 4 });
+      const offers = res.body.diagnostics.offers;
+      counts.push([offers.lookupsPastCap, offers.lookupsTimedOut === offers.lookupsMade]);
+    }
+    assert.deepStrictEqual(counts, [[0, true], [0, true], [0, true]]);
+  });
+
   await testAsync('no seller answers before the deadline: a 502 that says so, with the tally, and not charged', async () => {
     process.env.FYND_REQUEST_BUDGET_MS = '700';
     const six = Array.from({ length: 6 }, (_, i) => needsLookup(i));
@@ -686,7 +706,7 @@ async function main() {
     });
     const { res } = await post({ intent: INTENT, limit: 12 });
     assert.strictEqual(res.statusCode, 502);
-    assert.deepStrictEqual(res.body, { error: 'The product source did not answer in time.', reason: 'timeout', source: 'openwebninja' });
+    assert.deepStrictEqual(res.body, { error: 'The product source did not answer in time.', reason: 'timeout', kind: 'timeout', upstreamStatus: null, source: 'openwebninja' });
   });
 
   await testAsync('a source that errors is a 502 that says it failed, with no products', async () => {
@@ -696,13 +716,454 @@ async function main() {
     });
     const { res } = await post({ intent: INTENT, limit: 12 });
     assert.strictEqual(res.statusCode, 502);
-    assert.deepStrictEqual(res.body, { error: 'The product source is unavailable right now.', reason: 'failed', source: 'openwebninja' });
+    assert.deepStrictEqual(res.body, { error: 'The product source is unavailable right now.', reason: 'failed', kind: 'server-error', upstreamStatus: 500, source: 'openwebninja' });
+  });
+
+  await testAsync('a refused key is a 502 that names the refusal and its status, and nothing from the source', async () => {
+    installFetch({
+      search: () => ({ answer: { ok: false, status: 403, json: async () => ({}), text: async () => '{"message":"You are not subscribed to this API."}' }, delay: 5 }),
+      offers: () => ({ answer: okResponse(offersPayload([])), delay: 0 })
+    });
+    const { res } = await post({ intent: INTENT, limit: 12 });
+    assert.strictEqual(res.statusCode, 502);
+    assert.deepStrictEqual(res.body, { error: 'The product source is unavailable right now.', reason: 'failed', kind: 'invalid-key', upstreamStatus: 403, source: 'openwebninja' });
+    assert.ok(!JSON.stringify(res.body).includes('subscribed'), 'the source\'s own message reached the browser');
+  });
+
+  await testAsync('a connection that fails is a 502 that says it was the network, with no status', async () => {
+    installFetch({
+      search: () => ({ error: 'fetch failed' }),
+      offers: () => ({ answer: okResponse(offersPayload([])), delay: 0 })
+    });
+    const { res } = await post({ intent: INTENT, limit: 12 });
+    assert.strictEqual(res.statusCode, 502);
+    assert.deepStrictEqual({ reason: res.body.reason, kind: res.body.kind, upstreamStatus: res.body.upstreamStatus }, { reason: 'failed', kind: 'network', upstreamStatus: null });
+  });
+
+  await testAsync('a source that answers 200 with a page that is not JSON is a 502 that says so', async () => {
+    installFetch({
+      search: () => ({ answer: { ok: true, status: 200, json: async () => JSON.parse('<!doctype html>'), text: async () => '<!doctype html>' }, delay: 0 }),
+      offers: () => ({ answer: okResponse(offersPayload([])), delay: 0 })
+    });
+    const { res } = await post({ intent: INTENT, limit: 12 });
+    assert.strictEqual(res.statusCode, 502);
+    assert.deepStrictEqual({ reason: res.body.reason, kind: res.body.kind }, { reason: 'failed', kind: 'bad-response' });
+  });
+
+  await testAsync('a failure of ours after the source answered is a 500 that names the stage, never "the source is unavailable"', async () => {
+    const relevance = require('../api/_providers/relevance');
+    const real = relevance.rankByIntent;
+    relevance.rankByIntent = () => { throw new TypeError("Cannot read properties of undefined (reading 'length')"); };
+    delete require.cache[require.resolve('../api/search')];
+    const fresh = require('../api/search');
+    const error = console.error;
+    const logged = [];
+    console.error = (...a) => logged.push(a.join(' '));
+    try {
+      installFetch({
+        search: () => ({ answer: okResponse(envelope([withInlineLink(1), withInlineLink(2)])), delay: 0 }),
+        offers: () => ({ answer: okResponse(offersPayload([])), delay: 0 })
+      });
+      const res = mockRes();
+      await fresh({ method: 'POST', headers: { host: 'ai-clothes-application.vercel.app', origin: 'https://lxmafromnyc.github.io' }, body: { intent: INTENT, limit: 12 }, on: () => {} }, res);
+      assert.strictEqual(res.statusCode, 500);
+      assert.deepStrictEqual(res.body, { error: 'The search failed inside Fynd.', reason: 'internal', stage: 'ranking', source: 'openwebninja' });
+      assert.ok(logged.some((line) => /Search failed inside Fynd .*stage: ranking/.test(line)), logged.join(' | '));
+      assert.ok(!logged.some((line) => /Product source failed/.test(line)), 'reported as the source failing');
+    } finally {
+      console.error = error;
+      relevance.rankByIntent = real;
+      delete require.cache[require.resolve('../api/search')];
+      require('../api/search');
+    }
+  });
+
+  await testAsync('a cached offer of another shape is a miss: the lookup is made and the product keeps its link', async () => {
+    const store = require('../api/_store');
+    const region = provider.cacheContext();
+    const record = needsLookup(7);
+    const key = cache.offerKey({ provider: 'openwebninja', productId: record.product_id, country: region.country, language: region.language, store: record.store_name });
+    await store.set(key, { expiresAt: Date.now() + 600000, commerce: 'from another version' }, { ttlSeconds: 600 });
+    assert.strictEqual(await cache.readOffer(key, cache.counters()), null);
+    await store.set(key, { expiresAt: Date.now() + 600000 }, { ttlSeconds: 600 });
+    assert.strictEqual(await cache.readOffer(key, cache.counters()), null);
+    /* a real negative entry and a real offer still read as they always did */
+    await store.set(key, { expiresAt: Date.now() + 600000, none: true, reason: 'no-offers' }, { ttlSeconds: 600 });
+    assert.deepStrictEqual(await cache.readOffer(key, cache.counters()), { none: true, reason: 'no-offers' });
+    await store.set(key, { expiresAt: Date.now() + 600000, commerce: { price: 70, retailer: 'Arket', productUrl: 'https://www.arket.com/p/7' } }, { ttlSeconds: 600 });
+    assert.strictEqual((await cache.readOffer(key, cache.counters())).commerce.productUrl, 'https://www.arket.com/p/7');
+  });
+
+  await testAsync('a cached search whose records are not records is a miss, not half an hour of nothing', async () => {
+    const store = require('../api/_store');
+    const key = cache.searchKey({ provider: 'openwebninja', intent: INTENT, limit: 12, context: {} });
+    await store.set(key, { expiresAt: Date.now() + 600000, records: [null, 7, 'x'] }, { ttlSeconds: 600 });
+    assert.strictEqual(await cache.readSearch(key, cache.counters()), null);
+    await store.set(key, { expiresAt: Date.now() + 600000, records: [{ title: 'A Hoodie' }] }, { ttlSeconds: 600 });
+    assert.deepStrictEqual((await cache.readSearch(key, cache.counters())).records, [{ title: 'A Hoodie' }]);
   });
 
   await testAsync('a provider timeout says so in its own words', async () => {
     installFetch({ search: () => ({ answer: HANG }), offers: () => ({ answer: HANG }) });
     await assert.rejects(() => provider.search(INTENT, { limit: 4, deadline: Date.now() + 300 }),
       (err) => /OpenWeb Ninja did not answer within \d+ms \(timed out\)/.test(err.message));
+  });
+
+  console.log('\nthe request the search makes is the one the probe makes');
+
+  const withEnv = async (vars, fn) => {
+    const saved = Object.fromEntries(Object.keys(vars).map((k) => [k, process.env[k]]));
+    Object.entries(vars).forEach(([k, v]) => { if (v === undefined) delete process.env[k]; else process.env[k] = v; });
+    try { return await fn(); } finally {
+      Object.entries(saved).forEach(([k, v]) => { if (v === undefined) delete process.env[k]; else process.env[k] = v; });
+    }
+  };
+
+  await testAsync('the search sends exactly the request searchRequest builds — the one the probe sends', async () => {
+    const state = installFetch({
+      search: () => ({ answer: okResponse(envelope([withInlineLink(1)])), delay: 0 }),
+      offers: () => ({ answer: okResponse(offersPayload([])), delay: 0 })
+    });
+    for (const intent of [INTENT, { garments: ['hoodie'], colors: ['Grey'], fits: ['Relaxed'], keywords: ['baggy', 'cozy'] }, { keywords: ['linen', 'shirt'], minPrice: 20, maxPrice: 60 }]) {
+      state.urls.length = 0;
+      cache.reset();
+      await provider.search(intent, { limit: 12 });
+      const built = provider.searchRequest(intent, { limit: 12 });
+      assert.strictEqual(state.urls[0], `${built.url}?${built.params}`);
+    }
+  });
+
+  await testAsync('a key pasted with quotes, spaces or a newline is sent clean; an empty one is not a key', async () => {
+    const seen = [];
+    global.fetch = (url, options) => { seen.push(options.headers['x-api-key']); return Promise.resolve(okResponse(envelope([withInlineLink(1)]))); };
+    for (const raw of ['"the-key"', "  'the-key'  ", 'the-key\n', ' the-key ']) {
+      await withEnv({ OPENWEBNINJA_API_KEY: raw }, async () => {
+        cache.reset();
+        assert.strictEqual(provider.configured(), true);
+        await provider.search(INTENT, { limit: 1 });
+      });
+    }
+    assert.deepStrictEqual(seen, ['the-key', 'the-key', 'the-key', 'the-key']);
+    for (const raw of ['', '   ', '""']) {
+      await withEnv({ OPENWEBNINJA_API_KEY: raw }, async () => assert.strictEqual(provider.configured(), false, JSON.stringify(raw)));
+    }
+  });
+
+  await testAsync('the country and language are sent as the two-letter codes the API takes, and never guessed', async () => {
+    const cases = [
+      [{}, 'us', 'en'],
+      [{ OPENWEBNINJA_COUNTRY: ' US ', OPENWEBNINJA_LANGUAGE: 'en-US' }, 'us', 'en'],
+      [{ OPENWEBNINJA_COUNTRY: '"gb"', OPENWEBNINJA_LANGUAGE: 'FR' }, 'gb', 'fr'],
+      [{ OPENWEBNINJA_COUNTRY: 'United States', OPENWEBNINJA_LANGUAGE: 'English' }, 'us', 'en']
+    ];
+    const warn = console.warn;
+    const warnings = [];
+    console.warn = (...a) => warnings.push(a.join(' '));
+    try {
+      for (const [vars, country, language] of cases) {
+        await withEnv(Object.assign({ OPENWEBNINJA_COUNTRY: undefined, OPENWEBNINJA_LANGUAGE: undefined }, vars), async () => {
+          const built = provider.searchRequest(INTENT, { limit: 12 });
+          assert.deepStrictEqual([built.params.get('country'), built.params.get('language')], [country, language], JSON.stringify(vars));
+          /* the cache files the answer under the region actually asked */
+          const context = provider.cacheContext();
+          assert.deepStrictEqual([context.country, context.language], [country, language]);
+        });
+      }
+    } finally { console.warn = warn; }
+    /* a value that is not a code is named, not silently replaced */
+    assert.ok(warnings.some((w) => /OPENWEBNINJA_COUNTRY is not a two-letter code/.test(w)), warnings.join(' | '));
+    assert.ok(warnings.some((w) => /OPENWEBNINJA_LANGUAGE is not a two-letter code/.test(w)), warnings.join(' | '));
+  });
+
+  console.log('\nthe probe runs the route: the same effective request, deadline and answer');
+
+  const probeModule = require('./probe-openwebninja');
+  const { browserBody } = require('./diagnose-search');
+
+  /* a stand-in OpenWeb Ninja that records every request whole —
+     headers included, compared here and never printed — and answers
+     each as `plan` says */
+  const recorder = (plan) => {
+    const seen = [];
+    global.fetch = (url, options) => {
+      const u = new URL(String(url));
+      seen.push({ host: u.hostname, method: (options && options.method) || 'GET', path: u.pathname, params: Object.fromEntries(u.searchParams.entries()), body: (options && options.body) || null, headers: Object.assign({}, options && options.headers), at: Date.now() });
+      return plan(u, options);
+    };
+    return seen;
+  };
+  const answering = (u) => Promise.resolve(u.pathname.endsWith('/product-offers')
+    ? okResponse(offersPayload([sellerOffer(u.searchParams.get('product_id'))]))
+    : okResponse(envelope([withInlineLink(1), needsLookup(2), withInlineLink(3), needsLookup(4)])));
+  const routeAnswer = async (body) => {
+    const res = mockRes();
+    await handler({ method: 'POST', headers: { host: 'ai-clothes-application.vercel.app', origin: 'https://lxmafromnyc.github.io', 'content-type': 'application/json' }, body, on: () => {} }, res);
+    return res;
+  };
+
+  await testAsync('for the same body and environment, the probe and /api/search send identical requests to the provider', async () => {
+    const messy = (await browserBody('pants that arent skinny')).body;
+    const bodies = [
+      { intent: INTENT, limit: 12 },
+      messy,
+      { intent: { garments: ['hoodie'], colors: ['Grey'], keywords: ['hoodie'], minPrice: 30, maxPrice: 90 }, limit: 24 },
+      { intent: { keywords: ['linen', 'shirt'] }, limit: 3 }
+    ];
+    const envs = [{}, { OPENWEBNINJA_COUNTRY: ' GB ', OPENWEBNINJA_LANGUAGE: 'en-GB', OPENWEBNINJA_API_KEY: '"quoted-key"' }];
+    let compared = 0;
+    const warn = console.warn;
+    console.warn = () => {};
+    try {
+    for (const env of envs) {
+      for (const body of bodies) {
+        await withEnv(env, async () => {
+          cache.reset();
+          const viaRoute = recorder(answering);
+          const res = await routeAnswer(body);
+          cache.reset();
+          const viaProbe = recorder(answering);
+          const probed = await probeModule.probe({ body, photos: false });
+          const label = `${JSON.stringify(env)} ${JSON.stringify(body.intent).slice(0, 60)}`;
+          assert.strictEqual(res.statusCode, 200, label);
+          assert.strictEqual(probed.status, 200, label);
+          assert.deepStrictEqual(viaProbe.map((c) => [c.path, c.params]), viaRoute.map((c) => [c.path, c.params]), `${label}: a different request`);
+          assert.deepStrictEqual(viaProbe.map((c) => c.headers), viaRoute.map((c) => c.headers), `${label}: different headers`);
+          assert.ok(viaRoute.every((c) => c.headers['x-api-key'] === provider.apiKey()), `${label}: not this environment's key`);
+          /* and the answer the browser gets is the answer the probe reports */
+          assert.deepStrictEqual(probed.answer.products, res.body.products, `${label}: different products`);
+          assert.deepStrictEqual(probed.answer.rejected, res.body.rejected, `${label}: different refusals`);
+          assert.ok(probed.calls.every((c) => c.keyIsThisEnvironments), label);
+          if (res.body.products.length) compared += 1;
+        });
+      }
+    }
+    } finally {
+      console.warn = warn;
+    }
+    /* the products compared were real verified products, not two empty lists */
+    assert.ok(compared >= 2, `${compared} cases verified anything`);
+  });
+
+  await testAsync('the probe gives the /search leg the route\'s own timeout, and is cut off at the same moment', async () => {
+    process.env.FYND_REQUEST_BUDGET_MS = '600';
+    const hang = (u, options) => new Promise((resolve, reject) => {
+      const signal = options && options.signal;
+      if (signal) signal.addEventListener('abort', () => reject(Object.assign(new Error('This operation was aborted'), { name: 'AbortError' })));
+    });
+    try {
+      cache.reset();
+      let started = Date.now();
+      const viaRoute = recorder(hang);
+      const res = await routeAnswer({ intent: INTENT, limit: 12 });
+      const routeMs = Date.now() - started;
+      cache.reset();
+      started = Date.now();
+      recorder(hang);
+      const probed = await probeModule.probe({ body: { intent: INTENT, limit: 12 }, photos: false });
+      const probeMs = Date.now() - started;
+      assert.strictEqual(res.statusCode, 502);
+      assert.strictEqual(probed.status, 502);
+      assert.deepStrictEqual(probed.answer, res.body);
+      assert.strictEqual(res.body.reason, 'timeout');
+      assert.strictEqual(probed.plannedSearchTimeoutMs <= 600 && probed.plannedSearchTimeoutMs >= 500, true, `${probed.plannedSearchTimeoutMs}`);
+      assert.ok(probed.calls[0].abortedAfterMs !== null, 'the probe\'s request was not cut off by the clock');
+      assert.ok(Math.abs(routeMs - probeMs) < 150, `route ${routeMs}ms, probe ${probeMs}ms`);
+      assert.strictEqual(viaRoute.length, 1);
+    } finally {
+      delete process.env.FYND_REQUEST_BUDGET_MS;
+    }
+  });
+
+  await testAsync('every provider failure reads the same from the probe as from /api/search', async () => {
+    const replies = {
+      'invalid key': () => Promise.resolve({ ok: false, status: 401, json: async () => ({}), text: async () => '{"message":"Invalid API key"}' }),
+      'not subscribed': () => Promise.resolve({ ok: false, status: 403, json: async () => ({}), text: async () => '{"message":"You are not subscribed to this API."}' }),
+      'bad request': () => Promise.resolve({ ok: false, status: 400, json: async () => ({}), text: async () => '{"message":"Invalid value for country"}' }),
+      'rate limited': () => Promise.resolve({ ok: false, status: 429, json: async () => ({}), text: async () => '{"message":"Too many requests"}' }),
+      'server error': () => Promise.resolve({ ok: false, status: 503, json: async () => ({}), text: async () => 'down' }),
+      'not JSON': () => Promise.resolve({ ok: true, status: 200, json: async () => JSON.parse('<html>'), text: async () => '<html>' }),
+      network: () => Promise.reject(Object.assign(new TypeError('fetch failed'), { cause: { code: 'ENOTFOUND' } }))
+    };
+    const error = console.error;
+    console.error = () => {};
+    try {
+      for (const [name, reply] of Object.entries(replies)) {
+        cache.reset();
+        recorder(reply);
+        const res = await routeAnswer({ intent: INTENT, limit: 12 });
+        cache.reset();
+        recorder(reply);
+        const probed = await probeModule.probe({ body: { intent: INTENT, limit: 12 }, photos: false });
+        assert.strictEqual(res.statusCode, 502, name);
+        assert.strictEqual(probed.status, 502, name);
+        assert.deepStrictEqual(probed.answer, res.body, name);
+        assert.strictEqual(probed.failure.kind, res.body.kind, name);
+      }
+    } finally {
+      console.error = error;
+    }
+  });
+
+  /* OpenWeb Ninja out of searches, and Serper behind it: the route's
+     own fallback (searchWithFallback through providerChain), answered
+     here by the real Serper adapter against a stand-in for its host */
+  const OWN_SPENT = () => Promise.resolve({ ok: false, status: 429, json: async () => ({}), text: async () => '{"message":"Too many requests"}' });
+  const serperShopping = {
+    shopping: [1, 2, 3].map((n) => ({
+      title: `Black Oversized Knit Sweater ${n}`,
+      price: `$${55 + n}.00`,
+      link: `https://www.arket.com/en/product/knit-${n}`,
+      imageUrl: `https://img.arket-cdn.com/knit-${n}.jpg`,
+      source: 'Arket',
+      productId: `s${n}`
+    }))
+  };
+  const withSerper = (serper) => (u, options) => (u.hostname === 'google.serper.dev' ? serper(u, options) : OWN_SPENT());
+  /* the requests both made, in a stable order: Serper may start its
+     organic search beside the shopping one */
+  const outbound = (seen) => seen.map((c) => JSON.stringify([c.host, c.method, c.path, c.params, c.body, c.headers])).sort();
+
+  await testAsync('when OpenWeb Ninja is out of searches, the probe and /api/search fall back to Serper identically, and the probe shows the Serper request', async () => {
+    const error = console.error;
+    const warn = console.warn;
+    console.error = () => {};
+    console.warn = () => {};
+    try {
+      await withEnv({ SERPER_API_KEY: 'serper-test-key' }, async () => {
+        const serper = (u) => Promise.resolve(okResponse(u.pathname === '/shopping' ? serperShopping : { organic: [] }));
+        cache.reset();
+        const viaRoute = recorder(withSerper(serper));
+        const res = await routeAnswer({ intent: INTENT, limit: 12 });
+        cache.reset();
+        const viaProbe = recorder(withSerper(serper));
+        const probed = await probeModule.probe({ body: { intent: INTENT, limit: 12 }, photos: false });
+        assert.strictEqual(res.statusCode, 200, JSON.stringify(res.body));
+        assert.strictEqual(probed.status, 200);
+        assert.strictEqual(res.body.source, 'serper');
+        assert.strictEqual(res.body.diagnostics.fellBackFrom.provider, 'openwebninja');
+        assert.deepStrictEqual(outbound(viaProbe), outbound(viaRoute), 'a different request somewhere in the chain');
+        assert.deepStrictEqual(viaRoute.map((c) => c.host).filter((h, i, all) => all.indexOf(h) === i), ['api.openwebninja.com', 'google.serper.dev']);
+        assert.ok(res.body.products.length > 0, 'the fallback verified nothing, so nothing was compared');
+        assert.deepStrictEqual(probed.answer.products, res.body.products);
+        assert.deepStrictEqual(probed.answer.diagnostics.fellBackFrom, res.body.diagnostics.fellBackFrom);
+        /* and the probe now shows what the route did: both sources, each with its own key, the refusal by kind */
+        assert.deepStrictEqual(probed.calls.map((c) => c.source).filter((h, i, all) => all.indexOf(h) === i), ['openwebninja', 'serper']);
+        assert.ok(probed.calls.every((c) => c.keyIsThisEnvironments), JSON.stringify(probed.calls.map((c) => [c.source, c.keyIsThisEnvironments])));
+        const shopping = probed.calls.find((c) => c.source === 'serper' && c.path === '/shopping');
+        assert.ok(shopping && shopping.method === 'POST' && shopping.params.q, 'the Serper search is missing from the probe, or without its query');
+        assert.deepStrictEqual(probed.fellBackFrom, { provider: 'openwebninja', kind: 'rate-limited' });
+        assert.ok(!JSON.stringify(probed.calls).includes('serper-test-key') && !JSON.stringify(probed.calls).includes('test-key-never-used'), 'a key reached the probe\'s record');
+      });
+    } finally {
+      console.error = error;
+      console.warn = warn;
+    }
+  });
+
+  await testAsync('when the fallback is spent too, the probe and /api/search answer the same 502 after the same requests', async () => {
+    const error = console.error;
+    const warn = console.warn;
+    console.error = () => {};
+    console.warn = () => {};
+    try {
+      await withEnv({ SERPER_API_KEY: 'serper-test-key' }, async () => {
+        const spent = () => Promise.resolve({ ok: false, status: 400, json: async () => ({}), text: async () => '{"message":"Not enough credits","statusCode":400}' });
+        cache.reset();
+        const viaRoute = recorder(withSerper(spent));
+        const res = await routeAnswer({ intent: INTENT, limit: 12 });
+        cache.reset();
+        const viaProbe = recorder(withSerper(spent));
+        const probed = await probeModule.probe({ body: { intent: INTENT, limit: 12 }, photos: false });
+        assert.strictEqual(res.statusCode, 502);
+        assert.strictEqual(probed.status, 502);
+        assert.deepStrictEqual(probed.answer, res.body);
+        assert.strictEqual(res.body.kind, 'credits-exhausted', 'the answer is the fallback\'s own failure');
+        assert.deepStrictEqual(outbound(viaProbe), outbound(viaRoute));
+        /* OpenWeb Ninja asked once; Serper's shopping search (and the organic one it starts beside it) once each */
+        assert.strictEqual(viaRoute.filter((c) => c.host === 'api.openwebninja.com' && /\/search$/.test(c.path)).length, 1);
+        assert.strictEqual(viaRoute.filter((c) => c.host === 'api.openwebninja.com').length, 1, 'a refused search was followed by offer lookups');
+        assert.deepStrictEqual(viaRoute.filter((c) => c.host === 'google.serper.dev').map((c) => c.path).sort(), ['/search', '/shopping']);
+        assert.deepStrictEqual(probed.fellBackFrom, { provider: 'openwebninja', kind: 'rate-limited' });
+      });
+    } finally {
+      console.error = error;
+      console.warn = warn;
+    }
+  });
+
+  await testAsync('with no product source configured, /api/search answers 503 and the probe refuses to run; neither asks a provider', async () => {
+    const warn = console.warn;
+    console.warn = () => {};
+    try {
+      await withEnv({ OPENWEBNINJA_API_KEY: undefined, SERPER_API_KEY: 'serper-test-key' }, async () => {
+        cache.reset();
+        const viaRoute = recorder(answering);
+        const res = await routeAnswer({ intent: INTENT, limit: 12 });
+        assert.strictEqual(res.statusCode, 503);
+        assert.deepStrictEqual(res.body, { error: 'No product source is configured.', source: null });
+        const viaProbe = recorder(answering);
+        await assert.rejects(() => probeModule.probe({ body: { intent: INTENT, limit: 12 }, photos: false }), /OPENWEBNINJA_API_KEY is not set/);
+        /* a configured fallback is not a configured source: nothing was asked */
+        assert.strictEqual(viaRoute.length + viaProbe.length, 0);
+      });
+    } finally {
+      console.warn = warn;
+    }
+  });
+
+  await testAsync('prices not confirmed in time reads the same from the probe as from /api/search', async () => {
+    process.env.FYND_REQUEST_BUDGET_MS = '700';
+    const warn = console.warn;
+    console.warn = () => {};
+    /* milliseconds differ between two runs; everything else must not */
+    const withoutClock = (body) => JSON.parse(JSON.stringify(body, (k, v) => (/Ms$|^totalMs$|MsMedian$|MsMin$|MsMax$/.test(k) ? undefined : v)));
+    try {
+      const hung = (u) => (u.pathname.endsWith('/product-offers') ? new Promise(() => {}) : Promise.resolve(okResponse(envelope(Array.from({ length: 4 }, (_, i) => needsLookup(i))))));
+      /* the stub's hung lookups end only by abort */
+      const abortable = (u, options) => (u.pathname.endsWith('/product-offers')
+        ? new Promise((resolve, reject) => options.signal.addEventListener('abort', () => reject(Object.assign(new Error('This operation was aborted'), { name: 'AbortError' }))))
+        : hung(u));
+      cache.reset();
+      const viaRoute = recorder(abortable);
+      const res = await routeAnswer({ intent: INTENT, limit: 4 });
+      cache.reset();
+      const viaProbe = recorder(abortable);
+      const probed = await probeModule.probe({ body: { intent: INTENT, limit: 4 }, photos: false });
+      assert.strictEqual(res.statusCode, 502, JSON.stringify(res.body));
+      assert.strictEqual(probed.status, 502);
+      assert.deepStrictEqual(withoutClock(probed.answer), withoutClock(res.body));
+      assert.deepStrictEqual([probed.failure.kind, probed.failure.stage], ['timeout', 'offers']);
+      assert.deepStrictEqual(viaProbe.map((c) => [c.path, c.params]), viaRoute.map((c) => [c.path, c.params]), 'a different request');
+    } finally {
+      console.warn = warn;
+      delete process.env.FYND_REQUEST_BUDGET_MS;
+    }
+  });
+
+  await testAsync('the diagnostic says whether the running server answered as this process does, and names a disagreement', async () => {
+    const { agreement } = require('./diagnose-search');
+    const handlerAnswer = { status: 200, kind: null, upstreamStatus: null };
+    assert.ok(/agree \(200\)/.test(agreement({ server: { status: 200 }, handler: handlerAnswer })));
+    /* the probe's environment works, the server's key is refused: two environments */
+    const split = agreement({ server: { status: 502, kind: 'invalid-key', upstreamStatus: 401 }, handler: handlerAnswer });
+    assert.ok(/DISAGREE/.test(split) && /invalid-key/.test(split) && /not reading the same environment/.test(split), split);
+    assert.ok(/could not be reached/.test(agreement({ server: { status: null }, handler: handlerAnswer })));
+  });
+
+  await testAsync('by default the probe searches what the page would post, not the raw words', async () => {
+    cache.reset();
+    const seen = recorder(answering);
+    await probeModule.probe({ query: 'black oversized hoodie under $80', photos: false });
+    const page = (await browserBody('black oversized hoodie under $80')).body;
+    const built = provider.searchRequest(require('../api/search').shapeIntent(page.intent), { limit: page.limit });
+    assert.deepStrictEqual(seen[0].params, Object.fromEntries(built.params.entries()));
+    assert.strictEqual(seen[0].params.max_price, '80', 'the stated budget never reached the provider');
+    /* the old behaviour is still there, and says what it is */
+    cache.reset();
+    const raw = recorder(answering);
+    const old = await probeModule.probe({ query: 'black oversized hoodie under $80', keywords: true, photos: false });
+    assert.strictEqual(old.input, 'the raw words as keywords');
+    assert.strictEqual(raw[0].params.max_price, undefined);
   });
 
   console.log(`\n${passed} passed, ${failures.length} failed`);

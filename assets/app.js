@@ -331,30 +331,238 @@ const SKELETON = `<div class="skeleton-card">
     if (status) status.textContent = text;
   }
 
+  /* ---------- while a search runs ----------
+     What the page says while it waits is what is actually happening, and
+     it changes only when something actually happened:
+
+       understanding   from the moment the search is sent until the
+                       request has been read (/api/interpret, or the
+                       local reader when that cannot answer)
+       searching       from the moment the reading is back and the
+                       product search is sent, until it answers. That
+                       one request finds the products AND checks each
+                       one through the verification gate, so it is one
+                       stage: the page cannot see where one ends and the
+                       other begins, and does not pretend to.
+
+     There is no timer anywhere in this. A stage lasts exactly as long as
+     the request behind it, so a fast or cached search goes straight to
+     its results, and a slow one keeps its current line on screen, with
+     a hairline quietly pulsing along the bottom of the search box — never
+     a new message invented to fill the wait. Results, an empty answer or
+     an error replace all of it the moment they arrive.
+
+     The words are under the box, where the results will be; the hairline
+     is in the box, marked by the stage on the form. Both keep their size
+     from one stage to the next, so nothing on the page moves while it
+     changes. */
+  const STAGES = {
+    understanding: 'Understanding your request',
+    searching: 'Finding matching products'
+  };
+
+  function showStage(stage, detail) {
+    const head = results.querySelector('.search-progress');
+    if (!head) return;
+    head.dataset.stage = stage;
+    form.dataset.stage = stage;
+    const line = document.createElement('span');
+    line.className = 'stage-text';
+    line.textContent = STAGES[stage];
+    head.querySelector('h2').replaceChildren(line);
+    /* what Fynd understood, once it has understood something; the
+       request as typed until then */
+    if (detail) {
+      const said = head.querySelector('.results-query');
+      const words = document.createElement('span');
+      words.className = 'stage-text';
+      words.textContent = detail;
+      said.replaceChildren(words);
+    }
+    announce(detail ? `${detail}. ${STAGES[stage]}.` : `${STAGES[stage]}.`);
+  }
+
+  function showProgress(query) {
+    results.setAttribute('aria-busy', 'true');
+    results.innerHTML = `<div class="results-head search-progress" data-stage="understanding">
+        <h2 class="thinking"></h2>
+        <p class="results-query">Results for <q>${esc(query)}</q></p>
+      </div>
+      <div class="grid" aria-hidden="true">${SKELETON.repeat(4)}</div>`;
+    showStage('understanding');
+  }
+
+  /* the search has answered, failed or been dropped: the box stops
+     working at once */
+  function endProgress() {
+    results.removeAttribute('aria-busy');
+    delete form.dataset.stage;
+  }
+
+  /* Smooth unless the shopper has asked for less motion. */
+  const scrolling = () => (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth');
+
+  /* While a search runs, the box doing the work and the words saying what
+     it is doing are both on screen: the page moves only as far as it must
+     to bring the stage line up, and never so far that the box goes under
+     the header. The results are brought up when they arrive. */
+  const header = document.querySelector('.site-header');
+  const MARGIN = 16;
+  function keepBoxInView() {
+    const head = results.querySelector('.search-progress');
+    if (!head) return;
+    const top = header ? header.getBoundingClientRect().bottom : 0;
+    const room = form.getBoundingClientRect().top - top - MARGIN;
+    const below = head.getBoundingClientRect().bottom + MARGIN - window.innerHeight;
+    const by = Math.min(Math.max(below, 0), room);
+    if (by) window.scrollBy({ top: by, behavior: scrolling() });
+  }
+
+  /* ---------- how many live searches are left ----------
+     Shown at the bottom of the box before anything is typed, exactly as
+     /api/account last counted it: for the account, or signed out, for
+     this browser. A bar shows what remains of the allowance — the
+     server's remaining over the server's limit — and the words under it
+     say the count. Nothing here knows a plan's limit or subtracts a
+     search; when the account cannot be read, neither is shown rather
+     than a guess.
+
+     While a search runs both are empty — the count they held is about to
+     be out of date, and the hairline is what the box shows. When the
+     search is over the account is read again and the new count takes its
+     place, said once to screen readers after what the search found. */
+  const allowance = document.getElementById('ask-allowance');
+  const usageLine = document.getElementById('ask-usage');
+  const meter = document.getElementById('ask-meter');
+  const PERIOD_SAID = { day: 'today', month: 'this month' };
+  /* an allowance this small is drawn a step a search; a larger one is one
+     smooth fill, never a row of slivers */
+  const STEPS_UP_TO = 10;
+  let usageAsked = 0;
+  let allowanceShown = false;
+  let usageSaid = null;
+
+  function allowanceOf(account) {
+    const searches = account && account.usage && account.usage.searches;
+    const left = searches && searches.remaining;
+    if (!Number.isInteger(left) || left < 0) return null;
+    const period = PERIOD_SAID[searches.period] ? ` ${PERIOD_SAID[searches.period]}` : '';
+    const text = left === 0
+      ? `No live searches left${period}`
+      : `${left.toLocaleString('en-US')} ${left === 1 ? 'search' : 'searches'} left${period}`;
+    /* the bar is a share of the allowance; without one, the words stand alone */
+    const limit = Number.isInteger(searches.limit) && searches.limit > 0 ? searches.limit : null;
+    return { text, left, limit };
+  }
+
+  function drawMeter(reading) {
+    if (!meter) return;
+    meter.replaceChildren();
+    if (!reading || !reading.limit) return;
+    const share = Math.min(1, reading.left / reading.limit);
+    if (reading.limit <= STEPS_UP_TO) {
+      for (let step = 0; step < reading.limit; step += 1) {
+        const piece = document.createElement('span');
+        piece.className = step < reading.left ? 'ask-meter-step is-left' : 'ask-meter-step';
+        meter.appendChild(piece);
+      }
+      return;
+    }
+    const track = document.createElement('span');
+    track.className = 'ask-meter-track';
+    if (share > 0) {
+      const fill = document.createElement('span');
+      fill.className = 'ask-meter-fill';
+      fill.style.setProperty('--share', share);
+      track.appendChild(fill);
+    }
+    meter.appendChild(track);
+  }
+
+  function showAllowance(reading) {
+    if (!allowance) return;
+    usageLine.textContent = reading ? reading.text : '';
+    drawMeter(reading);
+    allowance.classList.toggle('is-shown', Boolean(reading));
+    if (reading) allowanceShown = true;
+    /* the space is held for a count; a box that never gets one goes back
+       to its own size, and one that has had one keeps the room, so a
+       failed re-read moves nothing */
+    allowance.hidden = !reading && !allowanceShown;
+  }
+
+  /* the count on screen is about to be out of date: show nothing until
+     the server has counted again, and drop any reading already asked for */
+  function forgetUsage() {
+    usageAsked += 1;
+    if (!allowance) return;
+    usageLine.textContent = '';
+    drawMeter(null);
+    allowance.classList.remove('is-shown');
+  }
+
+  async function readUsage(afterSearch) {
+    if (!allowance) return;
+    const ask = ++usageAsked;
+    let reading = null;
+    try {
+      const answer = typeof Account === 'undefined' ? null : await Account.load();
+      reading = answer && answer.ok ? allowanceOf(answer.data) : null;
+    } catch (err) { reading = null; }
+    if (ask !== usageAsked || form.dataset.stage) return;
+    showAllowance(reading);
+    const text = reading && reading.text;
+    if (afterSearch && text && usageSaid && text !== usageSaid) announce(`${status ? status.textContent : ''} ${text}.`.trim());
+    if (text) usageSaid = text;
+  }
+
+  /* a search that was replaced or dropped may still have been counted;
+     once nothing else is running, the count is read again, quietly */
+  function readUsageIfIdle() {
+    if (!form.dataset.stage) readUsage(false);
+  }
+
+  /* the search a newer one has replaced, or "Start over" has dropped,
+     answers into nothing: it never paints over what is on screen now */
+  let latest = 0;
+
   async function search(query, attached) {
+    const run = ++latest;
     error.classList.remove('show');
     error.textContent = '';
     input.removeAttribute('aria-invalid');
-    announce('Searching\u2026');
     /* the sample row on the home page steps aside: once a real search is
        running, the page has something better to put in that space */
     if (preview) preview.hidden = true;
     if (demo) demo.hidden = true;
     results.hidden = false;
     asked = query;
-    results.innerHTML = `<div class="results-head">
-        <h2 class="thinking">Searching\u2026</h2>
-        <p class="results-query">Results for <q>${esc(query)}</q></p>
-      </div>
-      <div class="grid">${SKELETON.repeat(4)}</div>`;
-    results.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    showProgress(query);
+    forgetUsage();
+    keepBoxInView();
 
-    const outcome = await Interpreter.interpret(query, vocabulary());
+    let outcome = null;
+    let found;
+    try {
+      outcome = await Interpreter.interpret(query, vocabulary());
+      if (run !== latest) return readUsageIfIdle();
 
-    /* real products first; the sample catalogue only when no source answers */
-    const found = typeof ProductSearch === 'undefined'
-      ? { source: null, products: [], notice: null }
-      : await ProductSearch.find(outcome.preferences, undefined, attached);
+      /* real products first; the sample catalogue only when no source answers */
+      if (typeof ProductSearch === 'undefined') {
+        found = { source: null, products: [], notice: null };
+      } else {
+        showStage('searching', Interpreter.describe ? Interpreter.describe(outcome.preferences, query) : null);
+        found = await ProductSearch.find(outcome.preferences, undefined, attached);
+      }
+    } catch (err) {
+      /* neither call is meant to throw — each answers with a state — but
+         if something does, the search is over and says so, rather than
+         leaving the last stage on screen */
+      found = { state: 'unavailable', source: null, products: [], notice: null };
+    }
+    if (run !== latest) return readUsageIfIdle();
+    endProgress();
+    outcome = outcome || { source: 'local', notice: null, preferences: Interpreter.EMPTY() };
 
     if (found.products.length) renderProducts(found, outcome);
     /* The sample catalogue stands in only when nothing is connected. Once
@@ -363,6 +571,8 @@ const SKELETON = `<div class="skeleton-card">
        rows, however clearly they are labelled. */
     else if (found.state === 'not-configured') render(outcome.preferences, outcome, found);
     else renderNothing(found, outcome);
+    results.scrollIntoView({ behavior: scrolling(), block: 'start' });
+    readUsage(true);
   }
 
   /* Files dropped on the card or chosen with the button. Held here
@@ -456,6 +666,10 @@ const SKELETON = `<div class="skeleton-card">
     error.textContent = '';
     input.removeAttribute('aria-invalid');
     announce('');
+    /* a search still running when the shopper starts over answers into
+       nothing */
+    latest += 1;
+    endProgress();
     /* starting over drops the attachments too, and hands back the
        object URLs their thumbnails were holding */
     if (attachments) attachments.clear();
@@ -466,6 +680,9 @@ const SKELETON = `<div class="skeleton-card">
     input.focus();
     form.scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
+
+  /* what is left, before anything is typed */
+  readUsage(false);
 })();
 
 /* ---------- what a result looks like ----------
