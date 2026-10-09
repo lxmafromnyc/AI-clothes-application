@@ -16,7 +16,16 @@
      warning   a caveat: sample data, or something to fix.
 
    Every colour is named here and nowhere else: no rule below writes a
-   raw colour value. Nothing glows and nothing is gradient-filled.
+   raw colour value. Type never glows and is never gradient-filled, and
+   nothing at rest is either.
+
+   The one exception is light, and only while Fynd is working. A search
+   in progress is shown as a single light passing over the search box
+   and over the placeholder photographs, left to right, at one pace: a
+   bright edge along the bottom of the box, a faint reflection across
+   its surface and rim, and a soft highlight raking across each
+   placeholder in turn. It is mixed from the accent and the page's own
+   white, never touches type, and is gone when the answer is in.
    ========================================================= */
 
 :root {
@@ -55,6 +64,12 @@
   --color-warning-soft: #FBF4E4;
   --color-warning-line: #EEDDB5;
 
+  /* the page's white, as light: what passes over a placeholder while a
+     search runs, and the glint on the box's rim */
+  --color-light: #FFFFFF;
+  /* the search box's edge while it works: the border, cooled toward the accent */
+  --color-accent-line: #C5CDF0;
+
   --color-text-on-primary: var(--color-text-invert);
   --color-focus: var(--color-accent);
   --color-artwork: rgba(0, 0, 0, .25);
@@ -68,8 +83,33 @@
   --shadow: 0 1px 2px rgba(0, 0, 0, .04), 0 8px 28px -12px rgba(0, 0, 0, .14);
   --shadow-focus: 0 1px 2px rgba(0, 0, 0, .04), 0 10px 32px -12px rgba(0, 0, 0, .18), 0 0 0 4px rgba(62, 91, 216, .14);
 
+  --shadow-working: 0 1px 2px rgba(0, 0, 0, .04), 0 14px 34px -16px rgba(62, 91, 216, .26);
+
   --ease: cubic-bezier(.2, .7, .2, 1);
   --fast: .15s;
+
+  /* ---------- light and motion while a search runs ----------
+     Every part of the light is mixed here, once, from the accent and the
+     white. Arrivals decelerate long (--ease-out); the light itself eases
+     in and out at the edges and travels evenly through the middle
+     (--ease-glide), one pass every --sweep, so the box and every
+     placeholder move to one rhythm. Placeholders wait --placeholder-wait
+     before they fade in, so an answer faster than that never shows one. */
+  --light-track: color-mix(in srgb, var(--color-accent) 15%, transparent);
+  --light-tail: color-mix(in srgb, var(--color-accent) 22%, transparent);
+  --light-core: color-mix(in srgb, var(--color-accent) 80%, transparent);
+  --light-bloom: color-mix(in srgb, var(--color-accent) 22%, transparent);
+  --light-surface: color-mix(in srgb, var(--color-accent) 5%, transparent);
+  --light-rim: color-mix(in srgb, var(--color-accent) 50%, transparent);
+  --light-glint: color-mix(in srgb, var(--color-light) 70%, transparent);
+  --light-reflect: color-mix(in srgb, var(--color-light) 74%, transparent);
+  --tile-lift: color-mix(in srgb, var(--color-light) 60%, transparent);
+  --tile-shade: color-mix(in srgb, var(--color-surface-3) 75%, transparent);
+
+  --ease-out: cubic-bezier(.16, 1, .3, 1);
+  --ease-glide: cubic-bezier(.37, .1, .63, .9);
+  --sweep: 2.4s;
+  --placeholder-wait: .16s;
 
   /* ---------- layout, per breakpoint (desktop, 1280px and up) ---------- */
   --max: 1200px;
@@ -292,9 +332,15 @@ strong { font-weight: 600; }
   box-shadow: var(--shadow);
   text-align: left;
   scroll-margin-top: 120px;
+  /* the light under the words (.ask-progress) stays inside the box */
+  isolation: isolate;
   transition: border-color var(--fast) var(--ease), box-shadow var(--fast) var(--ease);
 }
 .ask-card:focus-within { border-color: var(--color-accent); box-shadow: var(--shadow-focus); }
+/* at work and not being typed in: the edge cools toward the accent and
+   the box lifts a little, as if lit from below — slowly, like light */
+.ask-card[data-stage] { transition-duration: .4s; }
+.ask-card[data-stage]:not(:focus-within) { border-color: var(--color-accent-line); box-shadow: var(--shadow-working); }
 
 .ask-field { display: flex; align-items: center; gap: 12px; min-width: 0; grid-row: 1; }
 .ask-icon { flex: none; width: 20px; height: 20px; color: var(--color-text-muted); }
@@ -345,27 +391,102 @@ strong { font-weight: 600; }
 .ask-dropveil svg { width: 20px; height: 20px; }
 .ask-card.is-dragover .ask-dropveil { display: flex; }
 
-/* While a search is running the box itself shows it: a hairline along its
-   bottom edge, just inside the border and clipped to its rounded corners.
-   It is the full width of the box at every stage — it says the box is at
-   work, not how far along it is — and pulses quietly until the answer is
-   in, then goes at once. It lies in the box's own bottom padding, so it
-   takes no room, covers no text and no button, and the box keeps its
-   size whether it is there or not. */
+/* While a search is running the box itself shows it, as light passing
+   over a surface. Five layers, one light, one pace:
+
+     track     a faint full-width hairline along the bottom edge, just
+               inside the border: the box is at work. It is the whole
+               width at every stage — it says the box is working, not how
+               far along it is, because nothing here can know that.
+     light     a short bright run travelling along that hairline, left to
+               right, a long soft tail behind a crisp head
+     bloom     where the light meets the edge, a soft lift of colour into
+               the box's bottom margin
+     surface   a broad, very faint cool reflection gliding across the box
+     rim       the border catching the light as it passes
+
+   All five ease in at the left and out at the right, so each pass
+   begins and ends off the box and the loop has no seam. The light lies
+   under the words and the buttons (the box is isolated, the layer is
+   behind its content), in the box's own bottom padding, so it covers no
+   text and takes no room: the box keeps its size whether it is there or
+   not. When the answer is in it fades, still moving, and is put to rest
+   (.is-settling) when the fade has ended; the next search picks the
+   light up where it was, never from a restart. */
 .ask-progress {
-  position: absolute; inset: 0; z-index: 1;
-  display: none;
+  position: absolute; inset: 0; z-index: -1;
   border-radius: calc(var(--r-lg) - 1px);
   overflow: hidden;
   pointer-events: none;
+  opacity: 0; visibility: hidden;
+  transition: opacity .5s var(--ease), visibility 0s linear .5s;
 }
-.ask-card[data-stage] .ask-progress { display: block; }
+.ask-card[data-stage] .ask-progress { opacity: 1; visibility: visible; transition: opacity .45s var(--ease-out), visibility 0s; }
+
+.ask-progress::before,
+.ask-progress::after,
+.ask-progress-line::after { content: ''; position: absolute; pointer-events: none; }
+
+.ask-progress::before {
+  inset: 0;
+  background: linear-gradient(100deg, transparent 34%, var(--light-surface) 50%, transparent 66%);
+  animation: glide var(--sweep) var(--ease-glide) infinite paused;
+}
+.ask-progress::after {
+  left: 0; bottom: -12px;
+  width: 34%; height: 24px;
+  background: radial-gradient(30% 50% at 70% 50%, var(--light-bloom), transparent);
+  animation: sweep var(--sweep) var(--ease-glide) infinite paused;
+}
 .ask-progress-line {
   position: absolute; left: 0; right: 0; bottom: 0;
   height: 2px;
-  background: var(--color-accent);
-  animation: pulse 1.6s ease-in-out infinite;
+  overflow: hidden;
+  background: var(--light-track);
 }
+.ask-progress-line::after {
+  top: 0; bottom: 0; left: 0;
+  width: 34%;
+  background: linear-gradient(90deg, transparent, var(--light-tail) 40%, var(--light-core) 80%, var(--color-accent) 88%, transparent);
+  animation: sweep var(--sweep) var(--ease-glide) infinite paused;
+}
+
+/* the rim: the border itself, masked to its one pixel, lit where the
+   light is. Accent on the cooled edge; a white glint on the focused one */
+.ask-card::after {
+  --rim: var(--light-rim);
+  content: '';
+  position: absolute; inset: -1px; z-index: 1;
+  padding: 1px;
+  border-radius: var(--r-lg);
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent 43%, var(--rim) 50%, transparent 57%) 90% 0 / 250% 100% no-repeat;
+  -webkit-mask: linear-gradient(var(--color-text) 0 0) content-box, linear-gradient(var(--color-text) 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(var(--color-text) 0 0) content-box exclude, linear-gradient(var(--color-text) 0 0);
+  opacity: 0; visibility: hidden;
+  transition: opacity .5s var(--ease), visibility 0s linear .5s;
+  animation: rim var(--sweep) var(--ease-glide) infinite paused;
+}
+.ask-card[data-stage]::after { opacity: 1; visibility: visible; transition: opacity .45s var(--ease-out), visibility 0s; }
+.ask-card:focus-within::after { --rim: var(--light-glint); }
+
+.ask-card[data-stage] .ask-progress::before,
+.ask-card[data-stage] .ask-progress::after,
+.ask-card[data-stage] .ask-progress-line::after,
+.ask-card[data-stage]::after,
+.ask-card.is-settling .ask-progress::before,
+.ask-card.is-settling .ask-progress::after,
+.ask-card.is-settling .ask-progress-line::after,
+.ask-card.is-settling::after { animation-play-state: running; }
+
+/* The run is 34% of the box. It starts with its head just off the left
+   edge and ends with the last of its tail just past the right, so the
+   moment between passes is a breath, not a stop; the surface and the rim
+   travel the same span. */
+@keyframes sweep { from { transform: translateX(-86%); } to { transform: translateX(276%); } }
+@keyframes glide { from { transform: translateX(-60%); } to { transform: translateX(62%); } }
+@keyframes rim { from { background-position: 90% 0; } to { background-position: 8% 0; } }
 
 /* How many live searches are left, at the bottom of the box: a thin bar
    of what remains of the allowance, and beside it the count in words,
@@ -530,11 +651,84 @@ strong { font-weight: 600; }
 
 .thinking { color: var(--color-text-muted); }
 
-.skeleton-card { animation: pulse 1.4s ease-in-out infinite; }
-.skeleton-media { aspect-ratio: 4 / 5; border-radius: var(--r); background: var(--color-surface-2); }
-.skeleton-line { height: 10px; margin-top: 14px; width: 40%; border-radius: 4px; background: var(--color-surface-3); }
-.skeleton-line--short { width: 70%; margin-top: 8px; }
-@keyframes pulse { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
+/* ---------- placeholders ----------
+   A card's own shape, drawn in the card's own parts (app.js, skeletons),
+   so the picture is the same 4:5, every line sits where its text will,
+   and each breakpoint sizes both alike. The picture is the tile's grey,
+   lit a little from above like a studio sweep; each line is a bar as
+   long as such a line tends to be, centred in its own line box.
+
+   One light passes over each card at the box's pace — across the
+   picture and over the lines below it, which catch it too — and each
+   card a beat after the one before, so the light reads as one light
+   raking across the grid in reading order rather than every card
+   flashing at once. They fade in only once a search has taken longer
+   than --placeholder-wait, a beat apart. */
+.skeleton-card {
+  position: relative;
+  display: flex; flex-direction: column; min-width: 0;
+  overflow: hidden;
+  animation: placeholder-in .7s var(--ease-out) both;
+  animation-delay: calc(var(--placeholder-wait) + var(--i, 0) * 50ms);
+}
+.skeleton-media { background-image: linear-gradient(174deg, var(--tile-lift), transparent 46%, var(--tile-shade)); }
+.skeleton-card:nth-child(even) .skeleton-media { background-image: linear-gradient(186deg, var(--tile-lift), transparent 52%, var(--tile-shade)); }
+.skeleton-bar { display: flex; align-items: center; height: 1lh; }
+.skeleton-bar::before {
+  content: '';
+  width: var(--w); height: .56em;
+  border-radius: 3px;
+  background: var(--color-surface-3);
+}
+.skeleton-card::after {
+  content: ''; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(105deg, transparent 32%, var(--light-reflect) 50%, transparent 68%);
+  animation: reflect var(--sweep) var(--ease-glide) infinite;
+  animation-delay: calc(var(--i, 0) * 150ms - var(--sweep));
+}
+@keyframes placeholder-in { from { opacity: 0; } }
+@keyframes reflect { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
+
+/* ---------- results arriving ----------
+   The new body sits over whatever is leaving, which stays exactly where
+   it was, hidden from assistive technology and inert, and fades out
+   under it: each placeholder a little after the product arriving in its
+   place, so every slot is a crossfade and never a blank. Old results
+   being replaced by a new search leave all at once, quickly. */
+.results-stage { position: relative; }
+.results-body { position: relative; z-index: 1; }
+.results-body.results-leaving {
+  position: absolute; left: 0; right: 0; z-index: 0;
+  pointer-events: none;
+  animation: hold .9s linear both;
+}
+.results-leaving > :not(.grid),
+.results-leaving .item-ghost { animation: leave .26s var(--ease) both; animation-delay: calc(var(--i, 0) * 12ms); }
+.results-leaving .skeleton-card { animation: leave .42s var(--ease) both; animation-delay: calc(var(--i, 0) * 46ms + 70ms); }
+/* a placeholder's lines go first, before the real words have faded far
+   enough in to be read through them; its picture crossfades for longer */
+.results-leaving .skeleton-card .item-body { animation: leave .14s var(--ease) both; animation-delay: calc(var(--i, 0) * 46ms); }
+/* an answer with nothing to show — no matches, an error, a limit — is
+   shorter than the placeholders: they clear out quickly, all together,
+   and nothing that leaves may spill past the answer onto the page below */
+.results-stage[data-kind="nothing"] { overflow: clip; }
+.results-stage[data-kind="nothing"] .results-leaving .skeleton-card,
+.results-stage[data-kind="nothing"] .results-leaving .skeleton-card .item-body { animation-duration: .26s; animation-delay: 0s; }
+@keyframes leave { from { opacity: var(--from, 1); } to { opacity: 0; } }
+@keyframes hold { from, to { opacity: 1; } }
+
+/* products come in a beat apart, in reading order, rising a few pixels
+   as they fade in — no zoom, no bounce. An answer that beat the
+   placeholders (.is-quick) comes in faster and without the rise. */
+.grid.is-revealing > .item-card { animation: card-in .62s var(--ease-out) both; animation-delay: calc(var(--i, 0) * 46ms); }
+.grid.is-revealing.is-quick > .item-card { animation: card-in-quick .3s var(--ease-out) both; animation-delay: calc(var(--i, 0) * 14ms); }
+.results-body > .empty { animation: rise-in .52s var(--ease-out) both .14s; }
+.results-body > .notice,
+.results-body > .sample-note,
+.results-head:not(.search-progress) > * { animation: rise-in .44s var(--ease-out) both; }
+@keyframes card-in { from { opacity: 0; transform: translate3d(0, 10px, 0); } }
+@keyframes card-in-quick { from { opacity: 0; } }
+@keyframes rise-in { from { opacity: 0; transform: translate3d(0, 6px, 0); } }
 
 /* ---------- a search in progress ----------
    Two quiet lines where the results heading will be: what Fynd is doing,
@@ -578,7 +772,9 @@ strong { font-weight: 600; }
 
 .grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 40px var(--gap); }
 
-.item-card { display: flex; flex-direction: column; min-width: 0; }
+/* a card on its way out (app.js renames a leaving card, so nothing takes
+   it for a result) keeps the card's shape while it fades */
+.item-card, .item-ghost { display: flex; flex-direction: column; min-width: 0; }
 a.item-card { color: inherit; }
 
 .item-media {
@@ -593,7 +789,30 @@ a.item-card { color: inherit; }
    its shape on the white page */
 /* pinned to the tile, so the photo always fills exactly 4:5 and is
    cropped, never stretched and never letterboxed, whatever its own shape */
-.item-media img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; mix-blend-mode: multiply; transition: transform .4s var(--ease); }
+.item-media img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; mix-blend-mode: multiply; transition: opacity .55s var(--ease-out), transform .4s var(--ease); }
+
+/* A photo still on its way keeps the placeholder's light on its tile —
+   in step with the light that was passing over the placeholder (--phase)
+   — and fades in over it when it arrives, while the light fades out
+   underneath. A photo the browser already had is never faded. */
+.item-media::after {
+  content: ''; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(105deg, transparent 32%, var(--light-reflect) 50%, transparent 68%);
+  opacity: 0;
+  transform: translateX(-100%);
+  transition: opacity .55s var(--ease-out);
+}
+.item-media.is-pending::after,
+.item-media.is-arriving::after {
+  animation: reflect var(--sweep) var(--ease-glide) infinite;
+  animation-delay: calc(var(--i, 0) * 150ms - var(--sweep) - var(--phase, 0ms));
+}
+.item-media.is-pending::after { opacity: 1; }
+.item-media.is-pending img { opacity: 0; }
+/* a photo that was there almost at once is simply shown: no fade, and
+   the hover zoom keeps its own easing */
+.item-media.is-at-once img { transition: transform .4s var(--ease); }
+.item-media.is-at-once::after { transition: none; }
 .item-media svg.silhouette { width: 56%; height: 56%; color: var(--color-artwork); }
 a.item-card:hover .item-media img { transform: scale(1.03); }
 
@@ -838,6 +1057,8 @@ button.head-link { border: 0; background: none; padding: 8px 0; cursor: pointer;
   .demo-figure.is-portrait .demo-video { aspect-ratio: 5 / 9; }
   .signal-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .shelf-grid .item-card:nth-child(n+4) { display: none; }
+  /* two rows of placeholders at every width */
+  .results-body .skeleton-card:nth-child(n+7) { display: none; }
   .plan-grid { grid-template-columns: minmax(0, 1fr); max-width: 560px; margin-inline: auto; }
   .page-head { padding-top: 56px; }
 }
@@ -887,6 +1108,7 @@ button.head-link { border: 0; background: none; padding: 8px 0; cursor: pointer;
   .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px var(--gap); }
   .signal-list { grid-template-columns: minmax(0, 1fr); }
   .shelf-grid .item-card:nth-child(n+3) { display: none; }
+  .results-body .skeleton-card:nth-child(n+5) { display: none; }
   .discover-tabs { gap: 0 20px; }
   .page-head { padding: 40px 0 28px; }
   .page-head p { font-size: 17px; }
@@ -925,7 +1147,14 @@ button.head-link { border: 0; background: none; padding: 8px 0; cursor: pointer;
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
-  /* a search in progress holds still: the stage is said, not shown moving */
-  .stage-text, .ask-progress-line, .skeleton-card { animation: none; }
+  /* a search in progress holds still: the stage is said, not shown
+     moving. The box keeps a plain accent line along its bottom edge and
+     the placeholders their shape; no light travels, and what arrives is
+     simply there. */
+  .stage-text, .skeleton-card, .grid.is-revealing > .item-card, .grid.is-revealing.is-quick > .item-card,
+  .results-body > *, .results-head > * { animation: none; }
+  .ask-progress::before, .ask-progress::after, .ask-progress-line::after,
+  .ask-card::after, .skeleton-card::after, .item-media::after { display: none; animation: none; }
+  .ask-progress-line { background: var(--color-accent); }
   .js .ask-allowance { transition: none; }
 }
