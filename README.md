@@ -1294,6 +1294,35 @@ node scripts/test-demo-film.js      # the demo film: length, order, every store 
 node scripts/test-e2e.js       # the whole sign-in flow, in a real browser
 ```
 
+#### Continuous integration
+
+Every pull request into `main`, and every push to `main`, runs
+`.github/workflows/ci.yml`: the suites named in `scripts/ci-tests.js`, in two
+jobs, the Node suites and the browser suites (in Playwright's Chromium). The
+same command runs them anywhere:
+
+```sh
+npm ci && npx playwright install chromium   # once
+npm test                                    # every required suite
+node scripts/ci-tests.js node               # or one group: node | browser
+```
+
+Every suite is offline and keyless. It stubs its own network,
+`scripts/ci-offline.js` refuses any connection off the machine, and each suite
+starts with a clean environment, so a key in your shell never reaches a test;
+the workflow references no secret. A suite passes only when it exits 0 and
+reports a count with nothing failed and nothing skipped. A browser suite that
+skips itself because Chromium would not start is a failure, not a pass. A new
+`scripts/test-*.js` has to be added to a group, or to `NOT_RUN` with its
+reason, or the run stops.
+
+`test-catalog-prices` is not a required check. It already fails one test on
+`main` (checked at `2bac8c1`): "the live shape: the endpoint the page asks
+answers instead" expects `49.9` and reads `undefined`. That is an existing
+issue, to be investigated on its own. CI still runs the suite, last, in a step
+that cannot fail the job, and reports its result as a warning. It moves back
+into the browser group once it passes.
+
 Against a live deployment, with the request the interpreter produces for
 "black oversized hoodie under $80":
 

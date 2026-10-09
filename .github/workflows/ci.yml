@@ -1,0 +1,71 @@
+# Fynd — the offline test suites, on every pull request into main and
+# every push to main.
+#
+# Both jobs run scripts/ci-tests.js, which names every suite it runs.
+# Each suite is offline: it stubs its own network, scripts/ci-offline.js
+# refuses any connection off the runner, and each suite starts with a
+# clean environment. This file references no secret, so no step can
+# reach a key: nothing here calls a paid API or spends a provider
+# credit. The live checks are live-validation.yml's, run by hand.
+#
+# node      the suites that need no browser
+# browser   the interface, end-to-end and browser-path suites, in
+#           Playwright's Chromium
+#
+# A suite fails its job when it exits non-zero, prints no count, fails
+# or skips a test, or tries to reach the network.
+#
+# test-catalog-prices is not a required check: it already fails one
+# test on main (NOT_RUN in scripts/ci-tests.js says which, and why).
+# The browser job still runs it, last, in a step that cannot fail the
+# job, and reports the result as a warning.
+
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  node:
+    name: Offline tests (Node)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Run the Node suites
+        run: node scripts/ci-tests.js node
+
+  browser:
+    name: Offline tests (browser)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Install Playwright's Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Run the browser suites
+        run: node scripts/ci-tests.js browser
+      - name: Known failing, not a required check — test-catalog-prices
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: node scripts/ci-tests.js known-failing
