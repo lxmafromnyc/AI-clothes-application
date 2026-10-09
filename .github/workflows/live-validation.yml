@@ -40,6 +40,7 @@ concurrency:
 
 env:
   QUERY: a baggy hoodie thats light grey and its cozy
+  PLAIN_QUERY: black hoodie
   PRODUCTION_URL: https://ai-clothes-application.vercel.app
   BASELINE: 9507da1842518ecfcc772e7d15f014d5cea7e787
 
@@ -80,15 +81,19 @@ jobs:
           PREVIEW_URL: ${{ steps.preview.outputs.url }}
         run: |
           node -e "require('./scripts/diagnose-search').browserBody(process.env.QUERY, { served: false }).then((r) => process.stdout.write(JSON.stringify(r.body)))" > body.json
+          node -e "require('./scripts/diagnose-search').browserBody(process.env.PLAIN_QUERY, { served: false }).then((r) => process.stdout.write(JSON.stringify(r.body)))" > plain.json
           echo "body: $(cat body.json)"
-          for target in "production=$PRODUCTION_URL" "preview=$PREVIEW_URL"; do
-            name=${target%%=*}; url=${target#*=}
+          echo "plain body: $(cat plain.json)"
+          # the plain request on production only: is an empty page this request's, or every search's?
+          for target in "production=$PRODUCTION_URL=body.json" "preview=$PREVIEW_URL=body.json" "production-plain=$PRODUCTION_URL=plain.json"; do
+            name=${target%%=*}; rest=${target#*=}; url=${rest%=*}; file=${rest##*=}
             echo "::group::$name ${url:-(no URL)}"
             if [ -n "$url" ]; then
-              status=$(curl -sS -o answer.json -D headers.txt -w '%{http_code}' -m 30 -X POST -H 'Content-Type: application/json' --data @body.json "$url/api/search" || echo 000)
-              echo "HTTP $status"
-              grep -iE '^(x-vercel-id|x-vercel-cache|date):' headers.txt || true
-              node -e "const b=JSON.parse(require('fs').readFileSync('answer.json','utf8')); if (Array.isArray(b.products)) b.products = b.products.length + ' products'; console.log(JSON.stringify(b, null, 2))" 2>/dev/null || head -c 600 answer.json
+              rm -f answer.json headers.txt
+              status=$(curl -sS -o answer.json -D headers.txt -w '%{http_code}' -m 30 -X POST -H 'Content-Type: application/json' --data @"$file" "$url/api/search" || true)
+              echo "HTTP ${status:-000}"
+              grep -iE '^(x-vercel-id|x-vercel-cache|date):' headers.txt 2>/dev/null || true
+              node -e "const b=JSON.parse(require('fs').readFileSync('answer.json','utf8')); if (Array.isArray(b.products)) b.products = b.products.length + ' products'; console.log(JSON.stringify(b, null, 2))" 2>/dev/null || head -c 600 answer.json 2>/dev/null || echo '(no answer body)'
             fi
             echo "::endgroup::"
           done
@@ -125,6 +130,7 @@ jobs:
           path: |
             deployment-check/
             body.json
+            plain.json
 
   benchmark:
     name: probe, diagnostic and the 107-request benchmark
@@ -162,6 +168,17 @@ jobs:
           set +e
           node scripts/probe-openwebninja.js "$QUERY" 2>&1 | tee bench-results/live-1/probe.txt
           echo "probe exit: ${PIPESTATUS[0]}" | tee -a bench-results/live-1/probe.txt
+
+      - name: How long /product-offers really takes, with the per-lookup cap lifted (diagnostic only)
+        if: steps.keys.outputs.ready == 'true'
+        env:
+          # lifted for this one probe run only, so each lookup's own time is
+          # measured instead of being cut at 2500ms; the route is unchanged
+          OPENWEBNINJA_OFFER_LOOKUP_TIMEOUT_MS: '20000'
+        run: |
+          set +e
+          node scripts/probe-openwebninja.js --no-photos --budget-ms 30000 "$QUERY" 2>&1 | grep -E '^(deadline|request|           ->|provider|/api/search would answer)' | tee bench-results/live-1/offers-latency.txt
+          echo "probe exit: ${PIPESTATUS[0]}" | tee -a bench-results/live-1/offers-latency.txt
 
       - name: Diagnostic against this commit's preview
         if: steps.keys.outputs.ready == 'true' && env.PREVIEW_URL != ''
