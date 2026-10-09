@@ -138,13 +138,32 @@ function productCard(item) {
 }
 
 /* The shape of a card, drawn while the real one is on its way, so the
-   grid arrives in place instead of appearing out of nothing. It carries
-   no text: there is nothing true to say yet. */
-const SKELETON = `<div class="skeleton-card">
-  <div class="skeleton-media"></div>
-  <div class="skeleton-line"></div>
-  <div class="skeleton-line skeleton-line--short"></div>
-</div>`;
+   grid arrives in place instead of appearing out of nothing. It is built
+   from the card's own parts — the 4:5 picture, then the brand, a name of
+   two lines, the price and where it is sold — so every line sits where
+   the real one will, at every width the card is drawn at. It carries no
+   text: there is nothing true to say yet. The lines are as long as real
+   ones tend to be, and no two cards are alike; the lengths come from a
+   fixed table, so the same grid is drawn the same way every time. */
+const PLACEHOLDER_LINES = [
+  [46, 94, 58, 24, 42], [34, 88, 71, 21, 30], [52, 97, 44, 27, 38], [40, 83, 66, 23, 46],
+  [30, 91, 52, 26, 34], [48, 86, 74, 22, 40], [38, 95, 49, 25, 28], [44, 80, 62, 28, 36]
+];
+function skeletons(count) {
+  const bar = (width) => `<span class="skeleton-bar" style="--w:${width}%"></span>`;
+  return Array.from({ length: count }, (_, i) => {
+    const [brand, name, rest, price, seller] = PLACEHOLDER_LINES[i % PLACEHOLDER_LINES.length];
+    return `<div class="skeleton-card" style="--i:${i}">
+      <div class="item-media skeleton-media"></div>
+      <div class="item-body">
+        <p class="item-retailer">${bar(brand)}</p>
+        <p class="item-name">${bar(name)}${bar(rest)}</p>
+        <p class="item-price">${bar(price)}</p>
+        <p class="item-seller">${bar(seller)}</p>
+      </div>
+    </div>`;
+  }).join('');
+}
 
 /* ---------- mobile navigation ---------- */
 (function nav() {
@@ -228,10 +247,10 @@ const SKELETON = `<div class="skeleton-card">
       ? `<p class="notice" role="status">${esc(outcome.notice)}</p>` : '';
 
     const count = `${found.products.length} ${found.products.length === 1 ? 'piece' : 'pieces'} found`;
-    results.innerHTML = `${resultsHead(count)}
-      ${notice}
-      <div class="grid">${found.products.map(productCard).join('')}</div>`;
-    bindImageFallback(results);
+    const body = paint(resultsHead(count), `${notice}
+      <div class="grid">${found.products.map(productCard).join('')}</div>`, 'products');
+    arrive(body);
+    bindImageFallback(body);
     announce(`${found.products.length} ${found.products.length === 1 ? 'piece' : 'pieces'} found.`);
   }
 
@@ -271,12 +290,11 @@ const SKELETON = `<div class="skeleton-card">
     const action = `<p class="empty-action">${limited && found.upgrade
       ? '<a class="btn btn-primary" href="pricing.html">See plans</a>' : ''}<a class="btn btn-secondary" href="#search">Try another search</a></p>`;
 
-    results.innerHTML = `${resultsHead(heading)}
-      <div class="empty">
+    paint(resultsHead(heading), `<div class="empty">
         <h3>${esc(next)}</h3>
         <p>${esc(detail)}</p>
         ${action}
-      </div>`;
+      </div>`, 'nothing');
     announce(`${heading}. ${detail}`);
   }
 
@@ -301,14 +319,13 @@ const SKELETON = `<div class="skeleton-card">
       ? `<p class="notice" role="status">${esc(outcome.notice)}</p>` : '';
 
     if (!scored.length) {
-      results.innerHTML = `${resultsHead('No matches yet')}
-        ${notice}
+      paint(resultsHead('No matches yet'), `${notice}
         ${sourceNotice}
         <div class="empty">
           <h3>Try describing it a little differently</h3>
           <p>Nothing in the catalogue fits that request. Asking for something broader usually helps.</p>
           <p class="empty-action"><a class="btn btn-secondary" href="#search">Try another search</a></p>
-        </div>`;
+        </div>`, 'nothing');
       announce('No matches yet. Try describing it a little differently, or ask for something broader.');
       return;
     }
@@ -317,12 +334,12 @@ const SKELETON = `<div class="skeleton-card">
     /* these rows are the demo catalogue; it is only called sample data
        when placeholder rows are actually among them */
     const status = scored.some((item) => !item.productUrl) ? SAMPLE_STATUS : '';
-    results.innerHTML = `${resultsHead(picked, status)}
-      ${notice}
+    const body = paint(resultsHead(picked, status), `${notice}
       ${sourceNotice}
       ${sampleNote(scored)}
-      <div class="grid">${scored.map(productCard).join('')}</div>`;
-    bindImageFallback(results);
+      <div class="grid">${scored.map(productCard).join('')}</div>`, 'catalogue');
+    arrive(body);
+    bindImageFallback(body);
     announce(`${scored.length} ${scored.length === 1 ? 'piece' : 'pieces'} picked for you.`);
   }
 
@@ -382,30 +399,181 @@ const SKELETON = `<div class="skeleton-card">
     announce(detail ? `${detail}. ${STAGES[stage]}.` : `${STAGES[stage]}.`);
   }
 
+  /* Smooth unless the shopper has asked for less motion. */
+  const still = () => Boolean(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  const scrolling = () => (still() ? 'auto' : 'smooth');
+
+  /* The two timings the stylesheet sets and this code has to agree with:
+     how long a search may take before placeholders are worth showing,
+     and the period of the light that passes over them. Read from the
+     stylesheet, so they are written once. */
+  const timings = getComputedStyle(document.documentElement);
+  const ms = (name, fallback) => {
+    const value = parseFloat(timings.getPropertyValue(name));
+    return Number.isFinite(value) ? value * 1000 : fallback;
+  };
+  const PLACEHOLDER_WAIT = ms('--placeholder-wait', 160);
+  const SWEEP = ms('--sweep', 2400);
+  let searchStarted = 0;
+  let placeholdersSince = 0;
+
+  /* ---------- painting the results area ----------
+     A head — the outcome, and the request it answers — and under it a
+     body: placeholders, products, or the reason there are none. A new
+     body never simply replaces the one on screen. The old one stays
+     exactly where it is, is marked hidden and inert, its cards renamed so
+     nothing can take them for results, and fades out under the new one
+     — placeholders slot by slot as each product arrives over them, old
+     results all at once — and is gone when its fade ends. So nothing
+     flashes blank between the two, and the light on the placeholders
+     never restarts. Anyone who asks for reduced motion gets the new body
+     at once, with nothing leaving. */
+  function paintHead(head) {
+    const old = results.querySelector(':scope > .results-head');
+    const holder = document.createElement('div');
+    holder.innerHTML = head;
+    if (old) old.replaceWith(...holder.childNodes);
+    else results.prepend(...holder.childNodes);
+  }
+
+  function paint(head, html, kind) {
+    let stage = results.querySelector(':scope > .results-stage');
+    if (!stage) {
+      results.innerHTML = '<div class="results-stage"></div>';
+      stage = results.firstElementChild;
+    }
+    paintHead(head);
+    const before = stage.querySelector(':scope > .results-body:not(.results-leaving)');
+    const body = document.createElement('div');
+    body.className = 'results-body';
+    body.dataset.kind = kind;
+    body.innerHTML = html;
+    stage.prepend(body);
+    /* what the stage now holds: an answer with no products is shorter
+       than the placeholders were, and what leaves is kept inside it */
+    stage.dataset.kind = kind;
+    if (before) retire(before, body);
+    return body;
+  }
+
+  function retire(old, next) {
+    /* placeholders that never got as far as fading in have nothing to
+       leave from */
+    const unseen = old.dataset.kind === 'placeholders' && performance.now() - placeholdersSince < PLACEHOLDER_WAIT;
+    if (still() || unseen) { old.remove(); return; }
+    /* each card leaves from wherever its own arrival had got to */
+    const cards = old.querySelectorAll('.skeleton-card, .item-card');
+    const opacities = Array.from(cards, (card) => getComputedStyle(card).opacity);
+    cards.forEach((card, i) => {
+      card.style.setProperty('--from', opacities[i]);
+      if (card.classList.contains('item-card')) card.classList.replace('item-card', 'item-ghost');
+    });
+    old.querySelectorAll('[role], [aria-live]').forEach((el) => { el.removeAttribute('role'); el.removeAttribute('aria-live'); });
+    /* placeholders stand in the very places the products arrive in;
+       anything else fades where it stood */
+    const from = old.dataset.kind === 'placeholders' && old.querySelector('.grid');
+    const to = next.querySelector('.grid');
+    old.style.top = `${from && to ? to.offsetTop - from.offsetTop : 0}px`;
+    old.setAttribute('aria-hidden', 'true');
+    old.inert = true;
+    old.classList.add('results-leaving');
+    old.addEventListener('animationend', (e) => { if (e.target === old) old.remove(); });
+  }
+
+  /* What arrives comes in composed: the cards in reading order, a beat
+     apart, each rising a few pixels as it fades in over the placeholder
+     that stood in its place. An answer that came back before any
+     placeholder was shown comes in quicker still, so a fast or cached
+     search reads as instant. Nothing is held back — every card is in the
+     page from the first frame; only its fade is staggered. */
+  function arrive(body) {
+    const grid = body.querySelector('.grid');
+    if (!grid) return;
+    Array.from(grid.children).forEach((card, i) => card.style.setProperty('--i', Math.min(i, 9)));
+    /* the light on a photo still on its way carries on in step with the
+       light that was passing over the placeholders */
+    grid.style.setProperty('--phase', `${Math.round((performance.now() - placeholdersSince) % SWEEP)}ms`);
+    grid.classList.add('is-revealing');
+    if (performance.now() - searchStarted < PLACEHOLDER_WAIT) grid.classList.add('is-quick');
+    awaitPhotos(grid);
+  }
+
+  /* A photo still downloading keeps the placeholder's light on its tile,
+     because it is still on its way; when it arrives it fades in and the
+     light fades out under it. A photo the browser already has is shown
+     as it is, and one that fails becomes the drawn artwork as before. */
+  const AT_ONCE = 120;
+  function awaitPhotos(root) {
+    const asked = performance.now();
+    root.querySelectorAll('.item-media > img').forEach((img) => {
+      if (img.complete && img.naturalWidth > 0) return;
+      const tile = img.parentElement;
+      tile.classList.add('is-pending');
+      img.addEventListener('load', () => {
+        /* a photo that was there almost at once — the browser had it —
+           is simply shown; only one that kept the shopper waiting fades */
+        if (performance.now() - asked < AT_ONCE) {
+          tile.classList.add('is-at-once');
+          tile.classList.remove('is-pending');
+          return;
+        }
+        tile.classList.replace('is-pending', 'is-arriving');
+        tile.addEventListener('transitionend', function settled(e) {
+          if (e.pseudoElement !== '::after' || e.propertyName !== 'opacity') return;
+          tile.removeEventListener('transitionend', settled);
+          tile.classList.remove('is-arriving');
+        });
+      }, { once: true });
+      img.addEventListener('error', () => tile.classList.remove('is-pending'), { once: true });
+    });
+  }
+
   function showProgress(query) {
+    searchStarted = performance.now();
     results.setAttribute('aria-busy', 'true');
-    results.innerHTML = `<div class="results-head search-progress" data-stage="understanding">
+    form.classList.remove('is-settling');
+    const head = `<div class="results-head search-progress" data-stage="understanding">
         <h2 class="thinking"></h2>
         <p class="results-query">Results for <q>${esc(query)}</q></p>
-      </div>
-      <div class="grid" aria-hidden="true">${SKELETON.repeat(4)}</div>`;
+      </div>`;
+    /* a search replaced while it was still running: the placeholders and
+       the light carry on exactly as they were, and only the words change */
+    if (results.querySelector(':scope > .results-stage > .results-body[data-kind="placeholders"]:not(.results-leaving)')) {
+      paintHead(head);
+    } else {
+      paint(head, `<div class="grid" aria-hidden="true">${skeletons(8)}</div>`, 'placeholders');
+      placeholdersSince = searchStarted;
+    }
     showStage('understanding');
   }
 
-  /* the search has answered, failed or been dropped: the box stops
-     working at once */
+  /* The search has answered, failed or been dropped: the box stops
+     working at once. Its light does not snap off — it keeps moving while
+     it fades, and is put to rest when the fade has ended. */
   function endProgress() {
     results.removeAttribute('aria-busy');
+    const light = form.querySelector('.ask-progress');
+    /* a light that never got as far as showing has nothing to fade */
+    if (form.dataset.stage && light && Number(getComputedStyle(light).opacity) > 0) {
+      form.classList.add('is-settling');
+      const rest = (e) => {
+        if (e.target !== light || e.propertyName !== 'opacity') return;
+        light.removeEventListener('transitionend', rest);
+        light.removeEventListener('transitioncancel', rest);
+        if (!form.dataset.stage) form.classList.remove('is-settling');
+      };
+      light.addEventListener('transitionend', rest);
+      light.addEventListener('transitioncancel', rest);
+    }
     delete form.dataset.stage;
   }
 
-  /* Smooth unless the shopper has asked for less motion. */
-  const scrolling = () => (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth');
-
-  /* While a search runs, the box doing the work and the words saying what
-     it is doing are both on screen: the page moves only as far as it must
-     to bring the stage line up, and never so far that the box goes under
-     the header. The results are brought up when they arrive. */
+  /* While a search runs, the box doing the work, the words saying what
+     it is doing, and the placeholders where the products will land are
+     all on screen as far as the page allows: it moves far enough to bring
+     the stage line up and the first row of placeholders into view, and
+     never so far that the box goes under the header. The results are
+     brought up when they arrive. */
   const header = document.querySelector('.site-header');
   const MARGIN = 16;
   function keepBoxInView() {
@@ -414,7 +582,9 @@ const SKELETON = `<div class="skeleton-card">
     const top = header ? header.getBoundingClientRect().bottom : 0;
     const room = form.getBoundingClientRect().top - top - MARGIN;
     const below = head.getBoundingClientRect().bottom + MARGIN - window.innerHeight;
-    const by = Math.min(Math.max(below, 0), room);
+    const first = results.querySelector('.results-body .skeleton-card');
+    const glimpse = first ? first.getBoundingClientRect().top + first.offsetHeight * 0.55 + MARGIN - window.innerHeight : below;
+    const by = Math.min(Math.max(below, glimpse, 0), room);
     if (by) window.scrollBy({ top: by, behavior: scrolling() });
   }
 
@@ -862,7 +1032,7 @@ const SKELETON = `<div class="skeleton-card">
 
     if (!pool) {
       resultsCount.textContent = 'Checking the catalogue…';
-      resultsBody.innerHTML = `<div class="grid">${SKELETON.repeat(4)}</div>`;
+      resultsBody.innerHTML = `<div class="grid">${skeletons(4)}</div>`;
       return;
     }
     const found = filtered();

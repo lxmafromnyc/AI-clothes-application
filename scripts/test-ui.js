@@ -162,7 +162,9 @@ const server = http.createServer((req, res) => {
         if (stub && stub.hold) await stub.hold;
         stubs.log.push({ path: url.pathname, event: 'reply', at: Date.now() });
         if (stub && stub.drop) return res.destroy();
-        if (stub && stub.status) { res.statusCode = stub.status; return res.end(JSON.stringify({ error: 'stubbed failure' })); }
+        /* a failure answers with its own body when the test gives one —
+           the provider timeout names its stage — and a plain error if not */
+        if (stub && stub.status) { res.statusCode = stub.status; return res.end(JSON.stringify(stub.reply || { error: 'stubbed failure' })); }
         /* an answered search is what the server counts */
         if (url.pathname === '/api/search' && stubs.charge) chargeSearch();
         if (stub && stub.reply) return res.end(JSON.stringify(stub.reply));
@@ -182,12 +184,18 @@ const server = http.createServer((req, res) => {
     });
   }
 
-  const file = path.join(REPO, url.pathname.replace(/^\/+/, ''));
+  /* /__slow/<ms>/<path> answers <path> that much later: a photo that is
+     still on its way when the card it belongs to arrives */
+  const slow = /^\/__slow\/(\d+)(\/.+)$/.exec(url.pathname);
+  const file = path.join(REPO, (slow ? slow[2] : url.pathname).replace(/^\/+/, ''));
   if (!file.startsWith(REPO) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
     res.statusCode = 404; return res.end('not found');
   }
-  res.setHeader('Content-Type', TYPES[path.extname(file)] || 'application/octet-stream');
-  res.end(fs.readFileSync(file));
+  const send = () => {
+    res.setHeader('Content-Type', TYPES[path.extname(file)] || 'application/octet-stream');
+    res.end(fs.readFileSync(file));
+  };
+  return slow ? setTimeout(send, Number(slow[1])) : send();
 });
 
 let passed = 0;
@@ -694,16 +702,37 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     await page.keyboard.press('Enter');
   };
 
-  /* the hairline in the search box: whether the shopper can see it, and
-     the stage the box is marked with */
+  /* the light in the search box: whether the box is showing it as at
+     work — marked with a stage, the light up and the hairline drawn — and
+     the stage it is marked with. A light settling away after the answer
+     is not shown: the box stopped working when the stage went. */
   const boxLine = (page) => page.evaluate(() => {
     const form = document.getElementById('ask-form');
     const line = form.querySelector('.ask-progress-line');
     const box = line.getBoundingClientRect();
     return {
       stage: form.dataset.stage || null,
-      shown: getComputedStyle(form.querySelector('.ask-progress')).display !== 'none' && box.width > 0 && box.height > 0
+      shown: Boolean(form.dataset.stage) && getComputedStyle(form.querySelector('.ask-progress')).visibility === 'visible' && box.width > 0 && box.height > 0
     };
+  });
+
+  /* once the answer is in, the light fades while still moving and is put
+     to rest: invisible, and its animations paused, within the length of
+     its fade — never lingering as if the box were still working */
+  const lightRests = (page, where) => page.waitForFunction(() => {
+    const form = document.getElementById('ask-form');
+    const light = getComputedStyle(form.querySelector('.ask-progress'));
+    const run = getComputedStyle(form.querySelector('.ask-progress-line'), '::after');
+    return !form.dataset.stage && light.visibility === 'hidden' && light.opacity === '0'
+      && !form.classList.contains('is-settling') && run.animationPlayState === 'paused';
+  }, null, { timeout: 1500 }).catch(async () => {
+    const state = await page.evaluate(() => {
+      const form = document.getElementById('ask-form');
+      const light = getComputedStyle(form.querySelector('.ask-progress'));
+      return { stage: form.dataset.stage || null, classes: form.className, visibility: light.visibility, opacity: light.opacity,
+        play: getComputedStyle(form.querySelector('.ask-progress-line'), '::after').animationPlayState };
+    }).catch(() => null);
+    throw new Error(`${where || 'the light'} did not come to rest within 1.5s of the answer: ${JSON.stringify(state)}`);
   });
 
   /* what the box looked like at the very moment the progress left the
@@ -716,7 +745,7 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
       const form = document.getElementById('ask-form');
       window.__boxAtEnd = {
         stage: form.dataset.stage || null,
-        display: getComputedStyle(form.querySelector('.ask-progress')).display
+        busy: document.getElementById('results').getAttribute('aria-busy')
       };
     }).observe(document.getElementById('results'), { subtree: true, childList: true });
   });
@@ -814,10 +843,17 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     await watchEnd(page);
     search.release();
     await page.waitForSelector('.item-card');
-    /* gone from the box in the same moment the results replaced the
-       placeholders, not a beat later */
-    assert.deepStrictEqual(await boxAtEnd(page), { stage: null, display: 'none' }, 'the hairline outlived the search');
+    /* the box stops working in the same moment the results replaced the
+       placeholders, not a beat later, and its light settles away */
+    assert.deepStrictEqual(await boxAtEnd(page), { stage: null, busy: null }, 'the box was still at work when the results came');
     assert.deepStrictEqual(await boxLine(page), { stage: null, shown: false });
+    await lightRests(page);
+    /* the placeholders leave under the products, hidden and inert, and
+       are gone once their fade is over */
+    const leaving = await page.evaluate(() => Array.from(document.querySelectorAll('#results .skeleton-card'))
+      .map((card) => { const layer = card.closest('.results-leaving'); return Boolean(layer && layer.inert && layer.getAttribute('aria-hidden') === 'true'); }));
+    assert.ok(leaving.every(Boolean), 'a placeholder outside the leaving layer, or a leaving layer that is not hidden and inert');
+    await page.waitForFunction(() => !document.querySelector('#results .skeleton-card, #results .results-leaving'), null, { timeout: 2000 });
     const after = await page.evaluate(() => ({
       progress: Boolean(document.querySelector('#results .search-progress, #results .stage-bar, #results .thinking, #results .skeleton-card')),
       busy: document.getElementById('results').hasAttribute('aria-busy'),
@@ -839,8 +875,9 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
       await watchEnd(page);
       search.release();
       await page.waitForFunction(() => !document.querySelector('#results .search-progress'), null, { timeout: 10000 });
-      assert.deepStrictEqual(await boxAtEnd(page), { stage: null, display: 'none' }, `${why}: the hairline outlived the failure`);
+      assert.deepStrictEqual(await boxAtEnd(page), { stage: null, busy: null }, `${why}: the box was still at work after the failure`);
       assert.deepStrictEqual(await boxLine(page), { stage: null, shown: false }, why);
+      await lightRests(page, why);
       const after = await page.evaluate(() => ({
         stuck: Boolean(document.querySelector('#results .stage-bar, #results .thinking')),
         busy: document.getElementById('results').hasAttribute('aria-busy'),
@@ -916,14 +953,9 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     await submit(page, 'black oversized hoodie under $80');
     await page.waitForSelector('.item-card');
     const shown = Date.now();
-    /* the hairline goes with the placeholders, and nothing eases it out */
-    assert.deepStrictEqual(await boxAtEnd(page), { stage: null, display: 'none' });
-    const lingers = await page.evaluate(() => {
-      const wrap = getComputedStyle(document.querySelector('#ask-form .ask-progress'));
-      const line = getComputedStyle(document.querySelector('#ask-form .ask-progress-line'));
-      return { transition: wrap.transitionDuration, delay: line.animationDelay };
-    });
-    assert.deepStrictEqual(lingers, { transition: '0s', delay: '0s' });
+    /* the box stops working with the answer; its light only fades */
+    assert.deepStrictEqual(await boxAtEnd(page), { stage: null, busy: null });
+    await lightRests(page);
     const reply = stubs.log.filter((e) => e.path === '/api/search' && e.event === 'reply').pop();
     assert.ok(reply, 'the search never answered');
     assert.ok(shown - reply.at < 400, `results took ${shown - reply.at}ms to appear after the search answered`);
@@ -1006,9 +1038,9 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
   });
 
   const motionOf = (page) => page.evaluate(() => {
-    const css = (sel) => getComputedStyle(document.querySelector(sel));
+    const css = (sel, pseudo) => getComputedStyle(document.querySelector(sel), pseudo);
     return {
-      bar: css('#ask-form .ask-progress-line').animationName,
+      bar: css('#ask-form .ask-progress-line', '::after').animationName,
       line: css('#results .stage-text').animationName,
       skeleton: css('#results .skeleton-card').animationName,
       opacity: css('#ask-form .ask-progress-line').opacity
@@ -1023,8 +1055,9 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     await submit(moving, 'black oversized hoodie');
     await moving.waitForSelector('#results .search-progress[data-stage="searching"]');
     const normal = await motionOf(moving);
-    assert.strictEqual(normal.bar, 'pulse');
+    assert.strictEqual(normal.bar, 'sweep');
     assert.strictEqual(normal.line, 'stage-in');
+    assert.strictEqual(normal.skeleton, 'placeholder-in');
     search.release();
     await moving.close();
 
@@ -1043,9 +1076,11 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     await submit(still, 'black oversized hoodie');
     await still.waitForSelector('#results .search-progress[data-stage="searching"]');
     const reduced = await motionOf(still);
-    assert.deepStrictEqual(reduced, { bar: 'none', line: 'none', skeleton: 'none', opacity: '1' });
+    assert.deepStrictEqual(reduced, { bar: 'none', line: 'none', skeleton: 'none', opacity: '1' }, `reduced motion still moves: ${JSON.stringify(reduced)}`);
     /* still there, and still in the box: held still, not taken away */
-    assert.deepStrictEqual(await boxLine(still), { stage: 'searching', shown: true });
+    await still.waitForFunction(() => getComputedStyle(document.querySelector('#ask-form .ask-progress')).visibility === 'visible', null, { timeout: 2000 }).catch(() => {});
+    const line = await boxLine(still);
+    assert.deepStrictEqual(line, { stage: 'searching', shown: true }, `the still line is not in the box: ${JSON.stringify(line)}`);
     /* still, and still legible: every line in a palette ink */
     const problems = await textStyleProblems(still, await resolveInks(still));
     assert.deepStrictEqual(problems, [], `\n        ${problems.join('\n        ')}`);
@@ -1093,7 +1128,7 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
       inner: form.clientWidth,
       border: parseFloat(getComputedStyle(form).borderBottomWidth),
       line: at(form.querySelector('.ask-progress-line')),
-      shown: getComputedStyle(form.querySelector('.ask-progress')).display !== 'none',
+      shown: getComputedStyle(form.querySelector('.ask-progress')).visibility === 'visible',
       text: at(document.getElementById('ask')),
       button: at(form.querySelector('button[type=submit]')),
       clear: at(document.getElementById('reset-form')),
@@ -1184,6 +1219,7 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
 
       search.release();
       await page.waitForSelector('.item-card');
+      await lightRests(page, where);
       const after = await boxGeometry(page);
       assert.strictEqual(after.shown, false, `${where}: the hairline stayed after the results`);
       for (const side of ['top', 'left', 'width', 'height']) {
@@ -1247,6 +1283,398 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     const after = await page.evaluate(() => ({ hidden: document.getElementById('results').hidden, html: document.getElementById('results').innerHTML, busy: document.getElementById('results').hasAttribute('aria-busy') }));
     assert.deepStrictEqual(after, { hidden: true, html: '', busy: false });
     assert.deepStrictEqual(await boxLine(page), { stage: null, shown: false }, 'the hairline stayed after "Start over"');
+    await page.close();
+  });
+
+  console.log('\nthe loading experience');
+
+  /* Live products that read like real ones: a brand, a name long enough
+     to take its two lines, a price, and a shop that is not the brand, so
+     every line a card can carry is drawn — the lines the placeholders
+     stand in for. Their photos are on this origin, each at its own URL. */
+  const POSTER = `http://127.0.0.1:${PORT}/assets/demo/fynd-demo-poster.jpg`;
+  const livePiece = (i, photo) => ({
+    id: `look-${i}`, name: `Relaxed Wool Overshirt in Heathered Charcoal, Style ${i + 1}`,
+    brand: 'Arket', retailer: 'Arket Studio', price: 89 + i, currency: 'USD',
+    imageUrl: photo || `${POSTER}?look=${i}`, productUrl: `https://www.arket.com/en/product/${i}`,
+    category: '', colors: [], sizes: []
+  });
+  const answerWith = (products) => ({ source: 'openwebninja', products, returned: products.length, rejected: {} });
+  const pieces = (n) => Array.from({ length: n }, (_, i) => livePiece(i));
+
+  /* the placeholders the shopper can see, and where each part of each
+     sits, measured from the top-left of its own grid */
+  const cardShapes = (page, selector) => page.evaluate((sel) => {
+    const cards = Array.from(document.querySelectorAll(sel)).filter((card) => getComputedStyle(card).display !== 'none');
+    if (!cards.length) return [];
+    const grid = cards[0].parentElement.getBoundingClientRect();
+    const box = (el) => {
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      return { left: r.left - grid.left, top: r.top - grid.top, width: r.width, height: r.height };
+    };
+    return cards.map((card) => ({
+      card: box(card),
+      media: box(card.querySelector('.item-media')),
+      brand: box(card.querySelector('.item-retailer')),
+      name: box(card.querySelector('.item-name')),
+      price: box(card.querySelector('.item-price')),
+      seller: box(card.querySelector('.item-seller'))
+    }));
+  }, selector);
+
+  await test('placeholders take the real card\'s shape — its picture, its lines, its grid — at every width, and say nothing', async () => {
+    for (const [viewport, columns] of [[{ width: 1280, height: 900 }, 4], [{ width: 820, height: 1000 }, 3], [{ width: 390, height: 844 }, 2]]) {
+      const where = `${viewport.width}px`;
+      reset();
+      const search = deferred();
+      stubs.search = { hold: search.held, reply: answerWith(pieces(8)) };
+      const page = await open();
+      await page.setViewportSize(viewport);
+      await submit(page, 'an overshirt for the weekend');
+      await page.waitForSelector('#results .search-progress[data-stage="searching"]');
+      await page.waitForFunction(() => getComputedStyle(document.querySelector('#results .skeleton-card')).opacity === '1');
+      const placeholders = await cardShapes(page, '#results .skeleton-card');
+      /* two full rows, whatever the width */
+      assert.strictEqual(placeholders.length, columns * 2, `${where}: ${placeholders.length} placeholders for ${columns} columns`);
+      assert.strictEqual(new Set(placeholders.map((p) => Math.round(p.card.left))).size, columns, `${where}: placeholders not in ${columns} columns`);
+      /* nothing true to say yet, so nothing is said or shown */
+      const said = await page.evaluate(() => ({
+        text: Array.from(document.querySelectorAll('#results .skeleton-card')).map((c) => c.textContent.trim()).join(''),
+        photos: document.querySelectorAll('#results .skeleton-card img, #results .skeleton-card svg').length,
+        hidden: document.querySelector('#results .skeleton-card').closest('[aria-hidden="true"]') !== null
+      }));
+      assert.deepStrictEqual(said, { text: '', photos: 0, hidden: true }, where);
+
+      search.release();
+      await page.waitForSelector('#results .grid .item-card');
+      await finishedMoving(page);
+      const cards = await cardShapes(page, '#results .grid .item-card');
+      for (let i = 0; i < placeholders.length; i += 1) {
+        for (const part of ['card', 'media', 'brand', 'name', 'price', 'seller']) {
+          for (const side of ['left', 'top', 'width', 'height']) {
+            const off = Math.abs(placeholders[i][part][side] - cards[i][part][side]);
+            assert.ok(off <= 0.5, `${where}, card ${i + 1}: the placeholder's ${part} ${side} is ${placeholders[i][part][side]}, the card's ${cards[i][part][side]}`);
+          }
+        }
+      }
+      await page.close();
+    }
+  });
+
+  /* every opacity a placeholder and a card were drawn at, frame by frame,
+     from now until told to stop, with the time since the search was sent */
+  const sampleFrames = (page) => page.evaluate(() => {
+    window.__frames = [];
+    window.__sentAt = null;
+    document.getElementById('ask-form').addEventListener('submit', () => { window.__sentAt = performance.now(); }, { capture: true, once: true });
+    const seen = (el) => {
+      let value = 1;
+      for (let node = el; node && node.id !== 'results'; node = node.parentElement) value *= Number(getComputedStyle(node).opacity);
+      return value;
+    };
+    const tick = () => {
+      if (window.__stopFrames) return;
+      const placeholders = Array.from(document.querySelectorAll('#results .skeleton-card'));
+      const cards = Array.from(document.querySelectorAll('#results .grid .item-card'));
+      window.__frames.push({
+        at: window.__sentAt === null ? null : performance.now() - window.__sentAt,
+        placeholders: placeholders.map(seen),
+        cards: cards.map(seen),
+        quick: Boolean(document.querySelector('#results .grid.is-quick'))
+      });
+      requestAnimationFrame(tick);
+    };
+    window.__stopFrames = false;
+    requestAnimationFrame(tick);
+  });
+  const stopFrames = (page) => page.evaluate(() => { window.__stopFrames = true; return window.__frames.filter((f) => f.at !== null); });
+
+  await test('a fast or cached answer never shows a placeholder, and its cards come in quickly', async () => {
+    reset();
+    stubs.search = { reply: answerWith(pieces(8)) };
+    const page = await open();
+    await sampleFrames(page);
+    await submit(page, 'an overshirt for the weekend');
+    await page.waitForSelector('#results .grid .item-card');
+    await page.waitForTimeout(400);
+    const frames = await stopFrames(page);
+    const wait = await page.evaluate(() => parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--placeholder-wait')) * 1000);
+    /* whatever the timing, no placeholder is visible before the wait */
+    const early = frames.filter((f) => f.at < wait - 10).flatMap((f) => f.placeholders);
+    assert.ok(early.every((o) => o === 0), `a placeholder showed ${Math.max(...early).toFixed(2)} before ${wait}ms`);
+    /* and an answer that beat the wait shows none at all, and comes in quick */
+    const answered = frames.find((f) => f.cards.length);
+    assert.ok(answered, 'the cards never came');
+    if (answered.at < wait) {
+      assert.ok(frames.every((f) => f.placeholders.every((o) => o === 0)), 'a placeholder flashed before a fast answer');
+      assert.ok(answered.quick, 'a fast answer came in at the slow pace');
+    }
+    /* every card is in the page at once: only its fade is staggered */
+    assert.strictEqual(answered.cards.length, 8, `only ${answered.cards.length} of 8 cards were in the page when the answer came`);
+    await page.close();
+  });
+
+  await test('a slow search fades its placeholders in after a beat, and one light moves through the box and over them in step', async () => {
+    reset();
+    const search = deferred();
+    stubs.search = { hold: search.held, reply: answerWith(pieces(8)) };
+    const page = await open();
+    await submit(page, 'an overshirt for the weekend');
+    await page.waitForSelector('#results .search-progress[data-stage="searching"]');
+    await page.waitForFunction(() => Array.from(document.querySelectorAll('#results .skeleton-card')).slice(0, 4).every((c) => getComputedStyle(c).opacity === '1'));
+    const light = await page.evaluate(() => {
+      const css = (el, pseudo) => getComputedStyle(el, pseudo);
+      const run = css(document.querySelector('#ask-form .ask-progress-line'), '::after');
+      const cards = Array.from(document.querySelectorAll('#results .skeleton-card')).map((c) => css(c, '::after'));
+      return {
+        running: run.animationPlayState,
+        box: [run.animationName, run.animationDuration, run.animationTimingFunction, run.animationIterationCount],
+        tiles: cards.map((c) => [c.animationName, c.animationDuration, c.animationTimingFunction, c.animationIterationCount]),
+        phases: cards.map((c) => c.animationDelay)
+      };
+    });
+    assert.strictEqual(light.running, 'running', 'the light in the box is not moving');
+    /* one pace and one curve for the box and every placeholder */
+    light.tiles.forEach((tile) => {
+      assert.strictEqual(tile[1], light.box[1], 'a placeholder moves at another pace than the box');
+      assert.strictEqual(tile[2], light.box[2], 'a placeholder moves on another curve than the box');
+      assert.strictEqual(tile[3], 'infinite');
+    });
+    /* and each placeholder a beat after the one before, never all at once */
+    assert.strictEqual(new Set(light.phases).size, light.phases.length, `placeholders share a phase: ${light.phases.join(', ')}`);
+    search.release();
+    await page.waitForSelector('#results .grid .item-card');
+    await page.close();
+  });
+
+  await test('placeholders give way to products slot by slot: every slot is covered throughout, nothing flashes blank', async () => {
+    reset();
+    const search = deferred();
+    stubs.search = { hold: search.held, reply: answerWith(pieces(8)) };
+    const page = await open();
+    await submit(page, 'an overshirt for the weekend');
+    await page.waitForSelector('#results .search-progress[data-stage="searching"]');
+    await page.waitForFunction(() => Array.from(document.querySelectorAll('#results .skeleton-card')).slice(0, 4).every((c) => getComputedStyle(c).opacity === '1'));
+    await sampleFrames(page);
+    await page.evaluate(() => { window.__sentAt = performance.now(); });
+    search.release();
+    await page.waitForSelector('#results .grid .item-card');
+    await page.waitForFunction(() => !document.querySelector('#results .results-leaving'), null, { timeout: 3000 });
+    const frames = await stopFrames(page);
+    /* a slot is covered by whatever stands in it: the placeholder, the
+       card, or the two together while one fades into the other */
+    let worst = 1;
+    for (const f of frames) {
+      for (let slot = 0; slot < 4; slot += 1) {
+        const covered = 1 - (1 - (f.placeholders[slot] || 0)) * (1 - (f.cards[slot] || 0));
+        worst = Math.min(worst, covered);
+      }
+    }
+    assert.ok(frames.length > 10, `only ${frames.length} frames were sampled`);
+    assert.ok(worst >= 0.6, `a slot fell to ${worst.toFixed(2)} coverage during the handoff`);
+    /* the cards come in reading order, a beat apart */
+    const delays = await page.evaluate(() => Array.from(document.querySelectorAll('#results .grid .item-card')).map((c) => parseFloat(getComputedStyle(c).animationDelay)));
+    assert.ok(delays.every((d, i) => i === 0 || d > delays[i - 1]), `the cards do not come in reading order: ${delays.join(', ')}`);
+    assert.ok(delays[delays.length - 1] <= 0.5, `the last card waits ${delays[delays.length - 1]}s to come in`);
+    await page.close();
+  });
+
+  await test('a search replaced while it runs keeps its placeholders and its light; replaced results leave hidden and inert, never read as results', async () => {
+    reset();
+    const first = deferred();
+    const second = deferred();
+    const third = deferred();
+    stubs.search = { hold: first.held, reply: answerWith(pieces(8).map((p) => Object.assign({}, p, { name: `First ${p.name}` }))) };
+    const page = await open();
+    await submit(page, 'a red dress');
+    await page.waitForSelector('#results .search-progress[data-stage="searching"]');
+    await page.evaluate(() => {
+      document.querySelector('#results .skeleton-card').dataset.mark = 'first';
+      document.querySelector('#results .search-progress').dataset.mark = 'first';
+    });
+    stubs.search = { hold: second.held, reply: answerWith(pieces(8)) };
+    await submit(page, 'an overshirt for the weekend');
+    /* the words are the new search's: its head replaced the first one's */
+    await page.waitForFunction(() => {
+      const head = document.querySelector('#results .search-progress');
+      return head && !head.dataset.mark && head.dataset.stage === 'searching';
+    });
+    /* the same placeholders, never redrawn, and the light never stopped */
+    const carried = await page.evaluate(() => ({
+      same: Boolean(document.querySelector('#results .results-body:not(.results-leaving) .skeleton-card[data-mark="first"]')),
+      leaving: document.querySelectorAll('#results .results-leaving').length,
+      light: getComputedStyle(document.querySelector('#ask-form .ask-progress-line'), '::after').animationPlayState
+    }));
+    assert.deepStrictEqual(carried, { same: true, leaving: 0, light: 'running' }, 'the second search restarted the loading state');
+    /* the first search's answer comes back now, to nothing */
+    first.release();
+    await page.waitForTimeout(300);
+    assert.ok(await page.$('#results .skeleton-card[data-mark="first"]'), 'the replaced search painted over the running one');
+    assert.strictEqual(await page.$('#results .grid .item-card'), null);
+    second.release();
+    await page.waitForSelector('#results .grid .item-card');
+    assert.ok(!(await page.$$eval('#results .item-name', (ns) => ns.some((n) => /^First /.test(n.textContent)))), 'the replaced search\'s products were shown');
+
+    /* a third search over real results: the old products leave, hidden,
+       inert and renamed, and nothing can find them as results */
+    await page.waitForFunction(() => !document.querySelector('#results .results-leaving'), null, { timeout: 3000 });
+    stubs.search = { hold: third.held, reply: answerWith(pieces(4)) };
+    await submit(page, 'a wool coat');
+    await page.waitForSelector('#results .search-progress');
+    const outgoing = await page.evaluate(() => {
+      const layer = document.querySelector('#results .results-leaving');
+      return {
+        results: document.querySelectorAll('#results .grid .item-card').length,
+        ghosts: layer ? layer.querySelectorAll('.item-ghost').length : 0,
+        hidden: layer ? layer.getAttribute('aria-hidden') : null,
+        inert: layer ? layer.inert : null,
+        busy: document.getElementById('results').getAttribute('aria-busy')
+      };
+    });
+    assert.deepStrictEqual(outgoing, { results: 0, ghosts: 8, hidden: 'true', inert: true, busy: 'true' });
+    await page.waitForFunction(() => !document.querySelector('#results .item-ghost'), null, { timeout: 1500 });
+    third.release();
+    await page.waitForSelector('#results .grid .item-card');
+    assert.strictEqual(await page.$$eval('#results .grid .item-card', (ns) => ns.length), 4);
+    await page.close();
+  });
+
+  await test('no matches, a 502, a provider timeout and a dropped connection: the placeholders clear inside the results, the reason rises in, the light settles', async () => {
+    const outcomes = [
+      ['no matches', { reply: answerWith([]) }, 'No matches found', /could be verified/],
+      ['a 502', { status: 502, reply: { error: 'failed', reason: 'failed' } }, 'Product search unavailable', /failed/],
+      ['a provider timeout', { status: 502, reply: { error: 'timeout', reason: 'timeout', stage: 'offers' } }, 'Product search unavailable', /could not confirm their prices in time/],
+      ['a dropped connection', { drop: true }, 'Product search unavailable', /could not be reached/]
+    ];
+    for (const [why, outcome, heading, detail] of outcomes) {
+      reset();
+      const search = deferred();
+      stubs.search = Object.assign({ hold: search.held }, outcome);
+      const page = await open();
+      await submit(page, 'an overshirt for the weekend');
+      await page.waitForSelector('#results .search-progress[data-stage="searching"]');
+      await page.waitForFunction(() => getComputedStyle(document.querySelector('#results .skeleton-card')).opacity === '1');
+      search.release();
+      await page.waitForSelector('#results .results-body:not(.results-leaving) .empty', { timeout: 10000 });
+      const now = await page.evaluate(() => ({
+        heading: document.querySelector('.results-head h2').textContent.trim(),
+        detail: document.querySelector('#results .results-body:not(.results-leaving) .empty p').textContent.trim(),
+        kept: getComputedStyle(document.querySelector('#results .results-stage')).overflow,
+        busy: document.getElementById('results').hasAttribute('aria-busy'),
+        stage: document.getElementById('ask-form').dataset.stage || null
+      }));
+      assert.strictEqual(now.heading, heading, why);
+      assert.ok(detail.test(now.detail), `${why}: "${now.detail}"`);
+      /* what leaves stays within the answer, and never spills onto the page below */
+      assert.strictEqual(now.kept, 'clip', `${why}: the leaving placeholders can spill past the answer`);
+      assert.deepStrictEqual([now.busy, now.stage], [false, null], `${why}: still at work after the answer`);
+      await page.waitForFunction(() => !document.querySelector('#results .skeleton-card'), null, { timeout: 1500 });
+      await lightRests(page, why);
+      assert.ok(await page.$('#results a[href="#search"]'), `${why}: no way to try again`);
+      await page.close();
+    }
+  });
+
+  await test('a photo still on its way keeps the light on its tile and fades in when it arrives; a photo already there is never faded', async () => {
+    reset();
+    const late = `http://127.0.0.1:${PORT}/__slow/900/assets/demo/fynd-demo-poster.jpg?late=${Date.now()}`;
+    const ready = `${POSTER}?ready=${Date.now()}`;
+    stubs.search = { reply: answerWith([livePiece(0, late), livePiece(1, ready)]) };
+    const page = await open();
+    /* the second photo is already in the browser's cache */
+    await page.evaluate((url) => new Promise((resolve) => { const img = new Image(); img.onload = resolve; img.src = url; }), ready);
+    await submit(page, 'an overshirt for the weekend');
+    await page.waitForSelector('#results .grid .item-card');
+    const tiles = () => page.evaluate(() => Array.from(document.querySelectorAll('#results .grid .item-card .item-media')).map((tile) => ({
+      pending: tile.classList.contains('is-pending'),
+      light: getComputedStyle(tile, '::after').animationName,
+      photo: getComputedStyle(tile.querySelector('img')).opacity
+    })));
+    const waiting = await tiles();
+    assert.deepStrictEqual(waiting[0], { pending: true, light: 'reflect', photo: '0' }, 'a photo still on its way is shown half-loaded, or without the light');
+    /* the photo the browser already had is simply there: frame by frame
+       it is never caught part-way through a fade */
+    const cached = await page.evaluate(() => new Promise((resolve) => {
+      const img = document.querySelectorAll('#results .grid .item-card .item-media img')[1];
+      const seen = [];
+      const start = performance.now();
+      const tick = () => {
+        seen.push(Number(getComputedStyle(img).opacity));
+        if (performance.now() - start < 700) requestAnimationFrame(tick); else resolve(seen);
+      };
+      tick();
+    }));
+    assert.ok(cached.every((o) => o === 0 || o === 1), `a photo the browser already had faded in (${cached.filter((o) => o > 0 && o < 1).length} frames part-way)`);
+    assert.strictEqual(cached[cached.length - 1], 1, 'a photo the browser already had never showed');
+    await page.waitForFunction(() => {
+      const tile = document.querySelector('#results .grid .item-card .item-media');
+      return !tile.classList.contains('is-pending') && !tile.classList.contains('is-arriving') && getComputedStyle(tile.querySelector('img')).opacity === '1';
+    }, null, { timeout: 4000 });
+    assert.strictEqual(await page.$eval('#results .grid .item-card .item-media', (tile) => getComputedStyle(tile, '::after').animationName), 'none', 'the light stayed on a photo that had arrived');
+    await page.close();
+  });
+
+  await test('while it works, the box, the words and the first row of placeholders are all on screen', async () => {
+    for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }]) {
+      reset();
+      const search = deferred();
+      stubs.search = { hold: search.held };
+      const page = await open();
+      await page.setViewportSize(viewport);
+      await submit(page, 'an overshirt for the weekend');
+      await page.waitForSelector('#results .search-progress[data-stage="searching"]');
+      await scrollSettled(page);
+      const g = await page.evaluate(() => ({
+        header: document.querySelector('.site-header').getBoundingClientRect().bottom,
+        box: document.getElementById('ask-form').getBoundingClientRect().top,
+        words: document.querySelector('#results .search-progress').getBoundingClientRect().bottom,
+        placeholder: document.querySelector('#results .skeleton-card').getBoundingClientRect().top,
+        viewport: window.innerHeight
+      }));
+      assert.ok(g.box >= g.header, `${viewport.width}px: the box went under the header`);
+      assert.ok(g.words <= g.viewport, `${viewport.width}px: the stage line is off screen`);
+      assert.ok(g.placeholder < g.viewport - 100, `${viewport.width}px: the placeholders are off screen (${g.placeholder} of ${g.viewport})`);
+      search.release();
+      await page.waitForSelector('#results .grid .item-card');
+      await page.close();
+    }
+  });
+
+  await test('with reduced motion nothing travels or fades: a still line, still placeholders, and results that are simply there', async () => {
+    reset();
+    const search = deferred();
+    stubs.search = { hold: search.held, reply: answerWith(pieces(8)) };
+    const page = await browser.newPage();
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await page.addInitScript(() => {
+      window.FINDWEAR_API = 'http://127.0.0.1:8899/api/interpret';
+      window.FINDWEAR_SEARCH_API = 'http://127.0.0.1:8899/api/search';
+    });
+    await page.route((url) => !String(url).includes('127.0.0.1'), (route) => route.abort());
+    await page.goto(`http://127.0.0.1:${PORT}/find-clothes.html`, { waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => window.Attachments && document.getElementById('attachments'));
+    await submit(page, 'an overshirt for the weekend');
+    await page.waitForSelector('#results .search-progress[data-stage="searching"]');
+    const still = await page.evaluate(() => {
+      const css = (sel, pseudo) => getComputedStyle(document.querySelector(sel), pseudo);
+      return {
+        light: ['.ask-progress-line', '.ask-progress'].map((sel) => css(`#ask-form ${sel}`, '::after').animationName)
+          .concat(css('#ask-form', '::after').animationName, css('#ask-form .ask-progress', '::before').animationName),
+        placeholder: [css('#results .skeleton-card').animationName, css('#results .skeleton-card').opacity, css('#results .skeleton-card', '::after').animationName]
+      };
+    });
+    assert.deepStrictEqual(still.light, ['none', 'none', 'none', 'none'], 'light still travels for someone who asked for less motion');
+    assert.deepStrictEqual(still.placeholder, ['none', '1', 'none'], 'the placeholders move or fade');
+    search.release();
+    await page.waitForSelector('#results .grid .item-card');
+    const arrived = await page.evaluate(() => ({
+      leaving: document.querySelectorAll('#results .results-leaving').length,
+      cards: Array.from(document.querySelectorAll('#results .grid .item-card')).map((c) => getComputedStyle(c).animationName),
+      light: getComputedStyle(document.querySelector('#ask-form .ask-progress')).visibility
+    }));
+    assert.strictEqual(arrived.leaving, 0, 'something was left fading out');
+    assert.ok(arrived.cards.every((name) => name === 'none'), 'the cards animate in');
     await page.close();
   });
 
@@ -2972,11 +3400,19 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     }
   });
 
-  await test('no stylesheet rule paints type with a gradient or a glow', async () => {
+  await test('no stylesheet rule paints type with a gradient or a glow, and light belongs only to a search at work', async () => {
     const css = fs.readFileSync(path.join(REPO, 'assets', 'styles.css'), 'utf8');
     assert.ok(!/background-clip:\s*text/.test(css), 'no rule may clip a background to its text');
     assert.ok(!/text-shadow/.test(css), 'no rule may glow');
-    assert.ok(!/linear-gradient|radial-gradient|conic-gradient/.test(css), 'no rule may paint a gradient');
+    /* A gradient is light, and the only light is a search at work: the
+       search box's light, the placeholders, and a photo still on its way.
+       Nothing at rest, and no type, is ever gradient-filled. */
+    const LIGHT = /^(\.ask-progress|\.ask-card::after|\.skeleton-|\.item-media::after)/;
+    const rules = [...css.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/([^{}]+)\{([^{}]*)\}/g)];
+    const painted = rules.filter(([, , body]) => /gradient\(/.test(body))
+      .flatMap(([, selector]) => selector.split(',').map((one) => one.trim()));
+    assert.ok(painted.length > 0, 'the loading light is drawn with gradients, and none were found: this test is reading the wrong file');
+    painted.forEach((selector) => assert.ok(LIGHT.test(selector), `a gradient outside the loading light: ${selector}`));
     /* the neutral foundation the palette is built on: black type, one
        step down for prose, muted metadata, white on an inverted ground */
     const FOUNDATION = {
