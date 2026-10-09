@@ -391,6 +391,16 @@ product source is configured, a failed or empty search says so plainly: a
 deployment that can sell things must never pad the page with demo rows, however
 clearly they are labelled. No product is ever invented to fill the gap.
 
+An offer lookup that fails or times out costs that one product its link and
+nothing else: the search answers `200` with whatever did verify. The one
+exception is a search in which NOTHING verified because the lookups ran out of
+time — the source returned products, every one needed a seller's price and
+link, and not one lookup came back usable before the deadline. That is a `502`
+with `reason: "timeout"`, `stage: "offers"` and the same counts a `200` would
+carry, the page says the prices could not be confirmed in time, and it is not
+charged. A search whose lookups answered in time and showed nothing usable is
+still an honest empty `200`.
+
 ### Worth knowing
 
 - The endpoint caps requests at 400 characters and asks the model for JSON only,
@@ -657,7 +667,7 @@ roughly 770 shopper searches a month rather than 10,000. Two knobs bound it:
 | --- | --- | --- |
 | `OPENWEBNINJA_RESOLVE_OFFERS` | on | `off` skips the lookups entirely — cheaper, and almost everything is then dropped for having no retailer link |
 | `OPENWEBNINJA_OFFER_BUDGET_MS` | 6000 | total wall-clock budget for the lookups; whatever resolved by then is what shows |
-| `OPENWEBNINJA_OFFER_LOOKUP_TIMEOUT_MS` | 2500 | the most one lookup may take; a straggler is dropped and its worker moves on to the next candidate, so slow sellers cannot empty a page the others would fill |
+| `OPENWEBNINJA_OFFER_LOOKUP_TIMEOUT_MS` | 2500 | how long one lookup may hold a worker; a straggler's worker moves on to the next candidate, so slow sellers cannot starve the ones behind them. The straggler itself runs on to the request's deadline and its answer is used if it arrives in time — the same lookups start at the same moments either way. Each answer's time to headers and to the whole body is reported in `diagnostics.offers.lookupTiming` |
 
 #### Which records are worth a lookup
 

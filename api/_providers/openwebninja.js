@@ -132,9 +132,11 @@
                             whole request's deadline arrives first — see
                             search({ deadline }) and api/search.js.
      OPENWEBNINJA_OFFER_LOOKUP_TIMEOUT_MS
-                            the most one lookup may take, default 2500.
-                            A straggler is dropped and its worker moves
-                            on to the next candidate.
+                            how long one lookup may hold a worker,
+                            default 2500. A straggler's worker moves on
+                            to the next candidate; the straggler itself
+                            stays open to the request's deadline, and
+                            its answer is used if it arrives in time.
      FYND_CACHE             set to "off" to disable the offer cache, and
                             the search cache with it. This adapter then
                             behaves exactly as it did before either
@@ -144,7 +146,7 @@
 'use strict';
 
 const cache = require('../_cache');
-const { fetchWithin, timedOut } = require('./deadline');
+const { fetchWithin, timedOut, cancelled } = require('./deadline');
 
 const API_ROOT = 'https://api.openwebninja.com/realtime-product-search/v2';
 const SEARCH_URL = `${API_ROOT}/search`;
@@ -181,15 +183,24 @@ const OFFER_RESERVE_MS = 2000;
    sometimes still did. Bounded to the deadline, it cannot. */
 const MIN_LOOKUP_WINDOW_MS = 250;
 
-/* The most one offer lookup may take, inside whatever the deadline
-   leaves. A seller answers in a few hundred milliseconds
-   (scripts/bench-offer-resolution.js models 150–600ms); one still
-   pending after this is a straggler. Without a cap of its own, each
-   lookup was given the whole of the remaining budget, so four
-   stragglers at the head of the list held all four workers until the
+/* How long one offer lookup may hold a worker. Without a cap, each
+   lookup held its worker for the whole remaining budget, so four
+   stragglers at the head of the list kept all four workers to the
    deadline and the candidates behind them were never asked — a search
-   whose other products would have verified answered with none. Capped,
-   a straggler is dropped and its worker moves on to the next candidate.
+   whose other products would have verified answered with none. At the
+   cap the worker moves on to the next candidate.
+
+   The cap was first set on a model (scripts/bench-offer-resolution.js,
+   sellers answering in 150–600ms) and ABORTED the lookup there. Live,
+   the sellers are slower: a recorded production session on 3 October
+   resolved 7–12 products a search with a wave of four lookups taking
+   1.2–2s; on 9 October, 26 of the 28 lookups production made over three
+   searches were still unanswered at 2.5s and were thrown away (the two
+   that did answer carried no usable shop link), and every search showed
+   nothing. The lookup is therefore no longer
+   aborted at the cap, only its worker released: it runs on, bounded by
+   the request's deadline, and an answer in time is used. Which lookups
+   start, and when, is unchanged.
    OPENWEBNINJA_OFFER_LOOKUP_TIMEOUT_MS overrides it. */
 const DEFAULT_LOOKUP_TIMEOUT_MS = 2500;
 const lookupTimeout = () => Number(process.env.OPENWEBNINJA_OFFER_LOOKUP_TIMEOUT_MS) || DEFAULT_LOOKUP_TIMEOUT_MS;
@@ -440,6 +451,23 @@ function toRecord(product) {
   return record;
 }
 
+/* Why a seller's link could not be used, as a kind and never the URL:
+   absent, not a web address, Google's own page, or a Google forwarding
+   link that carries a shop's address inside it. Diagnostics only — the
+   rule for what may be shown is looksDirect's, unchanged. */
+function linkKind(offer) {
+  const raw = text(firstOf(offer, OFFER_URL_KEYS));
+  if (!raw) return 'missing';
+  let url;
+  try { url = new URL(raw); } catch (err) { return 'unparseable'; }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') return 'not-http';
+  if (!GOOGLE_HOST.test(url.hostname)) return 'direct';
+  for (const value of url.searchParams.values()) {
+    if (/^https?:\/\//i.test(value)) return 'google-forwarder';
+  }
+  return 'google';
+}
+
 /* Prefers the offer from the shop the search result named, so the card
    shows the retailer the search actually found, and falls back to the
    first seller that has a usable link. */
@@ -532,9 +560,14 @@ function legTimeout(deadline, reserve) {
    what is left of the request's budget, so a call started near the
    deadline is aborted AT the deadline instead of running its own full
    allowance well past it. */
-async function apiGet(url, params, timeout) {
+async function apiGet(url, params, timeout, options) {
   const key = process.env.OPENWEBNINJA_API_KEY;
   if (!key) throw new Error('OPENWEBNINJA_API_KEY is not set');
+  /* `options.signal` cancels the call (the search no longer needs it);
+     `options.timing` is filled with how long the response headers and
+     then the whole body took — milliseconds, nothing else */
+  const o = options || {};
+  const startedAt = Date.now();
 
   /* Through the shared helper, so a call cut off by the clock fails with
      an error that SAYS it timed out (deadline.js), not the runtime's
@@ -543,28 +576,35 @@ async function apiGet(url, params, timeout) {
      refuses before a connection is opened. */
   const ms = timeout === undefined ? REQUEST_TIMEOUT : timeout;
   const response = await fetchWithin('OpenWeb Ninja', `${url}?${params.toString()}`, {
-    headers: { 'x-api-key': key, Accept: 'application/json' }
+    headers: { 'x-api-key': key, Accept: 'application/json' },
+    signal: o.signal
   }, ms);
+  if (o.timing) o.timing.headersMs = Date.now() - startedAt;
 
   if (!response.ok) {
     const detail = await response.text().catch(() => '');
     throw new Error(`OpenWeb Ninja responded ${response.status}: ${detail.slice(0, 200)}`);
   }
-  return response.json();
+  const body = await response.json();
+  if (o.timing) o.timing.totalMs = Date.now() - startedAt;
+  return body;
 }
 
 /* The sellers for one product. A failure here is not fatal: that one
    product ends up without a link and the gate drops it, rather than the
    whole search failing because one lookup did. */
-async function offersFor(productId, region, timeout) {
+async function offersFor(productId, region, timeout, options) {
   const params = new URLSearchParams({ product_id: String(productId), country: region.country, language: region.language });
   try {
-    const payload = await apiGet(OFFERS_URL, params, timeout);
+    const payload = await apiGet(OFFERS_URL, params, timeout, options);
     const offers = resultsFrom(payload);
     /* when nothing was found, the shape says whether the array is simply
        under a key resultsFrom does not read yet */
     return { offers, failed: false, shape: offers.length ? null : shapeOf(payload) };
   } catch (err) {
+    /* cancelled because the search had what it needed: not a failure of
+       the seller's, and not logged as one */
+    if (cancelled(err)) return { offers: [], failed: true, cancelled: true, shape: null };
     console.warn('Offer lookup failed for product', String(productId), err && err.message);
     return { offers: [], failed: true, timedOut: timedOut(err), shape: null };
   }
@@ -641,7 +681,8 @@ function verifiedCount(records, intent) {
    answered. A failed lookup writes nothing: "we could not reach them"
    is not "they have nothing", and five minutes of confusing the two
    would drop products that are on sale right now. */
-async function lookupFor(record, region, tally, cacheStats, timeout) {
+async function lookupFor(record, region, tally, cacheStats, timeout, options) {
+  const o = options || {};
   const key = cache.offerKey({
     provider: NAME,
     productId: record.sku,
@@ -662,12 +703,21 @@ async function lookupFor(record, region, tally, cacheStats, timeout) {
   }
 
   tally.lookupsMade += 1;
-  const result = await offersFor(record.sku, region, timeout);
+  const timing = {};
+  const result = await offersFor(record.sku, region, timeout, { signal: o.signal, timing });
+  /* settled: from here to the next await, this lookup tallies its own
+     outcome, so the pool must not count it again */
+  if (o.onSettle) o.onSettle();
+  /* cancelled by the search itself: the pool counts it, once, when it
+     cancels — counting it here too would count it after the answer left */
+  if (result.cancelled) return null;
   if (result.failed) {
     tally.lookupsFailed += 1;
     if (result.timedOut) tally.lookupsTimedOut += 1;
     return null;
   }
+  if (o.timings && timing.totalMs !== undefined) o.timings.push(timing);
+  if (o.onAnswer) o.onAnswer();
   if (!result.offers.length) {
     tally.lookupsEmpty += 1;
     /* one sample is enough to see whether parsing is the problem */
@@ -678,6 +728,9 @@ async function lookupFor(record, region, tally, cacheStats, timeout) {
   const commerce = pickOffer(result.offers, record.retailerHint);
   if (!commerce) {
     tally.noDirectLinkInOffers += 1;
+    /* what the sellers' links were instead, by kind — never the URL */
+    const kinds = tally.offerLinkKinds || (tally.offerLinkKinds = {});
+    result.offers.slice(0, 20).forEach((offer) => { const kind = linkKind(offer); kinds[kind] = (kinds[kind] || 0) + 1; });
     await cache.writeOfferMiss(key, 'no-direct-link', cacheStats);
     return null;
   }
@@ -767,33 +820,96 @@ async function resolveMissingOffers(records, wanted, region, stats, intent, cach
      could still leave the page short — `verified + inFlight < wanted`.
      That is what stops a search buying lookups it can have no use for,
      the same guarantee a batch sized to the shortfall gives, without
-     waiting for a whole batch to come back. */
+     waiting for a whole batch to come back.
+
+     A lookup still unanswered at its cap (lookupTimeout) gives up its
+     WORKER, which takes the next candidate — so stragglers at the head
+     of the list cannot hold all four workers and starve the candidates
+     behind them. The lookup itself is not thrown away there: it stays
+     open, bounded by the request's own deadline, and an answer that
+     arrives in time goes through the same gate as any other. Which
+     lookups start, and when, is exactly what it was when the cap aborted
+     them, so this spends no request the capped pool would not have.
+     What it stops doing is discarding an answer the request still had
+     time to use — which, with the source's lookups running past the
+     cap, was every answer, and an empty page on every search.
+
+     Once nothing holds a worker and nothing is worth starting, the
+     search waits for those stragglers only while the page is still
+     short; when it is full, they are cancelled. Each one ends, at the
+     latest, at the deadline. */
+  const cap = lookupTimeout();
+  tally.lookupCapMs = cap;
+  tally.lookupsPastCap = 0;
+  /* past the cap, and still answered before the deadline */
+  tally.lookupsAnsweredLate = 0;
+  tally.resolvedLate = 0;
+  /* stragglers cancelled because the page was full without them */
+  tally.lookupsCancelled = 0;
+  const timings = [];
+
   let inFlight = 0;
   let next = 0;
+  const open = new Set();
+  let finished = false;
 
   const worthStarting = () => next < ceiling && verified + inFlight < wanted && legTimeout(deadline) >= MIN_LOOKUP_WINDOW_MS;
 
   await new Promise((done) => {
-    let settled = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      /* stragglers the page no longer needs: counted here, once, as
+         lookups that did not answer in time, then cancelled */
+      for (const lookup of open) {
+        /* one whose answer is already in has counted itself */
+        if (lookup.settled) continue;
+        tally.lookupsCancelled += 1;
+        tally.lookupsFailed += 1;
+        tally.lookupsTimedOut += 1;
+        lookup.controller.abort();
+      }
+      open.clear();
+      if (next < ceiling && verified < wanted && legTimeout(deadline) < MIN_LOOKUP_WINDOW_MS) tally.budgetExpired = true;
+      done();
+    };
 
     const pump = () => {
+      if (finished) return;
       while (inFlight < OFFER_CONCURRENCY && worthStarting()) {
         const record = pending[next];
         next += 1;
         inFlight += 1;
 
-        /* aborted at its own cap, or AT the deadline if that comes
-           first: a straggler is dropped, not waited for, and its worker
-           takes the next candidate */
-        lookupFor(record, region, tally, cacheTally, Math.min(legTimeout(deadline), lookupTimeout()))
+        const lookup = { controller: new AbortController(), holdsWorker: true, pastCap: false, settled: false };
+        open.add(lookup);
+        /* the worker goes back at the cap, or at the deadline if that
+           comes first; the request runs on to the deadline */
+        const capTimer = setTimeout(() => {
+          if (!lookup.holdsWorker) return;
+          lookup.holdsWorker = false;
+          lookup.pastCap = true;
+          tally.lookupsPastCap += 1;
+          inFlight -= 1;
+          pump();
+        }, Math.min(legTimeout(deadline), cap));
+
+        lookupFor(record, region, tally, cacheTally, legTimeout(deadline), {
+          signal: lookup.controller.signal,
+          timings,
+          onSettle: () => { lookup.settled = true; },
+          onAnswer: () => { if (lookup.pastCap && !finished) tally.lookupsAnsweredLate += 1; }
+        })
           .then((commerce) => {
-            if (!commerce) return;
+            /* the search has already answered without it */
+            if (finished || !commerce) return;
             /* all three together, from the one offer they came from */
             record.price = commerce.price;
             record.currency = commerce.currency;
             record.retailer = commerce.retailer;
             record.productUrl = commerce.productUrl;
             tally.resolvedFromOffers += 1;
+            if (lookup.pastCap) tally.resolvedLate += 1;
             /* asked again through the gate: a link that cannot be shown
                has not filled a slot, so the search keeps going for one
                that can */
@@ -802,20 +918,40 @@ async function resolveMissingOffers(records, wanted, region, stats, intent, cach
           /* lookupFor reports its own failures; nothing here may throw
              and leave the pool with a worker it never gets back */
           .catch(() => {})
-          .then(() => { inFlight -= 1; pump(); });
+          .then(() => {
+            clearTimeout(capTimer);
+            open.delete(lookup);
+            if (lookup.holdsWorker) { lookup.holdsWorker = false; inFlight -= 1; }
+            pump();
+          });
       }
 
-      /* nothing running and nothing worth starting: done. The budget is
-         named as the reason only when candidates were actually left. */
-      if (inFlight === 0 && !settled) {
-        settled = true;
-        if (next < ceiling && verified < wanted && legTimeout(deadline) < MIN_LOOKUP_WINDOW_MS) tally.budgetExpired = true;
-        done();
-      }
+      /* nothing holding a worker and nothing worth starting: done — unless
+         stragglers are still out and the page is still short, in which
+         case each one settling comes back here */
+      if (inFlight === 0 && (open.size === 0 || verified >= wanted)) finish();
     };
 
     pump();
   });
+
+  /* how long the lookups that answered took: to the response headers,
+     and to the whole body — milliseconds, nothing else */
+  if (timings.length) {
+    const sorted = (key) => timings.map((t) => t[key]).filter((v) => typeof v === 'number').sort((a, b) => a - b);
+    const median = (xs) => (xs.length ? xs[Math.floor((xs.length - 1) / 2)] : null);
+    const headers = sorted('headersMs');
+    const total = sorted('totalMs');
+    tally.lookupTiming = {
+      answered: timings.length,
+      headersMsMedian: median(headers),
+      totalMsMin: total[0],
+      totalMsMedian: median(total),
+      totalMsMax: total[total.length - 1]
+    };
+  } else {
+    tally.lookupTiming = { answered: 0 };
+  }
 
   tally.verified = verified;
   tally.targetMet = verified >= wanted;
@@ -858,7 +994,8 @@ async function search(intent, options) {
      reserve is the window the offer phase needs to turn records into
      products that can actually be shown. */
   const searchStartedAt = Date.now();
-  const payload = await apiGet(SEARCH_URL, params, legTimeout(deadline, OFFER_RESERVE_MS));
+  const searchTiming = {};
+  const payload = await apiGet(SEARCH_URL, params, legTimeout(deadline, OFFER_RESERVE_MS), { timing: searchTiming });
   const searchMs = Date.now() - searchStartedAt;
   const products = resultsFrom(payload);
 
@@ -869,6 +1006,8 @@ async function search(intent, options) {
     returnedByProvider: products.length,
     searchShape: products.length ? null : shapeOf(payload),
     searchMs,
+    /* to the response headers, and to the whole body */
+    searchTiming,
     cache: cacheStats
   };
 
@@ -883,6 +1022,14 @@ async function search(intent, options) {
 
   diagnostics.normalized = records.length;
   diagnostics.withInlineLink = records.filter((r) => r.productUrl).length;
+  /* records the search priced but gave no shop link for: their price is
+     not used — a price and a link come from one offer or not at all —
+     so each of them still needs a lookup, like a record with neither */
+  diagnostics.withInlinePriceNoLink = products.filter((product) => {
+    if (inlineCommerce(product)) return false;
+    const offer = offerFrom(product) || product;
+    return toPrice(firstOf(offer, OFFER_PRICE_KEYS)) !== null || toPrice(firstOf(product, OFFER_PRICE_KEYS)) !== null;
+  }).length;
 
   /* the search endpoint returns Google's product view, so most records
      arrive without a retailer link; this fetches the sellers for them.

@@ -311,8 +311,13 @@ async function main() {
     assert.ok(state.offerCalls >= 4, `lookups were started (${state.offerCalls})`);
     assert.strictEqual(state.aborted, state.offerCalls, 'every one of them was aborted');
     assert.ok(elapsed < 2000, `the answer did not wait for them: ${elapsed}ms`);
-    assert.strictEqual(res.statusCode, 200, 'nothing resolved, but the search itself worked');
-    assert.strictEqual(res.body.products.length, 0, 'and nothing unverified was shown');
+    /* nothing resolved because no seller answered in time: said as that,
+       not as an empty page that reads like "nothing matched" */
+    assert.strictEqual(res.statusCode, 502, JSON.stringify(res.body));
+    assert.strictEqual(res.body.reason, 'timeout');
+    assert.strictEqual(res.body.stage, 'offers');
+    assert.strictEqual(res.body.products, undefined, 'and nothing unverified was shown');
+    assert.strictEqual(res.body.diagnostics.offers.lookupsTimedOut, state.offerCalls, 'the tally the 200 carried still says how far it got');
   });
 
   await testAsync('the answer arrives near the deadline, not near the provider timeout', async () => {
@@ -342,8 +347,10 @@ async function main() {
     const { res } = await post({ intent: INTENT, limit: 6 });
 
     assert.strictEqual(state.offerCalls, 0, 'no request spent on a lookup that could only be aborted');
-    assert.strictEqual(res.statusCode, 200, 'the search itself still answered');
-    assert.strictEqual(res.body.diagnostics.offers.budgetExpired, true, 'and the tally says why the page is thin');
+    /* the source answered, and there was no time left to confirm a price */
+    assert.strictEqual(res.statusCode, 502, JSON.stringify(res.body));
+    assert.deepStrictEqual([res.body.reason, res.body.stage], ['timeout', 'offers']);
+    assert.strictEqual(res.body.diagnostics.offers.budgetExpired, true, 'and the tally says why the page is empty');
   });
 
   console.log('\nnothing is invented when the source fails');
@@ -494,16 +501,21 @@ async function main() {
     assert.ok(elapsed < 1500, `answered in ${elapsed}ms, before the deadline`);
   });
 
-  await testAsync('a lookup is never given more than its own cap, whatever the deadline leaves', async () => {
-    process.env.FYND_REQUEST_BUDGET_MS = '5000';
-    installFetch({
-      search: () => ({ answer: okResponse(envelope([needsLookup(1)])), delay: 5 }),
-      offers: () => ({ answer: HANG })
+  await testAsync('a straggler gives up its worker at the cap, and itself ends at the deadline, not the provider\'s 15s', async () => {
+    process.env.FYND_REQUEST_BUDGET_MS = '1200';
+    const state = installFetch({
+      search: () => ({ answer: okResponse(envelope([needsLookup(0), needsLookup(1)])), delay: 5 }),
+      offers: (i) => (i === 0 ? { answer: HANG } : { answer: okResponse(offersPayload([sellerOffer(i)])), delay: 5 })
     });
-    const { res, elapsed } = await withLookupCap(300, () => post({ intent: INTENT, limit: 1 }));
+    const { res, elapsed } = await withLookupCap(200, () => post({ intent: INTENT, limit: 2 }));
     assert.strictEqual(res.statusCode, 200);
-    assert.strictEqual(res.body.products.length, 0, 'nothing resolved, nothing shown');
-    assert.ok(elapsed < 2500, `the straggler was dropped at its cap, not held for the 5s budget (${elapsed}ms)`);
+    assert.strictEqual(res.body.products.length, 1, 'the one that answered is shown');
+    const offers = res.body.diagnostics.offers;
+    assert.deepStrictEqual([offers.lookupsPastCap, offers.lookupsTimedOut, offers.lookupsAnsweredLate], [1, 1, 0]);
+    /* the page was short, so the straggler was waited for — to the
+       request's own deadline, and no further */
+    assert.ok(elapsed >= 1000 && elapsed < 3000, `held to the deadline, not to 15s (${elapsed}ms)`);
+    assert.strictEqual(state.aborted, 1, 'and aborted there');
   });
 
   await testAsync('a product whose lookup timed out or carried no price stays rejected', async () => {
@@ -525,6 +537,113 @@ async function main() {
     assert.strictEqual(res.body.products.length, 2, 'only the two with a verified price and link');
     assert.strictEqual(res.body.rejected['missing-price'], 4, `${JSON.stringify(res.body.rejected)}`);
     res.body.products.forEach((p) => assert.ok(typeof p.price === 'number' && p.price > 0, 'no product without a real price'));
+  });
+
+  console.log('\na lookup slower than its cap is still a lookup (the live shape: every seller past 2.5s)');
+
+  await testAsync('every lookup slower than its cap but inside the deadline: used, not thrown away, at no extra request', async () => {
+    process.env.FYND_REQUEST_BUDGET_MS = '1500';
+    const six = Array.from({ length: 6 }, (_, i) => needsLookup(i));
+    const state = installFetch({
+      search: () => ({ answer: okResponse(envelope(six)), delay: 5 }),
+      /* every seller answers, slower than the cap */
+      offers: (i) => ({ answer: okResponse(offersPayload([sellerOffer(i)])), delay: 450 })
+    });
+    const { res, elapsed } = await withLookupCap(200, () => post({ intent: INTENT, limit: 6 }));
+    assert.strictEqual(res.statusCode, 200, JSON.stringify(res.body));
+    /* with the cap aborting them, this was the production page: nothing */
+    assert.strictEqual(res.body.products.length, 6, `the late answers are shown: ${JSON.stringify(res.body.diagnostics.offers)}`);
+    const offers = res.body.diagnostics.offers;
+    /* the same lookups the capped pool started — six, at the same moments */
+    assert.strictEqual(state.offerCalls, 6, 'no request the capped pool would not have made');
+    assert.deepStrictEqual([offers.lookupsPastCap, offers.lookupsAnsweredLate, offers.resolvedLate, offers.lookupsTimedOut], [6, 6, 6, 0]);
+    assert.strictEqual(offers.lookupTiming.answered, 6);
+    assert.ok(offers.lookupTiming.totalMsMin >= 400, `each lookup's own time is measured: ${JSON.stringify(offers.lookupTiming)}`);
+    assert.ok(elapsed < 1500, `inside the deadline (${elapsed}ms)`);
+    res.body.products.forEach((p) => {
+      assert.strictEqual(p.price, 70, 'the seller\'s own price');
+      assert.ok(/^https:\/\/www\.arket\.com\/en\/product\/knit-cardigan-\d+$/.test(p.productUrl), p.productUrl);
+      assert.ok(/^https:\/\/img\.example-cdn\.com\//.test(p.imageUrl), 'the product\'s own photo');
+    });
+  });
+
+  await testAsync('a late answer without a price is refused exactly as an early one', async () => {
+    process.env.FYND_REQUEST_BUDGET_MS = '1500';
+    const four = Array.from({ length: 4 }, (_, i) => needsLookup(i));
+    installFetch({
+      search: () => ({ answer: okResponse(envelope(four)), delay: 5 }),
+      offers: (i) => ({ answer: okResponse(offersPayload([Object.assign(sellerOffer(i), { price: undefined })])), delay: 400 })
+    });
+    const { res } = await withLookupCap(200, () => post({ intent: INTENT, limit: 4 }));
+    /* the sellers answered, in time, with nothing that can be shown: an honest empty page */
+    assert.strictEqual(res.statusCode, 200, JSON.stringify(res.body));
+    assert.strictEqual(res.body.products.length, 0);
+    assert.strictEqual(res.body.rejected['missing-price'], 4);
+  });
+
+  await testAsync('fast, late and never: the fast and the late are shown, the never ends at the deadline', async () => {
+    process.env.FYND_REQUEST_BUDGET_MS = '1200';
+    const six = Array.from({ length: 6 }, (_, i) => needsLookup(i));
+    const state = installFetch({
+      search: () => ({ answer: okResponse(envelope(six)), delay: 5 }),
+      offers: (i) => {
+        if (i < 2) return { answer: okResponse(offersPayload([sellerOffer(i)])), delay: 5 };
+        if (i < 4) return { answer: okResponse(offersPayload([sellerOffer(i)])), delay: 450 };
+        return { answer: HANG };
+      }
+    });
+    const { res, elapsed } = await withLookupCap(200, () => post({ intent: INTENT, limit: 6 }));
+    assert.strictEqual(res.statusCode, 200, 'a partial page is a page');
+    assert.strictEqual(res.body.products.length, 4);
+    const offers = res.body.diagnostics.offers;
+    assert.deepStrictEqual([offers.resolvedFromOffers, offers.resolvedLate, offers.lookupsTimedOut], [4, 2, 2]);
+    assert.strictEqual(state.aborted, 2, 'the two that never answered were aborted');
+    assert.ok(elapsed >= 1000 && elapsed < 3000, `ended at the deadline (${elapsed}ms)`);
+  });
+
+  await testAsync('once the page is full, stragglers are cancelled and the search answers then', async () => {
+    process.env.FYND_REQUEST_BUDGET_MS = '3000';
+    const four = Array.from({ length: 4 }, (_, i) => needsLookup(i));
+    const state = installFetch({
+      search: () => ({ answer: okResponse(envelope(four)), delay: 5 }),
+      offers: (i) => (i < 2 ? { answer: HANG } : { answer: okResponse(offersPayload([sellerOffer(i)])), delay: 5 })
+    });
+    const { res, elapsed } = await withLookupCap(200, () => post({ intent: INTENT, limit: 2 }));
+    assert.strictEqual(res.statusCode, 200);
+    assert.strictEqual(res.body.products.length, 2);
+    assert.strictEqual(res.body.diagnostics.offers.lookupsCancelled, 2);
+    assert.strictEqual(state.aborted, 2);
+    assert.ok(elapsed < 1000, `answered when full, not at the 3s deadline (${elapsed}ms)`);
+  });
+
+  await testAsync('no seller answers before the deadline: a 502 that says so, with the tally, and not charged', async () => {
+    process.env.FYND_REQUEST_BUDGET_MS = '700';
+    const six = Array.from({ length: 6 }, (_, i) => needsLookup(i));
+    installFetch({
+      search: () => ({ answer: okResponse(envelope(six)), delay: 5 }),
+      offers: () => ({ answer: HANG })
+    });
+    const before = await withLookupCap(200, () => post({ intent: INTENT, limit: 6 }));
+    assert.strictEqual(before.res.statusCode, 502, JSON.stringify(before.res.body));
+    assert.deepStrictEqual(
+      [before.res.body.error, before.res.body.reason, before.res.body.kind, before.res.body.stage, before.res.body.source],
+      ['The product source did not confirm any prices in time.', 'timeout', 'timeout', 'offers', 'openwebninja']);
+    assert.strictEqual(before.res.body.products, undefined, 'no product, verified or not');
+    assert.strictEqual(before.res.body.usage, undefined, 'nothing charged');
+    assert.strictEqual(before.res.body.returned, 6);
+    assert.strictEqual(before.res.body.rejected['missing-price'], 6);
+    const offers = before.res.body.diagnostics.offers;
+    assert.strictEqual(offers.resolvedFromOffers, 0);
+    assert.strictEqual(offers.lookupsTimedOut, offers.lookupsMade);
+    /* the same shopper's next search is their first charged one */
+    cache.reset();
+    installFetch({
+      search: () => ({ answer: okResponse(envelope([withInlineLink(1)])), delay: 5 }),
+      offers: () => ({ answer: okResponse(offersPayload([])), delay: 5 })
+    });
+    const after = await post({ intent: INTENT, limit: 1 });
+    assert.strictEqual(after.res.statusCode, 200);
+    assert.strictEqual(after.res.body.usage.used, 1, `the 502 was not counted: ${JSON.stringify(after.res.body.usage)}`);
   });
 
   console.log('\na total failure is still a failure, and says which kind');
