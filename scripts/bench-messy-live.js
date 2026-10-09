@@ -677,7 +677,9 @@ async function run(options) {
     store: opts.store === 'env' ? 'the configured store' : 'memory',
     dataset: { file: 'scripts/bench-messy-queries.js', total: CASES.length, messy, plain: CASES.length - messy, run: cases.length },
     retries: { max: retries, delayMs: retryDelayMs, kinds: [...TRANSIENT] },
-    checkouts: specs.map((s) => ({ name: s.name, root: s.root, server: s.server || null, config: s.config || null })),
+    /* a server runs with its own environment, which this process cannot
+       see: its configuration is not reported as this process's */
+    checkouts: specs.map((s) => ({ name: s.name, root: s.root, server: s.server || null, config: s.server ? null : s.config || null })),
     cases: cases.map((c) => c.id),
     byRoot,
     summary,
@@ -819,7 +821,7 @@ function summaryMarkdown(out) {
   lines.push(`- run: ${out.startedAt} → ${out.finishedAt}`);
   lines.push(`- mode: ${out.mode}; reader: ${out.reader}; store: ${out.store}`);
   lines.push(`- dataset: ${out.dataset.file} — ${out.dataset.messy} messy + ${out.dataset.plain} plain; ${out.dataset.run} run`);
-  out.checkouts.forEach((c) => lines.push(`- ${c.name}: ${c.server ? `${c.server} (page code from ${c.root})` : c.root}${c.config ? ` — provider ${c.config.provider} ${c.config.providerConfigured ? 'configured' : 'NOT configured'}, interpreter ${c.config.interpreterConfigured ? 'configured' : 'not configured'}, ${c.config.store}` : ''}`));
+  out.checkouts.forEach((c) => lines.push(`- ${c.name}: ${c.server ? `${c.server} (page code from ${c.root}) — the server's own environment, not visible from here` : c.root}${c.config ? ` — provider ${c.config.provider} ${c.config.providerConfigured ? 'configured' : 'NOT configured'}, interpreter ${c.config.interpreterConfigured ? 'configured' : 'not configured'}, ${c.config.store}` : ''}`));
   lines.push(`- retries: up to ${out.retries.max} per request, for ${out.retries.kinds.join(', ')}`);
   lines.push('', '## Summary', '', `| | ${names.join(' | ')} |`, `|---|${names.map(() => '---').join('|')}|`);
   for (const [label, f] of LINES) lines.push(`| ${label.trim()} | ${names.map((n) => cell(f(out.summary[n]))).join(' | ')} |`);

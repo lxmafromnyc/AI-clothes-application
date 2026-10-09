@@ -346,8 +346,12 @@ async function main() {
       if (saved.own === undefined) delete process.env.OPENWEBNINJA_API_KEY; else process.env.OPENWEBNINJA_API_KEY = saved.own;
     }
     const results = JSON.parse(fs.readFileSync(path.join(out, 'results.json'), 'utf8'));
+    const summaryText = fs.readFileSync(path.join(out, 'summary.md'), 'utf8');
     fs.rmSync(dir, { recursive: true, force: true });
     assert.strictEqual(results.mode, 'servers');
+    /* the server's environment is its own: this process's is not reported as the server's */
+    assert.strictEqual(results.checkouts[0].config, null);
+    assert.ok(/the server's own environment, not visible from here/.test(summaryText));
     for (const row of results.results) {
       const o = row.local;
       assert.ok(!o.crashed, `${row.id}: ${o.crashed}`);
