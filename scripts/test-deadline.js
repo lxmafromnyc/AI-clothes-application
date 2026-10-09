@@ -718,7 +718,7 @@ async function main() {
     const seen = [];
     global.fetch = (url, options) => {
       const u = new URL(String(url));
-      seen.push({ path: u.pathname, params: Object.fromEntries(u.searchParams.entries()), headers: Object.assign({}, options && options.headers), at: Date.now() });
+      seen.push({ host: u.hostname, method: (options && options.method) || 'GET', path: u.pathname, params: Object.fromEntries(u.searchParams.entries()), body: (options && options.body) || null, headers: Object.assign({}, options && options.headers), at: Date.now() });
       return plan(u, options);
     };
     return seen;
@@ -832,6 +832,113 @@ async function main() {
       }
     } finally {
       console.error = error;
+    }
+  });
+
+  /* OpenWeb Ninja out of searches, and Serper behind it: the route's
+     own fallback (searchWithFallback through providerChain), answered
+     here by the real Serper adapter against a stand-in for its host */
+  const OWN_SPENT = () => Promise.resolve({ ok: false, status: 429, json: async () => ({}), text: async () => '{"message":"Too many requests"}' });
+  const serperShopping = {
+    shopping: [1, 2, 3].map((n) => ({
+      title: `Black Oversized Knit Sweater ${n}`,
+      price: `$${55 + n}.00`,
+      link: `https://www.arket.com/en/product/knit-${n}`,
+      imageUrl: `https://img.arket-cdn.com/knit-${n}.jpg`,
+      source: 'Arket',
+      productId: `s${n}`
+    }))
+  };
+  const withSerper = (serper) => (u, options) => (u.hostname === 'google.serper.dev' ? serper(u, options) : OWN_SPENT());
+  /* the requests both made, in a stable order: Serper may start its
+     organic search beside the shopping one */
+  const outbound = (seen) => seen.map((c) => JSON.stringify([c.host, c.method, c.path, c.params, c.body, c.headers])).sort();
+
+  await testAsync('when OpenWeb Ninja is out of searches, the probe and /api/search fall back to Serper identically, and the probe shows the Serper request', async () => {
+    const error = console.error;
+    const warn = console.warn;
+    console.error = () => {};
+    console.warn = () => {};
+    try {
+      await withEnv({ SERPER_API_KEY: 'serper-test-key' }, async () => {
+        const serper = (u) => Promise.resolve(okResponse(u.pathname === '/shopping' ? serperShopping : { organic: [] }));
+        cache.reset();
+        const viaRoute = recorder(withSerper(serper));
+        const res = await routeAnswer({ intent: INTENT, limit: 12 });
+        cache.reset();
+        const viaProbe = recorder(withSerper(serper));
+        const probed = await probeModule.probe({ body: { intent: INTENT, limit: 12 }, photos: false });
+        assert.strictEqual(res.statusCode, 200, JSON.stringify(res.body));
+        assert.strictEqual(probed.status, 200);
+        assert.strictEqual(res.body.source, 'serper');
+        assert.strictEqual(res.body.diagnostics.fellBackFrom.provider, 'openwebninja');
+        assert.deepStrictEqual(outbound(viaProbe), outbound(viaRoute), 'a different request somewhere in the chain');
+        assert.deepStrictEqual(viaRoute.map((c) => c.host).filter((h, i, all) => all.indexOf(h) === i), ['api.openwebninja.com', 'google.serper.dev']);
+        assert.ok(res.body.products.length > 0, 'the fallback verified nothing, so nothing was compared');
+        assert.deepStrictEqual(probed.answer.products, res.body.products);
+        assert.deepStrictEqual(probed.answer.diagnostics.fellBackFrom, res.body.diagnostics.fellBackFrom);
+        /* and the probe now shows what the route did: both sources, each with its own key, the refusal by kind */
+        assert.deepStrictEqual(probed.calls.map((c) => c.source).filter((h, i, all) => all.indexOf(h) === i), ['openwebninja', 'serper']);
+        assert.ok(probed.calls.every((c) => c.keyIsThisEnvironments), JSON.stringify(probed.calls.map((c) => [c.source, c.keyIsThisEnvironments])));
+        const shopping = probed.calls.find((c) => c.source === 'serper' && c.path === '/shopping');
+        assert.ok(shopping && shopping.method === 'POST' && shopping.params.q, 'the Serper search is missing from the probe, or without its query');
+        assert.deepStrictEqual(probed.fellBackFrom, { provider: 'openwebninja', kind: 'rate-limited' });
+        assert.ok(!JSON.stringify(probed.calls).includes('serper-test-key') && !JSON.stringify(probed.calls).includes('test-key-never-used'), 'a key reached the probe\'s record');
+      });
+    } finally {
+      console.error = error;
+      console.warn = warn;
+    }
+  });
+
+  await testAsync('when the fallback is spent too, the probe and /api/search answer the same 502 after the same requests', async () => {
+    const error = console.error;
+    const warn = console.warn;
+    console.error = () => {};
+    console.warn = () => {};
+    try {
+      await withEnv({ SERPER_API_KEY: 'serper-test-key' }, async () => {
+        const spent = () => Promise.resolve({ ok: false, status: 400, json: async () => ({}), text: async () => '{"message":"Not enough credits","statusCode":400}' });
+        cache.reset();
+        const viaRoute = recorder(withSerper(spent));
+        const res = await routeAnswer({ intent: INTENT, limit: 12 });
+        cache.reset();
+        const viaProbe = recorder(withSerper(spent));
+        const probed = await probeModule.probe({ body: { intent: INTENT, limit: 12 }, photos: false });
+        assert.strictEqual(res.statusCode, 502);
+        assert.strictEqual(probed.status, 502);
+        assert.deepStrictEqual(probed.answer, res.body);
+        assert.strictEqual(res.body.kind, 'credits-exhausted', 'the answer is the fallback\'s own failure');
+        assert.deepStrictEqual(outbound(viaProbe), outbound(viaRoute));
+        /* OpenWeb Ninja asked once; Serper's shopping search (and the organic one it starts beside it) once each */
+        assert.strictEqual(viaRoute.filter((c) => c.host === 'api.openwebninja.com' && /\/search$/.test(c.path)).length, 1);
+        assert.strictEqual(viaRoute.filter((c) => c.host === 'api.openwebninja.com').length, 1, 'a refused search was followed by offer lookups');
+        assert.deepStrictEqual(viaRoute.filter((c) => c.host === 'google.serper.dev').map((c) => c.path).sort(), ['/search', '/shopping']);
+        assert.deepStrictEqual(probed.fellBackFrom, { provider: 'openwebninja', kind: 'rate-limited' });
+      });
+    } finally {
+      console.error = error;
+      console.warn = warn;
+    }
+  });
+
+  await testAsync('with no product source configured, /api/search answers 503 and the probe refuses to run; neither asks a provider', async () => {
+    const warn = console.warn;
+    console.warn = () => {};
+    try {
+      await withEnv({ OPENWEBNINJA_API_KEY: undefined, SERPER_API_KEY: 'serper-test-key' }, async () => {
+        cache.reset();
+        const viaRoute = recorder(answering);
+        const res = await routeAnswer({ intent: INTENT, limit: 12 });
+        assert.strictEqual(res.statusCode, 503);
+        assert.deepStrictEqual(res.body, { error: 'No product source is configured.', source: null });
+        const viaProbe = recorder(answering);
+        await assert.rejects(() => probeModule.probe({ body: { intent: INTENT, limit: 12 }, photos: false }), /OPENWEBNINJA_API_KEY is not set/);
+        /* a configured fallback is not a configured source: nothing was asked */
+        assert.strictEqual(viaRoute.length + viaProbe.length, 0);
+      });
+    } finally {
+      console.warn = warn;
     }
   });
 

@@ -451,13 +451,18 @@ region is sent as the two-letter codes the API takes (` US ` → `us`, `en-US` �
 `runSearch()` in `api/search.js`, everything the route does except check and
 charge the shopper's allowance — on the body the page would post for the
 words given (or a body copied from the browser with `--body`), under the
-route's own deadline. It prints every request that reaches OpenWeb Ninja: path,
-parameters, header names (and whether the key sent is this environment's, as a
-yes or no), status, time, and whether the clock cut it off; then the answer
-`/api/search` would give, a failure classified exactly as the route classifies
-it. `scripts/test-deadline.js` holds that equivalence: for the same body and
+route's own deadline. It prints every request that reaches OpenWeb Ninja — and
+Serper, when OpenWeb Ninja says its searches are spent and the route falls back
+to it: source, path, parameters, header names (and whether the key sent is this
+environment's, as a yes or no), status, time, and whether the clock cut it off;
+then the answer `/api/search` would give, a failure classified exactly as the
+route classifies it, and which source refused when it fell back.
+`scripts/test-deadline.js` holds that equivalence: for the same body and
 environment the probe and the route send identical requests, are cut off at the
-same moment, and answer every provider failure identically. So a probe that
+same moment, answer every provider failure identically, fall back to Serper
+with the same requests and answer, give the same 502 when the fallback is spent
+too, and — with no OpenWeb Ninja key — neither asks anything (the route answers
+503, the probe refuses to run). So a probe that
 works with an environment means `/api/search` works with it; when one works and
 the other fails, the two processes are not reading the same environment.
 
@@ -616,9 +621,14 @@ node scripts/bench-messy-live.js --servers after=http://localhost:3005
 ```
 
 Each run writes `results.json` (every request: HTTP status, latencies, the
-failure's kind if any, the phrase asked, provider searches and offer lookups,
-the products shown and how each was graded) and `summary.md` to
-`bench-results/` (ignored by git). Each request is graded by the same rules
+failure's kind if any, the phrase asked, provider searches by source and offer
+lookups, whether the route fell back, the products shown and how each was
+graded) and `summary.md` to `bench-results/` (ignored by git). The summary
+counts every dataset request as attempted, completed (200), failed, rate-limited
+or skipped (left out by `--only`, `--set` or `--types`); says how each metric is
+measured — relevance is graded automatically from patterns written before any
+run, and no manual relevance judgment is made; and picks representative
+successes and failures, with each kind of failure counted by kind of request. Each request is graded by the same rules
 whichever checkout answered it: interpretation (target, exclusions, stated
 constraints kept, nothing invented), relevant@4 and @8, strong matches and
 clearly wrong in the top 8, hard-constraint violations (budget, stated colour
@@ -640,6 +650,8 @@ not, which store), never values. The run exits 2 when no search succeeded on a
 checkout — the record then measures interpretation only, and its summary says
 so in its first line — 1 when the judged checkout crashed, showed something
 ruled out or made more than one provider search per request, and 0 otherwise.
+A request the route answered from Serper after OpenWeb Ninja refused for want of
+searches is counted as a fallback, not as a second search of ours.
 `scripts/diagnose-search.js --server` says whether the running server answered
 as the diagnostic's own process does with the same environment, and exits 1
 when either did not answer 200.

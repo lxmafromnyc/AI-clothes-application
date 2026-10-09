@@ -160,6 +160,34 @@ async function main() {
     assert.strictEqual(bench.grade(caseFor('blak hoddie'), { asked: 'black hoodie', intent: { colors: ['Black'] }, products: [] }).noneCorrect, null);
   });
 
+  await test('every request is counted as attempted, completed, failed, rate-limited or skipped; a fallback is not a second search of ours', () => {
+    const c = bench.CASES.find((x) => x.id === 'P001');
+    const obs = (over) => Object.assign({ status: 200, failure: null, asked: 'red dress', intent: { garments: ['dress'], colors: ['Red'], keywords: ['dress'] }, products: [{ name: 'Red Midi Dress', price: 60, retailer: 'Arket' }], verified: 1, providerSearches: 1, offerLookups: 0, interpreter: 'local', interpretMs: 1, searchMs: 1, totalMs: 2, attempts: 1, fellBack: false }, over);
+    /* each row its own request, as in a run: the same red-dress case under five ids */
+    const row = (n, observed, error) => {
+      const one = Object.assign({}, c, { id: `T00${n}` });
+      return { case: one, observed, error: error || null, graded: observed && !observed.crashed ? bench.grade(one, observed) : null };
+    };
+    const rows = [
+      row(1, obs({})),
+      /* answered by the fallback after the configured source refused: three searches, none of them a second search of ours */
+      row(2, obs({ providerSearches: 3, fellBack: true })),
+      row(3, obs({ status: 502, failure: { class: 'provider: rate-limited', kind: 'rate-limited' }, products: [], verified: 0 })),
+      row(4, obs({ status: 503, failure: { class: 'environment: no product source configured' }, products: [], verified: 0, providerSearches: 0 })),
+      row(5, null, 'no answer in 120000ms')
+    ];
+    const s = bench.summarise(rows, { skipped: 102 });
+    assert.deepStrictEqual([s.attempted, s.completed, s.failed, s.rateLimited, s.skipped], [5, 2, 3, 1, 102]);
+    assert.strictEqual(s.fellBack, 1);
+    assert.strictEqual(s.providerSearchesMax, 1, 'the fallback\'s searches were counted against the one-search rule');
+    /* the record says what to look at, by the grading rules alone */
+    const picked = bench.representative(rows);
+    assert.deepStrictEqual(picked.successes.map((x) => x.row.observed.status), [200, 200]);
+    assert.deepStrictEqual(picked.failures.map((x) => x.why), ['provider: rate-limited', 'environment: no product source configured', 'no answer: no answer in 120000ms']);
+    const patterns = bench.failurePatterns(rows);
+    assert.deepStrictEqual(patterns.map((p) => [p.pattern, p.n]).sort(), [['environment: no product source configured', 1], ['no answer from the checkout', 1], ['provider: rate-limited', 1]]);
+  });
+
   console.log('\nthe run, end to end, with stand-ins for the two services');
 
   const repo = path.join(__dirname, '..');
@@ -258,6 +286,31 @@ async function main() {
     /* and nothing secret was written */
     assert.ok(!/sk-stand-in|stand-in-key/.test(JSON.stringify(results)), 'a key reached the record');
     assert.ok(/## Every request — one/.test(summary) && /\| M005 \|/.test(summary), 'the summary has no per-request table');
+    assert.ok(/### How this is measured/.test(summary) && /No manual relevance judgment has been made/.test(summary), 'the summary does not say how relevance was graded');
+    assert.ok(/## Representative results — one/.test(summary) && /### Failure patterns — one/.test(summary), 'no representative results or failure patterns');
+    for (const name of ['one', 'two']) {
+      assert.deepStrictEqual([results.summary[name].attempted, results.summary[name].completed, results.summary[name].failed, results.summary[name].skipped], [3, 3, 0, bench.CASES.length - 3]);
+    }
+  });
+
+  await test('when OpenWeb Ninja is out of searches, the route\'s fallback is recorded as one, by source, and does not fail the run', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fynd-bench-fallback-'));
+    const spent = path.join(dir, 'spent.js');
+    /* OpenWeb Ninja refuses every search; Serper (a stand-in for its host) answers with shop-linked listings */
+    fs.writeFileSync(spent, `${STAND_IN}\nprocess.env.SERPER_API_KEY = 'serper-stand-in';\nconst inner = global.fetch;\nglobal.fetch = async (input, init) => {\n  const u = new URL(String(input && input.url ? input.url : input));\n  if (u.hostname === 'api.openwebninja.com') return { ok: false, status: 429, json: async () => ({}), text: async () => '{\"message\":\"Too many requests\"}' };\n  if (u.hostname === 'google.serper.dev') {\n    const q = JSON.parse(init.body).q || 'thing';\n    const body = u.pathname === '/shopping' ? { shopping: [1, 2, 3].map((n) => ({ title: 'Red ' + q + ' ' + n, price: '$' + (50 + n) + '.00', link: 'https://www.arket.com/en/product/' + n, imageUrl: 'https://img.arket-cdn.com/' + n + '.jpg', source: 'Arket' })) } : { organic: [] };\n    return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };\n  }\n  return inner(input, init);\n};\n`);
+    const out = path.join(dir, 'out');
+    const run = runBench(out, ['-r', spent, path.join(__dirname, 'bench-messy-live.js'), '--roots', `here=${repo}`, '--only', 'P001', '--retry-delay-ms', '10', '--out-dir', out], {}, [0]);
+    fs.rmSync(dir, { recursive: true, force: true });
+    const o = run.results.results[0].here;
+    assert.strictEqual(o.status, 200, JSON.stringify(o.failure));
+    assert.strictEqual(o.fellBack, true);
+    assert.strictEqual(o.attempts, 1, 'a request the fallback answered was retried');
+    assert.strictEqual(o.searchesBySource['api.openwebninja.com'], 1);
+    assert.ok(o.searchesBySource['google.serper.dev'] >= 1, JSON.stringify(o.searchesBySource));
+    assert.ok(o.verified > 0);
+    assert.strictEqual(run.results.summary.here.fellBack, 1);
+    assert.strictEqual(run.status, 0, 'a fallback after a refusal failed the run as a second search of ours');
+    assert.ok(!/serper-stand-in/.test(JSON.stringify(run.results)) && !/serper-stand-in/.test(run.summary), 'a key reached the record');
   });
 
   await test('against a running server: the page\'s two requests go over HTTP, and its answer is recorded as it came', async () => {

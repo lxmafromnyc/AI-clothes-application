@@ -18,8 +18,9 @@
 
    It runs /api/search's own search (runSearch in api/search.js) on the
    body the page would post, under the route's own deadline, and prints:
-     1. every request sent to OpenWeb Ninja: path, parameters, header
-        names, status, time, and whether the clock aborted it
+     1. every request sent to OpenWeb Ninja — and to Serper, when the
+        route falls back to it: source, path, parameters, header names,
+        status, time, and whether the clock aborted it
      2. the response envelope's top-level keys, every key on the first
         product and on its offer, and the record the adapter maps out
      3. what /api/search would answer: the status, and the verified
@@ -219,15 +220,40 @@ async function reportPhotos(results, site) {
    headers (whether the key sent is the one this environment holds, as a
    yes or no), status, time, and whether the clock aborted it. The raw
    /search envelope is read from that same response, so there is still
-   one provider search, not two. */
+   one provider search, not two.
+
+   The route falls back to Serper when OpenWeb Ninja says its allowance
+   is spent (searchWithFallback, through providerChain). The probe runs
+   that same chain, so it watches Serper's host too: a fallback is then
+   one more request in the list, under its own source, instead of a
+   search the route made and the probe never showed. */
 
 const { runSearch, shapeIntent, requestBudget } = require('../api/search');
 const { getProvider, failureKind } = require('../api/_providers/product-source');
 const { envReport } = require('../api/_env-report');
 
-const PROVIDER_HOST = 'api.openwebninja.com';
+/* the hosts the route's provider chain can ask, and the key each one
+   is sent with — read as each adapter reads it */
+const PROVIDER_HOSTS = {
+  'api.openwebninja.com': { source: 'openwebninja', key: () => provider.apiKey() },
+  'google.serper.dev': { source: 'serper', key: () => String(process.env.SERPER_API_KEY || '').trim() }
+};
+const SEARCH_PATH = /\/(search|shopping)$/;
 
-/* every request to the provider, with nothing secret in it */
+/* the scalar fields of a JSON request body (Serper posts its query):
+   what was asked, never a header */
+function bodyFields(body) {
+  if (typeof body !== 'string') return {};
+  try {
+    const parsed = JSON.parse(body);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    return Object.fromEntries(Object.entries(parsed).filter(([, v]) => v === null || ['string', 'number', 'boolean'].includes(typeof v)).map(([k, v]) => [k, String(v)]));
+  } catch (err) {
+    return {};
+  }
+}
+
+/* every request to a provider, with nothing secret in it */
 function watchProvider() {
   const real = global.fetch;
   const calls = [];
@@ -236,15 +262,17 @@ function watchProvider() {
     const href = String(input && input.url ? input.url : input);
     let url;
     try { url = new URL(href); } catch (err) { return real(input, init); }
-    if (url.hostname !== PROVIDER_HOST) return real(input, init);
-    const headers = (init && init.headers) || {};
+    const host = PROVIDER_HOSTS[url.hostname];
+    if (!host) return real(input, init);
+    const headers = Object.fromEntries(Object.entries((init && init.headers) || {}).map(([k, v]) => [k.toLowerCase(), v]));
     const call = {
+      source: host.source,
       method: (init && init.method) || 'GET',
       path: url.pathname,
-      params: Object.fromEntries(url.searchParams.entries()),
-      headerNames: Object.keys(headers).map((h) => h.toLowerCase()).sort(),
+      params: Object.assign(Object.fromEntries(url.searchParams.entries()), bodyFields(init && init.body)),
+      headerNames: Object.keys(headers).sort(),
       /* a yes or no, never the key */
-      keyIsThisEnvironments: headers['x-api-key'] === provider.apiKey(),
+      keyIsThisEnvironments: Boolean(host.key()) && headers['x-api-key'] === host.key(),
       status: null,
       ms: null,
       abortedAfterMs: null,
@@ -258,7 +286,7 @@ function watchProvider() {
       const response = await real(input, init);
       call.status = response.status;
       call.ms = Date.now() - startedAt;
-      if (/\/search$/.test(url.pathname) && response.ok && !seen.envelope) {
+      if (host.source === 'openwebninja' && /\/search$/.test(url.pathname) && response.ok && !seen.envelope) {
         try { seen.envelope = await response.clone().json(); } catch (err) { seen.envelope = { unreadable: String(err && err.message).slice(0, 80) }; }
       }
       return response;
@@ -283,12 +311,18 @@ async function bodyFor(o) {
   return { body: read.body, input: `the page's ${read.interpreter} reading` };
 }
 
+function fellBackFrom(outcome) {
+  const refused = outcome.status === 200 ? outcome.found && outcome.found.fellBackFrom : outcome.error && outcome.error.fellBackFrom;
+  return refused ? { provider: refused.provider, kind: failureKind(refused.reason) } : null;
+}
+
 /* Runs the probe and says what happened; prints nothing. */
 async function probe(options) {
   const o = Object.assign({ query: 'black oversized hoodie' }, options || {});
+  /* the key first: with none, the route has no source at all and answers 503 */
+  if (!provider.configured()) throw new Error('OPENWEBNINJA_API_KEY is not set in this environment');
   const source = getProvider();
   if (source.name !== provider.name) throw new Error(`the configured product source is ${source.name}, not OpenWeb Ninja`);
-  if (!source.configured()) throw new Error('OPENWEBNINJA_API_KEY is not set in this environment');
 
   const { body, input } = await bodyFor(o);
   const intent = shapeIntent(body && body.intent);
@@ -315,6 +349,10 @@ async function probe(options) {
     envelope: watch.seen.envelope,
     status: outcome.status,
     answer,
+    /* when OpenWeb Ninja refused for want of searches and the route asked
+       the fallback: which source refused, and the kind of refusal — never
+       its message */
+    fellBackFrom: fellBackFrom(outcome),
     /* the failure as /api/search classifies it, when there was one */
     failure: outcome.status === 200 ? null : { kind: failureKind(outcome.error), upstreamStatus: outcome.body.upstreamStatus === undefined ? null : outcome.body.upstreamStatus, stage: outcome.body.stage || null }
   };
@@ -355,12 +393,17 @@ async function main() {
   console.log(`deadline : ${r.budgetMs}ms budget; the /search leg was given ${r.plannedSearchTimeoutMs}ms`);
   r.calls.forEach((c, i) => {
     const params = Object.entries(c.params).map(([k, v]) => `${k}=${v}`).join('&');
-    console.log(`request ${i + 1}: ${c.method} ${c.path}?${params}`);
-    console.log(`           headers: ${c.headerNames.join(', ')} (x-api-key ${c.keyIsThisEnvironments ? 'is' : 'is NOT'} this environment's OPENWEBNINJA_API_KEY; never printed)`);
+    console.log(`request ${i + 1}: [${c.source}] ${c.method} ${c.path}?${params}`);
+    console.log(`           headers: ${c.headerNames.join(', ')} (x-api-key ${c.keyIsThisEnvironments ? 'is' : 'is NOT'} this environment's ${c.source === 'serper' ? 'SERPER_API_KEY' : 'OPENWEBNINJA_API_KEY'}; never printed)`);
     console.log(`           -> ${c.status === null ? `no answer: ${c.error}` : c.status} in ${c.ms}ms${c.abortedAfterMs !== null ? ` (aborted by the clock after ${c.abortedAfterMs}ms)` : ''}`);
   });
-  const searches = r.calls.filter((c) => /\/search$/.test(c.path)).length;
-  console.log(`provider : ${searches} search, ${r.calls.length - searches} offer lookups`);
+  const bySource = {};
+  for (const c of r.calls) {
+    const counts = bySource[c.source] || (bySource[c.source] = { searches: 0, lookups: 0 });
+    if (SEARCH_PATH.test(c.path)) counts.searches += 1; else counts.lookups += 1;
+  }
+  console.log(`provider : ${Object.entries(bySource).map(([name, n]) => `${name} ${n.searches} search${n.searches === 1 ? '' : 'es'}, ${n.lookups} offer lookups`).join('; ') || 'no request (answered from the search cache)'}`);
+  if (r.fellBackFrom) console.log(`fallback : ${r.fellBackFrom.provider} refused (${r.fellBackFrom.kind}), so the route asked the next source, as it would for a shopper`);
 
   if (r.status !== 200) {
     console.log(`\n/api/search would answer: ${r.status} ${JSON.stringify(r.answer)}`);
@@ -372,6 +415,8 @@ async function main() {
   if (payload) {
     console.log(`\nenvelope keys: ${keysOf(payload).join(', ')}`);
     console.log(`products returned: ${results.length}`);
+  } else if (r.fellBackFrom) {
+    console.log(`\n(answered by ${r.answer.source} after ${r.fellBackFrom.provider} refused: there is no OpenWeb Ninja envelope to show)`);
   } else {
     console.log('\n(answered from the search cache: no envelope was fetched)');
   }

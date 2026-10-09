@@ -391,7 +391,7 @@ function worker(root, reader, store, server) {
       let url;
       try { url = new URL(href); } catch (err) { wire.other += 1; return realFetch(input, init); }
       if (INTERPRETER_HOSTS.has(url.hostname)) wire.interpreter += 1;
-      else if (/\/search$|\/shopping$|\/search\.json$/.test(url.pathname)) wire.searches.push(url.searchParams.get('q'));
+      else if (/\/search$|\/shopping$|\/search\.json$/.test(url.pathname)) wire.searches.push({ host: url.hostname, q: url.searchParams.get('q') });
       else if (/offers/.test(url.pathname)) wire.offers += 1;
       else wire.other += 1;
       return realFetch(input, init);
@@ -427,9 +427,14 @@ function worker(root, reader, store, server) {
       totalMs,
       intent,
       /* the phrase the provider was asked: off the wire in this process; built from the posted body for a server */
-      asked: !fromServer && wire.searches[0] != null ? wire.searches[0] : providerQ(intent),
-      askedFrom: !fromServer && wire.searches[0] != null ? 'wire' : fromServer ? 'built from the posted body' : 'built (served from cache)',
+      asked: !fromServer && wire.searches[0] && wire.searches[0].q != null ? wire.searches[0].q : providerQ(intent),
+      askedFrom: !fromServer && wire.searches[0] && wire.searches[0].q != null ? 'wire' : fromServer ? 'built from the posted body' : 'built (served from cache)',
       providerSearches: fromServer ? (d.cache && d.cache.servedFromCache ? 0 : (s.status === 200 || s.status === 502 ? 1 : 0)) : wire.searches.length,
+      /* searches per provider host, off the wire (null over HTTP) */
+      searchesBySource: fromServer ? null : wire.searches.reduce((by, w) => Object.assign(by, { [w.host]: (by[w.host] || 0) + 1 }), {}),
+      /* the configured source refused for want of searches and the route
+         asked its fallback — the one case with more than one source asked */
+      fellBack: Boolean(d.fellBackFrom) || (!fromServer && new Set(wire.searches.map((w) => w.host)).size > 1),
       offerLookups: fromServer ? Number(d.offers && d.offers.lookupsMade) || 0 : wire.offers,
       interpreterCalls: fromServer ? null : wire.interpreter,
       providerCallsSeenBy: fromServer ? 'the server\'s diagnostics' : 'the wire',
@@ -502,7 +507,11 @@ const sum = (xs) => xs.reduce((a, b) => a + b, 0);
 const mean = (xs) => (xs.length ? sum(xs) / xs.length : null);
 const pct = (xs, p) => { if (!xs.length) return null; const s = xs.slice().sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.floor(p * (s.length - 1) + 0.5))]; };
 
-function summarise(rows) {
+/* a provider that said it is out of capacity, after any retries */
+const RATE_KINDS = new Set(['rate-limited', 'rate-limited-or-credits', 'credits-exhausted']);
+
+function summarise(rows, options) {
+  const o = options || {};
   const ok = rows.filter((r) => r.observed && !r.observed.crashed);
   const answered = ok.filter((r) => r.observed.status === 200);
   const judged = answered.filter((r) => !r.case.expectNone);
@@ -516,8 +525,17 @@ function summarise(rows) {
   /* only an answer can be right about having nothing to show */
   const none = answered.filter((r) => r.case.expectNone);
   const withExclusion = ok.filter((r) => r.case.exclude);
+  /* one search per request from the configured source; a fallback after
+     a refusal is the one exception, counted on its own */
+  const direct = ok.filter((r) => !r.observed.fellBack);
   return {
     requests: rows.length,
+    /* every dataset request is accounted for as one of these */
+    attempted: rows.length,
+    completed: answered.length,
+    failed: rows.length - answered.length,
+    rateLimited: ok.filter((r) => r.observed.failure && RATE_KINDS.has(r.observed.failure.kind)).length,
+    skipped: Number(o.skipped) || 0,
     crashed: rows.length - ok.length,
     httpStatuses: statuses,
     successfulRequests: answered.length,
@@ -542,8 +560,9 @@ function summarise(rows) {
     unexpectedlyEmpty: judged.filter((r) => !r.observed.verified).length,
     noResultCorrect: none.length ? `${none.filter((r) => r.graded.noneCorrect).length}/${none.length}` : null,
     verifiedMean: mean(g(answered, (r) => r.observed.verified)),
-    providerSearchesMean: mean(g(ok, (r) => r.observed.providerSearches)),
-    providerSearchesMax: Math.max(0, ...g(ok, (r) => r.observed.providerSearches)),
+    providerSearchesMean: mean(g(direct, (r) => r.observed.providerSearches)),
+    providerSearchesMax: Math.max(0, ...g(direct, (r) => r.observed.providerSearches)),
+    fellBack: ok.length - direct.length,
     offerLookupsMean: mean(g(ok, (r) => r.observed.offerLookups)),
     offerLookupsMax: Math.max(0, ...g(ok, (r) => r.observed.offerLookups)),
     interpreterCallsMean: mean(g(ok, (r) => r.observed.interpreterCalls)),
@@ -644,7 +663,9 @@ async function run(options) {
   }
   const summary = {};
   const types = {};
-  for (const w of workers) { summary[w.name] = summarise(byRoot[w.name]); types[w.name] = byType(byRoot[w.name]); }
+  /* dataset requests this run left out (--only, --set, --types) */
+  const skipped = CASES.filter((c) => !cases.includes(c)).length;
+  for (const w of workers) { summary[w.name] = summarise(byRoot[w.name], { skipped }); types[w.name] = byType(byRoot[w.name]); }
   const names = workers.map((w) => w.name);
   const compared = names.length > 1 ? differences(cases, byRoot, names[0], names[names.length - 1]) : null;
   const messy = CASES.filter((c) => c.set === 'messy').length;
@@ -670,9 +691,12 @@ async function run(options) {
 const f2 = (n) => (n === null || n === undefined ? '—' : Number(n).toFixed(2));
 const p0 = (n) => (n === null || n === undefined ? '—' : `${Math.round(n * 100)}%`);
 const LINES = [
-  ['requests', (s) => s.requests],
+  ['attempted', (s) => s.attempted],
+  ['completed (HTTP 200)', (s) => s.completed],
+  ['failed (any other answer, or none)', (s) => s.failed],
+  ['  of which rate-limited or out of credits', (s) => s.rateLimited],
+  ['skipped (left out of this run)', (s) => s.skipped],
   ['HTTP statuses', (s) => Object.entries(s.httpStatuses).map(([k, v]) => `${k}×${v}`).join(' ')],
-  ['successful (200)', (s) => s.successfulRequests],
   ['failures, by whose', (s) => Object.entries(s.failures).map(([k, v]) => `${k} ×${v}`).join('; ') || 'none'],
   ['requests retried (transient provider errors)', (s) => s.retried],
   ['interpreter answered', (s) => Object.entries(s.interpreterSources).map(([k, v]) => `${k}:${v}`).join(' ')],
@@ -692,6 +716,7 @@ const LINES = [
   ['nothing shown where nothing is right', (s) => s.noResultCorrect || '—'],
   ['verified per search (mean)', (s) => f2(s.verifiedMean)],
   ['provider searches per search (mean/max)', (s) => `${f2(s.providerSearchesMean)} / ${s.providerSearchesMax}`],
+  ['  fell back to the second source (quota refusal)', (s) => s.fellBack],
   ['offer lookups per search (mean/max)', (s) => `${f2(s.offerLookupsMean)} / ${s.offerLookupsMax}`],
   ['interpreter calls per search (mean)', (s) => f2(s.interpreterCallsMean)],
   ['interpret ms p50 / p95', (s) => `${s.interpretMsP50} / ${s.interpretMsP95}`],
@@ -723,6 +748,64 @@ function resultsJson(out) {
 
 const cell = (v) => String(v === null || v === undefined ? '' : v).replace(/\|/g, '\\|').replace(/\n/g, ' ');
 
+/* What a person reading the record should look at first: the best
+   answers, and the worst, each for a different reason. Chosen by the
+   grading rules alone — never by reading the products. */
+function representative(rows) {
+  const answered = rows.filter((r) => r.observed && !r.observed.crashed && r.graded);
+  const judged = answered.filter((r) => r.observed.status === 200 && !r.case.expectNone);
+  const successes = judged
+    .filter((r) => r.graded.relevantAt8 > 0 && !r.graded.wrongAt8 && !r.graded.hardViolations)
+    .sort((a, b) => b.graded.relevantAt8 - a.graded.relevantAt8 || b.graded.strongAt8 - a.graded.strongAt8)
+    .slice(0, 3)
+    .map((r) => ({ row: r, why: `relevant@8 ${f2(r.graded.relevantAt8)}, ${r.graded.strongAt8} strong, nothing wrong` }));
+  const failures = [];
+  const taken = new Set();
+  const add = (r, why) => { if (r && !taken.has(r.case.id) && failures.length < 6) { taken.add(r.case.id); failures.push({ row: r, why }); } };
+  /* one per kind of failed request */
+  const classes = new Set();
+  for (const r of rows) {
+    const k = !r.observed ? 'no answer' : r.observed.crashed ? 'crashed' : r.observed.status !== 200 ? (r.observed.failure && r.observed.failure.class) || `http ${r.observed.status}` : null;
+    if (k && !classes.has(k)) { classes.add(k); add(r, k === 'no answer' ? `no answer: ${r.error}` : k === 'crashed' ? `crashed: ${r.observed.crashed}` : k); }
+  }
+  answered.filter((r) => r.graded.exclusionViolations).forEach((r) => add(r, `${r.graded.exclusionViolations} ruled-out product(s) shown`));
+  answered.filter((r) => r.graded.hardViolations).forEach((r) => add(r, `${r.graded.hardViolations} hard-constraint violation(s)`));
+  answered.filter((r) => r.graded.noneExpected && r.graded.noneCorrect === false).forEach((r) => add(r, 'products shown where nothing is right'));
+  judged.filter((r) => !r.observed.verified).forEach((r) => add(r, 'no products where some were expected'));
+  judged.filter((r) => r.graded.wrongAt8).sort((a, b) => b.graded.wrongAt8 - a.graded.wrongAt8).forEach((r) => add(r, `${r.graded.wrongAt8} clearly wrong in the top 8`));
+  answered.filter((r) => !r.graded.reading.correct).forEach((r) => add(r, `misread: ${r.graded.reading.notes.join('; ')}`));
+  return { successes, failures };
+}
+
+/* How often each kind of failure happened, by kind of request: counts
+   only. Saying what to fix is left to a person reading the rows. */
+function failurePatterns(rows) {
+  const counts = {};
+  const bump = (pattern, type) => {
+    const p = counts[pattern] || (counts[pattern] = { n: 0, types: {} });
+    p.n += 1;
+    p.types[type] = (p.types[type] || 0) + 1;
+  };
+  for (const r of rows) {
+    const type = r.case.type;
+    if (!r.observed) { bump('no answer from the checkout', type); continue; }
+    if (r.observed.crashed) { bump('the page\'s code crashed', type); continue; }
+    if (r.observed.status !== 200) bump((r.observed.failure && r.observed.failure.class) || `http ${r.observed.status}`, type);
+    const gr = r.graded;
+    if (!gr) continue;
+    for (const note of gr.reading.notes) bump(`misread: ${note.replace(/"[^"]*"/g, '"…"').replace(/\d+/g, 'N')}`, type);
+    if (r.observed.status !== 200) continue;
+    if (gr.exclusionViolations) bump('ruled-out product shown', type);
+    if (gr.hardViolations) bump('hard constraint broken (budget, stated colour or gender)', type);
+    if (gr.noneExpected && gr.noneCorrect === false) bump('products shown where nothing is right', type);
+    if (!gr.noneExpected && !r.observed.verified) bump('no products where some were expected', type);
+    if (!gr.noneExpected && r.observed.verified && !gr.relevantAt8) bump('products shown, none relevant', type);
+    if (gr.wrongAt8) bump('clearly wrong product in the top 8', type);
+    if (gr.wronglyRemoved) bump('a plainly relevant product removed by the filter', type);
+  }
+  return Object.entries(counts).sort((a, b) => b[1].n - a[1].n).map(([pattern, p]) => ({ pattern, n: p.n, types: p.types }));
+}
+
 function summaryMarkdown(out) {
   const names = out.checkouts.map((c) => c.name);
   const lines = [];
@@ -740,11 +823,33 @@ function summaryMarkdown(out) {
   lines.push(`- retries: up to ${out.retries.max} per request, for ${out.retries.kinds.join(', ')}`);
   lines.push('', '## Summary', '', `| | ${names.join(' | ')} |`, `|---|${names.map(() => '---').join('|')}|`);
   for (const [label, f] of LINES) lines.push(`| ${label.trim()} | ${names.map((n) => cell(f(out.summary[n]))).join(' | ')} |`);
+  lines.push('', '### How this is measured', '',
+    '- A search **succeeded** only when /api/search answered 200. A 503 (nothing configured), 502 (the provider), 500 (Fynd) or 429 (allowance) is a failure and is never counted as a search.',
+    '- **Intent satisfaction** is the interpretation grade: the target garment, the exclusions recorded, the stated constraints kept (budget, colour, gender), nothing invented — graded from the body the page posted.',
+    '- **Relevance** (relevant@k, strong, clearly wrong, hard-constraint violations) is graded automatically against patterns written for each request in scripts/bench-messy-queries.js before any run, on the product title, price and retailer. A title that does not say is counted neither way. **No manual relevance judgment has been made**: relevant@k is a lower bound, and a difference worth acting on should be read against the product titles in results.json.',
+    '- Latency is wall-clock time in this process: the interpreter call, the /api/search call, and the whole request as the page makes it.');
   lines.push('', '## By kind of request (relevant@8 / clearly wrong / read correctly)', '', `| type | n | ${names.join(' | ')} |`, `|---|---|${names.map(() => '---').join('|')}|`);
   for (const type of TYPES) {
     const first = out.types[names[0]][type];
     if (!first) continue;
     lines.push(`| ${type} | ${first.n} | ${names.map((n) => { const t = out.types[n][type]; return t ? `${f2(t.relevantAt8)} / ${t.wrongAt8} / ${p0(t.readCorrectly)}` : '—'; }).join(' | ')} |`);
+  }
+  const products = (r) => (r.graded ? r.graded.products : r.observed && r.observed.products || []).slice(0, 3).map((p) => `${String(p.name || '').slice(0, 48)} (${p.price === null || p.price === undefined ? '?' : p.price}, ${p.retailer || '?'})`).join('; ');
+  for (const name of names) {
+    const picked = representative(out.byRoot[name]);
+    if (!picked.successes.length && !picked.failures.length) continue;
+    lines.push('', `## Representative results — ${name}`, '', '| | id | type | request | HTTP | why | top products |', '|---|---|---|---|---|---|---|');
+    for (const [label, list] of [['success', picked.successes], ['failure', picked.failures]]) {
+      for (const { row, why } of list) lines.push(`| ${label} | ${row.case.id} | ${row.case.type} | ${cell(row.case.q)} | ${row.observed ? row.observed.status : '—'} | ${cell(why)} | ${cell(products(row))} |`);
+    }
+    const patterns = failurePatterns(out.byRoot[name]);
+    lines.push('', `### Failure patterns — ${name}`, '');
+    if (!patterns.length) lines.push('None recorded.');
+    else {
+      lines.push('| pattern | requests | most affected kinds |', '|---|---|---|');
+      for (const p of patterns.slice(0, 12)) lines.push(`| ${cell(p.pattern)} | ${p.n} | ${Object.entries(p.types).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([t, n]) => `${t} ×${n}`).join(', ')} |`);
+    }
+    lines.push('', 'Counts only: what to fix is for a person to decide from these rows and the products in results.json.');
   }
   if (out.compared) {
     const ranked = out.compared.slice().sort((a, b) => a.score - b.score);
@@ -828,4 +933,4 @@ async function main() {
 
 if (require.main === module) main().catch((err) => { console.error(err && err.stack || err); process.exit(1); });
 
-module.exports = { run, failureClass, transient, grade, gradeReading, gradeProduct, colourConflict, genderConflict, recordedExclusions, summarise, byType, resultsJson, summaryMarkdown, writeRecord, CASES, QUERIES };
+module.exports = { representative, failurePatterns, run, failureClass, transient, grade, gradeReading, gradeProduct, colourConflict, genderConflict, recordedExclusions, summarise, byType, resultsJson, summaryMarkdown, writeRecord, CASES, QUERIES };
