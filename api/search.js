@@ -515,65 +515,111 @@ async function runSearch(body, options) {
     };
   }
 
-  const compose = (usage) => {
-    const { records, products, rejected } = found;
-
-    /* An adapter may carry a stage-by-stage account of what it did. Without
-       one, a search that returns nothing looks identical whether the source
-       had no stock, the records could not be parsed, the links could not be
-       obtained, or the budget filter took them all.
-
-       `cache` is always present, on every answer, so "this was free" and
-       "this cost us fourteen requests" are never a guess. It carries
-       counts and nothing else: no key, no digest, nothing a record or an
-       intent was stored under. */
-    const diagnostics = Object.assign({}, withoutSamples(found.funnel) || {}, {
-      reachedGate: records.length,
-      /* which source answered, and from which one it fell back and why */
-      provider: found.provider || provider.name,
-      fellBackFrom: found.fellBackFrom || null,
-      verified: products.length,
-      /* verified, and then removed as plainly a different garment: a count,
-         never a title */
-      removedAsAnotherGarment: Array.isArray(found.semanticRemoved) ? found.semanticRemoved.length : 0,
-      /* whether a descriptive request's results were put in the order of
-         what it most likely means: a yes or no, never a score */
-      reorderedByIntent: Boolean(found.reordered),
-      rejected,
-      cache: cache.report(cacheStats, { servedFromCache: found.servedFromCache }),
-      /* where the time went, so "the page is short" and "the source was
-         slow" are never the same question. Milliseconds and nothing else:
-         no key, no term, nothing out of a record. */
-      timing: {
-        budgetMs,
-        totalMs: Date.now() - startedAt,
-        deadlineExpired: Date.now() >= deadline
-      }
-    });
-
-    if (!products.length) {
-      /* server log only; counts and key names, never a value from a record */
-      console.warn('Search verified nothing.', JSON.stringify(diagnostics));
-    }
-
+  /* The source answered with records, every one of them still needed a
+     seller's price and link, and the lookups for them ran out of time
+     before a single one came back usable. That is not "nothing matched":
+     the products may well be there, and the page must not say they are
+     not. It is answered as what it is — the source not answering in
+     time — with the same counts the 200 would have carried, so whoever
+     reads it can see how far the search got. A page with even one
+     verified product is still a 200 with that product; a search whose
+     lookups ANSWERED and showed nothing usable is still an honest empty
+     200. Like any search that failed upstream, it is not charged. */
+  if (pricesNotConfirmedInTime(found)) {
+    const counts = composeBody(found, { provider, limit, attachments, budgetMs, startedAt, deadline, cacheStats }, null);
+    console.warn('Search confirmed no prices in time', provider.name, `${Date.now() - startedAt}ms`, JSON.stringify(counts.diagnostics.offers || {}));
     return {
-      /* the source that actually answered: the fallback, when it was used */
-      source: found.provider || provider.name,
-      products: products.slice(0, limit),
-      /* how many the source returned that could not be verified, and why —
-         so a badly behaved provider shows up instead of silently thinning */
-      returned: Array.isArray(records) ? records.length : 0,
-      rejected,
-      diagnostics,
-      /* said out loud so an attachment is never mistaken for something
-         that shaped these results. It did not. */
-      attachments: { received: attachments.length, used: 0, reason: attachments.length ? 'Attachments are not read yet.' : null },
-      /* so the meter on screen moves without a second round trip */
-      usage
+      status: 502,
+      body: {
+        error: 'The product source did not confirm any prices in time.',
+        reason: 'timeout',
+        kind: 'timeout',
+        stage: 'offers',
+        upstreamStatus: null,
+        source: counts.source,
+        returned: counts.returned,
+        rejected: counts.rejected,
+        diagnostics: counts.diagnostics
+      }
     };
-  };
+  }
+
+  const compose = (usage) => composeBody(found, { provider, limit, attachments, budgetMs, startedAt, deadline, cacheStats }, usage);
 
   return { status: 200, found, intent, limit, compose };
+}
+
+/* Whether a search that showed nothing did so because the offer lookups
+   ran out of time, rather than because what came back was unusable.
+   Read off the adapter's own tally; a source without offer lookups never
+   answers this way. */
+function pricesNotConfirmedInTime(found) {
+  const offers = found && found.funnel && found.funnel.offers;
+  if (!offers || found.servedFromCache) return false;
+  if (found.products.length || !Array.isArray(found.records) || !found.records.length) return false;
+  if (Number(offers.resolvedFromOffers) > 0) return false;
+  return Number(offers.lookupsTimedOut) > 0 || offers.budgetExpired === true;
+}
+
+/* The 200 body, built when it is sent so its timing includes whatever
+   the caller did in between. */
+function composeBody(found, context, usage) {
+  const { provider, limit, attachments, budgetMs, startedAt, deadline, cacheStats } = context;
+  const { records, products, rejected } = found;
+
+  /* An adapter may carry a stage-by-stage account of what it did. Without
+     one, a search that returns nothing looks identical whether the source
+     had no stock, the records could not be parsed, the links could not be
+     obtained, or the budget filter took them all.
+
+     `cache` is always present, on every answer, so "this was free" and
+     "this cost us fourteen requests" are never a guess. It carries
+     counts and nothing else: no key, no digest, nothing a record or an
+     intent was stored under. */
+  const diagnostics = Object.assign({}, withoutSamples(found.funnel) || {}, {
+    reachedGate: records.length,
+    /* which source answered, and from which one it fell back and why */
+    provider: found.provider || provider.name,
+    fellBackFrom: found.fellBackFrom || null,
+    verified: products.length,
+    /* verified, and then removed as plainly a different garment: a count,
+       never a title */
+    removedAsAnotherGarment: Array.isArray(found.semanticRemoved) ? found.semanticRemoved.length : 0,
+    /* whether a descriptive request's results were put in the order of
+       what it most likely means: a yes or no, never a score */
+    reorderedByIntent: Boolean(found.reordered),
+    rejected,
+    cache: cache.report(cacheStats, { servedFromCache: found.servedFromCache }),
+    /* where the time went, so "the page is short" and "the source was
+       slow" are never the same question. Milliseconds and nothing else:
+       no key, no term, nothing out of a record. */
+    timing: {
+      budgetMs,
+      totalMs: Date.now() - startedAt,
+      deadlineExpired: Date.now() >= deadline
+    }
+  });
+
+  if (!products.length) {
+    /* server log only; counts and key names, never a value from a record */
+    console.warn('Search verified nothing.', JSON.stringify(diagnostics));
+  }
+
+  return {
+    /* the source that actually answered: the fallback, when it was used */
+    source: found.provider || provider.name,
+    products: products.slice(0, limit),
+    /* how many the source returned that could not be verified, and why —
+       so a badly behaved provider shows up instead of silently thinning */
+    returned: Array.isArray(records) ? records.length : 0,
+    rejected,
+    diagnostics,
+    /* said out loud so an attachment is never mistaken for something
+       that shaped these results. It did not. */
+    attachments: { received: attachments.length, used: 0, reason: attachments.length ? 'Attachments are not read yet.' : null },
+    /* so the meter on screen moves without a second round trip */
+    usage
+  };
 }
 
 module.exports = async function handler(req, res) {

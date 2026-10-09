@@ -50,6 +50,7 @@
   const UNAVAILABLE = 'The product search could not be reached, so no live results are available right now.';
   const FAILED = 'The product search failed, so no live results are available right now.';
   const NOTHING = 'The product search ran but returned nothing that could be verified for this request.';
+  const TIMED_OUT = 'The product search found items but could not confirm their prices in time, so no live results are shown right now.';
   const OVER_LIMIT = 'You have used the live product searches your plan allows for this period.';
 
   const answer = (state, extra) => Object.assign({ source: null, products: [], notice: null, state }, extra || {});
@@ -104,7 +105,11 @@
       });
     }
     if (!response.ok) {
-      return answer('unavailable', { notice: FAILED });
+      /* a search whose sellers' prices could not be confirmed in time says
+         so, rather than reading as an outage or as "nothing matched" */
+      const detail = await response.json().catch(() => ({}));
+      const late = detail && detail.reason === 'timeout' && detail.stage === 'offers';
+      return answer('unavailable', { notice: late ? TIMED_OUT : FAILED });
     }
 
     try {

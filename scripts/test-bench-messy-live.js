@@ -160,6 +160,12 @@ async function main() {
     assert.strictEqual(bench.grade(caseFor('blak hoddie'), { asked: 'black hoodie', intent: { colors: ['Black'] }, products: [] }).noneCorrect, null);
   });
 
+  await test('prices not confirmed in time is its own failure, and tried again once like any timeout', () => {
+    assert.strictEqual(bench.failureClass(502, { reason: 'timeout', kind: 'timeout', stage: 'offers' }), 'provider: offer lookups timed out');
+    assert.strictEqual(bench.failureClass(502, { reason: 'timeout', kind: 'timeout' }), 'provider: timeout');
+    assert.strictEqual(bench.transient({ status: 502, failure: { kind: 'timeout' } }), true);
+  });
+
   await test('every request is counted as attempted, completed, failed, rate-limited or skipped; a fallback is not a second search of ours', () => {
     const c = bench.CASES.find((x) => x.id === 'P001');
     const obs = (over) => Object.assign({ status: 200, failure: null, asked: 'red dress', intent: { garments: ['dress'], colors: ['Red'], keywords: ['dress'] }, products: [{ name: 'Red Midi Dress', price: 60, retailer: 'Arket' }], verified: 1, providerSearches: 1, offerLookups: 0, interpreter: 'local', interpretMs: 1, searchMs: 1, totalMs: 2, attempts: 1, fellBack: false }, over);

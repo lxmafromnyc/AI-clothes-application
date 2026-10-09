@@ -52,24 +52,40 @@ function legTimeout(deadline, reserve, ceiling) {
    out" rather than "aborted". */
 const TIMED_OUT = /did not answer within|ran out before the request was made/;
 
+/* `init.signal`, when the caller passes one, cancels the call: the
+   caller no longer needs the answer (a search that already has what it
+   came for). That is not a timeout and does not read as one — the error
+   says "cancelled", carries `cancelled: true`, and none of the words a
+   timeout or a spent allowance is recognised by. */
 async function fetchWithin(who, url, init, ms) {
   if (!(ms > 0)) {
     throw new Error(`${who}: the time budget for this search ran out before the request was made`);
   }
+  const external = init && init.signal;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ms);
+  const cancel = () => controller.abort();
+  if (external) {
+    if (external.aborted) cancel();
+    else external.addEventListener('abort', cancel, { once: true });
+  }
   try {
     return await fetch(url, Object.assign({}, init, { signal: controller.signal }));
   } catch (err) {
+    if (external && external.aborted) {
+      throw Object.assign(new Error(`${who}: the call was cancelled, its answer no longer needed`), { cancelled: true });
+    }
     if (controller.signal.aborted) {
       throw new Error(`${who} did not answer within ${Math.round(ms)}ms (timed out)`);
     }
     throw err;
   } finally {
     clearTimeout(timer);
+    if (external) external.removeEventListener('abort', cancel);
   }
 }
 
 const timedOut = (err) => TIMED_OUT.test(err && err.message ? err.message : String(err));
+const cancelled = (err) => Boolean(err && err.cancelled);
 
-module.exports = { legTimeout, fetchWithin, timedOut, MIN_CALL_WINDOW_MS };
+module.exports = { legTimeout, fetchWithin, timedOut, cancelled, MIN_CALL_WINDOW_MS };

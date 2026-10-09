@@ -265,6 +265,8 @@ function failureClass(status, body) {
   const b = body || {};
   if (status === 200) return null;
   if (status === 503) return 'environment: no product source configured';
+  /* the source answered, and no seller's price came back in time */
+  if (status === 502 && b.stage === 'offers') return 'provider: offer lookups timed out';
   if (status === 502) return `provider: ${b.kind || b.reason || 'failed'}`;
   if (status === 500) return `fynd: ${b.stage || 'internal'}`;
   if (status === 429) return 'allowance: over limit';

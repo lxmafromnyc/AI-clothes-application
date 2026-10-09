@@ -354,7 +354,7 @@ async function probe(options) {
        its message */
     fellBackFrom: fellBackFrom(outcome),
     /* the failure as /api/search classifies it, when there was one */
-    failure: outcome.status === 200 ? null : { kind: failureKind(outcome.error), upstreamStatus: outcome.body.upstreamStatus === undefined ? null : outcome.body.upstreamStatus, stage: outcome.body.stage || null }
+    failure: outcome.status === 200 ? null : { kind: outcome.body.kind || failureKind(outcome.error), upstreamStatus: outcome.body.upstreamStatus === undefined ? null : outcome.body.upstreamStatus, stage: outcome.body.stage || null }
   };
 }
 
