@@ -835,6 +835,16 @@ async function main() {
     }
   });
 
+  await testAsync('the diagnostic says whether the running server answered as this process does, and names a disagreement', async () => {
+    const { agreement } = require('./diagnose-search');
+    const handlerAnswer = { status: 200, kind: null, upstreamStatus: null };
+    assert.ok(/agree \(200\)/.test(agreement({ server: { status: 200 }, handler: handlerAnswer })));
+    /* the probe's environment works, the server's key is refused: two environments */
+    const split = agreement({ server: { status: 502, kind: 'invalid-key', upstreamStatus: 401 }, handler: handlerAnswer });
+    assert.ok(/DISAGREE/.test(split) && /invalid-key/.test(split) && /not reading the same environment/.test(split), split);
+    assert.ok(/could not be reached/.test(agreement({ server: { status: null }, handler: handlerAnswer })));
+  });
+
   await testAsync('by default the probe searches what the page would post, not the raw words', async () => {
     cache.reset();
     const seen = recorder(answering);

@@ -629,6 +629,21 @@ beside each request as patterns on the product title; a title that does not say
 is counted neither way. `--reader local` measures the page's local fallback
 instead of the model.
 
+Every failure is recorded as whose it is — `environment` (503: nothing
+configured), `provider` (502, with its kind), `fynd` (500, with the stage) or
+`allowance` (429) — and none is ever counted as a search. A 502 that is
+rate-limited, a server error, a network failure or a timeout is tried again
+once after a pause (`--retries`, `--retry-delay-ms`); a refused key, a bad
+request or spent credits never are. The record names each checkout's
+configuration as states (provider configured or not, interpreter configured or
+not, which store), never values. The run exits 2 when no search succeeded on a
+checkout — the record then measures interpretation only, and its summary says
+so in its first line — 1 when the judged checkout crashed, showed something
+ruled out or made more than one provider search per request, and 0 otherwise.
+`scripts/diagnose-search.js --server` says whether the running server answered
+as the diagnostic's own process does with the same environment, and exits 1
+when either did not answer 200.
+
 ### Worth knowing
 
 - The endpoint caps requests at 400 characters and asks the model for JSON only,

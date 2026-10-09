@@ -292,6 +292,18 @@ async function diagnose(query, givenBody, options) {
   return report;
 }
 
+/* Whether the running server answered the way this process does with
+   this environment. When the two disagree they are not reading the same
+   environment (a key, a region, a different store) — the first thing to
+   know about a search that works in a probe and fails in the browser. */
+function agreement(r) {
+  const s = r.server;
+  const h = r.handler;
+  if (!s || s.status === null) return 'the server could not be reached';
+  const same = s.status === h.status && (s.kind || null) === (h.kind || null) && (s.upstreamStatus || null) === (h.upstreamStatus || null);
+  return same ? `they agree (${s.status}${s.kind ? ` ${s.kind}` : ''})` : `they DISAGREE: server ${s.status}${s.kind ? ` ${s.kind}` : ''}, this process ${h.status}${h.kind ? ` ${h.kind}` : ''} — they are not reading the same environment`;
+}
+
 function print(r) {
   console.log(`\n=== ${r.query}`);
   console.log(`interpreter: ${r.interpreter}`);
@@ -299,6 +311,7 @@ function print(r) {
   if (r.server) console.log(`running server: ${r.server.status === null ? `unreachable ${JSON.stringify(r.server.threw)}` : `${r.server.status} in ${r.server.ms}ms${r.server.error ? ` — ${JSON.stringify({ error: r.server.error, reason: r.server.reason, kind: r.server.kind, upstreamStatus: r.server.upstreamStatus, stage: r.server.stage })}` : ` — ${r.server.products} products`}`}`);
   const h = r.handler;
   console.log(`handler: ${h.status} in ${h.ms}ms${h.error ? ` — ${JSON.stringify({ error: h.error, reason: h.reason, kind: h.kind, upstreamStatus: h.upstreamStatus, stage: h.stage })}` : ` — ${h.products} products`}`);
+  if (r.server) console.log(`server and this process: ${agreement(r)}`);
   if (h.funnel) console.log(`funnel: ${JSON.stringify(h.funnel)}`);
   for (const c of r.upstream) console.log(`  upstream ${c.status === null ? 'THREW' : c.status} ${c.ms}ms ${c.where}${c.q ? ` q=${JSON.stringify(c.q)}` : ''}${c.threw ? ` ${JSON.stringify(c.threw)}` : ''}`);
   for (const line of r.serverLog) console.log(`  server ${line}`);
@@ -325,6 +338,8 @@ async function main() {
   for (const query of given ? ['(given body)'] : queries) reports.push(await diagnose(query, given && (given.intent ? given : { intent: given }), { server }));
   if (json) console.log(JSON.stringify(reports, null, 2));
   else reports.forEach(print);
+  /* a search that did not answer 200 — here or on the server — is not a pass */
+  if (reports.some((r) => r.handler.status !== 200 || (r.server && r.server.status !== 200))) process.exitCode = 1;
 }
 
 if (require.main === module) main().catch((err) => { console.error(err && err.stack); process.exit(1); });
@@ -335,4 +350,4 @@ async function pageVocabulary() {
   return vocabulary();
 }
 
-module.exports = { browserBody, diagnose, describe, pageVocabulary };
+module.exports = { browserBody, diagnose, describe, pageVocabulary, agreement };

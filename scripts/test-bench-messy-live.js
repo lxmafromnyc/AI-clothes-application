@@ -163,19 +163,63 @@ async function main() {
   console.log('\nthe run, end to end, with stand-ins for the two services');
 
   const repo = path.join(__dirname, '..');
-  const runBench = (dir, args, env) => {
+  const runBench = (dir, args, env, expected) => {
+    let status = 0;
+    let stderr = '';
     try {
       execFileSync(process.execPath, args, { stdio: ['ignore', 'pipe', 'pipe'], env: Object.assign({}, process.env, { OPENAI_API_KEY: '', OPENWEBNINJA_API_KEY: '' }, env || {}) });
     } catch (err) {
+      status = err.status;
+      stderr = String(err.stderr || '');
       /* exit 1 is the benchmark judging the results, which a stand-in
          answering "Skinny ..." for a request that ruled skinny out earns */
-      if (err.status !== 1) throw new Error(String(err.stderr || err.message));
+      if (!(expected || [1]).includes(err.status)) throw new Error(String(err.stderr || err.message));
     }
     return {
+      status,
+      stderr,
       results: JSON.parse(fs.readFileSync(path.join(dir, 'results.json'), 'utf8')),
       summary: fs.readFileSync(path.join(dir, 'summary.md'), 'utf8')
     };
   };
+
+  await test('a run in which no search succeeds exits 2, says it is not a live result, and names whose failure it was', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fynd-bench-dead-'));
+    const out = path.join(dir, 'out');
+    /* nothing configured at all: the route answers 503 to every request */
+    const run = runBench(out, [path.join(__dirname, 'bench-messy-live.js'), '--roots', `here=${repo}`, '--only', 'M005|P001', '--out-dir', out], {}, [2]);
+    fs.rmSync(dir, { recursive: true, force: true });
+    assert.strictEqual(run.status, 2, 'a run that searched nothing exited as if it had');
+    assert.ok(/NOT A LIVE RESULT/.test(run.stderr), run.stderr);
+    assert.ok(/Not a live result for here/.test(run.summary));
+    assert.strictEqual(run.results.summary.here.live, false);
+    assert.strictEqual(run.results.summary.here.successfulRequests, 0);
+    assert.deepStrictEqual(run.results.summary.here.failures, { 'environment: no product source configured': 2 });
+    assert.strictEqual(run.results.checkouts[0].config.providerConfigured, false);
+    for (const row of run.results.results) assert.strictEqual(row.here.status, 503, row.id);
+  });
+
+  await test('a transient provider failure is tried once more and recorded; a refused key is never retried', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fynd-bench-retry-'));
+    const flaky = path.join(dir, 'flaky.js');
+    /* the first /search answers 429, every one after it answers */
+    fs.writeFileSync(flaky, `${STAND_IN}\nconst inner = global.fetch; let first = true;\nglobal.fetch = async (input, init) => {\n  const u = new URL(String(input && input.url ? input.url : input));\n  if (u.hostname === 'api.openwebninja.com' && u.pathname.endsWith('/search') && first) { first = false; return { ok: false, status: 429, json: async () => ({}), text: async () => '{\"message\":\"Too many requests\"}' }; }\n  return inner(input, init);\n};\n`);
+    const refused = path.join(dir, 'refused.js');
+    fs.writeFileSync(refused, `${STAND_IN}\nconst inner = global.fetch;\nglobal.fetch = async (input, init) => {\n  const u = new URL(String(input && input.url ? input.url : input));\n  if (u.hostname === 'api.openwebninja.com') return { ok: false, status: 401, json: async () => ({}), text: async () => '{\"message\":\"Invalid API key\"}' };\n  return inner(input, init);\n};\n`);
+    const a = runBench(path.join(dir, 'a'), ['-r', flaky, path.join(__dirname, 'bench-messy-live.js'), '--roots', `here=${repo}`, '--only', 'P001', '--retry-delay-ms', '10', '--out-dir', path.join(dir, 'a')], {}, [0, 1]);
+    const b = runBench(path.join(dir, 'b'), ['-r', refused, path.join(__dirname, 'bench-messy-live.js'), '--roots', `here=${repo}`, '--only', 'P001', '--retry-delay-ms', '10', '--out-dir', path.join(dir, 'b')], {}, [2]);
+    fs.rmSync(dir, { recursive: true, force: true });
+    const retried = a.results.results[0].here;
+    assert.strictEqual(retried.status, 200, JSON.stringify(retried.failure));
+    assert.strictEqual(retried.attempts, 2);
+    assert.strictEqual(retried.earlierFailures[0].kind, 'rate-limited');
+    assert.strictEqual(a.results.summary.here.retried, 1);
+    const once = b.results.results[0].here;
+    assert.strictEqual(once.status, 502);
+    assert.strictEqual(once.attempts, 1, 'a refused key was asked again');
+    assert.strictEqual(once.failure.class, 'provider: invalid-key');
+    assert.deepStrictEqual(b.results.summary.here.failures, { 'provider: invalid-key': 1 });
+  });
 
   await test('in process: each request goes through the real /api/interpret and /api/search handlers, and is recorded with its HTTP status', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fynd-bench-live-'));

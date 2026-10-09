@@ -53,7 +53,16 @@
 
    Other flags: --reader local (the page's local reader even where an
    interpreter is configured), --set messy|plain|all, --only "ID|query",
-   --types negation,size, --json (print the summary as JSON).
+   --types negation,size, --json (print the summary as JSON),
+   --retries N (default 1) and --retry-delay-ms N (default 5000): a 502
+   that is rate-limited, a server error, a network failure or a timeout
+   is tried again, N times at most; a refused key, a bad request or
+   spent credits never are.
+
+   Exit status: 2 when no search succeeded on a checkout (the record
+   then measures interpretation only, and says so), 1 when the judged
+   checkout crashed, showed something ruled out or made more than one
+   provider search per request, 0 otherwise.
    ========================================================= */
 
 'use strict';
@@ -249,11 +258,32 @@ function grade(c, observed) {
 const STORE_VARS = ['KV_REST_API_URL', 'KV_REST_API_TOKEN', 'UPSTASH_REDIS_REST_URL', 'UPSTASH_REDIS_REST_TOKEN'];
 const INTERPRETER_HOSTS = new Set(['api.openai.com', 'generativelanguage.googleapis.com']);
 
+/* Whose failure a non-200 is, so a provider having a bad minute, an
+   environment with nothing configured and a fault of Fynd's own are
+   never counted as the same thing — and none of them as a search. */
+function failureClass(status, body) {
+  const b = body || {};
+  if (status === 200) return null;
+  if (status === 503) return 'environment: no product source configured';
+  if (status === 502) return `provider: ${b.kind || b.reason || 'failed'}`;
+  if (status === 500) return `fynd: ${b.stage || 'internal'}`;
+  if (status === 429) return 'allowance: over limit';
+  if (!status) return 'unreachable: no HTTP answer';
+  return `http ${status}`;
+}
+
 /* what may be kept of a failure: the route's own classification, never a message from upstream */
 const sanitizedFailure = (status, body) => (status === 200 || !body ? null : {
+  class: failureClass(status, body),
   reason: body.reason || null, kind: body.kind || null, upstreamStatus: body.upstreamStatus === undefined ? null : body.upstreamStatus,
   stage: body.stage || null, error: typeof body.error === 'string' ? body.error.slice(0, 120) : null
 });
+
+/* a provider failure that may pass: worth one more try after a pause.
+   Never a refused key, a bad request or spent credits, which would only
+   fail again and spend more of the allowance doing it */
+const TRANSIENT = new Set(['rate-limited', 'rate-limited-or-credits', 'server-error', 'network', 'timeout']);
+const transient = (observed) => Boolean(observed && observed.status === 502 && observed.failure && TRANSIENT.has(observed.failure.kind));
 
 function worker(root, reader, store, server) {
   if (store !== 'env') STORE_VARS.forEach((name) => { delete process.env[name]; });
@@ -419,7 +449,20 @@ function worker(root, reader, store, server) {
       process.send({ id: msg.id, ok: false, error: String(err && err.stack || err).slice(0, 600) });
     }
   });
-  process.send({ ready: true });
+  /* what this checkout is configured with, as states — never a value */
+  let envStates = null;
+  try { envStates = require(at('api', '_env-report')).envReport(); } catch (err) { envStates = null; }
+  const provider = require(at('api', '_providers', 'product-source')).getProvider();
+  process.send({
+    ready: true,
+    config: {
+      provider: provider.name,
+      providerConfigured: Boolean(provider.configured()),
+      interpreterConfigured: Boolean(process.env.AI_PROVIDER || process.env.OPENAI_API_KEY),
+      store: store === 'env' && STORE_VARS.some((name) => process.env[name]) ? 'configured store' : 'memory',
+      env: typeof envStates === 'string' ? envStates : envStates ? JSON.stringify(envStates) : null
+    }
+  });
 }
 
 /* ---------- the run ---------- */
@@ -429,10 +472,11 @@ function startWorker(spec, reader, store) {
   const child = fork(__filename, args, { stdio: ['ignore', 'ignore', 'inherit', 'ipc'] });
   const waiting = new Map();
   let next = 0;
+  const spec2 = spec;
   const ready = new Promise((resolve, reject) => {
     child.once('error', reject);
     child.on('message', (msg) => {
-      if (msg.ready) return resolve();
+      if (msg.ready) { spec2.config = msg.config || null; return resolve(); }
       const done = waiting.get(msg.id);
       if (done) { waiting.delete(msg.id); done(msg); }
     });
@@ -468,7 +512,7 @@ function summarise(rows) {
   const sources = {};
   for (const r of ok) sources[r.observed.interpreter] = (sources[r.observed.interpreter] || 0) + 1;
   const failures = {};
-  for (const r of ok) if (r.observed.failure) { const k = `${r.observed.status} ${r.observed.failure.reason || ''} ${r.observed.failure.kind || r.observed.failure.stage || ''}`.trim(); failures[k] = (failures[k] || 0) + 1; }
+  for (const r of ok) if (r.observed.failure) { const k = r.observed.failure.class || `http ${r.observed.status}`; failures[k] = (failures[k] || 0) + 1; }
   /* only an answer can be right about having nothing to show */
   const none = answered.filter((r) => r.case.expectNone);
   const withExclusion = ok.filter((r) => r.case.exclude);
@@ -478,6 +522,9 @@ function summarise(rows) {
     httpStatuses: statuses,
     successfulRequests: answered.length,
     failures,
+    /* a run that searched nothing measured nothing about search */
+    live: answered.length > 0,
+    retried: ok.filter((r) => r.observed.attempts > 1).length,
     interpreterSources: sources,
     interpretationCorrect: mean(g(ok, (r) => (r.graded.reading.correct ? 1 : 0))),
     targetCorrect: mean(g(ok, (r) => (r.graded.reading.targetOk ? 1 : 0))),
@@ -561,6 +608,8 @@ async function run(options) {
   let cases = CASES.filter((c) => !opts.set || opts.set === 'all' || c.set === opts.set);
   if (opts.types) cases = cases.filter((c) => opts.types.includes(c.type));
   if (opts.only) cases = opts.only.map((key) => CASES.find((c) => c.id === key || c.q === key) || { id: 'ad-hoc', type: 'natural-language', set: 'messy', q: key, intent: '(not in the dataset)', target: /./, relevant: /./ });
+  const retries = Number.isInteger(opts.retries) && opts.retries >= 0 ? opts.retries : 1;
+  const retryDelayMs = Number(opts.retryDelayMs) >= 0 ? Number(opts.retryDelayMs) : 5000;
   const workers = specs.map((spec) => startWorker(spec, reader, opts.store));
   await Promise.all(workers.map((w) => w.ready));
   const byRoot = {};
@@ -572,7 +621,18 @@ async function run(options) {
       /* alternate who asks first, so neither always meets a warmer provider */
       const order = i % 2 ? workers.slice().reverse() : workers;
       for (const w of order) {
-        const answer = await w.ask(c.q, opts.timeoutMs || 120000);
+        let answer = await w.ask(c.q, opts.timeoutMs || 120000);
+        let attempts = 1;
+        /* a transient provider failure is tried again, a bounded number of
+           times, after a pause; every attempt is recorded */
+        const earlier = [];
+        while (answer.ok && transient(answer.result) && attempts <= retries) {
+          earlier.push(answer.result.failure);
+          await new Promise((resolve) => setTimeout(resolve, retryDelayMs * attempts));
+          answer = await w.ask(c.q, opts.timeoutMs || 120000);
+          attempts += 1;
+        }
+        if (answer.ok) Object.assign(answer.result, { attempts, earlierFailures: earlier });
         const row = { case: c, observed: answer.ok ? answer.result : null, error: answer.ok ? null : answer.error };
         row.graded = row.observed && !row.observed.crashed ? grade(c, row.observed) : null;
         byRoot[w.name][i] = row;
@@ -595,7 +655,8 @@ async function run(options) {
     reader,
     store: opts.store === 'env' ? 'the configured store' : 'memory',
     dataset: { file: 'scripts/bench-messy-queries.js', total: CASES.length, messy, plain: CASES.length - messy, run: cases.length },
-    checkouts: specs.map((s) => ({ name: s.name, root: s.root, server: s.server || null })),
+    retries: { max: retries, delayMs: retryDelayMs, kinds: [...TRANSIENT] },
+    checkouts: specs.map((s) => ({ name: s.name, root: s.root, server: s.server || null, config: s.config || null })),
     cases: cases.map((c) => c.id),
     byRoot,
     summary,
@@ -612,7 +673,8 @@ const LINES = [
   ['requests', (s) => s.requests],
   ['HTTP statuses', (s) => Object.entries(s.httpStatuses).map(([k, v]) => `${k}×${v}`).join(' ')],
   ['successful (200)', (s) => s.successfulRequests],
-  ['failures', (s) => Object.entries(s.failures).map(([k, v]) => `${k}×${v}`).join('; ') || 'none'],
+  ['failures, by whose', (s) => Object.entries(s.failures).map(([k, v]) => `${k} ×${v}`).join('; ') || 'none'],
+  ['requests retried (transient provider errors)', (s) => s.retried],
   ['interpreter answered', (s) => Object.entries(s.interpreterSources).map(([k, v]) => `${k}:${v}`).join(' ')],
   ['interpretation correct', (s) => p0(s.interpretationCorrect)],
   ['  target correct', (s) => p0(s.targetCorrect)],
@@ -665,10 +727,17 @@ function summaryMarkdown(out) {
   const names = out.checkouts.map((c) => c.name);
   const lines = [];
   lines.push('# Messy-search live benchmark', '');
+  const dead = out.checkouts.filter((c) => !out.summary[c.name].live).map((c) => c.name);
+  if (dead.length) {
+    lines.push(`> **Not a live result for ${dead.join(', ')}: no search succeeded.** Every request ended in`,
+      `> ${dead.map((n) => Object.entries(out.summary[n].failures).map(([k, v]) => `${k} ×${v}`).join('; ')).join(' / ')}.`,
+      '> Interpretation is still measured (it runs before the provider is asked); nothing about products is.', '');
+  }
   lines.push(`- run: ${out.startedAt} → ${out.finishedAt}`);
   lines.push(`- mode: ${out.mode}; reader: ${out.reader}; store: ${out.store}`);
   lines.push(`- dataset: ${out.dataset.file} — ${out.dataset.messy} messy + ${out.dataset.plain} plain; ${out.dataset.run} run`);
-  out.checkouts.forEach((c) => lines.push(`- ${c.name}: ${c.server ? `${c.server} (page code from ${c.root})` : c.root}`));
+  out.checkouts.forEach((c) => lines.push(`- ${c.name}: ${c.server ? `${c.server} (page code from ${c.root})` : c.root}${c.config ? ` — provider ${c.config.provider} ${c.config.providerConfigured ? 'configured' : 'NOT configured'}, interpreter ${c.config.interpreterConfigured ? 'configured' : 'not configured'}, ${c.config.store}` : ''}`));
+  lines.push(`- retries: up to ${out.retries.max} per request, for ${out.retries.kinds.join(', ')}`);
   lines.push('', '## Summary', '', `| | ${names.join(' | ')} |`, `|---|${names.map(() => '---').join('|')}|`);
   for (const [label, f] of LINES) lines.push(`| ${label.trim()} | ${names.map((n) => cell(f(out.summary[n]))).join(' | ')} |`);
   lines.push('', '## By kind of request (relevant@8 / clearly wrong / read correctly)', '', `| type | n | ${names.join(' | ')} |`, `|---|---|${names.map(() => '---').join('|')}|`);
@@ -735,6 +804,8 @@ async function main() {
     only: value('--only') ? value('--only').split('|') : null,
     set: value('--set') || 'all',
     types: value('--types') ? value('--types').split(',') : null,
+    retries: value('--retries') === null ? undefined : Number(value('--retries')),
+    retryDelayMs: value('--retry-delay-ms') === null ? undefined : Number(value('--retry-delay-ms')),
     progress: (name, i, n, row) => process.stderr.write(`\r${name} ${i + 1}/${n} ${row.case.id} ${row.observed ? row.observed.status : 'crashed'}`.padEnd(60))
   });
   process.stderr.write('\n');
@@ -742,6 +813,14 @@ async function main() {
   if (args.includes('--json')) console.log(JSON.stringify(out.summary, null, 2));
   else print(out);
   console.log(`\nwritten: ${path.join(dir, 'results.json')} and summary.md`);
+  /* a checkout on which no search succeeded measured nothing about
+     search: that is never a pass, whatever else went right */
+  const dead = out.checkouts.filter((c) => !out.summary[c.name].live);
+  if (dead.length) {
+    console.error(`\nNOT A LIVE RESULT: no search succeeded on ${dead.map((c) => `${c.name} (${Object.entries(out.summary[c.name].failures).map(([k, v]) => `${k} ×${v}`).join('; ')})`).join(', ')}`);
+    process.exitCode = 2;
+    return;
+  }
   /* the one that ran last is the one being judged */
   const judged = out.summary[out.checkouts[out.checkouts.length - 1].name];
   if (judged.crashed || judged.exclusionViolations || judged.providerSearchesMax > 1) process.exitCode = 1;
@@ -749,4 +828,4 @@ async function main() {
 
 if (require.main === module) main().catch((err) => { console.error(err && err.stack || err); process.exit(1); });
 
-module.exports = { run, grade, gradeReading, gradeProduct, colourConflict, genderConflict, recordedExclusions, summarise, byType, resultsJson, summaryMarkdown, writeRecord, CASES, QUERIES };
+module.exports = { run, failureClass, transient, grade, gradeReading, gradeProduct, colourConflict, genderConflict, recordedExclusions, summarise, byType, resultsJson, summaryMarkdown, writeRecord, CASES, QUERIES };
