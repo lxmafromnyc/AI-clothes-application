@@ -493,6 +493,54 @@ async function main() {
     assert.ok(!words(phrase('vintage looking denim jacket but not cropped')).has('cropped'));
   });
 
+  console.log('\nwhat a preview search found');
+
+  /* typed on the preview, which answered it with hoodies: "an actual
+     hood" ruled out the word "actual", so the hood stood, the hoodie
+     became the garment, and the provider was asked for "fleece hoodie
+     sherpa hoodie" */
+  const COZY = 'yo im tryna find sumthin rlly cozy 4 fall n winter, kinda baggy n oversized but not like comically huge yk hoodie vibes but i dont want an actual hood so maybe a crewneck or sumthin ...';
+
+  await test('"i dont want an actual hood": the hood is ruled out, not the word "actual"', () => {
+    const c = read(COZY);
+    assert.ok(c.without.includes('hood') && !c.without.includes('actual'), JSON.stringify(c.without));
+    assert.ok(c.drop.includes('hoodie'), JSON.stringify(c.drop));
+    assert.deepStrictEqual(c.search, ['crewneck sweatshirt', 'pullover sweatshirt', 'knit pullover']);
+    assert.deepStrictEqual(local(COZY).garments, []);
+    assert.ok(!/hood/.test(phrase(COZY)), phrase(COZY));
+    assert.strictEqual(says(COZY), 'Looking for cozy oversized baggy crewneck sweatshirts, pullover sweatshirts or knit pullovers, without hoods');
+    /* passed over only after a "not": an actual hood asked for is still asked for */
+    assert.deepStrictEqual(read('not an actual coat, something warm').excluded, ['coat']);
+    assert.ok(!((read('i want an actual hood') || {}).without || []).includes('hood'));
+  });
+
+  await test('"tryna", "sumthin" and "rlly" are said in plain words, and none reaches the provider', () => {
+    assert.strictEqual(I.normalize('tryna find sumthin rlly cozy').text, 'trying to find something really cozy');
+    assert.ok(!/tryna|sumthin|rlly/.test(phrase(COZY)), phrase(COZY));
+  });
+
+  await test('whatever the model read, the served search rules the hood out the same way', async () => {
+    const intent = await served(COZY, { categories: ['knit'], garments: ['hoodie'], fits: ['Oversized'], keywords: ['cozy', 'hoodie'] });
+    assert.ok(intent.concepts.drop.includes('hoodie'), JSON.stringify(intent.concepts.drop));
+    assert.ok(!/hood/.test(queryFrom(intent)), queryFrom(intent));
+  });
+
+  await test('a listing that names its hood is removed; one that says nothing of a hood is kept, unclaimed, after one that names its crew neck', async () => {
+    const listing = (title, slug) => ({ title, price: 60, imageUrl: `https://img.example.com/${slug}.jpg`, productUrl: `https://shop.example.com/products/${slug}`, retailer: 'Example' });
+    productSource.registerProvider({
+      name: 'hood-offering-stand-in',
+      configured: () => true,
+      search: async () => [listing('Oversized Fleece Hoodie', 'fleece-hoodie'), listing('Relaxed Fleece Pullover', 'fleece-pullover'),
+        listing('Sherpa Lined Hooded Sweatshirt', 'sherpa-hooded'), listing('Cozy Oversized Crewneck Sweatshirt', 'crewneck')]
+    });
+    const found = await searchWithFallback(productSource.PROVIDERS['hood-offering-stand-in'], local(COZY), 12, cache.counters(), Date.now() + 60000);
+    assert.deepStrictEqual(found.products.map((p) => p.name), ['Cozy Oversized Crewneck Sweatshirt', 'Relaxed Fleece Pullover']);
+    assert.strictEqual(found.rejected['ruled-out-by-the-request'], 2);
+    /* the pullover's title says nothing of a hood: not removed on a
+       guess, and nothing it is shown with claims it has none */
+    assert.ok(!/hood/i.test(JSON.stringify(found.products[1])), JSON.stringify(found.products[1]));
+  });
+
   console.log(`\n${passed} passed, ${failures.length} failed`);
   if (failures.length) process.exit(1);
 }

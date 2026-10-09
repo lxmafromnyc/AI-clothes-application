@@ -375,8 +375,9 @@
   const NEGATORS = new Set(['not', 'no', 'without', 'never', 'nothing', 'except', 'minus', 'hates', 'hate', 'less']);
   const NEGATOR_PAIRS = [['other', 'than'], ['anything', 'but'], ['instead', 'of'], ['rather', 'than']];
   /* passed over between "not" and what it rules out: "don't want to look
-     too dressed up", "not really a jacket", "isn't super tight" */
-  const PASS_NEGATED = new Set(['too', 'so', 'as', 'super', 'very', 'that', 'overly', 'crazy', 'really', 'insanely', 'ridiculously', 'all', 'quite', 'a', 'an', 'the', 'any', 'much', 'actually', 'even', 'exactly', 'be', 'being', 'it', 'my', 'your', 'his', 'her', 'want', 'wanna', 'to', 'look', 'looking', 'seem', 'feel', 'for']);
+     too dressed up", "not really a jacket", "isn't super tight",
+     "don't want an actual hood" */
+  const PASS_NEGATED = new Set(['too', 'so', 'as', 'super', 'very', 'that', 'overly', 'crazy', 'really', 'insanely', 'ridiculously', 'all', 'quite', 'a', 'an', 'the', 'any', 'much', 'actually', 'actual', 'even', 'exactly', 'be', 'being', 'it', 'my', 'your', 'his', 'her', 'want', 'wanna', 'to', 'look', 'looking', 'seem', 'feel', 'for']);
   /* after "not", a word that says how sure or how keen, not what: "not
      sure", "not into", "not a fan of" rule nothing out */
   const NOT_RULED = new Set(('sure certain picky bothered fussed worried interested necessarily needed required ' +
@@ -523,6 +524,7 @@
     /* the sounds a person types while thinking, anywhere in the request */
     um: '', umm: '', ummm: '', uh: '', uhh: '', uhm: '', hmm: '', hmmm: '', fr: '', frfr: '',
     somthing: 'something', sumthing: 'something', smthing: 'something', somethng: 'something', someting: 'something',
+    sumthin: 'something', rlly: 'really', tryna: 'trying to',
     /* how shops and shoppers shorten things */
     blk: 'black', wht: 'white', nvy: 'navy', brn: 'brown', gry: 'grey', wmns: 'womens', wmn: 'womens', womns: 'womens',
     mns: 'mens', lng: 'long', slv: 'sleeve', slvs: 'sleeves', sz: 'size', cardi: 'cardigan', cardis: 'cardigans', jkt: 'jacket'
