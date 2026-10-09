@@ -1061,6 +1061,35 @@ async function main() {
     }
   });
 
+  await testAsync('prices not confirmed in time reads the same from the probe as from /api/search', async () => {
+    process.env.FYND_REQUEST_BUDGET_MS = '700';
+    const warn = console.warn;
+    console.warn = () => {};
+    /* milliseconds differ between two runs; everything else must not */
+    const withoutClock = (body) => JSON.parse(JSON.stringify(body, (k, v) => (/Ms$|^totalMs$|MsMedian$|MsMin$|MsMax$/.test(k) ? undefined : v)));
+    try {
+      const hung = (u) => (u.pathname.endsWith('/product-offers') ? new Promise(() => {}) : Promise.resolve(okResponse(envelope(Array.from({ length: 4 }, (_, i) => needsLookup(i))))));
+      /* the stub's hung lookups end only by abort */
+      const abortable = (u, options) => (u.pathname.endsWith('/product-offers')
+        ? new Promise((resolve, reject) => options.signal.addEventListener('abort', () => reject(Object.assign(new Error('This operation was aborted'), { name: 'AbortError' }))))
+        : hung(u));
+      cache.reset();
+      const viaRoute = recorder(abortable);
+      const res = await routeAnswer({ intent: INTENT, limit: 4 });
+      cache.reset();
+      const viaProbe = recorder(abortable);
+      const probed = await probeModule.probe({ body: { intent: INTENT, limit: 4 }, photos: false });
+      assert.strictEqual(res.statusCode, 502, JSON.stringify(res.body));
+      assert.strictEqual(probed.status, 502);
+      assert.deepStrictEqual(withoutClock(probed.answer), withoutClock(res.body));
+      assert.deepStrictEqual([probed.failure.kind, probed.failure.stage], ['timeout', 'offers']);
+      assert.deepStrictEqual(viaProbe.map((c) => [c.path, c.params]), viaRoute.map((c) => [c.path, c.params]), 'a different request');
+    } finally {
+      console.warn = warn;
+      delete process.env.FYND_REQUEST_BUDGET_MS;
+    }
+  });
+
   await testAsync('the diagnostic says whether the running server answered as this process does, and names a disagreement', async () => {
     const { agreement } = require('./diagnose-search');
     const handlerAnswer = { status: 200, kind: null, upstreamStatus: null };
