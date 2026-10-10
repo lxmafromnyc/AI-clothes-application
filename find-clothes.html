@@ -116,6 +116,81 @@
     <div class="results" id="results" hidden></div>
   </div>
 
+  <!-- Four real searches, start to finish: a short film cut from one
+       real Fynd session (scripts/demo-film.js). It steps aside the moment
+       a real search starts (assets/app.js). It lived on the home page
+       until the fit guide took that place. -->
+  <section class="section section--flush demo" id="demo" aria-label="Demo: four real searches, start to finish">
+    <div class="container">
+      <figure class="demo-figure" id="demo-figure">
+        <div class="demo-stage">
+          <!-- preload="none": not one byte of video is fetched until
+               assets/demo-video.js asks for it, after the page has
+               loaded and the section is close to the viewport. The
+               poster is named in data-poster, and put on by the script
+               below, because a poster attribute is fetched the moment it
+               is parsed — before anything could say which of the two
+               this screen wants. -->
+          <video class="demo-video" id="demo-video"
+            width="1280" height="800"
+            data-poster="assets/demo/fynd-demo-poster.jpg"
+            preload="none" muted loop playsinline controls
+            aria-describedby="demo-note"
+            aria-label="A film of a real Fynd session: four different requests are typed into the search box in turn — “black oversized hoodie under $80”, “lightweight jacket for fall under $150”, “BAPE shark hoodie under $400” and “sage green linen midi dress under $120”. Each time, real products come back with their photos, prices and retailers, and one of them is opened on its retailer’s own page.">
+            <!-- WebM first: the smaller file, and the one a Chromium built
+                 without proprietary codecs can play. Safari falls
+                 through to the H.264. -->
+            <source id="demo-webm" src="assets/demo/fynd-demo.webm" type="video/webm">
+            <source id="demo-mp4" src="assets/demo/fynd-demo.mp4" type="video/mp4">
+            <track id="demo-track" kind="captions" src="assets/demo/fynd-demo.vtt" srclang="en" label="English">
+          </video>
+
+          <!-- Which of the two recordings, settled here, before the browser
+               acts on the markup: a poster is fetched as soon as it is set,
+               and a source swapped after the player has chosen one is
+               ignored. The wide recording's interface type stays readable
+               down to the tablet width; at 1023px and under, the one
+               recorded in a phone-shaped window is used instead.
+               assets/styles.css reshapes the frame at the same width. -->
+          <script>
+            (function () {
+              var narrow = window.matchMedia && window.matchMedia('(max-width: 1023px)').matches;
+              var name = narrow ? 'fynd-demo-mobile' : 'fynd-demo';
+              var video = document.getElementById('demo-video');
+              video.poster = 'assets/demo/' + name + '-poster.jpg';
+              if (narrow) {
+                document.getElementById('demo-webm').src = 'assets/demo/' + name + '.webm';
+                document.getElementById('demo-mp4').src = 'assets/demo/' + name + '.mp4';
+                document.getElementById('demo-track').src = 'assets/demo/' + name + '.vtt';
+                document.getElementById('demo-figure').classList.add('is-portrait');
+                video.width = 800;
+                video.height = 1440;
+              }
+            })();
+          </script>
+
+          <!-- For browsers that will not start a muted video on their own,
+               and for anyone who asked for less motion. Hidden until
+               assets/demo-video.js finds out which; the player's own
+               controls work without it. -->
+          <button class="btn btn-primary btn-lg demo-play" type="button" id="demo-play" hidden>
+            <svg viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true"><path d="M8 5.6v12.8a1 1 0 001.53.85l10-6.4a1 1 0 000-1.7l-10-6.4A1 1 0 008 5.6z"/></svg>
+            <span>Play the demo</span>
+          </button>
+        </div>
+
+        <!-- What the recording is, written by scripts/record-demo.js each
+             time it makes one, so the words always match the video. -->
+        <figcaption class="demo-note" id="demo-note">
+          <!-- demo-note -->
+          <span class="status status--live">Real search</span>
+          Four real searches, recorded on Fynd on October 3, 2026. Prices and availability may have changed since. Turn the sound on for the narration.
+          <!-- /demo-note -->
+        </figcaption>
+      </figure>
+    </div>
+  </section>
+
 </main>
 
 <footer class="site-footer">
@@ -146,5 +221,6 @@
 <script src="assets/attachments.js"></script>
 <script src="assets/catalog.js"></script>
 <script src="assets/app.js"></script>
+<script src="assets/demo-video.js" defer></script>
 </body>
 </html>

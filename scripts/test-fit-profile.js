@@ -121,6 +121,7 @@ async function signUp(email) {
 const read = (jar, opts) => call(profileEndpoint, Object.assign({ method: 'GET', jar }, opts));
 const save = (jar, profile, opts) => call(profileEndpoint, Object.assign({ jar, body: { action: 'save', profile } }, opts));
 const del = (jar, opts) => call(profileEndpoint, Object.assign({ jar, body: { action: 'delete' } }, opts));
+const guide = (jar, answers, opts) => call(profileEndpoint, Object.assign({ jar, body: { action: 'guide', answers } }, opts));
 
 /* Distinctive values, so the log check can look for them by name. */
 const SENTINEL_BRAND = 'Quillborough';
@@ -331,7 +332,8 @@ await test('weight, photos, ids and any other field it does not name are dropped
   for (const word of ['weight', 'photo', 'userId', 'email', 'inseam', 'note', 'price', 'usr_someone_else', 'private']) {
     assert.ok(!text.includes(word), `${word} was kept`);
   }
-  assert.deepStrictEqual(Object.keys(profile).sort(), ['brandSizes', 'fitPreferences', 'measurements', 'schemaVersion']);
+  assert.deepStrictEqual(Object.keys(profile).sort(),
+    ['anchor', 'brandSizes', 'fitGoal', 'fitPreferences', 'measurements', 'schemaVersion', 'troubleZones']);
 });
 
 /* =========================================================
@@ -437,7 +439,10 @@ await test('a stored profile missing whole groups reads with "not said" in their
 
 await test('a stored profile with no version is read as the first one, and only named fields come back', () => {
   const read = Schema.upgrade({ measurements: { unit: 'in', chest: 40, weight: 180 }, secret: 'x', createdAt: '2026-01-01T00:00:00.000Z' });
-  assert.strictEqual(read.schemaVersion, 1);
+  /* read as version 1, and handed back in the current shape */
+  assert.strictEqual(read.schemaVersion, Schema.SCHEMA_VERSION);
+  assert.strictEqual(read.measurements.chest, 40);
+  assert.deepStrictEqual([read.anchor, read.fitGoal, read.troubleZones], [null, null, null]);
   assert.strictEqual(read.createdAt, '2026-01-01T00:00:00.000Z');
   assert.ok(!JSON.stringify(read).includes('weight') && !('secret' in read));
 });
@@ -693,6 +698,158 @@ await test('only origins the site already trusts may call it from a browser', as
 });
 
 /* =========================================================
+   The fit guide: version 2's three answers
+   ========================================================= */
+section('the fit guide (schema version 2)');
+
+const ANSWERS = () => ({
+  anchor: { brand: SENTINEL_BRAND, size: 'm' },
+  fitGoal: 'true-to-size',
+  troubleZones: ['waist-loose', 'sleeves-short']
+});
+const kept = (profile) => ({ measurements: profile.measurements, brandSizes: profile.brandSizes, fitPreferences: profile.fitPreferences });
+
+await test('a stored version 1 profile reads as version 2, with the guide unanswered and nothing it held changed', async () => {
+  const { jar, user } = await signUp('ada@example.test');
+  const v1 = Object.assign(FULL(), { createdAt: '2026-09-01T00:00:00.000Z' });
+  await store.set(fitProfiles.profileKey(user.id), v1);
+
+  const { status, body } = await read(jar);
+  assert.strictEqual(status, 200);
+  assert.strictEqual(body.profile.schemaVersion, 2);
+  assert.deepStrictEqual(kept(body.profile), kept(Schema.upgrade(v1)));
+  assert.deepStrictEqual(body.profile.fitPreferences, { hoodies: 'relaxed', sweatshirts: 'oversized' },
+    'per-category fits are read exactly as saved — never re-read through the new fit goal');
+  assert.deepStrictEqual([body.profile.anchor, body.profile.fitGoal, body.profile.troubleZones], [null, null, null]);
+  assert.strictEqual(body.profile.createdAt, '2026-09-01T00:00:00.000Z');
+});
+
+await test('the guide saves its three answers, and measurements, usual sizes and per-category fits stay as they were', async () => {
+  const { jar } = await signUp('ada@example.test');
+  const before = (await save(jar, FULL())).body.profile;
+
+  const { status, body } = await guide(jar, ANSWERS());
+  assert.strictEqual(status, 200, JSON.stringify(body));
+  assert.strictEqual(body.saved, true);
+  assert.deepStrictEqual(body.profile.anchor, { brand: SENTINEL_BRAND, size: 'M' });
+  assert.strictEqual(body.profile.fitGoal, 'true-to-size');
+  assert.deepStrictEqual(body.profile.troubleZones, ['sleeves-short', 'waist-loose'], 'stored in the listed order');
+  assert.deepStrictEqual(kept(body.profile), kept(before));
+  assert.strictEqual(body.profile.createdAt, before.createdAt);
+
+  const reread = (await read(jar)).body.profile;
+  assert.deepStrictEqual(reread, body.profile);
+});
+
+await test('the guide works for an account with no profile yet, and needs no measurements', async () => {
+  const { jar } = await signUp('ada@example.test');
+  const { status, body } = await guide(jar, { fitGoal: 'oversized' });
+  assert.strictEqual(status, 200);
+  assert.strictEqual(body.profile.fitGoal, 'oversized');
+  assert.ok(Object.values(body.profile.measurements).every((v) => v === null));
+  assert.deepStrictEqual(body.profile.brandSizes, []);
+});
+
+await test('a skipped step keeps its saved answer, and None of these is saved as an empty list, apart from unanswered', async () => {
+  const { jar } = await signUp('ada@example.test');
+  await guide(jar, ANSWERS());
+
+  /* step 3 changed to "None of these"; steps 1 and 2 skipped */
+  let profile = (await guide(jar, { troubleZones: [] })).body.profile;
+  assert.deepStrictEqual(profile.troubleZones, []);
+  assert.strictEqual(profile.fitGoal, 'true-to-size', 'a skipped step is not an erased one');
+  assert.deepStrictEqual(profile.anchor, { brand: SENTINEL_BRAND, size: 'M' });
+  assert.strictEqual(Schema.isEmpty(Object.assign(Schema.empty(), { troubleZones: [] })), false, '"none" is an answer');
+
+  /* a brand typed under Other, size not known */
+  profile = (await guide(jar, { anchor: { brand: '  arc’teryx ', size: 'Not sure' } })).body.profile;
+  assert.deepStrictEqual(profile.anchor, { brand: 'arc’teryx', size: null }, 'not sure is unknown, never a size');
+
+  /* a listed brand typed in another case is stored as listed */
+  profile = (await guide(jar, { anchor: { brand: 'uniqlo', size: 'xl' } })).body.profile;
+  assert.deepStrictEqual(profile.anchor, { brand: 'UNIQLO', size: 'XL' });
+
+  /* sent as null, an answer is cleared */
+  profile = (await guide(jar, { fitGoal: null })).body.profile;
+  assert.strictEqual(profile.fitGoal, null);
+});
+
+await test('a page that predates the guide cannot erase its answers; an explicit null still can', async () => {
+  const { jar } = await signUp('ada@example.test');
+  await guide(jar, ANSWERS());
+
+  /* the fit profile page as it was at version 1: no guide fields at all */
+  let profile = (await save(jar, FULL())).body.profile;
+  assert.strictEqual(profile.fitGoal, 'true-to-size');
+  assert.deepStrictEqual(profile.troubleZones, ['sleeves-short', 'waist-loose']);
+
+  /* a version 2 save that leaves them out keeps them too */
+  profile = (await save(jar, Object.assign(FULL(), { schemaVersion: 2 }))).body.profile;
+  assert.deepStrictEqual(profile.anchor, { brand: SENTINEL_BRAND, size: 'M' });
+
+  /* and one that sends them as null means it */
+  profile = (await save(jar, Object.assign(FULL(), { schemaVersion: 2, anchor: null, fitGoal: null, troubleZones: null }))).body.profile;
+  assert.deepStrictEqual([profile.anchor, profile.fitGoal, profile.troubleZones], [null, null, null]);
+});
+
+await test('what the guide sends is checked, field by field, and nothing is written when any of it is wrong', async () => {
+  const { jar, user } = await signUp('ada@example.test');
+  await guide(jar, ANSWERS());
+  const stored = await store.get(fitProfiles.profileKey(user.id));
+
+  for (const [answers, field] of [
+    [{ anchor: { brand: 'Nike', size: 'huge' } }, 'anchor.size'],
+    [{ anchor: { brand: '!!!' } }, 'anchor.brand'],
+    [{ anchor: { brand: 'x'.repeat(61) } }, 'anchor.brand'],
+    [{ anchor: 'Nike M' }, 'anchor'],
+    [{ fitGoal: 'baggy' }, 'fitGoal'],
+    [{ fitGoal: 'fitted' }, 'fitGoal'],
+    [{ troubleZones: ['knees'] }, 'troubleZones'],
+    [{ troubleZones: 'sleeves-short' }, 'troubleZones']
+  ]) {
+    const { status, body } = await guide(jar, answers);
+    assert.strictEqual(status, 400, `${JSON.stringify(answers)} answered ${status}`);
+    assert.strictEqual(body.reason, 'invalid');
+    assert.ok(body.errors.some((e) => e.field === field), `${JSON.stringify(answers)}: expected an error on ${field}, got ${JSON.stringify(body.errors)}`);
+  }
+  assert.deepStrictEqual(await store.get(fitProfiles.profileKey(user.id)), stored, 'nothing was written');
+});
+
+await test('the guide needs a session and the CSRF token, like every other change', async () => {
+  const signedOut = await guide({}, ANSWERS());
+  assert.strictEqual(signedOut.status, 401);
+  assert.strictEqual(signedOut.body.reason, 'sign-in-required');
+
+  const { jar, user } = await signUp('ada@example.test');
+  const forged = await guide(jar, ANSWERS(), { omitCsrf: true });
+  assert.strictEqual(forged.status, 403);
+  assert.strictEqual(forged.body.reason, 'csrf');
+  assert.strictEqual(await store.get(fitProfiles.profileKey(user.id)), null);
+  assert.strictEqual((await guide(jar, ANSWERS())).res.getHeader('cache-control'), 'no-store, private');
+});
+
+await test('a profile saved by a newer version is reported and never saved over, by the guide either', async () => {
+  const { jar, user } = await signUp('ada@example.test');
+  const later = { schemaVersion: Schema.SCHEMA_VERSION + 1, somethingNew: true, fitGoal: 'slim' };
+  await store.set(fitProfiles.profileKey(user.id), later);
+
+  const { status, body } = await guide(jar, ANSWERS());
+  assert.strictEqual(status, 409);
+  assert.strictEqual(body.reason, 'unsupported-version');
+  assert.deepStrictEqual(await store.get(fitProfiles.profileKey(user.id)), later);
+});
+
+await test('one account’s guide answers are never another’s', async () => {
+  const ada = await signUp('ada@example.test');
+  const bea = await signUp('bea@example.test');
+  await guide(ada.jar, ANSWERS());
+  assert.strictEqual((await read(bea.jar)).body.profile, null);
+  await guide(bea.jar, { fitGoal: 'slim' });
+  assert.strictEqual((await read(ada.jar)).body.profile.fitGoal, 'true-to-size');
+  assert.strictEqual((await read(bea.jar)).body.profile.anchor, null);
+});
+
+/* =========================================================
    What other responses and the logs say
    ========================================================= */
 section('privacy');
@@ -700,9 +857,10 @@ section('privacy');
 await test('/api/account says nothing about the fit profile, and its shape has not changed', async () => {
   const { jar } = await signUp('ada@example.test');
   await save(jar, FULL());
+  await guide(jar, ANSWERS());
   const { body } = await call(accountEndpoint, { method: 'GET', jar });
   const text = JSON.stringify(body);
-  for (const word of [SENTINEL_BRAND, '43.3', '69.4', 'measurements', 'brandSizes', 'fitPreferences', 'oversized', 'fitprofile']) {
+  for (const word of [SENTINEL_BRAND, '43.3', '69.4', 'measurements', 'brandSizes', 'fitPreferences', 'oversized', 'fitprofile', 'anchor', 'fitGoal', 'troubleZones', 'true-to-size', 'sleeves-short']) {
     assert.ok(!text.includes(word), `/api/account carries ${word}`);
   }
   assert.deepStrictEqual(Object.keys(body).sort(), [
@@ -734,6 +892,10 @@ await test('a store that fails answers a plain 500 and logs only the store’s o
     const saving = await save(jar, FULL());
     assert.strictEqual(saving.status, 500);
     assert.ok(!JSON.stringify(saving.body).includes(SENTINEL_BRAND));
+    const answering = await guide(jar, ANSWERS());
+    assert.strictEqual(answering.status, 500);
+    assert.match(answering.body.error, /Could not save your fit profile/);
+    assert.ok(!JSON.stringify(answering.body).includes(SENTINEL_BRAND));
     const deleting = await del(jar);
     assert.strictEqual(deleting.status, 500);
   } finally {
@@ -748,7 +910,8 @@ await test('a store that fails answers a plain 500 and logs only the store’s o
 await test('no measurement, brand, size or preference ever appears in the logs', () => {
   const all = logged.join('\n');
   assert.ok(all.length > 0, 'the suite should have logged something, or this proves nothing');
-  for (const value of [SENTINEL_BRAND, '43.3', '69.4', '39.5', 'about-right', 'too-large', 'oversized', 'relaxed', 'brandSizes', 'measurements']) {
+  for (const value of [SENTINEL_BRAND, '43.3', '69.4', '39.5', 'about-right', 'too-large', 'oversized', 'relaxed', 'brandSizes', 'measurements',
+    'true-to-size', 'sleeves-short', 'waist-loose', 'troubleZones', 'fitGoal', 'anchor']) {
     assert.ok(!all.includes(value), `${value} was logged`);
   }
 });

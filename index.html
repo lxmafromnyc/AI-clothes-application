@@ -3,22 +3,21 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Fynd — Clothing search in plain words</title>
-<meta name="description" content="Describe any clothing item naturally and Fynd will find matching products, with prices and links to the retailer.">
+<title>Fynd — Clothes that fit you</title>
+<meta name="description" content="Tell Fynd how your clothes fit in three quick taps — a top that already fits, how you like things to sit, and where clothes usually go wrong.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23111111'/><text x='16' y='23' font-family='Helvetica,Arial,sans-serif' font-size='19' font-weight='700' fill='white' text-anchor='middle'>F</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
 <link rel="stylesheet" href="assets/styles.css">
-<!-- Where the AI interpreter lives. The function is deployed on Vercel because
-     GitHub Pages cannot run server code; the API key is held there as an
-     environment variable and never reaches the browser. See README.md. -->
+<!-- Where the API lives. The functions are deployed on Vercel because
+     GitHub Pages cannot run server code. See README.md. -->
 <meta name="findwear-api" content="https://ai-clothes-application.vercel.app/api/interpret">
 <script>document.documentElement.classList.add('js');</script>
 </head>
 <body>
 
-<a class="skip-link" href="#search">Skip to search</a>
+<a class="skip-link" href="#guide">Skip to the fit guide</a>
 
 <header class="site-header">
   <div class="container">
@@ -30,7 +29,7 @@
       <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" aria-label="Open menu"><span></span></button>
       <nav aria-label="Main">
         <ul class="nav-links" id="site-nav">
-          <li><a href="index.html" aria-current="page">Search</a></li>
+          <li><a href="index.html" aria-current="page">Fit guide</a></li>
           <li><a href="discover.html">Discover</a></li>
           <li><a href="pricing.html">Pricing</a></li>
           <li><a href="about.html">About</a></li>
@@ -43,157 +42,188 @@
 
 <main id="main">
 
-  <!-- The first screen is the product: what it does, in one line, and
-       the box to do it in. Nothing else competes with it. -->
-  <section class="container hero" id="search">
-    <h1>Find what you&rsquo;re looking for.</h1>
-    <p class="lead">Describe any clothing item naturally and Fynd will find matching products.</p>
-      <div class="ask-wrap">
-      <form class="ask-card" id="ask-form" data-dropzone>
-        <label class="sr-only" for="ask">Describe the clothes you are looking for</label>
-        <div class="ask-field">
-          <svg class="ask-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.8-3.8"/></svg>
-          <textarea id="ask" name="ask" rows="1" maxlength="400" placeholder="black oversized hoodie under $80" aria-describedby="ask-usage"></textarea>
+  <!-- The first screen is the fit guide: three short questions, answered
+       with taps and two dropdowns, saved to the shopper's fit profile.
+       assets/guide.js runs it. Every answer is optional, nothing is
+       saved until the end, and a saved profile is only ever added to. -->
+  <section class="container hero guide-hero" id="guide" aria-labelledby="guide-title">
+    <h1 id="guide-title">Clothes that fit you.</h1>
+    <p class="lead">Three quick taps tell Fynd how your clothes fit. No tape measure.</p>
+
+    <div class="guide-card" id="guide-card">
+      <form class="guide-form" id="guide-form" novalidate>
+        <div class="guide-progress">
+          <p class="guide-count" id="guide-count">1 of 3</p>
+          <ol class="guide-bar" aria-hidden="true">
+            <li class="is-current"></li><li></li><li></li>
+          </ol>
         </div>
 
-        <!-- Shown only while a file is over the box. The file button is
-             the accessible path; this is a cue for a pointer gesture. -->
-        <div class="ask-dropveil" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 15v3a2 2 0 002 2h12a2 2 0 002-2v-3"/></svg>
-          <span>Drop to attach</span>
+        <!-- ================================================ 1: anchor fit -->
+        <fieldset class="guide-step" data-step="1">
+          <legend class="guide-legend">
+            <h2 class="guide-question" tabindex="-1"><span class="sr-only">Step 1 of 3: </span>What&rsquo;s a top you own right now that fits you perfectly?</h2>
+          </legend>
+          <div class="guide-pair">
+            <div class="guide-field">
+              <label class="guide-label" for="anchor-brand">Brand</label>
+              <span class="select-wrap"><select class="profile-select" id="anchor-brand" name="anchorBrand">
+                <option value="">Choose</option>
+                <option value="Nike">Nike</option>
+                <option value="UNIQLO">UNIQLO</option>
+                <option value="Zara">Zara</option>
+                <option value="Carhartt">Carhartt</option>
+                <option value="other">Other</option>
+              </select></span>
+            </div>
+            <div class="guide-field">
+              <label class="guide-label" for="anchor-size">Size</label>
+              <span class="select-wrap"><select class="profile-select" id="anchor-size" name="anchorSize">
+                <option value="">Choose</option>
+                <option value="XS">XS</option>
+                <option value="S">S</option>
+                <option value="M">M</option>
+                <option value="L">L</option>
+                <option value="XL">XL</option>
+                <option value="XXL">XXL</option>
+                <option value="not-sure">Not sure</option>
+              </select></span>
+            </div>
+          </div>
+          <!-- Only after "Other": pick a suggestion or type the name. -->
+          <div class="guide-field guide-other" id="anchor-other-field" hidden>
+            <label class="guide-label" for="anchor-other">Which brand?</label>
+            <input class="profile-input" type="text" id="anchor-other" name="anchorOther" list="guide-brands" maxlength="60" autocomplete="off" placeholder="Start typing, like Gap">
+            <datalist id="guide-brands">
+              <option value="Adidas"></option>
+              <option value="American Eagle"></option>
+              <option value="Banana Republic"></option>
+              <option value="Champion"></option>
+              <option value="Gap"></option>
+              <option value="H&amp;M"></option>
+              <option value="J.Crew"></option>
+              <option value="Lacoste"></option>
+              <option value="Levi&rsquo;s"></option>
+              <option value="Lululemon"></option>
+              <option value="Old Navy"></option>
+              <option value="Patagonia"></option>
+              <option value="Ralph Lauren"></option>
+              <option value="The North Face"></option>
+              <option value="Under Armour"></option>
+            </datalist>
+          </div>
+        </fieldset>
+
+        <!-- ================================================ 2: fit goal -->
+        <fieldset class="guide-step" data-step="2" hidden>
+          <legend class="guide-legend">
+            <h2 class="guide-question" tabindex="-1"><span class="sr-only">Step 2 of 3: </span>How do you actually like your clothes to sit on you?</h2>
+          </legend>
+          <div class="fit-cards">
+            <label class="fit-card">
+              <input type="radio" name="fitGoal" value="slim">
+              <span class="fit-card-body">
+                <svg class="fit-card-art" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><path d="M19 9 L12 13.5 L14.5 19 L17.5 17.5 V40 H30.5 V17.5 L33.5 19 L36 13.5 L29 9 C27 11.5 21 11.5 19 9 Z"/></svg>
+                <span class="fit-card-title">Tight / Slim Fit</span>
+                <span class="fit-card-hint">Close to the body</span>
+              </span>
+            </label>
+            <label class="fit-card">
+              <input type="radio" name="fitGoal" value="true-to-size">
+              <span class="fit-card-body">
+                <svg class="fit-card-art" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><path d="M17 9 L9 14 L12 20 L15 18.5 V40 H33 V18.5 L36 20 L39 14 L31 9 C29 12 19 12 17 9 Z"/></svg>
+                <span class="fit-card-title">True to Size</span>
+                <span class="fit-card-hint">Just as it&rsquo;s labelled</span>
+              </span>
+            </label>
+            <label class="fit-card">
+              <input type="radio" name="fitGoal" value="oversized">
+              <span class="fit-card-body">
+                <svg class="fit-card-art" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><path d="M15 8 L5 15.5 L9 22.5 L13 20 V42 H35 V20 L39 22.5 L43 15.5 L33 8 C30 11.5 18 11.5 15 8 Z"/></svg>
+                <span class="fit-card-title">Cozy / Oversized</span>
+                <span class="fit-card-hint">Room to move</span>
+              </span>
+            </label>
+          </div>
+        </fieldset>
+
+        <!-- ================================================ 3: trouble zones -->
+        <fieldset class="guide-step" data-step="3" hidden>
+          <legend class="guide-legend">
+            <h2 class="guide-question" tabindex="-1"><span class="sr-only">Step 3 of 3: </span>Where do normal clothes usually screw up on you?</h2>
+          </legend>
+          <p class="guide-hint">Pick any that apply &mdash; it&rsquo;s about the clothes, not you.</p>
+          <div class="zone-list">
+            <label class="zone"><input type="checkbox" name="troubleZones" value="sleeves-short"><span>Sleeves are always too short</span></label>
+            <label class="zone"><input type="checkbox" name="troubleZones" value="torso-short"><span>Torso is always too short</span></label>
+            <label class="zone"><input type="checkbox" name="troubleZones" value="neckline-tight"><span>Necklines are too tight</span></label>
+            <label class="zone"><input type="checkbox" name="troubleZones" value="waist-loose"><span>Fits my chest but bags out at my waist</span></label>
+            <label class="zone zone--none"><input type="checkbox" id="zone-none" name="troubleNone" value="none"><span>None of these</span></label>
+          </div>
+        </fieldset>
+
+        <p class="guide-error" id="guide-error" role="alert"></p>
+
+        <div class="guide-nav">
+          <button class="btn btn-secondary" type="button" id="guide-back" hidden>Back</button>
+          <button class="btn btn-primary" type="submit" id="guide-next">Skip</button>
         </div>
-
-        <!-- A hairline along the bottom edge of the box while a search is
-             running (assets/app.js marks the form with its stage). Purely
-             visual: the stage is said in words under the box and to
-             screen readers. -->
-        <span class="ask-progress" aria-hidden="true"><span class="ask-progress-line"></span></span>
-
-        <div class="ask-actions">
-          <button class="icon-btn" type="button" id="reset-form" aria-label="Clear search">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
-          </button>
-          <input class="sr-only" type="file" id="ask-files" name="ask-files">
-          <label class="attach-btn" for="ask-files" title="Add a photo">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.4 11.05l-9.19 9.19a5 5 0 01-7.07-7.07l9.19-9.19a3.5 3.5 0 014.95 4.95l-9.2 9.19a2 2 0 01-2.82-2.83l8.49-8.48"/></svg>
-            <span class="sr-only">Add a photo</span>
-          </label>
-          <button class="btn btn-primary" type="submit">Search</button>
-        </div>
-
-        <ul class="attachments" id="attachments" hidden></ul>
-
-        <!-- Both start empty: an alert is announced when its text arrives.
-             app.js writes them. -->
-        <p class="form-error" id="form-error" role="alert"></p>
-        <p class="form-error" id="attachment-error" role="alert"></p>
-        <p class="attachment-note" id="attachment-note" hidden>
-          Fynd does not read attachments yet. They are sent with your search, but they do not change your results.
-        </p>
-
-        <!-- How many live searches are left, exactly as /api/account last
-             counted them for this account or, signed out, this browser:
-             a bar of what remains of the allowance, and the count in
-             words. Empty until the server has said; written by
-             assets/app.js. The bar is a picture of the words, so only
-             the words reach assistive technology. -->
-        <div class="ask-allowance" id="ask-allowance">
-          <span class="ask-meter" id="ask-meter" aria-hidden="true"></span>
-          <p class="ask-usage" id="ask-usage"></p>
-        </div>
+        <p class="guide-saved-note" id="guide-saved-note" hidden>Your saved answers are filled in. Change anything, or keep going.</p>
       </form>
 
-      <p class="ask-examples" id="ask-examples">
-        <span class="examples-label">Try</span>
-        <button type="button" class="example">linen shirt for a summer wedding</button>
-        <button type="button" class="example">white sneakers under $120</button>
-        <button type="button" class="example">wool coat for winter</button>
-      </p>
-      </div>
-  </section>
+      <!-- Signed out at the end: an account to keep the answers in, made
+           right here so nothing has to be held anywhere but this page. -->
+      <form class="guide-account" id="guide-account" novalidate hidden>
+        <h2 class="guide-question" id="guide-account-title" tabindex="-1">Save your fit profile</h2>
+        <p class="guide-sub" id="guide-account-intro">Create a free account to keep your answers. Only you can see them.</p>
 
-  <div class="container">
-    <!-- The outcome in one line, for screen readers. -->
-    <p class="sr-only" id="search-status" role="status" aria-live="polite"></p>
-    <div class="results" id="results" hidden></div>
-  </div>
+        <label class="field" id="guide-field-name">
+          <span>Name</span>
+          <input type="text" id="guide-name" name="name" autocomplete="name" maxlength="80">
+        </label>
+        <label class="field">
+          <span>Email</span>
+          <input type="email" id="guide-email" name="email" autocomplete="email" required>
+        </label>
+        <label class="field">
+          <span>Password</span>
+          <input type="password" id="guide-password" name="password" autocomplete="new-password" required>
+        </label>
+        <label class="field" id="guide-field-confirm">
+          <span>Confirm password</span>
+          <input type="password" id="guide-confirm" name="confirmPassword" autocomplete="new-password">
+        </label>
 
-  <!-- Four real searches, start to finish, straight under the box they
-       happen in: a short film cut from one real Fynd session
-       (scripts/demo-film.js). Every request, result, price, photo and
-       retailer page in it is from that session; the type and the motion
-       around them are made from the same footage. It steps aside the
-       moment a real search starts (assets/app.js), because the results
-       take its place. The note under it says when it was recorded. -->
-  <section class="section section--flush demo" id="demo" aria-label="Demo: four real searches, start to finish">
-    <div class="container">
-      <figure class="demo-figure" id="demo-figure">
-        <div class="demo-stage">
-          <!-- preload="none": not one byte of video is fetched until
-               assets/demo-video.js asks for it, after the page has
-               loaded and the section is close to the viewport. The
-               poster is named in data-poster, and put on by the script
-               below, because a poster attribute is fetched the moment it
-               is parsed — before anything could say which of the two
-               this screen wants. -->
-          <video class="demo-video" id="demo-video"
-            width="1280" height="800"
-            data-poster="assets/demo/fynd-demo-poster.jpg"
-            preload="none" muted loop playsinline controls
-            aria-describedby="demo-note"
-            aria-label="A film of a real Fynd session: four different requests are typed into the search box in turn — “black oversized hoodie under $80”, “lightweight jacket for fall under $150”, “BAPE shark hoodie under $400” and “sage green linen midi dress under $120”. Each time, real products come back with their photos, prices and retailers, and one of them is opened on its retailer’s own page.">
-            <!-- WebM first: the smaller file, and the one a Chromium built
-                 without proprietary codecs can play. Safari falls
-                 through to the H.264. -->
-            <source id="demo-webm" src="assets/demo/fynd-demo.webm" type="video/webm">
-            <source id="demo-mp4" src="assets/demo/fynd-demo.mp4" type="video/mp4">
-            <track id="demo-track" kind="captions" src="assets/demo/fynd-demo.vtt" srclang="en" label="English">
-          </video>
+        <p class="guide-error" id="guide-account-error" role="alert"></p>
 
-          <!-- Which of the two recordings, settled here, before the browser
-               acts on the markup: a poster is fetched as soon as it is set,
-               and a source swapped after the player has chosen one is
-               ignored. The wide recording's interface type stays readable
-               down to the tablet width; at 1023px and under, the one
-               recorded in a phone-shaped window is used instead.
-               assets/styles.css reshapes the frame at the same width. -->
-          <script>
-            (function () {
-              var narrow = window.matchMedia && window.matchMedia('(max-width: 1023px)').matches;
-              var name = narrow ? 'fynd-demo-mobile' : 'fynd-demo';
-              var video = document.getElementById('demo-video');
-              video.poster = 'assets/demo/' + name + '-poster.jpg';
-              if (narrow) {
-                document.getElementById('demo-webm').src = 'assets/demo/' + name + '.webm';
-                document.getElementById('demo-mp4').src = 'assets/demo/' + name + '.mp4';
-                document.getElementById('demo-track').src = 'assets/demo/' + name + '.vtt';
-                document.getElementById('demo-figure').classList.add('is-portrait');
-                video.width = 800;
-                video.height = 1440;
-              }
-            })();
-          </script>
-
-          <!-- For browsers that will not start a muted video on their own,
-               and for anyone who asked for less motion. Hidden until
-               assets/demo-video.js finds out which; the player's own
-               controls work without it. -->
-          <button class="btn btn-primary btn-lg demo-play" type="button" id="demo-play" hidden>
-            <svg viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true"><path d="M8 5.6v12.8a1 1 0 001.53.85l10-6.4a1 1 0 000-1.7l-10-6.4A1 1 0 008 5.6z"/></svg>
-            <span>Play the demo</span>
-          </button>
+        <div class="guide-nav">
+          <button class="btn btn-secondary" type="button" id="guide-account-back">Back</button>
+          <button class="btn btn-primary" type="submit" id="guide-account-submit">Create account and save</button>
         </div>
+        <p class="auth-switch">
+          <span id="guide-switch-text">Already have an account?</span>
+          <button class="link-btn" type="button" id="guide-switch">Sign in</button>
+        </p>
+        <p class="auth-fineprint">Using Google? <a class="guide-link" href="account.html">Sign in on the account page</a>, then come back &mdash; the guide takes seconds.</p>
+      </form>
 
-        <!-- What the recording is, written by scripts/record-demo.js each
-             time it makes one, so the words always match the video. -->
-        <figcaption class="demo-note" id="demo-note">
-          <!-- demo-note -->
-          <span class="status status--live">Real search</span>
-          Four real searches, recorded on Fynd on October 3, 2026. Prices and availability may have changed since. Turn the sound on for the narration.
-          <!-- /demo-note -->
-        </figcaption>
-      </figure>
+      <!-- Shown only once the save has actually succeeded. -->
+      <div class="guide-done" id="guide-done" hidden>
+        <span class="guide-done-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>
+        </span>
+        <h2 class="guide-question" id="guide-done-title" tabindex="-1">Your fit profile is ready.</h2>
+        <ul class="guide-summary" id="guide-summary"></ul>
+        <p class="guide-sub">Personalised size recommendations are still being built. Fynd will only suggest a size in a brand once it has that brand&rsquo;s verified size chart.</p>
+        <div class="btn-row guide-done-actions">
+          <a class="btn btn-primary" href="discover.html">Browse the catalogue</a>
+          <a class="btn btn-secondary" href="fit-profile.html">See your fit profile</a>
+        </div>
+        <button class="link-btn" type="button" id="guide-edit">Change my answers</button>
+      </div>
     </div>
+
+    <p class="guide-alt">Looking for something specific? <a class="guide-link" href="find-clothes.html">Search Fynd</a></p>
   </section>
 
   <section class="section section--flush" id="how">
@@ -202,25 +232,25 @@
       <ol class="steps">
         <li class="step">
           <span class="step-num">1</span>
-          <h3>Describe it</h3>
-          <p>Type what you want in your own words &mdash; the item, colour, fit, occasion or budget.</p>
+          <h3>Tell us what fits</h3>
+          <p>Pick a top that already fits you, how you like clothes to sit, and where they usually go wrong. Three taps.</p>
         </li>
         <li class="step">
           <span class="step-num">2</span>
-          <h3>Fynd searches</h3>
-          <p>Fynd understands the request and looks for matching products at real retailers.</p>
+          <h3>Keep your fit profile</h3>
+          <p>Your answers are saved to your fit profile, where you can add sizes by brand or measurements any time.</p>
         </li>
         <li class="step">
           <span class="step-num">3</span>
-          <h3>Shop the results</h3>
-          <p>Every result shows its price and links straight to the retailer&rsquo;s product page.</p>
+          <h3>Size suggestions, next</h3>
+          <p>Fynd is building size suggestions from your profile and each brand&rsquo;s own verified size chart. Until a chart is checked, Fynd won&rsquo;t guess.</p>
         </li>
       </ol>
     </div>
   </section>
 
-  <!-- A few pieces from the catalogue, so the page shows what an answer
-       looks like. It steps aside when a real search runs. -->
+  <!-- A few pieces from the catalogue, so there is something to explore
+       straight away. -->
   <section class="section" id="preview">
     <div class="container">
       <div class="section-head">
@@ -243,7 +273,8 @@
       </a>
       <nav aria-label="Footer">
         <ul class="footer-links">
-          <li><a href="index.html">Search</a></li>
+          <li><a href="index.html">Fit guide</a></li>
+          <li><a href="find-clothes.html">Search</a></li>
           <li><a href="discover.html">Discover</a></li>
           <li><a href="pricing.html">Pricing</a></li>
           <li><a href="about.html">About</a></li>
@@ -256,12 +287,10 @@
 </footer>
 
 <script src="assets/products.js"></script>
-<script src="assets/interpret.js"></script>
-<script src="assets/search.js"></script>
 <script src="assets/account.js"></script>
-<script src="assets/attachments.js"></script>
 <script src="assets/catalog.js"></script>
+<script src="assets/fit-profile-schema.js"></script>
+<script src="assets/guide.js"></script>
 <script src="assets/app.js"></script>
-<script src="assets/demo-video.js" defer></script>
 </body>
 </html>

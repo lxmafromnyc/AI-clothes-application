@@ -3,11 +3,18 @@
 
    GET                                 -> { profile, storage }
    POST { action: "save", profile }    -> { profile, storage, saved }
+   POST { action: "guide", answers }   -> { profile, storage, saved }
    POST { action: "delete" }           -> { profile: null, storage, deleted }
 
-   Measurements, usual sizes by brand, and preferred fit — the shape is
-   assets/fit-profile-schema.js, and every save goes through its
-   normalise() here, whatever the page already checked.
+   Measurements, usual sizes by brand, preferred fit, and the fit guide's
+   three answers — the shape is assets/fit-profile-schema.js, and every
+   save goes through its normalise() here, whatever the page already
+   checked.
+
+   "guide" is the home page's fit guide saving { anchor, fitGoal,
+   troubleZones } — any of them — into the stored profile. Everything
+   else in the profile stays as stored, so the guide never has to read
+   measurements to keep them.
 
    ---------------------------------------------------------
    Whose profile
@@ -79,9 +86,11 @@ module.exports = async function handler(req, res) {
   const body = await readJson(req);
   const action = String((body && body.action) || '').trim();
 
-  if (action === 'save') {
+  if (action === 'save' || action === 'guide') {
     try {
-      const { profile, errors } = await fitProfiles.save(userId, body.profile);
+      const { profile, errors } = action === 'guide'
+        ? await fitProfiles.saveGuide(userId, body.answers)
+        : await fitProfiles.save(userId, body.profile);
       if (errors.length) {
         const stale = errors.some((e) => e.field === 'schemaVersion');
         return res.status(stale ? 409 : 400).json({

@@ -227,6 +227,9 @@
   const fitProfile = {
     read: () => call('fit-profile'),
     save: (profile) => call('fit-profile', { body: { action: 'save', profile } }),
+    /* the home page's fit guide: only its answers travel, and the server
+       keeps everything else in the profile as it is */
+    answerGuide: (answers) => call('fit-profile', { body: { action: 'guide', answers } }),
     remove: () => call('fit-profile', { body: { action: 'delete' } })
   };
 
