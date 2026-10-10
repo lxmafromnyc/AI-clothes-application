@@ -62,12 +62,12 @@
    also what clearing your cookies gets you. Signing it would imply it
    was worth more than it is.
 
-   A caller that sends no cookies at all — curl, a script — is metered
-   on a hash of its address and user agent instead, so the free
-   allowance is not simply bypassed by ignoring Set-Cookie. Neither is
-   airtight, and neither is asked to be: metering the free tier is about
-   the API bill, and the paid tiers rest on a real account and a real
-   subscription.
+   A caller that sends no device cookie back — curl, a script, a browser
+   refusing it as a third-party cookie — is metered on a hash of its
+   address and user agent instead, so the free allowance is not simply
+   bypassed by ignoring Set-Cookie. Neither is airtight, and neither is
+   asked to be: metering the free tier is about the API bill, and the
+   paid tiers rest on a real account and a real subscription.
 
    ---------------------------------------------------------
    Passwords
@@ -335,12 +335,23 @@ const addressSubject = (req) => 'ip_' + crypto.createHash('sha256')
   .update(`${clientAddress(req)}|${(req.headers && req.headers['user-agent']) || ''}`)
   .digest('hex').slice(0, 24);
 
-function deviceSubject(req, res) {
+/* What an anonymous request is counted against: the device cookie when
+   the browser sent one back, and the address hash otherwise — with a
+   device cookie offered for next time.
+
+   A request with no device cookie is a browser's first, or a caller
+   that will never send one back: curl, a script, a browser refusing it
+   as a third-party cookie (Safari on the Pages copy), or one sending
+   some other cookie instead. Counting each of those against a freshly
+   minted device id handed every such request a fresh Free allowance.
+   The address hash is the one thing all of its requests share. A
+   browser that keeps the cookie is counted by device from its next
+   request on, so its first request lands on its address instead. */
+function anonymousSubject(req, res) {
   const existing = parseCookies(req)[DEVICE_COOKIE];
   if (existing && /^[a-f0-9]{24,64}$/.test(existing)) return `dev_${existing}`;
-  const id = crypto.randomBytes(16).toString('hex');
-  if (res) setCookie(req, res, DEVICE_COOKIE, id, DEVICE_MAX_AGE);
-  return `dev_${id}`;
+  if (res) setCookie(req, res, DEVICE_COOKIE, crypto.randomBytes(16).toString('hex'), DEVICE_MAX_AGE);
+  return addressSubject(req);
 }
 
 /* ---------------------------------------------------------
@@ -389,11 +400,7 @@ async function identify(req, res, users) {
     if (res) await endSession(req, res);
   }
 
-  /* No cookies at all means no Set-Cookie will be honoured either, so
-     the address hash is the only stable thing on offer. */
-  const subject = Object.keys(cookies).length || res
-    ? deviceSubject(req, res)
-    : addressSubject(req);
+  const subject = anonymousSubject(req, res);
 
   return {
     user: null,
