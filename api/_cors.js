@@ -63,6 +63,10 @@
 
 'use strict';
 
+/* The header the CSRF check reads, named once, where it is checked.
+   _auth.js does not require this file, so there is no cycle. */
+const { CSRF_HEADER } = require('./_auth');
+
 const trimSlash = (value) => String(value || '').trim().replace(/\/+$/, '');
 
 /* FindWear's published front ends. A property of the project rather than
@@ -127,7 +131,20 @@ function applyCors(req, res) {
      Vary tells caches that the answer depends on who asked. */
   res.setHeader('Access-Control-Allow-Origin', origin);
   res.setHeader('Vary', 'Origin');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  /* Every header a page of ours sends, because a preflight answer that
+     leaves one out is a refusal and the request never leaves the
+     browser. Content-Type, since the POSTs are JSON. The CSRF header,
+     since assets/account.js sends it on every signed-in POST: without
+     it the Pages copy could not log out, check out, open the billing
+     portal or resend a verification email, while the all-on-Vercel
+     deployment — same-origin, so never preflighted — showed nothing
+     wrong. The name is _auth.js's own, so the two cannot drift apart.
+
+     It widens nothing. Like everything else here it is only ever sent
+     to an origin already on the list, and the CSRF header is a value a
+     forger cannot fill in, not a permission: listing it lets our page
+     send the token, it does not let anyone skip the check. */
+  res.setHeader('Access-Control-Allow-Headers', ['Content-Type', CSRF_HEADER].join(', '));
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   /* The session cookie has to travel for /api/account and the billing
      endpoints to know who is asking. This is only ever sent alongside a

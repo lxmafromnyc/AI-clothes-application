@@ -227,7 +227,8 @@ still overrides both.
 It sends the real request *"Find me a black oversized hoodie under $80"*, then
 checks the response came back tagged `source: "openai"`, that a colour, a fit and
 the $80 budget were extracted, that CORS allows your Pages origin, that preflight
-works, that `GET` and empty queries are refused, and that no key material appears
+works and lets through the `X-Fynd-CSRF` header signed-in requests carry, that
+`GET` and empty queries are refused, and that no key material appears
 in the response. It exits non-zero if anything fails and names the fix — a `503`
 tells you the key is missing, a missing CORS header tells you `ALLOWED_ORIGIN`
 is unset.
@@ -356,6 +357,45 @@ OPTIONS /api/search → 204    the Origin is allowed; the POST will follow
 A request with no `Origin` header is not a browser cross-origin request —
 `curl`, a server-to-server call — and is left alone, so the verification
 scripts keep working.
+
+**An allowed origin may send `Content-Type` and `X-Fynd-CSRF`.** The first
+because every POST is JSON; the second because every signed-in POST carries the
+[CSRF token](#csrf). The name is taken from `api/_auth.js`, which checks it, so
+the two cannot drift apart. A header the page sends but the preflight answer
+leaves out is a refusal the server never hears about: until the CSRF header was
+listed, logout, checkout, the billing portal and resend-verification were all
+blocked by the browser on the Pages copy, while the all-on-Vercel deployment —
+same-origin, so never preflighted — showed nothing wrong. `scripts/test-e2e.js`
+now logs out from a page on a second origin to keep it that way. That test runs
+without a Playwright route, because while one is installed Playwright answers
+every preflight itself and allows whatever was asked.
+
+**Accounts on the Pages copy depend on third-party cookies.** The session
+cookie belongs to the Vercel host. To a page on `lxmafromnyc.github.io` that is
+a third-party cookie — `github.io` and `vercel.app` are both public suffixes, so
+the two are different *sites*, not just different origins — and a browser that
+refuses third-party cookies refuses it whatever the CORS headers say:
+
+| Browser, default settings | Signed in on the Pages copy |
+| --- | --- |
+| Chrome, Edge | Works. Third-party cookies are allowed by default. |
+| Safari 13.1 and later, and the other WebKit browsers on iPhone and iPad | Does not work. Cookies on cross-site requests are blocked outright. |
+| Firefox | Email and password work, in a cookie jar kept for the Pages site alone (Total Cookie Protection). Continue with Google is not reliable: its cookie is set while the browser is on the Vercel host itself, which is a different jar. |
+| Brave; Chrome in Incognito; any browser set to block third-party cookies | Does not work. |
+
+"Does not work" looks like this: the sign-in request succeeds and the server
+creates the session, but the browser drops the cookie, so the next request
+arrives signed out. Searching needs no account and is unaffected.
+
+So accounts and billing belong on the Vercel copy, where the page and the
+functions share an origin and the cookie is first-party in every browser. The
+fixes for the split hosting are about sites, not headers: serve the pages and
+the functions under one registrable domain (`findwear.example` and
+`api.findwear.example` are the same site, so the cookie is first-party), or
+send the Pages copy's account and pricing links to the Vercel copy. A
+`Partitioned` (CHIPS) cookie would cover email sign-in in Chrome with
+third-party cookies blocked, but not Google sign-in, and Safari's support for it
+has come and gone between releases.
 
 ### How a request flows
 
@@ -1746,7 +1786,7 @@ storage. Deleting removes the record straight away.
 
 ```sh
 node scripts/test-fit-profile.js   # offline: schema, units, versions, endpoint, cross-account access, logs
-node scripts/test-e2e.js           # includes the fit profile page, against the real handlers
+node scripts/test-e2e.js           # includes the fit profile page, against the real handlers, and from a second origin
 node scripts/test-ui.js            # includes the fit profile page in the palette and legibility audits
 ```
 
@@ -1757,11 +1797,10 @@ node scripts/test-ui.js            # includes the fit profile page in the palett
 - Account deletion does not exist yet; when it is built it must also remove
   `fitprofile:<user id>`.
 - Two tabs saving at once: the last save wins.
-- From the GitHub Pages copy, saving and deleting are blocked by the browser:
-  the cross-origin preflight in `api/_cors.js` allows only `Content-Type`, not
-  the `X-Fynd-CSRF` header every signed-in POST carries. This predates the fit
-  profile and affects logout and checkout from that copy too. Reading works, and
-  the all-on-Vercel deployment is unaffected.
+- On the GitHub Pages copy the profile is only as reachable as the account:
+  saving and deleting pass the cross-origin preflight (`test-e2e` saves, reloads
+  and deletes one from a second origin), but signing in there depends on
+  third-party cookies — see [Cross-origin access](#cross-origin-access).
 
 ## Plans, payments and subscriptions
 
@@ -2068,6 +2107,8 @@ still saying Free leaves the page saying Free.
 | A plan is right and then wrong again later | No durable store: state is in memory and the instance was recycled. `verify-billing.sh` reports this. |
 | Sign-in answers 503 `no-auth-secret` | `AUTH_SECRET` is missing or shorter than 16 characters. |
 | Everything answers 403 | The Origin is not allowed — set `ALLOWED_ORIGIN` for a frontend on another host. See [Cross-origin access](#cross-origin-access). |
+| From another origin, a signed-in action fails with "Request header field x-fynd-csrf is not allowed" in the console | The preflight answer is not listing the CSRF header. `api/_cors.js` sends it to every allowed origin; check nothing in front of the function (a proxy, a `vercel.json` header rule) is replacing `Access-Control-Allow-Headers`. |
+| Signed in on the Pages site, signed out again on the next page | The browser is refusing the Vercel session cookie as third-party — Safari, Brave, Incognito. Use the Vercel copy for accounts. See [Cross-origin access](#cross-origin-access). |
 
 The function logs name which variables the running deployment can see —
 states only, never values. See `api/_env-report.js`.
