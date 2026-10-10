@@ -415,6 +415,12 @@
   function fill(profile) {
     const p = profile || Schema.empty();
     const m = p.measurements || {};
+
+    /* the fit guide's answers, shown as saved; this form never sends them */
+    const said = Schema.describeGuide(p);
+    setText('guide-answer-anchor', said.anchor);
+    setText('guide-answer-goal', said.fitGoal);
+    setText('guide-answer-zones', said.troubleZones);
     if (Schema.UNITS.includes(m.unit)) unit = m.unit;
     paintUnit();
 
@@ -486,7 +492,12 @@
 
     formError('');
     busy(true, 'Saving…');
-    const result = await global.Account.fitProfile.save(profile);
+    /* The guide's answers are not this form's to send. normalise() fills
+       them with null, and a null sent is an answer cleared, so they are
+       left out — the server keeps what the guide saved. */
+    const body = Object.assign({}, profile);
+    Schema.GUIDE_FIELDS.forEach((field) => { delete body[field]; });
+    const result = await global.Account.fitProfile.save(body);
     busy(false);
 
     if (result.ok && result.data) {

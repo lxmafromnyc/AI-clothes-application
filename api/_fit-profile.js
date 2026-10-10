@@ -34,8 +34,27 @@ async function read(userId) {
   return profile ? { profile, reason: null } : { profile: null, reason: 'unsupported-version' };
 }
 
-/* Validates, then replaces the whole profile. { profile, errors }: with
-   any error nothing is written. */
+const NEWER = [{ field: 'schemaVersion', message: 'Your fit profile was saved by a newer version of Fynd. Reload the page and try again.' }];
+const isNewer = (record) => Boolean(record) && Number.isInteger(record.schemaVersion) && record.schemaVersion > Schema.SCHEMA_VERSION;
+
+async function write(userId, profile, existing) {
+  const now = new Date().toISOString();
+  const record = Object.assign(profile, {
+    createdAt: (existing && typeof existing.createdAt === 'string') ? existing.createdAt : now,
+    updatedAt: now
+  });
+  await store.set(profileKey(userId), record);
+  return record;
+}
+
+/* Validates, then replaces the profile. { profile, errors }: with any
+   error nothing is written.
+
+   Replaces it all except the guide's answers when a save leaves them
+   out: the fit profile page that predates them, or one loaded before
+   this version, sends measurements, sizes and fits and nothing else,
+   and must not erase what the guide saved. Sent as null, an answer is
+   cleared; not sent, it is kept. */
 async function save(userId, input) {
   if (!userId) return { profile: null, errors: [{ field: 'profile', message: 'Sign in first.' }] };
 
@@ -43,17 +62,38 @@ async function save(userId, input) {
   if (errors.length) return { profile: null, errors };
 
   const existing = await store.get(profileKey(userId));
-  if (existing && Number.isInteger(existing.schemaVersion) && existing.schemaVersion > Schema.SCHEMA_VERSION) {
-    return { profile: null, errors: [{ field: 'schemaVersion', message: 'Your fit profile was saved by a newer version of Fynd. Reload the page and try again.' }] };
-  }
-  const now = new Date().toISOString();
-  const record = Object.assign(profile, {
-    createdAt: (existing && typeof existing.createdAt === 'string') ? existing.createdAt : now,
-    updatedAt: now
-  });
+  if (isNewer(existing)) return { profile: null, errors: NEWER };
 
-  await store.set(profileKey(userId), record);
-  return { profile: record, errors: [] };
+  const stored = existing ? Schema.upgrade(existing) : null;
+  if (stored) {
+    Schema.GUIDE_FIELDS.forEach((field) => {
+      if (!Object.prototype.hasOwnProperty.call(input, field)) profile[field] = stored[field];
+    });
+  }
+
+  return { profile: await write(userId, profile, existing), errors: [] };
+}
+
+/* The fit guide's save: its three answers, merged into whatever is
+   stored. Measurements, usual sizes and per-category fits are carried
+   over as stored and not sent back and forth, so the guide cannot lose
+   them. An answer the guide did not send — a skipped step — keeps its
+   saved value. { profile, errors }, as save(). */
+async function saveGuide(userId, input) {
+  if (!userId) return { profile: null, errors: [{ field: 'profile', message: 'Sign in first.' }] };
+
+  const { answers, errors } = Schema.normaliseGuide(input);
+  if (errors.length) return { profile: null, errors };
+
+  const existing = await store.get(profileKey(userId));
+  if (isNewer(existing)) return { profile: null, errors: NEWER };
+
+  const profile = (existing && Schema.upgrade(existing)) || Schema.empty();
+  delete profile.createdAt;
+  delete profile.updatedAt;
+  Object.assign(profile, answers);
+
+  return { profile: await write(userId, profile, existing), errors: [] };
 }
 
 async function remove(userId) {
@@ -62,4 +102,4 @@ async function remove(userId) {
   return true;
 }
 
-module.exports = { read, save, remove, profileKey };
+module.exports = { read, save, saveGuide, remove, profileKey };

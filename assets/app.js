@@ -794,7 +794,7 @@ function skeletons(count) {
      with the cursor already in the box means the button does the whole
      job in one press rather than leaving the shopper to find the field. */
   document.addEventListener('click', (e) => {
-    if (!e.target.closest || !e.target.closest('a[href="#search"], a[href="index.html#search"]')) return;
+    if (!e.target.closest || !e.target.closest('a[href="#search"], a[href="find-clothes.html#search"]')) return;
     window.setTimeout(() => input.focus({ preventScroll: true }), 400);
   });
 

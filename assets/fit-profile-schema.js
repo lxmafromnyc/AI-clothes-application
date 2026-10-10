@@ -2,7 +2,7 @@
    Fynd — the Shopper Fit Profile: its shape, and what it may hold
 
    The foundation brand-specific size recommendations will be built on.
-   Three groups, every part of each optional:
+   Every part of it is optional:
 
      measurements     height and chest for tops; waist and hip kept for
                       the categories that come later. One unit for all
@@ -13,6 +13,27 @@
      fitPreferences   fitted, regular, relaxed or oversized — per
                       category, so a hoodie and a future t-shirt can
                       differ.
+
+   And, from version 2, the three answers of the fit guide on the home
+   page (assets/guide.js):
+
+     anchor           a top the shopper owns that fits them perfectly:
+                      its brand and its size. A reference point, not a
+                      measurement — nothing here turns "UNIQLO M" into a
+                      chest size. That needs the brand's verified size
+                      chart, which recommendation code will have to look
+                      up before it estimates anything.
+     fitGoal          how they like clothes to sit, overall: slim, true
+                      to size, or cozy/oversized. It sits beside the
+                      per-category fitPreferences and never rewrites them;
+                      FIT_GOALS says which per-category fits each one is
+                      nearest, without pretending the two lists are one.
+     troubleZones     where ordinary clothes go wrong on them — sleeves,
+                      torso length, neckline, a loose waist. About
+                      garments, not bodies. An empty list means "none of
+                      these"; null means the question was not answered.
+
+   Each of the three is null until it is answered.
 
    One file, loaded by the page and required by api/fit-profile.js, so
    the rules the page checks while somebody types are the rules the
@@ -37,7 +58,14 @@
    version this file knows and returns the current shape, filling what
    an older profile never had with "not said". A new version adds a step
    to UPGRADES; a new category is a row in CATEGORIES. Neither touches a
-   profile already saved.
+   profile already saved: a version 1 profile reads as version 2 with
+   the guide's three answers unanswered, and its measurements, usual
+   sizes and per-category fits exactly as they were.
+
+   A save that leaves out a field added after version 1 keeps the stored
+   value (api/_fit-profile.js), so a page that predates the field cannot
+   erase it. A profile written by a later version than this file knows
+   is never read as this one, and never saved over.
 
    Nothing else is collected. There is no weight, no photograph and no
    free-text note here, and a field this file does not name is dropped
@@ -47,7 +75,7 @@
 (function (global) {
   'use strict';
 
-  const SCHEMA_VERSION = 1;
+  const SCHEMA_VERSION = 2;
 
   const UNITS = ['in', 'cm'];
   const UNIT_NAME = { in: 'inches', cm: 'centimetres' };
@@ -94,6 +122,38 @@
   const COMMON_SIZES = ['XXS', 'XS', 'S', 'M', 'L', 'XL', 'XXL', '3XL', '4XL'];
 
   const LIMITS = { brands: 50, brandLength: 60, sizeLength: 16 };
+
+  /* ---------- the fit guide's answers (version 2) ---------- */
+
+  /* Offered in the guide's brand list. Anything else is typed under
+     "Other", and one of these typed in any case is stored as spelled
+     here. */
+  const ANCHOR_BRANDS = ['Nike', 'UNIQLO', 'Zara', 'Carhartt'];
+  /* The guide's sizes. "Not sure" is stored as null, never as a size;
+     COMMON_SIZES is accepted too, for a later editor that offers more. */
+  const ANCHOR_SIZES = ['XS', 'S', 'M', 'L', 'XL', 'XXL'];
+
+  /* `nearest` is the per-category fit each goal sits closest to, for
+     code that has to read the two together. Cozy/oversized spans two of
+     them, and is kept as one answer rather than forced into either. */
+  const FIT_GOALS = [
+    { id: 'slim', label: 'Tight / Slim Fit', nearest: ['fitted'] },
+    { id: 'true-to-size', label: 'True to Size', nearest: ['regular'] },
+    { id: 'oversized', label: 'Cozy / Oversized', nearest: ['relaxed', 'oversized'] }
+  ];
+  const FIT_GOAL_IDS = FIT_GOALS.map((g) => g.id);
+
+  const TROUBLE_ZONES = [
+    { id: 'sleeves-short', label: 'Sleeves are always too short' },
+    { id: 'torso-short', label: 'Torso is always too short' },
+    { id: 'neckline-tight', label: 'Necklines are too tight' },
+    { id: 'waist-loose', label: 'Fits my chest but bags out at my waist' }
+  ];
+  const TROUBLE_ZONE_IDS = TROUBLE_ZONES.map((z) => z.id);
+
+  /* The fields version 2 added. A save that leaves one out keeps what is
+     stored (see the header). */
+  const GUIDE_FIELDS = ['anchor', 'fitGoal', 'troubleZones'];
 
   /* What somebody types when they do not know their size. Each is read
      as "unknown" — never as a size. */
@@ -180,13 +240,23 @@
   function empty() {
     const measurements = { unit: null };
     MEASUREMENT_KEYS.forEach((key) => { measurements[key] = null; });
-    return { schemaVersion: SCHEMA_VERSION, measurements, brandSizes: [], fitPreferences: {} };
+    return {
+      schemaVersion: SCHEMA_VERSION,
+      measurements,
+      brandSizes: [],
+      fitPreferences: {},
+      anchor: null,
+      fitGoal: null,
+      troubleZones: null
+    };
   }
 
   /* Each step takes a profile of version N and returns version N + 1.
-     Empty while there is only one version; the loop in upgrade() is
-     already in place for the first one that is added. */
-  const UPGRADES = {};
+     Version 1 had no guide; its answers start unanswered, and nothing
+     version 1 held is touched. */
+  const UPGRADES = {
+    1: (profile) => Object.assign({}, profile, { schemaVersion: 2, anchor: null, fitGoal: null, troubleZones: null })
+  };
 
   /* The current shape of whatever was stored, or null for something
      this version cannot read (a later schema, or not a profile at all).
@@ -222,6 +292,16 @@
       if (typeof prefs[category] === 'string') shaped.fitPreferences[category] = prefs[category];
     });
 
+    if (isPlainObject(current.anchor)) {
+      const brand = typeof current.anchor.brand === 'string' ? current.anchor.brand : null;
+      const size = typeof current.anchor.size === 'string' ? current.anchor.size : null;
+      shaped.anchor = brand || size ? { brand, size } : null;
+    }
+    shaped.fitGoal = typeof current.fitGoal === 'string' ? current.fitGoal : null;
+    shaped.troubleZones = Array.isArray(current.troubleZones)
+      ? current.troubleZones.filter((zone) => typeof zone === 'string')
+      : null;
+
     if (typeof current.createdAt === 'string') shaped.createdAt = current.createdAt;
     if (typeof current.updatedAt === 'string') shaped.updatedAt = current.updatedAt;
     return shaped;
@@ -233,7 +313,90 @@
     const m = profile.measurements || {};
     return MEASUREMENT_KEYS.every((key) => m[key] === null || m[key] === undefined)
       && !(profile.brandSizes || []).length
-      && !Object.keys(profile.fitPreferences || {}).length;
+      && !Object.keys(profile.fitPreferences || {}).length
+      && !profile.anchor
+      && !profile.fitGoal
+      /* "none of these" is an answer, so an empty list is not empty */
+      && !Array.isArray(profile.troubleZones);
+  }
+
+  /* The guide's answers in words, for every page that shows them. Never
+     a size suggestion: only what the shopper said. */
+  function describeGuide(profile) {
+    const p = profile || {};
+    const a = p.anchor;
+    const goal = FIT_GOALS.find((g) => g.id === p.fitGoal);
+    const zones = Array.isArray(p.troubleZones)
+      ? p.troubleZones.map((id) => (TROUBLE_ZONES.find((z) => z.id === id) || {}).label).filter(Boolean)
+      : null;
+    return {
+      anchor: a && (a.brand || a.size) ? `${a.brand || 'Brand not said'} · ${a.size || 'size not sure'}` : 'Not answered',
+      fitGoal: goal ? goal.label : 'Not answered',
+      troubleZones: zones === null ? 'Not answered' : (zones.length ? zones.join('; ') : 'None of these')
+    };
+  }
+
+  /* ---------- the guide's answers ----------
+     Takes { anchor, fitGoal, troubleZones } — any of them, from the
+     guide or a save — and returns { answers, errors }, with only the
+     fields that were sent in `answers`. A field sent as null clears the
+     answer; a field not sent is not in `answers` at all, which is how a
+     skipped step leaves a saved answer alone. Errors are named like the
+     rest: "anchor.brand", "fitGoal", "troubleZones". */
+  function normaliseGuide(input) {
+    const errors = [];
+    const answers = {};
+    const fail = (field, message) => errors.push({ field, message });
+    const source = isPlainObject(input) ? input : {};
+
+    if (source.anchor !== undefined) {
+      const raw = source.anchor;
+      if (raw === null) {
+        answers.anchor = null;
+      } else if (!isPlainObject(raw)) {
+        fail('anchor', 'Send the top that fits as a brand and a size.');
+      } else {
+        let brand = null;
+        if (!blank(raw.brand)) {
+          const text = typeof raw.brand === 'string' ? cleanText(raw.brand) : '';
+          if (!text || !brandKey(text)) fail('anchor.brand', 'Use letters or numbers for the brand name.');
+          else if (text.length > LIMITS.brandLength) fail('anchor.brand', `Brand names can be up to ${LIMITS.brandLength} characters.`);
+          else brand = ANCHOR_BRANDS.find((b) => brandKey(b) === brandKey(text)) || text;
+        }
+
+        let size = null;
+        if (!blank(raw.size)) {
+          const text = typeof raw.size === 'string' ? cleanText(raw.size) : '';
+          if (UNKNOWN_SIZE.has(text.toLowerCase()) || text.toLowerCase() === 'not-sure') size = null;
+          else if (COMMON_SIZES.includes(text.toUpperCase())) size = text.toUpperCase();
+          else fail('anchor.size', `Choose a size from ${ANCHOR_SIZES[0]} to ${ANCHOR_SIZES[ANCHOR_SIZES.length - 1]}, or Not sure.`);
+        }
+
+        if (!errors.some((e) => e.field.startsWith('anchor'))) answers.anchor = brand || size ? { brand, size } : null;
+      }
+    }
+
+    if (source.fitGoal !== undefined) {
+      if (blank(source.fitGoal)) answers.fitGoal = null;
+      else if (FIT_GOAL_IDS.includes(source.fitGoal)) answers.fitGoal = source.fitGoal;
+      else fail('fitGoal', `Choose how you like clothes to sit: ${FIT_GOALS.map((g) => g.label).join(', ')}.`);
+    }
+
+    if (source.troubleZones !== undefined) {
+      const raw = source.troubleZones;
+      if (raw === null) {
+        answers.troubleZones = null;
+      } else if (!Array.isArray(raw)) {
+        fail('troubleZones', 'Send the trouble spots as a list.');
+      } else if (raw.some((zone) => !TROUBLE_ZONE_IDS.includes(zone))) {
+        fail('troubleZones', 'Choose from the trouble spots listed, or None of these.');
+      } else {
+        /* the listed order, each once */
+        answers.troubleZones = TROUBLE_ZONE_IDS.filter((id) => raw.includes(id));
+      }
+    }
+
+    return { answers: errors.length ? {} : answers, errors };
   }
 
   /* ---------- the one validator ----------
@@ -399,6 +562,16 @@
       });
     }
 
+    /* ---- the guide's answers ----
+       Validated by the same rules the guide's own save uses. A field not
+       sent stays null here; api/_fit-profile.js keeps the stored value
+       for it, so leaving it out never erases it. */
+    const guide = normaliseGuide(source);
+    guide.errors.forEach((e) => errors.push(e));
+    GUIDE_FIELDS.forEach((field) => {
+      if (Object.prototype.hasOwnProperty.call(guide.answers, field)) profile[field] = guide.answers[field];
+    });
+
     return errors.length ? { profile: null, errors } : { profile, errors };
   }
 
@@ -413,7 +586,14 @@
     FIT_PREFERENCES,
     COMMON_SIZES,
     LIMITS,
+    ANCHOR_BRANDS,
+    ANCHOR_SIZES,
+    FIT_GOALS,
+    TROUBLE_ZONES,
+    GUIDE_FIELDS,
     normalise,
+    normaliseGuide,
+    describeGuide,
     upgrade,
     empty,
     isEmpty,

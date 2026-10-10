@@ -31,7 +31,7 @@ const {
   requestsFor, instability, howFound, recordingReport, RETRY_DELAYS_MS, loadEnv,
   handoffAllowed, visitRetailer, RETAILER_LOAD_MS, MAX_HANDOFFS,
   LIMITS, withDeadline, probeRetailers, preflightRetailers, RETAILER_MS, RETAILER_SHOWN_MS,
-  challengeIn, timelineOf, pageWithDemo
+  challengeIn, timelineOf, pageWithDemo, DEMO_PAGE
 } = require('./record-demo');
 const http = require('http');
 const store = require('../api/_store');
@@ -681,8 +681,24 @@ const savedRun = () => ({
   }))
 });
 
+/* The recorder writes its note into DEMO_PAGE, so DEMO_PAGE has to be
+   where the film actually is — and the only page it is on. */
+test('the recorder records on, and writes its note into, the one page that shows the film', () => {
+  const read = (file) => fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
+  assert.strictEqual(DEMO_PAGE, 'find-clothes.html', 'the film lives on the Search page');
+  const html = read(DEMO_PAGE);
+  assert.ok(html.includes('id="ask-form"'), `${DEMO_PAGE} has the search box the film is recorded in`);
+  assert.strictEqual((html.match(/id="demo-video"/g) || []).length, 1, `${DEMO_PAGE} has the video`);
+  assert.ok(/<script src="assets\/demo-video\.js" defer><\/script>/.test(html), `${DEMO_PAGE} loads the player script`);
+  assert.ok(/<!-- demo-note -->[\s\S]*?<!-- \/demo-note -->/.test(html), `${DEMO_PAGE} carries the note markers`);
+  const others = fs.readdirSync(path.join(__dirname, '..')).filter((f) => f.endsWith('.html') && f !== DEMO_PAGE);
+  for (const file of others) {
+    assert.ok(!read(file).includes('id="demo-video"') && !read(file).includes('<!-- demo-note -->'), `${file} still carries the film or its note`);
+  }
+});
+
 test('the page\'s note and labels take prices as written: "$150" is not read as a back-reference', () => {
-  const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  const html = fs.readFileSync(path.join(__dirname, '..', DEMO_PAGE), 'utf8');
   const queries = ['black oversized hoodie under $80', 'lightweight jacket for fall under $150', 'BAPE shark hoodie under $400', 'sage green linen midi dress under $120'];
   const saved = { searchedAt: '2026-10-01T12:00:00Z', searches: queries.map((query) => ({ query })) };
   const next = pageWithDemo(html, saved);
