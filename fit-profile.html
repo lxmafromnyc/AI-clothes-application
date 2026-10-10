@@ -28,7 +28,7 @@
       <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" aria-label="Open menu"><span></span></button>
       <nav aria-label="Main">
         <ul class="nav-links" id="site-nav">
-          <li><a href="index.html">Search</a></li>
+          <li><a href="index.html">Fit guide</a></li>
           <li><a href="discover.html">Discover</a></li>
           <li><a href="pricing.html">Pricing</a></li>
           <li><a href="about.html">About</a></li>
@@ -77,6 +77,19 @@
         </div>
 
         <form id="profile-form" novalidate hidden>
+
+          <!-- ==================================================== the fit guide's answers
+               Read here, changed in the guide on the home page. Saving this
+               form never sends them, and the server keeps them as they are. -->
+          <section class="profile-section profile-guide" id="section-guide" aria-labelledby="guide-answers-title">
+            <h2 class="profile-guide-title" id="guide-answers-title">From the fit guide</h2>
+            <ul class="guide-summary">
+              <li><span class="guide-summary-label">A top that fits</span><span class="guide-summary-value" id="guide-answer-anchor">Not answered</span></li>
+              <li><span class="guide-summary-label">How you like clothes to sit</span><span class="guide-summary-value" id="guide-answer-goal">Not answered</span></li>
+              <li><span class="guide-summary-label">Where clothes go wrong</span><span class="guide-summary-value" id="guide-answer-zones">Not answered</span></li>
+            </ul>
+            <a class="btn btn-secondary" href="index.html#guide" id="guide-answers-edit">Change in the fit guide</a>
+          </section>
 
           <!-- ==================================================== measurements -->
           <fieldset class="profile-section" id="section-measurements">
@@ -183,7 +196,7 @@
           <div class="profile-danger" id="profile-delete-area" hidden>
             <button class="link-btn" type="button" id="profile-delete">Delete my fit profile</button>
             <div class="profile-confirm" id="delete-confirm" hidden>
-              <p>This removes your measurements, usual sizes and preferred fit from your account. It cannot be undone.</p>
+              <p>This removes your measurements, usual sizes, preferred fit and fit guide answers from your account. It cannot be undone.</p>
               <div class="auth-actions">
                 <button class="btn btn-secondary" type="button" id="delete-confirm-yes">Delete fit profile</button>
                 <button class="link-btn" type="button" id="delete-cancel">Keep it</button>
@@ -228,7 +241,8 @@
       </a>
       <nav aria-label="Footer">
         <ul class="footer-links">
-          <li><a href="index.html">Search</a></li>
+          <li><a href="index.html">Fit guide</a></li>
+          <li><a href="find-clothes.html">Search</a></li>
           <li><a href="discover.html">Discover</a></li>
           <li><a href="pricing.html">Pricing</a></li>
           <li><a href="about.html">About</a></li>

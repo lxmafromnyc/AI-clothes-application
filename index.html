@@ -168,7 +168,7 @@
           <button class="btn btn-secondary" type="button" id="guide-back" hidden>Back</button>
           <button class="btn btn-primary" type="submit" id="guide-next">Skip</button>
         </div>
-        <p class="guide-saved-note" id="guide-saved-note" hidden>Your saved answers are filled in. Change anything, or keep going.</p>
+        <p class="guide-saved-note" id="guide-saved-note" hidden>Your saved answers are filled in. Change anything here, or edit everything on <a class="guide-link" href="fit-profile.html">your fit profile</a>.</p>
       </form>
 
       <!-- Signed out at the end: an account to keep the answers in, made
@@ -204,7 +204,22 @@
           <span id="guide-switch-text">Already have an account?</span>
           <button class="link-btn" type="button" id="guide-switch">Sign in</button>
         </p>
-        <p class="auth-fineprint">Using Google? <a class="guide-link" href="account.html">Sign in on the account page</a>, then come back &mdash; the guide takes seconds.</p>
+        <!-- Google sign-in is a full-page trip to Google and back to the
+             account page, so the answers in this page's memory do not
+             survive it. Offered only where Google is set up, and never
+             without saying so first. -->
+        <div class="guide-google" id="guide-google" hidden>
+          <button class="btn btn-secondary btn-provider" type="button" id="guide-google-button">
+            <svg viewBox="0 0 18 18" aria-hidden="true" focusable="false" class="provider-mark">
+              <path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.7-1.57 2.68-3.88 2.68-6.62z"/>
+              <path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.8.54-1.84.86-3.04.86-2.34 0-4.32-1.58-5.02-3.7H.94v2.33A9 9 0 0 0 9 18z"/>
+              <path fill="#FBBC05" d="M3.98 10.72a5.4 5.4 0 0 1 0-3.44V4.95H.94a9 9 0 0 0 0 8.1l3.04-2.33z"/>
+              <path fill="#EA4335" d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.58C13.46.9 11.43 0 9 0A9 9 0 0 0 .94 4.95l3.04 2.33C4.68 5.16 6.66 3.58 9 3.58z"/>
+            </svg>
+            Continue with Google
+          </button>
+          <p class="auth-fineprint" id="guide-google-note">Your answers are not saved yet. Google sign-in leaves this page, so afterwards come back to the fit guide and tap through again &mdash; it takes seconds.</p>
+        </div>
       </form>
 
       <!-- Shown only once the save has actually succeeded. -->

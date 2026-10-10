@@ -320,6 +320,22 @@
       && !Array.isArray(profile.troubleZones);
   }
 
+  /* The guide's answers in words, for every page that shows them. Never
+     a size suggestion: only what the shopper said. */
+  function describeGuide(profile) {
+    const p = profile || {};
+    const a = p.anchor;
+    const goal = FIT_GOALS.find((g) => g.id === p.fitGoal);
+    const zones = Array.isArray(p.troubleZones)
+      ? p.troubleZones.map((id) => (TROUBLE_ZONES.find((z) => z.id === id) || {}).label).filter(Boolean)
+      : null;
+    return {
+      anchor: a && (a.brand || a.size) ? `${a.brand || 'Brand not said'} · ${a.size || 'size not sure'}` : 'Not answered',
+      fitGoal: goal ? goal.label : 'Not answered',
+      troubleZones: zones === null ? 'Not answered' : (zones.length ? zones.join('; ') : 'None of these')
+    };
+  }
+
   /* ---------- the guide's answers ----------
      Takes { anchor, fitGoal, troubleZones } — any of them, from the
      guide or a save — and returns { answers, errors }, with only the
@@ -577,6 +593,7 @@
     GUIDE_FIELDS,
     normalise,
     normaliseGuide,
+    describeGuide,
     upgrade,
     empty,
     isEmpty,

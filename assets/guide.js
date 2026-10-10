@@ -26,6 +26,12 @@
    called a success once the server has said so; a failed one keeps
    every answer on screen with a way to try again.
 
+   Google sign-in is offered too, where it is set up, but it is a
+   full-page trip to Google that ends on the account page, so this
+   page's memory does not survive it. The button says so before it is
+   pressed: the answers are not saved, and the guide is tapped through
+   again afterwards.
+
    No size is suggested and no measurement is estimated here. A brand
    and a size are a reference point, not a body; turning one into the
    other needs that brand's verified size chart, which this page does
@@ -176,15 +182,10 @@
       item.append(name, said);
       list.append(item);
     };
-    const p = profile || {};
-    const a = p.anchor;
-    add('A top that fits', a ? [a.brand || 'A brand', a.size || 'size not sure'].join(' · ') : 'Not answered');
-    const goal = Schema && Schema.FIT_GOALS.find((g) => g.id === p.fitGoal);
-    add('How you like it to sit', goal ? goal.label : 'Not answered');
-    const zoneLabels = Array.isArray(p.troubleZones) && Schema
-      ? p.troubleZones.map((id) => (Schema.TROUBLE_ZONES.find((z) => z.id === id) || {}).label).filter(Boolean)
-      : null;
-    add('Where clothes go wrong', zoneLabels === null ? 'Not answered' : (zoneLabels.length ? zoneLabels.join('; ') : 'None of these'));
+    const said = Schema.describeGuide(profile);
+    add('A top that fits', said.anchor);
+    add('How you like clothes to sit', said.fitGoal);
+    add('Where clothes go wrong', said.troubleZones);
   }
 
   /* ---------- saving ---------- */
@@ -341,6 +342,13 @@
     goTo(LAST);
   });
 
+  /* Google: a full-page trip that ends on the account page. Nothing is
+     saved first and nothing claims to be — the note beside the button
+     says the answers will need tapping through again. */
+  $('guide-google-button').addEventListener('click', () => {
+    global.location.href = global.Account.googleStartUrl();
+  });
+
   $('guide-edit').addEventListener('click', () => {
     showPanel('questions', false);
     goTo(1);
@@ -354,6 +362,8 @@
 
     if (global.Account) {
       await global.Account.load();
+      const state = global.Account.state();
+      $('guide-google').hidden = !(state && state.accounts && state.accounts.google);
       /* signed in: what was saved is filled in, so finishing the guide
          again changes only what is changed. A profile that cannot be
          read is no reason to stop — the server merges, so saving can

@@ -1168,8 +1168,8 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
   await test('the hairline lies along the bottom edge of the search box, inside it, through both stages, at every width', async () => {
     /* long enough to wrap onto more lines on a phone, where the box stacks */
     const query = 'something cozy I can wear with jeans for a weekend away';
-    const runs = SEARCH_WIDTHS.map((viewport) => ['find-clothes.html', viewport])
-      .concat([['index.html', { width: 1280, height: 900 }], ['index.html', { width: 390, height: 844 }]]);
+    /* the search box lives on the Search page only; the home page is the fit guide */
+    const runs = SEARCH_WIDTHS.map((viewport) => ['find-clothes.html', viewport]);
     for (const [file, viewport] of runs) {
       const where = `${file} at ${viewport.width}px`;
       reset();
@@ -1246,7 +1246,7 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
   });
 
   await test('the hairline is decoration: hidden from assistive technology, with the stage still said in words', async () => {
-    for (const file of ['find-clothes.html', 'index.html']) {
+    for (const file of ['find-clothes.html']) {
       reset();
       const search = deferred();
       stubs.search = { hold: search.held };
@@ -1865,7 +1865,7 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
       [{ planId: 'max', searchesUsed: 3, extra: SIGNED_IN }, '497 searches left this month']
     ];
     for (const [state, said] of cases) {
-      for (const file of ['find-clothes.html', 'index.html']) {
+      for (const file of ['find-clothes.html']) {
         reset();
         accountState = accountReply(state);
         const page = await openPage(file);
@@ -2081,7 +2081,7 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
 
   await test('the count fits on one line in the box, beside nothing, at every width — and the box never changes size for it', async () => {
     const widths = [1440, 1280, 1024, 820, 768, 767, 480, 390, 375];
-    const runs = widths.map((width) => ['find-clothes.html', width]).concat([['index.html', 1280], ['index.html', 390]]);
+    const runs = widths.map((width) => ['find-clothes.html', width]);
     for (const [file, width] of runs) {
       const where = `${file} at ${width}px`;
       reset();
@@ -2397,11 +2397,14 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     /* a host that refuses foreign referrers answers with a 403 the page
        cannot see, so the photo simply never arrives. This is the one
        thing the card can do about that. */
-    searchPhoto = REAL_PHOTO;
+    /* an address of its own: the Search page's demo film uses this file as
+       its poster, and a copy already in the browser's memory would answer
+       the card without any request — and without a referrer to inspect */
+    searchPhoto = `${REAL_PHOTO}?referrer=${Date.now()}`;
     try {
       const page = await open();
       const sent = [];
-      await page.route((url) => String(url).endsWith('fynd-demo-poster.jpg'), (route) => {
+      await page.route((url) => String(url).includes('fynd-demo-poster.jpg?referrer='), (route) => {
         sent.push(route.request().headers().referer || null);
         return route.continue();
       });
@@ -3277,9 +3280,11 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     const page = await openPage(file, { photos: file === 'discover.html' });
     const built = {
       'discover.html': '.item-card',
-      /* the search pages read the live searches left from /api/account;
+      /* the home page is the fit guide, ready once /api/account has
+         answered, over the catalogue preview; both are audited */
+      'index.html': 'body:has(#guide[data-ready]):has(#preview-grid .item-card)',
+      /* the search page reads the live searches left from /api/account;
          the audit waits for the count so its ink is checked too */
-      'index.html': '#ask-usage:not(:empty)',
       'find-clothes.html': '#ask-usage:not(:empty)',
       /* both billing pages draw themselves from /api/account, so the
          audit has to wait for the answer or it walks an empty shell */
@@ -3361,6 +3366,104 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     }
     accountState = accountReply({});
     fitProfileState = fitProfileReply(null);
+  });
+
+  /* The fit guide on the home page shows one step at a time, so the page
+     audit above only sees step 1. These walk every step and panel. */
+  const guideAudit = (page, viewport) => async (where) => {
+    const problems = await textStyleProblems(page, await resolveInks(page));
+    assert.deepStrictEqual(problems, [], `${viewport.width}px, ${where}:\n        ${problems.join('\n        ')}`);
+    const width = await page.evaluate(() => document.documentElement.scrollWidth);
+    assert.ok(width <= viewport.width, `${where}: the page is ${width}px wide at ${viewport.width}px`);
+  };
+
+  await test('every step of the fit guide and its account step are set in a palette ink, legible, and fit a phone', async () => {
+    accountState = accountReply({});
+    fitProfileState = fitProfileReply(null);
+    for (const viewport of [{ width: 1280, height: 900 }, { width: 360, height: 740 }]) {
+      const page = await openPage('index.html', { viewport });
+      await page.waitForSelector('#guide[data-ready]', { timeout: 10000 });
+      const audit = guideAudit(page, viewport);
+
+      await page.selectOption('#anchor-brand', 'other');
+      await page.fill('#anchor-other', 'Gap');
+      await page.selectOption('#anchor-size', 'M');
+      await audit('step 1, with a brand typed under Other');
+      await page.click('#guide-next');
+      await page.check('input[name="fitGoal"][value="oversized"]');
+      await audit('step 2, with a card chosen');
+      await page.click('#guide-next');
+      await page.check('input[name="troubleZones"][value="torso-short"]');
+      await audit('step 3, with a trouble spot ticked');
+
+      /* signed out, saving asks for an account; an error puts the
+         warning ink under audit too */
+      await page.click('#guide-next');
+      await page.waitForSelector('#guide-account:not([hidden])');
+      await page.click('#guide-account-submit');
+      await page.waitForSelector('#guide-account-error:not(:empty)');
+      await audit('the account step, with an error');
+      await page.close();
+    }
+  });
+
+  await test('a failed save and the confirmation are legible, and a saved profile is filled in', async () => {
+    const saved = {
+      schemaVersion: 2,
+      measurements: { unit: 'in', height: 70, chest: 40, waist: null, hip: null },
+      brandSizes: [{ brand: 'Gap', category: 'hoodies', size: 'M', fit: 'about-right' }],
+      fitPreferences: { hoodies: 'relaxed' },
+      anchor: { brand: 'UNIQLO', size: 'L' },
+      fitGoal: 'slim',
+      troubleZones: []
+    };
+    accountState = accountReply({ extra: SIGNED_IN });
+    for (const viewport of [{ width: 1280, height: 900 }, { width: 360, height: 740 }]) {
+      /* the stub answers every /api/fit-profile request with this: a save
+         that does not say saved is a failed one */
+      fitProfileState = fitProfileReply(saved);
+      const page = await openPage('index.html', { viewport });
+      await page.waitForSelector('#guide[data-ready]', { timeout: 10000 });
+      const audit = guideAudit(page, viewport);
+
+      assert.strictEqual(await page.isVisible('#guide-saved-note'), true, 'says the saved answers are filled in');
+      assert.strictEqual(await page.$eval('#anchor-brand', (n) => n.value), 'UNIQLO');
+      assert.strictEqual(await page.$eval('#anchor-size', (n) => n.value), 'L');
+      await page.click('#guide-next');
+      assert.strictEqual(await page.isChecked('input[name="fitGoal"][value="slim"]'), true);
+      await page.click('#guide-next');
+      assert.strictEqual(await page.isChecked('#zone-none'), true, 'an empty list is "None of these"');
+
+      await page.click('#guide-next');
+      await page.waitForSelector('#guide-error:not(:empty)');
+      assert.strictEqual(await page.isVisible('#guide-done'), false, 'no confirmation for a save the server did not confirm');
+      await audit('a failed save');
+
+      fitProfileState = Object.assign(fitProfileReply(saved), { saved: true });
+      await page.click('#guide-next');
+      await page.waitForSelector('#guide-done:not([hidden])');
+      await audit('the confirmation');
+      await page.close();
+    }
+    accountState = accountReply({});
+    fitProfileState = fitProfileReply(null);
+  });
+
+  await test('the fit guide holds still for reduced motion: a choice changes colour, and nothing animates', async () => {
+    accountState = accountReply({});
+    const page = await openPage('index.html');
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await page.waitForSelector('#guide[data-ready]', { timeout: 10000 });
+    await page.click('#guide-next');
+    await page.check('input[name="fitGoal"][value="slim"]');
+    const moving = await page.evaluate(() => [...document.querySelectorAll('#guide *')]
+      .filter((n) => n.offsetParent)
+      .map((n) => ({ n, cs: getComputedStyle(n) }))
+      .filter(({ cs }) => cs.animationName !== 'none'
+        || cs.transitionDuration.split(',').some((d) => parseFloat(d) * (d.trim().endsWith('ms') ? 1 : 1000) > 1))
+      .map(({ n, cs }) => `${n.tagName.toLowerCase()}.${n.className} ${cs.animationName} ${cs.transitionDuration}`));
+    assert.deepStrictEqual(moving, []);
+    await page.close();
   });
 
   await test('the email form is set in a palette ink, in both of its modes', async () => {
@@ -3510,8 +3613,11 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
         cta: getComputedStyle(document.querySelector('.btn-primary')).backgroundColor === primary,
         mark: getComputedStyle(document.querySelector('.brand-mark')).backgroundColor === primary,
         current: getComputedStyle(document.querySelector('.nav-links a[aria-current="page"]'), '::after').backgroundColor === primary,
-        example: getComputedStyle(document.querySelector('.example')).color === rgbOf('--color-accent-ink'),
         step: getComputedStyle(document.querySelector('.step-num')).color === rgbOf('--color-accent-ink'),
+        /* the guide's "1 of 3" is a step number, so it takes the accent;
+           the part of the bar already reached is the primary */
+        guideCount: getComputedStyle(document.querySelector('.guide-count')).color === rgbOf('--color-accent-ink'),
+        guideBar: getComputedStyle(document.querySelector('.guide-bar li.is-current')).backgroundColor === primary,
         retailer: getComputedStyle(document.querySelector('.item-retailer')).color === rgbOf('--color-primary-ink'),
         defined: ['--color-bg', '--color-surface', '--color-text', '--color-text-muted', '--color-border',
           '--color-primary', '--color-primary-hover', '--color-accent', '--color-success', '--color-warning']
@@ -3522,6 +3628,19 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     });
     Object.entries(wired).forEach(([what, ok]) => assert.ok(ok, `${what} does not use its token`));
     await page.close();
+
+    /* the example searches live with the search box, on the Search page */
+    const search = await settled('find-clothes.html');
+    const example = await search.evaluate(() => {
+      const probe = document.createElement('span');
+      probe.style.color = 'var(--color-accent-ink)';
+      document.body.appendChild(probe);
+      const ok = getComputedStyle(document.querySelector('.example')).color === getComputedStyle(probe).color;
+      probe.remove();
+      return ok;
+    });
+    assert.ok(example, 'example does not use its token');
+    await search.close();
   });
 
   await browser.close();

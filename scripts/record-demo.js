@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /* =========================================================
-   Fynd — records the landing page demo video
+   Fynd — records the demo video on the Search page
 
    A screen recording of a person using Fynd for four genuinely different
    shopping problems, one after another, in about fifty-five seconds:
@@ -123,6 +123,11 @@ const REPLAY = arg('replay');
 const ONLY = arg('only');
 const PORT = Number(process.env.DEMO_PORT || 8917);
 const ORIGIN = `http://127.0.0.1:${PORT}`;
+
+/* The page the film is recorded on and shown on: the Search page, where
+   the search box is. It was the home page until the fit guide took the
+   home page's first screen. The note under the video is written here. */
+const DEMO_PAGE = 'find-clothes.html';
 
 /* The searches, in the order they are made: four different shopping
    problems — an everyday piece, another category altogether, a specific
@@ -919,7 +924,7 @@ async function searchOnce(browser, request) {
   try {
     const page = await context.newPage();
     await page.addInitScript(pagePrep, ORIGIN);
-    await page.goto(`${ORIGIN}/index.html`, { waitUntil: 'load' });
+    await page.goto(`${ORIGIN}/${DEMO_PAGE}`, { waitUntil: 'load' });
     await page.fill('#ask', request.query);
     await page.click('#ask-form button[type=submit]');
 
@@ -1069,7 +1074,7 @@ async function record(chromium, shot, rawDir, stillsDir) {
      with a row of empty frames filling in. */
   const photos = api.saved.searches.flatMap((s) => s.shown.map((p) => p.photo)).filter(Boolean);
   const warm = await context.newPage();
-  await warm.goto(`${ORIGIN}/index.html`, { waitUntil: 'load' });
+  await warm.goto(`${ORIGIN}/${DEMO_PAGE}`, { waitUntil: 'load' });
   /* a photo host that never answers costs this step, not the run: the
      photos are checked again, loaded, on camera */
   await withDeadline(warm.evaluate((urls) => Promise.all(urls.map((u) => new Promise((r) => {
@@ -1121,7 +1126,7 @@ async function record(chromium, shot, rawDir, stillsDir) {
   };
   const hush = () => page.evaluate(() => window.demo.hush());
 
-  await page.goto(`${ORIGIN}/index.html`, { waitUntil: 'load' });
+  await page.goto(`${ORIGIN}/${DEMO_PAGE}`, { waitUntil: 'load' });
   await page.waitForSelector('#ask-form');
   await page.evaluate(() => document.fonts.ready);
 
@@ -1635,11 +1640,11 @@ function build(shot, take, outDir) {
    and when they were made, because prices and stock move on after a
    recording. The video's own label says the same for anyone not seeing
    it. Only the text between the markers, and those two labels, are
-   replaced in index.html. */
+   replaced in DEMO_PAGE. */
 const attr = (t) => String(t).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
 const listed = (items) => (items.length < 2 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`);
 
-/* index.html with the note and the labels describing `saved`; null when
+/* DEMO_PAGE's markup with the note and the labels describing `saved`; null when
    the note's markers are missing. The new text goes in through replacer
    functions, never replacement strings: the requests carry prices, and
    "$150" in a replacement string would be read as "$1" and "50". */
@@ -1663,14 +1668,14 @@ function pageWithDemo(html, saved) {
 }
 
 function describeOnPage(saved) {
-  const file = path.join(REPO, 'index.html');
+  const file = path.join(REPO, DEMO_PAGE);
   const next = pageWithDemo(fs.readFileSync(file, 'utf8'), saved);
   if (next === null) {
-    console.log('  note: the demo-note markers were not found in index.html; update the note under the video by hand');
+    console.log(`  note: the demo-note markers were not found in ${DEMO_PAGE}; update the note under the video by hand`);
     return;
   }
   fs.writeFileSync(file, next);
-  console.log('  updated the note and the video\'s label in index.html');
+  console.log(`  updated the note and the video's label in ${DEMO_PAGE}`);
 }
 
 /* ---------------------------------------------------------
@@ -1823,5 +1828,5 @@ async function main() {
    starting anything */
 if (require.main === module) main();
 
-module.exports = { challengeIn, timelineOf, RETAILER_MS, RETAILER_SHOWN_MS, LIMITS, withDeadline, probeRetailers, preflightRetailers, retailerShows, handoffAllowed, visitRetailer, RETAILER_LOAD_MS, RETAILER_SETTLE_MS, MAX_HANDOFFS, ffprobeFor, durationCommand, SEARCHES, requestsFor, instability, howFound, recordingReport, RETRY_DELAYS_MS, loadEnv, MIN_PRODUCTS, verdict, fitness, pickProduct, budgetOf, priceOf, mentionOf, cutMap, savedProblem, narrationNeeded, pageWithDemo };
+module.exports = { challengeIn, timelineOf, RETAILER_MS, RETAILER_SHOWN_MS, LIMITS, withDeadline, probeRetailers, preflightRetailers, retailerShows, handoffAllowed, visitRetailer, RETAILER_LOAD_MS, RETAILER_SETTLE_MS, MAX_HANDOFFS, ffprobeFor, durationCommand, SEARCHES, requestsFor, instability, howFound, recordingReport, RETRY_DELAYS_MS, loadEnv, MIN_PRODUCTS, verdict, fitness, pickProduct, budgetOf, priceOf, mentionOf, cutMap, savedProblem, narrationNeeded, pageWithDemo, DEMO_PAGE };
 

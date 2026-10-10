@@ -1213,6 +1213,401 @@ const linkFromInbox = (pattern) => {
     await context.close();
   });
 
+  /* =========================================================
+     The fit guide on the home page, against /api/fit-profile
+     ========================================================= */
+
+  console.log('\nthe fit guide on the home page');
+
+  const guideReady = async (page) => {
+    await open(page, 'index.html');
+    await page.waitForSelector('#guide[data-ready]');
+  };
+
+  const stepShown = (page) => page.$eval('#guide-form .guide-step:not([hidden])', (n) => Number(n.dataset.step));
+
+  /* Taps through all three steps; leaves the last one showing. */
+  async function answerGuide(page, answers) {
+    const a = Object.assign({ brand: 'UNIQLO', size: 'M', goal: 'true-to-size', zones: ['sleeves-short'] }, answers || {});
+    if (a.brand) await page.selectOption('#anchor-brand', a.brand);
+    if (a.other) await page.fill('#anchor-other', a.other);
+    if (a.size) await page.selectOption('#anchor-size', a.size);
+    await page.click('#guide-next');
+    if (a.goal) await page.check(`input[name="fitGoal"][value="${a.goal}"]`);
+    await page.click('#guide-next');
+    for (const zone of a.zones) await page.check(zone === 'none' ? '#zone-none' : `input[name="troubleZones"][value="${zone}"]`);
+  }
+
+  /* Signed in through the real account page, then home. */
+  async function signedInAtGuide(context, email) {
+    const page = await context.newPage();
+    await signUpThroughTheUI(page, { name: 'Ada', email, password: PASSWORD });
+    await page.waitForSelector('#panel-account:not([hidden])');
+    await guideReady(page);
+    return page;
+  }
+
+  /* Presses Tab until the selector has focus: proof it is reachable by
+     keyboard, in order, without counting stops. */
+  async function tabTo(page, selector) {
+    for (let i = 0; i < 20; i += 1) {
+      if (await page.evaluate((s) => document.activeElement && document.activeElement.matches(s), selector)) return;
+      await page.keyboard.press('Tab');
+    }
+    throw new Error(`Tab never reached ${selector}`);
+  }
+
+  await test('the home page opens on the fit guide, step 1 of 3, with the Search page one tap away', async () => {
+    const context = await openContext();
+    const page = await context.newPage();
+    await guideReady(page);
+    assert.strictEqual(await page.textContent('#guide-count'), '1 of 3');
+    assert.strictEqual(await stepShown(page), 1);
+    assert.match(await page.textContent('.guide-step[data-step="1"] .guide-question'), /top you own right now that fits you perfectly/);
+    assert.strictEqual(await page.$('#ask-form'), null, 'no search box on the home page');
+    assert.strictEqual((await page.textContent('.nav-links a[aria-current="page"]')).trim(), 'Fit guide');
+
+    await page.click('.guide-alt a');
+    await page.waitForURL(/find-clothes\.html/);
+    await page.waitForSelector('#ask-form');
+    assert.ok(await page.$('#demo-video'), 'the demo film is on the Search page');
+    await context.close();
+  });
+
+  await test('all three steps in order, Continue reads Skip until something is chosen, and Back keeps every answer', async () => {
+    const context = await openContext();
+    const page = await context.newPage();
+    await guideReady(page);
+
+    assert.strictEqual(await page.isVisible('#guide-back'), false, 'no Back on the first step');
+    assert.strictEqual((await page.textContent('#guide-next')).trim(), 'Skip');
+    await page.selectOption('#anchor-brand', 'Nike');
+    assert.strictEqual((await page.textContent('#guide-next')).trim(), 'Continue');
+    await page.selectOption('#anchor-size', 'L');
+    await page.click('#guide-next');
+
+    assert.strictEqual(await stepShown(page), 2);
+    assert.strictEqual(await page.textContent('#guide-count'), '2 of 3');
+    assert.strictEqual(await page.evaluate(() => document.activeElement.closest('.guide-step').dataset.step), '2',
+      'the new question has focus, so it is read out');
+    assert.strictEqual((await page.textContent('#guide-next')).trim(), 'Skip');
+    await page.check('input[name="fitGoal"][value="slim"]');
+    await page.check('input[name="fitGoal"][value="oversized"]');
+    assert.strictEqual(await page.$$eval('input[name="fitGoal"]:checked', (ns) => ns.length), 1, 'one answer only');
+    await page.click('#guide-next');
+
+    assert.strictEqual(await stepShown(page), 3);
+    assert.strictEqual(await page.textContent('#guide-count'), '3 of 3');
+    assert.strictEqual((await page.textContent('#guide-next')).trim(), 'Save');
+    await page.check('input[name="troubleZones"][value="neckline-tight"]');
+
+    await page.click('#guide-back');
+    assert.strictEqual(await stepShown(page), 2);
+    assert.strictEqual(await page.isChecked('input[name="fitGoal"][value="oversized"]'), true);
+    await page.click('#guide-back');
+    assert.strictEqual(await stepShown(page), 1);
+    assert.strictEqual(await page.$eval('#anchor-brand', (n) => n.value), 'Nike');
+    assert.strictEqual(await page.$eval('#anchor-size', (n) => n.value), 'L');
+    await page.click('#guide-next');
+    await page.click('#guide-next');
+    assert.strictEqual(await page.isChecked('input[name="troubleZones"][value="neckline-tight"]'), true);
+    await context.close();
+  });
+
+  await test('"Other" opens a brand box, and "None of these" and a trouble spot rule each other out', async () => {
+    const context = await openContext();
+    const page = await context.newPage();
+    await guideReady(page);
+    assert.strictEqual(await page.isVisible('#anchor-other'), false);
+    await page.selectOption('#anchor-brand', 'other');
+    assert.strictEqual(await page.isVisible('#anchor-other'), true);
+    assert.strictEqual(await page.evaluate(() => document.activeElement.id), 'anchor-other');
+    await page.fill('#anchor-other', 'Gap');
+    await page.click('#guide-next');
+    await page.click('#guide-next');
+
+    await page.check('input[name="troubleZones"][value="sleeves-short"]');
+    await page.check('input[name="troubleZones"][value="torso-short"]');
+    await page.check('#zone-none');
+    assert.strictEqual(await page.$$eval('input[name="troubleZones"]:checked', (ns) => ns.length), 0, 'None clears the spots');
+    await page.check('input[name="troubleZones"][value="waist-loose"]');
+    assert.strictEqual(await page.isChecked('#zone-none'), false, 'a spot clears None');
+    await context.close();
+  });
+
+  await test('signed out, finishing makes an account right in the guide, and "ready" waits for the server to confirm the save', async () => {
+    const context = await openContext();
+    const page = await context.newPage();
+    await guideReady(page);
+    await answerGuide(page, { brand: 'other', other: 'Arc’teryx', size: 'not-sure', goal: 'oversized', zones: ['torso-short', 'waist-loose'] });
+
+    let release;
+    const held = new Promise((r) => { release = r; });
+    await page.route('**/api/fit-profile', async (route) => {
+      if (route.request().method() === 'POST') await held;
+      return route.continue();
+    });
+
+    await page.click('#guide-next');
+    await page.waitForSelector('#guide-account:not([hidden])');
+    assert.strictEqual(await page.evaluate(() => document.activeElement.id), 'guide-account-title');
+    await page.fill('#guide-name', 'Ada');
+    await page.fill('#guide-email', 'ada@e2e.test');
+    await page.fill('#guide-password', PASSWORD);
+    await page.fill('#guide-confirm', PASSWORD);
+    await page.click('#guide-account-submit');
+
+    /* the account exists, the save is on its way, and nothing says ready */
+    await page.waitForFunction(() => document.getElementById('guide-next').textContent === 'Saving…');
+    assert.strictEqual(await page.isVisible('#guide-done'), false, 'no confirmation before the server answers');
+    assert.ok(await users.byEmail('ada@e2e.test'), 'the account was made');
+    assert.strictEqual(await savedProfile('ada@e2e.test'), null, 'and nothing is saved yet');
+
+    release();
+    await page.waitForSelector('#guide-done:not([hidden])');
+    assert.strictEqual((await page.textContent('#guide-done-title')).trim(), 'Your fit profile is ready.');
+    const summary = await page.textContent('#guide-summary');
+    assert.match(summary, /Arc’teryx · size not sure/);
+    assert.match(summary, /Cozy \/ Oversized/);
+    assert.match(summary, /Torso is always too short; Fits my chest but bags out at my waist/);
+    const confirmation = await page.textContent('#guide-done');
+    assert.match(confirmation, /recommendations are still being built/);
+    assert.ok(!/recommended size|your size (is|in)|we suggest|we recommend|size up|size down/i.test(confirmation), 'no size is suggested');
+
+    const profile = await savedProfile('ada@e2e.test');
+    assert.deepStrictEqual(profile.anchor, { brand: 'Arc’teryx', size: null });
+    assert.strictEqual(profile.fitGoal, 'oversized');
+    assert.deepStrictEqual(profile.troubleZones, ['torso-short', 'waist-loose']);
+    assert.strictEqual(await page.$eval('#guide-password', (n) => n.value), '', 'the password does not stay in the page');
+    await context.close();
+  });
+
+  await test('signing in from the guide saves into that account, and keeps its measurements and usual sizes', async () => {
+    const setup = await openContext();
+    const first = await setup.newPage();
+    await signUpThroughTheUI(first, { name: 'Ada', email: 'ada@e2e.test', password: PASSWORD });
+    await first.waitForSelector('#panel-account:not([hidden])');
+    const user = await users.byEmail('ada@e2e.test');
+    await fitProfiles.save(user.id, {
+      schemaVersion: 1,
+      measurements: { unit: 'in', chest: 41 },
+      brandSizes: [{ brand: 'Gap', category: 'hoodies', size: 'M', fit: 'about-right' }],
+      fitPreferences: { hoodies: 'relaxed' }
+    });
+    await setup.close();
+
+    const context = await openContext();
+    const page = await context.newPage();
+    await guideReady(page);
+    await answerGuide(page, { brand: 'Zara', size: 'S', goal: 'slim', zones: ['none'] });
+    await page.click('#guide-next');
+    await page.waitForSelector('#guide-account:not([hidden])');
+    await page.click('#guide-switch');
+    assert.strictEqual(await page.isVisible('#guide-field-name'), false, 'signing in needs no name');
+    assert.strictEqual((await page.textContent('#guide-account-submit')).trim(), 'Sign in and save');
+    await page.fill('#guide-email', 'ada@e2e.test');
+    await page.fill('#guide-password', PASSWORD);
+    await page.click('#guide-account-submit');
+    await page.waitForSelector('#guide-done:not([hidden])');
+
+    const profile = await savedProfile('ada@e2e.test');
+    assert.deepStrictEqual(profile.anchor, { brand: 'Zara', size: 'S' });
+    assert.strictEqual(profile.fitGoal, 'slim');
+    assert.deepStrictEqual(profile.troubleZones, [], '"None of these" is saved as none');
+    assert.strictEqual(profile.measurements.chest, 41, 'measurements kept');
+    assert.deepStrictEqual(profile.brandSizes, [{ brand: 'Gap', category: 'hoodies', size: 'M', fit: 'about-right' }], 'usual sizes kept');
+    assert.deepStrictEqual(profile.fitPreferences, { hoodies: 'relaxed' }, 'per-category fit kept');
+    await context.close();
+  });
+
+  await test('a wrong password from the guide says so, keeps the answers, and saves nothing', async () => {
+    const setup = await openContext();
+    const first = await setup.newPage();
+    await signUpThroughTheUI(first, { name: 'Ada', email: 'ada@e2e.test', password: PASSWORD });
+    await first.waitForSelector('#panel-account:not([hidden])');
+    await setup.close();
+
+    const context = await openContext();
+    const page = await context.newPage();
+    await guideReady(page);
+    await answerGuide(page);
+    await page.click('#guide-next');
+    await page.click('#guide-switch');
+    await page.fill('#guide-email', 'ada@e2e.test');
+    await page.fill('#guide-password', 'not-the-password');
+    await page.click('#guide-account-submit');
+    await page.waitForSelector('#guide-account-error:not(:empty)');
+    assert.strictEqual(await page.isVisible('#guide-done'), false);
+    assert.strictEqual(await savedProfile('ada@e2e.test'), null);
+    await page.click('#guide-account-back');
+    assert.strictEqual(await page.isChecked('input[name="troubleZones"][value="sleeves-short"]'), true, 'answers kept');
+    await context.close();
+  });
+
+  await test('a failed save says so, keeps every answer, and Try again saves them — signed in, in under 30 seconds of taps', async () => {
+    const context = await openContext();
+    const page = await signedInAtGuide(context, 'ada@e2e.test');
+    const started = Date.now();
+    await answerGuide(page, { brand: 'Carhartt', size: 'XL', goal: 'true-to-size', zones: ['neckline-tight'] });
+
+    let failNext = true;
+    await page.route('**/api/fit-profile', (route) => {
+      if (route.request().method() === 'POST' && failNext) {
+        failNext = false;
+        return route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'Could not save your fit profile. Try again in a moment.' }) });
+      }
+      return route.continue();
+    });
+
+    await page.click('#guide-next');
+    await page.waitForSelector('#guide-error:not(:empty)');
+    assert.match(await page.textContent('#guide-error'), /was not saved.*Your answers are still here/);
+    assert.strictEqual(await page.isVisible('#guide-done'), false, 'no confirmation for a failed save');
+    assert.strictEqual((await page.textContent('#guide-next')).trim(), 'Try again');
+    assert.strictEqual(await page.isChecked('input[name="troubleZones"][value="neckline-tight"]'), true);
+    assert.strictEqual(await savedProfile('ada@e2e.test'), null);
+
+    await page.click('#guide-next');
+    await page.waitForSelector('#guide-done:not([hidden])');
+    assert.ok(Date.now() - started < 30000, `the guide took ${Date.now() - started}ms`);
+    const profile = await savedProfile('ada@e2e.test');
+    assert.deepStrictEqual(profile.anchor, { brand: 'Carhartt', size: 'XL' });
+    assert.deepStrictEqual(profile.troubleZones, ['neckline-tight']);
+    await context.close();
+  });
+
+  await test('a saved profile is filled in, a skipped step keeps its answer, and finishing again changes only what changed', async () => {
+    const context = await openContext();
+    const first = await signedInAtGuide(context, 'ada@e2e.test');
+    await first.close();
+    const user = await users.byEmail('ada@e2e.test');
+    await fitProfiles.save(user.id, { schemaVersion: 1, measurements: { unit: 'cm', chest: 102 } });
+    await fitProfiles.saveGuide(user.id, { anchor: { brand: 'Nike', size: 'M' }, fitGoal: 'slim', troubleZones: ['sleeves-short'] });
+
+    const page = await context.newPage();
+    await guideReady(page);
+    assert.strictEqual(await page.isVisible('#guide-saved-note'), true);
+    assert.strictEqual(await page.$eval('#anchor-brand', (n) => n.value), 'Nike');
+    assert.strictEqual(await page.$eval('#anchor-size', (n) => n.value), 'M');
+    await page.click('#guide-next');
+    assert.strictEqual(await page.isChecked('input[name="fitGoal"][value="slim"]'), true);
+    await page.check('input[name="fitGoal"][value="true-to-size"]');
+    await page.click('#guide-next');
+    assert.strictEqual(await page.isChecked('input[name="troubleZones"][value="sleeves-short"]'), true);
+    await page.click('#guide-next');
+    await page.waitForSelector('#guide-done:not([hidden])');
+
+    const profile = await savedProfile('ada@e2e.test');
+    assert.strictEqual(profile.fitGoal, 'true-to-size', 'the changed answer');
+    assert.deepStrictEqual(profile.anchor, { brand: 'Nike', size: 'M' }, 'the others as they were');
+    assert.deepStrictEqual(profile.troubleZones, ['sleeves-short']);
+    assert.strictEqual(profile.measurements.chest, 102, 'measurements untouched');
+
+    /* the fit profile page shows the guide's answers, and saving it keeps them */
+    await page.click('#guide-done a[href="fit-profile.html"]');
+    await page.waitForSelector('#profile-form:not([hidden])');
+    assert.strictEqual((await page.textContent('#guide-answer-anchor')).trim(), 'Nike · M');
+    assert.strictEqual((await page.textContent('#guide-answer-goal')).trim(), 'True to Size');
+    assert.strictEqual((await page.textContent('#guide-answer-zones')).trim(), 'Sleeves are always too short');
+    await page.fill('#measure-chest', '104');
+    await saveAndWait(page);
+    const after = await savedProfile('ada@e2e.test');
+    assert.strictEqual(after.measurements.chest, 104);
+    assert.strictEqual(after.fitGoal, 'true-to-size', 'the fit profile page does not erase the guide');
+    assert.deepStrictEqual(after.anchor, { brand: 'Nike', size: 'M' });
+    await context.close();
+  });
+
+  await test('Google from the guide says the answers are not saved, ends signed in on the account page, and nothing claims otherwise', async () => {
+    const context = await openContext();
+    const page = await context.newPage();
+    await guideReady(page);
+    await answerGuide(page, { brand: 'UNIQLO', size: 'M', goal: 'slim', zones: ['sleeves-short'] });
+    await page.click('#guide-next');
+    await page.waitForSelector('#guide-account:not([hidden])');
+    assert.strictEqual(await page.isVisible('#guide-google-button'), true, 'offered where Google is set up');
+    assert.match(await page.textContent('#guide-google-note'), /not saved yet/);
+
+    await page.click('#guide-google-button');
+    await page.waitForURL(/account\.html/, { timeout: 10000 });
+    await page.waitForSelector('#panel-account:not([hidden])');
+    assert.ok((await page.textContent('#account-identity')).includes('grace@gmail.e2e'));
+    assert.strictEqual(await savedProfile('grace@gmail.e2e'), null, 'the trip saved nothing');
+    assert.ok(!/fit profile is ready/i.test(await page.textContent('body')));
+
+    /* back at the guide: signed in, nothing filled in, nothing called ready */
+    await page.click('#fit-guide-link');
+    await page.waitForSelector('#guide[data-ready]');
+    assert.strictEqual(await page.isVisible('#guide-saved-note'), false);
+    assert.strictEqual(await page.isVisible('#guide-done'), false);
+    assert.strictEqual(await page.$eval('#anchor-brand', (n) => n.value), '');
+    await answerGuide(page, { brand: 'UNIQLO', size: 'M', goal: 'slim', zones: ['sleeves-short'] });
+    await page.click('#guide-next');
+    await page.waitForSelector('#guide-done:not([hidden])');
+    assert.strictEqual((await savedProfile('grace@gmail.e2e')).fitGoal, 'slim', 'tapped through again, and saved');
+    await context.close();
+  });
+
+  await test('the guide on a 360px phone: no sideways scroll, and the keyboard alone can reach and answer every step', async () => {
+    const context = await openContext();
+    const page = await context.newPage();
+    await page.setViewportSize({ width: 360, height: 740 });
+    await guideReady(page);
+    const wide = async (where) => {
+      const width = await page.evaluate(() => document.documentElement.scrollWidth);
+      assert.ok(width <= 360, `${where}: the page is ${width}px wide on a 360px screen`);
+      const offscreen = await page.$$eval('#guide-card select, #guide-card button, #guide-card .fit-card, #guide-card .zone',
+        (ns) => ns.filter((n) => n.offsetParent && n.getBoundingClientRect().right > 360).map((n) => n.id || n.className));
+      assert.deepStrictEqual(offscreen, [], where);
+    };
+
+    await wide('step 1');
+    await page.focus('#anchor-brand');
+    await page.keyboard.type('U');
+    await tabTo(page, '#anchor-size');
+    await page.keyboard.type('M');
+    assert.strictEqual(await page.$eval('#anchor-brand', (n) => n.value), 'UNIQLO');
+    await tabTo(page, '#guide-next');
+    await page.keyboard.press('Enter');
+
+    await wide('step 2');
+    await tabTo(page, 'input[name="fitGoal"]');
+    await page.keyboard.press('Space');
+    assert.strictEqual(await page.$$eval('input[name="fitGoal"]:checked', (ns) => ns.length), 1);
+    await tabTo(page, '#guide-next');
+    await page.keyboard.press('Enter');
+
+    await wide('step 3');
+    await tabTo(page, '#zone-none');
+    await page.keyboard.press('Space');
+    assert.strictEqual(await page.isChecked('#zone-none'), true);
+    await tabTo(page, '#guide-next');
+    await page.keyboard.press('Enter');
+    await page.waitForSelector('#guide-account:not([hidden])');
+    assert.strictEqual(await page.evaluate(() => document.activeElement.id), 'guide-account-title');
+    await wide('the account step');
+    await context.close();
+  });
+
+  await test('nothing from the guide is kept in browser storage, and no answer travels in the address', async () => {
+    const context = await openContext();
+    const page = await context.newPage();
+    await guideReady(page);
+    await answerGuide(page, { brand: 'other', other: 'Quillborough', size: 'XXL', goal: 'oversized', zones: ['neckline-tight'] });
+    await page.click('#guide-next');
+    await page.fill('#guide-name', 'Ada');
+    await page.fill('#guide-email', 'ada@e2e.test');
+    await page.fill('#guide-password', PASSWORD);
+    await page.fill('#guide-confirm', PASSWORD);
+    await page.click('#guide-account-submit');
+    await page.waitForSelector('#guide-done:not([hidden])');
+    const kept = await page.evaluate(() => JSON.stringify([Object.entries(localStorage), Object.entries(sessionStorage), document.cookie]));
+    assert.ok(!/Quillborough|XXL|oversized|neckline/i.test(kept), `found in browser storage: ${kept}`);
+    assert.ok(!/Quillborough|XXL|oversized|neckline|password/i.test(page.url()), `the address carries an answer: ${page.url()}`);
+    assert.strictEqual((await savedProfile('ada@e2e.test')).anchor.brand, 'Quillborough', 'it went to the server instead');
+    await context.close();
+  });
+
   console.log('\nfrom a page on another origin');
 
   /* The deployment this project runs: pages on GitHub Pages, functions
