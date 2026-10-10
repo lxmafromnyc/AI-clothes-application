@@ -1,9 +1,10 @@
 /* =========================================================
    Fynd — the account, as the browser sees it
 
-   One place that talks to /api/account, /api/auth, /api/checkout and
-   /api/portal, and one copy of whatever they last said. The pages read
-   from it; they do not each keep their own idea of who is signed in.
+   One place that talks to /api/account, /api/auth, /api/checkout,
+   /api/portal and /api/fit-profile, and one copy of whatever the
+   account endpoints last said. The pages read from it; they do not
+   each keep their own idea of who is signed in.
 
    ---------------------------------------------------------
    This file decides nothing
@@ -219,6 +220,16 @@
 
   const portal = () => call('portal', { body: { returnPath: returnPath('account.html') } });
 
+  /* The signed-in shopper's fit profile. Nothing here says whose: the
+     server reads the account from the session cookie and takes no id
+     from the page. Saving and deleting carry the CSRF header like every
+     other change. */
+  const fitProfile = {
+    read: () => call('fit-profile'),
+    save: (profile) => call('fit-profile', { body: { action: 'save', profile } }),
+    remove: () => call('fit-profile', { body: { action: 'delete' } })
+  };
+
   /* After a checkout the browser comes back before Stripe's webhook has
      necessarily arrived, so the plan on screen may still be the old one
      for a second or two. This re-reads the account a few times and
@@ -246,7 +257,7 @@
   }
 
   global.Account = {
-    load, signup, login, logout, checkout, portal,
+    load, signup, login, logout, checkout, portal, fitProfile,
     resendVerification, forgotPassword, resetPassword, googleStartUrl,
     awaitPlanChange, subscribe, endpoint, returnPath,
     state: () => current

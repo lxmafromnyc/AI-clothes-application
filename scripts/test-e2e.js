@@ -83,6 +83,7 @@ process.env.EMAIL_FROM = 'Fynd <hello@fynd.e2e>';
 const store = require('../api/_store');
 const users = require('../api/_users');
 const auth = require('../api/_auth');
+const fitProfiles = require('../api/_fit-profile');
 
 /* ---------------------------------------------------------
    Google and the mailbox, answered in-process
@@ -172,6 +173,7 @@ const HANDLERS = {
   '/api/google-callback': require('../api/google-callback'),
   '/api/checkout': require('../api/checkout'),
   '/api/portal': require('../api/portal'),
+  '/api/fit-profile': require('../api/fit-profile'),
   /* the search and the AI reader, so a search made in a test is a real,
      metered one — and so a page that should never make one is caught */
   '/api/search': require('../api/search'),
@@ -905,6 +907,312 @@ const linkFromInbox = (pattern) => {
     await context.close();
   });
 
+  /* =========================================================
+     The fit profile, through its page, against /api/fit-profile
+     ========================================================= */
+
+  console.log('\nthe fit profile');
+
+  /* Signs up through the real form, then follows the account page's
+     own link to the fit profile. */
+  async function profilePage(context, email) {
+    const page = await context.newPage();
+    await signUpThroughTheUI(page, { name: 'Ada', email, password: PASSWORD });
+    await page.waitForSelector('#panel-account:not([hidden])');
+    await page.click('#fit-profile-link');
+    await page.waitForURL(/fit-profile\.html/);
+    await page.waitForSelector('#profile-form:not([hidden])');
+    return page;
+  }
+
+  async function addBrand(page, { brand, category, size, fit }) {
+    await page.click('#add-brand');
+    const row = page.locator('#brand-list > .brand-row').last();
+    await row.locator('[data-part="brand"] input').fill(brand);
+    if (category) await row.locator('[data-part="category"] select').selectOption(category);
+    if (size) await row.locator('[data-part="size"] input').fill(size);
+    if (fit) await row.locator('[data-part="fit"] select').selectOption(fit);
+  }
+
+  const savedProfile = async (email) => (await fitProfiles.read((await users.byEmail(email)).id)).profile;
+
+  const saveAndWait = async (page) => {
+    await page.click('#profile-save');
+    await page.waitForFunction(() => document.getElementById('profile-save-state').textContent === 'Saved');
+  };
+
+  const waitForDeleted = (page) => page.waitForFunction(() => {
+    const note = document.getElementById('profile-note');
+    return !note.hidden && /deleted/.test(note.textContent);
+  });
+
+  await test('signed out, the fit profile page asks you to sign in and never asks for the profile', async () => {
+    const context = await openContext();
+    const page = await context.newPage();
+    apiHits.length = 0;
+    await open(page, 'fit-profile.html');
+    await page.waitForSelector('#profile-signed-out:not([hidden])');
+    assert.strictEqual(await page.$eval('#profile-form', (n) => n.hidden), true, 'no form for somebody signed out');
+    assert.ok(await page.$('#profile-signed-out a[href="account.html"]'), 'a way to sign in');
+    assert.ok(!apiHits.includes('/api/fit-profile'), 'nothing to ask for without an account');
+    await context.close();
+  });
+
+  await test('the account page leads to an empty fit profile, every part marked optional', async () => {
+    const context = await openContext();
+    const page = await profilePage(context, 'ada@e2e.test');
+
+    assert.strictEqual(await page.locator('.optional-tag').count(), 3);
+    assert.ok(await page.isVisible('#brand-empty'));
+    assert.strictEqual(await page.$eval('input[name="unit"][value="in"]', (n) => n.checked), true, 'the unit is visibly chosen');
+    assert.strictEqual(await page.$eval('#measure-chest', (n) => n.value), '');
+    assert.strictEqual(await page.isVisible('#profile-delete-area'), false, 'nothing saved, so nothing to delete');
+    for (const id of ['height-ft', 'height-in', 'measure-chest', 'measure-waist', 'measure-hip']) {
+      const named = await page.$eval(`#${id}`, (n) => Boolean(n.labels && n.labels.length && n.labels[0].textContent.trim()));
+      assert.ok(named, `#${id} has a label`);
+    }
+    await context.close();
+  });
+
+  await test('a profile is saved, survives a reload, and can be edited', async () => {
+    const context = await openContext();
+    const page = await profilePage(context, 'ada@e2e.test');
+
+    await page.fill('#height-ft', '5');
+    await page.fill('#height-in', '10');
+    await page.fill('#measure-chest', '40');
+    await addBrand(page, { brand: 'Uniqlo', category: 'hoodies', size: 'm', fit: 'about-right' });
+    await addBrand(page, { brand: 'Champion', category: 'sweatshirts' });
+    await page.check('input[name="pref-hoodies"][value="relaxed"]');
+    assert.strictEqual(await page.textContent('#profile-save-state'), 'Unsaved changes');
+    await saveAndWait(page);
+
+    const stored = await savedProfile('ada@e2e.test');
+    assert.deepStrictEqual(stored.measurements, { unit: 'in', height: 70, chest: 40, waist: null, hip: null });
+    assert.deepStrictEqual(stored.brandSizes, [
+      { brand: 'Uniqlo', category: 'hoodies', size: 'M', fit: 'about-right' },
+      { brand: 'Champion', category: 'sweatshirts', size: null, fit: null }
+    ]);
+    assert.deepStrictEqual(stored.fitPreferences, { hoodies: 'relaxed' });
+    assert.strictEqual(await page.$eval('#brand-list .brand-row [data-part="size"] input', (n) => n.value), 'M',
+      'the page shows what the server kept');
+
+    await page.reload();
+    await page.waitForSelector('#profile-form:not([hidden])');
+    assert.strictEqual(await page.$eval('#height-ft', (n) => n.value), '5');
+    assert.strictEqual(await page.$eval('#height-in', (n) => n.value), '10');
+    assert.strictEqual(await page.$eval('#measure-chest', (n) => n.value), '40');
+    assert.strictEqual(await page.locator('#brand-list > .brand-row').count(), 2);
+    assert.strictEqual(await page.$eval('input[name="pref-hoodies"][value="relaxed"]', (n) => n.checked), true);
+    assert.strictEqual(await page.$eval('input[name="pref-sweatshirts"][value=""]', (n) => n.checked), true, 'no preference, said as such');
+    assert.ok(await page.isVisible('#profile-delete-area'));
+
+    /* edit: a new chest, one brand fewer */
+    await page.fill('#measure-chest', '41.5');
+    await page.click('#brand-list > .brand-row:nth-child(2) [data-remove]');
+    await saveAndWait(page);
+    const edited = await savedProfile('ada@e2e.test');
+    assert.strictEqual(edited.measurements.chest, 41.5);
+    assert.deepStrictEqual(edited.brandSizes.map((e) => e.brand), ['Uniqlo']);
+    await context.close();
+  });
+
+  await test('usual sizes and preferred fit alone save, with no measurement at all', async () => {
+    const context = await openContext();
+    const page = await profilePage(context, 'ada@e2e.test');
+    await addBrand(page, { brand: 'Gap', category: 'hoodies', size: 'S', fit: 'too-small' });
+    await page.check('input[name="pref-sweatshirts"][value="oversized"]');
+    await saveAndWait(page);
+
+    const stored = await savedProfile('ada@e2e.test');
+    assert.deepStrictEqual([stored.measurements.height, stored.measurements.chest], [null, null]);
+    assert.deepStrictEqual(stored.brandSizes, [{ brand: 'Gap', category: 'hoodies', size: 'S', fit: 'too-small' }]);
+    assert.deepStrictEqual(stored.fitPreferences, { sweatshirts: 'oversized' });
+    await context.close();
+  });
+
+  await test('a value in the wrong unit is caught before it is sent, and nothing is saved', async () => {
+    const context = await openContext();
+    const page = await profilePage(context, 'ada@e2e.test');
+
+    await page.fill('#measure-chest', '102');
+    await page.locator('#measure-chest').blur();
+    await page.waitForSelector('#error-measurements-chest:not(:empty)');
+    assert.match(await page.textContent('#error-measurements-chest'), /102 looks like centimetres/);
+    assert.strictEqual(await page.getAttribute('#measure-chest', 'aria-invalid'), 'true');
+
+    await page.click('#profile-save');
+    await page.waitForSelector('#profile-form-error.show');
+    assert.match(await page.textContent('#profile-form-error'), /Nothing was saved/);
+    assert.strictEqual(await page.evaluate(() => document.activeElement.id), 'measure-chest', 'focus goes to the problem');
+    assert.strictEqual(await savedProfile('ada@e2e.test'), null);
+    await context.close();
+  });
+
+  await test('switching unit converts what was valid, keeps what was typed for the other unit, and says which', async () => {
+    const context = await openContext();
+    const page = await profilePage(context, 'ada@e2e.test');
+
+    await page.fill('#height-ft', '5');
+    await page.fill('#height-in', '10');
+    await page.fill('#measure-chest', '102');
+    await page.locator('#measure-chest').blur();
+    await page.check('input[name="unit"][value="cm"]');
+
+    assert.strictEqual(await page.$eval('#height-cm', (n) => n.value), '177.8');
+    assert.strictEqual(await page.$eval('#measure-chest', (n) => n.value), '102');
+    const said = await page.textContent('#unit-note');
+    assert.match(said, /now in centimetres/);
+    assert.match(said, /height 5 ft 10 in to 177.8 cm/);
+    assert.match(said, /Left as you typed it: chest/);
+    assert.strictEqual(await page.textContent('#error-measurements-chest'), '', 'valid as centimetres');
+    assert.strictEqual(await page.isVisible('#height-ft'), false);
+    assert.strictEqual((await page.textContent('[data-field="measurements.chest"] .measure-unit')).trim(), 'cm');
+
+    await saveAndWait(page);
+    const stored = await savedProfile('ada@e2e.test');
+    assert.deepStrictEqual(stored.measurements, { unit: 'cm', height: 177.8, chest: 102, waist: null, hip: null });
+
+    /* and back: both convert now, because both are valid */
+    await page.check('input[name="unit"][value="in"]');
+    assert.strictEqual(await page.$eval('#height-ft', (n) => n.value), '5');
+    assert.strictEqual(await page.$eval('#height-in', (n) => n.value), '10');
+    assert.strictEqual(await page.$eval('#measure-chest', (n) => n.value), '40.2');
+    assert.strictEqual(await page.textContent('#profile-save-state'), 'Unsaved changes');
+    await context.close();
+  });
+
+  await test('the same brand and category twice is flagged on the second row and not saved', async () => {
+    const context = await openContext();
+    const page = await profilePage(context, 'ada@e2e.test');
+    await addBrand(page, { brand: 'Uniqlo', category: 'hoodies', size: 'M' });
+    await addBrand(page, { brand: 'UNIQLO', category: 'hoodies', size: 'L' });
+    await page.click('#profile-save');
+
+    const second = page.locator('#brand-list > .brand-row').nth(1);
+    await second.locator('[data-part="brand"] .profile-error:not(:empty)').waitFor();
+    assert.match(await second.locator('[data-part="brand"] .profile-error').textContent(), /Uniqlo hoodies are already listed/);
+    assert.strictEqual(await savedProfile('ada@e2e.test'), null);
+
+    /* a different category is a different entry */
+    await second.locator('[data-part="category"] select').selectOption('sweatshirts');
+    await saveAndWait(page);
+    assert.strictEqual((await savedProfile('ada@e2e.test')).brandSizes.length, 2);
+    await context.close();
+  });
+
+  await test('deleting asks first, then removes the profile from the account', async () => {
+    const context = await openContext();
+    const page = await profilePage(context, 'ada@e2e.test');
+    await page.fill('#measure-chest', '40');
+    await saveAndWait(page);
+
+    await page.click('#profile-delete');
+    await page.waitForSelector('#delete-confirm:not([hidden])');
+    await page.click('#delete-cancel');
+    assert.ok(await savedProfile('ada@e2e.test'), 'keeping it keeps it');
+
+    await page.click('#profile-delete');
+    await page.click('#delete-confirm-yes');
+    /* the note may already be on screen saying the store is not durable,
+       so wait for what it says, not for it to appear */
+    await waitForDeleted(page);
+    assert.strictEqual(await savedProfile('ada@e2e.test'), null);
+    assert.strictEqual(await page.$eval('#measure-chest', (n) => n.value), '');
+    assert.strictEqual(await page.isVisible('#profile-delete-area'), false);
+
+    await page.reload();
+    await page.waitForSelector('#profile-form:not([hidden])');
+    assert.strictEqual(await page.$eval('#measure-chest', (n) => n.value), '');
+    await context.close();
+  });
+
+  await test('a profile that cannot be read is never shown as an empty form, and Try again recovers it', async () => {
+    const context = await openContext();
+    const page = await profilePage(context, 'ada@e2e.test');
+    await page.fill('#measure-chest', '40');
+    await saveAndWait(page);
+
+    await page.route('**/api/fit-profile', (route) => (route.request().method() === 'GET'
+      ? route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'Could not read your fit profile. Try again in a moment.' }) })
+      : route.continue()));
+    await page.reload();
+    await page.waitForSelector('#profile-load-failed:not([hidden])');
+    assert.strictEqual(await page.$eval('#profile-form', (n) => n.hidden), true, 'no empty form to save over the real one');
+    assert.match(await page.textContent('#profile-load-error'), /Could not read/);
+
+    await page.unroute('**/api/fit-profile');
+    await page.click('#profile-retry');
+    await page.waitForSelector('#profile-form:not([hidden])');
+    assert.strictEqual(await page.$eval('#measure-chest', (n) => n.value), '40');
+    await context.close();
+  });
+
+  await test('a save that fails keeps everything typed and says nothing was saved', async () => {
+    const context = await openContext();
+    const page = await profilePage(context, 'ada@e2e.test');
+    await page.route('**/api/fit-profile', (route) => (route.request().method() === 'POST' ? route.abort() : route.continue()));
+    await page.fill('#measure-chest', '40');
+    await addBrand(page, { brand: 'Uniqlo', category: 'hoodies', size: 'M' });
+    await page.click('#profile-save');
+    await page.waitForSelector('#profile-form-error.show');
+    assert.match(await page.textContent('#profile-form-error'), /Nothing was saved/);
+    assert.strictEqual(await page.$eval('#measure-chest', (n) => n.value), '40');
+    assert.strictEqual(await page.textContent('#profile-save-state'), 'Unsaved changes');
+    assert.strictEqual(await page.$eval('#profile-save', (n) => n.disabled), false, 'the button comes back');
+
+    await page.unroute('**/api/fit-profile');
+    await saveAndWait(page);
+    assert.strictEqual((await savedProfile('ada@e2e.test')).measurements.chest, 40);
+    await context.close();
+  });
+
+  await test('another account opens its own empty profile, never the first one’s', async () => {
+    const adaContext = await openContext();
+    const ada = await profilePage(adaContext, 'ada@e2e.test');
+    await ada.fill('#measure-chest', '40');
+    await addBrand(ada, { brand: 'Uniqlo', category: 'hoodies', size: 'M' });
+    await saveAndWait(ada);
+
+    const bobContext = await openContext();
+    const bob = await profilePage(bobContext, 'bob@e2e.test');
+    assert.strictEqual(await bob.$eval('#measure-chest', (n) => n.value), '');
+    assert.strictEqual(await bob.locator('#brand-list > .brand-row').count(), 0);
+    await bob.fill('#measure-chest', '38');
+    await saveAndWait(bob);
+
+    assert.strictEqual((await savedProfile('ada@e2e.test')).measurements.chest, 40);
+    assert.strictEqual((await savedProfile('bob@e2e.test')).measurements.chest, 38);
+    await adaContext.close();
+    await bobContext.close();
+  });
+
+  await test('nothing from the fit profile is kept in browser storage', async () => {
+    const context = await openContext();
+    const page = await profilePage(context, 'ada@e2e.test');
+    await page.fill('#measure-chest', '43.3');
+    await addBrand(page, { brand: 'Quillborough', category: 'hoodies', size: 'M' });
+    await saveAndWait(page);
+    const kept = await page.evaluate(() => JSON.stringify([Object.entries(localStorage), Object.entries(sessionStorage), document.cookie]));
+    assert.ok(!/43\.3|Quillborough/.test(kept), `found in browser storage: ${kept}`);
+    await context.close();
+  });
+
+  await test('the fit profile fits a phone, with no sideways scroll, and every control is reachable', async () => {
+    const context = await openContext();
+    const page = await profilePage(context, 'ada@e2e.test');
+    await page.setViewportSize({ width: 360, height: 740 });
+    await addBrand(page, { brand: 'Uniqlo', category: 'hoodies', size: 'M' });
+    await page.fill('#measure-chest', '102');
+    await page.locator('#measure-chest').blur();
+    const width = await page.evaluate(() => document.documentElement.scrollWidth);
+    assert.ok(width <= 360, `the page is ${width}px wide on a 360px screen`);
+    const offscreen = await page.$$eval('#profile-form input:not([type="radio"]), #profile-form select, #profile-form button, #profile-form .choice',
+      (ns) => ns.filter((n) => n.offsetParent && n.getBoundingClientRect().right > 360).map((n) => n.id || n.className));
+    assert.deepStrictEqual(offscreen, []);
+    await context.close();
+  });
+
   console.log('\nfrom a page on another origin');
 
   /* The deployment this project runs: pages on GitHub Pages, functions
@@ -959,6 +1267,44 @@ const linkFromInbox = (pattern) => {
     assert.ok(page.url().startsWith(`${PAGE_ORIGIN}/`), `the page left its own origin: ${page.url()}`);
     assert.strictEqual(await auth.readSession(session.value), null,
       'the session must be dead on the server, not just forgotten by the browser');
+    await context.close();
+  });
+
+  await test('a fit profile saved from another origin gets past the preflight, reads back after a reload, and deletes', async () => {
+    apiRequests.length = 0;
+    /* no route, for the same reason as the logout above */
+    const context = await openContext({ intercept: false });
+    const page = await context.newPage();
+    await signUpThroughTheUI(page, { name: 'Ada', email: 'ada@e2e.test', password: PASSWORD }, PAGE_ORIGIN);
+    await page.waitForSelector('#panel-account:not([hidden])');
+    await page.click('#fit-profile-link');
+    await page.waitForURL(`${PAGE_ORIGIN}/fit-profile.html`);
+    await page.waitForSelector('#profile-form:not([hidden])');
+
+    await page.fill('#measure-chest', '40');
+    await addBrand(page, { brand: 'Uniqlo', category: 'hoodies', size: 'M' });
+    await saveAndWait(page);
+
+    const saved = apiRequests.filter((r) => r.method === 'POST' && r.path === '/api/fit-profile').pop();
+    assert.ok(saved, `the save never reached the API: ${JSON.stringify(apiRequests)}`);
+    assert.strictEqual(saved.origin, PAGE_ORIGIN, 'the save has to come from the other origin, or this proves nothing');
+    assert.strictEqual(saved.csrf, true, 'and has to carry the CSRF header');
+    assert.strictEqual(saved.status, 200);
+    assert.strictEqual((await savedProfile('ada@e2e.test')).measurements.chest, 40);
+
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('#profile-form:not([hidden])');
+    assert.strictEqual(await page.$eval('#measure-chest', (n) => n.value), '40');
+    assert.strictEqual(await page.locator('#brand-list > .brand-row').count(), 1);
+    const read = apiRequests.filter((r) => r.method === 'GET' && r.path === '/api/fit-profile').pop();
+    assert.ok(read && read.origin === PAGE_ORIGIN && read.status === 200, 'read back across origins');
+
+    await page.click('#profile-delete');
+    await page.click('#delete-confirm-yes');
+    await waitForDeleted(page);
+    assert.strictEqual(await savedProfile('ada@e2e.test'), null);
+    const deleted = apiRequests.filter((r) => r.method === 'POST' && r.path === '/api/fit-profile').pop();
+    assert.ok(deleted.origin === PAGE_ORIGIN && deleted.csrf && deleted.status === 200);
     await context.close();
   });
 
