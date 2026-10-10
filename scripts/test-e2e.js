@@ -941,6 +941,11 @@ const linkFromInbox = (pattern) => {
     await page.waitForFunction(() => document.getElementById('profile-save-state').textContent === 'Saved');
   };
 
+  const waitForDeleted = (page) => page.waitForFunction(() => {
+    const note = document.getElementById('profile-note');
+    return !note.hidden && /deleted/.test(note.textContent);
+  });
+
   await test('signed out, the fit profile page asks you to sign in and never asks for the profile', async () => {
     const context = await openContext();
     const page = await context.newPage();
@@ -1109,8 +1114,9 @@ const linkFromInbox = (pattern) => {
 
     await page.click('#profile-delete');
     await page.click('#delete-confirm-yes');
-    await page.waitForSelector('#profile-note:not([hidden])');
-    assert.match(await page.textContent('#profile-note'), /deleted/);
+    /* the note may already be on screen saying the store is not durable,
+       so wait for what it says, not for it to appear */
+    await waitForDeleted(page);
     assert.strictEqual(await savedProfile('ada@e2e.test'), null);
     assert.strictEqual(await page.$eval('#measure-chest', (n) => n.value), '');
     assert.strictEqual(await page.isVisible('#profile-delete-area'), false);
@@ -1295,7 +1301,7 @@ const linkFromInbox = (pattern) => {
 
     await page.click('#profile-delete');
     await page.click('#delete-confirm-yes');
-    await page.waitForSelector('#profile-note:not([hidden])');
+    await waitForDeleted(page);
     assert.strictEqual(await savedProfile('ada@e2e.test'), null);
     const deleted = apiRequests.filter((r) => r.method === 'POST' && r.path === '/api/fit-profile').pop();
     assert.ok(deleted.origin === PAGE_ORIGIN && deleted.csrf && deleted.status === 200);
