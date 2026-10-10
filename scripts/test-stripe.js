@@ -1234,6 +1234,38 @@ const planOf = async (userId) => (await users.byId(userId)).plan;
     assert.strictEqual((await usage.check(subject, 'free', plans.SEARCHES)).allowed, false);
   });
 
+  /* The test above asks the store directly. These go through the real
+     handler, which is where a cookieless caller used to be handed a
+     brand-new device id — and so a brand-new Free allowance — on every
+     request. The subject is the one callEndpoint's requests share: the
+     same address, no user agent, no device cookie. */
+  const cookielessSubject = () => auth.addressSubject(makeReq({ headers: { host: 'fynd.test' } }));
+
+  await test('through the handler, a caller that never sends a cookie back runs out like anyone else', async () => {
+    await usage.record(cookielessSubject(), 'free', plans.SEARCHES, 3);
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      const { res } = await callEndpoint(searchEndpoint, { body: { intent: {} } });
+      assert.strictEqual(res.statusCode, 429, `request ${attempt} with no cookie got a fresh allowance (${res.statusCode})`);
+    }
+  });
+
+  await test('a cookie that is not a device id does not buy a fresh allowance either', async () => {
+    await usage.record(cookielessSubject(), 'free', plans.SEARCHES, 3);
+    for (const jar of [{ other: '1' }, { fynd_device: 'not-a-device-id' }]) {
+      const { res } = await callEndpoint(searchEndpoint, { jar, body: { intent: {} } });
+      assert.strictEqual(res.statusCode, 429, `${JSON.stringify(jar)} got a fresh allowance (${res.statusCode})`);
+    }
+  });
+
+  await test('a cookieless request is still offered a device cookie, and a browser that keeps it is counted by it', async () => {
+    const first = await callEndpoint(accountEndpoint, { method: 'GET' });
+    assert.ok(/^[a-f0-9]{32}$/.test(first.jar.fynd_device || ''), 'offered a device id for next time');
+
+    await usage.record(`dev_${first.jar.fynd_device}`, 'free', plans.SEARCHES, 3);
+    const { res } = await callEndpoint(searchEndpoint, { jar: first.jar, body: { intent: {} } });
+    assert.strictEqual(res.statusCode, 429, 'counted against the device it was given');
+  });
+
   await test('the daily and monthly counters are separate keys, so a plan change does not double-count', () => {
     const day = usage.counterKey('user:1', plans.SEARCHES, 'day', '2026-08-27');
     const month = usage.counterKey('user:1', plans.SEARCHES, 'month', '2026-08');

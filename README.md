@@ -1,15 +1,23 @@
 # Fynd — AI clothing finder
 
-A four-page site where you describe the clothes you want in your own words and get
-back matching items. "I need a black shirt for school under $50" is a complete
-request — there is no form to fill in.
+Fynd starts with fit. The home page is a three-step **fit guide** — a top you
+already own that fits, how you like clothes to sit, and where clothes usually go
+wrong — answered with two dropdowns and a few taps in well under a minute, and
+saved to your fit profile. See [The fit guide](#the-fit-guide). Size
+recommendations built from it are not implemented yet, and nothing on the site
+suggests a size.
+
+Searching is still one tap away, on the Search page: describe the clothes you want
+in your own words and get back matching items. "I need a black shirt for school
+under $50" is a complete request — there is no form to fill in.
 
 The interface is deliberately plain: one typeface, three levels of neutral ink
 (black for primary text, one step down for body copy, muted for metadata), and
 two brand hues used only where they are saying something.
 
 Hierarchy is carried by size, weight, space and surface. Every page opens on a
-lightly tinted band — the stage — holding the headline and the search card, and
+lightly tinted band — the stage — holding the headline and the page's one card
+(the fit guide at home, the search on the Search page), and
 closes on one inverted block that carries the call to action and the footer
 together. In between, the page is white. The search card is the only elevated
 layer and the primary button the only filled control, so the thing to do next
@@ -24,7 +32,7 @@ pages, cards, type, rules — is neutral; the hues have jobs:
 | Token | Job |
 | --- | --- |
 | `--color-primary` | Trust and action: the one filled control, the focus ring, the current page, links, the logo mark, and the retailer a product came from |
-| `--color-accent` | Discovery and energy: the example searches and the numbered steps — the places that invite a try |
+| `--color-accent` | Discovery and energy: the example searches, the numbered steps and the fit guide's "1 of 3" — the places that invite a try |
 | `--color-success` | A live listing came back from a real product source |
 | `--color-warning` | A caveat: sample data, or a request that needs fixing before it can run |
 
@@ -37,17 +45,19 @@ document rather than a fixed list of selectors: every piece of type must be set
 in one of the declared inks and must clear its contrast requirement on the
 ground it actually sits on, no rule may carry a raw colour value, no token may
 go unused, and the palette must still be wired to the CTA, the logo, the current
-page, the examples, the steps and the retailer labels.
+page, the examples, the steps, the fit guide's progress and the retailer labels.
+Every step and panel of the fit guide is audited, not just the first.
 
 ## Pages
 
 | Page | File | What it does |
 | --- | --- | --- |
-| Home | `index.html` | States the value proposition, carries the search itself directly under the headline, shows Fynd being used in the demo video directly under the search, and then how Fynd works and what an answer looks like |
-| Find Clothes | `find-clothes.html` | The same search, with nothing else on the page |
+| Home | `index.html` | The fit guide: three quick questions saved to your fit profile, then how Fynd works and a few pieces from the catalogue. Links to Search for anyone who came to search |
+| Search | `find-clothes.html` | Describe what you want in your own words; the demo film of four real searches sits under the box |
 | Discover | `discover.html` | Browse the catalogue by kind (tops, bottoms, outerwear, one-pieces, comfort and shoes), filtered in the page without a search |
 | Pricing | `pricing.html` | The three plans, which one you are on, and the way to change it |
 | Account | `account.html` | Sign in with Google or email; your plan, usage and subscription |
+| Fit profile | `fit-profile.html` | Your fit guide answers, measurements, usual sizes by brand and preferred fit — what size recommendations will read once they exist (reached from the account page and the guide) |
 | About | `about.html` | What the site does and what it takes into account |
 
 Every product, wherever it appears, is drawn by one function in `assets/app.js`
@@ -63,10 +73,13 @@ python3 -m http.server 8000
 # then open http://localhost:8000
 ```
 
-Opening `index.html` directly in a browser also works. Without the interpreter
+Opening `find-clothes.html` directly in a browser also works. Without the interpreter
 endpoint below, requests are read by a small local parser instead of the AI. The
 page still returns results, and says on screen that the AI did not read the
 request — a keyword match is never presented as an AI reading.
+
+The fit guide on `index.html` can be tapped through with no server, but saving
+needs an account, so it needs the functions: run it under `npx vercel dev`.
 
 `pricing.html` lists the plans from its own markup, so it reads correctly with
 no server at all. Signing in, subscribing and the usage meters need the
@@ -97,6 +110,12 @@ api/_usage.js           the token and search counters
 api/_meter.js           what /api/interpret and /api/search ask before spending
 api/_auth.js            password hashing, session cookies, who a request is
 api/_users.js           user records, and the Stripe customer mapping
+api/fit-profile.js      reads, saves and deletes the signed-in shopper's fit profile
+api/_fit-profile.js     where a fit profile is kept: one record per account
+assets/fit-profile-schema.js  the fit profile's versioned schema; the page and the server share it
+assets/fit-profile-ui.js       draws the fit profile page
+assets/guide.js                the fit guide on the home page: three steps, saved to the fit profile
+scripts/test-fit-profile.js    offline test of the schema, units, the guide's answers, and who may read or change a profile
 api/_store.js           the key/value store: Vercel KV / Upstash, or memory
 api/_providers/openwebninja.js OpenWeb Ninja Real-Time Product Search adapter
 api/_providers/etsy.js  Etsy Open API v3 adapter, kept as an alternative
@@ -113,9 +132,9 @@ scripts/test-gemini.js         offline test of the Gemini interpreter
 scripts/test-pipeline.js       offline test of the whole server pipeline
 scripts/test-stripe.js         offline test of payments and subscriptions
 scripts/test-auth.js           offline test of accounts, sessions and OAuth
-scripts/test-e2e.js            the whole sign-in flow in a real browser
+scripts/test-e2e.js            the whole sign-in flow, the fit guide and the fit profile in a real browser
 scripts/test-cross-origin.js   the Pages copy calling the API across origins, in a real browser
-scripts/test-ui.js             browser test of the search interface
+scripts/test-ui.js             browser test of the interface: the search, the fit guide, palette and contrast
 assets/attachments.js          drag-and-drop and file picker for the search box
 assets/account.js       talks to the account and billing endpoints
 assets/billing-ui.js    draws the pricing page
@@ -123,12 +142,12 @@ assets/account-ui.js    draws the account page and the sign-in flow
 .env.example            template; the real .env is git-ignored
 assets/products.js      data layer: normalises any source into one schema
 assets/catalog.js       demo product source, replaceable by a real feed
-assets/demo-video.js    lazy-loads the landing page demo, and decides autoplay
+assets/demo-video.js    lazy-loads the Search page's demo film, and decides autoplay
 assets/demo/            the demo film: two shapes, two codecs, two posters; the session in footage/
 scripts/record-demo.js  records the demo from four real searches, end to end
 scripts/demo-narration.py  speaks the demo's narration lines
 scripts/demo-audio.js   the demo's score and mix: composed to each video's timeline
-scripts/demo-film.js    cuts the homepage film from the recorded session
+scripts/demo-film.js    cuts the demo film from the recorded session
 assets/interpret.js     sends the request to the endpoint; local fallback; reads descriptive requests
 api/_providers/query.js the one search phrase every provider is asked
 api/_providers/relevance.js  the order a descriptive request's results are shown in
@@ -1338,7 +1357,7 @@ node scripts/test-auth.js      # accounts, sessions, tokens, OAuth
 node scripts/test-catalog-images.js  # the catalogue image extractor's gates
 node scripts/test-catalog-prices.js  # the catalogue price extractor's gates
 node scripts/test-ui.js        # the interface, its palette, its contrast, and a search in progress
-node scripts/record-demo.js    # re-records the landing page demo video
+node scripts/record-demo.js    # re-records the Search page's demo video
 node scripts/test-demo-audio.js     # the demo's sound: loudness, ducking, captions
 node scripts/test-demo-film.js      # the demo film: length, order, every store frame real
 node scripts/test-e2e.js       # the whole sign-in flow, in a real browser
@@ -1690,6 +1709,197 @@ its own state does not change what the server says.
 - A Google OAuth client whose redirect URI matches the deployment exactly, and
   a consent screen that is published if you want anyone beyond your test users.
 - Redeploy. Vercel applies variables to the next build, not the running one.
+
+## Shopper Fit Profile
+
+The foundation brand-specific size recommendations will be built on. It records
+what a shopper knows about how clothes fit them; **nothing is recommended from
+it yet**. It starts with tops — hoodies and sweatshirts.
+
+Most shoppers start it from the fit guide on the home page; signed in, the
+account page and the guide both link to `fit-profile.html`, where everything
+can be seen and edited. Every part is optional:
+
+| Group | What it holds | Set on |
+| --- | --- | --- |
+| A top that fits | The brand and size of a top the shopper owns that fits them perfectly — a reference point, not a measurement. | the fit guide |
+| How clothes should sit | Tight / Slim Fit, True to Size, or Cozy / Oversized — overall. | the fit guide |
+| Trouble spots | Where ordinary clothes go wrong: sleeves too short, torso too short, necklines too tight, fits the chest but loose at the waist — or none of these. | the fit guide |
+| Measurements | Height and chest (used for tops); waist and hip (kept for later categories). One unit for all of them: `in` or `cm`, chosen by the shopper. | the fit profile page |
+| Usual sizes by brand | Brand, category, the size usually bought, and how it fits: too small, about right, too large. | the fit profile page |
+| Preferred fit | Fitted, regular, relaxed or oversized — per category. | the fit profile page |
+
+The fit profile page shows the guide's three answers at the top, read-only, with
+a link back to the guide to change them.
+
+### The schema
+
+`assets/fit-profile-schema.js` is the one definition. The page loads it to
+check fields as they are typed; `api/fit-profile.js` runs every save through
+its `normalise()` regardless. A stored profile looks like this:
+
+```json
+{
+  "schemaVersion": 2,
+  "measurements": { "unit": "in", "height": 70, "chest": 40.5, "waist": null, "hip": null },
+  "brandSizes": [
+    { "brand": "Uniqlo", "category": "hoodies", "size": "M", "fit": "about-right" },
+    { "brand": "Champion", "category": "sweatshirts", "size": null, "fit": null }
+  ],
+  "fitPreferences": { "hoodies": "relaxed" },
+  "anchor": { "brand": "UNIQLO", "size": "M" },
+  "fitGoal": "true-to-size",
+  "troubleZones": ["sleeves-short"],
+  "createdAt": "2026-10-10T14:00:00.000Z",
+  "updatedAt": "2026-10-10T14:05:00.000Z"
+}
+```
+
+- **Units are never guessed.** A measurement is stored as entered, beside its
+  unit. A value with no unit is refused rather than defaulted. Each range is
+  stated per unit, and a value that only fits the other unit is refused with a
+  message that says so ("102 looks like centimetres…") — it is never read as the
+  other unit. On the page, switching the unit converts every value that was
+  valid in the old one, leaves one that was not exactly as typed, and says which
+  was which.
+- **Plausible ranges**, to one decimal place:
+
+  | | Inches | Centimetres |
+  | --- | --- | --- |
+  | Height | 48–90 (4 ft 0 in – 7 ft 6 in) | 120–230 |
+  | Chest | 24–67 | 60–170 |
+  | Waist | 20–67 | 50–170 |
+  | Hip | 24–71 | 60–180 |
+
+- **An unknown size stays unknown.** A blank size, or "not sure", "unknown",
+  "?" and the like, is stored as `null` — never as a default. Letter sizes are
+  written in capitals (`m` → `M`); a brand's own label (`38`, `M Tall`) is kept as
+  typed.
+- **No brand twice.** The same brand and category twice is refused, however the
+  brand is typed (`H&M` / `h & m`, `Levi’s` / `Levis`). The same brand in two
+  categories is two entries. Up to 50.
+- **Nothing else is kept.** No weight, no photos, no notes. A field the schema
+  does not name is dropped, not stored.
+- **Versioned.** `upgrade()` reads any version it knows and returns the current
+  shape, filling what an older profile never had with "not said". A new version
+  adds a step to `UPGRADES`; a new category is a row in `CATEGORIES`. A profile
+  written by a later version than the deployment knows is reported (409) and
+  never overwritten.
+- **Version 2 added the fit guide's answers** — `anchor`, `fitGoal` and
+  `troubleZones`, each `null` until answered. A version 1 profile reads as
+  version 2 with those three unanswered and its measurements, usual sizes and
+  per-category fits exactly as stored. `fitGoal` sits beside `fitPreferences` and
+  never rewrites them; `FIT_GOALS` records which per-category fit each goal is
+  nearest (slim ≈ fitted, true to size ≈ regular, cozy/oversized ≈ relaxed or
+  oversized) without folding one list into the other. `troubleZones: []` means
+  "none of these", which is different from not answered.
+- **A save never erases what it does not send.** A `save` that leaves out any of
+  the three guide fields keeps the stored value, so the fit profile page, or a copy
+  of it loaded before version 2, cannot wipe the guide's answers. Sent as `null`,
+  an answer is cleared.
+
+### The endpoint
+
+```
+GET  /api/fit-profile                          -> { profile | null, storage }
+POST /api/fit-profile { action: "save", profile }  -> { profile, storage, saved }
+POST /api/fit-profile { action: "guide", answers } -> { profile, storage, saved }
+POST /api/fit-profile { action: "delete" }         -> { profile: null, storage, deleted }
+```
+
+`guide` is the fit guide's save: any of `{ anchor, fitGoal, troubleZones }`,
+merged into the stored profile. Measurements, usual sizes and per-category fits
+are carried over on the server and never travel, so the guide cannot lose them,
+and an answer left out — a skipped step — keeps its saved value.
+
+Signed out, every method answers 401. The account is always the one the session
+cookie resolves to: no id, email or key in the query, headers or body is read, so
+no request can name somebody else's profile. Saving and deleting carry the CSRF
+token, like logout and checkout. A refused save answers 400 with one error per
+field (`measurements.chest`, `brandSizes.2.brand`, …) and changes nothing.
+POST with an action rather than PUT/DELETE keeps it inside the existing
+cross-origin rules.
+
+### Storage and privacy
+
+The profile lives in the store the accounts already use, under
+`fitprofile:<user id>` — no new database and no dependency. With Vercel KV or
+Upstash configured it is durable; on the memory fallback it lasts as long as the
+account does, and the page says so.
+
+Responses carry `Cache-Control: no-store, private`. The profile appears in no
+other response — `/api/account` is unchanged — and nothing logs a measurement,
+brand, size or preference: a failure logs only the store's own message, which
+names the command and never its arguments. Neither the fit profile page nor the
+fit guide writes anything to browser storage, and no answer goes in a URL.
+Deleting removes the record — guide answers included — straight away.
+
+### The fit guide
+
+The home page (`index.html`, run by `assets/guide.js`) asks three things, one
+at a time, with a "1 of 3" progress line, Back and Continue:
+
+1. **"What's a top you own right now that fits you perfectly?"** Two dropdowns:
+   brand (Nike, UNIQLO, Zara, Carhartt, Other) and size (XS–XXL, Not sure).
+   Other opens a box with suggestions; anything can be typed. Not sure is stored
+   as `null`, never as a size.
+2. **"How do you actually like your clothes to sit on you?"** Three cards, one
+   answer: Tight / Slim Fit, True to Size, Cozy / Oversized.
+3. **"Where do normal clothes usually screw up on you?"** Any of four trouble
+   spots, or None of these; choosing None clears the spots and choosing a spot
+   clears None. About the clothes, not the body.
+
+Every step is optional: Continue reads **Skip** until something is chosen, and a
+skipped step is not sent, so it keeps whatever was saved before. Signed in, the
+saved answers are filled in when the guide opens.
+
+**Saving.** Signed in, Save sends the answers (`action: "guide"`). Signed out, the
+guide asks for an account right there — create one, or sign in — with the
+answers held only in the page's memory, then saves the moment the account
+exists. **"Your fit profile is ready."** appears only once the server has
+confirmed the save; a failed save keeps every answer on screen, says nothing
+was saved, and offers Try again.
+
+**Google sign-in from the guide** is offered where Google is set up, but it is a
+full-page trip to Google that returns to the account page, so the answers in the
+page's memory do not survive it. The button says so before it is pressed — the
+answers are not saved yet, and the guide is tapped through again afterwards — and
+nothing claims otherwise. The account page links back to the guide.
+
+**What it does not do.** No size is recommended and no measurement is estimated.
+A brand and size are a reference point; turning "UNIQLO M" into a size in another
+brand needs both brands' verified size charts, which Fynd does not have yet. The
+confirmation says recommendations are still being built.
+
+The whole flow is a few taps: `test-e2e` completes it, saved, well inside 30
+seconds, and nothing in it waits on a timer.
+
+### Testing it
+
+```sh
+node scripts/test-fit-profile.js   # offline: schema, units, versions, the guide's answers and merge, endpoint, cross-account access, logs
+node scripts/test-e2e.js           # the fit guide and the fit profile page against the real handlers: every step, Back,
+                                   #   None, inline sign-up and sign-in, Google, save success and failure, a saved profile
+                                   #   filled in, a 360px phone with the keyboard alone, browser storage; and from a second origin
+node scripts/test-ui.js            # every step and panel of the guide, and the fit profile page, in the palette and legibility audits
+```
+
+### Not built yet
+
+- Size recommendations themselves. This is the profile they will read, and they
+  will need verified size charts per brand before an anchor size can mean
+  anything in another brand.
+- Categories beyond hoodies and sweatshirts.
+- Google sign-in from the guide does not carry the answers across; they are
+  tapped through again after signing in.
+- Account deletion does not exist yet; when it is built it must also remove
+  `fitprofile:<user id>`.
+- Two tabs saving at once: the last save wins.
+- On the GitHub Pages copy the profile is only as reachable as the account:
+  saving passes the cross-origin preflight (`test-e2e` saves, reloads and deletes
+  one from a second origin), but signing in there depends on third-party cookies,
+  which Safari, Brave and Incognito refuse — see
+  [Cross-origin access](#cross-origin-access).
 
 ## Plans, payments and subscriptions
 
@@ -2170,8 +2380,10 @@ Where the image hosts cannot be reached, it fails and names them.
 
 ## The demo video
 
-The landing page carries a short film directly under the search (`#demo` in
-`index.html`): Fynd used for four genuinely different shopping problems, one
+The Search page carries a short film directly under the search (`#demo` in
+`find-clothes.html`; it was on the home page until the fit guide took that
+place, and `scripts/record-demo.js` records on and writes to the Search page,
+named once as `DEMO_PAGE`): Fynd used for four genuinely different shopping problems, one
 after another, with a calm narration, in about 55 seconds. The point it makes:
 you know what you want but not where to find it — describe it, and Fynd finds
 it. It steps aside as soon as a real search starts, because the results take
@@ -2345,7 +2557,7 @@ on a still page; a failure still stops the run with nothing written. The recordi
 retailer opened, any product the preflight left out, and any click that was cut,
 and ends by saying whether every click reached its retailer. The note under the
 video on the
-homepage, and the video's label, are rewritten by the script with the requests
+Search page, and the video's label, are rewritten by the script with the requests
 and the date of the searches, since prices and stock move on after a
 recording. The script prints the finished length and says so if it falls
 outside 50–60 seconds.
@@ -2365,7 +2577,7 @@ npm run demo:record               # = node scripts/record-demo.js
 
 Then cut the film from the new session (**The film**, above), watch both films —
 with sound, without sound, and without reading the captions — and commit
-`assets/demo/` and `index.html`.
+`assets/demo/` and `find-clothes.html`.
 
 ```sh
 node scripts/record-demo.js --replay        # re-record from the saved searches
@@ -2496,7 +2708,7 @@ turn the narration on.
 
 ### What the page does with it
 
-`assets/demo-video.js` and a short inline script in `index.html` divide the work
+`assets/demo-video.js` and a short inline script in `find-clothes.html` divide the work
 by when the decision has to be made.
 
 **Before the browser acts on the markup**, in the inline script: which of the two
@@ -2528,7 +2740,7 @@ after one the page does not touch the video again.
 ## Notes
 
 - Typeface is Inter, loaded from Google Fonts.
-- The demo video on the landing page is a recording of a real search on this
+- The demo video on the Search page is a recording of a real search on this
   site, made by `scripts/record-demo.js`; see **The demo video** above.
 - Products without an `imageUrl` — every row but the UNIQLO one — render
   generated artwork built from CSS gradients and inline SVG. Set `imageUrl` on a

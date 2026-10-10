@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Your fit profile — Fynd</title>
+<meta name="description" content="Your measurements, the sizes you wear in each brand, and how you like clothes to fit — kept private to your Fynd account.">
+<meta name="referrer" content="same-origin">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23111111'/><text x='16' y='23' font-family='Helvetica,Arial,sans-serif' font-size='19' font-weight='700' fill='white' text-anchor='middle'>F</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/styles.css">
+<meta name="findwear-api" content="https://ai-clothes-application.vercel.app/api/interpret">
+<script>document.documentElement.classList.add('js');</script>
+</head>
+<body data-page="fit-profile">
+
+<a class="skip-link" href="#fit-profile">Skip to your fit profile</a>
+
+<header class="site-header">
+  <div class="container">
+    <div class="nav">
+      <a class="brand" href="index.html" aria-label="Fynd — home">
+        <span class="brand-mark" aria-hidden="true">F</span>
+        <span class="brand-word">Fynd</span>
+      </a>
+      <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" aria-label="Open menu"><span></span></button>
+      <nav aria-label="Main">
+        <ul class="nav-links" id="site-nav">
+          <li><a href="index.html">Fit guide</a></li>
+          <li><a href="discover.html">Discover</a></li>
+          <li><a href="pricing.html">Pricing</a></li>
+          <li><a href="about.html">About</a></li>
+          <li><a href="account.html" aria-current="page">Account</a></li>
+        </ul>
+      </nav>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+
+  <section id="fit-profile">
+    <div class="container">
+      <header class="page-head page-head--center">
+        <h1>Your fit profile</h1>
+        <p>How clothes fit you, so Fynd can learn which size to suggest in each brand. Every part is optional — save whatever you know.</p>
+      </header>
+
+      <div class="profile-main">
+        <!-- Each note has one job and stays empty until it has something
+             true to say. -->
+        <p class="billing-note" id="profile-note" role="status" hidden></p>
+
+        <!-- ============================================================
+             Waiting for the account and the profile. The form is never
+             shown before the saved profile has arrived: an empty form
+             saved over a profile that failed to load would erase it.
+             ============================================================ -->
+        <div class="profile-loading" id="profile-loading" role="status">Loading your fit profile…</div>
+
+        <div id="profile-signed-out" hidden>
+          <div class="auth-card auth-card--centred">
+            <h2 class="auth-heading">Sign in to keep a fit profile</h2>
+            <p class="auth-intro">Your fit profile is kept with your account, and only you can see it. Searching still never needs an account.</p>
+            <a class="btn btn-primary" href="account.html">Sign in</a>
+          </div>
+        </div>
+
+        <div id="profile-load-failed" hidden>
+          <div class="auth-card auth-card--centred">
+            <h2 class="auth-heading">Your fit profile did not load</h2>
+            <p class="auth-intro" id="profile-load-error">Something went wrong.</p>
+            <button class="btn btn-secondary" type="button" id="profile-retry">Try again</button>
+          </div>
+        </div>
+
+        <form id="profile-form" novalidate hidden>
+
+          <!-- ==================================================== the fit guide's answers
+               Read here, changed in the guide on the home page. Saving this
+               form never sends them, and the server keeps them as they are. -->
+          <section class="profile-section profile-guide" id="section-guide" aria-labelledby="guide-answers-title">
+            <h2 class="profile-guide-title" id="guide-answers-title">From the fit guide</h2>
+            <ul class="guide-summary">
+              <li><span class="guide-summary-label">A top that fits</span><span class="guide-summary-value" id="guide-answer-anchor">Not answered</span></li>
+              <li><span class="guide-summary-label">How you like clothes to sit</span><span class="guide-summary-value" id="guide-answer-goal">Not answered</span></li>
+              <li><span class="guide-summary-label">Where clothes go wrong</span><span class="guide-summary-value" id="guide-answer-zones">Not answered</span></li>
+            </ul>
+            <a class="btn btn-secondary" href="index.html#guide" id="guide-answers-edit">Change in the fit guide</a>
+          </section>
+
+          <!-- ==================================================== measurements -->
+          <fieldset class="profile-section" id="section-measurements">
+            <legend>Measurements <span class="optional-tag">Optional</span></legend>
+            <p class="profile-help">Measure over a thin layer. Leave out anything you do not know.</p>
+
+            <fieldset class="pref-group" data-field="measurements.unit">
+              <legend>Units</legend>
+              <div class="choices">
+                <label class="choice"><input type="radio" name="unit" value="in"><span>Inches</span></label>
+                <label class="choice"><input type="radio" name="unit" value="cm"><span>Centimetres</span></label>
+              </div>
+              <p class="profile-error" id="error-measurements-unit"></p>
+            </fieldset>
+            <p class="profile-note" id="unit-note" role="status"></p>
+
+            <div class="profile-grid">
+              <div class="profile-field" data-field="measurements.height">
+                <span class="profile-label" id="label-height">Height</span>
+                <div class="height-parts" data-unit="in" role="group" aria-labelledby="label-height">
+                  <label class="measure">
+                    <span class="sr-only">Height, feet</span>
+                    <input class="profile-input" type="text" id="height-ft" inputmode="numeric" autocomplete="off" aria-describedby="error-measurements-height">
+                    <span class="measure-unit" aria-hidden="true">ft</span>
+                  </label>
+                  <label class="measure">
+                    <span class="sr-only">Height, inches</span>
+                    <input class="profile-input" type="text" id="height-in" inputmode="decimal" autocomplete="off" aria-describedby="error-measurements-height">
+                    <span class="measure-unit" aria-hidden="true">in</span>
+                  </label>
+                </div>
+                <label class="measure" data-unit="cm" hidden>
+                  <span class="sr-only">Height, centimetres</span>
+                  <input class="profile-input" type="text" id="height-cm" inputmode="decimal" autocomplete="off" aria-describedby="error-measurements-height">
+                  <span class="measure-unit" aria-hidden="true">cm</span>
+                </label>
+                <p class="profile-error" id="error-measurements-height"></p>
+              </div>
+
+              <div class="profile-field" data-field="measurements.chest">
+                <label class="profile-label" for="measure-chest">Chest <span class="sr-only" data-unit-name>in inches</span></label>
+                <span class="measure">
+                  <input class="profile-input" type="text" id="measure-chest" data-measure="chest" inputmode="decimal" autocomplete="off" aria-describedby="hint-chest error-measurements-chest">
+                  <span class="measure-unit" data-unit-label aria-hidden="true">in</span>
+                </span>
+                <p class="profile-hint" id="hint-chest">Around the fullest part, under your arms.</p>
+                <p class="profile-error" id="error-measurements-chest"></p>
+              </div>
+            </div>
+
+            <h3 class="profile-subhead">For other categories, later</h3>
+            <p class="profile-help">Not used for hoodies and sweatshirts. Kept for when Fynd covers more than tops.</p>
+
+            <div class="profile-grid">
+              <div class="profile-field" data-field="measurements.waist">
+                <label class="profile-label" for="measure-waist">Waist <span class="sr-only" data-unit-name>in inches</span></label>
+                <span class="measure">
+                  <input class="profile-input" type="text" id="measure-waist" data-measure="waist" inputmode="decimal" autocomplete="off" aria-describedby="hint-waist error-measurements-waist">
+                  <span class="measure-unit" data-unit-label aria-hidden="true">in</span>
+                </span>
+                <p class="profile-hint" id="hint-waist">Around your natural waist.</p>
+                <p class="profile-error" id="error-measurements-waist"></p>
+              </div>
+
+              <div class="profile-field" data-field="measurements.hip">
+                <label class="profile-label" for="measure-hip">Hip <span class="sr-only" data-unit-name>in inches</span></label>
+                <span class="measure">
+                  <input class="profile-input" type="text" id="measure-hip" data-measure="hip" inputmode="decimal" autocomplete="off" aria-describedby="hint-hip error-measurements-hip">
+                  <span class="measure-unit" data-unit-label aria-hidden="true">in</span>
+                </span>
+                <p class="profile-hint" id="hint-hip">Around the fullest part.</p>
+                <p class="profile-error" id="error-measurements-hip"></p>
+              </div>
+            </div>
+          </fieldset>
+
+          <!-- ==================================================== usual sizes -->
+          <fieldset class="profile-section" id="section-brands">
+            <legend>Usual sizes by brand <span class="optional-tag">Optional</span></legend>
+            <p class="profile-help">The size you usually buy in a brand, and how it fits you. Leave the size blank if you are not sure — Fynd will not guess it.</p>
+
+            <p class="profile-empty" id="brand-empty">No brands yet.</p>
+            <ol class="brand-list" id="brand-list"></ol>
+            <p class="profile-error" id="error-brandSizes" data-field="brandSizes"></p>
+
+            <button class="btn btn-secondary" type="button" id="add-brand">Add a brand</button>
+            <datalist id="size-options"></datalist>
+          </fieldset>
+
+          <!-- ==================================================== preferred fit -->
+          <fieldset class="profile-section" id="section-fit">
+            <legend>Preferred fit <span class="optional-tag">Optional</span></legend>
+            <p class="profile-help">How you like each kind of top to fit. Each one is set on its own.</p>
+            <div id="pref-groups"></div>
+          </fieldset>
+
+          <p class="form-error" id="profile-form-error" role="alert"></p>
+
+          <div class="profile-actions">
+            <button class="btn btn-primary" type="submit" id="profile-save">Save profile</button>
+            <span class="profile-save-state" id="profile-save-state" role="status"></span>
+          </div>
+
+          <div class="profile-danger" id="profile-delete-area" hidden>
+            <button class="link-btn" type="button" id="profile-delete">Delete my fit profile</button>
+            <div class="profile-confirm" id="delete-confirm" hidden>
+              <p>This removes your measurements, usual sizes, preferred fit and fit guide answers from your account. It cannot be undone.</p>
+              <div class="auth-actions">
+                <button class="btn btn-secondary" type="button" id="delete-confirm-yes">Delete fit profile</button>
+                <button class="link-btn" type="button" id="delete-cancel">Keep it</button>
+              </div>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="container narrow">
+      <div class="section-head"><h2>How your fit profile works</h2></div>
+      <div class="faq-row">
+        <h3>Only you can see it</h3>
+        <p>It is kept with your account and read only when you are signed in. It is not shown on any other page, and nobody else can open it.</p>
+      </div>
+      <div class="faq-row">
+        <h3>We never guess your units</h3>
+        <p>Measurements are saved in the unit you choose. Fynd never reads inches as centimetres or the other way round — switching the unit converts what you typed, and says exactly what it changed.</p>
+      </div>
+      <div class="faq-row">
+        <h3>What we do not ask for</h3>
+        <p>No weight and no photos. Every measurement can be left out: the sizes you wear and the fit you like are a complete profile on their own.</p>
+      </div>
+      <div class="faq-row">
+        <h3>Deleting it</h3>
+        <p>Delete my fit profile removes it from your account straight away.</p>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="container">
+    <div class="footer-inner">
+      <a class="brand" href="index.html" aria-label="Fynd — home">
+        <span class="brand-mark" aria-hidden="true">F</span>
+        <span class="brand-word">Fynd</span>
+      </a>
+      <nav aria-label="Footer">
+        <ul class="footer-links">
+          <li><a href="index.html">Fit guide</a></li>
+          <li><a href="find-clothes.html">Search</a></li>
+          <li><a href="discover.html">Discover</a></li>
+          <li><a href="pricing.html">Pricing</a></li>
+          <li><a href="about.html">About</a></li>
+          <li><a href="account.html">Account</a></li>
+        </ul>
+      </nav>
+    </div>
+    <p class="footer-note">Fynd is a demo experience. Live results come from a connected product source; when none is connected, sample items are shown and labelled as such.</p>
+  </div>
+</footer>
+
+<script src="assets/account.js"></script>
+<script src="assets/fit-profile-schema.js"></script>
+<script src="assets/fit-profile-ui.js"></script>
+<script src="assets/app.js"></script>
+</body>
+</html>
