@@ -114,6 +114,7 @@ scripts/test-pipeline.js       offline test of the whole server pipeline
 scripts/test-stripe.js         offline test of payments and subscriptions
 scripts/test-auth.js           offline test of accounts, sessions and OAuth
 scripts/test-e2e.js            the whole sign-in flow in a real browser
+scripts/test-cross-origin.js   the Pages copy calling the API across origins, in a real browser
 scripts/test-ui.js             browser test of the search interface
 assets/attachments.js          drag-and-drop and file picker for the search box
 assets/account.js       talks to the account and billing endpoints
@@ -350,6 +351,42 @@ OPTIONS /api/search → 204    the Origin is allowed; the POST will follow
 A request with no `Origin` header is not a browser cross-origin request —
 `curl`, a server-to-server call — and is left alone, so the verification
 scripts keep working.
+
+**The headers a page may send are a fixed list: `Content-Type` and
+`X-Fynd-CSRF`.** Every signed-in request that changes something — logout,
+checkout, the billing portal, resending the confirmation email — carries the
+CSRF token in `X-Fynd-CSRF`, so its preflight asks for that header. When the
+list held only `Content-Type`, the Pages copy could sign in (a signed-out
+request carries no token) and then the browser refused to send logout and
+checkout at all; same-origin pages never preflight, so the all-on-Vercel
+deployment never showed it. The list is never an echo of what a preflight asks
+for, and allowing the header grants nothing by itself: the origin still has to
+be allowed, and the token still has to match the `HttpOnly` session cookie it is
+derived from.
+
+```
+OPTIONS /api/auth   asking [content-type,x-fynd-csrf]
+  → 204  Access-Control-Allow-Origin: https://lxmafromnyc.github.io
+         Access-Control-Allow-Credentials: true
+         Access-Control-Allow-Headers: Content-Type, X-Fynd-CSRF
+```
+
+`scripts/test-cross-origin.js` drives the Pages copy exactly as a visitor
+reaches it: the pages at `https://lxmafromnyc.github.io/AI-clothes-application/`
+and the real handlers at `https://ai-clothes-application.vercel.app`, both
+served from the test machine over TLS through a local proxy, so the browser
+enforces CORS and the cross-site cookie rules for real. It uses no request
+routing, because routing makes Playwright answer preflights itself.
+
+**Signing in from the Pages copy depends on third-party cookies.** The session
+cookie belongs to `ai-clothes-application.vercel.app` and is sent from a page on
+`lxmafromnyc.github.io`, a different site. Chrome and Edge send it by default
+and Firefox keeps it partitioned to the Pages site, which works; Safari, and
+any browser set to block third-party cookies (including Chrome in Incognito),
+drops it, so the account looks signed out again after signing in. Serving the
+pages from the Vercel deployment itself ([If you would rather not split the
+hosting](#if-you-would-rather-not-split-the-hosting)) or putting site and API on
+one registrable domain avoids this entirely.
 
 ### How a request flows
 
