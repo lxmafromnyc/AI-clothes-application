@@ -48,6 +48,7 @@ page, the examples, the steps and the retailer labels.
 | Discover | `discover.html` | Browse the catalogue by kind (tops, bottoms, outerwear, one-pieces, comfort and shoes), filtered in the page without a search |
 | Pricing | `pricing.html` | The three plans, which one you are on, and the way to change it |
 | Account | `account.html` | Sign in with Google or email; your plan, usage and subscription |
+| Fit profile | `fit-profile.html` | Your measurements, usual sizes by brand and preferred fit, for size recommendations (reached from the account page) |
 | About | `about.html` | What the site does and what it takes into account |
 
 Every product, wherever it appears, is drawn by one function in `assets/app.js`
@@ -97,6 +98,11 @@ api/_usage.js           the token and search counters
 api/_meter.js           what /api/interpret and /api/search ask before spending
 api/_auth.js            password hashing, session cookies, who a request is
 api/_users.js           user records, and the Stripe customer mapping
+api/fit-profile.js      reads, saves and deletes the signed-in shopper's fit profile
+api/_fit-profile.js     where a fit profile is kept: one record per account
+assets/fit-profile-schema.js  the fit profile's versioned schema; the page and the server share it
+assets/fit-profile-ui.js       draws the fit profile page
+scripts/test-fit-profile.js    offline test of the schema, units, and who may read or change a profile
 api/_store.js           the key/value store: Vercel KV / Upstash, or memory
 api/_providers/openwebninja.js OpenWeb Ninja Real-Time Product Search adapter
 api/_providers/etsy.js  Etsy Open API v3 adapter, kept as an alternative
@@ -1640,6 +1646,122 @@ its own state does not change what the server says.
 - A Google OAuth client whose redirect URI matches the deployment exactly, and
   a consent screen that is published if you want anyone beyond your test users.
 - Redeploy. Vercel applies variables to the next build, not the running one.
+
+## Shopper Fit Profile
+
+The foundation brand-specific size recommendations will be built on. It records
+what a shopper knows about how clothes fit them; **nothing is recommended from
+it yet**. It starts with tops — hoodies and sweatshirts.
+
+Signed in, the account page links to `fit-profile.html`. Three groups, every
+part optional, and the sizes and preferred fit alone are a complete profile:
+
+| Group | What it holds |
+| --- | --- |
+| Measurements | Height and chest (used for tops); waist and hip (kept for later categories). One unit for all of them: `in` or `cm`, chosen by the shopper. |
+| Usual sizes by brand | Brand, category, the size usually bought, and how it fits: too small, about right, too large. |
+| Preferred fit | Fitted, regular, relaxed or oversized — per category. |
+
+### The schema
+
+`assets/fit-profile-schema.js` is the one definition. The page loads it to
+check fields as they are typed; `api/fit-profile.js` runs every save through
+its `normalise()` regardless. A stored profile looks like this:
+
+```json
+{
+  "schemaVersion": 1,
+  "measurements": { "unit": "in", "height": 70, "chest": 40.5, "waist": null, "hip": null },
+  "brandSizes": [
+    { "brand": "Uniqlo", "category": "hoodies", "size": "M", "fit": "about-right" },
+    { "brand": "Champion", "category": "sweatshirts", "size": null, "fit": null }
+  ],
+  "fitPreferences": { "hoodies": "relaxed" },
+  "createdAt": "2026-10-10T14:00:00.000Z",
+  "updatedAt": "2026-10-10T14:05:00.000Z"
+}
+```
+
+- **Units are never guessed.** A measurement is stored as entered, beside its
+  unit. A value with no unit is refused rather than defaulted. Each range is
+  stated per unit, and a value that only fits the other unit is refused with a
+  message that says so ("102 looks like centimetres…") — it is never read as the
+  other unit. On the page, switching the unit converts every value that was
+  valid in the old one, leaves one that was not exactly as typed, and says which
+  was which.
+- **Plausible ranges**, to one decimal place:
+
+  | | Inches | Centimetres |
+  | --- | --- | --- |
+  | Height | 48–90 (4 ft 0 in – 7 ft 6 in) | 120–230 |
+  | Chest | 24–67 | 60–170 |
+  | Waist | 20–67 | 50–170 |
+  | Hip | 24–71 | 60–180 |
+
+- **An unknown size stays unknown.** A blank size, or "not sure", "unknown",
+  "?" and the like, is stored as `null` — never as a default. Letter sizes are
+  written in capitals (`m` → `M`); a brand's own label (`38`, `M Tall`) is kept as
+  typed.
+- **No brand twice.** The same brand and category twice is refused, however the
+  brand is typed (`H&M` / `h & m`, `Levi’s` / `Levis`). The same brand in two
+  categories is two entries. Up to 50.
+- **Nothing else is kept.** No weight, no photos, no notes. A field the schema
+  does not name is dropped, not stored.
+- **Versioned.** `upgrade()` reads any version it knows and returns the current
+  shape, filling what an older profile never had with "not said". A new version
+  adds a step to `UPGRADES`; a new category is a row in `CATEGORIES`. A profile
+  written by a later version than the deployment knows is reported (409) and
+  never overwritten.
+
+### The endpoint
+
+```
+GET  /api/fit-profile                          -> { profile | null, storage }
+POST /api/fit-profile { action: "save", profile }  -> { profile, storage, saved }
+POST /api/fit-profile { action: "delete" }         -> { profile: null, storage, deleted }
+```
+
+Signed out, every method answers 401. The account is always the one the session
+cookie resolves to: no id, email or key in the query, headers or body is read, so
+no request can name somebody else's profile. Saving and deleting carry the CSRF
+token, like logout and checkout. A refused save answers 400 with one error per
+field (`measurements.chest`, `brandSizes.2.brand`, …) and changes nothing.
+POST with an action rather than PUT/DELETE keeps it inside the existing
+cross-origin rules.
+
+### Storage and privacy
+
+The profile lives in the store the accounts already use, under
+`fitprofile:<user id>` — no new database and no dependency. With Vercel KV or
+Upstash configured it is durable; on the memory fallback it lasts as long as the
+account does, and the page says so.
+
+Responses carry `Cache-Control: no-store, private`. The profile appears in no
+other response — `/api/account` is unchanged — and nothing logs a measurement,
+brand, size or preference: a failure logs only the store's own message, which
+names the command and never its arguments. The page writes nothing to browser
+storage. Deleting removes the record straight away.
+
+### Testing it
+
+```sh
+node scripts/test-fit-profile.js   # offline: schema, units, versions, endpoint, cross-account access, logs
+node scripts/test-e2e.js           # includes the fit profile page, against the real handlers
+node scripts/test-ui.js            # includes the fit profile page in the palette and legibility audits
+```
+
+### Not built yet
+
+- Size recommendations themselves. This is the profile they will read.
+- Categories beyond hoodies and sweatshirts.
+- Account deletion does not exist yet; when it is built it must also remove
+  `fitprofile:<user id>`.
+- Two tabs saving at once: the last save wins.
+- From the GitHub Pages copy, saving and deleting are blocked by the browser:
+  the cross-origin preflight in `api/_cors.js` allows only `Content-Type`, not
+  the `X-Fynd-CSRF` header every signed-in POST carries. This predates the fit
+  profile and affects logout and checkout from that copy too. Reading works, and
+  the all-on-Vercel deployment is unaffected.
 
 ## Plans, payments and subscriptions
 

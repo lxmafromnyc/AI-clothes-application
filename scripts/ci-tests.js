@@ -60,6 +60,7 @@ const GROUPS = {
     ['test-live-organic', "the Serper fallback end to end: organic results, read off the retailers' own pages"],
     ['test-auth', 'accounts, sessions, tokens, OAuth'],
     ['test-stripe', 'payments and subscriptions'],
+    ['test-fit-profile', 'the shopper fit profile: its schema, units, and who may read or change it'],
     ['test-catalog-audit', 'the catalogue audit: every card proved from its row'],
     ['test-demo-audio', "the landing demo's sound: loudness, ducking, captions"],
     ['test-demo-film', "the landing demo film: length, order, every store frame real"]

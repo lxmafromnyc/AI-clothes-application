@@ -89,6 +89,11 @@ const accountReply = (over) => {
 
 let accountState = accountReply({});
 
+/* What the stub /api/fit-profile answers: the signed-in shopper's own
+   profile, or none. Only the design audits below read it. */
+const fitProfileReply = (profile) => ({ profile: profile || null, storage: { durable: true } });
+let fitProfileState = fitProfileReply(null);
+
 /* What the search-progress tests do to the two endpoints. Each may HOLD
    its reply until the test releases it — so a stage can be looked at
    while the request behind it is really still open, rather than caught
@@ -127,6 +132,11 @@ const withRowField = (id, field, value) => {
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
+
+  if (url.pathname === '/api/fit-profile') {
+    res.setHeader('Content-Type', 'application/json');
+    return res.end(JSON.stringify(fitProfileState));
+  }
 
   if (['/api/account', '/api/auth', '/api/checkout', '/api/portal'].includes(url.pathname)) {
     let body = '';
@@ -3257,7 +3267,7 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
 
   console.log('\ntypography and text styling');
 
-  const PAGES = ['index.html', 'find-clothes.html', 'discover.html', 'about.html', 'pricing.html', 'account.html'];
+  const PAGES = ['index.html', 'find-clothes.html', 'discover.html', 'about.html', 'pricing.html', 'account.html', 'fit-profile.html'];
 
   /* each page is given a moment to render whatever it builds from the
      catalogue, so cards, badges and pills are audited too, not just the
@@ -3277,7 +3287,10 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
       /* Signed out, the account page is the two choices; the dashboard
          behind it is hidden, so this waits for the shell that is
          actually on screen. The signed-in view is audited separately. */
-      'account.html': '#panel-choose:not([hidden])'
+      'account.html': '#panel-choose:not([hidden])',
+      /* signed out, the fit profile page is the way to sign in; the
+         form is audited signed in, below */
+      'fit-profile.html': '#profile-signed-out:not([hidden])'
     }[file];
     if (built) await page.waitForSelector(built, { timeout: 10000 });
     return page;
@@ -3310,6 +3323,44 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     assert.deepStrictEqual(problems, [], `\n        ${problems.join('\n        ')}`);
     await page.close();
     accountState = accountReply({});
+  });
+
+  await test('every piece of text on the fit profile form is set in a palette ink, and is legible — errors, notes and the delete confirmation too', async () => {
+    accountState = accountReply({
+      extra: {
+        signedIn: true,
+        user: { id: 'usr_1', email: 'ada@example.test', name: 'Ada Lovelace', emailVerified: true, signInMethods: ['password'], hasBilling: false },
+        emailVerified: true
+      }
+    });
+    fitProfileState = fitProfileReply({
+      schemaVersion: 1,
+      measurements: { unit: 'in', height: 70, chest: 40, waist: null, hip: null },
+      brandSizes: [{ brand: 'Uniqlo', category: 'hoodies', size: 'M', fit: 'about-right' }, { brand: 'Gap', category: 'sweatshirts', size: null, fit: null }],
+      fitPreferences: { hoodies: 'relaxed' }
+    });
+    for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }]) {
+      const page = await openPage('fit-profile.html', { viewport });
+      await page.waitForSelector('#profile-form:not([hidden])', { timeout: 10000 });
+      /* an error, a unit note, a form-level error and the confirmation,
+         all on screen at once, so every ink the form uses is audited */
+      await page.fill('#measure-waist', '500');
+      await page.check('input[name="unit"][value="cm"]');
+      await page.click('#profile-save');
+      await page.waitForSelector('#profile-form-error.show');
+      await page.click('#profile-delete');
+      await page.waitForSelector('#delete-confirm:not([hidden])');
+
+      const problems = await textStyleProblems(page, await resolveInks(page));
+      assert.deepStrictEqual(problems, [], `${viewport.width}px:\n        ${problems.join('\n        ')}`);
+      const inks = await resolveInks(page);
+      (await placeholderColours(page)).forEach(({ selector, color }) => assert.ok(inks[color], `${selector} placeholder is ${color}`));
+      const width = await page.evaluate(() => document.documentElement.scrollWidth);
+      assert.ok(width <= viewport.width, `${width}px wide at ${viewport.width}px`);
+      await page.close();
+    }
+    accountState = accountReply({});
+    fitProfileState = fitProfileReply(null);
   });
 
   await test('the email form is set in a palette ink, in both of its modes', async () => {
