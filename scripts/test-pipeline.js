@@ -497,6 +497,18 @@ test('every header assets/account.js sets on a request is one the preflight allo
   });
 });
 
+test('the allowed headers are a fixed list, never an echo of what a preflight asks for', () => {
+  withEnv({}, () => {
+    const req = signedInPreflight('https://lxmafromnyc.github.io');
+    req.headers['access-control-request-headers'] = 'content-type,x-fynd-csrf,authorization,cookie,x-anything';
+    const res = fakeCorsRes();
+    handledPreflight(req, res);
+    assert.deepStrictEqual(allowedHeaders(res), ['content-type', 'x-fynd-csrf'],
+      'a header is allowed because our pages send it, not because a caller asked');
+    assert.strictEqual(res.headers['access-control-allow-origin'], 'https://lxmafromnyc.github.io', 'one named origin, never *');
+  });
+});
+
 test('a request with no Origin is left alone, so curl still works', () => {
   withEnv({}, () => {
     const res = fakeCorsRes();

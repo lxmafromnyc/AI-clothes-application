@@ -133,6 +133,7 @@ scripts/test-pipeline.js       offline test of the whole server pipeline
 scripts/test-stripe.js         offline test of payments and subscriptions
 scripts/test-auth.js           offline test of accounts, sessions and OAuth
 scripts/test-e2e.js            the whole sign-in flow, the fit guide and the fit profile in a real browser
+scripts/test-cross-origin.js   the Pages copy calling the API across origins, in a real browser
 scripts/test-ui.js             browser test of the interface: the search, the fit guide, palette and contrast
 assets/attachments.js          drag-and-drop and file picker for the search box
 assets/account.js       talks to the account and billing endpoints
@@ -382,6 +383,15 @@ same-origin, so never preflighted — showed nothing wrong. `scripts/test-e2e.js
 now logs out from a page on a second origin to keep it that way. That test runs
 without a Playwright route, because while one is installed Playwright answers
 every preflight itself and allows whatever was asked.
+
+`scripts/test-cross-origin.js` goes one step further and uses the production
+hostnames: the pages at `https://lxmafromnyc.github.io/AI-clothes-application/`
+and the real handlers at `https://ai-clothes-application.vercel.app`, both served
+from the test machine over TLS through a local proxy. The two are different
+sites, so the session cookie really is a cross-site `SameSite=None; Secure`
+cookie, which plain http on one host cannot test. It signs up, logs out and
+checks out from the Pages origin, and shows that a page on another origin can
+neither read the account nor end its session.
 
 **Accounts on the Pages copy depend on third-party cookies.** The session
 cookie belongs to the Vercel host. To a page on `lxmafromnyc.github.io` that is
