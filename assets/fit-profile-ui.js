@@ -271,6 +271,11 @@
     editor.dataset.garment = id;
     editor.innerHTML = `
       <legend class="garment-editor-title">${g.label}</legend>
+      ${g.named ? `<div class="profile-field" data-field="${at}.name">
+        <label class="profile-label" for="${p}-name">What is it?</label>
+        <input class="profile-input" type="text" id="${p}-name" data-part="name" maxlength="${Schema.LIMITS.garmentNameLength}" autocomplete="off" placeholder="Like shorts or a jacket" aria-describedby="${p}-name-error">
+        <p class="profile-error" id="${p}-name-error"></p>
+      </div>` : ''}
       <div class="profile-grid">
         <div class="profile-field" data-field="${at}.anchor.brand">
           <label class="profile-label" for="${p}-brand">Brand</label>
@@ -316,6 +321,7 @@
       </div>`;
 
     const e = entry || {};
+    if (g.named) piece(editor, 'name').value = e.name || '';
     const a = e.anchor;
     if (a && (a.brand || a.size || a.length)) {
       if (a.brand && Schema.brandsFor(id).includes(a.brand)) piece(editor, 'brand').value = a.brand;
@@ -377,7 +383,9 @@
     let troubleZones = null;
     if (ticked.some((c) => c.dataset.none !== undefined)) troubleZones = [];
     else if (ticked.length) troubleZones = ticked.map((c) => c.value);
-    return { anchor, fitGoal: goal && goal.value ? goal.value : null, troubleZones };
+    const out = { anchor, fitGoal: goal && goal.value ? goal.value : null, troubleZones };
+    if (g.named) out.name = piece(editor, 'name').value;
+    return out;
   }
 
   function garmentChanged(editor, target) {

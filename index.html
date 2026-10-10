@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Fynd — Clothes that fit you</title>
-<meta name="description" content="Tell Fynd how your clothes fit in four quick taps — the type of clothing, one that already fits, how you like it to fit, and what usually gets the fit wrong.">
+<meta name="description" content="Find your fit in 4 quick steps, no measuring — the type of clothing, one that already fits, how you like it to fit, and what usually gets the fit wrong.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23111111'/><text x='16' y='23' font-family='Helvetica,Arial,sans-serif' font-size='19' font-weight='700' fill='white' text-anchor='middle'>F</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -50,22 +50,21 @@
        assets/fit-profile-schema.js. Nothing is saved until the end, and a
        saved profile is only ever added to. -->
   <section class="container hero guide-hero" id="guide" aria-labelledby="guide-title">
-    <h1 id="guide-title">Clothes that fit you.</h1>
-    <p class="lead">Four quick taps tell Fynd how your clothes fit. No tape measure.</p>
+    <h1 id="guide-title">Find your fit</h1>
+    <p class="lead">4 quick steps. No measuring.</p>
 
     <div class="guide-card" id="guide-card">
       <form class="guide-form" id="guide-form" novalidate>
+        <!-- One progress line: the step in words, a thin bar under it. -->
         <div class="guide-progress">
-          <p class="guide-count" id="guide-count">1 of 4</p>
-          <ol class="guide-bar" aria-hidden="true">
-            <li class="is-current"></li><li></li><li></li><li></li>
-          </ol>
+          <p class="guide-count" id="guide-count">Step 1 of 4</p>
+          <div class="guide-bar" aria-hidden="true"><span class="guide-bar-fill" id="guide-bar-fill"></span></div>
         </div>
 
         <!-- ================================================ 1: type of clothing -->
         <fieldset class="guide-step" data-step="1">
           <legend class="guide-legend">
-            <h2 class="guide-question" tabindex="-1"><span class="sr-only">Step 1 of 4: </span>What are we finding your fit for?</h2>
+            <h2 class="guide-question" tabindex="-1"><span class="sr-only">Step 1 of 4: </span>What are we sizing?</h2>
           </legend>
           <div class="garment-cards">
             <label class="garment-card">
@@ -120,11 +119,15 @@
               <input type="radio" name="garment" value="other">
               <span class="garment-card-body">
                 <svg class="garment-card-art" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M21 10.5 C21 8 22.5 6.5 24.5 6.5 C26.5 6.5 28 8 28 10 C28 12 26 13 24.5 13.5 V16"/><path d="M24.5 16 L7.5 31 C6.5 32 7 33.5 8.5 33.5 H40.5 C42 33.5 42.5 32 41.5 31 Z"/></svg>
-                <span class="garment-card-title">Other</span>
-                <span class="garment-card-hint">Something else</span>
+                <span class="garment-card-title">Something else</span>
                 <span class="garment-saved" hidden>Saved</span>
               </span>
             </label>
+          </div>
+          <!-- Only after "Something else": what it is, in a word or two. -->
+          <div class="guide-field guide-garment-name" id="garment-name-field" hidden>
+            <label class="guide-label" for="garment-name">What is it?</label>
+            <input class="profile-input" type="text" id="garment-name" name="garmentName" maxlength="40" autocomplete="off" placeholder="Like shorts or a jacket">
           </div>
         </fieldset>
 

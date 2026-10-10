@@ -1031,6 +1031,34 @@ await test('a profile from a later version is not saved over by a per-type answe
   assert.deepStrictEqual(await store.get(fitProfiles.profileKey(user.id)), later);
 });
 
+await test('"Something else" can say what it is; the name is a label kept beside answers, and only that type takes one', async () => {
+  const { jar } = await signUp('ada@example.test');
+  let res = await guide(jar, byType({ other: { name: '  swim   trunks ' } }));
+  assert.strictEqual(res.status, 200);
+  assert.deepStrictEqual(res.body.profile.garments, {}, 'a name alone is not an answer, so nothing is kept');
+
+  res = await guide(jar, byType({ other: { name: 'swim trunks', fitGoal: 'oversized' } }));
+  assert.deepStrictEqual(res.body.profile.garments.other, { anchor: null, fitGoal: 'oversized', troubleZones: null, name: 'swim trunks' });
+  assert.strictEqual(Schema.describeGarment('other', res.body.profile.garments.other).garment, 'Something else: swim trunks');
+
+  /* left out, it is kept; sent as null, cleared */
+  res = await guide(jar, byType({ other: { troubleZones: ['too-long'] } }));
+  assert.strictEqual(res.body.profile.garments.other.name, 'swim trunks');
+  res = await guide(jar, byType({ other: { name: null } }));
+  assert.strictEqual(res.body.profile.garments.other.name, null);
+
+  for (const [garments, field] of [
+    [{ jeans: { name: 'jorts', fitGoal: 'slim' } }, 'garments.jeans.name'],
+    [{ other: { name: '!!!' } }, 'garments.other.name'],
+    [{ other: { name: 'x'.repeat(41) } }, 'garments.other.name']
+  ]) {
+    const refused = await guide(jar, byType(garments));
+    assert.strictEqual(refused.status, 400, JSON.stringify(garments));
+    assert.ok(refused.body.errors.some((e) => e.field === field), JSON.stringify(refused.body.errors));
+  }
+  assert.strictEqual(Schema.garmentOf('other').label, 'Something else');
+});
+
 await test('each type’s answers are said in its own words, and never as a size suggestion', () => {
   assert.deepStrictEqual(Schema.describeGarment('jeans', { anchor: { brand: 'Levi’s', size: '32', length: '30' }, fitGoal: 'oversized', troubleZones: ['legs-long'] }),
     { garment: 'Jeans', anchor: 'Levi’s · 32 × 30', fitGoal: 'Relaxed / Oversized', troubleZones: 'Legs are too long' });
