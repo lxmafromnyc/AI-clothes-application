@@ -8,9 +8,10 @@
      https://ai-clothes-application.vercel.app/api/…          the API
 
    test-e2e.js drives the same pages same-origin, with the API beside
-   them; this suite drives them the way a visitor to the Pages site
-   reaches them, across origins, with the browser enforcing CORS and
-   cross-site cookie rules for real:
+   them, and logs out once from a second origin on the same host — the
+   same site, so its cookie is never a cross-site one. This suite drives
+   them the way a visitor to the Pages site reaches them, across sites,
+   with the browser enforcing CORS and cross-site cookie rules for real:
 
      - both hostnames are served from this machine over TLS, through a
        local CONNECT proxy, so the page's origin and the API's are

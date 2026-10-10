@@ -129,6 +129,19 @@ if [ -n "$ORIGIN" ]; then
   pre=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 15 -X OPTIONS "$ENDPOINT" \
     -H "Origin: $ORIGIN" -H "Access-Control-Request-Method: POST" 2>/dev/null)
   [ "$pre" = "204" ] && ok "preflight OPTIONS returns 204" || bad "preflight OPTIONS returned $pre, expected 204"
+
+  # What a signed-in POST from this origin asks for. Every endpoint shares
+  # api/_cors.js, so this one answers for /api/auth and the billing calls too.
+  allow=$(curl -sS -o /dev/null -D - --max-time 15 -X OPTIONS "$ENDPOINT" \
+    -H "Origin: $ORIGIN" -H "Access-Control-Request-Method: POST" \
+    -H "Access-Control-Request-Headers: content-type,x-fynd-csrf" 2>/dev/null \
+    | grep -i '^access-control-allow-headers:' | tr -d '\r' | cut -d' ' -f2-)
+  if printf '%s' "$allow" | tr 'A-Z' 'a-z' | tr -d ' ' | tr ',' '\n' | grep -qx 'x-fynd-csrf'; then
+    ok "preflight allows the X-Fynd-CSRF header signed-in POSTs carry"
+  else
+    bad "preflight allows '${allow}' but not X-Fynd-CSRF — logout, checkout and the billing portal are blocked from $ORIGIN"
+    note "fix: deploy an api/_cors.js that lists it, and check nothing in front of the function replaces Access-Control-Allow-Headers"
+  fi
 fi
 
 # --- 3. it refuses what it should -------------------------------------------

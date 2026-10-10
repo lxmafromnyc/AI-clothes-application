@@ -37,6 +37,13 @@ const crypto = require('crypto');
 const REPO = path.join(__dirname, '..');
 const PORT = 8901;
 const ORIGIN = `http://127.0.0.1:${PORT}`;
+/* The pages alone, on an origin of their own — the way GitHub Pages
+   serves them apart from the functions on Vercel. Same host, another
+   port: a different origin, so CORS and its preflight apply in full, but
+   the same site, so the cookie still travels. See the cross-origin test
+   for what that does and does not prove. */
+const PAGE_PORT = 8902;
+const PAGE_ORIGIN = `http://127.0.0.1:${PAGE_PORT}`;
 const CHROME = process.env.CHROME_PATH || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
 
 let chromium;
@@ -52,7 +59,7 @@ try {
    --------------------------------------------------------- */
 
 process.env.AUTH_SECRET = 'end-to-end-secret-of-sufficient-length';
-process.env.ALLOWED_ORIGIN = ORIGIN;
+process.env.ALLOWED_ORIGIN = `${ORIGIN},${PAGE_ORIGIN}`;
 process.env.STRIPE_SECRET_KEY = 'sk_test_e2e';
 process.env.STRIPE_WEBHOOK_SECRET = 'whsec_e2e';
 process.env.STRIPE_PRICE_PRO = 'price_pro_e2e';
@@ -75,6 +82,7 @@ process.env.EMAIL_FROM = 'Fynd <hello@fynd.e2e>';
 
 const store = require('../api/_store');
 const users = require('../api/_users');
+const auth = require('../api/_auth');
 
 /* ---------------------------------------------------------
    Google and the mailbox, answered in-process
@@ -188,6 +196,10 @@ const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/cs
 /* every API endpoint the browser reached, in order */
 const apiHits = [];
 
+/* every request a handler answered, with what CORS looks at, so the
+   cross-origin test can show its requests really came from elsewhere */
+const apiRequests = [];
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, ORIGIN);
 
@@ -217,6 +229,13 @@ const server = http.createServer(async (req, res) => {
       if (!res.writableEnded) { res.statusCode = 500; res.end('{}'); }
     }
     if (!res.writableEnded) res.end();
+    apiRequests.push({
+      method: req.method,
+      path: url.pathname,
+      origin: req.headers.origin || null,
+      csrf: Boolean(req.headers[auth.CSRF_HEADER]),
+      status: res.statusCode
+    });
     return;
   }
 
@@ -227,6 +246,10 @@ const server = http.createServer(async (req, res) => {
     return res.end(JSON.stringify({ source: null, products: [], preferences: {} }));
   }
 
+  return serveFile(url, res);
+});
+
+function serveFile(url, res) {
   const file = path.join(REPO, url.pathname === '/' ? 'index.html' : url.pathname.replace(/^\/+/, ''));
   if (!file.startsWith(REPO) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
     res.statusCode = 404;
@@ -234,7 +257,21 @@ const server = http.createServer(async (req, res) => {
   }
   res.setHeader('Content-Type', TYPES[path.extname(file)] || 'application/octet-stream');
   res.end(fs.readFileSync(file));
+}
+
+/* The pages and nothing else, as a static host serves them: /api/ is a
+   404 here, the answer assets/account.js reads as "no API on this
+   origin". */
+const pageServer = http.createServer((req, res) => {
+  const url = new URL(req.url, PAGE_ORIGIN);
+  if (url.pathname.startsWith('/api/')) {
+    res.statusCode = 404;
+    return res.end('not found');
+  }
+  return serveFile(url, res);
 });
+
+const closeServers = () => { server.close(); pageServer.close(); };
 
 /* ---------------------------------------------------------
    Runner
@@ -268,19 +305,26 @@ const linkFromInbox = (pattern) => {
 
 (async () => {
   await new Promise((r) => server.listen(PORT, r));
+  await new Promise((r) => pageServer.listen(PAGE_PORT, r));
 
   let browser;
   try {
-    browser = await chromium.launch({ executablePath: CHROME });
+    browser = await chromium.launch({
+      executablePath: CHROME,
+      /* No hostname resolves; 127.0.0.1 is all there is. The same rule
+         the route in openContext() enforces, at a level that intercepts
+         nothing — which a context opened without that route relies on. */
+      args: ['--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1']
+    });
   } catch (err) {
     console.log('Chromium could not launch here — skipping end-to-end tests.');
-    server.close();
+    closeServers();
     process.exit(0);
   }
 
   /* A fresh browser context per test: its own cookie jar, so one test's
      session cannot be another's. */
-  async function openContext() {
+  async function openContext(options) {
     const context = await browser.newContext({ baseURL: ORIGIN });
 
     /* The pages carry a meta tag pointing at the production deployment,
@@ -307,20 +351,28 @@ const linkFromInbox = (pattern) => {
     });
     /* Nothing off this origin is reachable here — the whole flow,
        Google's stand-in included, is served locally — so cutting
-       everything else makes the pages deterministic. */
-    await context.route((url) => !String(url).includes('127.0.0.1'), (route) => route.abort());
+       everything else makes the pages deterministic.
+
+       But while any route is installed, Playwright answers every CORS
+       preflight itself, with a 204 allowing whatever was asked, and the
+       server never sees it. A test about the server's own preflight
+       answer opens its context with { intercept: false } and leaves the
+       cutting to the launch flag above. */
+    if (!(options && options.intercept === false)) {
+      await context.route((url) => !String(url).includes('127.0.0.1'), (route) => route.abort());
+    }
 
     return context;
   }
 
-  const open = async (page, file) => {
-    await page.goto(`${ORIGIN}/${file}`, { waitUntil: 'domcontentloaded' });
+  const open = async (page, file, origin) => {
+    await page.goto(`${origin || ORIGIN}/${file}`, { waitUntil: 'domcontentloaded' });
     return page;
   };
 
   /* Fills and submits the email form, from the front door each time. */
-  async function signUpThroughTheUI(page, { name, email, password, confirm }) {
-    await open(page, 'account.html');
+  async function signUpThroughTheUI(page, { name, email, password, confirm }, origin) {
+    await open(page, 'account.html', origin);
     await page.waitForSelector('#panel-choose:not([hidden])');
     await page.click('#email-button');
     await page.waitForSelector('#panel-email:not([hidden])');
@@ -853,8 +905,65 @@ const linkFromInbox = (pattern) => {
     await context.close();
   });
 
+  console.log('\nfrom a page on another origin');
+
+  /* The deployment this project runs: pages on GitHub Pages, functions
+     on Vercel. Every test above is same-origin, and a same-origin
+     request is never preflighted — which is how a preflight that refused
+     the CSRF header went unnoticed while logout, checkout and the billing
+     portal were blocked from the Pages copy.
+
+     Here the page is on PAGE_ORIGIN and the API on ORIGIN, so each call
+     is a real CORS request and the browser decides for itself whether
+     to send it. What this cannot show is a cross-SITE cookie. Production
+     needs SameSite=None, a browser accepts that only with Secure, and
+     Secure needs https, so _auth.js gives plain-http localhost Lax
+     instead; it travels here only because both origins are the same
+     site, 127.0.0.1. Whether a browser that blocks third-party cookies
+     sends production's at all is a separate question this cannot
+     answer — see "Cross-origin access" in the README. */
+  await test('a signed-in logout from another origin gets past the preflight and ends the session', async () => {
+    apiRequests.length = 0;
+    /* no route: with one installed, Playwright would answer the
+       preflights itself and this would pass whatever _cors.js said */
+    const context = await openContext({ intercept: false });
+    const page = await context.newPage();
+    await signUpThroughTheUI(page, { name: 'Ada', email: 'ada@e2e.test', password: PASSWORD }, PAGE_ORIGIN);
+    await page.waitForSelector('#panel-account:not([hidden])');
+
+    assert.ok(apiRequests.some((r) => r.method === 'OPTIONS' && r.origin === PAGE_ORIGIN && r.status === 204),
+      `no preflight from ${PAGE_ORIGIN} reached the server, so the browser was not asking it: ${JSON.stringify(apiRequests)}`);
+
+    const session = (await context.cookies(ORIGIN)).find((c) => c.name === auth.SESSION_COOKIE && c.value);
+    assert.ok(session, 'signing up from the other origin should have left the API a session cookie');
+    assert.ok(await auth.readSession(session.value), 'and the server should hold that session');
+
+    /* The note already says "check your email" from the sign-up; a
+       failed logout turns it into a warning. */
+    const WARNING = '#account-note.billing-note--warn:not([hidden])';
+    assert.strictEqual(await page.$(WARNING), null, 'a warning was on screen before logging out');
+
+    const before = apiRequests.length;
+    await page.click('#signout-button');
+    await page.waitForSelector(`#panel-choose:not([hidden]), ${WARNING}`);
+
+    const said = await page.$eval('#account-note', (n) => (n.classList.contains('billing-note--warn') && !n.hidden ? n.textContent : ''));
+    const logout = apiRequests.slice(before).find((r) => r.method === 'POST' && r.path === '/api/auth');
+    assert.ok(!said && logout,
+      `the logout never reached the API — the page said "${said}" and the API saw ${JSON.stringify(apiRequests.slice(before))}. ` +
+      `The browser blocks a POST whose preflight does not allow ${auth.CSRF_HEADER}.`);
+    assert.strictEqual(logout.origin, PAGE_ORIGIN, 'the logout has to come from the other origin, or this proves nothing');
+    assert.strictEqual(logout.csrf, true, 'and has to carry the CSRF header');
+    assert.strictEqual(logout.status, 200);
+
+    assert.ok(page.url().startsWith(`${PAGE_ORIGIN}/`), `the page left its own origin: ${page.url()}`);
+    assert.strictEqual(await auth.readSession(session.value), null,
+      'the session must be dead on the server, not just forgotten by the browser');
+    await context.close();
+  });
+
   await browser.close();
-  server.close();
+  closeServers();
   console.log(`\n${passed} passed, ${failures.length} failed\n`);
   process.exit(failures.length ? 1 : 0);
-})().catch((err) => { console.error(err); server.close(); process.exit(1); });
+})().catch((err) => { console.error(err); closeServers(); process.exit(1); });

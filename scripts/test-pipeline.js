@@ -443,59 +443,69 @@ test('an accepted preflight answers 204 and echoes the caller, with Vary', () =>
   });
 });
 
-/* The preflight a signed-in page on GitHub Pages actually sends: a JSON
-   POST carrying the CSRF token. Leaving the token's header out of the
-   allowed list is what stopped logout and checkout from the Pages copy —
-   the browser refused to send them at all. */
-const signedInPreflight = (origin, asked) => {
-  const req = Object.assign(reqFrom(origin, 'ai-clothes-application.vercel.app'), { method: 'OPTIONS' });
-  req.headers['access-control-request-method'] = 'POST';
-  req.headers['access-control-request-headers'] = asked;
-  const res = fakeCorsRes();
-  handledPreflight(req, res);
-  return res;
-};
-const allowedHeaders = (res) => String(res.headers['access-control-allow-headers'] || '')
-  .toLowerCase().split(',').map((h) => h.trim()).filter(Boolean);
+/* What Chrome sends before a signed-in POST from the Pages site to
+   Vercel: the JSON body's Content-Type and the CSRF header. A preflight
+   answer missing either is a refusal the server never hears about. */
+const signedInPreflight = (origin) => ({
+  method: 'OPTIONS',
+  headers: {
+    host: 'ai-clothes-application.vercel.app',
+    origin,
+    'access-control-request-method': 'POST',
+    'access-control-request-headers': 'content-type,x-fynd-csrf'
+  }
+});
 
-test('a signed-in POST from the Pages site is allowed every header it asks for, with no configuration', () => {
+const allowedHeaders = (res) => String(res.headers['access-control-allow-headers'] || '')
+  .split(',').map((h) => h.trim().toLowerCase()).filter(Boolean);
+
+test("an allowed origin's preflight lets the CSRF header through, so signed-in POSTs work cross-origin", () => {
   withEnv({}, () => {
-    const res = signedInPreflight('https://lxmafromnyc.github.io', 'content-type,x-fynd-csrf');
+    const req = signedInPreflight('https://lxmafromnyc.github.io');
+    const res = fakeCorsRes();
+    assert.strictEqual(handledPreflight(req, res), true);
     assert.strictEqual(res.statusCode, 204);
-    assert.strictEqual(res.headers['access-control-allow-origin'], 'https://lxmafromnyc.github.io');
-    assert.strictEqual(res.headers['access-control-allow-credentials'], 'true');
-    assert.ok(/POST/.test(res.headers['access-control-allow-methods']));
-    ['content-type', 'x-fynd-csrf'].forEach((h) => assert.ok(allowedHeaders(res).includes(h), `${h} is not allowed`));
+    const allowed = allowedHeaders(res);
+    req.headers['access-control-request-headers'].split(',').forEach((h) => assert.ok(allowed.includes(h),
+      `the browser asked to send ${h} and was answered "${res.headers['access-control-allow-headers']}" — ` +
+      'logout, checkout and the billing portal would be blocked from the Pages site'));
+    assert.ok(allowed.includes(require('../api/_auth').CSRF_HEADER.toLowerCase()),
+      'the header _auth.js checks must be the one the preflight allows');
   });
 });
 
-test('the CSRF header the page sends, and the one the server checks, is the one the preflight allows', () => {
-  const page = require('fs').readFileSync(require('path').join(__dirname, '..', 'assets', 'account.js'), 'utf8');
-  const sent = /headers\['([^']+)'\]\s*=\s*current\.csrfToken/.exec(page);
-  assert.ok(sent, 'assets/account.js no longer sets the CSRF header the way this test reads it');
-  const { CSRF_HEADER } = require('../api/_auth');
-  const res = signedInPreflight('https://lxmafromnyc.github.io', 'content-type');
-  assert.ok(allowedHeaders(res).includes(sent[1].toLowerCase()), `the page sends ${sent[1]}, which is not allowed`);
-  assert.ok(allowedHeaders(res).includes(CSRF_HEADER.toLowerCase()), `the server checks ${CSRF_HEADER}, which is not allowed`);
+test('a disallowed origin asking to send the CSRF header still gets 403 and no CORS headers', () => {
+  withEnv({}, () => {
+    const res = fakeCorsRes();
+    assert.strictEqual(handledPreflight(signedInPreflight('https://evil.example.com'), res), true);
+    assert.strictEqual(res.statusCode, 403);
+    assert.strictEqual(res.headers['access-control-allow-origin'], undefined);
+    assert.strictEqual(res.headers['access-control-allow-headers'], undefined);
+    assert.strictEqual(res.headers['access-control-allow-credentials'], undefined);
+  });
+});
+
+test('every header assets/account.js sets on a request is one the preflight allows', () => {
+  withEnv({}, () => {
+    const source = require('fs').readFileSync(require('path').join(__dirname, '..', 'assets', 'account.js'), 'utf8');
+    const sent = [...source.matchAll(/headers\[\s*['"]([^'"]+)['"]\s*\]\s*=/g)].map((m) => m[1].toLowerCase());
+    assert.ok(sent.length, "found no headers['…'] = assignment in assets/account.js — this test needs updating");
+    const res = fakeCorsRes();
+    handledPreflight(signedInPreflight('https://lxmafromnyc.github.io'), res);
+    const allowed = allowedHeaders(res);
+    sent.forEach((h) => assert.ok(allowed.includes(h), `assets/account.js sends ${h}, which the preflight does not allow`));
+  });
 });
 
 test('the allowed headers are a fixed list, never an echo of what a preflight asks for', () => {
   withEnv({}, () => {
-    const res = signedInPreflight('https://lxmafromnyc.github.io', 'content-type,x-fynd-csrf,authorization,cookie,x-anything');
-    assert.deepStrictEqual(allowedHeaders(res), ['content-type', 'x-fynd-csrf']);
-  });
-});
-
-test('credentials only ever go with one named origin: never a wildcard, and nothing at all for a stranger', () => {
-  withEnv({}, () => {
-    const allowed = signedInPreflight('https://lxmafromnyc.github.io', 'content-type,x-fynd-csrf');
-    assert.notStrictEqual(allowed.headers['access-control-allow-origin'], '*');
-    assert.strictEqual(allowed.headers['access-control-allow-origin'], 'https://lxmafromnyc.github.io');
-
-    const refused = signedInPreflight('https://evil.example.com', 'content-type,x-fynd-csrf');
-    assert.strictEqual(refused.statusCode, 403);
-    ['access-control-allow-origin', 'access-control-allow-credentials', 'access-control-allow-headers']
-      .forEach((h) => assert.strictEqual(refused.headers[h], undefined, `${h} sent to a refused origin`));
+    const req = signedInPreflight('https://lxmafromnyc.github.io');
+    req.headers['access-control-request-headers'] = 'content-type,x-fynd-csrf,authorization,cookie,x-anything';
+    const res = fakeCorsRes();
+    handledPreflight(req, res);
+    assert.deepStrictEqual(allowedHeaders(res), ['content-type', 'x-fynd-csrf'],
+      'a header is allowed because our pages send it, not because a caller asked');
+    assert.strictEqual(res.headers['access-control-allow-origin'], 'https://lxmafromnyc.github.io', 'one named origin, never *');
   });
 });
 

@@ -63,6 +63,10 @@
 
 'use strict';
 
+/* The header the CSRF check reads, named once, where it is checked.
+   _auth.js does not require this file, so there is no cycle. */
+const { CSRF_HEADER } = require('./_auth');
+
 const trimSlash = (value) => String(value || '').trim().replace(/\/+$/, '');
 
 /* FindWear's published front ends. A property of the project rather than
@@ -72,29 +76,6 @@ const trimSlash = (value) => String(value || '').trim().replace(/\/+$/, '');
 const SITE_ORIGINS = [
   'https://lxmafromnyc.github.io'
 ];
-
-/* The request headers a page on an allowed origin may send.
-
-     Content-Type   every endpoint takes JSON, and a JSON POST is never a
-                    "simple" request, so the browser asks first.
-     X-Fynd-CSRF    every signed-in request that changes something —
-                    logout, checkout, the billing portal, resending the
-                    confirmation email — carries the CSRF token here
-                    (assets/account.js sends it; api/_auth.js checks it).
-
-   Leaving the second one out is what broke every signed-in change from
-   the GitHub Pages copy: signing in worked, because a signed-out request
-   carries no token, and then the browser refused to send logout and
-   checkout at all, because their preflight asked for a header this list
-   did not name. Same-origin pages never preflight, so nothing on the
-   all-on-Vercel deployment showed it.
-
-   A fixed list, never an echo of what the preflight asked for: a header
-   is allowed because Fynd's own pages send it, not because a caller
-   would like to. Allowing a header grants nothing on its own — the
-   origin still has to be on the list below, and the token still has to
-   match the HttpOnly session cookie it is derived from. */
-const ALLOWED_HEADERS = ['Content-Type', 'X-Fynd-CSRF'];
 
 /* Origins named in configuration, plus the ones Vercel tells us about. */
 function configuredOrigins() {
@@ -150,7 +131,20 @@ function applyCors(req, res) {
      Vary tells caches that the answer depends on who asked. */
   res.setHeader('Access-Control-Allow-Origin', origin);
   res.setHeader('Vary', 'Origin');
-  res.setHeader('Access-Control-Allow-Headers', ALLOWED_HEADERS.join(', '));
+  /* Every header a page of ours sends, because a preflight answer that
+     leaves one out is a refusal and the request never leaves the
+     browser. Content-Type, since the POSTs are JSON. The CSRF header,
+     since assets/account.js sends it on every signed-in POST: without
+     it the Pages copy could not log out, check out, open the billing
+     portal or resend a verification email, while the all-on-Vercel
+     deployment — same-origin, so never preflighted — showed nothing
+     wrong. The name is _auth.js's own, so the two cannot drift apart.
+
+     It widens nothing. Like everything else here it is only ever sent
+     to an origin already on the list, and the CSRF header is a value a
+     forger cannot fill in, not a permission: listing it lets our page
+     send the token, it does not let anyone skip the check. */
+  res.setHeader('Access-Control-Allow-Headers', ['Content-Type', CSRF_HEADER].join(', '));
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   /* The session cookie has to travel for /api/account and the billing
      endpoints to know who is asking. This is only ever sent alongside a
@@ -223,4 +217,4 @@ function returnUrl(req, path, fallback) {
   return `${origin}${safe}`;
 }
 
-module.exports = { applyCors, handledPreflight, configuredOrigins, isSameOrigin, isAllowed, siteOrigin, deploymentOrigin, returnUrl, SITE_ORIGINS, ALLOWED_HEADERS };
+module.exports = { applyCors, handledPreflight, configuredOrigins, isSameOrigin, isAllowed, siteOrigin, deploymentOrigin, returnUrl, SITE_ORIGINS };

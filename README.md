@@ -222,7 +222,8 @@ still overrides both.
 It sends the real request *"Find me a black oversized hoodie under $80"*, then
 checks the response came back tagged `source: "openai"`, that a colour, a fit and
 the $80 budget were extracted, that CORS allows your Pages origin, that preflight
-works, that `GET` and empty queries are refused, and that no key material appears
+works and lets through the `X-Fynd-CSRF` header signed-in requests carry, that
+`GET` and empty queries are refused, and that no key material appears
 in the response. It exits non-zero if anything fails and names the fix — a `503`
 tells you the key is missing, a missing CORS header tells you `ALLOWED_ORIGIN`
 is unset.
@@ -352,41 +353,53 @@ A request with no `Origin` header is not a browser cross-origin request —
 `curl`, a server-to-server call — and is left alone, so the verification
 scripts keep working.
 
-**The headers a page may send are a fixed list: `Content-Type` and
-`X-Fynd-CSRF`.** Every signed-in request that changes something — logout,
-checkout, the billing portal, resending the confirmation email — carries the
-CSRF token in `X-Fynd-CSRF`, so its preflight asks for that header. When the
-list held only `Content-Type`, the Pages copy could sign in (a signed-out
-request carries no token) and then the browser refused to send logout and
-checkout at all; same-origin pages never preflight, so the all-on-Vercel
-deployment never showed it. The list is never an echo of what a preflight asks
-for, and allowing the header grants nothing by itself: the origin still has to
-be allowed, and the token still has to match the `HttpOnly` session cookie it is
-derived from.
+**An allowed origin may send `Content-Type` and `X-Fynd-CSRF`.** The first
+because every POST is JSON; the second because every signed-in POST carries the
+[CSRF token](#csrf). The name is taken from `api/_auth.js`, which checks it, so
+the two cannot drift apart. A header the page sends but the preflight answer
+leaves out is a refusal the server never hears about: until the CSRF header was
+listed, logout, checkout, the billing portal and resend-verification were all
+blocked by the browser on the Pages copy, while the all-on-Vercel deployment —
+same-origin, so never preflighted — showed nothing wrong. `scripts/test-e2e.js`
+now logs out from a page on a second origin to keep it that way. That test runs
+without a Playwright route, because while one is installed Playwright answers
+every preflight itself and allows whatever was asked.
 
-```
-OPTIONS /api/auth   asking [content-type,x-fynd-csrf]
-  → 204  Access-Control-Allow-Origin: https://lxmafromnyc.github.io
-         Access-Control-Allow-Credentials: true
-         Access-Control-Allow-Headers: Content-Type, X-Fynd-CSRF
-```
+`scripts/test-cross-origin.js` goes one step further and uses the production
+hostnames: the pages at `https://lxmafromnyc.github.io/AI-clothes-application/`
+and the real handlers at `https://ai-clothes-application.vercel.app`, both served
+from the test machine over TLS through a local proxy. The two are different
+sites, so the session cookie really is a cross-site `SameSite=None; Secure`
+cookie, which plain http on one host cannot test. It signs up, logs out and
+checks out from the Pages origin, and shows that a page on another origin can
+neither read the account nor end its session.
 
-`scripts/test-cross-origin.js` drives the Pages copy exactly as a visitor
-reaches it: the pages at `https://lxmafromnyc.github.io/AI-clothes-application/`
-and the real handlers at `https://ai-clothes-application.vercel.app`, both
-served from the test machine over TLS through a local proxy, so the browser
-enforces CORS and the cross-site cookie rules for real. It uses no request
-routing, because routing makes Playwright answer preflights itself.
+**Accounts on the Pages copy depend on third-party cookies.** The session
+cookie belongs to the Vercel host. To a page on `lxmafromnyc.github.io` that is
+a third-party cookie — `github.io` and `vercel.app` are both public suffixes, so
+the two are different *sites*, not just different origins — and a browser that
+refuses third-party cookies refuses it whatever the CORS headers say:
 
-**Signing in from the Pages copy depends on third-party cookies.** The session
-cookie belongs to `ai-clothes-application.vercel.app` and is sent from a page on
-`lxmafromnyc.github.io`, a different site. Chrome and Edge send it by default
-and Firefox keeps it partitioned to the Pages site, which works; Safari, and
-any browser set to block third-party cookies (including Chrome in Incognito),
-drops it, so the account looks signed out again after signing in. Serving the
-pages from the Vercel deployment itself ([If you would rather not split the
-hosting](#if-you-would-rather-not-split-the-hosting)) or putting site and API on
-one registrable domain avoids this entirely.
+| Browser, default settings | Signed in on the Pages copy |
+| --- | --- |
+| Chrome, Edge | Works. Third-party cookies are allowed by default. |
+| Safari 13.1 and later, and the other WebKit browsers on iPhone and iPad | Does not work. Cookies on cross-site requests are blocked outright. |
+| Firefox | Email and password work, in a cookie jar kept for the Pages site alone (Total Cookie Protection). Continue with Google is not reliable: its cookie is set while the browser is on the Vercel host itself, which is a different jar. |
+| Brave; Chrome in Incognito; any browser set to block third-party cookies | Does not work. |
+
+"Does not work" looks like this: the sign-in request succeeds and the server
+creates the session, but the browser drops the cookie, so the next request
+arrives signed out. Searching needs no account and is unaffected.
+
+So accounts and billing belong on the Vercel copy, where the page and the
+functions share an origin and the cookie is first-party in every browser. The
+fixes for the split hosting are about sites, not headers: serve the pages and
+the functions under one registrable domain (`findwear.example` and
+`api.findwear.example` are the same site, so the cookie is first-party), or
+send the Pages copy's account and pricing links to the Vercel copy. A
+`Partitioned` (CHIPS) cookie would cover email sign-in in Chrome with
+third-party cookies blocked, but not Google sign-in, and Safari's support for it
+has come and gone between releases.
 
 ### How a request flows
 
@@ -1983,6 +1996,8 @@ still saying Free leaves the page saying Free.
 | A plan is right and then wrong again later | No durable store: state is in memory and the instance was recycled. `verify-billing.sh` reports this. |
 | Sign-in answers 503 `no-auth-secret` | `AUTH_SECRET` is missing or shorter than 16 characters. |
 | Everything answers 403 | The Origin is not allowed — set `ALLOWED_ORIGIN` for a frontend on another host. See [Cross-origin access](#cross-origin-access). |
+| From another origin, a signed-in action fails with "Request header field x-fynd-csrf is not allowed" in the console | The preflight answer is not listing the CSRF header. `api/_cors.js` sends it to every allowed origin; check nothing in front of the function (a proxy, a `vercel.json` header rule) is replacing `Access-Control-Allow-Headers`. |
+| Signed in on the Pages site, signed out again on the next page | The browser is refusing the Vercel session cookie as third-party — Safari, Brave, Incognito. Use the Vercel copy for accounts. See [Cross-origin access](#cross-origin-access). |
 
 The function logs name which variables the running deployment can see —
 states only, never values. See `api/_env-report.js`.
