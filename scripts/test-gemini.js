@@ -855,7 +855,12 @@ const bodyOf = (call) => JSON.parse(call.options.body);
       async () => jsonResponse(200, okReply()),
       async () => {
         const r = fakeRes();
-        await interpret(request({ query: 'a black hoodie' }), r);
+        /* Its own device, so this call is the only one on its meter. The
+           cookieless requests elsewhere in this file all share one
+           address-hash allowance, as cookieless callers do. */
+        const req = request({ query: 'a black hoodie' });
+        req.headers.cookie = `fynd_device=${require('crypto').randomBytes(16).toString('hex')}`;
+        await interpret(req, r);
         return r;
       }
     ));
