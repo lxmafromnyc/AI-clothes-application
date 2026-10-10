@@ -7,14 +7,15 @@
    POST { action: "delete" }           -> { profile: null, storage, deleted }
 
    Measurements, usual sizes by brand, preferred fit, and the fit guide's
-   three answers — the shape is assets/fit-profile-schema.js, and every
-   save goes through its normalise() here, whatever the page already
-   checked.
+   answers for each type of clothing — the shape is
+   assets/fit-profile-schema.js, and every save goes through its
+   normalise() here, whatever the page already checked.
 
-   "guide" is the home page's fit guide saving { anchor, fitGoal,
-   troubleZones } — any of them — into the stored profile. Everything
-   else in the profile stays as stored, so the guide never has to read
-   measurements to keep them.
+   "guide" is the home page's fit guide saving { garments: { <type>:
+   { anchor, fitGoal, troubleZones } } } — any of those three — into
+   that type's entry in the stored profile. Everything else in the
+   profile, every other type included, stays as stored, so the guide
+   never has to read measurements to keep them.
 
    ---------------------------------------------------------
    Whose profile

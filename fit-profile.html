@@ -45,7 +45,7 @@
     <div class="container">
       <header class="page-head page-head--center">
         <h1>Your fit profile</h1>
-        <p>How clothes fit you, so Fynd can learn which size to suggest in each brand. Every part is optional — save whatever you know.</p>
+        <p>How clothes fit you, type by type, so Fynd can learn which size to suggest in each brand. Every part is optional — save whatever you know.</p>
       </header>
 
       <div class="profile-main">
@@ -78,17 +78,43 @@
 
         <form id="profile-form" novalidate hidden>
 
-          <!-- ==================================================== the fit guide's answers
-               Read here, changed in the guide on the home page. Saving this
-               form never sends them, and the server keeps them as they are. -->
+          <!-- ==================================================== the fit guide's answers, per type
+               What the guide on the home page saved, one card per type of
+               clothing, edited here as well. Each type's brands, sizes and
+               trouble spots are its own (assets/fit-profile-schema.js), so
+               nothing typed for one can be saved as another's. -->
           <section class="profile-section profile-guide" id="section-guide" aria-labelledby="guide-answers-title">
-            <h2 class="profile-guide-title" id="guide-answers-title">From the fit guide</h2>
-            <ul class="guide-summary">
-              <li><span class="guide-summary-label">A top that fits</span><span class="guide-summary-value" id="guide-answer-anchor">Not answered</span></li>
-              <li><span class="guide-summary-label">How you like clothes to sit</span><span class="guide-summary-value" id="guide-answer-goal">Not answered</span></li>
-              <li><span class="guide-summary-label">Where clothes go wrong</span><span class="guide-summary-value" id="guide-answer-zones">Not answered</span></li>
-            </ul>
-            <a class="btn btn-secondary" href="index.html#guide" id="guide-answers-edit">Change in the fit guide</a>
+            <h2 class="profile-guide-title" id="guide-answers-title">Fit by type of clothing</h2>
+            <p class="profile-help">From the fit guide. Each type keeps its own answers, so a T-shirt size is never used for jeans.</p>
+
+            <p class="profile-empty" id="garment-empty">No types of clothing yet.</p>
+            <div class="garment-list" id="garment-list"></div>
+            <p class="profile-error" id="error-garments" data-field="garments"></p>
+
+            <div class="garment-add" id="garment-add-area">
+              <label class="profile-label" for="garment-add-select">Add a type of clothing</label>
+              <div class="garment-add-row">
+                <span class="select-wrap"><select class="profile-select" id="garment-add-select" data-ignore></select></span>
+                <button class="btn btn-secondary" type="button" id="garment-add">Add</button>
+              </div>
+            </div>
+            <p class="profile-help garment-guide-link">Or <a class="guide-link" href="index.html#guide" id="guide-answers-edit">answer in the fit guide</a> &mdash; four taps.</p>
+            <datalist id="garment-brands"></datalist>
+
+            <!-- Version 2's answers, from before the guide asked which type
+                 of clothing: about "a top". Shown as given, never read as
+                 the answer for any one type, and removable. -->
+            <div class="legacy-guide" id="legacy-guide" hidden>
+              <h3 class="profile-subhead">Earlier answers about a top</h3>
+              <p class="profile-help">From the first fit guide, before it asked which type of clothing. Kept as you gave them, and not used as the answer for any one type.</p>
+              <ul class="guide-summary" id="legacy-summary">
+                <li><span class="guide-summary-label">A top that fits</span><span class="guide-summary-value" id="guide-answer-anchor">Not answered</span></li>
+                <li><span class="guide-summary-label">How you like clothes to sit</span><span class="guide-summary-value" id="guide-answer-goal">Not answered</span></li>
+                <li><span class="guide-summary-label">Where clothes go wrong</span><span class="guide-summary-value" id="guide-answer-zones">Not answered</span></li>
+              </ul>
+              <p class="profile-note" id="legacy-note" role="status"></p>
+              <button class="link-btn" type="button" id="legacy-remove">Remove these answers</button>
+            </div>
           </section>
 
           <!-- ==================================================== measurements -->
@@ -140,8 +166,8 @@
               </div>
             </div>
 
-            <h3 class="profile-subhead">For other categories, later</h3>
-            <p class="profile-help">Not used for hoodies and sweatshirts. Kept for when Fynd covers more than tops.</p>
+            <h3 class="profile-subhead">For bottoms</h3>
+            <p class="profile-help">Waist and hip, for pants, jeans and sweatpants. Nothing estimates a size from your measurements yet.</p>
 
             <div class="profile-grid">
               <div class="profile-field" data-field="measurements.waist">

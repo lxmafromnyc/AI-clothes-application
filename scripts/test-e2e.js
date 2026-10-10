@@ -84,6 +84,7 @@ const store = require('../api/_store');
 const users = require('../api/_users');
 const auth = require('../api/_auth');
 const fitProfiles = require('../api/_fit-profile');
+const Schema = require('../assets/fit-profile-schema.js');
 
 /* ---------------------------------------------------------
    Google and the mailbox, answered in-process
@@ -1226,12 +1227,16 @@ const linkFromInbox = (pattern) => {
 
   const stepShown = (page) => page.$eval('#guide-form .guide-step:not([hidden])', (n) => Number(n.dataset.step));
 
-  /* Taps through all three steps; leaves the last one showing. */
+  /* Taps through all four steps for one type; leaves the last one
+     showing. */
   async function answerGuide(page, answers) {
-    const a = Object.assign({ brand: 'UNIQLO', size: 'M', goal: 'true-to-size', zones: ['sleeves-short'] }, answers || {});
+    const a = Object.assign({ garment: 'tshirts', brand: 'UNIQLO', size: 'M', goal: 'true-to-size', zones: ['sleeves-short'] }, answers || {});
+    await page.check(`input[name="garment"][value="${a.garment}"]`);
+    await page.click('#guide-next');
     if (a.brand) await page.selectOption('#anchor-brand', a.brand);
     if (a.other) await page.fill('#anchor-other', a.other);
     if (a.size) await page.selectOption('#anchor-size', a.size);
+    if (a.length) await page.selectOption('#anchor-length', a.length);
     await page.click('#guide-next');
     if (a.goal) await page.check(`input[name="fitGoal"][value="${a.goal}"]`);
     await page.click('#guide-next');
@@ -1257,13 +1262,20 @@ const linkFromInbox = (pattern) => {
     throw new Error(`Tab never reached ${selector}`);
   }
 
-  await test('the home page opens on the fit guide, step 1 of 3, with the Search page one tap away', async () => {
+  const optionValues = (page, selector) => page.$$eval(`${selector} option`, (ns) => ns.map((n) => n.value));
+  const zonesShown = (page) => page.$$eval('#zone-items input[name="troubleZones"]', (ns) => ns.map((n) => n.value));
+
+  await test('the home page opens on the fit guide, step 1 of 4: which type of clothing, with the Search page one tap away', async () => {
     const context = await openContext();
     const page = await context.newPage();
     await guideReady(page);
-    assert.strictEqual(await page.textContent('#guide-count'), '1 of 3');
+    assert.strictEqual(await page.textContent('#guide-count'), '1 of 4');
     assert.strictEqual(await stepShown(page), 1);
-    assert.match(await page.textContent('.guide-step[data-step="1"] .guide-question'), /top you own right now that fits you perfectly/);
+    assert.match(await page.textContent('.guide-step[data-step="1"] .guide-question'), /What are we finding your fit for\?/);
+    assert.deepStrictEqual(await page.$$eval('input[name="garment"]', (ns) => ns.map((n) => n.value)),
+      ['tshirts', 'hoodies', 'sweatshirts', 'pants', 'sweatpants', 'jeans', 'other']);
+    assert.deepStrictEqual(await page.$$eval('.garment-card-title', (ns) => ns.map((n) => n.textContent.trim())),
+      ['T-shirts', 'Hoodies', 'Sweatshirts', 'Pants', 'Sweatpants', 'Jeans', 'Other']);
     assert.strictEqual(await page.$('#ask-form'), null, 'no search box on the home page');
     assert.strictEqual((await page.textContent('.nav-links a[aria-current="page"]')).trim(), 'Fit guide');
 
@@ -1274,60 +1286,135 @@ const linkFromInbox = (pattern) => {
     await context.close();
   });
 
-  await test('all three steps in order, Continue reads Skip until something is chosen, and Back keeps every answer', async () => {
+  await test('step 1 needs exactly one type: Continue without one says so and stays, and a second tap replaces the first', async () => {
+    const context = await openContext();
+    const page = await context.newPage();
+    await guideReady(page);
+    assert.strictEqual((await page.textContent('#guide-next')).trim(), 'Continue');
+    await page.click('#guide-next');
+    assert.strictEqual(await stepShown(page), 1, 'no type, no step 2');
+    assert.match(await page.textContent('#guide-error'), /Pick a type of clothing/);
+    assert.strictEqual(await page.evaluate(() => document.activeElement.name), 'garment', 'the first card has focus');
+
+    await page.check('input[name="garment"][value="hoodies"]');
+    await page.check('input[name="garment"][value="jeans"]');
+    assert.deepStrictEqual(await page.$$eval('input[name="garment"]:checked', (ns) => ns.map((n) => n.value)), ['jeans'], 'one type only');
+    assert.strictEqual(await page.textContent('#guide-error'), '', 'the message goes once a type is chosen');
+    const selected = await page.$eval('input[name="garment"]:checked + .garment-card-body', (n) => getComputedStyle(n).backgroundColor);
+    const plain = await page.$eval('input[name="garment"][value="hoodies"] + .garment-card-body', (n) => getComputedStyle(n).backgroundColor);
+    assert.notStrictEqual(selected, plain, 'the chosen card is filled in');
+    await page.click('#guide-next');
+    assert.strictEqual(await stepShown(page), 2);
+    await context.close();
+  });
+
+  await test('each type asks its own questions, with its own brands, sizes and trouble spots and nothing from another', async () => {
+    const context = await openContext();
+    const page = await context.newPage();
+    await guideReady(page);
+    const expected = {
+      tshirts: { anchor: 'What brand and size of T-shirt fits you perfectly?', fit: 'How do you like your T-shirts to fit?', sizes: 'letter', zones: Schema.zonesFor('tshirts') },
+      hoodies: { anchor: 'What brand and size of hoodie fits you perfectly?', fit: 'How do you like your hoodies to fit?', sizes: 'letter', zones: Schema.zonesFor('hoodies') },
+      sweatshirts: { anchor: 'What brand and size of sweatshirt fits you perfectly?', fit: 'How do you like your sweatshirts to fit?', sizes: 'letter', zones: Schema.zonesFor('sweatshirts') },
+      pants: { anchor: 'What brand and size of pants fits you perfectly?', fit: 'How do you like your pants to fit?', sizes: 'both', zones: Schema.zonesFor('pants') },
+      sweatpants: { anchor: 'What brand and size of sweatpants fits you perfectly?', fit: 'How do you like your sweatpants to fit?', sizes: 'letter', zones: Schema.zonesFor('sweatpants') },
+      jeans: { anchor: 'What brand and size of jeans fits you perfectly?', fit: 'How do you like your jeans to fit?', sizes: 'waist', zones: Schema.zonesFor('jeans') },
+      other: { anchor: 'What brand and size fits you perfectly?', fit: 'How do you like your clothes to fit?', sizes: 'letter', zones: Schema.zonesFor('other') }
+    };
+    for (const [id, want] of Object.entries(expected)) {
+      await page.check(`input[name="garment"][value="${id}"]`);
+      await page.click('#guide-next');
+      assert.strictEqual((await page.textContent('#anchor-question')).trim(), want.anchor, id);
+      const sizes = await optionValues(page, '#anchor-size');
+      assert.ok(sizes.includes('not-sure'), `${id}: Not sure is offered`);
+      assert.strictEqual(sizes.includes('M'), want.sizes !== 'waist', `${id}: letter sizes`);
+      assert.strictEqual(sizes.includes('32'), want.sizes !== 'letter', `${id}: waist sizes`);
+      const brands = await optionValues(page, '#anchor-brand');
+      assert.deepStrictEqual(brands.slice(1, -1), Schema.brandsFor(id), `${id}: its common brands`);
+      assert.strictEqual(brands[brands.length - 1], 'other', `${id}: Other brand`);
+      assert.strictEqual(await page.isVisible('#anchor-length'), id === 'jeans', `${id}: a length shows for jeans before any size`);
+      await page.click('#guide-next');
+      assert.strictEqual((await page.textContent('#fit-question')).trim(), want.fit, id);
+      assert.deepStrictEqual(await page.$$eval('.fit-card-title', (ns) => ns.map((n) => n.textContent.trim())), ['Tight / Slim', 'True to Size', 'Relaxed / Oversized']);
+      await page.click('#guide-next');
+      assert.strictEqual((await page.textContent('.guide-step[data-step="4"] .guide-question')).replace('Step 4 of 4: ', '').trim(), 'What usually gets the fit wrong?');
+      assert.deepStrictEqual(await zonesShown(page), want.zones.map((z) => z.id), `${id}: only its own trouble spots`);
+      assert.deepStrictEqual(await page.$$eval('#zone-items .zone span', (ns) => ns.map((n) => n.textContent)), want.zones.map((z) => z.label));
+      assert.strictEqual(await page.isVisible('#zone-none'), true);
+      for (let i = 0; i < 3; i += 1) await page.click('#guide-back');
+    }
+    /* pants: a length only once a waist is chosen, and gone again for a letter size */
+    await page.check('input[name="garment"][value="pants"]');
+    await page.click('#guide-next');
+    assert.strictEqual(await page.isVisible('#anchor-length'), false);
+    await page.selectOption('#anchor-size', '34');
+    assert.strictEqual(await page.isVisible('#anchor-length'), true);
+    await page.selectOption('#anchor-length', '32');
+    await page.selectOption('#anchor-size', 'L');
+    assert.strictEqual(await page.isVisible('#anchor-length'), false);
+    assert.strictEqual(await page.$eval('#anchor-length', (n) => n.value), '', 'the length goes with the waist');
+    await context.close();
+  });
+
+  await test('all four steps in order, Continue reads Skip until something is chosen, and Back keeps every answer', async () => {
     const context = await openContext();
     const page = await context.newPage();
     await guideReady(page);
 
     assert.strictEqual(await page.isVisible('#guide-back'), false, 'no Back on the first step');
+    await page.check('input[name="garment"][value="hoodies"]');
+    await page.click('#guide-next');
+
+    assert.strictEqual(await stepShown(page), 2);
+    assert.strictEqual(await page.textContent('#guide-count'), '2 of 4');
+    assert.strictEqual(await page.evaluate(() => document.activeElement.closest('.guide-step').dataset.step), '2',
+      'the new question has focus, so it is read out');
     assert.strictEqual((await page.textContent('#guide-next')).trim(), 'Skip');
     await page.selectOption('#anchor-brand', 'Nike');
     assert.strictEqual((await page.textContent('#guide-next')).trim(), 'Continue');
     await page.selectOption('#anchor-size', 'L');
     await page.click('#guide-next');
 
-    assert.strictEqual(await stepShown(page), 2);
-    assert.strictEqual(await page.textContent('#guide-count'), '2 of 3');
-    assert.strictEqual(await page.evaluate(() => document.activeElement.closest('.guide-step').dataset.step), '2',
-      'the new question has focus, so it is read out');
+    assert.strictEqual(await page.textContent('#guide-count'), '3 of 4');
     assert.strictEqual((await page.textContent('#guide-next')).trim(), 'Skip');
     await page.check('input[name="fitGoal"][value="slim"]');
     await page.check('input[name="fitGoal"][value="oversized"]');
     assert.strictEqual(await page.$$eval('input[name="fitGoal"]:checked', (ns) => ns.length), 1, 'one answer only');
     await page.click('#guide-next');
 
-    assert.strictEqual(await stepShown(page), 3);
-    assert.strictEqual(await page.textContent('#guide-count'), '3 of 3');
+    assert.strictEqual(await page.textContent('#guide-count'), '4 of 4');
     assert.strictEqual((await page.textContent('#guide-next')).trim(), 'Save');
     await page.check('input[name="troubleZones"][value="neckline-tight"]');
 
     await page.click('#guide-back');
-    assert.strictEqual(await stepShown(page), 2);
     assert.strictEqual(await page.isChecked('input[name="fitGoal"][value="oversized"]'), true);
     await page.click('#guide-back');
-    assert.strictEqual(await stepShown(page), 1);
     assert.strictEqual(await page.$eval('#anchor-brand', (n) => n.value), 'Nike');
     assert.strictEqual(await page.$eval('#anchor-size', (n) => n.value), 'L');
-    await page.click('#guide-next');
-    await page.click('#guide-next');
+    await page.click('#guide-back');
+    assert.strictEqual(await page.isChecked('input[name="garment"][value="hoodies"]'), true);
+    for (let i = 0; i < 3; i += 1) await page.click('#guide-next');
     assert.strictEqual(await page.isChecked('input[name="troubleZones"][value="neckline-tight"]'), true);
     await context.close();
   });
 
-  await test('"Other" opens a brand box, and "None of these" and a trouble spot rule each other out', async () => {
+  await test('"Other brand" opens a brand box, and "None of these" and a trouble spot rule each other out', async () => {
     const context = await openContext();
     const page = await context.newPage();
     await guideReady(page);
+    await page.check('input[name="garment"][value="tshirts"]');
+    await page.click('#guide-next');
     assert.strictEqual(await page.isVisible('#anchor-other'), false);
     await page.selectOption('#anchor-brand', 'other');
     assert.strictEqual(await page.isVisible('#anchor-other'), true);
     assert.strictEqual(await page.evaluate(() => document.activeElement.id), 'anchor-other');
+    assert.ok((await optionValues(page, '#guide-brands')).includes('Gap'), 'suggestions, so little typing');
     await page.fill('#anchor-other', 'Gap');
     await page.click('#guide-next');
     await page.click('#guide-next');
 
     await page.check('input[name="troubleZones"][value="sleeves-short"]');
-    await page.check('input[name="troubleZones"][value="torso-short"]');
+    await page.check('input[name="troubleZones"][value="chest-tight"]');
     await page.check('#zone-none');
     assert.strictEqual(await page.$$eval('input[name="troubleZones"]:checked', (ns) => ns.length), 0, 'None clears the spots');
     await page.check('input[name="troubleZones"][value="waist-loose"]');
@@ -1335,11 +1422,68 @@ const linkFromInbox = (pattern) => {
     await context.close();
   });
 
+  await test('switching type never carries one type’s answers to another, and switching back brings them back', async () => {
+    const context = await openContext();
+    const page = await signedInAtGuide(context, 'ada@e2e.test');
+    await answerGuide(page, { garment: 'tshirts', brand: 'Nike', size: 'M', goal: 'slim', zones: ['sleeves-short'] });
+
+    /* back to step 1, and jeans instead */
+    for (let i = 0; i < 3; i += 1) await page.click('#guide-back');
+    await page.check('input[name="garment"][value="jeans"]');
+    await page.click('#guide-next');
+    assert.strictEqual(await page.$eval('#anchor-brand', (n) => n.value), '', 'no T-shirt brand in the jeans question');
+    assert.strictEqual(await page.$eval('#anchor-size', (n) => n.value), '', 'and no T-shirt size: M is not a waist');
+    assert.ok(!(await optionValues(page, '#anchor-size')).includes('M'));
+    assert.strictEqual((await page.textContent('#guide-next')).trim(), 'Skip');
+    await page.selectOption('#anchor-brand', 'Levi’s');
+    await page.selectOption('#anchor-size', '32');
+    await page.selectOption('#anchor-length', '30');
+    await page.click('#guide-next');
+    assert.strictEqual(await page.$$eval('input[name="fitGoal"]:checked', (ns) => ns.length), 0, 'no T-shirt fit for jeans');
+    await page.check('input[name="fitGoal"][value="oversized"]');
+    await page.click('#guide-next');
+    assert.strictEqual(await page.$$eval('#zone-items input:checked', (ns) => ns.length), 0, 'no T-shirt trouble spots');
+    assert.ok(!(await zonesShown(page)).includes('sleeves-short'));
+
+    /* and back to T-shirts: their answers are still there */
+    for (let i = 0; i < 3; i += 1) await page.click('#guide-back');
+    await page.check('input[name="garment"][value="tshirts"]');
+    await page.click('#guide-next');
+    assert.strictEqual(await page.$eval('#anchor-brand', (n) => n.value), 'Nike');
+    assert.strictEqual(await page.$eval('#anchor-size', (n) => n.value), 'M');
+    await page.click('#guide-next');
+    assert.strictEqual(await page.isChecked('input[name="fitGoal"][value="slim"]'), true);
+
+    /* jeans again, and save them: only the chosen type is saved */
+    await page.click('#guide-back');
+    await page.click('#guide-back');
+    await page.check('input[name="garment"][value="jeans"]');
+    await page.click('#guide-next');
+    assert.strictEqual(await page.$eval('#anchor-length', (n) => n.value), '30');
+    await page.click('#guide-next');
+    await page.click('#guide-next');
+    await page.check('input[name="troubleZones"][value="legs-long"]');
+    await page.click('#guide-next');
+    await page.waitForSelector('#guide-done:not([hidden])');
+
+    const profile = await savedProfile('ada@e2e.test');
+    assert.deepStrictEqual(profile.garments, {
+      jeans: { anchor: { brand: 'Levi’s', size: '32', length: '30' }, fitGoal: 'oversized', troubleZones: ['legs-long'] }
+    }, 'the jeans alone, with nothing of the T-shirt in them');
+    assert.deepStrictEqual([profile.anchor, profile.fitGoal, profile.troubleZones], [null, null, null], 'nothing written outside the type');
+    const summary = await page.textContent('#guide-summary');
+    assert.match(summary, /Type of clothing\s*Jeans/);
+    assert.match(summary, /Jeans that fit\s*Levi’s · 32 × 30/);
+    assert.match(summary, /How you like jeans to fit\s*Relaxed \/ Oversized/);
+    assert.match(summary, /Legs are too long/);
+    await context.close();
+  });
+
   await test('signed out, finishing makes an account right in the guide, and "ready" waits for the server to confirm the save', async () => {
     const context = await openContext();
     const page = await context.newPage();
     await guideReady(page);
-    await answerGuide(page, { brand: 'other', other: 'Arc’teryx', size: 'not-sure', goal: 'oversized', zones: ['torso-short', 'waist-loose'] });
+    await answerGuide(page, { garment: 'hoodies', brand: 'other', other: 'Arc’teryx', size: 'not-sure', goal: 'oversized', zones: ['torso-short', 'waist-loose'] });
 
     let release;
     const held = new Promise((r) => { release = r; });
@@ -1367,22 +1511,35 @@ const linkFromInbox = (pattern) => {
     await page.waitForSelector('#guide-done:not([hidden])');
     assert.strictEqual((await page.textContent('#guide-done-title')).trim(), 'Your fit profile is ready.');
     const summary = await page.textContent('#guide-summary');
-    assert.match(summary, /Arc’teryx · size not sure/);
-    assert.match(summary, /Cozy \/ Oversized/);
-    assert.match(summary, /Torso is always too short; Fits my chest but bags out at my waist/);
+    assert.match(summary, /Hoodies/);
+    assert.match(summary, /A hoodie that fits\s*Arc’teryx · size not sure/);
+    assert.match(summary, /Relaxed \/ Oversized/);
+    assert.match(summary, /Torso is too short; Fits my chest but is too loose around the waist/);
     const confirmation = await page.textContent('#guide-done');
     assert.match(confirmation, /recommendations are still being built/);
     assert.ok(!/recommended size|your size (is|in)|we suggest|we recommend|size up|size down/i.test(confirmation), 'no size is suggested');
 
     const profile = await savedProfile('ada@e2e.test');
-    assert.deepStrictEqual(profile.anchor, { brand: 'Arc’teryx', size: null });
-    assert.strictEqual(profile.fitGoal, 'oversized');
-    assert.deepStrictEqual(profile.troubleZones, ['torso-short', 'waist-loose']);
+    assert.deepStrictEqual(profile.garments.hoodies, { anchor: { brand: 'Arc’teryx', size: null }, fitGoal: 'oversized', troubleZones: ['torso-short', 'waist-loose'] });
+    assert.deepStrictEqual(Object.keys(profile.garments), ['hoodies']);
     assert.strictEqual(await page.$eval('#guide-password', (n) => n.value), '', 'the password does not stay in the page');
     await context.close();
   });
 
-  await test('signing in from the guide saves into that account, and keeps its measurements and usual sizes', async () => {
+  await test('signed out with nothing answered, Save asks for an answer before it asks for an account', async () => {
+    const context = await openContext();
+    const page = await context.newPage();
+    await guideReady(page);
+    await page.check('input[name="garment"][value="sweatpants"]');
+    for (let i = 0; i < 3; i += 1) await page.click('#guide-next');
+    assert.strictEqual((await page.textContent('#guide-next')).trim(), 'Save');
+    await page.click('#guide-next');
+    assert.match(await page.textContent('#guide-error'), /Answer at least one question about your sweatpants/);
+    assert.strictEqual(await page.isVisible('#guide-account'), false);
+    await context.close();
+  });
+
+  await test('signing in from the guide saves into that account, and keeps its measurements, usual sizes and other types', async () => {
     const setup = await openContext();
     const first = await setup.newPage();
     await signUpThroughTheUI(first, { name: 'Ada', email: 'ada@e2e.test', password: PASSWORD });
@@ -1394,12 +1551,13 @@ const linkFromInbox = (pattern) => {
       brandSizes: [{ brand: 'Gap', category: 'hoodies', size: 'M', fit: 'about-right' }],
       fitPreferences: { hoodies: 'relaxed' }
     });
+    await fitProfiles.saveGuide(user.id, { garments: { hoodies: { fitGoal: 'oversized' } } });
     await setup.close();
 
     const context = await openContext();
     const page = await context.newPage();
     await guideReady(page);
-    await answerGuide(page, { brand: 'Zara', size: 'S', goal: 'slim', zones: ['none'] });
+    await answerGuide(page, { garment: 'jeans', brand: 'Zara', size: '30', length: '32', goal: 'true-to-size', zones: ['none'] });
     await page.click('#guide-next');
     await page.waitForSelector('#guide-account:not([hidden])');
     await page.click('#guide-switch');
@@ -1411,9 +1569,9 @@ const linkFromInbox = (pattern) => {
     await page.waitForSelector('#guide-done:not([hidden])');
 
     const profile = await savedProfile('ada@e2e.test');
-    assert.deepStrictEqual(profile.anchor, { brand: 'Zara', size: 'S' });
-    assert.strictEqual(profile.fitGoal, 'slim');
-    assert.deepStrictEqual(profile.troubleZones, [], '"None of these" is saved as none');
+    assert.deepStrictEqual(profile.garments.jeans, { anchor: { brand: 'Zara', size: '30', length: '32' }, fitGoal: 'true-to-size', troubleZones: [] },
+      '"None of these" is saved as none');
+    assert.deepStrictEqual(profile.garments.hoodies, { anchor: null, fitGoal: 'oversized', troubleZones: null }, 'oversized hoodies kept beside regular jeans');
     assert.strictEqual(profile.measurements.chest, 41, 'measurements kept');
     assert.deepStrictEqual(profile.brandSizes, [{ brand: 'Gap', category: 'hoodies', size: 'M', fit: 'about-right' }], 'usual sizes kept');
     assert.deepStrictEqual(profile.fitPreferences, { hoodies: 'relaxed' }, 'per-category fit kept');
@@ -1448,7 +1606,7 @@ const linkFromInbox = (pattern) => {
     const context = await openContext();
     const page = await signedInAtGuide(context, 'ada@e2e.test');
     const started = Date.now();
-    await answerGuide(page, { brand: 'Carhartt', size: 'XL', goal: 'true-to-size', zones: ['neckline-tight'] });
+    await answerGuide(page, { garment: 'sweatshirts', brand: 'Carhartt', size: 'XL', goal: 'true-to-size', zones: ['neckline-tight'] });
 
     let failNext = true;
     await page.route('**/api/fit-profile', (route) => {
@@ -1471,50 +1629,163 @@ const linkFromInbox = (pattern) => {
     await page.waitForSelector('#guide-done:not([hidden])');
     assert.ok(Date.now() - started < 30000, `the guide took ${Date.now() - started}ms`);
     const profile = await savedProfile('ada@e2e.test');
-    assert.deepStrictEqual(profile.anchor, { brand: 'Carhartt', size: 'XL' });
-    assert.deepStrictEqual(profile.troubleZones, ['neckline-tight']);
+    assert.deepStrictEqual(profile.garments.sweatshirts, { anchor: { brand: 'Carhartt', size: 'XL' }, fitGoal: 'true-to-size', troubleZones: ['neckline-tight'] });
     await context.close();
   });
 
-  await test('a saved profile is filled in, a skipped step keeps its answer, and finishing again changes only what changed', async () => {
+  await test('saved types are marked and filled in after a reload, a skipped step keeps its answer, and another type can be added', async () => {
     const context = await openContext();
     const first = await signedInAtGuide(context, 'ada@e2e.test');
     await first.close();
     const user = await users.byEmail('ada@e2e.test');
     await fitProfiles.save(user.id, { schemaVersion: 1, measurements: { unit: 'cm', chest: 102 } });
-    await fitProfiles.saveGuide(user.id, { anchor: { brand: 'Nike', size: 'M' }, fitGoal: 'slim', troubleZones: ['sleeves-short'] });
+    await fitProfiles.saveGuide(user.id, { garments: { hoodies: { anchor: { brand: 'Nike', size: 'M' }, fitGoal: 'oversized', troubleZones: ['sleeves-short'] } } });
 
     const page = await context.newPage();
     await guideReady(page);
     assert.strictEqual(await page.isVisible('#guide-saved-note'), true);
+    assert.deepStrictEqual(await page.$$eval('.garment-card', (ns) => ns.filter((n) => !n.querySelector('.garment-saved').hidden)
+      .map((n) => n.querySelector('input').value)), ['hoodies'], 'only hoodies are marked Saved');
+    await page.check('input[name="garment"][value="hoodies"]');
+    await page.click('#guide-next');
     assert.strictEqual(await page.$eval('#anchor-brand', (n) => n.value), 'Nike');
     assert.strictEqual(await page.$eval('#anchor-size', (n) => n.value), 'M');
     await page.click('#guide-next');
-    assert.strictEqual(await page.isChecked('input[name="fitGoal"][value="slim"]'), true);
+    assert.strictEqual(await page.isChecked('input[name="fitGoal"][value="oversized"]'), true);
     await page.check('input[name="fitGoal"][value="true-to-size"]');
     await page.click('#guide-next');
     assert.strictEqual(await page.isChecked('input[name="troubleZones"][value="sleeves-short"]'), true);
     await page.click('#guide-next');
     await page.waitForSelector('#guide-done:not([hidden])');
 
-    const profile = await savedProfile('ada@e2e.test');
-    assert.strictEqual(profile.fitGoal, 'true-to-size', 'the changed answer');
-    assert.deepStrictEqual(profile.anchor, { brand: 'Nike', size: 'M' }, 'the others as they were');
-    assert.deepStrictEqual(profile.troubleZones, ['sleeves-short']);
+    let profile = await savedProfile('ada@e2e.test');
+    assert.strictEqual(profile.garments.hoodies.fitGoal, 'true-to-size', 'the changed answer');
+    assert.deepStrictEqual(profile.garments.hoodies.anchor, { brand: 'Nike', size: 'M' }, 'the others as they were');
     assert.strictEqual(profile.measurements.chest, 102, 'measurements untouched');
 
-    /* the fit profile page shows the guide's answers, and saving it keeps them */
-    await page.click('#guide-done a[href="fit-profile.html"]');
+    /* another type, straight from the confirmation */
+    await page.click('#guide-another');
+    assert.strictEqual(await stepShown(page), 1);
+    assert.strictEqual(await page.$$eval('input[name="garment"]:checked', (ns) => ns.length), 0, 'nothing chosen');
+    await answerGuide(page, { garment: 'sweatpants', brand: 'Adidas', size: 'L', goal: 'oversized', zones: ['legs-baggy'] });
+    await page.click('#guide-next');
+    await page.waitForSelector('#guide-done:not([hidden])');
+
+    /* a reload: both marked, each with its own answers */
+    await page.reload();
+    await page.waitForSelector('#guide[data-ready]');
+    assert.deepStrictEqual(await page.$$eval('.garment-card', (ns) => ns.filter((n) => !n.querySelector('.garment-saved').hidden)
+      .map((n) => n.querySelector('input').value)), ['hoodies', 'sweatpants']);
+    await page.check('input[name="garment"][value="sweatpants"]');
+    await page.click('#guide-next');
+    assert.strictEqual(await page.$eval('#anchor-brand', (n) => n.value), 'Adidas');
+    await page.click('#guide-next');
+    assert.strictEqual(await page.isChecked('input[name="fitGoal"][value="oversized"]'), true, 'oversized sweatpants');
+    await page.click('#guide-back');
+    await page.click('#guide-back');
+    await page.check('input[name="garment"][value="hoodies"]');
+    await page.click('#guide-next');
+    await page.click('#guide-next');
+    assert.strictEqual(await page.isChecked('input[name="fitGoal"][value="true-to-size"]'), true, 'true-to-size hoodies');
+
+    profile = await savedProfile('ada@e2e.test');
+    assert.deepStrictEqual(Object.keys(profile.garments), ['hoodies', 'sweatpants']);
+    await context.close();
+  });
+
+  await test('the fit profile page shows each type, edits and removes one, and keeps the others and the answers about a top', async () => {
+    const context = await openContext();
+    const first = await signedInAtGuide(context, 'ada@e2e.test');
+    await first.close();
+    const user = await users.byEmail('ada@e2e.test');
+    /* a version 2 profile, then two types from the new guide */
+    await fitProfiles.save(user.id, { schemaVersion: 2, measurements: { unit: 'cm', chest: 102 } });
+    await fitProfiles.saveGuide(user.id, { anchor: { brand: 'Nike', size: 'M' }, fitGoal: 'slim', troubleZones: ['sleeves-short'] });
+    await fitProfiles.saveGuide(user.id, { garments: {
+      tshirts: { anchor: { brand: 'UNIQLO', size: 'S' }, fitGoal: 'slim', troubleZones: ['chest-tight'] },
+      jeans: { anchor: { brand: 'Levi’s', size: '32', length: null }, fitGoal: 'true-to-size', troubleZones: [] }
+    } });
+
+    const page = await context.newPage();
+    await open(page, 'fit-profile.html');
     await page.waitForSelector('#profile-form:not([hidden])');
+    assert.deepStrictEqual(await page.$$eval('.garment-editor', (ns) => ns.map((n) => n.dataset.garment)), ['tshirts', 'jeans']);
+    assert.strictEqual(await page.$eval('#g-jeans-brand', (n) => n.value), 'Levi’s');
+    assert.strictEqual(await page.$eval('#g-jeans-size', (n) => n.value), '32');
+    assert.strictEqual(await page.isChecked('input[name="g-jeans-zones"][value="none"]'), true, 'None of these');
+    assert.ok(!(await optionValues(page, '#g-jeans-size')).includes('M'), 'no letter sizes for jeans');
+    assert.deepStrictEqual(await page.$$eval('input[name="g-jeans-zones"]', (ns) => ns.map((n) => n.value)),
+      Schema.zonesFor('jeans').map((z) => z.id).concat('none'), 'only jeans trouble spots');
+    assert.strictEqual(await page.$('#g-tshirts-length'), null, 'no length for T-shirts');
+
+    /* the answers about a top: shown as given, not as a T-shirt */
+    assert.strictEqual(await page.isVisible('#legacy-guide'), true);
     assert.strictEqual((await page.textContent('#guide-answer-anchor')).trim(), 'Nike · M');
-    assert.strictEqual((await page.textContent('#guide-answer-goal')).trim(), 'True to Size');
+    assert.strictEqual((await page.textContent('#guide-answer-goal')).trim(), 'Tight / Slim Fit');
     assert.strictEqual((await page.textContent('#guide-answer-zones')).trim(), 'Sleeves are always too short');
-    await page.fill('#measure-chest', '104');
+
+    /* edit jeans: a length and a trouble spot (which clears None) */
+    await page.selectOption('#g-jeans-length', '30');
+    await page.check('input[name="g-jeans-zones"][value="legs-long"]');
+    assert.strictEqual(await page.isChecked('input[name="g-jeans-zones"][value="none"]'), false);
+    /* remove T-shirts, add Other */
+    await page.click('.garment-editor[data-garment="tshirts"] [data-remove-garment]');
+    await page.selectOption('#garment-add-select', 'other');
+    await page.click('#garment-add');
+    await page.selectOption('#g-other-size', 'L');
+    await page.check('input[name="g-other-goal"][value="oversized"]');
+    assert.strictEqual(await page.textContent('#profile-save-state'), 'Unsaved changes');
     await saveAndWait(page);
-    const after = await savedProfile('ada@e2e.test');
-    assert.strictEqual(after.measurements.chest, 104);
-    assert.strictEqual(after.fitGoal, 'true-to-size', 'the fit profile page does not erase the guide');
-    assert.deepStrictEqual(after.anchor, { brand: 'Nike', size: 'M' });
+
+    let profile = await savedProfile('ada@e2e.test');
+    assert.deepStrictEqual(profile.garments, {
+      jeans: { anchor: { brand: 'Levi’s', size: '32', length: '30' }, fitGoal: 'true-to-size', troubleZones: ['legs-long'] },
+      other: { anchor: { brand: null, size: 'L' }, fitGoal: 'oversized', troubleZones: null }
+    });
+    assert.deepStrictEqual(profile.anchor, { brand: 'Nike', size: 'M' }, 'the answers about a top are kept');
+    assert.strictEqual(profile.measurements.chest, 102);
+
+    /* a reload reads it all back */
+    await page.reload();
+    await page.waitForSelector('#profile-form:not([hidden])');
+    assert.deepStrictEqual(await page.$$eval('.garment-editor', (ns) => ns.map((n) => n.dataset.garment)), ['jeans', 'other']);
+    assert.strictEqual(await page.$eval('#g-jeans-length', (n) => n.value), '30');
+
+    /* removing the answers about a top happens on save, and can be undone before */
+    await page.click('#legacy-remove');
+    assert.match(await page.textContent('#legacy-note'), /removed when you save/);
+    await page.click('#legacy-remove');
+    assert.strictEqual(await page.textContent('#profile-save-state'), '', 'undone, nothing to save');
+    await page.click('#legacy-remove');
+    await saveAndWait(page);
+    profile = await savedProfile('ada@e2e.test');
+    assert.deepStrictEqual([profile.anchor, profile.fitGoal, profile.troubleZones], [null, null, null]);
+    assert.deepStrictEqual(Object.keys(profile.garments), ['jeans', 'other'], 'the types are untouched');
+    assert.strictEqual(await page.isVisible('#legacy-guide'), false);
+    await context.close();
+  });
+
+  await test('an earlier answer about a top is never filled in as any one type’s answer', async () => {
+    const context = await openContext();
+    const first = await signedInAtGuide(context, 'ada@e2e.test');
+    await first.close();
+    const user = await users.byEmail('ada@e2e.test');
+    await fitProfiles.saveGuide(user.id, { anchor: { brand: 'Zara', size: 'L' }, fitGoal: 'oversized', troubleZones: ['torso-short'] });
+
+    const page = await context.newPage();
+    await guideReady(page);
+    assert.strictEqual(await page.isVisible('#guide-legacy-note'), true, 'said to be kept on the fit profile');
+    assert.strictEqual(await page.isVisible('#guide-saved-note'), false, 'and no type is marked Saved');
+    for (const id of ['tshirts', 'hoodies', 'sweatshirts']) {
+      await page.check(`input[name="garment"][value="${id}"]`);
+      await page.click('#guide-next');
+      assert.strictEqual(await page.$eval('#anchor-brand', (n) => n.value), '', `${id}: the top's brand is not lent`);
+      assert.strictEqual(await page.$eval('#anchor-size', (n) => n.value), '', `${id}: nor its size`);
+      await page.click('#guide-next');
+      assert.strictEqual(await page.$$eval('input[name="fitGoal"]:checked', (ns) => ns.length), 0, `${id}: nor its fit`);
+      await page.click('#guide-back');
+      await page.click('#guide-back');
+    }
     await context.close();
   });
 
@@ -1522,7 +1793,7 @@ const linkFromInbox = (pattern) => {
     const context = await openContext();
     const page = await context.newPage();
     await guideReady(page);
-    await answerGuide(page, { brand: 'UNIQLO', size: 'M', goal: 'slim', zones: ['sleeves-short'] });
+    await answerGuide(page, { garment: 'tshirts', brand: 'UNIQLO', size: 'M', goal: 'slim', zones: ['sleeves-short'] });
     await page.click('#guide-next');
     await page.waitForSelector('#guide-account:not([hidden])');
     assert.strictEqual(await page.isVisible('#guide-google-button'), true, 'offered where Google is set up');
@@ -1540,11 +1811,11 @@ const linkFromInbox = (pattern) => {
     await page.waitForSelector('#guide[data-ready]');
     assert.strictEqual(await page.isVisible('#guide-saved-note'), false);
     assert.strictEqual(await page.isVisible('#guide-done'), false);
-    assert.strictEqual(await page.$eval('#anchor-brand', (n) => n.value), '');
-    await answerGuide(page, { brand: 'UNIQLO', size: 'M', goal: 'slim', zones: ['sleeves-short'] });
+    assert.strictEqual(await page.$$eval('input[name="garment"]:checked', (ns) => ns.length), 0);
+    await answerGuide(page, { garment: 'tshirts', brand: 'UNIQLO', size: 'M', goal: 'slim', zones: ['sleeves-short'] });
     await page.click('#guide-next');
     await page.waitForSelector('#guide-done:not([hidden])');
-    assert.strictEqual((await savedProfile('grace@gmail.e2e')).fitGoal, 'slim', 'tapped through again, and saved');
+    assert.strictEqual((await savedProfile('grace@gmail.e2e')).garments.tshirts.fitGoal, 'slim', 'tapped through again, and saved');
     await context.close();
   });
 
@@ -1556,28 +1827,47 @@ const linkFromInbox = (pattern) => {
     const wide = async (where) => {
       const width = await page.evaluate(() => document.documentElement.scrollWidth);
       assert.ok(width <= 360, `${where}: the page is ${width}px wide on a 360px screen`);
-      const offscreen = await page.$$eval('#guide-card select, #guide-card button, #guide-card .fit-card, #guide-card .zone',
+      const offscreen = await page.$$eval('#guide-card select, #guide-card button, #guide-card .garment-card, #guide-card .fit-card, #guide-card .zone',
         (ns) => ns.filter((n) => n.offsetParent && n.getBoundingClientRect().right > 360).map((n) => n.id || n.className));
       assert.deepStrictEqual(offscreen, [], where);
     };
+    /* every card a comfortable thumb target */
+    const small = await page.$$eval('.garment-card', (ns) => ns.map((n) => n.getBoundingClientRect())
+      .filter((r) => r.height < 44 || r.width < 44).length);
+    assert.strictEqual(small, 0, 'type cards are at least 44px each way');
 
     await wide('step 1');
-    await page.focus('#anchor-brand');
-    await page.keyboard.type('U');
-    await tabTo(page, '#anchor-size');
-    await page.keyboard.type('M');
-    assert.strictEqual(await page.$eval('#anchor-brand', (n) => n.value), 'UNIQLO');
+    await tabTo(page, 'input[name="garment"]');
+    await page.keyboard.press('ArrowRight');
+    await page.keyboard.press('ArrowRight');
+    await page.keyboard.press('ArrowRight');
+    assert.strictEqual(await page.$eval('input[name="garment"]:checked', (n) => n.value), 'pants', 'arrows move through the types');
+    await page.keyboard.press('ArrowRight');
+    await page.keyboard.press('ArrowRight');
+    assert.strictEqual(await page.$eval('input[name="garment"]:checked', (n) => n.value), 'jeans');
     await tabTo(page, '#guide-next');
     await page.keyboard.press('Enter');
 
-    await wide('step 2');
+    await wide('step 2, jeans');
+    await page.focus('#anchor-brand');
+    await page.keyboard.type('L');
+    await tabTo(page, '#anchor-size');
+    await page.keyboard.type('32');
+    await tabTo(page, '#anchor-length');
+    await page.keyboard.type('30');
+    assert.strictEqual(await page.$eval('#anchor-brand', (n) => n.value), 'Levi’s');
+    assert.strictEqual(await page.$eval('#anchor-length', (n) => n.value), '30');
+    await tabTo(page, '#guide-next');
+    await page.keyboard.press('Enter');
+
+    await wide('step 3');
     await tabTo(page, 'input[name="fitGoal"]');
     await page.keyboard.press('Space');
     assert.strictEqual(await page.$$eval('input[name="fitGoal"]:checked', (ns) => ns.length), 1);
     await tabTo(page, '#guide-next');
     await page.keyboard.press('Enter');
 
-    await wide('step 3');
+    await wide('step 4');
     await tabTo(page, '#zone-none');
     await page.keyboard.press('Space');
     assert.strictEqual(await page.isChecked('#zone-none'), true);
@@ -1593,7 +1883,7 @@ const linkFromInbox = (pattern) => {
     const context = await openContext();
     const page = await context.newPage();
     await guideReady(page);
-    await answerGuide(page, { brand: 'other', other: 'Quillborough', size: 'XXL', goal: 'oversized', zones: ['neckline-tight'] });
+    await answerGuide(page, { garment: 'jeans', brand: 'other', other: 'Quillborough', size: '38', length: '34', goal: 'oversized', zones: ['hips-tight'] });
     await page.click('#guide-next');
     await page.fill('#guide-name', 'Ada');
     await page.fill('#guide-email', 'ada@e2e.test');
@@ -1602,9 +1892,9 @@ const linkFromInbox = (pattern) => {
     await page.click('#guide-account-submit');
     await page.waitForSelector('#guide-done:not([hidden])');
     const kept = await page.evaluate(() => JSON.stringify([Object.entries(localStorage), Object.entries(sessionStorage), document.cookie]));
-    assert.ok(!/Quillborough|XXL|oversized|neckline/i.test(kept), `found in browser storage: ${kept}`);
-    assert.ok(!/Quillborough|XXL|oversized|neckline|password/i.test(page.url()), `the address carries an answer: ${page.url()}`);
-    assert.strictEqual((await savedProfile('ada@e2e.test')).anchor.brand, 'Quillborough', 'it went to the server instead');
+    assert.ok(!/Quillborough|jeans|oversized|hips|garment/i.test(kept), `found in browser storage: ${kept}`);
+    assert.ok(!/Quillborough|jeans|38|oversized|hips|garment|password/i.test(page.url()), `the address carries an answer: ${page.url()}`);
+    assert.strictEqual((await savedProfile('ada@e2e.test')).garments.jeans.anchor.brand, 'Quillborough', 'it went to the server instead');
     await context.close();
   });
 

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Fynd — Clothes that fit you</title>
-<meta name="description" content="Tell Fynd how your clothes fit in three quick taps — a top that already fits, how you like things to sit, and where clothes usually go wrong.">
+<meta name="description" content="Tell Fynd how your clothes fit in four quick taps — the type of clothing, one that already fits, how you like it to fit, and what usually gets the fit wrong.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23111111'/><text x='16' y='23' font-family='Helvetica,Arial,sans-serif' font-size='19' font-weight='700' fill='white' text-anchor='middle'>F</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -42,89 +42,135 @@
 
 <main id="main">
 
-  <!-- The first screen is the fit guide: three short questions, answered
+  <!-- The first screen is the fit guide: four short questions, answered
        with taps and two dropdowns, saved to the shopper's fit profile.
-       assets/guide.js runs it. Every answer is optional, nothing is
-       saved until the end, and a saved profile is only ever added to. -->
+       The first picks the type of clothing, and the other three are asked
+       about that type alone. assets/guide.js runs it, and fills in each
+       type's brands, sizes and trouble spots from
+       assets/fit-profile-schema.js. Nothing is saved until the end, and a
+       saved profile is only ever added to. -->
   <section class="container hero guide-hero" id="guide" aria-labelledby="guide-title">
     <h1 id="guide-title">Clothes that fit you.</h1>
-    <p class="lead">Three quick taps tell Fynd how your clothes fit. No tape measure.</p>
+    <p class="lead">Four quick taps tell Fynd how your clothes fit. No tape measure.</p>
 
     <div class="guide-card" id="guide-card">
       <form class="guide-form" id="guide-form" novalidate>
         <div class="guide-progress">
-          <p class="guide-count" id="guide-count">1 of 3</p>
+          <p class="guide-count" id="guide-count">1 of 4</p>
           <ol class="guide-bar" aria-hidden="true">
-            <li class="is-current"></li><li></li><li></li>
+            <li class="is-current"></li><li></li><li></li><li></li>
           </ol>
         </div>
 
-        <!-- ================================================ 1: anchor fit -->
+        <!-- ================================================ 1: type of clothing -->
         <fieldset class="guide-step" data-step="1">
           <legend class="guide-legend">
-            <h2 class="guide-question" tabindex="-1"><span class="sr-only">Step 1 of 3: </span>What&rsquo;s a top you own right now that fits you perfectly?</h2>
+            <h2 class="guide-question" tabindex="-1"><span class="sr-only">Step 1 of 4: </span>What are we finding your fit for?</h2>
           </legend>
-          <div class="guide-pair">
-            <div class="guide-field">
-              <label class="guide-label" for="anchor-brand">Brand</label>
-              <span class="select-wrap"><select class="profile-select" id="anchor-brand" name="anchorBrand">
-                <option value="">Choose</option>
-                <option value="Nike">Nike</option>
-                <option value="UNIQLO">UNIQLO</option>
-                <option value="Zara">Zara</option>
-                <option value="Carhartt">Carhartt</option>
-                <option value="other">Other</option>
-              </select></span>
-            </div>
-            <div class="guide-field">
-              <label class="guide-label" for="anchor-size">Size</label>
-              <span class="select-wrap"><select class="profile-select" id="anchor-size" name="anchorSize">
-                <option value="">Choose</option>
-                <option value="XS">XS</option>
-                <option value="S">S</option>
-                <option value="M">M</option>
-                <option value="L">L</option>
-                <option value="XL">XL</option>
-                <option value="XXL">XXL</option>
-                <option value="not-sure">Not sure</option>
-              </select></span>
-            </div>
-          </div>
-          <!-- Only after "Other": pick a suggestion or type the name. -->
-          <div class="guide-field guide-other" id="anchor-other-field" hidden>
-            <label class="guide-label" for="anchor-other">Which brand?</label>
-            <input class="profile-input" type="text" id="anchor-other" name="anchorOther" list="guide-brands" maxlength="60" autocomplete="off" placeholder="Start typing, like Gap">
-            <datalist id="guide-brands">
-              <option value="Adidas"></option>
-              <option value="American Eagle"></option>
-              <option value="Banana Republic"></option>
-              <option value="Champion"></option>
-              <option value="Gap"></option>
-              <option value="H&amp;M"></option>
-              <option value="J.Crew"></option>
-              <option value="Lacoste"></option>
-              <option value="Levi&rsquo;s"></option>
-              <option value="Lululemon"></option>
-              <option value="Old Navy"></option>
-              <option value="Patagonia"></option>
-              <option value="Ralph Lauren"></option>
-              <option value="The North Face"></option>
-              <option value="Under Armour"></option>
-            </datalist>
+          <div class="garment-cards">
+            <label class="garment-card">
+              <input type="radio" name="garment" value="tshirts">
+              <span class="garment-card-body">
+                <svg class="garment-card-art" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M18 10 L9.5 14.5 L12.5 21 L15.5 19.5 V39 H32.5 V19.5 L35.5 21 L38.5 14.5 L30 10 C28.5 13 19.5 13 18 10 Z"/></svg>
+                <span class="garment-card-title">T-shirts</span>
+                <span class="garment-saved" hidden>Saved</span>
+              </span>
+            </label>
+            <label class="garment-card">
+              <input type="radio" name="garment" value="hoodies">
+              <span class="garment-card-body">
+                <svg class="garment-card-art" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M18.5 13 L11 17 L7.5 36.5 L12 37.5 L15 23 V40 H33 V23 L36 37.5 L40.5 36.5 L37 17 L29.5 13"/><path d="M18.5 13 C17.5 6 30.5 6 29.5 13 C27.5 16 20.5 16 18.5 13 Z"/><path d="M19 33.5 H29 L27.5 28.5 H20.5 Z"/><path d="M22 16 V20.5 M26 16 V20.5"/></svg>
+                <span class="garment-card-title">Hoodies</span>
+                <span class="garment-saved" hidden>Saved</span>
+              </span>
+            </label>
+            <label class="garment-card">
+              <input type="radio" name="garment" value="sweatshirts">
+              <span class="garment-card-body">
+                <svg class="garment-card-art" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M18.5 10 L11 14.5 L7.5 36.5 L12 37.5 L15 21 V39 H33 V21 L36 37.5 L40.5 36.5 L37 14.5 L29.5 10 C28 13 20 13 18.5 10 Z"/><path d="M15 35.5 H33 M8 33.5 L12.5 34.5 M40 33.5 L35.5 34.5"/></svg>
+                <span class="garment-card-title">Sweatshirts</span>
+                <span class="garment-saved" hidden>Saved</span>
+              </span>
+            </label>
+            <label class="garment-card">
+              <input type="radio" name="garment" value="pants">
+              <span class="garment-card-body">
+                <svg class="garment-card-art" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M15 8 H33 L35 41 H26.5 L24 18 L21.5 41 H13 Z"/><path d="M15 12 H33 M19.5 16 L18 37 M28.5 16 L30 37"/></svg>
+                <span class="garment-card-title">Pants</span>
+                <span class="garment-saved" hidden>Saved</span>
+              </span>
+            </label>
+            <label class="garment-card">
+              <input type="radio" name="garment" value="sweatpants">
+              <span class="garment-card-body">
+                <svg class="garment-card-art" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M14.5 8 H33.5 L34.5 36 L33.5 41 H25.5 L25 36 L24 18 L23 36 L22.5 41 H14.5 L13.5 36 Z"/><path d="M14.5 12.5 H33.5 M13.5 36 H23 M25 36 H34.5 M22.5 12.5 L21.5 17 M25.5 12.5 L26.5 17"/></svg>
+                <span class="garment-card-title">Sweatpants</span>
+                <span class="garment-saved" hidden>Saved</span>
+              </span>
+            </label>
+            <label class="garment-card">
+              <input type="radio" name="garment" value="jeans">
+              <span class="garment-card-body">
+                <svg class="garment-card-art" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M15 8 H33 L35 41 H26.5 L24 18 L21.5 41 H13 Z"/><path d="M15 12 H33 M24 12 V18 M16.5 12 C16.5 15 18.5 16.5 21 16.5 M31.5 12 C31.5 15 29.5 16.5 27 16.5"/></svg>
+                <span class="garment-card-title">Jeans</span>
+                <span class="garment-saved" hidden>Saved</span>
+              </span>
+            </label>
+            <label class="garment-card garment-card--other">
+              <input type="radio" name="garment" value="other">
+              <span class="garment-card-body">
+                <svg class="garment-card-art" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M21 10.5 C21 8 22.5 6.5 24.5 6.5 C26.5 6.5 28 8 28 10 C28 12 26 13 24.5 13.5 V16"/><path d="M24.5 16 L7.5 31 C6.5 32 7 33.5 8.5 33.5 H40.5 C42 33.5 42.5 32 41.5 31 Z"/></svg>
+                <span class="garment-card-title">Other</span>
+                <span class="garment-card-hint">Something else</span>
+                <span class="garment-saved" hidden>Saved</span>
+              </span>
+            </label>
           </div>
         </fieldset>
 
-        <!-- ================================================ 2: fit goal -->
+        <!-- ================================================ 2: one that fits
+             The words, brands and sizes change with the type chosen:
+             letter sizes for tops and sweatpants, waist and length for
+             jeans, either for pants. -->
         <fieldset class="guide-step" data-step="2" hidden>
           <legend class="guide-legend">
-            <h2 class="guide-question" tabindex="-1"><span class="sr-only">Step 2 of 3: </span>How do you actually like your clothes to sit on you?</h2>
+            <h2 class="guide-question" tabindex="-1"><span class="sr-only">Step 2 of 4: </span><span id="anchor-question">What brand and size fits you perfectly?</span></h2>
+          </legend>
+          <p class="guide-hint" id="anchor-hint">Think of something you own right now.</p>
+          <div class="guide-anchor">
+            <div class="guide-field">
+              <label class="guide-label" for="anchor-brand">Brand</label>
+              <span class="select-wrap"><select class="profile-select" id="anchor-brand" name="anchorBrand"><option value="">Choose</option></select></span>
+            </div>
+            <div class="guide-field">
+              <label class="guide-label" for="anchor-size" id="anchor-size-label">Size</label>
+              <span class="select-wrap"><select class="profile-select" id="anchor-size" name="anchorSize"><option value="">Choose</option><option value="not-sure">Not sure</option></select></span>
+            </div>
+            <!-- Only after "Other brand": pick a suggestion or type the name. -->
+            <div class="guide-field guide-other" id="anchor-other-field" hidden>
+              <label class="guide-label" for="anchor-other">Which brand?</label>
+              <input class="profile-input" type="text" id="anchor-other" name="anchorOther" list="guide-brands" maxlength="60" autocomplete="off" placeholder="Start typing, like Gap">
+              <datalist id="guide-brands"></datalist>
+            </div>
+            <!-- Only with a waist size: jeans, and pants sized by the waist. -->
+            <div class="guide-field guide-length" id="anchor-length-field" hidden>
+              <label class="guide-label" for="anchor-length">Length</label>
+              <span class="select-wrap"><select class="profile-select" id="anchor-length" name="anchorLength"><option value="">Choose</option><option value="not-sure">Not sure</option></select></span>
+            </div>
+          </div>
+        </fieldset>
+
+        <!-- ================================================ 3: how it should fit -->
+        <fieldset class="guide-step" data-step="3" hidden>
+          <legend class="guide-legend">
+            <h2 class="guide-question" tabindex="-1"><span class="sr-only">Step 3 of 4: </span><span id="fit-question">How do you like your clothes to fit?</span></h2>
           </legend>
           <div class="fit-cards">
             <label class="fit-card">
               <input type="radio" name="fitGoal" value="slim">
               <span class="fit-card-body">
                 <svg class="fit-card-art" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><path d="M19 9 L12 13.5 L14.5 19 L17.5 17.5 V40 H30.5 V17.5 L33.5 19 L36 13.5 L29 9 C27 11.5 21 11.5 19 9 Z"/></svg>
-                <span class="fit-card-title">Tight / Slim Fit</span>
+                <span class="fit-card-title">Tight / Slim</span>
                 <span class="fit-card-hint">Close to the body</span>
               </span>
             </label>
@@ -140,24 +186,22 @@
               <input type="radio" name="fitGoal" value="oversized">
               <span class="fit-card-body">
                 <svg class="fit-card-art" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><path d="M15 8 L5 15.5 L9 22.5 L13 20 V42 H35 V20 L39 22.5 L43 15.5 L33 8 C30 11.5 18 11.5 15 8 Z"/></svg>
-                <span class="fit-card-title">Cozy / Oversized</span>
+                <span class="fit-card-title">Relaxed / Oversized</span>
                 <span class="fit-card-hint">Room to move</span>
               </span>
             </label>
           </div>
         </fieldset>
 
-        <!-- ================================================ 3: trouble zones -->
-        <fieldset class="guide-step" data-step="3" hidden>
+        <!-- ================================================ 4: what goes wrong
+             Only the chosen type's own trouble spots are listed. -->
+        <fieldset class="guide-step" data-step="4" hidden>
           <legend class="guide-legend">
-            <h2 class="guide-question" tabindex="-1"><span class="sr-only">Step 3 of 3: </span>Where do normal clothes usually screw up on you?</h2>
+            <h2 class="guide-question" tabindex="-1"><span class="sr-only">Step 4 of 4: </span>What usually gets the fit wrong?</h2>
           </legend>
-          <p class="guide-hint">Pick any that apply &mdash; it&rsquo;s about the clothes, not you.</p>
+          <p class="guide-hint" id="zone-hint">Pick any that apply &mdash; it&rsquo;s about the clothes, not you.</p>
           <div class="zone-list">
-            <label class="zone"><input type="checkbox" name="troubleZones" value="sleeves-short"><span>Sleeves are always too short</span></label>
-            <label class="zone"><input type="checkbox" name="troubleZones" value="torso-short"><span>Torso is always too short</span></label>
-            <label class="zone"><input type="checkbox" name="troubleZones" value="neckline-tight"><span>Necklines are too tight</span></label>
-            <label class="zone"><input type="checkbox" name="troubleZones" value="waist-loose"><span>Fits my chest but bags out at my waist</span></label>
+            <div class="zone-items" id="zone-items"></div>
             <label class="zone zone--none"><input type="checkbox" id="zone-none" name="troubleNone" value="none"><span>None of these</span></label>
           </div>
         </fieldset>
@@ -166,9 +210,10 @@
 
         <div class="guide-nav">
           <button class="btn btn-secondary" type="button" id="guide-back" hidden>Back</button>
-          <button class="btn btn-primary" type="submit" id="guide-next">Skip</button>
+          <button class="btn btn-primary" type="submit" id="guide-next">Continue</button>
         </div>
-        <p class="guide-saved-note" id="guide-saved-note" hidden>Your saved answers are filled in. Change anything here, or edit everything on <a class="guide-link" href="fit-profile.html">your fit profile</a>.</p>
+        <p class="guide-saved-note" id="guide-saved-note" hidden>Clothing you&rsquo;ve answered for is marked Saved &mdash; pick it to change your answers, or edit everything on <a class="guide-link" href="fit-profile.html">your fit profile</a>.</p>
+        <p class="guide-saved-note" id="guide-legacy-note" hidden>Your earlier answers about a top are kept, just as you gave them, on <a class="guide-link" href="fit-profile.html">your fit profile</a>.</p>
       </form>
 
       <!-- Signed out at the end: an account to keep the answers in, made
@@ -234,7 +279,10 @@
           <a class="btn btn-primary" href="discover.html">Browse the catalogue</a>
           <a class="btn btn-secondary" href="fit-profile.html">See your fit profile</a>
         </div>
-        <button class="link-btn" type="button" id="guide-edit">Change my answers</button>
+        <div class="guide-done-links">
+          <button class="link-btn" type="button" id="guide-another">Add another type of clothing</button>
+          <button class="link-btn" type="button" id="guide-edit">Change these answers</button>
+        </div>
       </div>
     </div>
 
@@ -248,12 +296,12 @@
         <li class="step">
           <span class="step-num">1</span>
           <h3>Tell us what fits</h3>
-          <p>Pick a top that already fits you, how you like clothes to sit, and where they usually go wrong. Three taps.</p>
+          <p>Pick a type of clothing, then one that already fits you, how you like it to fit, and what usually goes wrong. Four taps.</p>
         </li>
         <li class="step">
           <span class="step-num">2</span>
           <h3>Keep your fit profile</h3>
-          <p>Your answers are saved to your fit profile, where you can add sizes by brand or measurements any time.</p>
+          <p>Each type of clothing keeps its own answers, so a T-shirt size is never used for jeans. Add sizes by brand or measurements any time.</p>
         </li>
         <li class="step">
           <span class="step-num">3</span>

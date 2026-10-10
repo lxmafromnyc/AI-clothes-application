@@ -333,7 +333,7 @@ strong { font-weight: 600; }
 
 .guide-progress { display: flex; align-items: center; gap: 14px; margin-bottom: 18px; }
 .guide-count { flex: none; font-size: 13.5px; font-weight: 600; color: var(--color-accent-ink); font-variant-numeric: tabular-nums; }
-.guide-bar { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; flex: 1; list-style: none; }
+.guide-bar { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; flex: 1; list-style: none; }
 .guide-bar li { height: 4px; border-radius: var(--r-pill); background: var(--color-surface-3); }
 .guide-bar li.is-done, .guide-bar li.is-current { background: var(--color-primary); }
 
@@ -345,14 +345,59 @@ strong { font-weight: 600; }
 .guide-hint, .guide-sub { margin: -8px 0 16px; font-size: 14.5px; color: var(--color-text-muted); }
 .guide-sub { margin: 8px 0 18px; }
 
-/* step 1: two dropdowns, side by side down to the smallest phone */
-.guide-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+/* step 1: a card for each type of clothing, one answer. Six in a grid,
+   and "Other" — anything the guide does not name — as a quieter row
+   beneath them. */
+.garment-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.garment-card { position: relative; display: flex; }
+.garment-card--other { grid-column: 1 / -1; }
+/* the real control lies over its card, as on the fit cards */
+.garment-card input { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.garment-card-body {
+  position: relative;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+  width: 100%; min-height: 112px; padding: 16px 10px 14px;
+  border: 1px solid var(--color-border-strong); border-radius: var(--r);
+  background: var(--color-surface);
+  text-align: center;
+  transition: background var(--fast) var(--ease), border-color var(--fast) var(--ease);
+}
+.garment-card--other .garment-card-body {
+  flex-direction: row; justify-content: flex-start; gap: 12px;
+  min-height: 60px; padding: 10px 16px;
+  border-style: dashed; text-align: left;
+}
+.garment-card-art { width: 44px; height: 44px; color: var(--color-text-muted); }
+.garment-card--other .garment-card-art { width: 32px; height: 32px; }
+.garment-card-title { font-size: 15px; font-weight: 600; color: var(--color-text); }
+.garment-card-hint { font-size: 13.5px; color: var(--color-text-muted); }
+/* answers already saved for this type, signed in */
+.garment-saved {
+  position: absolute; top: 7px; right: 7px;
+  padding: 1px 8px; border-radius: var(--r-pill);
+  background: var(--color-primary-soft);
+  font-size: 11.5px; font-weight: 600; color: var(--color-primary-ink);
+}
+.garment-card--other .garment-saved { position: static; margin-left: auto; }
+.garment-card-art, .garment-card-title, .garment-card-hint, .garment-saved { transition: color var(--fast) var(--ease), background var(--fast) var(--ease); }
+.garment-card input:hover + .garment-card-body { border-color: var(--color-text-muted); }
+.garment-card input:checked + .garment-card-body { background: var(--color-primary); border-color: var(--color-primary); border-style: solid; }
+.garment-card input:checked + .garment-card-body .garment-card-art,
+.garment-card input:checked + .garment-card-body .garment-card-title,
+.garment-card input:checked + .garment-card-body .garment-card-hint { color: var(--color-text-on-primary); }
+.garment-card input:checked + .garment-card-body .garment-saved { background: var(--color-surface); color: var(--color-primary-ink); }
+.garment-card input:focus-visible + .garment-card-body { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+
+/* step 2: brand and size side by side down to the smallest phone; the
+   brand box under the brand, the length under the waist */
+.guide-anchor { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 12px; }
 .guide-field { min-width: 0; }
 .guide-label { display: block; margin-bottom: 6px; font-size: 14px; font-weight: 500; color: var(--color-text-2); }
-.guide-other { margin-top: 14px; }
+.guide-other { grid-column: 1; grid-row: 2; }
+.guide-length { grid-column: 2; grid-row: 2; }
 .guide-card .profile-select, .guide-card .profile-input { height: 52px; }
 
-/* step 2: three cards, one answer */
+/* step 3: three cards, one answer */
 .fit-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .fit-card { position: relative; display: flex; }
 /* the real control lies over its card, invisible, so a tap, a hover
@@ -378,8 +423,9 @@ strong { font-weight: 600; }
 .fit-card input:checked + .fit-card-body .fit-card-hint { color: var(--color-text-on-primary); }
 .fit-card input:focus-visible + .fit-card-body { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 
-/* step 3: rows to tick, each a full-width target */
-.zone-list { display: grid; gap: 8px; }
+/* step 4: rows to tick, each a full-width target — the type's own
+   trouble spots, then None of these */
+.zone-list, .zone-items { display: grid; gap: 8px; }
 .zone { position: relative; display: flex; }
 .zone input { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
 .zone span {
@@ -441,6 +487,7 @@ strong { font-weight: 600; }
 .guide-summary-label { font-size: 14px; color: var(--color-text-muted); }
 .guide-summary-value { font-size: 15px; font-weight: 500; color: var(--color-text); text-align: right; }
 .guide-done-actions { margin: 4px 0 8px; }
+.guide-done-links { display: flex; flex-wrap: wrap; gap: 4px 20px; }
 
 .guide-alt { margin-top: 22px; font-size: 15px; color: var(--color-text-muted); }
 
@@ -450,6 +497,10 @@ strong { font-weight: 600; }
   .guide-question { font-size: 20px; }
 }
 @media (max-width: 479px) {
+  /* two types of clothing to a row, each still a thumb-sized target */
+  .garment-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .garment-card-body { min-height: 96px; padding: 14px 8px 12px; }
+  .garment-card-art { width: 38px; height: 38px; }
   /* the cards become rows: picture, then words, each a thumb-sized target */
   .fit-cards { grid-template-columns: minmax(0, 1fr); gap: 8px; }
   .fit-card-body {
@@ -1206,9 +1257,33 @@ button.head-link { border: 0; background: none; padding: 8px 0; cursor: pointer;
 /* floated, so the legend sits inside the card rather than on its border */
 .profile-section > legend { float: left; width: 100%; padding: 0; margin-bottom: 4px; font-size: 20px; font-weight: 600; letter-spacing: -.02em; line-height: 1.3; }
 .profile-section > legend + * { clear: both; }
-/* the fit guide's answers: read here, changed in the guide */
-.profile-guide-title { font-size: 20px; letter-spacing: -.02em; line-height: 1.3; }
+/* the fit guide's answers: a card per type of clothing, edited here or
+   in the guide, then version 2's answers about a top, as given */
+.profile-guide-title { margin-bottom: 4px; font-size: 20px; letter-spacing: -.02em; line-height: 1.3; }
 .profile-guide .guide-summary { margin: 14px 0 18px; }
+.garment-list { display: grid; gap: 12px; margin-bottom: 16px; }
+.garment-list:empty { display: none; }
+.garment-editor {
+  min-width: 0; margin: 0; padding: 16px 16px 6px;
+  border: 1px solid var(--color-border); border-radius: var(--r);
+  background: var(--color-bg-subtle);
+}
+.garment-editor-title { float: left; width: 100%; padding: 0; margin-bottom: 12px; font-size: 16px; font-weight: 600; }
+.garment-editor-title + * { clear: both; }
+.garment-editor .profile-grid { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0 12px; }
+.garment-editor .profile-field { margin-bottom: 14px; }
+.garment-editor .pref-group { margin-bottom: 14px; }
+.garment-other { margin-top: 8px; }
+/* trouble spots are longer than a word, so their pills may wrap */
+.zone-choices .choice { max-width: 100%; }
+.zone-choices .choice span { height: auto; min-height: 40px; padding-block: 8px; line-height: 1.35; border-radius: var(--r); }
+.garment-add { margin-bottom: 4px; }
+.garment-add-row { display: flex; gap: 10px; }
+.garment-add-row .select-wrap { flex: 1; min-width: 0; }
+.garment-add-row .btn { flex: none; height: 48px; }
+.garment-guide-link { margin: 10px 0 0; }
+.legacy-guide { margin-top: 20px; }
+.legacy-guide .profile-note { margin: -8px 0 8px; }
 .optional-tag {
   display: inline-block; margin-left: 8px; padding: 1px 9px;
   border-radius: var(--r-pill); background: var(--color-surface-2);
@@ -1393,7 +1468,7 @@ button.head-link { border: 0; background: none; padding: 8px 0; cursor: pointer;
   .tab { height: 42px; font-size: 14.5px; }
   .discover-tabs { gap: 0 16px; }
   /* the fit profile goes to one column; feet and inches stay side by side */
-  .profile-grid, .brand-row-grid { grid-template-columns: minmax(0, 1fr); }
+  .profile-grid, .brand-row-grid, .garment-editor .profile-grid { grid-template-columns: minmax(0, 1fr); }
   .profile-actions .btn { width: 100%; }
 }
 

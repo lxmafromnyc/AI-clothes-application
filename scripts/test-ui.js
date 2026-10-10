@@ -3339,10 +3339,16 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
       }
     });
     fitProfileState = fitProfileReply({
-      schemaVersion: 1,
+      schemaVersion: 3,
       measurements: { unit: 'in', height: 70, chest: 40, waist: null, hip: null },
       brandSizes: [{ brand: 'Uniqlo', category: 'hoodies', size: 'M', fit: 'about-right' }, { brand: 'Gap', category: 'sweatshirts', size: null, fit: null }],
-      fitPreferences: { hoodies: 'relaxed' }
+      fitPreferences: { hoodies: 'relaxed' },
+      /* the first guide's answers about a top, and two types from the new one */
+      anchor: { brand: 'UNIQLO', size: 'M' }, fitGoal: 'slim', troubleZones: ['sleeves-short'],
+      garments: {
+        tshirts: { anchor: { brand: 'Nike', size: 'M' }, fitGoal: 'oversized', troubleZones: ['waist-loose'] },
+        jeans: { anchor: { brand: 'Wrangler', size: '32', length: '30' }, fitGoal: 'true-to-size', troubleZones: [] }
+      }
     });
     for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }]) {
       const page = await openPage('fit-profile.html', { viewport });
@@ -3351,6 +3357,9 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
          all on screen at once, so every ink the form uses is audited */
       await page.fill('#measure-waist', '500');
       await page.check('input[name="unit"][value="cm"]');
+      /* a type's card with Other brand open, and the top's answers marked for removal */
+      await page.selectOption('#g-tshirts-brand', 'other');
+      await page.click('#legacy-remove');
       await page.click('#profile-save');
       await page.waitForSelector('#profile-form-error.show');
       await page.click('#profile-delete');
@@ -3385,16 +3394,22 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
       await page.waitForSelector('#guide[data-ready]', { timeout: 10000 });
       const audit = guideAudit(page, viewport);
 
+      await page.click('#guide-next');
+      await audit('step 1, asked to pick a type');
+      await page.check('input[name="garment"][value="jeans"]');
+      await audit('step 1, with a type chosen');
+      await page.click('#guide-next');
       await page.selectOption('#anchor-brand', 'other');
       await page.fill('#anchor-other', 'Gap');
-      await page.selectOption('#anchor-size', 'M');
-      await audit('step 1, with a brand typed under Other');
+      await page.selectOption('#anchor-size', '32');
+      await page.selectOption('#anchor-length', '30');
+      await audit('step 2, with a brand typed under Other and a length');
       await page.click('#guide-next');
       await page.check('input[name="fitGoal"][value="oversized"]');
-      await audit('step 2, with a card chosen');
+      await audit('step 3, with a card chosen');
       await page.click('#guide-next');
-      await page.check('input[name="troubleZones"][value="torso-short"]');
-      await audit('step 3, with a trouble spot ticked');
+      await page.check('input[name="troubleZones"][value="hips-tight"]');
+      await audit('step 4, with a trouble spot ticked');
 
       /* signed out, saving asks for an account; an error puts the
          warning ink under audit too */
@@ -3413,9 +3428,10 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
       measurements: { unit: 'in', height: 70, chest: 40, waist: null, hip: null },
       brandSizes: [{ brand: 'Gap', category: 'hoodies', size: 'M', fit: 'about-right' }],
       fitPreferences: { hoodies: 'relaxed' },
-      anchor: { brand: 'UNIQLO', size: 'L' },
-      fitGoal: 'slim',
-      troubleZones: []
+      anchor: null,
+      fitGoal: null,
+      troubleZones: null,
+      garments: { hoodies: { anchor: { brand: 'UNIQLO', size: 'L' }, fitGoal: 'slim', troubleZones: [] } }
     };
     accountState = accountReply({ extra: SIGNED_IN });
     for (const viewport of [{ width: 1280, height: 900 }, { width: 360, height: 740 }]) {
@@ -3426,7 +3442,12 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
       await page.waitForSelector('#guide[data-ready]', { timeout: 10000 });
       const audit = guideAudit(page, viewport);
 
-      assert.strictEqual(await page.isVisible('#guide-saved-note'), true, 'says the saved answers are filled in');
+      assert.strictEqual(await page.isVisible('#guide-saved-note'), true, 'says which types have saved answers');
+      assert.strictEqual(await page.isVisible('input[name="garment"][value="hoodies"] + .garment-card-body .garment-saved'), true);
+      await audit('step 1, with a type marked Saved');
+      await page.check('input[name="garment"][value="hoodies"]');
+      await audit('step 1, with a saved type chosen');
+      await page.click('#guide-next');
       assert.strictEqual(await page.$eval('#anchor-brand', (n) => n.value), 'UNIQLO');
       assert.strictEqual(await page.$eval('#anchor-size', (n) => n.value), 'L');
       await page.click('#guide-next');
@@ -3454,6 +3475,8 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     const page = await openPage('index.html');
     await page.emulateMedia({ reducedMotion: 'reduce' });
     await page.waitForSelector('#guide[data-ready]', { timeout: 10000 });
+    await page.check('input[name="garment"][value="tshirts"]');
+    await page.click('#guide-next');
     await page.click('#guide-next');
     await page.check('input[name="fitGoal"][value="slim"]');
     const moving = await page.evaluate(() => [...document.querySelectorAll('#guide *')]
@@ -3614,7 +3637,7 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
         mark: getComputedStyle(document.querySelector('.brand-mark')).backgroundColor === primary,
         current: getComputedStyle(document.querySelector('.nav-links a[aria-current="page"]'), '::after').backgroundColor === primary,
         step: getComputedStyle(document.querySelector('.step-num')).color === rgbOf('--color-accent-ink'),
-        /* the guide's "1 of 3" is a step number, so it takes the accent;
+        /* the guide's "1 of 4" is a step number, so it takes the accent;
            the part of the bar already reached is the primary */
         guideCount: getComputedStyle(document.querySelector('.guide-count')).color === rgbOf('--color-accent-ink'),
         guideBar: getComputedStyle(document.querySelector('.guide-bar li.is-current')).backgroundColor === primary,

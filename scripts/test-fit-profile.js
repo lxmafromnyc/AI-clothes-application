@@ -14,6 +14,9 @@
      - every part is optional; sizes and preferred fit alone are a
        complete profile, and an unknown size stays unknown
      - many brands and both categories, and no brand listed twice
+     - the guide's answers are kept per type of clothing, each type's
+       sizes and trouble spots its own, and one type's never pass for
+       another's; version 2's answers about a top are never moved into one
      - only the signed-in owner can read, change or delete it, and no
        request can name another account's profile
      - it appears in no other response, and nothing about it is logged
@@ -333,7 +336,7 @@ await test('weight, photos, ids and any other field it does not name are dropped
     assert.ok(!text.includes(word), `${word} was kept`);
   }
   assert.deepStrictEqual(Object.keys(profile).sort(),
-    ['anchor', 'brandSizes', 'fitGoal', 'fitPreferences', 'measurements', 'schemaVersion', 'troubleZones']);
+    ['anchor', 'brandSizes', 'fitGoal', 'fitPreferences', 'garments', 'measurements', 'schemaVersion', 'troubleZones']);
 });
 
 /* =========================================================
@@ -700,7 +703,7 @@ await test('only origins the site already trusts may call it from a browser', as
 /* =========================================================
    The fit guide: version 2's three answers
    ========================================================= */
-section('the fit guide (schema version 2)');
+section('the first fit guide, about a top (schema version 2)');
 
 const ANSWERS = () => ({
   anchor: { brand: SENTINEL_BRAND, size: 'm' },
@@ -709,14 +712,15 @@ const ANSWERS = () => ({
 });
 const kept = (profile) => ({ measurements: profile.measurements, brandSizes: profile.brandSizes, fitPreferences: profile.fitPreferences });
 
-await test('a stored version 1 profile reads as version 2, with the guide unanswered and nothing it held changed', async () => {
+await test('a stored version 1 profile reads as the current version, with the guide unanswered and nothing it held changed', async () => {
   const { jar, user } = await signUp('ada@example.test');
   const v1 = Object.assign(FULL(), { createdAt: '2026-09-01T00:00:00.000Z' });
   await store.set(fitProfiles.profileKey(user.id), v1);
 
   const { status, body } = await read(jar);
   assert.strictEqual(status, 200);
-  assert.strictEqual(body.profile.schemaVersion, 2);
+  assert.strictEqual(body.profile.schemaVersion, Schema.SCHEMA_VERSION);
+  assert.deepStrictEqual(body.profile.garments, {}, 'no type of clothing answered');
   assert.deepStrictEqual(kept(body.profile), kept(Schema.upgrade(v1)));
   assert.deepStrictEqual(body.profile.fitPreferences, { hoodies: 'relaxed', sweatshirts: 'oversized' },
     'per-category fits are read exactly as saved — never re-read through the new fit goal');
@@ -850,6 +854,195 @@ await test('one account’s guide answers are never another’s', async () => {
 });
 
 /* =========================================================
+   The fit guide per type of clothing: version 3
+   ========================================================= */
+section('the fit guide per type of clothing (schema version 3)');
+
+const JEANS = () => ({ anchor: { brand: 'levis', size: '32', length: '30' }, fitGoal: 'true-to-size', troubleZones: ['legs-long', 'thighs-tight'] });
+const HOODIES = () => ({ anchor: { brand: SENTINEL_BRAND, size: 'l' }, fitGoal: 'oversized', troubleZones: ['sleeves-short'] });
+const byType = (garments) => ({ garments });
+
+await test('every type of clothing is accepted with its own sizes and its own trouble spots', () => {
+  const cases = {
+    tshirts: { size: 'M', zone: 'chest-tight' },
+    hoodies: { size: 'XL', zone: 'neckline-tight' },
+    sweatshirts: { size: 'S', zone: 'waist-loose' },
+    pants: { size: '34', length: '32', zone: 'hips-tight' },
+    sweatpants: { size: 'L', zone: 'legs-baggy' },
+    jeans: { size: '30', length: '28', zone: 'legs-loose' },
+    other: { size: 'XS', zone: 'too-long' }
+  };
+  assert.deepStrictEqual(Object.keys(cases), Schema.GARMENTS.map((g) => g.id), 'every type is covered here');
+  for (const [id, c] of Object.entries(cases)) {
+    const anchor = Object.assign({ brand: 'Gap', size: c.size }, c.length ? { length: c.length } : {});
+    const { answers, errors } = Schema.normaliseGuide(byType({ [id]: { anchor, fitGoal: 'slim', troubleZones: [c.zone] } }));
+    assert.deepStrictEqual(errors, [], `${id}: ${JSON.stringify(errors)}`);
+    assert.strictEqual(answers.garments[id].anchor.size, c.size, id);
+    assert.deepStrictEqual(answers.garments[id].troubleZones, [c.zone], id);
+    const lengths = Schema.garmentOf(id).lengths;
+    assert.strictEqual('length' in answers.garments[id].anchor, Boolean(lengths), `${id}: a length only where the type has lengths`);
+  }
+  /* each group lists only its own spots */
+  assert.ok(!Schema.zonesFor('jeans').some((z) => z.id === 'sleeves-short'));
+  assert.ok(!Schema.zonesFor('tshirts').some((z) => z.id.startsWith('legs')));
+  assert.deepStrictEqual(Schema.zonesFor('sweatpants').map((z) => z.id), ['legs-length', 'waist-fit', 'thighs-tight', 'legs-baggy']);
+});
+
+await test('one type’s answers are refused for another: sizes, lengths and trouble spots, field by field', () => {
+  for (const [garments, field] of [
+    [{ jeans: { anchor: { size: 'M' } } }, 'garments.jeans.anchor.size'],
+    [{ tshirts: { anchor: { size: '32' } } }, 'garments.tshirts.anchor.size'],
+    [{ tshirts: { anchor: { size: 'M', length: '32' } } }, 'garments.tshirts.anchor.length'],
+    [{ pants: { anchor: { size: 'M', length: '32' } } }, 'garments.pants.anchor.length'],
+    [{ jeans: { anchor: { size: '32', length: '50' } } }, 'garments.jeans.anchor.length'],
+    [{ jeans: { troubleZones: ['sleeves-short'] } }, 'garments.jeans.troubleZones'],
+    [{ tshirts: { troubleZones: ['legs-long'] } }, 'garments.tshirts.troubleZones'],
+    [{ sweatpants: { troubleZones: ['legs-long'] } }, 'garments.sweatpants.troubleZones'],
+    [{ hoodies: { fitGoal: 'fitted' } }, 'garments.hoodies.fitGoal'],
+    [{ skirts: { fitGoal: 'slim' } }, 'garments'],
+    [{ jeans: 'Levi’s 32' }, 'garments.jeans'],
+    ['jeans', 'garments']
+  ]) {
+    const { answers, errors } = Schema.normaliseGuide(byType(garments));
+    assert.ok(errors.some((e) => e.field === field), `${JSON.stringify(garments)}: expected ${field}, got ${JSON.stringify(errors)}`);
+    assert.deepStrictEqual(answers, {}, 'nothing is accepted alongside an error');
+  }
+});
+
+await test('a version 2 profile reads as version 3 with its answers about a top kept where they were, and no type answered', async () => {
+  const { jar, user } = await signUp('ada@example.test');
+  const v2 = Object.assign(FULL(), { schemaVersion: 2, anchor: { brand: 'UNIQLO', size: 'M' }, fitGoal: 'oversized', troubleZones: ['waist-loose'] });
+  await store.set(fitProfiles.profileKey(user.id), v2);
+
+  const { body } = await read(jar);
+  assert.strictEqual(body.profile.schemaVersion, 3);
+  assert.deepStrictEqual(body.profile.garments, {}, 'the top is not guessed to be a T-shirt, a hoodie or a sweatshirt');
+  assert.deepStrictEqual([body.profile.anchor, body.profile.fitGoal, body.profile.troubleZones],
+    [{ brand: 'UNIQLO', size: 'M' }, 'oversized', ['waist-loose']]);
+  assert.deepStrictEqual(kept(body.profile), kept(Schema.upgrade(v2)));
+  /* and shown in the words they were asked in */
+  assert.deepStrictEqual(Schema.describeGuide(body.profile),
+    { anchor: 'UNIQLO · M', fitGoal: 'Cozy / Oversized', troubleZones: 'Fits my chest but bags out at my waist' });
+});
+
+await test('the guide saves one type, and every other type, the answers about a top and the rest stay as they were', async () => {
+  const { jar, user } = await signUp('ada@example.test');
+  await store.set(fitProfiles.profileKey(user.id), Object.assign(FULL(), { schemaVersion: 2, anchor: { brand: 'Nike', size: 'S' }, fitGoal: 'slim', troubleZones: [] }));
+  const before = (await read(jar)).body.profile;
+
+  let res = await guide(jar, byType({ hoodies: HOODIES() }));
+  assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+  assert.strictEqual(res.body.saved, true);
+  res = await guide(jar, byType({ jeans: JEANS() }));
+  const profile = res.body.profile;
+
+  assert.deepStrictEqual(profile.garments, {
+    hoodies: { anchor: { brand: SENTINEL_BRAND, size: 'L' }, fitGoal: 'oversized', troubleZones: ['sleeves-short'] },
+    jeans: { anchor: { brand: 'Levi’s', size: '32', length: '30' }, fitGoal: 'true-to-size', troubleZones: ['legs-long', 'thighs-tight'] }
+  }, 'oversized hoodies and true-to-size jeans, each kept apart');
+  assert.deepStrictEqual(Object.keys(profile.garments), ['hoodies', 'jeans']);
+  assert.deepStrictEqual([profile.anchor, profile.fitGoal, profile.troubleZones], [before.anchor, before.fitGoal, before.troubleZones],
+    'the answers about a top are untouched');
+  assert.deepStrictEqual(kept(profile), kept(before));
+  assert.deepStrictEqual((await read(jar)).body.profile, profile, 'and read back the same');
+});
+
+await test('within a type, a skipped step keeps its answer, null clears one, and a type with nothing left is removed', async () => {
+  const { jar } = await signUp('ada@example.test');
+  await guide(jar, byType({ jeans: JEANS(), tshirts: { fitGoal: 'slim' } }));
+
+  /* step 4 changed to "None of these"; steps 2 and 3 skipped */
+  let profile = (await guide(jar, byType({ jeans: { troubleZones: [] } }))).body.profile;
+  assert.deepStrictEqual(profile.garments.jeans, { anchor: { brand: 'Levi’s', size: '32', length: '30' }, fitGoal: 'true-to-size', troubleZones: [] });
+
+  /* waist not sure, length known */
+  profile = (await guide(jar, byType({ jeans: { anchor: { brand: 'Wrangler', size: 'Not sure', length: '32' } } }))).body.profile;
+  assert.deepStrictEqual(profile.garments.jeans.anchor, { brand: 'Wrangler', size: null, length: '32' }, 'not sure is unknown, never a size');
+
+  profile = (await guide(jar, byType({ jeans: { fitGoal: null } }))).body.profile;
+  assert.strictEqual(profile.garments.jeans.fitGoal, null);
+
+  profile = (await guide(jar, byType({ tshirts: { fitGoal: null } }))).body.profile;
+  assert.ok(!('tshirts' in profile.garments), 'nothing said about T-shirts any more, so no entry');
+  assert.ok(profile.garments.jeans, 'jeans untouched');
+
+  profile = (await guide(jar, byType({ jeans: null }))).body.profile;
+  assert.deepStrictEqual(profile.garments, {});
+});
+
+await test('the fit profile page’s save sends the whole map; a page that leaves it out cannot erase it', async () => {
+  const { jar } = await signUp('ada@example.test');
+  await guide(jar, byType({ hoodies: HOODIES(), jeans: JEANS() }));
+
+  /* a page from before version 3: no garments at all, so they are kept */
+  let profile = (await save(jar, FULL())).body.profile;
+  assert.deepStrictEqual(Object.keys(profile.garments), ['hoodies', 'jeans']);
+  profile = (await save(jar, Object.assign(FULL(), { schemaVersion: 2 }))).body.profile;
+  assert.deepStrictEqual(Object.keys(profile.garments), ['hoodies', 'jeans']);
+
+  /* version 3, as the page sends it: jeans edited, hoodies removed, an empty card dropped */
+  const res = await save(jar, Object.assign(FULL(), {
+    schemaVersion: 3,
+    garments: {
+      jeans: { anchor: { brand: 'Levi’s', size: '33', length: null }, fitGoal: 'slim', troubleZones: null },
+      sweatpants: { anchor: null, fitGoal: null, troubleZones: null }
+    }
+  }));
+  assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+  assert.deepStrictEqual(res.body.profile.garments, {
+    jeans: { anchor: { brand: 'Levi’s', size: '33', length: null }, fitGoal: 'slim', troubleZones: null }
+  });
+
+  /* and it is checked by the same rules */
+  const refused = await save(jar, Object.assign(FULL(), { schemaVersion: 3, garments: { jeans: { anchor: { size: 'M' } } } }));
+  assert.strictEqual(refused.status, 400);
+  assert.deepStrictEqual(refused.body.errors.map((e) => e.field), ['garments.jeans.anchor.size']);
+});
+
+await test('a guide page loaded before version 3 still saves its answers about a top, and touches no type', async () => {
+  const { jar } = await signUp('ada@example.test');
+  await guide(jar, byType({ jeans: JEANS() }));
+  const profile = (await guide(jar, ANSWERS())).body.profile;
+  assert.deepStrictEqual(profile.anchor, { brand: SENTINEL_BRAND, size: 'M' });
+  assert.deepStrictEqual(profile.troubleZones, ['sleeves-short', 'waist-loose']);
+  assert.deepStrictEqual(Object.keys(profile.garments), ['jeans'], 'the jeans are untouched');
+});
+
+await test('per-type answers need a session and the CSRF token, and are never another account’s', async () => {
+  assert.strictEqual((await guide({}, byType({ jeans: JEANS() }))).status, 401);
+  const ada = await signUp('ada@example.test');
+  const bea = await signUp('bea@example.test');
+  const forged = await guide(ada.jar, byType({ jeans: JEANS() }), { omitCsrf: true });
+  assert.strictEqual(forged.status, 403);
+  assert.strictEqual(await store.get(fitProfiles.profileKey(ada.user.id)), null);
+
+  await guide(ada.jar, byType({ jeans: JEANS() }));
+  await guide(bea.jar, byType({ jeans: { fitGoal: 'oversized' } }));
+  assert.strictEqual((await read(ada.jar)).body.profile.garments.jeans.fitGoal, 'true-to-size');
+  assert.deepStrictEqual((await read(bea.jar)).body.profile.garments, { jeans: { anchor: null, fitGoal: 'oversized', troubleZones: null } });
+});
+
+await test('a profile from a later version is not saved over by a per-type answer', async () => {
+  const { jar, user } = await signUp('ada@example.test');
+  const later = { schemaVersion: Schema.SCHEMA_VERSION + 1, garments: { jeans: { fitGoal: 'slim' } }, somethingNew: true };
+  await store.set(fitProfiles.profileKey(user.id), later);
+  const res = await guide(jar, byType({ jeans: JEANS() }));
+  assert.strictEqual(res.status, 409);
+  assert.deepStrictEqual(await store.get(fitProfiles.profileKey(user.id)), later);
+});
+
+await test('each type’s answers are said in its own words, and never as a size suggestion', () => {
+  assert.deepStrictEqual(Schema.describeGarment('jeans', { anchor: { brand: 'Levi’s', size: '32', length: '30' }, fitGoal: 'oversized', troubleZones: ['legs-long'] }),
+    { garment: 'Jeans', anchor: 'Levi’s · 32 × 30', fitGoal: 'Relaxed / Oversized', troubleZones: 'Legs are too long' });
+  assert.strictEqual(Schema.describeGarment('pants', { anchor: { brand: null, size: '34', length: null } }).anchor, 'Brand not said · waist 34');
+  assert.strictEqual(Schema.describeGarment('tshirts', { anchor: { brand: 'Nike', size: null } }).anchor, 'Nike · size not sure');
+  assert.deepStrictEqual(Schema.describeGarment('hoodies', null),
+    { garment: 'Hoodies', anchor: 'Not answered', fitGoal: 'Not answered', troubleZones: 'Not answered' });
+  assert.strictEqual(Schema.describeGarment('sweatpants', { troubleZones: [] }).troubleZones, 'None of these');
+  assert.strictEqual(Schema.isEmpty(Object.assign(Schema.empty(), { garments: { jeans: { anchor: null, fitGoal: null, troubleZones: [] } } })), false);
+});
+
+/* =========================================================
    What other responses and the logs say
    ========================================================= */
 section('privacy');
@@ -858,9 +1051,10 @@ await test('/api/account says nothing about the fit profile, and its shape has n
   const { jar } = await signUp('ada@example.test');
   await save(jar, FULL());
   await guide(jar, ANSWERS());
+  await guide(jar, byType({ jeans: JEANS() }));
   const { body } = await call(accountEndpoint, { method: 'GET', jar });
   const text = JSON.stringify(body);
-  for (const word of [SENTINEL_BRAND, '43.3', '69.4', 'measurements', 'brandSizes', 'fitPreferences', 'oversized', 'fitprofile', 'anchor', 'fitGoal', 'troubleZones', 'true-to-size', 'sleeves-short']) {
+  for (const word of [SENTINEL_BRAND, '43.3', '69.4', 'measurements', 'brandSizes', 'fitPreferences', 'oversized', 'fitprofile', 'anchor', 'fitGoal', 'troubleZones', 'true-to-size', 'sleeves-short', 'garments', 'jeans', 'legs-long', 'Levi']) {
     assert.ok(!text.includes(word), `/api/account carries ${word}`);
   }
   assert.deepStrictEqual(Object.keys(body).sort(), [
@@ -911,7 +1105,7 @@ await test('no measurement, brand, size or preference ever appears in the logs',
   const all = logged.join('\n');
   assert.ok(all.length > 0, 'the suite should have logged something, or this proves nothing');
   for (const value of [SENTINEL_BRAND, '43.3', '69.4', '39.5', 'about-right', 'too-large', 'oversized', 'relaxed', 'brandSizes', 'measurements',
-    'true-to-size', 'sleeves-short', 'waist-loose', 'troubleZones', 'fitGoal', 'anchor']) {
+    'true-to-size', 'sleeves-short', 'waist-loose', 'troubleZones', 'fitGoal', 'anchor', 'garments', 'legs-long', 'thighs-tight', 'Levi']) {
     assert.ok(!all.includes(value), `${value} was logged`);
   }
 });
