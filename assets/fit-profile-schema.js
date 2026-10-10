@@ -5,35 +5,52 @@
    Every part of it is optional:
 
      measurements     height and chest for tops; waist and hip kept for
-                      the categories that come later. One unit for all
-                      of them, chosen by the shopper: inches or
-                      centimetres.
+                      bottoms. One unit for all of them, chosen by the
+                      shopper: inches or centimetres.
      brandSizes       the size somebody usually buys in a brand, for a
                       category, and how it fits them.
      fitPreferences   fitted, regular, relaxed or oversized — per
-                      category, so a hoodie and a future t-shirt can
-                      differ.
+                      category, so a hoodie and a sweatshirt can differ.
 
-   And, from version 2, the three answers of the fit guide on the home
-   page (assets/guide.js):
+   From version 3, the fit guide on the home page (assets/guide.js)
+   answers per type of clothing — T-shirts, hoodies, sweatshirts, pants,
+   sweatpants, jeans, or something else:
 
-     anchor           a top the shopper owns that fits them perfectly:
-                      its brand and its size. A reference point, not a
-                      measurement — nothing here turns "UNIQLO M" into a
-                      chest size. That needs the brand's verified size
-                      chart, which recommendation code will have to look
-                      up before it estimates anything.
-     fitGoal          how they like clothes to sit, overall: slim, true
-                      to size, or cozy/oversized. It sits beside the
-                      per-category fitPreferences and never rewrites them;
-                      FIT_GOALS says which per-category fits each one is
-                      nearest, without pretending the two lists are one.
-     troubleZones     where ordinary clothes go wrong on them — sleeves,
-                      torso length, neckline, a loose waist. About
-                      garments, not bodies. An empty list means "none of
-                      these"; null means the question was not answered.
+     garments         { <type>: { anchor, fitGoal, troubleZones } }, one
+                      entry for each type the shopper has answered, keyed
+                      by its id in GARMENTS. Nothing answered for one
+                      type is ever read as an answer for another: a
+                      T-shirt that fits is not a pair of jeans that fits.
 
-   Each of the three is null until it is answered.
+       anchor         a piece of that type the shopper owns that fits
+                      perfectly: its brand and its size, and for jeans
+                      and pants sized by the waist, its length. A
+                      reference point, not a measurement — nothing here
+                      turns "Levi's 32 × 32" into a waist. That needs the
+                      brand's verified size chart, which recommendation
+                      code will have to look up before it estimates
+                      anything.
+       fitGoal        how they like that type to fit: slim, true to size,
+                      or relaxed/oversized. Oversized hoodies and
+                      regular jeans are two answers, not one.
+       troubleZones   where that type usually goes wrong on them, from
+                      that type's own list — sleeves for tops, legs and
+                      seat for jeans. About garments, not bodies. An
+                      empty list means "none of these"; null means the
+                      question was not answered.
+
+     Each of the three is null until it is answered, and a type with all
+     three unanswered is not kept at all.
+
+   And, kept from version 2, the first guide's three answers, which were
+   about "a top", not about any one type:
+
+     anchor, fitGoal, troubleZones   at the top level, exactly as saved.
+                      Version 3 never moves them into a type — the shopper
+                      never said whether that top was a T-shirt or a
+                      hoodie — and the new guide never writes them. The
+                      fit profile page shows them, in the words they were
+                      asked in, and can clear them.
 
    One file, loaded by the page and required by api/fit-profile.js, so
    the rules the page checks while somebody types are the rules the
@@ -57,10 +74,10 @@
    Every stored profile carries `schemaVersion`. upgrade() reads any
    version this file knows and returns the current shape, filling what
    an older profile never had with "not said". A new version adds a step
-   to UPGRADES; a new category is a row in CATEGORIES. Neither touches a
-   profile already saved: a version 1 profile reads as version 2 with
-   the guide's three answers unanswered, and its measurements, usual
-   sizes and per-category fits exactly as they were.
+   to UPGRADES; a new type of clothing is a row in GARMENTS. Neither
+   touches a profile already saved: a version 1 or 2 profile reads as
+   version 3 with no types answered, and its measurements, usual sizes,
+   per-category fits and version 2 answers exactly as they were.
 
    A save that leaves out a field added after version 1 keeps the stored
    value (api/_fit-profile.js), so a page that predates the field cannot
@@ -75,7 +92,7 @@
 (function (global) {
   'use strict';
 
-  const SCHEMA_VERSION = 2;
+  const SCHEMA_VERSION = 3;
 
   const UNITS = ['in', 'cm'];
   const UNIT_NAME = { in: 'inches', cm: 'centimetres' };
@@ -94,8 +111,10 @@
   };
   const MEASUREMENT_KEYS = Object.keys(MEASUREMENTS);
 
-  /* Tops first: hoodies and sweatshirts. A later category is one more
-     row here, and its fit preference and brand sizes need nothing else. */
+  /* The categories the fit profile page's usual sizes and preferred fit
+     cover: tops, hoodies and sweatshirts. The guide's types of clothing
+     are GARMENTS below; bringing these two lists together is later work,
+     and until then neither is read as the other. */
   const CATEGORIES = [
     { id: 'hoodies', label: 'Hoodies', group: 'tops' },
     { id: 'sweatshirts', label: 'Sweatshirts', group: 'tops' }
@@ -123,47 +142,135 @@
 
   const LIMITS = { brands: 50, brandLength: 60, sizeLength: 16 };
 
-  /* ---------- the fit guide's answers (version 2) ---------- */
+  /* ---------- the fit guide: types of clothing (version 3) ----------
+     `label` is the card; `one` and `many` are the words a question uses
+     ("What brand and size of T-shirt…", "How do you like your jeans…").
+     Only the id is ever stored, so no stored answer depends on how a
+     label is spelled or pluralised.
 
-  /* Offered in the guide's brand list. Anything else is typed under
-     "Other", and one of these typed in any case is stored as spelled
-     here. */
-  const ANCHOR_BRANDS = ['Nike', 'UNIQLO', 'Zara', 'Carhartt'];
-  /* The guide's sizes. "Not sure" is stored as null, never as a size;
-     COMMON_SIZES is accepted too, for a later editor that offers more. */
-  const ANCHOR_SIZES = ['XS', 'S', 'M', 'L', 'XL', 'XXL'];
+     `group` picks the trouble spots, the brands offered and the fit
+     cards' wording; `sizes` the sizes offered; `lengths` whether a waist
+     size can carry a length, as jeans and pants are sold. "Other" is
+     something the guide does not cover by name, so it is asked about in
+     words that fit any garment. */
+  const GARMENTS = [
+    { id: 'tshirts', label: 'T-shirts', one: 'T-shirt', many: 'T-shirts', group: 'tops', sizes: 'letter' },
+    { id: 'hoodies', label: 'Hoodies', one: 'hoodie', many: 'hoodies', group: 'tops', sizes: 'letter' },
+    { id: 'sweatshirts', label: 'Sweatshirts', one: 'sweatshirt', many: 'sweatshirts', group: 'tops', sizes: 'letter' },
+    { id: 'pants', label: 'Pants', one: 'pants', many: 'pants', group: 'trousers', sizes: 'waist-or-letter', lengths: true },
+    { id: 'sweatpants', label: 'Sweatpants', one: 'sweatpants', many: 'sweatpants', group: 'sweatpants', sizes: 'letter' },
+    { id: 'jeans', label: 'Jeans', one: 'jeans', many: 'jeans', group: 'trousers', sizes: 'waist', lengths: true },
+    { id: 'other', label: 'Other', one: null, many: 'clothes', group: 'other', sizes: 'letter' }
+  ];
+  const GARMENT_IDS = GARMENTS.map((g) => g.id);
+
+  /* The sizes the guide offers. "Not sure" is stored as null, never as a
+     size. Letter sizes from COMMON_SIZES and any whole waist in
+     WAIST_RANGE are accepted too, for a later editor that offers more. */
+  const LETTER_SIZES = ['XS', 'S', 'M', 'L', 'XL', 'XXL', '3XL'];
+  const WAIST_SIZES = ['26', '27', '28', '29', '30', '31', '32', '33', '34', '36', '38', '40', '42'];
+  const LENGTHS = ['28', '29', '30', '31', '32', '33', '34', '36'];
+  const WAIST_RANGE = [24, 50];
+  const LENGTH_RANGE = [26, 38];
+
+  /* Offered in the guide's brand list for each group; anything else is
+     typed under "Other brand", with BRAND_SUGGESTIONS to pick from. Any
+     of these typed in any case is stored as spelled here. */
+  const BRANDS = {
+    tops: ['Nike', 'UNIQLO', 'Zara', 'H&M', 'Carhartt'],
+    trousers: ['Levi’s', 'UNIQLO', 'Zara', 'Gap', 'Carhartt'],
+    sweatpants: ['Nike', 'Adidas', 'UNIQLO', 'Champion', 'Lululemon'],
+    other: ['Nike', 'UNIQLO', 'Zara', 'H&M', 'Gap']
+  };
+  const ANCHOR_BRANDS = Object.keys(BRANDS).reduce((all, group) => all.concat(BRANDS[group].filter((b) => !all.includes(b))), []);
+  const BRAND_SUGGESTIONS = ['Abercrombie & Fitch', 'Adidas', 'American Eagle', 'Banana Republic', 'Champion', 'Dickies',
+    'Everlane', 'Gap', 'H&M', 'J.Crew', 'Lacoste', 'Lee', 'Levi’s', 'Lululemon', 'Madewell', 'Old Navy', 'Patagonia',
+    'Puma', 'Ralph Lauren', 'The North Face', 'Under Armour', 'Wrangler'];
 
   /* `nearest` is the per-category fit each goal sits closest to, for
-     code that has to read the two together. Cozy/oversized spans two of
-     them, and is kept as one answer rather than forced into either. */
+     code that has to read the two together. Relaxed/oversized spans two
+     of them, and is kept as one answer rather than forced into either.
+     `hint` is the card's second line, in words for the group. */
   const FIT_GOALS = [
-    { id: 'slim', label: 'Tight / Slim Fit', nearest: ['fitted'] },
-    { id: 'true-to-size', label: 'True to Size', nearest: ['regular'] },
-    { id: 'oversized', label: 'Cozy / Oversized', nearest: ['relaxed', 'oversized'] }
+    {
+      id: 'slim', label: 'Tight / Slim', nearest: ['fitted'],
+      hint: { tops: 'Close to the body', trousers: 'Slim or skinny leg', sweatpants: 'Tapered and close', other: 'Close to the body' }
+    },
+    {
+      id: 'true-to-size', label: 'True to Size', nearest: ['regular'],
+      hint: { tops: 'Just as it’s labelled', trousers: 'Regular, straight leg', sweatpants: 'Regular, not baggy', other: 'Just as it’s labelled' }
+    },
+    {
+      id: 'oversized', label: 'Relaxed / Oversized', nearest: ['relaxed', 'oversized'],
+      hint: { tops: 'Room to move', trousers: 'Loose or baggy leg', sweatpants: 'Baggy and roomy', other: 'Room to move' }
+    }
   ];
   const FIT_GOAL_IDS = FIT_GOALS.map((g) => g.id);
 
-  const TROUBLE_ZONES = [
-    { id: 'sleeves-short', label: 'Sleeves are always too short' },
-    { id: 'torso-short', label: 'Torso is always too short' },
-    { id: 'neckline-tight', label: 'Necklines are too tight' },
-    { id: 'waist-loose', label: 'Fits my chest but bags out at my waist' }
-  ];
-  const TROUBLE_ZONE_IDS = TROUBLE_ZONES.map((z) => z.id);
+  /* Each group's own list. A spot from one list is refused for a type
+     in another: legs are not a T-shirt's problem. */
+  const TROUBLE_ZONES = {
+    tops: [
+      { id: 'sleeves-short', label: 'Sleeves are too short' },
+      { id: 'torso-short', label: 'Torso is too short' },
+      { id: 'neckline-tight', label: 'Neckline is too tight' },
+      { id: 'chest-tight', label: 'Too tight across the chest' },
+      { id: 'waist-loose', label: 'Fits my chest but is too loose around the waist' }
+    ],
+    trousers: [
+      { id: 'legs-short', label: 'Legs are too short' },
+      { id: 'legs-long', label: 'Legs are too long' },
+      { id: 'waist-tight', label: 'Too tight around the waist' },
+      { id: 'hips-tight', label: 'Too tight around the hips or seat' },
+      { id: 'thighs-tight', label: 'Too tight around the thighs' },
+      { id: 'legs-loose', label: 'Waist fits but legs are too loose' }
+    ],
+    sweatpants: [
+      { id: 'legs-length', label: 'Legs are too short or too long' },
+      { id: 'waist-fit', label: 'Waist is too tight or too loose' },
+      { id: 'thighs-tight', label: 'Too tight around the thighs' },
+      { id: 'legs-baggy', label: 'Too baggy through the legs' }
+    ],
+    other: [
+      { id: 'too-short', label: 'Too short' },
+      { id: 'too-long', label: 'Too long' },
+      { id: 'too-tight', label: 'Too tight' },
+      { id: 'too-loose', label: 'Too loose' }
+    ]
+  };
 
-  /* The fields version 2 added. A save that leaves one out keeps what is
-     stored (see the header). */
-  const GUIDE_FIELDS = ['anchor', 'fitGoal', 'troubleZones'];
+  /* The version 2 guide asked about "a top", in these words. Its answers
+     are kept and shown as they were asked, never re-read through the
+     lists above. */
+  const LEGACY_GUIDE = {
+    fitGoals: { slim: 'Tight / Slim Fit', 'true-to-size': 'True to Size', oversized: 'Cozy / Oversized' },
+    troubleZones: [
+      { id: 'sleeves-short', label: 'Sleeves are always too short' },
+      { id: 'torso-short', label: 'Torso is always too short' },
+      { id: 'neckline-tight', label: 'Necklines are too tight' },
+      { id: 'waist-loose', label: 'Fits my chest but bags out at my waist' }
+    ]
+  };
+  const LEGACY_ZONE_IDS = LEGACY_GUIDE.troubleZones.map((z) => z.id);
+  /* The version 2 sizes, for its anchor; still accepted from a page
+     loaded before version 3. */
+  const ANCHOR_SIZES = ['XS', 'S', 'M', 'L', 'XL', 'XXL'];
+
+  /* The fields added after version 1. A save that leaves one out keeps
+     what is stored (see the header). */
+  const LEGACY_FIELDS = ['anchor', 'fitGoal', 'troubleZones'];
+  const GUIDE_FIELDS = LEGACY_FIELDS.concat('garments');
 
   /* What somebody types when they do not know their size. Each is read
      as "unknown" — never as a size. */
-  const UNKNOWN_SIZE = new Set(['unknown', 'not sure', 'unsure', 'dont know', 'don’t know', "don't know", 'idk', '?', 'n/a', 'na', '-']);
+  const UNKNOWN_SIZE = new Set(['unknown', 'not sure', 'not-sure', 'unsure', 'dont know', 'don’t know', "don't know", 'idk', '?', 'n/a', 'na', '-']);
   const LETTER_SIZE = /^(?:[2-6]?x{0,4}[sl]|m|[2-6]x)$/i;
   const SIZE_CHARACTERS = /^[\p{L}\p{N} ./+\-()]+$/u;
 
   /* ---------- small helpers ---------- */
 
   const isPlainObject = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+  const has = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
   const round1 = (value) => Math.round(value * 10) / 10;
   const blank = (value) => value === null || value === undefined || (typeof value === 'string' && !value.trim());
 
@@ -180,6 +287,25 @@
     .replace(/[^\p{L}\p{N}]+/gu, '');
 
   const rangeOf = (key, unit) => (MEASUREMENTS[key] && MEASUREMENTS[key].range[unit]) || null;
+
+  const garmentOf = (id) => GARMENTS.find((g) => g.id === id) || null;
+  const zonesFor = (id) => { const g = garmentOf(id); return g ? TROUBLE_ZONES[g.group] : []; };
+  const brandsFor = (id) => { const g = garmentOf(id); return g ? BRANDS[g.group] : []; };
+  const isWaistSize = (size) => typeof size === 'string' && /^\d{2}$/.test(size);
+  const inRange = (text, [min, max]) => /^\d{2}$/.test(text) && Number(text) >= min && Number(text) <= max;
+
+  /* The sizes the guide offers for a type: letter sizes, waist sizes,
+     or both (pants come either way), and lengths where a waist can
+     carry one. */
+  function sizesFor(id) {
+    const g = garmentOf(id);
+    if (!g) return null;
+    return {
+      letter: g.sizes === 'waist' ? null : LETTER_SIZES,
+      waist: g.sizes === 'letter' ? null : WAIST_SIZES,
+      lengths: g.lengths ? LENGTHS : null
+    };
+  }
 
   /* A converted value, shown as such. Used by the page when the shopper
      switches unit, never by normalise(). */
@@ -247,16 +373,35 @@
       fitPreferences: {},
       anchor: null,
       fitGoal: null,
-      troubleZones: null
+      troubleZones: null,
+      garments: {}
     };
   }
 
+  const emptyGarment = () => ({ anchor: null, fitGoal: null, troubleZones: null });
+
+  /* Nothing said about this type. "None of these" is an answer, so an
+     empty list of trouble spots is not empty. */
+  const garmentIsEmpty = (entry) => !entry || (!entry.anchor && !entry.fitGoal && !Array.isArray(entry.troubleZones));
+
   /* Each step takes a profile of version N and returns version N + 1.
-     Version 1 had no guide; its answers start unanswered, and nothing
-     version 1 held is touched. */
+     Version 1 had no guide; version 2's guide asked about "a top". Each
+     step adds what is new, unanswered, and touches nothing older. */
   const UPGRADES = {
-    1: (profile) => Object.assign({}, profile, { schemaVersion: 2, anchor: null, fitGoal: null, troubleZones: null })
+    1: (profile) => Object.assign({}, profile, { schemaVersion: 2, anchor: null, fitGoal: null, troubleZones: null }),
+    2: (profile) => Object.assign({}, profile, { schemaVersion: 3, garments: {} })
   };
+
+  /* A stored anchor in its shape for the type: a length only where the
+     type has lengths. Null when nothing in it was said. */
+  function shapeAnchor(garment, raw) {
+    if (!isPlainObject(raw)) return null;
+    const brand = typeof raw.brand === 'string' ? raw.brand : null;
+    const size = typeof raw.size === 'string' ? raw.size : null;
+    const length = garment && garment.lengths && typeof raw.length === 'string' ? raw.length : null;
+    if (!brand && !size && !length) return null;
+    return garment && garment.lengths ? { brand, size, length } : { brand, size };
+  }
 
   /* The current shape of whatever was stored, or null for something
      this version cannot read (a later schema, or not a profile at all).
@@ -292,20 +437,34 @@
       if (typeof prefs[category] === 'string') shaped.fitPreferences[category] = prefs[category];
     });
 
-    if (isPlainObject(current.anchor)) {
-      const brand = typeof current.anchor.brand === 'string' ? current.anchor.brand : null;
-      const size = typeof current.anchor.size === 'string' ? current.anchor.size : null;
-      shaped.anchor = brand || size ? { brand, size } : null;
-    }
+    /* version 2's answers about a top: as stored, where they were */
+    shaped.anchor = shapeAnchor(null, current.anchor);
     shaped.fitGoal = typeof current.fitGoal === 'string' ? current.fitGoal : null;
     shaped.troubleZones = Array.isArray(current.troubleZones)
       ? current.troubleZones.filter((zone) => typeof zone === 'string')
       : null;
 
+    /* version 3's answers, type by type, in GARMENTS order */
+    const garments = isPlainObject(current.garments) ? current.garments : {};
+    GARMENTS.forEach((garment) => {
+      const raw = garments[garment.id];
+      if (!isPlainObject(raw)) return;
+      const entry = {
+        anchor: shapeAnchor(garment, raw.anchor),
+        fitGoal: typeof raw.fitGoal === 'string' ? raw.fitGoal : null,
+        troubleZones: Array.isArray(raw.troubleZones) ? raw.troubleZones.filter((zone) => typeof zone === 'string') : null
+      };
+      if (!garmentIsEmpty(entry)) shaped.garments[garment.id] = entry;
+    });
+
     if (typeof current.createdAt === 'string') shaped.createdAt = current.createdAt;
     if (typeof current.updatedAt === 'string') shaped.updatedAt = current.updatedAt;
     return shaped;
   }
+
+  /* Whether version 2's answers about a top are there at all. */
+  const hasLegacyGuide = (profile) => Boolean(profile)
+    && Boolean(profile.anchor || profile.fitGoal || Array.isArray(profile.troubleZones));
 
   /* Whether anything has been said at all. */
   function isEmpty(profile) {
@@ -314,41 +473,183 @@
     return MEASUREMENT_KEYS.every((key) => m[key] === null || m[key] === undefined)
       && !(profile.brandSizes || []).length
       && !Object.keys(profile.fitPreferences || {}).length
-      && !profile.anchor
-      && !profile.fitGoal
-      /* "none of these" is an answer, so an empty list is not empty */
-      && !Array.isArray(profile.troubleZones);
+      && !hasLegacyGuide(profile)
+      && !Object.keys(profile.garments || {}).length;
   }
 
-  /* The guide's answers in words, for every page that shows them. Never
-     a size suggestion: only what the shopper said. */
+  /* ---------- saying the answers in words ----------
+     For every page that shows them. Never a size suggestion: only what
+     the shopper said. */
+
+  /* Version 2's answers about a top, in the words it asked them in. */
   function describeGuide(profile) {
     const p = profile || {};
     const a = p.anchor;
-    const goal = FIT_GOALS.find((g) => g.id === p.fitGoal);
+    const goal = LEGACY_GUIDE.fitGoals[p.fitGoal];
     const zones = Array.isArray(p.troubleZones)
-      ? p.troubleZones.map((id) => (TROUBLE_ZONES.find((z) => z.id === id) || {}).label).filter(Boolean)
+      ? p.troubleZones.map((id) => (LEGACY_GUIDE.troubleZones.find((z) => z.id === id) || {}).label).filter(Boolean)
       : null;
     return {
       anchor: a && (a.brand || a.size) ? `${a.brand || 'Brand not said'} · ${a.size || 'size not sure'}` : 'Not answered',
+      fitGoal: goal || 'Not answered',
+      troubleZones: zones === null ? 'Not answered' : (zones.length ? zones.join('; ') : 'None of these')
+    };
+  }
+
+  /* One type's size, as somebody would say it: "M", "32 × 32",
+     "waist 32", "size not sure". */
+  function describeSize(anchor) {
+    if (anchor.size && anchor.length) return `${anchor.size} × ${anchor.length}`;
+    if (anchor.size) return isWaistSize(anchor.size) ? `waist ${anchor.size}` : anchor.size;
+    if (anchor.length) return `length ${anchor.length}, waist not sure`;
+    return 'size not sure';
+  }
+
+  /* One type's answers, in the words its own questions use. */
+  function describeGarment(id, entry) {
+    const garment = garmentOf(id);
+    const e = entry || {};
+    const a = e.anchor;
+    const goal = FIT_GOALS.find((g) => g.id === e.fitGoal);
+    const zones = Array.isArray(e.troubleZones)
+      ? e.troubleZones.map((zone) => (zonesFor(id).find((z) => z.id === zone) || {}).label).filter(Boolean)
+      : null;
+    return {
+      garment: garment ? garment.label : id,
+      anchor: a && (a.brand || a.size || a.length) ? `${a.brand || 'Brand not said'} · ${describeSize(a)}` : 'Not answered',
       fitGoal: goal ? goal.label : 'Not answered',
       troubleZones: zones === null ? 'Not answered' : (zones.length ? zones.join('; ') : 'None of these')
     };
   }
 
+  /* ---------- checking the guide's answers ---------- */
+
+  const isUnknown = (text) => UNKNOWN_SIZE.has(text.toLowerCase());
+
+  function readBrand(raw, field, fail) {
+    if (blank(raw)) return { ok: true, brand: null };
+    const text = typeof raw === 'string' ? cleanText(raw) : '';
+    if (!text || !brandKey(text)) { fail(field, 'Use letters or numbers for the brand name.'); return { ok: false }; }
+    if (text.length > LIMITS.brandLength) { fail(field, `Brand names can be up to ${LIMITS.brandLength} characters.`); return { ok: false }; }
+    return { ok: true, brand: ANCHOR_BRANDS.find((b) => brandKey(b) === brandKey(text)) || text };
+  }
+
+  function sizeMessage(garment) {
+    const letters = `a size from ${LETTER_SIZES[0]} to ${LETTER_SIZES[LETTER_SIZES.length - 1]}`;
+    if (garment.sizes === 'waist') return `Choose a waist size for ${garment.many}, like 32, or Not sure.`;
+    if (garment.sizes === 'waist-or-letter') return `Choose a waist size, like 32, or ${letters}, or Not sure.`;
+    return `Choose ${letters}, or Not sure.`;
+  }
+
+  /* One type's anchor: brand, a size from that type's own sizes, and a
+     length only where the type has lengths and the size is a waist. */
+  function readGarmentAnchor(garment, raw, at, fail) {
+    if (raw === null) return { ok: true, anchor: null };
+    if (!isPlainObject(raw)) { fail(at, 'Send the piece that fits as a brand and a size.'); return { ok: false }; }
+    let ok = true;
+
+    const brand = readBrand(raw.brand, `${at}.brand`, fail);
+    if (!brand.ok) ok = false;
+
+    const sizes = sizesFor(garment.id);
+    let size = null;
+    if (!blank(raw.size)) {
+      const text = typeof raw.size === 'string' || typeof raw.size === 'number' ? cleanText(raw.size) : '';
+      if (text && isUnknown(text)) size = null;
+      else if (sizes.letter && COMMON_SIZES.includes(text.toUpperCase())) size = text.toUpperCase();
+      else if (sizes.waist && inRange(text, WAIST_RANGE)) size = text;
+      else { fail(`${at}.size`, sizeMessage(garment)); ok = false; }
+    }
+
+    let length = null;
+    if (!blank(raw.length)) {
+      const text = typeof raw.length === 'string' || typeof raw.length === 'number' ? cleanText(raw.length) : '';
+      if (!sizes.lengths) { fail(`${at}.length`, `${garment.label} are not sized by length.`); ok = false; }
+      else if (text && isUnknown(text)) length = null;
+      else if (!inRange(text, LENGTH_RANGE)) { fail(`${at}.length`, `Choose a length from ${LENGTHS[0]} to ${LENGTHS[LENGTHS.length - 1]}, or Not sure.`); ok = false; }
+      else if (size !== null && !isWaistSize(size)) { fail(`${at}.length`, 'A length goes with a waist size, like 32 × 32.'); ok = false; }
+      else length = text;
+    }
+
+    if (!ok) return { ok: false };
+    if (!brand.brand && !size && !length) return { ok: true, anchor: null };
+    return { ok: true, anchor: garment.lengths ? { brand: brand.brand, size, length } : { brand: brand.brand, size } };
+  }
+
+  /* One type's answers: only the fields that were sent, so a skipped
+     step stays out and keeps its saved value. Null clears the whole
+     type. Undefined when anything in it was wrong. */
+  function readGarment(garment, raw, report) {
+    const at = `garments.${garment.id}`;
+    if (raw === null) return null;
+    let failed = false;
+    const fail = (field, message) => { failed = true; report(field, message); };
+    if (!isPlainObject(raw)) { fail(at, `Send the answers for ${garment.many} as an object.`); return undefined; }
+    const out = {};
+
+    if (raw.anchor !== undefined) {
+      const read = readGarmentAnchor(garment, raw.anchor, `${at}.anchor`, fail);
+      if (read.ok) out.anchor = read.anchor;
+    }
+
+    if (raw.fitGoal !== undefined) {
+      if (blank(raw.fitGoal)) out.fitGoal = null;
+      else if (FIT_GOAL_IDS.includes(raw.fitGoal)) out.fitGoal = raw.fitGoal;
+      else fail(`${at}.fitGoal`, `Choose how you like ${garment.many} to fit: ${FIT_GOALS.map((g) => g.label).join(', ')}.`);
+    }
+
+    if (raw.troubleZones !== undefined) {
+      const list = zonesFor(garment.id).map((z) => z.id);
+      const zones = raw.troubleZones;
+      if (zones === null) out.troubleZones = null;
+      else if (!Array.isArray(zones)) fail(`${at}.troubleZones`, 'Send the trouble spots as a list.');
+      else if (zones.some((zone) => !list.includes(zone))) {
+        fail(`${at}.troubleZones`, `Choose from the trouble spots listed for ${garment.id === 'other' ? 'this clothing' : garment.many}, or None of these.`);
+      } else out.troubleZones = list.filter((id) => zones.includes(id));
+    }
+
+    return failed ? undefined : out;
+  }
+
   /* ---------- the guide's answers ----------
-     Takes { anchor, fitGoal, troubleZones } — any of them, from the
-     guide or a save — and returns { answers, errors }, with only the
-     fields that were sent in `answers`. A field sent as null clears the
-     answer; a field not sent is not in `answers` at all, which is how a
-     skipped step leaves a saved answer alone. Errors are named like the
-     rest: "anchor.brand", "fitGoal", "troubleZones". */
+     Takes any of:
+
+       garments                     { <type>: { anchor, fitGoal, troubleZones } }
+       anchor, fitGoal, troubleZones   version 2's answers about a top
+
+     and returns { answers, errors }, with only what was sent in
+     `answers` — per type, only the fields sent. A field sent as null
+     clears the answer; a field not sent is not in `answers` at all,
+     which is how a skipped step leaves a saved answer alone. Errors are
+     named like the rest: "garments.jeans.anchor.size", "fitGoal". */
   function normaliseGuide(input) {
     const errors = [];
     const answers = {};
     const fail = (field, message) => errors.push({ field, message });
     const source = isPlainObject(input) ? input : {};
 
+    /* ---- version 3: per type of clothing ---- */
+    if (source.garments !== undefined) {
+      const raw = source.garments;
+      if (raw === null) {
+        answers.garments = null;
+      } else if (!isPlainObject(raw)) {
+        fail('garments', 'Send the answers for each type of clothing as an object.');
+      } else {
+        const out = {};
+        let unknown = false;
+        Object.keys(raw).forEach((id) => {
+          const garment = garmentOf(id);
+          if (!garment) { unknown = true; return; }
+          const entry = readGarment(garment, raw[id], fail);
+          if (entry !== undefined) out[id] = entry;
+        });
+        if (unknown) fail('garments', `Choose a type of clothing: ${GARMENTS.map((g) => g.label).join(', ')}.`);
+        answers.garments = out;
+      }
+    }
+
+    /* ---- version 2: about a top, from a page loaded before version 3 ---- */
     if (source.anchor !== undefined) {
       const raw = source.anchor;
       if (raw === null) {
@@ -356,30 +657,23 @@
       } else if (!isPlainObject(raw)) {
         fail('anchor', 'Send the top that fits as a brand and a size.');
       } else {
-        let brand = null;
-        if (!blank(raw.brand)) {
-          const text = typeof raw.brand === 'string' ? cleanText(raw.brand) : '';
-          if (!text || !brandKey(text)) fail('anchor.brand', 'Use letters or numbers for the brand name.');
-          else if (text.length > LIMITS.brandLength) fail('anchor.brand', `Brand names can be up to ${LIMITS.brandLength} characters.`);
-          else brand = ANCHOR_BRANDS.find((b) => brandKey(b) === brandKey(text)) || text;
-        }
-
+        const before = errors.length;
+        const brand = readBrand(raw.brand, 'anchor.brand', fail);
         let size = null;
         if (!blank(raw.size)) {
           const text = typeof raw.size === 'string' ? cleanText(raw.size) : '';
-          if (UNKNOWN_SIZE.has(text.toLowerCase()) || text.toLowerCase() === 'not-sure') size = null;
+          if (text && isUnknown(text)) size = null;
           else if (COMMON_SIZES.includes(text.toUpperCase())) size = text.toUpperCase();
           else fail('anchor.size', `Choose a size from ${ANCHOR_SIZES[0]} to ${ANCHOR_SIZES[ANCHOR_SIZES.length - 1]}, or Not sure.`);
         }
-
-        if (!errors.some((e) => e.field.startsWith('anchor'))) answers.anchor = brand || size ? { brand, size } : null;
+        if (errors.length === before) answers.anchor = brand.brand || size ? { brand: brand.brand, size } : null;
       }
     }
 
     if (source.fitGoal !== undefined) {
       if (blank(source.fitGoal)) answers.fitGoal = null;
       else if (FIT_GOAL_IDS.includes(source.fitGoal)) answers.fitGoal = source.fitGoal;
-      else fail('fitGoal', `Choose how you like clothes to sit: ${FIT_GOALS.map((g) => g.label).join(', ')}.`);
+      else fail('fitGoal', `Choose how you like clothes to sit: ${FIT_GOAL_IDS.map((id) => LEGACY_GUIDE.fitGoals[id]).join(', ')}.`);
     }
 
     if (source.troubleZones !== undefined) {
@@ -388,23 +682,52 @@
         answers.troubleZones = null;
       } else if (!Array.isArray(raw)) {
         fail('troubleZones', 'Send the trouble spots as a list.');
-      } else if (raw.some((zone) => !TROUBLE_ZONE_IDS.includes(zone))) {
+      } else if (raw.some((zone) => !LEGACY_ZONE_IDS.includes(zone))) {
         fail('troubleZones', 'Choose from the trouble spots listed, or None of these.');
       } else {
         /* the listed order, each once */
-        answers.troubleZones = TROUBLE_ZONE_IDS.filter((id) => raw.includes(id));
+        answers.troubleZones = LEGACY_ZONE_IDS.filter((id) => raw.includes(id));
       }
     }
 
     return { answers: errors.length ? {} : answers, errors };
   }
 
+  /* A whole map of types, as a save sends it: what is not said in an
+     entry is null, and a type with nothing said is left out. */
+  function fullGarments(partial) {
+    const out = {};
+    if (!partial) return out;
+    GARMENT_IDS.forEach((id) => {
+      if (!partial[id]) return;
+      const entry = Object.assign(emptyGarment(), partial[id]);
+      if (!garmentIsEmpty(entry)) out[id] = entry;
+    });
+    return out;
+  }
+
+  /* What the guide sent, merged into what was stored: per type, a field
+     sent replaces the stored one, a field not sent keeps it, and a type
+     sent as null is removed. Types not sent are not touched. */
+  function mergeGarments(stored, partial) {
+    if (partial === null) return {};
+    const out = {};
+    GARMENT_IDS.forEach((id) => {
+      let entry = stored && stored[id] ? Object.assign(emptyGarment(), stored[id]) : null;
+      if (partial && has(partial, id)) {
+        entry = partial[id] === null ? null : Object.assign(entry || emptyGarment(), partial[id]);
+      }
+      if (entry && !garmentIsEmpty(entry)) out[id] = entry;
+    });
+    return out;
+  }
+
   /* ---------- the one validator ----------
      Takes what a page sent and returns { profile, errors }. Every error
      names its field the way the page names its inputs —
-     "measurements.chest", "brandSizes.2.brand", "fitPreferences.hoodies"
-     — and says what to do about it. With any error, profile is null and
-     nothing should be saved. */
+     "measurements.chest", "brandSizes.2.brand", "fitPreferences.hoodies",
+     "garments.jeans.anchor.size" — and says what to do about it. With
+     any error, profile is null and nothing should be saved. */
 
   function normalise(input) {
     const errors = [];
@@ -564,13 +887,15 @@
 
     /* ---- the guide's answers ----
        Validated by the same rules the guide's own save uses. A field not
-       sent stays null here; api/_fit-profile.js keeps the stored value
-       for it, so leaving it out never erases it. */
+       sent stays empty here; api/_fit-profile.js keeps the stored value
+       for it, so leaving it out never erases it. Sent, `garments` is the
+       whole map: a type left out of it is removed. */
     const guide = normaliseGuide(source);
     guide.errors.forEach((e) => errors.push(e));
-    GUIDE_FIELDS.forEach((field) => {
-      if (Object.prototype.hasOwnProperty.call(guide.answers, field)) profile[field] = guide.answers[field];
+    LEGACY_FIELDS.forEach((field) => {
+      if (has(guide.answers, field)) profile[field] = guide.answers[field];
     });
+    if (has(guide.answers, 'garments')) profile.garments = fullGarments(guide.answers.garments);
 
     return errors.length ? { profile: null, errors } : { profile, errors };
   }
@@ -586,17 +911,35 @@
     FIT_PREFERENCES,
     COMMON_SIZES,
     LIMITS,
+    GARMENTS,
+    LETTER_SIZES,
+    WAIST_SIZES,
+    LENGTHS,
+    BRANDS,
     ANCHOR_BRANDS,
+    BRAND_SUGGESTIONS,
     ANCHOR_SIZES,
     FIT_GOALS,
     TROUBLE_ZONES,
+    LEGACY_GUIDE,
+    LEGACY_FIELDS,
     GUIDE_FIELDS,
     normalise,
     normaliseGuide,
+    mergeGarments,
     describeGuide,
+    describeGarment,
     upgrade,
     empty,
+    emptyGarment,
+    garmentIsEmpty,
+    hasLegacyGuide,
     isEmpty,
+    garmentOf,
+    zonesFor,
+    brandsFor,
+    sizesFor,
+    isWaistSize,
     brandKey,
     rangeOf,
     readNumber,

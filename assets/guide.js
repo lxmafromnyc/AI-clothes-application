@@ -1,24 +1,40 @@
 /* =========================================================
    Fynd — the fit guide on the home page
 
-   Three short questions, answered with two dropdowns and some taps,
-   saved to the shopper's fit profile:
+   Four short questions, answered with taps and two dropdowns, saved to
+   the shopper's fit profile:
 
-     1  a top they own that fits perfectly    anchor: brand and size
-     2  how they like clothes to sit          fitGoal
-     3  where clothes usually go wrong        troubleZones
+     1  what we are finding their fit for     a type of clothing
+     2  one of that type that fits perfectly  anchor: brand and size
+     3  how they like that type to fit        fitGoal
+     4  what usually gets the fit wrong       troubleZones, from that
+                                              type's own list
 
-   The words and the allowed values are assets/fit-profile-schema.js's;
-   the server checks every answer again (api/fit-profile.js, "guide").
+   Steps 2 to 4 are asked about the type chosen in step 1, in its words,
+   with its brands, its sizes (letters for tops, waist and length for
+   jeans) and its trouble spots, and saved under that type alone:
+   { garments: { jeans: { anchor, fitGoal, troubleZones } } }. The
+   words and the allowed values are assets/fit-profile-schema.js's; the
+   server checks every answer again (api/fit-profile.js, "guide").
+
+   ---------------------------------------------------------
+   One type at a time, and nothing lent between them
+   ---------------------------------------------------------
+   Switching type in step 1 puts the answers given so far aside for the
+   type they were given for, and shows the new type's own: what was
+   given for it earlier in this visit, or what is saved for it, or
+   nothing. A T-shirt size is never left standing in a jeans question.
+   Only the chosen type is saved; the others stay in this page's memory
+   until it is closed.
 
    ---------------------------------------------------------
    Nothing is lost
    ---------------------------------------------------------
-   Every step is optional. Continue reads "Skip" until something is
+   Steps 2 to 4 are optional. Continue reads "Skip" until something is
    chosen, and a skipped step is not sent at all — the server keeps
-   whatever was saved for it before. Only the guide's three answers
-   travel; measurements, usual sizes and per-category fits stay on the
-   server as they are. Leaving the page saves and changes nothing.
+   whatever was saved for it before. Every other type, measurements,
+   usual sizes and per-category fits stay on the server as they are.
+   Leaving the page saves and changes nothing.
 
    Signed out, the last step offers an account right here, so the
    answers never have to be kept anywhere but this page's memory: no
@@ -56,10 +72,14 @@
 
   const brand = $('anchor-brand');
   const size = $('anchor-size');
+  const length = $('anchor-length');
   const otherField = $('anchor-other-field');
   const other = $('anchor-other');
+  const lengthField = $('anchor-length-field');
   const none = $('zone-none');
-  const zones = () => Array.from(form.querySelectorAll('input[name="troubleZones"]'));
+  const zoneItems = $('zone-items');
+  const zones = () => Array.from(zoneItems.querySelectorAll('input[name="troubleZones"]'));
+  const garmentRadios = () => Array.from(form.querySelectorAll('input[name="garment"]'));
 
   const back = $('guide-back');
   const next = $('guide-next');
@@ -69,17 +89,189 @@
   let busy = false;
   /* "signup" or "login", for the account form at the end */
   let accountMode = 'signup';
+  /* the type of clothing steps 2 to 4 are about, once chosen */
+  let garment = null;
+  /* what is saved, per type, as the server last returned it */
+  let saved = {};
+  /* answers given in this visit for types not on screen, so switching
+     type and back loses nothing and lends nothing */
+  const drafts = {};
+  /* whether the account holds version 2's answers about a top */
+  let legacy = false;
+
+  const current = () => (garment && Schema.garmentOf(garment)) || null;
+
+  /* ---------- the words, for the type chosen ---------- */
+
+  const plural = (g) => g.one === g.many;   /* "jeans", "pants": one pair, a plural noun */
+  const words = {
+    anchorQuestion: (g) => (g.one ? `What brand and size of ${g.one} fits you perfectly?` : 'What brand and size fits you perfectly?'),
+    anchorHint: (g) => (g.group === 'tops' ? 'Think of one you own right now.'
+      : g.group === 'other' ? 'Think of something you own right now.' : 'Think of a pair you own right now.'),
+    fitQuestion: (g) => `How do you like your ${g.many} to fit?`,
+    zoneHint: (g) => (g.id === 'other' ? 'Pick any that apply — it’s about the clothes, not you.'
+      : `With ${g.many}, pick any that apply — it’s about the clothes, not you.`),
+    anchorLabel: (g) => (g.id === 'other' ? 'Something that fits' : plural(g) ? `${g.label} that fit` : `A ${g.one} that fits`),
+    fitLabel: (g) => `How you like ${g.id === 'other' ? 'it' : g.many} to fit`,
+    nothing: (g) => `Answer at least one question about ${g.id === 'other' ? 'it' : `your ${g.many}`} to save.`
+  };
+
+  /* The fit cards' pictures: a top for tops and anything else, a pair of
+     trousers for bottoms. */
+  const TOP_ART = {
+    slim: ['M19 9 L12 13.5 L14.5 19 L17.5 17.5 V40 H30.5 V17.5 L33.5 19 L36 13.5 L29 9 C27 11.5 21 11.5 19 9 Z'],
+    'true-to-size': ['M17 9 L9 14 L12 20 L15 18.5 V40 H33 V18.5 L36 20 L39 14 L31 9 C29 12 19 12 17 9 Z'],
+    oversized: ['M15 8 L5 15.5 L9 22.5 L13 20 V42 H35 V20 L39 22.5 L43 15.5 L33 8 C30 11.5 18 11.5 15 8 Z']
+  };
+  const BOTTOM_ART = {
+    slim: ['M18 8 H30 L30.5 41 H25.5 L24 18.5 L22.5 41 H17.5 Z', 'M18 12 H30'],
+    'true-to-size': ['M16 8 H32 L33.5 41 H26 L24 18.5 L22 41 H14.5 Z', 'M16 12 H32'],
+    oversized: ['M14 8 H34 L38 41 H27.5 L24 19 L20.5 41 H10 Z', 'M14 12 H34']
+  };
+
+  /* ---------- the questions, for the type chosen ---------- */
+
+  const option = (value, text) => new Option(text, value);
+
+  function optionGroup(label, values) {
+    const group = doc.createElement('optgroup');
+    group.label = label;
+    values.forEach((v) => group.append(option(v, v)));
+    return group;
+  }
+
+  function zoneRow(zone) {
+    const label = doc.createElement('label');
+    label.className = 'zone';
+    const input = doc.createElement('input');
+    input.type = 'checkbox';
+    input.name = 'troubleZones';
+    input.value = zone.id;
+    const text = doc.createElement('span');
+    text.textContent = zone.label;
+    label.append(input, text);
+    return label;
+  }
+
+  function render(g) {
+    form.dataset.garment = g.id;
+    $('anchor-question').textContent = words.anchorQuestion(g);
+    $('anchor-hint').textContent = words.anchorHint(g);
+
+    brand.replaceChildren(option('', 'Choose'), ...Schema.brandsFor(g.id).map((b) => option(b, b)), option('other', 'Other brand'));
+
+    const sizes = Schema.sizesFor(g.id);
+    $('anchor-size-label').textContent = g.sizes === 'waist' ? 'Waist' : 'Size';
+    const sizeOptions = [option('', 'Choose')];
+    if (sizes.waist && sizes.letter) sizeOptions.push(optionGroup('Waist', sizes.waist), optionGroup('Letter size', sizes.letter));
+    else (sizes.waist || sizes.letter).forEach((s) => sizeOptions.push(option(s, s)));
+    sizeOptions.push(option('not-sure', 'Not sure'));
+    size.replaceChildren(...sizeOptions);
+    length.replaceChildren(option('', 'Choose'), ...(sizes.lengths || []).map((l) => option(l, l)), option('not-sure', 'Not sure'));
+
+    $('fit-question').textContent = words.fitQuestion(g);
+    const art = g.group === 'trousers' || g.group === 'sweatpants' ? BOTTOM_ART : TOP_ART;
+    Schema.FIT_GOALS.forEach((goal) => {
+      const card = form.querySelector(`input[name="fitGoal"][value="${goal.id}"]`).closest('.fit-card');
+      card.querySelector('.fit-card-title').textContent = goal.label;
+      card.querySelector('.fit-card-hint').textContent = goal.hint[g.group];
+      card.querySelector('.fit-card-art').innerHTML = art[goal.id].map((d) => `<path d="${d}"/>`).join('');
+    });
+
+    zoneItems.replaceChildren(...Schema.zonesFor(g.id).map(zoneRow));
+    $('zone-hint').textContent = words.zoneHint(g);
+  }
+
+  /* ---------- a type's answers on screen, and set aside ---------- */
+
+  const BLANK = () => ({ brand: '', other: '', size: '', length: '', goal: '', zones: [], none: false });
+
+  function readDraft() {
+    const goal = form.querySelector('input[name="fitGoal"]:checked');
+    return {
+      brand: brand.value,
+      other: other.value,
+      size: size.value,
+      length: length.value,
+      goal: goal ? goal.value : '',
+      zones: zones().filter((z) => z.checked).map((z) => z.value),
+      none: none.checked
+    };
+  }
+
+  const isBlank = (d) => !d.brand && !d.other.trim() && !d.size && !d.length && !d.goal && !d.zones.length && !d.none;
+
+  /* What is saved for a type, as the form shows it. */
+  function draftFromSaved(g, entry) {
+    const d = BLANK();
+    if (!entry) return d;
+    const a = entry.anchor;
+    if (a && (a.brand || a.size || a.length)) {
+      if (a.brand && Schema.brandsFor(g.id).includes(a.brand)) d.brand = a.brand;
+      else if (a.brand) { d.brand = 'other'; d.other = a.brand; }
+      d.size = a.size || 'not-sure';
+      d.length = a.length || '';
+    }
+    d.goal = entry.fitGoal || '';
+    if (Array.isArray(entry.troubleZones)) {
+      d.zones = entry.troubleZones.slice();
+      d.none = entry.troubleZones.length === 0;
+    }
+    return d;
+  }
+
+  /* A size saved from somewhere that offers more than these lists is
+     shown as itself, so saving again cannot quietly drop it. */
+  function ensureOption(select, value) {
+    if (!value || Array.from(select.options).some((o) => o.value === value)) return;
+    select.insertBefore(option(value, value), select.querySelector('option[value="not-sure"]'));
+  }
+
+  function applyDraft(d) {
+    brand.value = d.brand;
+    other.value = d.other;
+    ensureOption(size, d.size);
+    size.value = d.size;
+    ensureOption(length, d.length);
+    length.value = d.length;
+    form.querySelectorAll('input[name="fitGoal"]').forEach((r) => { r.checked = r.value === d.goal; });
+    zones().forEach((z) => { z.checked = d.zones.includes(z.value); });
+    none.checked = d.none;
+  }
+
+  /* Puts the type on screen aside, and brings this one's own answers. */
+  function selectGarment(id) {
+    if (id === garment) return;
+    if (garment) drafts[garment] = readDraft();
+    garment = id;
+    const g = current();
+    render(g);
+    applyDraft(drafts[id] || draftFromSaved(g, saved[id]));
+    paint();
+  }
 
   /* ---------- reading the answers ---------- */
 
-  /* Only what was answered. A field left out keeps its saved value on
-     the server; that is what makes a skipped step safe. */
+  const lengthShown = () => {
+    const g = current();
+    return Boolean(g && g.lengths && (g.sizes === 'waist' || Schema.isWaistSize(size.value)));
+  };
+
+  /* Only what was answered, for the type on screen. A field left out
+     keeps its saved value on the server; that is what makes a skipped
+     step safe. */
   function answers() {
     const out = {};
+    const g = current();
+    if (!g) return out;
 
     const chosenBrand = brand.value === 'other' ? (other.value.trim() || null) : (brand.value || null);
     const chosenSize = size.value && size.value !== 'not-sure' ? size.value : null;
-    if (chosenBrand || chosenSize) out.anchor = { brand: chosenBrand, size: chosenSize };
+    const chosenLength = lengthShown() && length.value && length.value !== 'not-sure' ? length.value : null;
+    if (chosenBrand || chosenSize || chosenLength) {
+      out.anchor = { brand: chosenBrand, size: chosenSize };
+      if (g.lengths) out.anchor.length = chosenLength;
+    }
 
     const goal = form.querySelector('input[name="fitGoal"]:checked');
     if (goal) out.fitGoal = goal.value;
@@ -92,8 +284,9 @@
   }
 
   const answered = (n) => {
+    if (n === 1) return Boolean(garment);
     const a = answers();
-    return n === 1 ? Boolean(a.anchor) : n === 2 ? Boolean(a.fitGoal) : Array.isArray(a.troubleZones);
+    return n === 2 ? Boolean(a.anchor) : n === 3 ? Boolean(a.fitGoal) : Array.isArray(a.troubleZones);
   };
 
   /* ---------- showing a step ---------- */
@@ -106,8 +299,20 @@
       bar.classList.toggle('is-current', i + 1 === step);
     });
     back.hidden = step === 1;
-    next.textContent = step === LAST ? 'Save' : (answered(step) ? 'Continue' : 'Skip');
+    next.textContent = step === 1 ? 'Continue' : step === LAST ? 'Save' : (answered(step) ? 'Continue' : 'Skip');
     otherField.hidden = brand.value !== 'other';
+    lengthField.hidden = !lengthShown();
+    /* what is already saved is said where the type is chosen */
+    $('guide-saved-note').hidden = !(step === 1 && Object.keys(saved).length);
+    $('guide-legacy-note').hidden = !(step === 1 && legacy);
+  }
+
+  /* "Saved" on each type that has answers on the server. */
+  function paintSaved() {
+    garmentRadios().forEach((radio) => {
+      const mark = radio.closest('.garment-card').querySelector('.garment-saved');
+      if (mark) mark.hidden = !saved[radio.value];
+    });
   }
 
   function goTo(n, options) {
@@ -133,42 +338,10 @@
     if (heading) heading.scrollIntoView({ block: 'nearest' });
   }
 
-  /* ---------- filling in what was saved ---------- */
-
-  function fill(profile) {
-    if (!profile) return false;
-    let any = false;
-
-    const anchor = profile.anchor;
-    if (anchor && (anchor.brand || anchor.size)) {
-      const listed = anchor.brand && Array.from(brand.options).find((o) => o.value && o.value !== 'other' && o.value === anchor.brand);
-      if (listed) brand.value = anchor.brand;
-      else if (anchor.brand) { brand.value = 'other'; other.value = anchor.brand; }
-      /* a size saved from somewhere that offers more than this list is
-         shown as itself, so saving again cannot quietly drop it */
-      if (anchor.size && !Array.from(size.options).some((o) => o.value === anchor.size)) {
-        size.insertBefore(new Option(anchor.size, anchor.size), size.querySelector('option[value="not-sure"]'));
-      }
-      size.value = anchor.size || (anchor.brand ? 'not-sure' : '');
-      any = true;
-    }
-
-    if (profile.fitGoal) {
-      const radio = form.querySelector(`input[name="fitGoal"][value="${profile.fitGoal}"]`);
-      if (radio) { radio.checked = true; any = true; }
-    }
-
-    if (Array.isArray(profile.troubleZones)) {
-      zones().forEach((z) => { z.checked = profile.troubleZones.includes(z.value); });
-      none.checked = profile.troubleZones.length === 0;
-      any = true;
-    }
-    return any;
-  }
-
   /* ---------- the confirmation ---------- */
 
-  function summarise(profile) {
+  function summarise(id, entry) {
+    const g = Schema.garmentOf(id);
     const list = $('guide-summary');
     list.innerHTML = '';
     const add = (label, value) => {
@@ -182,10 +355,11 @@
       item.append(name, said);
       list.append(item);
     };
-    const said = Schema.describeGuide(profile);
-    add('A top that fits', said.anchor);
-    add('How you like clothes to sit', said.fitGoal);
-    add('Where clothes go wrong', said.troubleZones);
+    const said = Schema.describeGarment(id, entry);
+    add('Type of clothing', said.garment);
+    add(words.anchorLabel(g), said.anchor);
+    add(words.fitLabel(g), said.fitGoal);
+    add('What gets the fit wrong', said.troubleZones);
   }
 
   /* ---------- saving ---------- */
@@ -206,6 +380,19 @@
       error.textContent = 'This page did not load completely. Reload it to try again — your answers are still here until you do.';
       return;
     }
+    const g = current();
+    if (!g) {
+      goTo(1);
+      error.textContent = 'Pick a type of clothing to start.';
+      return;
+    }
+    const sending = answers();
+    /* a type with nothing said is not kept, so there is nothing to save
+       — and no account to make for it */
+    if (!Object.keys(sending).length && !saved[garment]) {
+      error.textContent = words.nothing(g);
+      return;
+    }
     if (!signedIn()) {
       showPanel('account');
       return;
@@ -215,12 +402,14 @@
     next.disabled = true;
     next.textContent = 'Saving…';
     error.textContent = '';
-    const result = await global.Account.fitProfile.answerGuide(answers());
+    const result = await global.Account.fitProfile.answerGuide({ garments: { [garment]: sending } });
     busy = false;
     next.disabled = false;
 
     if (result.ok && result.data && result.data.saved) {
-      summarise(result.data.profile);
+      saved = (result.data.profile && result.data.profile.garments) || {};
+      paintSaved();
+      summarise(garment, saved[garment]);
       showPanel('done');
       return;
     }
@@ -312,6 +501,11 @@
 
   form.addEventListener('submit', (event) => {
     event.preventDefault();
+    if (step === 1 && !garment) {
+      error.textContent = 'Pick a type of clothing to start.';
+      garmentRadios()[0].focus();
+      return;
+    }
     if (step < LAST) goTo(step + 1);
     else save();
   });
@@ -320,10 +514,13 @@
 
   form.addEventListener('change', (event) => {
     const target = event.target;
+    if (target.name === 'garment') selectGarment(target.value);
     if (target === brand) {
       otherField.hidden = brand.value !== 'other';
       if (brand.value === 'other') other.focus();
     }
+    /* a length goes with a waist, never with a letter size */
+    if (target === size && !lengthShown()) length.value = '';
     /* "None of these" and a trouble spot cannot both be true */
     if (target === none && none.checked) zones().forEach((z) => { z.checked = false; });
     if (target.name === 'troubleZones' && target.checked) none.checked = false;
@@ -351,6 +548,16 @@
 
   $('guide-edit').addEventListener('click', () => {
     showPanel('questions', false);
+    goTo(2);
+  });
+
+  /* Another type: the one just saved is put aside as saved, and step 1
+     starts with nothing chosen. */
+  $('guide-another').addEventListener('click', () => {
+    delete drafts[garment];
+    garment = null;
+    garmentRadios().forEach((radio) => { radio.checked = false; });
+    showPanel('questions', false);
     goTo(1);
   });
 
@@ -358,20 +565,31 @@
 
   async function start() {
     setAccountMode('signup');
+    $('guide-brands').replaceChildren(...Schema.BRAND_SUGGESTIONS.map((b) => option(b, '')));
+    /* a type already chosen (the browser restoring the form) is shown */
+    const restored = garmentRadios().find((r) => r.checked);
+    if (restored) selectGarment(restored.value);
     paint();
 
     if (global.Account) {
       await global.Account.load();
       const state = global.Account.state();
       $('guide-google').hidden = !(state && state.accounts && state.accounts.google);
-      /* signed in: what was saved is filled in, so finishing the guide
-         again changes only what is changed. A profile that cannot be
-         read is no reason to stop — the server merges, so saving can
-         never drop what it holds. */
+      /* Signed in: each type with saved answers is marked, and choosing
+         it fills them in, so finishing again changes only what is
+         changed. A profile that cannot be read is no reason to stop —
+         the server merges, so saving can never drop what it holds. */
       if (signedIn() && global.Account.fitProfile) {
         const read = await global.Account.fitProfile.read();
-        if (read.ok && read.data && fill(read.data.profile)) {
-          $('guide-saved-note').hidden = false;
+        const profile = read.ok && read.data && read.data.profile;
+        if (profile) {
+          saved = profile.garments || {};
+          legacy = Schema.hasLegacyGuide(profile);
+          paintSaved();
+          /* chosen while the profile was on its way, and not yet touched */
+          if (garment && saved[garment] && !drafts[garment] && isBlank(readDraft())) {
+            applyDraft(draftFromSaved(current(), saved[garment]));
+          }
           paint();
         }
       }

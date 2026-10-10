@@ -4,6 +4,12 @@
    Shows the signed-in shopper's fit profile as a form, checks it as
    they type, and saves or deletes it through /api/fit-profile.
 
+   The fit guide's answers are a card per type of clothing, each built
+   from that type's own brands, sizes and trouble spots, and saved as the
+   whole map: a card removed here is a type removed. Version 2's answers
+   about a top are shown as given and only ever removed, never edited
+   into any one type.
+
    ---------------------------------------------------------
    What this file is allowed to decide
    ---------------------------------------------------------
@@ -222,6 +228,186 @@
   function renderSizes() {
     const list = $('size-options');
     if (list) list.innerHTML = Schema.COMMON_SIZES.map((size) => `<option value="${size}"></option>`).join('');
+    const brands = $('garment-brands');
+    if (brands) brands.replaceChildren(...Schema.BRAND_SUGGESTIONS.map((b) => new Option('', b)));
+  }
+
+  /* ---------- the fit guide's answers, one card per type ----------
+     Each card is built from that type's own lists — its brands, its
+     sizes, its trouble spots — so a value only one type has cannot be
+     chosen for another. Values go in as properties, never as markup. */
+
+  const editors = () => Array.from(doc.querySelectorAll('#garment-list > .garment-editor'));
+  const piece = (editor, name) => editor.querySelector(`[data-part="${name}"]`);
+
+  /* the length shows with a waist size: always for jeans, and for pants
+     once a waist is chosen */
+  function lengthVisible(editor) {
+    const g = Schema.garmentOf(editor.dataset.garment);
+    return Boolean(g.lengths && (g.sizes === 'waist' || Schema.isWaistSize(piece(editor, 'size').value)));
+  }
+
+  function paintEditor(editor) {
+    piece(editor, 'other').hidden = piece(editor, 'brand').value !== 'other';
+    const length = editor.querySelector('[data-length]');
+    if (length) length.hidden = !lengthVisible(editor);
+  }
+
+  function addGarment(id, entry, settings) {
+    const list = $('garment-list');
+    const g = Schema.garmentOf(id);
+    if (!list || !g) return null;
+    const sizes = Schema.sizesFor(id);
+    const at = `garments.${id}`;
+    const p = `g-${id}`;
+    const opts = (values) => values.map((v) => `<option value="${v}">${v}</option>`).join('');
+    const sizeOptions = sizes.waist && sizes.letter
+      ? `<optgroup label="Waist">${opts(sizes.waist)}</optgroup><optgroup label="Letter size">${opts(sizes.letter)}</optgroup>`
+      : opts(sizes.waist || sizes.letter);
+    const noun = g.id === 'other' ? 'it' : g.many;
+
+    const editor = doc.createElement('fieldset');
+    editor.className = 'garment-editor';
+    editor.dataset.garment = id;
+    editor.innerHTML = `
+      <legend class="garment-editor-title">${g.label}</legend>
+      <div class="profile-grid">
+        <div class="profile-field" data-field="${at}.anchor.brand">
+          <label class="profile-label" for="${p}-brand">Brand</label>
+          <span class="select-wrap"><select class="profile-select" id="${p}-brand" data-part="brand" aria-describedby="${p}-brand-error">
+            <option value="">Not said</option>${opts(Schema.brandsFor(id))}<option value="other">Other brand</option>
+          </select></span>
+          <input class="profile-input garment-other" type="text" id="${p}-other" data-part="other" list="garment-brands" maxlength="${Schema.LIMITS.brandLength}" autocomplete="off" placeholder="Which brand?" aria-label="${g.label}: which brand?" aria-describedby="${p}-brand-error" hidden>
+          <p class="profile-error" id="${p}-brand-error"></p>
+        </div>
+        <div class="profile-field" data-field="${at}.anchor.size">
+          <label class="profile-label" for="${p}-size">${g.sizes === 'waist' ? 'Waist' : 'Size'}</label>
+          <span class="select-wrap"><select class="profile-select" id="${p}-size" data-part="size" aria-describedby="${p}-size-error">
+            <option value="">Not said</option>${sizeOptions}<option value="not-sure">Not sure</option>
+          </select></span>
+          <p class="profile-error" id="${p}-size-error"></p>
+        </div>
+        ${g.lengths ? `<div class="profile-field" data-field="${at}.anchor.length" data-length>
+          <label class="profile-label" for="${p}-length">Length</label>
+          <span class="select-wrap"><select class="profile-select" id="${p}-length" data-part="length" aria-describedby="${p}-length-error">
+            <option value="">Not said</option>${opts(sizes.lengths)}<option value="not-sure">Not sure</option>
+          </select></span>
+          <p class="profile-error" id="${p}-length-error"></p>
+        </div>` : ''}
+      </div>
+      <fieldset class="pref-group" data-field="${at}.fitGoal">
+        <legend>How you like ${noun} to fit</legend>
+        <div class="choices">
+          ${Schema.FIT_GOALS.map((goal) => `<label class="choice"><input type="radio" name="${p}-goal" value="${goal.id}"><span>${goal.label}</span></label>`).join('')}
+          <label class="choice"><input type="radio" name="${p}-goal" value=""><span>Not said</span></label>
+        </div>
+        <p class="profile-error"></p>
+      </fieldset>
+      <fieldset class="pref-group" data-field="${at}.troubleZones">
+        <legend>What gets the fit wrong</legend>
+        <div class="choices zone-choices">
+          ${Schema.zonesFor(id).map((zone) => `<label class="choice"><input type="checkbox" name="${p}-zones" value="${zone.id}"><span>${zone.label}</span></label>`).join('')}
+          <label class="choice"><input type="checkbox" name="${p}-zones" value="none" data-none><span>None of these</span></label>
+        </div>
+        <p class="profile-error"></p>
+      </fieldset>
+      <div class="brand-row-foot">
+        <button class="link-btn" type="button" data-remove-garment aria-label="Remove the answers for ${g.label}">Remove these answers</button>
+      </div>`;
+
+    const e = entry || {};
+    const a = e.anchor;
+    if (a && (a.brand || a.size || a.length)) {
+      if (a.brand && Schema.brandsFor(id).includes(a.brand)) piece(editor, 'brand').value = a.brand;
+      else if (a.brand) { piece(editor, 'brand').value = 'other'; piece(editor, 'other').value = a.brand; }
+      /* a size saved from somewhere that offers more is shown as itself */
+      ['size', 'length'].forEach((name) => {
+        const select = piece(editor, name);
+        const value = a[name];
+        if (!select || !value) return;
+        if (!Array.from(select.options).some((o) => o.value === value)) {
+          select.insertBefore(new Option(value, value), select.querySelector('option[value="not-sure"]'));
+        }
+        select.value = value;
+      });
+      if (!a.size) piece(editor, 'size').value = 'not-sure';
+    }
+    editor.querySelectorAll(`input[name="${p}-goal"]`).forEach((r) => { r.checked = r.value === (e.fitGoal || ''); });
+    if (Array.isArray(e.troubleZones)) {
+      editor.querySelectorAll(`input[name="${p}-zones"]`).forEach((c) => {
+        c.checked = c.dataset.none !== undefined ? e.troubleZones.length === 0 : e.troubleZones.includes(c.value);
+      });
+    }
+
+    list.appendChild(editor);
+    paintEditor(editor);
+    afterGarmentsChange();
+    if (settings && settings.focus) piece(editor, 'brand').focus();
+    return editor;
+  }
+
+  /* "Add a type" offers only the types without a card yet. */
+  function afterGarmentsChange() {
+    const shown = editors().map((el) => el.dataset.garment);
+    show('garment-empty', shown.length === 0);
+    const select = $('garment-add-select');
+    if (!select) return;
+    const left = Schema.GARMENTS.filter((g) => !shown.includes(g.id));
+    select.replaceChildren(new Option('Choose…', ''), ...left.map((g) => new Option(g.label, g.id)));
+    show('garment-add-area', left.length > 0);
+  }
+
+  /* One card's answers, as the schema takes them. */
+  function readGarment(editor) {
+    const g = Schema.garmentOf(editor.dataset.garment);
+    const p = `g-${g.id}`;
+    const choice = piece(editor, 'brand').value;
+    const brand = choice === 'other' ? piece(editor, 'other').value : choice;
+    const size = piece(editor, 'size').value;
+    const length = g.lengths && lengthVisible(editor) ? piece(editor, 'length').value : '';
+    const known = (value) => (value && value !== 'not-sure' ? value : null);
+
+    let anchor = null;
+    if (brand.trim() || size || length) {
+      anchor = { brand, size: known(size) };
+      if (g.lengths) anchor.length = known(length);
+    }
+    const goal = editor.querySelector(`input[name="${p}-goal"]:checked`);
+    const ticked = Array.from(editor.querySelectorAll(`input[name="${p}-zones"]:checked`));
+    let troubleZones = null;
+    if (ticked.some((c) => c.dataset.none !== undefined)) troubleZones = [];
+    else if (ticked.length) troubleZones = ticked.map((c) => c.value);
+    return { anchor, fitGoal: goal && goal.value ? goal.value : null, troubleZones };
+  }
+
+  function garmentChanged(editor, target) {
+    const part = target.dataset.part;
+    if (part === 'brand') {
+      paintEditor(editor);
+      if (target.value === 'other') piece(editor, 'other').focus();
+    }
+    /* a length goes with a waist, never with a letter size */
+    if (part === 'size' && piece(editor, 'length') && !lengthVisible(editor)) piece(editor, 'length').value = '';
+    /* "None of these" and a trouble spot cannot both be true */
+    if (target.type === 'checkbox' && target.checked) {
+      const isNone = target.dataset.none !== undefined;
+      editor.querySelectorAll(`input[name="${target.name}"]`).forEach((box) => {
+        if (box !== target && (isNone || box.dataset.none !== undefined)) box.checked = false;
+      });
+    }
+    paintEditor(editor);
+  }
+
+  /* ---------- version 2's answers about a top ----------
+     Shown as given. Removing them takes effect on save, like every
+     other change here, and can be taken back until then. */
+
+  let legacyRemoved = false;
+
+  function paintLegacy() {
+    show('legacy-summary', !legacyRemoved);
+    setText('legacy-note', legacyRemoved ? 'These answers will be removed when you save.' : '');
+    setText('legacy-remove', legacyRemoved ? 'Keep them' : 'Remove these answers');
   }
 
   /* ---------- units ---------- */
@@ -345,8 +531,13 @@
       if (checked && checked.value) fitPreferences[category.id] = checked.value;
     });
 
+    /* every card on the page, as the whole map: a card removed is a
+       type removed */
+    const garments = {};
+    editors().forEach((editor) => { garments[editor.dataset.garment] = readGarment(editor); });
+
     return {
-      payload: { schemaVersion: Schema.SCHEMA_VERSION, measurements, brandSizes, fitPreferences },
+      payload: { schemaVersion: Schema.SCHEMA_VERSION, measurements, brandSizes, fitPreferences, garments },
       local
     };
   }
@@ -361,10 +552,11 @@
   /* Everything the shopper could have changed, as typed — what "unsaved
      changes" is measured against. */
   function snapshotOf() {
-    const values = Array.from(doc.querySelectorAll('#profile-form input:not([type="radio"]), #profile-form select'))
+    const values = Array.from(doc.querySelectorAll('#profile-form input:not([type="radio"]):not([type="checkbox"]), #profile-form select:not([data-ignore])'))
       .map((el) => (el.closest('.brand-row') ? `row:${el.value}` : `${el.id}:${el.value}`));
-    const radios = Array.from(doc.querySelectorAll('#profile-form input[type="radio"]:checked')).map((el) => `${el.name}:${el.value}`);
-    return JSON.stringify([unit, values, radios]);
+    const radios = Array.from(doc.querySelectorAll('#profile-form input[type="radio"]:checked, #profile-form input[type="checkbox"]:checked'))
+      .map((el) => `${el.name}:${el.value}`);
+    return JSON.stringify([unit, values, radios, legacyRemoved]);
   }
 
   /* ---------- showing errors ---------- */
@@ -378,7 +570,7 @@
       const visible = Boolean(error) && (attempted || controlsOf(wrap).some((c) => c.dataset.touched));
       const out = wrap.classList.contains('profile-error') ? wrap : wrap.querySelector('.profile-error');
       if (out) out.textContent = visible ? error.message : '';
-      controlsOf(wrap).filter((c) => c.type !== 'radio').forEach((c) => {
+      controlsOf(wrap).filter((c) => c.type !== 'radio' && c.type !== 'checkbox').forEach((c) => {
         if (visible) c.setAttribute('aria-invalid', 'true');
         else c.removeAttribute('aria-invalid');
       });
@@ -416,11 +608,21 @@
     const p = profile || Schema.empty();
     const m = p.measurements || {};
 
-    /* the fit guide's answers, shown as saved; this form never sends them */
+    /* the guide's answers, a card per type, in the guide's order */
+    $('garment-list').innerHTML = '';
+    Schema.GARMENTS.forEach((g) => { if (p.garments && p.garments[g.id]) addGarment(g.id, p.garments[g.id]); });
+    afterGarmentsChange();
+
+    /* version 2's answers about a top, shown as given; sent only to
+       remove them */
     const said = Schema.describeGuide(p);
     setText('guide-answer-anchor', said.anchor);
     setText('guide-answer-goal', said.fitGoal);
     setText('guide-answer-zones', said.troubleZones);
+    legacyRemoved = false;
+    show('legacy-guide', Schema.hasLegacyGuide(p));
+    paintLegacy();
+
     if (Schema.UNITS.includes(m.unit)) unit = m.unit;
     paintUnit();
 
@@ -492,11 +694,15 @@
 
     formError('');
     busy(true, 'Saving…');
-    /* The guide's answers are not this form's to send. normalise() fills
-       them with null, and a null sent is an answer cleared, so they are
-       left out — the server keeps what the guide saved. */
+    /* Every type's card goes, as the whole map. Version 2's answers about
+       a top are not this form's to change, only to remove: normalise()
+       fills them with null, and a null sent is an answer cleared, so they
+       are left out — the server keeps them — unless Remove was pressed. */
     const body = Object.assign({}, profile);
-    Schema.GUIDE_FIELDS.forEach((field) => { delete body[field]; });
+    Schema.LEGACY_FIELDS.forEach((field) => {
+      if (legacyRemoved) body[field] = null;
+      else delete body[field];
+    });
     const result = await global.Account.fitProfile.save(body);
     busy(false);
 
@@ -583,6 +789,8 @@
       if (target.matches('input, select')) target.dataset.touched = '1';
       const row = target.closest('.brand-row');
       if (row) labelRemove(row);
+      const editor = target.closest('.garment-editor');
+      if (editor) garmentChanged(editor, target);
       refresh();
     });
 
@@ -612,6 +820,35 @@
       const next = rows()[Math.min(at, rows().length - 1)];
       if (next) part(next, 'brand').focus();
       else $('add-brand').focus();
+    });
+
+    $('garment-add').addEventListener('click', () => {
+      const id = $('garment-add-select').value;
+      if (!id) {
+        $('garment-add-select').focus();
+        return;
+      }
+      addGarment(id, null, { focus: true });
+      refresh();
+    });
+
+    $('garment-list').addEventListener('click', (event) => {
+      const button = event.target.closest('[data-remove-garment]');
+      if (!button) return;
+      const editor = button.closest('.garment-editor');
+      const at = editors().indexOf(editor);
+      editor.remove();
+      afterGarmentsChange();
+      refresh();
+      const next = editors()[Math.min(at, editors().length - 1)];
+      if (next) piece(next, 'brand').focus();
+      else $('garment-add-select').focus();
+    });
+
+    $('legacy-remove').addEventListener('click', () => {
+      legacyRemoved = !legacyRemoved;
+      paintLegacy();
+      refresh();
     });
 
     $('profile-delete').addEventListener('click', () => {
