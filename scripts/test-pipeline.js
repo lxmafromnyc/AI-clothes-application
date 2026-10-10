@@ -443,6 +443,60 @@ test('an accepted preflight answers 204 and echoes the caller, with Vary', () =>
   });
 });
 
+/* What Chrome sends before a signed-in POST from the Pages site to
+   Vercel: the JSON body's Content-Type and the CSRF header. A preflight
+   answer missing either is a refusal the server never hears about. */
+const signedInPreflight = (origin) => ({
+  method: 'OPTIONS',
+  headers: {
+    host: 'ai-clothes-application.vercel.app',
+    origin,
+    'access-control-request-method': 'POST',
+    'access-control-request-headers': 'content-type,x-fynd-csrf'
+  }
+});
+
+const allowedHeaders = (res) => String(res.headers['access-control-allow-headers'] || '')
+  .split(',').map((h) => h.trim().toLowerCase()).filter(Boolean);
+
+test("an allowed origin's preflight lets the CSRF header through, so signed-in POSTs work cross-origin", () => {
+  withEnv({}, () => {
+    const req = signedInPreflight('https://lxmafromnyc.github.io');
+    const res = fakeCorsRes();
+    assert.strictEqual(handledPreflight(req, res), true);
+    assert.strictEqual(res.statusCode, 204);
+    const allowed = allowedHeaders(res);
+    req.headers['access-control-request-headers'].split(',').forEach((h) => assert.ok(allowed.includes(h),
+      `the browser asked to send ${h} and was answered "${res.headers['access-control-allow-headers']}" — ` +
+      'logout, checkout and the billing portal would be blocked from the Pages site'));
+    assert.ok(allowed.includes(require('../api/_auth').CSRF_HEADER.toLowerCase()),
+      'the header _auth.js checks must be the one the preflight allows');
+  });
+});
+
+test('a disallowed origin asking to send the CSRF header still gets 403 and no CORS headers', () => {
+  withEnv({}, () => {
+    const res = fakeCorsRes();
+    assert.strictEqual(handledPreflight(signedInPreflight('https://evil.example.com'), res), true);
+    assert.strictEqual(res.statusCode, 403);
+    assert.strictEqual(res.headers['access-control-allow-origin'], undefined);
+    assert.strictEqual(res.headers['access-control-allow-headers'], undefined);
+    assert.strictEqual(res.headers['access-control-allow-credentials'], undefined);
+  });
+});
+
+test('every header assets/account.js sets on a request is one the preflight allows', () => {
+  withEnv({}, () => {
+    const source = require('fs').readFileSync(require('path').join(__dirname, '..', 'assets', 'account.js'), 'utf8');
+    const sent = [...source.matchAll(/headers\[\s*['"]([^'"]+)['"]\s*\]\s*=/g)].map((m) => m[1].toLowerCase());
+    assert.ok(sent.length, "found no headers['…'] = assignment in assets/account.js — this test needs updating");
+    const res = fakeCorsRes();
+    handledPreflight(signedInPreflight('https://lxmafromnyc.github.io'), res);
+    const allowed = allowedHeaders(res);
+    sent.forEach((h) => assert.ok(allowed.includes(h), `assets/account.js sends ${h}, which the preflight does not allow`));
+  });
+});
+
 test('a request with no Origin is left alone, so curl still works', () => {
   withEnv({}, () => {
     const res = fakeCorsRes();
