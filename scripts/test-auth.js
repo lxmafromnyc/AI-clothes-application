@@ -1203,6 +1203,58 @@ await test('a request from an origin that is not allowed is refused', async () =
   assert.strictEqual(account.res.statusCode, 403);
 });
 
+/* The GitHub Pages copy calls these endpoints from another origin. The
+   browser side of that — the preflight, the cross-site cookie — is
+   scripts/test-cross-origin.js; this is the handlers' side: a signed-in
+   change from the Pages origin works with the CSRF token, and is refused
+   without it, exactly as it is same-origin. */
+const FROM_PAGES = { origin: 'https://lxmafromnyc.github.io', host: 'ai-clothes-application.vercel.app' };
+
+await test('from the Pages origin, logging out with the CSRF token ends the session and clears the cookie cross-site', async () => {
+  const { jar } = await verifiedUser();
+  const token = jar.fynd_session;
+  assert.ok(await auth.readSession(token));
+
+  const { res } = await call(authEndpoint, { jar, headers: FROM_PAGES, body: { action: 'logout' } });
+  assert.strictEqual(res.statusCode, 200);
+  assert.strictEqual(res.getHeader('access-control-allow-origin'), FROM_PAGES.origin);
+  assert.strictEqual(res.getHeader('access-control-allow-credentials'), 'true');
+  assert.strictEqual(await auth.readSession(token), null, 'the session record is gone');
+
+  const cleared = [].concat(res.getHeader('Set-Cookie') || []).find((line) => line.startsWith('fynd_session='));
+  assert.ok(cleared, 'the cookie is cleared');
+  assert.match(cleared, /Max-Age=0/);
+  assert.match(cleared, /SameSite=None; Secure/, 'cleared with the attributes it was set with, or the browser keeps it');
+});
+
+await test('from the Pages origin, logging out without the CSRF token is refused and the session survives', async () => {
+  const { jar } = await verifiedUser();
+  const { res } = await call(authEndpoint, { jar, headers: FROM_PAGES, omitCsrf: true, body: { action: 'logout' } });
+  assert.strictEqual(res.statusCode, 403);
+  assert.strictEqual(res.payload.reason, 'csrf');
+  assert.ok(await auth.readSession(jar.fynd_session), 'still signed in');
+});
+
+await test('from the Pages origin, checkout with the CSRF token reaches Stripe and returns the shopper to Pages', async () => {
+  const { jar } = await verifiedUser();
+  const { res } = await call(checkoutEndpoint, {
+    jar, headers: FROM_PAGES, body: { plan: 'pro', returnPath: '/AI-clothes-application/pricing.html' }
+  });
+  assert.strictEqual(res.statusCode, 200, JSON.stringify(res.payload));
+  assert.strictEqual(res.getHeader('access-control-allow-origin'), FROM_PAGES.origin);
+  const session = stripeCalls.find((c) => c.href.endsWith('/v1/checkout/sessions'));
+  assert.ok(session.params.get('success_url').startsWith('https://lxmafromnyc.github.io/AI-clothes-application/pricing.html?checkout=success'));
+  assert.ok(session.params.get('cancel_url').startsWith('https://lxmafromnyc.github.io/AI-clothes-application/pricing.html?checkout=cancelled'));
+});
+
+await test('from the Pages origin, checkout without the CSRF token is refused before Stripe is asked anything', async () => {
+  const { jar } = await verifiedUser();
+  const { res } = await call(checkoutEndpoint, { jar, headers: FROM_PAGES, omitCsrf: true, body: { plan: 'pro' } });
+  assert.strictEqual(res.statusCode, 403);
+  assert.strictEqual(res.payload.reason, 'csrf');
+  assert.strictEqual(stripeCalls.length, 0);
+});
+
 /* =========================================================
    The account is the identity behind billing and usage
    ========================================================= */

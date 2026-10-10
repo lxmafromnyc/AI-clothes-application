@@ -919,9 +919,10 @@ const linkFromInbox = (pattern) => {
      needs SameSite=None, a browser accepts that only with Secure, and
      Secure needs https, so _auth.js gives plain-http localhost Lax
      instead; it travels here only because both origins are the same
-     site, 127.0.0.1. Whether a browser that blocks third-party cookies
-     sends production's at all is a separate question this cannot
-     answer — see "Cross-origin access" in the README. */
+     site, 127.0.0.1. scripts/test-cross-origin.js covers that half, on
+     the production hostnames over TLS. Whether a browser that blocks
+     third-party cookies sends production's at all is a question neither
+     can answer — see "Cross-origin access" in the README. */
   await test('a signed-in logout from another origin gets past the preflight and ends the session', async () => {
     apiRequests.length = 0;
     /* no route: with one installed, Playwright would answer the

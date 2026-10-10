@@ -485,6 +485,21 @@ test('a disallowed origin asking to send the CSRF header still gets 403 and no C
   });
 });
 
+/* Echoing Access-Control-Request-Headers back would also have "fixed"
+   the preflight — and would let an allowed origin's page send any header
+   at all, Authorization included. A header is allowed because Fynd's own
+   pages send it, not because a caller asked. */
+test('the allowed headers are a fixed list, never an echo of what a preflight asks for', () => {
+  withEnv({}, () => {
+    const req = signedInPreflight('https://lxmafromnyc.github.io');
+    req.headers['access-control-request-headers'] = 'content-type,x-fynd-csrf,authorization,cookie,x-anything';
+    const res = fakeCorsRes();
+    handledPreflight(req, res);
+    assert.strictEqual(res.statusCode, 204);
+    assert.deepStrictEqual(allowedHeaders(res), ['content-type', 'x-fynd-csrf']);
+  });
+});
+
 test('every header assets/account.js sets on a request is one the preflight allows', () => {
   withEnv({}, () => {
     const source = require('fs').readFileSync(require('path').join(__dirname, '..', 'assets', 'account.js'), 'utf8');

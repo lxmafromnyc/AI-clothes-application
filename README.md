@@ -114,6 +114,7 @@ scripts/test-pipeline.js       offline test of the whole server pipeline
 scripts/test-stripe.js         offline test of payments and subscriptions
 scripts/test-auth.js           offline test of accounts, sessions and OAuth
 scripts/test-e2e.js            the whole sign-in flow in a real browser
+scripts/test-cross-origin.js   the Pages copy calling the API across origins, in a real browser
 scripts/test-ui.js             browser test of the search interface
 assets/attachments.js          drag-and-drop and file picker for the search box
 assets/account.js       talks to the account and billing endpoints
@@ -363,6 +364,20 @@ same-origin, so never preflighted — showed nothing wrong. `scripts/test-e2e.js
 now logs out from a page on a second origin to keep it that way. That test runs
 without a Playwright route, because while one is installed Playwright answers
 every preflight itself and allows whatever was asked.
+
+Two origins on one plain-http host are still one *site*, so that test cannot
+show the cross-site cookie production depends on. `scripts/test-cross-origin.js`
+does: it serves the pages at `https://lxmafromnyc.github.io/AI-clothes-application/`
+and the real handlers at `https://ai-clothes-application.vercel.app` from the
+test machine, over TLS with a throwaway certificate (it needs `openssl`),
+through a local proxy, with no request routing. The pages find the API through
+their own meta tag, and the session cookie really is `SameSite=None; Secure`.
+It signs up, reads, logs out and checks out from Pages, and checks that a page on
+an origin the API does not trust can neither read the account nor end the
+session — including with the one POST shape a browser sends without a
+preflight, which the server's own origin check has to refuse. Chromium sends
+third-party cookies by default, so a pass here says nothing about Safari, Brave
+or Incognito; see the table below.
 
 **Accounts on the Pages copy depend on third-party cookies.** The session
 cookie belongs to the Vercel host. To a page on `lxmafromnyc.github.io` that is
