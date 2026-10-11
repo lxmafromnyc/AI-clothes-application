@@ -13,9 +13,12 @@
    missing; then it reports:
 
      leading       the leading size is one the case expects
-     top two       the case's first expected size is the leading size or
-                   the alternative (reported, not required: a case that
-                   accepts two sizes may get the other one)
+     top two       every size the case accepts is the leading size or the
+                   alternative (reported, not required). A case's accepted
+                   sizes (leadingAnyOf) are listed smallest first, not in
+                   order of preference, so no one of them is "the" expected
+                   size; a miss means an accepted size was not offered,
+                   and the cases that miss are named
      insufficient  "not enough data" comes back exactly when expected
      confidence    the label is one the case allows
 
@@ -62,6 +65,7 @@ function profileOf(c) {
 let passed = 0;
 const failures = [];
 const tally = { leading: [0, 0], topTwo: [0, 0], insufficient: [0, 0], confidence: [0, 0] };
+const topTwoMisses = [];
 const count = (name, ok) => { tally[name][1] += 1; if (ok) tally[name][0] += 1; };
 
 function check(c) {
@@ -84,8 +88,10 @@ function check(c) {
 
   const leadingOk = e.leadingAnyOf.includes(result.leading);
   count('leading', leadingOk);
-  const expectedPrimary = e.leadingAnyOf[0];
-  count('topTwo', result.leading === expectedPrimary || Boolean(result.alternative && result.alternative.size === expectedPrimary));
+  const offered = [result.leading, result.alternative ? result.alternative.size : null];
+  const notOffered = e.leadingAnyOf.filter((size) => !offered.includes(size));
+  count('topTwo', notOffered.length === 0);
+  if (notOffered.length) topTwoMisses.push(`${c.id}: accepts ${e.leadingAnyOf.join(', ')}; offered ${offered.filter(Boolean).join(', ')}`);
   assert.ok(leadingOk, `leading ${result.leading}, expected one of ${e.leadingAnyOf.join(', ')}`);
 
   if (e.alternativeAnyOf) {
@@ -140,11 +146,12 @@ try {
 
 const pct = ([ok, n]) => (n ? `${ok}/${n} (${Math.round((ok / n) * 100)}%)` : 'n/a');
 console.log('\nmetrics');
-console.log(`  leading size as expected     ${pct(tally.leading)}`);
-console.log(`  expected size in the top two ${pct(tally.topTwo)}`);
-console.log(`  insufficient exactly when    ${pct(tally.insufficient)}`);
-console.log(`  confidence label allowed     ${pct(tally.confidence)}`);
-console.log(`  insufficient-data cases      ${fixture.cases.filter((c) => c.expect.status === 'insufficient').length} of ${fixture.cases.length}`);
+console.log(`  leading size as expected      ${pct(tally.leading)}`);
+console.log(`  accepted sizes in the top two ${pct(tally.topTwo)}`);
+topTwoMisses.forEach((m) => console.log(`    not all offered — ${m}`));
+console.log(`  insufficient exactly when     ${pct(tally.insufficient)}`);
+console.log(`  confidence label allowed      ${pct(tally.confidence)}`);
+console.log(`  insufficient-data cases       ${fixture.cases.filter((c) => c.expect.status === 'insufficient').length} of ${fixture.cases.length}`);
 
 console.log(`\n${passed} passed, ${failures.length} failed\n`);
 process.exit(failures.length ? 1 : 0);

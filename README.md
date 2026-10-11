@@ -2106,10 +2106,15 @@ products — each with the expected leading size (or the two a reasonable fitter
 might pick), the allowed alternatives and confidence, and the reasoning from the
 published chart. `node scripts/test-size-eval.js` runs them on the verified
 records exactly as the endpoint does, and checks that with each record marked
-unverified every case is "insufficient: unverified-data". Today: every case passes; leading size as
-expected 18/18; the case's first expected size in the top two 16/18 (the two
-oversized cases pick XL where L was listed first; both are accepted); insufficient
-exactly when expected 22/22; confidence label allowed 18/18. These expectations
+unverified every case is "insufficient: unverified-data". Today: every case passes
+(22 cases and the unverified check, 23 in all). Leading size is one the case
+accepts in 18/18. Every accepted size is the leading size or the alternative in
+16/18 — reported, not required: the two oversized UNIQLO cases accept L or XL and
+are offered XL, then XXL, so L, though accepted, is not offered. (A case's
+accepted sizes are listed smallest first, not by preference; the metric used to
+read the first one as "the" expected size, which made the gap look like the
+engine missing L rather than offering XXL.) Insufficient exactly when expected
+22/22; confidence label allowed 18/18. These expectations
 are reasoned from charts, not observed fits — only feedback can show whether the
 method is right for real shoppers.
 

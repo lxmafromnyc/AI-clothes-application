@@ -2,7 +2,7 @@
   "about": [
     "Expected outcomes for the size engine (api/_sizing/engine.js), worked out by hand from each product's published chart and the shopper's profile.",
     "They are reasoned expectations, not real fit outcomes: real validation needs shoppers' feedback. Where a reasonable fitter could pick either of two sizes, both are accepted (leadingAnyOf), and a near tie expects an alternative.",
-    "The records are not verified yet, so this suite runs the engine with includeUnverified; the endpoint never does.",
+    "The records are verified, so this suite runs the engine as the endpoint does, without includeUnverified. leadingAnyOf lists the accepted sizes smallest first, not in order of preference.",
     "Chests are in inches unless a case says otherwise. 'ease' means the room the engine aims for (a starting assumption): slim 2-5 in, true to size 5-9 in, relaxed/oversized 10-16 in, around the chest."
   ],
   "cases": [
