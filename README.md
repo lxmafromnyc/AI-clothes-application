@@ -1,7 +1,7 @@
 # Fynd — AI clothing finder
 
 Fynd starts with fit. The home page is a four-step **fit guide** — the type of
-clothing (T-shirts, hoodies, sweatshirts, pants, sweatpants, jeans or other),
+clothing (T-shirts, hoodies, sweatshirts, pants, sweatpants, jeans or something else),
 one of that type you already own that fits, how you like that type to fit, and
 what usually gets its fit wrong — answered with taps and two dropdowns in well
 under a minute, and saved to your fit profile under that type alone. See [The fit guide](#the-fit-guide). Size
@@ -33,7 +33,7 @@ pages, cards, type, rules — is neutral; the hues have jobs:
 | Token | Job |
 | --- | --- |
 | `--color-primary` | Trust and action: the one filled control, the focus ring, the current page, links, the logo mark, and the retailer a product came from |
-| `--color-accent` | Discovery and energy: the example searches, the numbered steps and the fit guide's "1 of 4" — the places that invite a try |
+| `--color-accent` | Discovery and energy: the example searches, the numbered steps and the fit guide's "Step 1 of 4" — the places that invite a try |
 | `--color-success` | A live listing came back from a real product source |
 | `--color-warning` | A caveat: sample data, or a request that needs fixing before it can run |
 
@@ -1723,7 +1723,7 @@ can be seen and edited. Every part is optional:
 
 | Group | What it holds | Set on |
 | --- | --- | --- |
-| Fit by type of clothing | For each type the shopper has answered — T-shirts, hoodies, sweatshirts, pants, sweatpants, jeans, other — one of that type they own that fits perfectly (brand, size, and a length for jeans and pants sized by the waist), how they like that type to fit, and what usually gets its fit wrong. A reference point, not a measurement. | the fit guide, or the fit profile page |
+| Fit by type of clothing | For each type the shopper has answered — T-shirts, hoodies, sweatshirts, pants, sweatpants, jeans, something else (with what it is, in the shopper's words) — one of that type they own that fits perfectly (brand, size, and a length for jeans and pants sized by the waist), how they like that type to fit, and what usually gets its fit wrong. A reference point, not a measurement. | the fit guide, or the fit profile page |
 | Earlier answers about a top | What the first guide (version 2) saved: a top that fits, how clothes should sit, and trouble spots. Kept as given, never read as any one type's answers. | shown on the fit profile page, which can remove them |
 | Measurements | Height and chest (tops); waist and hip (bottoms). One unit for all of them: `in` or `cm`, chosen by the shopper. | the fit profile page |
 | Usual sizes by brand | Brand, category (hoodies or sweatshirts), the size usually bought, and how it fits: too small, about right, too large. | the fit profile page |
@@ -1795,9 +1795,12 @@ its `normalise()` regardless. A stored profile looks like this:
   `troubleZones`, about "a top", each `null` until answered.
 - **Version 3 answers per type of clothing.** `garments` is keyed by the type's
   id (`tshirts`, `hoodies`, `sweatshirts`, `pants`, `sweatpants`, `jeans`,
-  `other`); only ids are stored, and labels and plurals live in the UI. Each entry
-  is `{ anchor, fitGoal, troubleZones }`, each `null` until answered, and a type
-  with all three unanswered is not kept. A version 1 or 2 profile reads as version
+  `other`, shown as "Something else"); only ids are stored, and labels and
+  plurals live in the UI. Each entry is `{ anchor, fitGoal, troubleZones }`, each
+  `null` until answered, and a type with all three unanswered is not kept.
+  `other` also carries `name` — what the garment is, in the shopper's words (up
+  to 40 characters), or `null` — a label kept only beside an answer; any other
+  type sent a name is refused. A version 1 or 2 profile reads as version
   3 with `garments: {}` and everything else exactly as stored — **version 2's
   answers are not moved into any type**, because the shopper never said whether
   that top was a T-shirt, a hoodie or a sweatshirt. They stay at the top level,
@@ -1817,7 +1820,7 @@ its `normalise()` regardless. A stored profile looks like this:
     Pants and jeans: legs too short, legs too long, too tight at the waist, at the
     hips or seat, at the thighs, waist fits but legs too loose. Sweatpants: legs
     too short or long, waist too tight or loose, too tight at the thighs, too
-    baggy through the legs. Other: too short, too long, too tight, too loose.
+    baggy through the legs. Something else: too short, too long, too tight, too loose.
     `troubleZones: []` means "none of these", which is different from not
     answered.
 - **A save never erases what it does not send.** A `save` that leaves out any of
@@ -1870,14 +1873,18 @@ straight away.
 ### The fit guide
 
 The home page (`index.html`, run by `assets/guide.js`) asks four things, one
-at a time, with a "1 of 4" progress line, Back and Continue:
+at a time, under the heading **"Find your fit"** and the line "4 quick steps. No
+measuring." — with one compact progress line ("STEP 1 OF 4" over a thin bar),
+Back and Continue. The first step, Continue included, fits the first screen of
+a typical phone:
 
-1. **"What are we finding your fit for?"** Seven cards — T-shirts, Hoodies,
-   Sweatshirts, Pants, Sweatpants, Jeans, Other — exactly one chosen. This step
-   is required: Continue without a type says so and stays.
+1. **"What are we sizing?"** Seven cards — T-shirts, Hoodies, Sweatshirts,
+   Pants, Sweatpants, Jeans, Something else — exactly one chosen, two to a row on
+   a phone. Choosing Something else opens a "What is it?" box. This step is
+   required: Continue without a type says so and stays.
 2. **"What brand and size of T-shirt fits you perfectly?"** — worded for the
    type ("…of jeans fits you perfectly?"; "What brand and size fits you
-   perfectly?" for Other). Two dropdowns: brand (that type's common brands, then
+   perfectly?" for Something else). Two dropdowns: brand (that type's common brands, then
    Other brand, which opens a box with suggestions) and size (that type's sizes,
    then Not sure), with a length beside a waist size for jeans and pants. Not sure
    is stored as `null`, never as a size.
@@ -1946,9 +1953,9 @@ node scripts/test-ui.js            # every step and panel of the guide, and the 
   still cover hoodies and sweatshirts only, beside the guide's per-type answers.
   Bringing the two together is later work; until then neither is read as the
   other.
-- "Other" is one type: Fynd does not know what the garment is, so it gets
-  letter sizes and general trouble spots (too short, too long, too tight, too
-  loose).
+- "Something else" is one type: its name is free text and is not read by
+  anything, so it gets letter sizes and general trouble spots (too short, too
+  long, too tight, too loose), and two different garments typed there share it.
 - The earlier answers about a top stay as given; they are not turned into any
   one type's answers, so a shopper who wants them per type taps the guide again.
 - Google sign-in from the guide does not carry the answers across; they are

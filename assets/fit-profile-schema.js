@@ -38,6 +38,9 @@
                       seat for jeans. About garments, not bodies. An
                       empty list means "none of these"; null means the
                       question was not answered.
+       name           "Something else" only: what the garment is, in the
+                      shopper's words ("shorts"), or null. A label, not an
+                      answer — kept only beside at least one of the three.
 
      Each of the three is null until it is answered, and a type with all
      three unanswered is not kept at all.
@@ -140,7 +143,7 @@
      accepted as typed. */
   const COMMON_SIZES = ['XXS', 'XS', 'S', 'M', 'L', 'XL', 'XXL', '3XL', '4XL'];
 
-  const LIMITS = { brands: 50, brandLength: 60, sizeLength: 16 };
+  const LIMITS = { brands: 50, brandLength: 60, sizeLength: 16, garmentNameLength: 40 };
 
   /* ---------- the fit guide: types of clothing (version 3) ----------
      `label` is the card; `one` and `many` are the words a question uses
@@ -150,9 +153,10 @@
 
      `group` picks the trouble spots, the brands offered and the fit
      cards' wording; `sizes` the sizes offered; `lengths` whether a waist
-     size can carry a length, as jeans and pants are sold. "Other" is
-     something the guide does not cover by name, so it is asked about in
-     words that fit any garment. */
+     size can carry a length, as jeans and pants are sold. "Something
+     else" is anything the guide does not cover by name: the shopper may
+     say what it is (`named`), and it is asked about in words that fit
+     any garment. */
   const GARMENTS = [
     { id: 'tshirts', label: 'T-shirts', one: 'T-shirt', many: 'T-shirts', group: 'tops', sizes: 'letter' },
     { id: 'hoodies', label: 'Hoodies', one: 'hoodie', many: 'hoodies', group: 'tops', sizes: 'letter' },
@@ -160,7 +164,7 @@
     { id: 'pants', label: 'Pants', one: 'pants', many: 'pants', group: 'trousers', sizes: 'waist-or-letter', lengths: true },
     { id: 'sweatpants', label: 'Sweatpants', one: 'sweatpants', many: 'sweatpants', group: 'sweatpants', sizes: 'letter' },
     { id: 'jeans', label: 'Jeans', one: 'jeans', many: 'jeans', group: 'trousers', sizes: 'waist', lengths: true },
-    { id: 'other', label: 'Other', one: null, many: 'clothes', group: 'other', sizes: 'letter' }
+    { id: 'other', label: 'Something else', one: null, many: 'clothes', group: 'other', sizes: 'letter', named: true }
   ];
   const GARMENT_IDS = GARMENTS.map((g) => g.id);
 
@@ -378,7 +382,10 @@
     };
   }
 
-  const emptyGarment = () => ({ anchor: null, fitGoal: null, troubleZones: null });
+  const emptyGarment = (id) => {
+    const g = garmentOf(id);
+    return g && g.named ? { anchor: null, fitGoal: null, troubleZones: null, name: null } : { anchor: null, fitGoal: null, troubleZones: null };
+  };
 
   /* Nothing said about this type. "None of these" is an answer, so an
      empty list of trouble spots is not empty. */
@@ -454,6 +461,7 @@
         fitGoal: typeof raw.fitGoal === 'string' ? raw.fitGoal : null,
         troubleZones: Array.isArray(raw.troubleZones) ? raw.troubleZones.filter((zone) => typeof zone === 'string') : null
       };
+      if (garment.named) entry.name = typeof raw.name === 'string' ? raw.name : null;
       if (!garmentIsEmpty(entry)) shaped.garments[garment.id] = entry;
     });
 
@@ -515,7 +523,7 @@
       ? e.troubleZones.map((zone) => (zonesFor(id).find((z) => z.id === zone) || {}).label).filter(Boolean)
       : null;
     return {
-      garment: garment ? garment.label : id,
+      garment: garment ? (garment.named && e.name ? `${garment.label}: ${e.name}` : garment.label) : id,
       anchor: a && (a.brand || a.size || a.length) ? `${a.brand || 'Brand not said'} · ${describeSize(a)}` : 'Not answered',
       fitGoal: goal ? goal.label : 'Not answered',
       troubleZones: zones === null ? 'Not answered' : (zones.length ? zones.join('; ') : 'None of these')
@@ -606,6 +614,17 @@
       else if (zones.some((zone) => !list.includes(zone))) {
         fail(`${at}.troubleZones`, `Choose from the trouble spots listed for ${garment.id === 'other' ? 'this clothing' : garment.many}, or None of these.`);
       } else out.troubleZones = list.filter((id) => zones.includes(id));
+    }
+
+    if (raw.name !== undefined) {
+      if (!garment.named) fail(`${at}.name`, `Only Something else takes a name; ${garment.many} are named already.`);
+      else if (blank(raw.name)) out.name = null;
+      else {
+        const text = typeof raw.name === 'string' ? cleanText(raw.name) : '';
+        if (!text || !brandKey(text)) fail(`${at}.name`, 'Say what it is in letters or numbers, like shorts.');
+        else if (text.length > LIMITS.garmentNameLength) fail(`${at}.name`, `Keep it to ${LIMITS.garmentNameLength} characters, like shorts.`);
+        else out.name = text;
+      }
     }
 
     return failed ? undefined : out;
@@ -700,7 +719,7 @@
     if (!partial) return out;
     GARMENT_IDS.forEach((id) => {
       if (!partial[id]) return;
-      const entry = Object.assign(emptyGarment(), partial[id]);
+      const entry = Object.assign(emptyGarment(id), partial[id]);
       if (!garmentIsEmpty(entry)) out[id] = entry;
     });
     return out;
@@ -713,9 +732,9 @@
     if (partial === null) return {};
     const out = {};
     GARMENT_IDS.forEach((id) => {
-      let entry = stored && stored[id] ? Object.assign(emptyGarment(), stored[id]) : null;
+      let entry = stored && stored[id] ? Object.assign(emptyGarment(id), stored[id]) : null;
       if (partial && has(partial, id)) {
-        entry = partial[id] === null ? null : Object.assign(entry || emptyGarment(), partial[id]);
+        entry = partial[id] === null ? null : Object.assign(entry || emptyGarment(id), partial[id]);
       }
       if (entry && !garmentIsEmpty(entry)) out[id] = entry;
     });

@@ -3637,10 +3637,10 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
         mark: getComputedStyle(document.querySelector('.brand-mark')).backgroundColor === primary,
         current: getComputedStyle(document.querySelector('.nav-links a[aria-current="page"]'), '::after').backgroundColor === primary,
         step: getComputedStyle(document.querySelector('.step-num')).color === rgbOf('--color-accent-ink'),
-        /* the guide's "1 of 4" is a step number, so it takes the accent;
+        /* the guide's "Step 1 of 4" is a step number, so it takes the accent;
            the part of the bar already reached is the primary */
         guideCount: getComputedStyle(document.querySelector('.guide-count')).color === rgbOf('--color-accent-ink'),
-        guideBar: getComputedStyle(document.querySelector('.guide-bar li.is-current')).backgroundColor === primary,
+        guideBar: getComputedStyle(document.querySelector('.guide-bar-fill')).backgroundColor === primary,
         retailer: getComputedStyle(document.querySelector('.item-retailer')).color === rgbOf('--color-primary-ink'),
         defined: ['--color-bg', '--color-surface', '--color-text', '--color-text-muted', '--color-border',
           '--color-primary', '--color-primary-hover', '--color-accent', '--color-success', '--color-warning']

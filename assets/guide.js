@@ -4,7 +4,9 @@
    Four short questions, answered with taps and two dropdowns, saved to
    the shopper's fit profile:
 
-     1  what we are finding their fit for     a type of clothing
+     1  what we are sizing                    a type of clothing, and
+                                              for "Something else", what
+                                              it is in their words
      2  one of that type that fits perfectly  anchor: brand and size
      3  how they like that type to fit        fitGoal
      4  what usually gets the fit wrong       troubleZones, from that
@@ -76,6 +78,8 @@
   const otherField = $('anchor-other-field');
   const other = $('anchor-other');
   const lengthField = $('anchor-length-field');
+  const garmentName = $('garment-name');
+  const garmentNameField = $('garment-name-field');
   const none = $('zone-none');
   const zoneItems = $('zone-items');
   const zones = () => Array.from(zoneItems.querySelectorAll('input[name="troubleZones"]'));
@@ -184,11 +188,12 @@
 
   /* ---------- a type's answers on screen, and set aside ---------- */
 
-  const BLANK = () => ({ brand: '', other: '', size: '', length: '', goal: '', zones: [], none: false });
+  const BLANK = () => ({ name: '', brand: '', other: '', size: '', length: '', goal: '', zones: [], none: false });
 
   function readDraft() {
     const goal = form.querySelector('input[name="fitGoal"]:checked');
     return {
+      name: garmentName.value,
       brand: brand.value,
       other: other.value,
       size: size.value,
@@ -199,12 +204,13 @@
     };
   }
 
-  const isBlank = (d) => !d.brand && !d.other.trim() && !d.size && !d.length && !d.goal && !d.zones.length && !d.none;
+  const isBlank = (d) => !d.name.trim() && !d.brand && !d.other.trim() && !d.size && !d.length && !d.goal && !d.zones.length && !d.none;
 
   /* What is saved for a type, as the form shows it. */
   function draftFromSaved(g, entry) {
     const d = BLANK();
     if (!entry) return d;
+    d.name = entry.name || '';
     const a = entry.anchor;
     if (a && (a.brand || a.size || a.length)) {
       if (a.brand && Schema.brandsFor(g.id).includes(a.brand)) d.brand = a.brand;
@@ -228,6 +234,7 @@
   }
 
   function applyDraft(d) {
+    garmentName.value = d.name;
     brand.value = d.brand;
     other.value = d.other;
     ensureOption(size, d.size);
@@ -276,6 +283,10 @@
     const goal = form.querySelector('input[name="fitGoal"]:checked');
     if (goal) out.fitGoal = goal.value;
 
+    /* what "Something else" is: a label beside the answers, sent as
+       it stands so clearing the box clears it */
+    if (g.named) out.name = garmentName.value.trim() || null;
+
     const picked = zones().filter((z) => z.checked).map((z) => z.value);
     if (picked.length) out.troubleZones = picked;
     else if (none.checked) out.troubleZones = [];
@@ -293,11 +304,9 @@
 
   function paint() {
     steps.forEach((fieldset) => { fieldset.hidden = Number(fieldset.dataset.step) !== step; });
-    $('guide-count').textContent = `${step} of ${LAST}`;
-    form.querySelectorAll('.guide-bar li').forEach((bar, i) => {
-      bar.classList.toggle('is-done', i + 1 < step);
-      bar.classList.toggle('is-current', i + 1 === step);
-    });
+    $('guide-count').textContent = `Step ${step} of ${LAST}`;
+    $('guide-bar-fill').style.width = `${(step / LAST) * 100}%`;
+    garmentNameField.hidden = !(current() && current().named);
     back.hidden = step === 1;
     next.textContent = step === 1 ? 'Continue' : step === LAST ? 'Save' : (answered(step) ? 'Continue' : 'Skip');
     otherField.hidden = brand.value !== 'other';
@@ -387,9 +396,10 @@
       return;
     }
     const sending = answers();
-    /* a type with nothing said is not kept, so there is nothing to save
-       — and no account to make for it */
-    if (!Object.keys(sending).length && !saved[garment]) {
+    /* a type with nothing said is not kept — a name alone is a label,
+       not an answer — so there is nothing to save, and no account to
+       make for it */
+    if (!['anchor', 'fitGoal', 'troubleZones'].some((k) => k in sending) && !saved[garment]) {
       error.textContent = words.nothing(g);
       return;
     }

@@ -1269,13 +1269,18 @@ const linkFromInbox = (pattern) => {
     const context = await openContext();
     const page = await context.newPage();
     await guideReady(page);
-    assert.strictEqual(await page.textContent('#guide-count'), '1 of 4');
+    assert.strictEqual((await page.textContent('#guide-title')).trim(), 'Find your fit');
+    assert.strictEqual((await page.textContent('.guide-hero .lead')).trim(), '4 quick steps. No measuring.');
+    assert.strictEqual(await page.$eval('#guide-count', (n) => n.innerText.trim()), 'STEP 1 OF 4', 'shown in capitals');
+    assert.strictEqual(await page.$$eval('.guide-progress', (ns) => ns.length), 1, 'one progress indicator');
+    assert.strictEqual(await page.textContent('#guide-count'), 'Step 1 of 4');
     assert.strictEqual(await stepShown(page), 1);
-    assert.match(await page.textContent('.guide-step[data-step="1"] .guide-question'), /What are we finding your fit for\?/);
+    assert.match(await page.textContent('.guide-step[data-step="1"] .guide-question'), /What are we sizing\?/);
     assert.deepStrictEqual(await page.$$eval('input[name="garment"]', (ns) => ns.map((n) => n.value)),
       ['tshirts', 'hoodies', 'sweatshirts', 'pants', 'sweatpants', 'jeans', 'other']);
     assert.deepStrictEqual(await page.$$eval('.garment-card-title', (ns) => ns.map((n) => n.textContent.trim())),
-      ['T-shirts', 'Hoodies', 'Sweatshirts', 'Pants', 'Sweatpants', 'Jeans', 'Other']);
+      ['T-shirts', 'Hoodies', 'Sweatshirts', 'Pants', 'Sweatpants', 'Jeans', 'Something else']);
+    assert.ok(!/\bOther\b/.test(await page.textContent('.garment-cards')), 'no separate "Other" beside "Something else"');
     assert.strictEqual(await page.$('#ask-form'), null, 'no search box on the home page');
     assert.strictEqual((await page.textContent('.nav-links a[aria-current="page"]')).trim(), 'Fit guide');
 
@@ -1283,6 +1288,51 @@ const linkFromInbox = (pattern) => {
     await page.waitForURL(/find-clothes\.html/);
     await page.waitForSelector('#ask-form');
     assert.ok(await page.$('#demo-video'), 'the demo film is on the Search page');
+    await context.close();
+  });
+
+  await test('"Something else" asks what it is only once chosen, and saves the name beside its answers', async () => {
+    const context = await openContext();
+    const page = await signedInAtGuide(context, 'ada@e2e.test');
+    assert.strictEqual(await page.isVisible('#garment-name'), false, 'no name box before Something else');
+    await page.check('input[name="garment"][value="other"]');
+    assert.strictEqual(await page.isVisible('#garment-name'), true);
+    await page.fill('#garment-name', 'Swim trunks');
+    await page.check('input[name="garment"][value="jeans"]');
+    assert.strictEqual(await page.isVisible('#garment-name'), false, 'gone for a named type');
+    await page.check('input[name="garment"][value="other"]');
+    assert.strictEqual(await page.$eval('#garment-name', (n) => n.value), 'Swim trunks', 'kept for Something else');
+    await page.click('#guide-next');
+    assert.strictEqual((await page.textContent('#anchor-question')).trim(), 'What brand and size fits you perfectly?');
+    await page.selectOption('#anchor-size', 'M');
+    await page.click('#guide-next');
+    await page.click('#guide-next');
+    await page.check('input[name="troubleZones"][value="too-long"]');
+    await page.click('#guide-next');
+    await page.waitForSelector('#guide-done:not([hidden])');
+    assert.match(await page.textContent('#guide-summary'), /Something else: Swim trunks/);
+    assert.deepStrictEqual((await savedProfile('ada@e2e.test')).garments.other,
+      { anchor: { brand: null, size: 'M' }, fitGoal: null, troubleZones: ['too-long'], name: 'Swim trunks' });
+    await context.close();
+  });
+
+  await test('on a typical phone the first step is compact: heading, the types and Continue fit the first screen', async () => {
+    const context = await openContext();
+    const page = await context.newPage();
+    for (const viewport of [{ width: 390, height: 844 }, { width: 360, height: 740 }]) {
+      await page.setViewportSize(viewport);
+      await guideReady(page);
+      const bottom = await page.$eval('#guide-next', (n) => n.getBoundingClientRect().bottom);
+      assert.ok(bottom <= viewport.height, `${viewport.width}x${viewport.height}: Continue ends at ${Math.round(bottom)}px, below the screen`);
+      const columns = await page.$$eval('.garment-card:not(.garment-card--other)', (ns) => new Set(ns.map((n) => Math.round(n.getBoundingClientRect().left))).size);
+      assert.strictEqual(columns, 2, 'two columns of types on a phone');
+      const small = await page.$$eval('.garment-card', (ns) => ns.filter((n) => n.getBoundingClientRect().height < 44).length);
+      assert.strictEqual(small, 0, 'every type still at least 44px tall');
+    }
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await guideReady(page);
+    const desk = await page.$eval('#guide-next', (n) => n.getBoundingClientRect().bottom);
+    assert.ok(desk <= 800, `desktop: Continue ends at ${Math.round(desk)}px`);
     await context.close();
   });
 
@@ -1366,7 +1416,7 @@ const linkFromInbox = (pattern) => {
     await page.click('#guide-next');
 
     assert.strictEqual(await stepShown(page), 2);
-    assert.strictEqual(await page.textContent('#guide-count'), '2 of 4');
+    assert.strictEqual(await page.textContent('#guide-count'), 'Step 2 of 4');
     assert.strictEqual(await page.evaluate(() => document.activeElement.closest('.guide-step').dataset.step), '2',
       'the new question has focus, so it is read out');
     assert.strictEqual((await page.textContent('#guide-next')).trim(), 'Skip');
@@ -1375,14 +1425,14 @@ const linkFromInbox = (pattern) => {
     await page.selectOption('#anchor-size', 'L');
     await page.click('#guide-next');
 
-    assert.strictEqual(await page.textContent('#guide-count'), '3 of 4');
+    assert.strictEqual(await page.textContent('#guide-count'), 'Step 3 of 4');
     assert.strictEqual((await page.textContent('#guide-next')).trim(), 'Skip');
     await page.check('input[name="fitGoal"][value="slim"]');
     await page.check('input[name="fitGoal"][value="oversized"]');
     assert.strictEqual(await page.$$eval('input[name="fitGoal"]:checked', (ns) => ns.length), 1, 'one answer only');
     await page.click('#guide-next');
 
-    assert.strictEqual(await page.textContent('#guide-count'), '4 of 4');
+    assert.strictEqual(await page.textContent('#guide-count'), 'Step 4 of 4');
     assert.strictEqual((await page.textContent('#guide-next')).trim(), 'Save');
     await page.check('input[name="troubleZones"][value="neckline-tight"]');
 
@@ -1728,10 +1778,11 @@ const linkFromInbox = (pattern) => {
     await page.selectOption('#g-jeans-length', '30');
     await page.check('input[name="g-jeans-zones"][value="legs-long"]');
     assert.strictEqual(await page.isChecked('input[name="g-jeans-zones"][value="none"]'), false);
-    /* remove T-shirts, add Other */
+    /* remove T-shirts, add Something else */
     await page.click('.garment-editor[data-garment="tshirts"] [data-remove-garment]');
     await page.selectOption('#garment-add-select', 'other');
     await page.click('#garment-add');
+    await page.fill('#g-other-name', 'shorts');
     await page.selectOption('#g-other-size', 'L');
     await page.check('input[name="g-other-goal"][value="oversized"]');
     assert.strictEqual(await page.textContent('#profile-save-state'), 'Unsaved changes');
@@ -1740,7 +1791,7 @@ const linkFromInbox = (pattern) => {
     let profile = await savedProfile('ada@e2e.test');
     assert.deepStrictEqual(profile.garments, {
       jeans: { anchor: { brand: 'Levi’s', size: '32', length: '30' }, fitGoal: 'true-to-size', troubleZones: ['legs-long'] },
-      other: { anchor: { brand: null, size: 'L' }, fitGoal: 'oversized', troubleZones: null }
+      other: { anchor: { brand: null, size: 'L' }, fitGoal: 'oversized', troubleZones: null, name: 'shorts' }
     });
     assert.deepStrictEqual(profile.anchor, { brand: 'Nike', size: 'M' }, 'the answers about a top are kept');
     assert.strictEqual(profile.measurements.chest, 102);
