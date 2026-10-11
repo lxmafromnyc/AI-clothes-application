@@ -58,9 +58,8 @@
 
    A photo that no longer loads is taken off its row the same way. The
    Eileen Fisher ribbed knit skirt's photo (S6YFF-S4429M-349 on
-   www.eileenfisher.com) failed scripts/validate-discover-photos.js in a
-   real browser, so the row keeps its listing and its name and has no
-   photo, which keeps it off Discover's shelves.
+   www.eileenfisher.com) failed to load in a real browser, so the row
+   keeps its listing and its name and has no photo.
 
    imageEvidence records HOW a photo was tied to its product, and only
    where the URL cannot say so itself. UNIQLO and J.Crew carry their
@@ -95,7 +94,7 @@
      then names the store's address instead of a brand.
 
      A row whose name nothing ties to its listing keeps no identity note,
-     and Discover does not shelve it.
+     and scripts/audit-catalog.js does not count it as proved.
 
    colors is empty on a row whose colour nothing established, the same
    way sizes is empty on every real listing: an unknown is left unsaid

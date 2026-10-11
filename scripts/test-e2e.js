@@ -396,7 +396,7 @@ const linkFromInbox = (pattern) => {
   await test('every page has an Account link that opens account.html', async () => {
     const context = await openContext();
     const page = await context.newPage();
-    for (const file of ['index.html', 'find-clothes.html', 'discover.html', 'pricing.html', 'about.html']) {
+    for (const file of ['index.html', 'find-clothes.html', 'fit-profile.html', 'pricing.html', 'about.html']) {
       await open(page, file);
       const link = await page.$('.nav-links a[href="account.html"]');
       assert.ok(link, `${file} should have an Account link in the main navigation`);
@@ -752,65 +752,34 @@ const linkFromInbox = (pattern) => {
     await context.close();
   });
 
-  await test('exploring Discover end to end spends no search, no AI and no provider call', async () => {
+  await test('Discover is retired: no page links to it, the fit profile takes its place, and its old address lands on the fit guide', async () => {
     const context = await openContext();
     const page = await context.newPage();
-    await signUpThroughTheUI(page, { name: 'Ada', email: 'ada@e2e.test', password: PASSWORD });
-    await page.waitForSelector('#panel-account:not([hidden])');
-    const user = await users.byEmail('ada@e2e.test');
-    const usage = require('../api/_usage');
-    const used = async () => {
-      const now = await usage.summary(`user:${user.id}`, 'free', ['searches', 'aiTokens']);
-      return { searches: now.searches.used, aiTokens: now.aiTokens.used };
-    };
-    assert.deepStrictEqual(await used(), { searches: 0, aiTokens: 0 });
+    const PAGES = ['index.html', 'find-clothes.html', 'fit-profile.html', 'pricing.html', 'about.html', 'account.html'];
+    for (const file of PAGES) {
+      await open(page, file);
+      assert.deepStrictEqual(await page.$$eval('a[href*="discover"]', (ns) => ns.map((n) => n.getAttribute('href'))), [], `${file} still links to Discover`);
+      assert.ok(!/\bDiscover\b/.test(await page.textContent('body')), `${file} still says Discover`);
+      /* the fit profile is in the main navigation and the footer, beside the fit guide */
+      assert.deepStrictEqual(await page.$$eval('.nav-links a', (ns) => ns.map((n) => n.textContent.trim())),
+        ['Fit guide', 'Fit profile', 'Pricing', 'About', 'Account'], `${file}: main navigation`);
+      assert.ok(await page.$('.footer-links a[href="fit-profile.html"]'), `${file}: the footer links to the fit profile`);
+    }
+    await open(page, 'fit-profile.html');
+    assert.strictEqual((await page.textContent('.nav-links a[aria-current="page"]')).trim(), 'Fit profile');
+    await page.click('.nav-links a[href="fit-profile.html"]');
+    await page.waitForSelector('#profile-signed-out:not([hidden])');
 
-    /* the retailers' photo hosts are not reachable from here; each
-       catalogue photo is answered with a real JPEG, as a CDN would, so
-       Discover has its proved rows to filter */
-    const photos = new Set(require('./audit-catalog').readCatalogue().map((r) => r.imageUrl).filter(Boolean));
-    const jpeg = fs.readFileSync(path.join(REPO, 'assets', 'demo', 'fynd-demo-mobile-poster.jpg'));
-    await page.route((u) => photos.has(String(u)), (route) => route.fulfill({ status: 200, contentType: 'image/jpeg', body: jpeg }));
-
+    /* an old link or bookmark: lands on the fit guide, and nothing on the
+       way searches, reads with the AI, or reaches a product source */
     apiHits.length = 0;
     providerCalls.length = 0;
     await open(page, 'discover.html');
-    await page.waitForSelector('.shelf .item-card', { timeout: 10000 });
-
-    /* every category and every subcategory it offers, three times over */
-    let clicks = 0;
-    for (let round = 0; round < 3; round++) {
-      const categories = await page.$$eval('#discover-tabs button', (ns) => ns.length);
-      for (let c = 0; c < categories; c++) {
-        await page.click(`#discover-tabs button >> nth=${c}`); clicks += 1;
-        const pills = await page.$$eval('#discover-panel button.pill', (ns) => ns.length);
-        for (let i = 0; i < pills; i++) { await page.click(`#discover-panel button.pill >> nth=${i}`); clicks += 1; }
-      }
-      await page.click('#results-clear');
-      const shelves = await page.$$eval('.shelf button[data-category]', (ns) => ns.length);
-      for (let i = 0; i < shelves; i++) {
-        await page.click(`.shelf button[data-category] >> nth=${i}`); clicks += 1;
-        await page.click('#results-clear');
-      }
-    }
-    await page.waitForTimeout(300);
-
-    assert.ok(clicks >= 50, `only ${clicks} filters were used`);
-    assert.deepStrictEqual(apiHits.filter((p) => p === '/api/search' || p === '/api/interpret'), [], 'Discover reached a search endpoint');
-    assert.deepStrictEqual(providerCalls, [], 'Discover reached a product source or AI provider');
-    assert.ok(/discover\.html$/.test(page.url()), `Discover left the page for ${page.url()}`);
-    assert.deepStrictEqual(await used(), { searches: 0, aiTokens: 0 }, 'Discover spent from the plan');
-
-    /* The control: one real search from the search page is seen by the
-       same counters and spends from the same meter — so the zeros above
-       are Discover's, not blind instruments. */
-    await open(page, 'find-clothes.html');
-    await page.fill('#ask', 'black oversized hoodie');
-    await page.click('button[type=submit]');
-    await page.waitForSelector('#results h2:not(.thinking)', { timeout: 15000 });
-    assert.ok(apiHits.includes('/api/search'), 'the search page did not reach /api/search, so the check above proves nothing');
-    assert.ok(providerCalls.length > 0, 'the search did not reach the product source');
-    assert.strictEqual((await used()).searches, 1, 'a real search was not counted, so the zero above proves nothing');
+    await page.waitForURL(/\/index\.html$/);
+    await page.waitForSelector('#guide[data-ready]');
+    assert.strictEqual((await page.textContent('.nav-links a[aria-current="page"]')).trim(), 'Fit guide');
+    assert.deepStrictEqual(apiHits.filter((p) => p === '/api/search' || p === '/api/interpret'), [], 'the old address reached a search endpoint');
+    assert.deepStrictEqual(providerCalls, [], 'the old address reached a product source or AI provider');
     await context.close();
   });
 
@@ -1567,6 +1536,9 @@ const linkFromInbox = (pattern) => {
     assert.match(summary, /Torso is too short; Fits my chest but is too loose around the waist/);
     const confirmation = await page.textContent('#guide-done');
     assert.match(confirmation, /recommendations are still being built/);
+    /* the next step is the fit profile, and nothing leads off to browse a catalogue */
+    assert.deepStrictEqual(await page.$$eval('#guide-done a', (ns) => ns.map((n) => [n.textContent.trim(), n.getAttribute('href')])),
+      [['See your fit profile', 'fit-profile.html']]);
     assert.ok(!/recommended size|your size (is|in)|we suggest|we recommend|size up|size down/i.test(confirmation), 'no size is suggested');
 
     const profile = await savedProfile('ada@e2e.test');

@@ -53,13 +53,16 @@ Every step and panel of the fit guide is audited, not just the first.
 
 | Page | File | What it does |
 | --- | --- | --- |
-| Home | `index.html` | The fit guide: four quick questions, per type of clothing, saved to your fit profile, then how Fynd works and a few pieces from the catalogue. Links to Search for anyone who came to search |
+| Home | `index.html` | The fit guide: four quick questions, per type of clothing, saved to your fit profile, then how Fynd works. Links to Search for anyone who came to search |
 | Search | `find-clothes.html` | Describe what you want in your own words; the demo film of four real searches sits under the box |
-| Discover | `discover.html` | Browse the catalogue by kind (tops, bottoms, outerwear, one-pieces, comfort and shoes), filtered in the page without a search |
 | Pricing | `pricing.html` | The three plans, which one you are on, and the way to change it |
 | Account | `account.html` | Sign in with Google or email; your plan, usage and subscription |
-| Fit profile | `fit-profile.html` | Your fit guide answers for each type of clothing (editable), measurements, usual sizes by brand and preferred fit — what size recommendations will read once they exist (reached from the account page and the guide) |
+| Fit profile | `fit-profile.html` | Your fit guide answers for each type of clothing (editable), measurements, usual sizes by brand and preferred fit — what size recommendations will read once they exist (in the main navigation, and reached from the account page and the guide) |
 | About | `about.html` | What the site does and what it takes into account |
+
+Discover, the catalogue browser, was retired when Fynd turned to fit. `discover.html`
+is kept only so old links and bookmarks land on the fit guide: it redirects there,
+loads no script and asks no API anything.
 
 Every product, wherever it appears, is drawn by one function in `assets/app.js`
 and carries the same six things in the same order — image, retailer, name,
@@ -89,7 +92,8 @@ functions in `api/`, and the page says plainly when they are not reachable.
 ## Structure
 
 ```
-index.html, find-clothes.html, discover.html, about.html
+index.html, find-clothes.html, fit-profile.html, about.html, pricing.html, account.html
+discover.html           retired; redirects old links to the fit guide
 api/interpret.js        serverless endpoint; calls OpenAI, holds the API key
 api/search.js           serverless endpoint; asks the product source for real listings
 api/_providers/         product source adapters and the verification gate
@@ -166,10 +170,8 @@ scripts/bench-messy-live.js    runs them through the real route, live; compares 
 api/_reading.js                the model's reading, held to the shopper's words
 scripts/test-reading.js        offline test of that: inventions, roles, exact requests unchanged
 assets/app.js           rendering and page behaviour
-assets/discover-data.js Discover's six categories, and the words that place a product
 scripts/audit-catalog.js     re-proves every field a catalogue card shows
 scripts/test-catalog-audit.js  offline test of that audit, and of the shipped catalogue
-scripts/validate-discover-photos.js  Discover with the retailers' real photos
 assets/styles.css       colour tokens, design tokens and all shared components
 ```
 
@@ -2221,7 +2223,6 @@ While a search runs it and the words give way to the progress hairline along
 the box's edge; when the search is over the page reads `/api/account` again
 and shows the server's new count, and a screen reader hears it once after the
 results. If the account cannot be read, neither bar nor number is shown.
-Discover never calls `/api/search`, so it never moves the count.
 
 Fynd never sees a card. The shopper types their card on Stripe's own
 pages, and changing a card, switching plan, downloading an invoice and
@@ -2530,74 +2531,9 @@ Products.load('/api/products.json');   // a URL returning JSON
 Products.load(() => queryDatabase());  // a function or promise
 ```
 
-The interface subscribes to the store, so the Discover shelves and the matching
-vocabulary all rebuild from whatever arrives. Unfamiliar colours and
+The interface subscribes to the store, so the Search page's matching
+vocabulary rebuilds from whatever arrives. Unfamiliar colours and
 garment categories fall back to neutral artwork rather than breaking.
-
-## Discover
-
-Discover is clothing by the kind of thing you're looking for, in six
-categories:
-
-| Category | Subcategories it may offer |
-| --- | --- |
-| Tops | T-shirts, Button-down shirts, Tanks & camisoles |
-| Bottoms | Jeans, Trousers, Leggings & joggers |
-| Outerwear | Blazers, Trench coats, Jackets, Sweaters & cardigans |
-| One-Piece | Dresses, Jumpsuits, Rompers, Overalls |
-| Comfort | Underwear, Bras & bralettes, Loungewear, Sweat sets |
-| Shoes | Sneakers, Loafers & flats, Boots |
-
-Choose a category and the catalogue already on the page is filtered to it,
-with a count or *No matching products*. Choose one or more of its
-subcategories to narrow it; several are alternatives (T-shirts or button-down
-shirts). Each choice shows as a removable chip, and *Clear all* restores the
-shelves. With no filter chosen, the page shows a shelf for each category the
-catalogue can fill with four products, each with *See all*.
-
-Discover never searches:
-
-* no part of it calls `/api/search`, `/api/interpret` or any product or AI
-  provider (OpenWeb Ninja, Serper, SerpApi, OpenAI, Gemini)
-* nothing builds a query or opens the search page
-* nothing spends from the shopper's plan
-
-The Search page is the only place a live search happens.
-
-### How a product is placed
-
-Only by words its own proved name states (`assets/discover-data.js`), matched
-as whole words with plurals:
-
-* "Shirts" is not "T-shirt" or "sweatshirt".
-* "Shorts" is not "short sleeve".
-* Button-down shirts are those the name calls button-down, button-up or
-  button-front, or an oxford or camp shirt, which are button-front by
-  definition.
-
-A product can sit in two categories when its name puts it in both: a hoodie is
-a top, and comfortwear; sweatpants are bottoms, and comfortwear. No other field
-is read: not colour, material, style, brand or price.
-
-A subcategory is drawn only when the catalogue holds a product it matches. One
-that matches nothing is left off the page entirely, not shown disabled, and
-appears by itself once a product it fits is added. A category with nothing in
-it would be shown as a plain label rather than a control.
-
-Only proved rows are ever shown. A row must be `identified`, meaning its name,
-and its brand if it has one, are tied to its listing (see below). Its photo
-must also really arrive: the browser loads each photo exactly as the card will,
-and a photo that fails, or comes back smaller than 200px, keeps its row off
-Discover. Drawn artwork never stands in for a photo here.
-
-`scripts/test-ui.js` holds Discover to all of this. It works out each
-category's and subcategory's products independently and requires the page to
-show exactly those. It uses every category, subcategory and shelf several
-times, and fails on any request to `/api/`, OpenWeb Ninja, OpenAI, Serper,
-SerpApi or Gemini, or any navigation. `scripts/test-e2e.js` does the same
-against the real handlers as a signed-in user, and checks the server's search
-and AI-token counters stay at zero. As a control, it then runs one real search
-from the Search page and sees it counted.
 
 ### What a catalogue card may claim
 
@@ -2616,8 +2552,7 @@ from the row itself. Run it on its own to see each row's verdict
 A brand nothing proves is `null`. It is never guessed, and the store a listing
 is on is not taken to be its maker. The card then names the store's address on
 its top line, which is what the card already does for a source that names no
-brand. A row whose name nothing ties to its listing keeps no `identity` note,
-and Discover does not shelve it.
+brand. A row whose name nothing ties to its listing keeps no `identity` note.
 
 The `sample-` rows were drafted as invented products, with invented brands
 like "Northfold" and "Halden" and demo prices. They were later tied to real
@@ -2627,39 +2562,6 @@ row's own evidence says. `scripts/fixtures/catalog-as-drafted.js` keeps the
 drafted version, only so the discovery tool's tests can run against the rows
 they were written around (via `FYND_CATALOG`). The shipped catalogue is never
 written by those tests.
-
-### Checking the real photographs
-
-The interface tests stand a local JPEG in for every retailer photo, so they
-can run anywhere. `scripts/validate-discover-photos.js` does the opposite. It
-lets the browser reach the retailers' own image hosts, through the sandbox
-proxy when there is one, and checks Discover at 1440, 1024, 768, 390, 375 and
-360px. For every shelf card it checks that:
-
-* the photo is the row's own verified photo and really loaded, at
-  product-photo size
-* no artwork stands in for it
-* it fills its 4:5 tile by cropping
-* the brand and link are the ones the audit proves
-* the page never scrolls sideways
-
-It also loads the photo of every product that can appear on a shelf, not just
-today's six shelves. Each product is reported as a real photo or as failed, and
-it checks that every failed product is kept off the shelves.
-
-```sh
-npx vercel dev                                                # with .env.local
-node scripts/validate-discover-photos.js --url=http://localhost:3000
-```
-
-Without `--url` it serves this checkout itself. Screenshots are kept only when
-every check passes:
-
-* `artifacts/ui-validation/discover-real-<width>.png`
-* `discover-real-photos.png`, every checked photo beside its product, for a
-  person to confirm they match
-
-Where the image hosts cannot be reached, it fails and names them.
 
 ## The demo video
 

@@ -33,7 +33,7 @@
                               filed under the brand's name
      brand: 'url-slug'        the product's own URL slug opens with it
 
-   A brand with no note is not shown on Discover, and the fix for an
+   A brand with no note is not counted as proved, and the fix for an
    unknown brand is `brand: null` — never the store's name, and never a
    guess. A row whose name cannot be re-proved is not shelved.
 
@@ -173,8 +173,9 @@ function auditPrice(row) {
   return verdict.ok ? { ok: true, how: verdict.how } : { ok: false, why: verdict.why };
 }
 
-/* Every check, for one row. `shelvable` is the one Discover cares about:
-   a row it may put on a shelf has every field on its card proved. */
+/* Every check, for one row. `shelvable` means every field on the row's
+   card is proved (the name is from the retired Discover page, which
+   shelved only such rows). */
 function auditRow(row) {
   const checks = {
     link: auditLink(row),
@@ -206,7 +207,7 @@ if (require.main === module) {
       r.problems.forEach((p) => console.log(`        ${p}`));
     }
     const ok = results.filter((r) => r.shelvable).length;
-    console.log(`\n${results.length} rows audited, ${ok} shelvable, ${results.length - ok} kept off Discover`);
+    console.log(`\n${results.length} rows audited, ${ok} shelvable, ${results.length - ok} not fully proved`);
   }
 }
 

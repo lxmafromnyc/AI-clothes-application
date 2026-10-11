@@ -666,10 +666,11 @@ async function main() {
     }
   });
 
-  await test('Discover still loads neither the interpreter nor the search, so nothing here can reach it', () => {
-    const html = fs.readFileSync(path.join(__dirname, '..', 'discover.html'), 'utf8');
-    const scripts = [...html.matchAll(/<script[^>]*src="([^"]+)"/g)].map((m) => m[1]);
-    assert.ok(!scripts.some((src) => /interpret|search/.test(src)), scripts.join(', '));
+  await test('the fit guide loads neither the interpreter nor the search, and the retired Discover address loads nothing at all', () => {
+    const scriptsOf = (file) => [...fs.readFileSync(path.join(__dirname, '..', file), 'utf8').matchAll(/<script[^>]*src="([^"]+)"/g)].map((m) => m[1]);
+    const guide = scriptsOf('index.html');
+    assert.ok(!guide.some((src) => /interpret|search/.test(src)), guide.join(', '));
+    assert.deepStrictEqual(scriptsOf('discover.html'), []);
   });
 
   console.log(`\n${passed} passed, ${failures.length} failed`);

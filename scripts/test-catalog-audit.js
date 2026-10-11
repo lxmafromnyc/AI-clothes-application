@@ -67,13 +67,13 @@ test('every linked row accounts for its price', () => {
   }
 });
 
-test('enough rows are shelvable for Discover to fill its shelves', () => {
+test('enough rows have every card field proved (shelvable)', () => {
   const shelvable = rows.filter((r) => audit.auditRow(r).shelvable);
   assert.ok(shelvable.length >= 16, `${shelvable.length} shelvable rows`);
 });
 
 test('a photo that failed in a real browser is not shipped on any row', () => {
-  /* found by scripts/validate-discover-photos.js against the live hosts */
+  /* found by a real-browser check of every photo against the live hosts */
   const failedLive = [
     'https://www.eileenfisher.com/dw/image/v2/BGKB_PRD/on/demandware.static/-/Sites-ef-main-catalog/default/dw287f7711/images/S6YFF-S4429M-349.jpg?sw=525&sh=700&sfrm=png&q=90'
   ];
