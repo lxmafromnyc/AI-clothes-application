@@ -312,6 +312,34 @@ await test('a chest in centimetres is converted exactly, never relabelled', () =
   const cm = engine.recommend(profileWith({ fitGoal: 'true-to-size', line: 'men' }, chest(101.6, 'cm')), sizing.byId(UQ_HOODIE), { includeUnverified: true });
   assert.deepStrictEqual(cm.ranking, inches.ranking);
   assert.ok(cm.reasons[0].includes('101.6 cm'), cm.reasons[0]);
+  /* the per-size classes too: the same chest, the same feel */
+  const classes = (r) => r.fitBySize.map((f) => [f.size, f.dimensions.chestWidth.class, f.dimensions.chestWidth.couldBe || null]);
+  assert.deepStrictEqual(classes(cm), classes(inches));
+});
+
+await test('each size is assessed dimension by dimension, and only where the evidence reaches', () => {
+  const r = engine.recommend(profileWith({ fitGoal: 'true-to-size', line: 'men' }, chest(40)), sizing.byId(UQ_HOODIE));
+  assert.strictEqual(r.fitScale.basis, 'garment-vs-body');
+  assert.match(r.fitScale.note, /hypotheses/);
+  const m = r.fitBySize.find((f) => f.size === 'M');
+  assert.strictEqual(m.dimensions.chestWidth.class, 'about-right');
+  assert.deepStrictEqual(m.dimensions.chestWidth.ease, { value: 7, lo: 6.5, hi: 7.5, aim: [5, 9] });
+  assert.deepStrictEqual(m.assessed, ['chestWidth']);
+  ['bodyLength', 'sleeveLength', 'shoulderWidth'].forEach((d) => {
+    assert.strictEqual(m.dimensions[d].class, null, d);
+    assert.match(m.dimensions[d].reason, /no measurement of your/, d);
+  });
+  assert.ok(r.caveats.some((c) => /How M will feel through the length, sleeves, shoulders can't be told/.test(c)), r.caveats.join(' | '));
+  assert.strictEqual(r.tradeoffs[0], 'M: chest about right; length, sleeves, shoulders: not enough data.');
+  /* the order of the sizes is the ranking's, unchanged */
+  assert.deepStrictEqual(r.fitBySize.slice().sort((a, b) => a.rank - b.rank).map((f) => f.size), r.ranking.map((x) => x.size));
+
+  /* a body chart says who a size is cut for, never how it feels */
+  const nike = engine.recommend(profileWith({ fitGoal: 'true-to-size', line: 'men' }, chest(40)), sizing.byId(NIKE_HOODIE));
+  assert.strictEqual(nike.fitScale.basis, 'body-chart');
+  assert.match(nike.fitScale.note, /can't say how much room any size has/);
+  nike.fitBySize.forEach((f) => Object.values(f.dimensions).forEach((x) => assert.strictEqual(x.class, null, f.size)));
+  assert.strictEqual(nike.fitBySize.find((f) => f.size === 'M').dimensions.chestWidth.chart.yourChest, 'inside');
 });
 
 await test('a letter size is read only with its sizing line, and never from a brand without a chart', () => {
@@ -410,6 +438,10 @@ await test('verified, it suggests from the caller\'s own profile and nobody else
 
   const adas = (await suggest(ada.jar, UQ_HOODIE)).body.recommendation;
   assert.strictEqual(adas.status, 'ok');
+  /* the existing answer is unchanged in shape; how each size may feel is added beside it */
+  ['productId', 'product', 'method', 'leading', 'alternative', 'confidence', 'reasons', 'ranking', 'fitGoal', 'dataQuality', 'dataStatus', 'caveats', 'notes', 'fitBySize', 'fitScale', 'tradeoffs']
+    .forEach((k) => assert.ok(k in adas, k));
+  assert.strictEqual(adas.fitBySize.find((f) => f.size === 'M').dimensions.chestWidth.class, 'about-right');
   assert.strictEqual(adas.leading, 'M');
   assert.strictEqual(adas.dataStatus, 'verified');
   /* no id in the query or headers can point at Ada's profile */

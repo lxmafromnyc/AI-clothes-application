@@ -160,5 +160,100 @@
       "expect": { "status": "ok", "leadingAnyOf": ["M"], "confidenceAnyOf": ["low"] },
       "rationale": "No fit goal anywhere: true to size is assumed, said, and confidence drops a level."
     }
+,
+    {
+      "id": "waist-and-hip-only",
+      "product": "uniqlo-e475378-sweat-pullover-hoodie-us",
+      "profile": { "waist": 32, "hip": 38, "garment": { "fitGoal": "true-to-size", "line": "men" } },
+      "expect": { "status": "insufficient", "missing": ["no-evidence"] },
+      "rationale": "A waist and hip say nothing about a hoodie's chest, and nothing stands in for one: not enough data."
+    }
+  ],
+  "perSizeAbout": [
+    "How each size may feel, dimension by dimension (engine output fitBySize), worked out by hand from the published numbers. A class is written as it is expected; \"a|b\" means class a, could be b (the shopper's chest is a range, and its two ends land in neighbouring classes); null means no class may be given, and the engine must say why.",
+    "UNIQLO garment chest around is twice the published flat width (an estimate): XXS 40, XS 42, S 44 1/2, M 47, L 50, XL 53, XXL 55 1/2, 3XL 58 1/2 in. A measured 40 in chest is read as 39 1/2-40 1/2 in. Ease is garment around minus chest; aims: slim 2-5, true to size 5-9, oversized 10-16 in; slightly = up to 2 in outside the aim; no room at all is too tight. Against a garment that fits: chest about right within 1 in around, slightly within 3 in; lengths within 1/2 in, slightly within 1 1/2 in; shoulders within 3/8 in, slightly within 1 in.",
+    "These bands are hypotheses. The cases check that the engine does what its documented method says; they are not evidence that the classes match how clothes feel on real shoppers."
+  ],
+  "perSize": [
+    {
+      "id": "per-size-uq-hoodie-40-true",
+      "product": "uniqlo-e475378-sweat-pullover-hoodie-us",
+      "profile": { "chest": 40, "garment": { "fitGoal": "true-to-size", "line": "men" } },
+      "expect": { "basis": "garment-vs-body", "sizes": {
+        "XXS": { "chestWidth": "too-tight", "bodyLength": null, "sleeveLength": null, "shoulderWidth": null },
+        "XS": { "chestWidth": "too-tight" },
+        "S": { "chestWidth": "slightly-tight|about-right" },
+        "M": { "chestWidth": "about-right", "bodyLength": null, "sleeveLength": null, "shoulderWidth": null },
+        "L": { "chestWidth": "slightly-loose" },
+        "XL": { "chestWidth": "too-loose" } } },
+      "rationale": "Several sizes of one product for one shopper. Ease 0, 2, 4 1/2, 7, 10, 13 in against an aim of 5-9: S sits 1/2 in short of the aim at its centre and reaches it at one end of the chest range; L is 1 in past it; XL 4 in. No arm, torso or shoulder measurement exists, so lengths and shoulders get no class."
+    },
+    {
+      "id": "per-size-uq-hoodie-40-slim",
+      "product": "uniqlo-e475378-sweat-pullover-hoodie-us",
+      "profile": { "chest": 40, "garment": { "fitGoal": "slim", "line": "men" } },
+      "expect": { "basis": "garment-vs-body", "sizes": {
+        "XXS": { "chestWidth": "too-tight|slightly-tight" },
+        "XS": { "chestWidth": "about-right|slightly-tight" },
+        "S": { "chestWidth": "about-right" },
+        "M": { "chestWidth": "slightly-loose|too-loose" },
+        "L": { "chestWidth": "too-loose" } } },
+      "rationale": "Same shopper and product, slim (aim 2-5 in). XXS has no room at its centre (too tight), 1/2 in at one end; XS 2 in, at the aim's edge; S 4 1/2; M 7, at the edge of slightly loose; L 10."
+    },
+    {
+      "id": "per-size-uq-hoodie-40-oversized",
+      "product": "uniqlo-e475378-sweat-pullover-hoodie-us",
+      "profile": { "chest": 40, "garment": { "fitGoal": "oversized", "line": "men" } },
+      "expect": { "basis": "garment-vs-body", "sizes": {
+        "M": { "chestWidth": "too-tight" },
+        "L": { "chestWidth": "about-right|slightly-tight" },
+        "XL": { "chestWidth": "about-right" },
+        "XXL": { "chestWidth": "about-right" },
+        "3XL": { "chestWidth": "too-loose|slightly-loose" } } },
+      "rationale": "Same shopper and product, oversized (aim 10-16 in). M's 7 in is more than 2 in short of the aim: tighter than the fit asked for, not tight on the body. L's 10 in is the aim's edge; XL 13 and XXL 15 1/2 are inside; 3XL's 18 1/2 is just past slightly loose."
+    },
+    {
+      "id": "per-size-uq-hoodie-reference-L",
+      "product": "uniqlo-e475378-sweat-pullover-hoodie-us",
+      "profile": { "garment": { "anchor": { "brand": "UNIQLO", "size": "L" }, "fitGoal": "true-to-size", "line": "men" } },
+      "expect": { "basis": "garment-vs-reference", "sizes": {
+        "S": { "chestWidth": "too-tight", "bodyLength": "too-short", "sleeveLength": "too-short", "shoulderWidth": "too-tight" },
+        "M": { "chestWidth": "slightly-tight", "bodyLength": "slightly-short", "sleeveLength": "slightly-short", "shoulderWidth": "slightly-tight" },
+        "L": { "chestWidth": "about-right", "bodyLength": "about-right", "sleeveLength": "about-right", "shoulderWidth": "about-right" },
+        "XL": { "chestWidth": "slightly-loose", "bodyLength": "slightly-long", "sleeveLength": "about-right", "shoulderWidth": "slightly-loose" },
+        "XXL": { "chestWidth": "too-loose", "bodyLength": "slightly-long", "sleeveLength": "slightly-long", "shoulderWidth": "too-loose" },
+        "3XL": { "chestWidth": "too-loose", "bodyLength": "too-long", "sleeveLength": "slightly-long", "shoulderWidth": "too-loose" } } },
+      "rationale": "A known fitting garment: every dimension of every size against L (chest 25 flat, length 28, sleeve 35 3/4, shoulder 20 3/4). M: chest 3 in less around, length 1 1/4, sleeve 1 and shoulder 3/4 in less. XL: chest 3 in more around, length 3/4 more, sleeve 1/2 more (about right), shoulder 3/4 more. XXL: chest 5 1/2 around, length 1, sleeve 3/4, shoulder 1 1/2 more. 3XL: length 1 3/4, sleeve 1 1/4 more."
+    },
+    {
+      "id": "per-size-uq-hoodie-chart-estimated-chest",
+      "product": "uniqlo-e475378-sweat-pullover-hoodie-us",
+      "profile": { "garment": { "anchor": { "brand": "Nike", "size": "M" }, "fitGoal": "true-to-size", "line": "men" } },
+      "expect": { "basis": "garment-vs-body", "sizes": {
+        "S": { "chestWidth": "about-right|slightly-tight" },
+        "M": { "chestWidth": "about-right|slightly-loose" },
+        "L": { "chestWidth": null },
+        "XL": { "chestWidth": "too-loose" } } },
+      "rationale": "The chest is not measured, only inferred from Nike's M range (37 1/2-41 in, an estimate), so the ease is a 3 1/2 in wide range. For L it runs from 9 (about right) to 12 1/2 (too loose): two classes apart, so no class may be given."
+    },
+    {
+      "id": "per-size-nike-body-chart-only",
+      "product": "nike-fn3859-club-pullover-fleece-hoodie-us",
+      "profile": { "chest": 40, "garment": { "fitGoal": "true-to-size", "line": "men" } },
+      "expect": { "basis": "body-chart", "sizes": {
+        "S": { "chestWidth": null, "bodyLength": null, "sleeveLength": null, "shoulderWidth": null, "chart": "above" },
+        "M": { "chestWidth": null, "chart": "inside" },
+        "L": { "chestWidth": null, "chart": "below" } } },
+      "rationale": "Body chart only: Nike says M is cut for 37 1/2-41 in chests, which holds 40. That says who each size is for, not how much room it has, so no size gets a class in any dimension; only the chart position is reported."
+    },
+    {
+      "id": "per-size-carhartt-point-chart",
+      "product": "carhartt-k121-loose-fit-midweight-hoodie-us",
+      "profile": { "chest": 40, "garment": { "fitGoal": "true-to-size", "line": "men" } },
+      "expect": { "basis": "body-chart", "sizes": {
+        "S": { "chestWidth": null, "chart": "above" },
+        "M": { "chestWidth": null, "chart": "inside", "chartEstimated": true } } },
+      "rationale": "Carhartt publishes one chest per size (M 40); the range (38-42) is Fynd's estimate and is marked so. No garment measurements: no classes."
+    }
   ]
 }
