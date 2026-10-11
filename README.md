@@ -2071,6 +2071,38 @@ lists what it used as verified, unverified, estimated or unknown. When the data
 cannot support an answer it returns `insufficient` with what is missing and what
 would help.
 
+### How each size may feel
+
+Beside the ranking, every answer carries `fitBySize`: for each size the product
+sells, its chest, length, sleeves and shoulders, each on a five-step scale —
+too tight, slightly tight, about right, slightly loose, too loose (for lengths:
+too short … too long) — or no class and the reason why. `fitScale` says what the
+classes are measured against, and `tradeoffs` sums up the leading size and the
+alternative. A class is given only where the evidence reaches:
+
+| Basis (`fitScale.basis`) | When | What gets a class |
+| --- | --- | --- |
+| `garment-vs-reference` | the product's garment measurements, and a garment the shopper says fits | every dimension both publish by the same method, against that garment (about right within 1 in around the chest, ½ in in length and sleeve, ⅜ in at the shoulder; slightly within 3, 1½ and 1 in) |
+| `garment-vs-body` | the product's garment measurements, and the shopper's chest | the chest only: its ease (garment around minus chest) against the room the fit goal wants (slim 2–5, true to size 5–9, oversized 10–16 in; slightly = up to 2 in outside; no room at all is too tight). The chest is a range, so a size whose ease straddles two classes names both (`couldBe`), and one that spans more gets no class. Lengths and shoulders get none: the profile has no arm, torso or shoulder measurement |
+| `body-chart` | only the brand's body chart | nothing. Fynd reports where the shopper's chest falls in each size's range (`chart.yourChest`: below, inside, above); how much room a size has, and how long it is, can't be known without the product's finished measurements |
+
+Each dimension also says what its class rests on (`measurements`): `verified`
+(published values from verified records only, beside the shopper's own
+measurement, taken as given), `estimated` (at least one value was worked out
+rather than published — a circumference from a flat width, a chest from another
+brand's chart — listed in `estimated`), or `unknown` (no class). So UNIQLO's chest
+is always `estimated`, its lengths and shoulders against a garment that fits are
+`verified`, and every dimension of a Nike or Carhartt size is `unknown`.
+
+Every number in those bands is a hypothesis in one table at the top of the
+engine (`fitBands`, beside `ease`), to be calibrated against real fit outcomes —
+not a rule of tailoring. A circumference worked out from a flat width is listed
+as an estimate; so is a chest inferred from another brand's chart. No record
+states stretch, so none is applied. The ranking, the leading size and the
+confidence are unchanged by this: they are still the scoring above, and a
+leading size whose length, sleeves or shoulders can't be assessed says so in
+its caveats.
+
 ### The endpoints
 
 ```
@@ -2101,22 +2133,38 @@ at least ten accounts. Feedback does not change suggestions yet.
 
 ### Evaluation
 
-`scripts/fixtures/size-eval.json` holds 22 cases — profiles against the six
+`scripts/fixtures/size-eval.json` holds 23 cases — profiles against the six
 products — each with the expected leading size (or the two a reasonable fitter
 might pick), the allowed alternatives and confidence, and the reasoning from the
 published chart. `node scripts/test-size-eval.js` runs them on the verified
 records exactly as the endpoint does, and checks that with each record marked
 unverified every case is "insufficient: unverified-data". Today: every case passes
-(22 cases and the unverified check, 23 in all). Leading size is one the case
+(23 cases and the unverified check). Leading size is one the case
 accepts in 18/18. Every accepted size is the leading size or the alternative in
 16/18 — reported, not required: the two oversized UNIQLO cases accept L or XL and
 are offered XL, then XXL, so L, though accepted, is not offered. (A case's
 accepted sizes are listed smallest first, not by preference; the metric used to
 read the first one as "the" expected size, which made the gap look like the
 engine missing L rather than offering XXL.) Insufficient exactly when expected
-22/22; confidence label allowed 18/18. These expectations
-are reasoned from charts, not observed fits — only feedback can show whether the
-method is right for real shoppers.
+23/23; confidence label allowed 18/18.
+
+Its `perSize` section holds 7 more cases, each class worked out by hand from the
+published numbers: several sizes of one product for one shopper; slim, true to
+size and oversized for the same shopper and product; a garment known to fit
+against every size; a chest only inferred from another brand's chart (where one
+size must get no class); and body-chart-only products, Nike's ranges and
+Carhartt's single values. 58 classes are checked, and every answer — in these
+cases and the 23 above — is held to the same rules: every ranked size assessed,
+a reason for every missing class, no class from a body chart, the doubled flat
+width marked as an estimate. 31 checks pass in all.
+
+**What this shows, and what it does not.** These are tests of code correctness:
+that the engine does what its documented method says with real published data.
+They are not evidence that the classes match how clothes feel — that needs real
+fit outcomes, and there are none in this set yet. Stretch against non-stretch,
+and bottoms (waist, hip, rise, thigh, inseam), can't be tested yet: no record
+states stretch, there are no bottoms records, and the profile holds no rise,
+thigh or inseam.
 
 ```sh
 node scripts/test-sizing.js      # records, engine rules, both endpoints: auth, CSRF, ownership, consent, logs
@@ -2128,7 +2176,13 @@ node scripts/test-size-eval.js   # the evaluation set and its metrics
 - Women's sizing, Tall lengths, and every category beyond hoodies and sweatshirts.
 - A recommendation panel on product cards.
 - Using fit feedback to adjust suggestions, and any aggregate use of it.
-- Ease and weights are starting hypotheses; nothing has calibrated them yet.
+- Ease, fit bands and weights are starting hypotheses; nothing has calibrated
+  them yet.
+- Lengths, sleeves and shoulders get a class only against a garment the shopper
+  says fits: the profile has no arm, torso or shoulder measurement.
+- Bottoms: no records, and the profile has waist and hip but no rise, thigh or
+  inseam.
+- Fit feedback the shopper has kept is not yet read as a garment that fits.
 
 ## Plans, payments and subscriptions
 

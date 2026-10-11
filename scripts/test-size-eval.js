@@ -22,6 +22,11 @@
      insufficient  "not enough data" comes back exactly when expected
      confidence    the label is one the case allows
 
+   Then the fixture's perSize cases: for chosen sizes, the class each
+   dimension must get (too tight … too loose), or that it must get none,
+   worked out by hand from the same published numbers. Every "ok" answer
+   in either set is also held to fitBySize's rules (checkFitBySize).
+
    Every case must pass. The expectations are reasoned, not observed:
    they check the engine does what its documented method says with real
    published data. Whether that method is right for real shoppers is a
@@ -47,10 +52,11 @@ const fixture = require(path.join(__dirname, 'fixtures', 'size-eval.json'));
 function profileOf(c) {
   const p = Schema.empty();
   const spec = c.profile || {};
-  if (typeof spec.chest === 'number') {
+  ['chest', 'waist', 'hip'].forEach((key) => {
+    if (typeof spec[key] !== 'number') return;
     p.measurements.unit = spec.unit || 'in';
-    p.measurements.chest = spec.chest;
-  }
+    p.measurements[key] = spec[key];
+  });
   if (spec.brandSizes) p.brandSizes = spec.brandSizes.map((b) => Object.assign({ fit: null }, b));
   if (spec.fitPreferences) p.fitPreferences = spec.fitPreferences;
   const record = sizing.byId(c.product);
@@ -60,6 +66,36 @@ function profileOf(c) {
     p.garments[record.category] = entry;
   }
   return p;
+}
+
+/* What every per-size answer must hold to, whatever the case: every
+   size ranked is assessed, a dimension with no class says why, a body
+   chart never gives a class, and an estimate is said to be one. */
+function checkFitBySize(result, record) {
+  const dims = ['chestWidth', 'bodyLength', 'sleeveLength', 'shoulderWidth'];
+  assert.deepStrictEqual(result.fitBySize.map((f) => f.size).sort(), result.ranking.map((r) => r.size).sort(), 'every ranked size is assessed');
+  result.fitBySize.forEach((f) => {
+    assert.deepStrictEqual(Object.keys(f.dimensions).sort(), dims.slice().sort(), `${f.size}: the four dimensions of a top`);
+    dims.forEach((d) => {
+      const x = f.dimensions[d];
+      if (x.class === null) {
+        assert.ok(typeof x.reason === 'string' && x.reason, `${f.size} ${d}: no class, and says why`);
+        assert.strictEqual(x.measurements, 'unknown', `${f.size} ${d}: no class rests on unknown measurements`);
+      } else {
+        /* verified, or estimated with what was estimated listed — never unknown, never both */
+        assert.ok(Array.isArray(x.estimated), `${f.size} ${d}: estimated is a list`);
+        assert.strictEqual(x.measurements, x.estimated.length ? 'estimated' : 'verified', `${f.size} ${d}: ${x.measurements} with ${x.estimated.length} estimates`);
+      }
+      if (result.fitScale.basis === 'body-chart') assert.strictEqual(x.class, null, `${f.size} ${d}: a body chart gives no class`);
+      if (result.fitScale.basis === 'garment-vs-body' && d !== 'chestWidth') assert.strictEqual(x.class, null, `${f.size} ${d}: no body measurement to meet`);
+    });
+    const chest = f.dimensions.chestWidth;
+    if (result.fitScale.basis === 'garment-vs-body' && record.charts.garment.dimensions.chestWidth.method === 'flat-width-armpit-to-armpit') {
+      assert.ok(chest.estimated.some((e) => /twice its flat width/.test(e)), `${f.size}: the doubled flat width is an estimate`);
+      if (chest.class) assert.strictEqual(chest.measurements, 'estimated', `${f.size}: a doubled flat width is never verified`);
+    }
+  });
+  assert.ok(result.tradeoffs.length >= 1 && result.tradeoffs[0].startsWith(`${result.leading}:`), 'the leading size\'s trade-offs come first');
 }
 
 let passed = 0;
@@ -110,6 +146,7 @@ function check(c) {
   assert.ok(!/will fit|guarantee|perfect fit|exact fit/i.test(words), `promises a fit: ${words}`);
   assert.ok(result.caveats.some((x) => /not a promise of fit/.test(x)), 'says it is a suggestion');
   assert.strictEqual(result.dataStatus, 'verified', 'says the data is verified');
+  checkFitBySize(result, record);
   return result;
 }
 
@@ -144,6 +181,36 @@ try {
   console.log(`  FAIL  unverified gate\n        ${err.message}`);
 }
 
+/* how each size may feel: the hand-worked per-size cases */
+console.log(`\nper-size fit classes (${fixture.perSize.length} cases)\n`);
+let perSizeChecked = 0;
+fixture.perSize.forEach((c) => {
+  try {
+    const record = sizing.byId(c.product);
+    const result = engine.recommend(profileOf(c), record);
+    assert.strictEqual(result.status, 'ok', `status ${result.status}`);
+    assert.strictEqual(result.fitScale.basis, c.expect.basis);
+    checkFitBySize(result, record);
+    Object.entries(c.expect.sizes).forEach(([size, want]) => {
+      const got = result.fitBySize.find((f) => f.size === size);
+      assert.ok(got, `${size} is assessed`);
+      Object.entries(want).forEach(([d, expected]) => {
+        if (d === 'chart') { assert.strictEqual(got.dimensions.chestWidth.chart.yourChest, expected, `${size}: your chest ${got.dimensions.chestWidth.chart.yourChest} of the range, expected ${expected}`); return; }
+        if (d === 'chartEstimated') { assert.strictEqual(got.dimensions.chestWidth.chart.estimated, expected, `${size}: chart range estimated`); return; }
+        const x = got.dimensions[d];
+        const said = x.class === null ? null : x.class + (x.couldBe ? `|${x.couldBe}` : '');
+        assert.strictEqual(said, expected, `${size} ${d}: ${said}, expected ${expected}`);
+        perSizeChecked += 1;
+      });
+    });
+    passed += 1;
+    console.log(`  ok    ${c.id} — ${Object.keys(c.expect.sizes).length} sizes`);
+  } catch (err) {
+    failures.push(c.id);
+    console.log(`  FAIL  ${c.id}\n        ${err.message}\n        expected because: ${c.rationale}`);
+  }
+});
+
 const pct = ([ok, n]) => (n ? `${ok}/${n} (${Math.round((ok / n) * 100)}%)` : 'n/a');
 console.log('\nmetrics');
 console.log(`  leading size as expected      ${pct(tally.leading)}`);
@@ -152,6 +219,17 @@ topTwoMisses.forEach((m) => console.log(`    not all offered — ${m}`));
 console.log(`  insufficient exactly when     ${pct(tally.insufficient)}`);
 console.log(`  confidence label allowed      ${pct(tally.confidence)}`);
 console.log(`  insufficient-data cases       ${fixture.cases.filter((c) => c.expect.status === 'insufficient').length} of ${fixture.cases.length}`);
+
+console.log(`  per-size classes checked      ${perSizeChecked}, across ${fixture.perSize.length} cases`);
+
+/* What this run shows, and what it does not */
+const withStretch = sizing.RECORDS.filter((r) => r.material && r.material.stretch).length;
+console.log('\nwhat this shows');
+console.log('  code correctness              the engine does what its documented method says, on the published data (above)');
+console.log('  real-fit accuracy             not measured: 0 real fit outcomes in this set; the bands are uncalibrated hypotheses');
+console.log(`  stretch vs non-stretch        not testable: ${withStretch} of ${sizing.RECORDS.length} records state stretch`);
+console.log('  bottoms (waist, hip, rise,    not testable: no bottoms records, and the profile has no rise, thigh or inseam');
+console.log('    thigh, inseam)');
 
 console.log(`\n${passed} passed, ${failures.length} failed\n`);
 process.exit(failures.length ? 1 : 0);

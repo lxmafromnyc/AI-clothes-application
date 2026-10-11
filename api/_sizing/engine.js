@@ -11,6 +11,10 @@
 
      { status: "insufficient", missing: [...], next: [...] }
 
+   Every "ok" answer also says, for each size, how its chest, length,
+   sleeves and shoulders may feel (fitBySize), where the evidence
+   reaches; see "How each size may feel" below.
+
    It never says a size will fit, and it never shows a number the record
    or the shopper did not give it, except where it says how it worked
    one out.
@@ -105,6 +109,25 @@ const TOPS = {
   unassessable: {
     'neckline-tight': 'neck openings are not published',
     'waist-loose': 'hem and waist widths are not published'
+  },
+  /* FIT BANDS: how far from the aim each class starts, in inches. Like
+     EASE, hypotheses to be calibrated against real fit outcomes, not
+     constants of tailoring.
+       ease        around the chest, against the room the fit goal wants
+                   (EASE): inside it is about right; up to `slight`
+                   outside it is slightly tight or loose; beyond, too
+       reference   against a garment the shopper says fits: up to
+                   `about` either way is about right; up to `slight` is
+                   slightly; beyond, too. Chest is around (twice a flat
+                   width). */
+  fitBands: {
+    ease: { slight: 2 },
+    reference: {
+      chestWidth: { about: 1, slight: 3 },
+      bodyLength: { about: 0.5, slight: 1.5 },
+      sleeveLength: { about: 0.5, slight: 1.5 },
+      shoulderWidth: { about: 0.375, slight: 1 }
+    }
   }
 };
 const CATEGORY_PARAMS = { hoodies: TOPS, sweatshirts: TOPS };
@@ -386,6 +409,168 @@ function troubleSides(shopper) {
 }
 
 /* ---------------------------------------------------------
+   How each size may feel, dimension by dimension
+
+   For every size of the product, each dimension the category cares
+   about gets a class on a five-step scale, relative to the fit the
+   shopper asked for (or to the garment they said fits), or no class and
+   the reason why. A class is given only when the evidence supports it:
+
+     garment-vs-body       the product's garment chest (around: twice a
+                           flat width, an estimate) minus the shopper's
+                           chest is the ease, set against the room the
+                           fit goal wants. The shopper's chest is a
+                           range, so the ease is too: when its two ends
+                           land in neighbouring classes the nearer one
+                           is named with the other as `couldBe`; when
+                           they are further apart, no class is given.
+                           Lengths and shoulders: Fynd has no body
+                           measurement for them, so no class.
+     garment-vs-reference  each published garment measurement against
+                           the same measurement, by the same method, of
+                           the garment the shopper says fits.
+     body-chart            the product publishes no garment
+                           measurements, so how a size will feel can't
+                           be known: only where the shopper's chest
+                           falls in the brand's chart for that size.
+
+   Each dimension also says what its class rests on (`measurements`):
+     verified     published values from verified records only (and the
+                  shopper's own measurement, taken as given)
+     unverified   the same, from a record nobody has checked
+     estimated    at least one value was worked out, not published (a
+                  circumference from a flat width, a chest from another
+                  brand's chart); `estimated` lists which
+     unknown      no class: the data doesn't reach that far
+   The bands between classes are hypotheses whatever the measurements.
+
+   Stretch would change all of this; no record states it, so none is
+   applied. The ranking itself stays the scoring above.
+   --------------------------------------------------------- */
+
+const GIRTH_CLASSES = ['too-tight', 'slightly-tight', 'about-right', 'slightly-loose', 'too-loose'];
+const LENGTH_CLASSES = ['too-short', 'slightly-short', 'about-right', 'slightly-long', 'too-long'];
+const LENGTH_DIMS = ['bodyLength', 'sleeveLength'];
+const DIM_NAMES = { chestWidth: 'chest', bodyLength: 'length', sleeveLength: 'sleeves', shoulderWidth: 'shoulders' };
+const classesOf = (dim) => (LENGTH_DIMS.includes(dim) ? LENGTH_CLASSES : GIRTH_CLASSES);
+const EPS = 1e-9;
+
+/* -2 .. 2: below the about-right band by more than `slight`, below it,
+   inside it, above it, above it by more than `slight` */
+function step(v, lo, hi, slight) {
+  if (v < lo - slight - EPS) return -2;
+  if (v < lo - EPS) return -1;
+  if (v <= hi + EPS) return 0;
+  if (v <= hi + slight + EPS) return 1;
+  return 2;
+}
+
+function assessSizes(record, method, shopper, scored) {
+  const units = record.units;
+  const bands = shopper.params.fitBands;
+  const inU = (v) => toUnits(v, 'in', units);
+  const rankOf = Object.fromEntries(scored.map((s, i) => [s.size, i + 1]));
+  const dims = Object.keys(shopper.params.garment);
+  const garmentDims = record.charts.garment ? record.charts.garment.dimensions : {};
+  const flat = garmentDims.chestWidth && garmentDims.chestWidth.method === 'flat-width-armpit-to-armpit';
+  const unclassed = (reason, extra) => Object.assign({ class: null, measurements: 'unknown', reason }, extra || {});
+  /* what a class rests on, given the records it read and what was worked out */
+  const basisOf = (records, estimated) => (estimated.length ? 'estimated'
+    : records.every((r) => sizingSchema.isVerified(r)) ? 'verified' : 'unverified');
+
+  const forSize = (size) => {
+    const row = garmentRow(record, size);
+    const out = {};
+    if (method === 'body-chart') {
+      const range = bodyRange(record, size);
+      const centre = (shopper.body.lo + shopper.body.hi) / 2;
+      const position = !range ? null : centre < range.lo - EPS ? 'below' : centre > range.hi + EPS ? 'above' : 'inside';
+      out.chestWidth = unclassed(`${record.brand} publishes who each size is cut for, not what the garment measures, so how much room ${size} has is unknown.`,
+        range ? { chart: { text: range.text, lo: round(range.lo, 2), hi: round(range.hi, 2), estimated: range.estimated, yourChest: position } } : {});
+      dims.filter((d) => d !== 'chestWidth').forEach((d) => { out[d] = unclassed(`${record.brand} doesn't publish this product's ${DIM_NAMES[d]}.`); });
+      return out;
+    }
+    dims.forEach((d) => {
+      if (!garmentDims[d]) { out[d] = unclassed(`${record.brand} doesn't publish this product's ${DIM_NAMES[d]}.`); return; }
+      if (!row || !row[d]) { out[d] = unclassed(`${record.brand} publishes no ${DIM_NAMES[d]} for ${size}.`); return; }
+      const value = row[d].value;
+      if (method === 'reference-garment') {
+        const ref = shopper.garmentRef;
+        const refDims = ref.record.charts.garment.dimensions;
+        const refRow = garmentRow(ref.record, ref.size);
+        if (!refDims[d] || refDims[d].method !== garmentDims[d].method || !refRow[d]) {
+          out[d] = unclassed(`The garment you said fits has no ${DIM_NAMES[d]} measured the same way.`);
+          return;
+        }
+        const scale = d === 'chestWidth' && flat ? 2 : 1;
+        const diff = (value - toUnits(refRow[d].value, ref.record.units, units)) * scale;
+        const b = bands.reference[d];
+        const estimated = scale === 2 ? ['difference around the chest, taken as twice the flat widths'] : [];
+        out[d] = {
+          class: classesOf(d)[step(diff, -inU(b.about), inU(b.about), inU(b.slight - b.about)) + 2],
+          measurements: basisOf([record, ref.record], estimated),
+          against: `${ref.record.brand} ${ref.record.product.name} in ${ref.size}`,
+          difference: round(diff, 2),
+          estimated
+        };
+        return;
+      }
+      /* garment-vs-body: only the chest has a body measurement to meet */
+      if (d !== 'chestWidth') {
+        out[d] = unclassed(`Fynd has no measurement of your ${d === 'shoulderWidth' ? 'shoulders' : d === 'sleeveLength' ? 'arms' : 'torso'} and no garment you said fits to compare ${DIM_NAMES[d]} with.`,
+          { garment: value });
+        return;
+      }
+      const around = flat ? value * 2 : value;
+      const [e0, e1] = shopper.params.ease[shopper.goal].map(inU);
+      const slight = inU(bands.ease.slight);
+      const at = (body) => {
+        const ease = around - body;
+        return ease <= EPS ? -2 : step(ease, e0, e1, slight);   /* no room at all is too tight, whatever the goal */
+      };
+      const centre = (shopper.body.lo + shopper.body.hi) / 2;
+      const ends = [at(shopper.body.hi), at(shopper.body.lo)];
+      const ease = { value: round(around - centre, 2), lo: round(around - shopper.body.hi, 2), hi: round(around - shopper.body.lo, 2), aim: [round(e0, 2), round(e1, 2)] };
+      const estimated = [flat ? 'garment chest around, as twice its flat width' : null,
+        shopper.body.source === 'reference' ? 'your chest, from the chart for a size you wear' : null].filter(Boolean);
+      if (Math.abs(ends[1] - ends[0]) >= 2) {
+        out[d] = unclassed('What Fynd knows about your chest is too wide a range to say how this size will feel.', { ease, estimated });
+        return;
+      }
+      const mid = at(centre);
+      const other = ends.find((e) => e !== mid);
+      const refRecords = shopper.body.source === 'reference' ? shopper.body.from.map((x) => x.ref.record) : [];
+      out[d] = Object.assign({ class: GIRTH_CLASSES[mid + 2] }, other !== undefined ? { couldBe: GIRTH_CLASSES[other + 2] } : {},
+        { measurements: basisOf([record, ...refRecords], estimated), ease, estimated });
+    });
+    return out;
+  };
+
+  const sizes = record.sizes.filter((s) => rankOf[s]);
+  const fitBySize = sizes.map((size) => {
+    const dimensions = forSize(size);
+    const assessed = dims.filter((d) => dimensions[d].class);
+    return { size, rank: rankOf[size], dimensions, assessed, summary: summaryOf(size, dimensions, dims) };
+  });
+  return fitBySize;
+}
+
+const CLASS_WORDS = {
+  'too-tight': 'too tight', 'slightly-tight': 'slightly tight', 'about-right': 'about right', 'slightly-loose': 'slightly loose', 'too-loose': 'too loose',
+  'too-short': 'too short', 'slightly-short': 'slightly short', 'slightly-long': 'slightly long', 'too-long': 'too long'
+};
+
+function summaryOf(size, dimensions, dims) {
+  const said = dims.filter((d) => dimensions[d].class)
+    .map((d) => `${DIM_NAMES[d]} ${CLASS_WORDS[dimensions[d].class]}${dimensions[d].couldBe ? ` (could be ${CLASS_WORDS[dimensions[d].couldBe]})` : ''}`);
+  const open = dims.filter((d) => !dimensions[d].class).map((d) => DIM_NAMES[d]);
+  const parts = [];
+  if (said.length) parts.push(said.join(', '));
+  if (open.length) parts.push(`${open.join(', ')}: not enough data`);
+  return `${size}: ${parts.join('; ')}.`;
+}
+
+/* ---------------------------------------------------------
    What the data is, attribute by attribute
    --------------------------------------------------------- */
 
@@ -599,7 +784,15 @@ function recommend(profile, record, opts) {
     caveats.push(`${record.brand} publishes no lengths for this product, but sells it in Tall sizes, which may help with sleeves or a torso that run short.`);
   }
   if (!record.material || !record.material.stretch) caveats.push(`${record.brand} doesn't say how much this fabric stretches.`);
+
+  const fitBySize = assessSizes(record, method, shopper, scored);
+  const leadFit = fitBySize.find((f) => f.size === leading.size);
+  const unassessed = Object.keys(params.garment).filter((d) => !leadFit.dimensions[d].class).map((d) => DIM_NAMES[d]);
+  if (unassessed.length) {
+    caveats.push(`How ${leading.size} will feel through the ${unassessed.join(', ')} can't be told from the data Fynd has.`);
+  }
   caveats.push('This is a suggestion from published measurements, not a promise of fit.');
+  const tradeoffs = [leadFit, alternative && fitBySize.find((f) => f.size === alternative.size)].filter(Boolean).map((f) => f.summary);
 
   return {
     status: 'ok',
@@ -611,6 +804,18 @@ function recommend(profile, record, opts) {
     confidence,
     reasons: reasonsFor(method, record, shopper, leading, alternative),
     ranking: scored.map((s) => ({ size: s.size, score: round(s.cost, 3) })),
+    fitBySize,
+    fitScale: {
+      basis: method === 'reference-garment' ? 'garment-vs-reference' : method === 'body-plus-ease' ? 'garment-vs-body' : 'body-chart',
+      relativeTo: method === 'reference-garment' ? `the ${shopper.garmentRef.record.brand} ${shopper.garmentRef.size} you said fits`
+        : method === 'body-plus-ease' ? `the ${GOAL_WORDS[shopper.goal]} fit you asked for` : null,
+      classes: { girth: GIRTH_CLASSES, length: LENGTH_CLASSES },
+      units: record.units,
+      note: method === 'body-chart'
+        ? `${record.brand} publishes only who each size is cut for. Fynd can say where your chest falls in each size's range; it can't say how much room any size has, or how long it is, without the product's finished measurements.`
+        : 'The bands between classes are starting hypotheses, not measured facts; real fit feedback is needed to calibrate them.'
+    },
+    tradeoffs,
     fitGoal: { goal: shopper.goal, from: shopper.goalSource },
     dataQuality: dataQuality(record, method, shopper),
     dataStatus: sizingSchema.isVerified(record) ? 'verified' : 'unverified',
