@@ -71,6 +71,18 @@ async function save(userId, input) {
     Schema.GUIDE_FIELDS.forEach((field) => {
       if (!Object.prototype.hasOwnProperty.call(input, field)) profile[field] = stored[field];
     });
+    /* A page loaded before version 4 sends each type without its sizing
+       line; the line the guide saved stays. */
+    const sent = input.garments && typeof input.garments === 'object' ? input.garments : null;
+    if (sent) {
+      Object.keys(profile.garments).forEach((id) => {
+        const entry = sent[id];
+        const keep = stored.garments[id] && stored.garments[id].line;
+        if (keep && entry && typeof entry === 'object' && !Object.prototype.hasOwnProperty.call(entry, 'line')) {
+          profile.garments[id].line = keep;
+        }
+      });
+    }
   }
 
   return { profile: await write(userId, profile, existing), errors: [] };

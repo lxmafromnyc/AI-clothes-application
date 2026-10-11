@@ -41,6 +41,12 @@
        name           "Something else" only: what the garment is, in the
                       shopper's words ("shorts"), or null. A label, not an
                       answer — kept only beside at least one of the three.
+       line           (version 4) the sizing line the shopper's size is
+                      in and they shop: men, women, unisex or not-sure,
+                      exactly as chosen; null when not answered. A label
+                      like name: kept only beside an answer. Size
+                      recommendations (api/_sizing/engine.js) read it and
+                      never guess it.
 
      Each of the three is null until it is answered, and a type with all
      three unanswered is not kept at all.
@@ -95,7 +101,7 @@
 (function (global) {
   'use strict';
 
-  const SCHEMA_VERSION = 3;
+  const SCHEMA_VERSION = 4;
 
   const UNITS = ['in', 'cm'];
   const UNIT_NAME = { in: 'inches', cm: 'centimetres' };
@@ -262,6 +268,16 @@
 
   /* The fields added after version 1. A save that leaves one out keeps
      what is stored (see the header). */
+  /* The sizing lines the guide offers beside the size that fits.
+     "Not sure" is kept as itself: it is an answer, and it is not men's. */
+  const SIZING_LINES = [
+    { id: 'men', label: 'Men’s' },
+    { id: 'women', label: 'Women’s' },
+    { id: 'unisex', label: 'Unisex' },
+    { id: 'not-sure', label: 'Not sure' }
+  ];
+  const SIZING_LINE_IDS = SIZING_LINES.map((l) => l.id);
+
   const LEGACY_FIELDS = ['anchor', 'fitGoal', 'troubleZones'];
   const GUIDE_FIELDS = LEGACY_FIELDS.concat('garments');
 
@@ -384,7 +400,9 @@
 
   const emptyGarment = (id) => {
     const g = garmentOf(id);
-    return g && g.named ? { anchor: null, fitGoal: null, troubleZones: null, name: null } : { anchor: null, fitGoal: null, troubleZones: null };
+    return g && g.named
+      ? { anchor: null, fitGoal: null, troubleZones: null, name: null, line: null }
+      : { anchor: null, fitGoal: null, troubleZones: null, line: null };
   };
 
   /* Nothing said about this type. "None of these" is an answer, so an
@@ -396,7 +414,10 @@
      step adds what is new, unanswered, and touches nothing older. */
   const UPGRADES = {
     1: (profile) => Object.assign({}, profile, { schemaVersion: 2, anchor: null, fitGoal: null, troubleZones: null }),
-    2: (profile) => Object.assign({}, profile, { schemaVersion: 3, garments: {} })
+    2: (profile) => Object.assign({}, profile, { schemaVersion: 3, garments: {} }),
+    /* version 4 adds each type's sizing line, unanswered; upgrade()
+       shapes it in */
+    3: (profile) => Object.assign({}, profile, { schemaVersion: 4 })
   };
 
   /* A stored anchor in its shape for the type: a length only where the
@@ -462,6 +483,7 @@
         troubleZones: Array.isArray(raw.troubleZones) ? raw.troubleZones.filter((zone) => typeof zone === 'string') : null
       };
       if (garment.named) entry.name = typeof raw.name === 'string' ? raw.name : null;
+      entry.line = typeof raw.line === 'string' ? raw.line : null;
       if (!garmentIsEmpty(entry)) shaped.garments[garment.id] = entry;
     });
 
@@ -526,7 +548,8 @@
       garment: garment ? (garment.named && e.name ? `${garment.label}: ${e.name}` : garment.label) : id,
       anchor: a && (a.brand || a.size || a.length) ? `${a.brand || 'Brand not said'} · ${describeSize(a)}` : 'Not answered',
       fitGoal: goal ? goal.label : 'Not answered',
-      troubleZones: zones === null ? 'Not answered' : (zones.length ? zones.join('; ') : 'None of these')
+      troubleZones: zones === null ? 'Not answered' : (zones.length ? zones.join('; ') : 'None of these'),
+      line: (SIZING_LINES.find((l) => l.id === e.line) || {}).label || null
     };
   }
 
@@ -614,6 +637,12 @@
       else if (zones.some((zone) => !list.includes(zone))) {
         fail(`${at}.troubleZones`, `Choose from the trouble spots listed for ${garment.id === 'other' ? 'this clothing' : garment.many}, or None of these.`);
       } else out.troubleZones = list.filter((id) => zones.includes(id));
+    }
+
+    if (raw.line !== undefined) {
+      if (blank(raw.line)) out.line = null;
+      else if (SIZING_LINE_IDS.includes(raw.line)) out.line = raw.line;
+      else fail(`${at}.line`, 'Choose Men’s, Women’s, Unisex or Not sure.');
     }
 
     if (raw.name !== undefined) {
@@ -931,6 +960,7 @@
     COMMON_SIZES,
     LIMITS,
     GARMENTS,
+    SIZING_LINES,
     LETTER_SIZES,
     WAIST_SIZES,
     LENGTHS,

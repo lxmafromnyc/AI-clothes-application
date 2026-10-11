@@ -1312,7 +1312,7 @@ const linkFromInbox = (pattern) => {
     await page.waitForSelector('#guide-done:not([hidden])');
     assert.match(await page.textContent('#guide-summary'), /Something else: Swim trunks/);
     assert.deepStrictEqual((await savedProfile('ada@e2e.test')).garments.other,
-      { anchor: { brand: null, size: 'M' }, fitGoal: null, troubleZones: ['too-long'], name: 'Swim trunks' });
+      { anchor: { brand: null, size: 'M' }, fitGoal: null, troubleZones: ['too-long'], name: 'Swim trunks', line: null });
     await context.close();
   });
 
@@ -1518,7 +1518,7 @@ const linkFromInbox = (pattern) => {
 
     const profile = await savedProfile('ada@e2e.test');
     assert.deepStrictEqual(profile.garments, {
-      jeans: { anchor: { brand: 'Levi’s', size: '32', length: '30' }, fitGoal: 'oversized', troubleZones: ['legs-long'] }
+      jeans: { anchor: { brand: 'Levi’s', size: '32', length: '30' }, fitGoal: 'oversized', troubleZones: ['legs-long'], line: null }
     }, 'the jeans alone, with nothing of the T-shirt in them');
     assert.deepStrictEqual([profile.anchor, profile.fitGoal, profile.troubleZones], [null, null, null], 'nothing written outside the type');
     const summary = await page.textContent('#guide-summary');
@@ -1570,7 +1570,7 @@ const linkFromInbox = (pattern) => {
     assert.ok(!/recommended size|your size (is|in)|we suggest|we recommend|size up|size down/i.test(confirmation), 'no size is suggested');
 
     const profile = await savedProfile('ada@e2e.test');
-    assert.deepStrictEqual(profile.garments.hoodies, { anchor: { brand: 'Arc’teryx', size: null }, fitGoal: 'oversized', troubleZones: ['torso-short', 'waist-loose'] });
+    assert.deepStrictEqual(profile.garments.hoodies, { anchor: { brand: 'Arc’teryx', size: null }, fitGoal: 'oversized', troubleZones: ['torso-short', 'waist-loose'], line: null });
     assert.deepStrictEqual(Object.keys(profile.garments), ['hoodies']);
     assert.strictEqual(await page.$eval('#guide-password', (n) => n.value), '', 'the password does not stay in the page');
     await context.close();
@@ -1619,9 +1619,9 @@ const linkFromInbox = (pattern) => {
     await page.waitForSelector('#guide-done:not([hidden])');
 
     const profile = await savedProfile('ada@e2e.test');
-    assert.deepStrictEqual(profile.garments.jeans, { anchor: { brand: 'Zara', size: '30', length: '32' }, fitGoal: 'true-to-size', troubleZones: [] },
+    assert.deepStrictEqual(profile.garments.jeans, { anchor: { brand: 'Zara', size: '30', length: '32' }, fitGoal: 'true-to-size', troubleZones: [], line: null },
       '"None of these" is saved as none');
-    assert.deepStrictEqual(profile.garments.hoodies, { anchor: null, fitGoal: 'oversized', troubleZones: null }, 'oversized hoodies kept beside regular jeans');
+    assert.deepStrictEqual(profile.garments.hoodies, { anchor: null, fitGoal: 'oversized', troubleZones: null, line: null }, 'oversized hoodies kept beside regular jeans');
     assert.strictEqual(profile.measurements.chest, 41, 'measurements kept');
     assert.deepStrictEqual(profile.brandSizes, [{ brand: 'Gap', category: 'hoodies', size: 'M', fit: 'about-right' }], 'usual sizes kept');
     assert.deepStrictEqual(profile.fitPreferences, { hoodies: 'relaxed' }, 'per-category fit kept');
@@ -1679,7 +1679,7 @@ const linkFromInbox = (pattern) => {
     await page.waitForSelector('#guide-done:not([hidden])');
     assert.ok(Date.now() - started < 30000, `the guide took ${Date.now() - started}ms`);
     const profile = await savedProfile('ada@e2e.test');
-    assert.deepStrictEqual(profile.garments.sweatshirts, { anchor: { brand: 'Carhartt', size: 'XL' }, fitGoal: 'true-to-size', troubleZones: ['neckline-tight'] });
+    assert.deepStrictEqual(profile.garments.sweatshirts, { anchor: { brand: 'Carhartt', size: 'XL' }, fitGoal: 'true-to-size', troubleZones: ['neckline-tight'], line: null });
     await context.close();
   });
 
@@ -1790,8 +1790,8 @@ const linkFromInbox = (pattern) => {
 
     let profile = await savedProfile('ada@e2e.test');
     assert.deepStrictEqual(profile.garments, {
-      jeans: { anchor: { brand: 'Levi’s', size: '32', length: '30' }, fitGoal: 'true-to-size', troubleZones: ['legs-long'] },
-      other: { anchor: { brand: null, size: 'L' }, fitGoal: 'oversized', troubleZones: null, name: 'shorts' }
+      jeans: { anchor: { brand: 'Levi’s', size: '32', length: '30' }, fitGoal: 'true-to-size', troubleZones: ['legs-long'], line: null },
+      other: { anchor: { brand: null, size: 'L' }, fitGoal: 'oversized', troubleZones: null, name: 'shorts', line: null }
     });
     assert.deepStrictEqual(profile.anchor, { brand: 'Nike', size: 'M' }, 'the answers about a top are kept');
     assert.strictEqual(profile.measurements.chest, 102);
@@ -1867,6 +1867,55 @@ const linkFromInbox = (pattern) => {
     await page.click('#guide-next');
     await page.waitForSelector('#guide-done:not([hidden])');
     assert.strictEqual((await savedProfile('grace@gmail.e2e')).garments.tshirts.fitGoal, 'slim', 'tapped through again, and saved');
+    await context.close();
+  });
+
+  await test('"Sized as" is optional, saved for its own type exactly as chosen, filled in again, and editable on the fit profile page', async () => {
+    const context = await openContext();
+    const page = await signedInAtGuide(context, 'ada@e2e.test');
+    await page.check('input[name="garment"][value="hoodies"]');
+    await page.click('#guide-next');
+    assert.strictEqual(await page.$$eval('input[name="sizingLine"]', (ns) => ns.map((n) => n.value).join()), 'men,women,unisex,not-sure');
+    assert.strictEqual(await page.$$eval('input[name="sizingLine"]:checked', (ns) => ns.length), 0, 'nothing chosen for them');
+    assert.match(await page.textContent('.guide-line legend'), /optional/);
+    await page.selectOption('#anchor-brand', 'Nike');
+    await page.selectOption('#anchor-size', 'M');
+    await page.check('input[name="sizingLine"][value="not-sure"]');
+    await page.click('#guide-next');
+    await page.check('input[name="fitGoal"][value="oversized"]');
+    await page.click('#guide-next');
+    await page.click('#guide-next');
+    await page.waitForSelector('#guide-done:not([hidden])');
+    assert.match(await page.textContent('#guide-summary'), /Sized as\s*Not sure/);
+    assert.strictEqual((await savedProfile('ada@e2e.test')).garments.hoodies.line, 'not-sure', '"Not sure" is kept as itself, never as men\'s');
+
+    /* filled in again for hoodies, and not lent to jeans */
+    await page.reload();
+    await page.waitForSelector('#guide[data-ready]');
+    await page.check('input[name="garment"][value="hoodies"]');
+    await page.click('#guide-next');
+    assert.strictEqual(await page.isChecked('input[name="sizingLine"][value="not-sure"]'), true);
+    await page.check('input[name="sizingLine"][value="men"]');
+    await page.click('#guide-back');
+    await page.check('input[name="garment"][value="jeans"]');
+    await page.click('#guide-next');
+    assert.strictEqual(await page.$$eval('input[name="sizingLine"]:checked', (ns) => ns.length), 0, 'jeans have their own line');
+    await page.click('#guide-back');
+    await page.check('input[name="garment"][value="hoodies"]');
+    await page.click('#guide-next');
+    for (let i = 0; i < 3; i += 1) await page.click('#guide-next');
+    await page.waitForSelector('#guide-done:not([hidden])');
+    assert.strictEqual((await savedProfile('ada@e2e.test')).garments.hoodies.line, 'men');
+
+    /* the fit profile page shows it and can change it */
+    await page.click('#guide-done a[href="fit-profile.html"]');
+    await page.waitForSelector('#profile-form:not([hidden])');
+    assert.strictEqual(await page.$eval('#g-hoodies-line', (n) => n.value), 'men');
+    await page.selectOption('#g-hoodies-line', 'unisex');
+    await saveAndWait(page);
+    const after = await savedProfile('ada@e2e.test');
+    assert.strictEqual(after.garments.hoodies.line, 'unisex');
+    assert.strictEqual(after.garments.hoodies.fitGoal, 'oversized', 'the rest of the type is untouched');
     await context.close();
   });
 

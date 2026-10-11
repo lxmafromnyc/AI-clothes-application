@@ -300,6 +300,13 @@
           <p class="profile-error" id="${p}-length-error"></p>
         </div>` : ''}
       </div>
+      <div class="profile-field garment-line" data-field="${at}.line">
+        <label class="profile-label" for="${p}-line">Sized as</label>
+        <span class="select-wrap"><select class="profile-select" id="${p}-line" data-part="line" aria-describedby="${p}-line-error">
+          <option value="">Not said</option>${Schema.SIZING_LINES.map((l) => `<option value="${l.id}">${l.label}</option>`).join('')}
+        </select></span>
+        <p class="profile-error" id="${p}-line-error"></p>
+      </div>
       <fieldset class="pref-group" data-field="${at}.fitGoal">
         <legend>How you like ${noun} to fit</legend>
         <div class="choices">
@@ -322,6 +329,7 @@
 
     const e = entry || {};
     if (g.named) piece(editor, 'name').value = e.name || '';
+    piece(editor, 'line').value = e.line || '';
     const a = e.anchor;
     if (a && (a.brand || a.size || a.length)) {
       if (a.brand && Schema.brandsFor(id).includes(a.brand)) piece(editor, 'brand').value = a.brand;
@@ -385,6 +393,7 @@
     else if (ticked.length) troubleZones = ticked.map((c) => c.value);
     const out = { anchor, fitGoal: goal && goal.value ? goal.value : null, troubleZones };
     if (g.named) out.name = piece(editor, 'name').value;
+    out.line = piece(editor, 'line').value || null;
     return out;
   }
 

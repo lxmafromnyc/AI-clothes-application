@@ -1,0 +1,157 @@
+#!/usr/bin/env node
+/* =========================================================
+   Fynd — size engine evaluation
+
+   Runs api/_sizing/engine.js over scripts/fixtures/size-eval.json: a
+   small set of shoppers and products whose expected outcomes were
+   worked out by hand from the published charts, each with its reason.
+
+     node scripts/test-size-eval.js
+
+   For every case it checks the status, the leading size, the
+   alternative, the confidence and, for an insufficient answer, what was
+   missing; then it reports:
+
+     leading       the leading size is one the case expects
+     top two       every size the case accepts is the leading size or the
+                   alternative (reported, not required). A case's accepted
+                   sizes (leadingAnyOf) are listed smallest first, not in
+                   order of preference, so no one of them is "the" expected
+                   size; a miss means an accepted size was not offered,
+                   and the cases that miss are named
+     insufficient  "not enough data" comes back exactly when expected
+     confidence    the label is one the case allows
+
+   Every case must pass. The expectations are reasoned, not observed:
+   they check the engine does what its documented method says with real
+   published data. Whether that method is right for real shoppers is a
+   question only fit feedback can answer.
+
+   The records are verified, so this suite asks the engine exactly as
+   the endpoint does, without includeUnverified. It also checks the
+   gate: with each record marked unverified, every answer is
+   "insufficient".
+   ========================================================= */
+
+'use strict';
+
+const assert = require('assert');
+const path = require('path');
+
+const Schema = require('../assets/fit-profile-schema.js');
+const engine = require('../api/_sizing/engine');
+const sizing = require('../api/_sizing/records');
+const fixture = require(path.join(__dirname, 'fixtures', 'size-eval.json'));
+
+/* A full profile from a case's short form. */
+function profileOf(c) {
+  const p = Schema.empty();
+  const spec = c.profile || {};
+  if (typeof spec.chest === 'number') {
+    p.measurements.unit = spec.unit || 'in';
+    p.measurements.chest = spec.chest;
+  }
+  if (spec.brandSizes) p.brandSizes = spec.brandSizes.map((b) => Object.assign({ fit: null }, b));
+  if (spec.fitPreferences) p.fitPreferences = spec.fitPreferences;
+  const record = sizing.byId(c.product);
+  if (spec.garment && record) {
+    const entry = Object.assign(Schema.emptyGarment(record.category), spec.garment);
+    if (entry.anchor) entry.anchor = Object.assign({ brand: null, size: null }, entry.anchor);
+    p.garments[record.category] = entry;
+  }
+  return p;
+}
+
+let passed = 0;
+const failures = [];
+const tally = { leading: [0, 0], topTwo: [0, 0], insufficient: [0, 0], confidence: [0, 0] };
+const topTwoMisses = [];
+const count = (name, ok) => { tally[name][1] += 1; if (ok) tally[name][0] += 1; };
+
+function check(c) {
+  const record = sizing.byId(c.product);
+  assert.ok(record, `no record ${c.product}`);
+  assert.ok(sizing.problems.length === 0 && record.verification.status === 'verified', `${c.product} is not verified`);
+  const result = engine.recommend(profileOf(c), record);
+  const e = c.expect;
+
+  const insufficientOk = (result.status === 'insufficient') === (e.status === 'insufficient');
+  count('insufficient', insufficientOk);
+  assert.ok(insufficientOk, `status ${result.status}, expected ${e.status}${result.missing ? ` (${result.missing.map((m) => m.code).join(', ')})` : ''}`);
+
+  if (e.status === 'insufficient') {
+    const codes = result.missing.map((m) => m.code);
+    e.missing.forEach((code) => assert.ok(codes.includes(code), `missing ${codes.join(', ')}, expected ${code}`));
+    assert.ok(!('leading' in result), 'an insufficient answer names no size');
+    return result;
+  }
+
+  const leadingOk = e.leadingAnyOf.includes(result.leading);
+  count('leading', leadingOk);
+  const offered = [result.leading, result.alternative ? result.alternative.size : null];
+  const notOffered = e.leadingAnyOf.filter((size) => !offered.includes(size));
+  count('topTwo', notOffered.length === 0);
+  if (notOffered.length) topTwoMisses.push(`${c.id}: accepts ${e.leadingAnyOf.join(', ')}; offered ${offered.filter(Boolean).join(', ')}`);
+  assert.ok(leadingOk, `leading ${result.leading}, expected one of ${e.leadingAnyOf.join(', ')}`);
+
+  if (e.alternativeAnyOf) {
+    const alt = result.alternative ? result.alternative.size : null;
+    assert.ok(e.alternativeAnyOf.includes(alt), `alternative ${alt}, expected one of ${e.alternativeAnyOf.map(String).join(', ')}`);
+    assert.notStrictEqual(alt, result.leading, 'the alternative is a different size');
+  }
+  const confOk = e.confidenceAnyOf.includes(result.confidence);
+  count('confidence', confOk);
+  assert.ok(confOk, `confidence ${result.confidence}, expected one of ${e.confidenceAnyOf.join(', ')}`);
+  if (e.method) assert.strictEqual(result.method, e.method);
+
+  /* every answer explains itself, and promises nothing */
+  assert.ok(result.reasons.length >= 1, 'reasons are given');
+  const words = JSON.stringify([result.reasons, result.caveats]);
+  assert.ok(!/will fit|guarantee|perfect fit|exact fit/i.test(words), `promises a fit: ${words}`);
+  assert.ok(result.caveats.some((x) => /not a promise of fit/.test(x)), 'says it is a suggestion');
+  assert.strictEqual(result.dataStatus, 'verified', 'says the data is verified');
+  return result;
+}
+
+console.log(`\nsize engine evaluation (${fixture.cases.length} cases)\n`);
+fixture.cases.forEach((c) => {
+  try {
+    const r = check(c);
+    passed += 1;
+    const summary = r.status === 'ok'
+      ? `${r.leading}${r.alternative ? ` (or ${r.alternative.size})` : ''}, ${r.confidence}, ${r.method}`
+      : `insufficient: ${r.missing.map((m) => m.code).join(', ')}`;
+    console.log(`  ok    ${c.id} — ${summary}`);
+  } catch (err) {
+    failures.push(c.id);
+    console.log(`  FAIL  ${c.id}\n        ${err.message}\n        expected because: ${c.rationale}`);
+  }
+});
+
+/* the gate: without includeUnverified, nothing unverified gives a size */
+const unverified = (record) => Object.assign(JSON.parse(JSON.stringify(record)), { verification: { status: 'unverified', checkedBy: null, checkedAt: null } });
+try {
+  fixture.cases.forEach((c) => {
+    const pool = sizing.RECORDS.map(unverified);
+    const r = engine.recommend(profileOf(c), pool.find((x) => x.id === c.product), { records: pool });
+    assert.strictEqual(r.status, 'insufficient', `${c.id} gave a size from unverified data`);
+    assert.strictEqual(r.missing[0].code, 'unverified-data');
+  });
+  passed += 1;
+  console.log('  ok    with the records marked unverified, every case is "insufficient: unverified-data"');
+} catch (err) {
+  failures.push('unverified gate');
+  console.log(`  FAIL  unverified gate\n        ${err.message}`);
+}
+
+const pct = ([ok, n]) => (n ? `${ok}/${n} (${Math.round((ok / n) * 100)}%)` : 'n/a');
+console.log('\nmetrics');
+console.log(`  leading size as expected      ${pct(tally.leading)}`);
+console.log(`  accepted sizes in the top two ${pct(tally.topTwo)}`);
+topTwoMisses.forEach((m) => console.log(`    not all offered — ${m}`));
+console.log(`  insufficient exactly when     ${pct(tally.insufficient)}`);
+console.log(`  confidence label allowed      ${pct(tally.confidence)}`);
+console.log(`  insufficient-data cases       ${fixture.cases.filter((c) => c.expect.status === 'insufficient').length} of ${fixture.cases.length}`);
+
+console.log(`\n${passed} passed, ${failures.length} failed\n`);
+process.exit(failures.length ? 1 : 0);
