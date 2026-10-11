@@ -342,6 +342,28 @@ await test('each size is assessed dimension by dimension, and only where the evi
   assert.strictEqual(nike.fitBySize.find((f) => f.size === 'M').dimensions.chestWidth.chart.yourChest, 'inside');
 });
 
+await test('each class says whether it rests on verified, estimated or unknown measurements', () => {
+  const tts = { fitGoal: 'true-to-size', line: 'men' };
+  /* a doubled flat width is an estimate; what has no class is unknown */
+  const m = engine.recommend(profileWith(tts, chest(40)), sizing.byId(UQ_HOODIE)).fitBySize.find((f) => f.size === 'M').dimensions;
+  assert.strictEqual(m.chestWidth.measurements, 'estimated');
+  assert.deepStrictEqual(m.chestWidth.estimated, ['garment chest around, as twice its flat width']);
+  ['bodyLength', 'sleeveLength', 'shoulderWidth'].forEach((d) => assert.strictEqual(m[d].measurements, 'unknown', d));
+  /* published lengths against a verified garment that fits: verified */
+  const ref = engine.recommend(profileWith(Object.assign({ anchor: { brand: 'UNIQLO', size: 'L' } }, tts)), sizing.byId(UQ_HOODIE)).fitBySize.find((f) => f.size === 'M').dimensions;
+  assert.deepStrictEqual(['bodyLength', 'sleeveLength', 'shoulderWidth'].map((d) => [ref[d].class, ref[d].measurements]),
+    [['slightly-short', 'verified'], ['slightly-short', 'verified'], ['slightly-tight', 'verified']]);
+  assert.strictEqual(ref.chestWidth.measurements, 'estimated', 'a difference of doubled flat widths is an estimate');
+  /* a chest inferred from another brand's chart is an estimate too */
+  const inferred = engine.recommend(profileWith(Object.assign({ anchor: { brand: 'Nike', size: 'M' } }, tts)), sizing.byId(UQ_HOODIE)).fitBySize.find((f) => f.size === 'M').dimensions.chestWidth;
+  assert.strictEqual(inferred.measurements, 'estimated');
+  assert.ok(inferred.estimated.includes('your chest, from the chart for a size you wear'));
+  /* the same comparison from records nobody has checked says so */
+  const pool = [unverifiedCopy(UQ_HOODIE)];
+  const unchecked = engine.recommend(profileWith(Object.assign({ anchor: { brand: 'UNIQLO', size: 'L' } }, tts)), pool[0], { includeUnverified: true, records: pool });
+  assert.strictEqual(unchecked.fitBySize.find((f) => f.size === 'M').dimensions.bodyLength.measurements, 'unverified');
+});
+
 await test('a letter size is read only with its sizing line, and never from a brand without a chart', () => {
   const r = engine.recommend(profileWith({ anchor: { brand: 'Nike', size: 'M' }, fitGoal: 'true-to-size', line: null }), sizing.byId(UQ_HOODIE), { includeUnverified: true });
   assert.strictEqual(r.status, 'insufficient');

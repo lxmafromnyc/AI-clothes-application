@@ -434,6 +434,16 @@ function troubleSides(shopper) {
                            be known: only where the shopper's chest
                            falls in the brand's chart for that size.
 
+   Each dimension also says what its class rests on (`measurements`):
+     verified     published values from verified records only (and the
+                  shopper's own measurement, taken as given)
+     unverified   the same, from a record nobody has checked
+     estimated    at least one value was worked out, not published (a
+                  circumference from a flat width, a chest from another
+                  brand's chart); `estimated` lists which
+     unknown      no class: the data doesn't reach that far
+   The bands between classes are hypotheses whatever the measurements.
+
    Stretch would change all of this; no record states it, so none is
    applied. The ranking itself stays the scoring above.
    --------------------------------------------------------- */
@@ -463,7 +473,10 @@ function assessSizes(record, method, shopper, scored) {
   const dims = Object.keys(shopper.params.garment);
   const garmentDims = record.charts.garment ? record.charts.garment.dimensions : {};
   const flat = garmentDims.chestWidth && garmentDims.chestWidth.method === 'flat-width-armpit-to-armpit';
-  const unclassed = (reason, extra) => Object.assign({ class: null, reason }, extra || {});
+  const unclassed = (reason, extra) => Object.assign({ class: null, measurements: 'unknown', reason }, extra || {});
+  /* what a class rests on, given the records it read and what was worked out */
+  const basisOf = (records, estimated) => (estimated.length ? 'estimated'
+    : records.every((r) => sizingSchema.isVerified(r)) ? 'verified' : 'unverified');
 
   const forSize = (size) => {
     const row = garmentRow(record, size);
@@ -492,11 +505,13 @@ function assessSizes(record, method, shopper, scored) {
         const scale = d === 'chestWidth' && flat ? 2 : 1;
         const diff = (value - toUnits(refRow[d].value, ref.record.units, units)) * scale;
         const b = bands.reference[d];
+        const estimated = scale === 2 ? ['difference around the chest, taken as twice the flat widths'] : [];
         out[d] = {
           class: classesOf(d)[step(diff, -inU(b.about), inU(b.about), inU(b.slight - b.about)) + 2],
+          measurements: basisOf([record, ref.record], estimated),
           against: `${ref.record.brand} ${ref.record.product.name} in ${ref.size}`,
           difference: round(diff, 2),
-          ...(scale === 2 ? { estimated: 'difference around the chest, taken as twice the flat widths' } : {})
+          estimated
         };
         return;
       }
@@ -524,7 +539,9 @@ function assessSizes(record, method, shopper, scored) {
       }
       const mid = at(centre);
       const other = ends.find((e) => e !== mid);
-      out[d] = Object.assign({ class: GIRTH_CLASSES[mid + 2] }, other !== undefined ? { couldBe: GIRTH_CLASSES[other + 2] } : {}, { ease, estimated });
+      const refRecords = shopper.body.source === 'reference' ? shopper.body.from.map((x) => x.ref.record) : [];
+      out[d] = Object.assign({ class: GIRTH_CLASSES[mid + 2] }, other !== undefined ? { couldBe: GIRTH_CLASSES[other + 2] } : {},
+        { measurements: basisOf([record, ...refRecords], estimated), ease, estimated });
     });
     return out;
   };

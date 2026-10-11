@@ -2086,6 +2086,14 @@ alternative. A class is given only where the evidence reaches:
 | `garment-vs-body` | the product's garment measurements, and the shopper's chest | the chest only: its ease (garment around minus chest) against the room the fit goal wants (slim 2–5, true to size 5–9, oversized 10–16 in; slightly = up to 2 in outside; no room at all is too tight). The chest is a range, so a size whose ease straddles two classes names both (`couldBe`), and one that spans more gets no class. Lengths and shoulders get none: the profile has no arm, torso or shoulder measurement |
 | `body-chart` | only the brand's body chart | nothing. Fynd reports where the shopper's chest falls in each size's range (`chart.yourChest`: below, inside, above); how much room a size has, and how long it is, can't be known without the product's finished measurements |
 
+Each dimension also says what its class rests on (`measurements`): `verified`
+(published values from verified records only, beside the shopper's own
+measurement, taken as given), `estimated` (at least one value was worked out
+rather than published — a circumference from a flat width, a chest from another
+brand's chart — listed in `estimated`), or `unknown` (no class). So UNIQLO's chest
+is always `estimated`, its lengths and shoulders against a garment that fits are
+`verified`, and every dimension of a Nike or Carhartt size is `unknown`.
+
 Every number in those bands is a hypothesis in one table at the top of the
 engine (`fitBands`, beside `ease`), to be calibrated against real fit outcomes —
 not a rule of tailoring. A circumference worked out from a flat width is listed

@@ -78,13 +78,21 @@ function checkFitBySize(result, record) {
     assert.deepStrictEqual(Object.keys(f.dimensions).sort(), dims.slice().sort(), `${f.size}: the four dimensions of a top`);
     dims.forEach((d) => {
       const x = f.dimensions[d];
-      if (x.class === null) assert.ok(typeof x.reason === 'string' && x.reason, `${f.size} ${d}: no class, and says why`);
+      if (x.class === null) {
+        assert.ok(typeof x.reason === 'string' && x.reason, `${f.size} ${d}: no class, and says why`);
+        assert.strictEqual(x.measurements, 'unknown', `${f.size} ${d}: no class rests on unknown measurements`);
+      } else {
+        /* verified, or estimated with what was estimated listed — never unknown, never both */
+        assert.ok(Array.isArray(x.estimated), `${f.size} ${d}: estimated is a list`);
+        assert.strictEqual(x.measurements, x.estimated.length ? 'estimated' : 'verified', `${f.size} ${d}: ${x.measurements} with ${x.estimated.length} estimates`);
+      }
       if (result.fitScale.basis === 'body-chart') assert.strictEqual(x.class, null, `${f.size} ${d}: a body chart gives no class`);
       if (result.fitScale.basis === 'garment-vs-body' && d !== 'chestWidth') assert.strictEqual(x.class, null, `${f.size} ${d}: no body measurement to meet`);
     });
     const chest = f.dimensions.chestWidth;
     if (result.fitScale.basis === 'garment-vs-body' && record.charts.garment.dimensions.chestWidth.method === 'flat-width-armpit-to-armpit') {
       assert.ok(chest.estimated.some((e) => /twice its flat width/.test(e)), `${f.size}: the doubled flat width is an estimate`);
+      if (chest.class) assert.strictEqual(chest.measurements, 'estimated', `${f.size}: a doubled flat width is never verified`);
     }
   });
   assert.ok(result.tradeoffs.length >= 1 && result.tradeoffs[0].startsWith(`${result.leading}:`), 'the leading size\'s trade-offs come first');
