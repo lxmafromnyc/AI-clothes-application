@@ -3,7 +3,7 @@
   "id": "carhartt-k121-loose-fit-midweight-hoodie-us",
   "brand": "Carhartt",
   "product": {
-    "name": "Loose Fit Midweight Sweatshirt (Marquette hoodie)",
+    "name": "Marquette Sweatshirt",
     "code": "K121",
     "url": "https://www.carhartt.com/product/K121/loose-fit-midweight-sweatshirt"
   },
@@ -121,6 +121,8 @@
     "Carhartt publishes one chest value per size, not a range; it is recorded as published.",
     "Carhartt publishes body measurements only for this product; no finished-garment measurements are recorded.",
     "The chart continues to 5XL (64) and 6XL (68), but this product is sold XS to 4XL, so only those are recorded.",
-    "Tall lengths exist (Carhartt: Regular for 5' 7\" to 5' 11\", Tall for 6' to 6' 3\"); only Regular is recorded."
+    "Tall lengths exist (Carhartt: Regular for 5' 7\" to 5' 11\", Tall for 6' to 6' 3\"); only Regular is recorded.",
+    "Product name as Carhartt's product data gives it (\"Marquette Sweatshirt\"); the page title reads \"Men's Marquette Loose Fit Midweight Hoodie\". Corrected from a descriptive name on 2026-10-10 review.",
+    "The chest chart is Carhartt's general \"Men Tops Size and Fit Guide\" attached to this product, not a chart for this product alone. Read from the product's own size-guide content on carhartt.com; the guide page did not render in the review browser."
   ]
 }

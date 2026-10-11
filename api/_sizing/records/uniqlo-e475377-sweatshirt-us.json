@@ -298,6 +298,9 @@
     "Its Product Size values are identical to the Sweat Pullover Hoodie's (E475378) as published; confirm when checking.",
     "The Body Size table has a second, unlabelled column (probably waist); it is not recorded.",
     "Garment \"Chest\" is recorded as a flat, armpit-to-armpit width, per UNIQLO's measuring guide; confirm when checking.",
-    "Stretch is not stated by the brand."
+    "Stretch is not stated by the brand.",
+    "Review 2026-10-10: the Product Size tab says \"The dimensions shown below are the actual measurements of the product\"; the Body Size tab says they \"are body size measurements that correspond with a product's size\". Both read in inches.",
+    "The garment table labels the column only \"Chest\". Recording it as a flat width rests on UNIQLO's measuring guide (\"Body Width: armpit to armpit\") and on the values (23 ½ in for M, below M's 37 ¾-41 in body chest, so it cannot be a circumference). UNIQLO does not state it on the product table.",
+    "As published, XXS (30 ¾ - 33) and XS (31 ½ - 34 ¾) body chest ranges overlap."
   ]
 }
