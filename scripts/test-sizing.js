@@ -11,7 +11,8 @@
        value was copied from, and is refused when it claims more than it
        has (a verified record nobody checked, a range upside down, a
        dimension or method that does not exist)
-     - unverified data never gives a size outside the evaluation suite
+     - the six records are verified by a named check, and unverified
+       data never gives a size outside the evaluation suite
      - a body measurement is never compared with a garment measurement,
        and garment measurements only by the same method
      - /api/size-recommendation reads only the caller's own profile, is
@@ -120,8 +121,11 @@ const section = (t) => out(`\n${t}\n`);
 const UQ_HOODIE = 'uniqlo-e475378-sweat-pullover-hoodie-us';
 const UQ_SWEAT = 'uniqlo-e475377-sweatshirt-us';
 const NIKE_HOODIE = 'nike-fn3859-club-pullover-fleece-hoodie-us';
+const NIKE_CREW = 'nike-fn3886-club-fleece-crew-us';
 const CARHARTT_HOODIE = 'carhartt-k121-loose-fit-midweight-hoodie-us';
+const CARHARTT_CREW = 'carhartt-k124-loose-fit-midweight-crewneck-us';
 const copy = (id) => JSON.parse(JSON.stringify(sizing.byId(id)));
+const unverifiedCopy = (id) => Object.assign(copy(id), { verification: { status: 'unverified', checkedBy: null, checkedAt: null } });
 const verifiedCopy = (id) => Object.assign(copy(id), { verification: { status: 'verified', checkedBy: 'Test checker', checkedAt: '2026-10-10' } });
 const profileWith = (garment, extra) => {
   const p = Object.assign(Schema.empty(), extra || {});
@@ -131,10 +135,10 @@ const profileWith = (garment, extra) => {
 };
 const chest = (c, unit) => ({ measurements: { unit: unit || 'in', height: null, chest: c, waist: null, hip: null } });
 
-/* with every record verified in memory, for the endpoint's happy path */
-async function withVerifiedRecords(fn) {
+/* with every record marked unverified in memory, for the gate */
+async function withUnverifiedRecords(fn) {
   const saved = sizing.RECORDS.map((r) => Object.assign({}, r.verification));
-  sizing.RECORDS.forEach((r) => Object.assign(r.verification, { status: 'verified', checkedBy: 'Test checker', checkedAt: '2026-10-10' }));
+  sizing.RECORDS.forEach((r) => Object.assign(r.verification, { status: 'unverified', checkedBy: null, checkedAt: null }));
   try { await fn(); } finally { sizing.RECORDS.forEach((r, i) => { Object.keys(r.verification).forEach((k) => delete r.verification[k]); Object.assign(r.verification, saved[i]); }); }
 }
 
@@ -142,14 +146,20 @@ async function withVerifiedRecords(fn) {
 
 section('sizing records');
 
-await test('all six records load, each from the brand\'s own site, and none is marked verified', () => {
+await test('all six records load, each from the brand\'s own site, verified by the source audit', () => {
   assert.deepStrictEqual(sizing.problems, []);
   assert.strictEqual(sizing.RECORDS.length, 6);
   assert.deepStrictEqual([...new Set(sizing.RECORDS.map((r) => r.brand))].sort(), ['Carhartt', 'Nike', 'UNIQLO']);
   assert.deepStrictEqual([...new Set(sizing.RECORDS.map((r) => r.category))].sort(), ['hoodies', 'sweatshirts']);
   sizing.RECORDS.forEach((r) => {
-    assert.strictEqual(r.verification.status, 'unverified', `${r.id} must wait for a manual check`);
-    assert.strictEqual(r.verification.checkedBy, null);
+    assert.deepStrictEqual(r.verification, { status: 'verified', checkedBy: 'claude-code-source-audit', checkedAt: '2026-10-10' }, r.id);
+    assert.ok(sizingSchema.isVerified(r), r.id);
+    /* the official source and the brand's own words stay on the record */
+    assert.ok(sizingSchema.OFFICIAL_HOSTS[r.brand].includes(new URL(r.product.url).hostname), r.id);
+    Object.values(r.charts).forEach((chart) => Object.values(chart.dimensions).forEach((d) => {
+      assert.ok(sizingSchema.OFFICIAL_HOSTS[r.brand].includes(new URL(d.methodSource.url).hostname), `${r.id}: ${d.label}`);
+      assert.ok(/"/.test(d.methodSource.says), `${r.id}: ${d.label} quotes the brand`);
+    }));
     r.sources.forEach((s) => assert.ok(sizingSchema.OFFICIAL_HOSTS[r.brand].includes(new URL(s.url).hostname), s.url));
     assert.ok(r.region && r.line && r.units && r.sizes.length, r.id);
   });
@@ -191,6 +201,42 @@ await test('records keep exactly what each brand publishes: UNIQLO both charts, 
   }))));
 });
 
+await test('who a product is for, what its chart is called, and what a flat width can say are kept apart', () => {
+  /* Nike: sold to men, on a chart Nike calls gender-neutral, men's-based */
+  [NIKE_HOODIE, NIKE_CREW].forEach((id) => {
+    const r = sizing.byId(id);
+    assert.strictEqual(r.product.audience, 'men', id);
+    assert.strictEqual(r.line, 'men', id);
+    assert.strictEqual(r.charts.body.designation, 'gender-neutral, men\'s-based', id);
+    assert.strictEqual(r.charts.body.title, 'Gender Neutral (Men\'s Based) Size Chart', id);
+    assert.strictEqual(r.charts.body.source, 'https://www.nike.com/size-fit/gender-neutral-clothing-mens-based-alpha', id);
+    assert.ok(r.sources.some((s) => s.url === r.charts.body.source), id);
+  });
+  /* UNIQLO: body chest ranges in one chart, flat garment widths in another; doubling one is an estimate */
+  [UQ_HOODIE, UQ_SWEAT].forEach((id) => {
+    const r = sizing.byId(id);
+    assert.strictEqual(r.charts.body.measures, 'body', id);
+    assert.strictEqual(r.charts.body.dimensions.chest.kind, 'range', id);
+    assert.ok(!('chestWidth' in r.charts.body.dimensions), id);
+    assert.strictEqual(r.charts.garment.measures, 'finished-garment', id);
+    assert.ok(!('chest' in r.charts.garment.dimensions), id);
+    const d = r.charts.garment.dimensions.chestWidth.derivedCircumference;
+    assert.strictEqual(d.status, 'estimated', id);
+    assert.strictEqual(d.factor, 2, id);
+    assert.match(d.derivation, /2 × the published flat width/, id);
+    Object.values(r.charts.garment.sizes).forEach((row) => assert.deepStrictEqual(Object.keys(row.chestWidth).sort(), ['text', 'value'], `${id}: no derived value is stored`));
+  });
+  /* Carhartt: body measurements; heading, page title and garment type each kept */
+  [[CARHARTT_HOODIE, 'Marquette Sweatshirt', "Men's Marquette Loose Fit Midweight Hoodie | Carhartt", 'pullover-hoodie'],
+    [CARHARTT_CREW, 'Marquette Crewneck Sweatshirt', "Men's Marquette Loose Fit Midweight Crewneck Sweatshirt | Carhartt", 'crewneck-sweatshirt']].forEach(([id, heading, title, type]) => {
+    const r = sizing.byId(id);
+    assert.deepStrictEqual(Object.keys(r.charts), ['body'], id);
+    assert.strictEqual(r.charts.body.measures, 'body', id);
+    assert.strictEqual(r.charts.body.dimensions.chest.method, 'body-circumference', id);
+    assert.deepStrictEqual([r.product.name, r.product.pageTitle, r.product.garmentType], [heading, title, type], id);
+  });
+});
+
 await test('a record that claims more than it has is refused', () => {
   const bad = (change) => { const r = copy(UQ_HOODIE); change(r); return sizingSchema.validate(r).map((e) => e.field); };
   assert.ok(bad((r) => { r.verification = { status: 'verified', checkedBy: null, checkedAt: null }; }).includes('verification'));
@@ -209,6 +255,10 @@ await test('a record that claims more than it has is refused', () => {
   assert.ok(bad((r) => { delete r.charts.garment.sizes.M.chestWidth.text; }).includes('charts.garment.sizes.M.chestWidth'));
   assert.ok(bad((r) => { r.category = 'jeans'; }).includes('category'));
   assert.ok(bad((r) => { r.charts.body.retrievedAt = 'last week'; }).includes('charts.body.retrievedAt'));
+  assert.ok(bad((r) => { delete r.charts.garment.dimensions.chestWidth.derivedCircumference; }).includes('charts.garment.dimensions.chestWidth.derivedCircumference'), 'a flat width says how a circumference is derived');
+  assert.ok(bad((r) => { r.charts.garment.dimensions.chestWidth.derivedCircumference.status = 'verified'; }).includes('charts.garment.dimensions.chestWidth.derivedCircumference'), 'a doubled flat width is never verified');
+  assert.ok(bad((r) => { r.product.audience = 'everyone'; }).includes('product.audience'));
+  assert.ok(bad((r) => { r.charts.body.designation = ''; }).includes('charts.body.designation'));
   /* checked by somebody, dated: then it is verified */
   assert.deepStrictEqual(sizingSchema.validate(verifiedCopy(UQ_HOODIE)), []);
 });
@@ -217,7 +267,7 @@ section('the engine');
 
 await test('unverified data never gives a size; verified data does, and says so', () => {
   const profile = profileWith({ fitGoal: 'true-to-size', line: 'men' }, chest(40));
-  const refused = engine.recommend(profile, sizing.byId(UQ_HOODIE));
+  const refused = engine.recommend(profile, unverifiedCopy(UQ_HOODIE));
   assert.strictEqual(refused.status, 'insufficient');
   assert.strictEqual(refused.missing[0].code, 'unverified-data');
   assert.ok(!('leading' in refused));
@@ -300,12 +350,12 @@ await test('Carhartt\'s single chest values become ranges only as a stated estim
 await test('a flat garment width is never set against a body circumference: it becomes a garment circumference, said as an estimate', () => {
   const r = engine.recommend(profileWith({ fitGoal: 'true-to-size', line: 'men' }, chest(40)), sizing.byId(UQ_HOODIE), { includeUnverified: true });
   assert.strictEqual(r.method, 'body-plus-ease');
-  assert.ok(r.dataQuality.estimated.includes('garment chest around, taken as twice its flat width'));
+  assert.ok(r.dataQuality.estimated.includes('garment chest circumference, estimated as 2 × its published flat width (armpit to armpit)'));
   /* M's flat 23 ½ in is shown as a width, and its way around (47 in) is what meets 40 in + room */
   assert.ok(r.reasons.some((x) => /M measures 23½ in flat, about 47 in around/.test(x)), r.reasons.join(' | '));
   /* garment-to-garment needs no such step */
   const ref = engine.recommend(profileWith({ anchor: { brand: 'UNIQLO', size: 'M' }, fitGoal: 'true-to-size', line: 'men' }), sizing.byId(UQ_HOODIE), { includeUnverified: true });
-  assert.ok(!ref.dataQuality.estimated.some((e) => /twice its flat width/.test(e)));
+  assert.ok(!ref.dataQuality.estimated.some((e) => /2 × its published flat width/.test(e)));
 });
 
 await test('the room-for-fit numbers are labelled an assumption wherever they are used', () => {
@@ -329,7 +379,7 @@ await test('signed out it answers 401; it is GET only and no-store', async () =>
   assert.strictEqual(list.status, 200);
   assert.strictEqual(list.res.getHeader('cache-control'), 'no-store, private');
   assert.strictEqual(list.body.products.length, 6);
-  assert.ok(list.body.products.every((p) => p.verified === false));
+  assert.ok(list.body.products.every((p) => p.verified === true));
 });
 
 await test('an unknown or malformed product id is refused, and nothing is guessed', async () => {
@@ -338,7 +388,7 @@ await test('an unknown or malformed product id is refused, and nothing is guesse
   assert.strictEqual((await suggest(jar, 'uniqlo-made-up-hoodie')).status, 404);
 });
 
-await test('with today\'s unverified records every suggestion is an honest "insufficient"', async () => {
+await test('with unverified records every suggestion is an honest "insufficient"', async () => withUnverifiedRecords(async () => {
   const { jar, user } = await signUp('ada@example.test');
   await fitProfiles.save(user.id, { schemaVersion: 4, measurements: { unit: 'in', chest: 40 } });
   await fitProfiles.saveGuide(user.id, { garments: { hoodies: { fitGoal: 'true-to-size', line: 'men' } } });
@@ -348,40 +398,36 @@ await test('with today\'s unverified records every suggestion is an honest "insu
     assert.strictEqual(body.recommendation.status, 'insufficient', r.id);
     assert.strictEqual(body.recommendation.missing[0].code, 'unverified-data');
   }
-});
+}));
 
-await test('once verified, it suggests from the caller\'s own profile and nobody else\'s', async () => {
-  await withVerifiedRecords(async () => {
-    const ada = await signUp('ada@example.test');
-    const bea = await signUp('bea@example.test');
-    await fitProfiles.save(ada.user.id, { schemaVersion: 4, measurements: { unit: 'in', chest: 40 } });
-    await fitProfiles.saveGuide(ada.user.id, { garments: { hoodies: { fitGoal: 'true-to-size', line: 'men' } } });
-    await fitProfiles.save(bea.user.id, { schemaVersion: 4, measurements: { unit: 'in', chest: 46 } });
-    await fitProfiles.saveGuide(bea.user.id, { garments: { hoodies: { fitGoal: 'true-to-size', line: 'men' } } });
+await test('verified, it suggests from the caller\'s own profile and nobody else\'s', async () => {
+  const ada = await signUp('ada@example.test');
+  const bea = await signUp('bea@example.test');
+  await fitProfiles.save(ada.user.id, { schemaVersion: 4, measurements: { unit: 'in', chest: 40 } });
+  await fitProfiles.saveGuide(ada.user.id, { garments: { hoodies: { fitGoal: 'true-to-size', line: 'men' } } });
+  await fitProfiles.save(bea.user.id, { schemaVersion: 4, measurements: { unit: 'in', chest: 46 } });
+  await fitProfiles.saveGuide(bea.user.id, { garments: { hoodies: { fitGoal: 'true-to-size', line: 'men' } } });
 
-    const adas = (await suggest(ada.jar, UQ_HOODIE)).body.recommendation;
-    assert.strictEqual(adas.status, 'ok');
-    assert.strictEqual(adas.leading, 'M');
-    assert.strictEqual(adas.dataStatus, 'verified');
-    /* no id in the query or headers can point at Ada's profile */
-    const pointed = await suggest(bea.jar, UQ_HOODIE, { query: { product: UQ_HOODIE, userId: ada.user.id }, headers: { 'x-user-id': ada.user.id } });
-    assert.notStrictEqual(pointed.body.recommendation.leading, 'M', 'Bea gets her own size');
-    assert.strictEqual(pointed.body.recommendation.leading, 'XL');
-    /* read-only */
-    const before = await store.get(fitProfiles.profileKey(ada.user.id));
-    await suggest(ada.jar, NIKE_HOODIE);
-    assert.deepStrictEqual(await store.get(fitProfiles.profileKey(ada.user.id)), before);
-  });
+  const adas = (await suggest(ada.jar, UQ_HOODIE)).body.recommendation;
+  assert.strictEqual(adas.status, 'ok');
+  assert.strictEqual(adas.leading, 'M');
+  assert.strictEqual(adas.dataStatus, 'verified');
+  /* no id in the query or headers can point at Ada's profile */
+  const pointed = await suggest(bea.jar, UQ_HOODIE, { query: { product: UQ_HOODIE, userId: ada.user.id }, headers: { 'x-user-id': ada.user.id } });
+  assert.notStrictEqual(pointed.body.recommendation.leading, 'M', 'Bea gets her own size');
+  assert.strictEqual(pointed.body.recommendation.leading, 'XL');
+  /* read-only */
+  const before = await store.get(fitProfiles.profileKey(ada.user.id));
+  await suggest(ada.jar, NIKE_HOODIE);
+  assert.deepStrictEqual(await store.get(fitProfiles.profileKey(ada.user.id)), before);
 });
 
 await test('a signed-in caller with no profile is told what is missing, not given a size', async () => {
-  await withVerifiedRecords(async () => {
-    const { jar } = await signUp('ada@example.test');
-    const r = (await suggest(jar, NIKE_HOODIE)).body.recommendation;
-    assert.strictEqual(r.status, 'insufficient');
-    assert.strictEqual(r.missing[0].code, 'no-evidence');
-    assert.ok(r.next.some((n) => /chest measurement/.test(n)));
-  });
+  const { jar } = await signUp('ada@example.test');
+  const r = (await suggest(jar, NIKE_HOODIE)).body.recommendation;
+  assert.strictEqual(r.status, 'insufficient');
+  assert.strictEqual(r.missing[0].code, 'no-evidence');
+  assert.ok(r.next.some((n) => /chest measurement/.test(n)));
 });
 
 section('fit feedback, on /api/fit-profile');

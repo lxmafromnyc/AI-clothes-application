@@ -81,9 +81,9 @@
   ],
   "retrievedAt": "2026-10-10",
   "verification": {
-    "status": "unverified",
-    "checkedBy": null,
-    "checkedAt": null
+    "status": "verified",
+    "checkedBy": "claude-code-source-audit",
+    "checkedAt": "2026-10-10"
   },
   "notes": [
     "Carhartt shows two names: the product heading \"Marquette Crewneck Sweatshirt\" (stored as product.name) and the page title \"Men's Marquette Loose Fit Midweight Crewneck Sweatshirt\" (product.pageTitle). The garment type is stored on its own (product.garmentType).",

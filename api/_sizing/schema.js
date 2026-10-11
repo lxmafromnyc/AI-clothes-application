@@ -38,8 +38,19 @@
      unknown      not published
 
    A record is "verified" only when `verification.status` is "verified"
-   and it names who checked it and when. Nothing in this repository sets
-   that: the person checking does, by hand.
+   and it names who checked it and when. Only a check against the
+   record's sources, approved by the people who own this data, sets it;
+   the code never does.
+
+   Who a product is sold to (`product.audience`) is not the same as what
+   its chart is called: Nike sells the Club hoodie to men, on a chart it
+   titles "Gender Neutral (Men's Based)". A chart keeps its own `title`
+   and `designation` when the brand gives one.
+
+   A flat garment width is not a circumference. A record holding one
+   says how a circumference is worked out from it
+   (`derivedCircumference`: always "estimated", the factor, and why),
+   and that worked-out value is never stored.
    ========================================================= */
 
 'use strict';
@@ -110,6 +121,7 @@ function validate(record) {
   const product = isPlainObject(r.product) ? r.product : {};
   if (typeof product.name !== 'string' || !product.name) fail('product.name', 'Give the product\'s name as the brand displays it.');
   if (product.pageTitle !== undefined && (typeof product.pageTitle !== 'string' || !product.pageTitle)) fail('product.pageTitle', 'A page title, when kept, is the page\'s own.');
+  if (product.audience !== undefined && !LINES.includes(product.audience)) fail('product.audience', `Audience, when kept, is one of ${LINES.join(', ')}.`);
   if (!officialUrl(r.brand, product.url)) fail('product.url', 'The product URL must be on the brand\'s own site.');
   if (!CATEGORIES.includes(r.category)) fail('category', `Category must be one of ${CATEGORIES.join(', ')}.`);
   else if (!GARMENT_TYPES[r.category].includes(product.garmentType)) fail('product.garmentType', `A ${r.category} record's garment type is ${GARMENT_TYPES[r.category].join(' or ')}.`);
@@ -139,6 +151,9 @@ function validate(record) {
     const at = `charts.${kind}`;
     if (!isPlainObject(chart)) { fail(at, 'A chart is an object.'); return; }
     if (chart.measures !== MEASURES[kind]) fail(`${at}.measures`, `A ${kind} chart measures "${MEASURES[kind]}".`);
+    ['title', 'designation'].forEach((k) => {
+      if (chart[k] !== undefined && (typeof chart[k] !== 'string' || !chart[k])) fail(`${at}.${k}`, `A chart's ${k}, when kept, is the brand's own.`);
+    });
     if (!officialUrl(r.brand, chart.source)) fail(`${at}.source`, 'A chart\'s source must be on the brand\'s own site.');
     if (!isDate(chart.retrievedAt)) fail(`${at}.retrievedAt`, 'Give the date the chart was read, as YYYY-MM-DD.');
     const dims = isPlainObject(chart.dimensions) ? chart.dimensions : {};
@@ -150,6 +165,12 @@ function validate(record) {
       const src = isPlainObject(spec) && isPlainObject(spec.methodSource) ? spec.methodSource : {};
       if (!officialUrl(r.brand, src.url) || typeof src.says !== 'string' || !src.says) {
         fail(`${at}.dimensions.${dim}.methodSource`, 'Say where the brand states how this was measured: its URL and what it says.');
+      }
+      if (isPlainObject(spec) && spec.method === 'flat-width-armpit-to-armpit') {
+        const d = spec.derivedCircumference;
+        if (!isPlainObject(d) || d.status !== 'estimated' || d.factor !== 2 || typeof d.derivation !== 'string' || !d.derivation) {
+          fail(`${at}.dimensions.${dim}.derivedCircumference`, 'A flat width says how a circumference is worked out from it: status "estimated", factor 2, and the derivation.');
+        }
       }
       if (allowed.kinds && !allowed.kinds.includes(spec.kind)) fail(`${at}.dimensions.${dim}.kind`, `Kind must be one of ${allowed.kinds.join(', ')}.`);
     });

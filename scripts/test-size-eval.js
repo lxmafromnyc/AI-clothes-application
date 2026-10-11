@@ -24,8 +24,9 @@
    published data. Whether that method is right for real shoppers is a
    question only fit feedback can answer.
 
-   The records are unverified, so this suite asks the engine for
-   includeUnverified; it also checks that without it every answer is
+   The records are verified, so this suite asks the engine exactly as
+   the endpoint does, without includeUnverified. It also checks the
+   gate: with each record marked unverified, every answer is
    "insufficient".
    ========================================================= */
 
@@ -66,7 +67,8 @@ const count = (name, ok) => { tally[name][1] += 1; if (ok) tally[name][0] += 1; 
 function check(c) {
   const record = sizing.byId(c.product);
   assert.ok(record, `no record ${c.product}`);
-  const result = engine.recommend(profileOf(c), record, { includeUnverified: true });
+  assert.ok(sizing.problems.length === 0 && record.verification.status === 'verified', `${c.product} is not verified`);
+  const result = engine.recommend(profileOf(c), record);
   const e = c.expect;
 
   const insufficientOk = (result.status === 'insufficient') === (e.status === 'insufficient');
@@ -101,7 +103,7 @@ function check(c) {
   const words = JSON.stringify([result.reasons, result.caveats]);
   assert.ok(!/will fit|guarantee|perfect fit|exact fit/i.test(words), `promises a fit: ${words}`);
   assert.ok(result.caveats.some((x) => /not a promise of fit/.test(x)), 'says it is a suggestion');
-  assert.strictEqual(result.dataStatus, 'unverified', 'says the data is unverified');
+  assert.strictEqual(result.dataStatus, 'verified', 'says the data is verified');
   return result;
 }
 
@@ -121,14 +123,16 @@ fixture.cases.forEach((c) => {
 });
 
 /* the gate: without includeUnverified, nothing unverified gives a size */
+const unverified = (record) => Object.assign(JSON.parse(JSON.stringify(record)), { verification: { status: 'unverified', checkedBy: null, checkedAt: null } });
 try {
   fixture.cases.forEach((c) => {
-    const r = engine.recommend(profileOf(c), sizing.byId(c.product));
+    const pool = sizing.RECORDS.map(unverified);
+    const r = engine.recommend(profileOf(c), pool.find((x) => x.id === c.product), { records: pool });
     assert.strictEqual(r.status, 'insufficient', `${c.id} gave a size from unverified data`);
     assert.strictEqual(r.missing[0].code, 'unverified-data');
   });
   passed += 1;
-  console.log('  ok    without includeUnverified, every case is "insufficient: unverified-data"');
+  console.log('  ok    with the records marked unverified, every case is "insufficient: unverified-data"');
 } catch (err) {
   failures.push('unverified gate');
   console.log(`  FAIL  unverified gate\n        ${err.message}`);

@@ -90,6 +90,11 @@
         "chestWidth": {
           "label": "Chest",
           "method": "flat-width-armpit-to-armpit",
+          "derivedCircumference": {
+            "status": "estimated",
+            "factor": 2,
+            "derivation": "UNIQLO publishes this as a flat width, armpit to armpit, not a circumference. Where Fynd needs the garment's chest around, it takes 2 × the published flat width and labels the result estimated: it assumes the front and back are the same width and ignores fabric give. The derived value is never stored here, and it is never compared with the body chest ranges, which are a separate chart."
+          },
           "methodSource": {
             "url": "https://faq-us.uniqlo.com/articles/en_US/FAQ/How-to-Measure",
             "says": "How to Measure Clothing, Tops: \"B. Body Width: The length from armpit to armpit.\" The product table labels this column \"Chest\"; its tab says \"The dimensions shown below are the actual measurements of the product.\""
@@ -130,15 +135,15 @@
   ],
   "retrievedAt": "2026-10-10",
   "verification": {
-    "status": "unverified",
-    "checkedBy": null,
-    "checkedAt": null
+    "status": "verified",
+    "checkedBy": "claude-code-source-audit",
+    "checkedAt": "2026-10-10"
   },
   "notes": [
     "Sold as \"Men's\".",
     "Its Product Size values are identical to the Sweat Pullover Hoodie's (E475378) as published; confirm when checking.",
     "The Body Size table has a second, unlabelled column (probably waist); it is not recorded.",
-    "Garment \"Chest\" is recorded as a flat, armpit-to-armpit width, per UNIQLO's measuring guide; confirm when checking.",
+    "Garment \"Chest\" is recorded as a flat, armpit-to-armpit width, per UNIQLO's measuring guide. It is kept apart from the Body Size chart's chest ranges; any circumference worked out from it (2 × the flat width) is estimated (see charts.garment.dimensions.chestWidth.derivedCircumference).",
     "Stretch is not stated by the brand.",
     "Review 2026-10-10: the Product Size tab says \"The dimensions shown below are the actual measurements of the product\"; the Body Size tab says they \"are body size measurements that correspond with a product's size\". Both read in inches.",
     "The garment table labels the column only \"Chest\". Recording it as a flat width rests on UNIQLO's measuring guide (\"Body Width: armpit to armpit\") and on the values (23 ½ in for M, below M's 37 ¾-41 in body chest, so it cannot be a circumference). UNIQLO does not state it on the product table.",

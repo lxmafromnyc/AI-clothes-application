@@ -1958,8 +1958,8 @@ node scripts/test-ui.js            # every step and panel of the guide, and the 
 ### Not built yet
 
 - Size recommendations for shoppers: the engine and its API exist (see
-  [Size recommendations](#size-recommendations-first-version)), but no product's
-  sizing is verified yet, so none is suggested.
+  [Size recommendations](#size-recommendations-first-version)) and the six
+  product records are verified, but no page shows a suggestion yet.
 - Usual sizes by brand and preferred fit (the fit profile page's own sections)
   still cover hoodies and sweatshirts only, beside the guide's per-type answers.
   Bringing the two together is later work; until then neither is read as the
@@ -1988,12 +1988,13 @@ likes that kind of garment to fit — not a letter-to-letter conversion — and 
 how sure it is from the quality of the data, not from its own score. It never
 says a size will fit.
 
-**Nothing is suggested yet.** The six product records below were copied from the
-brands' own pages but have not been checked against them, and the engine refuses
-to suggest from unchecked data: every answer today is "not enough data:
-unverified". A record becomes usable when somebody checks it against its sources
-and sets `verification` to `{ "status": "verified", "checkedBy", "checkedAt" }` by
-hand. There is no product-card panel yet; this is the API and its evaluation.
+**The six records are verified.** Each was checked against its official sources
+and, with the owners' approval, marked
+`{ "status": "verified", "checkedBy": "claude-code-source-audit", "checkedAt": "2026-10-10" }`;
+each keeps its official source URLs and the brand's own words for every
+measurement. The engine still refuses to suggest from any record that is not
+verified ("not enough data: unverified"), and the code never sets that status.
+There is no product-card panel yet; this is the API and its evaluation.
 
 ### The data
 
@@ -2006,7 +2007,13 @@ body chest; `flat-width-armpit-to-armpit` or `garment-circumference` for a garme
 chest; `center-back-to-hem`, `center-back-to-cuff`, `seam-to-seam` and so on — and
 the brand's own words for it (`methodSource`: URL and quote). A flat garment width
 is never compared with a body circumference: where the engine needs the garment's
-way around it takes twice the flat width, and says so as an estimate. Each record
+way around it takes twice the flat width, and says so as an estimate. A record
+holding a flat width documents that derivation itself
+(`derivedCircumference`: `"estimated"`, factor 2, and why); the doubled value is
+never stored. Who a product is sold to (`product.audience`) is kept apart from
+what its chart is called (`charts.body.title` and `designation`): Nike's Club
+pieces are men's products sized on Nike's "Gender Neutral (Men's Based) Size
+Chart". Each record
 also keeps the product name the brand displays, the page title, the garment type
 (`pullover-hoodie`, `crewneck-sweatshirt`), region, units, the date it was read
 (`retrievedAt`), and the exact text each value was copied from. A value the brand
@@ -2097,9 +2104,9 @@ at least ten accounts. Feedback does not change suggestions yet.
 `scripts/fixtures/size-eval.json` holds 22 cases — profiles against the six
 products — each with the expected leading size (or the two a reasonable fitter
 might pick), the allowed alternatives and confidence, and the reasoning from the
-published chart. `node scripts/test-size-eval.js` runs them (with
-`includeUnverified`, since nothing is verified yet) and checks that without it every
-case is "insufficient: unverified-data". Today: every case passes; leading size as
+published chart. `node scripts/test-size-eval.js` runs them on the verified
+records exactly as the endpoint does, and checks that with each record marked
+unverified every case is "insufficient: unverified-data". Today: every case passes; leading size as
 expected 18/18; the case's first expected size in the top two 16/18 (the two
 oversized cases pick XL where L was listed first; both are accepted); insufficient
 exactly when expected 22/22; confidence label allowed 18/18. These expectations
@@ -2113,7 +2120,6 @@ node scripts/test-size-eval.js   # the evaluation set and its metrics
 
 ### Not built yet
 
-- No record is verified, so no suggestion is given.
 - Women's sizing, Tall lengths, and every category beyond hoodies and sweatshirts.
 - A recommendation panel on product cards.
 - Using fit feedback to adjust suggestions, and any aggregate use of it.

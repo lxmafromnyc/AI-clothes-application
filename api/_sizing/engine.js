@@ -413,7 +413,7 @@ function dataQuality(record, method, shopper) {
   if (method === 'body-plus-ease') {
     out.estimated.push('room around the chest for your fit (a starting assumption)');
     if (record.charts.garment.dimensions.chestWidth.method === 'flat-width-armpit-to-armpit') {
-      out.estimated.push('garment chest around, taken as twice its flat width');
+      out.estimated.push('garment chest circumference, estimated as 2 × its published flat width (armpit to armpit)');
     }
   }
   return out;
