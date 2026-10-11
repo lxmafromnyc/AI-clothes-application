@@ -40,7 +40,7 @@
    ---------------------------------------------------------
      reference-garment   the product has garment measurements, and so
                          does a garment the shopper says fits: compare
-                         garment with garment, on the same basis
+                         garment with garment, by the same method
      body-plus-ease      the product has garment measurements, the
                          shopper has only a body range: aim for the
                          body plus the room their fit wants (EASE)
@@ -51,8 +51,8 @@
 
    A body measurement is never compared directly with a garment
    measurement, and two garment measurements are only compared when
-   their basis (flat or around; centre back or shoulder seam) is the
-   same.
+   their method (a flat width or a circumference; from the centre back
+   or the shoulder seam) is the same.
 
    ---------------------------------------------------------
    Confidence
@@ -282,7 +282,7 @@ function scoreReferenceGarment(record, shopper) {
   const refRow = garmentRow(ref.record, ref.size);
   const refDims = ref.record.charts.garment.dimensions;
   const dims = record.charts.garment.dimensions;
-  const used = Object.keys(shopper.params.garment).filter((d) => dims[d] && refDims[d] && dims[d].basis === refDims[d].basis && refRow[d]);
+  const used = Object.keys(shopper.params.garment).filter((d) => dims[d] && refDims[d] && dims[d].method === refDims[d].method && refRow[d]);
   const trouble = troubleSides(shopper);
   return record.sizes.map((size) => {
     const row = garmentRow(record, size);
@@ -312,7 +312,10 @@ function scoreBodyPlusEase(record, shopper) {
   const hi = shopper.body.hi + e1;
   const centre = (lo + hi) / 2;
   const half = (hi - lo) / 2;
-  const flat = dims.chestWidth && dims.chestWidth.basis === 'flat';
+  /* a flat width is a width, not a circumference: the garment's way
+     around is taken as twice it (and said, in the data quality), and
+     only that is set against the body plus room */
+  const flat = dims.chestWidth && dims.chestWidth.method === 'flat-width-armpit-to-armpit';
   const trouble = troubleSides(shopper);
   const { weight, tol } = shopper.params.garment.chestWidth;
   const tolAround = toUnits(tol, 'in', units) * 2;
@@ -407,7 +410,12 @@ function dataQuality(record, method, shopper) {
   if (method === 'body-plus-ease' || method === 'body-chart') {
     if (shopper.body.source === 'reference') out.estimated.push('your chest, from the chart for a size you wear');
   }
-  if (method === 'body-plus-ease') out.estimated.push('room around the chest for your fit (a starting assumption)');
+  if (method === 'body-plus-ease') {
+    out.estimated.push('room around the chest for your fit (a starting assumption)');
+    if (record.charts.garment.dimensions.chestWidth.method === 'flat-width-armpit-to-armpit') {
+      out.estimated.push('garment chest around, taken as twice its flat width');
+    }
+  }
   return out;
 }
 
@@ -438,7 +446,7 @@ function reasonsFor(method, record, shopper, leading, alternative) {
     const from = shopper.body.source === 'measured' ? `your ${shopper.body.said} chest` : `a ${inches(shopper.body.lo, u)}–${inches(shopper.body.hi, u)} chest (from the chart for a size you wear)`;
     const [e0, e1] = shopper.params.ease[shopper.goal];
     out.push(`For a ${GOAL_WORDS[shopper.goal]} fit Fynd aims for ${e0}–${e1} in of room around ${from} — a starting assumption, not a rule: ${inches(p.band[0], u)}–${inches(p.band[1], u)} around.`);
-    const flat = record.charts.garment.dimensions.chestWidth.basis === 'flat';
+    const flat = record.charts.garment.dimensions.chestWidth.method === 'flat-width-armpit-to-armpit';
     out.push(`Chest: ${leading.size} measures ${inches(p.value, u)}${flat ? ` flat, about ${inches(p.around, u)} around` : ' around'} — ${p.inside ? 'inside' : 'outside'} that range.`);
     leading.parts.filter((x) => x.dim !== 'chestWidth').forEach((x) => {
       out.push(`${DIM_WORDS[x.dim]}: you said they run short, so Fynd looked for more length — ${leading.size} measures ${inches(x.value, u)}.`);

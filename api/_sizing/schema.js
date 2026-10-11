@@ -10,12 +10,17 @@
                       whichever the brand publishes
      charts.garment   what the finished piece measures, per size
 
-   Two different things. A body chest and a garment chest are never
-   compared directly: a 40 in chest and a 47 in garment are a fit, not a
-   mismatch. Every garment measurement also names its basis — chest
-   measured flat or around, sleeve from the centre back or from the
-   shoulder seam — and two measurements are only compared when their
-   basis is the same.
+   Two different things, and each chart says which it is (`measures`:
+   "body" or "finished-garment"). A body chest and a garment chest are
+   never compared directly: a 40 in chest and a 47 in garment are a fit,
+   not a mismatch.
+
+   Every dimension names how it was measured (`method`, from the lists
+   below — a flat width armpit to armpit is not a circumference; a
+   sleeve from the centre back is not one from the shoulder seam) and
+   the brand's own words that say so (`methodSource`: a URL on the
+   brand's site and what it says). Two measurements are only compared
+   when their method is the same.
 
    ---------------------------------------------------------
    What each value is
@@ -39,7 +44,7 @@
 
 'use strict';
 
-const SIZING_VERSION = 1;
+const SIZING_VERSION = 2;
 
 const CATEGORIES = ['hoodies', 'sweatshirts'];
 /* The lines a product's sizes are cut for. A unisex product also says
@@ -52,17 +57,22 @@ const UNITS = ['in', 'cm'];
 const FIT_CLASSES = ['slim', 'regular', 'relaxed', 'loose', 'oversized'];
 const STRETCH = ['none', 'low', 'moderate', 'high'];
 const VERIFICATION = ['unverified', 'verified'];
+/* the garment each category holds, stored apart from the brand's own
+   name for the product */
+const GARMENT_TYPES = { hoodies: ['pullover-hoodie'], sweatshirts: ['crewneck-sweatshirt'] };
+const MEASURES = { body: 'body', garment: 'finished-garment' };
 
-/* Every dimension a record may hold, and the bases each may be measured
-   on. A new category adds its own here (jeans: waist, inseam, rise). */
+/* Every dimension a record may hold, and the methods each may be
+   measured by. A new category adds its own here (jeans: waist, inseam,
+   rise). */
 const BODY_DIMENSIONS = {
-  chest: { kinds: ['range', 'point'], bases: ['body-circumference'] }
+  chest: { kinds: ['range', 'point'], methods: ['body-circumference'] }
 };
 const GARMENT_DIMENSIONS = {
-  chestWidth: { bases: ['flat', 'circumference'] },
-  bodyLength: { bases: ['center-back', 'high-point-shoulder'] },
-  sleeveLength: { bases: ['center-back', 'shoulder-seam'] },
-  shoulderWidth: { bases: ['seam-to-seam'] }
+  chestWidth: { methods: ['flat-width-armpit-to-armpit', 'garment-circumference'] },
+  bodyLength: { methods: ['center-back-to-hem', 'high-point-shoulder-to-hem'] },
+  sleeveLength: { methods: ['center-back-to-cuff', 'shoulder-seam-to-cuff'] },
+  shoulderWidth: { methods: ['seam-to-seam'] }
 };
 
 /* The brands' own sites. A source on any other host is refused. */
@@ -97,9 +107,12 @@ function validate(record) {
   if (r.sizingVersion !== SIZING_VERSION) fail('sizingVersion', `Expected sizingVersion ${SIZING_VERSION}.`);
   if (typeof r.id !== 'string' || !ID.test(r.id)) fail('id', 'The id is lower-case words joined by hyphens.');
   if (!Object.prototype.hasOwnProperty.call(OFFICIAL_HOSTS, r.brand)) fail('brand', `Brand must be one of ${Object.keys(OFFICIAL_HOSTS).join(', ')}.`);
-  if (!isPlainObject(r.product) || typeof r.product.name !== 'string' || !r.product.name) fail('product.name', 'Name the product.');
-  if (isPlainObject(r.product) && !officialUrl(r.brand, r.product.url)) fail('product.url', 'The product URL must be on the brand\'s own site.');
+  const product = isPlainObject(r.product) ? r.product : {};
+  if (typeof product.name !== 'string' || !product.name) fail('product.name', 'Give the product\'s name as the brand displays it.');
+  if (product.pageTitle !== undefined && (typeof product.pageTitle !== 'string' || !product.pageTitle)) fail('product.pageTitle', 'A page title, when kept, is the page\'s own.');
+  if (!officialUrl(r.brand, product.url)) fail('product.url', 'The product URL must be on the brand\'s own site.');
   if (!CATEGORIES.includes(r.category)) fail('category', `Category must be one of ${CATEGORIES.join(', ')}.`);
+  else if (!GARMENT_TYPES[r.category].includes(product.garmentType)) fail('product.garmentType', `A ${r.category} record's garment type is ${GARMENT_TYPES[r.category].join(' or ')}.`);
   if (typeof r.region !== 'string' || !/^[A-Z]{2}$/.test(r.region)) fail('region', 'Region is a two-letter country code.');
   if (!LINES.includes(r.line)) fail('line', `Line must be one of ${LINES.join(', ')}.`);
   if (!SCALES.includes(r.sizeScale)) fail('sizeScale', `Size scale must be one of ${SCALES.join(', ')}.`);
@@ -125,6 +138,7 @@ function validate(record) {
     if (chart === undefined) return;
     const at = `charts.${kind}`;
     if (!isPlainObject(chart)) { fail(at, 'A chart is an object.'); return; }
+    if (chart.measures !== MEASURES[kind]) fail(`${at}.measures`, `A ${kind} chart measures "${MEASURES[kind]}".`);
     if (!officialUrl(r.brand, chart.source)) fail(`${at}.source`, 'A chart\'s source must be on the brand\'s own site.');
     if (!isDate(chart.retrievedAt)) fail(`${at}.retrievedAt`, 'Give the date the chart was read, as YYYY-MM-DD.');
     const dims = isPlainObject(chart.dimensions) ? chart.dimensions : {};
@@ -132,7 +146,11 @@ function validate(record) {
     Object.entries(dims).forEach(([dim, spec]) => {
       const allowed = table[dim];
       if (!allowed) { fail(`${at}.dimensions.${dim}`, `${dim} is not a ${kind} dimension.`); return; }
-      if (!isPlainObject(spec) || !allowed.bases.includes(spec.basis)) fail(`${at}.dimensions.${dim}.basis`, `Basis must be one of ${allowed.bases.join(', ')}.`);
+      if (!isPlainObject(spec) || !allowed.methods.includes(spec.method)) fail(`${at}.dimensions.${dim}.method`, `Method must be one of ${allowed.methods.join(', ')}.`);
+      const src = isPlainObject(spec) && isPlainObject(spec.methodSource) ? spec.methodSource : {};
+      if (!officialUrl(r.brand, src.url) || typeof src.says !== 'string' || !src.says) {
+        fail(`${at}.dimensions.${dim}.methodSource`, 'Say where the brand states how this was measured: its URL and what it says.');
+      }
       if (allowed.kinds && !allowed.kinds.includes(spec.kind)) fail(`${at}.dimensions.${dim}.kind`, `Kind must be one of ${allowed.kinds.join(', ')}.`);
     });
     const rows = isPlainObject(chart.sizes) ? chart.sizes : {};
@@ -165,6 +183,8 @@ function validate(record) {
     else if (!isDate(s.retrievedAt)) fail(`sources.${i}.retrievedAt`, 'Give the date it was read, as YYYY-MM-DD.');
   });
 
+  if (!isDate(r.retrievedAt)) fail('retrievedAt', 'Give the date the record was read from its sources, as YYYY-MM-DD.');
+
   const v = isPlainObject(r.verification) ? r.verification : {};
   if (!VERIFICATION.includes(v.status)) fail('verification.status', 'Verification is "unverified" or "verified".');
   if (v.status === 'verified' && (typeof v.checkedBy !== 'string' || !v.checkedBy.trim() || !isDate(v.checkedAt))) {
@@ -181,6 +201,7 @@ module.exports = {
   LINES,
   FIT_CLASSES,
   STRETCH,
+  GARMENT_TYPES,
   BODY_DIMENSIONS,
   GARMENT_DIMENSIONS,
   OFFICIAL_HOSTS,

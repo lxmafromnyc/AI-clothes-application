@@ -1998,12 +1998,19 @@ hand. There is no product-card panel yet; this is the API and its evaluation.
 ### The data
 
 `api/_sizing/records/*.json`, one per product, region and sizing line, validated
-by `api/_sizing/schema.js` (`sizingVersion: 1`). Each record keeps **body charts**
-(who a size is cut for) apart from **garment measurements** (what the finished
-piece measures), names the basis of every garment measurement (chest flat or
-around; sleeve from the centre back or the shoulder seam), and keeps the exact
-text each value was copied from. A value the brand does not publish is absent —
-never filled in.
+by `api/_sizing/schema.js` (`sizingVersion: 2`). Each record keeps **body charts**
+(`measures: "body"`: who a size is cut for) apart from **finished-garment
+measurements** (`measures: "finished-garment"`: what the piece itself measures).
+Every dimension names its `method` from a fixed list — `body-circumference` for a
+body chest; `flat-width-armpit-to-armpit` or `garment-circumference` for a garment
+chest; `center-back-to-hem`, `center-back-to-cuff`, `seam-to-seam` and so on — and
+the brand's own words for it (`methodSource`: URL and quote). A flat garment width
+is never compared with a body circumference: where the engine needs the garment's
+way around it takes twice the flat width, and says so as an estimate. Each record
+also keeps the product name the brand displays, the page title, the garment type
+(`pullover-hoodie`, `crewneck-sweatshirt`), region, units, the date it was read
+(`retrievedAt`), and the exact text each value was copied from. A value the brand
+does not publish is absent — never filled in.
 
 | Product | Region · line · units | What the brand publishes |
 | --- | --- | --- |
@@ -2031,7 +2038,7 @@ Men's, Women's, Unisex or Not sure, stored per type as `line`).
 Three methods, by what the product publishes:
 
 - **reference-garment** — garment against a garment known to fit, dimension by
-  dimension, on the same basis.
+  dimension, by the same measurement method.
 - **body-plus-ease** — garment measurements against the shopper's body plus the
   room their fit goal wants. The room (garment minus body, around the chest) is a
   tunable hypothesis: slim 2–5 in, true to size 5–9 in, relaxed/oversized 10–16 in;

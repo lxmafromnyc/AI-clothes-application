@@ -1,11 +1,13 @@
 {
-  "sizingVersion": 1,
+  "sizingVersion": 2,
   "id": "nike-fn3886-club-fleece-crew-us",
   "brand": "Nike",
   "product": {
-    "name": "Nike Club Men's Fleece Crew",
+    "name": "Nike Club",
+    "pageTitle": "Nike Club Men's Fleece Crew. Nike.com",
     "code": "FN3886",
-    "url": "https://www.nike.com/t/club-mens-fleece-crew-RU1Il4yl/FN3886-010"
+    "url": "https://www.nike.com/t/club-mens-fleece-crew-RU1Il4yl/FN3886-010",
+    "garmentType": "crewneck-sweatshirt"
   },
   "category": "sweatshirts",
   "region": "US",
@@ -39,6 +41,7 @@
   },
   "charts": {
     "body": {
+      "measures": "body",
       "label": "Gender Neutral (Men's Based) Size Chart, Chest/Bust (in)",
       "source": "https://www.nike.com/size-fit/gender-neutral-clothing-mens-based-alpha",
       "retrievedAt": "2026-10-10",
@@ -46,73 +49,23 @@
         "chest": {
           "label": "Chest/Bust (in)",
           "kind": "range",
-          "basis": "body-circumference"
+          "method": "body-circumference",
+          "methodSource": {
+            "url": "https://www.nike.com/size-fit/gender-neutral-clothing-mens-based-alpha",
+            "says": "How to measure: \"CHEST/BUST: Measure around the fullest part of your chest/bust, keeping the measuring tape horizontal.\""
+          }
         }
       },
       "sizes": {
-        "XXS": {
-          "chest": {
-            "min": 28.5,
-            "max": 31.5,
-            "text": "28.5 - 31.5"
-          }
-        },
-        "XS": {
-          "chest": {
-            "min": 31.5,
-            "max": 35,
-            "text": "31.5 - 35"
-          }
-        },
-        "S": {
-          "chest": {
-            "min": 35,
-            "max": 37.5,
-            "text": "35 - 37.5"
-          }
-        },
-        "M": {
-          "chest": {
-            "min": 37.5,
-            "max": 41,
-            "text": "37.5 - 41"
-          }
-        },
-        "L": {
-          "chest": {
-            "min": 41,
-            "max": 44,
-            "text": "41 - 44"
-          }
-        },
-        "XL": {
-          "chest": {
-            "min": 44,
-            "max": 48.5,
-            "text": "44 - 48.5"
-          }
-        },
-        "XXL": {
-          "chest": {
-            "min": 48.5,
-            "max": 53.5,
-            "text": "48.5 - 53.5"
-          }
-        },
-        "3XL": {
-          "chest": {
-            "min": 53.5,
-            "max": 58,
-            "text": "53.5 - 58"
-          }
-        },
-        "4XL": {
-          "chest": {
-            "min": 58,
-            "max": 63,
-            "text": "58 - 63"
-          }
-        }
+        "XXS": { "chest": { "min": 28.5, "max": 31.5, "text": "28.5 - 31.5" }},
+        "XS": { "chest": { "min": 31.5, "max": 35, "text": "31.5 - 35" }},
+        "S": { "chest": { "min": 35, "max": 37.5, "text": "35 - 37.5" }},
+        "M": { "chest": { "min": 37.5, "max": 41, "text": "37.5 - 41" }},
+        "L": { "chest": { "min": 41, "max": 44, "text": "41 - 44" }},
+        "XL": { "chest": { "min": 44, "max": 48.5, "text": "44 - 48.5" }},
+        "XXL": { "chest": { "min": 48.5, "max": 53.5, "text": "48.5 - 53.5" }},
+        "3XL": { "chest": { "min": 53.5, "max": 58, "text": "53.5 - 58" }},
+        "4XL": { "chest": { "min": 58, "max": 63, "text": "58 - 63" }}
       }
     }
   },
@@ -128,6 +81,7 @@
       "retrievedAt": "2026-10-10"
     }
   ],
+  "retrievedAt": "2026-10-10",
   "verification": {
     "status": "unverified",
     "checkedBy": null,

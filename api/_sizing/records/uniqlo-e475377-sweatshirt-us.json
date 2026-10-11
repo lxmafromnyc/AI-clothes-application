@@ -1,11 +1,13 @@
 {
-  "sizingVersion": 1,
+  "sizingVersion": 2,
   "id": "uniqlo-e475377-sweatshirt-us",
   "brand": "UNIQLO",
   "product": {
     "name": "Sweatshirt",
+    "pageTitle": "Men's Sweatshirt | UNIQLO US",
     "code": "E475377-000",
-    "url": "https://www.uniqlo.com/us/en/products/E475377-000/00"
+    "url": "https://www.uniqlo.com/us/en/products/E475377-000/00",
+    "garmentType": "crewneck-sweatshirt"
   },
   "category": "sweatshirts",
   "region": "US",
@@ -37,6 +39,7 @@
   },
   "charts": {
     "body": {
+      "measures": "body",
       "label": "Size Guide, Body Size tab (inches)",
       "source": "https://www.uniqlo.com/us/en/products/E475377-000/00",
       "retrievedAt": "2026-10-10",
@@ -44,235 +47,72 @@
         "chest": {
           "label": "Chest",
           "kind": "range",
-          "basis": "body-circumference"
+          "method": "body-circumference",
+          "methodSource": {
+            "url": "https://www.uniqlo.com/us/en/products/E475377-000/00",
+            "says": "Size Guide, Body Size tab: \"The dimensions shown below are body size measurements that correspond with a product's size.\""
+          }
         }
       },
       "sizes": {
-        "XXS": {
-          "chest": {
-            "min": 30.75,
-            "max": 33,
-            "text": "30 ¾ - 33"
-          }
-        },
-        "XS": {
-          "chest": {
-            "min": 31.5,
-            "max": 34.75,
-            "text": "31 ½ - 34 ¾"
-          }
-        },
-        "S": {
-          "chest": {
-            "min": 34.75,
-            "max": 37.75,
-            "text": "34 ¾ - 37 ¾"
-          }
-        },
-        "M": {
-          "chest": {
-            "min": 37.75,
-            "max": 41,
-            "text": "37 ¾ - 41"
-          }
-        },
-        "L": {
-          "chest": {
-            "min": 41,
-            "max": 44,
-            "text": "41 - 44"
-          }
-        },
-        "XL": {
-          "chest": {
-            "min": 44,
-            "max": 47.25,
-            "text": "44 - 47 ¼"
-          }
-        },
-        "XXL": {
-          "chest": {
-            "min": 47.25,
-            "max": 50.5,
-            "text": "47 ¼ - 50 ½"
-          }
-        },
-        "3XL": {
-          "chest": {
-            "min": 50.5,
-            "max": 53.5,
-            "text": "50 ½ - 53 ½"
-          }
-        }
+        "XXS": { "chest": { "min": 30.75, "max": 33, "text": "30 ¾ - 33" }},
+        "XS": { "chest": { "min": 31.5, "max": 34.75, "text": "31 ½ - 34 ¾" }},
+        "S": { "chest": { "min": 34.75, "max": 37.75, "text": "34 ¾ - 37 ¾" }},
+        "M": { "chest": { "min": 37.75, "max": 41, "text": "37 ¾ - 41" }},
+        "L": { "chest": { "min": 41, "max": 44, "text": "41 - 44" }},
+        "XL": { "chest": { "min": 44, "max": 47.25, "text": "44 - 47 ¼" }},
+        "XXL": { "chest": { "min": 47.25, "max": 50.5, "text": "47 ¼ - 50 ½" }},
+        "3XL": { "chest": { "min": 50.5, "max": 53.5, "text": "50 ½ - 53 ½" }}
       }
     },
     "garment": {
+      "measures": "finished-garment",
       "label": "Size Guide, Product Size tab: \"the actual measurements of the product\" (inches)",
       "source": "https://www.uniqlo.com/us/en/products/E475377-000/00",
       "retrievedAt": "2026-10-10",
       "dimensions": {
         "bodyLength": {
           "label": "Length (back)",
-          "basis": "center-back"
+          "method": "center-back-to-hem",
+          "methodSource": {
+            "url": "https://faq-us.uniqlo.com/articles/en_US/FAQ/How-to-Measure",
+            "says": "How to Measure Clothing, Tops: \"C. Body Length: The length in the back of the garment in the center to the bottom (hem).\" The product table labels it \"Length (back)\"."
+          }
         },
         "shoulderWidth": {
           "label": "Shoulder width (seam to seam)",
-          "basis": "seam-to-seam"
+          "method": "seam-to-seam",
+          "methodSource": {
+            "url": "https://faq-us.uniqlo.com/articles/en_US/FAQ/How-to-Measure",
+            "says": "How to Measure Clothing, Tops: \"A. Shoulder Width: The length between the broadest part of the shoulders.\" The product table labels it \"Shoulder width (seam to seam)\"."
+          }
         },
         "chestWidth": {
           "label": "Chest",
-          "basis": "flat"
+          "method": "flat-width-armpit-to-armpit",
+          "methodSource": {
+            "url": "https://faq-us.uniqlo.com/articles/en_US/FAQ/How-to-Measure",
+            "says": "How to Measure Clothing, Tops: \"B. Body Width: The length from armpit to armpit.\" The product table labels this column \"Chest\" (the actual measurements of the product, measured flat)."
+          }
         },
         "sleeveLength": {
           "label": "Sleeve Length (center back)",
-          "basis": "center-back"
+          "method": "center-back-to-cuff",
+          "methodSource": {
+            "url": "https://www.uniqlo.com/us/en/products/E475377-000/00",
+            "says": "Product table header: \"Sleeve Length (center back)\"."
+          }
         }
       },
       "sizes": {
-        "XXS": {
-          "bodyLength": {
-            "value": 23.5,
-            "text": "23 ½"
-          },
-          "shoulderWidth": {
-            "value": 18,
-            "text": "18"
-          },
-          "chestWidth": {
-            "value": 20,
-            "text": "20"
-          },
-          "sleeveLength": {
-            "value": 32.25,
-            "text": "32 ¼"
-          }
-        },
-        "XS": {
-          "bodyLength": {
-            "value": 24.5,
-            "text": "24 ½"
-          },
-          "shoulderWidth": {
-            "value": 18.75,
-            "text": "18 ¾"
-          },
-          "chestWidth": {
-            "value": 21,
-            "text": "21"
-          },
-          "sleeveLength": {
-            "value": 32.75,
-            "text": "32 ¾"
-          }
-        },
-        "S": {
-          "bodyLength": {
-            "value": 25.5,
-            "text": "25 ½"
-          },
-          "shoulderWidth": {
-            "value": 19.25,
-            "text": "19 ¼"
-          },
-          "chestWidth": {
-            "value": 22.25,
-            "text": "22 ¼"
-          },
-          "sleeveLength": {
-            "value": 33.75,
-            "text": "33 ¾"
-          }
-        },
-        "M": {
-          "bodyLength": {
-            "value": 26.75,
-            "text": "26 ¾"
-          },
-          "shoulderWidth": {
-            "value": 20,
-            "text": "20"
-          },
-          "chestWidth": {
-            "value": 23.5,
-            "text": "23 ½"
-          },
-          "sleeveLength": {
-            "value": 34.75,
-            "text": "34 ¾"
-          }
-        },
-        "L": {
-          "bodyLength": {
-            "value": 28,
-            "text": "28"
-          },
-          "shoulderWidth": {
-            "value": 20.75,
-            "text": "20 ¾"
-          },
-          "chestWidth": {
-            "value": 25,
-            "text": "25"
-          },
-          "sleeveLength": {
-            "value": 35.75,
-            "text": "35 ¾"
-          }
-        },
-        "XL": {
-          "bodyLength": {
-            "value": 28.75,
-            "text": "28 ¾"
-          },
-          "shoulderWidth": {
-            "value": 21.5,
-            "text": "21 ½"
-          },
-          "chestWidth": {
-            "value": 26.5,
-            "text": "26 ½"
-          },
-          "sleeveLength": {
-            "value": 36.25,
-            "text": "36 ¼"
-          }
-        },
-        "XXL": {
-          "bodyLength": {
-            "value": 29,
-            "text": "29"
-          },
-          "shoulderWidth": {
-            "value": 22.25,
-            "text": "22 ¼"
-          },
-          "chestWidth": {
-            "value": 27.75,
-            "text": "27 ¾"
-          },
-          "sleeveLength": {
-            "value": 36.5,
-            "text": "36 ½"
-          }
-        },
-        "3XL": {
-          "bodyLength": {
-            "value": 29.75,
-            "text": "29 ¾"
-          },
-          "shoulderWidth": {
-            "value": 23,
-            "text": "23"
-          },
-          "chestWidth": {
-            "value": 29.25,
-            "text": "29 ¼"
-          },
-          "sleeveLength": {
-            "value": 37,
-            "text": "37"
-          }
-        }
+        "XXS": { "bodyLength": { "value": 23.5, "text": "23 ½" }, "shoulderWidth": { "value": 18, "text": "18" }, "chestWidth": { "value": 20, "text": "20" }, "sleeveLength": { "value": 32.25, "text": "32 ¼" }},
+        "XS": { "bodyLength": { "value": 24.5, "text": "24 ½" }, "shoulderWidth": { "value": 18.75, "text": "18 ¾" }, "chestWidth": { "value": 21, "text": "21" }, "sleeveLength": { "value": 32.75, "text": "32 ¾" }},
+        "S": { "bodyLength": { "value": 25.5, "text": "25 ½" }, "shoulderWidth": { "value": 19.25, "text": "19 ¼" }, "chestWidth": { "value": 22.25, "text": "22 ¼" }, "sleeveLength": { "value": 33.75, "text": "33 ¾" }},
+        "M": { "bodyLength": { "value": 26.75, "text": "26 ¾" }, "shoulderWidth": { "value": 20, "text": "20" }, "chestWidth": { "value": 23.5, "text": "23 ½" }, "sleeveLength": { "value": 34.75, "text": "34 ¾" }},
+        "L": { "bodyLength": { "value": 28, "text": "28" }, "shoulderWidth": { "value": 20.75, "text": "20 ¾" }, "chestWidth": { "value": 25, "text": "25" }, "sleeveLength": { "value": 35.75, "text": "35 ¾" }},
+        "XL": { "bodyLength": { "value": 28.75, "text": "28 ¾" }, "shoulderWidth": { "value": 21.5, "text": "21 ½" }, "chestWidth": { "value": 26.5, "text": "26 ½" }, "sleeveLength": { "value": 36.25, "text": "36 ¼" }},
+        "XXL": { "bodyLength": { "value": 29, "text": "29" }, "shoulderWidth": { "value": 22.25, "text": "22 ¼" }, "chestWidth": { "value": 27.75, "text": "27 ¾" }, "sleeveLength": { "value": 36.5, "text": "36 ½" }},
+        "3XL": { "bodyLength": { "value": 29.75, "text": "29 ¾" }, "shoulderWidth": { "value": 23, "text": "23" }, "chestWidth": { "value": 29.25, "text": "29 ¼" }, "sleeveLength": { "value": 37, "text": "37" }}
       }
     }
   },
@@ -288,6 +128,7 @@
       "retrievedAt": "2026-10-10"
     }
   ],
+  "retrievedAt": "2026-10-10",
   "verification": {
     "status": "unverified",
     "checkedBy": null,

@@ -10,10 +10,10 @@
      - every record is from the brand's own site, keeps the text each
        value was copied from, and is refused when it claims more than it
        has (a verified record nobody checked, a range upside down, a
-       dimension or basis that does not exist)
+       dimension or method that does not exist)
      - unverified data never gives a size outside the evaluation suite
      - a body measurement is never compared with a garment measurement,
-       and garment measurements only on the same basis
+       and garment measurements only by the same method
      - /api/size-recommendation reads only the caller's own profile, is
        read-only and no-store, and answers 401 signed out
      - fit feedback (on /api/fit-profile) keeps nothing without consent, takes only fixed
@@ -159,7 +159,20 @@ await test('records keep exactly what each brand publishes: UNIQLO both charts, 
   const uq = sizing.byId(UQ_HOODIE);
   assert.deepStrictEqual(Object.keys(uq.charts).sort(), ['body', 'garment']);
   assert.deepStrictEqual(Object.keys(uq.charts.garment.dimensions).sort(), ['bodyLength', 'chestWidth', 'shoulderWidth', 'sleeveLength']);
-  assert.strictEqual(uq.charts.garment.dimensions.chestWidth.basis, 'flat');
+  /* a flat width, armpit to armpit — not a circumference — on UNIQLO's own word */
+  assert.strictEqual(uq.charts.body.measures, 'body');
+  assert.strictEqual(uq.charts.garment.measures, 'finished-garment');
+  assert.strictEqual(uq.charts.garment.dimensions.chestWidth.method, 'flat-width-armpit-to-armpit');
+  assert.strictEqual(uq.charts.body.dimensions.chest.method, 'body-circumference');
+  assert.strictEqual(uq.charts.garment.dimensions.chestWidth.methodSource.url, 'https://faq-us.uniqlo.com/articles/en_US/FAQ/How-to-Measure');
+  assert.match(uq.charts.garment.dimensions.chestWidth.methodSource.says, /armpit to armpit/);
+  sizing.RECORDS.forEach((r) => {
+    assert.strictEqual(r.charts.body.dimensions.chest.method, 'body-circumference', `${r.id}: body chest`);
+    assert.ok(r.retrievedAt && r.region === 'US' && r.units === 'in', r.id);
+    assert.ok(r.product.name && r.product.garmentType, r.id);
+  });
+  assert.deepStrictEqual([sizing.byId(CARHARTT_HOODIE).product.name, sizing.byId(CARHARTT_HOODIE).product.garmentType], ['Marquette Sweatshirt', 'pullover-hoodie'],
+    'Carhartt’s displayed name and the garment type are kept apart');
   assert.strictEqual(uq.charts.garment.sizes.M.chestWidth.text, '23 ½');
   assert.strictEqual(uq.charts.garment.sizes.M.chestWidth.value, 23.5);
   assert.deepStrictEqual(Object.keys(sizing.byId(NIKE_HOODIE).charts), ['body']);
@@ -183,8 +196,15 @@ await test('a record that claims more than it has is refused', () => {
   assert.ok(bad((r) => { r.verification = { status: 'verified', checkedBy: null, checkedAt: null }; }).includes('verification'));
   assert.ok(bad((r) => { r.sources[0].url = 'https://some-blog.example/uniqlo-sizes'; }).includes('sources.0.url'));
   assert.ok(bad((r) => { r.charts.body.sizes.M.chest.min = 45; }).includes('charts.body.sizes.M.chest'));
-  assert.ok(bad((r) => { r.charts.garment.dimensions.chestWidth.basis = 'roughly'; }).includes('charts.garment.dimensions.chestWidth.basis'));
-  assert.ok(bad((r) => { r.charts.garment.dimensions.neck = { basis: 'flat' }; }).includes('charts.garment.dimensions.neck'));
+  assert.ok(bad((r) => { r.charts.garment.dimensions.chestWidth.method = 'roughly'; }).includes('charts.garment.dimensions.chestWidth.method'));
+  assert.ok(bad((r) => { r.charts.garment.dimensions.chestWidth.method = 'body-circumference'; }).includes('charts.garment.dimensions.chestWidth.method'), 'a garment width is not a body circumference');
+  assert.ok(bad((r) => { r.charts.body.dimensions.chest.method = 'flat-width-armpit-to-armpit'; }).includes('charts.body.dimensions.chest.method'), 'a body chest is not a flat width');
+  assert.ok(bad((r) => { delete r.charts.garment.dimensions.chestWidth.methodSource; }).includes('charts.garment.dimensions.chestWidth.methodSource'));
+  assert.ok(bad((r) => { r.charts.garment.dimensions.chestWidth.methodSource.url = 'https://sizes.example/uniqlo'; }).includes('charts.garment.dimensions.chestWidth.methodSource'));
+  assert.ok(bad((r) => { r.charts.garment.measures = 'body'; }).includes('charts.garment.measures'));
+  assert.ok(bad((r) => { r.product.garmentType = 'crewneck-sweatshirt'; }).includes('product.garmentType'));
+  assert.ok(bad((r) => { delete r.retrievedAt; }).includes('retrievedAt'));
+  assert.ok(bad((r) => { r.charts.garment.dimensions.neck = { method: 'flat-width-armpit-to-armpit', methodSource: { url: r.product.url, says: 'x' } }; }).includes('charts.garment.dimensions.neck'));
   assert.ok(bad((r) => { r.charts.body.sizes.XXXXL = { chest: { min: 60, max: 64, text: '60 - 64' } }; }).includes('charts.body.sizes.XXXXL'));
   assert.ok(bad((r) => { delete r.charts.garment.sizes.M.chestWidth.text; }).includes('charts.garment.sizes.M.chestWidth'));
   assert.ok(bad((r) => { r.category = 'jeans'; }).includes('category'));
@@ -226,14 +246,14 @@ await test('a body measurement is never compared with a garment one: body-only p
   assert.strictEqual(r.missing[0].code, 'incompatible-measurements');
 });
 
-await test('garment measurements are compared only on the same basis', () => {
+await test('garment measurements are compared only by the same method', () => {
   const target = copy(UQ_HOODIE);
-  target.charts.garment.dimensions.sleeveLength.basis = 'shoulder-seam';
+  target.charts.garment.dimensions.sleeveLength.method = 'shoulder-seam-to-cuff';
   /* the reference is the sweatshirt, whose sleeve is measured from the centre back */
   const profile = profileWith({ fitGoal: 'true-to-size', line: 'men' }, { brandSizes: [{ brand: 'UNIQLO', category: 'sweatshirts', size: 'M', fit: 'about-right' }] });
   const r = engine.recommend(profile, target, { includeUnverified: true, records: [sizing.byId(UQ_SWEAT), target] });
   assert.strictEqual(r.method, 'reference-garment');
-  assert.ok(!r.reasons.some((x) => /^Sleeves/.test(x)), `sleeves compared across bases: ${r.reasons.join(' | ')}`);
+  assert.ok(!r.reasons.some((x) => /^Sleeves/.test(x)), `sleeves compared across methods: ${r.reasons.join(' | ')}`);
   assert.ok(r.reasons.some((x) => /^Chest/.test(x)));
 });
 
@@ -275,6 +295,17 @@ await test('Carhartt\'s single chest values become ranges only as a stated estim
   assert.strictEqual(r.alternative.size, 'M');
   assert.ok(r.reasons.some((x) => /aims one size down/.test(x)));
   assert.notStrictEqual(r.confidence, 'high');
+});
+
+await test('a flat garment width is never set against a body circumference: it becomes a garment circumference, said as an estimate', () => {
+  const r = engine.recommend(profileWith({ fitGoal: 'true-to-size', line: 'men' }, chest(40)), sizing.byId(UQ_HOODIE), { includeUnverified: true });
+  assert.strictEqual(r.method, 'body-plus-ease');
+  assert.ok(r.dataQuality.estimated.includes('garment chest around, taken as twice its flat width'));
+  /* M's flat 23 ½ in is shown as a width, and its way around (47 in) is what meets 40 in + room */
+  assert.ok(r.reasons.some((x) => /M measures 23½ in flat, about 47 in around/.test(x)), r.reasons.join(' | '));
+  /* garment-to-garment needs no such step */
+  const ref = engine.recommend(profileWith({ anchor: { brand: 'UNIQLO', size: 'M' }, fitGoal: 'true-to-size', line: 'men' }), sizing.byId(UQ_HOODIE), { includeUnverified: true });
+  assert.ok(!ref.dataQuality.estimated.some((e) => /twice its flat width/.test(e)));
 });
 
 await test('the room-for-fit numbers are labelled an assumption wherever they are used', () => {
