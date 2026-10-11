@@ -113,10 +113,15 @@ api/_auth.js            password hashing, session cookies, who a request is
 api/_users.js           user records, and the Stripe customer mapping
 api/fit-profile.js      reads, saves and deletes the signed-in shopper's fit profile
 api/_fit-profile.js     where a fit profile is kept: one record per account
+api/size-recommendation.js  a size suggestion for one product, from the caller's own fit profile (read-only)
+api/_fit-feedback.js    where fit feedback is kept, and its consent rules
+api/_sizing/            product sizing records (records/*.json), their schema, and the size engine
 assets/fit-profile-schema.js  the fit profile's versioned schema; the page and the server share it
 assets/fit-profile-ui.js       draws the fit profile page
 assets/guide.js                the fit guide on the home page: four steps, saved per type of clothing to the fit profile
 scripts/test-fit-profile.js    offline test of the schema, units, the guide's per-type answers, and who may read or change a profile
+scripts/test-sizing.js         offline test of the sizing records, the size engine and both of its endpoints
+scripts/test-size-eval.js      the size engine against hand-worked expectations (scripts/fixtures/size-eval.json)
 api/_store.js           the key/value store: Vercel KV / Upstash, or memory
 api/_providers/openwebninja.js OpenWeb Ninja Real-Time Product Search adapter
 api/_providers/etsy.js  Etsy Open API v3 adapter, kept as an alternative
@@ -1742,7 +1747,7 @@ its `normalise()` regardless. A stored profile looks like this:
 
 ```json
 {
-  "schemaVersion": 3,
+  "schemaVersion": 4,
   "measurements": { "unit": "in", "height": 70, "chest": 40.5, "waist": null, "hip": null },
   "brandSizes": [
     { "brand": "Uniqlo", "category": "hoodies", "size": "M", "fit": "about-right" },
@@ -1753,8 +1758,8 @@ its `normalise()` regardless. A stored profile looks like this:
   "fitGoal": "true-to-size",
   "troubleZones": ["sleeves-short"],
   "garments": {
-    "hoodies": { "anchor": { "brand": "Nike", "size": "L" }, "fitGoal": "oversized", "troubleZones": ["sleeves-short"] },
-    "jeans": { "anchor": { "brand": "Levi’s", "size": "32", "length": "30" }, "fitGoal": "true-to-size", "troubleZones": [] }
+    "hoodies": { "anchor": { "brand": "Nike", "size": "L" }, "fitGoal": "oversized", "troubleZones": ["sleeves-short"], "line": "men" },
+    "jeans": { "anchor": { "brand": "Levi’s", "size": "32", "length": "30" }, "fitGoal": "true-to-size", "troubleZones": [], "line": null }
   },
   "createdAt": "2026-10-10T14:00:00.000Z",
   "updatedAt": "2026-10-10T14:05:00.000Z"
@@ -1800,7 +1805,13 @@ its `normalise()` regardless. A stored profile looks like this:
   `null` until answered, and a type with all three unanswered is not kept.
   `other` also carries `name` — what the garment is, in the shopper's words (up
   to 40 characters), or `null` — a label kept only beside an answer; any other
-  type sent a name is refused. A version 1 or 2 profile reads as version
+  type sent a name is refused.
+- **Version 4 adds each type's sizing line**, `line`: `men`, `women`, `unisex` or
+  `not-sure`, exactly as chosen beside the size that fits ("Not sure" is an answer,
+  not men's), or `null`. Like `name`, a label kept only beside an answer. A
+  version 3 profile reads as version 4 with every line unanswered; a fit profile
+  page from before version 4 that sends a type without `line` keeps the stored one.
+  Size suggestions read it, and never guess it. A version 1 or 2 profile reads as version
   3 with `garments: {}` and everything else exactly as stored — **version 2's
   answers are not moved into any type**, because the shopper never said whether
   that top was a T-shirt, a hoodie or a sweatshirt. They stay at the top level,
@@ -1946,9 +1957,9 @@ node scripts/test-ui.js            # every step and panel of the guide, and the 
 
 ### Not built yet
 
-- Size recommendations themselves. This is the profile they will read, and they
-  will need verified size charts per brand before an anchor size can mean
-  anything in another brand.
+- Size recommendations for shoppers: the engine and its API exist (see
+  [Size recommendations](#size-recommendations-first-version)), but no product's
+  sizing is verified yet, so none is suggested.
 - Usual sizes by brand and preferred fit (the fit profile page's own sections)
   still cover hoodies and sweatshirts only, beside the guide's per-type answers.
   Bringing the two together is later work; until then neither is read as the
@@ -1968,6 +1979,145 @@ node scripts/test-ui.js            # every step and panel of the guide, and the 
   one from a second origin), but signing in there depends on third-party cookies,
   which Safari, Brave and Incognito refuse — see
   [Cross-origin access](#cross-origin-access).
+
+## Size recommendations (first version)
+
+A size suggestion for one product, from the shopper's fit profile and the
+brand's own published sizing. It aims for the size closest to how the shopper
+likes that kind of garment to fit — not a letter-to-letter conversion — and says
+how sure it is from the quality of the data, not from its own score. It never
+says a size will fit.
+
+**Nothing is suggested yet.** The six product records below were copied from the
+brands' own pages but have not been checked against them, and the engine refuses
+to suggest from unchecked data: every answer today is "not enough data:
+unverified". A record becomes usable when somebody checks it against its sources
+and sets `verification` to `{ "status": "verified", "checkedBy", "checkedAt" }` by
+hand. There is no product-card panel yet; this is the API and its evaluation.
+
+### The data
+
+`api/_sizing/records/*.json`, one per product, region and sizing line, validated
+by `api/_sizing/schema.js` (`sizingVersion: 2`). Each record keeps **body charts**
+(`measures: "body"`: who a size is cut for) apart from **finished-garment
+measurements** (`measures: "finished-garment"`: what the piece itself measures).
+Every dimension names its `method` from a fixed list — `body-circumference` for a
+body chest; `flat-width-armpit-to-armpit` or `garment-circumference` for a garment
+chest; `center-back-to-hem`, `center-back-to-cuff`, `seam-to-seam` and so on — and
+the brand's own words for it (`methodSource`: URL and quote). A flat garment width
+is never compared with a body circumference: where the engine needs the garment's
+way around it takes twice the flat width, and says so as an estimate. Each record
+also keeps the product name the brand displays, the page title, the garment type
+(`pullover-hoodie`, `crewneck-sweatshirt`), region, units, the date it was read
+(`retrievedAt`), and the exact text each value was copied from. A value the brand
+does not publish is absent — never filled in.
+
+| Product | Region · line · units | What the brand publishes |
+| --- | --- | --- |
+| UNIQLO Sweat Pullover Hoodie (E475378) | US · unisex on men's sizes · in | Body chest ranges XXS–3XL; garment length (back), shoulder (seam to seam), chest (flat, armpit to armpit) and sleeve (centre back); "Regular" fit; fabric |
+| UNIQLO Sweatshirt (E475377) | US · men · in | The same two charts, with values identical to the hoodie's as published; "Regular" fit; fabric |
+| Nike Club Pullover Fleece Hoodie (FN3859) | US · men · in | Body chest ranges XXS–4XL from Nike's gender-neutral (men's based) chart; "Standard fit"; no garment measurements; fabric blend not stated |
+| Nike Club Fleece Crew (FN3886) | US · men · in | The same chart and fit |
+| Carhartt Loose Fit Midweight Hoodie (K121) | US · men · in | One body chest value per size, XS–4XL (not ranges); "Loose fit"; fabric by colour; no garment measurements |
+| Carhartt Loose Fit Midweight Crewneck (K124) | US · men · in | The same chart and fit |
+
+No brand states stretch; none publishes neck openings or hem widths; there is no
+women's chart for any of the six. Each record's `sources` and `notes` say exactly
+where every value came from and what was left out.
+
+### How a size is chosen
+
+`api/_sizing/engine.js`. What the profile says becomes a range, never an exact
+body: a chest measurement (± ½ in); a size the shopper says fits, in a brand there
+is a record for (that size's chart range — an estimate); and, best of all, a garment
+known to fit whose garment measurements are published. A letter size in a brand
+without a chart is not used, and a letter size is only read at all once the
+shopper has said which sizing line it is in (the guide's optional **Sized as**:
+Men's, Women's, Unisex or Not sure, stored per type as `line`).
+
+Three methods, by what the product publishes:
+
+- **reference-garment** — garment against a garment known to fit, dimension by
+  dimension, by the same measurement method.
+- **body-plus-ease** — garment measurements against the shopper's body plus the
+  room their fit goal wants. The room (garment minus body, around the chest) is a
+  tunable hypothesis: slim 2–5 in, true to size 5–9 in, relaxed/oversized 10–16 in;
+  every answer that uses it says so.
+- **body-chart** — the shopper's body against the brand's body chart. When the
+  brand's fit words and the shopper's goal are two or more steps apart (Carhartt's
+  "Loose" for a true-to-size shopper), the aim moves one size, and the size the
+  chart gives unmoved stays on offer as the alternative.
+
+Each size gets a cost: per dimension, a weight times the miss over a tolerance,
+squared; a trouble spot counts 2½ times in its direction (sleeves or torso shorter,
+chest tighter). Spots no chart speaks to (necklines, a loose waist) are said, not
+scored. Weights, tolerances, ease and margins are in one table at the top of the
+engine, per category (hoodies and sweatshirts share it for now).
+
+The answer is a leading size, an alternative when the next size is close or the
+brand's cut moved the aim, plain reasons, the ranking, and a confidence:
+**high** only for a garment-to-garment comparison with the next size clearly
+behind; **medium** for a measured chest against garment measurements or a body
+chart; **low** when the shopper's chest is inferred from a chart, the evidence
+disagrees, the fit goal had to be assumed, or two sizes are level. Every answer
+lists what it used as verified, unverified, estimated or unknown. When the data
+cannot support an answer it returns `insufficient` with what is missing and what
+would help.
+
+### The endpoints
+
+```
+GET  /api/size-recommendation                       -> { products }        what has sizing, and whether it is verified
+GET  /api/size-recommendation?product=<id>          -> { recommendation }  for the signed-in shopper
+GET  /api/fit-profile?part=feedback                    -> { feedback }
+POST /api/fit-profile { action: "feedback-consent", consent: { store, improve } }
+POST /api/fit-profile { action: "feedback-add", entry } -> { feedback, entry }
+POST /api/fit-profile { action: "feedback-delete", id } | { action: "feedback-delete-all" }
+```
+
+Fit feedback is part of the fit profile endpoint, not one of its own: the
+deployment's plan allows twelve functions, and `test-pipeline` holds it to that.
+
+Both read only the signed-in caller's own data (401 signed out; no id in the
+request is read), answer `no-store`, and log nothing about the profile, the
+suggestion or the feedback. The suggestion is read-only; every feedback change
+carries the CSRF token.
+
+**Fit feedback** (`fitfeedback:<user id>`) records the product and size tried,
+too small / right / too large overall, and tight / right / loose (or short /
+right / long) for chest, shoulders, waist, length and sleeves — fixed choices only,
+no free text. Nothing is kept without the shopper's consent to keep it; turning
+that off deletes every entry; it is deleted with the fit profile. A second,
+separate consent allows de-identified use to improve product data; nothing uses it
+yet, and when something does it may read only counts per product and size, from
+at least ten accounts. Feedback does not change suggestions yet.
+
+### Evaluation
+
+`scripts/fixtures/size-eval.json` holds 22 cases — profiles against the six
+products — each with the expected leading size (or the two a reasonable fitter
+might pick), the allowed alternatives and confidence, and the reasoning from the
+published chart. `node scripts/test-size-eval.js` runs them (with
+`includeUnverified`, since nothing is verified yet) and checks that without it every
+case is "insufficient: unverified-data". Today: every case passes; leading size as
+expected 18/18; the case's first expected size in the top two 16/18 (the two
+oversized cases pick XL where L was listed first; both are accepted); insufficient
+exactly when expected 22/22; confidence label allowed 18/18. These expectations
+are reasoned from charts, not observed fits — only feedback can show whether the
+method is right for real shoppers.
+
+```sh
+node scripts/test-sizing.js      # records, engine rules, both endpoints: auth, CSRF, ownership, consent, logs
+node scripts/test-size-eval.js   # the evaluation set and its metrics
+```
+
+### Not built yet
+
+- No record is verified, so no suggestion is given.
+- Women's sizing, Tall lengths, and every category beyond hoodies and sweatshirts.
+- A recommendation panel on product cards.
+- Using fit feedback to adjust suggestions, and any aggregate use of it.
+- Ease and weights are starting hypotheses; nothing has calibrated them yet.
 
 ## Plans, payments and subscriptions
 

@@ -402,6 +402,11 @@ strong { font-weight: 600; }
 .guide-other { grid-column: 1; grid-row: 2; }
 .guide-length { grid-column: 2; grid-row: 2; }
 .guide-card .profile-select, .guide-card .profile-input { height: 52px; }
+/* the sizing line under brand and size: optional, so quieter pills */
+.guide-line { min-width: 0; margin: 14px 0 0; padding: 0; border: 0; }
+.guide-line > legend { padding: 0; }
+.guide-optional { margin-left: 4px; font-weight: 400; color: var(--color-text-muted); }
+.guide-line .choice span { height: 38px; padding: 0 14px; }
 
 /* step 3: three cards, one answer */
 .fit-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
@@ -515,6 +520,9 @@ strong { font-weight: 600; }
   .garment-saved { top: 4px; right: 4px; padding: 0 6px; font-size: 10.5px; }
   .guide-legend { margin-bottom: 12px; }
   .guide-nav { margin-top: 14px; }
+  /* four even pills in one row */
+  .guide-line .choices { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+  .guide-line .choice span { justify-content: center; width: 100%; height: 36px; padding: 0 4px; font-size: 13px; }
   /* the cards become rows: picture, then words, each a thumb-sized target */
   .fit-cards { grid-template-columns: minmax(0, 1fr); gap: 8px; }
   .fit-card-body {
@@ -1286,6 +1294,7 @@ button.head-link { border: 0; background: none; padding: 8px 0; cursor: pointer;
 .garment-editor-title + * { clear: both; }
 .garment-editor .profile-grid { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0 12px; }
 .garment-editor .profile-field { margin-bottom: 14px; }
+.garment-line { max-width: 260px; }
 .garment-editor .pref-group { margin-bottom: 14px; }
 .garment-other { margin-top: 8px; }
 /* trouble spots are longer than a word, so their pills may wrap */

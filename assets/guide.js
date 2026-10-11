@@ -7,7 +7,9 @@
      1  what we are sizing                    a type of clothing, and
                                               for "Something else", what
                                               it is in their words
-     2  one of that type that fits perfectly  anchor: brand and size
+     2  one of that type that fits perfectly  anchor: brand and size, and
+                                              optionally the sizing line
+                                              it is in (line)
      3  how they like that type to fit        fitGoal
      4  what usually gets the fit wrong       troubleZones, from that
                                               type's own list
@@ -188,12 +190,14 @@
 
   /* ---------- a type's answers on screen, and set aside ---------- */
 
-  const BLANK = () => ({ name: '', brand: '', other: '', size: '', length: '', goal: '', zones: [], none: false });
+  const BLANK = () => ({ name: '', brand: '', other: '', size: '', length: '', line: '', goal: '', zones: [], none: false });
 
   function readDraft() {
     const goal = form.querySelector('input[name="fitGoal"]:checked');
+    const line = form.querySelector('input[name="sizingLine"]:checked');
     return {
       name: garmentName.value,
+      line: line ? line.value : '',
       brand: brand.value,
       other: other.value,
       size: size.value,
@@ -204,13 +208,14 @@
     };
   }
 
-  const isBlank = (d) => !d.name.trim() && !d.brand && !d.other.trim() && !d.size && !d.length && !d.goal && !d.zones.length && !d.none;
+  const isBlank = (d) => !d.name.trim() && !d.line && !d.brand && !d.other.trim() && !d.size && !d.length && !d.goal && !d.zones.length && !d.none;
 
   /* What is saved for a type, as the form shows it. */
   function draftFromSaved(g, entry) {
     const d = BLANK();
     if (!entry) return d;
     d.name = entry.name || '';
+    d.line = entry.line || '';
     const a = entry.anchor;
     if (a && (a.brand || a.size || a.length)) {
       if (a.brand && Schema.brandsFor(g.id).includes(a.brand)) d.brand = a.brand;
@@ -242,6 +247,7 @@
     ensureOption(length, d.length);
     length.value = d.length;
     form.querySelectorAll('input[name="fitGoal"]').forEach((r) => { r.checked = r.value === d.goal; });
+    form.querySelectorAll('input[name="sizingLine"]').forEach((r) => { r.checked = r.value === d.line; });
     zones().forEach((z) => { z.checked = d.zones.includes(z.value); });
     none.checked = d.none;
   }
@@ -286,6 +292,10 @@
     /* what "Something else" is: a label beside the answers, sent as
        it stands so clearing the box clears it */
     if (g.named) out.name = garmentName.value.trim() || null;
+
+    /* the sizing line, only once chosen; like the name, a label */
+    const line = form.querySelector('input[name="sizingLine"]:checked');
+    if (line) out.line = line.value;
 
     const picked = zones().filter((z) => z.checked).map((z) => z.value);
     if (picked.length) out.troubleZones = picked;
@@ -369,6 +379,7 @@
     add(words.anchorLabel(g), said.anchor);
     add(words.fitLabel(g), said.fitGoal);
     add('What gets the fit wrong', said.troubleZones);
+    if (said.line) add('Sized as', said.line);
   }
 
   /* ---------- saving ---------- */

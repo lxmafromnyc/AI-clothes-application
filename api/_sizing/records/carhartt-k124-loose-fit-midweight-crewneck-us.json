@@ -1,0 +1,96 @@
+{
+  "sizingVersion": 2,
+  "id": "carhartt-k124-loose-fit-midweight-crewneck-us",
+  "brand": "Carhartt",
+  "product": {
+    "name": "Marquette Crewneck Sweatshirt",
+    "pageTitle": "Men's Marquette Loose Fit Midweight Crewneck Sweatshirt | Carhartt",
+    "code": "K124",
+    "url": "https://www.carhartt.com/Men%27s-Clothing-%26-Gear/Men%27s-Hoodies-%26-Sweatshirts/Marquette-Crewneck-Sweatshirt/p/K124",
+    "garmentType": "crewneck-sweatshirt"
+  },
+  "category": "sweatshirts",
+  "region": "US",
+  "line": "men",
+  "sizeScale": "men",
+  "units": "in",
+  "sizes": [
+    "XS",
+    "S",
+    "M",
+    "L",
+    "XL",
+    "2XL",
+    "3XL",
+    "4XL"
+  ],
+  "lengthOptions": [
+    "regular",
+    "tall"
+  ],
+  "fit": {
+    "brandWords": "Loose fit",
+    "fitClass": "loose",
+    "source": "product page, Features (\"Loose fit\") and the product's fit field (\"Loose\")"
+  },
+  "material": {
+    "composition": "10.5-ounce, 50% cotton / 50% polyester; Heather Gray: 70% cotton / 30% polyester",
+    "stretch": null,
+    "source": "product page, Features"
+  },
+  "charts": {
+    "body": {
+      "measures": "body",
+      "label": "Men's body measurement chart (inches), on the product page",
+      "source": "https://www.carhartt.com/Men%27s-Clothing-%26-Gear/Men%27s-Hoodies-%26-Sweatshirts/Marquette-Crewneck-Sweatshirt/p/K124",
+      "retrievedAt": "2026-10-10",
+      "dimensions": {
+        "chest": {
+          "label": "Chest",
+          "kind": "point",
+          "method": "body-circumference",
+          "methodSource": {
+            "url": "https://www.carhartt.com/Men%27s-Clothing-%26-Gear/Men%27s-Hoodies-%26-Sweatshirts/Marquette-Crewneck-Sweatshirt/p/K124",
+            "says": "Men Tops Size and Fit Guide: \"CHEST: Measure just under arms and across shoulder blades holding the tape firm and level.\""
+          }
+        }
+      },
+      "sizes": {
+        "XS": { "chest": { "value": 32, "text": "32" }},
+        "S": { "chest": { "value": 36, "text": "36" }},
+        "M": { "chest": { "value": 40, "text": "40" }},
+        "L": { "chest": { "value": 44, "text": "44" }},
+        "XL": { "chest": { "value": 48, "text": "48" }},
+        "2XL": { "chest": { "value": 52, "text": "52" }},
+        "3XL": { "chest": { "value": 56, "text": "56" }},
+        "4XL": { "chest": { "value": 60, "text": "60" }}
+      }
+    }
+  },
+  "sources": [
+    {
+      "url": "https://www.carhartt.com/Men%27s-Clothing-%26-Gear/Men%27s-Hoodies-%26-Sweatshirts/Marquette-Crewneck-Sweatshirt/p/K124",
+      "what": "product page: Features, fit, sizes offered, and its men's body measurement chart",
+      "retrievedAt": "2026-10-10"
+    },
+    {
+      "url": "https://www.carhartt.com/men-size-guide",
+      "what": "Men's Size and Fit Guide the product page links to (it did not render for reading; the same chart is on the product page)",
+      "retrievedAt": "2026-10-10"
+    }
+  ],
+  "retrievedAt": "2026-10-10",
+  "verification": {
+    "status": "unverified",
+    "checkedBy": null,
+    "checkedAt": null
+  },
+  "notes": [
+    "Carhartt shows two names: the product heading \"Marquette Crewneck Sweatshirt\" (stored as product.name) and the page title \"Men's Marquette Loose Fit Midweight Crewneck Sweatshirt\" (product.pageTitle). The garment type is stored on its own (product.garmentType).",
+    "Carhartt publishes one chest value per size, not a range; it is recorded as published.",
+    "Carhartt publishes body measurements only for this product; no finished-garment measurements are recorded.",
+    "The chart continues to 5XL (64) and 6XL (68), but this product is sold XS to 4XL, so only those are recorded.",
+    "Tall lengths exist (Carhartt: Regular for 5' 7\" to 5' 11\", Tall for 6' to 6' 3\"); only Regular is recorded.",
+    "The chest chart is Carhartt's general \"Men Tops Size and Fit Guide\" attached to this product, not a chart for this product alone. Read from the product's own size-guide content on carhartt.com; the guide page did not render in the review browser."
+  ]
+}
