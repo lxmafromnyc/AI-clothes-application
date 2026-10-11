@@ -69,12 +69,9 @@ function media(item, badge) {
    gate drops the ones that do not, so this path only ever runs on live
    results. Without a category the drawn garment is the default one,
    which is the same artwork a category-less catalogue row would get. */
-function bindImageFallback(root, onFail) {
+function bindImageFallback(root) {
   root.querySelectorAll('img[data-fallback]').forEach((img) => {
     img.addEventListener('error', () => {
-      /* a page that must never show artwork in place of a photo (the
-         Discover shelves) takes the failure itself */
-      if (onFail && onFail(img.dataset.fallback)) return;
       const item = Products.byId(img.dataset.fallback) || { category: '' };
       img.outerHTML = artSvg(item);
     }, { once: true });
@@ -208,7 +205,6 @@ function skeletons(count) {
   const status = document.getElementById('search-status');
   const reset = document.getElementById('reset-form');
   const examples = document.getElementById('ask-examples');
-  const preview = document.getElementById('preview');
   /* the demo recording sits where the results will; it steps aside for them */
   const demo = document.getElementById('demo');
   /* the words the shopper used, echoed under the outcome so the answer
@@ -703,7 +699,6 @@ function skeletons(count) {
     input.removeAttribute('aria-invalid');
     /* the sample row on the home page steps aside: once a real search is
        running, the page has something better to put in that space */
-    if (preview) preview.hidden = true;
     if (demo) demo.hidden = true;
     results.hidden = false;
     asked = query;
@@ -845,7 +840,6 @@ function skeletons(count) {
     if (attachments) attachments.clear();
     results.hidden = true;
     results.innerHTML = '';
-    if (preview) preview.hidden = false;
     if (demo) demo.hidden = false;
     input.focus();
     form.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -853,331 +847,6 @@ function skeletons(count) {
 
   /* what is left, before anything is typed */
   readUsage(false);
-})();
-
-/* ---------- what a result looks like ----------
-   The home page carries two short rows of catalogue rows, so a first-time
-   visitor can see the shape of an answer — retailer, name, price, link —
-   before typing anything. It is never mistaken for the answer itself:
-   the rows are labelled exactly as they are anywhere else, and the whole
-   block steps aside the moment a real search runs. */
-(function preview() {
-  const grid = document.getElementById('preview-grid');
-  if (!grid || typeof Products === 'undefined') return;
-  const note = document.getElementById('preview-note');
-
-  Products.subscribe(() => {
-    const items = Products.all().slice(0, 8);
-    if (note) note.innerHTML = sampleNote(items);
-    grid.innerHTML = items.map(productCard).join('');
-    bindImageFallback(grid);
-  });
-})();
-
-/* ---------- discover ----------
-   Six kinds of clothing, drawn from DISCOVER in assets/discover-data.js:
-   choose one and the catalogue already on the page is filtered to it;
-   choose a subcategory, or several, and it narrows to those.
-
-   Nothing here searches. Discover never calls /api/search, the AI
-   reader or any product source, never builds a query, never opens the
-   search page, and never spends a search from the shopper's plan.
-
-   Only a catalogue row whose card is true in every field, and whose
-   photograph really arrives, is ever shown: `identified` says its name
-   and brand were tied to its listing (scripts/audit-catalog.js re-proves
-   every such note), and its photo is asked of the browser exactly as
-   the card asks for it. Drawn artwork never stands in for a photo here. */
-(function discover() {
-  const row = document.getElementById('discover-tabs');
-  if (!row || typeof DISCOVER === 'undefined' || typeof Products === 'undefined') return;
-
-  const panel = document.getElementById('discover-panel');
-  const status = document.getElementById('discover-status');
-  const count = document.getElementById('index-count');
-  const results = document.getElementById('discover-results');
-  const resultsCount = document.getElementById('results-count');
-  const resultsBody = document.getElementById('results-body');
-  const activeList = document.getElementById('active-filters');
-  const shelves = document.getElementById('discover-shelves');
-  const categories = DISCOVER.categories;
-
-  const announce = (text) => { if (status) status.textContent = text; };
-  const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
-
-  /* ---------- matching, on the product's own proved name ----------
-     Words are matched whole, so "shirt" is not "t-shirt" or
-     "sweatshirt", and a plural finds its singular; "=shorts" matches
-     only "shorts", never "short sleeve". */
-  const tokensOf = (text) => String(text || '').toLowerCase()
-    .replace(/\bt[\s-]?shirt(s?)\b/g, 'tshirt$1')
-    .replace(/[^a-z0-9]+/g, ' ').trim().split(' ').filter(Boolean);
-
-  const sameWord = (have, want, exact) => have === want
-    || (!exact && (have + 's' === want || have + 'es' === want || want + 's' === have || want + 'es' === have));
-
-  function nameSays(tokens, phrase) {
-    const exact = phrase.startsWith('=');
-    const want = tokensOf(phrase);
-    if (!want.length) return false;
-    for (let i = 0; i + want.length <= tokens.length; i++) {
-      if (want.every((w, k) => sameWord(tokens[i + k], w, exact))) return true;
-    }
-    return false;
-  }
-
-  const tokenCache = new Map();
-  const nameTokens = (item) => {
-    if (!tokenCache.has(item.id)) tokenCache.set(item.id, tokensOf(item.name));
-    return tokenCache.get(item.id);
-  };
-  const says = (item, words) => (words || []).some((w) => nameSays(nameTokens(item), w));
-
-  /* the rows Discover may show: proved, linked and photographed, and —
-     once their photos have answered — only those whose photo arrived */
-  let provable = [];
-  let pool = null;
-  const rows = () => pool || provable;
-
-  const inCategory = (category) => rows().filter((item) => says(item, category.words));
-  const inSub = (category, sub) => inCategory(category).filter((item) => says(item, sub.words));
-  /* a subcategory is offered only when the catalogue holds something it
-     matches; one that matches nothing is not drawn at all */
-  const offered = (category) => category.subcategories.filter((sub) => inSub(category, sub).length > 0);
-
-  /* ---------- what is chosen: one category, and any of its subcategories ---------- */
-  let chosen = null;
-  const subs = new Set();
-  const categoryOf = (id) => categories.find((c) => c.id === id) || null;
-
-  function filtered() {
-    const category = categoryOf(chosen);
-    if (!category) return [];
-    if (!subs.size) return inCategory(category);
-    const picked = category.subcategories.filter((sub) => subs.has(sub.label));
-    /* several subcategories are alternatives: T-shirts or button-downs */
-    return inCategory(category).filter((item) => picked.some((sub) => says(item, sub.words)));
-  }
-
-  function choose(id, reveal) {
-    chosen = chosen === id ? null : id;
-    subs.clear();
-    paintFilters();
-    if (reveal && chosen && results && !results.hidden) results.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  }
-
-  function toggleSub(label) {
-    if (label === '') subs.clear();
-    else if (subs.has(label)) subs.delete(label);
-    else subs.add(label);
-    paintFilters();
-  }
-
-  function clearAll() {
-    chosen = null;
-    subs.clear();
-    paintFilters();
-  }
-
-  /* ---------- the six categories ---------- */
-  function paintRow() {
-    row.innerHTML = categories.map((category) => {
-      const n = inCategory(category).length;
-      return n || !pool
-        ? `<button class="tab" type="button" data-category="${esc(category.id)}" aria-pressed="${chosen === category.id}">${esc(category.label)}</button>`
-        : `<span class="tab tab--empty" title="Nothing in the catalogue yet">${esc(category.label)}<span class="sr-only"> (nothing in the catalogue yet)</span></span>`;
-    }).join('');
-  }
-
-  function paintPanel() {
-    const category = categoryOf(chosen);
-    const list = category ? offered(category) : [];
-    panel.hidden = !category || !list.length;
-    if (panel.hidden) { panel.innerHTML = ''; return; }
-    const all = `<li><button class="pill" type="button" data-sub="" aria-pressed="${subs.size === 0}">${esc(category.all || `All ${category.label.toLowerCase()}`)}</button></li>`;
-    panel.innerHTML = `<ul class="index-pills">${all}${list.map((sub) =>
-      `<li><button class="pill" type="button" data-sub="${esc(sub.label)}" aria-pressed="${subs.has(sub.label)}">${esc(sub.label)}</button></li>`).join('')}</ul>`;
-  }
-
-  function paintCount() {
-    if (!count || !pool) return;
-    count.textContent = `${plural(pool.length, 'product', 'products')} in Fynd’s catalogue across six categories. Choose one to filter it instantly.`;
-  }
-
-  row.addEventListener('click', (e) => {
-    const button = e.target.closest('button[data-category]');
-    if (button) choose(button.dataset.category, false);
-  });
-  panel.addEventListener('click', (e) => {
-    const pill = e.target.closest('button[data-sub]');
-    if (pill) toggleSub(pill.dataset.sub);
-  });
-
-  /* ---------- the filtered catalogue ---------- */
-  function paintResults() {
-    const on = Boolean(chosen);
-    results.hidden = !on;
-    /* the shelves are the page unfiltered; a filter replaces them */
-    if (shelves) shelves.hidden = on;
-    if (!on) {
-      activeList.innerHTML = '';
-      resultsBody.innerHTML = '';
-      resultsCount.textContent = '';
-      return;
-    }
-    const category = categoryOf(chosen);
-    activeList.innerHTML = [`<li><button class="pill" type="button" aria-pressed="true" data-remove-category>${esc(category.label)}<span aria-hidden="true"> ×</span><span class="sr-only"> (remove)</span></button></li>`]
-      .concat([...subs].map((label) =>
-        `<li><button class="pill" type="button" aria-pressed="true" data-remove="${esc(label)}">${esc(label)}<span aria-hidden="true"> ×</span><span class="sr-only"> (remove)</span></button></li>`)).join('');
-
-    if (!pool) {
-      resultsCount.textContent = 'Checking the catalogue…';
-      resultsBody.innerHTML = `<div class="grid">${skeletons(4)}</div>`;
-      return;
-    }
-    const found = filtered();
-    resultsCount.textContent = found.length ? plural(found.length, 'result', 'results') : 'No matching products';
-    resultsBody.innerHTML = found.length
-      ? `${sampleNote(found)}<div class="grid">${found.map(productCard).join('')}</div>`
-      : `<div class="empty">
-          <h3>Nothing in the catalogue is in ${esc(category.label.toLowerCase())} yet</h3>
-          <p>Choose another category, or clear the filter.</p>
-        </div>`;
-    bindImageFallback(resultsBody, lostPhoto);
-    announce(resultsCount.textContent + '.');
-  }
-
-  activeList.addEventListener('click', (e) => {
-    if (e.target.closest('[data-remove-category]')) { clearAll(); return; }
-    const chip = e.target.closest('[data-remove]');
-    if (chip) toggleSub(chip.dataset.remove);
-  });
-  document.getElementById('results-clear').addEventListener('click', clearAll);
-
-  /* ---------- shelves: a few of each kind, before any filter ---------- */
-  const SHELF_SIZE = 4;
-
-  /* who a piece is from, for variety's sake: its brand, or the store it
-     is sold at when no brand is known */
-  const maker = (item) => item.brand || soldAt(item, '');
-
-  /* Fills one shelf, best first: a row no other shelf shows, of a kind
-     and from a maker this shelf does not have yet. */
-  function fill(candidates, shown) {
-    const picked = [];
-    const kinds = new Set();
-    const makers = new Set();
-    const cost = (item) => (shown.has(item.id) ? 4 : 0) + (kinds.has(item.category) ? 2 : 0) + (makers.has(maker(item)) ? 1 : 0);
-    const left = candidates.slice();
-    while (picked.length < SHELF_SIZE && left.length) {
-      let best = 0;
-      for (let i = 1; i < left.length; i++) if (cost(left[i]) < cost(left[best])) best = i;
-      const [item] = left.splice(best, 1);
-      picked.push(item);
-      kinds.add(item.category);
-      makers.add(maker(item));
-    }
-    return picked;
-  }
-
-  const shelfHtml = ({ category, total, picked }, n) => `<section class="discover-block shelf" aria-labelledby="shelf-${n}">
-      <div class="section-head">
-        <div>
-          <h2 id="shelf-${n}">${esc(category.label)}</h2>
-        </div>
-        <button class="link-btn head-link" type="button" data-category="${esc(category.id)}">See all ${total}<span class="sr-only">: ${esc(category.label)}</span></button>
-      </div>
-      ${sampleNote(picked)}
-      <div class="grid shelf-grid">${picked.map(productCard).join('')}</div>
-    </section>`;
-
-  /* a shelf per category the catalogue can fill with four, in the
-     categories' own order; a piece on one shelf is not repeated on the
-     next unless that shelf cannot be filled without it */
-  function paintShelves() {
-    if (!shelves) return;
-    if (!pool) { shelves.innerHTML = ''; return; }
-    const shown = new Set();
-    const drawn = categories
-      .map((category) => ({ category, candidates: inCategory(category) }))
-      .filter((one) => one.candidates.length >= SHELF_SIZE)
-      .map((one) => {
-        const picked = fill(one.candidates, shown);
-        picked.forEach((item) => shown.add(item.id));
-        return { category: one.category, total: one.candidates.length, picked };
-      });
-    shelves.innerHTML = drawn.map(shelfHtml).join('');
-    bindImageFallback(shelves, lostPhoto);
-  }
-  if (shelves) {
-    shelves.addEventListener('click', (e) => {
-      const button = e.target.closest('button[data-category]');
-      if (button) choose(button.dataset.category, true);
-    });
-  }
-
-  /* ---------- photos, asked of the browser the way the card asks ----------
-     A photo that fails, or comes back too small to be a product
-     photograph (a tracking pixel, a "no image" stub), keeps its row off
-     Discover entirely; if one fails after it was shown, everything is
-     drawn again without it. */
-  const MIN_PHOTO = 200;
-  const PHOTO_WAIT = 10000;
-  const photos = new Map();
-
-  function photoArrives(item) {
-    if (!photos.has(item.id)) {
-      photos.set(item.id, new Promise((resolve) => {
-        const probe = new Image();
-        const settle = (ok) => {
-          clearTimeout(timer);
-          probe.onload = probe.onerror = null;
-          resolve(ok);
-        };
-        const timer = setTimeout(() => settle(false), PHOTO_WAIT);
-        probe.referrerPolicy = 'no-referrer';
-        probe.onload = () => settle(probe.naturalWidth >= MIN_PHOTO && probe.naturalHeight >= MIN_PHOTO);
-        probe.onerror = () => settle(false);
-        probe.src = item.imageUrl;
-      }));
-    }
-    return photos.get(item.id);
-  }
-
-  function lostPhoto(id) {
-    photos.set(id, Promise.resolve(false));
-    if (pool) pool = pool.filter((item) => item.id !== id);
-    paintAll();
-    return true;
-  }
-
-  function paintFilters() {
-    paintRow();
-    paintPanel();
-    paintResults();
-  }
-
-  function paintAll() {
-    paintCount();
-    paintShelves();
-    paintFilters();
-  }
-
-  let settling = 0;
-  async function settle() {
-    const turn = ++settling;
-    provable = Products.all().filter((item) => item.identified && item.productUrl && item.imageUrl);
-    pool = null;
-    paintAll();
-    const arrived = await Promise.all(provable.map(photoArrives));
-    /* the store changed while this one was waiting */
-    if (turn !== settling) return;
-    pool = provable.filter((_, i) => arrived[i]);
-    paintAll();
-  }
-
-  paintAll();
-  Products.subscribe(settle);
 })();
 
 /* ---------- data source ----------
