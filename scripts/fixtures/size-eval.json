@@ -1,0 +1,164 @@
+{
+  "about": [
+    "Expected outcomes for the size engine (api/_sizing/engine.js), worked out by hand from each product's published chart and the shopper's profile.",
+    "They are reasoned expectations, not real fit outcomes: real validation needs shoppers' feedback. Where a reasonable fitter could pick either of two sizes, both are accepted (leadingAnyOf), and a near tie expects an alternative.",
+    "The records are not verified yet, so this suite runs the engine with includeUnverified; the endpoint never does.",
+    "Chests are in inches unless a case says otherwise. 'ease' means the room the engine aims for (a starting assumption): slim 2-5 in, true to size 5-9 in, relaxed/oversized 10-16 in, around the chest."
+  ],
+  "cases": [
+    {
+      "id": "uq-hoodie-chest40-true",
+      "product": "uniqlo-e475378-sweat-pullover-hoodie-us",
+      "profile": { "chest": 40, "garment": { "fitGoal": "true-to-size", "line": "men" } },
+      "expect": { "status": "ok", "leadingAnyOf": ["M"], "alternativeAnyOf": [null, "S", "L"], "confidenceAnyOf": ["medium"] },
+      "rationale": "UNIQLO's body chart puts 37 3/4-41 in M. M's garment chest is 23 1/2 in flat, about 47 in around: 7 in of room on a 40 in chest, the middle of true to size."
+    },
+    {
+      "id": "uq-hoodie-chest40-oversized",
+      "product": "uniqlo-e475378-sweat-pullover-hoodie-us",
+      "profile": { "chest": 40, "garment": { "fitGoal": "oversized", "line": "men" } },
+      "expect": { "status": "ok", "leadingAnyOf": ["L", "XL"], "confidenceAnyOf": ["medium", "low"] },
+      "rationale": "Relaxed/oversized wants 10-16 in of room: 50-56 in around. L is 50 in, XL 53 in, XXL 55 1/2 in. One or two sizes up from M; XL sits in the middle."
+    },
+    {
+      "id": "uq-sweatshirt-chest40-slim",
+      "product": "uniqlo-e475377-sweatshirt-us",
+      "profile": { "chest": 40, "garment": { "fitGoal": "slim", "line": "men" } },
+      "expect": { "status": "ok", "leadingAnyOf": ["S"], "alternativeAnyOf": [null, "XS", "M"], "confidenceAnyOf": ["medium", "low"] },
+      "rationale": "Slim wants 2-5 in of room: 42-45 in around. S is 22 1/4 in flat (44 1/2 around, 4 1/2 in of room); XS is 42 around, at the very edge; M is 47, too roomy."
+    },
+    {
+      "id": "uq-hoodie-reference-same-product",
+      "product": "uniqlo-e475378-sweat-pullover-hoodie-us",
+      "profile": { "garment": { "anchor": { "brand": "UNIQLO", "size": "M" }, "fitGoal": "true-to-size", "line": "men" } },
+      "expect": { "status": "ok", "leadingAnyOf": ["M"], "alternativeAnyOf": [null], "confidenceAnyOf": ["high"], "method": "reference-garment" },
+      "rationale": "The shopper says this very hoodie fits in M. The garment measurements of M are the reference, and S and L each miss them by a full size step."
+    },
+    {
+      "id": "uq-hoodie-reference-sleeves-short",
+      "product": "uniqlo-e475378-sweat-pullover-hoodie-us",
+      "profile": { "garment": { "anchor": { "brand": "UNIQLO", "size": "L" }, "fitGoal": "true-to-size", "troubleZones": ["sleeves-short"], "line": "men" } },
+      "expect": { "status": "ok", "leadingAnyOf": ["L"], "alternativeAnyOf": [null, "XL"], "confidenceAnyOf": ["high"] },
+      "rationale": "L is the garment known to fit, sleeves included (35 3/4 in). Sleeves running short elsewhere is no reason to leave a known fit; XL would be 1 1/2 in wider through the chest."
+    },
+    {
+      "id": "uq-hoodie-reference-from-sweatshirt",
+      "product": "uniqlo-e475378-sweat-pullover-hoodie-us",
+      "profile": { "brandSizes": [{ "brand": "UNIQLO", "category": "sweatshirts", "size": "M", "fit": "about-right" }], "garment": { "fitGoal": "true-to-size", "line": "men" } },
+      "expect": { "status": "ok", "leadingAnyOf": ["M"], "confidenceAnyOf": ["medium"], "method": "reference-garment" },
+      "rationale": "A UNIQLO sweatshirt in M fits; its published garment measurements equal the hoodie's M. Medium, not high: a sweatshirt is not a hoodie."
+    },
+    {
+      "id": "nike-hoodie-chest40-true",
+      "product": "nike-fn3859-club-pullover-fleece-hoodie-us",
+      "profile": { "chest": 40, "garment": { "fitGoal": "true-to-size", "line": "men" } },
+      "expect": { "status": "ok", "leadingAnyOf": ["M"], "alternativeAnyOf": [null, "L"], "confidenceAnyOf": ["medium"], "method": "body-chart" },
+      "rationale": "Nike's chart puts 37.5-41 in M, and Nike calls the fit standard, which matches true to size. Body chart only, so no better than medium."
+    },
+    {
+      "id": "nike-crew-chest44-boundary",
+      "product": "nike-fn3886-club-fleece-crew-us",
+      "profile": { "chest": 44, "garment": { "fitGoal": "true-to-size", "line": "men" } },
+      "expect": { "status": "ok", "leadingAnyOf": ["L", "XL"], "alternativeAnyOf": ["L", "XL"], "confidenceAnyOf": ["low"] },
+      "rationale": "44 in is exactly where Nike's L (41-44) ends and XL (44-48.5) begins. Either is defensible; the other must be offered, and confidence is low."
+    },
+    {
+      "id": "carhartt-hoodie-chest40-true",
+      "product": "carhartt-k121-loose-fit-midweight-hoodie-us",
+      "profile": { "chest": 40, "garment": { "fitGoal": "true-to-size", "line": "men" } },
+      "expect": { "status": "ok", "leadingAnyOf": ["S", "M"], "alternativeAnyOf": ["S", "M"], "confidenceAnyOf": ["low", "medium"] },
+      "rationale": "Carhartt's chart gives M for a 40 in chest, and calls the cut Loose: Carhartt's own guide says loose fit runs up to a full size larger. For a true-to-size fit, S or M, with the other offered."
+    },
+    {
+      "id": "carhartt-crew-chest40-oversized",
+      "product": "carhartt-k124-loose-fit-midweight-crewneck-us",
+      "profile": { "chest": 40, "garment": { "fitGoal": "oversized", "line": "men" } },
+      "expect": { "status": "ok", "leadingAnyOf": ["M"], "confidenceAnyOf": ["medium"] },
+      "rationale": "The loose cut already gives the roomy fit wanted, so the chart's own size: M (40). Medium: one chest value per size makes each size's range an estimate."
+    },
+    {
+      "id": "women-line-not-covered",
+      "product": "uniqlo-e475378-sweat-pullover-hoodie-us",
+      "profile": { "chest": 36, "garment": { "fitGoal": "true-to-size", "line": "women" } },
+      "expect": { "status": "insufficient", "missing": ["line-not-covered"] },
+      "rationale": "No record has a women's chart. A men's chart is not read as a women's one."
+    },
+    {
+      "id": "no-evidence",
+      "product": "uniqlo-e475378-sweat-pullover-hoodie-us",
+      "profile": { "garment": { "fitGoal": "true-to-size", "line": "men" } },
+      "expect": { "status": "insufficient", "missing": ["no-evidence"] },
+      "rationale": "A fit goal alone says nothing about size."
+    },
+    {
+      "id": "uncharted-brand-only",
+      "product": "nike-fn3859-club-pullover-fleece-hoodie-us",
+      "profile": { "garment": { "anchor": { "brand": "Zara", "size": "M" }, "fitGoal": "true-to-size", "line": "men" } },
+      "expect": { "status": "insufficient", "missing": ["no-evidence"] },
+      "rationale": "Fynd has no Zara chart, and a letter size is not a measurement."
+    },
+    {
+      "id": "line-not-sure-anchor-only",
+      "product": "uniqlo-e475378-sweat-pullover-hoodie-us",
+      "profile": { "garment": { "anchor": { "brand": "Nike", "size": "M" }, "fitGoal": "true-to-size", "line": "not-sure" } },
+      "expect": { "status": "insufficient", "missing": ["line-needed", "no-evidence"] },
+      "rationale": "A Nike M is a different body in men's and women's sizing; without the line it cannot be read."
+    },
+    {
+      "id": "line-not-sure-with-chest",
+      "product": "nike-fn3859-club-pullover-fleece-hoodie-us",
+      "profile": { "chest": 40, "garment": { "fitGoal": "true-to-size", "line": "not-sure" } },
+      "expect": { "status": "ok", "leadingAnyOf": ["M"], "confidenceAnyOf": ["medium", "low"] },
+      "rationale": "A chest measurement doesn't depend on the sizing line: Nike's 37.5-41 still holds 40. The result says the men's-based chart was read."
+    },
+    {
+      "id": "nike-anchor-to-uniqlo",
+      "product": "uniqlo-e475378-sweat-pullover-hoodie-us",
+      "profile": { "garment": { "anchor": { "brand": "Nike", "size": "M" }, "fitGoal": "true-to-size", "line": "men" } },
+      "expect": { "status": "ok", "leadingAnyOf": ["M"], "alternativeAnyOf": [null, "S", "L"], "confidenceAnyOf": ["low"] },
+      "rationale": "Nike M is cut for a 37.5-41 in chest (an estimate of this shopper, not a measurement). UNIQLO M at 47 in around gives 6-9.5 in of room: true to size. Low: the chest is inferred."
+    },
+    {
+      "id": "uq-hoodie-chest41.5-chest-tight",
+      "product": "uniqlo-e475378-sweat-pullover-hoodie-us",
+      "profile": { "chest": 41.5, "garment": { "fitGoal": "true-to-size", "troubleZones": ["chest-tight"], "line": "men" } },
+      "expect": { "status": "ok", "leadingAnyOf": ["L"], "alternativeAnyOf": [null, "M"], "confidenceAnyOf": ["medium", "low"] },
+      "rationale": "True to size wants 46 1/2-50 1/2 in around. M (47) and L (50) are both inside, equally far from the middle; chests usually feeling tight tips it to L."
+    },
+    {
+      "id": "uq-hoodie-chest41.5-tie",
+      "product": "uniqlo-e475378-sweat-pullover-hoodie-us",
+      "profile": { "chest": 41.5, "garment": { "fitGoal": "true-to-size", "line": "men" } },
+      "expect": { "status": "ok", "leadingAnyOf": ["M", "L"], "alternativeAnyOf": ["M", "L"], "confidenceAnyOf": ["low"] },
+      "rationale": "The same chest with no trouble spot: M and L are level, so the other is offered and confidence is low."
+    },
+    {
+      "id": "conflicting-evidence",
+      "product": "uniqlo-e475378-sweat-pullover-hoodie-us",
+      "profile": { "chest": 34, "garment": { "anchor": { "brand": "UNIQLO", "size": "L" }, "fitGoal": "true-to-size", "line": "men" } },
+      "expect": { "status": "ok", "leadingAnyOf": ["L"], "confidenceAnyOf": ["low"] },
+      "rationale": "The shopper says UNIQLO L fits, but measures 34 in, which UNIQLO's chart puts in XS/S. The garment known to fit leads; the disagreement makes confidence low."
+    },
+    {
+      "id": "chest-in-centimetres",
+      "product": "uniqlo-e475378-sweat-pullover-hoodie-us",
+      "profile": { "chest": 101.6, "unit": "cm", "garment": { "fitGoal": "true-to-size", "line": "men" } },
+      "expect": { "status": "ok", "leadingAnyOf": ["M"], "confidenceAnyOf": ["medium"] },
+      "rationale": "101.6 cm is 40 in exactly: the same answer as the 40 in case, from a measurement in the other unit."
+    },
+    {
+      "id": "preferred-fit-fallback",
+      "product": "uniqlo-e475378-sweat-pullover-hoodie-us",
+      "profile": { "chest": 40, "fitPreferences": { "hoodies": "oversized" }, "garment": { "line": "men" } },
+      "expect": { "status": "ok", "leadingAnyOf": ["L", "XL"], "confidenceAnyOf": ["medium", "low"] },
+      "rationale": "No fit goal in the guide, but the fit profile page says hoodies oversized: read as relaxed/oversized, as in the oversized case."
+    },
+    {
+      "id": "assumed-fit-goal",
+      "product": "uniqlo-e475378-sweat-pullover-hoodie-us",
+      "profile": { "chest": 40, "garment": { "line": "men" } },
+      "expect": { "status": "ok", "leadingAnyOf": ["M"], "confidenceAnyOf": ["low"] },
+      "rationale": "No fit goal anywhere: true to size is assumed, said, and confidence drops a level."
+    }
+  ]
+}

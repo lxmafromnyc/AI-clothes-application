@@ -1,0 +1,141 @@
+{
+  "sizingVersion": 1,
+  "id": "nike-fn3859-club-pullover-fleece-hoodie-us",
+  "brand": "Nike",
+  "product": {
+    "name": "Nike Club Men's Pullover Fleece Hoodie",
+    "code": "FN3859",
+    "url": "https://www.nike.com/t/club-mens-pullover-fleece-hoodie-00eeWNwD"
+  },
+  "category": "hoodies",
+  "region": "US",
+  "line": "men",
+  "sizeScale": "men",
+  "units": "in",
+  "sizes": [
+    "XXS",
+    "XS",
+    "S",
+    "M",
+    "L",
+    "XL",
+    "XXL",
+    "3XL",
+    "4XL"
+  ],
+  "lengthOptions": [
+    "regular",
+    "tall"
+  ],
+  "fit": {
+    "brandWords": "Standard fit: easy and traditional",
+    "fitClass": "regular",
+    "source": "product page, Size & Fit"
+  },
+  "material": {
+    "composition": null,
+    "stretch": null,
+    "source": "product page: \"midweight brushed fleece\"; the fibre blend is not stated on the page"
+  },
+  "charts": {
+    "body": {
+      "label": "Gender Neutral (Men's Based) Size Chart, Chest/Bust (in)",
+      "source": "https://www.nike.com/size-fit/gender-neutral-clothing-mens-based-alpha",
+      "retrievedAt": "2026-10-10",
+      "dimensions": {
+        "chest": {
+          "label": "Chest/Bust (in)",
+          "kind": "range",
+          "basis": "body-circumference"
+        }
+      },
+      "sizes": {
+        "XXS": {
+          "chest": {
+            "min": 28.5,
+            "max": 31.5,
+            "text": "28.5 - 31.5"
+          }
+        },
+        "XS": {
+          "chest": {
+            "min": 31.5,
+            "max": 35,
+            "text": "31.5 - 35"
+          }
+        },
+        "S": {
+          "chest": {
+            "min": 35,
+            "max": 37.5,
+            "text": "35 - 37.5"
+          }
+        },
+        "M": {
+          "chest": {
+            "min": 37.5,
+            "max": 41,
+            "text": "37.5 - 41"
+          }
+        },
+        "L": {
+          "chest": {
+            "min": 41,
+            "max": 44,
+            "text": "41 - 44"
+          }
+        },
+        "XL": {
+          "chest": {
+            "min": 44,
+            "max": 48.5,
+            "text": "44 - 48.5"
+          }
+        },
+        "XXL": {
+          "chest": {
+            "min": 48.5,
+            "max": 53.5,
+            "text": "48.5 - 53.5"
+          }
+        },
+        "3XL": {
+          "chest": {
+            "min": 53.5,
+            "max": 58,
+            "text": "53.5 - 58"
+          }
+        },
+        "4XL": {
+          "chest": {
+            "min": 58,
+            "max": 63,
+            "text": "58 - 63"
+          }
+        }
+      }
+    }
+  },
+  "sources": [
+    {
+      "url": "https://www.nike.com/t/club-mens-pullover-fleece-hoodie-00eeWNwD",
+      "what": "product page: sizes offered, Size & Fit, and its Size Guide link",
+      "retrievedAt": "2026-10-10"
+    },
+    {
+      "url": "https://www.nike.com/size-fit/gender-neutral-clothing-mens-based-alpha",
+      "what": "the size chart the product page links to",
+      "retrievedAt": "2026-10-10"
+    }
+  ],
+  "verification": {
+    "status": "unverified",
+    "checkedBy": null,
+    "checkedAt": null
+  },
+  "notes": [
+    "Nike publishes body measurements only for this product; no finished-garment measurements are recorded.",
+    "Tall sizes (S Tall to 4XL Tall) share the regular sizes' chest ranges; only regular sizes are recorded.",
+    "The chart also lists waist and hip ranges and women's equivalent sizes; neither is recorded, and women's sizing is not supported yet."
+  ]
+}

@@ -1,0 +1,303 @@
+{
+  "sizingVersion": 1,
+  "id": "uniqlo-e475377-sweatshirt-us",
+  "brand": "UNIQLO",
+  "product": {
+    "name": "Sweatshirt",
+    "code": "E475377-000",
+    "url": "https://www.uniqlo.com/us/en/products/E475377-000/00"
+  },
+  "category": "sweatshirts",
+  "region": "US",
+  "line": "men",
+  "sizeScale": "men",
+  "units": "in",
+  "sizes": [
+    "XXS",
+    "XS",
+    "S",
+    "M",
+    "L",
+    "XL",
+    "XXL",
+    "3XL"
+  ],
+  "lengthOptions": [
+    "regular"
+  ],
+  "fit": {
+    "brandWords": "Regular",
+    "fitClass": "regular",
+    "source": "product page, product details: \"Fit: Regular\""
+  },
+  "material": {
+    "composition": "Body: 100% Cotton / Rib: 82% Cotton, 18% Polyester",
+    "stretch": null,
+    "source": "product page, Materials"
+  },
+  "charts": {
+    "body": {
+      "label": "Size Guide, Body Size tab (inches)",
+      "source": "https://www.uniqlo.com/us/en/products/E475377-000/00",
+      "retrievedAt": "2026-10-10",
+      "dimensions": {
+        "chest": {
+          "label": "Chest",
+          "kind": "range",
+          "basis": "body-circumference"
+        }
+      },
+      "sizes": {
+        "XXS": {
+          "chest": {
+            "min": 30.75,
+            "max": 33,
+            "text": "30 ¾ - 33"
+          }
+        },
+        "XS": {
+          "chest": {
+            "min": 31.5,
+            "max": 34.75,
+            "text": "31 ½ - 34 ¾"
+          }
+        },
+        "S": {
+          "chest": {
+            "min": 34.75,
+            "max": 37.75,
+            "text": "34 ¾ - 37 ¾"
+          }
+        },
+        "M": {
+          "chest": {
+            "min": 37.75,
+            "max": 41,
+            "text": "37 ¾ - 41"
+          }
+        },
+        "L": {
+          "chest": {
+            "min": 41,
+            "max": 44,
+            "text": "41 - 44"
+          }
+        },
+        "XL": {
+          "chest": {
+            "min": 44,
+            "max": 47.25,
+            "text": "44 - 47 ¼"
+          }
+        },
+        "XXL": {
+          "chest": {
+            "min": 47.25,
+            "max": 50.5,
+            "text": "47 ¼ - 50 ½"
+          }
+        },
+        "3XL": {
+          "chest": {
+            "min": 50.5,
+            "max": 53.5,
+            "text": "50 ½ - 53 ½"
+          }
+        }
+      }
+    },
+    "garment": {
+      "label": "Size Guide, Product Size tab: \"the actual measurements of the product\" (inches)",
+      "source": "https://www.uniqlo.com/us/en/products/E475377-000/00",
+      "retrievedAt": "2026-10-10",
+      "dimensions": {
+        "bodyLength": {
+          "label": "Length (back)",
+          "basis": "center-back"
+        },
+        "shoulderWidth": {
+          "label": "Shoulder width (seam to seam)",
+          "basis": "seam-to-seam"
+        },
+        "chestWidth": {
+          "label": "Chest",
+          "basis": "flat"
+        },
+        "sleeveLength": {
+          "label": "Sleeve Length (center back)",
+          "basis": "center-back"
+        }
+      },
+      "sizes": {
+        "XXS": {
+          "bodyLength": {
+            "value": 23.5,
+            "text": "23 ½"
+          },
+          "shoulderWidth": {
+            "value": 18,
+            "text": "18"
+          },
+          "chestWidth": {
+            "value": 20,
+            "text": "20"
+          },
+          "sleeveLength": {
+            "value": 32.25,
+            "text": "32 ¼"
+          }
+        },
+        "XS": {
+          "bodyLength": {
+            "value": 24.5,
+            "text": "24 ½"
+          },
+          "shoulderWidth": {
+            "value": 18.75,
+            "text": "18 ¾"
+          },
+          "chestWidth": {
+            "value": 21,
+            "text": "21"
+          },
+          "sleeveLength": {
+            "value": 32.75,
+            "text": "32 ¾"
+          }
+        },
+        "S": {
+          "bodyLength": {
+            "value": 25.5,
+            "text": "25 ½"
+          },
+          "shoulderWidth": {
+            "value": 19.25,
+            "text": "19 ¼"
+          },
+          "chestWidth": {
+            "value": 22.25,
+            "text": "22 ¼"
+          },
+          "sleeveLength": {
+            "value": 33.75,
+            "text": "33 ¾"
+          }
+        },
+        "M": {
+          "bodyLength": {
+            "value": 26.75,
+            "text": "26 ¾"
+          },
+          "shoulderWidth": {
+            "value": 20,
+            "text": "20"
+          },
+          "chestWidth": {
+            "value": 23.5,
+            "text": "23 ½"
+          },
+          "sleeveLength": {
+            "value": 34.75,
+            "text": "34 ¾"
+          }
+        },
+        "L": {
+          "bodyLength": {
+            "value": 28,
+            "text": "28"
+          },
+          "shoulderWidth": {
+            "value": 20.75,
+            "text": "20 ¾"
+          },
+          "chestWidth": {
+            "value": 25,
+            "text": "25"
+          },
+          "sleeveLength": {
+            "value": 35.75,
+            "text": "35 ¾"
+          }
+        },
+        "XL": {
+          "bodyLength": {
+            "value": 28.75,
+            "text": "28 ¾"
+          },
+          "shoulderWidth": {
+            "value": 21.5,
+            "text": "21 ½"
+          },
+          "chestWidth": {
+            "value": 26.5,
+            "text": "26 ½"
+          },
+          "sleeveLength": {
+            "value": 36.25,
+            "text": "36 ¼"
+          }
+        },
+        "XXL": {
+          "bodyLength": {
+            "value": 29,
+            "text": "29"
+          },
+          "shoulderWidth": {
+            "value": 22.25,
+            "text": "22 ¼"
+          },
+          "chestWidth": {
+            "value": 27.75,
+            "text": "27 ¾"
+          },
+          "sleeveLength": {
+            "value": 36.5,
+            "text": "36 ½"
+          }
+        },
+        "3XL": {
+          "bodyLength": {
+            "value": 29.75,
+            "text": "29 ¾"
+          },
+          "shoulderWidth": {
+            "value": 23,
+            "text": "23"
+          },
+          "chestWidth": {
+            "value": 29.25,
+            "text": "29 ¼"
+          },
+          "sleeveLength": {
+            "value": 37,
+            "text": "37"
+          }
+        }
+      }
+    }
+  },
+  "sources": [
+    {
+      "url": "https://www.uniqlo.com/us/en/products/E475377-000/00",
+      "what": "Size Guide (Body Size and Product Size tabs), fit, materials",
+      "retrievedAt": "2026-10-10"
+    },
+    {
+      "url": "https://faq-us.uniqlo.com/articles/en_US/FAQ/How-to-Measure",
+      "what": "How to Measure Clothing, Tops: \"Body Width: the length from armpit to armpit\" — read as the flat chest measure",
+      "retrievedAt": "2026-10-10"
+    }
+  ],
+  "verification": {
+    "status": "unverified",
+    "checkedBy": null,
+    "checkedAt": null
+  },
+  "notes": [
+    "Sold as \"Men's\".",
+    "Its Product Size values are identical to the Sweat Pullover Hoodie's (E475378) as published; confirm when checking.",
+    "The Body Size table has a second, unlabelled column (probably waist); it is not recorded.",
+    "Garment \"Chest\" is recorded as a flat, armpit-to-armpit width, per UNIQLO's measuring guide; confirm when checking.",
+    "Stretch is not stated by the brand."
+  ]
+}

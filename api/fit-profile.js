@@ -5,6 +5,19 @@
    POST { action: "save", profile }    -> { profile, storage, saved }
    POST { action: "guide", answers }   -> { profile, storage, saved }
    POST { action: "delete" }           -> { profile: null, storage, deleted }
+                                          (and the account's fit feedback with it)
+
+   The shopper's fit feedback, how a size actually fitted, lives here
+   too, as part of the profile (api/_fit-feedback.js has its shape and
+   consent rules). Here rather than in an endpoint of its own because the
+   deployment's plan allows twelve functions:
+
+   GET  ?part=feedback                              -> { feedback }
+   POST { action: "feedback-consent", consent }     -> { feedback }
+   POST { action: "feedback-add", entry }           -> { feedback, entry }
+                                                       (409 without consent)
+   POST { action: "feedback-delete", id }           -> { feedback }
+   POST { action: "feedback-delete-all" }           -> { feedback, deleted }
 
    Measurements, usual sizes by brand, preferred fit, and the fit guide's
    answers for each type of clothing — the shape is
@@ -47,8 +60,42 @@ const { identify, csrfOk } = require('./_auth');
 const users = require('./_users');
 const store = require('./_store');
 const fitProfiles = require('./_fit-profile');
+const fitFeedback = require('./_fit-feedback');
 
 const storage = () => ({ durable: store.durable() });
+const feedbackShape = (record) => ({ consent: record.consent, entries: record.entries });
+
+/* The fit feedback actions, after the session and CSRF checks below. */
+async function feedbackAction(res, userId, action, body) {
+  try {
+    if (action === 'feedback-consent') {
+      const result = await fitFeedback.setConsent(userId, body.consent);
+      if (result.errors.length) return res.status(400).json({ error: result.errors[0].message, reason: 'invalid', errors: result.errors });
+      return res.status(200).json({ feedback: feedbackShape(result.feedback) });
+    }
+    if (action === 'feedback-add') {
+      const result = await fitFeedback.add(userId, body.entry);
+      if (result.consentRequired) return res.status(409).json({ error: result.errors[0].message, reason: 'consent-required' });
+      if (result.errors.length) {
+        return res.status(400).json({ error: result.errors.length === 1 ? result.errors[0].message : 'Some of that needs fixing before it can be saved.', reason: 'invalid', errors: result.errors });
+      }
+      return res.status(200).json({ feedback: feedbackShape(result.feedback), entry: result.entry });
+    }
+    if (action === 'feedback-delete') {
+      const removed = await fitFeedback.removeEntry(userId, typeof body.id === 'string' ? body.id : '');
+      if (!removed) return res.status(404).json({ error: 'No such feedback.', reason: 'not-found' });
+      return res.status(200).json({ feedback: feedbackShape(await fitFeedback.read(userId)) });
+    }
+    if (action === 'feedback-delete-all') {
+      await fitFeedback.removeAll(userId);
+      return res.status(200).json({ feedback: feedbackShape(await fitFeedback.read(userId)), deleted: true });
+    }
+  } catch (err) {
+    console.error('Fit feedback failed', err && err.message);
+    return res.status(500).json({ error: 'Could not reach your fit feedback. Try again in a moment.' });
+  }
+  return res.status(400).json({ error: 'Unknown action.', reason: 'unknown-action' });
+}
 
 module.exports = async function handler(req, res) {
   if (handledPreflight(req, res)) return;
@@ -64,6 +111,15 @@ module.exports = async function handler(req, res) {
 
   /* --------------------------------------------------- read */
   if (req.method === 'GET') {
+    const query = req.query || Object.fromEntries(new URL(req.url || '/', 'http://fynd.local').searchParams);
+    if (query.part === 'feedback') {
+      try {
+        return res.status(200).json({ feedback: feedbackShape(await fitFeedback.read(userId)) });
+      } catch (err) {
+        console.error('Fit feedback failed', err && err.message);
+        return res.status(500).json({ error: 'Could not read your fit feedback. Try again in a moment.' });
+      }
+    }
     try {
       const { profile, reason } = await fitProfiles.read(userId);
       if (reason === 'unsupported-version') {
@@ -110,12 +166,16 @@ module.exports = async function handler(req, res) {
   if (action === 'delete') {
     try {
       await fitProfiles.remove(userId);
+      /* the fit feedback goes with it (api/fit-feedback.js) */
+      await fitFeedback.removeAll(userId);
       return res.status(200).json({ profile: null, storage: storage(), deleted: true });
     } catch (err) {
       console.error('Fit profile delete failed', err && err.message);
       return res.status(500).json({ error: 'Could not delete your fit profile. Try again in a moment.' });
     }
   }
+
+  if (action.startsWith('feedback-')) return feedbackAction(res, userId, action, body);
 
   return res.status(400).json({ error: 'Unknown action.', reason: 'unknown-action' });
 };

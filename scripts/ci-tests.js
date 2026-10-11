@@ -61,6 +61,8 @@ const GROUPS = {
     ['test-auth', 'accounts, sessions, tokens, OAuth'],
     ['test-stripe', 'payments and subscriptions'],
     ['test-fit-profile', 'the shopper fit profile: its schema, units, and who may read or change it'],
+    ['test-sizing', 'sizing records, the size engine, /api/size-recommendation and fit feedback'],
+    ['test-size-eval', 'the size engine against hand-worked expectations from published charts'],
     ['test-catalog-audit', 'the catalogue audit: every card proved from its row'],
     ['test-demo-audio', "the landing demo's sound: loudness, ducking, captions"],
     ['test-demo-film', "the landing demo film: length, order, every store frame real"]
