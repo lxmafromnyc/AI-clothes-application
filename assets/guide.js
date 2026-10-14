@@ -14,6 +14,13 @@
      4  what usually gets the fit wrong       troubleZones, from that
                                               type's own list
 
+   For T-shirts, step 2 first asks whether they own one that fits
+   exactly how they like (favorite: perfect, close, or not really).
+   Brand and size follow only after Yes or Close, and below them, folded
+   away and every part optional, what Fynd can compare other T-shirts
+   with: the product's name or link, what makes its fit good, and its
+   measurements laid flat. None of it is needed to continue.
+
    Steps 2 to 4 are asked about the type chosen in step 1, in its words,
    with its brands, its sizes (letters for tops, waist and length for
    jeans) and its trouble spots, and saved under that type alone:
@@ -87,6 +94,21 @@
   const zones = () => Array.from(zoneItems.querySelectorAll('input[name="troubleZones"]'));
   const garmentRadios = () => Array.from(form.querySelectorAll('input[name="garment"]'));
 
+  /* T-shirts: the favourite question, and its folded-away details */
+  const favoriteField = $('favorite-field');
+  const favoriteLead = $('favorite-lead');
+  const favoriteMore = $('favorite-more');
+  const anchorBlock = $('anchor-block');
+  const product = $('favorite-product');
+  const likesBox = $('favorite-likes');
+  const measuresBox = $('favorite-measures');
+  const likes = () => Array.from(likesBox.querySelectorAll('input[name="favoriteLikes"]'));
+  const measureInput = (key) => $(`favorite-${key}`);
+  const favoriteChosen = () => {
+    const r = form.querySelector('input[name="favorite"]:checked');
+    return r ? r.value : '';
+  };
+
   const back = $('guide-back');
   const next = $('guide-next');
   const error = $('guide-error');
@@ -111,8 +133,10 @@
 
   const plural = (g) => g.one === g.many;   /* "jeans", "pants": one pair, a plural noun */
   const words = {
-    anchorQuestion: (g) => (g.one ? `What brand and size of ${g.one} fits you perfectly?` : 'What brand and size fits you perfectly?'),
-    anchorHint: (g) => (g.group === 'tops' ? 'Think of one you own right now.'
+    anchorQuestion: (g) => (g.favorite ? `Do you own a ${g.one} that fits you exactly how you like?`
+      : g.one ? `What brand and size of ${g.one} fits you perfectly?` : 'What brand and size fits you perfectly?'),
+    anchorHint: (g) => (g.favorite ? 'No measuring needed — it helps Fynd compare other brands with it.'
+      : g.group === 'tops' ? 'Think of one you own right now.'
       : g.group === 'other' ? 'Think of something you own right now.' : 'Think of a pair you own right now.'),
     fitQuestion: (g) => `How do you like your ${g.many} to fit?`,
     zoneHint: (g) => (g.id === 'other' ? 'Pick any that apply — it’s about the clothes, not you.'
@@ -159,6 +183,47 @@
     return label;
   }
 
+  /* The favourite's details, built once from the schema's lists: what
+     makes the fit good, and each measurement with how to take it. */
+  function buildFavorite() {
+    likesBox.replaceChildren(...Schema.FAVORITE_LIKES.map((like) => {
+      const label = doc.createElement('label');
+      label.className = 'choice';
+      const input = doc.createElement('input');
+      input.type = 'checkbox';
+      input.name = 'favoriteLikes';
+      input.value = like.id;
+      const text = doc.createElement('span');
+      text.textContent = like.label;
+      label.append(input, text);
+      return label;
+    }));
+    measuresBox.replaceChildren(...Schema.GARMENT_MEASURE_KEYS.map((key) => {
+      const m = Schema.GARMENT_MEASURES[key];
+      const field = doc.createElement('div');
+      field.className = 'guide-field';
+      const label = doc.createElement('label');
+      label.className = 'guide-label';
+      label.htmlFor = `favorite-${key}`;
+      label.textContent = m.label;
+      const input = doc.createElement('input');
+      input.className = 'profile-input';
+      input.type = 'text';
+      input.inputMode = 'decimal';
+      input.id = `favorite-${key}`;
+      input.name = `favorite-${key}`;
+      input.autocomplete = 'off';
+      input.maxLength = 6;
+      input.setAttribute('aria-describedby', `favorite-${key}-how`);
+      const how = doc.createElement('p');
+      how.className = 'guide-field-note';
+      how.id = `favorite-${key}-how`;
+      how.textContent = m.how;
+      field.append(label, input, how);
+      return field;
+    }));
+  }
+
   function render(g) {
     form.dataset.garment = g.id;
     $('anchor-question').textContent = words.anchorQuestion(g);
@@ -175,6 +240,7 @@
     size.replaceChildren(...sizeOptions);
     length.replaceChildren(option('', 'Choose'), ...(sizes.lengths || []).map((l) => option(l, l)), option('not-sure', 'Not sure'));
 
+    favoriteField.hidden = !g.favorite;
     $('fit-question').textContent = words.fitQuestion(g);
     const art = g.group === 'trousers' || g.group === 'sweatpants' ? BOTTOM_ART : TOP_ART;
     Schema.FIT_GOALS.forEach((goal) => {
@@ -190,11 +256,17 @@
 
   /* ---------- a type's answers on screen, and set aside ---------- */
 
-  const BLANK = () => ({ name: '', brand: '', other: '', size: '', length: '', line: '', goal: '', zones: [], none: false });
+  const BLANK = () => ({
+    name: '', brand: '', other: '', size: '', length: '', line: '', goal: '', zones: [], none: false,
+    favorite: '', product: '', likes: [], unit: 'in', measures: {}
+  });
 
   function readDraft() {
     const goal = form.querySelector('input[name="fitGoal"]:checked');
     const line = form.querySelector('input[name="sizingLine"]:checked');
+    const unit = form.querySelector('input[name="favoriteUnit"]:checked');
+    const measures = {};
+    Schema.GARMENT_MEASURE_KEYS.forEach((key) => { measures[key] = measureInput(key).value; });
     return {
       name: garmentName.value,
       line: line ? line.value : '',
@@ -204,11 +276,17 @@
       length: length.value,
       goal: goal ? goal.value : '',
       zones: zones().filter((z) => z.checked).map((z) => z.value),
-      none: none.checked
+      none: none.checked,
+      favorite: favoriteChosen(),
+      product: product.value,
+      likes: likes().filter((l) => l.checked).map((l) => l.value),
+      unit: unit ? unit.value : 'in',
+      measures
     };
   }
 
-  const isBlank = (d) => !d.name.trim() && !d.line && !d.brand && !d.other.trim() && !d.size && !d.length && !d.goal && !d.zones.length && !d.none;
+  const isBlank = (d) => !d.name.trim() && !d.line && !d.brand && !d.other.trim() && !d.size && !d.length && !d.goal && !d.zones.length && !d.none
+    && !d.favorite && !d.product.trim() && !d.likes.length && !Object.values(d.measures).some((v) => String(v).trim());
 
   /* What is saved for a type, as the form shows it. */
   function draftFromSaved(g, entry) {
@@ -222,6 +300,19 @@
       else if (a.brand) { d.brand = 'other'; d.other = a.brand; }
       d.size = a.size || 'not-sure';
       d.length = a.length || '';
+    }
+    if (g.favorite) {
+      /* an anchor saved before the question was asked was asked for as
+         the one that "fits you perfectly" */
+      d.favorite = entry.favorite || (a && (a.brand || a.size) ? 'perfect' : '');
+      if (a && a.product) d.product = a.product.url || a.product.name || '';
+      if (a && Array.isArray(a.likes)) d.likes = a.likes.slice();
+      if (a && a.measurements) {
+        d.unit = a.measurements.unit;
+        Schema.GARMENT_MEASURE_KEYS.forEach((key) => {
+          if (typeof a.measurements[key] === 'number') d.measures[key] = String(a.measurements[key]);
+        });
+      }
     }
     d.goal = entry.fitGoal || '';
     if (Array.isArray(entry.troubleZones)) {
@@ -250,6 +341,13 @@
     form.querySelectorAll('input[name="sizingLine"]').forEach((r) => { r.checked = r.value === d.line; });
     zones().forEach((z) => { z.checked = d.zones.includes(z.value); });
     none.checked = d.none;
+    form.querySelectorAll('input[name="favorite"]').forEach((r) => { r.checked = r.value === d.favorite; });
+    product.value = d.product;
+    likes().forEach((l) => { l.checked = d.likes.includes(l.value); });
+    form.querySelectorAll('input[name="favoriteUnit"]').forEach((r) => { r.checked = r.value === d.unit; });
+    Schema.GARMENT_MEASURE_KEYS.forEach((key) => { measureInput(key).value = d.measures[key] || ''; });
+    /* details already given are shown, not folded away */
+    favoriteMore.open = Boolean(d.product.trim() || d.likes.length || Object.values(d.measures).some((v) => String(v).trim()));
   }
 
   /* Puts the type on screen aside, and brings this one's own answers. */
@@ -281,7 +379,16 @@
     const chosenBrand = brand.value === 'other' ? (other.value.trim() || null) : (brand.value || null);
     const chosenSize = size.value && size.value !== 'not-sure' ? size.value : null;
     const chosenLength = lengthShown() && length.value && length.value !== 'not-sure' ? length.value : null;
-    if (chosenBrand || chosenSize || chosenLength) {
+    const fav = g.favorite ? favoriteChosen() : '';
+    if (g.favorite) {
+      if (fav) out.favorite = fav;
+      /* "Not really": nothing about a piece is sent, and the server
+         clears whatever was saved for one */
+      if (fav === 'perfect' || fav === 'close') {
+        const details = favoriteDetails();
+        if (chosenBrand || chosenSize || Object.keys(details).length) out.anchor = Object.assign({ brand: chosenBrand, size: chosenSize }, details);
+      }
+    } else if (chosenBrand || chosenSize || chosenLength) {
       out.anchor = { brand: chosenBrand, size: chosenSize };
       if (g.lengths) out.anchor.length = chosenLength;
     }
@@ -304,10 +411,31 @@
     return out;
   }
 
+  /* The favourite's details, only those given: a link or a name, what
+     makes the fit good, and any measurement typed — sent as typed, so
+     the server's check (and its message) is the one that decides. */
+  function favoriteDetails() {
+    const out = {};
+    const said = product.value.trim();
+    if (said) out.product = /^https?:\/\//i.test(said) ? { url: said } : { name: said };
+    const picked = likes().filter((l) => l.checked).map((l) => l.value);
+    if (picked.length) out.likes = picked;
+    const measures = {};
+    Schema.GARMENT_MEASURE_KEYS.forEach((key) => {
+      const v = measureInput(key).value.trim();
+      if (v) measures[key] = v;
+    });
+    if (Object.keys(measures).length) {
+      const unit = form.querySelector('input[name="favoriteUnit"]:checked');
+      out.measurements = Object.assign({ unit: unit ? unit.value : null }, measures);
+    }
+    return out;
+  }
+
   const answered = (n) => {
     if (n === 1) return Boolean(garment);
     const a = answers();
-    return n === 2 ? Boolean(a.anchor) : n === 3 ? Boolean(a.fitGoal) : Array.isArray(a.troubleZones);
+    return n === 2 ? Boolean(a.anchor || a.favorite) : n === 3 ? Boolean(a.fitGoal) : Array.isArray(a.troubleZones);
   };
 
   /* ---------- showing a step ---------- */
@@ -321,6 +449,14 @@
     next.textContent = step === 1 ? 'Continue' : step === LAST ? 'Save' : (answered(step) ? 'Continue' : 'Skip');
     otherField.hidden = brand.value !== 'other';
     lengthField.hidden = !lengthShown();
+    /* T-shirts: brand, size and the details only once there is a
+       favourite to describe */
+    const g = current();
+    const fav = favoriteChosen();
+    const describing = Boolean(g && g.favorite && (fav === 'perfect' || fav === 'close'));
+    anchorBlock.hidden = Boolean(g && g.favorite) && !describing;
+    favoriteLead.hidden = !describing;
+    favoriteMore.hidden = !describing;
     /* what is already saved is said where the type is chosen */
     $('guide-saved-note').hidden = !(step === 1 && Object.keys(saved).length);
     $('guide-legacy-note').hidden = !(step === 1 && legacy);
@@ -376,7 +512,12 @@
     };
     const said = Schema.describeGarment(id, entry);
     add('Type of clothing', said.garment);
-    add(words.anchorLabel(g), said.anchor);
+    const fav = said.favorite;
+    if (fav && fav.answer) add(`A ${g.one} that fits how you like`, fav.answer);
+    if (!(entry && entry.favorite === 'none')) add(words.anchorLabel(g), said.anchor);
+    if (fav && fav.product) add('Product', fav.product);
+    if (fav && fav.likes) add('What makes it fit well', fav.likes);
+    if (fav && fav.measurements) add('Its measurements', fav.measurements);
     add(words.fitLabel(g), said.fitGoal);
     add('What gets the fit wrong', said.troubleZones);
     if (said.line) add('Sized as', said.line);
@@ -410,7 +551,7 @@
     /* a type with nothing said is not kept — a name alone is a label,
        not an answer — so there is nothing to save, and no account to
        make for it */
-    if (!['anchor', 'fitGoal', 'troubleZones'].some((k) => k in sending) && !saved[garment]) {
+    if (!['anchor', 'fitGoal', 'troubleZones', 'favorite'].some((k) => k in sending) && !saved[garment]) {
       error.textContent = words.nothing(g);
       return;
     }
@@ -587,6 +728,7 @@
   async function start() {
     setAccountMode('signup');
     $('guide-brands').replaceChildren(...Schema.BRAND_SUGGESTIONS.map((b) => option(b, '')));
+    buildFavorite();
     /* a type already chosen (the browser restoring the form) is shown */
     const restored = garmentRadios().find((r) => r.checked);
     if (restored) selectGarment(restored.value);

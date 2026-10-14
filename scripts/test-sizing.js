@@ -146,14 +146,21 @@ async function withUnverifiedRecords(fn) {
 
 section('sizing records');
 
-await test('all six records load, each from the brand\'s own site, verified by the source audit', () => {
+await test('all ten records load, each from the brand\'s own site: the six fleece tops verified by the source audit, the four T-shirts not yet', () => {
   assert.deepStrictEqual(sizing.problems, []);
-  assert.strictEqual(sizing.RECORDS.length, 6);
-  assert.deepStrictEqual([...new Set(sizing.RECORDS.map((r) => r.brand))].sort(), ['Carhartt', 'Nike', 'UNIQLO']);
-  assert.deepStrictEqual([...new Set(sizing.RECORDS.map((r) => r.category))].sort(), ['hoodies', 'sweatshirts']);
+  assert.strictEqual(sizing.RECORDS.length, 10);
+  assert.deepStrictEqual([...new Set(sizing.RECORDS.map((r) => r.brand))].sort(), ['Carhartt', 'H&M', 'Nike', 'UNIQLO', 'Zara']);
+  assert.deepStrictEqual([...new Set(sizing.RECORDS.map((r) => r.category))].sort(), ['hoodies', 'sweatshirts', 'tshirts']);
   sizing.RECORDS.forEach((r) => {
-    assert.deepStrictEqual(r.verification, { status: 'verified', checkedBy: 'claude-code-source-audit', checkedAt: '2026-10-10' }, r.id);
-    assert.ok(sizingSchema.isVerified(r), r.id);
+    if (r.category === 'tshirts') {
+      /* copied from the brands' pages on 2026-10-14; only an approved
+         check against those pages may mark them verified */
+      assert.deepStrictEqual(r.verification, { status: 'unverified', checkedBy: null, checkedAt: null }, r.id);
+      assert.ok(!sizingSchema.isVerified(r), r.id);
+    } else {
+      assert.deepStrictEqual(r.verification, { status: 'verified', checkedBy: 'claude-code-source-audit', checkedAt: '2026-10-10' }, r.id);
+      assert.ok(sizingSchema.isVerified(r), r.id);
+    }
     /* the official source and the brand's own words stay on the record */
     assert.ok(sizingSchema.OFFICIAL_HOSTS[r.brand].includes(new URL(r.product.url).hostname), r.id);
     Object.values(r.charts).forEach((chart) => Object.values(chart.dimensions).forEach((d) => {
@@ -177,7 +184,7 @@ await test('records keep exactly what each brand publishes: UNIQLO both charts, 
   assert.strictEqual(uq.charts.garment.dimensions.chestWidth.methodSource.url, 'https://faq-us.uniqlo.com/articles/en_US/FAQ/How-to-Measure');
   assert.match(uq.charts.garment.dimensions.chestWidth.methodSource.says, /armpit to armpit/);
   sizing.RECORDS.forEach((r) => {
-    assert.strictEqual(r.charts.body.dimensions.chest.method, 'body-circumference', `${r.id}: body chest`);
+    if (r.charts.body) assert.strictEqual(r.charts.body.dimensions.chest.method, 'body-circumference', `${r.id}: body chest`);
     assert.ok(r.retrievedAt && r.region === 'US' && r.units === 'in', r.id);
     assert.ok(r.product.name && r.product.garmentType, r.id);
   });
@@ -195,7 +202,8 @@ await test('records keep exactly what each brand publishes: UNIQLO both charts, 
   assert.strictEqual(sizing.byId(NIKE_HOODIE).material.composition, null);
   /* every value's text reads as its number */
   sizing.RECORDS.forEach((r) => Object.values(r.charts).forEach((chart) => Object.values(chart.sizes).forEach((row) => Object.values(row).forEach((cell) => {
-    const n = (t) => t.replace(/ ¼/g, '.25').replace(/ ½/g, '.5').replace(/ ¾/g, '.75');
+    /* "23 ½" and H&M's "30¾-33¾" alike */
+    const n = (t) => t.replace(/ ?¼/g, '.25').replace(/ ?½/g, '.5').replace(/ ?¾/g, '.75').replace(/\s*-\s*/, ' - ');
     if ('value' in cell) assert.strictEqual(Number(n(cell.text)), cell.value, `${r.id}: ${cell.text}`);
     else assert.strictEqual(n(cell.text), `${cell.min} - ${cell.max}`, `${r.id}: ${cell.text}`);
   }))));
@@ -303,7 +311,9 @@ await test('garment measurements are compared only by the same method', () => {
   const profile = profileWith({ fitGoal: 'true-to-size', line: 'men' }, { brandSizes: [{ brand: 'UNIQLO', category: 'sweatshirts', size: 'M', fit: 'about-right' }] });
   const r = engine.recommend(profile, target, { includeUnverified: true, records: [sizing.byId(UQ_SWEAT), target] });
   assert.strictEqual(r.method, 'reference-garment');
-  assert.ok(!r.reasons.some((x) => /^Sleeves/.test(x)), `sleeves compared across methods: ${r.reasons.join(' | ')}`);
+  assert.ok(!r.reasons.some((x) => /^Sleeves: (?!not compared)/.test(x)), `sleeves compared across methods: ${r.reasons.join(' | ')}`);
+  /* and it says why it left them out */
+  assert.ok(r.reasons.some((x) => /^Sleeves: not compared — measured differently/.test(x)), r.reasons.join(' | '));
   assert.ok(r.reasons.some((x) => /^Chest/.test(x)));
 });
 
@@ -428,8 +438,8 @@ await test('signed out it answers 401; it is GET only and no-store', async () =>
   const list = await suggest(jar);
   assert.strictEqual(list.status, 200);
   assert.strictEqual(list.res.getHeader('cache-control'), 'no-store, private');
-  assert.strictEqual(list.body.products.length, 6);
-  assert.ok(list.body.products.every((p) => p.verified === true));
+  assert.strictEqual(list.body.products.length, 10);
+  assert.ok(list.body.products.every((p) => p.verified === (p.category !== 'tshirts')), 'the T-shirt records say they are not verified');
 });
 
 await test('an unknown or malformed product id is refused, and nothing is guessed', async () => {
@@ -563,6 +573,192 @@ await test('deleting the fit profile deletes the fit feedback too', async () => 
   const del = await call(profileEndpoint, { jar, body: { action: 'delete' } });
   assert.strictEqual(del.status, 200);
   assert.strictEqual(await store.get(fitFeedback.key(user.id)), null);
+});
+
+section('the favourite T-shirt');
+
+const UQ_TEE = 'uniqlo-e455365-supima-cotton-tshirt-us';
+const NIKE_TEE = 'nike-ih1121-premium-essentials-tshirt-us';
+const HM_TEE = 'hm-0685816-regular-fit-tshirt-us';
+const ZARA_TEE = 'zara-01887411-basic-medium-weight-tshirt-us';
+const UQ_TEE_LINK = 'https://www.uniqlo.com/us/en/products/E455365-000/00';
+const tee = (entry, extra) => {
+  const p = Object.assign(Schema.empty(), extra || {});
+  p.garments.tshirts = Object.assign(Schema.emptyGarment('tshirts'), entry);
+  return p;
+};
+const teePool = (...ids) => ids.map(verifiedCopy);
+/* a T-shirt measured at home, laid flat, in inches */
+const MEASURED = { unit: 'in', chestWidth: 21.5, shoulderWidth: 18.5, sleeveLength: 8, bodyLength: 27 };
+
+await test('the T-shirt records keep what each brand publishes: UNIQLO both charts, Zara garment only, Nike and H&M body only', () => {
+  assert.deepStrictEqual(Object.keys(sizing.byId(UQ_TEE).charts).sort(), ['body', 'garment']);
+  assert.deepStrictEqual(Object.keys(sizing.byId(ZARA_TEE).charts), ['garment']);
+  assert.deepStrictEqual(Object.keys(sizing.byId(NIKE_TEE).charts), ['body']);
+  assert.deepStrictEqual(Object.keys(sizing.byId(HM_TEE).charts), ['body']);
+  /* both garment chests are flat widths, and each says how a circumference would be worked out */
+  [UQ_TEE, ZARA_TEE].forEach((id) => {
+    const chest = sizing.byId(id).charts.garment.dimensions.chestWidth;
+    assert.strictEqual(chest.method, 'flat-width-armpit-to-armpit', id);
+    assert.strictEqual(chest.derivedCircumference.status, 'estimated', id);
+  });
+  /* measured differently, and kept so */
+  assert.strictEqual(sizing.byId(UQ_TEE).charts.garment.dimensions.sleeveLength.method, 'center-back-to-cuff');
+  assert.strictEqual(sizing.byId(ZARA_TEE).charts.garment.dimensions.sleeveLength.method, 'shoulder-seam-to-cuff');
+  assert.strictEqual(sizing.byId(UQ_TEE).charts.garment.sizes.M.chestWidth.text, '21 ½');
+  assert.strictEqual(sizing.byId(ZARA_TEE).charts.garment.sizes.M.chestWidth.value, 21.7);
+  /* each fit word is the product's own, not the brand's in general */
+  assert.deepStrictEqual([UQ_TEE, NIKE_TEE, HM_TEE, ZARA_TEE].map((id) => sizing.byId(id).fit.fitClass), ['regular', 'loose', 'regular', 'regular']);
+});
+
+await test('no brand is given a fit by rule: the engine\'s code names no brand', () => {
+  const code = require('fs').readFileSync(require('path').join(__dirname, '..', 'api', '_sizing', 'engine.js'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  assert.ok(!/\b(Nike|UNIQLO|Uniqlo|H&M|Zara|Carhartt)\b/.test(code), 'a brand is named in the engine\'s logic');
+});
+
+await test('a favourite found in the catalogue by its link is compared garment to garment, and only where both measure the same way', () => {
+  const profile = tee({ favorite: 'perfect', anchor: { brand: 'UNIQLO', size: 'M', product: { name: null, url: UQ_TEE_LINK } } });
+  const r = engine.recommend(profile, verifiedCopy(ZARA_TEE), { records: teePool(UQ_TEE, ZARA_TEE) });
+  assert.strictEqual(r.status, 'ok');
+  assert.strictEqual(r.method, 'reference-garment');
+  assert.deepStrictEqual(r.anchor.match, { id: UQ_TEE, by: 'link', name: 'SUPIMA® Cotton T-Shirt', size: 'M' });
+  assert.strictEqual(r.anchor.source, 'product');
+  assert.deepStrictEqual(r.anchor.compared.map((c) => c.dim), ['chestWidth', 'shoulderWidth']);
+  assert.deepStrictEqual(r.anchor.notCompared.map((c) => c.dim), ['bodyLength', 'sleeveLength']);
+  assert.ok(r.anchor.notCompared.every((c) => /measured differently/.test(c.why)));
+  assert.ok(r.reasons[0].includes('UNIQLO SUPIMA® Cotton T-Shirt in M'), r.reasons[0]);
+  assert.ok(r.reasons.some((x) => /^Length: not compared — measured differently — Zara's from the top of the shoulder, UNIQLO's from the centre back/.test(x)), r.reasons.join(' | '));
+  assert.strictEqual(r.leading, 'S');
+  /* two measurements of four: not high, whatever the gap */
+  assert.strictEqual(r.confidence, 'medium');
+  /* not a letter translated: Medium in one brand is not taken as any size in the other */
+  assert.ok(!r.reasons.some((x) => /M in UNIQLO is|runs (small|large)/.test(x)));
+  /* the same, found by its name */
+  const byName = engine.recommend(tee({ favorite: 'perfect', anchor: { brand: 'UNIQLO', size: 'M', product: { name: 'Supima Cotton T-Shirt', url: null } } }), verifiedCopy(ZARA_TEE), { records: teePool(UQ_TEE, ZARA_TEE) });
+  assert.strictEqual(byName.anchor.match.by, 'name');
+  assert.deepStrictEqual(byName.ranking, r.ranking);
+});
+
+await test('what makes the favourite fit well decides between sizes, and "close" lowers confidence', () => {
+  const pool = teePool(UQ_TEE, ZARA_TEE);
+  const base = { brand: 'UNIQLO', size: 'M', product: { url: UQ_TEE_LINK } };
+  /* UNIQLO M is 21½ in flat and 17½ in across the shoulders; Zara S is
+     20.9 and 18.1, Zara M 21.7 and 18.9 */
+  const chest = engine.recommend(tee({ favorite: 'close', anchor: Object.assign({ likes: ['chest'] }, base) }), verifiedCopy(ZARA_TEE), { records: pool });
+  const shoulders = engine.recommend(tee({ favorite: 'close', anchor: Object.assign({ likes: ['shoulders'] }, base) }), verifiedCopy(ZARA_TEE), { records: pool });
+  assert.strictEqual(chest.leading, 'M', 'the chest is what fits: the closest chest');
+  assert.strictEqual(shoulders.leading, 'S', 'the shoulders are what fit: the closest shoulders');
+  assert.strictEqual(chest.confidence, 'low', 'close, two measurements');
+  assert.ok(chest.caveats.some((c) => /close to the fit you like/.test(c)));
+  const perfect = engine.recommend(tee({ favorite: 'perfect', anchor: Object.assign({ likes: ['chest'] }, base) }), verifiedCopy(ZARA_TEE), { records: pool });
+  assert.strictEqual(perfect.confidence, 'medium');
+});
+
+await test('the shopper\'s own measurements are compared measurement by measurement, and never called published', () => {
+  const pool = teePool(ZARA_TEE);
+  const r = engine.recommend(tee({ favorite: 'perfect', anchor: { brand: 'Gap', size: 'M', measurements: MEASURED } }), verifiedCopy(ZARA_TEE), { records: pool });
+  assert.strictEqual(r.method, 'reference-garment');
+  assert.strictEqual(r.anchor.source, 'measured');
+  assert.deepStrictEqual(r.anchor.compared.map((c) => c.dim), ['chestWidth', 'bodyLength', 'sleeveLength', 'shoulderWidth']);
+  assert.strictEqual(r.leading, 'M');
+  assert.strictEqual(r.confidence, 'medium', 'measured at home: never high');
+  assert.ok(r.caveats.some((c) => /measured at home/.test(c)));
+  assert.ok(r.reasons[0].startsWith('Compared with the measurements you took of your Gap T-shirt (M on the label)'), r.reasons[0]);
+  /* the same garment in centimetres gives the same answer */
+  const cm = { unit: 'cm' };
+  ['chestWidth', 'shoulderWidth', 'sleeveLength', 'bodyLength'].forEach((k) => { cm[k] = MEASURED[k] * 2.54; });
+  const inCm = engine.recommend(tee({ favorite: 'perfect', anchor: { brand: 'Gap', size: 'M', measurements: cm } }), verifiedCopy(ZARA_TEE), { records: pool });
+  assert.deepStrictEqual(inCm.ranking, r.ranking);
+  /* against a product that publishes only who each size is cut for, there is nothing to compare */
+  for (const id of [NIKE_TEE, HM_TEE]) {
+    const none = engine.recommend(tee({ favorite: 'perfect', anchor: { measurements: MEASURED } }), verifiedCopy(id), { records: teePool(id) });
+    assert.strictEqual(none.status, 'insufficient', id);
+    assert.strictEqual(none.missing[0].code, 'incompatible-measurements', id);
+    assert.ok(!('leading' in none));
+  }
+});
+
+await test('brand and size alone is a weaker reference: a chest range from the brand\'s chart, never another product\'s garment', () => {
+  /* UNIQLO M, no product: Zara is not compared with the Supima's garment measurements */
+  const pool = teePool(UQ_TEE, ZARA_TEE);
+  const r = engine.recommend(tee({ favorite: 'perfect', line: 'men', anchor: { brand: 'UNIQLO', size: 'M' } }), verifiedCopy(ZARA_TEE), { records: pool });
+  assert.strictEqual(r.method, 'body-plus-ease');
+  assert.strictEqual(r.anchor.source, 'brand-size');
+  assert.strictEqual(r.anchor.usedAs, 'chest-range');
+  assert.strictEqual(r.confidence, 'low');
+  assert.ok(r.caveats.some((c) => /weaker reference/.test(c)), r.caveats.join(' | '));
+  assert.ok(r.dataQuality.estimated.some((e) => /your chest, from the chart/.test(e)));
+  /* Nike M against a Nike T-shirt: the chart size stands — no fit goal was said, so "Loose" moves nothing */
+  const nike = engine.recommend(tee({ favorite: 'perfect', line: 'men', anchor: { brand: 'Nike', size: 'M' } }), verifiedCopy(NIKE_TEE), { records: teePool(NIKE_TEE) });
+  assert.strictEqual(nike.method, 'body-chart');
+  assert.strictEqual(nike.leading, 'M');
+  assert.ok(!nike.reasons.some((x) => /aims one size/.test(x)));
+  assert.strictEqual(nike.confidence, 'low');
+  /* without the sizing line, the label can't be read at all — and it says what would help */
+  const noLine = engine.recommend(tee({ favorite: 'perfect', anchor: { brand: 'Nike', size: 'M' } }), verifiedCopy(NIKE_TEE), { records: teePool(NIKE_TEE) });
+  assert.strictEqual(noLine.status, 'insufficient');
+  assert.deepStrictEqual(noLine.missing.map((m) => m.code), ['anchor-unmeasured', 'line-needed', 'no-evidence']);
+  assert.ok(noLine.next.some((n) => /Measure your favourite T-shirt laid flat/.test(n)));
+});
+
+await test('a named product Fynd has no sizing for is kept as context, and nothing is made up for it', () => {
+  const r = engine.recommend(tee({ favorite: 'perfect', anchor: { brand: 'Uniqlo', size: 'M', product: { name: 'AIRism Cotton Oversized T-Shirt', url: 'https://www.uniqlo.com/us/en/products/E465185-000/00' } } }),
+    verifiedCopy(ZARA_TEE), { records: teePool(UQ_TEE, ZARA_TEE) });
+  assert.strictEqual(r.status, 'insufficient');
+  assert.strictEqual(r.anchor.match, null);
+  assert.ok(r.notes.some((n) => /no sizing for the product you named/.test(n)));
+});
+
+await test('unverified T-shirt data gives no size: neither the product shopped for nor the favourite\'s', () => {
+  /* as shipped: the T-shirt records are unverified */
+  const profile = tee({ favorite: 'perfect', anchor: { brand: 'UNIQLO', size: 'M', product: { url: UQ_TEE_LINK } } });
+  const shipped = engine.recommend(profile, sizing.byId(ZARA_TEE));
+  assert.strictEqual(shipped.status, 'insufficient');
+  assert.strictEqual(shipped.missing[0].code, 'unverified-data');
+  /* the product verified, the favourite's record not: the favourite isn't used */
+  const half = engine.recommend(profile, verifiedCopy(ZARA_TEE), { records: [copy(UQ_TEE), verifiedCopy(ZARA_TEE)] });
+  assert.strictEqual(half.status, 'insufficient');
+  assert.ok(half.notes.some((n) => /hasn't been checked against UNIQLO's chart yet/.test(n)), half.notes.join(' | '));
+});
+
+await test('a favourite T-shirt never stands in for a hoodie, and a T-shirt chart never for a hoodie\'s', () => {
+  const profile = tee({ favorite: 'perfect', anchor: { brand: 'UNIQLO', size: 'M', product: { url: UQ_TEE_LINK }, measurements: MEASURED } });
+  const r = engine.recommend(profile, sizing.byId(UQ_HOODIE), { records: [verifiedCopy(UQ_TEE), sizing.byId(UQ_HOODIE)] });
+  assert.strictEqual(r.status, 'insufficient');
+  assert.strictEqual(r.anchor, null, 'the hoodie answer has no favourite in it');
+  /* a usual hoodie size never stands in for a T-shirt's garment */
+  const viaHoodie = engine.recommend(tee({}, { brandSizes: [{ brand: 'UNIQLO', category: 'hoodies', size: 'M', fit: 'about-right' }] }), verifiedCopy(ZARA_TEE), { records: [sizing.byId(UQ_HOODIE), verifiedCopy(ZARA_TEE)] });
+  assert.notStrictEqual(viaHoodie.method, 'reference-garment');
+});
+
+await test('/api/size-recommendation reads the saved favourite, for its owner only, and says honestly when the data is unchecked', async () => {
+  const { jar, user } = await signUp('ada@example.test');
+  const saved = await fitProfiles.saveGuide(user.id, { garments: { tshirts: { favorite: 'perfect', anchor: { brand: 'UNIQLO', size: 'M', product: { url: `${UQ_TEE_LINK}?colorDisplayCode=07` } } } } });
+  assert.deepStrictEqual(saved.errors, []);
+  /* as shipped, unverified: an honest "insufficient" */
+  const shipped = await suggest(jar, ZARA_TEE);
+  assert.strictEqual(shipped.status, 200);
+  assert.strictEqual(shipped.body.recommendation.status, 'insufficient');
+  assert.strictEqual(shipped.body.recommendation.missing[0].code, 'unverified-data');
+  /* once both records are checked, the favourite is used end to end */
+  const marks = [UQ_TEE, ZARA_TEE].map((id) => sizing.byId(id).verification);
+  const before = marks.map((m) => Object.assign({}, m));
+  try {
+    marks.forEach((m) => Object.assign(m, { status: 'verified', checkedBy: 'Test checker', checkedAt: '2026-10-14' }));
+    const ok = (await suggest(jar, ZARA_TEE)).body.recommendation;
+    assert.strictEqual(ok.status, 'ok');
+    assert.strictEqual(ok.anchor.source, 'product');
+    assert.strictEqual(ok.leading, 'S');
+    /* someone else's session reads their own (empty) profile, never Ada's */
+    const bob = await signUp('bob@example.test');
+    const theirs = (await suggest(bob.jar, ZARA_TEE)).body.recommendation;
+    assert.strictEqual(theirs.status, 'insufficient');
+    assert.strictEqual(theirs.anchor, null);
+  } finally {
+    marks.forEach((m, i) => { Object.keys(m).forEach((k) => delete m[k]); Object.assign(m, before[i]); });
+  }
+  assert.strictEqual((await suggest({}, ZARA_TEE)).status, 401);
 });
 
 section('privacy');

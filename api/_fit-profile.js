@@ -72,14 +72,29 @@ async function save(userId, input) {
       if (!Object.prototype.hasOwnProperty.call(input, field)) profile[field] = stored[field];
     });
     /* A page loaded before version 4 sends each type without its sizing
-       line; the line the guide saved stays. */
+       line; the line the guide saved stays. The same for version 5's
+       favourite answer, and for the favourite piece's details when the
+       page sends the same brand and size without them: a page that
+       never showed the details cannot erase them. A different brand or
+       size is a different piece, and its old details go. */
     const sent = input.garments && typeof input.garments === 'object' ? input.garments : null;
     if (sent) {
+      const has = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
       Object.keys(profile.garments).forEach((id) => {
         const entry = sent[id];
-        const keep = stored.garments[id] && stored.garments[id].line;
-        if (keep && entry && typeof entry === 'object' && !Object.prototype.hasOwnProperty.call(entry, 'line')) {
-          profile.garments[id].line = keep;
+        const before = stored.garments[id];
+        if (!before || !entry || typeof entry !== 'object') return;
+        const now = profile.garments[id];
+        if (before.line && !has(entry, 'line')) now.line = before.line;
+        /* "Not really" no longer holds once a piece is named */
+        if (before.favorite && has(now, 'favorite') && !has(entry, 'favorite')) {
+          now.favorite = before.favorite === 'none' && now.anchor ? null : before.favorite;
+        }
+        const a = now.anchor;
+        const b = before.anchor;
+        const sentAnchor = entry.anchor && typeof entry.anchor === 'object' ? entry.anchor : null;
+        if (a && b && sentAnchor && a.brand === b.brand && a.size === b.size) {
+          ['product', 'likes', 'measurements'].forEach((k) => { if (b[k] && !has(sentAnchor, k)) a[k] = b[k]; });
         }
       });
     }

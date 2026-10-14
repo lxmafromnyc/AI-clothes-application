@@ -140,6 +140,19 @@
             <h2 class="guide-question" tabindex="-1"><span class="sr-only">Step 2 of 4: </span><span id="anchor-question">What brand and size fits you perfectly?</span></h2>
           </legend>
           <p class="guide-hint" id="anchor-hint">Think of something you own right now.</p>
+          <!-- T-shirts only: whether they own one that fits just right.
+               Brand and size, and the optional details below them, show
+               only after Yes or Close. -->
+          <fieldset class="guide-favorite" id="favorite-field" hidden>
+            <legend class="sr-only">Do you own one that fits exactly how you like?</legend>
+            <div class="zone-list">
+              <label class="zone zone--one"><input type="radio" name="favorite" value="perfect"><span>Yes, I have the perfect fit.</span></label>
+              <label class="zone zone--one"><input type="radio" name="favorite" value="close"><span>I have one that&rsquo;s close.</span></label>
+              <label class="zone zone--one"><input type="radio" name="favorite" value="none"><span>Not really / I&rsquo;m not sure.</span></label>
+            </div>
+          </fieldset>
+          <div class="guide-anchor-block" id="anchor-block">
+          <p class="guide-label guide-favorite-lead" id="favorite-lead" hidden>Which one is it? Skip anything you don&rsquo;t know.</p>
           <div class="guide-anchor">
             <div class="guide-field">
               <label class="guide-label" for="anchor-brand">Brand</label>
@@ -173,6 +186,31 @@
               <label class="choice"><input type="radio" name="sizingLine" value="not-sure"><span>Not sure</span></label>
             </div>
           </fieldset>
+          <!-- T-shirts only, folded away: what Fynd can use to compare it
+               with other T-shirts. Every part optional; nothing here is
+               needed to continue. -->
+          <details class="guide-more" id="favorite-more" hidden>
+            <summary class="guide-more-summary">Tell us more about it <span class="guide-optional">optional</span></summary>
+            <div class="guide-field">
+              <label class="guide-label" for="favorite-product">Product name or link</label>
+              <input class="profile-input" type="text" id="favorite-product" name="favoriteProduct" maxlength="300" autocomplete="off" placeholder="Its name, or paste a link">
+              <p class="guide-field-note">If Fynd has that product&rsquo;s size chart, it uses its exact measurements.</p>
+            </div>
+            <fieldset class="guide-likes">
+              <legend class="guide-label">What makes the fit good?</legend>
+              <div class="choices" id="favorite-likes"></div>
+            </fieldset>
+            <fieldset class="guide-measure">
+              <legend class="guide-label">Its measurements, laid flat</legend>
+              <p class="guide-field-note">Only if you have a tape measure handy &mdash; you can come back to the guide and add them any time.</p>
+              <div class="choices guide-measure-unit">
+                <label class="choice"><input type="radio" name="favoriteUnit" value="in" checked><span>Inches</span></label>
+                <label class="choice"><input type="radio" name="favoriteUnit" value="cm"><span>Centimetres</span></label>
+              </div>
+              <div class="guide-measure-grid" id="favorite-measures"></div>
+            </fieldset>
+          </details>
+          </div>
         </fieldset>
 
         <!-- ================================================ 3: how it should fit -->

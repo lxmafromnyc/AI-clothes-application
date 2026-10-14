@@ -1202,6 +1202,8 @@ const linkFromInbox = (pattern) => {
     const a = Object.assign({ garment: 'tshirts', brand: 'UNIQLO', size: 'M', goal: 'true-to-size', zones: ['sleeves-short'] }, answers || {});
     await page.check(`input[name="garment"][value="${a.garment}"]`);
     await page.click('#guide-next');
+    /* T-shirts first ask whether there is a favourite; brand and size follow a Yes */
+    if (a.garment === 'tshirts' && (a.favorite || a.brand || a.size)) await page.check(`input[name="favorite"][value="${a.favorite || 'perfect'}"]`);
     if (a.brand) await page.selectOption('#anchor-brand', a.brand);
     if (a.other) await page.fill('#anchor-other', a.other);
     if (a.size) await page.selectOption('#anchor-size', a.size);
@@ -1332,7 +1334,7 @@ const linkFromInbox = (pattern) => {
     const page = await context.newPage();
     await guideReady(page);
     const expected = {
-      tshirts: { anchor: 'What brand and size of T-shirt fits you perfectly?', fit: 'How do you like your T-shirts to fit?', sizes: 'letter', zones: Schema.zonesFor('tshirts') },
+      tshirts: { anchor: 'Do you own a T-shirt that fits you exactly how you like?', fit: 'How do you like your T-shirts to fit?', sizes: 'letter', zones: Schema.zonesFor('tshirts') },
       hoodies: { anchor: 'What brand and size of hoodie fits you perfectly?', fit: 'How do you like your hoodies to fit?', sizes: 'letter', zones: Schema.zonesFor('hoodies') },
       sweatshirts: { anchor: 'What brand and size of sweatshirt fits you perfectly?', fit: 'How do you like your sweatshirts to fit?', sizes: 'letter', zones: Schema.zonesFor('sweatshirts') },
       pants: { anchor: 'What brand and size of pants fits you perfectly?', fit: 'How do you like your pants to fit?', sizes: 'both', zones: Schema.zonesFor('pants') },
@@ -1423,6 +1425,7 @@ const linkFromInbox = (pattern) => {
     await guideReady(page);
     await page.check('input[name="garment"][value="tshirts"]');
     await page.click('#guide-next');
+    await page.check('input[name="favorite"][value="close"]');
     assert.strictEqual(await page.isVisible('#anchor-other'), false);
     await page.selectOption('#anchor-brand', 'other');
     assert.strictEqual(await page.isVisible('#anchor-other'), true);
@@ -1785,6 +1788,90 @@ const linkFromInbox = (pattern) => {
     assert.deepStrictEqual([profile.anchor, profile.fitGoal, profile.troubleZones], [null, null, null]);
     assert.deepStrictEqual(Object.keys(profile.garments), ['jeans', 'other'], 'the types are untouched');
     assert.strictEqual(await page.isVisible('#legacy-guide'), false);
+    await context.close();
+  });
+
+  await test('a favourite T-shirt: asked first, details only after Yes and all optional, saved, shown on the fit profile and removable there', async () => {
+    const context = await openContext();
+    const page = await signedInAtGuide(context, 'tess@e2e.test');
+    await page.check('input[name="garment"][value="tshirts"]');
+    await page.click('#guide-next');
+    assert.strictEqual((await page.textContent('#anchor-question')).trim(), 'Do you own a T-shirt that fits you exactly how you like?');
+    assert.deepStrictEqual(await page.$$eval('input[name="favorite"]', (ns) => ns.map((n) => n.closest('label').textContent.trim())),
+      ['Yes, I have the perfect fit.', 'I have one that’s close.', 'Not really / I’m not sure.']);
+    /* nothing more until there is a favourite to describe */
+    for (const id of ['#anchor-brand', '#anchor-size', '#favorite-more']) assert.strictEqual(await page.isVisible(id), false, `${id} waits for an answer`);
+    assert.strictEqual((await page.textContent('#guide-next')).trim(), 'Skip');
+    await page.check('input[name="favorite"][value="perfect"]');
+    assert.strictEqual((await page.textContent('#guide-next')).trim(), 'Continue', 'the answer alone is enough to go on');
+    assert.strictEqual(await page.isVisible('#anchor-brand'), true);
+    assert.strictEqual(await page.isVisible('#favorite-more'), true);
+    assert.strictEqual(await page.isVisible('#favorite-product'), false, 'the details stay folded away until asked for');
+
+    await page.selectOption('#anchor-brand', 'UNIQLO');
+    await page.selectOption('#anchor-size', 'M');
+    await page.click('#favorite-more summary');
+    await page.fill('#favorite-product', 'https://www.uniqlo.com/us/en/products/E455365-000/00?colorDisplayCode=07');
+    await page.check('input[name="favoriteLikes"][value="chest"]');
+    await page.check('input[name="favoriteLikes"][value="shoulders"]');
+    assert.strictEqual(await page.isChecked('input[name="favoriteUnit"][value="in"]'), true);
+    await page.fill('#favorite-chestWidth', '21.5');
+    for (let i = 0; i < 3; i += 1) await page.click('#guide-next');
+    await page.waitForSelector('#guide-done:not([hidden])');
+
+    let profile = await savedProfile('tess@e2e.test');
+    assert.deepStrictEqual(profile.garments.tshirts, {
+      anchor: {
+        brand: 'UNIQLO', size: 'M',
+        product: { name: null, url: 'https://www.uniqlo.com/us/en/products/E455365-000/00' },
+        likes: ['shoulders', 'chest'],
+        measurements: { unit: 'in', chestWidth: 21.5, shoulderWidth: null, sleeveLength: null, bodyLength: null }
+      },
+      fitGoal: null, troubleZones: null, line: null, favorite: 'perfect'
+    });
+    const summary = await page.textContent('#guide-summary');
+    assert.match(summary, /A T-shirt that fits how you like\s*Yes, I have the perfect fit\./);
+    assert.match(summary, /What makes it fit well\s*Shoulder fit, Chest/);
+    assert.match(summary, /Its measurements\s*Chest, flat 21\.5 in/);
+
+    /* a measurement that is a circumference is refused with how to measure, and nothing is saved */
+    await page.click('#guide-edit');
+    assert.strictEqual(await page.isVisible('#favorite-chestWidth'), true, 'details given are shown open');
+    await page.fill('#favorite-chestWidth', '43');
+    for (let i = 0; i < 3; i += 1) await page.click('#guide-next');
+    await page.waitForSelector('#guide-error:not(:empty)');
+    assert.match(await page.textContent('#guide-error'), /laid flat, armpit to armpit/);
+    assert.strictEqual((await savedProfile('tess@e2e.test')).garments.tshirts.anchor.measurements.chestWidth, 21.5);
+
+    /* the fit profile page shows it, keeps it through an unrelated save, and removes the details on request */
+    await open(page, 'fit-profile.html');
+    await page.waitForSelector('#profile-form:not([hidden])');
+    const said = await page.$$eval('.garment-editor[data-garment="tshirts"] [data-part="favorite-said"] li', (ns) => ns.map((n) => n.textContent));
+    assert.deepStrictEqual(said, ['Yes, I have the perfect fit.', 'Product: https://www.uniqlo.com/us/en/products/E455365-000/00', 'Fits well: Shoulder fit, Chest', 'Measured: Chest, flat 21.5 in']);
+    await page.check('input[name="g-tshirts-goal"][value="slim"]');
+    await saveAndWait(page);
+    profile = await savedProfile('tess@e2e.test');
+    assert.strictEqual(profile.garments.tshirts.fitGoal, 'slim');
+    assert.strictEqual(profile.garments.tshirts.anchor.measurements.chestWidth, 21.5, 'kept through a save that did not touch it');
+    assert.strictEqual(profile.garments.tshirts.favorite, 'perfect');
+    await page.click('.garment-editor[data-garment="tshirts"] [data-remove-details]');
+    assert.strictEqual(await page.textContent('#profile-save-state'), 'Unsaved changes');
+    await saveAndWait(page);
+    profile = await savedProfile('tess@e2e.test');
+    assert.deepStrictEqual(profile.garments.tshirts.anchor, { brand: 'UNIQLO', size: 'M' });
+    assert.strictEqual(profile.garments.tshirts.favorite, 'perfect');
+
+    /* "Not really" in the guide clears the piece, and is kept as an answer */
+    await guideReady(page);
+    await page.check('input[name="garment"][value="tshirts"]');
+    await page.click('#guide-next');
+    assert.strictEqual(await page.isChecked('input[name="favorite"][value="perfect"]'), true, 'the saved answer is filled in');
+    await page.check('input[name="favorite"][value="none"]');
+    assert.strictEqual(await page.isVisible('#anchor-brand'), false);
+    for (let i = 0; i < 3; i += 1) await page.click('#guide-next');
+    await page.waitForSelector('#guide-done:not([hidden])');
+    profile = await savedProfile('tess@e2e.test');
+    assert.deepStrictEqual([profile.garments.tshirts.favorite, profile.garments.tshirts.anchor, profile.garments.tshirts.fitGoal], ['none', null, 'slim']);
     await context.close();
   });
 

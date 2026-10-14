@@ -48,8 +48,31 @@
                       recommendations (api/_sizing/engine.js) read it and
                       never guess it.
 
+       favorite       (version 5, T-shirts only — a type marked `favorite`
+                      in GARMENTS) the answer to "Do you own a T-shirt
+                      that fits you exactly how you like?": perfect,
+                      close or none; null when not answered. "none" is an
+                      answer, and clears the anchor.
+
+       For those types the anchor may also carry, each optional:
+
+         product        { name, url }: the product, in the shopper's
+                        words or as a link. Kept as said; a link keeps
+                        only its address (no query or fragment) and is
+                        never fetched. The size engine matches it against
+                        Fynd's own sizing records; nothing here claims a
+                        match.
+         likes          what makes its fit good, from FAVORITE_LIKES.
+                        An empty list is not kept: not said is null.
+         measurements   the garment itself, measured at home, laid flat:
+                        { unit, chestWidth, shoulderWidth, sleeveLength,
+                        bodyLength }, each by the method in
+                        GARMENT_MEASURES — chest is a flat width armpit
+                        to armpit, never a circumference. Stored as
+                        entered, in the unit said; never converted here.
+
      Each of the three is null until it is answered, and a type with all
-     three unanswered is not kept at all.
+     three (and, for T-shirts, `favorite`) unanswered is not kept at all.
 
    And, kept from version 2, the first guide's three answers, which were
    about "a top", not about any one type:
@@ -101,7 +124,7 @@
 (function (global) {
   'use strict';
 
-  const SCHEMA_VERSION = 4;
+  const SCHEMA_VERSION = 5;
 
   const UNITS = ['in', 'cm'];
   const UNIT_NAME = { in: 'inches', cm: 'centimetres' };
@@ -164,7 +187,7 @@
      say what it is (`named`), and it is asked about in words that fit
      any garment. */
   const GARMENTS = [
-    { id: 'tshirts', label: 'T-shirts', one: 'T-shirt', many: 'T-shirts', group: 'tops', sizes: 'letter' },
+    { id: 'tshirts', label: 'T-shirts', one: 'T-shirt', many: 'T-shirts', group: 'tops', sizes: 'letter', favorite: true },
     { id: 'hoodies', label: 'Hoodies', one: 'hoodie', many: 'hoodies', group: 'tops', sizes: 'letter' },
     { id: 'sweatshirts', label: 'Sweatshirts', one: 'sweatshirt', many: 'sweatshirts', group: 'tops', sizes: 'letter' },
     { id: 'pants', label: 'Pants', one: 'pants', many: 'pants', group: 'trousers', sizes: 'waist-or-letter', lengths: true },
@@ -277,6 +300,58 @@
     { id: 'not-sure', label: 'Not sure' }
   ];
   const SIZING_LINE_IDS = SIZING_LINES.map((l) => l.id);
+
+  /* ---------- the favourite-fitting piece (version 5) ----------
+     For a type marked `favorite` (T-shirts, so far). The question, its
+     three answers, what may make that piece's fit good, and the
+     measurements a shopper can take of it at home. */
+  const FAVORITE_ANSWERS = [
+    { id: 'perfect', label: 'Yes, I have the perfect fit.' },
+    { id: 'close', label: 'I have one that’s close.' },
+    { id: 'none', label: 'Not really / I’m not sure.' }
+  ];
+  const FAVORITE_IDS = FAVORITE_ANSWERS.map((a) => a.id);
+
+  const FAVORITE_LIKES = [
+    { id: 'shoulders', label: 'Shoulder fit' },
+    { id: 'chest', label: 'Chest' },
+    { id: 'sleeves', label: 'Sleeve length' },
+    { id: 'length', label: 'Body length' },
+    { id: 'looseness', label: 'Overall looseness or tightness' },
+    { id: 'feel', label: 'The overall feel' }
+  ];
+  const FAVORITE_LIKE_IDS = FAVORITE_LIKES.map((l) => l.id);
+
+  /* How each is measured, laid flat — the same names and methods as
+     api/_sizing/schema.js's garment dimensions, so the size engine can
+     set them beside a brand's own chart where the methods match. The
+     ranges are for a short-sleeved T-shirt, stated per unit like
+     MEASUREMENTS. A chest past its range is most often a circumference,
+     and the message says so. */
+  const GARMENT_MEASURES = {
+    chestWidth: {
+      label: 'Chest, flat', method: 'flat-width-armpit-to-armpit',
+      how: 'Lay it flat and measure straight across, armpit to armpit.',
+      range: { in: [14, 36], cm: [35, 92] }
+    },
+    shoulderWidth: {
+      label: 'Shoulders', method: 'seam-to-seam',
+      how: 'Across the back, from one shoulder seam to the other.',
+      range: { in: [12, 30], cm: [30, 76] }
+    },
+    sleeveLength: {
+      label: 'Sleeve', method: 'shoulder-seam-to-cuff',
+      how: 'From the shoulder seam to the end of the sleeve.',
+      range: { in: [3, 16], cm: [7, 40] }
+    },
+    bodyLength: {
+      label: 'Length', method: 'high-point-shoulder-to-hem',
+      how: 'From the top of the shoulder, beside the collar, straight down to the hem.',
+      range: { in: [18, 40], cm: [45, 102] }
+    }
+  };
+  const GARMENT_MEASURE_KEYS = Object.keys(GARMENT_MEASURES);
+  const PRODUCT_LIMITS = { name: 80, url: 300 };
 
   const LEGACY_FIELDS = ['anchor', 'fitGoal', 'troubleZones'];
   const GUIDE_FIELDS = LEGACY_FIELDS.concat('garments');
@@ -400,14 +475,17 @@
 
   const emptyGarment = (id) => {
     const g = garmentOf(id);
-    return g && g.named
+    const entry = g && g.named
       ? { anchor: null, fitGoal: null, troubleZones: null, name: null, line: null }
       : { anchor: null, fitGoal: null, troubleZones: null, line: null };
+    if (g && g.favorite) entry.favorite = null;
+    return entry;
   };
 
   /* Nothing said about this type. "None of these" is an answer, so an
-     empty list of trouble spots is not empty. */
-  const garmentIsEmpty = (entry) => !entry || (!entry.anchor && !entry.fitGoal && !Array.isArray(entry.troubleZones));
+     empty list of trouble spots is not empty; nor is "Not really" to the
+     favourite question. */
+  const garmentIsEmpty = (entry) => !entry || (!entry.anchor && !entry.fitGoal && !Array.isArray(entry.troubleZones) && !entry.favorite);
 
   /* Each step takes a profile of version N and returns version N + 1.
      Version 1 had no guide; version 2's guide asked about "a top". Each
@@ -417,7 +495,10 @@
     2: (profile) => Object.assign({}, profile, { schemaVersion: 3, garments: {} }),
     /* version 4 adds each type's sizing line, unanswered; upgrade()
        shapes it in */
-    3: (profile) => Object.assign({}, profile, { schemaVersion: 4 })
+    3: (profile) => Object.assign({}, profile, { schemaVersion: 4 }),
+    /* version 5 adds the favourite T-shirt's answer and details,
+       unanswered; upgrade() shapes them in */
+    4: (profile) => Object.assign({}, profile, { schemaVersion: 5 })
   };
 
   /* A stored anchor in its shape for the type: a length only where the
@@ -427,9 +508,40 @@
     const brand = typeof raw.brand === 'string' ? raw.brand : null;
     const size = typeof raw.size === 'string' ? raw.size : null;
     const length = garment && garment.lengths && typeof raw.length === 'string' ? raw.length : null;
-    if (!brand && !size && !length) return null;
-    return garment && garment.lengths ? { brand, size, length } : { brand, size };
+    const details = garment && garment.favorite ? shapeDetails(raw) : null;
+    if (!brand && !size && !length && !hasDetails(details)) return null;
+    if (garment && garment.lengths) return { brand, size, length };
+    return Object.assign({ brand, size }, onlySaid(details));
   }
+
+  /* Details not said are left out, so an anchor with none keeps the
+     { brand, size } shape every earlier version stored. */
+  const onlySaid = (details) => {
+    const out = {};
+    if (details) ['product', 'likes', 'measurements'].forEach((k) => { if (details[k]) out[k] = details[k]; });
+    return out;
+  };
+
+  /* The favourite piece's details, as stored: only named fields, each
+     null when not said. */
+  function shapeDetails(raw) {
+    const p = isPlainObject(raw.product) ? raw.product : null;
+    const product = p && (typeof p.name === 'string' || typeof p.url === 'string')
+      ? { name: typeof p.name === 'string' ? p.name : null, url: typeof p.url === 'string' ? p.url : null }
+      : null;
+    const likes = Array.isArray(raw.likes) ? FAVORITE_LIKE_IDS.filter((id) => raw.likes.includes(id)) : [];
+    const m = isPlainObject(raw.measurements) ? raw.measurements : null;
+    let measurements = null;
+    if (m && UNITS.includes(m.unit)) {
+      measurements = { unit: m.unit };
+      GARMENT_MEASURE_KEYS.forEach((key) => {
+        measurements[key] = typeof m[key] === 'number' && Number.isFinite(m[key]) ? m[key] : null;
+      });
+      if (GARMENT_MEASURE_KEYS.every((key) => measurements[key] === null)) measurements = null;
+    }
+    return { product, likes: likes.length ? likes : null, measurements };
+  }
+  const hasDetails = (d) => Boolean(d && (d.product || d.likes || d.measurements));
 
   /* The current shape of whatever was stored, or null for something
      this version cannot read (a later schema, or not a profile at all).
@@ -484,6 +596,7 @@
       };
       if (garment.named) entry.name = typeof raw.name === 'string' ? raw.name : null;
       entry.line = typeof raw.line === 'string' ? raw.line : null;
+      if (garment.favorite) entry.favorite = typeof raw.favorite === 'string' ? raw.favorite : null;
       if (!garmentIsEmpty(entry)) shaped.garments[garment.id] = entry;
     });
 
@@ -544,12 +657,34 @@
     const zones = Array.isArray(e.troubleZones)
       ? e.troubleZones.map((zone) => (zonesFor(id).find((z) => z.id === zone) || {}).label).filter(Boolean)
       : null;
-    return {
+    const said = {
       garment: garment ? (garment.named && e.name ? `${garment.label}: ${e.name}` : garment.label) : id,
       anchor: a && (a.brand || a.size || a.length) ? `${a.brand || 'Brand not said'} · ${describeSize(a)}` : 'Not answered',
       fitGoal: goal ? goal.label : 'Not answered',
       troubleZones: zones === null ? 'Not answered' : (zones.length ? zones.join('; ') : 'None of these'),
       line: (SIZING_LINES.find((l) => l.id === e.line) || {}).label || null
+    };
+    if (garment && garment.favorite) said.favorite = describeFavorite(e);
+    return said;
+  }
+
+  /* The favourite piece, in words: the answer, then each detail said,
+     null when nothing was. Never a measurement the shopper did not give. */
+  function describeFavorite(entry) {
+    const e = entry || {};
+    const a = e.anchor || {};
+    const answer = (FAVORITE_ANSWERS.find((f) => f.id === e.favorite) || {}).label || null;
+    const product = a.product ? (a.product.name || a.product.url) : null;
+    const likes = Array.isArray(a.likes) ? a.likes.map((id) => (FAVORITE_LIKES.find((l) => l.id === id) || {}).label).filter(Boolean) : [];
+    const m = a.measurements;
+    const measured = m ? GARMENT_MEASURE_KEYS.filter((key) => m[key] !== null && m[key] !== undefined)
+      .map((key) => `${GARMENT_MEASURES[key].label} ${formatNumber(m[key])} ${m.unit}`) : [];
+    if (!answer && !product && !likes.length && !measured.length) return null;
+    return {
+      answer,
+      product,
+      likes: likes.length ? likes.join(', ') : null,
+      measurements: measured.length ? measured.join(' · ') : null
     };
   }
 
@@ -602,9 +737,95 @@
       else length = text;
     }
 
+    let details = null;
+    if (garment.favorite) {
+      details = readDetails(raw, at, fail);
+      if (!details) ok = false;
+    } else if (['product', 'likes', 'measurements'].some((k) => raw[k] !== undefined && raw[k] !== null)) {
+      fail(at, `Only ${GARMENTS.filter((g) => g.favorite).map((g) => g.many).join(' and ')} keep a product, what fits well, or measurements.`);
+      ok = false;
+    }
+
     if (!ok) return { ok: false };
-    if (!brand.brand && !size && !length) return { ok: true, anchor: null };
-    return { ok: true, anchor: garment.lengths ? { brand: brand.brand, size, length } : { brand: brand.brand, size } };
+    if (!brand.brand && !size && !length && !hasDetails(details)) return { ok: true, anchor: null };
+    if (garment.lengths) return { ok: true, anchor: { brand: brand.brand, size, length } };
+    return { ok: true, anchor: Object.assign({ brand: brand.brand, size }, onlySaid(details)) };
+  }
+
+  /* A link as kept: http(s) only, its address without query or
+     fragment (where trackers and session ids live). Never fetched. */
+  function readProductUrl(raw) {
+    let u;
+    try { u = new URL(raw); } catch (err) { return null; }
+    if (u.protocol !== 'https:' && u.protocol !== 'http:') return null;
+    if (u.username || u.password || !u.hostname.includes('.')) return null;
+    return `${u.protocol}//${u.host.toLowerCase()}${u.pathname}`;
+  }
+
+  /* The favourite piece's details: { product, likes, measurements },
+     each null when not said, or null with the failures reported. */
+  function readDetails(raw, at, fail) {
+    let ok = true;
+    let product = null;
+    if (!blank(raw.product)) {
+      const p = raw.product;
+      if (!isPlainObject(p)) { fail(`${at}.product`, 'Send the product as a name, a link, or both.'); ok = false; } else {
+        let name = null;
+        let url = null;
+        if (!blank(p.name)) {
+          const text = typeof p.name === 'string' ? cleanText(p.name) : '';
+          if (!text || !brandKey(text)) { fail(`${at}.product.name`, 'Write the product name in letters or numbers.'); ok = false; } else if (text.length > PRODUCT_LIMITS.name) { fail(`${at}.product.name`, `Keep the product name to ${PRODUCT_LIMITS.name} characters.`); ok = false; } else name = text;
+        }
+        if (!blank(p.url)) {
+          const text = typeof p.url === 'string' ? p.url.trim() : '';
+          const kept = text.length <= 2000 ? readProductUrl(text) : null;
+          if (!kept) { fail(`${at}.product.url`, 'Paste the product’s web address, starting with https://, or leave it blank.'); ok = false; } else if (kept.length > PRODUCT_LIMITS.url) { fail(`${at}.product.url`, 'That link is too long to keep. Leave it blank, or give the product name instead.'); ok = false; } else url = kept;
+        }
+        if (name || url) product = { name, url };
+      }
+    }
+
+    let likes = null;
+    if (!blank(raw.likes)) {
+      if (!Array.isArray(raw.likes) || raw.likes.some((id) => !FAVORITE_LIKE_IDS.includes(id))) {
+        fail(`${at}.likes`, `Choose from: ${FAVORITE_LIKES.map((l) => l.label).join(', ')}.`);
+        ok = false;
+      } else if (raw.likes.length) likes = FAVORITE_LIKE_IDS.filter((id) => raw.likes.includes(id));
+    }
+
+    let measurements = null;
+    if (!blank(raw.measurements)) {
+      const m = raw.measurements;
+      if (!isPlainObject(m)) { fail(`${at}.measurements`, 'Send the measurements as an object.'); ok = false; } else {
+        const said = {};
+        let any = false;
+        GARMENT_MEASURE_KEYS.forEach((key) => {
+          const read = readNumber(m[key]);
+          if (read.blank) { said[key] = null; return; }
+          if (!read.ok) { fail(`${at}.measurements.${key}`, `Enter the ${GARMENT_MEASURES[key].label.toLowerCase()} as a number, like 21 or 21.5.`); ok = false; return; }
+          said[key] = round1(read.value);
+          any = true;
+        });
+        const unit = blank(m.unit) ? null : String(m.unit).trim().toLowerCase();
+        if (any && !UNITS.includes(unit)) {
+          fail(`${at}.measurements.unit`, 'Choose inches or centimetres, so the measurements mean what you meant.');
+          ok = false;
+        } else if (any && ok) {
+          GARMENT_MEASURE_KEYS.forEach((key) => {
+            if (said[key] === null) return;
+            const [min, max] = GARMENT_MEASURES[key].range[unit];
+            if (said[key] < min || said[key] > max) {
+              let message = `${GARMENT_MEASURES[key].label} should be between ${min} and ${max} ${unit} for a T-shirt.`;
+              if (key === 'chestWidth' && said[key] > max) message += ' Measure it laid flat, armpit to armpit — about half the way around.';
+              fail(`${at}.measurements.${key}`, message);
+              ok = false;
+            }
+          });
+          if (ok) measurements = Object.assign({ unit }, said);
+        }
+      }
+    }
+    return ok ? { product, likes, measurements } : null;
   }
 
   /* One type's answers: only the fields that were sent, so a skipped
@@ -643,6 +864,17 @@
       if (blank(raw.line)) out.line = null;
       else if (SIZING_LINE_IDS.includes(raw.line)) out.line = raw.line;
       else fail(`${at}.line`, 'Choose Men’s, Women’s, Unisex or Not sure.');
+    }
+
+    if (raw.favorite !== undefined) {
+      if (!garment.favorite) fail(`${at}.favorite`, `Only ${GARMENTS.filter((g) => g.favorite).map((g) => g.many).join(' and ')} ask about a favourite that fits.`);
+      else if (blank(raw.favorite)) out.favorite = null;
+      else if (FAVORITE_IDS.includes(raw.favorite)) {
+        out.favorite = raw.favorite;
+        /* "Not really" has no piece to describe: whatever was said
+           about one goes */
+        if (raw.favorite === 'none') out.anchor = null;
+      } else fail(`${at}.favorite`, 'Choose Yes, Close, or Not really.');
     }
 
     if (raw.name !== undefined) {
@@ -961,6 +1193,11 @@
     LIMITS,
     GARMENTS,
     SIZING_LINES,
+    FAVORITE_ANSWERS,
+    FAVORITE_LIKES,
+    GARMENT_MEASURES,
+    GARMENT_MEASURE_KEYS,
+    PRODUCT_LIMITS,
     LETTER_SIZES,
     WAIST_SIZES,
     LENGTHS,
@@ -978,6 +1215,7 @@
     mergeGarments,
     describeGuide,
     describeGarment,
+    describeFavorite,
     upgrade,
     empty,
     emptyGarment,

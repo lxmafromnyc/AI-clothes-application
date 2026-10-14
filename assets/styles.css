@@ -469,6 +469,34 @@ strong { font-weight: 600; }
 .zone input:focus-visible + span { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 .zone--none { margin-top: 4px; }
 .zone--none span { border-style: dashed; }
+/* one answer of several: a ring and a dot rather than a box and a tick */
+.zone--one span::before { border-radius: 50%; }
+.zone--one input:checked + span::before { background: var(--color-surface); box-shadow: inset 0 0 0 4px var(--color-primary); }
+.zone--one input:checked + span::after { content: none; }
+
+/* step 2, T-shirts: the favourite question, then — once there is one —
+   brand and size, and what more it can say, folded away */
+.guide-favorite { min-width: 0; margin: 0 0 18px; padding: 0; border: 0; }
+.guide-favorite-lead { margin-bottom: 10px; }
+.guide-more { margin-top: 16px; border-top: 1px solid var(--color-border); }
+.guide-more-summary {
+  display: flex; align-items: center; gap: 4px;
+  min-height: 44px; padding: 10px 0 0;
+  font-size: 14.5px; font-weight: 600; color: var(--color-primary-ink);
+  cursor: pointer; list-style: none;
+}
+.guide-more-summary::-webkit-details-marker { display: none; }
+.guide-more-summary::after { content: '+'; margin-left: auto; font-size: 18px; font-weight: 400; color: var(--color-text-muted); }
+.guide-more[open] .guide-more-summary::after { content: '\2212'; }
+.guide-more-summary:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.guide-more > .guide-field, .guide-likes, .guide-measure { min-width: 0; margin: 14px 0 0; padding: 0; border: 0; }
+.guide-likes > legend, .guide-measure > legend { padding: 0; }
+.guide-likes .choice span, .guide-measure-unit .choice span { height: 38px; padding: 0 14px; }
+.guide-field-note { margin: 6px 0 0; font-size: 13px; color: var(--color-text-muted); }
+.guide-measure > .guide-field-note { margin: -2px 0 10px; }
+.guide-measure-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 12px; }
+.guide-card .guide-measure-grid .profile-input { height: 46px; }
+.guide-measure-grid .guide-field-note { margin-top: 4px; font-size: 12.5px; }
 
 .guide-error { margin: 14px 0 0; font-size: 14px; font-weight: 500; color: var(--color-warning-ink); }
 .guide-error:empty { display: none; }
@@ -1230,6 +1258,8 @@ a.item-card:hover .item-name { text-decoration: underline; text-underline-offset
 .garment-editor .profile-grid { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0 12px; }
 .garment-editor .profile-field { margin-bottom: 14px; }
 .garment-line { max-width: 260px; }
+/* the favourite T-shirt's answer and details, as the guide saved them */
+.garment-favorite-list { display: grid; gap: 4px; margin: 0 0 6px; padding: 0; list-style: none; font-size: 14.5px; color: var(--color-text-2); overflow-wrap: anywhere; }
 .garment-editor .pref-group { margin-bottom: 14px; }
 .garment-other { margin-top: 8px; }
 /* trouble spots are longer than a word, so their pills may wrap */
