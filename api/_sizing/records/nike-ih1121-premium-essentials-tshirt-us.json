@@ -35,9 +35,9 @@
     "source": "product page, Size & Fit"
   },
   "material": {
-    "composition": null,
+    "composition": "100% cotton",
     "stretch": null,
-    "source": "product page: \"Heavyweight cotton\"; the fibre blend is not stated on the page"
+    "source": "product page, Product Details: \"100% cotton\"; the description says \"Heavyweight cotton\". Stretch is not stated."
   },
   "charts": {
     "body": {
@@ -58,14 +58,62 @@
         }
       },
       "sizes": {
-        "XS": { "chest": { "min": 31.5, "max": 35, "text": "31.5 - 35" }},
-        "S": { "chest": { "min": 35, "max": 37.5, "text": "35 - 37.5" }},
-        "M": { "chest": { "min": 37.5, "max": 41, "text": "37.5 - 41" }},
-        "L": { "chest": { "min": 41, "max": 44, "text": "41 - 44" }},
-        "XL": { "chest": { "min": 44, "max": 48.5, "text": "44 - 48.5" }},
-        "XXL": { "chest": { "min": 48.5, "max": 53.5, "text": "48.5 - 53.5" }},
-        "3XL": { "chest": { "min": 53.5, "max": 58, "text": "53.5 - 58" }},
-        "4XL": { "chest": { "min": 58, "max": 63, "text": "58 - 63" }}
+        "XS": {
+          "chest": {
+            "min": 31.5,
+            "max": 35,
+            "text": "31.5 - 35"
+          }
+        },
+        "S": {
+          "chest": {
+            "min": 35,
+            "max": 37.5,
+            "text": "35 - 37.5"
+          }
+        },
+        "M": {
+          "chest": {
+            "min": 37.5,
+            "max": 41,
+            "text": "37.5 - 41"
+          }
+        },
+        "L": {
+          "chest": {
+            "min": 41,
+            "max": 44,
+            "text": "41 - 44"
+          }
+        },
+        "XL": {
+          "chest": {
+            "min": 44,
+            "max": 48.5,
+            "text": "44 - 48.5"
+          }
+        },
+        "XXL": {
+          "chest": {
+            "min": 48.5,
+            "max": 53.5,
+            "text": "48.5 - 53.5"
+          }
+        },
+        "3XL": {
+          "chest": {
+            "min": 53.5,
+            "max": 58,
+            "text": "53.5 - 58"
+          }
+        },
+        "4XL": {
+          "chest": {
+            "min": 58,
+            "max": 63,
+            "text": "58 - 63"
+          }
+        }
       }
     }
   },
@@ -92,6 +140,9 @@
     "The chart is Nike's general men's tops chart, linked from this product's Size Guide; it is not specific to this product. It also lists XXS, which this product does not offer, so XXS is not recorded.",
     "Nike publishes no garment measurements for this product, so its length, sleeve, shoulder and garment chest are unknown.",
     "Tall sizes share the regular sizes' chest ranges and are cut for 6'0\" - 6'5\"; heights are not recorded.",
-    "\"Loose fit: roomy and relaxed\" is Nike's description of this product only; it says nothing about other Nike T-shirts."
+    "\"Loose fit: roomy and relaxed\" is Nike's description of this product only; it says nothing about other Nike T-shirts.",
+    "Source audit 2026-10-14 (claude-code-source-audit), pending approval: product page re-read: \"Nike Sportswear Premium Essentials Men's T-Shirt\", Style IH1121-491, sizes XS-4XL each also in Tall, \"Loose fit: roomy and relaxed\"; its Size Guide links to https://www.nike.com/size-fit/mens_tops_alpha (\"Men's Tops & Tees Size Chart\"). Every chest range matches in inches and in cm (M 37.5 - 41 in / 96 - 104 cm).",
+    "Source audit 2026-10-14 (claude-code-source-audit), pending approval: correction: composition was recorded as not stated; Product Details says \"100% cotton\". The page also shows a \"Recycled Materials\" badge, which this record does not interpret.",
+    "Source audit 2026-10-14 (claude-code-source-audit), pending approval: the chart's Fit Tips say Tall tops are \"1.75”/4.5cm longer in length than regular tops\" with sleeves \"adjusted proportionately\"; not recorded as a garment measurement."
   ]
 }

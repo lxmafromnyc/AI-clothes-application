@@ -25,8 +25,7 @@
     "3XL"
   ],
   "lengthOptions": [
-    "regular",
-    "long"
+    "regular"
   ],
   "fit": {
     "brandWords": "Regular-fit, comfortable T-shirt … with a classic silhouette",
@@ -52,18 +51,60 @@
           "method": "body-circumference",
           "methodSource": {
             "url": "https://www2.hm.com/en_us/productpage.0685816001.html",
-            "says": "Size guide for tops, rows \"Chest inch\", \"Waist inch\", \"Arm length inch\" and \"Neckline inch\", beside US suit sizes (\"38R-40R\" for M). Its How to measure panel was not read; the chest is recorded as a body circumference from the chart's rows and values, and that reading needs checking."
+            "says": "Size guide, How to measure: \"BUST — Measure your chest over the fullest part.\" (a body diagram, numbered 1-4 for bust, waist, arm length, neckline). The table row is \"Chest inch\"."
           }
         }
       },
       "sizes": {
-        "XS": { "chest": { "min": 30.75, "max": 33.75, "text": "30¾-33¾" }},
-        "S": { "chest": { "min": 33.75, "max": 37, "text": "33¾-37" }},
-        "M": { "chest": { "min": 37, "max": 40.25, "text": "37-40¼" }},
-        "L": { "chest": { "min": 40.25, "max": 43.25, "text": "40¼-43¼" }},
-        "XL": { "chest": { "min": 43.25, "max": 46.5, "text": "43¼-46½" }},
-        "XXL": { "chest": { "min": 46.5, "max": 49.5, "text": "46½-49½" }},
-        "3XL": { "chest": { "min": 49.5, "max": 52.75, "text": "49½-52¾" }}
+        "XS": {
+          "chest": {
+            "min": 30.75,
+            "max": 33.75,
+            "text": "30¾-33¾"
+          }
+        },
+        "S": {
+          "chest": {
+            "min": 33.75,
+            "max": 37,
+            "text": "33¾-37"
+          }
+        },
+        "M": {
+          "chest": {
+            "min": 37,
+            "max": 40.25,
+            "text": "37-40¼"
+          }
+        },
+        "L": {
+          "chest": {
+            "min": 40.25,
+            "max": 43.25,
+            "text": "40¼-43¼"
+          }
+        },
+        "XL": {
+          "chest": {
+            "min": 43.25,
+            "max": 46.5,
+            "text": "43¼-46½"
+          }
+        },
+        "XXL": {
+          "chest": {
+            "min": 46.5,
+            "max": 49.5,
+            "text": "46½-49½"
+          }
+        },
+        "3XL": {
+          "chest": {
+            "min": 49.5,
+            "max": 52.75,
+            "text": "49½-52¾"
+          }
+        }
       }
     }
   },
@@ -83,7 +124,9 @@
   "notes": [
     "The size guide is H&M's general guide for tops, shirts, jackets and blazers, opened from this product's page; it is not specific to this T-shirt.",
     "H&M publishes no garment measurements for this product, so its length, sleeve, shoulder and garment chest are unknown.",
-    "The guide's Long sizes (XS/L - 3XL/L) share the Regular chest ranges with longer arm lengths; arm length and neckline are body measurements the schema does not hold yet, and are not recorded.",
-    "\"Regular fit\" describes this product only; other H&M T-shirts are sold as slim, relaxed and oversized."
+    "\"Regular fit\" describes this product only; other H&M T-shirts are sold as slim, relaxed and oversized.",
+    "Source audit 2026-10-14 (claude-code-source-audit), pending approval: product page re-read: \"Regular Fit T-shirt\", product 0685816 (colour 001), audience male, variants XS-3XL only, description \"Regular-fit, comfortable T-shirt in lightweight cotton jersey…\", \"Cotton 100%\". All seven Regular chest ranges match in inches and cm (M 37-40¼ in / 94-102 cm).",
+    "Source audit 2026-10-14 (claude-code-source-audit), pending approval: correction: lengthOptions was \"regular\" and \"long\"; the Long sizes (XS/L - 3XL/L) are in H&M's general tops guide but are not sold for this product, so only \"regular\" is kept.",
+    "Source audit 2026-10-14 (claude-code-source-audit), pending approval: the How to measure panel, unread before, was read: chest is a body measurement (\"Measure your chest over the fullest part\"). It does not say \"around\" in words; the diagram and the values (37-40¼ in for M) are circumferences."
   ]
 }
