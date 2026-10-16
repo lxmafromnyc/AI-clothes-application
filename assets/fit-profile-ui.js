@@ -300,6 +300,12 @@
           <p class="profile-error" id="${p}-length-error"></p>
         </div>` : ''}
       </div>
+      ${g.favorite ? `<div class="profile-field garment-favorite" data-field="${at}.anchor" data-favorite hidden>
+        <p class="profile-label">Your favourite ${g.one}</p>
+        <ul class="garment-favorite-list" data-part="favorite-said"></ul>
+        <button class="link-btn" type="button" data-remove-details aria-label="Remove the product, what fits well and measurements for your ${g.one}">Remove these details</button>
+        <p class="profile-error"></p>
+      </div>` : ''}
       <div class="profile-field garment-line" data-field="${at}.line">
         <label class="profile-label" for="${p}-line">Sized as</label>
         <span class="select-wrap"><select class="profile-select" id="${p}-line" data-part="line" aria-describedby="${p}-line-error">
@@ -346,6 +352,19 @@
       });
       if (!a.size) piece(editor, 'size').value = 'not-sure';
     }
+    if (g.favorite) {
+      /* what the guide said about the favourite, kept as it was saved
+         and sent back with the card unless removed here, or unless its
+         brand or size changes — then it describes a different piece */
+      editor.favorite = {
+        answer: e.favorite || null,
+        brand: a ? a.brand : null,
+        size: a ? a.size : null,
+        details: a ? { product: a.product || null, likes: a.likes || null, measurements: a.measurements || null } : null,
+        removed: false
+      };
+      paintFavorite(editor);
+    }
     editor.querySelectorAll(`input[name="${p}-goal"]`).forEach((r) => { r.checked = r.value === (e.fitGoal || ''); });
     if (Array.isArray(e.troubleZones)) {
       editor.querySelectorAll(`input[name="${p}-zones"]`).forEach((c) => {
@@ -358,6 +377,23 @@
     afterGarmentsChange();
     if (settings && settings.focus) piece(editor, 'brand').focus();
     return editor;
+  }
+
+  /* The favourite's answer and details, in words, on its card. */
+  function paintFavorite(editor) {
+    const box = editor.querySelector('[data-favorite]');
+    const f = editor.favorite;
+    if (!box || !f) return;
+    const details = f.removed ? null : f.details;
+    const said = Schema.describeFavorite({ favorite: f.answer, anchor: details || {} });
+    const rows = said ? [said.answer, said.product && `Product: ${said.product}`, said.likes && `Fits well: ${said.likes}`, said.measurements && `Measured: ${said.measurements}`].filter(Boolean) : [];
+    box.querySelector('[data-part="favorite-said"]').replaceChildren(...rows.map((text) => {
+      const li = doc.createElement('li');
+      li.textContent = text;
+      return li;
+    }));
+    box.querySelector('[data-remove-details]').hidden = !(details && (details.product || details.likes || details.measurements));
+    box.hidden = !rows.length;
   }
 
   /* "Add a type" offers only the types without a card yet. */
@@ -392,6 +428,18 @@
     if (ticked.some((c) => c.dataset.none !== undefined)) troubleZones = [];
     else if (ticked.length) troubleZones = ticked.map((c) => c.value);
     const out = { anchor, fitGoal: goal && goal.value ? goal.value : null, troubleZones };
+    const f = editor.favorite;
+    if (g.favorite && f) {
+      out.favorite = f.answer;
+      const known = (v) => v || null;
+      const samePiece = anchor && known(anchor.brand && anchor.brand.trim()) === known(f.brand) && anchor.size === f.size;
+      if (f.removed && anchor) Object.assign(anchor, { product: null, likes: null, measurements: null });
+      else if (samePiece && f.details) {
+        ['product', 'likes', 'measurements'].forEach((k) => { if (f.details[k]) anchor[k] = f.details[k]; });
+      }
+      /* "Not really" no longer holds once a piece is named here */
+      if (anchor && f.answer === 'none') out.favorite = null;
+    }
     if (g.named) out.name = piece(editor, 'name').value;
     out.line = piece(editor, 'line').value || null;
     return out;
@@ -573,7 +621,9 @@
       .map((el) => (el.closest('.brand-row') ? `row:${el.value}` : `${el.id}:${el.value}`));
     const radios = Array.from(doc.querySelectorAll('#profile-form input[type="radio"]:checked, #profile-form input[type="checkbox"]:checked'))
       .map((el) => `${el.name}:${el.value}`);
-    return JSON.stringify([unit, values, radios, legacyRemoved]);
+    /* the favourite's details removed, which no control holds */
+    const detailsRemoved = editors().filter((el) => el.favorite && el.favorite.removed).map((el) => el.dataset.garment);
+    return JSON.stringify([unit, values, radios, legacyRemoved, detailsRemoved]);
   }
 
   /* ---------- showing errors ---------- */
@@ -720,6 +770,13 @@
       if (legacyRemoved) body[field] = null;
       else delete body[field];
     });
+    /* Likewise a favourite's details: normalise() leaves out what isn't
+       there, and what isn't sent the server keeps — so details removed
+       here are sent as null, which clears them. */
+    editors().forEach((editor) => {
+      const entry = editor.favorite && editor.favorite.removed && body.garments[editor.dataset.garment];
+      if (entry && entry.anchor) Object.assign(entry.anchor, { product: null, likes: null, measurements: null });
+    });
     const result = await global.Account.fitProfile.save(body);
     busy(false);
 
@@ -850,6 +907,16 @@
     });
 
     $('garment-list').addEventListener('click', (event) => {
+      /* the favourite's details go on save; brand, size and the answer stay */
+      const details = event.target.closest('[data-remove-details]');
+      if (details) {
+        const editor = details.closest('.garment-editor');
+        editor.favorite.removed = true;
+        paintFavorite(editor);
+        refresh();
+        piece(editor, 'brand').focus();
+        return;
+      }
       const button = event.target.closest('[data-remove-garment]');
       if (!button) return;
       const editor = button.closest('.garment-editor');

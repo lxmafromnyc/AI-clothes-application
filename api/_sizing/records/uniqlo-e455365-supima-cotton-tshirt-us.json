@@ -1,0 +1,338 @@
+{
+  "sizingVersion": 2,
+  "id": "uniqlo-e455365-supima-cotton-tshirt-us",
+  "brand": "UNIQLO",
+  "product": {
+    "name": "SUPIMA® Cotton T-Shirt",
+    "audience": "unisex",
+    "pageTitle": "Unisex SUPIMA® Cotton T-Shirt | UNIQLO US",
+    "code": "E455365-000",
+    "url": "https://www.uniqlo.com/us/en/products/E455365-000/00",
+    "garmentType": "crewneck-tshirt"
+  },
+  "category": "tshirts",
+  "region": "US",
+  "line": "unisex",
+  "sizeScale": "men",
+  "units": "in",
+  "sizes": [
+    "XXS",
+    "XS",
+    "S",
+    "M",
+    "L",
+    "XL",
+    "XXL",
+    "3XL"
+  ],
+  "lengthOptions": [
+    "regular"
+  ],
+  "fit": {
+    "brandWords": "Regular",
+    "fitClass": "regular",
+    "source": "product page, product spec table: \"Fit | Regular\""
+  },
+  "material": {
+    "composition": "100% Cotton",
+    "stretch": null,
+    "source": "product page, Materials / Care: \"Fabric details 100% Cotton\""
+  },
+  "charts": {
+    "body": {
+      "measures": "body",
+      "label": "Size Guide, Body Size tab (inches)",
+      "source": "https://www.uniqlo.com/us/en/products/E455365-000/00",
+      "retrievedAt": "2026-10-14",
+      "dimensions": {
+        "chest": {
+          "label": "Chest",
+          "kind": "range",
+          "method": "body-circumference",
+          "methodSource": {
+            "url": "https://www.uniqlo.com/us/en/products/E455365-000/00",
+            "says": "Size Guide, Body Size tab: \"The dimensions shown below are body size measurements that correspond with a product's size.\""
+          }
+        }
+      },
+      "sizes": {
+        "XXS": {
+          "chest": {
+            "min": 30.75,
+            "max": 33,
+            "text": "30 ¾ - 33"
+          }
+        },
+        "XS": {
+          "chest": {
+            "min": 31.5,
+            "max": 34.75,
+            "text": "31 ½ - 34 ¾"
+          }
+        },
+        "S": {
+          "chest": {
+            "min": 34.75,
+            "max": 37.75,
+            "text": "34 ¾ - 37 ¾"
+          }
+        },
+        "M": {
+          "chest": {
+            "min": 37.75,
+            "max": 41,
+            "text": "37 ¾ - 41"
+          }
+        },
+        "L": {
+          "chest": {
+            "min": 41,
+            "max": 44,
+            "text": "41 - 44"
+          }
+        },
+        "XL": {
+          "chest": {
+            "min": 44,
+            "max": 47.25,
+            "text": "44 - 47 ¼"
+          }
+        },
+        "XXL": {
+          "chest": {
+            "min": 47.25,
+            "max": 50.5,
+            "text": "47 ¼ - 50 ½"
+          }
+        },
+        "3XL": {
+          "chest": {
+            "min": 50.5,
+            "max": 53.5,
+            "text": "50 ½ - 53 ½"
+          }
+        }
+      }
+    },
+    "garment": {
+      "measures": "finished-garment",
+      "label": "Size Guide, Product Size tab: \"the actual measurements of the product\" (inches)",
+      "source": "https://www.uniqlo.com/us/en/products/E455365-000/00",
+      "retrievedAt": "2026-10-14",
+      "dimensions": {
+        "bodyLength": {
+          "label": "Length (back)",
+          "method": "center-back-to-hem",
+          "methodSource": {
+            "url": "https://faq-us.uniqlo.com/articles/en_US/FAQ/How-to-Measure",
+            "says": "How to Measure Clothing, Tops: \"C. Body Length: The length in the back of the garment in the center to the bottom (hem).\" The product table labels it \"Length (back)\"."
+          }
+        },
+        "shoulderWidth": {
+          "label": "Shoulder width (seam to seam)",
+          "method": "seam-to-seam",
+          "methodSource": {
+            "url": "https://faq-us.uniqlo.com/articles/en_US/FAQ/How-to-Measure",
+            "says": "How to Measure Clothing, Tops: \"A. Shoulder Width: The length between the broadest part of the shoulders.\" The product table labels it \"Shoulder width (seam to seam)\"."
+          }
+        },
+        "chestWidth": {
+          "label": "Chest",
+          "method": "flat-width-armpit-to-armpit",
+          "derivedCircumference": {
+            "status": "estimated",
+            "factor": 2,
+            "derivation": "UNIQLO publishes this as a flat width, armpit to armpit, not a circumference. Where Fynd needs the garment's chest around, it takes 2 × the published flat width and labels the result estimated: it assumes the front and back are the same width and ignores fabric give. The derived value is never stored here, and it is never compared with the body chest ranges, which are a separate chart."
+          },
+          "methodSource": {
+            "url": "https://faq-us.uniqlo.com/articles/en_US/FAQ/How-to-Measure",
+            "says": "How to Measure Clothing, Tops: \"B. Body Width: The length from armpit to armpit.\" The product table labels this column \"Chest\"; its tab says \"The dimensions shown below are the actual measurements of the product.\""
+          }
+        },
+        "sleeveLength": {
+          "label": "Sleeve Length (center back)",
+          "method": "center-back-to-cuff",
+          "methodSource": {
+            "url": "https://faq-us.uniqlo.com/articles/en_US/FAQ/How-to-Measure",
+            "says": "How to Measure Clothing, Tops: \"F. Sleeve Length (Center Back): The length between the back center of the collar to the edge of the sleeve.\" The product table labels it \"Sleeve Length (center back)\"."
+          }
+        }
+      },
+      "sizes": {
+        "XXS": {
+          "bodyLength": {
+            "value": 24.75,
+            "text": "24 ¾"
+          },
+          "shoulderWidth": {
+            "value": 15.75,
+            "text": "15 ¾"
+          },
+          "chestWidth": {
+            "value": 18,
+            "text": "18"
+          },
+          "sleeveLength": {
+            "value": 15.25,
+            "text": "15 ¼"
+          }
+        },
+        "XS": {
+          "bodyLength": {
+            "value": 25.5,
+            "text": "25 ½"
+          },
+          "shoulderWidth": {
+            "value": 16.25,
+            "text": "16 ¼"
+          },
+          "chestWidth": {
+            "value": 19,
+            "text": "19"
+          },
+          "sleeveLength": {
+            "value": 15.75,
+            "text": "15 ¾"
+          }
+        },
+        "S": {
+          "bodyLength": {
+            "value": 26.75,
+            "text": "26 ¾"
+          },
+          "shoulderWidth": {
+            "value": 17,
+            "text": "17"
+          },
+          "chestWidth": {
+            "value": 20.25,
+            "text": "20 ¼"
+          },
+          "sleeveLength": {
+            "value": 16.5,
+            "text": "16 ½"
+          }
+        },
+        "M": {
+          "bodyLength": {
+            "value": 28,
+            "text": "28"
+          },
+          "shoulderWidth": {
+            "value": 17.5,
+            "text": "17 ½"
+          },
+          "chestWidth": {
+            "value": 21.5,
+            "text": "21 ½"
+          },
+          "sleeveLength": {
+            "value": 17.25,
+            "text": "17 ¼"
+          }
+        },
+        "L": {
+          "bodyLength": {
+            "value": 29.25,
+            "text": "29 ¼"
+          },
+          "shoulderWidth": {
+            "value": 18.25,
+            "text": "18 ¼"
+          },
+          "chestWidth": {
+            "value": 23,
+            "text": "23"
+          },
+          "sleeveLength": {
+            "value": 18,
+            "text": "18"
+          }
+        },
+        "XL": {
+          "bodyLength": {
+            "value": 30,
+            "text": "30"
+          },
+          "shoulderWidth": {
+            "value": 19,
+            "text": "19"
+          },
+          "chestWidth": {
+            "value": 24.5,
+            "text": "24 ½"
+          },
+          "sleeveLength": {
+            "value": 18.5,
+            "text": "18 ½"
+          }
+        },
+        "XXL": {
+          "bodyLength": {
+            "value": 30,
+            "text": "30"
+          },
+          "shoulderWidth": {
+            "value": 20,
+            "text": "20"
+          },
+          "chestWidth": {
+            "value": 25.75,
+            "text": "25 ¾"
+          },
+          "sleeveLength": {
+            "value": 19,
+            "text": "19"
+          }
+        },
+        "3XL": {
+          "bodyLength": {
+            "value": 31,
+            "text": "31"
+          },
+          "shoulderWidth": {
+            "value": 20.75,
+            "text": "20 ¾"
+          },
+          "chestWidth": {
+            "value": 27.25,
+            "text": "27 ¼"
+          },
+          "sleeveLength": {
+            "value": 19.5,
+            "text": "19 ½"
+          }
+        }
+      }
+    }
+  },
+  "sources": [
+    {
+      "url": "https://www.uniqlo.com/us/en/products/E455365-000/00",
+      "what": "Size Guide (Body Size and Product Size tabs), fit, materials",
+      "retrievedAt": "2026-10-14"
+    },
+    {
+      "url": "https://faq-us.uniqlo.com/articles/en_US/FAQ/How-to-Measure",
+      "what": "How to Measure Clothing, Tops (diagrams A-D and F): shoulder width, body width armpit to armpit, body length down the centre back, sleeve length from the centre back; linked from the product's Size Guide (\"Click here for measuring instructions\")",
+      "retrievedAt": "2026-10-14"
+    }
+  ],
+  "retrievedAt": "2026-10-14",
+  "verification": {
+    "status": "unverified",
+    "checkedBy": null,
+    "checkedAt": null
+  },
+  "notes": [
+    "Listed under MEN, marked UNISEX, sizes XXS-3XL; read on UNIQLO's men's scale.",
+    "The Body Size table has a second, unlabelled column (probably waist); it is not recorded.",
+    "Garment \"Chest\" is recorded as a flat width, armpit to armpit, per UNIQLO's measuring guide and the values (21 ½ in for M, well below M's 37 ¾-41 in body chest). Any circumference worked out from it is estimated.",
+    "Sleeve length is from the centre back, not from the shoulder seam; the size engine says so whenever it compares it with a sleeve measured the other way.",
+    "XXL and XL publish the same Length (back), 30.",
+    "Stretch is not stated by the brand.",
+    "Source audit 2026-10-14 (claude-code-source-audit), pending approval: product page re-read: title \"Unisex SUPIMA® Cotton T-Shirt | UNIQLO US\", Product ID 482297, code E455365-000, listed MEN / T-Shirts, sizes XXS-3XL, \"Fit | Regular\", \"100% Cotton\". Every Body Size and Product Size value matches in inches; the centimetre tables agree to rounding (M: chest 54.5 cm flat = 21 ½ in; length 71 cm = 28 in).",
+    "Source audit 2026-10-14 (claude-code-source-audit), pending approval: XL and XXL both read 30 in Length (back) because UNIQLO's cm values are 76 and 76.5; kept as published.",
+    "Source audit 2026-10-14 (claude-code-source-audit), pending approval: UNIQLO's How to Measure page (linked from this product's Size Guide) was re-read; its Tops diagrams confirm every method recorded here."
+  ]
+}

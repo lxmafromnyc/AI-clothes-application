@@ -2906,6 +2906,30 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     }
   });
 
+  await test('the favourite T-shirt question and its details are set in a palette ink, legible, and fit a phone', async () => {
+    accountState = accountReply({});
+    fitProfileState = fitProfileReply(null);
+    for (const viewport of [{ width: 1280, height: 900 }, { width: 360, height: 740 }]) {
+      const page = await openPage('index.html', { viewport });
+      await page.waitForSelector('#guide[data-ready]', { timeout: 10000 });
+      const audit = guideAudit(page, viewport);
+      await page.check('input[name="garment"][value="tshirts"]');
+      await page.click('#guide-next');
+      await audit('step 2, the favourite question');
+      assert.strictEqual(await page.isVisible('#anchor-brand'), false, 'brand and size wait for a Yes or Close');
+      await page.check('input[name="favorite"][value="close"]');
+      await page.click('#favorite-more summary');
+      await page.check('input[name="favoriteLikes"][value="sleeves"]');
+      await page.check('input[name="favoriteUnit"][value="cm"]');
+      await page.fill('#favorite-chestWidth', '54');
+      await page.fill('#favorite-product', 'https://www.zara.com/us/en/basic-medium-weight-t-shirt--02-p01887411.html');
+      await audit('step 2, a favourite with every detail open');
+      /* each measurement says how to take it */
+      assert.deepStrictEqual(await page.$$eval('#favorite-measures .guide-field-note', (ns) => ns.length), 4);
+      await page.close();
+    }
+  });
+
   await test('a failed save and the confirmation are legible, and a saved profile is filled in', async () => {
     const saved = {
       schemaVersion: 2,

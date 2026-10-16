@@ -57,7 +57,7 @@
 
 const SIZING_VERSION = 2;
 
-const CATEGORIES = ['hoodies', 'sweatshirts'];
+const CATEGORIES = ['hoodies', 'sweatshirts', 'tshirts'];
 /* The lines a product's sizes are cut for. A unisex product also says
    which scale its sizes follow (`sizeScale`). */
 const LINES = ['men', 'women', 'unisex'];
@@ -70,7 +70,7 @@ const STRETCH = ['none', 'low', 'moderate', 'high'];
 const VERIFICATION = ['unverified', 'verified'];
 /* the garment each category holds, stored apart from the brand's own
    name for the product */
-const GARMENT_TYPES = { hoodies: ['pullover-hoodie'], sweatshirts: ['crewneck-sweatshirt'] };
+const GARMENT_TYPES = { hoodies: ['pullover-hoodie'], sweatshirts: ['crewneck-sweatshirt'], tshirts: ['crewneck-tshirt'] };
 const MEASURES = { body: 'body', garment: 'finished-garment' };
 
 /* Every dimension a record may hold, and the methods each may be
@@ -90,7 +90,9 @@ const GARMENT_DIMENSIONS = {
 const OFFICIAL_HOSTS = {
   UNIQLO: ['www.uniqlo.com', 'faq-us.uniqlo.com'],
   Nike: ['www.nike.com'],
-  Carhartt: ['www.carhartt.com']
+  Carhartt: ['www.carhartt.com'],
+  'H&M': ['www2.hm.com'],
+  Zara: ['www.zara.com']
 };
 
 const isPlainObject = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);

@@ -1818,6 +1818,21 @@ its `normalise()` regardless. A stored profile looks like this:
   answers are not moved into any type**, because the shopper never said whether
   that top was a T-shirt, a hoodie or a sweatshirt. They stay at the top level,
   are shown in the words they were asked in, and the new guide never writes them.
+- **Version 5 adds the favourite T-shirt** (T-shirts only — a type marked
+  `favorite` in `GARMENTS`): `favorite` is the answer to "Do you own a T-shirt that
+  fits you exactly how you like?" — `perfect`, `close` or `none` ("Not really / I'm
+  not sure"), or `null`. `none` is an answer on its own and clears the anchor. The
+  T-shirt anchor may also carry, each optional and left out when not said:
+  `product` (`{ name, url }` — a link keeps only its address, without query or
+  fragment, and is never fetched), `likes` (what makes its fit good: `shoulders`,
+  `chest`, `sleeves`, `length`, `looseness`, `feel`) and `measurements` (the garment
+  laid flat: `{ unit, chestWidth, shoulderWidth, sleeveLength, bodyLength }`, each by
+  a stated method — chest is a flat width armpit to armpit, never a circumference;
+  a chest past the flat range is refused with "about half the way around"). A
+  version 4 profile reads as version 5 with every anchor exactly as stored. A fit
+  profile page that sends a T-shirt's brand and size without the details keeps
+  them; a different brand or size is a different piece, and its details go; sending
+  them as `null` removes them. Any other type sent a favourite or details is refused.
 - **Each type has its own lists**, and one type's values are refused for another:
   - sizes — letters (XS–3XL) for T-shirts, hoodies, sweatshirts, sweatpants and
     other; waist (26–42) for jeans; waist or letters for pants. A length (28–36)
@@ -1901,6 +1916,12 @@ a typical phone:
    Other brand, which opens a box with suggestions) and size (that type's sizes,
    then Not sure), with a length beside a waist size for jeans and pants. Not sure
    is stored as `null`, never as a size.
+   **For T-shirts this step asks first "Do you own a T-shirt that fits you exactly
+   how you like?"** — Yes, I have the perfect fit / I have one that's close / Not
+   really. Brand and size appear only after Yes or Close, and beneath them, folded
+   away under "Tell us more about it (optional)": the product's name or link, what
+   makes the fit good, and its measurements laid flat (each with how to take it).
+   No measuring is needed to continue, and "Not really" continues straight on.
 3. **"How do you like your T-shirts to fit?"** — worded for the type. Three
    cards, one answer: Tight / Slim, True to Size, Relaxed / Oversized, with
    pictures and second lines for tops or bottoms.
@@ -1961,7 +1982,9 @@ node scripts/test-ui.js            # every step and panel of the guide, and the 
 
 - Size recommendations for shoppers: the engine and its API exist (see
   [Size recommendations](#size-recommendations-first-version)) and the six
-  product records are verified, but no page shows a suggestion yet.
+  hoodie and sweatshirt records are verified, but no page shows a suggestion yet.
+  The favourite T-shirt is saved and read by the engine, but its four T-shirt
+  records await verification.
 - Usual sizes by brand and preferred fit (the fit profile page's own sections)
   still cover hoodies and sweatshirts only, beside the guide's per-type answers.
   Bringing the two together is later work; until then neither is read as the
@@ -1990,13 +2013,56 @@ likes that kind of garment to fit — not a letter-to-letter conversion — and 
 how sure it is from the quality of the data, not from its own score. It never
 says a size will fit.
 
-**The six records are verified.** Each was checked against its official sources
+**The six hoodie and sweatshirt records are verified.** Each was checked against its official sources
 and, with the owners' approval, marked
 `{ "status": "verified", "checkedBy": "claude-code-source-audit", "checkedAt": "2026-10-10" }`;
 each keeps its official source URLs and the brand's own words for every
 measurement. The engine still refuses to suggest from any record that is not
 verified ("not enough data: unverified"), and the code never sets that status.
 There is no product-card panel yet; this is the API and its evaluation.
+
+**Four T-shirt records are in, unverified.** Copied from each brand's own US page
+on 2026-10-14, one product each, and waiting for the same source check before
+the engine will use them:
+
+| Record | What the brand publishes |
+| --- | --- |
+| UNIQLO SUPIMA® Cotton T-Shirt (E455365) | body chest ranges, and the garment: chest flat, shoulders, sleeve and length from the centre back |
+| Nike Sportswear Premium Essentials (IH1121) | body chest ranges only (Nike's general men's tops chart) |
+| H&M Regular Fit T-shirt (0685816) | body chest ranges only (H&M's general tops guide; its how-to-measure panel was not read) |
+| Zara Basic Medium Weight T-shirt /02 (01887411) | the garment only: chest flat, back width, sleeve from the shoulder seam, front length |
+
+Each record's notes list what needs checking (Zara's "arm circumference" values
+equal its sleeve lengths as shown, for one).
+
+### The favourite T-shirt
+
+For a T-shirt, the shopper's favourite (from the guide) is read strongest first:
+
+1. **Its product**, found in the sizing records by its link (the brand's own
+   site, with the product's code in the address) or, failing that, by a name only
+   one record answers to: that product's published garment measurements, in the
+   size on its label, compared with the product shopped for garment to garment.
+2. **Its own measurements**, taken at home: compared the same way, capped at
+   medium confidence and never called published.
+3. **Brand and size only**: never another product's garment measurements — only
+   the chest range that brand's T-shirt chart gives that size, an estimated and
+   weaker reference (low confidence, and said so). Without a sizing line, it can't
+   be read at all, and the answer says what would help.
+
+Two garment measurements are compared only when measured the same way; a flat
+chest and a circumference are related by × 2 (estimated). A sleeve from the
+centre back and one from the shoulder seam, or a length from the centre back and
+from the top of the shoulder, are **not compared**, and the reasons say so —
+UNIQLO against Zara compares chest and shoulders only. What makes the favourite
+fit well counts double; on a favourite that is only close, what wasn't named
+counts half, and confidence drops a step. With a favourite and no fit goal, a
+brand's fit words ("Loose fit") don't move the size. A favourite T-shirt is never
+read for a hoodie, nor a hoodie for a T-shirt. Brand fits are never rules: the
+engine's code names no brand, and each record's fit words are that product's
+own. Every answer carries `anchor`: where its evidence came from, how it was used
+(`garment`, `chest-range` or `not-used`), and which measurements were and weren't
+compared, and why.
 
 ### The data
 
@@ -2175,7 +2241,11 @@ node scripts/test-size-eval.js   # the evaluation set and its metrics
 
 ### Not built yet
 
-- Women's sizing, Tall lengths, and every category beyond hoodies and sweatshirts.
+- Women's sizing, Tall lengths, and every category beyond hoodies, sweatshirts and T-shirts.
+- T-shirt suggestions for shoppers: the records are unverified, so until they are
+  checked every T-shirt answer is "not enough data: unverified". One product per
+  brand; a favourite from any other product is kept as context, or used through
+  its own measurements.
 - A recommendation panel on product cards.
 - Using fit feedback to adjust suggestions, and any aggregate use of it.
 - Ease, fit bands and weights are starting hypotheses; nothing has calibrated

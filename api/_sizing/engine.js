@@ -39,6 +39,27 @@
      trouble spots              which measurements matter more, and in
                                 which direction
 
+     a favourite T-shirt        (T-shirts) the piece the shopper says
+                                fits perfectly, or close — read in this
+                                order, strongest first:
+                                  product   its product, found in
+                                            Fynd's own sizing records by
+                                            link or name: that product's
+                                            published garment measurements
+                                            in the size on its label
+                                  measured  the measurements the shopper
+                                            took of it, laid flat, each
+                                            by a named method
+                                  brand and size only: never another
+                                            product's garment
+                                            measurements, only the chest
+                                            range that brand's chart puts
+                                            in that size — a weaker,
+                                            estimated reference
+                                What makes it fit well (likes) weighs
+                                those measurements more; "close" rather
+                                than perfect lowers confidence.
+
    ---------------------------------------------------------
    Three ways to score, by what the product publishes
    ---------------------------------------------------------
@@ -56,7 +77,15 @@
    A body measurement is never compared directly with a garment
    measurement, and two garment measurements are only compared when
    their method (a flat width or a circumference; from the centre back
-   or the shoulder seam) is the same.
+   or the shoulder seam) is the same — or when one can be worked out
+   from the other by a stated rule, and is then called estimated:
+
+     chest       a flat width is half the way around (× 2)
+     sleeve      from the centre back and from the shoulder seam: not
+                 convertible (where the seam sits is not published), so
+                 not compared
+     length      from the centre back and from the top of the shoulder:
+                 not convertible, not compared
 
    ---------------------------------------------------------
    Confidence
@@ -130,7 +159,13 @@ const TOPS = {
     }
   }
 };
-const CATEGORY_PARAMS = { hoodies: TOPS, sweatshirts: TOPS };
+/* T-shirts: the same dimensions and bands, with less room around the
+   chest for each fit goal than a fleece top — again a hypothesis, to be
+   corrected by fit feedback. */
+const TEES = Object.assign({}, TOPS, { ease: { slim: [1, 4], 'true-to-size': [4, 8], oversized: [9, 16] } });
+const CATEGORY_PARAMS = { hoodies: TOPS, sweatshirts: TOPS, tshirts: TEES };
+/* which categories' charts may stand in for each other */
+const FAMILY = { hoodies: 'fleece', sweatshirts: 'fleece', tshirts: 'tees' };
 
 const TROUBLE_FACTOR = 2.5;     /* a miss in the direction a trouble spot names counts this much more */
 const ALTERNATIVE_MARGIN = 0.75; /* a second size this close behind is offered as the alternative */
@@ -204,6 +239,118 @@ function garmentRow(record, size) {
 const toUnits = (value, from, to) => (from === to ? value : (from === 'in' ? value * IN_TO_CM : value / IN_TO_CM));
 
 /* ---------------------------------------------------------
+   The favourite piece: finding its product, and its own measurements
+   --------------------------------------------------------- */
+
+/* what each "what makes it fit well" answer is about */
+const LIKE_DIMS = { shoulders: 'shoulderWidth', chest: 'chestWidth', looseness: 'chestWidth', sleeves: 'sleeveLength', length: 'bodyLength' };
+const LIKED_WEIGHT = 2;       /* a measurement the shopper says is right counts this much more */
+const UNLIKED_CLOSE = 0.5;    /* on a piece that is only close, one they didn't name counts this much */
+const SHOPPER_MEASURED = 'shopper-measured';
+
+/* The record for the product the shopper named, by its link (the
+   brand's own site, with the product's code in the address) or, failing
+   that, by its name — only when exactly one record answers to it.
+   { record, by } or null. Never a guess between two products. */
+function matchProduct(anchor, pool) {
+  const product = anchor && anchor.product;
+  if (!product) return null;
+  const same = pool.filter((r) => r.category === 'tshirts' && (!anchor.brand || brandKey(r.brand) === brandKey(anchor.brand)));
+  if (product.url) {
+    let u = null;
+    try { u = new URL(product.url); } catch (err) { u = null; }
+    if (u) {
+      const path = u.pathname.toLowerCase();
+      const byUrl = same.filter((r) => (sizingSchema.OFFICIAL_HOSTS[r.brand] || []).includes(u.hostname)
+        && r.product.code && path.includes(String(r.product.code).split('-')[0].toLowerCase()));
+      if (byUrl.length === 1) return { record: byUrl[0], by: 'link' };
+    }
+  }
+  if (product.name) {
+    const key = brandKey(product.name);
+    const named = same.filter((r) => {
+      const own = brandKey(r.product.name);
+      return own === key || (key.length >= 8 && own.includes(key)) || (own.length >= 8 && key.includes(own));
+    });
+    if (named.length === 1) return { record: named[0], by: 'name' };
+  }
+  return null;
+}
+
+/* The shopper's own measurements of the piece, as a garment chart Fynd
+   can set beside a product's: one row, labelled with the size on its
+   label (or "yours"), each dimension by the method the guide asked for.
+   Taken as given, like a chest measurement — never called verified,
+   never estimated. */
+function measuredRecord(anchor, category) {
+  const m = anchor && anchor.measurements;
+  if (!m || (m.unit !== 'in' && m.unit !== 'cm')) return null;
+  const dims = {};
+  const row = {};
+  ProfileSchema.GARMENT_MEASURE_KEYS.forEach((d) => {
+    if (typeof m[d] !== 'number') return;
+    dims[d] = { method: ProfileSchema.GARMENT_MEASURES[d].method };
+    row[d] = { value: m[d], text: String(m[d]) };
+  });
+  if (!Object.keys(row).length) return null;
+  const size = anchor.size || 'yours';
+  return {
+    id: 'your-measurements',
+    brand: anchor.brand || 'Your',
+    product: { name: 'T-shirt you measured' },
+    category,
+    units: m.unit,
+    sizes: [size],
+    charts: { garment: { dimensions: dims, sizes: { [size]: row } } },
+    verification: { status: SHOPPER_MEASURED }
+  };
+}
+const isShopperMeasured = (record) => Boolean(record && record.verification && record.verification.status === SHOPPER_MEASURED);
+
+/* One garment dimension of a reference, in the method another record
+   uses for it: { value, estimated } in the reference's units, or null
+   when the two can't be compared. */
+function inMethodOf(d, refRecord, refRow, method) {
+  const own = refRecord.charts.garment.dimensions[d];
+  if (!own || !refRow[d]) return null;
+  if (own.method === method) return { value: refRow[d].value, estimated: null };
+  if (d === 'chestWidth') {
+    if (own.method === 'flat-width-armpit-to-armpit' && method === 'garment-circumference') return { value: refRow[d].value * 2, estimated: 'chest around, as twice its flat width' };
+    if (own.method === 'garment-circumference' && method === 'flat-width-armpit-to-armpit') return { value: refRow[d].value / 2, estimated: 'chest flat width, as half its way around' };
+  }
+  /* a sleeve from the centre back and one from the shoulder seam differ
+     by where the shoulder seam sits, which no chart publishes (a dropped
+     shoulder moves it): not converted */
+  return null;
+}
+
+const METHOD_WORDS = {
+  'flat-width-armpit-to-armpit': 'flat, armpit to armpit',
+  'garment-circumference': 'all the way around',
+  'center-back-to-hem': 'from the centre back',
+  'high-point-shoulder-to-hem': 'from the top of the shoulder',
+  'center-back-to-cuff': 'from the centre back',
+  'shoulder-seam-to-cuff': 'from the shoulder seam',
+  'seam-to-seam': 'seam to seam'
+};
+
+/* How much each dimension counts, from what the shopper said about the
+   piece they compare with: what makes its fit good counts more; on a
+   piece that is only close, what they didn't name counts less. */
+function dimWeights(shopper) {
+  const out = {};
+  Object.keys(shopper.params.garment).forEach((d) => { out[d] = 1; });
+  const fav = shopper.favorite;
+  if (!fav || !shopper.garmentRef || !shopper.garmentRef.claim.favorite) return out;
+  const liked = new Set((fav.likes || []).map((l) => LIKE_DIMS[l]).filter(Boolean));
+  Object.keys(out).forEach((d) => {
+    if (liked.has(d)) out[d] = LIKED_WEIGHT;
+    else if (fav.answer === 'close' && liked.size) out[d] = UNLIKED_CLOSE;
+  });
+  return out;
+}
+
+/* ---------------------------------------------------------
    What the profile says about this shopper, for this product
    --------------------------------------------------------- */
 
@@ -239,17 +386,57 @@ function readShopper(profile, record, pool, options) {
   /* sizes the shopper says fit: the type's anchor, and usual sizes by
      brand marked "about right", for either kind of top */
   const claims = [];
-  if (entry.anchor && entry.anchor.brand && entry.anchor.size) claims.push({ brand: entry.anchor.brand, size: entry.anchor.size, category, from: 'anchor' });
+  const garmentType = ProfileSchema.garmentOf(category);
+  const favoriteType = Boolean(garmentType && garmentType.favorite);
+  const anchor = entry.anchor || null;
+  /* the favourite piece (T-shirts): its product, else its own
+     measurements, else brand and size only — see the header */
+  let favorite = null;
+  let favoriteRef = null;
+  if (favoriteType && anchor && entry.favorite !== 'none') {
+    favorite = { answer: entry.favorite || null, likes: anchor.likes || null, brand: anchor.brand || null, size: anchor.size || null, source: null, match: null };
+    const match = matchProduct(anchor, pool);
+    const matchedUsable = Boolean(match) && (sizingSchema.isVerified(match.record) || options.includeUnverified);
+    const matchedSize = match ? sizeIn(match.record, anchor.size) : null;
+    if (match && !matchedUsable) {
+      notes.push(`Fynd has ${match.record.brand}'s ${match.record.product.name} on file, but its sizing hasn't been checked against ${match.record.brand}'s chart yet, so it isn't used.`);
+    } else if (match && !anchor.size) {
+      notes.push(`Fynd found your ${match.record.brand} ${match.record.product.name}, but without the size on its label it can't tell which of its measurements are yours.`);
+    } else if (match && !matchedSize) {
+      notes.push(`Fynd found your ${match.record.brand} ${match.record.product.name}, but it isn't sold in ${anchor.size}.`);
+    }
+    if (match && matchedUsable && matchedSize && garmentRow(match.record, matchedSize)) {
+      favorite.source = 'product';
+      favorite.match = { id: match.record.id, by: match.by, name: match.record.product.name, size: matchedSize };
+      favoriteRef = { claim: { brand: match.record.brand, size: matchedSize, category, from: 'favorite', favorite: true }, record: match.record, size: matchedSize, product: true };
+    } else {
+      const measured = measuredRecord(anchor, category);
+      if (measured) {
+        favorite.source = 'measured';
+        favoriteRef = { claim: { brand: measured.brand, size: measured.sizes[0], category, from: 'favorite', favorite: true }, record: measured, size: measured.sizes[0], measured: true };
+      } else {
+        favorite.source = anchor.brand && anchor.size ? 'brand-size' : 'not-enough';
+        if (anchor.product && !match) notes.push(`Fynd has no sizing for the product you named, so your${anchor.brand ? ` ${anchor.brand}` : ''} T-shirt is kept as your reference without its exact measurements.`);
+      }
+    }
+    /* its brand's chart for that size, for a chest range only — never
+       another product's garment measurements */
+    if (favorite.source !== 'product' && anchor.brand && anchor.size) claims.push({ brand: anchor.brand, size: anchor.size, category, from: 'anchor', bodyOnly: true });
+  } else if (anchor && anchor.brand && anchor.size) claims.push({ brand: anchor.brand, size: anchor.size, category, from: 'anchor' });
   ((profile && profile.brandSizes) || []).forEach((b) => {
-    if (b && b.fit === 'about-right' && b.size && CATEGORY_PARAMS[b.category]) claims.push({ brand: b.brand, size: b.size, category: b.category, from: 'usual size' });
+    /* a hoodie's garment measurements say little about a T-shirt's: for
+       T-shirts, another type's size gives only a chest range */
+    if (b && b.fit === 'about-right' && b.size && CATEGORY_PARAMS[b.category]) claims.push({ brand: b.brand, size: b.size, category: b.category, from: 'usual size', bodyOnly: favoriteType && b.category !== category });
   });
 
   const usable = (r) => (sizingSchema.isVerified(r) || options.includeUnverified) && CATEGORY_PARAMS[r.category] && r.sizeScale === scale;
   const references = [];
   claims.forEach((claim) => {
-    const candidates = pool.filter((r) => brandKey(r.brand) === brandKey(claim.brand));
+    /* fleece tops are read against fleece tops, T-shirts against
+       T-shirts: a T-shirt chart says nothing about a hoodie's size */
+    const candidates = pool.filter((r) => brandKey(r.brand) === brandKey(claim.brand) && FAMILY[r.category] === FAMILY[category]);
     if (!candidates.length) {
-      notes.push(`${claim.brand} ${claim.size} isn't used: Fynd has no ${claim.brand} size chart, and a letter size alone isn't a measurement.`);
+      notes.push(`${claim.brand} ${claim.size} isn't used: Fynd has no ${claim.brand} size chart for ${category === 'tshirts' ? 'T-shirts' : 'hoodies or sweatshirts'}, and a letter size alone isn't a measurement.`);
       return;
     }
     if (!scale) {
@@ -257,9 +444,9 @@ function readShopper(profile, record, pool, options) {
       return;
     }
     /* prefer the same kind of top, and a record with garment measurements */
-    const ranked = candidates.filter(usable).filter((r) => sizeIn(r, claim.size))
+    const ranked = candidates.filter(usable).filter((r) => sizeIn(r, claim.size)).filter((r) => !claim.bodyOnly || r.charts.body)
       .sort((a, b) => (Number(b.category === claim.category) - Number(a.category === claim.category))
-        || (Number(Boolean(b.charts.garment)) - Number(Boolean(a.charts.garment))));
+        || (claim.bodyOnly ? 0 : Number(Boolean(b.charts.garment)) - Number(Boolean(a.charts.garment))));
     if (!ranked.length) {
       notes.push(`${claim.brand} ${claim.size} isn't used: Fynd has no checked ${claim.brand} chart for that size and sizing line.`);
       return;
@@ -270,7 +457,9 @@ function readShopper(profile, record, pool, options) {
 
   /* the garment that fits: the first reference whose record publishes
      garment measurements for that size */
-  const garmentRef = references.find((r) => garmentRow(r.record, r.size)) || null;
+  const garmentRef = favoriteRef || references.find((r) => !r.claim.bodyOnly && garmentRow(r.record, r.size)) || null;
+  /* the favourite's own product says who it is cut for, too */
+  if (favoriteRef && favoriteRef.product) references.push(favoriteRef);
 
   /* body ranges from references' charts (estimated), combined */
   const refBodies = references.map((r) => ({ ref: r, range: bodyRange(r.record, r.size) })).filter((x) => x.range)
@@ -292,7 +481,11 @@ function readShopper(profile, record, pool, options) {
   }
 
   const troubles = Array.isArray(entry.troubleZones) ? entry.troubleZones : [];
-  return { entry, goal, goalSource, line, scale, measured, references, garmentRef, body, conflict, troubles, notes, params };
+  /* a favourite piece is how they like it to fit: with no goal said, the
+     brand's fit words don't move the chart a size on an assumed one */
+  const unmoved = Boolean(favorite) && goalSource === 'assumed';
+  return {
+    unmoved, entry, goal, goalSource, line, scale, measured, references, garmentRef, body, conflict, troubles, notes, params, favorite };
 }
 
 /* ---------------------------------------------------------
@@ -300,27 +493,49 @@ function readShopper(profile, record, pool, options) {
    --------------------------------------------------------- */
 
 /* garment against a garment known to fit, dimension by dimension */
-function scoreReferenceGarment(record, shopper) {
+/* Which dimensions a product and the garment that fits can be set side
+   by side on: `used`, { <dim>: { value, estimated } } with the
+   reference's value in its own units and the product's method; and
+   `skipped`, each dimension left out and why. */
+function comparable(record, shopper) {
   const ref = shopper.garmentRef;
   const refRow = garmentRow(ref.record, ref.size);
-  const refDims = ref.record.charts.garment.dimensions;
   const dims = record.charts.garment.dimensions;
-  const used = Object.keys(shopper.params.garment).filter((d) => dims[d] && refDims[d] && dims[d].method === refDims[d].method && refRow[d]);
+  const refDims = ref.record.charts.garment.dimensions;
+  const used = {};
+  const skipped = [];
+  Object.keys(shopper.params.garment).forEach((d) => {
+    if (!dims[d]) { skipped.push({ dim: d, why: `${record.brand} doesn't publish it` }); return; }
+    if (!refDims[d] || !refRow[d]) { skipped.push({ dim: d, why: ref.measured ? 'you didn\'t measure it' : `${ref.record.brand} doesn't publish it for ${ref.size}` }); return; }
+    const v = inMethodOf(d, ref.record, refRow, dims[d].method);
+    if (!v) {
+      skipped.push({ dim: d, why: `measured differently — ${record.brand}'s ${METHOD_WORDS[dims[d].method] || dims[d].method}, ${ref.measured ? 'yours' : `${ref.record.brand}'s`} ${METHOD_WORDS[refDims[d].method] || refDims[d].method}` });
+      return;
+    }
+    used[d] = v;
+  });
+  return { used, skipped };
+}
+
+function scoreReferenceGarment(record, shopper) {
+  const ref = shopper.garmentRef;
+  const { used } = comparable(record, shopper);
+  const weights = dimWeights(shopper);
   const trouble = troubleSides(shopper);
   return record.sizes.map((size) => {
     const row = garmentRow(record, size);
     if (!row) return null;
     let cost = 0;
     const parts = [];
-    used.forEach((d) => {
+    Object.keys(used).forEach((d) => {
       if (!row[d]) return;
       const { weight, tol } = shopper.params.garment[d];
-      const target = toUnits(refRow[d].value, ref.record.units, record.units);
+      const target = toUnits(used[d].value, ref.record.units, record.units);
       const diff = row[d].value - target;
-      let c = weight * (diff / toUnits(tol, 'in', record.units)) ** 2;
+      let c = weight * weights[d] * (diff / toUnits(tol, 'in', record.units)) ** 2;
       if (trouble[d] && diff < 0) c *= TROUBLE_FACTOR;
       cost += c;
-      parts.push({ dim: d, value: row[d].value, target, diff });
+      parts.push({ dim: d, value: row[d].value, target, diff, estimated: used[d].estimated });
     });
     return { size, cost, parts };
   }).filter(Boolean);
@@ -476,7 +691,8 @@ function assessSizes(record, method, shopper, scored) {
   const unclassed = (reason, extra) => Object.assign({ class: null, measurements: 'unknown', reason }, extra || {});
   /* what a class rests on, given the records it read and what was worked out */
   const basisOf = (records, estimated) => (estimated.length ? 'estimated'
-    : records.every((r) => sizingSchema.isVerified(r)) ? 'verified' : 'unverified');
+    : records.filter((r) => !isShopperMeasured(r)).every((r) => sizingSchema.isVerified(r)) ? 'verified' : 'unverified');
+  const compare = method === 'reference-garment' ? comparable(record, shopper) : null;
 
   const forSize = (size) => {
     const row = garmentRow(record, size);
@@ -496,20 +712,20 @@ function assessSizes(record, method, shopper, scored) {
       const value = row[d].value;
       if (method === 'reference-garment') {
         const ref = shopper.garmentRef;
-        const refDims = ref.record.charts.garment.dimensions;
-        const refRow = garmentRow(ref.record, ref.size);
-        if (!refDims[d] || refDims[d].method !== garmentDims[d].method || !refRow[d]) {
-          out[d] = unclassed(`The garment you said fits has no ${DIM_NAMES[d]} measured the same way.`);
+        const v = compare.used[d];
+        if (!v) {
+          const skip = compare.skipped.find((x) => x.dim === d);
+          out[d] = unclassed(`The garment you said fits has no ${DIM_NAMES[d]} measured the same way${skip ? ` (${skip.why})` : ''}.`);
           return;
         }
         const scale = d === 'chestWidth' && flat ? 2 : 1;
-        const diff = (value - toUnits(refRow[d].value, ref.record.units, units)) * scale;
+        const diff = (value - toUnits(v.value, ref.record.units, units)) * scale;
         const b = bands.reference[d];
-        const estimated = scale === 2 ? ['difference around the chest, taken as twice the flat widths'] : [];
+        const estimated = [scale === 2 ? 'difference around the chest, taken as twice the flat widths' : null, v.estimated].filter(Boolean);
         out[d] = {
           class: classesOf(d)[step(diff, -inU(b.about), inU(b.about), inU(b.slight - b.about)) + 2],
           measurements: basisOf([record, ref.record], estimated),
-          against: `${ref.record.brand} ${ref.record.product.name} in ${ref.size}`,
+          against: ref.measured ? 'the T-shirt you measured' : `${ref.record.brand} ${ref.record.product.name} in ${ref.size}`,
           difference: round(diff, 2),
           estimated
         };
@@ -618,14 +834,22 @@ function reasonsFor(method, record, shopper, leading, alternative) {
   if (method === 'reference-garment') {
     const ref = shopper.garmentRef;
     const same = ref.record.id === record.id;
-    out.push(same
-      ? `You said ${ref.claim.brand} ${ref.size} fits you, and this is that product: its ${leading.size} has the same published measurements.`
-      : `Compared with the ${ref.record.brand} ${ref.record.product.name} in ${ref.size}, which you said fits, using both products' published garment measurements.`);
+    const fav = ref.claim.favorite ? shopper.favorite : null;
+    const fits = fav && fav.answer === 'close' ? 'is close to the fit you like' : 'fits';
+    if (ref.measured) {
+      out.push(`Compared with the measurements you took of your ${fav.brand ? `${fav.brand} ` : ''}T-shirt${fav.size ? ` (${fav.size} on the label)` : ''}, against ${record.brand}'s published garment measurements.`);
+    } else if (same) {
+      out.push(`You said ${ref.claim.brand} ${ref.size} ${fits}, and this is that product: its ${leading.size} has the same published measurements.`);
+    } else {
+      out.push(`Compared with the ${ref.record.brand} ${ref.record.product.name} in ${ref.size}, which you said ${fits}, using both products' published garment measurements${fav && fav.match ? ` (Fynd found it in its catalogue by its ${fav.match.by})` : ''}.`);
+    }
     leading.parts.forEach((p) => {
       const word = DIM_WORDS[p.dim];
-      if (Math.abs(p.diff) < 0.13) out.push(`${word}: ${leading.size} measures ${inches(p.value, u)}, the same as the one that fits.`);
-      else out.push(`${word}: ${leading.size} measures ${inches(p.value, u)}, ${inches(Math.abs(p.diff), u)} ${p.diff > 0 ? 'more' : 'less'} than the one that fits.`);
+      const est = p.estimated ? ` (its ${p.estimated}: an estimate)` : '';
+      if (Math.abs(p.diff) < 0.13) out.push(`${word}: ${leading.size} measures ${inches(p.value, u)}, the same as the one that fits${est}.`);
+      else out.push(`${word}: ${leading.size} measures ${inches(p.value, u)}, ${inches(Math.abs(p.diff), u)} ${p.diff > 0 ? 'more' : 'less'} than the one that fits${est}.`);
     });
+    comparable(record, shopper).skipped.forEach((x) => out.push(`${DIM_WORDS[x.dim]}: not compared — ${x.why}.`));
   } else if (method === 'body-plus-ease') {
     const p = leading.parts.find((x) => x.dim === 'chestWidth');
     const from = shopper.body.source === 'measured' ? `your ${shopper.body.said} chest` : `a ${inches(shopper.body.lo, u)}–${inches(shopper.body.hi, u)} chest (from the chart for a size you wear)`;
@@ -640,7 +864,7 @@ function reasonsFor(method, record, shopper, leading, alternative) {
     const p = leading.parts[0];
     const from = shopper.body.source === 'measured' ? `your ${shopper.body.said} chest` : `a ${inches(shopper.body.lo, u)}–${inches(shopper.body.hi, u)} chest (from the chart for a size you wear)`;
     out.push(`${record.brand}'s body chart puts ${p.range.estimated ? `about ${inches(p.range.lo, u)}–${inches(p.range.hi, u)} (its chart gives ${p.range.text} in)` : `${p.range.text} in`} in ${p.aim}; Fynd compared that with ${from}.`);
-    const offset = sizeOffset(record, shopper.goal);
+    const offset = shopper.unmoved ? 0 : sizeOffset(record, shopper.goal);
     if (offset !== 0) {
       out.push(`${record.brand} calls this "${record.fit.brandWords}", and you like ${GOAL_WORDS[shopper.goal]}, so Fynd aims one size ${offset > 0 ? 'up' : 'down'} from the chart: ${leading.size}.`);
     }
@@ -668,6 +892,29 @@ function alternativeWhy(method, record, leading, alt) {
    The answer
    --------------------------------------------------------- */
 
+/* What the favourite piece gave this answer, for the page to say: where
+   its evidence came from, how it was used, and which measurements were
+   and weren't set against this product. Null without one. */
+function anchorSummary(record, method, shopper) {
+  const fav = shopper.favorite;
+  if (!fav) return null;
+  const asGarment = method === 'reference-garment' && shopper.garmentRef.claim.favorite;
+  const compare = asGarment ? comparable(record, shopper) : null;
+  const asChest = !asGarment && Boolean(shopper.body) && shopper.body.source === 'reference'
+    && shopper.references.some((r) => r.claim.from === 'anchor' || r.claim.from === 'favorite');
+  return {
+    source: fav.source,
+    answer: fav.answer,
+    brand: fav.brand,
+    size: fav.size,
+    match: fav.match,
+    likes: fav.likes,
+    usedAs: asGarment ? 'garment' : asChest ? 'chest-range' : 'not-used',
+    compared: compare ? Object.keys(compare.used).map((d) => ({ dim: d, estimated: compare.used[d].estimated })) : [],
+    notCompared: compare ? compare.skipped : []
+  };
+}
+
 function insufficient(record, missing, next) {
   return { status: 'insufficient', productId: record ? record.id : null, missing, next };
 }
@@ -688,39 +935,57 @@ function recommend(profile, record, opts) {
   }
   const params = CATEGORY_PARAMS[record.category];
   if (!params) {
-    return insufficient(record, [{ code: 'category-not-covered', message: 'Size suggestions cover hoodies and sweatshirts so far.' }], []);
+    return insufficient(record, [{ code: 'category-not-covered', message: 'Size suggestions cover hoodies, sweatshirts and T-shirts so far.' }], []);
   }
 
   const shopper = readShopper(profile, record, pool, options);
-  if (shopper.line === 'women' || (shopper.scale && shopper.scale !== record.sizeScale)) {
-    return insufficient(record, [{ code: 'line-not-covered', message: `Fynd has no women's sizing for this ${record.brand} product yet, and won't read a men's chart as a women's one.` }], []);
-  }
 
   const hasGarment = Boolean(record.charts.garment && record.charts.garment.dimensions.chestWidth);
   const hasBody = Boolean(record.charts.body);
+  /* a garment that fits, sharing no measurement with this product (all
+     measured differently), is no comparison at all */
+  const shared = hasGarment && shopper.garmentRef && Object.keys(comparable(record, shopper).used).length > 0;
+  if (hasGarment && shopper.garmentRef && !shared) {
+    shopper.notes.push(`The ${shopper.garmentRef.measured ? 'T-shirt you measured' : `${shopper.garmentRef.record.brand} ${shopper.garmentRef.size} you said fits`} shares no measurement taken the same way with this product, so it wasn't compared.`);
+  }
   let method = null;
-  if (hasGarment && shopper.garmentRef) method = 'reference-garment';
+  if (shared) method = 'reference-garment';
   else if (hasGarment && shopper.body) method = 'body-plus-ease';
   else if (hasBody && shopper.body) method = 'body-chart';
+
+  /* garment against garment needs no sizing line: a measurement is the
+     same whoever the label was cut for. Anything read from a chart does. */
+  const garmentOnly = method === 'reference-garment' && shopper.garmentRef.claim.favorite;
+  if (!garmentOnly && (shopper.line === 'women' || (shopper.scale && shopper.scale !== record.sizeScale))) {
+    return insufficient(record, [{ code: 'line-not-covered', message: `Fynd has no women's sizing for this ${record.brand} product yet, and won't read a men's chart as a women's one.` }], []);
+  }
 
   if (!method) {
     const missing = [];
     const next = [];
-    if (shopper.references.length === 0 && !shopper.measured) {
+    const fav = shopper.favorite;
+    if (fav && fav.source === 'measured' && !record.charts.garment && !shopper.measured && !shopper.references.length) {
+      missing.push({ code: 'incompatible-measurements', message: `You measured your T-shirt, but ${record.brand} publishes only who each size is cut for, not this product's measurements; the two can't be compared.` });
+      next.push('Add your chest measurement on your fit profile.');
+    } else if (shopper.references.length === 0 && !shopper.measured) {
+      if (fav && (fav.source === 'brand-size' || fav.source === 'not-enough')) {
+        missing.push({ code: 'anchor-unmeasured', message: `Your${fav.brand ? ` ${fav.brand}` : ''} T-shirt is kept as your reference, but Fynd has no measurements for it${fav.brand ? ` and no ${fav.brand} chart it can read for it` : ''} — the size on a label isn't a measurement.` });
+        next.push('Measure your favourite T-shirt laid flat (chest, shoulders, sleeve, length) in the fit guide.');
+      }
       const lineUnknown = !shopper.scale && shopper.entry.anchor && shopper.entry.anchor.size;
       if (lineUnknown) {
         missing.push({ code: 'line-needed', message: 'Your size can only be read once Fynd knows whether it\'s men\'s, women\'s or unisex.' });
         next.push('Choose Men’s, Women’s or Unisex beside the size that fits, in the fit guide.');
       }
       missing.push({ code: 'no-evidence', message: 'Fynd has nothing it can measure against: no chest measurement, and no size in a brand it has a size chart for.' });
-      const brands = [...new Set(pool.filter((r) => sizingSchema.isVerified(r) || options.includeUnverified).map((r) => r.brand))];
+      const brands = [...new Set(pool.filter((r) => (sizingSchema.isVerified(r) || options.includeUnverified) && (!shopper.favorite || r.category === record.category)).map((r) => r.brand))];
       next.push('Add your chest measurement on your fit profile.');
       if (brands.length) next.push(`Or tell the fit guide a size that fits you in ${brands.join(', ')}.`);
     } else {
       missing.push({ code: 'incompatible-measurements', message: 'What Fynd knows about you is a garment measurement, and this product publishes only body measurements; the two can\'t be compared.' });
       next.push('Add your chest measurement on your fit profile.');
     }
-    return Object.assign(insufficient(record, missing, next), { notes: shopper.notes });
+    return Object.assign(insufficient(record, missing, next), { notes: shopper.notes, anchor: anchorSummary(record, null, shopper) });
   }
 
   const scored = (method === 'reference-garment' ? scoreReferenceGarment(record, shopper)
@@ -739,7 +1004,7 @@ function recommend(profile, record, opts) {
 
   /* a brand's fit words moved the aim a size: that is a judgement, so
      the size its chart gives unmoved stays on offer */
-  const shifted = method === 'body-chart' && sizeOffset(record, shopper.goal) !== 0;
+  const shifted = method === 'body-chart' && !shopper.unmoved && sizeOffset(record, shopper.goal) !== 0;
   if (shifted) {
     const unmoved = scoreBodyChart(record, Object.assign({}, shopper, { goal: null, unmoved: true })).sort((a, b) => a.cost - b.cost)[0];
     if (unmoved && unmoved.size !== leading.size) {
@@ -750,6 +1015,33 @@ function recommend(profile, record, opts) {
   /* confidence: from the data */
   let confidence = method === 'reference-garment' ? 'high' : (shopper.body.source === 'measured' ? 'medium' : 'low');
   const caveats = [];
+  const fav = shopper.favorite;
+  const fromFavorite = method === 'reference-garment' && shopper.garmentRef.claim.favorite;
+  if (fromFavorite) {
+    const compared = leading.parts.map((p) => p.dim);
+    if (shopper.garmentRef.measured) {
+      confidence = capAt(confidence, 'medium');
+      caveats.push('Your T-shirt was measured at home; a quarter inch either way changes what its measurements say.');
+    } else if (!sizingSchema.isVerified(shopper.garmentRef.record)) {
+      caveats.push(`The ${shopper.garmentRef.record.brand} measurements for your T-shirt haven't been checked against ${shopper.garmentRef.record.brand}'s chart yet.`);
+    }
+    if (leading.parts.some((p) => p.estimated)) {
+      confidence = capAt(confidence, 'medium');
+      caveats.push('Some of your T-shirt\'s measurements were worked out from others, not published (see the reasons).');
+    }
+    if (compared.length < 2) {
+      confidence = capAt(confidence, 'low');
+      caveats.push(`Only the ${DIM_NAMES[compared[0]]} could be compared.`);
+    } else if (compared.length < 3) {
+      confidence = capAt(confidence, 'medium');
+    }
+    if (fav.answer === 'close') {
+      confidence = lower(confidence);
+      caveats.push('You said your T-shirt is close to the fit you like, not exactly it, so this aims for close too.');
+    }
+  } else if (fav && fav.source === 'brand-size' && shopper.references.some((r) => r.claim.from === 'anchor')) {
+    caveats.push(`Your ${fav.brand} ${fav.size} was read only as the chest range ${fav.brand}'s chart gives ${fav.size}: a size on a label is a weaker reference than the garment's measurements.`);
+  }
   if (method === 'reference-garment' && shopper.garmentRef.record.category !== record.category) {
     confidence = capAt(confidence, 'medium');
     caveats.push(`The garment you compared with is a ${shopper.garmentRef.record.category === 'hoodies' ? 'hoodie' : 'sweatshirt'}, not a ${record.category === 'hoodies' ? 'hoodie' : 'sweatshirt'}.`);
@@ -763,7 +1055,8 @@ function recommend(profile, record, opts) {
     confidence = 'low';
     caveats.push('Your chest measurement and the sizes you said fit point to different sizes.');
   }
-  if (shopper.goalSource === 'assumed') {
+  /* a favourite piece is the fit they like: no goal is assumed */
+  if (shopper.goalSource === 'assumed' && !fromFavorite) {
     confidence = lower(confidence);
     caveats.push('You haven\'t said how you like this to fit, so Fynd assumed true to size.');
   }
@@ -807,7 +1100,7 @@ function recommend(profile, record, opts) {
     fitBySize,
     fitScale: {
       basis: method === 'reference-garment' ? 'garment-vs-reference' : method === 'body-plus-ease' ? 'garment-vs-body' : 'body-chart',
-      relativeTo: method === 'reference-garment' ? `the ${shopper.garmentRef.record.brand} ${shopper.garmentRef.size} you said fits`
+      relativeTo: method === 'reference-garment' ? (shopper.garmentRef.measured ? 'the T-shirt you measured' : `the ${shopper.garmentRef.record.brand} ${shopper.garmentRef.size} you said fits`)
         : method === 'body-plus-ease' ? `the ${GOAL_WORDS[shopper.goal]} fit you asked for` : null,
       classes: { girth: GIRTH_CLASSES, length: LENGTH_CLASSES },
       units: record.units,
@@ -817,6 +1110,7 @@ function recommend(profile, record, opts) {
     },
     tradeoffs,
     fitGoal: { goal: shopper.goal, from: shopper.goalSource },
+    anchor: anchorSummary(record, method, shopper),
     dataQuality: dataQuality(record, method, shopper),
     dataStatus: sizingSchema.isVerified(record) ? 'verified' : 'unverified',
     caveats,

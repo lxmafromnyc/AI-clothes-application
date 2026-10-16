@@ -1,0 +1,199 @@
+{
+  "sizingVersion": 2,
+  "id": "zara-01887411-basic-medium-weight-tshirt-us",
+  "brand": "Zara",
+  "product": {
+    "name": "BASIC MEDIUM WEIGHT T-SHIRT /02",
+    "audience": "men",
+    "pageTitle": "BASIC MEDIUM WEIGHT T-SHIRT /02 - White / Navy | ZARA United States",
+    "code": "01887411",
+    "url": "https://www.zara.com/us/en/basic-medium-weight-t-shirt--02-p01887411.html",
+    "garmentType": "crewneck-tshirt"
+  },
+  "category": "tshirts",
+  "region": "US",
+  "line": "men",
+  "sizeScale": "men",
+  "units": "in",
+  "sizes": [
+    "S",
+    "M",
+    "L",
+    "XL",
+    "XXL"
+  ],
+  "lengthOptions": [
+    "regular"
+  ],
+  "fit": {
+    "brandWords": "Regular fit T-shirt. Round neck and short sleeves.",
+    "fitClass": "regular",
+    "source": "product page, Description"
+  },
+  "material": {
+    "composition": "98% cotton, 2% elastane",
+    "stretch": null,
+    "source": "product page, Composition & care: \"Composition: 98% cotton, 2% elastane\". Zara does not say how much it stretches."
+  },
+  "charts": {
+    "garment": {
+      "measures": "finished-garment",
+      "label": "Product Measurements, Product dimensions (IN): \"The garment is measured flat\"",
+      "source": "https://www.zara.com/us/en/basic-medium-weight-t-shirt--02-p01887411.html",
+      "retrievedAt": "2026-10-14",
+      "dimensions": {
+        "chestWidth": {
+          "label": "Chest",
+          "method": "flat-width-armpit-to-armpit",
+          "derivedCircumference": {
+            "status": "estimated",
+            "factor": 2,
+            "derivation": "Zara measures the garment flat, side to side at armhole height: a width, not a circumference. Where Fynd needs the garment's chest around, it takes 2 × the published flat width and labels the result estimated: it assumes the front and back are the same width and ignores fabric give. The derived value is never stored here."
+          },
+          "methodSource": {
+            "url": "https://www.zara.com/us/en/basic-medium-weight-t-shirt--02-p01887411.html",
+            "says": "How a garment is measured: \"CHEST — Measure from side to side at armhole height.\" Product dimensions: \"The garment is measured flat\"."
+          }
+        },
+        "bodyLength": {
+          "label": "Front length",
+          "method": "high-point-shoulder-to-hem",
+          "methodSource": {
+            "url": "https://www.zara.com/us/en/basic-medium-weight-t-shirt--02-p01887411.html",
+            "says": "How a garment is measured: \"FRONT LENGTH — Measure from the shoulder seam to the bottom hem of the garment.\" Recorded as from the high point of the shoulder, where the shoulder seam meets the collar; Zara does not say which point of the seam."
+          }
+        },
+        "sleeveLength": {
+          "label": "Sleeve length",
+          "method": "shoulder-seam-to-cuff",
+          "methodSource": {
+            "url": "https://www.zara.com/us/en/basic-medium-weight-t-shirt--02-p01887411.html",
+            "says": "How a garment is measured: \"SLEEVE LENGTH — Measure from the shoulder/sleeve seam to the hem of the sleeve.\""
+          }
+        },
+        "shoulderWidth": {
+          "label": "Back width",
+          "method": "seam-to-seam",
+          "methodSource": {
+            "url": "https://www.zara.com/us/en/basic-medium-weight-t-shirt--02-p01887411.html",
+            "says": "How a garment is measured: \"BACK WIDTH — Measure from the shoulder/sleeve seam to the other shoulder/sleeve seam.\""
+          }
+        }
+      },
+      "sizes": {
+        "S": {
+          "chestWidth": {
+            "value": 20.9,
+            "text": "20.9"
+          },
+          "bodyLength": {
+            "value": 26,
+            "text": "26.0"
+          },
+          "sleeveLength": {
+            "value": 7.5,
+            "text": "7.5"
+          },
+          "shoulderWidth": {
+            "value": 18.1,
+            "text": "18.1"
+          }
+        },
+        "M": {
+          "chestWidth": {
+            "value": 21.7,
+            "text": "21.7"
+          },
+          "bodyLength": {
+            "value": 26.6,
+            "text": "26.6"
+          },
+          "sleeveLength": {
+            "value": 7.9,
+            "text": "7.9"
+          },
+          "shoulderWidth": {
+            "value": 18.9,
+            "text": "18.9"
+          }
+        },
+        "L": {
+          "chestWidth": {
+            "value": 22.4,
+            "text": "22.4"
+          },
+          "bodyLength": {
+            "value": 27.2,
+            "text": "27.2"
+          },
+          "sleeveLength": {
+            "value": 8.3,
+            "text": "8.3"
+          },
+          "shoulderWidth": {
+            "value": 19.7,
+            "text": "19.7"
+          }
+        },
+        "XL": {
+          "chestWidth": {
+            "value": 23.2,
+            "text": "23.2"
+          },
+          "bodyLength": {
+            "value": 27.8,
+            "text": "27.8"
+          },
+          "sleeveLength": {
+            "value": 8.7,
+            "text": "8.7"
+          },
+          "shoulderWidth": {
+            "value": 20.5,
+            "text": "20.5"
+          }
+        },
+        "XXL": {
+          "chestWidth": {
+            "value": 24,
+            "text": "24.0"
+          },
+          "bodyLength": {
+            "value": 28.3,
+            "text": "28.3"
+          },
+          "sleeveLength": {
+            "value": 9.1,
+            "text": "9.1"
+          },
+          "shoulderWidth": {
+            "value": 21.3,
+            "text": "21.3"
+          }
+        }
+      }
+    }
+  },
+  "sources": [
+    {
+      "url": "https://www.zara.com/us/en/basic-medium-weight-t-shirt--02-p01887411.html",
+      "what": "product page: Description, Composition & care, Product Measurements (inches) and How a garment is measured",
+      "retrievedAt": "2026-10-14"
+    }
+  ],
+  "retrievedAt": "2026-10-14",
+  "verification": {
+    "status": "unverified",
+    "checkedBy": null,
+    "checkedAt": null
+  },
+  "notes": [
+    "Zara publishes the finished garment's measurements only, and no body chart: Fynd can compare it with a garment that fits, or with a chest measurement plus room, but not with a body chart.",
+    "Values are as shown with the IN toggle, one decimal place.",
+    "Elastane (2%) suggests some stretch; Zara does not say how much, so stretch is left unknown.",
+    "Sold under MAN; the product's offers list S, M, L, XL and XXL only — no XS.",
+    "Source audit 2026-10-14 (claude-code-source-audit), pending approval: product page re-read: \"BASIC MEDIUM WEIGHT T-SHIRT /02\", reference 1887/411, \"Regular fit T-shirt. Round neck and short sleeves.\", \"Composition: 98% cotton, 2% elastane\". Every inch value matches; Zara's cm table is the source of them (S-XXL chest 53, 55, 57, 59, 61 cm; front length 66, 67.5, 69, 70.5, 72; back width 46, 48, 50, 52, 54).",
+    "Source audit 2026-10-14 (claude-code-source-audit), pending approval: CONFLICT, needs approval: \"Sleeve length\" and \"Arm circumference\" are identical in every size in both units (19, 20, 21, 22, 23 cm = 7.5 … 9.1 in). Both are plausible for a short sleeve, so the page cannot say which row is right. Sleeve length is kept as published and could be wrong; \"Arm circumference\" is not recorded (no such dimension in the schema).",
+    "Source audit 2026-10-14 (claude-code-source-audit), pending approval: INTERPRETATION, needs approval: Zara says front length is \"from the shoulder seam to the bottom hem\"; it does not say which point of the seam, and the page has no diagram. Recorded as from the high point of the shoulder (beside the collar)."
+  ]
+}

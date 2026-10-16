@@ -1062,7 +1062,7 @@ await test('"Something else" can say what it is; the name is a label kept beside
 await test('the sizing line is stored exactly as chosen, "Not sure" included, and an older page cannot erase it', async () => {
   const { jar } = await signUp('ada@example.test');
   let profile = (await guide(jar, byType({ hoodies: { fitGoal: 'oversized', line: 'not-sure' } }))).body.profile;
-  assert.strictEqual(profile.schemaVersion, 4);
+  assert.strictEqual(profile.schemaVersion, Schema.SCHEMA_VERSION);
   assert.strictEqual(profile.garments.hoodies.line, 'not-sure', 'not sure is an answer, kept as itself');
   profile = (await guide(jar, byType({ hoodies: { line: 'men' } }))).body.profile;
   assert.strictEqual(profile.garments.hoodies.line, 'men');
@@ -1084,13 +1084,13 @@ await test('the sizing line is stored exactly as chosen, "Not sure" included, an
   assert.strictEqual(Schema.describeGarment('hoodies', { line: 'women' }).line, 'Women’s');
 });
 
-await test('a version 3 profile reads as version 4 with every type\'s line unanswered and nothing else changed', async () => {
+await test('a version 3 profile reads as the current version with every type\'s line unanswered and nothing else changed', async () => {
   const { jar, user } = await signUp('ada@example.test');
   const v3 = Object.assign(FULL(), { schemaVersion: 3, anchor: null, fitGoal: null, troubleZones: null,
     garments: { jeans: { anchor: { brand: 'Levi’s', size: '32', length: '30' }, fitGoal: 'slim', troubleZones: [] }, other: { fitGoal: 'oversized', name: 'shorts' } } });
   await store.set(fitProfiles.profileKey(user.id), v3);
   const { body } = await read(jar);
-  assert.strictEqual(body.profile.schemaVersion, 4);
+  assert.strictEqual(body.profile.schemaVersion, Schema.SCHEMA_VERSION);
   assert.deepStrictEqual(body.profile.garments, {
     jeans: { anchor: { brand: 'Levi’s', size: '32', length: '30' }, fitGoal: 'slim', troubleZones: [], line: null },
     other: { anchor: null, fitGoal: 'oversized', troubleZones: null, name: 'shorts', line: null }
@@ -1112,6 +1112,157 @@ await test('each type’s answers are said in its own words, and never as a size
 /* =========================================================
    What other responses and the logs say
    ========================================================= */
+section('the favourite T-shirt (schema version 5)');
+
+const UQ_LINK = 'https://www.uniqlo.com/us/en/products/E455365-000/00?colorDisplayCode=07&sizeDisplayCode=004#reviews';
+const FAVORITE = () => ({
+  favorite: 'perfect',
+  anchor: {
+    brand: 'uniqlo', size: 'm',
+    product: { url: UQ_LINK },
+    likes: ['chest', 'shoulders'],
+    measurements: { unit: 'in', chestWidth: '21.5', shoulderWidth: 17.5, sleeveLength: '', bodyLength: null }
+  }
+});
+
+await test('the favourite T-shirt is saved with its answer and only the details given; its link loses query and fragment', async () => {
+  const { jar } = await signUp('ada@example.test');
+  const { status, body } = await guide(jar, byType({ tshirts: FAVORITE() }));
+  assert.strictEqual(status, 200, JSON.stringify(body));
+  assert.strictEqual(body.profile.schemaVersion, 5);
+  assert.deepStrictEqual(body.profile.garments.tshirts, {
+    anchor: {
+      brand: 'UNIQLO', size: 'M',
+      product: { name: null, url: 'https://www.uniqlo.com/us/en/products/E455365-000/00' },
+      likes: ['shoulders', 'chest'],
+      measurements: { unit: 'in', chestWidth: 21.5, shoulderWidth: 17.5, sleeveLength: null, bodyLength: null }
+    },
+    fitGoal: null, troubleZones: null, line: null, favorite: 'perfect'
+  });
+  /* read back the same, and said in words without a size suggestion */
+  const again = (await read(jar)).body.profile.garments.tshirts;
+  assert.deepStrictEqual(again, body.profile.garments.tshirts);
+  const said = Schema.describeGarment('tshirts', again).favorite;
+  assert.deepStrictEqual(said, {
+    answer: 'Yes, I have the perfect fit.',
+    product: 'https://www.uniqlo.com/us/en/products/E455365-000/00',
+    likes: 'Shoulder fit, Chest',
+    measurements: 'Chest, flat 21.5 in · Shoulders 17.5 in'
+  });
+});
+
+await test('nothing about the favourite is required: the answer alone, or brand and size alone, is enough', async () => {
+  const { jar } = await signUp('ada@example.test');
+  let t = (await guide(jar, byType({ tshirts: { favorite: 'close' } }))).body.profile.garments.tshirts;
+  assert.deepStrictEqual([t.favorite, t.anchor], ['close', null]);
+  t = (await guide(jar, byType({ tshirts: { favorite: 'perfect', anchor: { brand: 'Zara', size: 'L' } } }))).body.profile.garments.tshirts;
+  assert.deepStrictEqual(t.anchor, { brand: 'Zara', size: 'L' }, 'no empty detail fields are stored');
+  /* a name, not a link, is kept as a name */
+  t = (await guide(jar, byType({ tshirts: { anchor: { brand: 'H&M', size: null, product: { name: '  Regular   Fit T-shirt ' } } } }))).body.profile.garments.tshirts;
+  assert.deepStrictEqual(t.anchor, { brand: 'H&M', size: null, product: { name: 'Regular Fit T-shirt', url: null } });
+  assert.strictEqual(t.favorite, 'perfect', 'a field not sent keeps its saved value');
+});
+
+await test('"Not really" is an answer: kept on its own, and it clears the piece saved before', async () => {
+  const { jar } = await signUp('ada@example.test');
+  await guide(jar, byType({ tshirts: FAVORITE() }));
+  const t = (await guide(jar, byType({ tshirts: { favorite: 'none', anchor: { brand: 'Nike', size: 'M' } } }))).body.profile.garments.tshirts;
+  assert.deepStrictEqual([t.favorite, t.anchor], ['none', null]);
+  /* and a type with only that answer is kept */
+  assert.ok(!Schema.garmentIsEmpty(t));
+});
+
+await test('details are checked: a chest that is a circumference, a measurement with no unit, a link that is not one, an unknown "fits well"', async () => {
+  const { jar } = await signUp('ada@example.test');
+  const cases = [
+    [{ anchor: { measurements: { unit: 'in', chestWidth: 42 } } }, 'garments.tshirts.anchor.measurements.chestWidth', /laid flat, armpit to armpit — about half the way around/],
+    [{ anchor: { measurements: { chestWidth: 21 } } }, 'garments.tshirts.anchor.measurements.unit', /inches or centimetres/],
+    [{ anchor: { measurements: { unit: 'cm', sleeveLength: 'long' } } }, 'garments.tshirts.anchor.measurements.sleeveLength', /as a number/],
+    [{ anchor: { measurements: { unit: 'cm', bodyLength: 30 } } }, 'garments.tshirts.anchor.measurements.bodyLength', /between 45 and 102 cm/],
+    [{ anchor: { product: { url: 'javascript:alert(1)' } } }, 'garments.tshirts.anchor.product.url', /web address/],
+    [{ anchor: { product: { url: 'https://user:pass@www.zara.com/x' } } }, 'garments.tshirts.anchor.product.url', /web address/],
+    [{ anchor: { product: { name: 'x'.repeat(81) } } }, 'garments.tshirts.anchor.product.name', /80 characters/],
+    [{ anchor: { likes: ['colour'] } }, 'garments.tshirts.anchor.likes', /Shoulder fit/],
+    [{ favorite: 'maybe' }, 'garments.tshirts.favorite', /Yes, Close, or Not really/]
+  ];
+  for (const [answers, field, message] of cases) {
+    const refused = await guide(jar, byType({ tshirts: answers }));
+    assert.strictEqual(refused.status, 400, JSON.stringify(answers));
+    const error = refused.body.errors.find((e) => e.field === field);
+    assert.ok(error, `${field}: ${JSON.stringify(refused.body.errors)}`);
+    assert.match(error.message, message);
+  }
+  /* centimetres are their own range, never converted */
+  const ok = (await guide(jar, byType({ tshirts: { anchor: { measurements: { unit: 'cm', chestWidth: 54.6 } } } }))).body.profile.garments.tshirts;
+  assert.deepStrictEqual(ok.anchor.measurements, { unit: 'cm', chestWidth: 54.6, shoulderWidth: null, sleeveLength: null, bodyLength: null });
+  assert.strictEqual((await read(jar)).body.profile.garments.tshirts.anchor.measurements.chestWidth, 54.6);
+});
+
+await test('only T-shirts ask about a favourite: another type is refused one, and its details', async () => {
+  const { jar } = await signUp('ada@example.test');
+  const a = await guide(jar, byType({ hoodies: { favorite: 'perfect' } }));
+  assert.strictEqual(a.status, 400);
+  assert.deepStrictEqual(a.body.errors.map((e) => e.field), ['garments.hoodies.favorite']);
+  const b = await guide(jar, byType({ jeans: { anchor: { brand: 'Gap', size: '32', measurements: { unit: 'in', chestWidth: 20 } } } }));
+  assert.strictEqual(b.status, 400);
+  assert.deepStrictEqual(b.body.errors.map((e) => e.field), ['garments.jeans.anchor']);
+});
+
+await test('the fit profile page keeps the favourite and its details unless the piece changes, and can remove them', async () => {
+  const { jar } = await signUp('ada@example.test');
+  await guide(jar, byType({ tshirts: FAVORITE() }));
+  /* a page that shows only brand and size sends just those: the rest stays */
+  let t = (await save(jar, Object.assign(FULL(), { schemaVersion: 4, garments: { tshirts: { anchor: { brand: 'UNIQLO', size: 'M' }, fitGoal: 'slim', troubleZones: null } } }))).body.profile.garments.tshirts;
+  assert.strictEqual(t.favorite, 'perfect');
+  assert.strictEqual(t.fitGoal, 'slim');
+  assert.deepStrictEqual(t.anchor.likes, ['shoulders', 'chest']);
+  assert.strictEqual(t.anchor.measurements.chestWidth, 21.5);
+  /* removed on purpose: sent as null */
+  t = (await save(jar, Object.assign(FULL(), { schemaVersion: 5, garments: { tshirts: { anchor: { brand: 'UNIQLO', size: 'M', product: null, likes: null, measurements: null }, favorite: 'perfect' } } }))).body.profile.garments.tshirts;
+  assert.deepStrictEqual(t.anchor, { brand: 'UNIQLO', size: 'M' });
+  /* a different size is a different piece: the old details go */
+  await guide(jar, byType({ tshirts: FAVORITE() }));
+  t = (await save(jar, Object.assign(FULL(), { schemaVersion: 5, garments: { tshirts: { anchor: { brand: 'UNIQLO', size: 'L' }, fitGoal: null, troubleZones: null } } }))).body.profile.garments.tshirts;
+  assert.deepStrictEqual(t.anchor, { brand: 'UNIQLO', size: 'L' });
+  /* and removing the type removes it all */
+  const gone = (await save(jar, Object.assign(FULL(), { schemaVersion: 5, garments: {} }))).body.profile.garments;
+  assert.ok(!('tshirts' in gone));
+});
+
+await test('a version 4 profile reads as version 5 with every answer, T-shirt anchors included, exactly as it was', async () => {
+  const { jar, user } = await signUp('ada@example.test');
+  const v4 = Object.assign(FULL(), { schemaVersion: 4, anchor: null, fitGoal: null, troubleZones: null,
+    garments: { tshirts: { anchor: { brand: 'Nike', size: 'M' }, fitGoal: 'slim', troubleZones: [], line: 'men' }, jeans: { anchor: { brand: 'Gap', size: '32', length: '30' }, fitGoal: null, troubleZones: null, line: null } } });
+  await store.set(fitProfiles.profileKey(user.id), v4);
+  const { body } = await read(jar);
+  assert.strictEqual(body.profile.schemaVersion, 5);
+  assert.deepStrictEqual(body.profile.garments, {
+    tshirts: { anchor: { brand: 'Nike', size: 'M' }, fitGoal: 'slim', troubleZones: [], line: 'men', favorite: null },
+    jeans: { anchor: { brand: 'Gap', size: '32', length: '30' }, fitGoal: null, troubleZones: null, line: null }
+  });
+  assert.deepStrictEqual(kept(body.profile), kept(v4));
+  /* and the guide can add to it without losing anything */
+  const after = (await guide(jar, byType({ tshirts: { favorite: 'close' } }))).body.profile;
+  assert.deepStrictEqual(after.garments.tshirts.anchor, { brand: 'Nike', size: 'M' });
+  assert.strictEqual(after.garments.jeans.anchor.length, '30');
+});
+
+await test('the favourite is saved only by its owner: signed out 401, no CSRF token 403, and another account never sees it', async () => {
+  const ada = await signUp('ada@example.test');
+  const bob = await signUp('bob@example.test');
+  assert.strictEqual((await guide({}, byType({ tshirts: FAVORITE() }))).status, 401);
+  const forged = await guide(ada.jar, byType({ tshirts: FAVORITE() }), { omitCsrf: true });
+  assert.strictEqual(forged.status, 403);
+  assert.strictEqual(forged.body.reason, 'csrf');
+  assert.strictEqual(await store.get(fitProfiles.profileKey(ada.user.id)), null, 'nothing written without the token');
+  await guide(ada.jar, byType({ tshirts: FAVORITE() }));
+  const bobs = (await read(bob.jar)).body.profile;
+  assert.strictEqual(bobs, null);
+  /* a user id in the body is not read */
+  await guide(bob.jar, Object.assign(byType({ tshirts: { favorite: 'none' } }), { userId: ada.user.id }));
+  assert.strictEqual((await read(ada.jar)).body.profile.garments.tshirts.favorite, 'perfect');
+});
+
 section('privacy');
 
 await test('/api/account says nothing about the fit profile, and its shape has not changed', async () => {

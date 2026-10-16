@@ -16,7 +16,11 @@ const FILES = [
   require('./records/nike-fn3859-club-pullover-fleece-hoodie-us.json'),
   require('./records/nike-fn3886-club-fleece-crew-us.json'),
   require('./records/carhartt-k121-loose-fit-midweight-hoodie-us.json'),
-  require('./records/carhartt-k124-loose-fit-midweight-crewneck-us.json')
+  require('./records/carhartt-k124-loose-fit-midweight-crewneck-us.json'),
+  require('./records/uniqlo-e455365-supima-cotton-tshirt-us.json'),
+  require('./records/nike-ih1121-premium-essentials-tshirt-us.json'),
+  require('./records/hm-0685816-regular-fit-tshirt-us.json'),
+  require('./records/zara-01887411-basic-medium-weight-tshirt-us.json')
 ];
 
 const problems = [];

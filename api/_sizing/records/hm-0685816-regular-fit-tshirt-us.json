@@ -1,0 +1,132 @@
+{
+  "sizingVersion": 2,
+  "id": "hm-0685816-regular-fit-tshirt-us",
+  "brand": "H&M",
+  "product": {
+    "name": "Regular Fit T-shirt",
+    "audience": "men",
+    "pageTitle": "Men’s White Regular Fit T-shirt | H&M US",
+    "code": "0685816",
+    "url": "https://www2.hm.com/en_us/productpage.0685816001.html",
+    "garmentType": "crewneck-tshirt"
+  },
+  "category": "tshirts",
+  "region": "US",
+  "line": "men",
+  "sizeScale": "men",
+  "units": "in",
+  "sizes": [
+    "XS",
+    "S",
+    "M",
+    "L",
+    "XL",
+    "XXL",
+    "3XL"
+  ],
+  "lengthOptions": [
+    "regular"
+  ],
+  "fit": {
+    "brandWords": "Regular-fit, comfortable T-shirt … with a classic silhouette",
+    "fitClass": "regular",
+    "source": "product page, structured product description: \"Regular-fit, comfortable T-shirt in lightweight cotton jersey with a classic silhouette.\""
+  },
+  "material": {
+    "composition": "Cotton 100%",
+    "stretch": null,
+    "source": "product page, Material & care"
+  },
+  "charts": {
+    "body": {
+      "measures": "body",
+      "label": "Size guide - Tops, shirts, jackets, blazers etc., Regular, \"Chest inch\"",
+      "title": "SIZE GUIDE - TOPS, SHIRTS, JACKETS, BLAZERS ETC.",
+      "source": "https://www2.hm.com/en_us/productpage.0685816001.html",
+      "retrievedAt": "2026-10-14",
+      "dimensions": {
+        "chest": {
+          "label": "Chest inch",
+          "kind": "range",
+          "method": "body-circumference",
+          "methodSource": {
+            "url": "https://www2.hm.com/en_us/productpage.0685816001.html",
+            "says": "Size guide, How to measure: \"BUST — Measure your chest over the fullest part.\" (a body diagram, numbered 1-4 for bust, waist, arm length, neckline). The table row is \"Chest inch\"."
+          }
+        }
+      },
+      "sizes": {
+        "XS": {
+          "chest": {
+            "min": 30.75,
+            "max": 33.75,
+            "text": "30¾-33¾"
+          }
+        },
+        "S": {
+          "chest": {
+            "min": 33.75,
+            "max": 37,
+            "text": "33¾-37"
+          }
+        },
+        "M": {
+          "chest": {
+            "min": 37,
+            "max": 40.25,
+            "text": "37-40¼"
+          }
+        },
+        "L": {
+          "chest": {
+            "min": 40.25,
+            "max": 43.25,
+            "text": "40¼-43¼"
+          }
+        },
+        "XL": {
+          "chest": {
+            "min": 43.25,
+            "max": 46.5,
+            "text": "43¼-46½"
+          }
+        },
+        "XXL": {
+          "chest": {
+            "min": 46.5,
+            "max": 49.5,
+            "text": "46½-49½"
+          }
+        },
+        "3XL": {
+          "chest": {
+            "min": 49.5,
+            "max": 52.75,
+            "text": "49½-52¾"
+          }
+        }
+      }
+    }
+  },
+  "sources": [
+    {
+      "url": "https://www2.hm.com/en_us/productpage.0685816001.html",
+      "what": "product page: sizes offered, Size guide (Regular: XS-M, L-XXL, 3XL tabs), description and material",
+      "retrievedAt": "2026-10-14"
+    }
+  ],
+  "retrievedAt": "2026-10-14",
+  "verification": {
+    "status": "unverified",
+    "checkedBy": null,
+    "checkedAt": null
+  },
+  "notes": [
+    "The size guide is H&M's general guide for tops, shirts, jackets and blazers, opened from this product's page; it is not specific to this T-shirt.",
+    "H&M publishes no garment measurements for this product, so its length, sleeve, shoulder and garment chest are unknown.",
+    "\"Regular fit\" describes this product only; other H&M T-shirts are sold as slim, relaxed and oversized.",
+    "Source audit 2026-10-14 (claude-code-source-audit), pending approval: product page re-read: \"Regular Fit T-shirt\", product 0685816 (colour 001), audience male, variants XS-3XL only, description \"Regular-fit, comfortable T-shirt in lightweight cotton jersey…\", \"Cotton 100%\". All seven Regular chest ranges match in inches and cm (M 37-40¼ in / 94-102 cm).",
+    "Source audit 2026-10-14 (claude-code-source-audit), pending approval: correction: lengthOptions was \"regular\" and \"long\"; the Long sizes (XS/L - 3XL/L) are in H&M's general tops guide but are not sold for this product, so only \"regular\" is kept.",
+    "Source audit 2026-10-14 (claude-code-source-audit), pending approval: the How to measure panel, unread before, was read: chest is a body measurement (\"Measure your chest over the fullest part\"). It does not say \"around\" in words; the diagram and the values (37-40¼ in for M) are circumferences."
+  ]
+}
