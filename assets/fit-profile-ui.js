@@ -360,7 +360,7 @@
         answer: e.favorite || null,
         brand: a ? a.brand : null,
         size: a ? a.size : null,
-        details: a ? { product: a.product || null, likes: a.likes || null, measurements: a.measurements || null } : null,
+        details: a ? { product: a.product || null, likes: a.likes || null, measurements: a.measurements || null, notes: a.notes || null } : null,
         removed: false
       };
       paintFavorite(editor);
@@ -386,13 +386,13 @@
     if (!box || !f) return;
     const details = f.removed ? null : f.details;
     const said = Schema.describeFavorite({ favorite: f.answer, anchor: details || {} });
-    const rows = said ? [said.answer, said.product && `Product: ${said.product}`, said.likes && `Fits well: ${said.likes}`, said.measurements && `Measured: ${said.measurements}`].filter(Boolean) : [];
+    const rows = said ? [said.answer, said.product && `Product: ${said.product}`, said.likes && `Fits well: ${said.likes}`, said.measurements && `Measured: ${said.measurements}`, said.notes && `Notes: ${said.notes}`].filter(Boolean) : [];
     box.querySelector('[data-part="favorite-said"]').replaceChildren(...rows.map((text) => {
       const li = doc.createElement('li');
       li.textContent = text;
       return li;
     }));
-    box.querySelector('[data-remove-details]').hidden = !(details && (details.product || details.likes || details.measurements));
+    box.querySelector('[data-remove-details]').hidden = !(details && (details.product || details.likes || details.measurements || details.notes));
     box.hidden = !rows.length;
   }
 
@@ -433,9 +433,9 @@
       out.favorite = f.answer;
       const known = (v) => v || null;
       const samePiece = anchor && known(anchor.brand && anchor.brand.trim()) === known(f.brand) && anchor.size === f.size;
-      if (f.removed && anchor) Object.assign(anchor, { product: null, likes: null, measurements: null });
+      if (f.removed && anchor) Object.assign(anchor, { product: null, likes: null, measurements: null, notes: null });
       else if (samePiece && f.details) {
-        ['product', 'likes', 'measurements'].forEach((k) => { if (f.details[k]) anchor[k] = f.details[k]; });
+        ['product', 'likes', 'measurements', 'notes'].forEach((k) => { if (f.details[k]) anchor[k] = f.details[k]; });
       }
       /* "Not really" no longer holds once a piece is named here */
       if (anchor && f.answer === 'none') out.favorite = null;
@@ -775,7 +775,7 @@
        here are sent as null, which clears them. */
     editors().forEach((editor) => {
       const entry = editor.favorite && editor.favorite.removed && body.garments[editor.dataset.garment];
-      if (entry && entry.anchor) Object.assign(entry.anchor, { product: null, likes: null, measurements: null });
+      if (entry && entry.anchor) Object.assign(entry.anchor, { product: null, likes: null, measurements: null, notes: null });
     });
     const result = await global.Account.fitProfile.save(body);
     busy(false);

@@ -1,0 +1,185 @@
+{
+  "sizingVersion": 2,
+  "id": "zara-08054350-relaxed-fit-hoodie-sweatshirt-us",
+  "brand": "Zara",
+  "product": {
+    "name": "RELAXED FIT HOODIE SWEATSHIRT",
+    "audience": "men",
+    "pageTitle": "RELAXED FIT HOODIE SWEATSHIRT - Light gray | ZARA United States",
+    "code": "08054350",
+    "url": "https://www.zara.com/us/en/relaxed-fit-hoodie-sweatshirt-p08054350.html",
+    "garmentType": "pullover-hoodie"
+  },
+  "category": "hoodies",
+  "region": "US",
+  "line": "men",
+  "sizeScale": "men",
+  "units": "cm",
+  "sizes": [
+    "S",
+    "M",
+    "L",
+    "XL"
+  ],
+  "lengthOptions": [
+    "regular"
+  ],
+  "fit": {
+    "brandWords": "Relaxed fit hoodie sweatshirt crafted from a cotton blend with a fleece interior.",
+    "fitClass": "relaxed",
+    "source": "product page, Description"
+  },
+  "material": {
+    "composition": "Main fabric: 75% cotton, 25% polyester / Secondary fabric: 58% cotton, 39% polyester, 3% elastane / Lining: 75% cotton, 25% polyester",
+    "stretch": null,
+    "source": "product page, Composition & care. Zara does not say how much the fabric stretches."
+  },
+  "construction": {
+    "sleeve": null,
+    "notes": null,
+    "source": null
+  },
+  "charts": {
+    "garment": {
+      "measures": "finished-garment",
+      "origin": "official-published",
+      "label": "Product Measurements, Product dimensions (CM): \"The garment is measured flat\"",
+      "source": "https://www.zara.com/us/en/relaxed-fit-hoodie-sweatshirt-p08054350.html",
+      "retrievedAt": "2026-10-16",
+      "dimensions": {
+        "chestWidth": {
+          "label": "Chest",
+          "method": "flat-width-armpit-to-armpit",
+          "methodSource": {
+            "url": "https://www.zara.com/us/en/relaxed-fit-hoodie-sweatshirt-p08054350.html",
+            "says": "How a garment is measured: \"CHEST — Measure from side to side at armhole height.\" Product dimensions: \"The garment is measured flat\"."
+          },
+          "derivedCircumference": {
+            "status": "estimated",
+            "factor": 2,
+            "derivation": "Zara measures the garment flat, side to side at armhole height: a width, not a circumference. Where Fynd needs the chest around, it takes 2 × the published flat width and labels it estimated; the derived value is never stored here."
+          }
+        },
+        "bodyLength": {
+          "label": "Front length",
+          "method": "high-point-shoulder-to-hem",
+          "methodSource": {
+            "url": "https://www.zara.com/us/en/relaxed-fit-hoodie-sweatshirt-p08054350.html",
+            "says": "How a garment is measured: \"FRONT LENGTH — Measure from the shoulder seam to the bottom hem of the garment.\" Recorded as from the high point of the shoulder, where the shoulder seam meets the collar; Zara does not say which point of the seam."
+          }
+        },
+        "sleeveLength": {
+          "label": "Sleeve length",
+          "method": "shoulder-seam-to-cuff",
+          "methodSource": {
+            "url": "https://www.zara.com/us/en/relaxed-fit-hoodie-sweatshirt-p08054350.html",
+            "says": "How a garment is measured: \"SLEEVE LENGTH — Measure from the shoulder/sleeve seam to the hem of the sleeve.\""
+          }
+        },
+        "shoulderWidth": {
+          "label": "Back width",
+          "method": "seam-to-seam",
+          "methodSource": {
+            "url": "https://www.zara.com/us/en/relaxed-fit-hoodie-sweatshirt-p08054350.html",
+            "says": "How a garment is measured: \"BACK WIDTH — Measure from the shoulder/sleeve seam to the other shoulder/sleeve seam.\""
+          }
+        }
+      },
+      "sizes": {
+        "S": {
+          "chestWidth": {
+            "value": 59.5,
+            "text": "59.5"
+          },
+          "bodyLength": {
+            "value": 60,
+            "text": "60.0"
+          },
+          "sleeveLength": {
+            "value": 77,
+            "text": "77.0"
+          },
+          "shoulderWidth": {
+            "value": 44,
+            "text": "44.0"
+          }
+        },
+        "M": {
+          "chestWidth": {
+            "value": 61.5,
+            "text": "61.5"
+          },
+          "bodyLength": {
+            "value": 63,
+            "text": "63.0"
+          },
+          "sleeveLength": {
+            "value": 79.5,
+            "text": "79.5"
+          },
+          "shoulderWidth": {
+            "value": 46,
+            "text": "46.0"
+          }
+        },
+        "L": {
+          "chestWidth": {
+            "value": 63.5,
+            "text": "63.5"
+          },
+          "bodyLength": {
+            "value": 66,
+            "text": "66.0"
+          },
+          "sleeveLength": {
+            "value": 82,
+            "text": "82.0"
+          },
+          "shoulderWidth": {
+            "value": 48,
+            "text": "48.0"
+          }
+        },
+        "XL": {
+          "chestWidth": {
+            "value": 65.5,
+            "text": "65.5"
+          },
+          "bodyLength": {
+            "value": 69,
+            "text": "69.0"
+          },
+          "sleeveLength": {
+            "value": 84.5,
+            "text": "84.5"
+          },
+          "shoulderWidth": {
+            "value": 50,
+            "text": "50.0"
+          }
+        }
+      }
+    }
+  },
+  "sources": [
+    {
+      "url": "https://www.zara.com/us/en/relaxed-fit-hoodie-sweatshirt-p08054350.html",
+      "what": "product page (reference 8054/350): Description, Composition & care, Product Measurements (cm and in) and How a garment is measured",
+      "retrievedAt": "2026-10-16"
+    }
+  ],
+  "retrievedAt": "2026-10-16",
+  "verification": {
+    "status": "unverified",
+    "checkedBy": null,
+    "checkedAt": null
+  },
+  "notes": [
+    "Sold under MAN; the product's offers list S, M, L, XL.",
+    "Recorded in centimetres, Zara's own values; its inch table is the same numbers converted to one decimal.",
+    "Zara publishes the finished garment only, no body chart. \"Arm circumference\" is published but not recorded (no such dimension in the schema).",
+    "Construction: Zara does not say whether the sleeves are set-in, raglan or dropped, so construction.sleeve is unknown.",
+    "NEEDS APPROVAL: sleeve length (77-84.5 cm) is far longer, and back width (44-50 cm) far narrower, than the other Zara hoodies'. That is what a raglan sleeve measured from its seam near the collar looks like; Zara does not say the sleeves are raglan. Until confirmed, its sleeve and back width should not be compared with a set-in garment's.",
+    "Sold as a hoodie (\"Features an adjustable hoodie\"), named \"hoodie sweatshirt\"; recorded as a hoodie."
+  ]
+}

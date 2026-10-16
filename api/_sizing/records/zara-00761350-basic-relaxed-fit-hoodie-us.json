@@ -1,0 +1,203 @@
+{
+  "sizingVersion": 2,
+  "id": "zara-00761350-basic-relaxed-fit-hoodie-us",
+  "brand": "Zara",
+  "product": {
+    "name": "BASIC RELAXED FIT HOODIE",
+    "audience": "men",
+    "pageTitle": "BASIC RELAXED FIT HOODIE - Navy blue | ZARA United States",
+    "code": "00761350",
+    "url": "https://www.zara.com/us/en/basic-relaxed-fit-hoodie-p00761350.html",
+    "garmentType": "pullover-hoodie"
+  },
+  "category": "hoodies",
+  "region": "US",
+  "line": "men",
+  "sizeScale": "men",
+  "units": "cm",
+  "sizes": [
+    "S",
+    "M",
+    "L",
+    "XL",
+    "XXL"
+  ],
+  "lengthOptions": [
+    "regular"
+  ],
+  "fit": {
+    "brandWords": "Relaxed-fit hoodie made of cotton fabric with a fleece interior.",
+    "fitClass": "relaxed",
+    "source": "product page, Description"
+  },
+  "material": {
+    "composition": "Main fabric: 63% cotton, 37% polyester / Details: 99% cotton, 1% elastane / Lining: 63% cotton, 37% polyester",
+    "stretch": null,
+    "source": "product page, Composition & care. Zara does not say how much the fabric stretches."
+  },
+  "construction": {
+    "sleeve": null,
+    "notes": null,
+    "source": null
+  },
+  "charts": {
+    "garment": {
+      "measures": "finished-garment",
+      "origin": "official-published",
+      "label": "Product Measurements, Product dimensions (CM): \"The garment is measured flat\"",
+      "source": "https://www.zara.com/us/en/basic-relaxed-fit-hoodie-p00761350.html",
+      "retrievedAt": "2026-10-16",
+      "dimensions": {
+        "chestWidth": {
+          "label": "Chest",
+          "method": "flat-width-armpit-to-armpit",
+          "methodSource": {
+            "url": "https://www.zara.com/us/en/basic-relaxed-fit-hoodie-p00761350.html",
+            "says": "How a garment is measured: \"CHEST — Measure from side to side at armhole height.\" Product dimensions: \"The garment is measured flat\"."
+          },
+          "derivedCircumference": {
+            "status": "estimated",
+            "factor": 2,
+            "derivation": "Zara measures the garment flat, side to side at armhole height: a width, not a circumference. Where Fynd needs the chest around, it takes 2 × the published flat width and labels it estimated; the derived value is never stored here."
+          }
+        },
+        "bodyLength": {
+          "label": "Front length",
+          "method": "high-point-shoulder-to-hem",
+          "methodSource": {
+            "url": "https://www.zara.com/us/en/basic-relaxed-fit-hoodie-p00761350.html",
+            "says": "How a garment is measured: \"FRONT LENGTH — Measure from the shoulder seam to the bottom hem of the garment.\" Recorded as from the high point of the shoulder, where the shoulder seam meets the collar; Zara does not say which point of the seam."
+          }
+        },
+        "sleeveLength": {
+          "label": "Sleeve length",
+          "method": "shoulder-seam-to-cuff",
+          "methodSource": {
+            "url": "https://www.zara.com/us/en/basic-relaxed-fit-hoodie-p00761350.html",
+            "says": "How a garment is measured: \"SLEEVE LENGTH — Measure from the shoulder/sleeve seam to the hem of the sleeve.\""
+          }
+        },
+        "shoulderWidth": {
+          "label": "Back width",
+          "method": "seam-to-seam",
+          "methodSource": {
+            "url": "https://www.zara.com/us/en/basic-relaxed-fit-hoodie-p00761350.html",
+            "says": "How a garment is measured: \"BACK WIDTH — Measure from the shoulder/sleeve seam to the other shoulder/sleeve seam.\""
+          }
+        }
+      },
+      "sizes": {
+        "S": {
+          "chestWidth": {
+            "value": 64.5,
+            "text": "64.5"
+          },
+          "bodyLength": {
+            "value": 65.5,
+            "text": "65.5"
+          },
+          "sleeveLength": {
+            "value": 64,
+            "text": "64.0"
+          },
+          "shoulderWidth": {
+            "value": 55.5,
+            "text": "55.5"
+          }
+        },
+        "M": {
+          "chestWidth": {
+            "value": 66,
+            "text": "66.0"
+          },
+          "bodyLength": {
+            "value": 67,
+            "text": "67.0"
+          },
+          "sleeveLength": {
+            "value": 65,
+            "text": "65.0"
+          },
+          "shoulderWidth": {
+            "value": 56.5,
+            "text": "56.5"
+          }
+        },
+        "L": {
+          "chestWidth": {
+            "value": 67.5,
+            "text": "67.5"
+          },
+          "bodyLength": {
+            "value": 68.5,
+            "text": "68.5"
+          },
+          "sleeveLength": {
+            "value": 66,
+            "text": "66.0"
+          },
+          "shoulderWidth": {
+            "value": 57.5,
+            "text": "57.5"
+          }
+        },
+        "XL": {
+          "chestWidth": {
+            "value": 69,
+            "text": "69.0"
+          },
+          "bodyLength": {
+            "value": 70,
+            "text": "70.0"
+          },
+          "sleeveLength": {
+            "value": 67,
+            "text": "67.0"
+          },
+          "shoulderWidth": {
+            "value": 58.5,
+            "text": "58.5"
+          }
+        },
+        "XXL": {
+          "chestWidth": {
+            "value": 70.5,
+            "text": "70.5"
+          },
+          "bodyLength": {
+            "value": 71.5,
+            "text": "71.5"
+          },
+          "sleeveLength": {
+            "value": 68,
+            "text": "68.0"
+          },
+          "shoulderWidth": {
+            "value": 59.5,
+            "text": "59.5"
+          }
+        }
+      }
+    }
+  },
+  "sources": [
+    {
+      "url": "https://www.zara.com/us/en/basic-relaxed-fit-hoodie-p00761350.html",
+      "what": "product page (reference 0761/350): Description, Composition & care, Product Measurements (cm and in) and How a garment is measured",
+      "retrievedAt": "2026-10-16"
+    }
+  ],
+  "retrievedAt": "2026-10-16",
+  "verification": {
+    "status": "unverified",
+    "checkedBy": null,
+    "checkedAt": null
+  },
+  "notes": [
+    "Sold under MAN; the product's offers list S, M, L, XL, XXL.",
+    "Recorded in centimetres, Zara's own values; its inch table is the same numbers converted to one decimal.",
+    "Zara publishes the finished garment only, no body chart. \"Arm circumference\" is published but not recorded (no such dimension in the schema).",
+    "Construction: Zara does not say whether the sleeves are set-in, raglan or dropped, so construction.sleeve is unknown.",
+    "Back width (55.5-59.5 cm) is below the chest width (64.5-70.5 cm) — usual for a set-in sleeve, but Zara does not say how the sleeves are set."
+  ]
+}

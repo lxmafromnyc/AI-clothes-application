@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Compare before buying — Fynd</title>
+<meta name="description" content="Set a hoodie or sweatshirt you already love beside every size of another, measurement by measurement.">
+<meta name="referrer" content="same-origin">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23111111'/><text x='16' y='23' font-family='Helvetica,Arial,sans-serif' font-size='19' font-weight='700' fill='white' text-anchor='middle'>F</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/styles.css">
+<meta name="findwear-api" content="https://ai-clothes-application.vercel.app/api/interpret">
+<script>document.documentElement.classList.add('js');</script>
+</head>
+<body data-page="compare">
+
+<a class="skip-link" href="#compare">Skip to the comparison</a>
+
+<header class="site-header">
+  <div class="container">
+    <div class="nav">
+      <a class="brand" href="index.html" aria-label="Fynd — home">
+        <span class="brand-mark" aria-hidden="true">F</span>
+        <span class="brand-word">Fynd</span>
+      </a>
+      <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" aria-label="Open menu"><span></span></button>
+      <nav aria-label="Main">
+        <ul class="nav-links" id="site-nav">
+          <li><a href="index.html">Fit guide</a></li>
+          <li><a href="compare.html" aria-current="page">Compare</a></li>
+          <li><a href="fit-profile.html">Fit profile</a></li>
+          <li><a href="pricing.html">Pricing</a></li>
+          <li><a href="about.html">About</a></li>
+          <li><a href="account.html">Account</a></li>
+        </ul>
+      </nav>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+  <!-- Compare before buying. assets/compare.js runs it:
+         1  your fit reference — a hoodie or sweatshirt you own and like,
+            measured laid flat (saved to the fit profile, per type)
+         2  a hoodie or sweatshirt Fynd has sizing for
+         3  every size of it beside your reference, difference by
+            difference (api/size-recommendation.js?compare=1)
+         4  how it fitted, once tried (fit feedback)
+       Nothing is compared on the page: the server works it out from the
+       shopper's own profile and the product's checked measurements. -->
+  <section id="compare">
+    <div class="container">
+      <header class="page-head page-head--center">
+        <h1>Compare before buying</h1>
+        <p>Set a hoodie or sweatshirt you already love beside every size of another — chest, length, shoulders and sleeves. The physical fit of garments, not just their size labels.</p>
+      </header>
+
+      <div class="profile-main compare-main" id="compare-root">
+        <p class="billing-note" id="compare-note" role="status" hidden></p>
+        <p class="profile-loading" id="compare-loading">Loading…</p>
+
+        <!-- Signed out: references and feedback belong to an account. -->
+        <div class="detail-card" id="compare-signed-out" hidden>
+          <h2 class="profile-guide-title">Sign in to compare</h2>
+          <p class="detail-text">Your reference garment and your fit feedback are kept on your Fynd account, visible only to you.</p>
+          <div class="btn-row detail-action"><a class="btn btn-primary" href="account.html">Sign in or create an account</a></div>
+        </div>
+
+        <div id="compare-app" hidden>
+
+          <!-- ================================================ 1 your reference -->
+          <section class="profile-section compare-step" id="reference-section" aria-labelledby="reference-title">
+            <p class="compare-step-count">Step 1</p>
+            <h2 class="profile-guide-title" id="reference-title">Your fit reference</h2>
+            <p class="detail-text">A hoodie or sweatshirt you own that fits the way you like. Its measurements are what every size is compared with.</p>
+
+            <fieldset class="compare-type">
+              <legend class="profile-label">Which do you want to compare?</legend>
+              <div class="choices">
+                <label class="choice"><input type="radio" name="refType" value="hoodies" checked><span>Hoodies</span></label>
+                <label class="choice"><input type="radio" name="refType" value="sweatshirts"><span>Sweatshirts</span></label>
+              </div>
+            </fieldset>
+
+            <!-- what is saved, said back -->
+            <div class="compare-ref-saved" id="ref-saved" hidden>
+              <dl class="compare-ref-list" id="ref-saved-list"></dl>
+              <p class="detail-text compare-ref-hint" id="ref-saved-hint" hidden></p>
+              <div class="btn-row detail-action">
+                <button class="btn btn-secondary" type="button" id="ref-edit">Edit or replace</button>
+                <button class="link-btn" type="button" id="ref-delete">Delete this reference</button>
+              </div>
+            </div>
+            <div class="compare-ref-empty" id="ref-empty" hidden>
+              <p class="detail-text" id="ref-empty-text">No reference yet. You can still look at products — but measuring one you own is what makes the comparison precise.</p>
+              <div class="btn-row detail-action"><button class="btn btn-primary" type="button" id="ref-add">Add a reference</button></div>
+            </div>
+
+            <!-- the guided measuring form -->
+            <form class="compare-ref-form" id="ref-form" novalidate hidden>
+              <h3 class="compare-sub" id="ref-form-title">Measure it laid flat</h3>
+              <p class="detail-text">Lay the garment flat on a table, smooth it out, and measure the garment — not yourself.</p>
+              <figure class="compare-diagram" aria-labelledby="ref-diagram-caption">
+                <svg viewBox="0 0 240 200" role="img" aria-labelledby="ref-diagram-caption">
+                  <path class="diagram-garment" d="M88 22 Q120 40 152 22 L196 40 L226 150 L202 158 L176 78 L176 186 L64 186 L64 78 L38 158 L14 150 L44 40 Z"/>
+                  <g class="diagram-line diagram-line--chest"><line x1="66" y1="86" x2="174" y2="86"/><text x="120" y="80">A</text></g>
+                  <g class="diagram-line diagram-line--length"><line x1="100" y1="30" x2="100" y2="184"/><text x="108" y="140">B</text></g>
+                  <g class="diagram-line diagram-line--shoulder"><line x1="46" y1="44" x2="194" y2="44"/><text x="120" y="58">C</text></g>
+                  <g class="diagram-line diagram-line--sleeve"><line x1="196" y1="42" x2="224" y2="150"/><text x="218" y="92">D</text></g>
+                </svg>
+                <figcaption id="ref-diagram-caption">A chest, armpit to armpit · B body length, top of the shoulder to the hem · C shoulders, seam to seam · D sleeve, shoulder seam to cuff</figcaption>
+              </figure>
+
+              <div class="profile-grid">
+                <div class="profile-field" data-field="anchor.brand">
+                  <label class="profile-label" for="ref-brand">Brand</label>
+                  <input class="profile-input" type="text" id="ref-brand" list="ref-brands" maxlength="60" autocomplete="off" placeholder="Like Carhartt">
+                  <datalist id="ref-brands"></datalist>
+                  <p class="profile-error"></p>
+                </div>
+                <div class="profile-field" data-field="anchor.size">
+                  <label class="profile-label" for="ref-size">Size on the label</label>
+                  <span class="select-wrap"><select class="profile-select" id="ref-size"></select></span>
+                  <p class="profile-error"></p>
+                </div>
+              </div>
+              <div class="profile-field" data-field="anchor.product">
+                <label class="profile-label" for="ref-product">Product name or link <span class="guide-optional">optional</span></label>
+                <input class="profile-input" type="text" id="ref-product" maxlength="300" autocomplete="off" placeholder="Its name, or paste a link — if you know it">
+                <p class="profile-error"></p>
+              </div>
+
+              <fieldset class="compare-units">
+                <legend class="profile-label">Measured in</legend>
+                <div class="choices">
+                  <label class="choice"><input type="radio" name="refUnit" value="in" checked><span>Inches</span></label>
+                  <label class="choice"><input type="radio" name="refUnit" value="cm"><span>Centimetres</span></label>
+                </div>
+              </fieldset>
+              <div class="compare-measure-grid" id="ref-measures"></div>
+
+              <fieldset class="compare-units">
+                <legend class="profile-label">What matters most to you? <span class="guide-optional">optional</span></legend>
+                <div class="choices" id="ref-priorities"></div>
+              </fieldset>
+              <fieldset class="compare-units">
+                <legend class="profile-label">How well does it fit?</legend>
+                <div class="choices">
+                  <label class="choice"><input type="radio" name="refAnswer" value="perfect" checked><span>Exactly how I like</span></label>
+                  <label class="choice"><input type="radio" name="refAnswer" value="close"><span>Close</span></label>
+                </div>
+              </fieldset>
+              <div class="profile-field" data-field="anchor.notes">
+                <label class="profile-label" for="ref-notes">Notes on the fit you like <span class="guide-optional">optional</span></label>
+                <textarea class="profile-input compare-notes" id="ref-notes" maxlength="200" rows="2" placeholder="Like: roomy in the body, sleeves just past the wrist"></textarea>
+                <p class="profile-error"></p>
+              </div>
+              <p class="profile-error compare-form-error" id="ref-form-error" role="alert"></p>
+              <div class="btn-row">
+                <button class="btn btn-primary" type="submit" id="ref-save">Save reference</button>
+                <button class="btn btn-secondary" type="button" id="ref-cancel">Cancel</button>
+              </div>
+            </form>
+          </section>
+
+          <!-- ================================================ 2 choose a product -->
+          <section class="profile-section compare-step" id="product-section" aria-labelledby="product-title">
+            <p class="compare-step-count">Step 2</p>
+            <h2 class="profile-guide-title" id="product-title">Choose one to compare</h2>
+            <p class="detail-text">Hoodies and sweatshirts Fynd has sizing for. Only products whose finished-garment measurements have been checked can be compared size by size.</p>
+            <ul class="compare-products" id="product-list"></ul>
+          </section>
+
+          <!-- ================================================ 3 the comparison -->
+          <section class="profile-section compare-step" id="result-section" aria-labelledby="result-title" hidden>
+            <p class="compare-step-count">Step 3</p>
+            <h2 class="profile-guide-title" id="result-title">How each size compares</h2>
+            <p class="compare-summary" id="result-summary"></p>
+            <p class="compare-reliability" id="result-reliability"></p>
+            <div class="compare-unit-switch" id="result-units" hidden>
+              <span class="profile-label">Show in</span>
+              <div class="choices">
+                <label class="choice"><input type="radio" name="showUnit" value="in"><span>in</span></label>
+                <label class="choice"><input type="radio" name="showUnit" value="cm"><span>cm</span></label>
+              </div>
+            </div>
+            <div class="compare-table-wrap" id="result-table-wrap" hidden>
+              <table class="compare-table" id="result-table">
+                <caption class="sr-only">Each size's measurements and how they differ from your reference</caption>
+                <thead><tr><th scope="col">Size</th><th scope="col">Chest</th><th scope="col">Body length</th><th scope="col">Shoulders</th><th scope="col">Sleeves</th></tr></thead>
+                <tbody></tbody>
+              </table>
+            </div>
+            <ul class="compare-list" id="result-missing"></ul>
+            <details class="compare-details" id="result-context" hidden>
+              <summary>Fabric, stretch and construction</summary>
+              <dl class="compare-ref-list" id="result-context-list"></dl>
+              <p class="detail-text">Said for context only: Fynd doesn't adjust any size for them.</p>
+            </details>
+            <details class="compare-details" id="result-caveats-wrap" hidden>
+              <summary>How this was worked out, and its limits</summary>
+              <p class="detail-text" id="result-method"></p>
+              <ul class="compare-list" id="result-caveats"></ul>
+            </details>
+            <p class="detail-text"><a class="guide-link" id="result-link" href="#" rel="noopener" target="_blank" hidden>See it on the brand's site</a></p>
+          </section>
+
+          <!-- ================================================ 4 fit feedback -->
+          <section class="profile-section compare-step" id="feedback-section" aria-labelledby="feedback-title" hidden>
+            <p class="compare-step-count">Step 4</p>
+            <h2 class="profile-guide-title" id="feedback-title">Tried it on? Tell us how it fit</h2>
+            <ul class="compare-list" id="feedback-saved"></ul>
+            <form class="compare-feedback" id="feedback-form" novalidate>
+              <div class="profile-field" data-field="sizeTried">
+                <label class="profile-label" for="fb-size">Size you tried</label>
+                <span class="select-wrap"><select class="profile-select" id="fb-size"></select></span>
+                <p class="profile-error"></p>
+              </div>
+              <fieldset class="compare-units" data-field="asExpected">
+                <legend class="profile-label">Did it fit as you expected?</legend>
+                <div class="choices">
+                  <label class="choice"><input type="radio" name="fbExpected" value="yes"><span>Yes</span></label>
+                  <label class="choice"><input type="radio" name="fbExpected" value="no"><span>No</span></label>
+                </div>
+                <p class="profile-error"></p>
+              </fieldset>
+              <fieldset class="compare-units" id="fb-issues-field" data-field="issues" hidden>
+                <legend class="profile-label">What was off? Pick any.</legend>
+                <div class="choices">
+                  <label class="choice"><input type="checkbox" name="fbIssue" value="too-wide"><span>Too wide</span></label>
+                  <label class="choice"><input type="checkbox" name="fbIssue" value="too-narrow"><span>Too narrow</span></label>
+                  <label class="choice"><input type="checkbox" name="fbIssue" value="too-long"><span>Too long</span></label>
+                  <label class="choice"><input type="checkbox" name="fbIssue" value="too-short"><span>Too short</span></label>
+                </div>
+                <p class="profile-error"></p>
+              </fieldset>
+              <div class="profile-field" data-field="notes">
+                <label class="profile-label" for="fb-notes">Anything else? <span class="guide-optional">optional</span></label>
+                <textarea class="profile-input compare-notes" id="fb-notes" maxlength="500" rows="2"></textarea>
+                <p class="profile-error"></p>
+              </div>
+              <label class="compare-check" id="fb-reference-wrap"><input type="checkbox" id="fb-reference" checked> <span>It was compared with my saved reference</span></label>
+              <label class="compare-check" id="fb-consent-wrap" hidden><input type="checkbox" id="fb-consent"> <span>Keep my fit feedback on my account (only you can see it; you can delete it any time)</span></label>
+              <p class="profile-error compare-form-error" id="fb-error" role="alert"></p>
+              <div class="btn-row">
+                <button class="btn btn-primary" type="submit" id="fb-save">Save feedback</button>
+              </div>
+            </form>
+          </section>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="site-footer">
+  <div class="container">
+    <div class="footer-inner">
+      <a class="brand" href="index.html" aria-label="Fynd — home">
+        <span class="brand-mark" aria-hidden="true">F</span>
+        <span class="brand-word">Fynd</span>
+      </a>
+      <nav aria-label="Footer">
+        <ul class="footer-links">
+          <li><a href="index.html">Fit guide</a></li>
+          <li><a href="compare.html">Compare</a></li>
+          <li><a href="find-clothes.html">Search</a></li>
+          <li><a href="fit-profile.html">Fit profile</a></li>
+          <li><a href="pricing.html">Pricing</a></li>
+          <li><a href="about.html">About</a></li>
+          <li><a href="account.html">Account</a></li>
+        </ul>
+      </nav>
+    </div>
+    <p class="footer-note">Fynd is a demo experience. Live results come from a connected product source; when none is connected, sample items are shown and labelled as such.</p>
+  </div>
+</footer>
+
+<script src="assets/account.js"></script>
+<script src="assets/fit-profile-schema.js"></script>
+<script src="assets/compare.js"></script>
+<script src="assets/app.js"></script>
+</body>
+</html>

@@ -68,6 +68,16 @@ const UNITS = ['in', 'cm'];
 const FIT_CLASSES = ['slim', 'regular', 'relaxed', 'loose', 'oversized'];
 const STRETCH = ['none', 'low', 'moderate', 'high'];
 const VERIFICATION = ['unverified', 'verified'];
+/* How the sleeves are set, where the brand says (construction.sleeve);
+   null when it doesn't. Said beside a comparison, never scored. */
+const SLEEVE_TYPES = ['set-in', 'raglan', 'drop-shoulder'];
+/* Where a garment chart's numbers come from (charts.garment.origin):
+     official-published     the brand's own published finished-garment
+                            measurements (every record so far)
+     physical-measurement   somebody measured the garment itself, laid
+                            flat; names who and when
+   Absent reads as official-published. Estimates are never stored. */
+const ORIGINS = ['official-published', 'physical-measurement'];
 /* the garment each category holds, stored apart from the brand's own
    name for the product */
 const GARMENT_TYPES = { hoodies: ['pullover-hoodie'], sweatshirts: ['crewneck-sweatshirt'], tshirts: ['crewneck-tshirt'] };
@@ -145,7 +155,25 @@ function validate(record) {
     fail('material.stretch', `Stretch is ${STRETCH.join(', ')}, or null when the brand does not say.`);
   }
 
+  if (r.construction !== undefined) {
+    const c = r.construction;
+    if (!isPlainObject(c) || (c.sleeve !== null && !SLEEVE_TYPES.includes(c.sleeve))) {
+      fail('construction.sleeve', `Sleeves are ${SLEEVE_TYPES.join(', ')}, or null when the brand does not say.`);
+    } else if (c.sleeve && (typeof c.source !== 'string' || !c.source)) {
+      fail('construction.source', 'Say where the brand describes how the sleeves are set.');
+    } else if (c.notes !== undefined && c.notes !== null && (typeof c.notes !== 'string' || !c.notes)) {
+      fail('construction.notes', 'Construction notes, when kept, are the brand\'s own words.');
+    }
+  }
+
   const charts = isPlainObject(r.charts) ? r.charts : {};
+  if (isPlainObject(charts.garment) && charts.garment.origin !== undefined) {
+    const g = charts.garment;
+    if (!ORIGINS.includes(g.origin)) fail('charts.garment.origin', `Origin is ${ORIGINS.join(' or ')}.`);
+    else if (g.origin === 'physical-measurement' && (typeof g.measuredBy !== 'string' || !g.measuredBy.trim() || !isDate(g.measuredAt))) {
+      fail('charts.garment.origin', 'A garment measured by hand names who measured it and the date.');
+    }
+  }
   if (!charts.body && !charts.garment) fail('charts', 'A record needs a body chart, a garment chart, or both.');
   const checkChart = (kind, table) => {
     const chart = charts[kind];
@@ -224,6 +252,8 @@ module.exports = {
   LINES,
   FIT_CLASSES,
   STRETCH,
+  SLEEVE_TYPES,
+  ORIGINS,
   GARMENT_TYPES,
   BODY_DIMENSIONS,
   GARMENT_DIMENSIONS,

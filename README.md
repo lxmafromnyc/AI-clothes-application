@@ -2064,6 +2064,75 @@ own. Every answer carries `anchor`: where its evidence came from, how it was use
 (`garment`, `chest-range` or `not-used`), and which measurements were and weren't
 compared, and why.
 
+## Compare before buying (hoodies and sweatshirts)
+
+`compare.html` (in the main navigation as **Compare**) walks a shopper through
+four steps, each backed by the systems above rather than new ones:
+
+1. **My fit reference.** A hoodie or sweatshirt they own and like: brand, the size
+   on its label, optionally its product (name or link), and four measurements of
+   the garment **laid flat** — chest armpit to armpit, body length from the top of
+   the shoulder to the hem, shoulders seam to seam, sleeve from the shoulder seam
+   to the cuff — in inches or centimetres, with a diagram and how to take each.
+   Plus what matters most (chest, shoulders, sleeves, length) and short notes. It
+   is the type's favourite piece in the fit profile (`garments.hoodies` or
+   `garments.sweatshirts`: `favorite` and `anchor`), saved through the guide's own
+   `guide` action, so the guide, the fit profile page and this page all edit the
+   same answer. Measurements are stored exactly as entered, in their unit, and
+   converted once, for display. Save, edit, replace and delete are on the page; a
+   hoodie reference never touches the T-shirt one. Nothing needs measuring to look
+   around, but without measurements nothing is compared.
+2. **A product.** `GET /api/size-recommendation` lists each record with
+   `garmentDimensions` (the finished-garment dimensions it publishes for every
+   size, and how each is measured), `garmentOrigin`, and `comparable` — true only
+   for a **verified** record with finished-garment measurements.
+3. **The comparison.** `GET /api/size-recommendation?product=<id>&compare=1[&unit=]`
+   runs `engine.compare()` on the caller's own profile: every size beside the
+   reference, each dimension's **signed difference** in the reference's unit
+   ("2 cm wider", "¾ in shorter"), the closest size, what wasn't compared and why,
+   how reliable it is, and the product's fabric, stretch and construction in the
+   brand's words ("unknown" where it says nothing) — context, never a numerical
+   adjustment.
+   - Ranking: Σ weight × priority × (difference / tolerance)², with the
+     category's own weights (chest 1, lengths 0.6, shoulders 0.3 with a tighter
+     tolerance) and "what matters most" doubling a dimension. Deterministic; the
+     constants are hypotheses for feedback to correct.
+   - Only finished-garment measurements are used, on both sides, and only when
+     measured the same way (a flat chest and a circumference are related by × 2,
+     called estimated). A body chart is never compared with a garment.
+   - It **recommends** only with a verified product and at least three of the four
+     dimensions compared, the chest among them. With fewer it shows the closest
+     size and every difference it can, calls it partial, and recommends nothing.
+     An unverified product gives no numbers at all. A size missing a measurement
+     is shown but not ranked.
+   - A reference found in the catalogue (by link, or a name only one record
+     answers to) uses that product's published measurements instead of the
+     shopper's own; a sweatshirt reference can stand in for a hoodie, with
+     reliability lowered and said.
+4. **Fit feedback.** Once tried: the size, whether it fitted as expected, what was
+   off (too wide, too narrow, too long, too short — any of them), notes, and
+   whether it was compared with the reference — of which the server keeps a
+   snapshot from the shopper's own profile. Consent first, one entry per product
+   and size (telling it again updates it), editable without ever moving to another
+   size, deletable. `summarise()` counts consenting accounts' feedback per product
+   and size, reads nothing below ten accounts, and flags opposite reports; nothing
+   in the engine reads feedback.
+
+**What production can compare today.** Only the two verified UNIQLO records (Sweat
+Pullover Hoodie, Sweatshirt) publish finished-garment measurements, and UNIQLO
+measures body length and sleeve from the **centre back**, while a reference is
+measured from the shoulder. So a home-measured reference against UNIQLO compares
+chest and shoulders only — partial, never a recommendation. A reference that *is* a
+UNIQLO product (found by its link) compares all four. Four Zara hoodies, measured
+exactly the way a reference is, are recorded and **unverified** pending an approved
+source check; until then they compare nothing. Nike and Carhartt publish body charts
+only and are never compared.
+
+For hoodies and sweatshirts, a reference of brand and size alone keeps the reading
+the evaluation set was worked out on in `recommend()` (that brand's record for the
+size); T-shirts read it only as a chest range. Bringing hoodies to the stricter rule
+means reviewing the evaluation set's hand-worked cases first.
+
 ### The data
 
 `api/_sizing/records/*.json`, one per product, region and sizing line, validated
@@ -2246,8 +2315,17 @@ node scripts/test-size-eval.js   # the evaluation set and its metrics
   checked every T-shirt answer is "not enough data: unverified". One product per
   brand; a favourite from any other product is kept as context, or used through
   its own measurements.
-- A recommendation panel on product cards.
-- Using fit feedback to adjust suggestions, and any aggregate use of it.
+- A recommendation panel on search result cards (the compare page covers the
+  sizing catalogue only).
+- Using fit feedback to adjust suggestions. `summarise()` exists, but no job
+  gathers accounts' feedback yet (the store has no scan), and nothing acts on it.
+- Four Zara hoodie records await an approved source check; two of them need a
+  decision first (Compact Boxy: back width wider than the chest, likely dropped
+  shoulders; Relaxed Fit Hoodie Sweatshirt: very long sleeve and narrow back,
+  likely raglan), since their sleeve and shoulder figures aren't comparable with a
+  set-in reference.
+- Centre-back measurements for a reference, which would let UNIQLO compare all
+  four dimensions.
 - Ease, fit bands and weights are starting hypotheses; nothing has calibrated
   them yet.
 - Lengths, sleeves and shoulders get a class only against a garment the shopper

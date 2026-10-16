@@ -14,7 +14,7 @@
      4  what usually gets the fit wrong       troubleZones, from that
                                               type's own list
 
-   For T-shirts, step 2 first asks whether they own one that fits
+   For T-shirts, hoodies and sweatshirts, step 2 first asks whether they own one that fits
    exactly how they like (favorite: perfect, close, or not really).
    Brand and size follow only after Yes or Close, and below them, folded
    away and every part optional, what Fynd can compare other T-shirts
@@ -100,6 +100,7 @@
   const favoriteMore = $('favorite-more');
   const anchorBlock = $('anchor-block');
   const product = $('favorite-product');
+  const notesBox = $('favorite-notes');
   const likesBox = $('favorite-likes');
   const measuresBox = $('favorite-measures');
   const likes = () => Array.from(likesBox.querySelectorAll('input[name="favoriteLikes"]'));
@@ -258,7 +259,7 @@
 
   const BLANK = () => ({
     name: '', brand: '', other: '', size: '', length: '', line: '', goal: '', zones: [], none: false,
-    favorite: '', product: '', likes: [], unit: 'in', measures: {}
+    favorite: '', product: '', likes: [], unit: 'in', measures: {}, notes: ''
   });
 
   function readDraft() {
@@ -281,12 +282,13 @@
       product: product.value,
       likes: likes().filter((l) => l.checked).map((l) => l.value),
       unit: unit ? unit.value : 'in',
-      measures
+      measures,
+      notes: notesBox.value
     };
   }
 
   const isBlank = (d) => !d.name.trim() && !d.line && !d.brand && !d.other.trim() && !d.size && !d.length && !d.goal && !d.zones.length && !d.none
-    && !d.favorite && !d.product.trim() && !d.likes.length && !Object.values(d.measures).some((v) => String(v).trim());
+    && !d.favorite && !d.product.trim() && !d.likes.length && !Object.values(d.measures).some((v) => String(v).trim()) && !d.notes.trim();
 
   /* What is saved for a type, as the form shows it. */
   function draftFromSaved(g, entry) {
@@ -307,6 +309,7 @@
       d.favorite = entry.favorite || (a && (a.brand || a.size) ? 'perfect' : '');
       if (a && a.product) d.product = a.product.url || a.product.name || '';
       if (a && Array.isArray(a.likes)) d.likes = a.likes.slice();
+      if (a && a.notes) d.notes = a.notes;
       if (a && a.measurements) {
         d.unit = a.measurements.unit;
         Schema.GARMENT_MEASURE_KEYS.forEach((key) => {
@@ -346,8 +349,9 @@
     likes().forEach((l) => { l.checked = d.likes.includes(l.value); });
     form.querySelectorAll('input[name="favoriteUnit"]').forEach((r) => { r.checked = r.value === d.unit; });
     Schema.GARMENT_MEASURE_KEYS.forEach((key) => { measureInput(key).value = d.measures[key] || ''; });
+    notesBox.value = d.notes;
     /* details already given are shown, not folded away */
-    favoriteMore.open = Boolean(d.product.trim() || d.likes.length || Object.values(d.measures).some((v) => String(v).trim()));
+    favoriteMore.open = Boolean(d.product.trim() || d.likes.length || Object.values(d.measures).some((v) => String(v).trim()) || d.notes.trim());
   }
 
   /* Puts the type on screen aside, and brings this one's own answers. */
@@ -429,6 +433,7 @@
       const unit = form.querySelector('input[name="favoriteUnit"]:checked');
       out.measurements = Object.assign({ unit: unit ? unit.value : null }, measures);
     }
+    if (notesBox.value.trim()) out.notes = notesBox.value.trim();
     return out;
   }
 
@@ -518,6 +523,7 @@
     if (fav && fav.product) add('Product', fav.product);
     if (fav && fav.likes) add('What makes it fit well', fav.likes);
     if (fav && fav.measurements) add('Its measurements', fav.measurements);
+    if (fav && fav.notes) add('Notes', fav.notes);
     add(words.fitLabel(g), said.fitGoal);
     add('What gets the fit wrong', said.troubleZones);
     if (said.line) add('Sized as', said.line);

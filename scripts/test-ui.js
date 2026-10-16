@@ -130,8 +130,23 @@ const withRowField = (id, field, value) => {
   return CATALOGUE_SOURCE.slice(0, start) + block + CATALOGUE_SOURCE.slice(end);
 };
 
+/* /api/size-recommendation for the compare page's audit: the real
+   records and the real engine, against whatever profile the stub holds.
+   includeUnverified, so the audit sees a whole table; the engine's own
+   gating is tested in test-sizing.js and test-e2e.js. */
+const sizingRecords = require('../api/_sizing/records');
+const sizingEngine = require('../api/_sizing/engine');
+
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
+
+  if (url.pathname === '/api/size-recommendation') {
+    res.setHeader('Content-Type', 'application/json');
+    const id = url.searchParams.get('product');
+    if (!id) return res.end(JSON.stringify({ products: sizingRecords.RECORDS.map(sizingRecords.summary) }));
+    const unit = url.searchParams.get('unit') || undefined;
+    return res.end(JSON.stringify({ comparison: sizingEngine.compare(fitProfileState.profile, sizingRecords.byId(id), { includeUnverified: true, unit }) }));
+  }
 
   if (url.pathname === '/api/fit-profile') {
     res.setHeader('Content-Type', 'application/json');
@@ -2756,7 +2771,7 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
 
   console.log('\ntypography and text styling');
 
-  const PAGES = ['index.html', 'find-clothes.html', 'about.html', 'pricing.html', 'account.html', 'fit-profile.html'];
+  const PAGES = ['index.html', 'find-clothes.html', 'about.html', 'pricing.html', 'account.html', 'fit-profile.html', 'compare.html'];
 
   /* each page is given a moment to render whatever it builds from the
      catalogue, so cards, badges and pills are audited too, not just the
@@ -2779,7 +2794,9 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
       'account.html': '#panel-choose:not([hidden])',
       /* signed out, the fit profile page is the way to sign in; the
          form is audited signed in, below */
-      'fit-profile.html': '#profile-signed-out:not([hidden])'
+      'fit-profile.html': '#profile-signed-out:not([hidden])',
+      /* signed out, the compare page says why it needs an account */
+      'compare.html': '#compare-signed-out:not([hidden])'
     }[file];
     if (built) await page.waitForSelector(built, { timeout: 10000 });
     return page;
@@ -2904,6 +2921,38 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
       await audit('the account step, with an error');
       await page.close();
     }
+  });
+
+  await test('compare before buying — reference form, product list, the comparison table and feedback — is set in a palette ink, legible, and fits a phone', async () => {
+    accountState = accountReply({ extra: SIGNED_IN });
+    /* ILLUSTRATIVE reference measurements, for the audit only */
+    fitProfileState = fitProfileReply(Object.assign(require('../assets/fit-profile-schema.js').empty(), {
+      garments: { hoodies: { favorite: 'perfect', fitGoal: null, troubleZones: null, line: null, anchor: { brand: 'Carhartt', size: 'L', likes: ['chest'], notes: 'Roomy in the body', measurements: { unit: 'cm', chestWidth: 64, bodyLength: 70, shoulderWidth: 56, sleeveLength: 65 } } } }
+    }));
+    for (const viewport of [{ width: 1280, height: 900 }, { width: 360, height: 740 }]) {
+      const page = await openPage('compare.html', { viewport });
+      await page.waitForSelector('#compare-root[data-ready]', { timeout: 10000 });
+      const audit = guideAudit(page, viewport);
+      await page.waitForSelector('#ref-saved:not([hidden])');
+      await audit('the saved reference and the products');
+      await page.click('#ref-edit');
+      await audit('the measuring form, with its diagram');
+      await page.click('#ref-cancel');
+      await page.click('[data-product="zara-00761810-basic-heavyweight-hoodie-us"]');
+      await page.waitForSelector('#result-table-wrap:not([hidden])');
+      await page.click('#result-context summary');
+      await page.click('#result-caveats-wrap summary');
+      await page.check('input[name="fbExpected"][value="no"]');
+      await audit('a whole comparison, its context and limits, and the feedback form');
+      /* the table may scroll sideways inside its box; the page never does */
+      assert.strictEqual(await page.$$eval('#result-table tbody tr', (rows) => rows.length), 6, 'your reference and five sizes');
+      await page.click('[data-product="nike-fn3859-club-pullover-fleece-hoodie-us"]');
+      await page.waitForFunction(() => /only who each size is cut for|publishes who each size is cut for/.test(document.querySelector('#result-summary').textContent));
+      await audit('a product that cannot be compared');
+      await page.close();
+    }
+    accountState = accountReply({});
+    fitProfileState = fitProfileReply(null);
   });
 
   await test('the favourite T-shirt question and its details are set in a palette ink, legible, and fit a phone', async () => {

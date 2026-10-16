@@ -14,8 +14,12 @@
 
    GET  ?part=feedback                              -> { feedback }
    POST { action: "feedback-consent", consent }     -> { feedback }
-   POST { action: "feedback-add", entry }           -> { feedback, entry }
-                                                       (409 without consent)
+   POST { action: "feedback-add", entry }           -> { feedback, entry, updated }
+                                                       (409 without consent; the same
+                                                       product and size again updates
+                                                       its entry)
+   POST { action: "feedback-update", id, entry }    -> { feedback, entry }
+                                                       (its product and size stay)
    POST { action: "feedback-delete", id }           -> { feedback }
    POST { action: "feedback-delete-all" }           -> { feedback, deleted }
 
@@ -73,13 +77,20 @@ async function feedbackAction(res, userId, action, body) {
       if (result.errors.length) return res.status(400).json({ error: result.errors[0].message, reason: 'invalid', errors: result.errors });
       return res.status(200).json({ feedback: feedbackShape(result.feedback) });
     }
-    if (action === 'feedback-add') {
-      const result = await fitFeedback.add(userId, body.entry);
+    if (action === 'feedback-add' || action === 'feedback-update') {
+      /* the caller's own profile, for the snapshot of the reference the
+         entry was compared against — never a reference the page sends */
+      const wantsReference = body.entry && typeof body.entry === 'object' && body.entry.withReference === true;
+      const profile = wantsReference ? (await fitProfiles.read(userId)).profile : null;
+      const result = action === 'feedback-add'
+        ? await fitFeedback.add(userId, body.entry, { profile })
+        : await fitFeedback.update(userId, typeof body.id === 'string' ? body.id : '', body.entry, { profile });
       if (result.consentRequired) return res.status(409).json({ error: result.errors[0].message, reason: 'consent-required' });
+      if (result.notFound) return res.status(404).json({ error: 'No such feedback.', reason: 'not-found' });
       if (result.errors.length) {
         return res.status(400).json({ error: result.errors.length === 1 ? result.errors[0].message : 'Some of that needs fixing before it can be saved.', reason: 'invalid', errors: result.errors });
       }
-      return res.status(200).json({ feedback: feedbackShape(result.feedback), entry: result.entry });
+      return res.status(200).json({ feedback: feedbackShape(result.feedback), entry: result.entry, updated: Boolean(result.updated) || action === 'feedback-update' });
     }
     if (action === 'feedback-delete') {
       const removed = await fitFeedback.removeEntry(userId, typeof body.id === 'string' ? body.id : '');

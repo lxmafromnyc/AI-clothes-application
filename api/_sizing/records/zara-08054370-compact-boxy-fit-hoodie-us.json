@@ -1,0 +1,185 @@
+{
+  "sizingVersion": 2,
+  "id": "zara-08054370-compact-boxy-fit-hoodie-us",
+  "brand": "Zara",
+  "product": {
+    "name": "COMPACT BOXY FIT HOODIE",
+    "audience": "men",
+    "pageTitle": "COMPACT BOXY FIT HOODIE - Eggplant | ZARA United States",
+    "code": "08054370",
+    "url": "https://www.zara.com/us/en/compact-boxy-fit-hoodie-p08054370.html",
+    "garmentType": "pullover-hoodie"
+  },
+  "category": "hoodies",
+  "region": "US",
+  "line": "men",
+  "sizeScale": "men",
+  "units": "cm",
+  "sizes": [
+    "S",
+    "M",
+    "L",
+    "XL"
+  ],
+  "lengthOptions": [
+    "regular"
+  ],
+  "fit": {
+    "brandWords": "Boxy fit hoodie in compact, double-knit cotton.",
+    "fitClass": "oversized",
+    "source": "product page, Description"
+  },
+  "material": {
+    "composition": "Outer shell: 100% cotton / Lining (main fabric): 100% polyester / Hood: 100% cotton",
+    "stretch": null,
+    "source": "product page, Composition & care. Zara does not say how much the fabric stretches."
+  },
+  "construction": {
+    "sleeve": null,
+    "notes": null,
+    "source": null
+  },
+  "charts": {
+    "garment": {
+      "measures": "finished-garment",
+      "origin": "official-published",
+      "label": "Product Measurements, Product dimensions (CM): \"The garment is measured flat\"",
+      "source": "https://www.zara.com/us/en/compact-boxy-fit-hoodie-p08054370.html",
+      "retrievedAt": "2026-10-16",
+      "dimensions": {
+        "chestWidth": {
+          "label": "Chest",
+          "method": "flat-width-armpit-to-armpit",
+          "methodSource": {
+            "url": "https://www.zara.com/us/en/compact-boxy-fit-hoodie-p08054370.html",
+            "says": "How a garment is measured: \"CHEST — Measure from side to side at armhole height.\" Product dimensions: \"The garment is measured flat\"."
+          },
+          "derivedCircumference": {
+            "status": "estimated",
+            "factor": 2,
+            "derivation": "Zara measures the garment flat, side to side at armhole height: a width, not a circumference. Where Fynd needs the chest around, it takes 2 × the published flat width and labels it estimated; the derived value is never stored here."
+          }
+        },
+        "bodyLength": {
+          "label": "Front length",
+          "method": "high-point-shoulder-to-hem",
+          "methodSource": {
+            "url": "https://www.zara.com/us/en/compact-boxy-fit-hoodie-p08054370.html",
+            "says": "How a garment is measured: \"FRONT LENGTH — Measure from the shoulder seam to the bottom hem of the garment.\" Recorded as from the high point of the shoulder, where the shoulder seam meets the collar; Zara does not say which point of the seam."
+          }
+        },
+        "sleeveLength": {
+          "label": "Sleeve length",
+          "method": "shoulder-seam-to-cuff",
+          "methodSource": {
+            "url": "https://www.zara.com/us/en/compact-boxy-fit-hoodie-p08054370.html",
+            "says": "How a garment is measured: \"SLEEVE LENGTH — Measure from the shoulder/sleeve seam to the hem of the sleeve.\""
+          }
+        },
+        "shoulderWidth": {
+          "label": "Back width",
+          "method": "seam-to-seam",
+          "methodSource": {
+            "url": "https://www.zara.com/us/en/compact-boxy-fit-hoodie-p08054370.html",
+            "says": "How a garment is measured: \"BACK WIDTH — Measure from the shoulder/sleeve seam to the other shoulder/sleeve seam.\""
+          }
+        }
+      },
+      "sizes": {
+        "S": {
+          "chestWidth": {
+            "value": 63,
+            "text": "63.0"
+          },
+          "bodyLength": {
+            "value": 58.5,
+            "text": "58.5"
+          },
+          "sleeveLength": {
+            "value": 57.5,
+            "text": "57.5"
+          },
+          "shoulderWidth": {
+            "value": 68.5,
+            "text": "68.5"
+          }
+        },
+        "M": {
+          "chestWidth": {
+            "value": 65,
+            "text": "65.0"
+          },
+          "bodyLength": {
+            "value": 61.5,
+            "text": "61.5"
+          },
+          "sleeveLength": {
+            "value": 59.5,
+            "text": "59.5"
+          },
+          "shoulderWidth": {
+            "value": 69.5,
+            "text": "69.5"
+          }
+        },
+        "L": {
+          "chestWidth": {
+            "value": 67,
+            "text": "67.0"
+          },
+          "bodyLength": {
+            "value": 64.5,
+            "text": "64.5"
+          },
+          "sleeveLength": {
+            "value": 61.5,
+            "text": "61.5"
+          },
+          "shoulderWidth": {
+            "value": 70.5,
+            "text": "70.5"
+          }
+        },
+        "XL": {
+          "chestWidth": {
+            "value": 69,
+            "text": "69.0"
+          },
+          "bodyLength": {
+            "value": 67.5,
+            "text": "67.5"
+          },
+          "sleeveLength": {
+            "value": 63.5,
+            "text": "63.5"
+          },
+          "shoulderWidth": {
+            "value": 71.5,
+            "text": "71.5"
+          }
+        }
+      }
+    }
+  },
+  "sources": [
+    {
+      "url": "https://www.zara.com/us/en/compact-boxy-fit-hoodie-p08054370.html",
+      "what": "product page (reference 8054/370): Description, Composition & care, Product Measurements (cm and in) and How a garment is measured",
+      "retrievedAt": "2026-10-16"
+    }
+  ],
+  "retrievedAt": "2026-10-16",
+  "verification": {
+    "status": "unverified",
+    "checkedBy": null,
+    "checkedAt": null
+  },
+  "notes": [
+    "Sold under MAN; the product's offers list S, M, L, XL.",
+    "Recorded in centimetres, Zara's own values; its inch table is the same numbers converted to one decimal.",
+    "Zara publishes the finished garment only, no body chart. \"Arm circumference\" is published but not recorded (no such dimension in the schema).",
+    "Construction: Zara does not say whether the sleeves are set-in, raglan or dropped, so construction.sleeve is unknown.",
+    "NEEDS APPROVAL: back width (68.5-71.5 cm) is wider than the chest (63-69 cm), which points to dropped shoulders; Zara does not say so. With the shoulder seam on the upper arm, its back width and sleeve are not comparable with a set-in garment's, even though both are measured \"seam to seam\" and \"from the seam\".",
+    "\"Boxy fit\" is mapped to the oversized fit class."
+  ]
+}

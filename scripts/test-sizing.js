@@ -146,15 +146,19 @@ async function withUnverifiedRecords(fn) {
 
 section('sizing records');
 
-await test('all ten records load, each from the brand\'s own site: the six fleece tops verified by the source audit, the four T-shirts not yet', () => {
+/* the six records approved by the source audit of 2026-10-10; every
+   other record waits for its own approved check */
+const VERIFIED_IDS = [UQ_HOODIE, UQ_SWEAT, NIKE_HOODIE, NIKE_CREW, CARHARTT_HOODIE, CARHARTT_CREW];
+
+await test('all fourteen records load, each from the brand\'s own site: the six audited fleece tops verified, every other record not yet', () => {
   assert.deepStrictEqual(sizing.problems, []);
-  assert.strictEqual(sizing.RECORDS.length, 10);
+  assert.strictEqual(sizing.RECORDS.length, 14);
   assert.deepStrictEqual([...new Set(sizing.RECORDS.map((r) => r.brand))].sort(), ['Carhartt', 'H&M', 'Nike', 'UNIQLO', 'Zara']);
   assert.deepStrictEqual([...new Set(sizing.RECORDS.map((r) => r.category))].sort(), ['hoodies', 'sweatshirts', 'tshirts']);
   sizing.RECORDS.forEach((r) => {
-    if (r.category === 'tshirts') {
-      /* copied from the brands' pages on 2026-10-14; only an approved
-         check against those pages may mark them verified */
+    if (!VERIFIED_IDS.includes(r.id)) {
+      /* copied from the brands' pages; only an approved check against
+         those pages may mark them verified */
       assert.deepStrictEqual(r.verification, { status: 'unverified', checkedBy: null, checkedAt: null }, r.id);
       assert.ok(!sizingSchema.isVerified(r), r.id);
     } else {
@@ -185,7 +189,8 @@ await test('records keep exactly what each brand publishes: UNIQLO both charts, 
   assert.match(uq.charts.garment.dimensions.chestWidth.methodSource.says, /armpit to armpit/);
   sizing.RECORDS.forEach((r) => {
     if (r.charts.body) assert.strictEqual(r.charts.body.dimensions.chest.method, 'body-circumference', `${r.id}: body chest`);
-    assert.ok(r.retrievedAt && r.region === 'US' && r.units === 'in', r.id);
+    /* Zara's hoodies are kept in centimetres, the unit Zara measures in */
+    assert.ok(r.retrievedAt && r.region === 'US' && (r.units === 'in' || (r.brand === 'Zara' && r.units === 'cm')), r.id);
     assert.ok(r.product.name && r.product.garmentType, r.id);
   });
   assert.deepStrictEqual([sizing.byId(CARHARTT_HOODIE).product.name, sizing.byId(CARHARTT_HOODIE).product.garmentType], ['Marquette Sweatshirt', 'pullover-hoodie'],
@@ -378,8 +383,8 @@ await test('a letter size is read only with its sizing line, and never from a br
   const r = engine.recommend(profileWith({ anchor: { brand: 'Nike', size: 'M' }, fitGoal: 'true-to-size', line: null }), sizing.byId(UQ_HOODIE), { includeUnverified: true });
   assert.strictEqual(r.status, 'insufficient');
   assert.ok(r.missing.some((m) => m.code === 'line-needed'));
-  const zara = engine.recommend(profileWith({ anchor: { brand: 'Zara', size: 'M' }, fitGoal: 'true-to-size', line: 'men' }), sizing.byId(UQ_HOODIE), { includeUnverified: true });
-  assert.ok(zara.notes.some((n) => /no Zara size chart/.test(n)));
+  const gap = engine.recommend(profileWith({ anchor: { brand: 'Gap', size: 'M' }, fitGoal: 'true-to-size', line: 'men' }), sizing.byId(UQ_HOODIE), { includeUnverified: true });
+  assert.ok(gap.notes.some((n) => /no Gap size chart/.test(n)), gap.notes.join(' | '));
   const women = engine.recommend(profileWith({ fitGoal: 'true-to-size', line: 'women' }, chest(36)), sizing.byId(UQ_HOODIE), { includeUnverified: true });
   assert.strictEqual(women.missing[0].code, 'line-not-covered');
 });
@@ -438,8 +443,10 @@ await test('signed out it answers 401; it is GET only and no-store', async () =>
   const list = await suggest(jar);
   assert.strictEqual(list.status, 200);
   assert.strictEqual(list.res.getHeader('cache-control'), 'no-store, private');
-  assert.strictEqual(list.body.products.length, 10);
-  assert.ok(list.body.products.every((p) => p.verified === (p.category !== 'tshirts')), 'the T-shirt records say they are not verified');
+  assert.strictEqual(list.body.products.length, 14);
+  assert.ok(list.body.products.every((p) => p.verified === VERIFIED_IDS.includes(p.id)), 'only the audited records say they are verified');
+  /* only a checked record with finished-garment measurements can be compared */
+  assert.deepStrictEqual(list.body.products.filter((p) => p.comparable).map((p) => p.id).sort(), [UQ_SWEAT, UQ_HOODIE].sort());
 });
 
 await test('an unknown or malformed product id is refused, and nothing is guessed', async () => {
@@ -513,7 +520,7 @@ await test('with consent, an entry of fixed choices is kept; anything else is re
   assert.strictEqual((await feedback(jar, { action: 'consent', consent: { store: true } })).status, 200);
   const added = await feedback(jar, { action: 'add', entry: Object.assign(ENTRY(), { note: 'my chest is 40', email: 'x@y.z' }) });
   assert.strictEqual(added.status, 200, JSON.stringify(added.body));
-  assert.deepStrictEqual(Object.keys(added.body.entry).sort(), ['areas', 'brand', 'category', 'createdAt', 'id', 'overall', 'productId', 'recommendedSize', 'sizeTried']);
+  assert.deepStrictEqual(Object.keys(added.body.entry).sort(), ['areas', 'asExpected', 'brand', 'category', 'createdAt', 'id', 'issues', 'notes', 'overall', 'productId', 'recommendedSize', 'reference', 'sizeTried']);
   assert.ok(!JSON.stringify(added.body).includes('my chest is 40'), 'free text is dropped');
   for (const [entry, field] of [
     [Object.assign(ENTRY(), { productId: 'made-up' }), 'productId'],
@@ -759,6 +766,275 @@ await test('/api/size-recommendation reads the saved favourite, for its owner on
     marks.forEach((m, i) => { Object.keys(m).forEach((k) => delete m[k]); Object.assign(m, before[i]); });
   }
   assert.strictEqual((await suggest({}, ZARA_TEE)).status, 401);
+});
+
+section('compare before buying');
+
+/* ILLUSTRATIVE FIXTURE — invented numbers for testing the arithmetic,
+   not a real product's measurements. It is measured the way a shopper's
+   reference is (chest flat, length from the top of the shoulder, sleeve
+   from the shoulder seam, shoulders seam to seam), and marked verified
+   only in this test's memory. */
+const ILLUSTRATIVE = () => {
+  const r = copy('zara-00761810-basic-heavyweight-hoodie-us');
+  r.id = 'illustrative-test-hoodie';
+  r.product = Object.assign({}, r.product, { name: 'Illustrative test hoodie (not a real product)', code: 'TEST0001' });
+  r.sizes = ['S', 'M', 'L', 'XL'];
+  const row = (chest, length, shoulder, sleeve) => ({
+    chestWidth: { value: chest, text: String(chest) }, bodyLength: { value: length, text: String(length) },
+    shoulderWidth: { value: shoulder, text: String(shoulder) }, sleeveLength: { value: sleeve, text: String(sleeve) }
+  });
+  r.charts.garment.sizes = { S: row(57, 65, 49, 61), M: row(60, 67, 51, 62), L: row(63, 69, 53, 63), XL: row(66, 71, 55, 64) };
+  r.verification = { status: 'verified', checkedBy: 'Test checker', checkedAt: '2026-10-16' };
+  r.material = { composition: 'Illustrative: 80% cotton, 20% polyester', stretch: null, source: 'test fixture' };
+  return r;
+};
+/* a hoodie reference measured at home, laid flat */
+const hoodieRef = (anchor, extra) => {
+  const p = Object.assign(Schema.empty(), extra || {});
+  p.garments.hoodies = Object.assign(Schema.emptyGarment('hoodies'), { favorite: 'perfect', anchor: Object.assign({ brand: 'Carhartt', size: 'L' }, anchor) });
+  return p;
+};
+const REF_CM = { unit: 'cm', chestWidth: 58, bodyLength: 68, shoulderWidth: 50, sleeveLength: 62 };
+const compareCall = (jar, product, unit) => call(recommendEndpoint, {
+  method: 'GET', jar, query: Object.assign({ product, compare: '1' }, unit ? { unit } : {}),
+  url: `/api/size-recommendation?product=${product}&compare=1${unit ? `&unit=${unit}` : ''}`
+});
+
+await test('all four signed differences are worked out for every size, in the reference\'s own unit', () => {
+  const r = engine.compare(hoodieRef({ measurements: REF_CM }), ILLUSTRATIVE());
+  assert.strictEqual(r.status, 'ok');
+  assert.strictEqual(r.unit, 'cm');
+  assert.deepStrictEqual(r.reference.values, { chestWidth: 58, bodyLength: 68, shoulderWidth: 50, sleeveLength: 62 });
+  assert.deepStrictEqual(r.dimensionsCompared, ['chestWidth', 'bodyLength', 'shoulderWidth', 'sleeveLength']);
+  const m = r.sizes.find((s) => s.size === 'M').dimensions;
+  assert.deepStrictEqual(['chestWidth', 'bodyLength', 'shoulderWidth', 'sleeveLength'].map((d) => m[d].difference), [2, -1, 1, 0]);
+  assert.deepStrictEqual(['chestWidth', 'bodyLength', 'shoulderWidth', 'sleeveLength'].map((d) => m[d].words),
+    ['Chest: 2 cm wider', 'Body length: 1 cm shorter', 'Shoulders: 1 cm wider', 'Sleeves: the same as your reference']);
+  const s = r.sizes.find((x) => x.size === 'S').dimensions;
+  assert.deepStrictEqual(['chestWidth', 'bodyLength', 'shoulderWidth', 'sleeveLength'].map((d) => s[d].difference), [-1, -3, -1, -1]);
+  /* every size, not just the one on the reference's label */
+  assert.deepStrictEqual(r.sizes.map((x) => x.size), ['S', 'M', 'L', 'XL']);
+  assert.ok(r.sizes.every((x) => typeof x.rank === 'number'));
+});
+
+await test('the size recommended is the closest by measurement, not the same letter', () => {
+  /* the reference says L on its label; this product's M is closer */
+  const r = engine.compare(hoodieRef({ size: 'L', measurements: REF_CM }), ILLUSTRATIVE());
+  assert.strictEqual(r.recommended, 'M');
+  assert.strictEqual(r.reliability, 'medium', 'measured at home: never high');
+  assert.ok(/M is the closest to your reference across chest, length, shoulders and sleeves/.test(r.summary), r.summary);
+  assert.ok(r.caveats.some((c) => /don't guarantee the same fit or feel/.test(c)));
+});
+
+await test('inches and centimetres give the same comparison, converted once, never twice', () => {
+  const inches = {};
+  Object.entries(REF_CM).forEach(([k, v]) => { inches[k] = k === 'unit' ? 'in' : v / 2.54; });
+  const cm = engine.compare(hoodieRef({ measurements: REF_CM }), ILLUSTRATIVE());
+  const inch = engine.compare(hoodieRef({ measurements: inches }), ILLUSTRATIVE());
+  assert.strictEqual(inch.unit, 'in');
+  assert.deepStrictEqual(inch.sizes.map((s) => s.score), cm.sizes.map((s) => s.score));
+  const mIn = inch.sizes.find((s) => s.size === 'M').dimensions.chestWidth;
+  assert.ok(Math.abs(mIn.difference - 2 / 2.54) < 0.01, `${mIn.difference}`);
+  assert.strictEqual(mIn.words, 'Chest: ¾ in wider');
+  /* asked for in cm, an inch reference reads back in cm, from one conversion */
+  const asked = engine.compare(hoodieRef({ measurements: inches }), ILLUSTRATIVE(), { unit: 'cm' });
+  assert.strictEqual(asked.unit, 'cm');
+  assert.ok(Math.abs(asked.sizes.find((s) => s.size === 'M').dimensions.chestWidth.difference - 2) < 0.01);
+  assert.ok(Math.abs(asked.reference.values.chestWidth - 58) < 0.01);
+});
+
+await test('what matters most to the shopper decides between sizes, deterministically', () => {
+  /* a reference between M and L: M is right in the shoulders, L in the chest */
+  const ref = { unit: 'cm', chestWidth: 61.8, bodyLength: 68, shoulderWidth: 51, sleeveLength: 62.5 };
+  const chest = engine.compare(hoodieRef({ measurements: ref, likes: ['chest'] }), ILLUSTRATIVE());
+  const shoulders = engine.compare(hoodieRef({ measurements: ref, likes: ['shoulders'] }), ILLUSTRATIVE());
+  assert.strictEqual(chest.recommended, 'L');
+  assert.strictEqual(shoulders.recommended, 'M');
+  assert.deepStrictEqual(engine.compare(hoodieRef({ measurements: ref, likes: ['chest'] }), ILLUSTRATIVE()).sizes, chest.sizes, 'the same inputs, the same answer');
+});
+
+await test('missing measurements are said: a dimension not measured, and a size without one, are never compared', () => {
+  const partial = engine.compare(hoodieRef({ measurements: { unit: 'cm', chestWidth: 58, shoulderWidth: 50 } }), ILLUSTRATIVE());
+  assert.strictEqual(partial.status, 'partial');
+  assert.strictEqual(partial.recommended, null, 'two of four is not a recommendation');
+  assert.strictEqual(partial.reliability, 'low');
+  assert.deepStrictEqual(partial.notCompared.map((x) => [x.dim, x.why]), [['bodyLength', 'you didn\'t measure it'], ['sleeveLength', 'you didn\'t measure it']]);
+  assert.ok(/not enough for a recommendation/.test(partial.summary));
+  /* a size the product publishes no sleeve for is shown, not ranked */
+  const gap = ILLUSTRATIVE();
+  delete gap.charts.garment.sizes.XL.sleeveLength;
+  const r = engine.compare(hoodieRef({ measurements: REF_CM }), gap);
+  const xl = r.sizes.find((s) => s.size === 'XL');
+  assert.strictEqual(xl.score, null);
+  assert.ok(/XL isn't ranked: .* publishes no sleeves/.test(xl.unranked), xl.unranked);
+  assert.strictEqual(xl.dimensions.sleeveLength.compared, false);
+  assert.ok(r.notes.includes(xl.unranked));
+});
+
+await test('a body chart is never compared with a garment, and a label alone is not a reference', () => {
+  const nike = engine.compare(hoodieRef({ measurements: REF_CM }), sizing.byId(NIKE_HOODIE));
+  assert.strictEqual(nike.missing[0].code, 'body-chart-only');
+  assert.ok(!('sizes' in nike));
+  const label = engine.compare(hoodieRef({ brand: 'Carhartt', size: 'L' }), ILLUSTRATIVE());
+  assert.strictEqual(label.missing[0].code, 'no-reference');
+  const none = engine.compare(Schema.empty(), ILLUSTRATIVE());
+  assert.strictEqual(none.missing[0].code, 'no-reference');
+  assert.ok(/Save a hoodie that fits you well/.test(none.missing[0].message));
+  /* a product named but not in Fynd's records, with no measurements: nothing to compare */
+  const named = engine.compare(hoodieRef({ product: { name: 'Some hoodie Fynd has never seen', url: null } }), ILLUSTRATIVE());
+  assert.strictEqual(named.missing[0].code, 'no-reference-measurements');
+});
+
+await test('an unverified product gives no numbers at all; production compares only checked records', () => {
+  const zara = engine.compare(hoodieRef({ measurements: REF_CM }), sizing.byId('zara-00761810-basic-heavyweight-hoodie-us'));
+  assert.strictEqual(zara.status, 'insufficient');
+  assert.strictEqual(zara.missing[0].code, 'unverified-data');
+  assert.ok(!('sizes' in zara) && !('recommended' in zara) && !('closest' in zara));
+  /* with the evaluation flag the arithmetic runs, and still recommends nothing */
+  const evalRun = engine.compare(hoodieRef({ measurements: REF_CM }), sizing.byId('zara-00761810-basic-heavyweight-hoodie-us'), { includeUnverified: true });
+  assert.strictEqual(evalRun.recommended, null);
+  assert.ok(/haven't been checked, so it isn't a recommendation/.test(evalRun.summary));
+});
+
+await test('against UNIQLO\'s checked hoodie, a home-measured reference compares only what is measured the same way', () => {
+  const r = engine.compare(hoodieRef({ measurements: REF_CM }), sizing.byId(UQ_HOODIE));
+  assert.strictEqual(r.status, 'partial');
+  assert.deepStrictEqual(r.dimensionsCompared, ['chestWidth', 'shoulderWidth']);
+  assert.strictEqual(r.recommended, null);
+  assert.ok(r.notCompared.every((x) => /measured differently — UNIQLO's from the centre back/.test(x.why)), JSON.stringify(r.notCompared));
+  /* the values UNIQLO publishes still show, marked not compared */
+  const m = r.sizes.find((s) => s.size === 'M').dimensions;
+  assert.strictEqual(m.bodyLength.compared, false);
+  assert.ok(typeof m.bodyLength.candidate === 'number');
+});
+
+await test('a reference found in the catalogue uses its published measurements; fabric and construction are said, never scored', () => {
+  /* the shopper's sweatshirt is UNIQLO's (found by its link); comparing UNIQLO's hoodie */
+  const p = Schema.empty();
+  p.garments.sweatshirts = Object.assign(Schema.emptyGarment('sweatshirts'), { favorite: 'perfect', anchor: { brand: 'UNIQLO', size: 'M', product: { name: null, url: 'https://www.uniqlo.com/us/en/products/E475377-000/00' } } });
+  const r = engine.compare(p, sizing.byId(UQ_HOODIE));
+  assert.strictEqual(r.reference.source, 'product');
+  assert.strictEqual(r.reference.crossCategory, true);
+  assert.deepStrictEqual(r.dimensionsCompared, ['chestWidth', 'bodyLength', 'shoulderWidth', 'sleeveLength']);
+  assert.strictEqual(r.recommended, 'M', 'the same published measurements');
+  assert.ok(r.sizes.find((s) => s.size === 'M').dimensions.chestWidth.words.endsWith('the same as your reference'));
+  assert.strictEqual(r.reliability, 'medium', 'a sweatshirt for a hoodie lowers it');
+  assert.ok(r.caveats.some((c) => /Your reference is a sweatshirt, and this is a hoodie/.test(c)));
+  /* context: the brand's own words, and unknown where it says nothing */
+  assert.strictEqual(r.context.product.stretch, 'unknown');
+  assert.strictEqual(r.context.product.construction, 'unknown');
+  assert.ok(/100% Cotton/.test(r.context.product.fabric));
+  assert.ok(/100% Cotton/.test(r.context.reference.fabric));
+  /* no fabric word turns into a claim about fit */
+  assert.ok(!/stretch|fabric|cotton/i.test(r.summary));
+  assert.ok(!r.sizes.some((s) => Object.values(s.dimensions).some((d) => /stretch|fabric/i.test(d.words || ''))));
+});
+
+await test('/api/size-recommendation compares only the caller\'s own reference, read-only and no-store', async () => {
+  const ada = await signUp('ada@example.test');
+  const bob = await signUp('bob@example.test');
+  assert.strictEqual((await compareCall({}, UQ_HOODIE)).status, 401);
+  await fitProfiles.saveGuide(ada.user.id, { garments: { hoodies: { favorite: 'perfect', anchor: { brand: 'Carhartt', size: 'L', measurements: REF_CM } } } });
+  const mine = await compareCall(ada.jar, UQ_HOODIE);
+  assert.strictEqual(mine.status, 200);
+  assert.strictEqual(mine.res.getHeader('cache-control'), 'no-store, private');
+  assert.strictEqual(mine.body.comparison.reference.source, 'measured');
+  assert.strictEqual(mine.body.comparison.unit, 'cm');
+  const inches = await compareCall(ada.jar, UQ_HOODIE, 'in');
+  assert.strictEqual(inches.body.comparison.unit, 'in');
+  /* Bob's session reads Bob's (empty) profile, never Ada's */
+  const his = await compareCall(bob.jar, UQ_HOODIE);
+  assert.strictEqual(his.body.comparison.missing[0].code, 'no-reference');
+  assert.strictEqual((await compareCall(ada.jar, 'not a product')).status, 400);
+  /* reading changes nothing */
+  const before = JSON.stringify((await fitProfiles.read(ada.user.id)).profile);
+  await compareCall(ada.jar, UQ_HOODIE);
+  assert.strictEqual(JSON.stringify((await fitProfiles.read(ada.user.id)).profile), before);
+});
+
+section('fit feedback against the reference');
+
+const TRIED = () => ({ productId: UQ_HOODIE, sizeTried: 'M', asExpected: false, issues: ['too-long', 'too-wide'], notes: '  sleeves   a bit long ' });
+
+await test('feedback names the exact product and size, what was off, and the reference — snapshotted from the caller\'s own profile', async () => {
+  const { jar, user } = await signUp('ada@example.test');
+  await fitProfiles.saveGuide(user.id, { garments: { hoodies: { favorite: 'perfect', anchor: { brand: 'Carhartt', size: 'L', measurements: REF_CM } } } });
+  await feedback(jar, { action: 'consent', consent: { store: true } });
+  /* a reference the page sends is ignored: only the server's snapshot counts */
+  const added = await feedback(jar, { action: 'add', entry: Object.assign(TRIED(), { withReference: true, reference: { brand: 'Forged', measurements: { chestWidth: 99 } } }) });
+  assert.strictEqual(added.status, 200, JSON.stringify(added.body));
+  const e = added.body.entry;
+  assert.deepStrictEqual([e.productId, e.sizeTried, e.asExpected, e.issues, e.notes], [UQ_HOODIE, 'M', false, ['too-wide', 'too-long'], 'sleeves a bit long']);
+  assert.deepStrictEqual(e.reference, { category: 'hoodies', brand: 'Carhartt', size: 'L', product: null, measurements: Object.assign({}, REF_CM) });
+  /* a later change to the reference never rewrites the feedback */
+  await fitProfiles.saveGuide(user.id, { garments: { hoodies: { anchor: { brand: 'Nike', size: 'M', measurements: { unit: 'in', chestWidth: 25 } } } } });
+  assert.strictEqual((await readFeedback(jar)).body.feedback.entries[0].reference.brand, 'Carhartt');
+});
+
+await test('one entry per product and size: told again it updates; another size is a new entry; an edit never moves an entry', async () => {
+  const { jar } = await signUp('ada@example.test');
+  await feedback(jar, { action: 'consent', consent: { store: true } });
+  const first = (await feedback(jar, { action: 'add', entry: TRIED() })).body;
+  const again = (await feedback(jar, { action: 'add', entry: Object.assign(TRIED(), { asExpected: true, issues: [] }) })).body;
+  assert.strictEqual(again.updated, true);
+  assert.strictEqual(again.entry.id, first.entry.id);
+  assert.strictEqual(again.feedback.entries.length, 1, 'no duplicate');
+  assert.strictEqual(again.entry.asExpected, true);
+  const other = (await feedback(jar, { action: 'add', entry: Object.assign(TRIED(), { sizeTried: 'L' }) })).body;
+  assert.strictEqual(other.feedback.entries.length, 2);
+  /* an update keeps product and size, and refuses to change them */
+  const moved = await feedback(jar, { action: 'update', id: first.entry.id, entry: { sizeTried: 'L', asExpected: true } });
+  assert.strictEqual(moved.status, 400);
+  assert.match(moved.body.error, /stays with the product and size/);
+  const edited = await feedback(jar, { action: 'update', id: first.entry.id, entry: { asExpected: false, issues: ['too-short'] } });
+  assert.strictEqual(edited.status, 200, JSON.stringify(edited.body));
+  assert.deepStrictEqual([edited.body.entry.sizeTried, edited.body.entry.issues], ['M', ['too-short']]);
+  /* and removed */
+  assert.strictEqual((await feedback(jar, { action: 'delete', id: first.entry.id })).status, 200);
+  assert.deepStrictEqual((await readFeedback(jar)).body.feedback.entries.map((x) => x.sizeTried), ['L']);
+});
+
+await test('feedback is checked, and another account can neither change nor delete it', async () => {
+  const ada = await signUp('ada@example.test');
+  const bob = await signUp('bob@example.test');
+  await feedback(ada.jar, { action: 'consent', consent: { store: true } });
+  await feedback(bob.jar, { action: 'consent', consent: { store: true } });
+  for (const [entry, field] of [
+    [Object.assign(TRIED(), { issues: ['too-tight'] }), 'issues'],
+    [Object.assign(TRIED(), { asExpected: true }), 'issues'],
+    [Object.assign(TRIED(), { asExpected: false, issues: [] }), 'issues'],
+    [Object.assign(TRIED(), { asExpected: 'kind of' }), 'asExpected'],
+    [Object.assign(TRIED(), { notes: 'x'.repeat(501) }), 'notes'],
+    [{ productId: UQ_HOODIE, sizeTried: 'M' }, 'asExpected']
+  ]) {
+    const r = await feedback(ada.jar, { action: 'add', entry });
+    assert.strictEqual(r.status, 400, field);
+    assert.ok(r.body.errors.some((e) => e.field === field), `${field}: ${JSON.stringify(r.body.errors)}`);
+  }
+  const id = (await feedback(ada.jar, { action: 'add', entry: TRIED() })).body.entry.id;
+  assert.strictEqual((await feedback(bob.jar, { action: 'update', id, entry: { asExpected: true } })).status, 404);
+  assert.strictEqual((await feedback(bob.jar, { action: 'delete', id })).status, 404);
+  assert.strictEqual((await feedback(ada.jar, { action: 'update', id, entry: { asExpected: true } }, { omitCsrf: true })).status, 403);
+  assert.strictEqual((await readFeedback(ada.jar)).body.feedback.entries[0].asExpected, false, 'untouched');
+});
+
+await test('feedback is read together only with consent and enough accounts, and conflicting reports are flagged, not acted on', () => {
+  const said = (issues, improve) => ({ consent: { store: true, improve: improve !== false }, entries: [{ productId: UQ_HOODIE, sizeTried: 'M', asExpected: !issues.length, issues }] });
+  const records = [];
+  for (let i = 0; i < 6; i += 1) records.push(said(['too-long']));
+  for (let i = 0; i < 4; i += 1) records.push(said(['too-short']));
+  records.push(said(['too-wide'], false));
+  const [m] = fitFeedback.summarise(records);
+  assert.strictEqual(m.accounts, 10, 'only accounts that agreed to improve count');
+  assert.strictEqual(m.enough, true);
+  assert.deepStrictEqual(m.conflicting, ['too-long / too-short']);
+  assert.strictEqual(m.issues['too-wide'], 0);
+  const [few] = fitFeedback.summarise(records.slice(0, 3));
+  assert.strictEqual(few.enough, false, 'three accounts are not enough to read');
+  /* nothing in the engine reads feedback */
+  const code = require('fs').readFileSync(require('path').join(__dirname, '..', 'api', '_sizing', 'engine.js'), 'utf8');
+  assert.ok(!/_fit-feedback|fitFeedback|summarise/.test(code));
 });
 
 section('privacy');
