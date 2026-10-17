@@ -251,7 +251,10 @@
     compare: (productId, unit) => call(`size-recommendation?product=${encodeURIComponent(productId)}&compare=1${unit === 'in' || unit === 'cm' ? `&unit=${unit}` : ''}`),
     /* the search page's listings, sized from one type of clothing's
        profile: only what the listings themselves say travels */
-    fit: (type, items) => call(`size-recommendation?fit=${encodeURIComponent(type)}&items=${encodeURIComponent(JSON.stringify(items))}`)
+    fit: (type, items) => call(`size-recommendation?fit=${encodeURIComponent(type)}&items=${encodeURIComponent(JSON.stringify(items))}`),
+    /* one listing's sizing chart, from its brand's own page: only the
+       listing's link travels, and no account is needed */
+    chart: (url) => call(`size-recommendation?chart=${encodeURIComponent(url)}`)
   };
 
   /* After a checkout the browser comes back before Stripe's webhook has

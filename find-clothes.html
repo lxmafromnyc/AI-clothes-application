@@ -207,6 +207,21 @@
     </div>
   </section>
 
+  <!-- One product's sizing chart, over the results (assets/size-chart.js):
+       read from its brand's own page on demand, or why it couldn't be. -->
+  <dialog class="size-chart" id="size-chart" aria-labelledby="size-chart-title">
+    <div class="size-chart-head">
+      <div>
+        <h2 class="size-chart-title" id="size-chart-title">Sizing chart</h2>
+        <p class="size-chart-product" id="size-chart-product"></p>
+      </div>
+      <button class="icon-btn size-chart-close" type="button" id="size-chart-close" aria-label="Close the sizing chart">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+    <div class="size-chart-body" id="size-chart-body" aria-live="polite"></div>
+  </dialog>
+
 </main>
 
 <footer class="site-footer">
@@ -238,6 +253,7 @@
 <script src="assets/account.js"></script>
 <script src="assets/fit-profile-schema.js"></script>
 <script src="assets/fit-for-you.js"></script>
+<script src="assets/size-chart.js"></script>
 <script src="assets/attachments.js"></script>
 <script src="assets/catalog.js"></script>
 <script src="assets/app.js"></script>

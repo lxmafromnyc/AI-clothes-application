@@ -2073,6 +2073,58 @@ own. Every answer carries `anchor`: where its evidence came from, how it was use
 (`garment`, `chest-range` or `not-used`), and which measurements were and weren't
 compared, and why.
 
+## Sizing charts on search results
+
+Every real listing on the Search page has **View sizing chart** over the corner
+of its picture. Pressed — and only then — the page asks
+`GET /api/size-recommendation?chart=<the listing's link>` and shows the answer in
+a dialog over the results (`assets/size-chart.js`). No account or fit profile is
+needed; only the listing's link travels, and the endpoint reads no profile. It
+is rate limited per client (`sizing:chart`, 40 per ten minutes).
+
+`api/_sizing/chart.js` decides what can be shown:
+
+1. **Only a brand's own site is read** — the exact hosts in `OFFICIAL_HOSTS`
+   (UNIQLO, Nike, Carhartt, H&M, Zara), over https, with no credentials, port or
+   address literal. A listing on any other site is never fetched and answers
+   "Fynd doesn't read this site", with the listing's link.
+2. **Fynd's own record of exactly that product** (found by the code in its link,
+   as a favourite piece is) is used as it stands: its body chart and its
+   finished-garment chart kept apart, every value in the brand's own words and
+   units, its sources, and its own verification status.
+3. **Otherwise the product page itself**, read once: redirects followed by hand,
+   each hop held to the same brand's hosts; 8 seconds; 1.5 MB; HTML only. Its
+   `<table>`s are read deterministically (no model): a table counts only with a
+   size column and at least one measurement column (sideways tables are turned).
+   What it measures — **body**, **finished garment**, or **not stated** — comes
+   only from the words around it, and so does its unit ("in" as an ordinary word
+   is not inches). Values are kept exactly as written; a missing value stays
+   missing. The sizes in the product's JSON-LD are shown as **labels only** when
+   there is no table. A chart read this way is **not verified**: reading is not
+   checking.
+
+Each answer carries the product, the market (only when the address names it),
+whether the chart is the product's own or published on its page, its status, the
+source link, and a short note built from those facts alone: what kind of
+measurements they are, which dimensions are given, that a body chart can't be set
+beside a garment, the brand's own fit words with where they came from. It never
+says how a product runs. A page that is refused, slow, too big, not HTML or
+drawn by script answers **unavailable** with the reason and the page's link,
+never a chart from elsewhere. Results are cached by product page (host and path):
+six hours for a chart, thirty minutes for a failure.
+
+A chart is not a recommendation: only a checked finished-garment chart is
+offered to the fit profile's comparison (and that size appears on the card, from
+the search's fit panel).
+
+**What has and hasn't been tried against real pages.** The tests use invented
+HTML in the shapes size tables take, and Fynd's own records; the development
+environment had no outbound network, so no live retailer page has been read by
+this code yet. Many brands (Nike, Zara, H&M among them) draw their size guides
+with script after the page loads, or refuse automated readers; for those the
+honest outcome is "unavailable", and only products with a Fynd record show a
+chart until a page is found that publishes its table in its HTML.
+
 ## Compare before buying (hoodies and sweatshirts)
 
 `compare.html` (in the main navigation as **Compare**) walks a shopper through
@@ -2255,6 +2307,7 @@ its caveats.
 GET  /api/size-recommendation                       -> { products }        what has sizing, and whether it is verified
 GET  /api/size-recommendation?product=<id>          -> { recommendation }  for the signed-in shopper
 GET  /api/size-recommendation?fit=<type>&items=<JSON> -> { fit }           up to 24 search listings, matched and sized from that type only
+GET  /api/size-recommendation?chart=<link>           -> { chart }         one listing's sizing chart; no account needed (see Sizing charts on search results)
 GET  /api/fit-profile?part=feedback                    -> { feedback }
 POST /api/fit-profile { action: "feedback-consent", consent: { store, improve } }
 POST /api/fit-profile { action: "feedback-add", entry } -> { feedback, entry }

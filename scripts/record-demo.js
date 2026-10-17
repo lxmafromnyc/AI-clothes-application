@@ -599,7 +599,7 @@ async function checkResults(page, { settle = true } = {}) {
         name: text(c, '.item-name'),
         brand: text(c, '.item-retailer'),
         price: text(c, '.item-price'),
-        href: c.getAttribute('href') || '',
+        href: (c.querySelector('a.item-link') || c).getAttribute('href') || '',
         retailer: text(c, '.item-seller') || text(c, '.item-retailer'),
         drawn: Boolean(c.querySelector('.item-media svg')),
         sample: Boolean(c.querySelector('.item-badge')),

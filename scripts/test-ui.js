@@ -143,6 +143,12 @@ const server = http.createServer((req, res) => {
 
   if (url.pathname === '/api/size-recommendation') {
     res.setHeader('Content-Type', 'application/json');
+    /* a sizing chart: the real reader, with no network — a record is
+       answered from Fynd's own data, anything else as unreachable */
+    if (url.searchParams.has('chart')) {
+      return require('../api/_sizing/chart').chartFor(url.searchParams.get('chart'), { noCache: true, fetch: async () => { throw new Error('offline'); } })
+        .then((chart) => res.end(JSON.stringify({ chart })));
+    }
     /* the search page's listings, matched and sized the endpoint's own way */
     if (url.searchParams.has('fit')) {
       return res.end(JSON.stringify({ fit: sizingEndpoint.fitFor(fitProfileState.profile, url.searchParams.get('fit'), sizingEndpoint.readItems(url.searchParams.get('items'))) }));
@@ -2423,7 +2429,7 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
       retailer: document.querySelector('.item-retailer').textContent.trim(),
       name: document.querySelector('.item-name').textContent.trim(),
       price: document.querySelector('.item-price').textContent.trim(),
-      href: document.querySelector('a.item-card').getAttribute('href')
+      href: document.querySelector('.item-card .item-link').getAttribute('href')
     })), {
       retailer: 'Nordstrom',
       name: 'Champion Hoodie',
@@ -2960,6 +2966,31 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     stubs.search = null;
     accountState = accountReply({});
     fitProfileState = fitProfileReply(null);
+  });
+
+  await test('the sizing chart dialog — loading, a record’s body and garment tables, and an unavailable answer — is set in a palette ink, legible, and fits a phone', async () => {
+    const UQ = { id: 'uq', name: 'Sweat Pullover Hoodie', brand: 'UNIQLO', price: 39.9, currency: 'USD', imageUrl: null,
+      productUrl: 'https://www.uniqlo.com/us/en/products/E475378-000/00', retailer: 'UNIQLO', category: '', colors: [], sizes: [] };
+    const GAP = { id: 'gap', name: 'Arch Logo Hoodie', brand: 'Gap', price: 49.95, currency: 'USD', imageUrl: null,
+      productUrl: 'https://www.gap.com/browse/product.do?pid=1', retailer: 'Gap', category: '', colors: [], sizes: [] };
+    accountState = accountReply({});
+    for (const viewport of [{ width: 1280, height: 900 }, { width: 360, height: 740 }]) {
+      stubs.search = { reply: { source: 'openwebninja', products: [UQ, GAP], returned: 2, rejected: {} } };
+      const page = await openPage('find-clothes.html?shop=hoodies', { viewport });
+      await page.waitForSelector('.item-chart', { timeout: 10000 });
+      const audit = guideAudit(page, viewport);
+      await audit('a result with its sizing button');
+      await page.click('.item-card:nth-child(1) .item-chart');
+      await page.waitForSelector('#size-chart[data-state="ok"]');
+      assert.strictEqual(await page.$$eval('#size-chart table', (ns) => ns.length), 2);
+      await audit('a body chart and a garment chart');
+      await page.keyboard.press('Escape');
+      await page.click('.item-card:nth-child(2) .item-chart');
+      await page.waitForSelector('#size-chart[data-state="unavailable"]');
+      await audit('an answer with no chart');
+      await page.close();
+    }
+    stubs.search = null;
   });
 
   await test('compare before buying — the saved reference, product list, the comparison table and feedback — is set in a palette ink, legible, and fits a phone', async () => {
