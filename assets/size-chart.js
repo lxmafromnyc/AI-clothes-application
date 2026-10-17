@@ -1,7 +1,10 @@
 /* =========================================================
-   Fynd — "View sizing chart", on the search page
+   Fynd — drawing a product’s sizing chart
 
-   Each real listing carries a "View sizing chart" button (drawn by
+   The drawing of one sizing-chart answer, shared by Find Fit
+   (index.html, assets/find-fit.js) and the search page.
+
+   Each real search listing carries a "View sizing chart" button (drawn by
    productCard in assets/app.js). Pressed, it asks the server for that
    one product's chart — /api/size-recommendation?chart=<its link>, see
    api/_sizing/chart.js — and shows the answer in a dialog over the
@@ -21,9 +24,7 @@
   'use strict';
 
   const doc = global.document;
-  const dialog = doc && doc.getElementById('size-chart');
-  if (!dialog) return;
-  const body = doc.getElementById('size-chart-body');
+  if (!doc) return;
 
   const el = (tag, cls, text) => {
     const n = doc.createElement(tag);
@@ -31,10 +32,10 @@
     if (text !== undefined && text !== null) n.textContent = text;
     return n;
   };
-  /* only the brand's own https pages are ever linked */
+  /* only plain web pages are ever linked */
   const safeLink = (url, text) => {
     const a = el('a', 'guide-link', text);
-    if (/^https:\/\/[^\s"'<>]+$/i.test(String(url || ''))) {
+    if (/^https?:\/\/[^\s"'<>]+$/i.test(String(url || ''))) {
       a.href = url;
       a.target = '_blank';
       a.rel = 'noopener noreferrer';
@@ -49,68 +50,37 @@
   };
   const SCOPE = {
     'product-specific': 'This product’s own chart',
-    'product-page': 'Published on this product’s page'
+    'product-page': 'Published on this product’s page',
+    'linked-size-guide': 'The retailer’s size guide linked from the product page — possibly a general chart, not this product’s own'
   };
   const STATUS = {
     verified: 'Verified — checked by a person against the brand’s page',
     unverified: 'Unverified — copied from the brand’s page, not yet checked',
     'not-verified': 'Not verified — read automatically just now'
   };
-  const UNIT = { in: 'inches', cm: 'centimetres', both: 'inches and centimetres', null: 'not stated' };
+  const UNIT = { in: 'inches, as published', cm: 'centimetres, as published', both: 'inches and centimetres, as published', null: 'not stated — check the source' };
+  const LINE = { men: 'men’s', women: 'women’s', unisex: 'unisex' };
 
-  let asking = 0;
-  let opener = null;
-
-  function open(button) {
-    opener = button;
-    const ask = ++asking;
-    body.replaceChildren(el('p', 'size-chart-loading', 'Finding this product’s sizing…'));
-    dialog.dataset.state = 'loading';
-    doc.getElementById('size-chart-product').textContent = [button.dataset.brand, button.dataset.name].filter(Boolean).join(' · ');
-    if (!dialog.open) dialog.showModal();
-    const sizing = global.Account && global.Account.sizing;
-    const request = sizing ? sizing.chart(button.dataset.chart) : Promise.resolve({ ok: false, unreachable: true });
-    request.then((result) => {
-      if (ask !== asking) return;
-      if (result.ok && result.data && result.data.chart) render(result.data.chart, button);
-      else failed(result, button);
-    });
-  }
-
-  function failed(result, button) {
-    dialog.dataset.state = 'error';
-    const why = result.status === 429 ? 'Fynd has been asked for a lot of sizing charts just now. Try again in a few minutes.'
-      : result.unreachable ? 'Fynd’s sizing service couldn’t be reached, so no chart could be read.'
-        : 'Fynd couldn’t read a sizing chart for this product just now.';
-    body.replaceChildren(el('p', 'size-chart-note', why), linkLine(button.dataset.chart, 'See the product’s own page'));
-  }
-
-  function linkLine(url, text) {
-    const p = el('p', 'size-chart-source');
-    p.append(safeLink(url, text));
-    return p;
-  }
-
-  function render(chart, button) {
-    dialog.dataset.state = chart.status;
+  /* The nodes for one answer from /api/size-recommendation?chart=:
+     what the server said, drawn as text. `asked` is the link the
+     shopper gave, kept beside the answer it produced. */
+  function render(chart, asked) {
     const out = [];
-    const product = chart.product || {};
-    const name = [product.brand || button.dataset.brand, product.name || button.dataset.name].filter(Boolean).join(' · ');
-    doc.getElementById('size-chart-product').textContent = name;
-
     const notes = el('ul', 'size-chart-notes');
     (chart.note || []).forEach((line) => notes.append(el('li', null, line)));
     out.push(notes);
 
+    const facts = el('dl', 'size-chart-facts');
+    const fact = (label, value) => { if (value) facts.append(el('dt', null, label), el('dd', null, value)); };
+    if (chart.retailer) fact('Retailer', chart.retailer);
     if (chart.status !== 'unavailable') {
-      const facts = el('dl', 'size-chart-facts');
-      const fact = (label, value) => { if (value) facts.append(el('dt', null, label), el('dd', null, value)); };
-      fact('Market', chart.market ? `${chart.market}${chart.line ? ` · ${chart.line === 'men' ? 'men’s' : chart.line === 'women' ? 'women’s' : chart.line} sizing` : ''}` : 'Not stated');
+      fact('Market', chart.market ? `${chart.market}${chart.line && LINE[chart.line] ? ` · ${LINE[chart.line]} sizing` : ''}` : 'Not stated');
       fact('Chart', SCOPE[chart.scope]);
       fact('Status', STATUS[chart.verification]);
-      out.push(facts);
     }
+    if (facts.childNodes.length) out.push(facts);
 
+    const main = (chart.source && chart.source.url) || asked;
     (chart.charts || []).forEach((c, i) => {
       const section = el('section', 'size-chart-table');
       section.append(el('h3', 'size-chart-kind', KIND[c.measures] || KIND['not-stated']));
@@ -135,6 +105,12 @@
       table.append(caption, head, tbody);
       wrap.append(table);
       section.append(wrap);
+      /* a table read from another page than the product's says which */
+      if (c.source && c.source.url && c.source.url !== main) {
+        const from = el('p', 'size-chart-source');
+        from.append(el('span', null, 'From: '), safeLink(c.source.url, c.source.title || c.source.url));
+        section.append(from);
+      }
       out.push(section);
     });
 
@@ -142,24 +118,71 @@
       out.push(el('p', 'size-chart-labels', `Sizes listed: ${chart.sizes.join(', ')} (labels only — no measurements).`));
     }
 
-    /* a chart isn't a recommendation: only a checked garment chart can
-       be set beside a reference, and that is the fit profile's job */
-    if (chart.comparable) {
-      out.push(el('p', 'size-chart-fit', 'These finished-garment measurements are checked, so Fynd can compare this product with a reference garment saved on your fit profile. A size from that comparison shows on the product’s card.'));
-    }
-
     const src = chart.source || {};
     const source = el('p', 'size-chart-source');
     /* with no chart, the page is a place to look, not a source */
-    source.append(el('span', null, chart.status === 'unavailable' ? 'Product page: ' : 'Source: '), safeLink(src.url || button.dataset.chart, src.title || 'the product’s page'));
+    source.append(el('span', null, chart.status === 'unavailable' ? 'Product page: ' : 'Source: '), safeLink(src.url || asked, src.title || src.url || asked));
     if (src.retrievedAt) source.append(el('span', null, ` · read ${src.retrievedAt}`));
     out.push(source);
-    (chart.otherSources || []).forEach((s) => {
+    (chart.guides || []).filter((g) => !g.read).forEach((g) => {
       const p = el('p', 'size-chart-source');
-      p.append(el('span', null, 'Also: '), safeLink(s.url, s.what || s.url));
+      p.append(el('span', null, 'Size guide (couldn’t be read): '), safeLink(g.url, g.url));
       out.push(p);
     });
-    body.replaceChildren(...out);
+    (chart.otherSources || []).forEach((s2) => {
+      const p = el('p', 'size-chart-source');
+      p.append(el('span', null, 'Also: '), safeLink(s2.url, s2.what || s2.url));
+      out.push(p);
+    });
+    return out;
+  }
+
+  /* When the server's own call failed: why, and the page itself. */
+  function renderFailure(result, asked) {
+    const why = result.status === 429 ? 'Fynd has been asked for a lot of sizing charts just now. Try again in a few minutes.'
+      : result.unreachable ? 'Fynd’s sizing service couldn’t be reached, so no chart could be read.'
+        : 'Fynd couldn’t read a sizing chart for this product just now.';
+    const p = el('p', 'size-chart-source');
+    p.append(safeLink(asked, 'Open the original product page'));
+    return [el('p', 'size-chart-note', why), p];
+  }
+
+  global.SizeChart = { render, renderFailure, el, safeLink };
+
+  /* ---------- the search page's dialog ---------- */
+
+  const dialog = doc.getElementById('size-chart');
+  if (!dialog) return;
+  const body = doc.getElementById('size-chart-body');
+  let asking = 0;
+  let opener = null;
+
+  function open(button) {
+    opener = button;
+    const ask = ++asking;
+    body.replaceChildren(el('p', 'size-chart-loading', 'Finding this product’s sizing…'));
+    dialog.dataset.state = 'loading';
+    doc.getElementById('size-chart-product').textContent = [button.dataset.brand, button.dataset.name].filter(Boolean).join(' · ');
+    if (!dialog.open) dialog.showModal();
+    const sizing = global.Account && global.Account.sizing;
+    const request = sizing ? sizing.chart(button.dataset.chart) : Promise.resolve({ ok: false, unreachable: true });
+    request.then((result) => {
+      if (ask !== asking) return;
+      if (result.ok && result.data && result.data.chart) {
+        const chart = result.data.chart;
+        dialog.dataset.state = chart.status;
+        const product = chart.product || {};
+        doc.getElementById('size-chart-product').textContent = [product.brand || button.dataset.brand, product.name || button.dataset.name].filter(Boolean).join(' · ');
+        const nodes = render(chart, button.dataset.chart);
+        /* a chart isn't a recommendation: only a checked garment chart can
+           be set beside a reference, and that is the fit profile's job */
+        if (chart.comparable) nodes.push(el('p', 'size-chart-fit', 'These finished-garment measurements are checked, so Fynd can compare this product with a reference garment saved on your fit profile. A size from that comparison shows on the product’s card.'));
+        body.replaceChildren(...nodes);
+      } else {
+        dialog.dataset.state = 'error';
+        body.replaceChildren(...renderFailure(result, button.dataset.chart));
+      }
+    });
   }
 
   doc.addEventListener('click', (event) => {
@@ -173,5 +196,5 @@
     if (opener && opener.isConnected) opener.focus();
   });
 
-  global.SizeChart = { open };
+  global.SizeChart.open = open;
 })(typeof window !== 'undefined' ? window : globalThis);

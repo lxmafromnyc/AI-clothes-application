@@ -1,18 +1,16 @@
 # Fynd — AI clothing finder
 
-Fynd starts with shopping. The home page asks one thing — **what are you
-shopping for?** — with a search line and the types of clothing (T-shirts,
-hoodies, sweatshirts, jeans, pants, sweatpants), and the Search page finds
-matching pieces across the brands and retailers the product search reaches.
-Nothing has to be answered first, and no account is needed to search.
+Fynd finds the fit. The home page, **Find Fit**, takes one thing: a link to a
+clothing product from any shop. Fynd reads that product's page — and the size
+guide it links to — on its own server, and shows the sizing chart there and then:
+its sizes and measurements exactly as published, their unit, whether they
+describe the body or the garment, where they came from, and a short note on what
+they do and don't tell you. A saved **fit profile** adds a comparison with a
+garment the shopper owns, where the chart supports one. See
+[Find Fit: sizing charts from a product link](#find-fit-sizing-charts-from-a-product-link).
 
-The **fit profile** (`fit-profile.html`) is the one place a shopper's sizing
-information lives, type by type. When a search is for a type the profile has
-answers for, the Search page uses that type's answers — and only that type's —
-automatically, and sizes a listing only where it matches a product whose
-measurements Fynd has checked. See [Shopping with the fit profile](#shopping-with-the-fit-profile).
-The four-step fit guide that used to open the home page is retired: everything
-it asked is now on each type's card on the fit profile page.
+The Search page (keyword search across the product source) is still there,
+reached from the footer; each of its results can open the same sizing chart.
 
 The interface is deliberately plain: one typeface, three levels of neutral ink
 (black for primary text, one step down for body copy, muted for metadata), and
@@ -55,7 +53,7 @@ cards, with every detail open, and the search page's fit panel are audited too.
 
 | Page | File | What it does |
 | --- | --- | --- |
-| Shop (home) | `index.html` | What are you shopping for: a search line and the types of clothing, each a link to the Search page; then how Fynd works. `index.html#guide`, the old fit guide's address, goes to the fit profile |
+| Find Fit (home) | `index.html` | Paste a clothing product's link; its sizing chart appears on the page, with its source, what it measures and a note, and a fit-profile comparison where supported. `index.html#guide`, the old fit guide's address, goes to the fit profile |
 | Search | `find-clothes.html` | Describe what you want in your own words, and say what kind of clothing it is ("Shopping for"); results are followed by how your fit profile was used. The demo film of four real searches sits under the box |
 | Pricing | `pricing.html` | The three plans, which one you are on, and the way to change it |
 | Account | `account.html` | Sign in with Google or email; your plan, usage and subscription |
@@ -2073,57 +2071,71 @@ own. Every answer carries `anchor`: where its evidence came from, how it was use
 (`garment`, `chest-range` or `not-used`), and which measurements were and weren't
 compared, and why.
 
-## Sizing charts on search results
+## Find Fit: sizing charts from a product link
 
-Every real listing on the Search page has **View sizing chart** over the corner
-of its picture. Pressed — and only then — the page asks
-`GET /api/size-recommendation?chart=<the listing's link>` and shows the answer in
-a dialog over the results (`assets/size-chart.js`). No account or fit profile is
-needed; only the listing's link travels, and the endpoint reads no profile. It
-is rate limited per client (`sizing:chart`, 40 per ten minutes).
+**Find Fit** (`index.html`, `assets/find-fit.js`) is one box: paste a clothing
+product's link, and its sizing chart is drawn below it (`assets/size-chart.js`,
+which the Search page's **View sizing chart** dialog uses too). A link is checked
+on the page first (a whole http(s) address with a host name); a pasted link starts
+the lookup by itself, a typed one waits for Enter or **Find sizing chart** — no
+request is made per keystroke. The link the shopper gave stays beside the answer.
+No account or fit profile is needed: `GET /api/size-recommendation?chart=<link>`
+reads no profile, and only the link travels. It is rate limited per client
+(`sizing:chart`, 40 per ten minutes).
 
-`api/_sizing/chart.js` decides what can be shown:
+`api/_sizing/chart.js` is the one place a chart is worked out:
 
-1. **Only a brand's own site is read** — the exact hosts in `OFFICIAL_HOSTS`
-   (UNIQLO, Nike, Carhartt, H&M, Zara), over https, with no credentials, port or
-   address literal. A listing on any other site is never fetched and answers
-   "Fynd doesn't read this site", with the listing's link.
-2. **Fynd's own record of exactly that product** (found by the code in its link,
-   as a favourite piece is) is used as it stands: its body chart and its
-   finished-garment chart kept apart, every value in the brand's own words and
-   units, its sources, and its own verification status.
-3. **Otherwise the product page itself**, read once: redirects followed by hand,
-   each hop held to the same brand's hosts; 8 seconds; 1.5 MB; HTML only. Its
-   `<table>`s are read deterministically (no model): a table counts only with a
-   size column and at least one measurement column (sideways tables are turned).
-   What it measures — **body**, **finished garment**, or **not stated** — comes
-   only from the words around it, and so does its unit ("in" as an ordinary word
-   is not inches). Values are kept exactly as written; a missing value stays
-   missing. The sizes in the product's JSON-LD are shown as **labels only** when
-   there is no table. A chart read this way is **not verified**: reading is not
-   checking.
+1. **The address.** http or https; no credentials; no port but the default; a
+   host name, never an address literal, `localhost`, `.local`/`.internal` names or
+   `metadata.google.internal`. The connection itself uses a DNS lookup that refuses
+   any non-public address (private, loopback, link-local and cloud metadata,
+   carrier-grade NAT, multicast, reserved, and their IPv6 forms), so a name can't
+   be pointed somewhere private between a check and the request. Tracking
+   parameters (`utm_*`, `gclid`, …) and fragments are dropped.
+2. **Fynd's own record of exactly that product** (on its brand's own site, by its
+   code, as a favourite piece is found) is used as it stands: body chart and
+   finished-garment chart kept apart, every value in the brand's words and units,
+   its sources, and its own verification status.
+3. **The product page**, read once: redirects followed by hand, every new address
+   checked again; 8 seconds; 1.5 MB; HTML only. Its `<table>`s are read
+   deterministically (no model): a table counts only with a size column and at
+   least one measurement column (sideways tables are turned).
+4. **The size guide it links to**, when the page has no table: up to two links on
+   the same site whose words or address say "size guide", "size chart", "sizing"…
+   are read the same way. Their charts are labelled **the retailer's size guide
+   linked from the product page — possibly a general chart, not this product's
+   own**, with the guide's own link.
+5. **Labels only**: the sizes in the product's JSON-LD, when no table was found.
 
-Each answer carries the product, the market (only when the address names it),
-whether the chart is the product's own or published on its page, its status, the
-source link, and a short note built from those facts alone: what kind of
-measurements they are, which dimensions are given, that a body chart can't be set
-beside a garment, the brand's own fit words with where they came from. It never
-says how a product runs. A page that is refused, slow, too big, not HTML or
-drawn by script answers **unavailable** with the reason and the page's link,
-never a chart from elsewhere. Results are cached by product page (host and path):
-six hours for a chart, thirty minutes for a failure.
+What a table measures — **body**, **finished garment** or **not stated** — and its
+unit come only from the words around it ("in" as an ordinary word is not
+inches). Values are kept exactly as written and nothing is converted; a missing
+value stays missing, and a chest-only chart stays chest-only. A chart read this
+way is **not verified**: reading is not checking. A page that is refused (401,
+403, 429 — never worked around), drawn by script, slow, too big or not HTML
+answers **unavailable** with the reason, "We couldn't retrieve a usable sizing
+chart from this product page…", the page's link and any size guide link it had.
 
-A chart is not a recommendation: only a checked finished-garment chart is
-offered to the fit profile's comparison (and that size appears on the card, from
-the search's fit panel).
+Each answer carries the product and brand (from the page's JSON-LD), the retailer
+(its `og:site_name`, or host), the market (only when the address or the page's
+`og:locale` names it), whether the chart is the product's own, published on its
+page, or from its linked guide, its status, and a note built from those facts
+alone. It never says how a product runs. Results are cached by address: six
+hours for a chart, thirty minutes for a failure.
+
+**The fit profile, separately.** A chart is not a recommendation. Only a chart
+from a **verified** record with finished-garment measurements is compared with the
+shopper's saved reference (signed in, `engine.compare`, as on Compare); a chart
+read live can't be, because how each measurement was taken isn't known, and a
+body chart can't be set beside a garment at all — Find Fit says which.
 
 **What has and hasn't been tried against real pages.** The tests use invented
-HTML in the shapes size tables take, and Fynd's own records; the development
-environment had no outbound network, so no live retailer page has been read by
-this code yet. Many brands (Nike, Zara, H&M among them) draw their size guides
-with script after the page loads, or refuse automated readers; for those the
-honest outcome is "unavailable", and only products with a Fynd record show a
-chart until a page is found that publishes its table in its HTML.
+HTML in the shapes product pages and size guides take, and Fynd's own records;
+the development environment had no outbound network, so this code has not yet
+read a single live retailer page. Many shops draw their size guides with script
+after the page loads, or refuse automated readers; for those the honest outcome
+is "unavailable". Which shops publish usable HTML tables has to be established
+against real pages before retailer-specific reading is added.
 
 ## Compare before buying (hoodies and sweatshirts)
 
@@ -2307,7 +2319,7 @@ its caveats.
 GET  /api/size-recommendation                       -> { products }        what has sizing, and whether it is verified
 GET  /api/size-recommendation?product=<id>          -> { recommendation }  for the signed-in shopper
 GET  /api/size-recommendation?fit=<type>&items=<JSON> -> { fit }           up to 24 search listings, matched and sized from that type only
-GET  /api/size-recommendation?chart=<link>           -> { chart }         one listing's sizing chart; no account needed (see Sizing charts on search results)
+GET  /api/size-recommendation?chart=<link>           -> { chart }         a product's sizing chart from its link; no account needed (see Find Fit)
 GET  /api/fit-profile?part=feedback                    -> { feedback }
 POST /api/fit-profile { action: "feedback-consent", consent: { store, improve } }
 POST /api/fit-profile { action: "feedback-add", entry } -> { feedback, entry }

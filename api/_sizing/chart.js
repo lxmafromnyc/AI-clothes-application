@@ -1,48 +1,58 @@
 /* =========================================================
-   Fynd — a product's sizing chart, read from its brand's own page
+   Fynd — a product's sizing chart, from its link
 
-   The search page's "View sizing chart" asks for one listing's chart,
-   by its link, on demand. This answers with what that product's brand
-   actually publishes, or says why there is nothing to show:
+   Find Fit (index.html) takes a link to a clothing product from any
+   shop; the search page's "View sizing chart" asks the same question
+   for one of its results. Both come here (GET /api/size-recommendation
+   ?chart=<link>), and the answer is what the product's own pages
+   actually publish, or why there is nothing to show. In order:
 
-     1  the address    only the brand's own site, by exact host
-                       (OFFICIAL_HOSTS in ./schema.js), over https, no
-                       credentials, no port, no address literal. Any
-                       other shop is never fetched: Fynd can't say a
-                       third-party page's chart is the brand's.
-     2  Fynd's record  a sizing record for exactly this product (found
-                       by its code in the link, as a favourite piece is)
-                       is used as it stands: its body chart and its
-                       finished-garment chart, its sources, and its own
-                       verification status — verified only when a person
-                       checked it against the brand, never because it was
-                       read.
-     3  the page       otherwise the page itself, read once: redirects
-                       followed by hand, each hop held to the same
-                       brand's hosts; a time limit; a size limit; HTML
-                       only. Its size tables are read deterministically
-                       (no model), from the markup the server sent: a
-                       table counts only when it has a size column and
-                       at least one measurement column. What a table
-                       measures — the body it is cut for, or the garment
-                       — is taken from the words around it, and is
-                       "not stated" when they don't say. Values are kept
-                       as the page wrote them, with their units. The
-                       sizes the product is sold in come from its JSON-LD,
-                       as labels only.
+     1  the address    http or https, no credentials, no unusual port,
+                       a public host: never localhost, a private or
+                       link-local network, a cloud metadata address or a
+                       bare name. The host's addresses are checked when
+                       the connection is made, so a name that resolves
+                       somewhere private is refused even if it changed
+                       its answer since the last look.
+     2  Fynd's record  a sizing record for exactly this product (on its
+                       brand's own site, by its code — as a favourite
+                       piece is found) is used as it stands: body and
+                       finished-garment charts kept apart, values as the
+                       brand wrote them, and its own verification status.
+     3  the page       otherwise the product page, read once: redirects
+                       followed by hand, each new address checked again;
+                       a time limit; a size limit; HTML only. Its size
+                       tables are read deterministically (no model): a
+                       table counts only with a size column and at least
+                       one measurement column.
+     4  its size guide when the page has no table but links to a size
+                       guide on the same site ("Size guide", "Size chart",
+                       …), up to two such pages are read the same way.
+                       Their tables are labelled as the retailer's size
+                       guide linked from the page — possibly a general
+                       chart, never presented as this product's own.
+     5  labels         the sizes the product is sold in, from its JSON-LD,
+                       when no table was found anywhere.
 
-   Nothing read is ever run, and nothing is returned but short plain
-   strings; the page draws them as text. A page that is refused, slow,
-   too big, not HTML or drawn by script answers "unavailable" with the
-   reason and a link to the page, never a chart from somewhere else.
+   What a table measures — the body, the finished garment, or "not
+   stated" — and its unit come only from the page's own words. Values are
+   kept as written; nothing missing is filled in, and nothing is
+   converted. A page drawn by script, refused, slow, too big or not HTML
+   answers "unavailable" with the reason, the page's link and any size
+   guide link it had — never a chart from somewhere else. Nothing read is
+   ever run; only short plain strings come back, drawn as text.
 
-   Results are cached by product page (host and path, no query): a chart
+   Results are cached by address (without tracking parameters): a chart
    for six hours, a failure for thirty minutes.
    ========================================================= */
 
 'use strict';
 
 const crypto = require('crypto');
+const dns = require('dns');
+const net = require('net');
+const http = require('http');
+const https = require('https');
 const store = require('../_store');
 const sizingSchema = require('./schema');
 const { RECORDS } = require('./records');
@@ -53,7 +63,7 @@ const MAX_BYTES = 1500000;
 const MAX_REDIRECTS = 3;
 const CACHE_OK_SECONDS = 6 * 60 * 60;
 const CACHE_MISS_SECONDS = 30 * 60;
-const CACHE_VERSION = 'v1';
+const CACHE_VERSION = 'v2';
 const MAX_CELL = 60;
 const MAX_ROWS = 40;
 const MAX_COLUMNS = 12;
@@ -67,39 +77,136 @@ const SUPPORTED_BRANDS = Object.keys(sizingSchema.OFFICIAL_HOSTS);
 
 /* ---------- the address ---------- */
 
-/* { url, brand, market } or { error } for anything Fynd won't fetch. */
+/* Is this IP address on the public internet? Loopback, private,
+   carrier-grade NAT, link-local (cloud metadata lives there),
+   multicast, reserved and documentation ranges are not; nor are their
+   IPv6 counterparts or IPv4 written inside IPv6. */
+function isPublicAddress(ip) {
+  const kind = net.isIP(String(ip || ''));
+  if (kind === 4) {
+    const [a, b] = ip.split('.').map(Number);
+    if (a === 0 || a === 10 || a === 127 || a >= 224) return false;
+    if (a === 169 && b === 254) return false;
+    if (a === 172 && b >= 16 && b <= 31) return false;
+    if (a === 192 && b === 168) return false;
+    if (a === 100 && b >= 64 && b <= 127) return false;
+    if (a === 192 && b === 0) return false;
+    if (a === 198 && (b === 18 || b === 19)) return false;
+    if ((a === 198 && b === 51) || (a === 203 && b === 0)) return false;
+    return true;
+  }
+  if (kind === 6) {
+    const v = ip.toLowerCase();
+    const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(v);
+    if (mapped) return isPublicAddress(mapped[1]);
+    if (v === '::' || v === '::1') return false;
+    if (/^(fc|fd|fe8|fe9|fea|feb|ff)/.test(v)) return false;
+    if (/^(64:ff9b|2001:db8|2001::|::ffff)/.test(v)) return false;
+    return true;
+  }
+  return false;
+}
+
+const TRACKING = /^(utm_[a-z]+|gclid|fbclid|msclkid|mc_[a-z]+|ref|ref_src|_ga|igshid)$/i;
+
+/* { url, host, brand, market } or { error } for anything Fynd won't
+   fetch. The address may name any shop; it may not name anything that
+   isn't plainly a public web page. */
 function checkUrl(raw) {
   if (typeof raw !== 'string' || !raw.trim() || raw.length > 2000) return { error: 'invalid-url' };
   let u;
   try { u = new URL(raw.trim()); } catch (err) { return { error: 'invalid-url' }; }
-  if (u.protocol !== 'https:') return { error: 'invalid-url' };
-  if (u.username || u.password || u.port) return { error: 'invalid-url' };
-  const host = u.hostname.toLowerCase();
-  if (/^[\d.]+$/.test(host) || host.includes(':')) return { error: 'invalid-url' };
-  const brand = HOSTS.get(host);
-  if (!brand) return { error: 'unsupported-retailer', host };
-  return { url: `https://${host}${u.pathname}`, brand, host, market: marketOf(host, u.pathname) };
+  if (u.protocol !== 'https:' && u.protocol !== 'http:') return { error: 'invalid-url' };
+  if (u.username || u.password) return { error: 'invalid-url' };
+  if (u.port && !((u.protocol === 'https:' && u.port === '443') || (u.protocol === 'http:' && u.port === '80'))) return { error: 'blocked-address' };
+  const host = u.hostname.toLowerCase().replace(/\.$/, '');
+  /* a product page has a name; a bare address, public or not, is refused */
+  if (net.isIP(host.replace(/^\[|\]$/g, ''))) return { error: 'blocked-address' };
+  if (!host.includes('.') || /(^|\.)(localhost|local|internal|intranet|lan|home|corp|localdomain)$/.test(host) || host === 'metadata.google.internal') {
+    return { error: 'blocked-address' };
+  }
+  [...u.searchParams.keys()].forEach((k) => { if (TRACKING.test(k)) u.searchParams.delete(k); });
+  const query = u.searchParams.toString();
+  return {
+    url: `${u.protocol}//${host}${u.pathname}${query ? `?${query}` : ''}`,
+    host,
+    brand: HOSTS.get(host) || null,
+    market: marketOf(host, u.pathname)
+  };
 }
 
-/* The market the address names, or null: "/us/en/…" and "/en_us/…" say
-   it; an address that doesn't is not guessed. */
+/* The market the address names, or null: "/us/en/…", "/en_us/…",
+   "/en-gb/…" say it; an address that doesn't is not guessed. */
 function marketOf(host, path) {
   const parts = path.split('/').filter(Boolean).slice(0, 2);
   for (const p of parts) {
     const pair = /^[a-z]{2}[_-]([a-z]{2})$/i.exec(p);
     if (pair) return pair[1].toUpperCase();
-    if (/^[a-z]{2}$/i.test(p) && !/^(en|fr|es|de|it|ja|zh|ko|pt|nl|sv|da|pl|t)$/i.test(p)) return p.toUpperCase();
+    if (/^[a-z]{2}$/i.test(p) && !/^(en|fr|es|de|it|ja|zh|ko|pt|nl|sv|da|pl|t|p)$/i.test(p)) return p.toUpperCase();
   }
   return null;
 }
 
 /* ---------- reading the page ---------- */
 
+/* The default way pages are fetched: Node's own http(s), with a DNS
+   lookup that refuses any non-public address for the connection itself
+   (so a name can't be pointed somewhere private between a check and the
+   request), and the body cut off past MAX_BYTES. Answers like fetch's
+   Response, as far as fetchPage needs it. */
+function guardedLookup(hostname, options, callback) {
+  dns.lookup(hostname, Object.assign({}, options, { all: true }), (err, addresses) => {
+    if (err) return callback(err);
+    const list = [].concat(addresses || []);
+    if (!list.length || list.some((a) => !isPublicAddress(a.address))) {
+      const blocked = new Error('blocked-address');
+      blocked.code = 'EBLOCKED';
+      return callback(blocked);
+    }
+    if (options && options.all) return callback(null, list);
+    return callback(null, list[0].address, list[0].family);
+  });
+}
+
+function guardedTransport(url, init) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(url);
+    const lib = u.protocol === 'https:' ? https : http;
+    const req = lib.request(u, { method: 'GET', headers: init.headers, lookup: guardedLookup, signal: init.signal, timeout: TIMEOUT_MS }, (res) => {
+      const chunks = [];
+      let total = 0;
+      let over = false;
+      res.on('data', (chunk) => {
+        total += chunk.length;
+        if (total > MAX_BYTES) { over = true; res.destroy(); return; }
+        chunks.push(chunk);
+      });
+      const done = () => resolve({
+        status: res.statusCode,
+        ok: res.statusCode >= 200 && res.statusCode < 300,
+        headers: { get: (name) => { const v = res.headers[String(name).toLowerCase()]; return Array.isArray(v) ? v.join(', ') : (v || null); } },
+        /* null: the body ran past MAX_BYTES and was cut off */
+        text: async () => (over ? null : Buffer.concat(chunks).toString('utf8'))
+      });
+      res.on('end', done);
+      res.on('close', done);
+      res.on('error', (err) => (over ? done() : reject(err)));
+    });
+    req.on('timeout', () => req.destroy(Object.assign(new Error('timed out'), { name: 'AbortError' })));
+    req.on('error', reject);
+    req.end();
+  });
+}
+
+let transport = guardedTransport;
+/* for the browser suites, whose servers answer in-process and must
+   never reach out */
+const setTransport = (fn) => { transport = fn || guardedTransport; };
+
 /* Reads a page from a checked address. Redirects are followed by hand
-   so each hop is checked again: a page that sends Fynd anywhere but the
-   same brand's own site is not read. */
+   so each new address is checked again before it is asked for. */
 async function fetchPage(checked, fetchImpl) {
-  const doFetch = fetchImpl || fetch;
+  const doFetch = fetchImpl || transport;
   let url = checked.url;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
@@ -113,17 +220,19 @@ async function fetchPage(checked, fetchImpl) {
           headers: { 'User-Agent': UA, Accept: 'text/html,application/xhtml+xml', 'Accept-Language': 'en-US,en;q=0.8' }
         });
       } catch (err) {
+        if (err && (err.code === 'EBLOCKED' || err.message === 'blocked-address')) return { failed: 'blocked-address' };
         return { failed: err && err.name === 'AbortError' ? 'timeout' : 'unreachable' };
       }
       if (response.status >= 300 && response.status < 400) {
         const location = response.headers && response.headers.get && response.headers.get('location');
         if (!location) return { failed: 'bad-redirect' };
-        const next = checkUrl(new URL(location, url).toString());
-        if (next.error || next.brand !== checked.brand) return { failed: 'redirected-away' };
+        let next;
+        try { next = checkUrl(new URL(location, url).toString()); } catch (err) { return { failed: 'bad-redirect' }; }
+        if (next.error) return { failed: 'redirected-away' };
         url = next.url;
         continue;
       }
-      if (response.status === 403 || response.status === 429) return { failed: 'refused', status: response.status };
+      if (response.status === 401 || response.status === 403 || response.status === 429) return { failed: 'refused', status: response.status };
       if (!response.ok) return { failed: 'http-error', status: response.status };
       const type = String((response.headers && response.headers.get && response.headers.get('content-type')) || '');
       if (type && !/html/i.test(type)) return { failed: 'not-html' };
@@ -145,7 +254,7 @@ async function readCapped(response) {
   if (length > MAX_BYTES) return null;
   if (!response.body || !response.body.getReader) {
     const text = await response.text();
-    return Buffer.byteLength(text) > MAX_BYTES ? null : text;
+    return text === null || Buffer.byteLength(text) > MAX_BYTES ? null : text;
   }
   const reader = response.body.getReader();
   const chunks = [];
@@ -301,13 +410,61 @@ function kindOf(text) {
   return 'not-stated';
 }
 
+/* The name the site gives itself, or its host. */
+function retailerOf(html, host) {
+  const m = /<meta[^>]+property=["']og:site_name["'][^>]*content=["']([^"']+)["']/i.exec(html)
+    || /<meta[^>]+content=["']([^"']+)["'][^>]*property=["']og:site_name["']/i.exec(html);
+  return (m && plain(m[1], 60)) || host.replace(/^www\d?\./, '');
+}
+
+/* The market the page states for itself (og:locale "en_US"), if any. */
+function localeMarket(html) {
+  const m = /<meta[^>]+property=["']og:locale["'][^>]*content=["'][a-z]{2}[_-]([a-z]{2})["']/i.exec(html)
+    || /<meta[^>]+content=["'][a-z]{2}[_-]([a-z]{2})["'][^>]*property=["']og:locale["']/i.exec(html);
+  return m ? m[1].toUpperCase() : null;
+}
+
+const registrable = (host) => host.split('.').slice(-2).join('.');
+
+/* Links from the page to its own size guide: same site, said so by
+   their words or their address. At most three, never the page itself. */
+const GUIDE_WORDS = /\bsize[\s_-]*(guide|chart|table|info|information)\b|\bsizing( guide| chart| info)?\b|\bmeasurement guide\b|\bfind your size\b/i;
+function guideLinks(html, pageUrl) {
+  const out = [];
+  const page = new URL(pageUrl);
+  const re = /<a\b([^>]*)>([\s\S]*?)<\/a\s*>/gi;
+  let m;
+  while ((m = re.exec(visible(html))) && out.length < 3) {
+    const href = (/\bhref=["']([^"']+)["']/i.exec(m[1]) || [])[1];
+    if (!href || /^(#|javascript:|mailto:|tel:)/i.test(href)) continue;
+    const words = `${plain(m[2], 80)} ${(/\b(?:aria-label|title)=["']([^"']+)["']/i.exec(m[1]) || [])[1] || ''}`;
+    let target;
+    try { target = new URL(decode(href), page); } catch (err) { continue; }
+    if (!GUIDE_WORDS.test(words) && !GUIDE_WORDS.test(decodeURIComponent(target.pathname).replace(/[-_/]/g, ' '))) continue;
+    if (registrable(target.hostname.toLowerCase()) !== registrable(page.hostname.toLowerCase())) continue;
+    target.hash = '';
+    if (target.href === page.href || out.includes(target.href)) continue;
+    out.push(target.href);
+  }
+  return out;
+}
+
+/* A page whose content is drawn by script after it loads: next to no
+   readable text, or an empty application root. */
+function drawnByScript(html) {
+  const text = plain(visible(html));
+  return text.length < 400 || /<div[^>]+id=["'](root|app|__next)["'][^>]*>\s*<\/div>/i.test(html);
+}
+
 /* ---------- the answer ---------- */
 
 const unavailable = (checked, reason, extra) => Object.assign({
   status: 'unavailable',
   reason,
   product: checked && checked.brand ? { brand: checked.brand, name: null } : null,
+  retailer: checked && checked.host ? checked.host.replace(/^www\d?\./, '') : null,
   source: checked && checked.url ? { title: null, url: checked.url, kind: 'product-page' } : null,
+  guides: [],
   market: checked ? checked.market || null : null,
   charts: [],
   sizes: [],
@@ -315,20 +472,23 @@ const unavailable = (checked, reason, extra) => Object.assign({
 }, extra || {});
 
 const REASONS = {
-  'invalid-url': 'That isn’t a product link Fynd can read.',
-  'unsupported-retailer': `Fynd reads sizing only from the sites of brands it knows (${SUPPORTED_BRANDS.join(', ')}). It doesn’t read this site, so it has no chart for this listing — check the size guide on the listing’s own page.`,
-  refused: 'The brand’s site refused Fynd’s request for this page.',
-  timeout: 'The brand’s page took too long to answer.',
-  unreachable: 'The brand’s page couldn’t be reached.',
-  'http-error': 'The brand’s page answered with an error.',
-  'redirected-away': 'The page sent Fynd somewhere other than the brand’s own site, so it wasn’t read.',
-  'bad-redirect': 'The page sent Fynd to an address it couldn’t follow.',
+  'invalid-url': 'That isn’t a valid product link. Paste the full address of a product page, starting with https://.',
+  'blocked-address': 'Fynd only reads public web pages, and that address points somewhere it won’t go.',
+  refused: 'The retailer’s site refused Fynd’s request for this page. Fynd doesn’t try to get around that.',
+  timeout: 'The retailer’s page took too long to answer.',
+  unreachable: 'The retailer’s page couldn’t be reached.',
+  'http-error': 'The retailer’s page answered with an error.',
+  'redirected-away': 'The page redirected to an address Fynd won’t read.',
+  'bad-redirect': 'The page redirected to an address Fynd couldn’t follow.',
   'too-many-redirects': 'The page redirected too many times.',
-  'not-html': 'The link isn’t a web page.',
+  'not-html': 'That link isn’t a web page.',
   'too-large': 'The page was too large to read.',
   unreadable: 'The page couldn’t be read.',
-  'no-chart': 'The page Fynd received contains no size table it could read. Many brands draw their size guide with script after the page loads, which Fynd doesn’t run.'
+  'needs-script': 'This page builds its content with JavaScript after it loads, which Fynd doesn’t run, so no size table was in what it received.',
+  'no-chart': 'The page Fynd received has no size table it could read, and no size guide it could read was linked from it.'
 };
+const COULD_NOT = 'We couldn’t retrieve a usable sizing chart from this product page. You can open the original product page or try the retailer’s official size guide.';
+
 
 /* A chart from Fynd's own record of this product: body and garment
    charts kept apart, each value as the brand wrote it. */
@@ -341,6 +501,7 @@ function fromRecord(record, checked) {
       measures,
       title: chart.label || null,
       unit: record.units,
+      source: { url: chart.source && /^https:/.test(chart.source.url || '') ? chart.source.url : record.product.url, title: null },
       columns: keys.map((k) => chart.dimensions[k].label || k),
       rows: record.sizes.filter((s) => chart.sizes[s]).map((s) => ({ size: s, values: keys.map((k) => (chart.sizes[s][k] ? String(chart.sizes[s][k].text) : '')) }))
     });
@@ -350,7 +511,9 @@ function fromRecord(record, checked) {
   return {
     status: 'ok',
     from: 'fynd-record',
+    productId: record.id,
     product: { brand: record.brand, name: record.product.name, code: record.product.code || null },
+    retailer: record.brand,
     source: { title: record.product.pageTitle || record.product.name, url: record.product.url, kind: 'product-page', retrievedAt: record.retrievedAt },
     otherSources: (record.sources || []).filter((s) => s.url !== record.product.url).map((s) => ({ url: s.url, what: plain(s.what || '', 160) })),
     scope: 'product-specific',
@@ -364,28 +527,45 @@ function fromRecord(record, checked) {
   };
 }
 
-/* What the page itself gave. */
-function fromPage(html, checked, landedUrl) {
-  const data = productData(html);
-  const charts = [];
+/* The size tables in one page, each labelled with where it came from. */
+function chartsIn(html, pageUrl, title) {
+  const out = [];
   tablesOf(html).forEach((t) => {
     const table = sizeTable(t.rows);
     if (!table) return;
     const words = `${t.before} ${t.caption} ${table.columns.join(' ')}`;
-    charts.push({
+    out.push({
       measures: kindOf(words),
       title: t.caption || null,
       unit: unitOf(`${t.caption} ${table.columns.join(' ')} ${t.before.slice(-120)}`),
+      source: { url: pageUrl, title: title || null },
       columns: table.columns,
       rows: table.rows
     });
   });
+  return out;
+}
+
+/* What the product page — and, failing that, the size guide it links
+   to — gave. `guides` are the pages read: [{ url, html }]. */
+function fromPage(html, checked, landedUrl, guides) {
+  const data = productData(html);
+  const pageUrl = landedUrl || checked.url;
+  const pageTitle = titleOf(html);
+  let charts = chartsIn(html, pageUrl, pageTitle);
+  let scope = 'product-page';
+  if (!charts.length) {
+    (guides || []).forEach((g) => { if (g.html) charts = charts.concat(chartsIn(g.html, g.url, titleOf(g.html))); });
+    scope = 'linked-size-guide';
+  }
   const base = {
     from: 'live-page',
-    product: { brand: data.brand || checked.brand, name: data.name, code: data.sku },
-    source: { title: titleOf(html), url: landedUrl || checked.url, kind: 'product-page', retrievedAt: new Date().toISOString().slice(0, 10) },
-    scope: 'product-page',
-    market: checked.market,
+    product: { brand: data.brand || checked.brand || null, name: data.name, code: data.sku },
+    retailer: retailerOf(html, new URL(pageUrl).hostname),
+    source: { title: pageTitle, url: pageUrl, kind: 'product-page', retrievedAt: new Date().toISOString().slice(0, 10) },
+    guides: (guides || []).map((g) => ({ url: g.url, read: Boolean(g.html), reason: g.failed || null })),
+    scope,
+    market: checked.market || localeMarket(html),
     sizes: data.sizes,
     fit: null,
     verification: 'not-verified',
@@ -393,7 +573,8 @@ function fromPage(html, checked, landedUrl) {
   };
   if (charts.length) return Object.assign(base, { status: 'ok', charts: charts.slice(0, 4) });
   if (data.sizes.length) return Object.assign(base, { status: 'labels-only', charts: [] });
-  return Object.assign(unavailable(checked, 'no-chart'), { product: base.product, source: base.source });
+  const reason = drawnByScript(html) ? 'needs-script' : 'no-chart';
+  return Object.assign(unavailable(checked, reason), { product: base.product, retailer: base.retailer, source: base.source, guides: base.guides, market: base.market });
 }
 
 /* The short note, built only from what was found. */
@@ -402,12 +583,15 @@ function noteFor(result) {
   const lines = [];
   if (result.status === 'unavailable') {
     lines.push(REASONS[result.reason] || REASONS.unreadable);
-    if (result.source && result.source.url) lines.push('Check the size guide on the brand’s own page.');
+    if (result.source && result.source.url) lines.push(COULD_NOT);
     return lines;
   }
   if (result.status === 'labels-only') {
-    lines.push(`The product page lists sizes ${result.sizes[0]}${result.sizes.length > 1 ? `–${result.sizes[result.sizes.length - 1]}` : ''} but Fynd found no measurements on it.`);
+    lines.push(`The product page lists sizes ${result.sizes[0]}${result.sizes.length > 1 ? `–${result.sizes[result.sizes.length - 1]}` : ''}, but Fynd found no measurements on it${(result.guides || []).length ? ' or in the size guide it links to' : ''}.`);
     return lines;
+  }
+  if (result.scope === 'linked-size-guide') {
+    lines.push('The product page has no size table of its own. This chart is from the retailer’s size guide linked from that page — it may be a general chart for the category, not one for this product only.');
   }
   result.charts.forEach((c) => {
     const unit = c.unit === 'in' ? ', in inches' : c.unit === 'cm' ? ', in centimetres' : c.unit === 'both' ? ', in inches and centimetres' : ', with no unit stated — check the source';
@@ -422,7 +606,7 @@ function noteFor(result) {
       ? `From Fynd’s record of this product, copied from ${result.product.brand}’s page on ${result.source.retrievedAt} and checked against it.`
       : `From Fynd’s record of this product, copied from ${result.product.brand}’s page on ${result.source.retrievedAt} and not yet checked against it.`);
   } else {
-    lines.push('Read just now from the product’s page and not checked by a person. Check the source for how each measurement is taken.');
+    lines.push('Read just now from the retailer’s page and not checked by a person. Check the source for how each measurement is taken.');
   }
   return lines;
 }
@@ -441,7 +625,7 @@ async function chartFor(rawUrl, options) {
     const result = unavailable(null, checked.error);
     return Object.assign(result, { note: noteFor(result) });
   }
-  const match = recordFor(checked);
+  const match = checked.brand ? recordFor(checked) : null;
   if (match) {
     const result = fromRecord(match, checked);
     return Object.assign(result, { note: noteFor(result) });
@@ -453,7 +637,22 @@ async function chartFor(rawUrl, options) {
     if (cached && cached.source && cached.source.url && checkUrl(cached.source.url).url === checked.url) return Object.assign(cached, { cached: true });
   }
   const page = await fetchPage(checked, opts.fetch);
-  const result = page.failed ? unavailable(checked, page.failed, page.status ? { status: 'unavailable', httpStatus: page.status } : null) : fromPage(page.html, checked, page.url);
+  let result;
+  if (page.failed) {
+    result = unavailable(checked, page.failed, page.status ? { httpStatus: page.status } : null);
+  } else {
+    /* no table on the page: the size guide it links to, read the same way */
+    let guides = [];
+    if (!chartsIn(page.html, page.url).length) {
+      guides = await Promise.all(guideLinks(page.html, page.url).slice(0, 2).map(async (url) => {
+        const g = checkUrl(url);
+        if (g.error) return { url, failed: g.error };
+        const got = await fetchPage(g, opts.fetch);
+        return got.failed ? { url, failed: got.failed } : { url: got.url, html: got.html };
+      }));
+    }
+    result = fromPage(page.html, checked, page.url, guides);
+  }
   result.note = noteFor(result);
   /* only kept under the address it was asked for */
   if (result.source) result.source.url = result.source.url || checked.url;
@@ -473,4 +672,4 @@ function recordFor(checked) {
   return null;
 }
 
-module.exports = { chartFor, checkUrl, marketOf, fetchPage, productData, tablesOf, sizeTable, unitOf, kindOf, fromPage, fromRecord, noteFor, plain, SUPPORTED_BRANDS, MAX_BYTES };
+module.exports = { chartFor, checkUrl, isPublicAddress, guardedLookup, marketOf, fetchPage, setTransport, productData, tablesOf, sizeTable, guideLinks, drawnByScript, unitOf, kindOf, fromPage, fromRecord, noteFor, plain, SUPPORTED_BRANDS, MAX_BYTES, COULD_NOT };
