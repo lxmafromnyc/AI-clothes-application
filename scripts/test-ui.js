@@ -136,9 +136,25 @@ const withRowField = (id, field, value) => {
    gating is tested in test-sizing.js and test-e2e.js. */
 const sizingRecords = require('../api/_sizing/records');
 const sizingEngine = require('../api/_sizing/engine');
+/* ...and the search page's personalisation: the real module, production
+   gating and all (no includeUnverified here) */
+const { personalize: sizingPersonalize } = require('../api/_sizing/personalize');
+const personalizeRequests = [];
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
+
+  if (url.pathname === '/api/size-recommendation' && req.method === 'POST') {
+    let body = '';
+    req.on('data', (d) => { body += d; });
+    return req.on('end', () => {
+      res.setHeader('Content-Type', 'application/json');
+      personalizeRequests.push(JSON.parse(body || '{}'));
+      if (stubs.personalizeFails) { res.statusCode = 500; return res.end(JSON.stringify({ error: 'stubbed failure' })); }
+      const parsed = JSON.parse(body || '{}');
+      return res.end(JSON.stringify({ personalized: sizingPersonalize(fitProfileState.profile, parsed.items, { query: parsed.query, referenceCategory: parsed.referenceCategory }) }));
+    });
+  }
 
   if (url.pathname === '/api/size-recommendation') {
     res.setHeader('Content-Type', 'application/json');
@@ -1705,9 +1721,154 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
 
   reset();
 
-  console.log('\nlive searches left, in the search box');
+  console.log('\nsearch results, read against the Fit Guide');
 
   const SIGNED_IN = { signedIn: true, user: { id: 'usr_1', email: 'ada@example.test', name: 'Ada', emailVerified: true } };
+
+  /* ILLUSTRATIVE FIXTURE LISTINGS — invented search results in the shape
+     a product source returns, across brands and shops, for testing what
+     the page does with them. The UNIQLO, Nike and Zara addresses carry
+     the product codes of Fynd's real sizing records, so the real
+     personalisation module (production gating, no includeUnverified)
+     matches them; the H&M and Nordstrom ones match nothing. */
+  const FIT_LISTINGS = [
+    { id: 'u', name: 'Sweat Pullover Hoodie', brand: 'UNIQLO', retailer: 'UNIQLO', productUrl: 'https://www.uniqlo.com/us/en/products/E475378-000/00?colorDisplayCode=09' },
+    { id: 'n', name: 'Nike Club Pullover Hoodie', brand: 'Nike', retailer: 'Nike', productUrl: 'https://www.nike.com/t/club-pullover-hoodie-test/FN3859-010' },
+    { id: 'z', name: 'Basic Heavyweight Hoodie', brand: 'Zara', retailer: 'Zara', productUrl: 'https://www.zara.com/us/en/basic-heavyweight-hoodie-p00761810.html' },
+    { id: 'h', name: 'Relaxed Fit Hoodie', brand: 'H&M', retailer: 'H&M', productUrl: 'https://www2.hm.com/en_us/productpage.0000000001.html' },
+    { id: 'c', name: 'Champion Reverse Weave Hoodie', retailer: 'Nordstrom', productUrl: 'https://www.nordstrom.com/s/hoodie/1' }
+  ].map((p) => Object.assign({ price: 60, currency: 'USD', imageUrl: searchPhoto, category: '', colors: [], sizes: [] }, p));
+  const fitSearch = () => ({ reply: { source: 'openwebninja', products: FIT_LISTINGS, returned: FIT_LISTINGS.length, rejected: {}, attachments: { received: 0, used: 0 } } });
+  /* a hoodie reference measured at home (ILLUSTRATIVE), with a chest measurement and men's line for body charts */
+  const REF_PROFILE = (extra) => Object.assign(require('../assets/fit-profile-schema.js').empty(), {
+    measurements: { unit: 'in', height: null, chest: 40, waist: null, hip: null },
+    garments: Object.assign({ hoodies: { favorite: 'perfect', fitGoal: 'true-to-size', troubleZones: null, line: 'men', anchor: { brand: 'Carhartt', size: 'L', measurements: { unit: 'cm', chestWidth: 58, bodyLength: 68, shoulderWidth: 50, sleeveLength: 62 } } } }, extra || {})
+  });
+  const cardHrefs = (page) => page.$$eval('#results .grid .item-card', (ns) => ns.map((n) => n.getAttribute('href')));
+
+  await test('signed out, every result shows as it always did, with one line on how to personalise sizes', async () => {
+    reset();
+    accountState = accountReply({});
+    stubs.search = fitSearch();
+    personalizeRequests.length = 0;
+    const page = await openPage('find-clothes.html');
+    await submit(page, 'hoodie');
+    await page.waitForSelector('#results [data-fit="signed-out"]');
+    assert.deepStrictEqual(await cardHrefs(page), FIT_LISTINGS.map((p) => p.productUrl), 'every result, in order, to its own shop');
+    assert.match(await page.textContent('.fit-notice'), /Sign in to see sizes from your Fit Guide/);
+    assert.strictEqual(await page.$$eval('.item-fit', (ns) => ns.length), 0);
+    assert.strictEqual(personalizeRequests.length, 0, 'nothing about the shopper is asked for signed out');
+    await page.close();
+  });
+
+  await test('with a saved hoodie reference, each result says what Fynd can honestly tell — and every result stays', async () => {
+    reset();
+    accountState = accountReply({ extra: SIGNED_IN });
+    fitProfileState = fitProfileReply(REF_PROFILE());
+    stubs.search = fitSearch();
+    personalizeRequests.length = 0;
+    for (const viewport of [{ width: 1280, height: 900 }, { width: 360, height: 740 }]) {
+      const page = await openPage('find-clothes.html', { viewport });
+      await submit(page, 'hoodie');
+      await page.waitForSelector('#results [data-fit="ready"]');
+      assert.deepStrictEqual(await cardHrefs(page), FIT_LISTINGS.map((p) => p.productUrl), 'nothing removed, reordered or relinked');
+      const fits = await page.$$eval('.item-slot', (slots) => slots.map((s) => ({
+        href: s.querySelector('.item-card').getAttribute('href'),
+        level: s.querySelector('.item-fit').dataset.level,
+        label: s.querySelector('.item-fit-label').textContent,
+        detail: s.querySelector('.item-fit-detail').textContent,
+        diffs: Array.from(s.querySelectorAll('.item-fit-diffs li'), (li) => li.textContent),
+        link: (s.querySelector('.item-fit a') || {}).href || null
+      })));
+      const by = (id) => fits.find((f) => f.href === FIT_LISTINGS.find((p) => p.id === id).productUrl);
+      /* UNIQLO: checked garment measurements, but only chest and shoulders measured the same way */
+      assert.strictEqual(by('u').level, 'partial');
+      assert.match(by('u').label, /^Closest size: /);
+      assert.match(by('u').detail, /2 of 4 measurements — not enough to recommend a size/);
+      assert.deepStrictEqual(by('u').diffs.map((d) => d.split(':')[0]), ['Chest', 'Shoulders']);
+      assert.ok(by('u').link.endsWith('compare.html?product=uniqlo-e475378-sweat-pullover-hoodie-us&type=hoodies'));
+      /* Nike: a body-size chart, said to be one, with no garment dimensions */
+      assert.strictEqual(by('n').level, 'partial');
+      assert.match(by('n').label, /^Likely size: /);
+      assert.match(by('n').detail, /body-size chart — who each size is cut for, not what this garment measures/);
+      assert.deepStrictEqual(by('n').diffs, []);
+      /* Zara: a record nobody has checked gives no size */
+      assert.strictEqual(by('z').level, 'none');
+      assert.match(by('z').detail, /hasn't checked it yet/);
+      /* H&M and a Nordstrom listing: shown, linked, and plainly without a size */
+      for (const id of ['h', 'c']) {
+        assert.strictEqual(by(id).level, 'none', id);
+        assert.strictEqual(by(id).label, 'No size suggestion');
+        assert.strictEqual(by(id).link, null);
+      }
+      assert.match(await page.textContent('.fit-notice'), /Read against your Fit Guide for hoodies: 2 less certain, 3 without reliable sizing yet/);
+      /* legible, in the palette, and no wider than the screen */
+      const problems = await textStyleProblems(page, await resolveInks(page));
+      assert.deepStrictEqual(problems, [], `${viewport.width}px:\n        ${problems.join('\n        ')}`);
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth) <= viewport.width);
+      await page.close();
+    }
+    /* only the listings' address, name, brand and shop were sent */
+    assert.deepStrictEqual(Object.keys(personalizeRequests[0].items[0]).sort(), ['brand', 'name', 'productUrl', 'retailer']);
+    assert.strictEqual(personalizeRequests[0].action, 'personalize');
+  });
+
+  await test('with no Fit Guide for the type, results are unchanged and the page offers to personalise them', async () => {
+    reset();
+    accountState = accountReply({ extra: SIGNED_IN });
+    fitProfileState = fitProfileReply(null);
+    stubs.search = fitSearch();
+    const page = await openPage('find-clothes.html');
+    await submit(page, 'hoodie');
+    await page.waitForSelector('#results [data-fit="ready"]');
+    assert.deepStrictEqual(await cardHrefs(page), FIT_LISTINGS.map((p) => p.productUrl));
+    assert.match(await page.textContent('.fit-notice'), /Sizes here aren’t personalised yet: tell the Fit Guide about a hoodie that fits you/);
+    assert.ok((await page.getAttribute('.fit-notice a', 'href')).endsWith('compare.html?type=hoodies'));
+    /* a checked product still says it can be compared once there is a reference */
+    assert.match(await page.textContent('.item-slot:first-child .item-fit'), /Save a hoodie that fits you, with its measurements/);
+    await page.close();
+  });
+
+  await test('when the Fit Guide can\'t be read, the results are untouched and the page says so', async () => {
+    reset();
+    accountState = accountReply({ extra: SIGNED_IN });
+    fitProfileState = fitProfileReply(REF_PROFILE());
+    stubs.search = fitSearch();
+    stubs.personalizeFails = true;
+    const page = await openPage('find-clothes.html');
+    await submit(page, 'hoodie');
+    await page.waitForSelector('.fit-notice');
+    assert.match(await page.textContent('.fit-notice'), /couldn’t be read against these results just now. The results themselves are unaffected/);
+    assert.deepStrictEqual(await cardHrefs(page), FIT_LISTINGS.map((p) => p.productUrl));
+    assert.strictEqual(await page.$$eval('.item-fit', (ns) => ns.length), 0);
+    stubs.personalizeFails = false;
+    await page.close();
+  });
+
+  await test('with a hoodie and a sweatshirt reference, the shopper can switch which one the results are read against', async () => {
+    reset();
+    accountState = accountReply({ extra: SIGNED_IN });
+    fitProfileState = fitProfileReply(REF_PROFILE({
+      sweatshirts: { favorite: 'perfect', fitGoal: null, troubleZones: null, line: 'men', anchor: { brand: 'UNIQLO', size: 'M', product: { name: null, url: 'https://www.uniqlo.com/us/en/products/E475377-000/00' } } }
+    }));
+    stubs.search = fitSearch();
+    personalizeRequests.length = 0;
+    const page = await openPage('find-clothes.html');
+    await submit(page, 'hoodie');
+    await page.waitForSelector('#results [data-fit="ready"]');
+    assert.match(await page.textContent('.fit-notice'), /Compare with your hoodie \(Carhartt L\) or sweatshirt \(UNIQLO M\)/);
+    await page.click('[data-reference="sweatshirts"]');
+    await page.waitForFunction(() => /Suggested size/.test(document.querySelector('.item-slot .item-fit-label').textContent));
+    /* the UNIQLO sweatshirt IS a checked product: all four measurements, a suggestion */
+    assert.strictEqual(await page.textContent('.item-slot .item-fit-label'), 'Suggested size: M');
+    assert.strictEqual(await page.$$eval('.item-slot:first-child .item-fit-diffs li', (ns) => ns.length), 4);
+    assert.strictEqual(personalizeRequests[personalizeRequests.length - 1].referenceCategory, 'sweatshirts');
+    await page.close();
+    accountState = accountReply({});
+    fitProfileState = fitProfileReply(null);
+  });
+
+  console.log('\nlive searches left, in the search box');
 
   /* the count in words, and whether the allowance — words and bar — is
      on screen at all */

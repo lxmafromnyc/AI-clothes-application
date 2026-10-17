@@ -563,9 +563,19 @@
       type = 'sweatshirts';
       doc.querySelectorAll('input[name="refType"]').forEach((r) => { r.checked = r.value === type; });
     }
+    /* from a search result: ?type=<hoodies|sweatshirts>&product=<id>,
+       each used only if it names a type and a product this page lists */
+    const params = new URLSearchParams(global.location.search);
+    const asked = products.find((x) => x.id === params.get('product'));
+    const askedType = asked ? asked.category : params.get('type');
+    if (TYPES[askedType]) {
+      type = askedType;
+      doc.querySelectorAll('input[name="refType"]').forEach((r) => { r.checked = r.value === type; });
+    }
     show('compare-app', true);
     renderReference();
     renderProducts();
+    if (asked) await loadComparison(asked.id);
     root.dataset.ready = 'true';
   }
 

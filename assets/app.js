@@ -248,6 +248,9 @@ function skeletons(count) {
     arrive(body);
     bindImageFallback(body);
     announce(`${found.products.length} ${found.products.length === 1 ? 'piece' : 'pieces'} found.`);
+    /* the results, for assets/search-fit.js to read against the shopper's
+       Fit Guide — after they are on screen, and never holding them up */
+    body.dispatchEvent(new CustomEvent('fynd:results', { bubbles: true, detail: { products: found.products, query: asked } }));
   }
 
   /* When a plan's allowance is what ran out, the reset is the useful

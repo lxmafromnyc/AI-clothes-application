@@ -1229,9 +1229,13 @@ function contextOf(record) {
 
 /* the shopper's reference for this product's type, or the other
    fleece top's: { category, entry, crossCategory } or null */
-function referenceEntry(profile, category) {
+function referenceEntry(profile, category, preferred) {
   const garments = (profile && profile.garments) || {};
   const usable = (e) => e && e.favorite !== 'none' && e.anchor && (e.anchor.measurements || e.anchor.product);
+  /* the one the shopper chose, if it is the same family and usable */
+  if (preferred && FAMILY[preferred] && FAMILY[preferred] === FAMILY[category] && usable(garments[preferred])) {
+    return { category: preferred, entry: garments[preferred], crossCategory: preferred !== category };
+  }
   if (usable(garments[category])) return { category, entry: garments[category], crossCategory: false };
   const sibling = Object.keys(FAMILY).find((c) => c !== category && FAMILY[c] === FAMILY[category] && usable(garments[c]));
   return sibling ? { category: sibling, entry: garments[sibling], crossCategory: true } : null;
@@ -1255,7 +1259,7 @@ function compare(profile, record, opts) {
       [], { product: { brand: record.brand, name: record.product.name }, context: productContext });
   }
 
-  const found = referenceEntry(profile, record.category);
+  const found = referenceEntry(profile, record.category, options.referenceCategory);
   if (!found) {
     return no('no-reference', `Save a ${CATEGORY_WORDS[record.category]} that fits you well, with its measurements, to compare against.`,
       [`Measure a ${CATEGORY_WORDS[record.category]} you like, laid flat: chest, body length, shoulders and sleeves.`], { product: { brand: record.brand, name: record.product.name }, context: productContext });

@@ -248,7 +248,17 @@
      unit) travels in the address, never anything about the shopper. */
   const sizing = {
     products: () => call('size-recommendation'),
-    compare: (productId, unit) => call(`size-recommendation?product=${encodeURIComponent(productId)}&compare=1${unit === 'in' || unit === 'cm' ? `&unit=${unit}` : ''}`)
+    compare: (productId, unit) => call(`size-recommendation?product=${encodeURIComponent(productId)}&compare=1${unit === 'in' || unit === 'cm' ? `&unit=${unit}` : ''}`),
+    /* a page of search results, read against the shopper's Fit Guide:
+       only each listing's address, name, brand and shop travel */
+    personalize: (products, query, referenceCategory) => call('size-recommendation', {
+      body: {
+        action: 'personalize',
+        query: typeof query === 'string' ? query.slice(0, 300) : '',
+        referenceCategory: referenceCategory || null,
+        items: (products || []).slice(0, 48).map((p) => ({ productUrl: p.productUrl, name: p.name, brand: p.brand, retailer: p.retailer }))
+      }
+    })
   };
 
   /* After a checkout the browser comes back before Stripe's webhook has

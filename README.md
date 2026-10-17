@@ -2064,6 +2064,56 @@ own. Every answer carries `anchor`: where its evidence came from, how it was use
 (`garment`, `chest-range` or `not-used`), and which measurements were and weren't
 compared, and why.
 
+## Search, read against the Fit Guide
+
+Search is unchanged: `/api/search` asks whichever product source is configured
+(OpenWeb Ninja, SerpApi, Serper) for any garment, brand or shop, and every result
+that passes the verification gate is shown — Nike, UNIQLO, Zara, H&M and anything
+else the source returns, through the same workflow. Fynd can only show what the
+source retrieves; it does not claim every retailer.
+
+After results are on screen, a signed-in shopper's page (`assets/search-fit.js`)
+sends each listing's address, name, brand and shop — nothing else — to `POST
+/api/size-recommendation { action: "personalize" }`, which reads them against that
+shopper's own saved Fit Guide (`api/_sizing/personalize.js`). Deterministic, no AI
+call, no new storage. It never removes, reorders or relinks a result: catalogue
+coverage decides how strong a size answer is, not whether a product can be found.
+
+- **Which answers apply.** The garment is read from the listing's title, else the
+  search, by word (hoodie, sweatshirt/crewneck, T-shirt/tee, jeans, pants/trousers,
+  sweatpants/joggers): a hoodie search reads the hoodie answers and reference,
+  jeans the jeans answers — never another type's. A fleece top may use the other
+  fleece type's reference (said so), and with both saved the shopper can switch.
+  Nothing is asked again.
+- **Which product it is.** Only by its own address: the brand's official site with a
+  sizing record's product code in the path. A similar name on another shop is a
+  different product to Fynd.
+- **Three kinds of answer, strongest evidence first:**
+  - *Suggested size* — a checked record with finished-garment measurements and a
+    reference with measurements (or itself a checked product): `engine.compare()`
+    recommends, with the differences listed.
+  - *Less certain* — the closest size on too few measurements; a likely size from a
+    checked **body-size chart** (`engine.recommend()`), said to be who each size is cut
+    for, not what the garment measures; or no record, and the shopper's own saved
+    size in that brand for that type ("your usual size … may fit differently").
+  - *No size suggestion* — everything else. The product shows and links to its
+    shop as always.
+  Unchecked records give no size. Listing text is data: matched against a fixed word
+  list, capped, never echoed back.
+- Signed out, or with nothing saved for that type, results show as they always did
+  with one line after them on how to personalise sizes. If the reading fails, the
+  results are untouched and the page says so.
+- A result Fynd has a record for links to `compare.html?product=…`, where every size
+  is compared and fit feedback is given against that exact product and size.
+
+**Coverage today.** A *suggested size* is possible for the two verified UNIQLO
+fleece records against a reference that is itself a UNIQLO product; a home-measured
+reference against them gives the closest size on chest and shoulders only. Nike and
+Carhartt's verified fleece records give body-chart *likely sizes* when the Fit Guide
+has a chest measurement or a usable size. Everything else — Zara and T-shirt records
+awaiting checks, and every product not in the 14 records — gets at most the
+shopper's usual size in that brand, or no suggestion.
+
 ## Compare before buying (hoodies and sweatshirts)
 
 `compare.html` (in the main navigation as **Compare**) walks a shopper through
