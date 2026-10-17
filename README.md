@@ -2078,7 +2078,14 @@ product's link, and its sizing chart is drawn below it (`assets/size-chart.js`,
 which the Search page's **View sizing chart** dialog uses too). A link is checked
 on the page first (a whole http(s) address with a host name); a pasted link starts
 the lookup by itself, a typed one waits for Enter or **Find sizing chart** — no
-request is made per keystroke. The link the shopper gave stays beside the answer.
+request is made per keystroke. The result is headed by the product's brand and
+name, with a **View product** link to its page (the server's canonical address,
+without tracking parameters). In view: each chart, what it measures (body or
+finished garment), its unit, and one line on where it is from — the product's
+own chart, a retailer's size guide, or the brand's general guide. When there is
+no chart, a short status and reason. Everything else — the server's notes, the
+market, scope and verification status, every source link and the request trace —
+is under **Source details**, closed by default.
 No account or fit profile is needed: `GET /api/size-recommendation?chart=<link>`
 reads no profile, and only the link travels. It is rate limited per client
 (`sizing:chart`, 40 per ten minutes).
