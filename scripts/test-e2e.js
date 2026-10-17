@@ -762,7 +762,9 @@ const linkFromInbox = (pattern) => {
       assert.ok(!/\bDiscover\b/.test(await page.textContent('body')), `${file} still says Discover`);
       /* shopping first, and the fit profile the one place for sizing; no fit guide anywhere */
       assert.deepStrictEqual(await page.$$eval('.nav-links a', (ns) => ns.map((n) => n.textContent.trim())),
-        ['Shop', 'Search', 'Compare', 'Fit profile', 'Pricing', 'About', 'Account'], `${file}: main navigation`);
+        ['Shop', 'Compare', 'Fit profile', 'Pricing', 'About', 'Account'], `${file}: main navigation`);
+      /* the Search page is reached from shopping and the footer, not the main navigation */
+      assert.ok(await page.$('.footer-links a[href="find-clothes.html"]'), `${file}: the footer still links to Search`);
       assert.ok(!/fit guide/i.test(await page.textContent('body')), `${file} still mentions the fit guide`);
       assert.deepStrictEqual(await page.$$eval('a[href*="#guide"]', (ns) => ns.map((n) => n.getAttribute('href'))), [], `${file} links to the old guide`);
       assert.ok(await page.$('.footer-links a[href="compare.html"]'), `${file}: the footer links to Compare`);
