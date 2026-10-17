@@ -1385,6 +1385,86 @@ await test('the real request path: compressed pages are inflated, the size limit
   } finally { server.close(); server.closeAllConnections && server.closeAllConnections(); }
 });
 
+/* ---------- official fallback charts ---------- */
+
+const officialCharts = require('../api/_sizing/official-charts');
+const UQ_OVERSIZED = 'https://www.uniqlo.com/us/en/products/E471808-000/00';
+
+await test('a product page that times out still shows its brand’s applicable official chart — as a fallback, labelled body-size, with every value’s source', async () => {
+  const pasted = `${UQ_OVERSIZED}?colorDisplayCode=03&sizeDisplayCode=005&utm_campaign=pmax&utm_source=google&utm_medium=cpc`;
+  const r = await read(pasted, { [UQ_OVERSIZED]: { throws: 'abort' } });
+  assert.deepStrictEqual([r.status, r.from, r.fallback.reason, r.scope], ['fallback', 'official-fallback', 'no-answer', 'brand-general']);
+  assert.deepStrictEqual(r.product, { brand: 'UNIQLO', name: 'Sweat Oversized Pullover Hoodie', code: 'E471808-000' });
+  const c = r.charts[0];
+  assert.strictEqual(c.label, 'Official UNIQLO body-size chart — not garment measurements.');
+  assert.deepStrictEqual([c.measures, c.unit, c.columns], ['body', 'in', ['Chest']]);
+  /* the values are exactly those UNIQLO publishes on the pages it names */
+  const hoodie = require('../api/_sizing/records').byId('uniqlo-e475378-sweat-pullover-hoodie-us');
+  assert.deepStrictEqual(c.rows.map((x) => [x.size, x.values[0]]), hoodie.sizes.map((s) => [s, hoodie.charts.body.sizes[s].chest.text]));
+  assert.deepStrictEqual(c.rows.find((x) => x.size === 'M').values, ['37 ¾ - 41']);
+  assert.strictEqual(c.source.url, 'https://www.uniqlo.com/us/en/products/E475378-000/00');
+  assert.deepStrictEqual(r.otherSources.map((o) => o.url), ['https://www.uniqlo.com/us/en/products/E475377-000/00', 'https://www.uniqlo.com/us/en/products/E455365-000/00']);
+  assert.ok([c.source.url, ...r.otherSources.map((o) => o.url)].every((u) => new URL(u).hostname === 'www.uniqlo.com'), 'every source is UNIQLO’s own site');
+  /* never presented as read live, or as this product's own */
+  assert.strictEqual(r.source.url, UQ_OVERSIZED);
+  assert.strictEqual(r.source.retrievedAt, null, 'the product page was not read');
+  assert.strictEqual(r.verification, 'official-general');
+  assert.match(r.note[0], /^Reading this product’s page directly timed out/);
+  assert.match(r.note[1], /fallback chart, not one extracted from the product’s page/);
+  assert.match(r.note.join(' '), /hasn’t been confirmed on this product’s own page/);
+  assert.strictEqual(r.trace[0].phase, 'connect', 'what was tried is still reported');
+});
+
+await test('a body-size fallback can never start a garment comparison', async () => {
+  const r = await read(UQ_OVERSIZED, { [UQ_OVERSIZED]: { throws: 'abort' } });
+  assert.strictEqual(r.comparable, false);
+  assert.strictEqual(r.productId, undefined, 'no record to compare against');
+  assert.ok(!r.charts.some((c) => c.measures === 'finished-garment'));
+  assert.strictEqual(require('../api/_sizing/records').byId(r.fallback.chartId), null, 'the chart is not a sizing record the compare endpoint would accept');
+  assert.match(r.note.join(' '), /can’t be set beside a garment you own/);
+});
+
+await test('a page that loads but holds no chart gets the same fallback, saying the page was read', async () => {
+  const shell = '<!doctype html><html><head><title>Sweat Oversized Pullover Hoodie | UNIQLO US</title></head><body><div id="root"></div><script src="/app.js"></script></body></html>';
+  const r = await read(UQ_OVERSIZED, { [UQ_OVERSIZED]: { body: shell } });
+  assert.deepStrictEqual([r.status, r.fallback.reason], ['fallback', 'needs-script']);
+  assert.match(r.note[0], /^Fynd read this product’s page, but found no size chart in it/);
+  assert.ok(!/timed out/.test(r.note.join(' ')));
+});
+
+await test('no fallback is invented: another UNIQLO product, another market, or another shop stays honestly unavailable', async () => {
+  const other = 'https://www.uniqlo.com/us/en/products/E999999-000/00';
+  const a = await read(other, { [other]: { throws: 'abort' } });
+  assert.deepStrictEqual([a.status, a.reason, a.charts], ['unavailable', 'no-answer', []]);
+  assert.strictEqual(a.source.url, other, 'the official page is still linked');
+  const uk = 'https://www.uniqlo.com/uk/en/products/E471808-000/00';
+  assert.strictEqual((await read(uk, { [uk]: { throws: 'abort' } })).status, 'unavailable');
+  const b = await read(SHOP, { [SHOP]: { throws: 'abort' } });
+  assert.deepStrictEqual([b.status, b.reason], ['unavailable', 'no-answer']);
+  assert.strictEqual(officialCharts.fallbackFor(charts.checkUrl('https://www.uniqlo.com/us/en/products/E4718080-000/00')), null, 'a code is matched whole');
+});
+
+await test('a page that does give its own chart is used, not the fallback', async () => {
+  const r = await read(UQ_OVERSIZED, { [UQ_OVERSIZED]: { body: BODY_IN } });
+  assert.deepStrictEqual([r.status, r.from, r.scope], ['ok', 'live-page', 'product-page']);
+});
+
+await test('the official-chart loader refuses a chart that disagrees with its sources, isn’t a body chart, or reaches past its category', () => {
+  assert.deepStrictEqual(officialCharts.problems, []);
+  assert.strictEqual(officialCharts.CHARTS.length, 1);
+  const base = JSON.parse(JSON.stringify(require('../api/_sizing/official-charts/uniqlo-us-men-tops-body.json')));
+  const variant = (f) => { const c = JSON.parse(JSON.stringify(base)); f(c); return officialCharts.validate(c); };
+  assert.deepStrictEqual(officialCharts.validate(base), []);
+  assert.ok(variant((c) => { c.values.M.chest = '38 - 41'; }).some((e) => /disagrees at M chest/.test(e)), 'a changed value');
+  assert.ok(variant((c) => { c.measures = 'finished-garment'; }).length, 'a garment chart');
+  assert.ok(variant((c) => { c.label = 'Official UNIQLO size chart'; }).length, 'a label that doesn’t say body-size');
+  assert.ok(variant((c) => { c.products[0].category = 'jeans'; }).length, 'a product outside the category');
+  assert.ok(variant((c) => { c.products[0].url = 'https://uniqlo.example.com/us/en/products/E471808-000/00'; }).length, 'a product off the brand’s site');
+  assert.ok(variant((c) => { c.evidence[0].recordId = 'zara-00761810-basic-heavyweight-hoodie-us'; }).length, 'evidence from another brand');
+  assert.ok(variant((c) => { c.evidence[0].url = 'https://uniqlloshop.it.com/product/sweat-pullover-hoodie/'; }).length, 'evidence off the brand’s site');
+  assert.ok(variant((c) => { delete c.products[0].identity; }).length, 'a product with no account of how it is known');
+});
+
 await test('redirects are followed by hand, and every new address is checked again', async () => {
   const log = [];
   const moved = 'https://shop.example.com/products/illustrative-tee-v2';

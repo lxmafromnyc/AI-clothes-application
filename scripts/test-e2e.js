@@ -189,6 +189,8 @@ charts.setTransport(async (url) => {
   if (url.startsWith('https://www.zara.com/')) return { status: 403, ok: false, headers: { get: () => null }, text: async () => 'Access denied' };
   /* a shop that never starts answering: the request is given up */
   if (url.startsWith('https://silent.example.test/')) throw Object.assign(new Error('aborted'), { name: 'AbortError' });
+  /* as the deployed site saw it: UNIQLO's page for E471808 never answers */
+  if (url.startsWith('https://www.uniqlo.com/us/en/products/E471808-000/')) throw Object.assign(new Error('aborted'), { name: 'AbortError' });
   if (SHOP_PAGES[url]) return html(SHOP_PAGES[url]);
   throw new Error('unreachable');
 });
@@ -1407,6 +1409,35 @@ const linkFromInbox = (pattern) => {
     assert.match(await page.textContent('#fit-result .size-chart-trace'), /What Fynd tried.*answered 200 · text\/html/s);
     assert.ok(transportAsked.includes(url), 'tracking was dropped before asking');
     assert.ok(!transportAsked.some((u) => /utm_/.test(u)), 'no advertising parameters were sent on');
+    await context.close();
+  });
+
+  await test('REGRESSION: UNIQLO’s page times out, and Find Fit still shows the official body-size chart — as a fallback, with its sources, never compared with a garment', async () => {
+    const context = await openContext();
+    const page = await context.newPage();
+    await open(page, 'index.html');
+    transportAsked.length = 0;
+    await page.fill('#fit-url', 'https://www.uniqlo.com/us/en/products/E471808-000/00?colorDisplayCode=03&sizeDisplayCode=005&utm_source=google&utm_medium=cpc');
+    await page.press('#fit-url', 'Enter');
+    await page.waitForSelector('#fit-result[data-state="fallback"]');
+    assert.strictEqual(await page.textContent('#fit-result-title'), 'UNIQLO · Sweat Oversized Pullover Hoodie');
+    assert.strictEqual(await page.textContent('#fit-result .size-chart-label'), 'Official UNIQLO body-size chart — not garment measurements.');
+    assert.strictEqual(await page.textContent('#fit-result .size-chart-kind'), 'Body measurements — the body each size is cut for, not the garment');
+    assert.match(await page.textContent('#fit-result .size-chart-unit'), /inches, as published/);
+    const rows = await page.$$eval('#fit-result tbody tr', (trs) => trs.map((tr) => [...tr.children].map((td) => td.textContent)));
+    assert.deepStrictEqual(rows[3], ['M', '37 ¾ - 41']);
+    assert.strictEqual(rows.length, 8);
+    const text = await page.textContent('#fit-result');
+    assert.match(text, /Reading this product’s page directly timed out/);
+    assert.match(text, /fallback chart, not one extracted from the product’s page/);
+    assert.match(text, /The brand’s general chart for this kind of product — a fallback, not this product’s own/);
+    assert.match(text, /not read from this product’s page/);
+    assert.ok(!/Verified —|Read just now/.test(text), 'never presented as checked for this product, or read live');
+    const links = await page.$$eval('#fit-result .size-chart-source a', (as) => as.map((a) => a.href));
+    assert.ok(links.includes('https://www.uniqlo.com/us/en/products/E475378-000/00'), 'the chart’s official source');
+    assert.ok(links.includes('https://www.uniqlo.com/us/en/products/E471808-000/00'), 'the product’s own page');
+    assert.match(await page.textContent('#fit-compare'), /describes bodies, not garments/);
+    assert.deepStrictEqual(transportAsked, ['https://www.uniqlo.com/us/en/products/E471808-000/00'], 'the canonical page was tried first, once');
     await context.close();
   });
 

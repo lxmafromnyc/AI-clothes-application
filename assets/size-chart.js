@@ -51,12 +51,14 @@
   const SCOPE = {
     'product-specific': 'This product’s own chart',
     'product-page': 'Published on this product’s page',
-    'linked-size-guide': 'The retailer’s size guide linked from the product page — possibly a general chart, not this product’s own'
+    'linked-size-guide': 'The retailer’s size guide linked from the product page — possibly a general chart, not this product’s own',
+    'brand-general': 'The brand’s general chart for this kind of product — a fallback, not this product’s own'
   };
   const STATUS = {
     verified: 'Verified — checked by a person against the brand’s page',
     unverified: 'Unverified — copied from the brand’s page, not yet checked',
-    'not-verified': 'Not verified — read automatically just now'
+    'not-verified': 'Not verified — read automatically just now',
+    'official-general': 'Official values, copied from the brand’s own pages — not read from this product’s page'
   };
   const UNIT = { in: 'inches, as published', cm: 'centimetres, as published', both: 'inches and centimetres, as published', null: 'not stated — check the source' };
   const LINE = { men: 'men’s', women: 'women’s', unisex: 'unisex' };
@@ -73,8 +75,9 @@
     const facts = el('dl', 'size-chart-facts');
     const fact = (label, value) => { if (value) facts.append(el('dt', null, label), el('dd', null, value)); };
     if (chart.retailer) fact('Retailer', chart.retailer);
-    /* what the page did say about the product, when it gave no chart */
-    if (chart.status === 'unavailable' && chart.product && chart.product.name) {
+    /* what the page did say about the product, when it gave no chart —
+       or, for a fallback, the product as Fynd knows it */
+    if ((chart.status === 'unavailable' || chart.status === 'fallback') && chart.product && chart.product.name) {
       fact('Product', [chart.product.brand, chart.product.name].filter(Boolean).join(' · '));
     }
     const details = chart.details || {};
@@ -90,6 +93,7 @@
     const main = (chart.source && chart.source.url) || asked;
     (chart.charts || []).forEach((c, i) => {
       const section = el('section', 'size-chart-table');
+      if (c.label) section.append(el('p', 'size-chart-label', c.label));
       section.append(el('h3', 'size-chart-kind', KIND[c.measures] || KIND['not-stated']));
       if (c.title) section.append(el('p', 'size-chart-caption', c.title));
       section.append(el('p', 'size-chart-unit', `Units: ${UNIT[c.unit] || UNIT.null}`));
@@ -128,7 +132,7 @@
     const src = chart.source || {};
     const source = el('p', 'size-chart-source');
     /* with no chart, the page is a place to look, not a source */
-    source.append(el('span', null, chart.status === 'unavailable' ? 'Product page: ' : 'Source: '), safeLink(src.url || asked, src.title || src.url || asked));
+    source.append(el('span', null, chart.status === 'unavailable' || chart.status === 'fallback' ? 'Product page: ' : 'Source: '), safeLink(src.url || asked, src.title || src.url || asked));
     if (src.retrievedAt) source.append(el('span', null, ` · read ${src.retrievedAt}`));
     out.push(source);
     (chart.guides || []).filter((g) => !g.read).forEach((g) => {

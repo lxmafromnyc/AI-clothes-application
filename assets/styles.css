@@ -427,6 +427,7 @@ strong { font-weight: 600; }
 .size-chart-facts dd { margin: 0; color: var(--color-text); }
 .size-chart-table { margin-top: 16px; }
 .size-chart-kind { font-size: 15px; }
+.size-chart-label { margin-bottom: 8px; padding: 8px 12px; border: 1px solid var(--color-warning-line); border-radius: var(--r); background: var(--color-warning-soft); font-size: 14px; font-weight: 600; color: var(--color-warning-ink); }
 .size-chart-caption, .size-chart-unit { margin-top: 2px; font-size: 13px; color: var(--color-text-muted); }
 .size-chart-scroll { margin-top: 8px; overflow-x: auto; }
 .size-chart .compare-table { min-width: 0; }

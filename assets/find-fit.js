@@ -88,7 +88,8 @@
     body.replaceChildren(...render(chart, url));
     $('fit-result-title').focus({ preventScroll: true });
     result.scrollIntoView({ block: 'start', behavior: 'auto' });
-    if (chart.status === 'ok') compareWith(chart, ask);
+    /* a fallback says why it can't be compared, like any body chart */
+    if (chart.status === 'ok' || chart.status === 'fallback') compareWith(chart, ask);
   }
 
   /* The fit profile's part: only where the chart supports it. */
