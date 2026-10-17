@@ -1157,7 +1157,7 @@ const read = (url, routes, log) => charts.chartFor(url, { noCache: true, fetch: 
 
 await test('any public http(s) product page is accepted; anything else is refused before a request', () => {
   assert.strictEqual(charts.checkUrl('https://www.uniqlo.com/us/en/products/E475378-000/00?utm_source=x&colorDisplayCode=09#reviews').url,
-    'https://www.uniqlo.com/us/en/products/E475378-000/00?colorDisplayCode=09', 'tracking and fragments dropped, the product kept');
+    'https://www.uniqlo.com/us/en/products/E475378-000/00', 'tracking, colour choice and fragments dropped: the path names the product');
   assert.strictEqual(charts.checkUrl('https://www.gap.com/browse/product.do?pid=1').url, 'https://www.gap.com/browse/product.do?pid=1');
   assert.strictEqual(charts.checkUrl('http://shop.example.com/p/1').url, 'http://shop.example.com/p/1');
   assert.strictEqual(charts.checkUrl('https://www2.hm.com/en_us/productpage.0685816001.html').market, 'US');
@@ -1289,7 +1289,7 @@ await test('malformed pages and markup in cells: nothing breaks, nothing executa
 
 await test('an inaccessible page answers unavailable with its reason and its link — never a chart from elsewhere', async () => {
   const cases = [
-    [{ throws: 'unreachable' }, 'unreachable'], [{ throws: 'abort' }, 'timeout'], [{ status: 403 }, 'refused'], [{ status: 401 }, 'refused'], [{ status: 429 }, 'refused'],
+    [{ throws: 'unreachable' }, 'unreachable'], [{ throws: 'abort' }, 'no-answer'], [{ status: 403 }, 'refused'], [{ status: 401 }, 'refused'], [{ status: 429 }, 'refused'],
     [{ status: 500 }, 'http-error'], [{ headers: { 'content-type': 'application/pdf' }, body: '%PDF' }, 'not-html'],
     [{ headers: { 'content-length': String(charts.MAX_BYTES + 1) }, body: 'x' }, 'too-large']
   ];
@@ -1299,6 +1299,90 @@ await test('an inaccessible page answers unavailable with its reason and its lin
     assert.strictEqual(r.source.url, SHOP);
     assert.ok(!/runs (small|large)|true to size/i.test(r.note.join(' ')));
   }
+});
+
+await test('a link with a brand’s variant and advertising parameters is read as the product’s canonical page', () => {
+  const pasted = 'https://www.uniqlo.com/us/en/products/E471808-000/00?colorDisplayCode=03&sizeDisplayCode=005&utm_campaign=pmax_broad_seasonal_promotions_google_cpc_sales_us_evergreen_en&utm_source=google&utm_medium=cpc';
+  assert.strictEqual(charts.checkUrl(pasted).url, 'https://www.uniqlo.com/us/en/products/E471808-000/00');
+  assert.strictEqual(charts.checkUrl('https://www.gap.com/browse/product.do?pid=1&utm_source=x').url, 'https://www.gap.com/browse/product.do?pid=1', 'another shop keeps the query that names its product');
+});
+
+/* A transport that holds its answer until the request is aborted —
+   a shop that never starts answering, or one whose page stops arriving. */
+const holding = (whenAnswered) => async (url, init) => new Promise((resolve, reject) => {
+  const abort = () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+  if (!whenAnswered) { init.signal.addEventListener('abort', abort); return; }
+  resolve({ status: 200, ok: true, headers: { get: (k) => (k === 'content-type' ? 'text/html' : null) },
+    text: () => new Promise((done, fail) => init.signal.addEventListener('abort', () => fail(Object.assign(new Error('aborted'), { name: 'AbortError' })))) });
+});
+
+await test('no answer and a page still arriving are two failures, each said as itself, with what was tried', async () => {
+  const silent = await charts.chartFor(SHOP, { noCache: true, deadlineMs: 150, fetch: holding(false) });
+  assert.deepStrictEqual([silent.status, silent.reason], ['unavailable', 'no-answer']);
+  assert.match(silent.note[0], /didn’t start answering within a few seconds/);
+  assert.deepStrictEqual([silent.trace[0].phase, silent.trace[0].status], ['connect', null]);
+  assert.ok(silent.trace[0].ms >= 100 && silent.trace[0].ms < 2000, `${silent.trace[0].ms} ms`);
+  const slow = await charts.chartFor(SHOP, { noCache: true, deadlineMs: 150, fetch: holding(true) });
+  assert.deepStrictEqual([slow.reason, slow.trace[0].phase, slow.trace[0].status], ['slow-page', 'body', 200]);
+  assert.match(slow.note[0], /answered, but the page hadn’t finished arriving/);
+});
+
+await test('REGRESSION: a page that loads but has no chart says so — what the page said is kept, and nothing claims a timeout', async () => {
+  const product = page('<p>Pick a size.</p>', LD({ '@type': 'Product', name: 'Illustrative Sweat Shorts', brand: { name: 'Example Brand' },
+    material: '100% Cotton', additionalProperty: [{ '@type': 'PropertyValue', name: 'Fit', value: 'Relaxed' }] }));
+  const r = await read(SHOP, { [SHOP]: { body: product } });
+  assert.deepStrictEqual([r.status, r.reason], ['unavailable', 'no-chart']);
+  assert.ok(!/took too long|didn’t start answering|hadn’t finished arriving/.test(r.note.join(' ')), r.note.join(' | '));
+  assert.ok(r.note.some((n) => /The product page itself did load/.test(n)));
+  assert.deepStrictEqual(r.product, { brand: 'Example Brand', name: 'Illustrative Sweat Shorts', code: null });
+  assert.deepStrictEqual(r.details, { material: '100% Cotton', fit: 'Relaxed' });
+  assert.deepStrictEqual(r.charts, []);
+  assert.deepStrictEqual([r.trace[0].status, r.trace[0].phase, r.trace[0].contentType], [200, 'done', 'text/html; charset=utf-8']);
+  assert.ok(r.trace[0].bytes > 0);
+  assert.strictEqual(r.verification, 'not-verified', 'a page read is not a chart checked');
+});
+
+await test('a page that links a size guide which can’t be read says that — not that the page failed', async () => {
+  const GUIDE = 'https://shop.example.com/pages/size-guide';
+  const product = page('<a href="/pages/size-guide">Size guide</a>');
+  const r = await read(SHOP, { [SHOP]: { body: product }, [GUIDE]: { status: 403 } });
+  assert.deepStrictEqual([r.status, r.reason], ['unavailable', 'guide-unreadable']);
+  assert.match(r.note[0], /The product page loaded and links to a size guide, but that guide couldn’t be read/);
+  assert.ok(r.note.some((n) => n.includes(GUIDE) && /refused/.test(n)));
+  assert.deepStrictEqual(r.trace.map((t) => [t.requested, t.status]), [[SHOP, 200], [GUIDE, 403]]);
+});
+
+await test('redirects are recorded in what was tried', async () => {
+  const moved = 'https://shop.example.com/products/illustrative-tee-v2';
+  const r = await read(SHOP, { [SHOP]: { status: 301, headers: { location: '/products/illustrative-tee-v2' } }, [moved]: { body: GARMENT_CM } });
+  assert.deepStrictEqual(r.trace[0].redirects, [{ status: 301, to: moved }]);
+  assert.strictEqual(r.trace[0].url, moved);
+});
+
+await test('the real request path: compressed pages are inflated, the size limit applies to what they inflate to, and a slow body is a slow page', async () => {
+  const http = require('http');
+  const zlib = require('zlib');
+  const server = http.createServer((req, res) => {
+    if (req.url === '/gzip') { res.writeHead(200, { 'content-type': 'text/html', 'content-encoding': 'gzip' }); return res.end(zlib.gzipSync(GARMENT_CM)); }
+    if (req.url === '/br') { res.writeHead(200, { 'content-type': 'text/html', 'content-encoding': 'br' }); return res.end(zlib.brotliCompressSync(GARMENT_CM)); }
+    if (req.url === '/bomb') { res.writeHead(200, { 'content-type': 'text/html', 'content-encoding': 'gzip' }); return res.end(zlib.gzipSync(Buffer.alloc(charts.MAX_BYTES + 10, 'a'))); }
+    if (req.url === '/slow') { res.writeHead(200, { 'content-type': 'text/html' }); res.write('<html>'); return; }
+    res.writeHead(404); return res.end();
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const port = server.address().port;
+  /* the shop's name is checked as usual, then this test alone sends the
+     request to this machine — the real transport refuses loopback */
+  const via = (url, init) => charts.request(url.replace('http://shop.example.com', `http://127.0.0.1:${port}`), init);
+  try {
+    for (const path of ['/gzip', '/br']) {
+      const r = await charts.chartFor(`http://shop.example.com${path}`, { noCache: true, fetch: via });
+      assert.deepStrictEqual([r.status, r.charts[0].measures, r.charts[0].rows.length], ['ok', 'finished-garment', 3], path);
+    }
+    assert.strictEqual((await charts.chartFor('http://shop.example.com/bomb', { noCache: true, fetch: via })).reason, 'too-large');
+    const slow = await charts.chartFor('http://shop.example.com/slow', { noCache: true, fetch: via, deadlineMs: 300 });
+    assert.deepStrictEqual([slow.reason, slow.trace[0].status], ['slow-page', 200]);
+  } finally { server.close(); server.closeAllConnections && server.closeAllConnections(); }
 });
 
 await test('redirects are followed by hand, and every new address is checked again', async () => {

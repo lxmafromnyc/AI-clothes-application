@@ -84,11 +84,7 @@
     }
     const chart = answer.data.chart;
     result.dataset.state = chart.status;
-    const product = chart.product || {};
-    const named = [product.brand, product.name].filter(Boolean).join(' · ');
-    $('fit-result-title').textContent = chart.status === 'unavailable'
-      ? 'We couldn’t retrieve a sizing chart'
-      : (named || 'Sizing chart');
+    $('fit-result-title').textContent = global.SizeChart.headingFor(chart);
     body.replaceChildren(...render(chart, url));
     $('fit-result-title').focus({ preventScroll: true });
     result.scrollIntoView({ block: 'start', behavior: 'auto' });

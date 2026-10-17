@@ -73,6 +73,13 @@
     const facts = el('dl', 'size-chart-facts');
     const fact = (label, value) => { if (value) facts.append(el('dt', null, label), el('dd', null, value)); };
     if (chart.retailer) fact('Retailer', chart.retailer);
+    /* what the page did say about the product, when it gave no chart */
+    if (chart.status === 'unavailable' && chart.product && chart.product.name) {
+      fact('Product', [chart.product.brand, chart.product.name].filter(Boolean).join(' · '));
+    }
+    const details = chart.details || {};
+    if (details.fit) fact('Fit, as the page says', details.fit);
+    if (details.material) fact('Fabric, as the page says', details.material);
     if (chart.status !== 'unavailable') {
       fact('Market', chart.market ? `${chart.market}${chart.line && LINE[chart.line] ? ` · ${LINE[chart.line]} sizing` : ''}` : 'Not stated');
       fact('Chart', SCOPE[chart.scope]);
@@ -134,7 +141,30 @@
       p.append(el('span', null, 'Also: '), safeLink(s2.url, s2.what || s2.url));
       out.push(p);
     });
+    if ((chart.trace || []).length) out.push(traceOf(chart.trace));
     return out;
+  }
+
+  /* What Fynd asked for and what came back, step by step — so a failure
+     can be told apart from a missing chart. */
+  const STEP = { connect: 'no answer', body: 'the page was still arriving', done: 'read' };
+  function traceOf(trace) {
+    const box = el('details', 'size-chart-trace');
+    box.append(el('summary', null, 'What Fynd tried'));
+    const list = el('ul');
+    trace.forEach((t) => {
+      const bits = [];
+      bits.push(t.status ? `answered ${t.status}` : STEP[t.phase] || 'no answer');
+      if (t.contentType) bits.push(t.contentType.split(';')[0]);
+      if (typeof t.bytes === 'number') bits.push(`${Math.round(t.bytes / 1024)} KB`);
+      if (t.phase === 'body') bits.push('stopped while the page was arriving');
+      if (typeof t.ms === 'number') bits.push(`${(t.ms / 1000).toFixed(1)} s`);
+      const li = el('li', null, `${t.url}: ${bits.join(' · ')}`);
+      (t.redirects || []).forEach((r) => li.append(el('span', 'size-chart-hop', ` → redirected (${r.status}) to ${r.to}`)));
+      list.append(li);
+    });
+    box.append(list);
+    return box;
   }
 
   /* When the server's own call failed: why, and the page itself. */
@@ -147,7 +177,20 @@
     return [el('p', 'size-chart-note', why), p];
   }
 
-  global.SizeChart = { render, renderFailure, el, safeLink };
+  /* The heading for an answer: a chart's product, or which kind of
+     failure — the page couldn't be read, or it was read and held no
+     chart. */
+  const PAGE_READ = ['no-chart', 'needs-script', 'guide-unreadable'];
+  function headingFor(chart) {
+    if (chart.status !== 'unavailable') {
+      const p = chart.product || {};
+      return [p.brand, p.name].filter(Boolean).join(' · ') || 'Sizing chart';
+    }
+    if (chart.reason === 'guide-unreadable') return 'Page read — its size guide couldn’t be';
+    return PAGE_READ.includes(chart.reason) ? 'Page read — no sizing chart found' : 'We couldn’t read the product page';
+  }
+
+  global.SizeChart = { render, renderFailure, headingFor, el, safeLink };
 
   /* ---------- the search page's dialog ---------- */
 
