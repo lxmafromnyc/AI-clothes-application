@@ -1352,6 +1352,61 @@ await test('nobody else can read or change a reference', async () => {
   assert.strictEqual((await guide({}, byType({ hoodies: HOODIE_REF() }))).status, 401);
 });
 
+section('the fit profile as the one place: what the old guide saved, kept and edited here');
+
+await test('a profile the four-step guide saved reads back whole, and a fit profile page save of every card keeps every answer', async () => {
+  const { jar } = await signUp('guide-era@example.test');
+  /* exactly what the retired guide sent, one type at a time */
+  await guide(jar, { garments: { tshirts: { favorite: 'perfect', line: 'men', fitGoal: 'true-to-size', troubleZones: ['sleeves-short'],
+    anchor: { brand: 'UNIQLO', size: 'M', product: { url: 'https://www.uniqlo.com/us/en/products/E455365-000/00' }, likes: ['shoulders'],
+      measurements: { unit: 'in', chestWidth: '20', shoulderWidth: '17', sleeveLength: '8', bodyLength: '28' }, notes: 'roomy in the body' } } } });
+  await guide(jar, { garments: { jeans: { anchor: { brand: 'Levi’s', size: '32', length: '30' }, fitGoal: 'slim', troubleZones: [] } } });
+  await save(jar, { schemaVersion: 5, measurements: { unit: 'in', chest: 40 }, brandSizes: [{ brand: 'Gap', category: 'hoodies', size: 'L', fit: 'about-right' }], fitPreferences: { hoodies: 'relaxed' } });
+  const before = (await read(jar)).body.profile;
+  assert.strictEqual(before.garments.tshirts.anchor.measurements.chestWidth, 20, 'the guide’s answers survive a save that leaves them out');
+  /* the fit profile page now shows every card with every detail, and sends them all back */
+  const page = { schemaVersion: 5, measurements: before.measurements, brandSizes: before.brandSizes, fitPreferences: before.fitPreferences, garments: before.garments };
+  const after = (await save(jar, page)).body.profile;
+  ['measurements', 'brandSizes', 'fitPreferences', 'garments', 'anchor', 'fitGoal', 'troubleZones'].forEach((k) => assert.deepStrictEqual(after[k], before[k], k));
+});
+
+await test('a reference is replaced, and removed, from its card; what it does not touch stays', async () => {
+  const { jar } = await signUp('replace@example.test');
+  await guide(jar, { garments: { hoodies: { favorite: 'perfect', fitGoal: 'oversized', anchor: { brand: 'Carhartt', size: 'L', measurements: { unit: 'cm', chestWidth: '58', bodyLength: '68', shoulderWidth: '50', sleeveLength: '62' } } } } });
+  const card = (anchor, favorite) => ({ schemaVersion: 5, garments: { hoodies: { favorite, fitGoal: 'oversized', troubleZones: null, line: null, anchor } } });
+  /* replaced: another piece, its own details; the old measurements are sent as cleared */
+  const replaced = (await save(jar, card({ brand: 'Nike', size: 'M', product: null, likes: null, measurements: null, notes: 'new one' }, 'close'))).body.profile;
+  assert.deepStrictEqual(replaced.garments.hoodies.anchor, { brand: 'Nike', size: 'M', notes: 'new one' });
+  assert.strictEqual(replaced.garments.hoodies.favorite, 'close');
+  /* removed: no piece and no answer; how hoodies should fit stays */
+  const removed = (await save(jar, card(null, null))).body.profile;
+  assert.strictEqual(removed.garments.hoodies.anchor, null);
+  assert.strictEqual(removed.garments.hoodies.fitGoal, 'oversized');
+});
+
+await test('readiness says what a type can support, and never calls an answered card complete', () => {
+  const p = (entry) => ({ garments: { tshirts: Object.assign(Schema.emptyGarment('tshirts'), entry) } });
+  assert.strictEqual(Schema.readiness(null, 'tshirts').level, 'empty');
+  assert.strictEqual(Schema.readiness(p({ fitGoal: 'slim' }), 'tshirts').level, 'partial', 'one answer is a useful start');
+  const brandOnly = Schema.readiness(p({ favorite: 'perfect', anchor: { brand: 'Nike', size: 'M' } }), 'tshirts');
+  assert.strictEqual(brandOnly.level, 'partial', 'a label is not a measurement');
+  assert.ok(brandOnly.improve.some((t) => /Measure your reference T-shirt laid flat/.test(t)));
+  assert.ok(brandOnly.improve.some((t) => /men’s, women’s or unisex/.test(t)));
+  const two = Schema.readiness(p({ favorite: 'perfect', anchor: { brand: 'Nike', size: 'M', measurements: { unit: 'in', chestWidth: 20, shoulderWidth: 17, sleeveLength: null, bodyLength: null } } }), 'tshirts');
+  assert.strictEqual(two.level, 'partial', 'chest and one more is not enough to compare');
+  const three = Schema.readiness(p({ favorite: 'close', line: 'men', fitGoal: 'slim', anchor: { brand: 'Nike', size: 'M', measurements: { unit: 'in', chestWidth: 20, shoulderWidth: 17, sleeveLength: 8, bodyLength: null } } }), 'tshirts');
+  assert.strictEqual(three.level, 'compare');
+  assert.ok(!/complete|accurate|guarantee/i.test(three.label), three.label);
+  assert.match(three.label, /wherever Fynd has a product’s checked measurements/);
+  assert.strictEqual(Schema.readiness(p({ favorite: 'none', fitGoal: 'slim' }), 'tshirts').level, 'partial', '"Not really" is a usable answer');
+  const jeans = Schema.readiness({ garments: { jeans: Object.assign(Schema.emptyGarment('jeans'), { anchor: { brand: 'Gap', size: '32', length: '30' } }) } }, 'jeans');
+  assert.strictEqual(jeans.level, 'saved');
+  assert.match(jeans.label, /can’t compare jeans sizes yet/);
+  /* one type's answers are never read for another */
+  assert.strictEqual(Schema.readiness(p({ fitGoal: 'slim' }), 'hoodies').level, 'empty');
+  assert.strictEqual(Schema.readiness(p({ fitGoal: 'slim' }), 'not-a-type'), null);
+});
+
 section('privacy');
 
 await test('/api/account says nothing about the fit profile, and its shape has not changed', async () => {

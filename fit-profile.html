@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Your fit profile — Fynd</title>
-<meta name="description" content="Your measurements, the sizes you wear in each brand, and how you like clothes to fit — kept private to your Fynd account.">
+<meta name="description" content="How clothes fit you, type by type — the sizes you wear, a favourite piece and its measurements, how you like things to fit — used automatically when you shop, and private to your Fynd account.">
 <meta name="referrer" content="same-origin">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23111111'/><text x='16' y='23' font-family='Helvetica,Arial,sans-serif' font-size='19' font-weight='700' fill='white' text-anchor='middle'>F</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -28,7 +28,8 @@
       <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" aria-label="Open menu"><span></span></button>
       <nav aria-label="Main">
         <ul class="nav-links" id="site-nav">
-          <li><a href="index.html">Fit guide</a></li>
+          <li><a href="index.html">Shop</a></li>
+          <li><a href="find-clothes.html">Search</a></li>
           <li><a href="compare.html">Compare</a></li>
           <li><a href="fit-profile.html" aria-current="page">Fit profile</a></li>
           <li><a href="pricing.html">Pricing</a></li>
@@ -46,13 +47,21 @@
     <div class="container">
       <header class="page-head page-head--center">
         <h1>Your fit profile</h1>
-        <p>How clothes fit you, type by type, so Fynd can learn which size to suggest in each brand. Every part is optional — save whatever you know.</p>
+        <p>The one place Fynd keeps how clothes fit you, type by type. When you shop, Fynd uses the type you are shopping for automatically. Every part is optional — save what you know, and add more any time.</p>
       </header>
 
       <div class="profile-main">
         <!-- Each note has one job and stays empty until it has something
              true to say. -->
         <p class="billing-note" id="profile-note" role="status" hidden></p>
+
+        <!-- Arrived from a search: the way back to it. Only the search's
+             own words and type of clothing are in the address, never
+             anything from the profile. -->
+        <p class="profile-return" id="profile-return" hidden>
+          <span id="profile-return-text">You came here from a search.</span>
+          <a class="btn btn-secondary" id="profile-return-link" href="find-clothes.html">Back to your search</a>
+        </p>
 
         <!-- ============================================================
              Waiting for the account and the profile. The form is never
@@ -61,12 +70,50 @@
              ============================================================ -->
         <div class="profile-loading" id="profile-loading" role="status">Loading your fit profile…</div>
 
+        <!-- Signed out: an account, made right here, so a shopper who
+             came from a search never loses their place. Searching
+             itself never needs one. -->
         <div id="profile-signed-out" hidden>
-          <div class="auth-card auth-card--centred">
-            <h2 class="auth-heading">Sign in to keep a fit profile</h2>
-            <p class="auth-intro">Your fit profile is kept with your account, and only you can see it. Searching still never needs an account.</p>
-            <a class="btn btn-primary" href="account.html">Sign in</a>
-          </div>
+          <form class="auth-card auth-card--centred profile-account" id="profile-account" novalidate>
+            <h2 class="auth-heading" id="pa-title" tabindex="-1">Create your fit profile</h2>
+            <p class="auth-intro" id="pa-intro">A free account keeps your fit profile, and only you can see it. Fynd then uses it whenever you shop — searching never needs an account.</p>
+            <label class="field" id="pa-field-name">
+              <span>Name</span>
+              <input type="text" id="pa-name" name="name" autocomplete="name" maxlength="80">
+            </label>
+            <label class="field">
+              <span>Email</span>
+              <input type="email" id="pa-email" name="email" autocomplete="email" required>
+            </label>
+            <label class="field">
+              <span>Password</span>
+              <input type="password" id="pa-password" name="password" autocomplete="new-password" required>
+            </label>
+            <label class="field" id="pa-field-confirm">
+              <span>Confirm password</span>
+              <input type="password" id="pa-confirm" name="confirmPassword" autocomplete="new-password">
+            </label>
+            <p class="form-error" id="pa-error" role="alert"></p>
+            <button class="btn btn-primary" type="submit" id="pa-submit">Create account</button>
+            <p class="auth-switch">
+              <span id="pa-switch-text">Already have an account?</span>
+              <button class="link-btn" type="button" id="pa-switch">Sign in</button>
+            </p>
+            <!-- Google is a full-page trip that ends on the account page;
+                 offered only where it is set up, and said first. -->
+            <div class="profile-google" id="pa-google" hidden>
+              <a class="btn btn-secondary btn-provider" id="pa-google-button" href="account.html">
+                <svg viewBox="0 0 18 18" aria-hidden="true" focusable="false" class="provider-mark">
+                  <path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.7-1.57 2.68-3.88 2.68-6.62z"/>
+                  <path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.8.54-1.84.86-3.04.86-2.34 0-4.32-1.58-5.02-3.7H.94v2.33A9 9 0 0 0 9 18z"/>
+                  <path fill="#FBBC05" d="M3.98 10.72a5.4 5.4 0 0 1 0-3.44V4.95H.94a9 9 0 0 0 0 8.1l3.04-2.33z"/>
+                  <path fill="#EA4335" d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.58C13.46.9 11.43 0 9 0A9 9 0 0 0 .94 4.95l3.04 2.33C4.68 5.16 6.66 3.58 9 3.58z"/>
+                </svg>
+                Continue with Google
+              </a>
+              <p class="auth-fineprint">Google sign-in ends on your account page; your fit profile is one tap from there.</p>
+            </div>
+          </form>
         </div>
 
         <div id="profile-load-failed" hidden>
@@ -79,14 +126,18 @@
 
         <form id="profile-form" novalidate hidden>
 
-          <!-- ==================================================== the fit guide's answers, per type
-               What the guide on the home page saved, one card per type of
-               clothing, edited here as well. Each type's brands, sizes and
-               trouble spots are its own (assets/fit-profile-schema.js), so
-               nothing typed for one can be saved as another's. -->
+          <!-- ==================================================== fit by type of clothing
+               One card per type of clothing, asking what the fit guide
+               used to ask, in its words: one that fits (and for tops, a
+               favourite reference and its measurements laid flat), how
+               that type should fit, and what gets its fit wrong. Each
+               type's brands, sizes and trouble spots are its own
+               (assets/fit-profile-schema.js), so nothing typed for one
+               can be saved as another's — and search reads only the type
+               being shopped for. -->
           <section class="profile-section profile-guide" id="section-guide" aria-labelledby="guide-answers-title">
             <h2 class="profile-guide-title" id="guide-answers-title">Fit by type of clothing</h2>
-            <p class="profile-help">From the fit guide. Each type keeps its own answers, so a T-shirt size is never used for jeans.</p>
+            <p class="profile-help">Each type keeps its own answers, so a T-shirt size is never used for jeans. Answer as much or as little as you like — each card says what it can already do, and what would help.</p>
 
             <p class="profile-empty" id="garment-empty">No types of clothing yet.</p>
             <div class="garment-list" id="garment-list"></div>
@@ -99,7 +150,6 @@
                 <button class="btn btn-secondary" type="button" id="garment-add">Add</button>
               </div>
             </div>
-            <p class="profile-help garment-guide-link">Or <a class="guide-link" href="index.html#guide" id="guide-answers-edit">answer in the fit guide</a> &mdash; four taps.</p>
             <datalist id="garment-brands"></datalist>
 
             <!-- Version 2's answers, from before the guide asked which type
@@ -107,7 +157,7 @@
                  the answer for any one type, and removable. -->
             <div class="legacy-guide" id="legacy-guide" hidden>
               <h3 class="profile-subhead">Earlier answers about a top</h3>
-              <p class="profile-help">From the first fit guide, before it asked which type of clothing. Kept as you gave them, and not used as the answer for any one type.</p>
+              <p class="profile-help">From Fynd’s first fit questions, before they asked which type of clothing. Kept as you gave them, and not used as the answer for any one type.</p>
               <ul class="guide-summary" id="legacy-summary">
                 <li><span class="guide-summary-label">A top that fits</span><span class="guide-summary-value" id="guide-answer-anchor">Not answered</span></li>
                 <li><span class="guide-summary-label">How you like clothes to sit</span><span class="guide-summary-value" id="guide-answer-goal">Not answered</span></li>
@@ -206,10 +256,14 @@
             <datalist id="size-options"></datalist>
           </fieldset>
 
-          <!-- ==================================================== preferred fit -->
-          <fieldset class="profile-section" id="section-fit">
-            <legend>Preferred fit <span class="optional-tag">Optional</span></legend>
-            <p class="profile-help">How you like each kind of top to fit. Each one is set on its own.</p>
+          <!-- ==================================================== preferred fit (earlier)
+               Saved before each type card asked how it should fit. Shown
+               only to a profile that holds one, so there is one place to
+               say how a type should fit; a type's own answer is read
+               first, and this only where the type has none. -->
+          <fieldset class="profile-section" id="section-fit" hidden>
+            <legend>Earlier preferred fit <span class="optional-tag">Optional</span></legend>
+            <p class="profile-help">Saved before each type of clothing asked how it should fit. The answer on a type’s own card is used first; this is used only where a card has none. Choose No preference to clear it.</p>
             <div id="pref-groups"></div>
           </fieldset>
 
@@ -223,7 +277,7 @@
           <div class="profile-danger" id="profile-delete-area" hidden>
             <button class="link-btn" type="button" id="profile-delete">Delete my fit profile</button>
             <div class="profile-confirm" id="delete-confirm" hidden>
-              <p>This removes your measurements, usual sizes, preferred fit and fit guide answers from your account. It cannot be undone.</p>
+              <p>This removes your measurements, usual sizes, preferred fit, reference garments and every type of clothing’s answers from your account. It cannot be undone.</p>
               <div class="auth-actions">
                 <button class="btn btn-secondary" type="button" id="delete-confirm-yes">Delete fit profile</button>
                 <button class="link-btn" type="button" id="delete-cancel">Keep it</button>
@@ -238,6 +292,10 @@
   <section class="section">
     <div class="container narrow">
       <div class="section-head"><h2>How your fit profile works</h2></div>
+      <div class="faq-row">
+        <h3>Used when you shop</h3>
+        <p>Search for clothes as usual. When Fynd knows the type you are shopping for, it reads that type’s card — and only that one — to personalise sizing. Where a product’s measurements haven’t been checked, it says so rather than guess a size.</p>
+      </div>
       <div class="faq-row">
         <h3>Only you can see it</h3>
         <p>It is kept with your account and read only when you are signed in. It is not shown on any other page, and nobody else can open it.</p>
@@ -268,9 +326,9 @@
       </a>
       <nav aria-label="Footer">
         <ul class="footer-links">
-          <li><a href="index.html">Fit guide</a></li>
-          <li><a href="compare.html">Compare</a></li>
+          <li><a href="index.html">Shop</a></li>
           <li><a href="find-clothes.html">Search</a></li>
+          <li><a href="compare.html">Compare</a></li>
           <li><a href="fit-profile.html">Fit profile</a></li>
           <li><a href="pricing.html">Pricing</a></li>
           <li><a href="about.html">About</a></li>

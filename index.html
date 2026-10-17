@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Fynd — Clothes that fit you</title>
-<meta name="description" content="Find your fit in 4 quick steps, no measuring — the type of clothing, one that already fits, how you like it to fit, and what usually gets the fit wrong.">
+<title>Fynd — Find clothes that fit you</title>
+<meta name="description" content="Choose the clothing you want, search across brands like Nike, UNIQLO, Zara and H&amp;M, and let your Fynd fit profile personalise sizing where reliable measurements exist.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23111111'/><text x='16' y='23' font-family='Helvetica,Arial,sans-serif' font-size='19' font-weight='700' fill='white' text-anchor='middle'>F</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -14,10 +14,20 @@
      GitHub Pages cannot run server code. See README.md. -->
 <meta name="findwear-api" content="https://ai-clothes-application.vercel.app/api/interpret">
 <script>document.documentElement.classList.add('js');</script>
+<!-- The four-step fit guide that used to open this page now lives on the
+     fit profile page, type by type. An old link or bookmark to it
+     (index.html#guide) lands there instead of on a guide that is gone. -->
+<script>
+  (function () {
+    var go = function () { if (window.location.hash === '#guide') window.location.replace('fit-profile.html'); };
+    go();
+    window.addEventListener('hashchange', go);
+  })();
+</script>
 </head>
 <body>
 
-<a class="skip-link" href="#guide">Skip to the fit guide</a>
+<a class="skip-link" href="#shop">Skip to shopping</a>
 
 <header class="site-header">
   <div class="container">
@@ -29,7 +39,8 @@
       <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" aria-label="Open menu"><span></span></button>
       <nav aria-label="Main">
         <ul class="nav-links" id="site-nav">
-          <li><a href="index.html" aria-current="page">Fit guide</a></li>
+          <li><a href="index.html" aria-current="page">Shop</a></li>
+          <li><a href="find-clothes.html">Search</a></li>
           <li><a href="compare.html">Compare</a></li>
           <li><a href="fit-profile.html">Fit profile</a></li>
           <li><a href="pricing.html">Pricing</a></li>
@@ -43,307 +54,54 @@
 
 <main id="main">
 
-  <!-- The first screen is the fit guide: four short questions, answered
-       with taps and two dropdowns, saved to the shopper's fit profile.
-       The first picks the type of clothing, and the other three are asked
-       about that type alone. assets/guide.js runs it, and fills in each
-       type's brands, sizes and trouble spots from
-       assets/fit-profile-schema.js. Nothing is saved until the end, and a
-       saved profile is only ever added to. -->
-  <section class="container hero guide-hero" id="guide" aria-labelledby="guide-title">
-    <h1 id="guide-title">Find your fit</h1>
-    <p class="lead">4 quick steps. No measuring.</p>
+  <!-- The first screen is shopping: say what you want, or pick a type of
+       clothing, and the Search page finds it across the brands and
+       retailers Fynd's product search reaches. Nothing here asks about
+       fit. A fit profile is optional, kept on fit-profile.html, and used
+       by the search on its own once there is one. -->
+  <section class="container hero shop-hero" id="shop" aria-labelledby="shop-title">
+    <h1 id="shop-title">What are you shopping for?</h1>
+    <p class="lead">Pick a type of clothing, or describe it in your own words. Fynd searches Nike, UNIQLO, Zara, H&amp;M and more.</p>
 
-    <div class="guide-card" id="guide-card">
-      <form class="guide-form" id="guide-form" novalidate>
-        <!-- One progress line: the step in words, a thin bar under it. -->
-        <div class="guide-progress">
-          <p class="guide-count" id="guide-count">Step 1 of 4</p>
-          <div class="guide-bar" aria-hidden="true"><span class="guide-bar-fill" id="guide-bar-fill"></span></div>
-        </div>
-
-        <!-- ================================================ 1: type of clothing -->
-        <fieldset class="guide-step" data-step="1">
-          <legend class="guide-legend">
-            <h2 class="guide-question" tabindex="-1"><span class="sr-only">Step 1 of 4: </span>What are we sizing?</h2>
-          </legend>
-          <div class="garment-cards">
-            <label class="garment-card">
-              <input type="radio" name="garment" value="tshirts">
-              <span class="garment-card-body">
-                <svg class="garment-card-art" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M18 10 L9.5 14.5 L12.5 21 L15.5 19.5 V39 H32.5 V19.5 L35.5 21 L38.5 14.5 L30 10 C28.5 13 19.5 13 18 10 Z"/></svg>
-                <span class="garment-card-title">T-shirts</span>
-                <span class="garment-saved" hidden>Saved</span>
-              </span>
-            </label>
-            <label class="garment-card">
-              <input type="radio" name="garment" value="hoodies">
-              <span class="garment-card-body">
-                <svg class="garment-card-art" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M18.5 13 L11 17 L7.5 36.5 L12 37.5 L15 23 V40 H33 V23 L36 37.5 L40.5 36.5 L37 17 L29.5 13"/><path d="M18.5 13 C17.5 6 30.5 6 29.5 13 C27.5 16 20.5 16 18.5 13 Z"/><path d="M19 33.5 H29 L27.5 28.5 H20.5 Z"/><path d="M22 16 V20.5 M26 16 V20.5"/></svg>
-                <span class="garment-card-title">Hoodies</span>
-                <span class="garment-saved" hidden>Saved</span>
-              </span>
-            </label>
-            <label class="garment-card">
-              <input type="radio" name="garment" value="sweatshirts">
-              <span class="garment-card-body">
-                <svg class="garment-card-art" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M18.5 10 L11 14.5 L7.5 36.5 L12 37.5 L15 21 V39 H33 V21 L36 37.5 L40.5 36.5 L37 14.5 L29.5 10 C28 13 20 13 18.5 10 Z"/><path d="M15 35.5 H33 M8 33.5 L12.5 34.5 M40 33.5 L35.5 34.5"/></svg>
-                <span class="garment-card-title">Sweatshirts</span>
-                <span class="garment-saved" hidden>Saved</span>
-              </span>
-            </label>
-            <label class="garment-card">
-              <input type="radio" name="garment" value="pants">
-              <span class="garment-card-body">
-                <svg class="garment-card-art" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M15 8 H33 L35 41 H26.5 L24 18 L21.5 41 H13 Z"/><path d="M15 12 H33 M19.5 16 L18 37 M28.5 16 L30 37"/></svg>
-                <span class="garment-card-title">Pants</span>
-                <span class="garment-saved" hidden>Saved</span>
-              </span>
-            </label>
-            <label class="garment-card">
-              <input type="radio" name="garment" value="sweatpants">
-              <span class="garment-card-body">
-                <svg class="garment-card-art" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M14.5 8 H33.5 L34.5 36 L33.5 41 H25.5 L25 36 L24 18 L23 36 L22.5 41 H14.5 L13.5 36 Z"/><path d="M14.5 12.5 H33.5 M13.5 36 H23 M25 36 H34.5 M22.5 12.5 L21.5 17 M25.5 12.5 L26.5 17"/></svg>
-                <span class="garment-card-title">Sweatpants</span>
-                <span class="garment-saved" hidden>Saved</span>
-              </span>
-            </label>
-            <label class="garment-card">
-              <input type="radio" name="garment" value="jeans">
-              <span class="garment-card-body">
-                <svg class="garment-card-art" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M15 8 H33 L35 41 H26.5 L24 18 L21.5 41 H13 Z"/><path d="M15 12 H33 M24 12 V18 M16.5 12 C16.5 15 18.5 16.5 21 16.5 M31.5 12 C31.5 15 29.5 16.5 27 16.5"/></svg>
-                <span class="garment-card-title">Jeans</span>
-                <span class="garment-saved" hidden>Saved</span>
-              </span>
-            </label>
-            <label class="garment-card garment-card--other">
-              <input type="radio" name="garment" value="other">
-              <span class="garment-card-body">
-                <svg class="garment-card-art" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M21 10.5 C21 8 22.5 6.5 24.5 6.5 C26.5 6.5 28 8 28 10 C28 12 26 13 24.5 13.5 V16"/><path d="M24.5 16 L7.5 31 C6.5 32 7 33.5 8.5 33.5 H40.5 C42 33.5 42.5 32 41.5 31 Z"/></svg>
-                <span class="garment-card-title">Something else</span>
-                <span class="garment-saved" hidden>Saved</span>
-              </span>
-            </label>
-          </div>
-          <!-- Only after "Something else": what it is, in a word or two. -->
-          <div class="guide-field guide-garment-name" id="garment-name-field" hidden>
-            <label class="guide-label" for="garment-name">What is it?</label>
-            <input class="profile-input" type="text" id="garment-name" name="garmentName" maxlength="40" autocomplete="off" placeholder="Like shorts or a jacket">
-          </div>
-        </fieldset>
-
-        <!-- ================================================ 2: one that fits
-             The words, brands and sizes change with the type chosen:
-             letter sizes for tops and sweatpants, waist and length for
-             jeans, either for pants. -->
-        <fieldset class="guide-step" data-step="2" hidden>
-          <legend class="guide-legend">
-            <h2 class="guide-question" tabindex="-1"><span class="sr-only">Step 2 of 4: </span><span id="anchor-question">What brand and size fits you perfectly?</span></h2>
-          </legend>
-          <p class="guide-hint" id="anchor-hint">Think of something you own right now.</p>
-          <!-- T-shirts only: whether they own one that fits just right.
-               Brand and size, and the optional details below them, show
-               only after Yes or Close. -->
-          <fieldset class="guide-favorite" id="favorite-field" hidden>
-            <legend class="sr-only">Do you own one that fits exactly how you like?</legend>
-            <div class="zone-list">
-              <label class="zone zone--one"><input type="radio" name="favorite" value="perfect"><span>Yes, I have the perfect fit.</span></label>
-              <label class="zone zone--one"><input type="radio" name="favorite" value="close"><span>I have one that&rsquo;s close.</span></label>
-              <label class="zone zone--one"><input type="radio" name="favorite" value="none"><span>Not really / I&rsquo;m not sure.</span></label>
-            </div>
-          </fieldset>
-          <div class="guide-anchor-block" id="anchor-block">
-          <p class="guide-label guide-favorite-lead" id="favorite-lead" hidden>Which one is it? Skip anything you don&rsquo;t know.</p>
-          <div class="guide-anchor">
-            <div class="guide-field">
-              <label class="guide-label" for="anchor-brand">Brand</label>
-              <span class="select-wrap"><select class="profile-select" id="anchor-brand" name="anchorBrand"><option value="">Choose</option></select></span>
-            </div>
-            <div class="guide-field">
-              <label class="guide-label" for="anchor-size" id="anchor-size-label">Size</label>
-              <span class="select-wrap"><select class="profile-select" id="anchor-size" name="anchorSize"><option value="">Choose</option><option value="not-sure">Not sure</option></select></span>
-            </div>
-            <!-- Only after "Other brand": pick a suggestion or type the name. -->
-            <div class="guide-field guide-other" id="anchor-other-field" hidden>
-              <label class="guide-label" for="anchor-other">Which brand?</label>
-              <input class="profile-input" type="text" id="anchor-other" name="anchorOther" list="guide-brands" maxlength="60" autocomplete="off" placeholder="Start typing, like Gap">
-              <datalist id="guide-brands"></datalist>
-            </div>
-            <!-- Only with a waist size: jeans, and pants sized by the waist. -->
-            <div class="guide-field guide-length" id="anchor-length-field" hidden>
-              <label class="guide-label" for="anchor-length">Length</label>
-              <span class="select-wrap"><select class="profile-select" id="anchor-length" name="anchorLength"><option value="">Choose</option><option value="not-sure">Not sure</option></select></span>
-            </div>
-          </div>
-          <!-- Optional: which sizing line that size is in. Kept as chosen —
-               "Not sure" is an answer — and read by size suggestions, which
-               never guess it. -->
-          <fieldset class="guide-line">
-            <legend class="guide-label">Sized as <span class="guide-optional">optional</span></legend>
-            <div class="choices">
-              <label class="choice"><input type="radio" name="sizingLine" value="men"><span>Men&rsquo;s</span></label>
-              <label class="choice"><input type="radio" name="sizingLine" value="women"><span>Women&rsquo;s</span></label>
-              <label class="choice"><input type="radio" name="sizingLine" value="unisex"><span>Unisex</span></label>
-              <label class="choice"><input type="radio" name="sizingLine" value="not-sure"><span>Not sure</span></label>
-            </div>
-          </fieldset>
-          <!-- T-shirts only, folded away: what Fynd can use to compare it
-               with other T-shirts. Every part optional; nothing here is
-               needed to continue. -->
-          <details class="guide-more" id="favorite-more" hidden>
-            <summary class="guide-more-summary">Tell us more about it <span class="guide-optional">optional</span></summary>
-            <div class="guide-field">
-              <label class="guide-label" for="favorite-product">Product name or link</label>
-              <input class="profile-input" type="text" id="favorite-product" name="favoriteProduct" maxlength="300" autocomplete="off" placeholder="Its name, or paste a link">
-              <p class="guide-field-note">If Fynd has that product&rsquo;s size chart, it uses its exact measurements.</p>
-            </div>
-            <fieldset class="guide-likes">
-              <legend class="guide-label">What makes the fit good?</legend>
-              <div class="choices" id="favorite-likes"></div>
-            </fieldset>
-            <fieldset class="guide-measure">
-              <legend class="guide-label">Its measurements, laid flat</legend>
-              <p class="guide-field-note">Only if you have a tape measure handy &mdash; you can come back to the guide and add them any time.</p>
-              <div class="choices guide-measure-unit">
-                <label class="choice"><input type="radio" name="favoriteUnit" value="in" checked><span>Inches</span></label>
-                <label class="choice"><input type="radio" name="favoriteUnit" value="cm"><span>Centimetres</span></label>
-              </div>
-              <div class="guide-measure-grid" id="favorite-measures"></div>
-            </fieldset>
-            <div class="guide-field">
-              <label class="guide-label" for="favorite-notes">Notes on the fit you like</label>
-              <textarea class="profile-input guide-notes" id="favorite-notes" name="favoriteNotes" maxlength="200" rows="2" placeholder="Like: roomy in the body, sleeves just past the wrist"></textarea>
-            </div>
-          </details>
-          </div>
-        </fieldset>
-
-        <!-- ================================================ 3: how it should fit -->
-        <fieldset class="guide-step" data-step="3" hidden>
-          <legend class="guide-legend">
-            <h2 class="guide-question" tabindex="-1"><span class="sr-only">Step 3 of 4: </span><span id="fit-question">How do you like your clothes to fit?</span></h2>
-          </legend>
-          <div class="fit-cards">
-            <label class="fit-card">
-              <input type="radio" name="fitGoal" value="slim">
-              <span class="fit-card-body">
-                <svg class="fit-card-art" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><path d="M19 9 L12 13.5 L14.5 19 L17.5 17.5 V40 H30.5 V17.5 L33.5 19 L36 13.5 L29 9 C27 11.5 21 11.5 19 9 Z"/></svg>
-                <span class="fit-card-title">Tight / Slim</span>
-                <span class="fit-card-hint">Close to the body</span>
-              </span>
-            </label>
-            <label class="fit-card">
-              <input type="radio" name="fitGoal" value="true-to-size">
-              <span class="fit-card-body">
-                <svg class="fit-card-art" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><path d="M17 9 L9 14 L12 20 L15 18.5 V40 H33 V18.5 L36 20 L39 14 L31 9 C29 12 19 12 17 9 Z"/></svg>
-                <span class="fit-card-title">True to Size</span>
-                <span class="fit-card-hint">Just as it&rsquo;s labelled</span>
-              </span>
-            </label>
-            <label class="fit-card">
-              <input type="radio" name="fitGoal" value="oversized">
-              <span class="fit-card-body">
-                <svg class="fit-card-art" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><path d="M15 8 L5 15.5 L9 22.5 L13 20 V42 H35 V20 L39 22.5 L43 15.5 L33 8 C30 11.5 18 11.5 15 8 Z"/></svg>
-                <span class="fit-card-title">Relaxed / Oversized</span>
-                <span class="fit-card-hint">Room to move</span>
-              </span>
-            </label>
-          </div>
-        </fieldset>
-
-        <!-- ================================================ 4: what goes wrong
-             Only the chosen type's own trouble spots are listed. -->
-        <fieldset class="guide-step" data-step="4" hidden>
-          <legend class="guide-legend">
-            <h2 class="guide-question" tabindex="-1"><span class="sr-only">Step 4 of 4: </span>What usually gets the fit wrong?</h2>
-          </legend>
-          <p class="guide-hint" id="zone-hint">Pick any that apply &mdash; it&rsquo;s about the clothes, not you.</p>
-          <div class="zone-list">
-            <div class="zone-items" id="zone-items"></div>
-            <label class="zone zone--none"><input type="checkbox" id="zone-none" name="troubleNone" value="none"><span>None of these</span></label>
-          </div>
-        </fieldset>
-
-        <p class="guide-error" id="guide-error" role="alert"></p>
-
-        <div class="guide-nav">
-          <button class="btn btn-secondary" type="button" id="guide-back" hidden>Back</button>
-          <button class="btn btn-primary" type="submit" id="guide-next">Continue</button>
-        </div>
-        <p class="guide-saved-note" id="guide-saved-note" hidden>Clothing you&rsquo;ve answered for is marked Saved &mdash; pick it to change your answers, or edit everything on <a class="guide-link" href="fit-profile.html">your fit profile</a>.</p>
-        <p class="guide-saved-note" id="guide-legacy-note" hidden>Your earlier answers about a top are kept, just as you gave them, on <a class="guide-link" href="fit-profile.html">your fit profile</a>.</p>
+    <div class="shop-card">
+      <!-- A plain GET to the Search page: find-clothes.html?q=… runs the
+           search exactly as if it had been typed there. -->
+      <form class="shop-search" id="shop-search" action="find-clothes.html" method="get" role="search">
+        <label class="sr-only" for="shop-q">Describe the clothes you are looking for</label>
+        <input class="profile-input" type="search" id="shop-q" name="q" maxlength="400" autocomplete="off" placeholder="black oversized hoodie under $80" required>
+        <button class="btn btn-primary" type="submit">Search</button>
       </form>
 
-      <!-- Signed out at the end: an account to keep the answers in, made
-           right here so nothing has to be held anywhere but this page. -->
-      <form class="guide-account" id="guide-account" novalidate hidden>
-        <h2 class="guide-question" id="guide-account-title" tabindex="-1">Save your fit profile</h2>
-        <p class="guide-sub" id="guide-account-intro">Create a free account to keep your answers. Only you can see them.</p>
-
-        <label class="field" id="guide-field-name">
-          <span>Name</span>
-          <input type="text" id="guide-name" name="name" autocomplete="name" maxlength="80">
-        </label>
-        <label class="field">
-          <span>Email</span>
-          <input type="email" id="guide-email" name="email" autocomplete="email" required>
-        </label>
-        <label class="field">
-          <span>Password</span>
-          <input type="password" id="guide-password" name="password" autocomplete="new-password" required>
-        </label>
-        <label class="field" id="guide-field-confirm">
-          <span>Confirm password</span>
-          <input type="password" id="guide-confirm" name="confirmPassword" autocomplete="new-password">
-        </label>
-
-        <p class="guide-error" id="guide-account-error" role="alert"></p>
-
-        <div class="guide-nav">
-          <button class="btn btn-secondary" type="button" id="guide-account-back">Back</button>
-          <button class="btn btn-primary" type="submit" id="guide-account-submit">Create account and save</button>
-        </div>
-        <p class="auth-switch">
-          <span id="guide-switch-text">Already have an account?</span>
-          <button class="link-btn" type="button" id="guide-switch">Sign in</button>
-        </p>
-        <!-- Google sign-in is a full-page trip to Google and back to the
-             account page, so the answers in this page's memory do not
-             survive it. Offered only where Google is set up, and never
-             without saying so first. -->
-        <div class="guide-google" id="guide-google" hidden>
-          <button class="btn btn-secondary btn-provider" type="button" id="guide-google-button">
-            <svg viewBox="0 0 18 18" aria-hidden="true" focusable="false" class="provider-mark">
-              <path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.7-1.57 2.68-3.88 2.68-6.62z"/>
-              <path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.8.54-1.84.86-3.04.86-2.34 0-4.32-1.58-5.02-3.7H.94v2.33A9 9 0 0 0 9 18z"/>
-              <path fill="#FBBC05" d="M3.98 10.72a5.4 5.4 0 0 1 0-3.44V4.95H.94a9 9 0 0 0 0 8.1l3.04-2.33z"/>
-              <path fill="#EA4335" d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.58C13.46.9 11.43 0 9 0A9 9 0 0 0 .94 4.95l3.04 2.33C4.68 5.16 6.66 3.58 9 3.58z"/>
-            </svg>
-            Continue with Google
-          </button>
-          <p class="auth-fineprint" id="guide-google-note">Your answers are not saved yet. Google sign-in leaves this page, so afterwards come back to the fit guide and tap through again &mdash; it takes seconds.</p>
-        </div>
-      </form>
-
-      <!-- Shown only once the save has actually succeeded. -->
-      <div class="guide-done" id="guide-done" hidden>
-        <span class="guide-done-mark" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>
-        </span>
-        <h2 class="guide-question" id="guide-done-title" tabindex="-1">Your fit profile is ready.</h2>
-        <ul class="guide-summary" id="guide-summary"></ul>
-        <p class="guide-sub">Personalised size recommendations are still being built. Fynd will only suggest a size in a brand once it has that brand&rsquo;s verified size chart.</p>
-        <div class="btn-row guide-done-actions">
-          <a class="btn btn-primary" href="fit-profile.html">See your fit profile</a>
-        </div>
-        <div class="guide-done-links">
-          <button class="link-btn" type="button" id="guide-another">Add another type of clothing</button>
-          <button class="link-btn" type="button" id="guide-edit">Change these answers</button>
-        </div>
-      </div>
+      <h2 class="shop-label" id="shop-types-title">Or choose a type of clothing</h2>
+      <ul class="garment-cards shop-types" aria-labelledby="shop-types-title">
+          <li class="garment-card"><a class="garment-card-body" href="find-clothes.html?shop=tshirts">
+            <svg class="garment-card-art" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M18 10 L9.5 14.5 L12.5 21 L15.5 19.5 V39 H32.5 V19.5 L35.5 21 L38.5 14.5 L30 10 C28.5 13 19.5 13 18 10 Z"/></svg>
+            <span class="garment-card-title">T-shirts</span>
+          </a></li>
+          <li class="garment-card"><a class="garment-card-body" href="find-clothes.html?shop=hoodies">
+            <svg class="garment-card-art" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M18.5 13 L11 17 L7.5 36.5 L12 37.5 L15 23 V40 H33 V23 L36 37.5 L40.5 36.5 L37 17 L29.5 13"/><path d="M18.5 13 C17.5 6 30.5 6 29.5 13 C27.5 16 20.5 16 18.5 13 Z"/><path d="M19 33.5 H29 L27.5 28.5 H20.5 Z"/><path d="M22 16 V20.5 M26 16 V20.5"/></svg>
+            <span class="garment-card-title">Hoodies</span>
+          </a></li>
+          <li class="garment-card"><a class="garment-card-body" href="find-clothes.html?shop=sweatshirts">
+            <svg class="garment-card-art" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M18.5 10 L11 14.5 L7.5 36.5 L12 37.5 L15 21 V39 H33 V21 L36 37.5 L40.5 36.5 L37 14.5 L29.5 10 C28 13 20 13 18.5 10 Z"/><path d="M15 35.5 H33 M8 33.5 L12.5 34.5 M40 33.5 L35.5 34.5"/></svg>
+            <span class="garment-card-title">Sweatshirts</span>
+          </a></li>
+          <li class="garment-card"><a class="garment-card-body" href="find-clothes.html?shop=jeans">
+            <svg class="garment-card-art" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M15 8 H33 L35 41 H26.5 L24 18 L21.5 41 H13 Z"/><path d="M15 12 H33 M24 12 V18 M16.5 12 C16.5 15 18.5 16.5 21 16.5 M31.5 12 C31.5 15 29.5 16.5 27 16.5"/></svg>
+            <span class="garment-card-title">Jeans</span>
+          </a></li>
+          <li class="garment-card"><a class="garment-card-body" href="find-clothes.html?shop=pants">
+            <svg class="garment-card-art" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M15 8 H33 L35 41 H26.5 L24 18 L21.5 41 H13 Z"/><path d="M15 12 H33 M19.5 16 L18 37 M28.5 16 L30 37"/></svg>
+            <span class="garment-card-title">Pants</span>
+          </a></li>
+          <li class="garment-card"><a class="garment-card-body" href="find-clothes.html?shop=sweatpants">
+            <svg class="garment-card-art" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M14.5 8 H33.5 L34.5 36 L33.5 41 H25.5 L25 36 L24 18 L23 36 L22.5 41 H14.5 L13.5 36 Z"/><path d="M14.5 12.5 H33.5 M13.5 36 H23 M25 36 H34.5 M22.5 12.5 L21.5 17 M25.5 12.5 L26.5 17"/></svg>
+            <span class="garment-card-title">Sweatpants</span>
+          </a></li>
+      </ul>
     </div>
 
-    <p class="guide-alt">Looking for something specific? <a class="guide-link" href="find-clothes.html">Search Fynd</a></p>
+    <p class="guide-alt">Want sizes picked for you? <a class="guide-link" href="fit-profile.html">Set up your fit profile</a> &mdash; optional, and searching never needs it.</p>
   </section>
 
   <section class="section section--flush" id="how">
@@ -352,18 +110,18 @@
       <ol class="steps">
         <li class="step">
           <span class="step-num">1</span>
-          <h3>Tell us what fits</h3>
-          <p>Pick a type of clothing, then one that already fits you, how you like it to fit, and what usually goes wrong. Four taps.</p>
+          <h3>Choose your clothing</h3>
+          <p>Pick T-shirts, hoodies, jeans and more, or describe exactly what you want &mdash; colour, fit, price, occasion.</p>
         </li>
         <li class="step">
           <span class="step-num">2</span>
-          <h3>Keep your fit profile</h3>
-          <p>Each type of clothing keeps its own answers, so a T-shirt size is never used for jeans. Add sizes by brand or measurements any time.</p>
+          <h3>Search across brands</h3>
+          <p>Fynd finds matching pieces from the brands and retailers its product search reaches, and links you to each one.</p>
         </li>
         <li class="step">
           <span class="step-num">3</span>
-          <h3>Size suggestions, next</h3>
-          <p>Fynd is building size suggestions from your profile and each brand&rsquo;s own verified size chart. Until a chart is checked, Fynd won&rsquo;t guess.</p>
+          <h3>Sized with your fit profile</h3>
+          <p>Saved a fit profile? Fynd uses the right part of it on its own &mdash; your T-shirts for a T-shirt search &mdash; and compares sizes only where a product&rsquo;s measurements have been checked.</p>
         </li>
       </ol>
     </div>
@@ -380,9 +138,9 @@
       </a>
       <nav aria-label="Footer">
         <ul class="footer-links">
-          <li><a href="index.html">Fit guide</a></li>
-          <li><a href="compare.html">Compare</a></li>
+          <li><a href="index.html">Shop</a></li>
           <li><a href="find-clothes.html">Search</a></li>
+          <li><a href="compare.html">Compare</a></li>
           <li><a href="fit-profile.html">Fit profile</a></li>
           <li><a href="pricing.html">Pricing</a></li>
           <li><a href="about.html">About</a></li>
@@ -394,9 +152,6 @@
   </div>
 </footer>
 
-<script src="assets/account.js"></script>
-<script src="assets/fit-profile-schema.js"></script>
-<script src="assets/guide.js"></script>
 <script src="assets/app.js"></script>
 </body>
 </html>

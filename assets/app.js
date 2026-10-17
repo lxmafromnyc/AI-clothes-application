@@ -210,6 +210,18 @@ function skeletons(count) {
   /* the words the shopper used, echoed under the outcome so the answer
      is always read against the question */
   let asked = '';
+  /* what kind of clothing this is: "Shopping for", or a type the
+     request names (assets/fit-for-you.js) */
+  const chips = document.getElementById('shop-chips');
+  const Fit = typeof FitForYou === 'undefined' ? null : FitForYou;
+  const chosenType = () => {
+    const r = chips && chips.querySelector('input[name="shop"]:checked');
+    return r ? r.value : '';
+  };
+  const setType = (id) => {
+    if (!chips) return;
+    chips.querySelectorAll('input[name="shop"]').forEach((r) => { r.checked = r.value === (id || ''); });
+  };
 
   /* the vocabulary the catalogue can actually match, handed to the
      interpreter so it maps a request onto values that exist */
@@ -248,6 +260,7 @@ function skeletons(count) {
     arrive(body);
     bindImageFallback(body);
     announce(`${found.products.length} ${found.products.length === 1 ? 'piece' : 'pieces'} found.`);
+    return body;
   }
 
   /* When a plan's allowance is what ran out, the reset is the useful
@@ -337,6 +350,7 @@ function skeletons(count) {
     arrive(body);
     bindImageFallback(body);
     announce(`${scored.length} ${scored.length === 1 ? 'piece' : 'pieces'} picked for you.`);
+    return { body, products: scored };
   }
 
   /* One short line for anyone not looking at the grid. */
@@ -692,7 +706,7 @@ function skeletons(count) {
      answers into nothing: it never paints over what is on screen now */
   let latest = 0;
 
-  async function search(query, attached) {
+  async function search(query, attached, type) {
     const run = ++latest;
     error.classList.remove('show');
     error.textContent = '';
@@ -729,13 +743,20 @@ function skeletons(count) {
     endProgress();
     outcome = outcome || { source: 'local', notice: null, preferences: Interpreter.EMPTY() };
 
-    if (found.products.length) renderProducts(found, outcome);
+    /* the fit profile is used once results are on screen, never before,
+       and below them: shopping does not wait on it */
+    const personalise = (body, products) => {
+      if (Fit && body && products && products.length) Fit.show(body, { type: type || null, query, products });
+    };
+    if (found.products.length) personalise(renderProducts(found, outcome), found.products);
     /* The sample catalogue stands in only when nothing is connected. Once
        a product source IS configured, a failed or empty search says so —
        a deployment that can sell things must never pad the page with demo
        rows, however clearly they are labelled. */
-    else if (found.state === 'not-configured') render(outcome.preferences, outcome, found);
-    else renderNothing(found, outcome);
+    else if (found.state === 'not-configured') {
+      const shown = render(outcome.preferences, outcome, found);
+      if (shown) personalise(shown.body, shown.products);
+    } else renderNothing(found, outcome);
     results.scrollIntoView({ behavior: scrolling(), block: 'start' });
     readUsage(true);
   }
@@ -753,10 +774,20 @@ function skeletons(count) {
     }
   });
 
+  /* The request as typed, with the type of clothing: a type it names
+     wins and is shown as chosen; one chosen and not named is added. */
+  function run(text, attached) {
+    const named = Fit ? Fit.detect(text) : null;
+    if (named) setType(named);
+    const type = named || chosenType() || null;
+    const query = Fit ? Fit.compose(text, type) : text;
+    return search(query, attached, type);
+  }
+
   form.addEventListener('submit', (e) => {
     e.preventDefault();
     const query = input.value.trim();
-    if (!query) {
+    if (!query && !chosenType()) {
       error.textContent = 'Tell Fynd what you\u2019re looking for first.';
       error.classList.add('show');
       input.setAttribute('aria-invalid', 'true');
@@ -764,7 +795,7 @@ function skeletons(count) {
       return;
     }
     input.removeAttribute('aria-invalid');
-    search(query, attachments ? attachments.manifest() : []);
+    run(query, attachments ? attachments.manifest() : []);
   });
 
   /* The box grows with the request up to a few lines, then scrolls, so a
@@ -799,7 +830,9 @@ function skeletons(count) {
       if (!button) return;
       input.value = button.textContent.trim();
       grow();
-      search(input.value);
+      /* an example is a whole request of its own */
+      setType('');
+      run(input.value);
     });
   }
 
@@ -809,18 +842,25 @@ function skeletons(count) {
      is handed the catalogue's vocabulary), and is then taken out of the
      address so that reloading the page, or coming Back to it, does not
      spend another search from the shopper's allowance. */
-  const handed = new URLSearchParams(window.location.search).get('q');
-  if (handed && handed.trim()) {
+  /* A type of clothing can be handed over the same way — shop=tshirts,
+     from the home page's cards or back from the fit profile — and is
+     chosen; with no request beside it, the type alone is searched. */
+  const params = new URLSearchParams(window.location.search);
+  const handed = params.get('q');
+  const handedType = Fit && Fit.TYPES[params.get('shop')] ? params.get('shop') : '';
+  if (handedType) setType(handedType);
+  if ((handed && handed.trim()) || handedType) {
     const address = new URL(window.location.href);
     address.searchParams.delete('q');
+    address.searchParams.delete('shop');
     window.history.replaceState(window.history.state, '', address.pathname + address.search + address.hash);
     let ran = false;
     Products.subscribe(() => {
       if (ran) return;
       ran = true;
-      input.value = handed.trim().slice(0, Number(input.getAttribute('maxlength')) || 400);
+      input.value = (handed || '').trim().slice(0, Number(input.getAttribute('maxlength')) || 400);
       grow();
-      search(input.value);
+      run(input.value);
     });
   }
 

@@ -981,17 +981,17 @@ function recommend(profile, record, opts) {
     } else if (shopper.references.length === 0 && !shopper.measured) {
       if (fav && (fav.source === 'brand-size' || fav.source === 'not-enough')) {
         missing.push({ code: 'anchor-unmeasured', message: `Your${fav.brand ? ` ${fav.brand}` : ''} T-shirt is kept as your reference, but Fynd has no measurements for it${fav.brand ? ` and no ${fav.brand} chart it can read for it` : ''} — the size on a label isn't a measurement.` });
-        next.push('Measure your favourite T-shirt laid flat (chest, shoulders, sleeve, length) in the fit guide.');
+        next.push('Measure your favourite T-shirt laid flat (chest, shoulders, sleeve, length) on your fit profile.');
       }
       const lineUnknown = !shopper.scale && shopper.entry.anchor && shopper.entry.anchor.size;
       if (lineUnknown) {
         missing.push({ code: 'line-needed', message: 'Your size can only be read once Fynd knows whether it\'s men\'s, women\'s or unisex.' });
-        next.push('Choose Men’s, Women’s or Unisex beside the size that fits, in the fit guide.');
+        next.push('Choose Men’s, Women’s or Unisex beside the size that fits, on your fit profile.');
       }
       missing.push({ code: 'no-evidence', message: 'Fynd has nothing it can measure against: no chest measurement, and no size in a brand it has a size chart for.' });
       const brands = [...new Set(pool.filter((r) => (sizingSchema.isVerified(r) || options.includeUnverified) && (!shopper.favorite || r.category === record.category)).map((r) => r.brand))];
       next.push('Add your chest measurement on your fit profile.');
-      if (brands.length) next.push(`Or tell the fit guide a size that fits you in ${brands.join(', ')}.`);
+      if (brands.length) next.push(`Or add a size that fits you in ${brands.join(', ')} to your fit profile.`);
     } else {
       missing.push({ code: 'incompatible-measurements', message: 'What Fynd knows about you is a garment measurement, and this product publishes only body measurements; the two can\'t be compared.' });
       next.push('Add your chest measurement on your fit profile.');
@@ -1342,7 +1342,7 @@ function compare(profile, record, opts) {
 
   if (!dims.length || !rankable.length) {
     return no('nothing-comparable', `Your reference and this product share no measurement taken the same way, so no size can be set beside it.`,
-      ['Add measurements to your reference, taken as the guide shows.'], { product: { brand: record.brand, name: record.product.name }, context: productContext, reference, notCompared: skipped, notes });
+      ['Add measurements to your reference on your fit profile, taken as it shows.'], { product: { brand: record.brand, name: record.product.name }, context: productContext, reference, notCompared: skipped, notes });
   }
 
   const ranked = rankable.slice().sort((a, b) => a.score - b.score || record.sizes.indexOf(a.size) - record.sizes.indexOf(b.size));
@@ -1397,4 +1397,4 @@ function compare(profile, record, opts) {
   };
 }
 
-module.exports = { recommend, compare, CATEGORY_PARAMS, TROUBLE_FACTOR, ALTERNATIVE_MARGIN, sizeOffset, bodyRange, contextOf };
+module.exports = { recommend, compare, matchProduct, CATEGORY_PARAMS, TROUBLE_FACTOR, ALTERNATIVE_MARGIN, sizeOffset, bodyRange, contextOf };
