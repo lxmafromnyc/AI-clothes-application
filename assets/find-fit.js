@@ -6,9 +6,10 @@
    never on each keystroke — the link goes to the server
    (Account.sizing.chart: /api/size-recommendation?chart=, which reads
    only public pages, on its own side; see api/_sizing/chart.js) and the
-   answer is drawn here by assets/size-chart.js: the chart as published,
-   what it measures, where it came from, or why there isn't one. The
-   link the shopper gave stays beside the answer it produced.
+   answer is drawn here by assets/size-chart.js: the product's name, the
+   chart as published and what it measures, or briefly why there isn't
+   one; where it came from is under "Source details". The product's own
+   page stays a click away ("View product"), without tracking parameters.
 
    No account is needed. Signed in, a chart Fynd has checked
    finished-garment measurements for is also set beside the shopper's
@@ -31,7 +32,7 @@
   const result = $('fit-result');
   const body = $('fit-result-body');
   const compare = $('fit-compare');
-  const { el, safeLink, render, renderFailure } = global.SizeChart;
+  const { el, safeLink, render, renderFailure, headingFor, cleanUrl } = global.SizeChart;
 
   let latest = 0;
   let lastAsked = '';
@@ -50,6 +51,15 @@
     return { url: u.href };
   }
 
+  /* "View product", and the shop it is on */
+  function productLink(url) {
+    const line = $('fit-result-product');
+    let host = '';
+    try { host = new URL(url).hostname.replace(/^www\./, ''); } catch (err) { /* shown without */ }
+    line.replaceChildren(safeLink(url, 'View product'));
+    if (host) line.append(el('span', 'fit-result-host', ` · ${host}`));
+  }
+
   function say(text) {
     error.textContent = text || '';
     error.classList.toggle('show', Boolean(text));
@@ -65,8 +75,7 @@
     result.dataset.state = 'loading';
     compare.hidden = true;
     compare.replaceChildren();
-    const asked = $('fit-result-asked');
-    asked.replaceChildren(el('span', null, 'Sizing for '), safeLink(url, url));
+    productLink(cleanUrl(url));
     $('fit-result-title').textContent = 'Finding this product’s sizing chart…';
     body.replaceChildren(el('p', 'size-chart-loading', 'Reading the product’s page and any size guide it links to…'));
     $('fit-url-submit').disabled = true;
@@ -78,14 +87,17 @@
 
     if (!(answer.ok && answer.data && answer.data.chart)) {
       result.dataset.state = 'error';
-      $('fit-result-title').textContent = 'No sizing chart';
-      body.replaceChildren(...renderFailure(answer, url));
+      $('fit-result-title').textContent = 'Sizing chart unavailable';
+      body.replaceChildren(...renderFailure(answer, url, { linked: true }));
       return;
     }
     const chart = answer.data.chart;
     result.dataset.state = chart.status;
-    $('fit-result-title').textContent = global.SizeChart.headingFor(chart);
-    body.replaceChildren(...render(chart, url));
+    $('fit-result-title').textContent = headingFor(chart);
+    /* the server's canonical page for it, when it gave one */
+    const page = chart.source && chart.source.url;
+    if (page && /^https?:\/\//.test(page)) productLink(page);
+    body.replaceChildren(...render(chart, url, { linked: true }));
     $('fit-result-title').focus({ preventScroll: true });
     result.scrollIntoView({ block: 'start', behavior: 'auto' });
     /* a fallback says why it can't be compared, like any body chart */

@@ -77,12 +77,13 @@
     <p class="guide-alt">Saved <a class="guide-link" href="fit-profile.html">a fit profile</a>? Fynd compares a chart with the clothes you own where the chart allows it. It&rsquo;s optional.</p>
   </section>
 
-  <!-- The answer, on this page: what was read, from where, and what it
-       measures. Drawn as text by assets/size-chart.js. -->
+  <!-- The answer, on this page: the product, its chart and what it
+       measures; where it came from is under "Source details". Drawn as
+       text by assets/size-chart.js. -->
   <section class="container fit-result" id="fit-result" aria-labelledby="fit-result-title" hidden>
     <div class="fit-result-card" id="fit-result-card">
-      <p class="fit-result-asked" id="fit-result-asked"></p>
       <h2 class="fit-result-title" id="fit-result-title" tabindex="-1">Sizing chart</h2>
+      <p class="fit-result-product" id="fit-result-product"></p>
       <div class="size-chart-body" id="fit-result-body" aria-live="polite"></div>
       <div class="fit-compare" id="fit-compare" hidden></div>
     </div>
