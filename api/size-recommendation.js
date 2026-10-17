@@ -4,6 +4,9 @@
 
    GET                      -> { products: [...] }     what Fynd has sizing for
    GET ?product=<id>        -> { recommendation }      for the signed-in shopper
+   GET ?product=<id>&compare=1[&unit=in|cm]
+                            -> { comparison }          their fit reference beside
+                                                       every size (engine.compare)
 
    Read-only: it reads the caller's own fit profile and one sizing
    record (api/_sizing), runs api/_sizing/engine.js, and changes
@@ -68,6 +71,12 @@ module.exports = async function handler(req, res) {
     const { profile, reason } = await fitProfiles.read(identity.user.id);
     if (reason === 'unsupported-version') {
       return res.status(409).json({ error: 'Your fit profile was saved by a newer version of Fynd. Reload the page.', reason });
+    }
+    /* compare before buying: the shopper's own fit reference beside
+       every size (engine.compare), in the unit asked for, if any */
+    if (query.compare === '1') {
+      const unit = query.unit === 'in' || query.unit === 'cm' ? query.unit : undefined;
+      return res.status(200).json({ comparison: engine.compare(profile || null, record, { unit }) });
     }
     const recommendation = engine.recommend(profile || null, record);
     return res.status(200).json({ recommendation });

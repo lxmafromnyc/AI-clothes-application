@@ -94,7 +94,7 @@ async function save(userId, input) {
         const b = before.anchor;
         const sentAnchor = entry.anchor && typeof entry.anchor === 'object' ? entry.anchor : null;
         if (a && b && sentAnchor && a.brand === b.brand && a.size === b.size) {
-          ['product', 'likes', 'measurements'].forEach((k) => { if (b[k] && !has(sentAnchor, k)) a[k] = b[k]; });
+          ['product', 'likes', 'measurements', 'notes'].forEach((k) => { if (b[k] && !has(sentAnchor, k)) a[k] = b[k]; });
         }
       });
     }

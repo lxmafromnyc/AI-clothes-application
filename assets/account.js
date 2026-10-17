@@ -231,7 +231,24 @@
        the answers for one type of clothing travel, and the server keeps
        everything else in the profile as it is */
     answerGuide: (answers) => call('fit-profile', { body: { action: 'guide', answers } }),
-    remove: () => call('fit-profile', { body: { action: 'delete' } })
+    remove: () => call('fit-profile', { body: { action: 'delete' } }),
+    /* how a size actually fitted (api/_fit-feedback.js): kept only with
+       consent, one entry per product and size */
+    feedback: {
+      read: () => call('fit-profile?part=feedback'),
+      consent: (consent) => call('fit-profile', { body: { action: 'feedback-consent', consent } }),
+      add: (entry) => call('fit-profile', { body: { action: 'feedback-add', entry } }),
+      update: (id, entry) => call('fit-profile', { body: { action: 'feedback-update', id, entry } }),
+      remove: (id) => call('fit-profile', { body: { action: 'feedback-delete', id } })
+    }
+  };
+
+  /* What Fynd has sizing for, and a product's sizes set beside the
+     shopper's own fit reference. Read-only: only the product id (and a
+     unit) travels in the address, never anything about the shopper. */
+  const sizing = {
+    products: () => call('size-recommendation'),
+    compare: (productId, unit) => call(`size-recommendation?product=${encodeURIComponent(productId)}&compare=1${unit === 'in' || unit === 'cm' ? `&unit=${unit}` : ''}`)
   };
 
   /* After a checkout the browser comes back before Stripe's webhook has
@@ -261,7 +278,7 @@
   }
 
   global.Account = {
-    load, signup, login, logout, checkout, portal, fitProfile,
+    load, signup, login, logout, checkout, portal, fitProfile, sizing,
     resendVerification, forgotPassword, resetPassword, googleStartUrl,
     awaitPlanChange, subscribe, endpoint, returnPath,
     state: () => current

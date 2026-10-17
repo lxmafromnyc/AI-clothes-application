@@ -48,9 +48,10 @@
                       recommendations (api/_sizing/engine.js) read it and
                       never guess it.
 
-       favorite       (version 5, T-shirts only — a type marked `favorite`
-                      in GARMENTS) the answer to "Do you own a T-shirt
-                      that fits you exactly how you like?": perfect,
+       favorite       (version 5; T-shirts, hoodies and sweatshirts — the
+                      types marked `favorite` in GARMENTS) the answer to
+                      "Do you own a T-shirt (hoodie, sweatshirt) that
+                      fits you exactly how you like?": perfect,
                       close or none; null when not answered. "none" is an
                       answer, and clears the anchor.
 
@@ -70,9 +71,17 @@
                         GARMENT_MEASURES — chest is a flat width armpit
                         to armpit, never a circumference. Stored as
                         entered, in the unit said; never converted here.
+                        Plausible ranges depend on the sleeve: short for
+                        T-shirts, long for hoodies and sweatshirts.
+         notes          what they like about its fit, in their own words
+                        (up to 200 characters): the profile's only free
+                        text, read by nothing that scores, never logged.
+
+       Together these are the shopper's fit reference for that type: a
+       hoodie reference never stands in for a T-shirt one.
 
      Each of the three is null until it is answered, and a type with all
-     three (and, for T-shirts, `favorite`) unanswered is not kept at all.
+     three (and `favorite`, where asked) unanswered is not kept at all.
 
    And, kept from version 2, the first guide's three answers, which were
    about "a top", not about any one type:
@@ -187,9 +196,9 @@
      say what it is (`named`), and it is asked about in words that fit
      any garment. */
   const GARMENTS = [
-    { id: 'tshirts', label: 'T-shirts', one: 'T-shirt', many: 'T-shirts', group: 'tops', sizes: 'letter', favorite: true },
-    { id: 'hoodies', label: 'Hoodies', one: 'hoodie', many: 'hoodies', group: 'tops', sizes: 'letter' },
-    { id: 'sweatshirts', label: 'Sweatshirts', one: 'sweatshirt', many: 'sweatshirts', group: 'tops', sizes: 'letter' },
+    { id: 'tshirts', label: 'T-shirts', one: 'T-shirt', many: 'T-shirts', group: 'tops', sizes: 'letter', favorite: true, sleeves: 'short' },
+    { id: 'hoodies', label: 'Hoodies', one: 'hoodie', many: 'hoodies', group: 'tops', sizes: 'letter', favorite: true, sleeves: 'long' },
+    { id: 'sweatshirts', label: 'Sweatshirts', one: 'sweatshirt', many: 'sweatshirts', group: 'tops', sizes: 'letter', favorite: true, sleeves: 'long' },
     { id: 'pants', label: 'Pants', one: 'pants', many: 'pants', group: 'trousers', sizes: 'waist-or-letter', lengths: true },
     { id: 'sweatpants', label: 'Sweatpants', one: 'sweatpants', many: 'sweatpants', group: 'sweatpants', sizes: 'letter' },
     { id: 'jeans', label: 'Jeans', one: 'jeans', many: 'jeans', group: 'trousers', sizes: 'waist', lengths: true },
@@ -325,33 +334,46 @@
   /* How each is measured, laid flat — the same names and methods as
      api/_sizing/schema.js's garment dimensions, so the size engine can
      set them beside a brand's own chart where the methods match. The
-     ranges are for a short-sleeved T-shirt, stated per unit like
-     MEASUREMENTS. A chest past its range is most often a circumference,
-     and the message says so. */
+     ranges are stated per unit like MEASUREMENTS, and per kind of
+     sleeve (GARMENTS' `sleeves`): `range` for a short-sleeved T-shirt,
+     `longRange` for a hoodie or sweatshirt. A chest past its range is
+     most often a circumference, and the message says so. */
   const GARMENT_MEASURES = {
     chestWidth: {
       label: 'Chest, flat', method: 'flat-width-armpit-to-armpit',
       how: 'Lay it flat and measure straight across, armpit to armpit.',
-      range: { in: [14, 36], cm: [35, 92] }
+      range: { in: [14, 36], cm: [35, 92] },
+      longRange: { in: [16, 40], cm: [40, 102] }
     },
     shoulderWidth: {
       label: 'Shoulders', method: 'seam-to-seam',
       how: 'Across the back, from one shoulder seam to the other.',
-      range: { in: [12, 30], cm: [30, 76] }
+      range: { in: [12, 30], cm: [30, 76] },
+      longRange: { in: [12, 32], cm: [30, 82] }
     },
     sleeveLength: {
       label: 'Sleeve', method: 'shoulder-seam-to-cuff',
-      how: 'From the shoulder seam to the end of the sleeve.',
-      range: { in: [3, 16], cm: [7, 40] }
+      how: 'From the shoulder seam to the end of the sleeve (the cuff).',
+      range: { in: [3, 16], cm: [7, 40] },
+      longRange: { in: [14, 34], cm: [35, 87] }
     },
     bodyLength: {
       label: 'Length', method: 'high-point-shoulder-to-hem',
       how: 'From the top of the shoulder, beside the collar, straight down to the hem.',
-      range: { in: [18, 40], cm: [45, 102] }
+      range: { in: [18, 40], cm: [45, 102] },
+      longRange: { in: [18, 40], cm: [45, 102] }
     }
   };
   const GARMENT_MEASURE_KEYS = Object.keys(GARMENT_MEASURES);
-  const PRODUCT_LIMITS = { name: 80, url: 300 };
+  /* the plausible range of one measurement, for one type, in one unit */
+  const measureRange = (garmentId, key, unit) => {
+    const g = GARMENTS.find((x) => x.id === garmentId);
+    const m = GARMENT_MEASURES[key];
+    return ((g && g.sleeves === 'long') ? m.longRange : m.range)[unit];
+  };
+  /* notes: what the shopper likes about its fit, in their own words —
+     the only free text in the profile, kept short and never logged */
+  const PRODUCT_LIMITS = { name: 80, url: 300, notes: 200 };
 
   const LEGACY_FIELDS = ['anchor', 'fitGoal', 'troubleZones'];
   const GUIDE_FIELDS = LEGACY_FIELDS.concat('garments');
@@ -518,7 +540,7 @@
      { brand, size } shape every earlier version stored. */
   const onlySaid = (details) => {
     const out = {};
-    if (details) ['product', 'likes', 'measurements'].forEach((k) => { if (details[k]) out[k] = details[k]; });
+    if (details) DETAIL_KEYS.forEach((k) => { if (details[k]) out[k] = details[k]; });
     return out;
   };
 
@@ -539,9 +561,11 @@
       });
       if (GARMENT_MEASURE_KEYS.every((key) => measurements[key] === null)) measurements = null;
     }
-    return { product, likes: likes.length ? likes : null, measurements };
+    const notes = typeof raw.notes === 'string' && raw.notes ? raw.notes : null;
+    return { product, likes: likes.length ? likes : null, measurements, notes };
   }
-  const hasDetails = (d) => Boolean(d && (d.product || d.likes || d.measurements));
+  const DETAIL_KEYS = ['product', 'likes', 'measurements', 'notes'];
+  const hasDetails = (d) => Boolean(d && DETAIL_KEYS.some((k) => d[k]));
 
   /* The current shape of whatever was stored, or null for something
      this version cannot read (a later schema, or not a profile at all).
@@ -684,7 +708,8 @@
       answer,
       product,
       likes: likes.length ? likes.join(', ') : null,
-      measurements: measured.length ? measured.join(' · ') : null
+      measurements: measured.length ? measured.join(' · ') : null,
+      notes: a.notes || null
     };
   }
 
@@ -739,9 +764,9 @@
 
     let details = null;
     if (garment.favorite) {
-      details = readDetails(raw, at, fail);
+      details = readDetails(raw, at, fail, garment);
       if (!details) ok = false;
-    } else if (['product', 'likes', 'measurements'].some((k) => raw[k] !== undefined && raw[k] !== null)) {
+    } else if (['product', 'likes', 'measurements', 'notes'].some((k) => raw[k] !== undefined && raw[k] !== null)) {
       fail(at, `Only ${GARMENTS.filter((g) => g.favorite).map((g) => g.many).join(' and ')} keep a product, what fits well, or measurements.`);
       ok = false;
     }
@@ -764,7 +789,7 @@
 
   /* The favourite piece's details: { product, likes, measurements },
      each null when not said, or null with the failures reported. */
-  function readDetails(raw, at, fail) {
+  function readDetails(raw, at, fail, garment) {
     let ok = true;
     let product = null;
     if (!blank(raw.product)) {
@@ -813,9 +838,9 @@
         } else if (any && ok) {
           GARMENT_MEASURE_KEYS.forEach((key) => {
             if (said[key] === null) return;
-            const [min, max] = GARMENT_MEASURES[key].range[unit];
+            const [min, max] = measureRange(garment.id, key, unit);
             if (said[key] < min || said[key] > max) {
-              let message = `${GARMENT_MEASURES[key].label} should be between ${min} and ${max} ${unit} for a T-shirt.`;
+              let message = `${GARMENT_MEASURES[key].label} should be between ${min} and ${max} ${unit} for a ${garment.one}.`;
               if (key === 'chestWidth' && said[key] > max) message += ' Measure it laid flat, armpit to armpit — about half the way around.';
               fail(`${at}.measurements.${key}`, message);
               ok = false;
@@ -825,7 +850,12 @@
         }
       }
     }
-    return ok ? { product, likes, measurements } : null;
+    let notes = null;
+    if (!blank(raw.notes)) {
+      const text = typeof raw.notes === 'string' ? cleanText(raw.notes) : '';
+      if (!text) { fail(`${at}.notes`, 'Write your notes in words, or leave them blank.'); ok = false; } else if (text.length > PRODUCT_LIMITS.notes) { fail(`${at}.notes`, `Keep your notes to ${PRODUCT_LIMITS.notes} characters.`); ok = false; } else notes = text;
+    }
+    return ok ? { product, likes, measurements, notes } : null;
   }
 
   /* One type's answers: only the fields that were sent, so a skipped
@@ -1197,6 +1227,7 @@
     FAVORITE_LIKES,
     GARMENT_MEASURES,
     GARMENT_MEASURE_KEYS,
+    measureRange,
     PRODUCT_LIMITS,
     LETTER_SIZES,
     WAIST_SIZES,

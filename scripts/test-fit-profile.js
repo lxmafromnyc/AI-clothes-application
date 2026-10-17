@@ -937,7 +937,7 @@ await test('the guide saves one type, and every other type, the answers about a 
   const profile = res.body.profile;
 
   assert.deepStrictEqual(profile.garments, {
-    hoodies: { anchor: { brand: SENTINEL_BRAND, size: 'L' }, fitGoal: 'oversized', troubleZones: ['sleeves-short'], line: null },
+    hoodies: { anchor: { brand: SENTINEL_BRAND, size: 'L' }, fitGoal: 'oversized', troubleZones: ['sleeves-short'], line: null, favorite: null },
     jeans: { anchor: { brand: 'Levi’s', size: '32', length: '30' }, fitGoal: 'true-to-size', troubleZones: ['legs-long', 'thighs-tight'], line: null }
   }, 'oversized hoodies and true-to-size jeans, each kept apart');
   assert.deepStrictEqual(Object.keys(profile.garments), ['hoodies', 'jeans']);
@@ -1104,7 +1104,7 @@ await test('each type’s answers are said in its own words, and never as a size
   assert.strictEqual(Schema.describeGarment('pants', { anchor: { brand: null, size: '34', length: null } }).anchor, 'Brand not said · waist 34');
   assert.strictEqual(Schema.describeGarment('tshirts', { anchor: { brand: 'Nike', size: null } }).anchor, 'Nike · size not sure');
   assert.deepStrictEqual(Schema.describeGarment('hoodies', null),
-    { garment: 'Hoodies', anchor: 'Not answered', fitGoal: 'Not answered', troubleZones: 'Not answered', line: null });
+    { garment: 'Hoodies', anchor: 'Not answered', fitGoal: 'Not answered', troubleZones: 'Not answered', line: null, favorite: null });
   assert.strictEqual(Schema.describeGarment('sweatpants', { troubleZones: [] }).troubleZones, 'None of these');
   assert.strictEqual(Schema.isEmpty(Object.assign(Schema.empty(), { garments: { jeans: { anchor: null, fitGoal: null, troubleZones: [] } } })), false);
 });
@@ -1147,7 +1147,8 @@ await test('the favourite T-shirt is saved with its answer and only the details 
     answer: 'Yes, I have the perfect fit.',
     product: 'https://www.uniqlo.com/us/en/products/E455365-000/00',
     likes: 'Shoulder fit, Chest',
-    measurements: 'Chest, flat 21.5 in · Shoulders 17.5 in'
+    measurements: 'Chest, flat 21.5 in · Shoulders 17.5 in',
+    notes: null
   });
 });
 
@@ -1198,11 +1199,11 @@ await test('details are checked: a chest that is a circumference, a measurement 
   assert.strictEqual((await read(jar)).body.profile.garments.tshirts.anchor.measurements.chestWidth, 54.6);
 });
 
-await test('only T-shirts ask about a favourite: another type is refused one, and its details', async () => {
+await test('only tops ask about a favourite (T-shirts, hoodies, sweatshirts): another type is refused one, and its details', async () => {
   const { jar } = await signUp('ada@example.test');
-  const a = await guide(jar, byType({ hoodies: { favorite: 'perfect' } }));
+  const a = await guide(jar, byType({ jeans: { favorite: 'perfect' } }));
   assert.strictEqual(a.status, 400);
-  assert.deepStrictEqual(a.body.errors.map((e) => e.field), ['garments.hoodies.favorite']);
+  assert.deepStrictEqual(a.body.errors.map((e) => e.field), ['garments.jeans.favorite']);
   const b = await guide(jar, byType({ jeans: { anchor: { brand: 'Gap', size: '32', measurements: { unit: 'in', chestWidth: 20 } } } }));
   assert.strictEqual(b.status, 400);
   assert.deepStrictEqual(b.body.errors.map((e) => e.field), ['garments.jeans.anchor']);
@@ -1261,6 +1262,94 @@ await test('the favourite is saved only by its owner: signed out 401, no CSRF to
   /* a user id in the body is not read */
   await guide(bob.jar, Object.assign(byType({ tshirts: { favorite: 'none' } }), { userId: ada.user.id }));
   assert.strictEqual((await read(ada.jar)).body.profile.garments.tshirts.favorite, 'perfect');
+});
+
+section('the fit reference: a hoodie or sweatshirt you own');
+
+const HOODIE_REF = () => ({
+  favorite: 'perfect',
+  anchor: {
+    brand: 'carhartt', size: 'l', product: { name: 'Midweight hoodie' },
+    likes: ['chest', 'sleeves'],
+    measurements: { unit: 'cm', chestWidth: '62', bodyLength: 72, shoulderWidth: 58.5, sleeveLength: '64' },
+    notes: '  roomy in the body ,  sleeves to the wrist '
+  }
+});
+
+await test('a hoodie reference is created, read back, edited, replaced and deleted — through the same save as the guide', async () => {
+  const { jar } = await signUp('ada@example.test');
+  let res = await guide(jar, byType({ hoodies: HOODIE_REF() }));
+  assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+  assert.deepStrictEqual(res.body.profile.garments.hoodies.anchor, {
+    brand: 'Carhartt', size: 'L', product: { name: 'Midweight hoodie', url: null }, likes: ['chest', 'sleeves'],
+    measurements: { unit: 'cm', chestWidth: 62, shoulderWidth: 58.5, sleeveLength: 64, bodyLength: 72 },
+    notes: 'roomy in the body , sleeves to the wrist'
+  });
+  assert.deepStrictEqual((await read(jar)).body.profile.garments.hoodies, res.body.profile.garments.hoodies, 'reusable: read back the same');
+  /* edit: one measurement changes, the rest sent as they are */
+  const edited = HOODIE_REF();
+  edited.anchor.measurements.chestWidth = 63.5;
+  res = await guide(jar, byType({ hoodies: edited }));
+  assert.strictEqual(res.body.profile.garments.hoodies.anchor.measurements.chestWidth, 63.5);
+  /* replace: another hoodie altogether, in inches; nothing of the first is kept */
+  res = await guide(jar, byType({ hoodies: { favorite: 'close', anchor: { brand: 'Nike', size: 'M', measurements: { unit: 'in', chestWidth: 24, bodyLength: 27, shoulderWidth: 20, sleeveLength: 25 } } } }));
+  assert.deepStrictEqual(res.body.profile.garments.hoodies.anchor, { brand: 'Nike', size: 'M', measurements: { unit: 'in', chestWidth: 24, shoulderWidth: 20, sleeveLength: 25, bodyLength: 27 } });
+  assert.strictEqual(res.body.profile.garments.hoodies.favorite, 'close');
+  /* delete: the reference goes; a type with nothing else said goes with it */
+  res = await guide(jar, byType({ hoodies: { favorite: null, anchor: null } }));
+  assert.ok(!('hoodies' in res.body.profile.garments));
+});
+
+await test('measurements are a garment laid flat, in the unit given, checked against a long-sleeved top\'s ranges', async () => {
+  const { jar } = await signUp('ada@example.test');
+  const refused = async (measurements, field, message) => {
+    const r = await guide(jar, byType({ sweatshirts: { anchor: { measurements } } }));
+    assert.strictEqual(r.status, 400, JSON.stringify(measurements));
+    const e = r.body.errors.find((x) => x.field === `garments.sweatshirts.anchor.measurements.${field}`);
+    assert.ok(e, JSON.stringify(r.body.errors));
+    assert.match(e.message, message);
+  };
+  await refused({ unit: 'in', chestWidth: 46 }, 'chestWidth', /between 16 and 40 in for a sweatshirt\. Measure it laid flat, armpit to armpit/);
+  await refused({ unit: 'in', sleeveLength: 8 }, 'sleeveLength', /between 14 and 34 in for a sweatshirt/);
+  await refused({ unit: 'cm', bodyLength: 30 }, 'bodyLength', /between 45 and 102 cm/);
+  await refused({ chestWidth: 22 }, 'unit', /inches or centimetres/);
+  /* a T-shirt's short sleeve is still refused on a hoodie, and a hoodie's long sleeve on a T-shirt */
+  assert.strictEqual((await guide(jar, byType({ tshirts: { anchor: { measurements: { unit: 'in', sleeveLength: 25 } } } }))).status, 400);
+  /* stored as entered: 60.96 cm stays 61 cm (rounded to a millimetre), never turned into inches */
+  const ok = (await guide(jar, byType({ sweatshirts: { anchor: { measurements: { unit: 'cm', chestWidth: '60.96' } } } }))).body.profile.garments.sweatshirts;
+  assert.deepStrictEqual(ok.anchor.measurements, { unit: 'cm', chestWidth: 61, shoulderWidth: null, sleeveLength: null, bodyLength: null });
+  /* each measurement says how it was taken */
+  assert.deepStrictEqual(Schema.GARMENT_MEASURE_KEYS.map((k) => Schema.GARMENT_MEASURES[k].method),
+    ['flat-width-armpit-to-armpit', 'seam-to-seam', 'shoulder-seam-to-cuff', 'high-point-shoulder-to-hem']);
+  /* notes are short */
+  const long = await guide(jar, byType({ hoodies: { anchor: { brand: 'Gap', notes: 'x'.repeat(201) } } }));
+  assert.strictEqual(long.status, 400);
+  assert.deepStrictEqual(long.body.errors.map((e) => e.field), ['garments.hoodies.anchor.notes']);
+});
+
+await test('a hoodie reference lives beside the T-shirt one: saving either never touches the other', async () => {
+  const { jar } = await signUp('ada@example.test');
+  await guide(jar, byType({ tshirts: FAVORITE() }));
+  const tee = (await read(jar)).body.profile.garments.tshirts;
+  await guide(jar, byType({ hoodies: HOODIE_REF() }));
+  await guide(jar, byType({ hoodies: { favorite: null, anchor: null } }));
+  assert.deepStrictEqual((await read(jar)).body.profile.garments.tshirts, tee);
+  /* and the fit profile page carries the hoodie's notes through a save that doesn't show them */
+  await guide(jar, byType({ hoodies: HOODIE_REF() }));
+  const after = (await save(jar, Object.assign(FULL(), { schemaVersion: 5, garments: { hoodies: { anchor: { brand: 'Carhartt', size: 'L' }, fitGoal: 'oversized', troubleZones: null } } }))).body.profile.garments.hoodies;
+  assert.strictEqual(after.anchor.notes, 'roomy in the body , sleeves to the wrist');
+  assert.strictEqual(after.anchor.measurements.chestWidth, 62);
+});
+
+await test('nobody else can read or change a reference', async () => {
+  const ada = await signUp('ada@example.test');
+  const bob = await signUp('bob@example.test');
+  await guide(ada.jar, byType({ hoodies: HOODIE_REF() }));
+  assert.strictEqual((await read(bob.jar)).body.profile, null);
+  await guide(bob.jar, Object.assign(byType({ hoodies: { favorite: null, anchor: null } }), { userId: ada.user.id }));
+  assert.strictEqual((await read(ada.jar)).body.profile.garments.hoodies.anchor.brand, 'Carhartt');
+  assert.strictEqual((await guide(ada.jar, byType({ hoodies: { anchor: null } }), { omitCsrf: true })).status, 403);
+  assert.strictEqual((await guide({}, byType({ hoodies: HOODIE_REF() }))).status, 401);
 });
 
 section('privacy');
@@ -1323,7 +1412,7 @@ await test('no measurement, brand, size or preference ever appears in the logs',
   const all = logged.join('\n');
   assert.ok(all.length > 0, 'the suite should have logged something, or this proves nothing');
   for (const value of [SENTINEL_BRAND, '43.3', '69.4', '39.5', 'about-right', 'too-large', 'oversized', 'relaxed', 'brandSizes', 'measurements',
-    'true-to-size', 'sleeves-short', 'waist-loose', 'troubleZones', 'fitGoal', 'anchor', 'garments', 'legs-long', 'thighs-tight', 'Levi']) {
+    'true-to-size', 'sleeves-short', 'waist-loose', 'troubleZones', 'fitGoal', 'anchor', 'garments', 'legs-long', 'thighs-tight', 'Levi', 'roomy in the body', 'Midweight hoodie']) {
     assert.ok(!all.includes(value), `${value} was logged`);
   }
 });

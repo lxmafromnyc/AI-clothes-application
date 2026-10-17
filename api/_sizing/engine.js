@@ -164,8 +164,12 @@ const TOPS = {
    corrected by fit feedback. */
 const TEES = Object.assign({}, TOPS, { ease: { slim: [1, 4], 'true-to-size': [4, 8], oversized: [9, 16] } });
 const CATEGORY_PARAMS = { hoodies: TOPS, sweatshirts: TOPS, tshirts: TEES };
+/* the categories where a brand and size alone, with no product or
+   measurements, are read only as a chest range */
+const STRICT_ANCHOR = { tshirts: true };
 /* which categories' charts may stand in for each other */
 const FAMILY = { hoodies: 'fleece', sweatshirts: 'fleece', tshirts: 'tees' };
+const CATEGORY_WORDS = { hoodies: 'hoodie', sweatshirts: 'sweatshirt', tshirts: 'T-shirt' };
 
 const TROUBLE_FACTOR = 2.5;     /* a miss in the direction a trouble spot names counts this much more */
 const ALTERNATIVE_MARGIN = 0.75; /* a second size this close behind is offered as the alternative */
@@ -252,10 +256,10 @@ const SHOPPER_MEASURED = 'shopper-measured';
    brand's own site, with the product's code in the address) or, failing
    that, by its name — only when exactly one record answers to it.
    { record, by } or null. Never a guess between two products. */
-function matchProduct(anchor, pool) {
+function matchProduct(anchor, pool, category) {
   const product = anchor && anchor.product;
   if (!product) return null;
-  const same = pool.filter((r) => r.category === 'tshirts' && (!anchor.brand || brandKey(r.brand) === brandKey(anchor.brand)));
+  const same = pool.filter((r) => r.category === category && (!anchor.brand || brandKey(r.brand) === brandKey(anchor.brand)));
   if (product.url) {
     let u = null;
     try { u = new URL(product.url); } catch (err) { u = null; }
@@ -395,7 +399,7 @@ function readShopper(profile, record, pool, options) {
   let favoriteRef = null;
   if (favoriteType && anchor && entry.favorite !== 'none') {
     favorite = { answer: entry.favorite || null, likes: anchor.likes || null, brand: anchor.brand || null, size: anchor.size || null, source: null, match: null };
-    const match = matchProduct(anchor, pool);
+    const match = matchProduct(anchor, pool, category);
     const matchedUsable = Boolean(match) && (sizingSchema.isVerified(match.record) || options.includeUnverified);
     const matchedSize = match ? sizeIn(match.record, anchor.size) : null;
     if (match && !matchedUsable) {
@@ -421,12 +425,19 @@ function readShopper(profile, record, pool, options) {
     }
     /* its brand's chart for that size, for a chest range only — never
        another product's garment measurements */
-    if (favorite.source !== 'product' && anchor.brand && anchor.size) claims.push({ brand: anchor.brand, size: anchor.size, category, from: 'anchor', bodyOnly: true });
+    if (favorite.source !== 'product' && anchor.brand && anchor.size) {
+      /* T-shirts read brand and size alone only as a chest range. Hoodies
+         and sweatshirts keep the reading the evaluation set was worked out
+         on (the brand's record for that size), until that set is reviewed
+         for the stricter rule — see README, "Fit reference". */
+      claims.push(STRICT_ANCHOR[category] ? { brand: anchor.brand, size: anchor.size, category, from: 'anchor', bodyOnly: true }
+        : { brand: anchor.brand, size: anchor.size, category, from: 'anchor' });
+    }
   } else if (anchor && anchor.brand && anchor.size) claims.push({ brand: anchor.brand, size: anchor.size, category, from: 'anchor' });
   ((profile && profile.brandSizes) || []).forEach((b) => {
     /* a hoodie's garment measurements say little about a T-shirt's: for
        T-shirts, another type's size gives only a chest range */
-    if (b && b.fit === 'about-right' && b.size && CATEGORY_PARAMS[b.category]) claims.push({ brand: b.brand, size: b.size, category: b.category, from: 'usual size', bodyOnly: favoriteType && b.category !== category });
+    if (b && b.fit === 'about-right' && b.size && CATEGORY_PARAMS[b.category]) claims.push({ brand: b.brand, size: b.size, category: b.category, from: 'usual size', bodyOnly: Boolean(STRICT_ANCHOR[category]) && b.category !== category });
   });
 
   const usable = (r) => (sizingSchema.isVerified(r) || options.includeUnverified) && CATEGORY_PARAMS[r.category] && r.sizeScale === scale;
@@ -483,7 +494,7 @@ function readShopper(profile, record, pool, options) {
   const troubles = Array.isArray(entry.troubleZones) ? entry.troubleZones : [];
   /* a favourite piece is how they like it to fit: with no goal said, the
      brand's fit words don't move the chart a size on an assumed one */
-  const unmoved = Boolean(favorite) && goalSource === 'assumed';
+  const unmoved = Boolean(favorite) && goalSource === 'assumed' && (Boolean(STRICT_ANCHOR[category]) || favorite.source !== 'brand-size');
   return {
     unmoved, entry, goal, goalSource, line, scale, measured, references, garmentRef, body, conflict, troubles, notes, params, favorite };
 }
@@ -1118,4 +1129,272 @@ function recommend(profile, record, opts) {
   };
 }
 
-module.exports = { recommend, CATEGORY_PARAMS, TROUBLE_FACTOR, ALTERNATIVE_MARGIN, sizeOffset, bodyRange };
+/* =========================================================
+   Compare before buying
+
+   compare(profile, record) sets the shopper's fit reference — a
+   garment they own and like — beside every size of one product, and
+   says, dimension by dimension, how much wider, narrower, longer or
+   shorter each size is, in the reference's own unit.
+
+   ---------------------------------------------------------
+   What it compares
+   ---------------------------------------------------------
+   The reference is the product type's favourite piece (a hoodie's for
+   a hoodie; failing that, the other fleece top's, and said so):
+
+     measured   the four measurements the shopper took of it, laid flat
+     product    its product, found in Fynd's records and checked, with
+                that product's published garment measurements in the
+                size on its label
+
+   Brand and size alone are not a reference here: they give no
+   dimensions to compare. Only finished-garment measurements are used,
+   on both sides; a body chart is never compared with a garment. Two
+   measurements are compared only when taken the same way (see
+   comparable(); a flat chest and a circumference are related by × 2,
+   and called estimated). Every other dimension is listed as not
+   compared, with why.
+
+   ---------------------------------------------------------
+   How sizes are ranked
+   ---------------------------------------------------------
+   Deterministic: each size's distance from the reference is
+
+     Σ  weight(d) × priority(d) × (difference(d) / tolerance(d))²
+
+   over the dimensions both sides measured the same way, with the
+   category's own weights and tolerances (CATEGORY_PARAMS.garment):
+   chest counts most (weight 1, a 1 in flat tolerance), because it sets
+   how much room the whole top has; body and sleeve length next (0.6);
+   shoulders least (0.3, but a tighter ¾ in tolerance), since a
+   shoulder seam's place shifts with the cut. The shopper's "what
+   matters most" doubles a dimension's priority. These numbers are
+   hypotheses for fit feedback to correct, not tailoring constants.
+   Fabric, stretch and construction are said beside the numbers and
+   never turned into numbers.
+
+   ---------------------------------------------------------
+   When it recommends
+   ---------------------------------------------------------
+   Only with a verified product, a reference, and at least three of the
+   four dimensions compared, the chest among them. With fewer, it shows
+   the closest size and every difference it can, calls the comparison
+   partial, and recommends nothing. An unverified product gives no
+   numbers at all outside the evaluation suite.
+   ========================================================= */
+
+const COMPARE_DIMS = ['chestWidth', 'bodyLength', 'shoulderWidth', 'sleeveLength'];
+const COMPARE_WORDS = {
+  chestWidth: { name: 'Chest', more: 'wider', less: 'narrower' },
+  shoulderWidth: { name: 'Shoulders', more: 'wider', less: 'narrower' },
+  bodyLength: { name: 'Body length', more: 'longer', less: 'shorter' },
+  sleeveLength: { name: 'Sleeves', more: 'longer', less: 'shorter' }
+};
+const STRETCH_WORDS = { none: 'no stretch', low: 'a little stretch', moderate: 'moderate stretch', high: 'a lot of stretch' };
+const SLEEVE_WORDS = { 'set-in': 'set-in sleeves', raglan: 'raglan sleeves', 'drop-shoulder': 'dropped shoulders' };
+
+/* a length in the unit asked for, as a shopper reads it */
+/* to the nearest millimetre, or the nearest quarter inch: "2 cm", "¾ in" */
+function amount(v, unit) {
+  const a = Math.abs(v);
+  if (unit === 'cm') return `${round(a, 1)} cm`;
+  const q = Math.round(a * 4) / 4;
+  const whole = Math.floor(q);
+  const glyph = { 0: '', 0.25: '¼', 0.5: '½', 0.75: '¾' }[round(q - whole, 2)];
+  return `${whole ? whole : ''}${glyph}${whole || glyph ? '' : '0'} in`;
+}
+/* "the same" when the difference rounds to nothing in the unit shown */
+function differenceWords(d, diff, unit) {
+  const w = COMPARE_WORDS[d];
+  const nothing = unit === 'cm' ? Math.abs(diff) < 0.05 : Math.round(Math.abs(diff) * 4) === 0;
+  if (nothing) return `${w.name}: the same as your reference`;
+  return `${w.name}: ${amount(diff, unit)} ${diff > 0 ? w.more : w.less}`;
+}
+const listWords = (xs) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`);
+
+/* What a record says about its fabric and making, in words, with
+   "unknown" wherever it says nothing. Never a fit claim. */
+function contextOf(record) {
+  if (!record) return null;
+  const c = record.construction || {};
+  return {
+    fit: record.fit ? record.fit.brandWords : null,
+    fabric: record.material && record.material.composition ? record.material.composition : 'unknown',
+    stretch: record.material && record.material.stretch ? STRETCH_WORDS[record.material.stretch] : 'unknown',
+    construction: c.sleeve ? SLEEVE_WORDS[c.sleeve] : 'unknown',
+    constructionNotes: c.notes || null
+  };
+}
+
+/* the shopper's reference for this product's type, or the other
+   fleece top's: { category, entry, crossCategory } or null */
+function referenceEntry(profile, category) {
+  const garments = (profile && profile.garments) || {};
+  const usable = (e) => e && e.favorite !== 'none' && e.anchor && (e.anchor.measurements || e.anchor.product);
+  if (usable(garments[category])) return { category, entry: garments[category], crossCategory: false };
+  const sibling = Object.keys(FAMILY).find((c) => c !== category && FAMILY[c] === FAMILY[category] && usable(garments[c]));
+  return sibling ? { category: sibling, entry: garments[sibling], crossCategory: true } : null;
+}
+
+function compare(profile, record, opts) {
+  const options = Object.assign({ includeUnverified: false, records: RECORDS }, opts || {});
+  const pool = options.records;
+  const no = (code, message, next, extra) => Object.assign({ status: 'insufficient', productId: record ? record.id : null, missing: [{ code, message }], next: next || [] }, extra || {});
+
+  if (!record || sizingSchema.validate(record).length) return no('no-record', 'Fynd has no sizing data for this product.');
+  const params = CATEGORY_PARAMS[record.category];
+  if (!params) return no('category-not-covered', 'Comparisons cover hoodies, sweatshirts and T-shirts so far.');
+  const productContext = contextOf(record);
+  if (!sizingSchema.isVerified(record) && !options.includeUnverified) {
+    return no('unverified-data', `This product's measurements were copied from ${record.brand}'s own page but haven't been checked yet, so Fynd won't compare them.`,
+      ['Check back once its sizing has been verified.'], { product: { brand: record.brand, name: record.product.name }, context: productContext, dataStatus: 'unverified' });
+  }
+  if (!record.charts.garment) {
+    return no('body-chart-only', `${record.brand} publishes who each size is cut for, not what the garment itself measures, so there is nothing to set beside your reference.`,
+      [], { product: { brand: record.brand, name: record.product.name }, context: productContext });
+  }
+
+  const found = referenceEntry(profile, record.category);
+  if (!found) {
+    return no('no-reference', `Save a ${CATEGORY_WORDS[record.category]} that fits you well, with its measurements, to compare against.`,
+      [`Measure a ${CATEGORY_WORDS[record.category]} you like, laid flat: chest, body length, shoulders and sleeves.`], { product: { brand: record.brand, name: record.product.name }, context: productContext });
+  }
+  const anchor = found.entry.anchor;
+  const notes = [];
+  let ref = null;
+  const match = matchProduct(anchor, pool, found.category);
+  const matchSize = match ? sizeIn(match.record, anchor.size) : null;
+  if (match && matchSize && garmentRow(match.record, matchSize) && (sizingSchema.isVerified(match.record) || options.includeUnverified)) {
+    ref = { record: match.record, size: matchSize, product: true, claim: { favorite: true } };
+  } else {
+    if (match && !matchSize) notes.push(`Fynd found your ${match.record.brand} ${match.record.product.name}, but ${anchor.size ? `not in ${anchor.size}` : 'not the size on its label'}, so its published measurements aren't used.`);
+    const measured = measuredRecord(anchor, found.category);
+    if (measured) ref = { record: measured, size: measured.sizes[0], measured: true, claim: { favorite: true } };
+  }
+  if (!ref) {
+    return no('no-reference-measurements', 'Your saved reference has no measurements Fynd can compare, and its product isn\'t in Fynd\'s checked records.',
+      ['Add your reference\'s four measurements, laid flat.'], { product: { brand: record.brand, name: record.product.name }, context: productContext, notes });
+  }
+
+  const favorite = { answer: found.entry.favorite || null, likes: anchor.likes || null };
+  const shopper = { garmentRef: ref, params, favorite };
+  const { used, skipped } = comparable(record, shopper);
+  const weights = dimWeights(shopper);
+  const unit = options.unit === 'in' || options.unit === 'cm' ? options.unit
+    : ref.measured ? ref.record.units : ((profile && profile.measurements && profile.measurements.unit) || record.units);
+  const show = (v, from) => round(toUnits(v, from, unit), 2);
+  const dims = COMPARE_DIMS.filter((d) => used[d]);
+
+  /* the reference, in the unit shown */
+  const refRow = garmentRow(ref.record, ref.size);
+  const reference = {
+    source: ref.measured ? 'measured' : 'product',
+    category: found.category,
+    crossCategory: found.crossCategory,
+    brand: anchor.brand || null,
+    size: anchor.size || null,
+    product: ref.product ? { id: ref.record.id, name: ref.record.product.name, brand: ref.record.brand } : (anchor.product || null),
+    answer: favorite.answer,
+    unit,
+    values: Object.fromEntries(COMPARE_DIMS.map((d) => [d, refRow[d] ? show(refRow[d].value, ref.record.units) : null])),
+    methods: Object.fromEntries(COMPARE_DIMS.map((d) => [d, ref.record.charts.garment.dimensions[d] ? ref.record.charts.garment.dimensions[d].method : null])),
+    context: ref.product ? contextOf(ref.record) : null
+  };
+
+  const sizes = record.sizes.map((size) => {
+    const row = garmentRow(record, size);
+    if (!row) return null;
+    let score = 0;
+    const out = {};
+    COMPARE_DIMS.forEach((d) => {
+      const v = used[d];
+      if (!v || !row[d]) {
+        const skip = skipped.find((x) => x.dim === d);
+        out[d] = { compared: false, candidate: row[d] ? show(row[d].value, record.units) : null, why: skip ? skip.why : `${record.brand} publishes no ${DIM_NAMES[d]} for ${size}` };
+        return;
+      }
+      const target = toUnits(v.value, ref.record.units, record.units);
+      const diffRecord = row[d].value - target;
+      const { weight, tol } = params.garment[d];
+      score += weight * weights[d] * (diffRecord / toUnits(tol, 'in', record.units)) ** 2;
+      const difference = round(toUnits(diffRecord, record.units, unit), 2);
+      out[d] = {
+        compared: true,
+        candidate: show(row[d].value, record.units),
+        reference: show(target, record.units),
+        difference,
+        words: differenceWords(d, difference, unit),
+        estimated: v.estimated || null
+      };
+    });
+    return { size, score: round(score, 3), dimensions: out };
+  }).filter(Boolean);
+  /* a size missing a measurement the others are compared on is shown,
+     but not ranked against them — and said */
+  const unranked = sizes.filter((s) => !dims.every((d) => s.dimensions[d].compared));
+  unranked.forEach((s) => {
+    s.score = null;
+    s.unranked = `${s.size} isn't ranked: ${record.brand} publishes no ${dims.filter((d) => !s.dimensions[d].compared).map((d) => DIM_NAMES[d]).join(' or ')} for it.`;
+    notes.push(s.unranked);
+  });
+  const rankable = sizes.filter((s) => s.score !== null);
+
+  if (!dims.length || !rankable.length) {
+    return no('nothing-comparable', `Your reference and this product share no measurement taken the same way, so no size can be set beside it.`,
+      ['Add measurements to your reference, taken as the guide shows.'], { product: { brand: record.brand, name: record.product.name }, context: productContext, reference, notCompared: skipped, notes });
+  }
+
+  const ranked = rankable.slice().sort((a, b) => a.score - b.score || record.sizes.indexOf(a.size) - record.sizes.indexOf(b.size));
+  ranked.forEach((s, i) => { s.rank = i + 1; });
+  const closest = ranked[0];
+  const second = ranked[1] || null;
+  const complete = dims.length === COMPARE_DIMS.length;
+  const enough = dims.length >= 3 && dims.includes('chestWidth');
+
+  /* how far to trust it, from the data alone */
+  const caveats = [];
+  let reliability = complete ? 'high' : enough ? 'medium' : 'low';
+  if (!complete) caveats.push(`Compared on ${dims.map((d) => DIM_NAMES[d]).join(', ')} only — ${skipped.map((x) => `${DIM_NAMES[x.dim]}: ${x.why}`).join('; ')}.`);
+  if (ref.measured) { reliability = capAt(reliability, 'medium'); caveats.push('Your reference was measured at home; a quarter inch either way changes the comparison.'); }
+  if (dims.some((d) => used[d].estimated)) { reliability = capAt(reliability, 'medium'); caveats.push('Some differences rest on a worked-out value, not a published one.'); }
+  if (found.crossCategory) { reliability = lower(reliability); caveats.push(`Your reference is a ${CATEGORY_WORDS[found.category]}, and this is a ${CATEGORY_WORDS[record.category]}.`); }
+  if (favorite.answer === 'close') { reliability = lower(reliability); caveats.push('You said your reference is close to the fit you like, not exactly it.'); }
+  const nearTie = second && second.score - closest.score < TIE_MARGIN;
+  if (nearTie) { reliability = lower(reliability); caveats.push(`${closest.size} and ${second.size} are about as close as each other.`); }
+  if (ref.product && !sizingSchema.isVerified(ref.record)) caveats.push(`The measurements used for your ${ref.record.brand} reference haven't been checked yet.`);
+  caveats.push('Matching measurements don\'t guarantee the same fit or feel: fabric, stretch and cut change how a garment wears.');
+
+  const verified = sizingSchema.isVerified(record);
+  const recommended = enough && verified ? closest.size : null;
+  const named = listWords(dims.map((d) => DIM_NAMES[d]));
+  const summary = recommended
+    ? `${recommended} is the closest to your reference across ${named}.`
+    : !verified
+      ? `${closest.size} is the closest on ${named}, but this product's measurements haven't been checked, so it isn't a recommendation.`
+      : `${closest.size} is the closest on ${named}, but that's ${dims.length === 1 ? 'one dimension' : `${dims.length} of 4 dimensions`} — not enough for a recommendation.`;
+
+  return {
+    status: recommended ? 'ok' : 'partial',
+    productId: record.id,
+    product: { brand: record.brand, name: record.product.name, category: record.category, url: record.product.url },
+    unit,
+    reference,
+    recommended,
+    closest: closest.size,
+    alternative: nearTie ? second.size : null,
+    summary,
+    reliability,
+    dimensionsCompared: dims,
+    notCompared: skipped,
+    sizes: record.sizes.map((s) => sizes.find((x) => x.size === s)).filter(Boolean),
+    priorities: (favorite.likes || []).filter((l) => LIKE_DIMS[l]),
+    context: { product: productContext, reference: reference.context },
+    method: 'Each size is scored by how far its measurements are from your reference, dimension by dimension — chest counts most, then lengths, then shoulders, and whatever you said matters most counts double. Only measurements taken the same way are compared.',
+    caveats,
+    notes,
+    dataStatus: sizingSchema.isVerified(record) ? 'verified' : 'unverified'
+  };
+}
+
+module.exports = { recommend, compare, CATEGORY_PARAMS, TROUBLE_FACTOR, ALTERNATIVE_MARGIN, sizeOffset, bodyRange, contextOf };
