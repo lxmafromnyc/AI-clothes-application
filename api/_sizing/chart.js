@@ -33,6 +33,12 @@
                        chart, never presented as this product's own.
      5  labels         the sizes the product is sold in, from its JSON-LD,
                        when no table was found anywhere.
+     6  fallback       when the page couldn't be read or held no chart, and
+                       Fynd knows this exact product belongs to a category
+                       its brand publishes one official chart for
+                       (official-charts.js), that chart — labelled as the
+                       brand's general chart and as a fallback, never as
+                       the product's own or as read just now.
 
    What a table measures — the body, the finished garment, or "not
    stated" — and its unit come only from the page's own words. Values are
@@ -57,6 +63,7 @@ const zlib = require('zlib');
 const store = require('../_store');
 const sizingSchema = require('./schema');
 const { RECORDS } = require('./records');
+const officialCharts = require('./official-charts');
 const engine = require('./engine');
 
 /* One deadline for the whole lookup — the product page, its redirects
@@ -600,6 +607,44 @@ function fromRecord(record, checked) {
   };
 }
 
+/* A brand's general official chart, used because the product's own
+   page couldn't be read (`live` is what that attempt answered). Shown
+   as the brand's chart for the category and as a fallback; a body chart,
+   so never comparable with a garment. */
+function fromOfficial(found, checked, live) {
+  const { chart, product } = found;
+  const [first, ...rest] = chart.evidence;
+  return {
+    status: 'fallback',
+    from: 'official-fallback',
+    fallback: { reason: live.status === 'labels-only' ? 'labels-only' : live.reason, chartId: chart.id },
+    product: { brand: chart.brand, name: product.name, code: product.code },
+    details: live.details || null,
+    retailer: chart.brand,
+    source: { title: `${chart.brand} product page (not read)`, url: checked.url, kind: 'product-page', retrievedAt: null },
+    otherSources: rest.map((e) => ({ url: e.url, what: `The same chart on ${chart.brand}’s ${e.what}, read ${e.retrievedAt}` })),
+    scope: 'brand-general',
+    market: chart.market,
+    line: product.line,
+    charts: [{
+      measures: 'body',
+      label: chart.label,
+      title: chart.title,
+      unit: chart.units,
+      source: { url: first.url, title: `${chart.brand}’s ${first.what}, read ${first.retrievedAt}` },
+      columns: chart.columns.map((c) => c.label),
+      rows: chart.sizes.map((s) => ({ size: s, values: chart.columns.map((c) => chart.values[s][c.key]) }))
+    }],
+    sizes: chart.sizes.slice(),
+    fit: null,
+    evidenceDate: chart.evidenceDate,
+    provenance: chart.provenance,
+    verification: 'official-general',
+    comparable: false,
+    guides: live.guides || []
+  };
+}
+
 /* The size tables in one page, each labelled with where it came from. */
 function chartsIn(html, pageUrl, title) {
   const out = [];
@@ -665,6 +710,21 @@ function noteFor(result) {
       lines.push('The product page itself did load; what it said about the product is shown below, without a measurement chart.');
     }
     if (result.source && result.source.url) lines.push(COULD_NOT);
+    return lines;
+  }
+  if (result.status === 'fallback') {
+    const why = result.fallback.reason;
+    const said = (t) => t.charAt(0).toLowerCase() + t.slice(1);
+    if (PAGE_READ.includes(why) || why === 'labels-only') {
+      lines.push(`Fynd read this product’s page, but found no size chart in it: ${why === 'labels-only' ? 'only size labels.' : said(REASONS[why])}`);
+    } else {
+      lines.push(`${why === 'no-answer' || why === 'slow-page' ? 'Reading this product’s page directly timed out' : 'This product’s page couldn’t be read'}: ${said(REASONS[why] || REASONS.unreadable)}`);
+    }
+    const c = result.charts[0];
+    lines.push(`So this is a fallback chart, not one extracted from the product’s page: ${result.product.brand}’s general Body Size chart for its ${c.title.replace(/ —.*$/, '').replace(`${result.product.brand} `, '')}, which this product is one of.`);
+    lines.push(`${result.product.brand} publishes this same chart, value for value, on ${result.otherSources.length + 1} of those products; Fynd copied it from them by ${result.evidenceDate}. It hasn’t been confirmed on this product’s own page, and this product may be sold in fewer sizes.`);
+    lines.push(`Units: ${c.unit === 'in' ? 'inches' : 'centimetres'}, as published. It gives ${listOf(c.columns)}.`);
+    lines.push('There are no finished-garment measurements here, so this can’t be set beside a garment you own.');
     return lines;
   }
   if (result.status === 'labels-only') {
@@ -739,12 +799,19 @@ async function chartFor(rawUrl, options) {
     }
     result = fromPage(page.html, checked, page.url, guides);
   }
+  /* the page gave no chart: a general official chart, only for a
+     product Fynd knows belongs to its category */
+  if (result.status === 'unavailable' || result.status === 'labels-only') {
+    const found = officialCharts.fallbackFor(checked);
+    if (found) result = fromOfficial(found, checked, result);
+  }
   /* what was asked for, and what came back: no profile, nothing private */
   result.trace = traces.filter(Boolean);
   result.note = noteFor(result);
   /* only kept under the address it was asked for */
   if (result.source) result.source.url = result.source.url || checked.url;
-  const ttl = result.status === 'unavailable' ? CACHE_MISS_SECONDS : CACHE_OK_SECONDS;
+  /* a fallback is kept only as long as a failure: the page may answer next time */
+  const ttl = result.status === 'unavailable' || result.status === 'fallback' ? CACHE_MISS_SECONDS : CACHE_OK_SECONDS;
   if (!opts.noCache) await store.set(key, Object.assign({}, result, { source: Object.assign({}, result.source, { url: checked.url }) }), { ttlSeconds: ttl }).catch(() => {});
   return result;
 }
@@ -760,4 +827,4 @@ function recordFor(checked) {
   return null;
 }
 
-module.exports = { request, DEADLINE_MS, HEADERS_MS, PAGE_READ, chartFor, checkUrl, isPublicAddress, guardedLookup, marketOf, fetchPage, setTransport, productData, tablesOf, sizeTable, guideLinks, drawnByScript, unitOf, kindOf, fromPage, fromRecord, noteFor, plain, SUPPORTED_BRANDS, MAX_BYTES, COULD_NOT };
+module.exports = { request, DEADLINE_MS, HEADERS_MS, PAGE_READ, chartFor, checkUrl, isPublicAddress, guardedLookup, marketOf, fetchPage, setTransport, productData, tablesOf, sizeTable, guideLinks, drawnByScript, unitOf, kindOf, fromPage, fromRecord, fromOfficial, noteFor, plain, SUPPORTED_BRANDS, MAX_BYTES, COULD_NOT };

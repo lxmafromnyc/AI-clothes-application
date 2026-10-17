@@ -258,6 +258,7 @@ module.exports = {
   BODY_DIMENSIONS,
   GARMENT_DIMENSIONS,
   OFFICIAL_HOSTS,
+  officialUrl,
   validate,
   isVerified
 };

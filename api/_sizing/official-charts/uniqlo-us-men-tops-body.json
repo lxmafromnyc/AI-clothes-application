@@ -1,0 +1,64 @@
+{
+  "id": "uniqlo-us-men-tops-body",
+  "brand": "UNIQLO",
+  "market": "US",
+  "measures": "body",
+  "scope": "brand-category",
+  "label": "Official UNIQLO body-size chart — not garment measurements.",
+  "title": "UNIQLO US men’s and unisex tops — Size Guide, Body Size tab (inches)",
+  "appliesTo": {
+    "categories": ["tshirts", "sweatshirts", "hoodies"],
+    "lines": ["men", "unisex"]
+  },
+  "units": "in",
+  "columns": [
+    { "key": "chest", "label": "Chest" }
+  ],
+  "sizes": ["XXS", "XS", "S", "M", "L", "XL", "XXL", "3XL"],
+  "values": {
+    "XXS": { "chest": "30 ¾ - 33" },
+    "XS": { "chest": "31 ½ - 34 ¾" },
+    "S": { "chest": "34 ¾ - 37 ¾" },
+    "M": { "chest": "37 ¾ - 41" },
+    "L": { "chest": "41 - 44" },
+    "XL": { "chest": "44 - 47 ¼" },
+    "XXL": { "chest": "47 ¼ - 50 ½" },
+    "3XL": { "chest": "50 ½ - 53 ½" }
+  },
+  "evidence": [
+    {
+      "recordId": "uniqlo-e475378-sweat-pullover-hoodie-us",
+      "url": "https://www.uniqlo.com/us/en/products/E475378-000/00",
+      "what": "Sweat Pullover Hoodie (unisex): Size Guide, Body Size tab",
+      "retrievedAt": "2026-10-10"
+    },
+    {
+      "recordId": "uniqlo-e475377-sweatshirt-us",
+      "url": "https://www.uniqlo.com/us/en/products/E475377-000/00",
+      "what": "Sweatshirt (men): Size Guide, Body Size tab",
+      "retrievedAt": "2026-10-10"
+    },
+    {
+      "recordId": "uniqlo-e455365-supima-cotton-tshirt-us",
+      "url": "https://www.uniqlo.com/us/en/products/E455365-000/00",
+      "what": "SUPIMA® Cotton T-Shirt (unisex): Size Guide, Body Size tab",
+      "retrievedAt": "2026-10-14"
+    }
+  ],
+  "evidenceDate": "2026-10-14",
+  "provenance": "Not a page of its own. UNIQLO’s Body Size tab says its values “are body size measurements that correspond with a product’s size”, and the three US tops above publish it identically, size for size. Fynd copied each from its product page into the records named; the loader refuses this chart if any of them stops agreeing with it.",
+  "notes": [
+    "Each product page’s Body Size table also has a second, unlabelled column (probably waist); it was never recorded, so it isn’t shown.",
+    "The sizes are the chart’s. A product using it may be sold in fewer of them."
+  ],
+  "products": [
+    {
+      "code": "E471808-000",
+      "url": "https://www.uniqlo.com/us/en/products/E471808-000/00",
+      "name": "Sweat Oversized Pullover Hoodie",
+      "category": "hoodies",
+      "line": "men",
+      "identity": "The product’s name and line are from UNIQLO’s listing title as shown in search results (“UNIQLO Men’s Sweat Oversized Pullover Hoodie”, assets/demo/demo-recording.json) and from the product’s owner; Fynd has not read its product page. Its own Size Guide has not been copied, so this general chart is used only when that page can’t be read."
+    }
+  ]
+}

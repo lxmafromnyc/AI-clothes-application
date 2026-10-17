@@ -2115,6 +2115,33 @@ reads no profile, and only the link travels. It is rate limited per client
    linked from the product page — possibly a general chart, not this product's
    own**, with the guide's own link.
 5. **Labels only**: the sizes in the product's JSON-LD, when no table was found.
+6. **An official fallback** (`api/_sizing/official-charts.js`), when the page
+   couldn't be read or held no chart: a brand's **general** official chart for a
+   category, used only for a product listed by its code under that chart. It is
+   shown as `status: 'fallback'`, `scope: 'brand-general'`,
+   `verification: 'official-general'`, with the chart's label, its official
+   sources, and a note saying why the page wasn't used — never as the product's
+   own chart or as read live. Only body charts may be fallbacks, so a fallback is
+   never comparable with a garment. An unlisted product, another market or
+   another shop gets no fallback: it stays unavailable, with the page's link.
+   Cached like a failure (30 minutes), so a page that answers later is read.
+
+   Each chart file (`api/_sizing/official-charts/*.json`) holds its brand,
+   market, measurement type, unit, values as published, a label, the categories
+   and lines it covers, its evidence (the official product pages it was copied
+   from, each tied to a sizing record, with dates), its provenance, and the
+   products it is known to apply to, each with how that is known. The loader
+   refuses a chart whose values disagree with any of its evidence records, that
+   isn't a body chart, whose label doesn't say "not garment measurements", or
+   that lists a product outside its categories or off the brand's site.
+
+   **The one chart so far:** UNIQLO's US men's and unisex tops Body Size chart
+   (chest, inches, XXS–3XL). UNIQLO publishes it identically on the Sweat
+   Pullover Hoodie (E475378), Sweatshirt (E475377) and SUPIMA Cotton T-Shirt
+   (E455365) pages Fynd has records for. It is listed for **E471808, the Sweat
+   Oversized Pullover Hoodie**, whose page doesn't answer Fynd's requests from
+   the deployment. E471808's own Size Guide has not been copied: when it is, a
+   record of its own replaces this fallback (step 2 comes first).
 
 What a table measures — **body**, **finished garment** or **not stated** — and its
 unit come only from the words around it ("in" as an ordinary word is not
