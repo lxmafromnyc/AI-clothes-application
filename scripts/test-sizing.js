@@ -1037,6 +1037,97 @@ await test('feedback is read together only with consent and enough accounts, and
   assert.ok(!/_fit-feedback|fitFeedback|summarise/.test(code));
 });
 
+section('search results, sized from one type of clothing');
+
+const fitCall = (jar, type, items, o) => call(recommendEndpoint, Object.assign({
+  method: 'GET', jar, query: { fit: type, items: typeof items === 'string' ? items : JSON.stringify(items) },
+  url: '/api/size-recommendation?fit=…'
+}, o));
+const UQ_HOODIE_URL = sizing.byId(UQ_HOODIE).product.url;
+const LISTINGS = [
+  { brand: 'UNIQLO', name: 'Sweat Pullover Hoodie', url: `${UQ_HOODIE_URL}?colorDisplayCode=09` },
+  { brand: 'Gap', name: 'Gap Arch Logo Hoodie', url: 'https://www.gap.com/browse/product.do?pid=1' },
+  { brand: null, name: 'A hoodie', url: null }
+];
+
+await test('the engine’s types are the schema’s sized types: one list, never two', () => {
+  assert.deepStrictEqual(Schema.SIZED_TYPES.slice().sort(), Object.keys(engine.CATEGORY_PARAMS).sort());
+});
+
+await test('signed out it answers 401; a type or list it cannot read is refused', async () => {
+  assert.strictEqual((await fitCall({}, 'hoodies', LISTINGS)).status, 401);
+  const { jar } = await signUp('ada@example.test');
+  assert.strictEqual((await fitCall(jar, 'scarves', LISTINGS)).status, 400);
+  assert.strictEqual((await fitCall(jar, 'hoodies', 'not json')).status, 400);
+  assert.strictEqual((await fitCall(jar, 'hoodies', { brand: 'x' })).status, 400, 'a list, not an object');
+  assert.strictEqual((await fitCall(jar, 'hoodies', Array.from({ length: 25 }, () => LISTINGS[1]))).status, 400, 'at most 24');
+});
+
+await test('only a listing that matches a sizing record is sized; the rest are left out, never guessed', async () => {
+  const { jar, user } = await signUp('ada@example.test');
+  await fitProfiles.save(user.id, { schemaVersion: 5, measurements: { unit: 'in', chest: 40 } });
+  await fitProfiles.saveGuide(user.id, { garments: { hoodies: { fitGoal: 'true-to-size', line: 'men' } } });
+  const { status, body, res } = await fitCall(jar, 'hoodies', LISTINGS);
+  assert.strictEqual(status, 200);
+  assert.strictEqual(res.getHeader('cache-control'), 'no-store, private');
+  assert.strictEqual(body.fit.type, 'hoodies');
+  assert.strictEqual(body.fit.covered, true);
+  assert.deepStrictEqual(body.fit.items.map((i) => i.index), [0], 'the Gap and unnamed listings get nothing');
+  const item = body.fit.items[0];
+  assert.strictEqual(item.productId, UQ_HOODIE);
+  assert.strictEqual(item.matchedBy, 'link');
+  /* the same answer the product endpoint gives, from the same profile */
+  const direct = (await suggest(jar, UQ_HOODIE)).body.recommendation;
+  assert.strictEqual(item.status, 'ok');
+  assert.strictEqual(item.size, direct.leading);
+  assert.strictEqual(item.by, 'profile');
+  /* read-only */
+  const before = await store.get(fitProfiles.profileKey(user.id));
+  await fitCall(jar, 'hoodies', LISTINGS);
+  assert.deepStrictEqual(await store.get(fitProfiles.profileKey(user.id)), before);
+});
+
+await test('a hoodie reference compares a hoodie search, and is never read for jeans or T-shirts', async () => {
+  const { jar, user } = await signUp('ada@example.test');
+  await fitProfiles.saveGuide(user.id, { garments: { hoodies: { favorite: 'perfect', anchor: { brand: 'Carhartt', size: 'L', measurements: { unit: 'cm', chestWidth: '58', bodyLength: '68', shoulderWidth: '50', sleeveLength: '62' } } } } });
+  const hoodie = (await fitCall(jar, 'hoodies', LISTINGS)).body.fit.items[0];
+  assert.strictEqual(hoodie.by, 'reference', 'compared with the reference');
+  /* UNIQLO measures sleeves and length from the centre back: chest and shoulders only, so no recommendation */
+  assert.strictEqual(hoodie.status, 'partial');
+  assert.strictEqual(hoodie.size, null);
+  assert.ok(hoodie.closest);
+  const jeans = (await fitCall(jar, 'jeans', LISTINGS)).body.fit;
+  assert.strictEqual(jeans.covered, false);
+  assert.deepStrictEqual(jeans.items, [], 'jeans are never sized from a hoodie');
+  const tees = (await fitCall(jar, 'tshirts', LISTINGS)).body.fit;
+  assert.deepStrictEqual(tees.items, [], 'a hoodie listing is not a T-shirt');
+});
+
+await test('a T-shirt reference is not used for a hoodie, and an unchecked T-shirt record gives no size', async () => {
+  const { jar, user } = await signUp('ada@example.test');
+  await fitProfiles.saveGuide(user.id, { garments: { tshirts: { favorite: 'perfect', line: 'men', fitGoal: 'true-to-size', anchor: { brand: 'UNIQLO', size: 'M', measurements: { unit: 'in', chestWidth: '20', bodyLength: '28', shoulderWidth: '17', sleeveLength: '8' } } } } });
+  const hoodie = (await fitCall(jar, 'hoodies', LISTINGS)).body.fit.items[0];
+  assert.strictEqual(hoodie.status, 'insufficient');
+  assert.strictEqual(hoodie.size, null);
+  const tee = (await fitCall(jar, 'tshirts', [{ brand: 'UNIQLO', name: 'Supima Cotton T-Shirt', url: sizing.byId(UQ_TEE).product.url }])).body.fit.items[0];
+  assert.strictEqual(tee.productId, UQ_TEE);
+  assert.strictEqual(tee.status, 'insufficient');
+  assert.strictEqual(tee.size, null);
+  assert.ok(tee.missing.some((m) => /hasn't been checked|haven't been checked/.test(m)), tee.missing.join(' | '));
+});
+
+await test('each caller’s listings are sized from their own profile, whatever the request names', async () => {
+  const ada = await signUp('ada@example.test');
+  const bea = await signUp('bea@example.test');
+  await fitProfiles.save(ada.user.id, { schemaVersion: 5, measurements: { unit: 'in', chest: 40 } });
+  await fitProfiles.saveGuide(ada.user.id, { garments: { hoodies: { fitGoal: 'true-to-size', line: 'men' } } });
+  await fitProfiles.save(bea.user.id, { schemaVersion: 5, measurements: { unit: 'in', chest: 46 } });
+  await fitProfiles.saveGuide(bea.user.id, { garments: { hoodies: { fitGoal: 'true-to-size', line: 'men' } } });
+  const beas = await fitCall(bea.jar, 'hoodies', LISTINGS, { headers: { 'x-user-id': ada.user.id } });
+  assert.strictEqual(beas.body.fit.items[0].size, 'XL');
+  assert.strictEqual((await fitCall(ada.jar, 'hoodies', LISTINGS)).body.fit.items[0].size, 'M');
+});
+
 section('privacy');
 
 await test('/api/account says nothing about suggestions or feedback', async () => {

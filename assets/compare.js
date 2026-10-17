@@ -3,15 +3,13 @@
 
    Four steps, on one page, for hoodies and sweatshirts:
 
-     1  your fit reference   a hoodie or sweatshirt you own and like:
-                             brand, the size on its label, optionally its
-                             product, and its four measurements laid flat.
-                             Saved to the fit profile as that type's
-                             favourite piece (garments.<type>: favorite
-                             and anchor), through the guide's own save, so
-                             the guide, the fit profile page and this page
-                             all read and change the same answer. Edit,
-                             replace or delete it here.
+     1  your fit reference   a hoodie or sweatshirt you own and like, as
+                             the fit profile holds it (garments.<type>:
+                             favorite and anchor). Shown here, read only:
+                             it is added, edited, replaced and removed on
+                             the fit profile page, the one place sizing
+                             information is managed, which this page
+                             links to at that type's card.
      2  a product            what Fynd has sizing for, of that type, each
                              saying whether it can be compared
      3  the comparison       the server's (api/size-recommendation.js,
@@ -39,7 +37,6 @@
   const TYPES = { hoodies: 'hoodie', sweatshirts: 'sweatshirt' };
   const DIMS = ['chestWidth', 'bodyLength', 'shoulderWidth', 'sleeveLength'];
   const DIM_LABEL = { chestWidth: 'Chest, flat', bodyLength: 'Body length', shoulderWidth: 'Shoulders', sleeveLength: 'Sleeves' };
-  const PRIORITIES = ['chest', 'shoulders', 'sleeves', 'length'];
   const RELIABILITY = {
     high: 'Reliability: high — all four measurements compared, from checked data.',
     medium: 'Reliability: medium — see the limits below.',
@@ -54,7 +51,6 @@
   let comparison = null;
   let showUnit = null;
   let editingFeedback = null;
-  let confirmDelete = false;
   let busy = false;
 
   /* ---------- small helpers ---------- */
@@ -108,7 +104,7 @@
       if (said && said.likes) row('What matters most', said.likes);
       if (said && said.answer) row('Fit', entryOf(type).favorite === 'close' ? 'Close to how I like it' : 'Exactly how I like it');
       if (a.notes) row('Notes', a.notes);
-      $('ref-saved-hint').textContent = m ? '' : `Add its measurements to compare precisely: a brand and size alone aren't a measurement.`;
+      $('ref-saved-hint').textContent = m ? '' : `Add its measurements on your fit profile to compare precisely: a brand and size alone aren't a measurement.`;
       show('ref-saved-hint', !m);
       show('ref-saved', true);
       show('ref-empty', false);
@@ -117,63 +113,8 @@
       show('ref-saved', false);
       show('ref-empty', true);
     }
-    $('ref-delete').textContent = 'Delete this reference';
-    confirmDelete = false;
-  }
-
-  function buildForm() {
-    $('ref-brands').replaceChildren(...Schema.BRANDS.tops.concat(Schema.BRAND_SUGGESTIONS.filter((b) => !Schema.BRANDS.tops.includes(b))).map((b) => new Option(b, b)));
-    $('ref-size').replaceChildren(new Option('Choose', ''), ...Schema.LETTER_SIZES.map((s) => new Option(s, s)), new Option('Not sure', 'not-sure'));
-    $('ref-measures').replaceChildren(...DIMS.map((key) => {
-      const m = Schema.GARMENT_MEASURES[key];
-      const field = el('div', 'profile-field');
-      field.dataset.field = `anchor.measurements.${key}`;
-      const label = el('label', 'profile-label', m.label);
-      label.htmlFor = `ref-${key}`;
-      const input = el('input', 'profile-input');
-      Object.assign(input, { type: 'text', id: `ref-${key}`, inputMode: 'decimal', autocomplete: 'off', maxLength: 6 });
-      input.setAttribute('aria-describedby', `ref-${key}-how`);
-      const how = el('p', 'compare-how', m.how);
-      how.id = `ref-${key}-how`;
-      field.append(label, input, how, el('p', 'profile-error'));
-      return field;
-    }));
-    $('ref-priorities').replaceChildren(...PRIORITIES.map((id) => {
-      const like = Schema.FAVORITE_LIKES.find((l) => l.id === id);
-      const label = el('label', 'choice');
-      const input = el('input');
-      Object.assign(input, { type: 'checkbox', name: 'refPriority', value: id });
-      label.append(input, el('span', null, like.label));
-      return label;
-    }));
-  }
-
-  function openForm() {
-    const a = anchorOf(type) || {};
-    const word = TYPES[type];
-    $('ref-form-title').textContent = a.measurements ? `Your ${word}, laid flat` : `Measure your ${word} laid flat`;
-    $('ref-brand').value = a.brand || '';
-    const size = $('ref-size');
-    if (a.size && !Array.from(size.options).some((o) => o.value === a.size)) size.insertBefore(new Option(a.size, a.size), size.querySelector('option[value="not-sure"]'));
-    size.value = a.size || (a.brand ? 'not-sure' : '');
-    $('ref-product').value = a.product ? (a.product.url || a.product.name || '') : '';
-    const unit = (a.measurements && a.measurements.unit) || (profile && profile.measurements && profile.measurements.unit) || 'in';
-    doc.querySelectorAll('input[name="refUnit"]').forEach((r) => { r.checked = r.value === unit; });
-    DIMS.forEach((d) => { $(`ref-${d}`).value = a.measurements && typeof a.measurements[d] === 'number' ? String(a.measurements[d]) : ''; });
-    doc.querySelectorAll('input[name="refPriority"]').forEach((c) => { c.checked = Boolean(a.likes && a.likes.includes(c.value)); });
-    const answer = (entryOf(type) && entryOf(type).favorite) === 'close' ? 'close' : 'perfect';
-    doc.querySelectorAll('input[name="refAnswer"]').forEach((r) => { r.checked = r.value === answer; });
-    $('ref-notes').value = a.notes || '';
-    clearErrors($('ref-form'));
-    show('ref-form', true);
-    show('ref-saved', false);
-    show('ref-empty', false);
-    $('ref-brand').focus();
-  }
-
-  function closeForm() {
-    show('ref-form', false);
-    renderReference();
+    /* managed on the fit profile, opened at this type's card */
+    ['ref-edit', 'ref-add'].forEach((id) => { $(id).href = `fit-profile.html?for=${type}`; });
   }
 
   function clearErrors(form) {
@@ -193,81 +134,6 @@
       if (control) control.setAttribute('aria-invalid', 'true');
     });
     foot.textContent = rest.join(' ');
-  }
-
-  function readForm() {
-    const brand = $('ref-brand').value.trim() || null;
-    const size = $('ref-size').value && $('ref-size').value !== 'not-sure' ? $('ref-size').value : null;
-    const said = $('ref-product').value.trim();
-    const product = said ? (/^https?:\/\//i.test(said) ? { url: said } : { name: said }) : null;
-    const unit = (doc.querySelector('input[name="refUnit"]:checked') || {}).value || null;
-    const measures = {};
-    DIMS.forEach((d) => { const v = $(`ref-${d}`).value.trim(); if (v) measures[d] = v; });
-    const likes = Array.from(doc.querySelectorAll('input[name="refPriority"]:checked')).map((c) => c.value);
-    const notes = $('ref-notes').value.trim() || null;
-    const answer = (doc.querySelector('input[name="refAnswer"]:checked') || {}).value || 'perfect';
-    return {
-      favorite: answer,
-      anchor: {
-        brand, size, product,
-        likes: likes.length ? likes : null,
-        measurements: Object.keys(measures).length ? Object.assign({ unit }, measures) : null,
-        notes
-      }
-    };
-  }
-
-  async function saveReference(answers) {
-    const result = await global.Account.fitProfile.answerGuide({ garments: { [type]: answers } });
-    if (result.ok && result.data && result.data.saved) {
-      profile = result.data.profile;
-      return { ok: true };
-    }
-    return { ok: false, result };
-  }
-
-  async function submitReference(event) {
-    event.preventDefault();
-    if (busy) return;
-    const form = $('ref-form');
-    clearErrors(form);
-    $('ref-form-error').textContent = '';
-    const answers = readForm();
-    const a = answers.anchor;
-    if (!a.brand && !a.size && !a.product && !a.measurements) {
-      $('ref-form-error').textContent = 'Say at least its brand, its size, or one measurement.';
-      return;
-    }
-    busy = true;
-    $('ref-save').disabled = true;
-    $('ref-save').textContent = 'Saving…';
-    const saved = await saveReference(answers);
-    busy = false;
-    $('ref-save').disabled = false;
-    $('ref-save').textContent = 'Save reference';
-    if (!saved.ok) {
-      const errors = (saved.result.data && saved.result.data.errors) || [];
-      paintErrors(form, errors, `garments.${type}.`, $('ref-form-error'));
-      if (!errors.length) $('ref-form-error').textContent = `Your reference was not saved. ${failure(saved.result, 'Try again in a moment.')}`;
-      return;
-    }
-    closeForm();
-    note(`Your ${TYPES[type]} reference is saved.`);
-    if (selected) loadComparison(selected);
-  }
-
-  /* two steps, so a stray tap never deletes it */
-  async function deleteReference() {
-    if (!confirmDelete) {
-      confirmDelete = true;
-      $('ref-delete').textContent = 'Tap again to delete it';
-      return;
-    }
-    const saved = await saveReference({ favorite: null, anchor: null });
-    if (!saved.ok) { note(`Your reference was not deleted. ${failure(saved.result, 'Try again in a moment.')}`, true); return; }
-    renderReference();
-    note(`Your ${TYPES[type]} reference is deleted.`);
-    if (selected) loadComparison(selected);
   }
 
   /* ---------- 2  the products ---------- */
@@ -507,17 +373,11 @@
       type = r.value;
       selected = null;
       comparison = null;
-      show('ref-form', false);
       show('result-section', false);
       show('feedback-section', false);
       renderReference();
       renderProducts();
     }));
-    $('ref-add').addEventListener('click', openForm);
-    $('ref-edit').addEventListener('click', openForm);
-    $('ref-cancel').addEventListener('click', closeForm);
-    $('ref-delete').addEventListener('click', deleteReference);
-    $('ref-form').addEventListener('submit', submitReference);
     $('product-list').addEventListener('click', (event) => {
       const b = event.target.closest('[data-product]');
       if (b) loadComparison(b.dataset.product);
@@ -542,7 +402,6 @@
   /* ---------- start ---------- */
 
   async function start() {
-    buildForm();
     wire();
     if (!global.Account) { show('compare-loading', false); note('This page did not load completely. Reload it to try again.', true); return; }
     await global.Account.load();

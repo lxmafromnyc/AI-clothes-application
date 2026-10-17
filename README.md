@@ -1,16 +1,18 @@
 # Fynd — AI clothing finder
 
-Fynd starts with fit. The home page is a four-step **fit guide** — the type of
-clothing (T-shirts, hoodies, sweatshirts, pants, sweatpants, jeans or something else),
-one of that type you already own that fits, how you like that type to fit, and
-what usually gets its fit wrong — answered with taps and two dropdowns in well
-under a minute, and saved to your fit profile under that type alone. See [The fit guide](#the-fit-guide). Size
-recommendations built from it are not implemented yet, and nothing on the site
-suggests a size.
+Fynd starts with shopping. The home page asks one thing — **what are you
+shopping for?** — with a search line and the types of clothing (T-shirts,
+hoodies, sweatshirts, jeans, pants, sweatpants), and the Search page finds
+matching pieces across the brands and retailers the product search reaches.
+Nothing has to be answered first, and no account is needed to search.
 
-Searching is still one tap away, on the Search page: describe the clothes you want
-in your own words and get back matching items. "I need a black shirt for school
-under $50" is a complete request — there is no form to fill in.
+The **fit profile** (`fit-profile.html`) is the one place a shopper's sizing
+information lives, type by type. When a search is for a type the profile has
+answers for, the Search page uses that type's answers — and only that type's —
+automatically, and sizes a listing only where it matches a product whose
+measurements Fynd has checked. See [Shopping with the fit profile](#shopping-with-the-fit-profile).
+The four-step fit guide that used to open the home page is retired: everything
+it asked is now on each type's card on the fit profile page.
 
 The interface is deliberately plain: one typeface, three levels of neutral ink
 (black for primary text, one step down for body copy, muted for metadata), and
@@ -18,7 +20,7 @@ two brand hues used only where they are saying something.
 
 Hierarchy is carried by size, weight, space and surface. Every page opens on a
 lightly tinted band — the stage — holding the headline and the page's one card
-(the fit guide at home, the search on the Search page), and
+(choosing clothing at home, the search on the Search page), and
 closes on one inverted block that carries the call to action and the footer
 together. In between, the page is white. The search card is the only elevated
 layer and the primary button the only filled control, so the thing to do next
@@ -33,7 +35,7 @@ pages, cards, type, rules — is neutral; the hues have jobs:
 | Token | Job |
 | --- | --- |
 | `--color-primary` | Trust and action: the one filled control, the focus ring, the current page, links, the logo mark, and the retailer a product came from |
-| `--color-accent` | Discovery and energy: the example searches, the numbered steps and the fit guide's "Step 1 of 4" — the places that invite a try |
+| `--color-accent` | Discovery and energy: the example searches, the numbered steps — the places that invite a try |
 | `--color-success` | A live listing came back from a real product source |
 | `--color-warning` | A caveat: sample data, or a request that needs fixing before it can run |
 
@@ -46,22 +48,22 @@ document rather than a fixed list of selectors: every piece of type must be set
 in one of the declared inks and must clear its contrast requirement on the
 ground it actually sits on, no rule may carry a raw colour value, no token may
 go unused, and the palette must still be wired to the CTA, the logo, the current
-page, the examples, the steps, the fit guide's progress and the retailer labels.
-Every step and panel of the fit guide is audited, not just the first.
+page, the examples, the steps and the retailer labels. The fit profile's type
+cards, with every detail open, and the search page's fit panel are audited too.
 
 ## Pages
 
 | Page | File | What it does |
 | --- | --- | --- |
-| Home | `index.html` | The fit guide: four quick questions, per type of clothing, saved to your fit profile, then how Fynd works. Links to Search for anyone who came to search |
-| Search | `find-clothes.html` | Describe what you want in your own words; the demo film of four real searches sits under the box |
+| Shop (home) | `index.html` | What are you shopping for: a search line and the types of clothing, each a link to the Search page; then how Fynd works. `index.html#guide`, the old fit guide's address, goes to the fit profile |
+| Search | `find-clothes.html` | Describe what you want in your own words, and say what kind of clothing it is ("Shopping for"); results are followed by how your fit profile was used. The demo film of four real searches sits under the box |
 | Pricing | `pricing.html` | The three plans, which one you are on, and the way to change it |
 | Account | `account.html` | Sign in with Google or email; your plan, usage and subscription |
-| Fit profile | `fit-profile.html` | Your fit guide answers for each type of clothing (editable), measurements, usual sizes by brand and preferred fit — what size recommendations will read once they exist (in the main navigation, and reached from the account page and the guide) |
+| Fit profile | `fit-profile.html` | The one place for sizing: a card per type of clothing (a reference that fits, its product and measurements laid flat, how it should fit, what goes wrong), measurements, usual sizes by brand. Opened at a type's card from a search (`?for=<type>&from=search&q=…`), with the way back |
 | About | `about.html` | What the site does and what it takes into account |
 
 Discover, the catalogue browser, was retired when Fynd turned to fit. `discover.html`
-is kept only so old links and bookmarks land on the fit guide: it redirects there,
+is kept only so old links and bookmarks land on the home page: it redirects there,
 loads no script and asks no API anything.
 
 Every product, wherever it appears, is drawn by one function in `assets/app.js`
@@ -82,8 +84,8 @@ endpoint below, requests are read by a small local parser instead of the AI. The
 page still returns results, and says on screen that the AI did not read the
 request — a keyword match is never presented as an AI reading.
 
-The fit guide on `index.html` can be tapped through with no server, but saving
-needs an account, so it needs the functions: run it under `npx vercel dev`.
+The fit profile needs an account, so it needs the functions: run it under
+`npx vercel dev`.
 
 `pricing.html` lists the plans from its own markup, so it reads correctly with
 no server at all. Signing in, subscribing and the usage meters need the
@@ -93,7 +95,7 @@ functions in `api/`, and the page says plainly when they are not reachable.
 
 ```
 index.html, find-clothes.html, fit-profile.html, about.html, pricing.html, account.html
-discover.html           retired; redirects old links to the fit guide
+discover.html           retired; redirects old links to the home page
 api/interpret.js        serverless endpoint; calls OpenAI, holds the API key
 api/search.js           serverless endpoint; asks the product source for real listings
 api/_providers/         product source adapters and the verification gate
@@ -122,8 +124,8 @@ api/_fit-feedback.js    where fit feedback is kept, and its consent rules
 api/_sizing/            product sizing records (records/*.json), their schema, and the size engine
 assets/fit-profile-schema.js  the fit profile's versioned schema; the page and the server share it
 assets/fit-profile-ui.js       draws the fit profile page
-assets/guide.js                the fit guide on the home page: four steps, saved per type of clothing to the fit profile
-scripts/test-fit-profile.js    offline test of the schema, units, the guide's per-type answers, and who may read or change a profile
+assets/fit-for-you.js          the search page's fit panel: which type a search is for, and that type's profile, used on the results
+scripts/test-fit-profile.js    offline test of the schema, units, per-type answers, readiness, and who may read or change a profile
 scripts/test-sizing.js         offline test of the sizing records, the size engine and both of its endpoints
 scripts/test-size-eval.js      the size engine against hand-worked expectations (scripts/fixtures/size-eval.json)
 api/_store.js           the key/value store: Vercel KV / Upstash, or memory
@@ -142,9 +144,9 @@ scripts/test-gemini.js         offline test of the Gemini interpreter
 scripts/test-pipeline.js       offline test of the whole server pipeline
 scripts/test-stripe.js         offline test of payments and subscriptions
 scripts/test-auth.js           offline test of accounts, sessions and OAuth
-scripts/test-e2e.js            the whole sign-in flow, the fit guide and the fit profile in a real browser
+scripts/test-e2e.js            the whole sign-in flow, shopping, and the fit profile in a real browser
 scripts/test-cross-origin.js   the Pages copy calling the API across origins, in a real browser
-scripts/test-ui.js             browser test of the interface: the search, the fit guide, palette and contrast
+scripts/test-ui.js             browser test of the interface: the search, the fit profile, palette and contrast
 assets/attachments.js          drag-and-drop and file picker for the search box
 assets/account.js       talks to the account and billing endpoints
 assets/billing-ui.js    draws the pricing page
@@ -1724,13 +1726,13 @@ The foundation brand-specific size recommendations will be built on. It records
 what a shopper knows about how clothes fit them; **nothing is recommended from
 it yet**.
 
-Most shoppers start it from the fit guide on the home page; signed in, the
-account page and the guide both link to `fit-profile.html`, where everything
-can be seen and edited. Every part is optional:
+It lives on `fit-profile.html`, reached from the main navigation, the account
+page, Compare, and the Search page's fit panel — the one place it is seen and
+edited. Every part is optional, and a profile with one answer is a profile:
 
 | Group | What it holds | Set on |
 | --- | --- | --- |
-| Fit by type of clothing | For each type the shopper has answered — T-shirts, hoodies, sweatshirts, pants, sweatpants, jeans, something else (with what it is, in the shopper's words) — one of that type they own that fits perfectly (brand, size, and a length for jeans and pants sized by the waist), how they like that type to fit, and what usually gets its fit wrong. A reference point, not a measurement. | the fit guide, or the fit profile page |
+| Fit by type of clothing | For each type the shopper has answered — T-shirts, hoodies, sweatshirts, pants, sweatpants, jeans, something else (with what it is, in the shopper's words) — one of that type they own that fits perfectly (brand, size, and a length for jeans and pants sized by the waist), how they like that type to fit, and what usually gets its fit wrong. A reference point, not a measurement. | the fit profile page (and, until it was retired, the fit guide) |
 | Earlier answers about a top | What the first guide (version 2) saved: a top that fits, how clothes should sit, and trouble spots. Kept as given, never read as any one type's answers. | shown on the fit profile page, which can remove them |
 | Measurements | Height and chest (tops); waist and hip (bottoms). One unit for all of them: `in` or `cm`, chosen by the shopper. | the fit profile page |
 | Usual sizes by brand | Brand, category (hoodies or sweatshirts), the size usually bought, and how it fits: too small, about right, too large. | the fit profile page |
@@ -1866,7 +1868,7 @@ POST /api/fit-profile { action: "guide", answers } -> { profile, storage, saved 
 POST /api/fit-profile { action: "delete" }         -> { profile: null, storage, deleted }
 ```
 
-`guide` is the fit guide's save: `{ garments: { <type>: { anchor, fitGoal,
+`guide` saves one type at a time (the retired fit guide used it; Compare and older pages may still): `{ garments: { <type>: { anchor, fitGoal,
 troubleZones } } }`, merged into that type's entry. Within the type, a field
 left out — a skipped step — keeps its saved value; every other type,
 measurements, usual sizes and per-category fits are carried over on the server
@@ -1894,88 +1896,94 @@ Responses carry `Cache-Control: no-store, private`. The profile appears in no
 other response — `/api/account` is unchanged — and nothing logs a measurement,
 brand, size or preference: a failure logs only the store's own message, which
 names the command and never its arguments. Neither the fit profile page nor the
-fit guide writes anything to browser storage, and no answer — not even the type
-chosen — goes in a URL. Deleting removes the record — guide answers included —
-straight away.
+search's fit panel writes anything to browser storage, and no answer goes in a
+URL: only the type being shopped for and the shopper's own search words do, to
+open that type's card and come back. Deleting removes the record — every type's
+answers included — straight away.
 
-### The fit guide
+### The fit profile page: one card per type of clothing
 
-The home page (`index.html`, run by `assets/guide.js`) asks four things, one
-at a time, under the heading **"Find your fit"** and the line "4 quick steps. No
-measuring." — with one compact progress line ("STEP 1 OF 4" over a thin bar),
-Back and Continue. The first step, Continue included, fits the first screen of
-a typical phone:
+The fit guide asked four things, one at a time, before shopping. They are now
+the questions on each type's card on `fit-profile.html`, in the guide's own
+words, and no shopper has to step through them to shop:
 
-1. **"What are we sizing?"** Seven cards — T-shirts, Hoodies, Sweatshirts,
-   Pants, Sweatpants, Jeans, Something else — exactly one chosen, two to a row on
-   a phone. Choosing Something else opens a "What is it?" box. This step is
-   required: Continue without a type says so and stays.
-2. **"What brand and size of T-shirt fits you perfectly?"** — worded for the
-   type ("…of jeans fits you perfectly?"; "What brand and size fits you
-   perfectly?" for Something else). Two dropdowns: brand (that type's common brands, then
-   Other brand, which opens a box with suggestions) and size (that type's sizes,
-   then Not sure), with a length beside a waist size for jeans and pants. Not sure
-   is stored as `null`, never as a size.
-   **For T-shirts this step asks first "Do you own a T-shirt that fits you exactly
-   how you like?"** — Yes, I have the perfect fit / I have one that's close / Not
-   really. Brand and size appear only after Yes or Close, and beneath them, folded
-   away under "Tell us more about it (optional)": the product's name or link, what
-   makes the fit good, and its measurements laid flat (each with how to take it).
-   No measuring is needed to continue, and "Not really" continues straight on.
-3. **"How do you like your T-shirts to fit?"** — worded for the type. Three
-   cards, one answer: Tight / Slim, True to Size, Relaxed / Oversized, with
-   pictures and second lines for tops or bottoms.
-4. **"What usually gets the fit wrong?"** Only that type's trouble spots, any
-   number of them, or None of these; choosing None clears the spots and choosing
-   a spot clears None. About the clothes, not the body.
+1. For T-shirts, hoodies and sweatshirts: **"Do you own a T-shirt that fits you
+   exactly how you like?"** — Yes, I have the perfect fit / I have one that's
+   close / Not really / Not said. Not really hides the piece's questions and
+   saves no piece.
+2. **The piece that fits** — brand (that type's brands, or Other brand), size
+   (that type's sizes; a length beside a waist size for jeans and pants), and
+   Sized as. For the three tops, folded under "Its product and measurements":
+   the product's name or link, what makes its fit good, and its four
+   measurements laid flat — with the diagram and how to take each — in inches or
+   centimetres, and notes. **Remove this reference** clears the piece, its answer
+   and its details on save, and leaves how the type should fit.
+3. **"How do you like your T-shirts to fit?"** — Tight / Slim, True to Size,
+   Relaxed / Oversized, with the type's own wording.
+4. **"What usually gets the fit wrong?"** — that type's trouble spots, or None
+   of these.
 
-Steps 2–4 are optional: Continue reads **Skip** until something is chosen, and a
-skipped step is not sent, so it keeps whatever was saved for that type before.
-Only the chosen type is saved. Saving a type with nothing answered at all is
-refused on the page before it asks for an account.
+Each card opens with what its answers can support
+(`FitProfileSchema.readiness`): nothing yet; kept, but that type can't be
+compared yet (jeans, pants, sweatpants, something else); usable, with what would
+help (a reference, its measurements — the chest and two more —, the sizing line,
+the fit); or ready to compare with the reference *wherever Fynd has a product's
+checked measurements*. Answering every question is never called complete or
+accurate. Every detail is shown in its own box, and every box is sent on save, so
+clearing one clears it; a profile saved by the old guide opens with all of it
+filled in, and saving it unchanged changes nothing (`test-e2e`).
 
-**Switching type.** Going back and choosing another type puts the answers given
-so far aside for the type they were given for and shows the new type's own —
-given earlier in this visit, saved, or nothing. A T-shirt size is never left in a
-jeans question, and switching back brings the T-shirt answers back.
+The earlier per-category **preferred fit** (hoodies, sweatshirts) is shown only to
+a profile that holds one, labelled as earlier, so how a type should fit is asked
+in one place; the engine still reads a type's own answer first and that only where
+it has none. Nothing was migrated or dropped: the schema is unchanged (version 5).
 
-**Signed in**, each type with saved answers is marked **Saved**, and choosing it
-fills them in. The confirmation offers **Add another type of clothing**, which
-starts again at step 1 with nothing chosen. Earlier answers about a top are
-mentioned (they are kept on the fit profile) but never filled in as a type's.
+**Signed out**, the page makes the account right there (create one, or sign in),
+so a shopper who came from a search keeps their place; Google sign-in is offered
+where set up, and says it ends on the account page. **Compare** shows the hoodie
+or sweatshirt reference read-only and links to that type's card to add, edit,
+replace or remove it.
 
-**Saving.** Signed in, Save sends the type's answers (`action: "guide"`). Signed
-out, the guide asks for an account right there — create one, or sign in — with
-the answers held only in the page's memory, then saves the moment the account
-exists. **"Your fit profile is ready."** appears only once the server has
-confirmed the save, with a summary of that type's answers; a failed save keeps
-every answer on screen, says nothing was saved, and offers Try again.
+## Shopping with the fit profile
 
-**Google sign-in from the guide** is offered where Google is set up, but it is a
-full-page trip to Google that returns to the account page, so the answers in the
-page's memory do not survive it. The button says so before it is pressed — the
-answers are not saved yet, and the guide is tapped through again afterwards — and
-nothing claims otherwise. The account page links back to the guide.
+The Search page has **Shopping for** — Anything, T-shirts, Hoodies, Sweatshirts,
+Jeans, Pants, Sweatpants. A request that names a type ("black hoodie") chooses it;
+one that names none gets the chosen type's word added; a type alone is searched
+for itself (the home page's cards hand it over as `find-clothes.html?shop=<type>`,
+taken out of the address once run). Two types named at once are no type.
 
-**What it does not do.** No size is recommended and no measurement is estimated.
-A brand and size are a reference point; turning "Levi’s 32 × 30" into a size in
-another brand needs both brands' verified size charts, which Fynd does not have
-yet. The confirmation says recommendations are still being built.
+Under the results, one panel (`assets/fit-for-you.js`) says how the profile was
+used — after the results, so their arrival never moves:
 
-The whole flow is a few taps: `test-e2e` completes it, saved, well inside 30
-seconds, and nothing in it waits on a timer.
+- **No type**: it asks which, and sizes nothing.
+- **Signed out, or nothing saved for that type**: one line, "These sizes aren't
+  personalised", and **Personalise my size**. Asked, it says **"Get a more
+  personalized fit recommendation."**, what a profile is for, and links to that
+  type's card: `fit-profile.html?for=<type>&from=search&q=<the search>`. The card
+  is opened (added, empty, if there is none), and after saving the page offers
+  **Back to your search**, which runs it again. Only the type and the shopper's own
+  search words are ever in an address — never anything from the profile.
+- **Saved**: "Using your T-shirt fit profile", what it holds, and its readiness.
+  Then `GET /api/size-recommendation?fit=<type>&items=<listings>` matches each
+  listing to a sizing record the way a favourite is matched (the brand's own link
+  with the product's code, or a name only one record answers to; never guessed),
+  and sizes a matched listing from that type's profile only: a comparison with the
+  reference where there is one (partial stays partial — the closest size, never a
+  recommendation), else the engine's suggestion, else what is missing. A matched
+  listing shows its size on its own card; the others get nothing, and the panel
+  says how many had no checked measurements. Jeans, pants and sweatpants are said
+  to be uncomparable, and are never sized from a hoodie.
 
 ### Testing it
 
 ```sh
 node scripts/test-fit-profile.js   # offline: schema, units, versions 1→2→3, every type's sizes and trouble spots, one type's
                                    #   answers refused for another, the per-type merge, endpoint, cross-account access, logs
-node scripts/test-e2e.js           # the fit guide and the fit profile page against the real handlers: each type's questions,
-                                   #   switching type without carrying answers, Back, None, inline sign-up and sign-in, Google,
-                                   #   save success and failure, saved types marked and filled in after a reload, editing and
-                                   #   removing a type on the fit profile page, earlier answers about a top never lent to a
-                                   #   type, a 360px phone with the keyboard alone, browser storage; and from a second origin
-node scripts/test-ui.js            # every step and panel of the guide, and the fit profile page, in the palette and legibility audits
+node scripts/test-e2e.js           # shopping and the fit profile page against the real handlers: choosing clothing, the search's fit
+                                   #   panel signed out and in, the prompt to the card and back, references added, replaced and removed,
+                                   #   a guide-era profile shown whole, category isolation, "Not really", a 360px phone, units,
+                                   #   save failure, deletion, cross-account access, browser storage; and from a second origin
+node scripts/test-ui.js            # the fit profile's cards and account step, and the search's fit panel, in the palette and legibility audits
 ```
 
 ### Not built yet
@@ -1985,17 +1993,18 @@ node scripts/test-ui.js            # every step and panel of the guide, and the 
   hoodie and sweatshirt records are verified, but no page shows a suggestion yet.
   The favourite T-shirt is saved and read by the engine, but its four T-shirt
   records await verification.
-- Usual sizes by brand and preferred fit (the fit profile page's own sections)
-  still cover hoodies and sweatshirts only, beside the guide's per-type answers.
-  Bringing the two together is later work; until then neither is read as the
-  other.
+- Usual sizes by brand still cover hoodies and sweatshirts only, beside each
+  type's own answers; the earlier per-category preferred fit is kept, and shown
+  only where saved.
 - "Something else" is one type: its name is free text and is not read by
   anything, so it gets letter sizes and general trouble spots (too short, too
   long, too tight, too loose), and two different garments typed there share it.
 - The earlier answers about a top stay as given; they are not turned into any
-  one type's answers, so a shopper who wants them per type taps the guide again.
-- Google sign-in from the guide does not carry the answers across; they are
-  tapped through again after signing in.
+  one type's answers; a shopper who wants them per type answers that type's card.
+- Google sign-in from the fit profile page ends on the account page, not back on
+  the card or the search it came from.
+- Few live listings match a sizing record (fourteen products), so most searches
+  show no size — said, never filled in.
 - Account deletion does not exist yet; when it is built it must also remove
   `fitprofile:<user id>`.
 - Two tabs saving at once: the last save wins.
@@ -2037,7 +2046,7 @@ equal its sleeve lengths as shown, for one).
 
 ### The favourite T-shirt
 
-For a T-shirt, the shopper's favourite (from the guide) is read strongest first:
+For a T-shirt, the shopper's favourite (from the fit profile) is read strongest first:
 
 1. **Its product**, found in the sizing records by its link (the brand's own
    site, with the product's code in the address) or, failing that, by a name only
@@ -2076,10 +2085,10 @@ four steps, each backed by the systems above rather than new ones:
    to the cuff — in inches or centimetres, with a diagram and how to take each.
    Plus what matters most (chest, shoulders, sleeves, length) and short notes. It
    is the type's favourite piece in the fit profile (`garments.hoodies` or
-   `garments.sweatshirts`: `favorite` and `anchor`), saved through the guide's own
-   `guide` action, so the guide, the fit profile page and this page all edit the
-   same answer. Measurements are stored exactly as entered, in their unit, and
-   converted once, for display. Save, edit, replace and delete are on the page; a
+   `garments.sweatshirts`: `favorite` and `anchor`), added, edited and removed on
+   that type's card on the fit profile page, which this page links to; here it is
+   read only. Measurements are stored exactly as entered, in their unit, and
+   converted once, for display. A
    hoodie reference never touches the T-shirt one. Nothing needs measuring to look
    around, but without measurements nothing is compared.
 2. **A product.** `GET /api/size-recommendation` lists each record with
@@ -2176,7 +2185,7 @@ body: a chest measurement (± ½ in); a size the shopper says fits, in a brand t
 is a record for (that size's chart range — an estimate); and, best of all, a garment
 known to fit whose garment measurements are published. A letter size in a brand
 without a chart is not used, and a letter size is only read at all once the
-shopper has said which sizing line it is in (the guide's optional **Sized as**:
+shopper has said which sizing line it is in (the card's optional **Sized as**:
 Men's, Women's, Unisex or Not sure, stored per type as `line`).
 
 Three methods, by what the product publishes:
@@ -2245,6 +2254,7 @@ its caveats.
 ```
 GET  /api/size-recommendation                       -> { products }        what has sizing, and whether it is verified
 GET  /api/size-recommendation?product=<id>          -> { recommendation }  for the signed-in shopper
+GET  /api/size-recommendation?fit=<type>&items=<JSON> -> { fit }           up to 24 search listings, matched and sized from that type only
 GET  /api/fit-profile?part=feedback                    -> { feedback }
 POST /api/fit-profile { action: "feedback-consent", consent: { store, improve } }
 POST /api/fit-profile { action: "feedback-add", entry } -> { feedback, entry }
@@ -2714,7 +2724,7 @@ written by those tests.
 ## The demo video
 
 The Search page carries a short film directly under the search (`#demo` in
-`find-clothes.html`; it was on the home page until the fit guide took that
+`find-clothes.html`; it was on the home page until fit took that
 place, and `scripts/record-demo.js` records on and writes to the Search page,
 named once as `DEMO_PAGE`): Fynd used for four genuinely different shopping problems, one
 after another, with a calm narration, in about 55 seconds. The point it makes:

@@ -30,7 +30,8 @@
       <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" aria-label="Open menu"><span></span></button>
       <nav aria-label="Main">
         <ul class="nav-links" id="site-nav">
-          <li><a href="index.html">Fit guide</a></li>
+          <li><a href="index.html">Shop</a></li>
+          <li><a href="find-clothes.html" aria-current="page">Search</a></li>
           <li><a href="compare.html">Compare</a></li>
           <li><a href="fit-profile.html">Fit profile</a></li>
           <li><a href="pricing.html">Pricing</a></li>
@@ -46,7 +47,7 @@
 
   <section class="container hero" id="search">
     <h1>What are you looking for?</h1>
-    <p class="lead">Describe any clothing item naturally and Fynd will find matching products.</p>
+    <p class="lead">Choose a type of clothing or describe it naturally, and Fynd finds matching products from brands like Nike, UNIQLO, Zara and H&amp;M.</p>
       <div class="ask-wrap">
       <form class="ask-card" id="ask-form" data-dropzone>
         <label class="sr-only" for="ask">Describe the clothes you are looking for</label>
@@ -102,6 +103,22 @@
         </div>
       </form>
 
+      <!-- What kind of clothing this is: added to the request when it
+           names none, and the part of the fit profile the results are
+           sized with. Choosing one never needs an account. -->
+      <fieldset class="shop-chips" id="shop-chips">
+        <legend class="examples-label">Shopping for</legend>
+        <div class="choices">
+          <label class="choice"><input type="radio" name="shop" value="" checked><span>Anything</span></label>
+          <label class="choice"><input type="radio" name="shop" value="tshirts"><span>T-shirts</span></label>
+          <label class="choice"><input type="radio" name="shop" value="hoodies"><span>Hoodies</span></label>
+          <label class="choice"><input type="radio" name="shop" value="sweatshirts"><span>Sweatshirts</span></label>
+          <label class="choice"><input type="radio" name="shop" value="jeans"><span>Jeans</span></label>
+          <label class="choice"><input type="radio" name="shop" value="pants"><span>Pants</span></label>
+          <label class="choice"><input type="radio" name="shop" value="sweatpants"><span>Sweatpants</span></label>
+        </div>
+      </fieldset>
+
       <p class="ask-examples" id="ask-examples">
         <span class="examples-label">Try</span>
         <button type="button" class="example">linen shirt for a summer wedding</button>
@@ -119,8 +136,7 @@
 
   <!-- Four real searches, start to finish: a short film cut from one
        real Fynd session (scripts/demo-film.js). It steps aside the moment
-       a real search starts (assets/app.js). It lived on the home page
-       until the fit guide took that place. -->
+       a real search starts (assets/app.js). -->
   <section class="section section--flush demo" id="demo" aria-label="Demo: four real searches, start to finish">
     <div class="container">
       <figure class="demo-figure" id="demo-figure">
@@ -203,9 +219,9 @@
       </a>
       <nav aria-label="Footer">
         <ul class="footer-links">
-          <li><a href="index.html">Fit guide</a></li>
-          <li><a href="compare.html">Compare</a></li>
+          <li><a href="index.html">Shop</a></li>
           <li><a href="find-clothes.html">Search</a></li>
+          <li><a href="compare.html">Compare</a></li>
           <li><a href="fit-profile.html">Fit profile</a></li>
           <li><a href="pricing.html">Pricing</a></li>
           <li><a href="about.html">About</a></li>
@@ -221,6 +237,8 @@
 <script src="assets/interpret.js"></script>
 <script src="assets/search.js"></script>
 <script src="assets/account.js"></script>
+<script src="assets/fit-profile-schema.js"></script>
+<script src="assets/fit-for-you.js"></script>
 <script src="assets/attachments.js"></script>
 <script src="assets/catalog.js"></script>
 <script src="assets/app.js"></script>

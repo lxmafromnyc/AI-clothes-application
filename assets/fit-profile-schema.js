@@ -713,6 +713,56 @@
     };
   }
 
+  /* The types the size engine can size so far (api/_sizing/engine.js's
+     CATEGORY_PARAMS; scripts/test-sizing.js holds the two together). */
+  const SIZED_TYPES = ['tshirts', 'hoodies', 'sweatshirts'];
+
+  /* What one type's saved answers can support, said without promising
+     more than the data holds:
+
+       empty     nothing saved for the type
+       saved     answers kept, but Fynd cannot size this type yet
+       partial   answers that can help, and what would help more
+       compare   a reference garment with enough of its own measurements
+                 (chest and two more), or its product: sizes can be set
+                 beside it — where a product's measurements are checked
+
+     `improve` lists, in the shopper's words, what would make it more
+     useful. Never "complete": answering every question is not accuracy. */
+  function readiness(profile, id) {
+    const g = garmentOf(id);
+    if (!g) return null;
+    const entry = profile && profile.garments ? profile.garments[id] : null;
+    const sized = SIZED_TYPES.includes(id);
+    const noun = g.id === 'other' ? 'it' : g.many;
+    if (garmentIsEmpty(entry)) {
+      return { level: 'empty', sized, improve: [], label: 'Nothing saved yet' };
+    }
+    const a = entry.anchor || null;
+    const improve = [];
+    if (!sized) {
+      if (!a) improve.push(`Add a ${g.id === 'other' ? 'piece' : g.one} that fits you, with its brand and size.`);
+      if (!entry.fitGoal) improve.push(`Say how you like ${noun} to fit.`);
+      return {
+        level: 'saved', sized, improve,
+        label: `Kept for when you shop. Fynd can’t compare ${g.id === 'other' ? 'these' : g.many} sizes yet — it has no checked measurements for them.`
+      };
+    }
+    const m = a && entry.favorite !== 'none' ? a.measurements : null;
+    const measured = m ? GARMENT_MEASURE_KEYS.filter((key) => typeof m[key] === 'number') : [];
+    const comparable = Boolean(a && entry.favorite !== 'none' && (a.product || (measured.includes('chestWidth') && measured.length >= 3)));
+    if (!comparable) {
+      if (entry.favorite === 'none' || !a) improve.push(`Add a ${g.one} you own that fits well, as your reference.`);
+      else if (!measured.length) improve.push(`Measure your reference ${g.one} laid flat, so other ${g.many} can be compared with it.`);
+      else improve.push(`Add the rest of your reference’s measurements — the chest and at least two more.`);
+    }
+    if (a && a.size && !entry.line) improve.push('Say whether that size is men’s, women’s or unisex.');
+    if (!entry.fitGoal) improve.push(`Say how you like ${g.many} to fit.`);
+    return comparable
+      ? { level: 'compare', sized, improve, label: `Ready to compare sizes with your reference, wherever Fynd has a product’s checked measurements.` }
+      : { level: 'partial', sized, improve, label: 'Used when you shop. A reference garment with its measurements would let Fynd compare sizes.' };
+  }
+
   /* ---------- checking the guide's answers ---------- */
 
   const isUnknown = (text) => UNKNOWN_SIZE.has(text.toLowerCase());
@@ -1247,6 +1297,8 @@
     describeGuide,
     describeGarment,
     describeFavorite,
+    readiness,
+    SIZED_TYPES,
     upgrade,
     empty,
     emptyGarment,

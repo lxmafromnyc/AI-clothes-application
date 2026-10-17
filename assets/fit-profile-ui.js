@@ -4,11 +4,29 @@
    Shows the signed-in shopper's fit profile as a form, checks it as
    they type, and saves or deletes it through /api/fit-profile.
 
-   The fit guide's answers are a card per type of clothing, each built
-   from that type's own brands, sizes and trouble spots, and saved as the
-   whole map: a card removed here is a type removed. Version 2's answers
-   about a top are shown as given and only ever removed, never edited
-   into any one type.
+   This is the one place a shopper manages how clothes fit them. Each
+   type of clothing is a card, built from that type's own brands, sizes
+   and trouble spots, asking what the old four-step fit guide asked, in
+   its words: one that fits (for tops, first whether they own a
+   favourite, then that reference piece — its product, what makes its
+   fit good, and its measurements laid flat, each with how to take it),
+   how that type should fit, and what gets its fit wrong. Everything is
+   optional, and each card says what its answers can support so far
+   (FitProfileSchema.readiness). Cards are saved as the whole map: a
+   card removed here is a type removed. Version 2's answers about a top
+   are shown as given and only ever removed, never edited into any one
+   type.
+
+   ---------------------------------------------------------
+   Arriving from a search
+   ---------------------------------------------------------
+   find-clothes.html links here as fit-profile.html?for=<type>&from=
+   search&q=<the search>. `for` opens that type's card (adding an empty
+   one when there is none yet, so nothing has to start over); `from`
+   and `q` build the way back to the search. Only the type and the
+   shopper's own search words are ever in the address — nothing from
+   the profile. Signed out, an account is made right here, so the page
+   — and the way back — are not lost.
 
    ---------------------------------------------------------
    What this file is allowed to decide
@@ -247,11 +265,43 @@
     return Boolean(g.lengths && (g.sizes === 'waist' || Schema.isWaistSize(piece(editor, 'size').value)));
   }
 
+  const favoriteOf = (editor) => {
+    const r = editor.querySelector(`input[name="g-${editor.dataset.garment}-favorite"]:checked`);
+    return r ? r.value : '';
+  };
+
   function paintEditor(editor) {
     piece(editor, 'other').hidden = piece(editor, 'brand').value !== 'other';
     const length = editor.querySelector('[data-length]');
     if (length) length.hidden = !lengthVisible(editor);
+    /* "Not really": there is no piece to describe, so its questions go */
+    const reference = editor.querySelector('[data-reference]');
+    if (reference) reference.hidden = favoriteOf(editor) === 'none';
   }
+
+  /* The guide's questions, worded for the type, as each card's headings. */
+  const plural = (g) => g.one === g.many;
+  const words = {
+    favorite: (g) => `Do you own a ${g.one} that fits you exactly how you like?`,
+    anchor: (g) => (g.favorite ? `Which ${g.one} is it?`
+      : g.one ? `What brand and size of ${g.one} ${plural(g) ? 'fit' : 'fits'} you perfectly?` : 'What brand and size fits you perfectly?'),
+    fit: (g) => `How do you like your ${g.id === 'other' ? 'clothes' : g.many} to fit?`,
+    zones: () => 'What usually gets the fit wrong?'
+  };
+
+  /* The diagram the old compare page drew: where each of the four
+     measurements is taken on a top laid flat. */
+  const DIAGRAM = `<figure class="compare-diagram profile-diagram">
+      <svg viewBox="0 0 240 200" aria-hidden="true" focusable="false">
+        <path class="diagram-garment" d="M88 22 Q120 40 152 22 L196 40 L226 150 L202 158 L176 78 L176 186 L64 186 L64 78 L38 158 L14 150 L44 40 Z"/>
+        <g class="diagram-line"><line x1="66" y1="86" x2="174" y2="86"/><text x="120" y="80">A</text></g>
+        <g class="diagram-line"><line x1="100" y1="30" x2="100" y2="184"/><text x="108" y="140">B</text></g>
+        <g class="diagram-line"><line x1="46" y1="44" x2="194" y2="44"/><text x="120" y="58">C</text></g>
+        <g class="diagram-line"><line x1="196" y1="42" x2="224" y2="150"/><text x="218" y="92">D</text></g>
+      </svg>
+      <figcaption>A chest, armpit to armpit · B length, top of the shoulder to the hem · C shoulders, seam to seam · D sleeve, shoulder seam to cuff</figcaption>
+    </figure>`;
+  const DIAGRAM_LETTER = { chestWidth: 'A', bodyLength: 'B', shoulderWidth: 'C', sleeveLength: 'D' };
 
   function addGarment(id, entry, settings) {
     const list = $('garment-list');
@@ -264,65 +314,123 @@
     const sizeOptions = sizes.waist && sizes.letter
       ? `<optgroup label="Waist">${opts(sizes.waist)}</optgroup><optgroup label="Letter size">${opts(sizes.letter)}</optgroup>`
       : opts(sizes.waist || sizes.letter);
-    const noun = g.id === 'other' ? 'it' : g.many;
+    const group = g.group;
+    const radio = (name, value, label, extra) => `<label class="choice"><input type="radio" name="${name}" value="${value}"${extra || ''}><span>${label}</span></label>`;
 
     const editor = doc.createElement('fieldset');
     editor.className = 'garment-editor';
+    editor.id = `card-${id}`;
     editor.dataset.garment = id;
     editor.innerHTML = `
       <legend class="garment-editor-title">${g.label}</legend>
+      <div class="garment-status" data-part="status" role="status">
+        <p class="garment-status-line" data-part="status-line"></p>
+        <ul class="garment-improve" data-part="improve"></ul>
+      </div>
       ${g.named ? `<div class="profile-field" data-field="${at}.name">
         <label class="profile-label" for="${p}-name">What is it?</label>
         <input class="profile-input" type="text" id="${p}-name" data-part="name" maxlength="${Schema.LIMITS.garmentNameLength}" autocomplete="off" placeholder="Like shorts or a jacket" aria-describedby="${p}-name-error">
         <p class="profile-error" id="${p}-name-error"></p>
       </div>` : ''}
-      <div class="profile-grid">
-        <div class="profile-field" data-field="${at}.anchor.brand">
-          <label class="profile-label" for="${p}-brand">Brand</label>
-          <span class="select-wrap"><select class="profile-select" id="${p}-brand" data-part="brand" aria-describedby="${p}-brand-error">
-            <option value="">Not said</option>${opts(Schema.brandsFor(id))}<option value="other">Other brand</option>
-          </select></span>
-          <input class="profile-input garment-other" type="text" id="${p}-other" data-part="other" list="garment-brands" maxlength="${Schema.LIMITS.brandLength}" autocomplete="off" placeholder="Which brand?" aria-label="${g.label}: which brand?" aria-describedby="${p}-brand-error" hidden>
-          <p class="profile-error" id="${p}-brand-error"></p>
+      ${g.favorite ? `<fieldset class="pref-group" data-field="${at}.favorite">
+        <legend>${words.favorite(g)}</legend>
+        <div class="choices">
+          ${Schema.FAVORITE_ANSWERS.map((a) => radio(`${p}-favorite`, a.id, a.label)).join('')}
+          ${radio(`${p}-favorite`, '', 'Not said')}
         </div>
-        <div class="profile-field" data-field="${at}.anchor.size">
-          <label class="profile-label" for="${p}-size">${g.sizes === 'waist' ? 'Waist' : 'Size'}</label>
-          <span class="select-wrap"><select class="profile-select" id="${p}-size" data-part="size" aria-describedby="${p}-size-error">
-            <option value="">Not said</option>${sizeOptions}<option value="not-sure">Not sure</option>
-          </select></span>
-          <p class="profile-error" id="${p}-size-error"></p>
-        </div>
-        ${g.lengths ? `<div class="profile-field" data-field="${at}.anchor.length" data-length>
-          <label class="profile-label" for="${p}-length">Length</label>
-          <span class="select-wrap"><select class="profile-select" id="${p}-length" data-part="length" aria-describedby="${p}-length-error">
-            <option value="">Not said</option>${opts(sizes.lengths)}<option value="not-sure">Not sure</option>
-          </select></span>
-          <p class="profile-error" id="${p}-length-error"></p>
-        </div>` : ''}
-      </div>
-      ${g.favorite ? `<div class="profile-field garment-favorite" data-field="${at}.anchor" data-favorite hidden>
-        <p class="profile-label">Your favourite ${g.one}</p>
-        <ul class="garment-favorite-list" data-part="favorite-said"></ul>
-        <button class="link-btn" type="button" data-remove-details aria-label="Remove the product, what fits well and measurements for your ${g.one}">Remove these details</button>
+        <p class="profile-hint">No measuring needed to start — it helps Fynd compare other ${g.many} with it.</p>
         <p class="profile-error"></p>
-      </div>` : ''}
-      <div class="profile-field garment-line" data-field="${at}.line">
-        <label class="profile-label" for="${p}-line">Sized as</label>
-        <span class="select-wrap"><select class="profile-select" id="${p}-line" data-part="line" aria-describedby="${p}-line-error">
-          <option value="">Not said</option>${Schema.SIZING_LINES.map((l) => `<option value="${l.id}">${l.label}</option>`).join('')}
-        </select></span>
-        <p class="profile-error" id="${p}-line-error"></p>
+      </fieldset>` : ''}
+      <div class="garment-reference" data-reference>
+        <p class="profile-label garment-question">${words.anchor(g)}</p>
+        <div class="profile-grid">
+          <div class="profile-field" data-field="${at}.anchor.brand">
+            <label class="profile-label" for="${p}-brand">Brand</label>
+            <span class="select-wrap"><select class="profile-select" id="${p}-brand" data-part="brand" aria-describedby="${p}-brand-error">
+              <option value="">Not said</option>${opts(Schema.brandsFor(id))}<option value="other">Other brand</option>
+            </select></span>
+            <input class="profile-input garment-other" type="text" id="${p}-other" data-part="other" list="garment-brands" maxlength="${Schema.LIMITS.brandLength}" autocomplete="off" placeholder="Which brand?" aria-label="${g.label}: which brand?" aria-describedby="${p}-brand-error" hidden>
+            <p class="profile-error" id="${p}-brand-error"></p>
+          </div>
+          <div class="profile-field" data-field="${at}.anchor.size">
+            <label class="profile-label" for="${p}-size">${g.sizes === 'waist' ? 'Waist' : 'Size'}</label>
+            <span class="select-wrap"><select class="profile-select" id="${p}-size" data-part="size" aria-describedby="${p}-size-error">
+              <option value="">Not said</option>${sizeOptions}<option value="not-sure">Not sure</option>
+            </select></span>
+            <p class="profile-error" id="${p}-size-error"></p>
+          </div>
+          ${g.lengths ? `<div class="profile-field" data-field="${at}.anchor.length" data-length>
+            <label class="profile-label" for="${p}-length">Length</label>
+            <span class="select-wrap"><select class="profile-select" id="${p}-length" data-part="length" aria-describedby="${p}-length-error">
+              <option value="">Not said</option>${opts(sizes.lengths)}<option value="not-sure">Not sure</option>
+            </select></span>
+            <p class="profile-error" id="${p}-length-error"></p>
+          </div>` : ''}
+          <div class="profile-field garment-line" data-field="${at}.line">
+            <label class="profile-label" for="${p}-line">Sized as</label>
+            <span class="select-wrap"><select class="profile-select" id="${p}-line" data-part="line" aria-describedby="${p}-line-error">
+              <option value="">Not said</option>${Schema.SIZING_LINES.map((l) => `<option value="${l.id}">${l.label}</option>`).join('')}
+            </select></span>
+            <p class="profile-error" id="${p}-line-error"></p>
+          </div>
+        </div>
+        ${g.favorite ? `<details class="garment-more" data-part="more">
+          <summary class="garment-more-summary">Its product and measurements <span class="guide-optional">optional</span></summary>
+          <div class="profile-field" data-field="${at}.anchor.product" data-prefix>
+            <label class="profile-label" for="${p}-product">Product name or link</label>
+            <input class="profile-input" type="text" id="${p}-product" data-part="product" maxlength="300" autocomplete="off" placeholder="Its name, or paste a link" aria-describedby="${p}-product-note ${p}-product-error">
+            <p class="profile-hint" id="${p}-product-note">If Fynd has that product’s checked measurements, it uses them instead of yours.</p>
+            <p class="profile-error" id="${p}-product-error"></p>
+          </div>
+          <fieldset class="pref-group" data-field="${at}.anchor.likes">
+            <legend>What makes the fit good?</legend>
+            <div class="choices">${Schema.FAVORITE_LIKES.map((l) => `<label class="choice"><input type="checkbox" name="${p}-likes" value="${l.id}"><span>${l.label}</span></label>`).join('')}</div>
+            <p class="profile-error"></p>
+          </fieldset>
+          <fieldset class="pref-group garment-measure" data-field="${at}.anchor.measurements.unit">
+            <legend>Its measurements, laid flat</legend>
+            <p class="profile-hint">Lay it flat on a table, smooth it out, and measure the garment — not yourself. Only if you have a tape measure handy; you can add them any time.</p>
+            ${DIAGRAM}
+            <div class="choices">
+              ${radio(`${p}-unit`, 'in', 'Inches')}
+              ${radio(`${p}-unit`, 'cm', 'Centimetres')}
+            </div>
+            <p class="profile-error"></p>
+          </fieldset>
+          <div class="compare-measure-grid">
+            ${Schema.GARMENT_MEASURE_KEYS.map((key) => {
+              const m = Schema.GARMENT_MEASURES[key];
+              return `<div class="profile-field" data-field="${at}.anchor.measurements.${key}">
+                <label class="profile-label" for="${p}-m-${key}">${DIAGRAM_LETTER[key]} · ${m.label} <span class="sr-only" data-part="unit-name"></span></label>
+                <span class="measure">
+                  <input class="profile-input" type="text" id="${p}-m-${key}" data-measure-key="${key}" inputmode="decimal" maxlength="6" autocomplete="off" aria-describedby="${p}-m-${key}-how ${p}-m-${key}-error">
+                  <span class="measure-unit" data-part="unit-label" aria-hidden="true">in</span>
+                </span>
+                <p class="compare-how" id="${p}-m-${key}-how">${m.how}</p>
+                <p class="profile-error" id="${p}-m-${key}-error"></p>
+              </div>`;
+            }).join('')}
+          </div>
+          <div class="profile-field" data-field="${at}.anchor.notes">
+            <label class="profile-label" for="${p}-notes">Notes on the fit you like</label>
+            <textarea class="profile-input compare-notes" id="${p}-notes" data-part="notes" maxlength="200" rows="2" placeholder="Like: roomy in the body, sleeves just past the wrist" aria-describedby="${p}-notes-error"></textarea>
+            <p class="profile-error" id="${p}-notes-error"></p>
+          </div>
+        </details>
+        <button class="link-btn garment-remove-ref" type="button" data-remove-reference aria-label="Remove your reference ${g.one}">Remove this reference</button>` : ''}
       </div>
       <fieldset class="pref-group" data-field="${at}.fitGoal">
-        <legend>How you like ${noun} to fit</legend>
+        <legend>${words.fit(g)}</legend>
+        <p class="profile-hint garment-goal-hints">${Schema.FIT_GOALS.map((goal) => `<span id="${p}-goal-${goal.id}">${goal.label}: ${goal.hint[group].toLowerCase()}</span>`).join(' · ')}</p>
         <div class="choices">
-          ${Schema.FIT_GOALS.map((goal) => `<label class="choice"><input type="radio" name="${p}-goal" value="${goal.id}"><span>${goal.label}</span></label>`).join('')}
-          <label class="choice"><input type="radio" name="${p}-goal" value=""><span>Not said</span></label>
+          ${Schema.FIT_GOALS.map((goal) => radio(`${p}-goal`, goal.id, goal.label, ` aria-describedby="${p}-goal-${goal.id}"`)).join('')}
+          ${radio(`${p}-goal`, '', 'Not said')}
         </div>
         <p class="profile-error"></p>
       </fieldset>
       <fieldset class="pref-group" data-field="${at}.troubleZones">
-        <legend>What gets the fit wrong</legend>
+        <legend>${words.zones(g)}</legend>
+        <p class="profile-hint">Pick any that apply — it’s about the clothes, not you.</p>
         <div class="choices zone-choices">
           ${Schema.zonesFor(id).map((zone) => `<label class="choice"><input type="checkbox" name="${p}-zones" value="${zone.id}"><span>${zone.label}</span></label>`).join('')}
           <label class="choice"><input type="checkbox" name="${p}-zones" value="none" data-none><span>None of these</span></label>
@@ -350,20 +458,11 @@
         }
         select.value = value;
       });
-      if (!a.size) piece(editor, 'size').value = 'not-sure';
+      if (!a.size && (a.brand || a.length)) piece(editor, 'size').value = 'not-sure';
     }
     if (g.favorite) {
-      /* what the guide said about the favourite, kept as it was saved
-         and sent back with the card unless removed here, or unless its
-         brand or size changes — then it describes a different piece */
-      editor.favorite = {
-        answer: e.favorite || null,
-        brand: a ? a.brand : null,
-        size: a ? a.size : null,
-        details: a ? { product: a.product || null, likes: a.likes || null, measurements: a.measurements || null, notes: a.notes || null } : null,
-        removed: false
-      };
-      paintFavorite(editor);
+      editor.querySelectorAll(`input[name="${p}-favorite"]`).forEach((r) => { r.checked = r.value === (e.favorite || ''); });
+      fillReference(editor, a || {});
     }
     editor.querySelectorAll(`input[name="${p}-goal"]`).forEach((r) => { r.checked = r.value === (e.fitGoal || ''); });
     if (Array.isArray(e.troubleZones)) {
@@ -374,26 +473,63 @@
 
     list.appendChild(editor);
     paintEditor(editor);
+    paintReadiness(editor, Schema.readiness({ garments: entry ? { [id]: entry } : {} }, id));
     afterGarmentsChange();
-    if (settings && settings.focus) piece(editor, 'brand').focus();
+    if (settings && settings.focus) {
+      const first = editor.querySelector('input, select');
+      if (first) first.focus();
+    }
     return editor;
   }
 
-  /* The favourite's answer and details, in words, on its card. */
-  function paintFavorite(editor) {
-    const box = editor.querySelector('[data-favorite]');
-    const f = editor.favorite;
-    if (!box || !f) return;
-    const details = f.removed ? null : f.details;
-    const said = Schema.describeFavorite({ favorite: f.answer, anchor: details || {} });
-    const rows = said ? [said.answer, said.product && `Product: ${said.product}`, said.likes && `Fits well: ${said.likes}`, said.measurements && `Measured: ${said.measurements}`, said.notes && `Notes: ${said.notes}`].filter(Boolean) : [];
-    box.querySelector('[data-part="favorite-said"]').replaceChildren(...rows.map((text) => {
+  /* The reference piece's details, as saved: shown in their own boxes,
+     and opened when there is anything in them. */
+  function fillReference(editor, a) {
+    const p = `g-${editor.dataset.garment}`;
+    const product = a.product || null;
+    editor.savedProduct = product;
+    piece(editor, 'product').value = product ? (product.url || product.name || '') : '';
+    editor.querySelectorAll(`input[name="${p}-likes"]`).forEach((c) => { c.checked = Boolean(a.likes && a.likes.includes(c.value)); });
+    const m = a.measurements || null;
+    const refUnit = (m && m.unit) || unit;
+    editor.querySelectorAll(`input[name="${p}-unit"]`).forEach((r) => { r.checked = r.value === refUnit; });
+    Schema.GARMENT_MEASURE_KEYS.forEach((key) => {
+      editor.querySelector(`[data-measure-key="${key}"]`).value = m && typeof m[key] === 'number' ? String(m[key]) : '';
+    });
+    piece(editor, 'notes').value = a.notes || '';
+    piece(editor, 'more').open = Boolean(product || (a.likes && a.likes.length) || m || a.notes);
+    paintReferenceUnit(editor);
+  }
+
+  function paintReferenceUnit(editor) {
+    const r = editor.querySelector(`input[name="g-${editor.dataset.garment}-unit"]:checked`);
+    const u = r ? r.value : unit;
+    editor.querySelectorAll('[data-part="unit-label"]').forEach((el) => { el.textContent = u; });
+    editor.querySelectorAll('[data-part="unit-name"]').forEach((el) => { el.textContent = `in ${UNIT_NAME[u]}`; });
+  }
+
+  /* What this card's answers can support so far, in words. */
+  function paintReadiness(editor, ready) {
+    if (!ready) return;
+    const box = piece(editor, 'status');
+    box.dataset.level = ready.level;
+    piece(editor, 'status-line').textContent = ready.level === 'empty' ? 'Nothing saved for this type yet — answer what you know.' : ready.label;
+    piece(editor, 'improve').replaceChildren(...ready.improve.map((text) => {
       const li = doc.createElement('li');
       li.textContent = text;
       return li;
     }));
-    box.querySelector('[data-remove-details]').hidden = !(details && (details.product || details.likes || details.measurements || details.notes));
-    box.hidden = !rows.length;
+  }
+
+  /* Removing the reference: the piece, its answer and its details go
+     on save; how the type should fit and what goes wrong stay. */
+  function clearReference(editor) {
+    const p = `g-${editor.dataset.garment}`;
+    editor.querySelectorAll(`input[name="${p}-favorite"]`).forEach((r) => { r.checked = r.value === ''; });
+    ['brand', 'size', 'length'].forEach((name) => { const el = piece(editor, name); if (el) el.value = ''; });
+    piece(editor, 'other').value = '';
+    fillReference(editor, {});
+    paintEditor(editor);
   }
 
   /* "Add a type" offers only the types without a card yet. */
@@ -407,7 +543,9 @@
     show('garment-add-area', left.length > 0);
   }
 
-  /* One card's answers, as the schema takes them. */
+  /* One card's answers, as the schema takes them. For a type with a
+     favourite, every detail is sent as it stands on screen — a box
+     cleared is a detail cleared — and "Not really" sends no piece. */
   function readGarment(editor) {
     const g = Schema.garmentOf(editor.dataset.garment);
     const p = `g-${g.id}`;
@@ -428,21 +566,48 @@
     if (ticked.some((c) => c.dataset.none !== undefined)) troubleZones = [];
     else if (ticked.length) troubleZones = ticked.map((c) => c.value);
     const out = { anchor, fitGoal: goal && goal.value ? goal.value : null, troubleZones };
-    const f = editor.favorite;
-    if (g.favorite && f) {
-      out.favorite = f.answer;
-      const known = (v) => v || null;
-      const samePiece = anchor && known(anchor.brand && anchor.brand.trim()) === known(f.brand) && anchor.size === f.size;
-      if (f.removed && anchor) Object.assign(anchor, { product: null, likes: null, measurements: null, notes: null });
-      else if (samePiece && f.details) {
-        ['product', 'likes', 'measurements', 'notes'].forEach((k) => { if (f.details[k]) anchor[k] = f.details[k]; });
+
+    if (g.favorite) {
+      const answer = favoriteOf(editor);
+      out.favorite = answer || null;
+      if (answer === 'none') {
+        out.anchor = null;
+      } else {
+        const details = readReference(editor);
+        if (anchor || Object.values(details).some(Boolean)) out.anchor = Object.assign(anchor || { brand: null, size: null }, details);
       }
-      /* "Not really" no longer holds once a piece is named here */
-      if (anchor && f.answer === 'none') out.favorite = null;
     }
     if (g.named) out.name = piece(editor, 'name').value;
     out.line = piece(editor, 'line').value || null;
     return out;
+  }
+
+  /* The reference's details, each null when not said. A product saved
+     with both a name and a link is kept whole while its box still shows
+     it. */
+  function readReference(editor) {
+    const p = `g-${editor.dataset.garment}`;
+    const said = piece(editor, 'product').value.trim();
+    const saved = editor.savedProduct;
+    let product = null;
+    if (said) {
+      if (saved && (said === saved.url || said === saved.name)) product = saved;
+      else product = /^https?:\/\//i.test(said) ? { url: said } : { name: said };
+    }
+    const likes = Array.from(editor.querySelectorAll(`input[name="${p}-likes"]:checked`)).map((c) => c.value);
+    const measures = {};
+    Schema.GARMENT_MEASURE_KEYS.forEach((key) => {
+      const v = editor.querySelector(`[data-measure-key="${key}"]`).value.trim();
+      if (v) measures[key] = v;
+    });
+    const unitChoice = editor.querySelector(`input[name="${p}-unit"]:checked`);
+    const notes = piece(editor, 'notes').value.trim();
+    return {
+      product,
+      likes: likes.length ? likes : null,
+      measurements: Object.keys(measures).length ? Object.assign({ unit: unitChoice ? unitChoice.value : null }, measures) : null,
+      notes: notes || null
+    };
   }
 
   function garmentChanged(editor, target) {
@@ -453,6 +618,7 @@
     }
     /* a length goes with a waist, never with a letter size */
     if (part === 'size' && piece(editor, 'length') && !lengthVisible(editor)) piece(editor, 'length').value = '';
+    if (target.name === `g-${editor.dataset.garment}-unit`) paintReferenceUnit(editor);
     /* "None of these" and a trouble spot cannot both be true */
     if (target.type === 'checkbox' && target.checked) {
       const isNone = target.dataset.none !== undefined;
@@ -617,23 +783,24 @@
   /* Everything the shopper could have changed, as typed — what "unsaved
      changes" is measured against. */
   function snapshotOf() {
-    const values = Array.from(doc.querySelectorAll('#profile-form input:not([type="radio"]):not([type="checkbox"]), #profile-form select:not([data-ignore])'))
+    const values = Array.from(doc.querySelectorAll('#profile-form input:not([type="radio"]):not([type="checkbox"]), #profile-form select:not([data-ignore]), #profile-form textarea'))
       .map((el) => (el.closest('.brand-row') ? `row:${el.value}` : `${el.id}:${el.value}`));
     const radios = Array.from(doc.querySelectorAll('#profile-form input[type="radio"]:checked, #profile-form input[type="checkbox"]:checked'))
       .map((el) => `${el.name}:${el.value}`);
-    /* the favourite's details removed, which no control holds */
-    const detailsRemoved = editors().filter((el) => el.favorite && el.favorite.removed).map((el) => el.dataset.garment);
-    return JSON.stringify([unit, values, radios, legacyRemoved, detailsRemoved]);
+    /* which cards are on the page: a card added and left empty is not a change */
+    return JSON.stringify([unit, values, radios, legacyRemoved]);
   }
 
   /* ---------- showing errors ---------- */
 
-  const controlsOf = (wrap) => Array.from(wrap.querySelectorAll('input, select'));
+  const controlsOf = (wrap) => Array.from(wrap.querySelectorAll('input, select, textarea'));
 
   function paintErrors(errors) {
     const placed = new Set();
     doc.querySelectorAll('#profile-form [data-field]').forEach((wrap) => {
-      const error = errors.find((e) => e.field === wrap.dataset.field);
+      /* a box that takes a name or a link answers for both */
+      const own = (field) => field === wrap.dataset.field || (wrap.dataset.prefix !== undefined && field.startsWith(`${wrap.dataset.field}.`));
+      const error = errors.find((e) => own(e.field));
       const visible = Boolean(error) && (attempted || controlsOf(wrap).some((c) => c.dataset.touched));
       const out = wrap.classList.contains('profile-error') ? wrap : wrap.querySelector('.profile-error');
       if (out) out.textContent = visible ? error.message : '';
@@ -648,8 +815,11 @@
   }
 
   function refresh() {
-    const { errors } = check();
+    const { errors, profile } = check();
     const unplaced = paintErrors(errors);
+    /* each card says what it can support as it stands on screen; while
+       something on it is wrong, what it last said stays */
+    if (profile) editors().forEach((editor) => paintReadiness(editor, Schema.readiness(profile, editor.dataset.garment)));
     if (attempted) {
       if (!errors.length) formError('');
       else if (unplaced.length) formError(unplaced.map((e) => e.message).join(' '));
@@ -675,7 +845,9 @@
     const p = profile || Schema.empty();
     const m = p.measurements || {};
 
-    /* the guide's answers, a card per type, in the guide's order */
+    if (Schema.UNITS.includes(m.unit)) unit = m.unit;
+
+    /* a card per type, in the schema's order */
     $('garment-list').innerHTML = '';
     Schema.GARMENTS.forEach((g) => { if (p.garments && p.garments[g.id]) addGarment(g.id, p.garments[g.id]); });
     afterGarmentsChange();
@@ -690,7 +862,6 @@
     show('legacy-guide', Schema.hasLegacyGuide(p));
     paintLegacy();
 
-    if (Schema.UNITS.includes(m.unit)) unit = m.unit;
     paintUnit();
 
     ['height-ft', 'height-in', 'height-cm'].forEach((id) => { $(id).value = ''; });
@@ -715,10 +886,118 @@
       const wanted = (p.fitPreferences || {})[category.id] || '';
       doc.querySelectorAll(`input[name="pref-${category.id}"]`).forEach((radio) => { radio.checked = radio.value === wanted; });
     });
+    /* the earlier per-category fit is shown only where one is saved:
+       how a type should fit is asked on its own card */
+    show('section-fit', Object.keys(p.fitPreferences || {}).length > 0);
 
     setText('unit-note', '');
     show('profile-delete-area', Boolean(saved));
     show('delete-confirm', false);
+  }
+
+  /* ---------- arriving from a search ----------
+     Read once from the address: the type to open, and the search to go
+     back to. Nothing is written to the address, and nothing from the
+     profile is ever read into it. */
+
+  const arrival = (() => {
+    const params = new URLSearchParams(global.location.search);
+    const type = Schema && Schema.garmentOf(params.get('for')) ? params.get('for') : null;
+    const fromSearch = params.get('from') === 'search';
+    const q = fromSearch ? String(params.get('q') || '').trim().slice(0, 400) : '';
+    return { type, fromSearch, q };
+  })();
+
+  /* The way back: the search page, with its own type and words, which it
+     runs again exactly as if they had been typed. */
+  function paintReturn(afterSave) {
+    if (!arrival.fromSearch) return;
+    const back = new URLSearchParams();
+    if (arrival.type) back.set('shop', arrival.type);
+    if (arrival.q) back.set('q', arrival.q);
+    const link = $('profile-return-link');
+    link.href = `find-clothes.html${back.toString() ? `?${back}` : ''}`;
+    link.textContent = arrival.q ? 'Back to your search' : 'Back to shopping';
+    const g = arrival.type && Schema.garmentOf(arrival.type);
+    setText('profile-return-text', afterSave
+      ? `Saved. Your search will use it${g ? ` for ${g.many}` : ''}.`
+      : arrival.q ? `You came here from your search for “${arrival.q}”.` : 'You came here while shopping.');
+    $('profile-return').classList.toggle('profile-return--saved', Boolean(afterSave));
+    show('profile-return', true);
+  }
+
+  /* The type the search was for: its card, opened and in view — added
+     when there is none yet, so a profile is only ever added to. */
+  function openArrivalCard() {
+    if (!arrival.type) return;
+    let editor = $(`card-${arrival.type}`);
+    if (!editor) editor = addGarment(arrival.type, null);
+    if (!editor) return;
+    editor.classList.add('garment-editor--focus');
+    editor.scrollIntoView({ block: 'start' });
+    const first = editor.querySelector('input, select');
+    if (first) first.focus({ preventScroll: true });
+  }
+
+  /* ---------- an account, right here, when signed out ---------- */
+
+  let accountMode = 'signup';
+
+  function setAccountMode(mode) {
+    accountMode = mode;
+    const signup = mode === 'signup';
+    show('pa-field-name', signup);
+    show('pa-field-confirm', signup);
+    setText('pa-title', signup ? 'Create your fit profile' : 'Sign in to your fit profile');
+    setText('pa-intro', signup
+      ? 'A free account keeps your fit profile, and only you can see it. Fynd then uses it whenever you shop — searching never needs an account.'
+      : 'Sign in, and your fit profile opens here.');
+    setText('pa-submit', signup ? 'Create account' : 'Sign in');
+    setText('pa-switch-text', signup ? 'Already have an account?' : 'New to Fynd?');
+    setText('pa-switch', signup ? 'Sign in' : 'Create an account');
+    $('pa-password').autocomplete = signup ? 'new-password' : 'current-password';
+    setText('pa-error', '');
+    $('pa-error').classList.remove('show');
+  }
+
+  async function submitAccount() {
+    if (working) return;
+    const say = (text) => {
+      setText('pa-error', text);
+      $('pa-error').classList.toggle('show', Boolean(text));
+    };
+    const value = (id) => $(id).value;
+    say('');
+    if (!value('pa-email').trim()) return say('Enter your email address.');
+    if (accountMode === 'signup') {
+      if (!value('pa-name').trim()) return say('Tell us what to call you.');
+      if (value('pa-password').length < 10) return say('Use at least 10 characters for your password.');
+      if (value('pa-password') !== value('pa-confirm')) return say('Those passwords do not match.');
+    } else if (!value('pa-password')) {
+      return say('Enter your password.');
+    }
+    const submit = $('pa-submit');
+    const label = submit.textContent;
+    working = true;
+    submit.disabled = true;
+    submit.textContent = accountMode === 'signup' ? 'Creating your account…' : 'Signing in…';
+    const result = accountMode === 'signup'
+      ? await global.Account.signup({ name: value('pa-name'), email: value('pa-email'), password: value('pa-password'), confirmPassword: value('pa-confirm') })
+      : await global.Account.login(value('pa-email'), value('pa-password'));
+    working = false;
+    submit.disabled = false;
+    submit.textContent = label;
+    if (!result.ok) {
+      if (result.status === 409 && accountMode === 'signup') {
+        setAccountMode('login');
+        return say('There is already an account for that address. Sign in to open your fit profile.');
+      }
+      return say(failure(result, 'That did not work. Try again in a moment.'));
+    }
+    /* passwords do not stay in the page a moment longer than needed */
+    $('pa-password').value = '';
+    $('pa-confirm').value = '';
+    await readProfile();
   }
 
   /* ---------- talking to the server ---------- */
@@ -770,12 +1049,14 @@
       if (legacyRemoved) body[field] = null;
       else delete body[field];
     });
-    /* Likewise a favourite's details: normalise() leaves out what isn't
-       there, and what isn't sent the server keeps — so details removed
-       here are sent as null, which clears them. */
+    /* Likewise a reference's details: normalise() leaves out what isn't
+       there, and what isn't sent the server keeps — but every detail is
+       on this page, so one not said here was cleared here, and is sent
+       as null. */
     editors().forEach((editor) => {
-      const entry = editor.favorite && editor.favorite.removed && body.garments[editor.dataset.garment];
-      if (entry && entry.anchor) Object.assign(entry.anchor, { product: null, likes: null, measurements: null, notes: null });
+      const g = Schema.garmentOf(editor.dataset.garment);
+      const entry = g.favorite && body.garments[g.id];
+      if (entry && entry.anchor) ['product', 'likes', 'measurements', 'notes'].forEach((k) => { if (!entry.anchor[k]) entry.anchor[k] = null; });
     });
     const result = await global.Account.fitProfile.save(body);
     busy(false);
@@ -786,6 +1067,7 @@
       justSaved = true;
       markClean();
       storageNote(result.data.storage);
+      paintReturn(true);
       return;
     }
 
@@ -822,6 +1104,15 @@
       : `Nothing was deleted. ${failure(result, 'Try again in a moment.')}`, 'warn');
   }
 
+  function showSignedOut() {
+    setAccountMode(accountMode);
+    const state = global.Account.state();
+    show('pa-google', Boolean(state && state.accounts && state.accounts.google));
+    const google = $('pa-google-button');
+    if (google) google.href = global.Account.googleStartUrl();
+    showPanel('profile-signed-out');
+  }
+
   async function readProfile() {
     showPanel('profile-loading');
     const result = await global.Account.fitProfile.read();
@@ -833,10 +1124,15 @@
       justSaved = false;
       markClean();
       storageNote(result.data.storage);
+      /* a card opened for the search is a card to fill in, not a change
+         to warn about leaving */
+      openArrivalCard();
+      snapshot = snapshotOf();
+      refresh();
       return;
     }
     if (result.status === 401) {
-      showPanel('profile-signed-out');
+      showSignedOut();
       return;
     }
     setText('profile-load-error', failure(result, 'Something went wrong reading it. Your saved profile has not been changed.'));
@@ -907,14 +1203,14 @@
     });
 
     $('garment-list').addEventListener('click', (event) => {
-      /* the favourite's details go on save; brand, size and the answer stay */
-      const details = event.target.closest('[data-remove-details]');
-      if (details) {
-        const editor = details.closest('.garment-editor');
-        editor.favorite.removed = true;
-        paintFavorite(editor);
+      /* the reference goes on save; how the type should fit stays */
+      const reference = event.target.closest('[data-remove-reference]');
+      if (reference) {
+        const editor = reference.closest('.garment-editor');
+        clearReference(editor);
         refresh();
-        piece(editor, 'brand').focus();
+        const first = editor.querySelector(`input[name="g-${editor.dataset.garment}-favorite"]`);
+        if (first) first.focus();
         return;
       }
       const button = event.target.closest('[data-remove-garment]');
@@ -947,6 +1243,12 @@
 
     $('profile-retry').addEventListener('click', start);
 
+    $('profile-account').addEventListener('submit', (event) => {
+      event.preventDefault();
+      submitAccount();
+    });
+    $('pa-switch').addEventListener('click', () => setAccountMode(accountMode === 'signup' ? 'login' : 'signup'));
+
     global.addEventListener('beforeunload', (event) => {
       if (!isDirty()) return;
       event.preventDefault();
@@ -958,6 +1260,7 @@
 
   async function start() {
     note('profile-note', '', null);
+    paintReturn(false);
     if (!global.Account || !Schema) {
       setText('profile-load-error', 'This page did not load completely. Reload it to try again.');
       showPanel('profile-load-failed');
@@ -980,7 +1283,7 @@
     }
 
     if (!state.signedIn) {
-      showPanel('profile-signed-out');
+      showSignedOut();
       return;
     }
 

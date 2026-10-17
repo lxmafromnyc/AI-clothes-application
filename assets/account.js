@@ -227,9 +227,9 @@
   const fitProfile = {
     read: () => call('fit-profile'),
     save: (profile) => call('fit-profile', { body: { action: 'save', profile } }),
-    /* the home page's fit guide: { garments: { <type>: answers } } — only
-       the answers for one type of clothing travel, and the server keeps
-       everything else in the profile as it is */
+    /* one type of clothing's answers: { garments: { <type>: answers } } —
+       only that type travels, and the server keeps everything else in
+       the profile as it is */
     answerGuide: (answers) => call('fit-profile', { body: { action: 'guide', answers } }),
     remove: () => call('fit-profile', { body: { action: 'delete' } }),
     /* how a size actually fitted (api/_fit-feedback.js): kept only with
@@ -248,7 +248,10 @@
      unit) travels in the address, never anything about the shopper. */
   const sizing = {
     products: () => call('size-recommendation'),
-    compare: (productId, unit) => call(`size-recommendation?product=${encodeURIComponent(productId)}&compare=1${unit === 'in' || unit === 'cm' ? `&unit=${unit}` : ''}`)
+    compare: (productId, unit) => call(`size-recommendation?product=${encodeURIComponent(productId)}&compare=1${unit === 'in' || unit === 'cm' ? `&unit=${unit}` : ''}`),
+    /* the search page's listings, sized from one type of clothing's
+       profile: only what the listings themselves say travels */
+    fit: (type, items) => call(`size-recommendation?fit=${encodeURIComponent(type)}&items=${encodeURIComponent(JSON.stringify(items))}`)
   };
 
   /* After a checkout the browser comes back before Stripe's webhook has

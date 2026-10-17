@@ -136,12 +136,17 @@ const withRowField = (id, field, value) => {
    gating is tested in test-sizing.js and test-e2e.js. */
 const sizingRecords = require('../api/_sizing/records');
 const sizingEngine = require('../api/_sizing/engine');
+const sizingEndpoint = require('../api/size-recommendation');
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
 
   if (url.pathname === '/api/size-recommendation') {
     res.setHeader('Content-Type', 'application/json');
+    /* the search page's listings, matched and sized the endpoint's own way */
+    if (url.searchParams.has('fit')) {
+      return res.end(JSON.stringify({ fit: sizingEndpoint.fitFor(fitProfileState.profile, url.searchParams.get('fit'), sizingEndpoint.readItems(url.searchParams.get('items'))) }));
+    }
     const id = url.searchParams.get('product');
     if (!id) return res.end(JSON.stringify({ products: sizingRecords.RECORDS.map(sizingRecords.summary) }));
     const unit = url.searchParams.get('unit') || undefined;
@@ -1183,7 +1188,7 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
   await test('the hairline lies along the bottom edge of the search box, inside it, through both stages, at every width', async () => {
     /* long enough to wrap onto more lines on a phone, where the box stacks */
     const query = 'something cozy I can wear with jeans for a weekend away';
-    /* the search box lives on the Search page only; the home page is the fit guide */
+    /* the search box lives on the Search page only; the home page is where shopping starts */
     const runs = SEARCH_WIDTHS.map((viewport) => ['find-clothes.html', viewport]);
     for (const [file, viewport] of runs) {
       const where = `${file} at ${viewport.width}px`;
@@ -2779,9 +2784,8 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
   const settled = async (file) => {
     const page = await openPage(file);
     const built = {
-      /* the home page is the fit guide, ready once /api/account has
-         answered */
-      'index.html': '#guide[data-ready]',
+      /* the home page is static: choosing clothing, and a search line */
+      'index.html': '#shop-search',
       /* the search page reads the live searches left from /api/account;
          the audit waits for the count so its ink is checked too */
       'find-clothes.html': '#ask-usage:not(:empty)',
@@ -2878,8 +2882,7 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     fitProfileState = fitProfileReply(null);
   });
 
-  /* The fit guide on the home page shows one step at a time, so the page
-     audit above only sees step 1. These walk every step and panel. */
+  /* Panels and folded sections the page audits above never open. */
   const guideAudit = (page, viewport) => async (where) => {
     const problems = await textStyleProblems(page, await resolveInks(page));
     assert.deepStrictEqual(problems, [], `${viewport.width}px, ${where}:\n        ${problems.join('\n        ')}`);
@@ -2887,43 +2890,79 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     assert.ok(width <= viewport.width, `${where}: the page is ${width}px wide at ${viewport.width}px`);
   };
 
-  await test('every step of the fit guide and its account step are set in a palette ink, legible, and fit a phone', async () => {
-    accountState = accountReply({});
-    fitProfileState = fitProfileReply(null);
+  await test('the fit profile’s type cards — the favourite question, a reference with every detail open, what a card can do, the way back, and the account step — are set in a palette ink, legible, and fit a phone', async () => {
     for (const viewport of [{ width: 1280, height: 900 }, { width: 360, height: 740 }]) {
-      const page = await openPage('index.html', { viewport });
-      await page.waitForSelector('#guide[data-ready]', { timeout: 10000 });
-      const audit = guideAudit(page, viewport);
+      /* signed out, arriving from a search: the account step, with an error */
+      accountState = accountReply({});
+      let page = await openPage('fit-profile.html?for=tshirts&from=search&q=white%20tee', { viewport });
+      await page.waitForSelector('#profile-signed-out:not([hidden])', { timeout: 10000 });
+      let audit = guideAudit(page, viewport);
+      await page.click('#pa-submit');
+      await page.waitForSelector('#pa-error:not(:empty)');
+      await audit('the account step, with an error, and the way back');
+      await page.click('#pa-switch');
+      await audit('the account step, signing in');
+      await page.close();
 
-      await page.click('#guide-next');
-      await audit('step 1, asked to pick a type');
-      await page.check('input[name="garment"][value="jeans"]');
-      await audit('step 1, with a type chosen');
-      await page.click('#guide-next');
-      await page.selectOption('#anchor-brand', 'other');
-      await page.fill('#anchor-other', 'Gap');
-      await page.selectOption('#anchor-size', '32');
-      await page.selectOption('#anchor-length', '30');
-      await audit('step 2, with a brand typed under Other and a length');
-      await page.click('#guide-next');
-      await page.check('input[name="fitGoal"][value="oversized"]');
-      await audit('step 3, with a card chosen');
-      await page.click('#guide-next');
-      await page.check('input[name="troubleZones"][value="hips-tight"]');
-      await audit('step 4, with a trouble spot ticked');
-
-      /* signed out, saving asks for an account; an error puts the
-         warning ink under audit too */
-      await page.click('#guide-next');
-      await page.waitForSelector('#guide-account:not([hidden])');
-      await page.click('#guide-account-submit');
-      await page.waitForSelector('#guide-account-error:not(:empty)');
-      await audit('the account step, with an error');
+      /* signed in: a saved hoodie reference, and a new T-shirt card opened for the search */
+      accountState = accountReply({ extra: SIGNED_IN });
+      fitProfileState = fitProfileReply(Object.assign(require('../assets/fit-profile-schema.js').empty(), {
+        garments: { hoodies: { favorite: 'perfect', fitGoal: 'oversized', troubleZones: [], line: 'men', anchor: { brand: 'Carhartt', size: 'L', likes: ['chest'], notes: 'Roomy in the body', measurements: { unit: 'cm', chestWidth: 64, bodyLength: 70, shoulderWidth: 56, sleeveLength: 65 } } } }
+      }));
+      page = await openPage('fit-profile.html?for=tshirts&from=search&q=white%20tee', { viewport });
+      await page.waitForSelector('#card-tshirts', { timeout: 10000 });
+      audit = guideAudit(page, viewport);
+      await audit('a card opened for the search, beside a saved reference');
+      await page.check('input[name="g-tshirts-favorite"][value="close"]');
+      await page.selectOption('#g-tshirts-brand', 'other');
+      await page.click('#card-tshirts .garment-more-summary');
+      await page.check('input[name="g-tshirts-likes"][value="sleeves"]');
+      await page.check('input[name="g-tshirts-unit"][value="cm"]');
+      await page.fill('#g-tshirts-m-chestWidth', '540');
+      await page.fill('#g-tshirts-product', 'https://www.zara.com/us/en/basic-medium-weight-t-shirt--02-p01887411.html');
+      await page.click('#profile-save');
+      await page.waitForSelector('#profile-form-error.show');
+      await audit('a favourite with every detail open, a measurement refused, and the diagram');
+      /* each measurement says how to take it */
+      assert.strictEqual(await page.$$eval('#card-tshirts .compare-how', (ns) => ns.length), 4);
+      assert.match(await page.textContent('#card-hoodies .garment-status'), /Ready to compare sizes/);
       await page.close();
     }
+    accountState = accountReply({});
+    fitProfileState = fitProfileReply(null);
   });
 
-  await test('compare before buying — reference form, product list, the comparison table and feedback — is set in a palette ink, legible, and fits a phone', async () => {
+  await test('the search page’s fit panel — offered, asked for, and in use with a size on a listing — is set in a palette ink, legible, and fits a phone', async () => {
+    const UQ = { id: 'uq', name: 'Sweat Pullover Hoodie', brand: 'UNIQLO', price: 39.9, currency: 'USD', imageUrl: null,
+      productUrl: 'https://www.uniqlo.com/us/en/products/E475378-000/00', retailer: 'UNIQLO', category: '', colors: [], sizes: [] };
+    for (const viewport of [{ width: 1280, height: 900 }, { width: 360, height: 740 }]) {
+      accountState = accountReply({});
+      stubs.search = { reply: { source: 'openwebninja', products: [UQ], returned: 1, rejected: {} } };
+      let page = await openPage('find-clothes.html?shop=hoodies', { viewport });
+      await page.waitForSelector('.fit-panel[data-state="no-profile"]', { timeout: 10000 });
+      let audit = guideAudit(page, viewport);
+      await audit('the panel, offered');
+      await page.click('.fit-panel-ask');
+      await audit('the panel, asked for');
+      await page.close();
+
+      accountState = accountReply({ extra: SIGNED_IN });
+      fitProfileState = fitProfileReply(Object.assign(require('../assets/fit-profile-schema.js').empty(), {
+        measurements: { unit: 'in', height: null, chest: 40, waist: null, hip: null },
+        garments: { hoodies: { favorite: null, fitGoal: 'true-to-size', troubleZones: [], line: 'men', anchor: null } }
+      }));
+      page = await openPage('find-clothes.html?shop=hoodies', { viewport });
+      await page.waitForSelector('.item-fit', { timeout: 10000 });
+      audit = guideAudit(page, viewport);
+      await audit('the panel in use, and a listing with its size');
+      await page.close();
+    }
+    stubs.search = null;
+    accountState = accountReply({});
+    fitProfileState = fitProfileReply(null);
+  });
+
+  await test('compare before buying — the saved reference, product list, the comparison table and feedback — is set in a palette ink, legible, and fits a phone', async () => {
     accountState = accountReply({ extra: SIGNED_IN });
     /* ILLUSTRATIVE reference measurements, for the audit only */
     fitProfileState = fitProfileReply(Object.assign(require('../assets/fit-profile-schema.js').empty(), {
@@ -2935,9 +2974,6 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
       const audit = guideAudit(page, viewport);
       await page.waitForSelector('#ref-saved:not([hidden])');
       await audit('the saved reference and the products');
-      await page.click('#ref-edit');
-      await audit('the measuring form, with its diagram');
-      await page.click('#ref-cancel');
       await page.click('[data-product="zara-00761810-basic-heavyweight-hoodie-us"]');
       await page.waitForSelector('#result-table-wrap:not([hidden])');
       await page.click('#result-context summary');
@@ -2955,88 +2991,13 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     fitProfileState = fitProfileReply(null);
   });
 
-  await test('the favourite T-shirt question and its details are set in a palette ink, legible, and fit a phone', async () => {
-    accountState = accountReply({});
-    fitProfileState = fitProfileReply(null);
-    for (const viewport of [{ width: 1280, height: 900 }, { width: 360, height: 740 }]) {
-      const page = await openPage('index.html', { viewport });
-      await page.waitForSelector('#guide[data-ready]', { timeout: 10000 });
-      const audit = guideAudit(page, viewport);
-      await page.check('input[name="garment"][value="tshirts"]');
-      await page.click('#guide-next');
-      await audit('step 2, the favourite question');
-      assert.strictEqual(await page.isVisible('#anchor-brand'), false, 'brand and size wait for a Yes or Close');
-      await page.check('input[name="favorite"][value="close"]');
-      await page.click('#favorite-more summary');
-      await page.check('input[name="favoriteLikes"][value="sleeves"]');
-      await page.check('input[name="favoriteUnit"][value="cm"]');
-      await page.fill('#favorite-chestWidth', '54');
-      await page.fill('#favorite-product', 'https://www.zara.com/us/en/basic-medium-weight-t-shirt--02-p01887411.html');
-      await audit('step 2, a favourite with every detail open');
-      /* each measurement says how to take it */
-      assert.deepStrictEqual(await page.$$eval('#favorite-measures .guide-field-note', (ns) => ns.length), 4);
-      await page.close();
-    }
-  });
-
-  await test('a failed save and the confirmation are legible, and a saved profile is filled in', async () => {
-    const saved = {
-      schemaVersion: 2,
-      measurements: { unit: 'in', height: 70, chest: 40, waist: null, hip: null },
-      brandSizes: [{ brand: 'Gap', category: 'hoodies', size: 'M', fit: 'about-right' }],
-      fitPreferences: { hoodies: 'relaxed' },
-      anchor: null,
-      fitGoal: null,
-      troubleZones: null,
-      garments: { hoodies: { anchor: { brand: 'UNIQLO', size: 'L' }, fitGoal: 'slim', troubleZones: [] } }
-    };
-    accountState = accountReply({ extra: SIGNED_IN });
-    for (const viewport of [{ width: 1280, height: 900 }, { width: 360, height: 740 }]) {
-      /* the stub answers every /api/fit-profile request with this: a save
-         that does not say saved is a failed one */
-      fitProfileState = fitProfileReply(saved);
-      const page = await openPage('index.html', { viewport });
-      await page.waitForSelector('#guide[data-ready]', { timeout: 10000 });
-      const audit = guideAudit(page, viewport);
-
-      assert.strictEqual(await page.isVisible('#guide-saved-note'), true, 'says which types have saved answers');
-      assert.strictEqual(await page.isVisible('input[name="garment"][value="hoodies"] + .garment-card-body .garment-saved'), true);
-      await audit('step 1, with a type marked Saved');
-      await page.check('input[name="garment"][value="hoodies"]');
-      await audit('step 1, with a saved type chosen');
-      await page.click('#guide-next');
-      assert.strictEqual(await page.$eval('#anchor-brand', (n) => n.value), 'UNIQLO');
-      assert.strictEqual(await page.$eval('#anchor-size', (n) => n.value), 'L');
-      await page.click('#guide-next');
-      assert.strictEqual(await page.isChecked('input[name="fitGoal"][value="slim"]'), true);
-      await page.click('#guide-next');
-      assert.strictEqual(await page.isChecked('#zone-none'), true, 'an empty list is "None of these"');
-
-      await page.click('#guide-next');
-      await page.waitForSelector('#guide-error:not(:empty)');
-      assert.strictEqual(await page.isVisible('#guide-done'), false, 'no confirmation for a save the server did not confirm');
-      await audit('a failed save');
-
-      fitProfileState = Object.assign(fitProfileReply(saved), { saved: true });
-      await page.click('#guide-next');
-      await page.waitForSelector('#guide-done:not([hidden])');
-      await audit('the confirmation');
-      await page.close();
-    }
-    accountState = accountReply({});
-    fitProfileState = fitProfileReply(null);
-  });
-
-  await test('the fit guide holds still for reduced motion: a choice changes colour, and nothing animates', async () => {
+  await test('choosing clothing holds still for reduced motion: hovering a type changes colour, and nothing animates', async () => {
     accountState = accountReply({});
     const page = await openPage('index.html');
     await page.emulateMedia({ reducedMotion: 'reduce' });
-    await page.waitForSelector('#guide[data-ready]', { timeout: 10000 });
-    await page.check('input[name="garment"][value="tshirts"]');
-    await page.click('#guide-next');
-    await page.click('#guide-next');
-    await page.check('input[name="fitGoal"][value="slim"]');
-    const moving = await page.evaluate(() => [...document.querySelectorAll('#guide *')]
+    await page.waitForSelector('#shop-search', { timeout: 10000 });
+    await page.hover('.shop-types a[href$="hoodies"]');
+    const moving = await page.evaluate(() => [...document.querySelectorAll('#shop *')]
       .filter((n) => n.offsetParent)
       .map((n) => ({ n, cs: getComputedStyle(n) }))
       .filter(({ cs }) => cs.animationName !== 'none'
@@ -3194,10 +3155,6 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
         mark: getComputedStyle(document.querySelector('.brand-mark')).backgroundColor === primary,
         current: getComputedStyle(document.querySelector('.nav-links a[aria-current="page"]'), '::after').backgroundColor === primary,
         step: getComputedStyle(document.querySelector('.step-num')).color === rgbOf('--color-accent-ink'),
-        /* the guide's "Step 1 of 4" is a step number, so it takes the accent;
-           the part of the bar already reached is the primary */
-        guideCount: getComputedStyle(document.querySelector('.guide-count')).color === rgbOf('--color-accent-ink'),
-        guideBar: getComputedStyle(document.querySelector('.guide-bar-fill')).backgroundColor === primary,
         defined: ['--color-bg', '--color-surface', '--color-text', '--color-text-muted', '--color-border',
           '--color-primary', '--color-primary-hover', '--color-accent', '--color-success', '--color-warning']
           .every((t) => val(t) !== '')
