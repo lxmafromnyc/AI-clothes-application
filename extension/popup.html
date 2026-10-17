@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Fynd — check sizing</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header class="pop-head">
+    <span class="pop-mark" aria-hidden="true">F</span>
+    <span class="pop-brand">Fynd</span>
+  </header>
+
+  <main class="pop-main">
+    <section id="start" class="pop-start">
+      <h1 class="pop-title">Check this product’s sizing</h1>
+      <p class="pop-text">Fynd reads the sizing chart on the page you have open — only when you press the button, and only in your browser.</p>
+      <button class="btn btn-primary" id="check" type="button">Check sizing with Fynd</button>
+      <p class="pop-small">If the retailer shows its chart in a size guide, open the guide on the page first.</p>
+    </section>
+
+    <section id="busy" class="pop-busy" hidden>
+      <p>Reading this page…</p>
+    </section>
+
+    <section id="problem" class="pop-problem" hidden>
+      <h1 class="pop-title" id="problem-title">Fynd can’t read this page</h1>
+      <p class="pop-text" id="problem-text"></p>
+      <button class="btn btn-secondary" id="retry" type="button">Try again</button>
+    </section>
+
+    <section id="choose" class="pop-choose" hidden>
+      <h1 class="pop-title">Which table is the size chart?</h1>
+      <p class="pop-text" id="choose-text"></p>
+      <ul class="pop-choices" id="choices"></ul>
+    </section>
+
+    <section id="result" class="pop-result" hidden>
+      <h1 class="pop-title" id="result-title"></h1>
+      <p class="pop-product" id="result-product"></p>
+      <div class="size-chart-body" id="result-body"></div>
+      <p class="pop-other" id="other" hidden><button class="link-button" id="other-button" type="button">Choose another table on this page</button></p>
+      <div class="pop-actions">
+        <button class="btn btn-primary" id="open-fynd" type="button">Open in Fynd</button>
+        <button class="btn btn-secondary" id="again" type="button">Check again</button>
+      </div>
+      <p class="pop-small" id="open-note"></p>
+    </section>
+  </main>
+
+  <script src="config.js"></script>
+  <script src="vendor/sizing-tables.js"></script>
+  <script src="vendor/fynd-payload.js"></script>
+  <script src="vendor/size-chart.js"></script>
+  <script src="collect.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

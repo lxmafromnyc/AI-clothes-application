@@ -55,7 +55,9 @@
     'product-specific': 'This product’s own chart',
     'product-page': 'Published on this product’s page',
     'linked-size-guide': 'The retailer’s size guide linked from the product page — possibly a general chart, not this product’s own',
-    'brand-general': 'The brand’s general chart for this kind of product — a fallback, not this product’s own'
+    'brand-general': 'The brand’s general chart for this kind of product — a fallback, not this product’s own',
+    'browser-page': 'Read by the Fynd extension from the product page open in your browser',
+    'browser-size-guide': 'Read by the Fynd extension from the retailer’s size guide open in your browser — possibly a general chart, not this product’s own'
   };
   const STATUS = {
     verified: 'Verified — checked by a person against the brand’s page',
@@ -71,6 +73,8 @@
   function caveatOf(chart) {
     const brand = (chart.product && chart.product.brand) || chart.retailer || 'the brand';
     if (chart.scope === 'brand-general') return `A general ${brand} sizing guide — not measurements confirmed for this exact product.`;
+    if (chart.scope === 'browser-size-guide') return 'Read from the retailer’s size guide open in your browser — possibly a general chart. Not checked by Fynd.';
+    if (chart.scope === 'browser-page') return 'Read from the product page open in your browser. Not checked by Fynd.';
     if (chart.scope === 'linked-size-guide') return 'From the retailer’s size guide — possibly a general chart, not this product’s own.';
     if (chart.verification === 'verified') return `This product’s own chart, checked against ${brand}’s page.`;
     if (chart.verification === 'unverified') return `This product’s own chart, copied from ${brand}’s page — not yet checked.`;
@@ -91,9 +95,10 @@
     'too-many-redirects': 'This link doesn’t lead to a product page Fynd can read.',
     'no-chart': 'The product page doesn’t include a sizing chart Fynd can read.',
     'needs-script': 'The product page loads its sizing with JavaScript, which Fynd doesn’t run.',
-    'guide-unreadable': 'The product page links to a size guide, but that guide couldn’t be read.'
+    'guide-unreadable': 'The product page links to a size guide, but that guide couldn’t be read.',
+    'guide-not-open': 'The page links to a size guide, but it isn’t open. Open the retailer’s size guide on the page, then check again.'
   };
-  const PAGE_READ = ['no-chart', 'needs-script', 'guide-unreadable'];
+  const PAGE_READ = ['no-chart', 'needs-script', 'guide-unreadable', 'guide-not-open'];
   const statusOf = (chart) => (PAGE_READ.includes(chart.reason) ? 'No sizing chart found on this page' : 'Couldn’t read the product page');
 
   /* The nodes for one answer from /api/size-recommendation?chart=:
@@ -112,7 +117,9 @@
     if (unavailable) {
       out.push(el('p', 'size-chart-status', statusOf(chart)));
       out.push(el('p', 'size-chart-note', SHORT[chart.reason] || (chart.note || [])[0] || 'Fynd couldn’t read a sizing chart for this product.'));
-      if (src.url) {
+      if (chart.from === 'browser-extension') {
+        if (chart.reason !== 'guide-not-open') out.push(el('p', 'size-chart-hint', 'If the retailer has a size guide button, open it on the page, then check again.'));
+      } else if (src.url) {
         const hint = el('p', 'size-chart-hint');
         if (o.linked) hint.textContent = 'The product page may have its own size guide.';
         else hint.append(el('span', null, 'The product page may have its own size guide: '), safeLink(src.url, 'open the product page'));

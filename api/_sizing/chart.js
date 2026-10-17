@@ -78,9 +78,9 @@ const MAX_REDIRECTS = 3;
 const CACHE_OK_SECONDS = 6 * 60 * 60;
 const CACHE_MISS_SECONDS = 30 * 60;
 const CACHE_VERSION = 'v2';
-const MAX_CELL = 60;
-const MAX_ROWS = 40;
-const MAX_COLUMNS = 12;
+/* How a size table is recognised, read and labelled: shared with the
+   Fynd browser extension, so a table reads the same either way. */
+const { MAX_CELL, MAX_ROWS, MAX_COLUMNS, GUIDE_WORDS, sizeTable, unitOf, kindOf, labelTable } = require('../../assets/sizing-tables');
 
 const UA = 'Mozilla/5.0 (compatible; FyndSizing/1.0; +https://ai-clothes-application.vercel.app/about.html)';
 
@@ -413,10 +413,6 @@ function productData(html) {
   return out;
 }
 
-const SIZE_HEADER = /\b(size|sizes|us size|uk size|eu size|label)\b/i;
-const SIZE_VALUE = /^(?:[2-6]?x{0,4}[sml]|xx?s|xx?l|[2-6]xl|one size|\d{1,2}(?:\s*[x/×]\s*\d{1,2})?|\d{2,3})$/i;
-const MEASURE = /\b(chest|bust|waist|hips?|seat|length|sleeve|shoulders?|inseam|outseam|neck|height|thigh|rise|leg|width|body)\b/i;
-
 /* Every table in the page, as rows of plain cells, with the words just
    before it (a heading, a tab's name) to say what it measures. */
 function tablesOf(html) {
@@ -434,55 +430,6 @@ function tablesOf(html) {
     if (rows.length) out.push({ rows, caption, before });
   }
   return out;
-}
-
-/* A size table, with sizes down the left: { columns, rows } or null.
-   A table with sizes across the top is turned so they read down. */
-function sizeTable(rows) {
-  if (rows.length < 2) return null;
-  const width = Math.max(...rows.map((r) => r.length));
-  const grid = rows.map((r) => Array.from({ length: width }, (_, i) => r[i] || ''));
-  const asIs = readOriented(grid);
-  if (asIs) return asIs;
-  const turned = grid[0].map((_, c) => grid.map((r) => r[c]));
-  return readOriented(turned);
-}
-
-function readOriented(grid) {
-  const head = grid[0];
-  if (head.length < 2) return null;
-  const body = grid.slice(1).filter((r) => r[0]);
-  const sizesDown = body.filter((r) => SIZE_VALUE.test(r[0].replace(/\s+/g, ' '))).length;
-  const labelled = SIZE_HEADER.test(head[0]) || (!head[0] && sizesDown === body.length);
-  if (!labelled || body.length < 2 || sizesDown < Math.ceil(body.length * 0.6)) return null;
-  const measured = head.slice(1).map((h, i) => ({ h, i: i + 1 })).filter((c) => MEASURE.test(c.h));
-  if (!measured.length) return null;
-  const columns = measured.map((c) => c.h);
-  const out = body.map((r) => ({ size: r[0], values: measured.map((c) => r[c.i] || '') }))
-    .filter((r) => r.values.some((v) => /\d/.test(v)));
-  if (out.length < 2) return null;
-  return { columns, rows: out.slice(0, MAX_ROWS) };
-}
-
-/* Inches, centimetres, both, or not stated — from the table's own words. */
-function unitOf(text) {
-  const cm = /\b(cm|centimet(?:er|re)s?)\b/i.test(text);
-  /* "in" alone is an ordinary word ("measured flat, in cm"): only an
-     unmistakable inch counts — inch(es), "(in)", "in." or a ″ mark */
-  const inch = /\binch(es)?\b|\(in\)|\bin\.(?!\w)|["″]/i.test(text);
-  if (cm && inch) return 'both';
-  return cm ? 'cm' : inch ? 'in' : null;
-}
-
-/* What the table measures, only when its words say so. */
-const SAYS_GARMENT = /\b(garment|product|item|clothing)\s+(measurements?|size|dimensions?)\b|\blaid flat\b|\bmeasured flat\b|\bflat measurements?\b|\bfrom (the )?cent(?:er|re) back\b|\bbody width\b/i;
-const SAYS_BODY = /\bbody (measurements?|size)\b|\byour (body|measurements)\b|\bmeasure (yourself|your body)\b|\bto fit\b|\bbody chart\b/i;
-function kindOf(text) {
-  const garment = SAYS_GARMENT.test(text);
-  const body = SAYS_BODY.test(text);
-  if (garment && !body) return 'finished-garment';
-  if (body && !garment) return 'body';
-  return 'not-stated';
 }
 
 /* The name the site gives itself, or its host. */
@@ -503,7 +450,6 @@ const registrable = (host) => host.split('.').slice(-2).join('.');
 
 /* Links from the page to its own size guide: same site, said so by
    their words or their address. At most three, never the page itself. */
-const GUIDE_WORDS = /\bsize[\s_-]*(guide|chart|table|info|information)\b|\bsizing( guide| chart| info)?\b|\bmeasurement guide\b|\bfind your size\b/i;
 function guideLinks(html, pageUrl) {
   const out = [];
   const page = new URL(pageUrl);
@@ -649,17 +595,8 @@ function fromOfficial(found, checked, live) {
 function chartsIn(html, pageUrl, title) {
   const out = [];
   tablesOf(html).forEach((t) => {
-    const table = sizeTable(t.rows);
-    if (!table) return;
-    const words = `${t.before} ${t.caption} ${table.columns.join(' ')}`;
-    out.push({
-      measures: kindOf(words),
-      title: t.caption || null,
-      unit: unitOf(`${t.caption} ${table.columns.join(' ')} ${t.before.slice(-120)}`),
-      source: { url: pageUrl, title: title || null },
-      columns: table.columns,
-      rows: table.rows
-    });
+    const chart = labelTable(t);
+    if (chart) out.push(Object.assign(chart, { source: { url: pageUrl, title: title || null } }));
   });
   return out;
 }
