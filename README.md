@@ -2199,6 +2199,38 @@ after the page loads, or refuse automated readers; for those the honest outcome
 is "unavailable". Which shops publish usable HTML tables has to be established
 against real pages before retailer-specific reading is added.
 
+### The Fynd browser extension
+
+`extension/` is a Manifest V3 Chrome extension. It lets a customer check the
+sizing on the product page they already have open, without copying its link.
+Installation steps, permissions and tests are in
+[`extension/README.md`](extension/README.md). In short:
+
+- **When it reads the page:** only when the customer clicks Fynd's toolbar button
+  and presses **Check sizing with Fynd**. It requests `activeTab` and `scripting`
+  only.
+- **Where the reading happens:** in the customer's browser. The extension reads
+  the page's tables and structured data and recognises size tables with the same
+  code the server uses (`assets/sizing-tables.js`). It shows the chart with
+  Find Fit's own renderer.
+- **Several possible charts:** the customer chooses which one. A closed size
+  guide is never opened for them.
+- **Handover to Find Fit:** **Open in Fynd** carries the chart in Find Fit's
+  address fragment (`#fynd-chart=…`, `assets/fynd-payload.js`). That part of the
+  address never reaches a server. Find Fit validates the payload (bounded text,
+  http(s) links only, rows as wide as their columns, a number in every row),
+  draws it, and clears it from the address.
+- **Never verified:** a browser-read chart is never marked verified or
+  comparable, so the fit profile is never compared with it. **Check Fynd's
+  catalog** looks the product up the usual way.
+- **No chart on the page:** `#fynd-url=…` asks Find Fit to look the product up
+  as if its link had been pasted.
+
+This can show charts that Fynd's server can't fetch, such as a page that never
+answers the server, or a chart that is only shown once the customer opens the
+size guide. It doesn't get around a retailer's protections. Extraction has been
+tested on invented fixture pages only, not yet on live retailer pages.
+
 ## Compare before buying (hoodies and sweatshirts)
 
 `compare.html` (in the main navigation as **Compare**) walks a shopper through

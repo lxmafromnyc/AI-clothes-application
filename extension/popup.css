@@ -1,0 +1,98 @@
+/* Fynd extension popup — the Fynd site's tokens and size-chart styles
+   (assets/styles.css), cut to what a 380px popup needs. */
+
+:root {
+  --color-bg: #FFFFFF;
+  --color-bg-subtle: #F7F7F5;
+  --color-surface: #FFFFFF;
+  --color-border: #E7E7E3;
+  --color-border-strong: #D2D2CD;
+  --color-text: #000000;
+  --color-text-2: #2B2B2B;
+  --color-text-muted: #6B6B6B;
+  --color-text-on-primary: #FFFFFF;
+  --color-primary: #111111;
+  --color-primary-hover: #333333;
+  --color-warning-ink: #7A5413;
+  --color-warning-soft: #FBF4E4;
+  --color-warning-line: #EEDDB5;
+  --color-focus: #3E5BD8;
+  --r: 12px;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  width: 380px; min-height: 200px; max-height: 600px;
+  background: var(--color-bg); color: var(--color-text);
+  font: 14px/1.5 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+p, h1, h2, h3, ul, dl { margin: 0; }
+[hidden] { display: none !important; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+
+.pop-head { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--color-border); }
+.pop-mark { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 6px; background: var(--color-primary); color: var(--color-text-on-primary); font-weight: 700; font-size: 13px; }
+.pop-brand { font-weight: 700; letter-spacing: -.01em; }
+.pop-main { padding: 16px; }
+
+.pop-title { font-size: 18px; letter-spacing: -.02em; line-height: 1.3; }
+.pop-text { margin-top: 6px; color: var(--color-text-2); }
+.pop-small { margin-top: 10px; font-size: 12.5px; color: var(--color-text-muted); }
+.pop-start .btn, .pop-problem .btn { margin-top: 14px; width: 100%; }
+.pop-busy { padding: 24px 0; color: var(--color-text-2); }
+.pop-product { margin: 4px 0 14px; font-size: 13.5px; }
+.pop-host { color: var(--color-text-muted); }
+
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  height: 40px; padding: 0 16px;
+  border: 1px solid transparent; border-radius: var(--r);
+  font: inherit; font-size: 14px; font-weight: 600; letter-spacing: -.005em;
+  cursor: pointer; white-space: nowrap;
+}
+.btn-primary { background: var(--color-primary); border-color: var(--color-primary); color: var(--color-text-on-primary); }
+.btn-primary:hover { background: var(--color-primary-hover); border-color: var(--color-primary-hover); }
+.btn-secondary { background: var(--color-surface); border-color: var(--color-border-strong); color: var(--color-text); }
+.btn-secondary:hover { border-color: var(--color-text-muted); }
+.btn:active { transform: scale(.98); }
+.link-button { border: none; background: none; padding: 0; font: inherit; font-size: 13px; color: var(--color-text-muted); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.link-button:hover { color: var(--color-text); }
+.pop-actions { display: flex; gap: 8px; margin-top: 16px; }
+.pop-actions .btn { flex: 1; }
+.pop-other { margin-top: 10px; }
+
+.pop-choices { list-style: none; padding: 0; margin-top: 12px; display: grid; gap: 8px; }
+.pop-choice { display: grid; gap: 2px; width: 100%; padding: 10px 12px; text-align: left; border: 1px solid var(--color-border-strong); border-radius: var(--r); background: var(--color-surface); font: inherit; cursor: pointer; }
+.pop-choice:hover { border-color: var(--color-text-muted); }
+.pop-choice-name { font-weight: 600; }
+.pop-choice-cols { font-size: 12.5px; color: var(--color-text-muted); }
+
+/* the sizing chart, as Find Fit draws it (assets/size-chart.js) */
+.guide-link { color: var(--color-text); text-decoration: underline; text-underline-offset: 3px; }
+.guide-link:hover { color: var(--color-primary-hover); }
+.size-chart-notes { display: grid; gap: 6px; margin: 0 0 12px; padding: 10px 12px 10px 26px; border-radius: var(--r); background: var(--color-bg-subtle); font-size: 13px; color: var(--color-text-2); }
+.size-chart-facts { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 12px; margin: 10px 0 0; font-size: 13px; }
+.size-chart-facts dt { color: var(--color-text-muted); }
+.size-chart-facts dd { margin: 0; color: var(--color-text); }
+.size-chart-table + .size-chart-table { margin-top: 14px; }
+.size-chart-name { font-size: 15px; }
+.size-chart-kind { margin-top: 2px; font-size: 13px; color: var(--color-text-2); }
+.size-chart-unit { margin-top: 2px; font-size: 12.5px; color: var(--color-text-muted); }
+.size-chart-scroll { margin-top: 8px; overflow-x: auto; }
+.compare-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.compare-table th, .compare-table td { padding: 7px 6px; border-bottom: 1px solid var(--color-border); text-align: left; vertical-align: top; }
+.compare-table thead th { font-size: 12px; font-weight: 600; color: var(--color-text-muted); }
+.compare-table tbody th { font-weight: 600; white-space: nowrap; }
+.size-chart-caveat { margin-top: 10px; padding: 8px 10px; border: 1px solid var(--color-warning-line); border-radius: var(--r); background: var(--color-warning-soft); font-size: 13px; color: var(--color-warning-ink); }
+.size-chart-status { font-size: 15px; font-weight: 600; }
+.size-chart-note { margin-top: 4px; color: var(--color-text-2); }
+.size-chart-hint { margin-top: 4px; font-size: 13px; color: var(--color-text-muted); }
+.size-chart-labels { margin-top: 10px; font-size: 13px; color: var(--color-text-2); }
+.size-chart-details { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--color-border); font-size: 12.5px; color: var(--color-text-2); }
+.size-chart-details > summary { cursor: pointer; font-weight: 500; color: var(--color-text); }
+.size-chart-details[open] > summary { margin-bottom: 8px; }
+.size-chart-source { margin-top: 8px; overflow-wrap: anywhere; }
+.size-chart-trace-title { margin-top: 10px; font-weight: 500; color: var(--color-text); }

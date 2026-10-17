@@ -11,6 +11,16 @@
    one; where it came from is under "Source details". The product's own
    page stays a click away ("View product"), without tracking parameters.
 
+   From the Fynd browser extension (extension/), the address arrives
+   carrying either a chart it read in the shopper's own browser
+   (#fynd-chart=…, checked by assets/fynd-payload.js before anything is
+   drawn) or just a product's address (#fynd-url=…, looked up as if it
+   had been pasted). The fragment never reaches a server, and it is
+   cleared from the address as soon as it is read. A chart from the
+   extension is shown as read from the browser and not checked — never
+   verified, never comparable — with a way to look the product up in
+   Fynd's catalog of checked charts.
+
    No account is needed. Signed in, a chart Fynd has checked
    finished-garment measurements for is also set beside the shopper's
    saved reference garment (Account.sizing.compare: the engine's own
@@ -73,6 +83,7 @@
     say('');
     result.hidden = false;
     result.dataset.state = 'loading';
+    delete result.dataset.from;
     compare.hidden = true;
     compare.replaceChildren();
     productLink(cleanUrl(url));
@@ -179,5 +190,64 @@
   });
   input.addEventListener('input', () => { if (error.textContent) say(''); });
 
-  global.FindFit = { readLink, find };
+  /* A chart the Fynd extension read in this browser: checked, drawn as
+     read from the browser and unverified, never compared. */
+  function showExtensionChart(payload) {
+    const ask = ++latest;
+    const url = payload.page.url;
+    lastAsked = url;
+    input.value = url;
+    say('');
+    const chart = global.FyndPayload.toChart(payload);
+    result.hidden = false;
+    result.dataset.state = chart.status;
+    result.dataset.from = 'extension';
+    compare.hidden = true;
+    compare.replaceChildren();
+    $('fit-result-title').textContent = headingFor(chart);
+    productLink(url);
+    const lookup = el('button', 'btn btn-secondary fit-catalog', 'Check Fynd’s catalog for this product');
+    lookup.type = 'button';
+    lookup.addEventListener('click', () => find(url));
+    const offer = el('p', 'fit-catalog-line');
+    offer.append(el('span', null, 'Fynd may have a checked chart for this product. '), lookup);
+    body.replaceChildren(...render(chart, url, { linked: true }), offer);
+    $('fit-result-title').focus({ preventScroll: true });
+    result.scrollIntoView({ block: 'start', behavior: 'auto' });
+    if (chart.status === 'ok') compareWith(chart, ask);
+  }
+
+  /* #fynd-chart=… or #fynd-url=…, from the extension: read once, then
+     cleared from the address */
+  function fromExtension() {
+    const hash = global.location.hash || '';
+    const chartIn = /^#fynd-chart=([A-Za-z0-9_-]{1,30000})$/.exec(hash);
+    const urlIn = /^#fynd-url=([^#]{1,4000})$/.exec(hash);
+    if (!chartIn && !urlIn && !/^#fynd-(chart|url)=/.test(hash)) return;
+    global.history.replaceState(null, '', global.location.pathname + global.location.search);
+    if (urlIn) {
+      let raw = '';
+      try { raw = decodeURIComponent(urlIn[1]); } catch (err) { /* refused below */ }
+      const link = readLink(raw);
+      if (link.error) { say(link.error); return; }
+      input.value = link.url;
+      find(link.url);
+      return;
+    }
+    const got = chartIn && global.FyndPayload ? global.FyndPayload.decode(chartIn[1]) : { error: 'unreadable' };
+    if (got.error) {
+      result.hidden = false;
+      result.dataset.state = 'error';
+      result.dataset.from = 'extension';
+      $('fit-result-title').textContent = 'This chart couldn’t be opened';
+      $('fit-result-product').replaceChildren();
+      body.replaceChildren(el('p', 'size-chart-note', 'The link from the Fynd extension wasn’t a chart Fynd could read, so nothing from it is shown. Check the product page again with the extension, or paste the product’s link above.'));
+      return;
+    }
+    showExtensionChart(got.payload);
+  }
+  fromExtension();
+  global.addEventListener('hashchange', fromExtension);
+
+  global.FindFit = { readLink, find, fromExtension };
 })(typeof window !== 'undefined' ? window : globalThis);
