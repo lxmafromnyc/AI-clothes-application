@@ -113,25 +113,29 @@ function soldAt(item, seller) {
    Sample badge on its picture and links nowhere. */
 function productCard(item) {
   const linked = Boolean(item.productUrl);
-  const tag = linked ? 'a' : 'article';
-  const attrs = linked ? ` href="${esc(item.productUrl)}" target="_blank" rel="noopener noreferrer"` : '';
   const named = item.brand || item.retailer || '';
   const where = linked ? soldAt(item, named) : '';
   /* a maker nobody established is left unsaid, never guessed: the top
      line then names where it is sold, and is not said twice */
   const seller = named || where;
   const price = formatPrice(item.price);
-
-  return `<${tag} class="item-card"${attrs}>
-    ${media(item, linked ? '' : SAMPLE_BADGE)}
+  const inner = `${media(item, linked ? '' : SAMPLE_BADGE)}
     <div class="item-body">
       <p class="item-retailer">${esc(seller)}</p>
       <h3 class="item-name">${esc(item.name)}</h3>
       <p class="item-price${price ? '' : ' item-price--none'}">${price || 'Price at retailer'}</p>
       ${where && where !== seller ? `<p class="item-seller">${esc(where)}</p>` : ''}
       ${linked ? '<span class="sr-only">(opens in a new tab)</span>' : ''}
-    </div>
-  </${tag}>`;
+    </div>`;
+
+  if (!linked) return `<article class="item-card">${inner}</article>`;
+  /* A real listing: the card's link, and beside it — not inside it, a
+     button can't live in a link — "View sizing chart", over the corner
+     of the picture so the card keeps its shape (assets/size-chart.js) */
+  return `<article class="item-card item-card--linked">
+    <a class="item-link" href="${esc(item.productUrl)}" target="_blank" rel="noopener noreferrer">${inner}</a>
+    <button class="item-chart" type="button" data-chart="${esc(item.productUrl)}" data-name="${esc(item.name)}" data-brand="${esc(named)}">View sizing chart<span class="sr-only"> for ${esc(item.name)}</span></button>
+  </article>`;
 }
 
 /* The shape of a card, drawn while the real one is on its way, so the

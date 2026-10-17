@@ -13,7 +13,12 @@
                                                        answers to it, and sized from
                                                        that type's own profile
 
-   The last is the search page's: up to 24 listings it is showing, as
+   GET ?chart=<listing link>   -> { chart }           that product's sizing chart,
+                                                       read from its brand's own page
+                                                       (api/_sizing/chart.js); needs
+                                                       no account and reads no profile
+
+   The fit mode is the search page's: up to 24 listings it is showing, as
    the listing itself names them (brand, name, link — nothing about the
    shopper). A listing is matched only the way a favourite piece is
    (engine.matchProduct: the brand's own link with the product's code,
@@ -55,6 +60,9 @@ const sizing = require('./_sizing/records');
 const engine = require('./_sizing/engine');
 
 const ProfileSchema = require('../assets/fit-profile-schema.js');
+const charts = require('./_sizing/chart');
+const limits = require('./_ratelimit');
+const auth = require('./_auth');
 
 const PRODUCT_ID = /^[a-z0-9]+(?:-[a-z0-9]+){0,12}$/;
 const MAX_ITEMS = 24;
@@ -118,6 +126,25 @@ async function handler(req, res) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'Use GET.' });
 
   res.setHeader('Cache-Control', 'no-store, private');
+
+  const early = req.query || Object.fromEntries(new URL(req.url || '/', 'http://fynd.local').searchParams);
+  /* a product's sizing chart: for anyone browsing, signed in or not */
+  if (early.chart !== undefined) {
+    const address = auth.addressSubject(req);
+    const gate = await limits.check('sizing:chart', address);
+    if (!gate.allowed) {
+      res.setHeader('Retry-After', String(gate.retryAfter || 60));
+      return res.status(429).json({ error: 'Too many sizing charts at once. Try again in a few minutes.', reason: 'rate-limited' });
+    }
+    await limits.note('sizing:chart', address);
+    try {
+      const chart = await charts.chartFor(typeof early.chart === 'string' ? early.chart : '');
+      return res.status(200).json({ chart });
+    } catch (err) {
+      console.error('Sizing chart failed', err && err.message);
+      return res.status(500).json({ error: 'Could not read the sizing chart. Try again in a moment.' });
+    }
+  }
 
   const identity = await identify(req, res, users);
   if (!identity.user) {

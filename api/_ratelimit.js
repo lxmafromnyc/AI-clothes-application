@@ -38,7 +38,10 @@ const LIMITS = {
   'auth:signup': { max: 5, windowSeconds: 60 * 60 },
   'auth:resend-verification': { max: 5, windowSeconds: 60 * 60, minGapSeconds: 60 },
   'auth:forgot-password': { max: 5, windowSeconds: 60 * 60, minGapSeconds: 60 },
-  'auth:reset-password': { max: 10, windowSeconds: 60 * 60 }
+  'auth:reset-password': { max: 10, windowSeconds: 60 * 60 },
+  /* a sizing chart can make Fynd read a brand's page: kept to a pace a
+     shopper clicking through results never reaches */
+  'sizing:chart': { max: 40, windowSeconds: 60 * 10 }
 };
 
 const countKey = (name, subject) => `ratelimit:${name}:${subject}`;

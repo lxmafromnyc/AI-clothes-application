@@ -73,6 +73,7 @@
   --color-text-on-primary: var(--color-text-invert);
   --color-focus: var(--color-accent);
   --color-artwork: rgba(0, 0, 0, .25);
+  --color-backdrop: rgba(17, 17, 17, .45);
 
   /* ---------- shape and depth ---------- */
   --r-sm: 8px;
@@ -405,6 +406,31 @@ a.garment-card-body:focus-visible { outline: 2px solid var(--color-focus); outli
 .fit-panel-actions { margin-top: 10px; }
 /* a long label wraps rather than pushing the page sideways on a phone */
 .fit-panel .btn, .profile-return .btn { height: auto; min-height: 40px; padding-block: 8px; white-space: normal; text-align: center; }
+/* one product's sizing chart, over the results */
+.size-chart {
+  width: min(680px, calc(100vw - 32px)); max-height: calc(100vh - 48px);
+  margin: auto; padding: 20px 22px 22px;
+  border: 1px solid var(--color-border); border-radius: var(--r-lg);
+  background: var(--color-surface); color: var(--color-text);
+  box-shadow: var(--shadow);
+}
+.size-chart::backdrop { background: var(--color-backdrop); }
+.size-chart-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.size-chart-title { font-size: 20px; letter-spacing: -.02em; }
+.size-chart-product { margin-top: 2px; font-size: 14.5px; color: var(--color-text-2); }
+.size-chart-close { flex: none; }
+.size-chart-loading { font-size: 14.5px; color: var(--color-text-2); }
+.size-chart-notes { display: grid; gap: 6px; margin: 0 0 14px; padding: 12px 14px 12px 30px; border-radius: var(--r); background: var(--color-bg-subtle); font-size: 14px; color: var(--color-text-2); }
+.size-chart-facts { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 14px; margin: 0 0 14px; font-size: 14px; }
+.size-chart-facts dt { color: var(--color-text-muted); }
+.size-chart-facts dd { margin: 0; color: var(--color-text); }
+.size-chart-table { margin-top: 16px; }
+.size-chart-kind { font-size: 15px; }
+.size-chart-caption, .size-chart-unit { margin-top: 2px; font-size: 13px; color: var(--color-text-muted); }
+.size-chart-scroll { margin-top: 8px; overflow-x: auto; }
+.size-chart .compare-table { min-width: 0; }
+.size-chart-labels, .size-chart-fit { margin-top: 14px; font-size: 14px; color: var(--color-text-2); }
+.size-chart-source { margin-top: 12px; font-size: 13.5px; color: var(--color-text-2); overflow-wrap: anywhere; }
 .item-fit { margin-top: 6px; font-size: 13px; font-weight: 500; color: var(--color-text-2); }
 .item-fit--ok { color: var(--color-primary-ink); }
 
@@ -870,7 +896,20 @@ a.garment-card-body:focus-visible { outline: 2px solid var(--color-focus); outli
 /* a card on its way out (app.js renames a leaving card, so nothing takes
    it for a result) keeps the card's shape while it fades */
 .item-card, .item-ghost { display: flex; flex-direction: column; min-width: 0; }
-a.item-card { color: inherit; }
+/* a real listing: the link fills the card, and the sizing chart's
+   button sits over the corner of its picture */
+.item-card--linked { position: relative; }
+.item-link { display: flex; flex: 1; flex-direction: column; min-width: 0; color: inherit; }
+.item-chart {
+  position: absolute; top: 8px; left: 8px; z-index: 1;
+  height: 30px; padding: 0 11px;
+  border: 1px solid var(--color-border); border-radius: var(--r-pill);
+  background: var(--color-surface);
+  font-size: 12.5px; font-weight: 600; color: var(--color-primary-ink);
+  cursor: pointer;
+}
+.item-chart:hover { border-color: var(--color-primary); }
+.item-chart:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 
 .item-media {
   position: relative;
@@ -909,7 +948,7 @@ a.item-card { color: inherit; }
 .item-media.is-at-once img { transition: transform .4s var(--ease); }
 .item-media.is-at-once::after { transition: none; }
 .item-media svg.silhouette { width: 56%; height: 56%; color: var(--color-artwork); }
-a.item-card:hover .item-media img { transform: scale(1.03); }
+.item-link:hover .item-media img { transform: scale(1.03); }
 
 .item-badge {
   position: absolute; top: 10px; left: 10px;
@@ -929,7 +968,7 @@ a.item-card:hover .item-media img { transform: scale(1.03); }
   color: var(--color-text-2);
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
-a.item-card:hover .item-name { text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--color-border-strong); }
+.item-link:hover .item-name { text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--color-border-strong); }
 .item-price { margin-top: 6px; font-size: 15px; font-weight: 600; color: var(--color-text); font-variant-numeric: tabular-nums; }
 .item-price--none { font-size: 14px; font-weight: 400; color: var(--color-text-muted); }
 .item-seller { margin-top: 2px; font-size: 13px; color: var(--color-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

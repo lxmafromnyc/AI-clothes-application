@@ -1128,6 +1128,191 @@ await test('each caller’s listings are sized from their own profile, whatever 
   assert.strictEqual((await fitCall(ada.jar, 'hoodies', LISTINGS)).body.fit.items[0].size, 'M');
 });
 
+section('sizing charts, read on demand (api/_sizing/chart.js)');
+
+const charts = require('../api/_sizing/chart');
+/* ILLUSTRATIVE FIXTURES — invented markup in the shapes brands' pages
+   use, to test the reader. None of it is a real product's page or a real
+   measurement, and nothing here is evidence about any retailer. */
+const NIKE_OTHER = 'https://www.nike.com/t/illustrative-tee-TEST001';
+const page = (inner, extra) => `<!doctype html><html><head><title>Illustrative Tee | Nike</title>${extra || ''}</head><body>${inner}</body></html>`;
+const LD = (data) => `<script type="application/ld+json">${JSON.stringify(data)}</script>`;
+const GARMENT_CM = page(`<h2>Garment measurements</h2><p>Measured laid flat, in cm.</p>
+  <table><caption>Product size (cm)</caption><tr><th>Size</th><th>Chest width</th><th>Body length</th><th>Sleeve</th></tr>
+  <tr><td>S</td><td>51</td><td>70</td><td>20.5</td></tr><tr><td>M</td><td>54</td><td>72</td><td>21</td></tr><tr><td>L</td><td>57</td><td>74</td><td>21.5</td></tr></table>`,
+  LD({ '@context': 'https://schema.org', '@type': 'Product', name: 'Illustrative Tee', brand: { '@type': 'Brand', name: 'Nike' }, sku: 'TEST001' }));
+const BODY_IN = page(`<h3>Body measurements</h3><p>Use these to find the size made to fit your body. Inches.</p>
+  <table><tr><th>Size</th><th>Chest</th><th>Waist</th></tr><tr><td>S</td><td>35 - 37.5</td><td>29 - 32</td></tr><tr><td>M</td><td>37.5 - 41</td><td>32 - 35</td></tr></table>`);
+const fakeFetch = (routes, log) => async (url, opts) => {
+  if (log) log.push({ url, redirect: opts && opts.redirect });
+  const r = routes[url];
+  if (!r) throw new Error('unreachable');
+  if (r.throws) { const e = new Error(r.throws); e.name = r.throws === 'abort' ? 'AbortError' : 'Error'; throw e; }
+  const headers = new Map(Object.entries(Object.assign({ 'content-type': 'text/html; charset=utf-8' }, r.headers || {})));
+  return { status: r.status || 200, ok: (r.status || 200) < 300, headers: { get: (k) => headers.get(k.toLowerCase()) || null }, text: async () => r.body || '' };
+};
+const read = (url, routes, log) => charts.chartFor(url, { noCache: true, fetch: fakeFetch(routes, log) });
+
+await test('only a brand’s own site is ever read: https, its exact host, no credentials, port or address literal', () => {
+  assert.strictEqual(charts.checkUrl('https://www.uniqlo.com/us/en/products/E475378-000/00?x=1').url, 'https://www.uniqlo.com/us/en/products/E475378-000/00');
+  assert.strictEqual(charts.checkUrl('https://www2.hm.com/en_us/productpage.0685816001.html').market, 'US');
+  assert.strictEqual(charts.checkUrl('https://www.carhartt.com/product/K121/x').market, null, 'a market the address doesn’t name is not guessed');
+  ['http://www.nike.com/t/x', 'https://user:pw@www.nike.com/t/x', 'https://www.nike.com:8443/t/x', 'https://127.0.0.1/x', 'https://[::1]/x', 'javascript:alert(1)', 'not a url', '']
+    .forEach((u) => assert.strictEqual(charts.checkUrl(u).error, 'invalid-url', u));
+  ['https://www.gap.com/p/1', 'https://nike.com.evil.test/t/x', 'https://evil-nike.com/t/x', 'https://shop.nike.com/t/x']
+    .forEach((u) => assert.strictEqual(charts.checkUrl(u).error, 'unsupported-retailer', u));
+});
+
+await test('another shop is never fetched, and says why, with nothing made up', async () => {
+  const log = [];
+  const r = await read('https://www.gap.com/browse/product.do?pid=1', {}, log);
+  assert.strictEqual(r.status, 'unavailable');
+  assert.strictEqual(r.reason, 'unsupported-retailer');
+  assert.deepStrictEqual(r.charts, []);
+  assert.deepStrictEqual(log, [], 'nothing was fetched');
+  assert.match(r.note[0], /only from the sites of brands it knows/);
+});
+
+await test('a product Fynd has a record for: its own body and garment charts, as the brand wrote them, with the record’s own status', async () => {
+  const log = [];
+  const r = await read('https://www.uniqlo.com/us/en/products/E475378-000/00?colorDisplayCode=09', {}, log);
+  assert.deepStrictEqual(log, [], 'the record is used; the page is not read again');
+  assert.strictEqual(r.from, 'fynd-record');
+  assert.strictEqual(r.scope, 'product-specific');
+  assert.strictEqual(r.verification, 'verified');
+  assert.deepStrictEqual(r.charts.map((c) => [c.measures, c.unit]), [['body', 'in'], ['finished-garment', 'in']]);
+  assert.deepStrictEqual(r.charts[0].rows.find((x) => x.size === 'M').values, ['37 ¾ - 41'], 'values kept exactly as published');
+  assert.ok(r.note.some((n) => /body measurements — the body each size is cut for, not the garment/.test(n)));
+  assert.ok(r.comparable);
+  /* an unchecked record says so, and is not offered for comparison */
+  const tee = await read('https://www.zara.com/us/en/basic-medium-weight-t-shirt--02-p01887411.html', {});
+  assert.strictEqual(tee.verification, 'unverified');
+  assert.strictEqual(tee.comparable, false);
+  assert.ok(tee.note.some((n) => /not yet checked/.test(n)));
+  /* a body chart only: no garment chart, and said */
+  const nike = await read('https://www.nike.com/t/club-mens-fleece-crew-RU1Il4yl/FN3886-010', {});
+  assert.deepStrictEqual(nike.charts.map((c) => c.measures), ['body']);
+  assert.ok(nike.note.some((n) => /no finished-garment measurements/.test(n)));
+});
+
+await test('a live page’s garment table: read as written, in its own unit, labelled garment only because the page says so, and not verified', async () => {
+  const r = await read(NIKE_OTHER, { [NIKE_OTHER]: { body: GARMENT_CM } });
+  assert.strictEqual(r.status, 'ok');
+  assert.strictEqual(r.from, 'live-page');
+  assert.strictEqual(r.scope, 'product-page');
+  assert.strictEqual(r.verification, 'not-verified', 'reading a page is not checking it');
+  assert.deepStrictEqual(r.product, { brand: 'Nike', name: 'Illustrative Tee', code: 'TEST001' });
+  const c = r.charts[0];
+  assert.deepStrictEqual([c.measures, c.unit], ['finished-garment', 'cm']);
+  assert.deepStrictEqual(c.columns, ['Chest width', 'Body length', 'Sleeve']);
+  assert.deepStrictEqual(c.rows, [{ size: 'S', values: ['51', '70', '20.5'] }, { size: 'M', values: ['54', '72', '21'] }, { size: 'L', values: ['57', '74', '21.5'] }]);
+  assert.strictEqual(r.source.url, NIKE_OTHER);
+  assert.strictEqual(r.source.title, 'Illustrative Tee | Nike');
+  assert.ok(r.note.some((n) => /not checked by a person/.test(n)));
+});
+
+await test('a body chart is called a body chart, never the garment, in inches', async () => {
+  const r = await read(NIKE_OTHER, { [NIKE_OTHER]: { body: BODY_IN } });
+  assert.deepStrictEqual([r.charts[0].measures, r.charts[0].unit], ['body', 'in']);
+  assert.deepStrictEqual(r.charts[0].rows[1].values, ['37.5 - 41', '32 - 35']);
+  assert.ok(r.note.some((n) => /body measurements — the body each size is cut for, not the garment/.test(n)));
+  assert.ok(r.note.some((n) => /no finished-garment measurements here/.test(n)));
+});
+
+await test('a table whose page doesn’t say what it measures, or its unit, is labelled as not stated — never assumed', async () => {
+  assert.strictEqual(charts.unitOf('Measured laid flat, in cm.'), 'cm', '"in" as a word is not inches');
+  assert.strictEqual(charts.unitOf('Chest (in)'), 'in');
+  const html = page('<table><tr><th>Size</th><th>Chest</th><th>Length</th></tr><tr><td>S</td><td>96</td><td>70</td></tr><tr><td>M</td><td>102</td><td>72</td></tr></table>');
+  const r = await read(NIKE_OTHER, { [NIKE_OTHER]: { body: html } });
+  assert.deepStrictEqual([r.charts[0].measures, r.charts[0].unit], ['not-stated', null]);
+  assert.ok(r.note.some((n) => /doesn’t say whether these are body or garment/.test(n)));
+  assert.ok(r.note.some((n) => /no unit stated/.test(n)));
+});
+
+await test('an incomplete or sideways table keeps only what it gives; a table that isn’t a size chart is ignored', async () => {
+  const sideways = page('<p>Body measurements (cm)</p><table><tr><th>Size</th><th>S</th><th>M</th><th>L</th></tr><tr><td>Chest</td><td>88-96</td><td>96-104</td><td></td></tr><tr><td>Waist</td><td>73-81</td><td>81-89</td><td>89-97</td></tr></table>');
+  const r = await read(NIKE_OTHER, { [NIKE_OTHER]: { body: sideways } });
+  assert.deepStrictEqual(r.charts[0].columns, ['Chest', 'Waist']);
+  assert.deepStrictEqual(r.charts[0].rows.find((x) => x.size === 'L').values, ['', '89-97'], 'a missing value stays missing');
+  assert.deepStrictEqual([r.charts[0].measures, r.charts[0].unit], ['body', 'cm']);
+  const notChart = page('<table><tr><th>Delivery</th><th>Price</th></tr><tr><td>Standard</td><td>$5</td></tr><tr><td>Express</td><td>$15</td></tr></table>');
+  assert.strictEqual((await read(NIKE_OTHER, { [NIKE_OTHER]: { body: notChart } })).reason, 'no-chart');
+});
+
+await test('sizes with no measurements are shown as labels only, and said', async () => {
+  const html = page('<p>Pick a size.</p>', LD({ '@type': 'ProductGroup', name: 'Illustrative Tee', brand: 'Nike', hasVariant: ['S', 'M', 'L', 'XL'].map((size) => ({ '@type': 'Product', size })) }));
+  const r = await read(NIKE_OTHER, { [NIKE_OTHER]: { body: html } });
+  assert.strictEqual(r.status, 'labels-only');
+  assert.deepStrictEqual(r.sizes, ['S', 'M', 'L', 'XL']);
+  assert.deepStrictEqual(r.charts, []);
+  assert.match(r.note[0], /lists sizes S–XL but Fynd found no measurements/);
+});
+
+await test('malformed pages and markup in cells: nothing breaks, nothing executable comes back', async () => {
+  const broken = page('<script type="application/ld+json">{ not json</script><table><tr><td>oops');
+  assert.strictEqual((await read(NIKE_OTHER, { [NIKE_OTHER]: { body: broken } })).reason, 'no-chart');
+  const hostile = page('<p>Garment measurements, cm</p><table><tr><th>Size</th><th>Chest <img src=x onerror=alert(1)></th></tr><tr><td>S<script>alert(1)</script></td><td>50 &lt;b&gt;</td></tr><tr><td>M</td><td>53</td></tr></table>');
+  const r = await read(NIKE_OTHER, { [NIKE_OTHER]: { body: hostile } });
+  const text = JSON.stringify(r);
+  assert.ok(!/<script|onerror|<img/i.test(text), text);
+  assert.deepStrictEqual(r.charts[0].rows[0], { size: 'S', values: ['50 <b>'] }, 'entities read as text, drawn as text');
+});
+
+await test('an inaccessible page answers unavailable with its reason and the page’s link — never a chart from elsewhere', async () => {
+  const cases = [
+    [{ throws: 'unreachable' }, 'unreachable'], [{ throws: 'abort' }, 'timeout'], [{ status: 403 }, 'refused'], [{ status: 429 }, 'refused'],
+    [{ status: 500 }, 'http-error'], [{ headers: { 'content-type': 'application/pdf' }, body: '%PDF' }, 'not-html'],
+    [{ headers: { 'content-length': String(charts.MAX_BYTES + 1) }, body: 'x' }, 'too-large']
+  ];
+  for (const [route, reason] of cases) {
+    const r = await read(NIKE_OTHER, { [NIKE_OTHER]: route });
+    assert.deepStrictEqual([r.status, r.reason, r.charts.length], ['unavailable', reason, 0], reason);
+    assert.strictEqual(r.source.url, NIKE_OTHER);
+    assert.ok(r.note.length && !/runs (small|large)|true to size/i.test(r.note.join(' ')));
+  }
+});
+
+await test('redirects are followed by hand and held to the same brand’s site', async () => {
+  const log = [];
+  const moved = 'https://www.nike.com/t/illustrative-tee-moved-TEST001';
+  const r = await read(NIKE_OTHER, { [NIKE_OTHER]: { status: 301, headers: { location: '/t/illustrative-tee-moved-TEST001' } }, [moved]: { body: GARMENT_CM } }, log);
+  assert.strictEqual(r.status, 'ok');
+  assert.strictEqual(r.source.url, moved);
+  assert.ok(log.every((x) => x.redirect === 'manual'));
+  for (const location of ['https://evil.test/x', 'http://www.nike.com/t/x', 'https://127.0.0.1/admin', 'https://www.zara.com/us/en/x.html']) {
+    const away = await read(NIKE_OTHER, { [NIKE_OTHER]: { status: 302, headers: { location } } });
+    assert.strictEqual(away.reason, 'redirected-away', location);
+  }
+  const loop = await read(NIKE_OTHER, { [NIKE_OTHER]: { status: 302, headers: { location: NIKE_OTHER } } });
+  assert.strictEqual(loop.reason, 'too-many-redirects');
+});
+
+await test('cached by product page: asked twice, read once; another product is its own entry', async () => {
+  const log = [];
+  const opts = { fetch: fakeFetch({ [NIKE_OTHER]: { body: GARMENT_CM } }, log) };
+  const first = await charts.chartFor(`${NIKE_OTHER}?color=red`, opts);
+  const second = await charts.chartFor(`${NIKE_OTHER}?color=blue`, opts);
+  assert.strictEqual(log.length, 1);
+  assert.strictEqual(second.cached, true);
+  assert.deepStrictEqual(second.charts, first.charts);
+  const other = await charts.chartFor('https://www.nike.com/t/other-TEST002', { fetch: fakeFetch({}, log) });
+  assert.strictEqual(other.reason, 'unreachable', 'another product is never answered from this one’s entry');
+});
+
+await test('/api/size-recommendation?chart= needs no account, is GET only, rate limited, and reads no profile', async () => {
+  const chartCall = (jar, url, o) => call(recommendEndpoint, Object.assign({ method: 'GET', jar: jar || {}, query: { chart: url }, url: '/api/size-recommendation?chart=…' }, o));
+  const signedOut = await chartCall({}, 'https://www.uniqlo.com/us/en/products/E475378-000/00');
+  assert.strictEqual(signedOut.status, 200);
+  assert.strictEqual(signedOut.body.chart.status, 'ok');
+  assert.strictEqual(signedOut.res.getHeader('cache-control'), 'no-store, private');
+  assert.strictEqual((await chartCall({}, 'https://www.gap.com/p/1')).body.chart.reason, 'unsupported-retailer');
+  const headers = { 'x-forwarded-for': '198.51.100.77' };
+  let last;
+  for (let i = 0; i < 41; i += 1) last = await chartCall({}, 'https://www.gap.com/p/1', { headers });
+  assert.strictEqual(last.status, 429);
+  assert.strictEqual(last.body.reason, 'rate-limited');
+});
+
 section('privacy');
 
 await test('/api/account says nothing about suggestions or feedback', async () => {

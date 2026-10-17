@@ -133,6 +133,11 @@ global.fetch = async (url, options) => {
   if (href.startsWith('https://api.openwebninja.com/')) {
     return { ok: true, status: 200, json: async () => ({ status: 'OK', data: { products: [] } }), text: async () => '' };
   }
+  /* a brand's product page read for its sizing chart (api/_sizing/chart.js):
+     this suite's stand-in for a site that refuses automated readers */
+  if (href.startsWith('https://www.zara.com/')) {
+    return { ok: false, status: 403, headers: { get: () => null }, text: async () => 'Access denied' };
+  }
   const body = (options && options.body) || '';
   const reply = (payload, ok) => ({ ok: ok !== false, status: ok === false ? 400 : 200, json: async () => payload });
 
@@ -1409,6 +1414,54 @@ const linkFromInbox = (pattern) => {
     await page.check('input[name="shop"][value=""]');
     await page.click('#ask-form button[type="submit"]');
     await page.waitForSelector(`${NOW} .fit-panel[data-state="no-type"]`);
+    await context.close();
+  });
+
+  await test('"View sizing chart" on a result: fetched only when pressed, shown over the results, honest about what it is — signed out, with no profile', async () => {
+    const context = await openContext();
+    const page = await context.newPage();
+    await listingsFor(page);
+    await open(page, 'find-clothes.html');
+    await page.fill('#ask', 'hoodie');
+    await page.click('#ask-form button[type="submit"]');
+    await page.waitForSelector(`${NOW} .item-chart`);
+    assert.strictEqual(await page.locator(`${NOW} .item-chart`).count(), 3, 'every real listing has one');
+    const chartsAsked = () => apiHits.filter((p) => p === '/api/size-recommendation').length;
+    const before = chartsAsked();
+
+    /* the UNIQLO listing: Fynd's checked record, body and garment kept apart, values as published */
+    await page.click(`${NOW} .item-card:nth-child(1) .item-chart`);
+    await page.waitForSelector('#size-chart[data-state="ok"]');
+    assert.strictEqual(chartsAsked(), before + 1, 'one request, for this product only');
+    assert.match(await page.textContent('#size-chart-product'), /UNIQLO · Sweat Pullover Hoodie/);
+    const kinds = await page.$$eval('#size-chart .size-chart-kind', (ns) => ns.map((n) => n.textContent));
+    assert.deepStrictEqual(kinds, ['Body measurements — the body each size is cut for, not the garment', 'Finished-garment measurements — the clothing itself']);
+    assert.match(await page.textContent('#size-chart'), /Verified — checked by a person/);
+    assert.match(await page.textContent('#size-chart'), /This product’s own chart/);
+    assert.match(await page.textContent('#size-chart'), /Units: inches/);
+    const mRow = await page.$$eval('#size-chart-t0 tbody tr', (rows) => rows.map((r) => r.textContent).find((t) => t.startsWith('M')));
+    assert.strictEqual(mRow, 'M37 ¾ - 41');
+    assert.strictEqual(await page.getAttribute('#size-chart .size-chart-source a', 'href'), 'https://www.uniqlo.com/us/en/products/E475378-000/00');
+    assert.ok(!/runs (small|large)|true to size/i.test(await page.textContent('#size-chart')), 'no claim about how it runs');
+    assert.ok(page.url().includes('find-clothes.html'), 'still on the search');
+
+    /* closed with Escape: focus goes back to the button that opened it */
+    await page.keyboard.press('Escape');
+    assert.strictEqual(await page.$eval('#size-chart', (n) => n.open), false);
+    assert.strictEqual(await page.evaluate(() => document.activeElement.classList.contains('item-chart')), true);
+
+    /* a shop Fynd doesn't read: said plainly, with nothing invented */
+    await page.click(`${NOW} .item-card:nth-child(2) .item-chart`);
+    await page.waitForSelector('#size-chart[data-state="unavailable"]');
+    assert.strictEqual(await page.$$eval('#size-chart table', (ns) => ns.length), 0);
+    assert.match(await page.textContent('#size-chart'), /only from the sites of brands it knows/);
+    await page.click('#size-chart-close');
+    /* a brand page that refuses to be read: why, and the link, never a chart */
+    await page.click(`${NOW} .item-card:nth-child(3) .item-chart`);
+    await page.waitForSelector('#size-chart[data-state="unavailable"]');
+    assert.match(await page.textContent('#size-chart'), /The brand’s site refused Fynd’s request/);
+    assert.strictEqual(await page.getAttribute('#size-chart .size-chart-source a', 'href'), 'https://www.zara.com/us/en/boxy-t-shirt-p1.html', 'the page itself, to check by hand');
+    assert.strictEqual(await page.$$eval('#size-chart table', (ns) => ns.length), 0);
     await context.close();
   });
 
