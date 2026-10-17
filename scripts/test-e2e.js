@@ -177,12 +177,18 @@ const SHOP_PAGES = {
   'https://shop.example.test/pages/size-guide': shopPage('Size guide | Illustrative Shop', '<h1>Tops size guide</h1><p>Body measurements in inches.</p><table><tr><th>Size</th><th>Chest</th></tr><tr><td>S</td><td>34-36</td></tr><tr><td>M</td><td>38-40</td></tr></table>'),
   'https://shop.example.test/products/script-tee': '<!doctype html><html><head><title>Shop</title></head><body><div id="root"></div></body></html>',
   'https://shop.example.test/products/labels-tee': shopPage('Illustrative Labels Tee', '<p>Choose a size.</p>',
-    `<script type="application/ld+json">${JSON.stringify({ '@type': 'ProductGroup', name: 'Illustrative Labels Tee', hasVariant: ['S', 'M', 'L'].map((size) => ({ size })) })}</script>`)
+    `<script type="application/ld+json">${JSON.stringify({ '@type': 'ProductGroup', name: 'Illustrative Labels Tee', hasVariant: ['S', 'M', 'L'].map((size) => ({ size })) })}</script>`),
+  /* the shape of the first real failure: the page loads, names the
+     product, its fit and fabric, and carries no chart at all */
+  'https://shop.example.test/products/details-shorts': shopPage('Illustrative Sweat Shorts', '<p>Pick a size.</p>',
+    `<script type="application/ld+json">${JSON.stringify({ '@type': 'Product', name: 'Illustrative Sweat Shorts', brand: { name: 'Illustrative Brand' }, material: '100% Cotton', additionalProperty: [{ '@type': 'PropertyValue', name: 'Fit', value: 'Relaxed' }] })}</script>`)
 };
 charts.setTransport(async (url) => {
   transportAsked.push(url);
   const html = (u) => ({ status: 200, ok: true, headers: { get: (k) => (k.toLowerCase() === 'content-type' ? 'text/html' : null) }, text: async () => u });
   if (url.startsWith('https://www.zara.com/')) return { status: 403, ok: false, headers: { get: () => null }, text: async () => 'Access denied' };
+  /* a shop that never starts answering: the request is given up */
+  if (url.startsWith('https://silent.example.test/')) throw Object.assign(new Error('aborted'), { name: 'AbortError' });
   if (SHOP_PAGES[url]) return html(SHOP_PAGES[url]);
   throw new Error('unreachable');
 });
@@ -1364,15 +1370,43 @@ const linkFromInbox = (pattern) => {
     assert.match(text, /refused Fynd’s request for this page\. Fynd doesn’t try to get around that/);
     assert.match(text, /We couldn’t retrieve a usable sizing chart from this product page\. You can open the original product page or try the retailer’s official size guide\./);
     assert.strictEqual(await page.getAttribute('#fit-result .size-chart-source a', 'href'), 'https://www.zara.com/us/en/boxy-t-shirt-p1.html');
-    assert.match(await page.textContent('#fit-result-title'), /We couldn’t retrieve a sizing chart/);
+    assert.strictEqual(await page.textContent('#fit-result-title'), 'We couldn’t read the product page');
     text = await ask('https://shop.example.test/products/script-tee', 'unavailable');
     assert.match(text, /builds its content with JavaScript/);
+    assert.strictEqual(await page.textContent('#fit-result-title'), 'Page read — no sizing chart found');
+    text = await ask('https://silent.example.test/products/tee', 'unavailable');
+    assert.match(text, /didn’t start answering within a few seconds/);
+    assert.ok(!/took too long/.test(text));
+    assert.strictEqual(await page.textContent('#fit-result-title'), 'We couldn’t read the product page');
     text = await ask('https://shop.example.test/products/labels-tee', 'labels-only');
     assert.match(text, /lists sizes S–L, but Fynd found no measurements/);
     assert.match(text, /Sizes listed: S, M, L \(labels only — no measurements\)/);
     text = await ask('http://169.254.169.254/latest/meta-data/', 'unavailable');
     assert.match(text, /only reads public web pages/);
     assert.ok(!transportAsked.some((u) => /169\.254|localhost|127\.0\.0\.1/.test(u)), 'a private address was never asked for');
+    await context.close();
+  });
+
+  await test('REGRESSION: a product page that loads with no chart says the page was read — its name, fit and fabric shown, what was tried listed, and no timeout claimed', async () => {
+    const context = await openContext();
+    const page = await context.newPage();
+    await open(page, 'index.html');
+    const url = 'https://shop.example.test/products/details-shorts';
+    await page.fill('#fit-url', `${url}?utm_campaign=pmax&utm_source=google&utm_medium=cpc#reviews`);
+    await page.press('#fit-url', 'Enter');
+    await page.waitForSelector('#fit-result[data-state="unavailable"]');
+    assert.strictEqual(await page.textContent('#fit-result-title'), 'Page read — no sizing chart found');
+    const text = await page.textContent('#fit-result');
+    assert.ok(!/took too long|didn’t start answering|hadn’t finished arriving|couldn’t be reached/.test(text), text);
+    assert.match(text, /The page Fynd received has no size table it could read/);
+    assert.match(text, /The product page itself did load/);
+    const facts = await page.$$eval('#fit-result .size-chart-facts dt, #fit-result .size-chart-facts dd', (ns) => ns.map((n) => n.textContent));
+    assert.deepStrictEqual(facts.slice(facts.indexOf('Product')), ['Product', 'Illustrative Brand · Illustrative Sweat Shorts', 'Fit, as the page says', 'Relaxed', 'Fabric, as the page says', '100% Cotton']);
+    assert.strictEqual(await page.$$eval('#fit-result table', (ns) => ns.length), 0, 'no measurements invented');
+    assert.ok(!/Verified|Unverified/.test(text), 'a page read is not presented as checked sizing');
+    assert.match(await page.textContent('#fit-result .size-chart-trace'), /What Fynd tried.*answered 200 · text\/html/s);
+    assert.ok(transportAsked.includes(url), 'tracking was dropped before asking');
+    assert.ok(!transportAsked.some((u) => /utm_/.test(u)), 'no advertising parameters were sent on');
     await context.close();
   });
 

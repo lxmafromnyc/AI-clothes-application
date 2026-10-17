@@ -2091,13 +2091,22 @@ reads no profile, and only the link travels. It is rate limited per client
    any non-public address (private, loopback, link-local and cloud metadata,
    carrier-grade NAT, multicast, reserved, and their IPv6 forms), so a name can't
    be pointed somewhere private between a check and the request. Tracking
-   parameters (`utm_*`, `gclid`, …) and fragments are dropped.
+   parameters (`utm_*`, `gclid`, …) and fragments are dropped. On a brand's own
+   site Fynd has records for (UNIQLO, Zara, Nike…), the path names the product,
+   so every query parameter is dropped too: a pasted
+   `…/products/E471808-000/00?colorDisplayCode=03&sizeDisplayCode=005&utm_…` is
+   read as `…/products/E471808-000/00`. Other shops keep any non-tracking query,
+   since some name the product there (`product.do?pid=…`).
 2. **Fynd's own record of exactly that product** (on its brand's own site, by its
    code, as a favourite piece is found) is used as it stands: body chart and
    finished-garment chart kept apart, every value in the brand's words and units,
    its sources, and its own verification status.
-3. **The product page**, read once: redirects followed by hand, every new address
-   checked again; 8 seconds; 1.5 MB; HTML only. Its `<table>`s are read
+3. **The product page**, read once: redirects followed by hand (at most three),
+   every new address checked again; HTML only; 3 MB after decompression (gzip,
+   deflate and Brotli are asked for, since large shop pages are slow
+   uncompressed). One 9-second budget covers the page **and** any guides it
+   links to, so a lookup can't outlast the serverless function; the shop must
+   start answering within 6 seconds of it. Its `<table>`s are read
    deterministically (no model): a table counts only with a size column and at
    least one measurement column (sideways tables are turned).
 4. **The size guide it links to**, when the page has no table: up to two links on
@@ -2111,10 +2120,29 @@ What a table measures — **body**, **finished garment** or **not stated** — a
 unit come only from the words around it ("in" as an ordinary word is not
 inches). Values are kept exactly as written and nothing is converted; a missing
 value stays missing, and a chest-only chart stays chest-only. A chart read this
-way is **not verified**: reading is not checking. A page that is refused (401,
-403, 429 — never worked around), drawn by script, slow, too big or not HTML
-answers **unavailable** with the reason, "We couldn't retrieve a usable sizing
-chart from this product page…", the page's link and any size guide link it had.
+way is **not verified**: reading is not checking.
+
+An **unavailable** answer names which of these happened, and the heading says
+whether the page was read at all:
+
+| What happened | `reason` | Heading |
+|---|---|---|
+| The shop never started answering | `no-answer` | We couldn't read the product page |
+| It answered, but the page hadn't finished arriving | `slow-page` | We couldn't read the product page |
+| Refused (401, 403, 429 — never worked around) or an error status | `refused`, `http-error` | We couldn't read the product page |
+| Not HTML, too big, a bad redirect, unreachable, a private address | `not-html`, `too-large`, … | We couldn't read the product page |
+| The page loaded; it links a size guide that couldn't be read | `guide-unreadable` | Page read — its size guide couldn't be |
+| The page loaded; it is drawn by script and held no table | `needs-script` | Page read — no sizing chart found |
+| The page loaded and held no table and no readable guide | `no-chart` | Page read — no sizing chart found |
+
+A page that loaded is never reported as slow. When it loaded, what it said about
+the product is still shown — its name and brand, and its fit and fabric where its
+JSON-LD gives them (`material`, or an `additionalProperty` named fit, fabric or
+composition) — marked as the page's words, with no measurements. Every answer
+also carries `trace`: for each address asked, the address finally read, each
+redirect, the status, content type, bytes, milliseconds, and how far it got
+(`connect`, `body`, `done`). The page lists it under **What Fynd tried**, so a
+failure on the live site can be read off the screen.
 
 Each answer carries the product and brand (from the page's JSON-LD), the retailer
 (its `og:site_name`, or host), the market (only when the address or the page's

@@ -53,13 +53,20 @@ const dns = require('dns');
 const net = require('net');
 const http = require('http');
 const https = require('https');
+const zlib = require('zlib');
 const store = require('../_store');
 const sizingSchema = require('./schema');
 const { RECORDS } = require('./records');
 const engine = require('./engine');
 
-const TIMEOUT_MS = 8000;
-const MAX_BYTES = 1500000;
+/* One deadline for the whole lookup — the product page, its redirects
+   and any size guide it links to — kept inside what a serverless
+   function is given. The page must start answering within
+   HEADERS_MS; what is left of the deadline is for its body and guides. */
+const DEADLINE_MS = 9000;
+const HEADERS_MS = 6000;
+const TIMEOUT_MS = DEADLINE_MS;
+const MAX_BYTES = 3000000;
 const MAX_REDIRECTS = 3;
 const CACHE_OK_SECONDS = 6 * 60 * 60;
 const CACHE_MISS_SECONDS = 30 * 60;
@@ -126,6 +133,13 @@ function checkUrl(raw) {
     return { error: 'blocked-address' };
   }
   [...u.searchParams.keys()].forEach((k) => { if (TRACKING.test(k)) u.searchParams.delete(k); });
+  /* A brand Fynd knows names the product in the path (UNIQLO's
+     E471808-000/00, Nike's style code, Zara's p00761810): its query only
+     picks a colour or size of that product (colorDisplayCode,
+     sizeDisplayCode, v1=…), which no size chart depends on, so the
+     product's canonical page is what is read. Any other shop keeps its
+     query — gap.com's ?pid= is the product. */
+  if (HOSTS.get(host)) [...u.searchParams.keys()].forEach((k) => u.searchParams.delete(k));
   const query = u.searchParams.toString();
   return {
     url: `${u.protocol}//${host}${u.pathname}${query ? `?${query}` : ''}`,
@@ -168,81 +182,130 @@ function guardedLookup(hostname, options, callback) {
   });
 }
 
-function guardedTransport(url, init) {
+function request(url, init, lookup) {
   return new Promise((resolve, reject) => {
     const u = new URL(url);
     const lib = u.protocol === 'https:' ? https : http;
-    const req = lib.request(u, { method: 'GET', headers: init.headers, lookup: guardedLookup, signal: init.signal, timeout: TIMEOUT_MS }, (res) => {
-      const chunks = [];
-      let total = 0;
-      let over = false;
-      res.on('data', (chunk) => {
-        total += chunk.length;
-        if (total > MAX_BYTES) { over = true; res.destroy(); return; }
-        chunks.push(chunk);
-      });
-      const done = () => resolve({
+    const req = lib.request(u, { method: 'GET', headers: init.headers, lookup, signal: init.signal }, (res) => {
+      /* answered: the headers are here. The body is read on request, and
+         an abort from here on is the body being too slow, not the shop
+         not answering. Compressed bodies are inflated as they arrive, and
+         the size limit applies to what they inflate to. */
+      const encoding = String(res.headers['content-encoding'] || '').toLowerCase();
+      const inflate = encoding === 'br' ? zlib.createBrotliDecompress() : encoding === 'gzip' ? zlib.createGunzip() : encoding === 'deflate' ? zlib.createInflate() : null;
+      const stream = inflate ? res.pipe(inflate) : res;
+      if (inflate) res.on('error', (err) => inflate.destroy(err));
+      resolve({
         status: res.statusCode,
         ok: res.statusCode >= 200 && res.statusCode < 300,
         headers: { get: (name) => { const v = res.headers[String(name).toLowerCase()]; return Array.isArray(v) ? v.join(', ') : (v || null); } },
         /* null: the body ran past MAX_BYTES and was cut off */
-        text: async () => (over ? null : Buffer.concat(chunks).toString('utf8'))
+        text: () => new Promise((done, fail) => {
+          const chunks = [];
+          let total = 0;
+          let over = false;
+          stream.on('data', (chunk) => {
+            total += chunk.length;
+            if (total > MAX_BYTES) { over = true; res.destroy(); stream.destroy(); done(null); return; }
+            chunks.push(chunk);
+          });
+          let ended = false;
+          stream.on('end', () => { ended = true; if (!over) done(Buffer.concat(chunks).toString('utf8')); });
+          stream.on('error', (err) => { if (!over) fail(err); });
+          /* cut off part-way (an abort, a dropped connection) */
+          stream.on('close', () => { if (!ended && !over) fail(Object.assign(new Error('the page stopped arriving'), { name: init.signal && init.signal.aborted ? 'AbortError' : 'Error' })); });
+        }),
+        /* nothing more is wanted from this answer */
+        discard: () => { res.destroy(); }
       });
-      res.on('end', done);
-      res.on('close', done);
-      res.on('error', (err) => (over ? done() : reject(err)));
     });
-    req.on('timeout', () => req.destroy(Object.assign(new Error('timed out'), { name: 'AbortError' })));
     req.on('error', reject);
     req.end();
   });
 }
+
+/* every real request: through the lookup that refuses non-public addresses */
+const guardedTransport = (url, init) => request(url, init, guardedLookup);
 
 let transport = guardedTransport;
 /* for the browser suites, whose servers answer in-process and must
    never reach out */
 const setTransport = (fn) => { transport = fn || guardedTransport; };
 
+/* A deadline a whole lookup shares. */
+const budgetOf = (ms) => { const until = Date.now() + ms; return { left: () => Math.max(0, until - Date.now()) }; };
+
 /* Reads a page from a checked address. Redirects are followed by hand
-   so each new address is checked again before it is asked for. */
-async function fetchPage(checked, fetchImpl) {
+   so each new address is checked again before it is asked for. What
+   happened is recorded either way — the status, how long it took, the
+   redirects, the content type and how much arrived — and a failure
+   says which step failed:
+
+     no-answer   the shop didn't start answering within HEADERS_MS (or
+                 the deadline): nothing came back at all
+     slow-page   the shop answered, but the page hadn't finished arriving
+                 by the deadline
+     refused     401, 403 or 429 — said, never worked around
+     …           and the rest below */
+async function fetchPage(checked, fetchImpl, budget) {
   const doFetch = fetchImpl || transport;
+  const clock = budget || budgetOf(DEADLINE_MS);
+  const started = Date.now();
+  const trace = { requested: checked.url, url: checked.url, redirects: [], status: null, contentType: null, bytes: null, ms: null, phase: 'connect' };
+  const finish = (out) => Object.assign(out, { trace: Object.assign(trace, { ms: Date.now() - started }) });
   let url = checked.url;
+  if (clock.left() <= 0) return finish({ failed: 'no-answer' });
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), clock.left());
   try {
     for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
+      trace.url = url;
+      trace.phase = 'connect';
+      const headersTimer = setTimeout(() => controller.abort(), Math.min(HEADERS_MS, clock.left()));
       let response;
       try {
         response = await doFetch(url, {
           redirect: 'manual',
           signal: controller.signal,
-          headers: { 'User-Agent': UA, Accept: 'text/html,application/xhtml+xml', 'Accept-Language': 'en-US,en;q=0.8' }
+          headers: { 'User-Agent': UA, Accept: 'text/html,application/xhtml+xml', 'Accept-Language': 'en-US,en;q=0.8', 'Accept-Encoding': 'gzip, deflate, br' }
         });
       } catch (err) {
-        if (err && (err.code === 'EBLOCKED' || err.message === 'blocked-address')) return { failed: 'blocked-address' };
-        return { failed: err && err.name === 'AbortError' ? 'timeout' : 'unreachable' };
+        if (err && (err.code === 'EBLOCKED' || err.message === 'blocked-address')) return finish({ failed: 'blocked-address' });
+        return finish({ failed: (err && err.name === 'AbortError') || controller.signal.aborted ? 'no-answer' : 'unreachable' });
+      } finally {
+        clearTimeout(headersTimer);
       }
+      trace.status = response.status;
+      trace.contentType = (response.headers && response.headers.get && response.headers.get('content-type')) || null;
       if (response.status >= 300 && response.status < 400) {
         const location = response.headers && response.headers.get && response.headers.get('location');
-        if (!location) return { failed: 'bad-redirect' };
+        if (response.discard) response.discard();
+        if (!location) return finish({ failed: 'bad-redirect' });
         let next;
-        try { next = checkUrl(new URL(location, url).toString()); } catch (err) { return { failed: 'bad-redirect' }; }
-        if (next.error) return { failed: 'redirected-away' };
+        try { next = checkUrl(new URL(location, url).toString()); } catch (err) { return finish({ failed: 'bad-redirect' }); }
+        trace.redirects.push({ status: response.status, to: next.error ? String(location).slice(0, 200) : next.url });
+        if (next.error) return finish({ failed: 'redirected-away' });
         url = next.url;
         continue;
       }
-      if (response.status === 401 || response.status === 403 || response.status === 429) return { failed: 'refused', status: response.status };
-      if (!response.ok) return { failed: 'http-error', status: response.status };
-      const type = String((response.headers && response.headers.get && response.headers.get('content-type')) || '');
-      if (type && !/html/i.test(type)) return { failed: 'not-html' };
-      const body = await readCapped(response);
-      if (body === null) return { failed: 'too-large' };
-      return { html: body, url };
+      if (response.status === 401 || response.status === 403 || response.status === 429) { if (response.discard) response.discard(); return finish({ failed: 'refused', status: response.status }); }
+      if (!response.ok) { if (response.discard) response.discard(); return finish({ failed: 'http-error', status: response.status }); }
+      if (trace.contentType && !/html/i.test(trace.contentType)) { if (response.discard) response.discard(); return finish({ failed: 'not-html' }); }
+      trace.phase = 'body';
+      let body;
+      try {
+        body = await readCapped(response);
+      } catch (err) {
+        return finish({ failed: (err && err.name === 'AbortError') || controller.signal.aborted ? 'slow-page' : 'unreadable' });
+      }
+      if (body === null) return finish({ failed: 'too-large' });
+      trace.bytes = Buffer.byteLength(body);
+      trace.phase = 'done';
+      return finish({ html: body, url });
     }
-    return { failed: 'too-many-redirects' };
+    return finish({ failed: 'too-many-redirects' });
   } catch (err) {
-    return { failed: err && err.name === 'AbortError' ? 'timeout' : 'unreadable' };
+    return finish({ failed: err && err.name === 'AbortError' ? (trace.phase === 'body' ? 'slow-page' : 'no-answer') : 'unreadable' });
   } finally {
     clearTimeout(timer);
   }
@@ -307,7 +370,7 @@ function titleOf(html) {
 /* The product's own JSON-LD: its name, brand, code and the sizes it is
    sold in, as labels. Malformed blocks are skipped. */
 function productData(html) {
-  const out = { name: null, brand: null, sku: null, sizes: [] };
+  const out = { name: null, brand: null, sku: null, sizes: [], material: null, fit: null };
   const blocks = String(html).match(/<script[^>]+type=["']application\/ld\+json["'][^>]*>[\s\S]*?<\/script>/gi) || [];
   const nodes = [];
   blocks.slice(0, 20).forEach((block) => {
@@ -335,6 +398,11 @@ function productData(html) {
   [].concat(product.hasVariant || []).forEach((v) => v && typeof v === 'object' && [].concat(v.size || []).forEach(add));
   [].concat(product.offers || []).forEach((o) => o && typeof o === 'object' && [].concat(o.size || []).forEach(add));
   out.sizes = sizes.slice(0, 30);
+  /* fabric and fit only where the product's own data names them */
+  const props = [].concat(product.additionalProperty || []).filter((x) => x && typeof x === 'object');
+  const prop = (re) => { const hit = props.find((x) => re.test(String(x.name || ''))); return hit ? str(hit.value) : null; };
+  out.material = str(Array.isArray(product.material) ? product.material.join(', ') : product.material) || prop(/^(material|fabric|composition)s?$/i);
+  out.fit = prop(/^fit$/i);
   return out;
 }
 
@@ -476,6 +544,9 @@ const REASONS = {
   'blocked-address': 'Fynd only reads public web pages, and that address points somewhere it won’t go.',
   refused: 'The retailer’s site refused Fynd’s request for this page. Fynd doesn’t try to get around that.',
   timeout: 'The retailer’s page took too long to answer.',
+  'no-answer': 'The retailer’s site didn’t start answering within a few seconds. Some shops hold back automated requests rather than refusing them; Fynd doesn’t try to get around that.',
+  'slow-page': 'The retailer’s site answered, but the page hadn’t finished arriving in time.',
+  'guide-unreadable': 'The product page loaded and links to a size guide, but that guide couldn’t be read.',
   unreachable: 'The retailer’s page couldn’t be reached.',
   'http-error': 'The retailer’s page answered with an error.',
   'redirected-away': 'The page redirected to an address Fynd won’t read.',
@@ -487,6 +558,8 @@ const REASONS = {
   'needs-script': 'This page builds its content with JavaScript after it loads, which Fynd doesn’t run, so no size table was in what it received.',
   'no-chart': 'The page Fynd received has no size table it could read, and no size guide it could read was linked from it.'
 };
+/* the page itself was read: what failed was finding a chart in it */
+const PAGE_READ = ['no-chart', 'needs-script', 'guide-unreadable'];
 const COULD_NOT = 'We couldn’t retrieve a usable sizing chart from this product page. You can open the original product page or try the retailer’s official size guide.';
 
 
@@ -561,6 +634,7 @@ function fromPage(html, checked, landedUrl, guides) {
   const base = {
     from: 'live-page',
     product: { brand: data.brand || checked.brand || null, name: data.name, code: data.sku },
+    details: { material: data.material, fit: data.fit },
     retailer: retailerOf(html, new URL(pageUrl).hostname),
     source: { title: pageTitle, url: pageUrl, kind: 'product-page', retrievedAt: new Date().toISOString().slice(0, 10) },
     guides: (guides || []).map((g) => ({ url: g.url, read: Boolean(g.html), reason: g.failed || null })),
@@ -573,8 +647,9 @@ function fromPage(html, checked, landedUrl, guides) {
   };
   if (charts.length) return Object.assign(base, { status: 'ok', charts: charts.slice(0, 4) });
   if (data.sizes.length) return Object.assign(base, { status: 'labels-only', charts: [] });
-  const reason = drawnByScript(html) ? 'needs-script' : 'no-chart';
-  return Object.assign(unavailable(checked, reason), { product: base.product, retailer: base.retailer, source: base.source, guides: base.guides, market: base.market });
+  const triedGuides = (guides || []).length && (guides || []).every((g) => !g.html);
+  const reason = triedGuides ? 'guide-unreadable' : drawnByScript(html) ? 'needs-script' : 'no-chart';
+  return Object.assign(unavailable(checked, reason), { product: base.product, details: base.details, retailer: base.retailer, source: base.source, guides: base.guides, market: base.market, sizes: [] });
 }
 
 /* The short note, built only from what was found. */
@@ -583,6 +658,12 @@ function noteFor(result) {
   const lines = [];
   if (result.status === 'unavailable') {
     lines.push(REASONS[result.reason] || REASONS.unreadable);
+    if (result.reason === 'guide-unreadable') {
+      result.guides.forEach((g) => { if (g.reason) lines.push(`The size guide at ${g.url}: ${(REASONS[g.reason] || REASONS.unreadable).replace(/^The retailer’s (page|site)/, 'it')}`); });
+    }
+    if (PAGE_READ.includes(result.reason) && result.product && (result.product.name || (result.details && (result.details.material || result.details.fit)))) {
+      lines.push('The product page itself did load; what it said about the product is shown below, without a measurement chart.');
+    }
     if (result.source && result.source.url) lines.push(COULD_NOT);
     return lines;
   }
@@ -636,23 +717,30 @@ async function chartFor(rawUrl, options) {
     const cached = await store.get(key).catch(() => null);
     if (cached && cached.source && cached.source.url && checkUrl(cached.source.url).url === checked.url) return Object.assign(cached, { cached: true });
   }
-  const page = await fetchPage(checked, opts.fetch);
+  /* one deadline for the page, its redirects and its size guides */
+  const budget = budgetOf(opts.deadlineMs || DEADLINE_MS);
+  const page = await fetchPage(checked, opts.fetch, budget);
+  const traces = [page.trace];
   let result;
   if (page.failed) {
     result = unavailable(checked, page.failed, page.status ? { httpStatus: page.status } : null);
   } else {
-    /* no table on the page: the size guide it links to, read the same way */
+    /* no table on the page: the size guide it links to, read the same
+       way, in what is left of the deadline */
     let guides = [];
     if (!chartsIn(page.html, page.url).length) {
       guides = await Promise.all(guideLinks(page.html, page.url).slice(0, 2).map(async (url) => {
         const g = checkUrl(url);
         if (g.error) return { url, failed: g.error };
-        const got = await fetchPage(g, opts.fetch);
+        const got = await fetchPage(g, opts.fetch, budget);
+        traces.push(got.trace);
         return got.failed ? { url, failed: got.failed } : { url: got.url, html: got.html };
       }));
     }
     result = fromPage(page.html, checked, page.url, guides);
   }
+  /* what was asked for, and what came back: no profile, nothing private */
+  result.trace = traces.filter(Boolean);
   result.note = noteFor(result);
   /* only kept under the address it was asked for */
   if (result.source) result.source.url = result.source.url || checked.url;
@@ -672,4 +760,4 @@ function recordFor(checked) {
   return null;
 }
 
-module.exports = { chartFor, checkUrl, isPublicAddress, guardedLookup, marketOf, fetchPage, setTransport, productData, tablesOf, sizeTable, guideLinks, drawnByScript, unitOf, kindOf, fromPage, fromRecord, noteFor, plain, SUPPORTED_BRANDS, MAX_BYTES, COULD_NOT };
+module.exports = { request, DEADLINE_MS, HEADERS_MS, PAGE_READ, chartFor, checkUrl, isPublicAddress, guardedLookup, marketOf, fetchPage, setTransport, productData, tablesOf, sizeTable, guideLinks, drawnByScript, unitOf, kindOf, fromPage, fromRecord, noteFor, plain, SUPPORTED_BRANDS, MAX_BYTES, COULD_NOT };

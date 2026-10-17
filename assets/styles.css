@@ -431,6 +431,9 @@ strong { font-weight: 600; }
 .size-chart-scroll { margin-top: 8px; overflow-x: auto; }
 .size-chart .compare-table { min-width: 0; }
 .size-chart-labels, .size-chart-fit { margin-top: 14px; font-size: 14px; color: var(--color-text-2); }
+.size-chart-trace { margin-top: 14px; font-size: 13px; color: var(--color-text-2); }
+.size-chart-trace summary { cursor: pointer; font-weight: 500; color: var(--color-text); }
+.size-chart-trace ul { display: grid; gap: 4px; margin: 8px 0 0; padding-left: 18px; overflow-wrap: anywhere; }
 .size-chart-source { margin-top: 12px; font-size: 13.5px; color: var(--color-text-2); overflow-wrap: anywhere; }
 .item-fit { margin-top: 6px; font-size: 13px; font-weight: 500; color: var(--color-text-2); }
 .item-fit--ok { color: var(--color-primary-ink); }
