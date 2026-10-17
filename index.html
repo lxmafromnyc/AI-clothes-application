@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Fynd — Find clothes that fit you</title>
-<meta name="description" content="Choose the clothing you want, search across brands like Nike, UNIQLO, Zara and H&amp;M, and let your Fynd fit profile personalise sizing where reliable measurements exist.">
+<title>Fynd — Find Fit: any product’s sizing chart</title>
+<meta name="description" content="Paste any clothing product link. Fynd retrieves its sizing chart, explains what it measures, and compares the fit with clothes you already own.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23111111'/><text x='16' y='23' font-family='Helvetica,Arial,sans-serif' font-size='19' font-weight='700' fill='white' text-anchor='middle'>F</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -27,7 +27,7 @@
 </head>
 <body>
 
-<a class="skip-link" href="#shop">Skip to shopping</a>
+<a class="skip-link" href="#find-fit">Skip to Find Fit</a>
 
 <header class="site-header">
   <div class="container">
@@ -39,7 +39,7 @@
       <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" aria-label="Open menu"><span></span></button>
       <nav aria-label="Main">
         <ul class="nav-links" id="site-nav">
-          <li><a href="index.html" aria-current="page">Shop</a></li>
+          <li><a href="index.html" aria-current="page">Find Fit</a></li>
           <li><a href="compare.html">Compare</a></li>
           <li><a href="fit-profile.html">Fit profile</a></li>
           <li><a href="pricing.html">Pricing</a></li>
@@ -53,54 +53,39 @@
 
 <main id="main">
 
-  <!-- The first screen is shopping: say what you want, or pick a type of
-       clothing, and the Search page finds it across the brands and
-       retailers Fynd's product search reaches. Nothing here asks about
-       fit. A fit profile is optional, kept on fit-profile.html, and used
-       by the search on its own once there is one. -->
-  <section class="container hero shop-hero" id="shop" aria-labelledby="shop-title">
-    <h1 id="shop-title">What are you shopping for?</h1>
-    <p class="lead">Pick a type of clothing, or describe it in your own words. Fynd searches Nike, UNIQLO, Zara, H&amp;M and more.</p>
+  <!-- Find Fit: the product's link is the input, its sizing chart the
+       output. assets/find-fit.js sends the link to
+       /api/size-recommendation?chart= (api/_sizing/chart.js), which reads
+       the product's own page — or the size guide it links to — and
+       answers with the chart as published, or why there isn't one. No
+       account is needed; a saved fit profile adds a comparison only
+       where the chart supports one. -->
+  <section class="container hero shop-hero" id="find-fit" aria-labelledby="find-fit-title">
+    <h1 id="find-fit-title">Find Fit</h1>
+    <p class="lead">Paste any clothing product link. Get its sizing chart, understand the measurements, and compare the fit with clothes you already own.</p>
 
     <div class="shop-card">
-      <!-- A plain GET to the Search page: find-clothes.html?q=… runs the
-           search exactly as if it had been typed there. -->
-      <form class="shop-search" id="shop-search" action="find-clothes.html" method="get" role="search">
-        <label class="sr-only" for="shop-q">Describe the clothes you are looking for</label>
-        <input class="profile-input" type="search" id="shop-q" name="q" maxlength="400" autocomplete="off" placeholder="black oversized hoodie under $80" required>
-        <button class="btn btn-primary" type="submit">Search</button>
+      <form class="shop-search fit-url" id="fit-url-form" novalidate>
+        <label class="sr-only" for="fit-url">Clothing product link</label>
+        <input class="profile-input" type="url" id="fit-url" name="url" inputmode="url" maxlength="2000" autocomplete="off" spellcheck="false" placeholder="Paste a clothing product URL..." aria-describedby="fit-url-hint fit-url-error">
+        <button class="btn btn-primary" type="submit" id="fit-url-submit">Find sizing chart</button>
       </form>
-
-      <h2 class="shop-label" id="shop-types-title">Or choose a type of clothing</h2>
-      <ul class="garment-cards shop-types" aria-labelledby="shop-types-title">
-          <li class="garment-card"><a class="garment-card-body" href="find-clothes.html?shop=tshirts">
-            <svg class="garment-card-art" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M18 10 L9.5 14.5 L12.5 21 L15.5 19.5 V39 H32.5 V19.5 L35.5 21 L38.5 14.5 L30 10 C28.5 13 19.5 13 18 10 Z"/></svg>
-            <span class="garment-card-title">T-shirts</span>
-          </a></li>
-          <li class="garment-card"><a class="garment-card-body" href="find-clothes.html?shop=hoodies">
-            <svg class="garment-card-art" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M18.5 13 L11 17 L7.5 36.5 L12 37.5 L15 23 V40 H33 V23 L36 37.5 L40.5 36.5 L37 17 L29.5 13"/><path d="M18.5 13 C17.5 6 30.5 6 29.5 13 C27.5 16 20.5 16 18.5 13 Z"/><path d="M19 33.5 H29 L27.5 28.5 H20.5 Z"/><path d="M22 16 V20.5 M26 16 V20.5"/></svg>
-            <span class="garment-card-title">Hoodies</span>
-          </a></li>
-          <li class="garment-card"><a class="garment-card-body" href="find-clothes.html?shop=sweatshirts">
-            <svg class="garment-card-art" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M18.5 10 L11 14.5 L7.5 36.5 L12 37.5 L15 21 V39 H33 V21 L36 37.5 L40.5 36.5 L37 14.5 L29.5 10 C28 13 20 13 18.5 10 Z"/><path d="M15 35.5 H33 M8 33.5 L12.5 34.5 M40 33.5 L35.5 34.5"/></svg>
-            <span class="garment-card-title">Sweatshirts</span>
-          </a></li>
-          <li class="garment-card"><a class="garment-card-body" href="find-clothes.html?shop=jeans">
-            <svg class="garment-card-art" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M15 8 H33 L35 41 H26.5 L24 18 L21.5 41 H13 Z"/><path d="M15 12 H33 M24 12 V18 M16.5 12 C16.5 15 18.5 16.5 21 16.5 M31.5 12 C31.5 15 29.5 16.5 27 16.5"/></svg>
-            <span class="garment-card-title">Jeans</span>
-          </a></li>
-          <li class="garment-card"><a class="garment-card-body" href="find-clothes.html?shop=pants">
-            <svg class="garment-card-art" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M15 8 H33 L35 41 H26.5 L24 18 L21.5 41 H13 Z"/><path d="M15 12 H33 M19.5 16 L18 37 M28.5 16 L30 37"/></svg>
-            <span class="garment-card-title">Pants</span>
-          </a></li>
-          <li class="garment-card"><a class="garment-card-body" href="find-clothes.html?shop=sweatpants">
-            <svg class="garment-card-art" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M14.5 8 H33.5 L34.5 36 L33.5 41 H25.5 L25 36 L24 18 L23 36 L22.5 41 H14.5 L13.5 36 Z"/><path d="M14.5 12.5 H33.5 M13.5 36 H23 M25 36 H34.5 M22.5 12.5 L21.5 17 M25.5 12.5 L26.5 17"/></svg>
-            <span class="garment-card-title">Sweatpants</span>
-          </a></li>
-      </ul>
+      <p class="fit-url-hint" id="fit-url-hint">A link to one product&rsquo;s page &mdash; from Nike, UNIQLO, Zara, H&amp;M or another shop.</p>
+      <p class="form-error" id="fit-url-error" role="alert"></p>
     </div>
 
-    <p class="guide-alt">Want sizes picked for you? <a class="guide-link" href="fit-profile.html">Set up your fit profile</a> &mdash; optional, and searching never needs it.</p>
+    <p class="guide-alt">Saved <a class="guide-link" href="fit-profile.html">a fit profile</a>? Fynd compares a chart with the clothes you own where the chart allows it. It&rsquo;s optional.</p>
+  </section>
+
+  <!-- The answer, on this page: what was read, from where, and what it
+       measures. Drawn as text by assets/size-chart.js. -->
+  <section class="container fit-result" id="fit-result" aria-labelledby="fit-result-title" hidden>
+    <div class="fit-result-card" id="fit-result-card">
+      <p class="fit-result-asked" id="fit-result-asked"></p>
+      <h2 class="fit-result-title" id="fit-result-title" tabindex="-1">Sizing chart</h2>
+      <div class="size-chart-body" id="fit-result-body" aria-live="polite"></div>
+      <div class="fit-compare" id="fit-compare" hidden></div>
+    </div>
   </section>
 
   <section class="section section--flush" id="how">
@@ -109,18 +94,18 @@
       <ol class="steps">
         <li class="step">
           <span class="step-num">1</span>
-          <h3>Choose your clothing</h3>
-          <p>Pick T-shirts, hoodies, jeans and more, or describe exactly what you want &mdash; colour, fit, price, occasion.</p>
+          <h3>Paste a product link</h3>
+          <p>Any clothing product page. Fynd reads that page on its own server &mdash; never anything private, and never your profile.</p>
         </li>
         <li class="step">
           <span class="step-num">2</span>
-          <h3>Search across brands</h3>
-          <p>Fynd finds matching pieces from the brands and retailers its product search reaches, and links you to each one.</p>
+          <h3>See its sizing chart</h3>
+          <p>The chart as the shop publishes it, with its units and source, and a note on what it measures: your body, the garment, or only size labels.</p>
         </li>
         <li class="step">
           <span class="step-num">3</span>
-          <h3>Sized with your fit profile</h3>
-          <p>Saved a fit profile? Fynd uses the right part of it on its own &mdash; your T-shirts for a T-shirt search &mdash; and compares sizes only where a product&rsquo;s measurements have been checked.</p>
+          <h3>Compare with what fits</h3>
+          <p>With a reference garment on your fit profile, Fynd sets its measurements beside the chart &mdash; only where the chart&rsquo;s measurements can be checked against yours.</p>
         </li>
       </ol>
     </div>
@@ -137,7 +122,7 @@
       </a>
       <nav aria-label="Footer">
         <ul class="footer-links">
-          <li><a href="index.html">Shop</a></li>
+          <li><a href="index.html">Find Fit</a></li>
           <li><a href="find-clothes.html">Search</a></li>
           <li><a href="compare.html">Compare</a></li>
           <li><a href="fit-profile.html">Fit profile</a></li>
@@ -151,6 +136,9 @@
   </div>
 </footer>
 
+<script src="assets/account.js"></script>
+<script src="assets/size-chart.js"></script>
+<script src="assets/find-fit.js"></script>
 <script src="assets/app.js"></script>
 </body>
 </html>

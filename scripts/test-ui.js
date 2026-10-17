@@ -2790,8 +2790,8 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
   const settled = async (file) => {
     const page = await openPage(file);
     const built = {
-      /* the home page is static: choosing clothing, and a search line */
-      'index.html': '#shop-search',
+      /* the home page is Find Fit: one box for a product's link */
+      'index.html': '#fit-url-form',
       /* the search page reads the live searches left from /api/account;
          the audit waits for the count so its ink is checked too */
       'find-clothes.html': '#ask-usage:not(:empty)',
@@ -2968,6 +2968,30 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     fitProfileState = fitProfileReply(null);
   });
 
+  await test('Find Fit — a refused link, a chart with its facts and comparison note, and an unavailable answer — is set in a palette ink, legible, and fits a phone', async () => {
+    accountState = accountReply({});
+    for (const viewport of [{ width: 1280, height: 900 }, { width: 360, height: 740 }]) {
+      const page = await openPage('index.html', { viewport });
+      await page.waitForSelector('#fit-url-form', { timeout: 10000 });
+      const audit = guideAudit(page, viewport);
+      await page.fill('#fit-url', 'not a link');
+      await page.click('#fit-url-submit');
+      await page.waitForSelector('#fit-url-error.show');
+      await audit('a link refused on the page');
+      await page.fill('#fit-url', 'https://www.uniqlo.com/us/en/products/E475378-000/00');
+      await page.press('#fit-url', 'Enter');
+      await page.waitForSelector('#fit-result[data-state="ok"]');
+      await page.waitForSelector('#fit-compare:not([hidden])');
+      assert.strictEqual(await page.$$eval('#fit-result table', (ns) => ns.length), 2);
+      await audit('a record’s body and garment charts, with what a fit profile adds');
+      await page.fill('#fit-url', 'https://shop.example.com/products/anything');
+      await page.press('#fit-url', 'Enter');
+      await page.waitForSelector('#fit-result[data-state="unavailable"]');
+      await audit('a page that couldn’t be read');
+      await page.close();
+    }
+  });
+
   await test('the sizing chart dialog — loading, a record’s body and garment tables, and an unavailable answer — is set in a palette ink, legible, and fits a phone', async () => {
     const UQ = { id: 'uq', name: 'Sweat Pullover Hoodie', brand: 'UNIQLO', price: 39.9, currency: 'USD', imageUrl: null,
       productUrl: 'https://www.uniqlo.com/us/en/products/E475378-000/00', retailer: 'UNIQLO', category: '', colors: [], sizes: [] };
@@ -3022,13 +3046,15 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     fitProfileState = fitProfileReply(null);
   });
 
-  await test('choosing clothing holds still for reduced motion: hovering a type changes colour, and nothing animates', async () => {
+  await test('Find Fit holds still for reduced motion: a chart arrives, and nothing animates', async () => {
     accountState = accountReply({});
     const page = await openPage('index.html');
     await page.emulateMedia({ reducedMotion: 'reduce' });
-    await page.waitForSelector('#shop-search', { timeout: 10000 });
-    await page.hover('.shop-types a[href$="hoodies"]');
-    const moving = await page.evaluate(() => [...document.querySelectorAll('#shop *')]
+    await page.waitForSelector('#fit-url-form', { timeout: 10000 });
+    await page.fill('#fit-url', 'https://www.uniqlo.com/us/en/products/E475378-000/00');
+    await page.press('#fit-url', 'Enter');
+    await page.waitForSelector('#fit-result[data-state="ok"]');
+    const moving = await page.evaluate(() => [...document.querySelectorAll('#find-fit *, #fit-result *')]
       .filter((n) => n.offsetParent)
       .map((n) => ({ n, cs: getComputedStyle(n) }))
       .filter(({ cs }) => cs.animationName !== 'none'

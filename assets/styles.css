@@ -314,10 +314,9 @@ strong { font-weight: 600; }
   text-wrap: pretty;
 }
 
-/* ---------- the home page: choose clothing ----------
-   The first screen is shopping: one search line and the types of
-   clothing, each a thumb-sized link to the Search page. Nothing on it
-   asks about fit. */
+/* ---------- the home page: Find Fit ----------
+   The first screen is one box for a product's link, and under it the
+   sizing chart that link brings back. */
 
 .hero.shop-hero { min-height: 0; justify-content: flex-start; padding-block: 32px 36px; }
 .hero.shop-hero h1 { font-size: clamp(30px, 4vw, 40px); line-height: 1.1; }
@@ -335,23 +334,30 @@ strong { font-weight: 600; }
 .shop-search { display: flex; gap: 10px; }
 .shop-search .profile-input { flex: 1; min-width: 0; height: 52px; font-size: 16px; }
 .shop-search .btn { flex: none; height: 52px; }
-.shop-label { margin: 20px 0 10px; font-size: 14px; font-weight: 500; color: var(--color-text-2); }
 
-/* the types of clothing: a grid of cards, three to a row */
-.garment-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; list-style: none; }
-.garment-card { position: relative; display: flex; }
-.garment-card-body {
-  display: flex; flex: 1; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
-  min-height: 92px; padding: 12px 8px;
-  border: 1px solid var(--color-border); border-radius: var(--r);
+/* Find Fit: the link box, and the chart it brings back */
+.fit-url-hint { margin-top: 10px; font-size: 13.5px; color: var(--color-text-muted); }
+.fit-url + .fit-url-hint + .form-error { margin-top: 8px; }
+.fit-result { margin: 0 auto 48px; max-width: 760px; }
+.fit-result[hidden] { display: none; }
+.fit-result-card {
+  padding: 22px 24px 24px;
+  border: 1px solid var(--color-border); border-radius: var(--r-lg);
   background: var(--color-surface);
-  text-align: center; text-decoration: none;
-  transition: border-color var(--fast) var(--ease), background var(--fast) var(--ease);
+  box-shadow: var(--shadow);
 }
-.garment-card-art { width: 36px; height: 36px; color: var(--color-text-muted); }
-.garment-card-title { font-size: 15px; font-weight: 600; color: var(--color-text); }
-a.garment-card-body:hover { border-color: var(--color-primary); background: var(--color-primary-soft); }
-a.garment-card-body:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.fit-result-asked { font-size: 13.5px; color: var(--color-text-muted); overflow-wrap: anywhere; }
+.fit-result-title { margin: 4px 0 14px; font-size: 22px; letter-spacing: -.02em; }
+.fit-result-title:focus { outline: none; }
+.fit-compare { margin-top: 20px; padding: 14px 16px; border: 1px solid var(--color-primary-line); border-radius: var(--r); background: var(--color-primary-soft); font-size: 14.5px; color: var(--color-text-2); }
+.fit-compare[hidden] { display: none; }
+.fit-compare p + p { margin-top: 6px; }
+.fit-compare-title { margin-bottom: 6px; font-size: 15px; color: var(--color-text); }
+@media (max-width: 767px) {
+  .fit-result-card { padding: 16px 14px 18px; }
+  .fit-url { flex-wrap: wrap; }
+  .fit-url .btn { width: 100%; }
+}
 
 .guide-optional { margin-left: 4px; font-weight: 400; color: var(--color-text-muted); }
 .guide-link { color: var(--color-text); text-decoration: underline; text-underline-offset: 3px; }
@@ -369,13 +375,8 @@ a.garment-card-body:focus-visible { outline: 2px solid var(--color-focus); outli
   .shop-card { margin-top: 16px; padding: 16px 14px 14px; }
 }
 @media (max-width: 479px) {
-  /* two types of clothing to a row, picture beside the word, each still
-     a thumb-sized target */
-  .garment-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-  .garment-card-body { flex-direction: row; justify-content: flex-start; gap: 8px; min-height: 56px; padding: 8px 10px; text-align: left; }
-  .garment-card-art { width: 28px; height: 28px; flex: none; }
-  .garment-card-title { font-size: 14.5px; }
   .guide-summary-value { text-align: left; }
+}
 }
 
 /* ---------- the search page: what kind of clothing ---------- */

@@ -133,11 +133,6 @@ global.fetch = async (url, options) => {
   if (href.startsWith('https://api.openwebninja.com/')) {
     return { ok: true, status: 200, json: async () => ({ status: 'OK', data: { products: [] } }), text: async () => '' };
   }
-  /* a brand's product page read for its sizing chart (api/_sizing/chart.js):
-     this suite's stand-in for a site that refuses automated readers */
-  if (href.startsWith('https://www.zara.com/')) {
-    return { ok: false, status: 403, headers: { get: () => null }, text: async () => 'Access denied' };
-  }
   const body = (options && options.body) || '';
   const reply = (payload, ok) => ({ ok: ok !== false, status: ok === false ? 400 : 200, json: async () => payload });
 
@@ -165,6 +160,32 @@ global.fetch = async (url, options) => {
   if (realFetch) return realFetch(url, options);
   throw new Error(`unexpected request to ${href}`);
 };
+
+/* Product pages read for their sizing charts (api/_sizing/chart.js),
+   answered in-process: invented pages in the shapes shops publish, a
+   site that refuses automated readers, and nothing else — every other
+   address is unreachable, so no test can reach a real shop. */
+const charts = require('../api/_sizing/chart');
+const transportAsked = [];
+const SHOP_FILLER = '<p>' + 'An illustrative product page, invented for these tests, with enough words to read as a page. '.repeat(6) + '</p>';
+const shopPage = (title, inner, head) => `<!doctype html><html><head><title>${title}</title><meta property="og:site_name" content="Illustrative Shop">${head || ''}</head><body>${SHOP_FILLER}${inner}</body></html>`;
+const SHOP_PAGES = {
+  'https://shop.example.test/products/garment-tee': shopPage('Illustrative Garment Tee | Illustrative Shop',
+    '<h2>Garment measurements, laid flat (cm)</h2><table><tr><th>Size</th><th>Chest width</th><th>Body length</th></tr><tr><td>S</td><td>51</td><td>70</td></tr><tr><td>M</td><td>54</td><td>72</td></tr></table>',
+    `<script type="application/ld+json">${JSON.stringify({ '@type': 'Product', name: 'Illustrative Garment Tee', brand: { name: 'Illustrative Brand' } })}</script>`),
+  'https://shop.example.test/products/guide-tee': shopPage('Illustrative Guide Tee', '<a href="/pages/size-guide">Size guide</a>'),
+  'https://shop.example.test/pages/size-guide': shopPage('Size guide | Illustrative Shop', '<h1>Tops size guide</h1><p>Body measurements in inches.</p><table><tr><th>Size</th><th>Chest</th></tr><tr><td>S</td><td>34-36</td></tr><tr><td>M</td><td>38-40</td></tr></table>'),
+  'https://shop.example.test/products/script-tee': '<!doctype html><html><head><title>Shop</title></head><body><div id="root"></div></body></html>',
+  'https://shop.example.test/products/labels-tee': shopPage('Illustrative Labels Tee', '<p>Choose a size.</p>',
+    `<script type="application/ld+json">${JSON.stringify({ '@type': 'ProductGroup', name: 'Illustrative Labels Tee', hasVariant: ['S', 'M', 'L'].map((size) => ({ size })) })}</script>`)
+};
+charts.setTransport(async (url) => {
+  transportAsked.push(url);
+  const html = (u) => ({ status: 200, ok: true, headers: { get: (k) => (k.toLowerCase() === 'content-type' ? 'text/html' : null) }, text: async () => u });
+  if (url.startsWith('https://www.zara.com/')) return { status: 403, ok: false, headers: { get: () => null }, text: async () => 'Access denied' };
+  if (SHOP_PAGES[url]) return html(SHOP_PAGES[url]);
+  throw new Error('unreachable');
+});
 
 /* ---------------------------------------------------------
    The server: real handlers, real HTTP
@@ -757,7 +778,7 @@ const linkFromInbox = (pattern) => {
     await context.close();
   });
 
-  await test('Discover and the fit guide are retired: no page links to either, and their old addresses land on shopping and the fit profile', async () => {
+  await test('Discover and the fit guide are retired: no page links to either, and their old addresses land on Find Fit and the fit profile', async () => {
     const context = await openContext();
     const page = await context.newPage();
     const PAGES = ['index.html', 'find-clothes.html', 'fit-profile.html', 'compare.html', 'pricing.html', 'about.html', 'account.html'];
@@ -767,7 +788,7 @@ const linkFromInbox = (pattern) => {
       assert.ok(!/\bDiscover\b/.test(await page.textContent('body')), `${file} still says Discover`);
       /* shopping first, and the fit profile the one place for sizing; no fit guide anywhere */
       assert.deepStrictEqual(await page.$$eval('.nav-links a', (ns) => ns.map((n) => n.textContent.trim())),
-        ['Shop', 'Compare', 'Fit profile', 'Pricing', 'About', 'Account'], `${file}: main navigation`);
+        ['Find Fit', 'Compare', 'Fit profile', 'Pricing', 'About', 'Account'], `${file}: main navigation`);
       /* the Search page is reached from shopping and the footer, not the main navigation */
       assert.ok(await page.$('.footer-links a[href="find-clothes.html"]'), `${file}: the footer still links to Search`);
       assert.ok(!/fit guide/i.test(await page.textContent('body')), `${file} still mentions the fit guide`);
@@ -786,8 +807,8 @@ const linkFromInbox = (pattern) => {
     providerCalls.length = 0;
     await open(page, 'discover.html');
     await page.waitForURL(/\/index\.html$/);
-    await page.waitForSelector('#shop-search');
-    assert.strictEqual((await page.textContent('.nav-links a[aria-current="page"]')).trim(), 'Shop');
+    await page.waitForSelector('#fit-url-form');
+    assert.strictEqual((await page.textContent('.nav-links a[aria-current="page"]')).trim(), 'Find Fit');
     assert.deepStrictEqual(apiHits.filter((p) => p === '/api/search' || p === '/api/interpret'), [], 'the old address reached a search endpoint');
     assert.deepStrictEqual(providerCalls, [], 'the old address reached a product source or AI provider');
 
@@ -1258,39 +1279,137 @@ const linkFromInbox = (pattern) => {
     return page.$eval(`${NOW} .fit-panel`, (n) => n.dataset.state);
   };
 
-  await test('the home page opens on choosing clothing: a search line and the types, no fit questions, and the Search page runs it', async () => {
+  await test('Find Fit opens on a product-link box; a malformed link is refused on the page and nothing is asked', async () => {
     const context = await openContext();
     const page = await context.newPage();
     await open(page, 'index.html');
-    assert.strictEqual((await page.textContent('#shop-title')).trim(), 'What are you shopping for?');
-    assert.match(await page.textContent('.shop-hero .lead'), /Nike, UNIQLO, Zara, H&M and more/);
-    assert.deepStrictEqual(await page.$$eval('.shop-types a', (ns) => ns.map((n) => n.getAttribute('href'))),
-      ['tshirts', 'hoodies', 'sweatshirts', 'jeans', 'pants', 'sweatpants'].map((t) => `find-clothes.html?shop=${t}`));
-    assert.strictEqual(await page.$('#guide'), null, 'no fit guide on the way in');
-    assert.strictEqual(await page.$$eval('input[type="radio"], select', (ns) => ns.length), 0, 'nothing to answer before shopping');
-    assert.strictEqual((await page.textContent('.nav-links a[aria-current="page"]')).trim(), 'Shop');
-    /* a fit profile is offered, and said to be optional */
-    assert.match(await page.textContent('.guide-alt'), /optional, and searching never needs it/);
-
-    /* typed here, searched there, exactly as typed */
-    await listingsFor(page);
-    await page.fill('#shop-q', 'black hoodie');
-    await page.click('#shop-search button[type="submit"]');
-    await page.waitForURL(/find-clothes\.html/);
-    await page.waitForSelector(`${NOW} .grid .item-card`);
-    assert.strictEqual(await page.$eval('#ask', (n) => n.value), 'black hoodie');
-    /* the request named a type, so it is the one chosen */
-    assert.strictEqual(await page.$eval('input[name="shop"][value="hoodies"]', (n) => n.checked), true);
-    assert.ok(!/[?&]q=/.test(page.url()), 'taken out of the address once run');
+    assert.strictEqual((await page.textContent('#find-fit-title')).trim(), 'Find Fit');
+    assert.match(await page.textContent('#find-fit .lead'), /Paste any clothing product link\. Get its sizing chart/);
+    assert.strictEqual(await page.getAttribute('#fit-url', 'placeholder'), 'Paste a clothing product URL...');
+    assert.strictEqual((await page.textContent('#fit-url-submit')).trim(), 'Find sizing chart');
+    assert.strictEqual((await page.textContent('.nav-links a[aria-current="page"]')).trim(), 'Find Fit');
+    assert.strictEqual(await page.$('#ask, #shop-q, .shop-types'), null, 'no keyword search on Find Fit');
+    const asked = () => apiHits.filter((p) => p === '/api/size-recommendation').length;
+    const before = asked();
+    for (const bad of ['black hoodie', 'www.nike.com', 'ftp://shop.example.test/x', 'https://localhost']) {
+      await page.fill('#fit-url', bad);
+      await page.click('#fit-url-submit');
+      await page.waitForSelector('#fit-url-error.show');
+      assert.match(await page.textContent('#fit-url-error'), /isn’t a (valid )?product (page )?link/, bad);
+    }
+    /* typing a link, character by character, asks nothing until Enter */
+    await page.fill('#fit-url', '');
+    await page.type('#fit-url', 'https://shop.example.test/products/garment-tee', { delay: 2 });
+    assert.strictEqual(asked(), before, 'nothing asked while typing (localhost was refused on the page too)');
+    await page.press('#fit-url', 'Enter');
+    await page.waitForSelector('#fit-result[data-state="ok"]');
+    assert.strictEqual(asked(), before + 1);
     await context.close();
   });
 
-  await test('signed out, a type from the home page is searched across brands, browsed without any profile, and personalising is offered only on request', async () => {
+  await test('Find Fit, signed out: a pasted link shows the chart as published, with its source, type and status — and the link pasted stays beside it', async () => {
+    const context = await openContext();
+    const page = await context.newPage();
+    await open(page, 'index.html');
+    /* a whole link pasted starts the lookup by itself */
+    const link = 'https://shop.example.test/products/garment-tee?utm_source=mail';
+    await page.evaluate((text) => {
+      const input = document.getElementById('fit-url');
+      input.focus();
+      input.value = text;
+      input.dispatchEvent(new ClipboardEvent('paste', { bubbles: true }));
+    }, link);
+    await page.waitForSelector('#fit-result[data-state="ok"]');
+    assert.match(await page.textContent('#fit-result-asked'), /Sizing for https:\/\/shop\.example\.test\/products\/garment-tee\?utm_source=mail/);
+    assert.match(await page.textContent('#fit-result-title'), /Illustrative Brand · Illustrative Garment Tee/);
+    assert.deepStrictEqual(await page.$$eval('#fit-result .size-chart-kind', (ns) => ns.map((n) => n.textContent)), ['Finished-garment measurements — the clothing itself']);
+    assert.deepStrictEqual(await page.$$eval('#size-chart-t0 thead th', (ns) => ns.map((n) => n.textContent)), ['Size', 'Chest width', 'Body length']);
+    assert.deepStrictEqual(await page.$$eval('#size-chart-t0 tbody tr', (rows) => rows.map((r) => r.textContent)), ['S5170', 'M5472'], 'only the values the page gave');
+    const facts = await page.textContent('#fit-result .size-chart-facts');
+    assert.match(facts, /RetailerIllustrative Shop/);
+    assert.match(facts, /Published on this product’s page/);
+    assert.match(facts, /Not verified — read automatically just now/);
+    assert.match(await page.textContent('#fit-result'), /Units: centimetres, as published/);
+    assert.strictEqual(await page.getAttribute('#fit-result .size-chart-source a', 'href'), 'https://shop.example.test/products/garment-tee');
+    /* a chart read live isn't offered as a comparison */
+    assert.match(await page.textContent('#fit-compare'), /can’t confirm exactly how each measurement was taken/);
+    assert.ok(!/runs (small|large)|true to size|your size is/i.test(await page.textContent('#fit-result')), 'no recommendation from a chart alone');
+
+    /* no table on the page: its own size guide, labelled as the retailer's general guide */
+    await page.fill('#fit-url', 'https://shop.example.test/products/guide-tee');
+    await page.press('#fit-url', 'Enter');
+    await page.waitForFunction(() => /size guide linked from the product page/.test(document.getElementById('fit-result').textContent));
+    assert.match(await page.textContent('#fit-result .size-chart-notes'), /it may be a general chart for the category, not one for this product only/);
+    assert.deepStrictEqual(await page.$$eval('#fit-result .size-chart-kind', (ns) => ns.map((n) => n.textContent)), ['Body measurements — the body each size is cut for, not the garment']);
+    assert.match(await page.textContent('#fit-result .size-chart-table'), /From: .*Size guide/);
+    assert.match(await page.textContent('#fit-compare'), /describes bodies, not garments/);
+    await context.close();
+  });
+
+  await test('Find Fit says plainly when there is no chart: refused, drawn by script, labels only, a private address — with the page’s link, and nothing invented', async () => {
+    const context = await openContext();
+    const page = await context.newPage();
+    await open(page, 'index.html');
+    const ask = async (url, state) => {
+      await page.fill('#fit-url', url);
+      await page.press('#fit-url', 'Enter');
+      await page.waitForFunction(([u, s]) => {
+        const r = document.getElementById('fit-result');
+        return r.dataset.state === s && document.getElementById('fit-result-asked').textContent.includes(u);
+      }, [url, state]);
+      assert.strictEqual(await page.$$eval('#fit-result table', (ns) => ns.length), 0, url);
+      return page.textContent('#fit-result');
+    };
+    let text = await ask('https://www.zara.com/us/en/boxy-t-shirt-p1.html', 'unavailable');
+    assert.match(text, /refused Fynd’s request for this page\. Fynd doesn’t try to get around that/);
+    assert.match(text, /We couldn’t retrieve a usable sizing chart from this product page\. You can open the original product page or try the retailer’s official size guide\./);
+    assert.strictEqual(await page.getAttribute('#fit-result .size-chart-source a', 'href'), 'https://www.zara.com/us/en/boxy-t-shirt-p1.html');
+    assert.match(await page.textContent('#fit-result-title'), /We couldn’t retrieve a sizing chart/);
+    text = await ask('https://shop.example.test/products/script-tee', 'unavailable');
+    assert.match(text, /builds its content with JavaScript/);
+    text = await ask('https://shop.example.test/products/labels-tee', 'labels-only');
+    assert.match(text, /lists sizes S–L, but Fynd found no measurements/);
+    assert.match(text, /Sizes listed: S, M, L \(labels only — no measurements\)/);
+    text = await ask('http://169.254.169.254/latest/meta-data/', 'unavailable');
+    assert.match(text, /only reads public web pages/);
+    assert.ok(!transportAsked.some((u) => /169\.254|localhost|127\.0\.0\.1/.test(u)), 'a private address was never asked for');
+    await context.close();
+  });
+
+  await test('Find Fit with a saved reference: a product Fynd has checked garment measurements for is compared with it; nothing private travels', async () => {
+    const context = await openContext();
+    const page = await signedIn(context, 'rhea@e2e.test');
+    const user = await users.byEmail('rhea@e2e.test');
+    await fitProfiles.saveGuide(user.id, { garments: { hoodies: { favorite: 'perfect', anchor: { brand: 'Carhartt', size: 'L', measurements: { unit: 'cm', chestWidth: '58', bodyLength: '68', shoulderWidth: '50', sleeveLength: '62' } } } } });
+    await open(page, 'index.html');
+    transportAsked.length = 0;
+    await page.fill('#fit-url', 'https://www.uniqlo.com/us/en/products/E475378-000/00');
+    await page.press('#fit-url', 'Enter');
+    await page.waitForSelector('#fit-result[data-state="ok"]');
+    assert.match(await page.textContent('#fit-result .size-chart-facts'), /This product’s own chart/);
+    assert.match(await page.textContent('#fit-result .size-chart-facts'), /Verified — checked by a person/);
+    await page.waitForSelector('#fit-compare:not([hidden]) .fit-compare-title');
+    assert.strictEqual((await page.textContent('#fit-compare .fit-compare-title')).trim(), 'Compared with your reference');
+    assert.match(await page.textContent('#fit-compare'), /closest on chest and shoulders, but that's 2 of 4 dimensions — not enough for a recommendation/);
+    assert.deepStrictEqual(transportAsked, [], 'Fynd’s record answered: the shop was not asked');
+    const sent = apiRequests.filter((r) => r.path === '/api/size-recommendation');
+    assert.ok(sent.length >= 2);
+    assert.ok(!/Carhartt|chestWidth|58/.test(page.url()));
+    /* signed out, the same chart says what a profile would add */
+    const out = await (await openContext()).newPage();
+    await open(out, 'index.html');
+    await out.fill('#fit-url', 'https://www.uniqlo.com/us/en/products/E475378-000/00');
+    await out.press('#fit-url', 'Enter');
+    await out.waitForSelector('#fit-compare:not([hidden])');
+    assert.match(await out.textContent('#fit-compare'), /With a reference garment saved on your fit profile, Fynd can compare every size with it/);
+    await context.close();
+  });
+
+  await test('signed out, a type on the Search page is searched across brands, browsed without any profile, and personalising is offered only on request', async () => {
     const context = await openContext();
     const page = await context.newPage();
     await listingsFor(page);
-    await open(page, 'index.html');
-    await page.click('.shop-types a[href="find-clothes.html?shop=tshirts"]');
+    await open(page, 'find-clothes.html?shop=tshirts');
     await page.waitForSelector(`${NOW} .grid .item-card`);
     assert.strictEqual(await page.$eval('input[name="shop"][value="tshirts"]', (n) => n.checked), true, 'the type, chosen');
     assert.match(await page.textContent('.results-query'), /T-shirts/, 'the type alone is what was searched');
@@ -1450,16 +1569,17 @@ const linkFromInbox = (pattern) => {
     assert.strictEqual(await page.$eval('#size-chart', (n) => n.open), false);
     assert.strictEqual(await page.evaluate(() => document.activeElement.classList.contains('item-chart')), true);
 
-    /* a shop Fynd doesn't read: said plainly, with nothing invented */
+    /* any shop is tried; one that can't be reached says so, with nothing invented */
     await page.click(`${NOW} .item-card:nth-child(2) .item-chart`);
     await page.waitForSelector('#size-chart[data-state="unavailable"]');
     assert.strictEqual(await page.$$eval('#size-chart table', (ns) => ns.length), 0);
-    assert.match(await page.textContent('#size-chart'), /only from the sites of brands it knows/);
+    assert.match(await page.textContent('#size-chart'), /The retailer’s page couldn’t be reached\./);
+    assert.match(await page.textContent('#size-chart'), /We couldn’t retrieve a usable sizing chart from this product page/);
     await page.click('#size-chart-close');
     /* a brand page that refuses to be read: why, and the link, never a chart */
     await page.click(`${NOW} .item-card:nth-child(3) .item-chart`);
     await page.waitForSelector('#size-chart[data-state="unavailable"]');
-    assert.match(await page.textContent('#size-chart'), /The brand’s site refused Fynd’s request/);
+    assert.match(await page.textContent('#size-chart'), /The retailer’s site refused Fynd’s request/);
     assert.strictEqual(await page.getAttribute('#size-chart .size-chart-source a', 'href'), 'https://www.zara.com/us/en/boxy-t-shirt-p1.html', 'the page itself, to check by hand');
     assert.strictEqual(await page.$$eval('#size-chart table', (ns) => ns.length), 0);
     await context.close();
