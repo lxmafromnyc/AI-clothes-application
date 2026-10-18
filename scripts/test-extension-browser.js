@@ -63,6 +63,14 @@ function serve() {
   const server = http.createServer(async (req, res) => {
     const u = new URL(req.url, 'http://127.0.0.1');
     if (u.pathname === '/api/size-recommendation') {
+      /* Find Fit's brand menu and product list load on every visit:
+         answered by the real brand modules, and not counted as lookups */
+      if (u.searchParams.has('brands') || (u.searchParams.has('brand') && !u.searchParams.has('item'))) {
+        const brands = require('../api/_sizing/brands');
+        const brand = brands.get(u.searchParams.get('brand'));
+        res.writeHead(200, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify(u.searchParams.has('brands') ? { brands: brands.list(), planned: brands.PLANNED } : { brand: { id: brand.id, name: brand.name, coverage: brand.coverage }, products: brand.products() }));
+      }
       apiAsked.push(u.search);
       const chart = await charts.chartFor(u.searchParams.get('chart'), { noCache: true });
       res.writeHead(200, { 'content-type': 'application/json' });

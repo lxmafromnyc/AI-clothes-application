@@ -1508,6 +1508,82 @@ await test('/api/size-recommendation?chart= needs no account, reads no profile, 
   } finally { charts.setTransport(null); }
 });
 
+section('browsing a brand in Find Fit');
+
+const brandsIndex = require('../api/_sizing/brands');
+const uniqloBrand = brandsIndex.get('uniqlo');
+
+await test('only brands with a working product list are offered; the rest are named as coming, not offered', () => {
+  assert.deepStrictEqual(brandsIndex.list().map((b) => b.id), ['uniqlo']);
+  assert.deepStrictEqual(brandsIndex.PLANNED, ['Nike', 'Zara', 'H&M']);
+  assert.match(uniqloBrand.coverage, /not UNIQLO’s full range/);
+});
+
+await test('every UNIQLO product listed is a real one Fynd sourced: a sizing record, a product named under a general chart, or a recorded listing — on uniqlo.com, nothing invented', () => {
+  const listings = require('../api/_sizing/brands/uniqlo-listings.json').products.map((p) => p.code);
+  const recordCodes = sizing.RECORDS.filter((r) => r.brand === 'UNIQLO').map((r) => r.product.code);
+  const generalCodes = require('../api/_sizing/official-charts').CHARTS.flatMap((c) => (c.products || []).map((p) => p.code));
+  const products = uniqloBrand.products();
+  assert.ok(products.length >= 5);
+  products.forEach((p) => {
+    assert.ok(recordCodes.includes(p.code) || generalCodes.includes(p.code) || listings.includes(p.code), p.code);
+    assert.strictEqual(p.url, `https://www.uniqlo.com/us/en/products/${p.code}/00`);
+    assert.ok(!/sample|example|illustrative|placeholder/i.test(JSON.stringify(p)), p.code);
+    if (p.imageUrl) assert.match(p.imageUrl, new RegExp(`^https://image\\.uniqlo\\.com/.*${p.code.slice(1, 7)}`), 'a photo carries its product’s code');
+  });
+  const holds = Object.fromEntries(products.map((p) => [p.code, p.holds]));
+  assert.deepStrictEqual(holds, { 'E475378-000': 'checked-chart', 'E475377-000': 'checked-chart', 'E455365-000': 'unchecked-chart', 'E471808-000': 'general-chart', 'E429066-000': 'live-only' });
+});
+
+await test('a product is found by its exact code only — never by a link, a near code or anything else the browser sends', () => {
+  assert.strictEqual(uniqloBrand.find('E475378-000').name, 'Sweat Pullover Hoodie');
+  for (const bad of ['E475378', 'e475378-000', 'E475378-0000', 'https://www.uniqlo.com/us/en/products/E475378-000/00', 'E999999-000', ' E475378-000', null, {}, ['E475378-000']]) {
+    assert.strictEqual(uniqloBrand.find(bad), null, JSON.stringify(bad));
+  }
+});
+
+await test('/api/size-recommendation lists brands and products, and looks a chosen product up by its code — public, read-only, rate limited', async () => {
+  const UQ_OVERSIZED_URL = 'https://www.uniqlo.com/us/en/products/E471808-000/00';
+  const asked = [];
+  charts.setTransport(async (url) => { asked.push(url); throw Object.assign(new Error('aborted'), { name: 'AbortError' }); });
+  try {
+    const get = (query, o) => call(recommendEndpoint, Object.assign({ method: 'GET', jar: {}, query, url: '/api/size-recommendation' }, o));
+    const listed = await get({ brands: '1' });
+    assert.deepStrictEqual([listed.status, listed.body.brands.map((b) => b.name), listed.body.planned], [200, ['UNIQLO'], ['Nike', 'Zara', 'H&M']]);
+    const catalog = await get({ brand: 'uniqlo' });
+    assert.strictEqual(catalog.status, 200);
+    assert.strictEqual(catalog.body.products.length, uniqloBrand.products().length);
+    assert.ok(catalog.body.products.every((p) => !('source' in p)), 'bookkeeping stays on the server');
+    assert.deepStrictEqual([(await get({ brand: 'nike' })).status, (await get({ brand: 'nike' })).body.reason], [404, 'unknown-brand']);
+
+    /* a checked record: its own charts, no page asked */
+    const hoodie = await get({ brand: 'uniqlo', item: 'E475378-000' });
+    assert.deepStrictEqual([hoodie.status, hoodie.body.chart.from, hoodie.body.chart.verification, hoodie.body.item.code], [200, 'fynd-record', 'verified', 'E475378-000']);
+    assert.deepStrictEqual(asked, []);
+    /* E471808: its page doesn't answer, so UNIQLO's general body chart — a fallback, never comparable */
+    const oversized = await get({ brand: 'uniqlo', item: 'E471808-000' });
+    assert.deepStrictEqual([oversized.body.chart.status, oversized.body.chart.from, oversized.body.chart.scope, oversized.body.chart.comparable], ['fallback', 'official-fallback', 'brand-general', false]);
+    assert.deepStrictEqual(oversized.body.chart.charts.map((c) => c.measures), ['body']);
+    assert.deepStrictEqual(asked, [UQ_OVERSIZED_URL], 'the address came from the brand module');
+    /* E429066: no record, no general chart — its page doesn't answer, so honestly unavailable, never E471808's fallback */
+    const merino = await get({ brand: 'uniqlo', item: 'E429066-000' });
+    assert.deepStrictEqual([merino.body.chart.status, merino.body.chart.reason, merino.body.chart.charts], ['unavailable', 'no-answer', []]);
+    assert.ok(!merino.body.chart.fallback);
+    assert.strictEqual(merino.body.chart.source.url, 'https://www.uniqlo.com/us/en/products/E429066-000/00', 'the official page is still linked');
+    /* anything not listed by its exact code is refused before anything is fetched */
+    const before = asked.length;
+    for (const item of ['https://169.254.169.254/latest/', 'E999999-000', '../../etc', 'E475378-000/../x']) {
+      const r = await get({ brand: 'uniqlo', item });
+      assert.deepStrictEqual([r.status, r.body.reason], [404, 'unknown-product'], item);
+    }
+    assert.strictEqual(asked.length, before);
+    const headers = { 'x-forwarded-for': '198.51.100.88' };
+    let last;
+    for (let i = 0; i < 41; i += 1) last = await get({ brand: 'uniqlo', item: 'E475378-000' }, { headers });
+    assert.deepStrictEqual([last.status, last.body.reason], [429, 'rate-limited']);
+  } finally { charts.setTransport(null); }
+});
+
 section('privacy');
 
 await test('/api/account says nothing about suggestions or feedback', async () => {

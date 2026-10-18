@@ -1,8 +1,9 @@
 /* =========================================================
-   Fynd — Find Fit: a product's link in, its sizing chart out
+   Fynd — Find Fit: a product in, its sizing chart out
 
-   The home page's one box takes a link to a clothing product. When a
-   whole link is pasted, or Enter or "Find sizing chart" is pressed —
+   A product comes from the brand browser (findItem, below) or as a link
+   pasted under "Have a link…". When a whole link is pasted, or Enter or
+   "Find sizing chart" is pressed —
    never on each keystroke — the link goes to the server
    (Account.sizing.chart: /api/size-recommendation?chart=, which reads
    only public pages, on its own side; see api/_sizing/chart.js) and the
@@ -20,6 +21,11 @@
    extension is shown as read from the browser and not checked — never
    verified, never comparable — with a way to look the product up in
    Fynd's catalog of checked charts.
+
+   The home page's main path is the brand browser (assets/brand-browser.js):
+   a product picked there comes to findItem with its brand and code, and
+   the server finds its address. A link pasted under "Have a link…" comes
+   to find. Both end in the same result.
 
    No account is needed. Signed in, a chart Fynd has checked
    finished-garment measurements for is also set beside the shopper's
@@ -77,34 +83,54 @@
     else input.removeAttribute('aria-invalid');
   }
 
-  async function find(url) {
-    const ask = ++latest;
+  /* A pasted link: its chart, looked up by its address. */
+  function find(url) {
     lastAsked = url;
+    return lookup(url, null, 'Finding this product’s sizing chart…', 'Reading the product’s page and any size guide it links to…',
+      (sizing) => sizing.chart(url));
+  }
+
+  /* A product picked in the brand browser (assets/brand-browser.js):
+     its chart, asked for by the brand and the product's code. The
+     server finds the product's address itself. */
+  function findItem(brand, product) {
+    const named = `${brand.name} · ${product.name}`;
+    return lookup(product.url, Object.assign({ named }, product), named, 'Looking up this product’s sizing chart. Reading the brand’s page can take a few seconds…',
+      (sizing) => sizing.item(brand.id, product.code));
+  }
+
+  async function lookup(url, product, title, waiting, request) {
+    const ask = ++latest;
     say('');
     result.hidden = false;
     result.dataset.state = 'loading';
     delete result.dataset.from;
+    if (product) result.dataset.item = product.code;
+    else delete result.dataset.item;
     compare.hidden = true;
     compare.replaceChildren();
     productLink(cleanUrl(url));
-    $('fit-result-title').textContent = 'Finding this product’s sizing chart…';
-    body.replaceChildren(el('p', 'size-chart-loading', 'Reading the product’s page and any size guide it links to…'));
+    $('fit-result-title').textContent = title;
+    body.replaceChildren(el('p', 'size-chart-loading', waiting));
     $('fit-url-submit').disabled = true;
+    if (product) result.scrollIntoView({ block: 'start', behavior: 'auto' });
 
     const sizing = global.Account && global.Account.sizing;
-    const answer = sizing ? await sizing.chart(url) : { ok: false, unreachable: true };
+    const answer = sizing ? await request(sizing) : { ok: false, unreachable: true };
     if (ask !== latest) return;
     $('fit-url-submit').disabled = false;
 
     if (!(answer.ok && answer.data && answer.data.chart)) {
       result.dataset.state = 'error';
-      $('fit-result-title').textContent = 'Sizing chart unavailable';
+      $('fit-result-title').textContent = product ? product.named : 'Sizing chart unavailable';
       body.replaceChildren(...renderFailure(answer, url, { linked: true }));
       return;
     }
     const chart = answer.data.chart;
     result.dataset.state = chart.status;
-    $('fit-result-title').textContent = headingFor(chart);
+    /* a picked product keeps the name its brand listing gave, when its
+       page couldn't say */
+    $('fit-result-title').textContent = product && !(chart.product && chart.product.name) ? product.named : headingFor(chart);
     /* the server's canonical page for it, when it gave one */
     const page = chart.source && chart.source.url;
     if (page && /^https?:\/\//.test(page)) productLink(page);
@@ -229,6 +255,7 @@
       let raw = '';
       try { raw = decodeURIComponent(urlIn[1]); } catch (err) { /* refused below */ }
       const link = readLink(raw);
+      $('fit-link-alt').open = true;
       if (link.error) { say(link.error); return; }
       input.value = link.url;
       find(link.url);
@@ -249,5 +276,5 @@
   fromExtension();
   global.addEventListener('hashchange', fromExtension);
 
-  global.FindFit = { readLink, find, fromExtension };
+  global.FindFit = { readLink, find, findItem, fromExtension };
 })(typeof window !== 'undefined' ? window : globalThis);

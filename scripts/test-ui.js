@@ -149,6 +149,19 @@ const server = http.createServer((req, res) => {
       return require('../api/_sizing/chart').chartFor(url.searchParams.get('chart'), { noCache: true, fetch: async () => { throw new Error('offline'); } })
         .then((chart) => res.end(JSON.stringify({ chart })));
     }
+    /* Find Fit's brand menu, a brand's products, and a picked product's
+       chart: the real brand modules, with no network */
+    if (url.searchParams.has('brands') || url.searchParams.has('brand')) {
+      const brands = require('../api/_sizing/brands');
+      if (url.searchParams.has('brands')) return res.end(JSON.stringify({ brands: brands.list(), planned: brands.PLANNED }));
+      const brand = brands.get(url.searchParams.get('brand'));
+      if (!brand) { res.statusCode = 404; return res.end('{}'); }
+      if (!url.searchParams.has('item')) return res.end(JSON.stringify({ brand: { id: brand.id, name: brand.name, coverage: brand.coverage }, products: brand.products() }));
+      const item = brand.find(url.searchParams.get('item'));
+      if (!item) { res.statusCode = 404; return res.end('{}'); }
+      return require('../api/_sizing/chart').chartFor(item.url, { noCache: true, fetch: async () => { throw new Error('offline'); } })
+        .then((chart) => res.end(JSON.stringify({ chart, item: { code: item.code, name: item.name, url: item.url } })));
+    }
     /* the search page's listings, matched and sized the endpoint's own way */
     if (url.searchParams.has('fit')) {
       return res.end(JSON.stringify({ fit: sizingEndpoint.fitFor(fitProfileState.profile, url.searchParams.get('fit'), sizingEndpoint.readItems(url.searchParams.get('items'))) }));
@@ -2790,8 +2803,9 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
   const settled = async (file) => {
     const page = await openPage(file);
     const built = {
-      /* the home page is Find Fit: one box for a product's link */
-      'index.html': '#fit-url-form',
+      /* the home page is Find Fit: a brand's products, from the sizing
+         endpoint, so the cards are audited too */
+      'index.html': '.fit-product',
       /* the search page reads the live searches left from /api/account;
          the audit waits for the count so its ink is checked too */
       'find-clothes.html': '#ask-usage:not(:empty)',
@@ -2972,7 +2986,8 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     accountState = accountReply({});
     for (const viewport of [{ width: 1280, height: 900 }, { width: 360, height: 740 }]) {
       const page = await openPage('index.html', { viewport });
-      await page.waitForSelector('#fit-url-form', { timeout: 10000 });
+      await page.waitForSelector('.fit-product', { timeout: 10000 });
+      await page.evaluate(() => { document.getElementById('fit-link-alt').open = true; });
       const audit = guideAudit(page, viewport);
       await page.fill('#fit-url', 'not a link');
       await page.click('#fit-url-submit');
@@ -3050,7 +3065,8 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     accountState = accountReply({});
     const page = await openPage('index.html');
     await page.emulateMedia({ reducedMotion: 'reduce' });
-    await page.waitForSelector('#fit-url-form', { timeout: 10000 });
+    await page.waitForSelector('.fit-product', { timeout: 10000 });
+      await page.evaluate(() => { document.getElementById('fit-link-alt').open = true; });
     await page.fill('#fit-url', 'https://www.uniqlo.com/us/en/products/E475378-000/00');
     await page.press('#fit-url', 'Enter');
     await page.waitForSelector('#fit-result[data-state="ok"]');

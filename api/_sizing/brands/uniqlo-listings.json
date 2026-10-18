@@ -1,0 +1,14 @@
+{
+  "about": "UNIQLO US products Fynd has a listing for but no sizing record or general chart: each read off uniqlo.com and carried over from the catalogue (assets/catalog.js), where its evidence is recorded. Its chart is looked up live when chosen.",
+  "products": [
+    {
+      "code": "E429066-000",
+      "name": "Men's Extra Fine Merino Crew Neck Long-Sleeve Sweater",
+      "url": "https://www.uniqlo.com/us/en/products/E429066-000/00",
+      "category": "knitwear",
+      "line": "men",
+      "imageUrl": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/429066/item/goods_03_429066_3x4.jpg",
+      "source": "assets/catalog.js row uniqlo-merino-crew: name and photo read off this listing; the photo's address carries the product's code"
+    }
+  ]
+}

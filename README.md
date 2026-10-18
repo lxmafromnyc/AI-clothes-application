@@ -2073,7 +2073,60 @@ compared, and why.
 
 ## Find Fit: sizing charts from a product link
 
-**Find Fit** (`index.html`, `assets/find-fit.js`) is one box: paste a clothing
+### Choosing a brand and a product
+
+Find Fit opens on a brand menu and that brand's products, so no link has to be
+pasted (`assets/brand-browser.js`). The customer chooses a brand and picks a
+product card. Find Fit then asks for that product's chart by brand and product
+code (`GET /api/size-recommendation?brand=uniqlo&item=E475378-000`).
+
+The server finds the product's address in its own brand module
+(`api/_sizing/brands`) and looks it up through the same pipeline a pasted link
+takes (`api/_sizing/chart.js`):
+1. Fynd's record for that product.
+2. Otherwise, its live page.
+3. Otherwise, a general official chart, only for a product listed under one.
+4. Otherwise, the reason there is no chart.
+
+No address the browser sends is used, and a code that isn't listed is refused
+before anything is fetched. The listing and lookup modes are public and
+read-only. They share the `sizing:chart` rate limit and never read a profile.
+
+**UNIQLO** is the first and only brand so far. Its products are the UNIQLO US
+products Fynd has itself read off uniqlo.com. The list says this and is not
+UNIQLO's full range:
+
+| Product | Code | What Fynd holds for its sizing |
+|---|---|---|
+| Sweat Pullover Hoodie | E475378-000 | its own body and garment charts, checked |
+| Sweatshirt | E475377-000 | its own body and garment charts, checked |
+| SUPIMA Cotton T-Shirt | E455365-000 | its own charts, not yet checked |
+| Sweat Oversized Pullover Hoodie | E471808-000 | UNIQLO's general US tops body chart, used only when its page can't be read |
+| Extra Fine Merino Crew Neck Sweater | E429066-000 | a listing only; its chart is looked up live |
+
+Each card says what Fynd holds, never that a chart was read. Only E429066 has a
+verified photo; the others are drawn as line artwork. The menu offers only brands
+that have a working product list. Nike, Zara and H&M are named as coming later.
+
+**Why not UNIQLO's own site in a frame, or its catalogue?** The development
+environment couldn't reach uniqlo.com, so whether it may be framed is unknown.
+`node scripts/check-embed.js` reports its framing headers from a machine that can
+reach it. Even a framable page can't tell Find Fit which product was clicked
+across origins, so a frame can't start a lookup. The deployed server's requests to
+uniqlo.com go unanswered. UNIQLO publishes no open product feed or licence for
+one. No paid or third-party catalogue is used.
+
+**Adding a brand:** write a module beside `api/_sizing/brands/uniqlo.js` with
+`id`, `name`, `market`, `coverage`, `products()` and `find(code)`, and add it to
+`BRANDS` in `api/_sizing/brands/index.js`. Find Fit needs no change.
+
+### Pasting a link
+
+A link from any other shop can still be pasted under **Have a link to a product
+from another shop?** (closed by default). The Fynd browser extension's
+`#fynd-url=` uses the same box.
+
+**Find Fit** (`index.html`, `assets/find-fit.js`) can also take a clothing
 product's link, and its sizing chart is drawn below it (`assets/size-chart.js`,
 which the Search page's **View sizing chart** dialog uses too). A link is checked
 on the page first (a whole http(s) address with a host name); a pasted link starts

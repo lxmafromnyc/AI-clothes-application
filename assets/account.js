@@ -254,7 +254,12 @@
     fit: (type, items) => call(`size-recommendation?fit=${encodeURIComponent(type)}&items=${encodeURIComponent(JSON.stringify(items))}`),
     /* one listing's sizing chart, from its brand's own page: only the
        listing's link travels, and no account is needed */
-    chart: (url) => call(`size-recommendation?chart=${encodeURIComponent(url)}`)
+    chart: (url) => call(`size-recommendation?chart=${encodeURIComponent(url)}`),
+    /* the brands Find Fit browses, one brand's products, and a chosen
+       product's chart — only the brand and the product's code travel */
+    brands: () => call('size-recommendation?brands=1'),
+    catalog: (brand) => call(`size-recommendation?brand=${encodeURIComponent(brand)}`),
+    item: (brand, code) => call(`size-recommendation?brand=${encodeURIComponent(brand)}&item=${encodeURIComponent(code)}`)
   };
 
   /* After a checkout the browser comes back before Stripe's webhook has
