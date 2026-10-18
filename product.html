@@ -97,8 +97,8 @@
   </article>
 
   <!-- the Size Guide: the product's chart — the same lookup and drawing
-       as Find Fit's — without leaving the page; a size can be chosen here
-       too, and the product keeps it -->
+       as Find Fit's — without leaving the page. The product's sizes are
+       chosen here too, and the product keeps the choice. -->
   <dialog class="size-chart pdp-guide" id="pdp-guide" aria-labelledby="pdp-guide-title">
     <div class="size-chart-head">
       <div>
@@ -107,13 +107,17 @@
       </div>
       <button class="btn btn-secondary size-chart-close" id="pdp-guide-close" type="button">Back to product</button>
     </div>
-    <div class="pdp-guide-pick" id="pdp-guide-pick">
-      <p class="pdp-guide-selected" id="pdp-guide-selected"></p>
-      <div class="pdp-guide-sizes" id="pdp-guide-sizes" role="radiogroup" aria-label="Size"></div>
-      <p class="pdp-guide-variant" id="pdp-guide-variant"></p>
-    </div>
+    <section class="pdp-guide-pick" id="pdp-guide-pick" aria-labelledby="pdp-guide-selected">
+      <h3 class="pdp-guide-selected" id="pdp-guide-selected"></h3>
+      <div class="pdp-guide-sizes" id="pdp-guide-sizes" role="radiogroup" aria-labelledby="pdp-guide-selected"></div>
+      <p class="pdp-guide-nosizes" id="pdp-guide-nosizes" hidden></p>
+    </section>
     <div class="size-chart-body" id="pdp-guide-body" aria-live="polite"></div>
     <div class="fit-compare" id="pdp-guide-compare" hidden></div>
+    <div class="pdp-guide-foot" id="pdp-guide-foot">
+      <p class="pdp-guide-next" id="pdp-guide-next" role="status"></p>
+      <button class="btn btn-primary pdp-guide-done" id="pdp-guide-done" type="button" hidden></button>
+    </div>
   </dialog>
 </main>
 

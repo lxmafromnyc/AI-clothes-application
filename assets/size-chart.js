@@ -66,6 +66,7 @@
     'official-general': 'Official values, copied from the brand’s own pages — not read from this product’s page'
   };
   const UNIT = { in: 'inches, as published', cm: 'centimetres, as published', both: 'inches and centimetres, as published', null: 'not stated — check the source' };
+  const UNIT_SHORT = { in: 'Inches', cm: 'Centimetres', both: 'Inches and centimetres', null: 'Units not stated' };
   const LINE = { men: 'men’s', women: 'women’s', unisex: 'unisex' };
 
   /* The one line a shopper needs about where a chart is from — the rest
@@ -106,7 +107,11 @@
      what it measures, and one line on where it is from; everything else
      — the server's notes, sources, status and what was tried — is under
      "Source details", closed. `asked` is the link the shopper gave.
-     `opts.linked`: the caller already shows a link to the product. */
+     `opts.linked`: the caller already shows a link to the product.
+     `opts.garment`: the product page's Size Guide, naming the garment
+     ("hoodie"): each table says once what it measures and in what unit,
+     a general chart is called a general guide to the body, not to this
+     garment, and there is one note on what the chart can't say. */
   function render(chart, asked, opts) {
     const o = opts || {};
     const out = [];
@@ -128,14 +133,19 @@
     }
 
     const brand = (chart.product && chart.product.brand) || chart.retailer;
+    const general = chart.scope === 'brand-general';
     (chart.charts || []).forEach((c, i) => {
       const section = el('section', 'size-chart-table');
-      const general = chart.scope === 'brand-general';
-      section.append(el('h3', 'size-chart-name', general ? `${[brand, chart.market].filter(Boolean).join(' ')} ${c.measures === 'body' ? 'body-size' : 'size'} chart` : KIND_NAME[c.measures] || KIND_NAME['not-stated']));
-      section.append(el('p', 'size-chart-kind', general
-        ? `General sizing guide · ${c.measures === 'body' ? 'Body measurements, not garment measurements' : KIND[c.measures]}`
-        : KIND[c.measures] || KIND['not-stated']));
-      section.append(el('p', 'size-chart-unit', `Units: ${UNIT[c.unit] || UNIT.null}`));
+      if (o.garment) {
+        section.append(el('h3', 'size-chart-name', general ? `General ${[brand, chart.market].filter(Boolean).join(' ')} sizing guide` : KIND_NAME[c.measures] || KIND_NAME['not-stated']));
+        section.append(el('p', 'size-chart-kind', `${kindFor(c.measures, o.garment, general)} · ${UNIT_SHORT[c.unit] || UNIT_SHORT.null}`));
+      } else {
+        section.append(el('h3', 'size-chart-name', general ? `${[brand, chart.market].filter(Boolean).join(' ')} ${c.measures === 'body' ? 'body-size' : 'size'} chart` : KIND_NAME[c.measures] || KIND_NAME['not-stated']));
+        section.append(el('p', 'size-chart-kind', general
+          ? `General sizing guide · ${c.measures === 'body' ? 'Body measurements, not garment measurements' : KIND[c.measures]}`
+          : KIND[c.measures] || KIND['not-stated']));
+        section.append(el('p', 'size-chart-unit', `Units: ${UNIT[c.unit] || UNIT.null}`));
+      }
       const wrap = el('div', 'size-chart-scroll');
       const table = el('table', 'compare-table');
       table.id = `size-chart-t${i}`;
@@ -157,13 +167,17 @@
       section.append(wrap);
       out.push(section);
     });
-    if (!unavailable && (chart.charts || []).length) out.push(el('p', 'size-chart-caveat', caveatOf(chart)));
+    if (!unavailable && (chart.charts || []).length) {
+      out.push(el('p', 'size-chart-caveat', o.garment && general && chart.charts.every((c) => c.measures === 'body')
+        ? `These describe the body each size fits, not this ${o.garment} itself.`
+        : caveatOf(chart)));
+    }
     if (chart.status === 'labels-only' && chart.sizes.length) {
       out.push(el('p', 'size-chart-labels', `Sizes listed: ${chart.sizes.join(', ')} — the page gives no measurements.`));
     }
 
     /* what the page said about the product, in its words */
-    const details = chart.details || {};
+    const details = o.garment ? {} : chart.details || {};
     const said = el('dl', 'size-chart-facts');
     if (details.fit) said.append(el('dt', null, 'Fit, as the page says'), el('dd', null, details.fit));
     if (details.material) said.append(el('dt', null, 'Fabric, as the page says'), el('dd', null, details.material));
@@ -171,6 +185,15 @@
 
     out.push(detailsOf(chart, pageUrl));
     return out;
+  }
+
+  /* What one table measures, in the product page's words: once, with
+     the garment named — a body chart is never the garment's own. */
+  function kindFor(measures, garment, general) {
+    /* a general chart's one note says what its body measurements aren't */
+    if (measures === 'body') return general ? 'Body measurements' : `The body each size fits, not the ${garment} itself`;
+    if (measures === 'finished-garment') return general ? 'Garment measurements for this kind of product, not this one’s own' : `The ${garment} itself, as the brand measured it`;
+    return 'The page doesn’t say whether these measure the body or the garment';
   }
 
   /* "Source details": closed until asked for. Every note the server

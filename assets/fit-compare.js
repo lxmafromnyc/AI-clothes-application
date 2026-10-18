@@ -9,7 +9,14 @@
    the profile travels in any address). Any other chart says why it
    can't be compared; a body chart never is.
 
-     FitCompare.show(chart, container, stillCurrent?)
+     FitCompare.show(chart, container, stillCurrent?)   (a promise)
+     FitCompare.focus(container, size)
+
+   focus() adds, to a comparison already drawn, how one size differs
+   from the reference, measurement by measurement — the engine's own
+   figures for that size, nothing worked out here — and redraws only
+   that when the size changes, without asking again. The product page's
+   Size Guide uses it for the size being considered.
    ========================================================= */
 
 (function (global) {
@@ -18,9 +25,12 @@
   const doc = global.document;
   if (!doc || !global.SizeChart) return;
   const { el } = global.SizeChart;
+  /* what each container last drew, so a new size redraws only its part */
+  const drawn = new WeakMap();
 
   async function show(chart, compare, current) {
     const stillCurrent = current || (() => true);
+    drawn.delete(compare);
     const lines = [];
     const kinds = (chart.charts || []).map((c) => c.measures);
     if (!chart.comparable) {
@@ -54,7 +64,8 @@
       (c.caveats || []).slice(0, 2).forEach((x) => lines.push(x));
       const more = el('p');
       more.append(safeLinkLocal('compare.html', 'See every size beside your reference on Compare'));
-      put(compare, lines, [more], 'Compared with your reference');
+      drawn.set(compare, { comparison: c, lines, extra: [more] });
+      focus(compare, null);
       return;
     }
     (c.missing || []).slice(0, 1).forEach((m) => lines.push(m.message));
@@ -62,6 +73,30 @@
     const fix = el('p');
     fix.append(safeLinkLocal('fit-profile.html', 'Open your fit profile'));
     put(compare, lines, [fix]);
+  }
+
+  /* the chosen size beside the reference, in the engine's words */
+  function focus(compare, size) {
+    const d = drawn.get(compare);
+    if (!d) return;
+    const nodes = [];
+    if (size) {
+      const row = (d.comparison.sizes || []).find((s) => s.size === size);
+      const box = el('div', 'fit-compare-size');
+      box.append(el('p', 'fit-compare-size-title', `Size ${size} beside your reference`));
+      if (row) {
+        const list = el('ul');
+        Object.values(row.dimensions).filter((x) => x.compared).forEach((x) => list.append(el('li', null, x.words)));
+        if (list.childNodes.length) box.append(list);
+        if (row.unranked) box.append(el('p', null, row.unranked));
+      } else {
+        box.append(el('p', null, `Fynd has no garment measurements for size ${size} to set beside your reference.`));
+      }
+      nodes.push(box);
+    }
+    /* the summary, then the size being considered, then the caveats */
+    const [summary, ...rest] = d.lines;
+    put(compare, [], [el('p', null, summary), ...nodes, ...rest.map((t) => el('p', null, t)), ...d.extra], 'Compared with your reference');
   }
 
   function safeLinkLocal(href, text) {
@@ -75,5 +110,5 @@
     compare.hidden = false;
   }
 
-  global.FitCompare = { show };
+  global.FitCompare = { show, focus };
 })(typeof window !== 'undefined' ? window : globalThis);

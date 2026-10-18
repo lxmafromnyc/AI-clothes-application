@@ -147,7 +147,11 @@
     size = s;
     $('pdp-size-heading').textContent = s ? `Your size: ${s}` : (product.sizes ? 'Choose your size' : 'Size');
     doc.querySelectorAll('.pdp-size').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.size === s)));
-    if ($('pdp-guide').open) { $('pdp-guide-selected').textContent = selectedLine(); markSize($('pdp-guide-body')); }
+    if ($('pdp-guide').open) {
+      guideChoice();
+      markSize($('pdp-guide-body'));
+      if (global.FitCompare) global.FitCompare.focus($('pdp-guide-compare'), size);
+    }
     if (!quiet) remember();
   }
 
@@ -260,11 +264,34 @@
 
   /* ---------- the Size Guide ---------- */
 
-  function selectedLine() {
-    const bits = [];
-    if (colour) bits.push(colour.label);
-    bits.push(size ? `Size ${size}` : 'No size chosen yet');
-    return `Selected: ${bits.join(' · ')}`;
+  /* the Size Guide's own size choice: the heading, and what comes next —
+     a prompt until a size is chosen, then a way back to the product */
+  function guideChoice() {
+    const next = $('pdp-guide-next');
+    const done = $('pdp-guide-done');
+    $('pdp-guide-foot').hidden = !product.sizes;
+    if (!product.sizes) {
+      $('pdp-guide-selected').textContent = 'Sizes';
+      next.textContent = '';
+      done.hidden = true;
+      return;
+    }
+    $('pdp-guide-selected').textContent = size ? `Your size: ${size}` : 'Choose your size';
+    next.textContent = size ? '' : 'Choose a size to continue.';
+    done.hidden = !size;
+    done.textContent = size ? `Continue with size ${size}` : '';
+  }
+
+  /* what the garment is, in a word, to say what a chart is not */
+  function garmentWord() {
+    const name = product.name || '';
+    if (/hoodie/i.test(name)) return 'hoodie';
+    if (/sweatshirt/i.test(name)) return 'sweatshirt';
+    if (/t-shirt|\btee\b/i.test(name)) return 'T-shirt';
+    if (/cardigan/i.test(name)) return 'cardigan';
+    if (/sweater/i.test(name)) return 'sweater';
+    if (/shirt/i.test(name)) return 'shirt';
+    return 'garment';
   }
 
   /* the chosen size's row, marked in every table that has it — or, when
@@ -293,12 +320,14 @@
     const dialog = $('pdp-guide');
     const body = $('pdp-guide-body');
     const compare = $('pdp-guide-compare');
-    $('pdp-guide-product').textContent = `${product.brand} · ${product.name}`;
-    $('pdp-guide-selected').textContent = selectedLine();
-    /* the product's own sizes, to choose from beside the chart */
+    $('pdp-guide-product').textContent = [product.brand, product.name, colour && colour.label].filter(Boolean).join(' · ');
+    /* the product's own sizes, to choose from beside the chart — and,
+       when Fynd holds none, said: a chart's rows aren't the product's sizes */
     $('pdp-guide-sizes').replaceChildren(...(product.sizes ? sizeButtons() : []));
     $('pdp-guide-sizes').hidden = !product.sizes;
-    $('pdp-guide-variant').textContent = '';
+    $('pdp-guide-nosizes').hidden = Boolean(product.sizes);
+    $('pdp-guide-nosizes').textContent = product.sizes ? '' : 'Fynd doesn’t hold this product’s size list, so a size is chosen on UNIQLO’s page.';
+    guideChoice();
     if (!dialog.open) dialog.showModal();
     if (chartAnswer) { show(chartAnswer); return; }
     const ask = ++guideAsk;
@@ -323,15 +352,20 @@
     }
     const chart = answer.data.chart;
     dialog.dataset.state = chart.status;
-    body.replaceChildren(...render(chart, product.url, { linked: false }));
+    body.replaceChildren(...render(chart, product.url, { linked: false, garment: garmentWord() }));
     markSize(body);
     /* Fynd's saved records are kept per product, never per colour: said,
-       not assumed either way. A general chart is no product's own. */
-    $('pdp-guide-variant').textContent = chart.scope === 'product-specific' && (chart.charts || []).length && product.colours.length > 1
-      ? 'Fynd’s chart is recorded for this product, not for a particular colour.'
-      : '';
+       not assumed either way, with the chart's other sources. A general
+       chart is no product's own. */
+    const sources = body.querySelector('.size-chart-details');
+    if (sources && chart.scope === 'product-specific' && (chart.charts || []).length && product.colours.length > 1) {
+      sources.insertBefore(el('p', 'pdp-guide-variant', 'Fynd’s chart is recorded for this product, not for a particular colour.'), sources.children[1] || null);
+    }
+    /* a body chart is never set beside a garment: FitCompare says why */
     if ((chart.status === 'ok' || chart.status === 'fallback') && global.FitCompare) {
-      global.FitCompare.show(chart, compare, () => dialog.open);
+      /* the size being considered, once the comparison is in — whatever
+         it is by then */
+      global.FitCompare.show(chart, compare, () => dialog.open).then(() => global.FitCompare.focus(compare, size));
     } else {
       compare.hidden = true;
     }
@@ -339,6 +373,7 @@
 
   $('pdp-size-guide').addEventListener('click', openGuide);
   $('pdp-guide-close').addEventListener('click', () => $('pdp-guide').close());
+  $('pdp-guide-done').addEventListener('click', () => $('pdp-guide').close());
   $('pdp-guide').addEventListener('click', (event) => { if (event.target === $('pdp-guide')) $('pdp-guide').close(); });
   $('pdp-guide').addEventListener('close', () => { guideAsk += 1; $('pdp-size-guide').focus(); });
 
