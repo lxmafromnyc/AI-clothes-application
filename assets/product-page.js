@@ -4,13 +4,18 @@
    product.html?brand=uniqlo&item=E475378-000[&colour=09&size=M]
 
    Laid out the way a shop lays out a product: photos, the product's
-   name and facts, its colours, its sizes and — beside the sizes —
-   Fynd's Size Guide, which opens the product's real chart (the server's
-   own lookup, Account.sizing.item; drawn by assets/size-chart.js) in a
-   dialog, with what a saved fit profile can say about it
-   (assets/fit-compare.js). The chosen colour and size stay in the
-   address and are carried into the Size Guide, where the chosen size's
-   row is marked.
+   name, its colours, its sizes and — right under the sizes — Fynd's
+   Size Guide ("View size measurements"), which opens the product's real
+   chart in a dialog: the same lookup Find Fit makes (Account.sizing.item)
+   drawn by the same code (assets/size-chart.js), with what a saved fit
+   profile can say about it (assets/fit-compare.js). The chosen colour
+   and size stay in the address and are carried into the Size Guide,
+   where the chosen size's row is marked and a size can be chosen too;
+   closing it leaves the product as it was.
+
+   The shopping part shows only what helps choose: name, colour, size,
+   measurements, the retailer. Where each fact came from, and what Fynd
+   doesn't hold, is under the closed "Source details".
 
    Everything shown is what Fynd holds for the product
    (Account.sizing.detail; api/_sizing/brands): photos only from the
@@ -98,13 +103,20 @@
       return b;
     }));
     thumbs.hidden = urls.length < 2;
-    $('pdp-photo-note').textContent = product.imagesFrom ? `Photos from ${product.imagesFrom}.` : 'Fynd holds no photo of this product.';
   }
 
   function chooseColour(c, quiet) {
     colour = c;
     $('pdp-colour-name').textContent = c ? c.label : '—';
-    $('pdp-colours').querySelectorAll('.pdp-swatch').forEach((s) => s.setAttribute('aria-checked', String(s.dataset.code === (c && c.code))));
+    const box = $('pdp-colours');
+    box.querySelectorAll('.pdp-swatch').forEach((s) => s.setAttribute('aria-checked', String(s.dataset.code === (c && c.code))));
+    /* on a phone the colours scroll in one row: keep the chosen one in it */
+    const on = box.querySelector('.pdp-swatch[aria-checked="true"]');
+    if (on && box.scrollWidth > box.clientWidth) {
+      const r = on.getBoundingClientRect();
+      const b = box.getBoundingClientRect();
+      if (r.left < b.left || r.right > b.right) box.scrollLeft += r.left - b.left - (b.width - r.width) / 2;
+    }
     if (c) showImage(c.image, `${product.name}, ${c.label}`);
     if (!quiet) remember();
   }
@@ -128,32 +140,42 @@
       b.addEventListener('click', () => chooseColour(c));
       return b;
     }));
-    $('pdp-colours-note').textContent = product.coloursNote;
   }
 
+  /* one size, chosen on the page or in the Size Guide: both show it */
   function chooseSize(s, quiet) {
     size = s;
-    $('pdp-size-name').textContent = s || 'Choose a size';
-    $('pdp-sizes').querySelectorAll('.pdp-size').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.size === s)));
+    $('pdp-size-heading').textContent = s ? `Your size: ${s}` : (product.sizes ? 'Choose your size' : 'Size');
+    doc.querySelectorAll('.pdp-size').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.size === s)));
+    if ($('pdp-guide').open) { $('pdp-guide-selected').textContent = selectedLine(); markSize($('pdp-guide-body')); }
     if (!quiet) remember();
+  }
+
+  /* the product's sizes as buttons — only those in Fynd's record, none
+     marked unavailable: Fynd doesn't know which are in stock */
+  function sizeButtons() {
+    return product.sizes.list.map((s) => {
+      const b = el('button', 'pdp-size', s);
+      b.type = 'button';
+      b.setAttribute('role', 'radio');
+      b.setAttribute('aria-checked', String(s === size));
+      b.dataset.size = s;
+      b.addEventListener('click', () => chooseSize(s));
+      return b;
+    });
   }
 
   function drawSizes() {
     const box = $('pdp-sizes');
     if (!product.sizes) {
       box.replaceChildren();
-      $('pdp-sizes-note').textContent = 'Fynd doesn’t hold this product’s size list — it’s on UNIQLO’s page. The Size Guide shows what Fynd does hold.';
+      box.hidden = true;
+      $('pdp-sizes-note').textContent = 'Fynd doesn’t hold this product’s size list — UNIQLO’s page has it.';
       return;
     }
-    box.replaceChildren(...product.sizes.list.map((s) => {
-      const b = el('button', 'pdp-size', s);
-      b.type = 'button';
-      b.setAttribute('role', 'radio');
-      b.dataset.size = s;
-      b.addEventListener('click', () => chooseSize(s));
-      return b;
-    }));
-    $('pdp-sizes-note').textContent = `Sizes from ${product.sizes.source}. Fynd doesn’t know which sizes are in stock.`;
+    box.replaceChildren(...sizeButtons());
+    $('pdp-sizes-note').textContent = '';
+    $('pdp-sizes-note').hidden = true;
   }
 
   /* the expandable sections a shop's page has, each saying what Fynd holds */
@@ -179,8 +201,8 @@
 
     const fitNodes = [];
     if (product.fit) fitNodes.push(sourced(`Fit: ${product.fit.words}`, product.fit.source));
-    fitNodes.push(p(product.holdsText ? `${product.holdsText}.` : ''));
-    const guide = el('button', 'btn btn-secondary pdp-section-guide', 'Open the Size Guide');
+    else fitNodes.push(p('Fynd doesn’t hold UNIQLO’s fit description for this product.'));
+    const guide = el('button', 'btn btn-secondary pdp-section-guide', 'View size measurements');
     guide.type = 'button';
     guide.addEventListener('click', openGuide);
     fitNodes.push(guide);
@@ -190,18 +212,21 @@
     else materials.push(p('Fynd doesn’t hold this product’s fabric composition.'));
     materials.push(p('Care instructions aren’t held by Fynd — they’re on UNIQLO’s page.'));
 
-    const about = [
+    /* where everything on the page came from, and what Fynd doesn't hold */
+    const sources = [
       p(`Product ID ${product.code.slice(1, 7)} (${product.code}), UNIQLO ${product.market}.`),
       p(product.recordedAt ? `Sizes, fabric and fit are from Fynd’s saved record, copied from UNIQLO’s page on ${product.recordedAt} — not read live.` : 'Fynd has no saved record of this product’s details; only its listing and photos.'),
+      product.sizes ? p(`Sizes from ${product.sizes.source}. Fynd doesn’t know which sizes are in stock.`) : null,
+      p(product.coloursNote),
+      p(product.imagesFrom ? `Photos from ${product.imagesFrom}.` : 'Fynd holds no photo of this product.'),
       p(`Not held by Fynd: ${product.missing.join(', ')}.`)
-    ];
+    ].filter(Boolean);
 
     $('pdp-sections').replaceChildren(
-      section('Description & features', [describe], true),
+      section('Description & features', [describe]),
       section('Materials & care', materials),
       section('Fit & sizing', fitNodes),
-      section('Availability & shipping', [p('Fynd doesn’t hold stock, delivery or returns information for this product. UNIQLO’s page has them.')]),
-      section('About this information', about)
+      section('Source details', sources)
     );
   }
 
@@ -212,21 +237,24 @@
     $('pdp-crumb-category').textContent = product.categoryLabel || '';
     $('pdp-brand').textContent = product.brand;
     $('pdp-name').textContent = product.name;
-    $('pdp-meta').textContent = [`Product ID ${product.code.slice(1, 7)}`, product.categoryLabel, LINES[product.line]].filter(Boolean).join(' · ');
-    $('pdp-price').textContent = 'Price isn’t held by Fynd — see it on UNIQLO.';
-    $('pdp-holds').textContent = product.holdsText ? `Size Guide — ${product.holdsText}.` : '';
+    /* the sizing it is sold in; the ID and everything else are under Source details */
+    $('pdp-meta').textContent = [LINES[product.line], `${product.market} sizes`].filter(Boolean).join(' · ');
+    /* what Fynd holds for the measurements, said before anything is looked up */
+    $('pdp-holds').textContent = product.holdsText || '';
     const link = $('pdp-retailer');
     link.href = product.url;
     link.textContent = `View on ${retailerName}`;
+    /* no price, and no stock: neither is held, so neither is shown */
+    $('pdp-retailer-note').textContent = `Price, stock and checkout are on ${retailerName}’s own page — Fynd doesn’t know which colours or sizes are in stock.`;
     drawGallery();
     drawColours();
     drawSizes();
     drawSections();
+    $('pdp-grid').hidden = false;
     const wantColour = params.get('colour');
     chooseColour(product.colours.find((c) => c.code === wantColour) || product.colours.find((c) => c.code === product.defaultColour) || product.colours[0] || null, true);
     const wantSize = params.get('size');
-    if (product.sizes && product.sizes.list.includes(wantSize)) chooseSize(wantSize, true);
-    $('pdp-grid').hidden = false;
+    chooseSize(product.sizes && product.sizes.list.includes(wantSize) ? wantSize : null, true);
     status('', 'ready');
   }
 
@@ -239,16 +267,26 @@
     return `Selected: ${bits.join(' · ')}`;
   }
 
-  /* the chosen size's row, marked in every table that has it */
+  /* the chosen size's row, marked in every table that has it — or, when
+     no table has it, said */
   function markSize(body) {
-    if (!size) return;
+    let found = 0;
     body.querySelectorAll('tbody tr').forEach((tr) => {
       const th = tr.querySelector('th');
-      const on = Boolean(th && th.textContent.trim() === size);
+      const on = Boolean(size && th && th.textContent.trim() === size);
+      if (on) found += 1;
       tr.classList.toggle('is-chosen', on);
       if (on) tr.setAttribute('aria-current', 'true');
       else tr.removeAttribute('aria-current');
     });
+    const tables = body.querySelectorAll('tbody tr').length > 0;
+    let missing = body.querySelector('.pdp-guide-missing');
+    if (size && tables && !found) {
+      if (!missing) { missing = el('p', 'pdp-guide-missing'); body.prepend(missing); }
+      missing.textContent = `Size ${size} isn’t listed in this chart.`;
+    } else if (missing) {
+      missing.remove();
+    }
   }
 
   async function openGuide() {
@@ -257,6 +295,10 @@
     const compare = $('pdp-guide-compare');
     $('pdp-guide-product').textContent = `${product.brand} · ${product.name}`;
     $('pdp-guide-selected').textContent = selectedLine();
+    /* the product's own sizes, to choose from beside the chart */
+    $('pdp-guide-sizes').replaceChildren(...(product.sizes ? sizeButtons() : []));
+    $('pdp-guide-sizes').hidden = !product.sizes;
+    $('pdp-guide-variant').textContent = '';
     if (!dialog.open) dialog.showModal();
     if (chartAnswer) { show(chartAnswer); return; }
     const ask = ++guideAsk;
@@ -283,6 +325,11 @@
     dialog.dataset.state = chart.status;
     body.replaceChildren(...render(chart, product.url, { linked: false }));
     markSize(body);
+    /* Fynd's saved records are kept per product, never per colour: said,
+       not assumed either way. A general chart is no product's own. */
+    $('pdp-guide-variant').textContent = chart.scope === 'product-specific' && (chart.charts || []).length && product.colours.length > 1
+      ? 'Fynd’s chart is recorded for this product, not for a particular colour.'
+      : '';
     if ((chart.status === 'ok' || chart.status === 'fallback') && global.FitCompare) {
       global.FitCompare.show(chart, compare, () => dialog.open);
     } else {

@@ -2152,11 +2152,16 @@ carrying each product's code).
 
 Clicking a product card opens its own page,
 `product.html?brand=uniqlo&item=E475378-000` (`assets/product-page.js`). It is
-laid out the way a shop lays out a product: a large photo with thumbnails,
-brand, name, product ID and category, colour swatches, size buttons with
-**Size Guide** beside them, **View on UNIQLO**, and expandable sections
-(Description & features, Materials & care, Fit & sizing, Availability &
-shipping, About this information).
+laid out the way a shop lays out a product, in the order a shopper chooses: a
+large photo with thumbnails, brand and name, colour swatches, then **Choose your
+size** — large size buttons (the chosen one filled, ringed and ticked, and named
+in the heading) with **View size measurements** directly under them, saying what
+Fynd holds before it is pressed — then **View on UNIQLO**. Everything else sits
+in closed sections: Description & features, Materials & care, Fit & sizing, and
+**Source details** (product ID, record date, where sizes, colours and photos come
+from, and what Fynd doesn't hold). On a phone the photo is shorter and the
+colours scroll in one row, so the name, colours and sizes are on the first
+screen.
 
 Everything on it comes from `GET /api/size-recommendation?brand=uniqlo&detail=<code>`
 (the brand module's `detail(code)`), and each fact carries its source:
@@ -2169,15 +2174,21 @@ Everything on it comes from `GET /api/size-recommendation?brand=uniqlo&detail=<c
 - **Sizes, fabric and fit:** only from Fynd's saved record for the product,
   with the date it was copied. Without a record, the page says Fynd doesn't
   hold them.
-- **Not held, and said in place:** price, description, care, reviews, and
-  stock or availability by size. The retailer's page is one click away.
+- **Not held, and not shown:** price, description, care, reviews, and stock or
+  availability by size. No size is marked unavailable, and one line under the
+  retailer button says price and stock are on the retailer's page.
 
-**Size Guide** opens the product's real chart in a dialog, using the same lookup
-as everywhere else (`?brand=&item=`) and the same renderer
-(`assets/size-chart.js`). The chosen colour and size are carried in: they are
-named at the top, and the chosen size's row is marked in every table. Under the
-chart, `assets/fit-compare.js` (shared with Find Fit) adds what a saved fit
-profile can say. Only a checked finished-garment chart is compared; a body or
+**View size measurements** opens the product's real chart in a dialog, using the
+same lookup as everywhere else (`?brand=&item=`) and the same renderer
+(`assets/size-chart.js`), so its tables, units and sources are Find Fit's own.
+The chosen colour and size are carried in: they are named at the top, the
+product's sizes can be chosen there too, and the chosen size's row is marked
+("Your size") in every table — or, when the chart lacks that size, it says so.
+A chart from Fynd's own record says it is recorded per product, not per colour;
+a general chart never claims to be the product's own. **Back to product** (or
+Esc) returns with the colour and size as they were. Under the chart,
+`assets/fit-compare.js` (shared with Find Fit) adds what a saved fit profile can
+say. Only a checked finished-garment chart is compared; a body or
 general chart never is. The chosen colour and size stay in the address (`&colour=09&size=M`).
 
 **Adding a brand:** write a module beside `api/_sizing/brands/uniqlo.js` with

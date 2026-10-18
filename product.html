@@ -60,52 +60,58 @@
       <section class="pdp-gallery" aria-label="Photos">
         <div class="pdp-main-image" id="pdp-main-image"></div>
         <div class="pdp-thumbs" id="pdp-thumbs" role="group" aria-label="More photos"></div>
-        <p class="pdp-photo-note" id="pdp-photo-note"></p>
       </section>
 
       <section class="pdp-info" aria-labelledby="pdp-name">
         <p class="pdp-brand" id="pdp-brand"></p>
         <h1 class="pdp-name" id="pdp-name"></h1>
         <p class="pdp-meta" id="pdp-meta"></p>
-        <p class="pdp-price" id="pdp-price"></p>
 
         <div class="pdp-option" id="pdp-colours-block">
           <p class="pdp-option-label">Colour: <span id="pdp-colour-name"></span></p>
           <div class="pdp-swatches" id="pdp-colours" role="radiogroup" aria-label="Colour"></div>
-          <p class="pdp-option-note" id="pdp-colours-note"></p>
         </div>
 
-        <div class="pdp-option" id="pdp-sizes-block">
-          <div class="pdp-option-head">
-            <p class="pdp-option-label">Size: <span id="pdp-size-name">Choose a size</span></p>
-            <button class="pdp-size-guide" id="pdp-size-guide" type="button" aria-haspopup="dialog">Size Guide</button>
-          </div>
-          <div class="pdp-sizes" id="pdp-sizes" role="radiogroup" aria-label="Size"></div>
+        <!-- the size, and the product's measurements right under it -->
+        <div class="pdp-option pdp-size-block" id="pdp-sizes-block">
+          <h2 class="pdp-size-heading" id="pdp-size-heading">Choose your size</h2>
+          <div class="pdp-sizes" id="pdp-sizes" role="radiogroup" aria-labelledby="pdp-size-heading"></div>
           <p class="pdp-option-note" id="pdp-sizes-note"></p>
+          <button class="pdp-size-guide" id="pdp-size-guide" type="button" aria-haspopup="dialog" aria-describedby="pdp-holds">
+            <svg class="pdp-size-guide-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 8.5 8.5 3 21 15.5 15.5 21z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="m7 9 2 2m1-5 2 2m1 1 2 2m1-5 2 2m-5 5 2 2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" transform="translate(-1.2 1.2)"/></svg>
+            <span class="pdp-size-guide-text">
+              <span class="pdp-size-guide-label">View size measurements</span>
+              <span class="pdp-holds" id="pdp-holds"></span>
+            </span>
+          </button>
         </div>
-
-        <p class="pdp-holds" id="pdp-holds"></p>
 
         <div class="pdp-actions">
           <a class="btn btn-primary pdp-retailer" id="pdp-retailer" target="_blank" rel="noopener noreferrer">View on UNIQLO</a>
         </div>
-        <p class="pdp-retailer-note">Price, stock and checkout are on the retailer&rsquo;s own page.</p>
+        <p class="pdp-retailer-note" id="pdp-retailer-note">Price, stock and checkout are on the retailer&rsquo;s own page.</p>
 
         <div class="pdp-sections" id="pdp-sections"></div>
       </section>
     </div>
   </article>
 
-  <!-- the Size Guide: the product's chart, without leaving the page -->
+  <!-- the Size Guide: the product's chart — the same lookup and drawing
+       as Find Fit's — without leaving the page; a size can be chosen here
+       too, and the product keeps it -->
   <dialog class="size-chart pdp-guide" id="pdp-guide" aria-labelledby="pdp-guide-title">
     <div class="size-chart-head">
       <div>
         <h2 class="size-chart-title" id="pdp-guide-title">Size Guide</h2>
         <p class="size-chart-product" id="pdp-guide-product"></p>
       </div>
-      <button class="btn btn-secondary size-chart-close" id="pdp-guide-close" type="button">Close</button>
+      <button class="btn btn-secondary size-chart-close" id="pdp-guide-close" type="button">Back to product</button>
     </div>
-    <p class="pdp-guide-selected" id="pdp-guide-selected"></p>
+    <div class="pdp-guide-pick" id="pdp-guide-pick">
+      <p class="pdp-guide-selected" id="pdp-guide-selected"></p>
+      <div class="pdp-guide-sizes" id="pdp-guide-sizes" role="radiogroup" aria-label="Size"></div>
+      <p class="pdp-guide-variant" id="pdp-guide-variant"></p>
+    </div>
     <div class="size-chart-body" id="pdp-guide-body" aria-live="polite"></div>
     <div class="fit-compare" id="pdp-guide-compare" hidden></div>
   </dialog>
