@@ -63,8 +63,13 @@
   let brand = null;
   let products = [];
   let category = 'all';
+  let line = 'all';
+  let shownCount = 0;
   let picked = null;
   let asking = 0;
+  const PAGE = 24;
+  const groupOf = (p) => p.group || p.category;
+  const more = $('fit-products-more');
 
   const IMAGE_HOSTS = /^https:\/\/image\.uniqlo\.com\//;
 
@@ -101,14 +106,22 @@
     if (global.FindFit && global.FindFit.findItem) global.FindFit.findItem({ id: brand.id, name: brand.name }, p);
   }
 
-  function draw() {
+  /* the products matching the filters, a page at a time */
+  function draw(keep) {
     const words = search.value.trim().toLowerCase();
-    const shown = products.filter((p) => (category === 'all' || p.category === category) && (!words || p.name.toLowerCase().includes(words)));
-    grid.replaceChildren(...shown.map(card));
+    const matching = products.filter((p) => (category === 'all' || groupOf(p) === category)
+      && (line === 'all' || p.line === line || p.line === 'unisex')
+      && (!words || p.name.toLowerCase().includes(words)));
+    shownCount = keep ? Math.min(Math.max(shownCount, PAGE), matching.length) : Math.min(PAGE, matching.length);
+    grid.replaceChildren(...matching.slice(0, shownCount).map(card));
+    more.hidden = shownCount >= matching.length;
+    more.textContent = `Show more (${matching.length - shownCount} more)`;
+    root.dataset.matching = String(matching.length);
     if (!products.length) say('No products to show for this brand yet.');
-    else if (!shown.length) say('No products match. Clear the search or choose another type.');
-    else say('');
+    else if (!matching.length) say('No products match. Clear the search or choose another type.');
+    else say(matching.length > shownCount ? `Showing ${shownCount} of ${matching.length}` : '', 'ready');
   }
+  more.addEventListener('click', () => { shownCount += PAGE; draw(true); });
 
   function say(text, state) {
     status.textContent = text;
@@ -117,19 +130,35 @@
   }
 
   function drawFilters() {
-    const kinds = [...new Map(products.map((p) => [p.category, p.categoryLabel])).entries()];
-    const chip = (value, label) => {
+    const kinds = [...new Map(products.map((p) => [groupOf(p), p.categoryLabel])).entries()];
+    const lines = [...new Set(products.map((p) => p.line).filter((l) => l === 'men' || l === 'women'))];
+    const chip = (group, value, label, set) => {
       const b = el('button', 'fit-filter', label);
       b.type = 'button';
-      b.setAttribute('aria-pressed', String(category === value));
+      b.dataset.group = group;
+      b.setAttribute('aria-pressed', String(value === 'all'));
       b.addEventListener('click', () => {
-        category = value;
-        filters.querySelectorAll('.fit-filter').forEach((f) => f.setAttribute('aria-pressed', String(f === b)));
+        set(value);
+        filters.querySelectorAll(`.fit-filter[data-group="${group}"]`).forEach((f) => f.setAttribute('aria-pressed', String(f === b)));
         draw();
       });
       return b;
     };
-    filters.replaceChildren(chip('all', 'All'), ...kinds.map(([value, label]) => chip(value, label)));
+    const setKind = (v) => { category = v; };
+    const setLine = (v) => { line = v; };
+    const kindRow = el('div', 'fit-filter-row');
+    kindRow.setAttribute('role', 'group');
+    kindRow.setAttribute('aria-label', 'Type of clothing');
+    kindRow.append(chip('kind', 'all', 'All', setKind), ...kinds.map(([value, label]) => chip('kind', value, label, setKind)));
+    const rows = [kindRow];
+    if (lines.length > 1) {
+      const lineRow = el('div', 'fit-filter-row');
+      lineRow.setAttribute('role', 'group');
+      lineRow.setAttribute('aria-label', 'Men or women');
+      lineRow.append(chip('line', 'all', 'Everyone', setLine), ...lines.map((l) => chip('line', l, l === 'men' ? 'Men' : 'Women', setLine)));
+      rows.push(lineRow);
+    }
+    filters.replaceChildren(...rows);
   }
 
   async function load(id) {
@@ -150,6 +179,7 @@
     brand = answer.data.brand;
     products = answer.data.products;
     category = 'all';
+    line = 'all';
     coverage.textContent = brand.coverage || '';
     drawFilters();
     draw();
@@ -173,7 +203,7 @@
   }
 
   brandSelect.addEventListener('change', () => load(brandSelect.value));
-  search.addEventListener('input', draw);
+  search.addEventListener('input', () => draw());
   start();
 
   global.BrandBrowser = { load, choose: (code) => { const p = products.find((x) => x.code === code); if (p) choose(p); } };

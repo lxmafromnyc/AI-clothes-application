@@ -1535,6 +1535,31 @@ await test('every UNIQLO product listed is a real one Fynd sourced: a sizing rec
   assert.deepStrictEqual(holds, { 'E475378-000': 'checked-chart', 'E475377-000': 'checked-chart', 'E455365-000': 'unchecked-chart', 'E471808-000': 'general-chart', 'E429066-000': 'live-only' });
 });
 
+await test('a catalogue snapshot (FIXTURE) adds UNIQLO’s listed products: rows that break a rule are dropped, known products keep what Fynd holds, and only men’s tops in UNIQLO’s own categories fall under the general men’s chart', () => {
+  const { execFileSync } = require('child_process');
+  const path = require('path');
+  const probe = `
+    const b = require('./api/_sizing/brands/uniqlo');
+    const oc = require('./api/_sizing/official-charts');
+    const ch = require('./api/_sizing/chart');
+    const fb = (code) => { const f = oc.fallbackFor(ch.checkUrl('https://www.uniqlo.com/us/en/products/' + code + '/00')); return f ? f.product.identity : null; };
+    console.log(JSON.stringify({ coverage: b.coverage, products: b.products(), menHoodie: fb('E900001-000'), womenTee: fb('E900019-000'), menKnit: fb('E900027-000'), uk: oc.fallbackFor(ch.checkUrl('https://www.uniqlo.com/uk/en/products/E900001-000/00')) }));`;
+  const out = JSON.parse(execFileSync(process.execPath, ['-e', probe], { cwd: path.join(__dirname, '..'), env: Object.assign({}, process.env, { FYND_UNIQLO_CATALOG: path.join(__dirname, 'fixtures/uniqlo-catalog-fixture.json') }) }).toString());
+  const codes = out.products.map((p) => p.code);
+  assert.strictEqual(out.products.length, 36);
+  assert.match(out.coverage, /36 UNIQLO US products, as listed on uniqlo\.com’s own category pages on 2026-10-18/);
+  ['E9BAD-000', 'E999901-000', 'E999903-000', 'E999904-000'].forEach((c) => assert.ok(!codes.includes(c), `${c} dropped`));
+  assert.strictEqual(out.products.find((p) => p.code === 'E999902-000').imageUrl, null, 'a photo off UNIQLO’s image host is dropped, the product kept');
+  const known = out.products.find((p) => p.code === 'E475378-000');
+  assert.deepStrictEqual([known.holds, known.line, known.category], ['checked-chart', 'unisex', 'hoodies'], 'the snapshot changes nothing Fynd holds');
+  assert.deepStrictEqual(out.products.slice(0, 3).map((p) => p.holds), ['checked-chart', 'checked-chart', 'unchecked-chart']);
+  assert.strictEqual(out.products.find((p) => p.code === 'E900001-000').holds, 'general-chart');
+  assert.strictEqual(out.products.find((p) => p.code === 'E900019-000').holds, 'live-only');
+  assert.strictEqual(out.products.find((p) => p.code === 'E900027-000').holds, 'live-only');
+  assert.match(out.menHoodie, /Listed on UNIQLO’s Sweatshirts & Hoodies page for men \(https:\/\/www\.uniqlo\.com\/us\/en\/men\/tops\/sweatshirts-and-hoodies\)/);
+  assert.deepStrictEqual([out.womenTee, out.menKnit, out.uk], [null, null, null], 'women’s tops, knitwear and another market never get the men’s chart');
+});
+
 await test('a product is found by its exact code only — never by a link, a near code or anything else the browser sends', () => {
   assert.strictEqual(uniqloBrand.find('E475378-000').name, 'Sweat Pullover Hoodie');
   for (const bad of ['E475378', 'e475378-000', 'E475378-0000', 'https://www.uniqlo.com/us/en/products/E475378-000/00', 'E999999-000', ' E475378-000', null, {}, ['E475378-000']]) {

@@ -26,6 +26,7 @@
 'use strict';
 
 const { byId } = require('./records');
+const uniqloSnapshot = require('./brands/uniqlo-snapshot');
 const schema = require('./schema');
 
 const FILES = [
@@ -76,17 +77,35 @@ FILES.forEach((c) => {
   else CHARTS.push(Object.freeze(c));
 });
 
+/* A product from the UNIQLO catalogue snapshot falls under a general
+   chart only when UNIQLO's own category page put it in one of the
+   chart's categories and lines: "Sweatshirts & Hoodies" covers both. */
+const SNAPSHOT_CATEGORIES = { 'sweatshirts-hoodies': ['sweatshirts', 'hoodies'], tshirts: ['tshirts'] };
+function covers(chart, product) {
+  const cats = SNAPSHOT_CATEGORIES[product.category] || [];
+  return chart.brand === 'UNIQLO' && chart.appliesTo.lines.includes(product.line) && cats.some((c) => chart.appliesTo.categories.includes(c));
+}
+const listedProduct = (snap) => ({
+  code: snap.code, url: snap.url, name: snap.name, category: snap.category, line: snap.line,
+  identity: `Listed on UNIQLO’s ${snap.categoryLabel || snap.category} page for ${snap.line} (${snap.listedOn}), read ${uniqloSnapshot.SNAPSHOT.fetchedAt || 'from uniqlo.com'}.`
+});
+
 /* The general chart that applies to this product, and the product as
    Fynd knows it — or null. Matched by the product's own code in its
-   canonical link, on the brand's site, in the chart's market. */
+   canonical link, on the brand's site, in the chart's market: a product
+   the chart names, or one UNIQLO's own category page placed within the
+   chart's categories and lines. */
 function fallbackFor(checked) {
   if (!checked || !checked.brand || checked.error) return null;
+  const code = (/\/products\/(E\d{6}-\d{3})\//.exec(`${checked.url}/`) || [])[1] || null;
   for (const chart of CHARTS) {
     if (chart.brand !== checked.brand || (checked.market && checked.market !== chart.market)) continue;
     const product = (chart.products || []).find((p) => checked.url === p.url || checked.url.startsWith(`${p.url.replace(/\/[^/]*$/, '')}/`));
     if (product) return { chart, product };
+    const snap = code && checked.brand === 'UNIQLO' && chart.market === 'US' ? uniqloSnapshot.byCode(code) : null;
+    if (snap && checked.url.startsWith('https://www.uniqlo.com/us/') && covers(chart, snap)) return { chart, product: listedProduct(snap) };
   }
   return null;
 }
 
-module.exports = { CHARTS, problems, validate, fallbackFor };
+module.exports = { CHARTS, problems, validate, fallbackFor, covers };

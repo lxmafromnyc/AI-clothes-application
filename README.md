@@ -2092,29 +2092,61 @@ No address the browser sends is used, and a code that isn't listed is refused
 before anything is fetched. The listing and lookup modes are public and
 read-only. They share the `sizing:chart` rate limit and never read a profile.
 
-**UNIQLO** is the first and only brand so far. Its products are the UNIQLO US
-products Fynd has itself read off uniqlo.com. The list says this and is not
-UNIQLO's full range:
+**UNIQLO** is the first and only brand so far. The list holds every UNIQLO US
+product Fynd can source:
 
-| Product | Code | What Fynd holds for its sizing |
-|---|---|---|
-| Sweat Pullover Hoodie | E475378-000 | its own body and garment charts, checked |
-| Sweatshirt | E475377-000 | its own body and garment charts, checked |
-| SUPIMA Cotton T-Shirt | E455365-000 | its own charts, not yet checked |
-| Sweat Oversized Pullover Hoodie | E471808-000 | UNIQLO's general US tops body chart, used only when its page can't be read |
-| Extra Fine Merino Crew Neck Sweater | E429066-000 | a listing only; its chart is looked up live |
+- **What Fynd holds already** (always listed, first):
 
-Each card says what Fynd holds, never that a chart was read. Only E429066 has a
-verified photo; the others are drawn as line artwork. The menu offers only brands
-that have a working product list. Nike, Zara and H&M are named as coming later.
+  | Product | Code | What Fynd holds for its sizing |
+  |---|---|---|
+  | Sweat Pullover Hoodie | E475378-000 | its own body and garment charts, checked |
+  | Sweatshirt | E475377-000 | its own body and garment charts, checked |
+  | SUPIMA Cotton T-Shirt | E455365-000 | its own charts, not yet checked |
+  | Sweat Oversized Pullover Hoodie | E471808-000 | UNIQLO's general US men's tops body chart, used only when its page can't be read |
+  | Extra Fine Merino Crew Neck Sweater | E429066-000 | a listing only; its chart is looked up live |
 
-**Why not UNIQLO's own site in a frame, or its catalogue?** The development
-environment couldn't reach uniqlo.com, so whether it may be framed is unknown.
-`node scripts/check-embed.js` reports its framing headers from a machine that can
-reach it. Even a framable page can't tell Find Fit which product was clicked
-across origins, so a frame can't start a lookup. The deployed server's requests to
-uniqlo.com go unanswered. UNIQLO publishes no open product feed or licence for
-one. No paid or third-party catalogue is used.
+- **A catalogue snapshot**, when one has been committed
+  (`api/_sizing/brands/uniqlo-catalog.json`). It holds the products on UNIQLO's
+  own US category pages: Sweatshirts & Hoodies, T-shirts, and Sweaters &
+  Cardigans for men and women. `scripts/fetch-uniqlo-catalog.js` writes it, and
+  `uniqlo-snapshot.js` checks it as it loads. A row is dropped if:
+  - its code doesn't match its own canonical link;
+  - its category or line is unknown;
+  - it wasn't listed on a uniqlo.com category page.
+
+  A photo is kept only if it is on `image.uniqlo.com` and carries the product's
+  code. A product already known keeps what Fynd holds for it. A men's
+  sweatshirt, hoodie or T-shirt that UNIQLO's own page placed there may fall
+  back to UNIQLO's general men's body chart, labelled as general. Anything else,
+  including every women's product and all knitwear, gets its live page or an
+  honest "unavailable".
+
+The list shows products with a saved chart first, 24 at a time (**Show more**).
+It can be filtered by type and by Men/Women, and searched by name. Each card
+says what Fynd holds, never that a chart was read. Photos come from UNIQLO's
+image host only. All five products listed today have one
+(`uniqlo-photos.json`: found by `scripts/find-uniqlo-photos.js` at addresses
+carrying each product's code).
+
+**Where UNIQLO's product listings could come from, and what was found**
+(18 October 2026):
+- **Official channels:** none. UNIQLO publishes no product API, feed or affiliate
+  catalogue. The only "UNIQLO APIs" on offer are third-party scrapers of its
+  site's internal commerce backend, which Fynd doesn't use.
+- **Its own site, from cloud machines:** the development container has no
+  outbound network. The deployed server's requests to uniqlo.com go unanswered.
+  From GitHub's runners (`.github/workflows/uniqlo-catalog.yml`, runs
+  39081940293, 39082036637 and 39082168769), www.uniqlo.com accepted the
+  connection and then reset every request (`HTTP/2 INTERNAL_ERROR`):
+  robots.txt included, under curl's own user agent and Fynd's.
+  `image.uniqlo.com` answered.
+- **Fynd doesn't disguise itself** to get past this, so no snapshot has been
+  written yet. Run `node scripts/fetch-uniqlo-catalog.js` from a machine
+  uniqlo.com answers, read the file, and commit it. The page then lists every
+  product in it with no other change.
+- **Framing:** a page in an iframe can't tell Find Fit which product was clicked,
+  so UNIQLO's site in a frame couldn't start a lookup. Its framing headers
+  couldn't be read either: the reset came before any headers.
 
 **Adding a brand:** write a module beside `api/_sizing/brands/uniqlo.js` with
 `id`, `name`, `market`, `coverage`, `products()` and `find(code)`, and add it to

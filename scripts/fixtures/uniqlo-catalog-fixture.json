@@ -1,0 +1,358 @@
+{
+  "about": "FIXTURE \u2014 invented for Fynd's tests in the shape scripts/fetch-uniqlo-catalog.js writes. Not UNIQLO's products: every code from E900001 is made up, and every name says FIXTURE. Never served to customers; loaded only when FYND_UNIQLO_CATALOG names this file.",
+  "source": "https://www.uniqlo.com",
+  "fetchedAt": "2026-10-18T00:00:00.000Z",
+  "products": [
+    {
+      "code": "E900001-000",
+      "name": "FIXTURE Men's Sweat Hoodie 01",
+      "url": "https://www.uniqlo.com/us/en/products/E900001-000/00",
+      "imageUrl": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/900001/item/goods_09_900001_3x4.jpg",
+      "category": "sweatshirts-hoodies",
+      "categoryLabel": "Sweatshirts & Hoodies",
+      "line": "men",
+      "listedOn": "https://www.uniqlo.com/us/en/men/tops/sweatshirts-and-hoodies"
+    },
+    {
+      "code": "E900002-000",
+      "name": "FIXTURE Men's Sweat Hoodie 02",
+      "url": "https://www.uniqlo.com/us/en/products/E900002-000/00",
+      "imageUrl": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/900002/item/goods_09_900002_3x4.jpg",
+      "category": "sweatshirts-hoodies",
+      "categoryLabel": "Sweatshirts & Hoodies",
+      "line": "men",
+      "listedOn": "https://www.uniqlo.com/us/en/men/tops/sweatshirts-and-hoodies"
+    },
+    {
+      "code": "E900003-000",
+      "name": "FIXTURE Men's Sweat Hoodie 03",
+      "url": "https://www.uniqlo.com/us/en/products/E900003-000/00",
+      "imageUrl": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/900003/item/goods_09_900003_3x4.jpg",
+      "category": "sweatshirts-hoodies",
+      "categoryLabel": "Sweatshirts & Hoodies",
+      "line": "men",
+      "listedOn": "https://www.uniqlo.com/us/en/men/tops/sweatshirts-and-hoodies"
+    },
+    {
+      "code": "E900004-000",
+      "name": "FIXTURE Men's Sweat Hoodie 04",
+      "url": "https://www.uniqlo.com/us/en/products/E900004-000/00",
+      "imageUrl": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/900004/item/goods_09_900004_3x4.jpg",
+      "category": "sweatshirts-hoodies",
+      "categoryLabel": "Sweatshirts & Hoodies",
+      "line": "men",
+      "listedOn": "https://www.uniqlo.com/us/en/men/tops/sweatshirts-and-hoodies"
+    },
+    {
+      "code": "E900005-000",
+      "name": "FIXTURE Men's Sweat Hoodie 05",
+      "url": "https://www.uniqlo.com/us/en/products/E900005-000/00",
+      "imageUrl": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/900005/item/goods_09_900005_3x4.jpg",
+      "category": "sweatshirts-hoodies",
+      "categoryLabel": "Sweatshirts & Hoodies",
+      "line": "men",
+      "listedOn": "https://www.uniqlo.com/us/en/men/tops/sweatshirts-and-hoodies"
+    },
+    {
+      "code": "E900006-000",
+      "name": "FIXTURE Men's Sweat Hoodie 06",
+      "url": "https://www.uniqlo.com/us/en/products/E900006-000/00",
+      "imageUrl": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/900006/item/goods_09_900006_3x4.jpg",
+      "category": "sweatshirts-hoodies",
+      "categoryLabel": "Sweatshirts & Hoodies",
+      "line": "men",
+      "listedOn": "https://www.uniqlo.com/us/en/men/tops/sweatshirts-and-hoodies"
+    },
+    {
+      "code": "E900007-000",
+      "name": "FIXTURE Men's Sweat Hoodie 07",
+      "url": "https://www.uniqlo.com/us/en/products/E900007-000/00",
+      "imageUrl": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/900007/item/goods_09_900007_3x4.jpg",
+      "category": "sweatshirts-hoodies",
+      "categoryLabel": "Sweatshirts & Hoodies",
+      "line": "men",
+      "listedOn": "https://www.uniqlo.com/us/en/men/tops/sweatshirts-and-hoodies"
+    },
+    {
+      "code": "E900008-000",
+      "name": "FIXTURE Men's Sweat Hoodie 08",
+      "url": "https://www.uniqlo.com/us/en/products/E900008-000/00",
+      "imageUrl": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/900008/item/goods_09_900008_3x4.jpg",
+      "category": "sweatshirts-hoodies",
+      "categoryLabel": "Sweatshirts & Hoodies",
+      "line": "men",
+      "listedOn": "https://www.uniqlo.com/us/en/men/tops/sweatshirts-and-hoodies"
+    },
+    {
+      "code": "E900009-000",
+      "name": "FIXTURE Men's Sweat Hoodie 09",
+      "url": "https://www.uniqlo.com/us/en/products/E900009-000/00",
+      "imageUrl": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/900009/item/goods_09_900009_3x4.jpg",
+      "category": "sweatshirts-hoodies",
+      "categoryLabel": "Sweatshirts & Hoodies",
+      "line": "men",
+      "listedOn": "https://www.uniqlo.com/us/en/men/tops/sweatshirts-and-hoodies"
+    },
+    {
+      "code": "E900010-000",
+      "name": "FIXTURE Men's Sweat Hoodie 10",
+      "url": "https://www.uniqlo.com/us/en/products/E900010-000/00",
+      "imageUrl": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/900010/item/goods_09_900010_3x4.jpg",
+      "category": "sweatshirts-hoodies",
+      "categoryLabel": "Sweatshirts & Hoodies",
+      "line": "men",
+      "listedOn": "https://www.uniqlo.com/us/en/men/tops/sweatshirts-and-hoodies"
+    },
+    {
+      "code": "E900011-000",
+      "name": "FIXTURE Men's Sweat Hoodie 11",
+      "url": "https://www.uniqlo.com/us/en/products/E900011-000/00",
+      "imageUrl": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/900011/item/goods_09_900011_3x4.jpg",
+      "category": "sweatshirts-hoodies",
+      "categoryLabel": "Sweatshirts & Hoodies",
+      "line": "men",
+      "listedOn": "https://www.uniqlo.com/us/en/men/tops/sweatshirts-and-hoodies"
+    },
+    {
+      "code": "E900012-000",
+      "name": "FIXTURE Men's Sweat Hoodie 12",
+      "url": "https://www.uniqlo.com/us/en/products/E900012-000/00",
+      "imageUrl": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/900012/item/goods_09_900012_3x4.jpg",
+      "category": "sweatshirts-hoodies",
+      "categoryLabel": "Sweatshirts & Hoodies",
+      "line": "men",
+      "listedOn": "https://www.uniqlo.com/us/en/men/tops/sweatshirts-and-hoodies"
+    },
+    {
+      "code": "E900013-000",
+      "name": "FIXTURE Men's Sweat Hoodie 13",
+      "url": "https://www.uniqlo.com/us/en/products/E900013-000/00",
+      "imageUrl": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/900013/item/goods_09_900013_3x4.jpg",
+      "category": "sweatshirts-hoodies",
+      "categoryLabel": "Sweatshirts & Hoodies",
+      "line": "men",
+      "listedOn": "https://www.uniqlo.com/us/en/men/tops/sweatshirts-and-hoodies"
+    },
+    {
+      "code": "E900014-000",
+      "name": "FIXTURE Men's Sweat Hoodie 14",
+      "url": "https://www.uniqlo.com/us/en/products/E900014-000/00",
+      "imageUrl": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/900014/item/goods_09_900014_3x4.jpg",
+      "category": "sweatshirts-hoodies",
+      "categoryLabel": "Sweatshirts & Hoodies",
+      "line": "men",
+      "listedOn": "https://www.uniqlo.com/us/en/men/tops/sweatshirts-and-hoodies"
+    },
+    {
+      "code": "E900015-000",
+      "name": "FIXTURE Men's Sweat Hoodie 15",
+      "url": "https://www.uniqlo.com/us/en/products/E900015-000/00",
+      "imageUrl": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/900015/item/goods_09_900015_3x4.jpg",
+      "category": "sweatshirts-hoodies",
+      "categoryLabel": "Sweatshirts & Hoodies",
+      "line": "men",
+      "listedOn": "https://www.uniqlo.com/us/en/men/tops/sweatshirts-and-hoodies"
+    },
+    {
+      "code": "E900016-000",
+      "name": "FIXTURE Men's Sweat Hoodie 16",
+      "url": "https://www.uniqlo.com/us/en/products/E900016-000/00",
+      "imageUrl": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/900016/item/goods_09_900016_3x4.jpg",
+      "category": "sweatshirts-hoodies",
+      "categoryLabel": "Sweatshirts & Hoodies",
+      "line": "men",
+      "listedOn": "https://www.uniqlo.com/us/en/men/tops/sweatshirts-and-hoodies"
+    },
+    {
+      "code": "E900017-000",
+      "name": "FIXTURE Men's Sweat Hoodie 17",
+      "url": "https://www.uniqlo.com/us/en/products/E900017-000/00",
+      "imageUrl": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/900017/item/goods_09_900017_3x4.jpg",
+      "category": "sweatshirts-hoodies",
+      "categoryLabel": "Sweatshirts & Hoodies",
+      "line": "men",
+      "listedOn": "https://www.uniqlo.com/us/en/men/tops/sweatshirts-and-hoodies"
+    },
+    {
+      "code": "E900018-000",
+      "name": "FIXTURE Men's Sweat Hoodie 18",
+      "url": "https://www.uniqlo.com/us/en/products/E900018-000/00",
+      "imageUrl": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/900018/item/goods_09_900018_3x4.jpg",
+      "category": "sweatshirts-hoodies",
+      "categoryLabel": "Sweatshirts & Hoodies",
+      "line": "men",
+      "listedOn": "https://www.uniqlo.com/us/en/men/tops/sweatshirts-and-hoodies"
+    },
+    {
+      "code": "E900019-000",
+      "name": "FIXTURE Women's Crew Neck T-Shirt 01",
+      "url": "https://www.uniqlo.com/us/en/products/E900019-000/00",
+      "imageUrl": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/900019/item/goods_09_900019_3x4.jpg",
+      "category": "tshirts",
+      "categoryLabel": "T-shirts",
+      "line": "women",
+      "listedOn": "https://www.uniqlo.com/us/en/women/tops/t-shirts"
+    },
+    {
+      "code": "E900020-000",
+      "name": "FIXTURE Women's Crew Neck T-Shirt 02",
+      "url": "https://www.uniqlo.com/us/en/products/E900020-000/00",
+      "imageUrl": null,
+      "category": "tshirts",
+      "categoryLabel": "T-shirts",
+      "line": "women",
+      "listedOn": "https://www.uniqlo.com/us/en/women/tops/t-shirts"
+    },
+    {
+      "code": "E900021-000",
+      "name": "FIXTURE Women's Crew Neck T-Shirt 03",
+      "url": "https://www.uniqlo.com/us/en/products/E900021-000/00",
+      "imageUrl": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/900021/item/goods_09_900021_3x4.jpg",
+      "category": "tshirts",
+      "categoryLabel": "T-shirts",
+      "line": "women",
+      "listedOn": "https://www.uniqlo.com/us/en/women/tops/t-shirts"
+    },
+    {
+      "code": "E900022-000",
+      "name": "FIXTURE Women's Crew Neck T-Shirt 04",
+      "url": "https://www.uniqlo.com/us/en/products/E900022-000/00",
+      "imageUrl": null,
+      "category": "tshirts",
+      "categoryLabel": "T-shirts",
+      "line": "women",
+      "listedOn": "https://www.uniqlo.com/us/en/women/tops/t-shirts"
+    },
+    {
+      "code": "E900023-000",
+      "name": "FIXTURE Women's Crew Neck T-Shirt 05",
+      "url": "https://www.uniqlo.com/us/en/products/E900023-000/00",
+      "imageUrl": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/900023/item/goods_09_900023_3x4.jpg",
+      "category": "tshirts",
+      "categoryLabel": "T-shirts",
+      "line": "women",
+      "listedOn": "https://www.uniqlo.com/us/en/women/tops/t-shirts"
+    },
+    {
+      "code": "E900024-000",
+      "name": "FIXTURE Women's Crew Neck T-Shirt 06",
+      "url": "https://www.uniqlo.com/us/en/products/E900024-000/00",
+      "imageUrl": null,
+      "category": "tshirts",
+      "categoryLabel": "T-shirts",
+      "line": "women",
+      "listedOn": "https://www.uniqlo.com/us/en/women/tops/t-shirts"
+    },
+    {
+      "code": "E900025-000",
+      "name": "FIXTURE Women's Crew Neck T-Shirt 07",
+      "url": "https://www.uniqlo.com/us/en/products/E900025-000/00",
+      "imageUrl": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/900025/item/goods_09_900025_3x4.jpg",
+      "category": "tshirts",
+      "categoryLabel": "T-shirts",
+      "line": "women",
+      "listedOn": "https://www.uniqlo.com/us/en/women/tops/t-shirts"
+    },
+    {
+      "code": "E900026-000",
+      "name": "FIXTURE Women's Crew Neck T-Shirt 08",
+      "url": "https://www.uniqlo.com/us/en/products/E900026-000/00",
+      "imageUrl": null,
+      "category": "tshirts",
+      "categoryLabel": "T-shirts",
+      "line": "women",
+      "listedOn": "https://www.uniqlo.com/us/en/women/tops/t-shirts"
+    },
+    {
+      "code": "E900027-000",
+      "name": "FIXTURE Men's Merino Sweater 01",
+      "url": "https://www.uniqlo.com/us/en/products/E900027-000/00",
+      "imageUrl": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/900027/item/goods_09_900027_3x4.jpg",
+      "category": "knitwear",
+      "categoryLabel": "Sweaters & Cardigans",
+      "line": "men",
+      "listedOn": "https://www.uniqlo.com/us/en/men/tops/sweaters-and-cardigans"
+    },
+    {
+      "code": "E900028-000",
+      "name": "FIXTURE Men's Merino Sweater 02",
+      "url": "https://www.uniqlo.com/us/en/products/E900028-000/00",
+      "imageUrl": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/900028/item/goods_09_900028_3x4.jpg",
+      "category": "knitwear",
+      "categoryLabel": "Sweaters & Cardigans",
+      "line": "men",
+      "listedOn": "https://www.uniqlo.com/us/en/men/tops/sweaters-and-cardigans"
+    },
+    {
+      "code": "E900029-000",
+      "name": "FIXTURE Men's Merino Sweater 03",
+      "url": "https://www.uniqlo.com/us/en/products/E900029-000/00",
+      "imageUrl": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/900029/item/goods_09_900029_3x4.jpg",
+      "category": "knitwear",
+      "categoryLabel": "Sweaters & Cardigans",
+      "line": "men",
+      "listedOn": "https://www.uniqlo.com/us/en/men/tops/sweaters-and-cardigans"
+    },
+    {
+      "code": "E900030-000",
+      "name": "FIXTURE Men's Merino Sweater 04",
+      "url": "https://www.uniqlo.com/us/en/products/E900030-000/00",
+      "imageUrl": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/900030/item/goods_09_900030_3x4.jpg",
+      "category": "knitwear",
+      "categoryLabel": "Sweaters & Cardigans",
+      "line": "men",
+      "listedOn": "https://www.uniqlo.com/us/en/men/tops/sweaters-and-cardigans"
+    },
+    {
+      "code": "E475378-000",
+      "name": "Sweat Pullover Hoodie",
+      "url": "https://www.uniqlo.com/us/en/products/E475378-000/00",
+      "imageUrl": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/475378/item/goods_09_475378_3x4.jpg",
+      "category": "sweatshirts-hoodies",
+      "categoryLabel": "Sweatshirts & Hoodies",
+      "line": "men",
+      "listedOn": "https://www.uniqlo.com/us/en/men/tops/sweatshirts-and-hoodies"
+    },
+    {
+      "code": "E9BAD-000",
+      "name": "FIXTURE bad code",
+      "url": "https://www.uniqlo.com/us/en/products/E9BAD-000/00",
+      "category": "tshirts",
+      "line": "men",
+      "listedOn": "https://www.uniqlo.com/us/en/men/tops/t-shirts"
+    },
+    {
+      "code": "E999901-000",
+      "name": "FIXTURE wrong url",
+      "url": "https://evil.example/products/E999901-000/00",
+      "category": "tshirts",
+      "line": "men",
+      "listedOn": "https://www.uniqlo.com/us/en/men/tops/t-shirts"
+    },
+    {
+      "code": "E999902-000",
+      "name": "FIXTURE foreign photo",
+      "url": "https://www.uniqlo.com/us/en/products/E999902-000/00",
+      "imageUrl": "https://cdn.example/999902.jpg",
+      "category": "tshirts",
+      "line": "men",
+      "listedOn": "https://www.uniqlo.com/us/en/men/tops/t-shirts"
+    },
+    {
+      "code": "E999903-000",
+      "name": "FIXTURE unknown category",
+      "url": "https://www.uniqlo.com/us/en/products/E999903-000/00",
+      "category": "socks",
+      "line": "men",
+      "listedOn": "https://www.uniqlo.com/us/en/men/socks"
+    },
+    {
+      "code": "E999904-000",
+      "name": "",
+      "url": "https://www.uniqlo.com/us/en/products/E999904-000/00",
+      "category": "tshirts",
+      "line": "men",
+      "listedOn": "https://www.uniqlo.com/us/en/men/tops/t-shirts"
+    }
+  ]
+}

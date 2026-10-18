@@ -59,6 +59,10 @@ try {
    --------------------------------------------------------- */
 
 process.env.AUTH_SECRET = 'end-to-end-secret-of-sufficient-length';
+/* Find Fit's UNIQLO list: the products Fynd holds, plus a FIXTURE
+   snapshot in the shape scripts/fetch-uniqlo-catalog.js writes — every
+   code from E900001 and every "FIXTURE" name is invented */
+process.env.FYND_UNIQLO_CATALOG = path.join(__dirname, 'fixtures/uniqlo-catalog-fixture.json');
 process.env.ALLOWED_ORIGIN = `${ORIGIN},${PAGE_ORIGIN}`;
 process.env.STRIPE_SECRET_KEY = 'sk_test_e2e';
 process.env.STRIPE_WEBHOOK_SECRET = 'whsec_e2e';
@@ -1490,18 +1494,34 @@ const linkFromInbox = (pattern) => {
     assert.deepStrictEqual(await page.$$eval('#fit-brand option', (os) => os.map((o) => o.textContent)), ['UNIQLO'], 'only brands that work are offered');
     assert.match(await page.textContent('#fit-brand-planned'), /Nike, Zara, H&M — coming later\./);
     const cards = await page.$$eval('.fit-product', (bs) => bs.map((b) => [b.dataset.code, b.querySelector('.fit-product-name').textContent, b.querySelector('.fit-product-holds').textContent]));
-    assert.deepStrictEqual(cards.map((c) => c[0]).sort(), ['E429066-000', 'E455365-000', 'E471808-000', 'E475377-000', 'E475378-000']);
+    assert.strictEqual(cards.length, 24, 'a page at a time');
+    assert.deepStrictEqual(cards.slice(0, 3).map((c) => c[0]), ['E475378-000', 'E475377-000', 'E455365-000'], 'products with a saved chart first');
     assert.ok(cards.some(([code, name, holds]) => code === 'E471808-000' && name === 'Sweat Oversized Pullover Hoodie' && holds === 'UNIQLO’s general chart only'));
-    assert.match(await page.textContent('#fit-coverage'), /5 UNIQLO US products Fynd has read off uniqlo\.com — not UNIQLO’s full range\./);
+    assert.match(await page.textContent('#fit-coverage'), /36 UNIQLO US products, as listed on uniqlo\.com’s own category pages on 2026-10-18 — not UNIQLO’s full range\./);
+    assert.match(await page.textContent('#fit-browser-status'), /Showing 24 of 36/);
+    await page.click('#fit-products-more');
+    assert.strictEqual(await page.$$eval('.fit-product', (bs) => bs.length), 36);
+    assert.strictEqual(await page.isHidden('#fit-products-more'), true);
     /* filters and search */
-    await page.click('.fit-filter:has-text("Hoodies")');
-    assert.deepStrictEqual((await page.$$eval('.fit-product', (bs) => bs.map((b) => b.dataset.code))).sort(), ['E471808-000', 'E475378-000']);
+    await page.click('.fit-filter[data-group="kind"]:has-text("Sweatshirts & Hoodies")');
+    const hoodies = await page.$$eval('.fit-product', (bs) => bs.map((b) => b.dataset.code));
+    assert.strictEqual(hoodies.length, 21);
+    assert.ok(['E471808-000', 'E475378-000', 'E475377-000', 'E900001-000'].every((c) => hoodies.includes(c)));
+    await page.click('.fit-filter[data-group="line"]:has-text("Women")');
+    assert.deepStrictEqual(await page.$$eval('.fit-product', (bs) => bs.map((b) => b.dataset.code)), ['E475378-000'], 'only the unisex hoodie');
+    await page.click('.fit-filter[data-group="kind"]:has-text("T-shirts")');
+    const tees = await page.$$eval('.fit-product', (bs) => bs.map((b) => b.dataset.code));
+    assert.ok(tees.length === 9 && tees.includes('E455365-000') && tees.includes('E900019-000'), `women's tees and the unisex one: ${tees}`);
+    await page.click('.fit-filter[data-group="line"]:has-text("Everyone")');
+    await page.click('.fit-filter[data-group="kind"]:has-text("All")');
     await page.fill('#fit-product-search', 'oversized');
     assert.deepStrictEqual(await page.$$eval('.fit-product', (bs) => bs.map((b) => b.dataset.code)), ['E471808-000']);
     await page.fill('#fit-product-search', 'parka');
     assert.match(await page.textContent('#fit-browser-status'), /No products match/);
     await page.fill('#fit-product-search', '');
-    await page.click('.fit-filter:has-text("All")');
+    /* photos only from UNIQLO's image host; the snapshot's foreign one was dropped */
+    const photos = await page.$$eval('.fit-product img', (is) => is.map((i) => i.getAttribute('src')));
+    assert.ok(photos.every((src) => src.startsWith('https://image.uniqlo.com/')), photos.join(' '));
 
     /* a checked record: its own body and garment charts, by its code — no link typed, no page fetched */
     transportAsked.length = 0;
@@ -1519,6 +1539,7 @@ const linkFromInbox = (pattern) => {
     assert.match(await page.textContent('#fit-compare'), /With a reference garment saved on your fit profile, Fynd can compare every size with it/);
 
     /* E471808: its page doesn't answer — the general body-size fallback, for this product only, never compared */
+    await page.fill('#fit-product-search', 'Oversized');
     await page.click('.fit-product[data-code="E471808-000"]');
     await page.waitForSelector('#fit-result[data-item="E471808-000"][data-state="fallback"]');
     assert.strictEqual(await page.textContent('#fit-result .size-chart-name'), 'UNIQLO US body-size chart');
@@ -1528,6 +1549,7 @@ const linkFromInbox = (pattern) => {
     assert.match(await page.textContent('#fit-compare'), /describes bodies, not garments/);
 
     /* E429066: nothing saved and its page can't be read — unavailable, with its name and page, and not E471808's fallback */
+    await page.fill('#fit-product-search', 'Extra Fine Merino');
     await page.click('.fit-product[data-code="E429066-000"]');
     await page.waitForSelector('#fit-result[data-item="E429066-000"][data-state="unavailable"]');
     assert.strictEqual(await page.textContent('#fit-result-title'), 'UNIQLO · Men\'s Extra Fine Merino Crew Neck Long-Sleeve Sweater');
@@ -1536,6 +1558,20 @@ const linkFromInbox = (pattern) => {
     assert.strictEqual(await page.getAttribute('#fit-result-product a', 'href'), 'https://www.uniqlo.com/us/en/products/E429066-000/00');
     assert.ok(!/body-size chart|general UNIQLO/.test(await page.innerText('#fit-result')));
     assert.ok(lookups() >= 3, 'each pick asked by its code');
+
+    /* a snapshot product in men's sweatshirts & hoodies: its page doesn't answer, so the general men's body chart, said to be general */
+    await page.fill('#fit-product-search', 'Sweat Hoodie 01');
+    await page.click('.fit-product[data-code="E900001-000"]');
+    await page.waitForSelector('#fit-result[data-item="E900001-000"][data-state="fallback"]');
+    assert.strictEqual(await page.textContent('#fit-result .size-chart-name'), 'UNIQLO US body-size chart');
+    assert.strictEqual(await page.textContent('#fit-result .size-chart-caveat'), 'A general UNIQLO sizing guide — not measurements confirmed for this exact product.');
+    await page.click('#fit-result .size-chart-details summary');
+    assert.match(await page.textContent('#fit-result .size-chart-details'), /Listed on UNIQLO’s Sweatshirts & Hoodies page|fallback chart/);
+    /* a women's snapshot product: outside the men's chart, so honestly none */
+    await page.fill('#fit-product-search', 'Crew Neck T-Shirt 01');
+    await page.click('.fit-product[data-code="E900019-000"]');
+    await page.waitForSelector('#fit-result[data-item="E900019-000"][data-state="unavailable"]');
+    assert.strictEqual(await page.$$eval('#fit-result table', (ns) => ns.length), 0);
     assert.ok(apiRequests.filter((r) => r.path === '/api/size-recommendation' && /item=/.test(r.search || '')).every((r) => !/http/.test(decodeURIComponent(r.search))), 'no address travels with a pick');
     await context.close();
   });
@@ -1557,7 +1593,15 @@ const linkFromInbox = (pattern) => {
     assert.ok(fits, 'no sideways scrolling');
     const widths = await phone.$$eval('.fit-product', (bs) => bs.map((b) => b.getBoundingClientRect().width));
     assert.ok(widths.every((w) => w > 120), `cards are tappable: ${widths}`);
+    /* while a pick is looked up, it says so, under the product's own name */
+    let release;
+    const held = new Promise((r) => { release = r; });
+    await phone.route('**/api/size-recommendation?brand=uniqlo&item=*', async (route) => { await held; await route.continue(); });
     await phone.click('.fit-product[data-code="E475377-000"]');
+    await phone.waitForSelector('#fit-result[data-state="loading"]');
+    assert.strictEqual(await phone.textContent('#fit-result-title'), 'UNIQLO · Sweatshirt');
+    assert.match(await phone.textContent('#fit-result .size-chart-loading'), /Looking up this product’s sizing chart/);
+    release();
     await phone.waitForSelector('#fit-result[data-item="E475377-000"][data-state="ok"]');
     assert.strictEqual(await phone.textContent('#fit-result-title'), 'UNIQLO · Sweatshirt');
     await context.close();

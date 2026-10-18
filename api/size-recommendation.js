@@ -147,7 +147,7 @@ async function handler(req, res) {
     if (early.item === undefined) {
       return res.status(200).json({
         brand: { id: brand.id, name: brand.name, market: brand.market, coverage: brand.coverage },
-        products: brand.products().map((p) => ({ code: p.code, name: p.name, url: p.url, category: p.category, categoryLabel: p.categoryLabel, line: p.line, imageUrl: p.imageUrl, holds: p.holds, holdsText: p.holdsText }))
+        products: brand.products().map((p) => ({ code: p.code, name: p.name, url: p.url, category: p.category, group: p.group, categoryLabel: p.categoryLabel, line: p.line, imageUrl: p.imageUrl, holds: p.holds, holdsText: p.holdsText }))
       });
     }
     const item = brand.find(early.item);

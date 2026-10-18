@@ -9,15 +9,17 @@
 # committed by this workflow: a person reads the snapshot and commits it.
 #
 # It holds no secret and calls no paid service. It is not one of the
-# required checks: it runs when the script or this file changes on the
-# branch, or by hand.
+# required checks.
 
 name: UNIQLO catalogue snapshot
 
+# By hand only. Its first runs (18 October 2026, runs 39081940293,
+# 39082036637, 39082168769) found that www.uniqlo.com accepts the
+# runner's connection and then resets every request — robots.txt
+# included, under curl's own user agent and Fynd's — while
+# image.uniqlo.com answers. So the catalogue can't be read from here,
+# and it isn't asked again on every push.
 on:
-  push:
-    branches: [claude/fit-guide-consolidation-d9968y]
-    paths: [scripts/fetch-uniqlo-catalog.js, scripts/find-uniqlo-photos.js]
   workflow_dispatch:
 
 permissions:
