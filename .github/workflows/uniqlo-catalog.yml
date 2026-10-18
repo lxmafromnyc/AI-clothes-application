@@ -17,7 +17,7 @@ name: UNIQLO catalogue snapshot
 on:
   push:
     branches: [claude/fit-guide-consolidation-d9968y]
-    paths: [scripts/fetch-uniqlo-catalog.js, .github/workflows/uniqlo-catalog.yml]
+    paths: [scripts/fetch-uniqlo-catalog.js, scripts/find-uniqlo-photos.js]
   workflow_dispatch:
 
 permissions:
@@ -50,7 +50,10 @@ jobs:
           curl -sS -m 20 -o /dev/null -A 'Mozilla/5.0 (compatible; FyndCatalog/1.0; +https://ai-clothes-application.vercel.app/about.html)' -w 'status %{http_code}, total %{time_total}s (Fynd user agent)\n' https://www.uniqlo.com/robots.txt || echo "curl as Fynd: no answer"
           curl -sS -m 20 -o /dev/null -w 'image host: status %{http_code}, total %{time_total}s\n' https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/429066/item/goods_03_429066_3x4.jpg || echo "image host: no answer"
       - name: Read the catalogue
+        continue-on-error: true
         run: node scripts/fetch-uniqlo-catalog.js --print --out uniqlo-catalog.json
+      - name: Find photos on UNIQLO's image host for listed products without one
+        run: node scripts/find-uniqlo-photos.js
       - name: Keep the snapshot
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
