@@ -2201,9 +2201,14 @@ choose a size:
   the closed **Source details**.
 - **The fit profile.** `assets/fit-compare.js` (shared with Find Fit) adds what a
   saved fit profile can say. Only a checked finished-garment chart is compared,
-  and then `FitCompare.focus(container, size)` also shows how the size being
-  considered differs from the reference, from the engine's own per-size figures,
-  following each new choice without asking again. A body or general chart is
+  and then `FitCompare.focus(container, size)` also shows the size being
+  considered beside the reference: for each of chest, body length, shoulders and
+  sleeves, **yours**, **this size's** and the **difference** — the engine's own
+  per-size figures (`engine.compare(...).sizes`), in the comparison's unit,
+  following each new choice without asking again. A dimension measured
+  differently, or not measured, shows this size's value and "Not compared", never
+  a difference; the engine's caveat says why, once. On a phone each dimension
+  reads as a heading over its three labelled values. A body or general chart is
   never compared; it says why.
 
 The chosen colour and size stay in the address (`&colour=09&size=M`), so they
@@ -2298,9 +2303,32 @@ reads no profile, and only the link travels. It is rate limited per client
 
 What a table measures — **body**, **finished garment** or **not stated** — and its
 unit come only from the words around it ("in" as an ordinary word is not
-inches). Values are kept exactly as written and nothing is converted; a missing
-value stays missing, and a chest-only chart stays chest-only. A chart read this
-way is **not verified**: reading is not checking.
+inches), and only the words after the table before it: a "Body size" heading
+over one table never speaks for the "Product size" table that follows (the
+server's `tablesOf` and the extension's `collect.js` both stop there).
+
+A garment claim must agree with the table's columns
+(`assets/sizing-tables.js`, `kindOf`):
+
+- How it was measured ("laid flat", "from the centre back", "body width",
+  "garment measurements") says it is the garment.
+- A bare label — **"Product size"**, "Item measurements" — is not enough alone:
+  the table counts as the garment only when a column is the garment's own
+  geometry (a length, a width, a sleeve, the shoulders, a hem).
+- Any garment claim with a body-only column (height, weight, bust, hips) is
+  **not stated**: a chart that mixes the two can't say which each value is.
+
+Values are kept exactly as written and nothing is converted; a missing value
+stays missing, and a chest-only chart stays chest-only. A chart read this way is
+**not verified** and never compared: reading is not checking.
+
+**The garment's own measurements come first.** Every answer lists its charts
+finished-garment first, then not stated, then body — from Fynd's records and
+from a page alike (on a page with more than four tables, the garment's are the
+ones kept). A chart from Fynd's record also says how each column was measured
+(`methods`, in the engine's words: "flat, armpit to armpit", "from the centre
+back", "seam to seam", "around the body"), and the chart drawing shows it under
+the table, so a flat width is never read as a circumference.
 
 An **unavailable** answer names which of these happened, and the heading says
 whether the page was read at all:

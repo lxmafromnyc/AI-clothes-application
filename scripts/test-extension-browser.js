@@ -220,6 +220,26 @@ async function launch(extDir) {
     await popup.close();
   });
 
+  await test('a body chart and a product-size chart on one page: each labelled by its own heading — the body one never speaks for the garment one', async () => {
+    const { shop, popup } = await check('body-and-product.html');
+    assert.strictEqual(await popup.getAttribute('body', 'data-state'), 'choose');
+    await popup.click('.pop-choice >> nth=0');
+    await popup.waitForFunction(() => document.body.dataset.state === 'result');
+    const first = await popup.textContent('#result .size-chart-name');
+    await popup.click('#other-button');
+    await popup.click('.pop-choice >> nth=1');
+    await popup.waitForFunction(() => document.body.dataset.state === 'result');
+    const second = await popup.textContent('#result .size-chart-name');
+    assert.deepStrictEqual([first, second].sort(), ['Body measurements', 'Finished-garment measurements']);
+    const garmentHead = second === 'Finished-garment measurements' ? 1 : 0;
+    await popup.click('#other-button');
+    await popup.click(`.pop-choice >> nth=${garmentHead}`);
+    await popup.waitForFunction(() => document.body.dataset.state === 'result');
+    assert.deepStrictEqual(await popup.$$eval('#result thead th', (ns) => ns.map((n) => n.textContent)), ['Size', 'Body length', 'Body width', 'Sleeve length']);
+    await shop.close();
+    await popup.close();
+  });
+
   await test('sizes but no measurements: labels only, said plainly', async () => {
     const { shop, popup } = await check('labels-only.html');
     assert.strictEqual(await popup.getAttribute('body', 'data-result'), 'labels-only');

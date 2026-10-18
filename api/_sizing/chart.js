@@ -414,15 +414,19 @@ function productData(html) {
 }
 
 /* Every table in the page, as rows of plain cells, with the words just
-   before it (a heading, a tab's name) to say what it measures. */
+   before it (a heading, a tab's name) to say what it measures — only
+   words after the table before it, so a "Body size" heading over one
+   table never speaks for the "Product size" table that follows. */
 function tablesOf(html) {
   const page = visible(html);
   const out = [];
   const re = /<table\b[\s\S]*?<\/table\s*>/gi;
   let m;
+  let lastEnd = 0;
   while ((m = re.exec(page)) && out.length < 12) {
     const markup = m[0];
-    const before = plain(page.slice(Math.max(0, m.index - 1500), m.index)).slice(-300);
+    const before = plain(page.slice(Math.max(lastEnd, m.index - 1500), m.index)).slice(-300);
+    lastEnd = m.index + markup.length;
     const caption = plain(((/<caption[^>]*>([\s\S]*?)<\/caption>/i.exec(markup) || [])[1]) || '', 160);
     const rows = (markup.match(/<tr\b[\s\S]*?<\/tr\s*>/gi) || []).slice(0, MAX_ROWS + 1)
       .map((tr) => (tr.match(/<t[hd]\b[\s\S]*?<\/t[hd]\s*>/gi) || []).slice(0, MAX_COLUMNS).map((cell) => plain(cell, MAX_CELL)))
@@ -516,8 +520,17 @@ const PAGE_READ = ['no-chart', 'needs-script', 'guide-unreadable'];
 const COULD_NOT = 'We couldn’t retrieve a usable sizing chart from this product page. You can open the original product page or try the retailer’s official size guide.';
 
 
+/* What each kind of chart is worth to a shopper choosing this garment,
+   most first: the garment's own measurements, then a table that doesn't
+   say, then the body each size is cut for. Charts are answered in this
+   order, so whatever draws them leads with the garment. */
+const KIND_ORDER = { 'finished-garment': 0, 'not-stated': 1, body: 2 };
+const byKind = (charts) => charts.map((c, i) => [c, i]).sort((a, b) => (KIND_ORDER[a[0].measures] - KIND_ORDER[b[0].measures]) || a[1] - b[1]).map(([c]) => c);
+
 /* A chart from Fynd's own record of this product: body and garment
-   charts kept apart, each value as the brand wrote it. */
+   charts kept apart, each value as the brand wrote it, the garment's
+   first. Each column says how the brand measured it (`methods`, in the
+   engine's words), so a flat width is never read as a circumference. */
 function fromRecord(record, checked) {
   const charts = [];
   const add = (chart, measures) => {
@@ -529,11 +542,12 @@ function fromRecord(record, checked) {
       unit: record.units,
       source: { url: chart.source && /^https:/.test(chart.source.url || '') ? chart.source.url : record.product.url, title: null },
       columns: keys.map((k) => chart.dimensions[k].label || k),
+      methods: keys.map((k) => engine.METHOD_WORDS[chart.dimensions[k].method] || null),
       rows: record.sizes.filter((s) => chart.sizes[s]).map((s) => ({ size: s, values: keys.map((k) => (chart.sizes[s][k] ? String(chart.sizes[s][k].text) : '')) }))
     });
   };
-  add(record.charts.body, 'body');
   add(record.charts.garment, 'finished-garment');
+  add(record.charts.body, 'body');
   return {
     status: 'ok',
     from: 'fynd-record',
@@ -627,7 +641,7 @@ function fromPage(html, checked, landedUrl, guides) {
     verification: 'not-verified',
     comparable: false
   };
-  if (charts.length) return Object.assign(base, { status: 'ok', charts: charts.slice(0, 4) });
+  if (charts.length) return Object.assign(base, { status: 'ok', charts: byKind(charts).slice(0, 4) });
   if (data.sizes.length) return Object.assign(base, { status: 'labels-only', charts: [] });
   const triedGuides = (guides || []).length && (guides || []).every((g) => !g.html);
   const reason = triedGuides ? 'guide-unreadable' : drawnByScript(html) ? 'needs-script' : 'no-chart';
