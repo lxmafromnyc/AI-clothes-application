@@ -40,6 +40,15 @@ jobs:
           cache: npm
       - run: npm ci --no-audit --no-fund
       - run: npx playwright install --with-deps chromium
+      - name: Can uniqlo.com be reached from here at all?
+        # A diagnostic only, so a refusal can be told apart from silence:
+        # the connection itself, then robots.txt asked by curl under its
+        # own name. Nothing here is used to read the catalogue.
+        continue-on-error: true
+        run: |
+          curl -sS -m 20 -o /dev/null -w 'TCP connect %{time_connect}s, TLS %{time_appconnect}s, status %{http_code}, total %{time_total}s (curl, own user agent)\n' https://www.uniqlo.com/robots.txt || echo "curl: no answer"
+          curl -sS -m 20 -o /dev/null -A 'Mozilla/5.0 (compatible; FyndCatalog/1.0; +https://ai-clothes-application.vercel.app/about.html)' -w 'status %{http_code}, total %{time_total}s (Fynd user agent)\n' https://www.uniqlo.com/robots.txt || echo "curl as Fynd: no answer"
+          curl -sS -m 20 -o /dev/null -w 'image host: status %{http_code}, total %{time_total}s\n' https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/429066/item/goods_03_429066_3x4.jpg || echo "image host: no answer"
       - name: Read the catalogue
         run: node scripts/fetch-uniqlo-catalog.js --print --out uniqlo-catalog.json
       - name: Keep the snapshot
