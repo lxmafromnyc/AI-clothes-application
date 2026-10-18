@@ -1,0 +1,51 @@
+# Fynd — a snapshot of UNIQLO US products, read off uniqlo.com
+#
+# Runs scripts/fetch-uniqlo-catalog.js where uniqlo.com can be reached
+# (the development container and the Vercel deployment can't reach it).
+# The script reads robots.txt first and skips anything it disallows,
+# names itself honestly, reads one page at a time with pauses, and
+# clicks nothing. It writes api/_sizing/brands/uniqlo-catalog.json and
+# prints it to the log; the file is uploaded as an artifact. Nothing is
+# committed by this workflow: a person reads the snapshot and commits it.
+#
+# It holds no secret and calls no paid service. It is not one of the
+# required checks: it runs when the script or this file changes on the
+# branch, or by hand.
+
+name: UNIQLO catalogue snapshot
+
+on:
+  push:
+    branches: [claude/fit-guide-consolidation-d9968y]
+    paths: [scripts/fetch-uniqlo-catalog.js, .github/workflows/uniqlo-catalog.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: uniqlo-catalog
+  cancel-in-progress: false
+
+jobs:
+  snapshot:
+    name: Read UNIQLO US category pages
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npx playwright install --with-deps chromium
+      - name: Read the catalogue
+        run: node scripts/fetch-uniqlo-catalog.js --print --out uniqlo-catalog.json
+      - name: Keep the snapshot
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: uniqlo-catalog
+          path: uniqlo-catalog.json
+          if-no-files-found: warn
