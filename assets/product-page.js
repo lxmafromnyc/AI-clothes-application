@@ -361,7 +361,11 @@
     if (sources && chart.scope === 'product-specific' && (chart.charts || []).length && product.colours.length > 1) {
       sources.insertBefore(el('p', 'pdp-guide-variant', 'Fynd’s chart is recorded for this product, not for a particular colour.'), sources.children[1] || null);
     }
-    /* a body chart is never set beside a garment: FitCompare says why */
+    /* a body chart is never set beside a garment: FitCompare says why.
+       Last time's comparison goes first, so a reopened guide never shows
+       another size's figures while this one loads. */
+    compare.hidden = true;
+    compare.replaceChildren();
     if ((chart.status === 'ok' || chart.status === 'fallback') && global.FitCompare) {
       /* the size being considered, once the comparison is in — whatever
          it is by then */

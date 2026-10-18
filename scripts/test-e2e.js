@@ -1834,6 +1834,19 @@ const linkFromInbox = (pattern) => {
     await page.click('#pdp-guide-sizes .pdp-size[data-size="S"]');
     assert.strictEqual(await page.textContent('#pdp-guide-compare .fit-compare-size-title'), 'Size S beside your reference', 'follows the size, without asking again');
     assert.ok((await page.$$eval('#pdp-guide-compare .fit-compare-size li', (ns) => ns.length)) > 0);
+    /* reopened while the comparison is slow: no other size's figures meanwhile, then the size chosen during the wait */
+    await page.click('#pdp-guide-close');
+    let letCompare;
+    const slow = new Promise((r) => { letCompare = r; });
+    await page.route('**/api/size-recommendation?product=*', async (route) => { await slow; await route.continue(); });
+    await page.click('#pdp-size-guide');
+    await page.waitForSelector('#pdp-guide[open][data-state="ok"]');
+    await page.click('#pdp-guide-sizes .pdp-size[data-size="M"]');
+    assert.strictEqual(await page.$$eval('#pdp-guide-compare .fit-compare-size', (ns) => ns.filter((n) => n.offsetParent).length), 0, 'nothing stale while it loads');
+    letCompare();
+    await page.waitForSelector('#pdp-guide-compare .fit-compare-size');
+    assert.strictEqual(await page.textContent('#pdp-guide-compare .fit-compare-size-title'), 'Size M beside your reference');
+    await page.unroute('**/api/size-recommendation?product=*');
     assert.ok(!/Carhartt|chestWidth|58/.test(page.url()), 'nothing from the profile in the address');
     /* signed out, the same chart says what a profile would add */
     const out = await (await openContext()).newPage();
