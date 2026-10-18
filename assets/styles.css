@@ -465,15 +465,31 @@ strong { font-weight: 600; }
 .pdp-source { margin-top: 2px; font-size: 12.5px; color: var(--color-text-muted); }
 .pdp-section-guide { height: 40px; font-size: 14px; }
 
-/* the Size Guide dialog: the chosen size, choosable, then the chart */
-.pdp-guide { max-width: 760px; }
-.pdp-guide-pick { margin-bottom: 16px; padding-bottom: 14px; border-bottom: 1px solid var(--color-border); }
-.pdp-guide-selected { font-size: 14px; font-weight: 600; color: var(--color-text); }
-.pdp-guide-sizes { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
-.pdp-guide-sizes .pdp-size { min-height: 40px; min-width: 52px; font-size: 14px; border-radius: 8px; }
-.pdp-guide-sizes .pdp-size[aria-checked="true"]::after { top: -7px; right: -7px; width: 16px; height: 16px; font-size: 9px; }
-.pdp-guide-variant { margin-top: 10px; font-size: 13px; color: var(--color-text-muted); }
-.pdp-guide-variant:empty { display: none; }
+/* the Size Guide dialog: the product's sizes to choose from, the chart,
+   and — kept in view at the foot — what to do next */
+.size-chart.pdp-guide { max-width: 760px; padding-bottom: 0; }
+.pdp-guide-pick { margin-bottom: 16px; padding-bottom: 16px; border-bottom: 1px solid var(--color-border); }
+.pdp-guide-selected { margin: 0; font-size: 17px; font-weight: 700; letter-spacing: -.01em; color: var(--color-text); }
+.pdp-guide-sizes { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
+.pdp-guide-sizes .pdp-size { min-height: 46px; min-width: 58px; font-size: 15px; }
+.pdp-guide-nosizes { margin-top: 6px; font-size: 14px; color: var(--color-text-2); }
+.pdp-guide-nosizes[hidden] { display: none; }
+.pdp-guide-variant { font-size: 13.5px; }
+.pdp-guide-foot {
+  position: sticky; bottom: 0; z-index: 1;
+  display: flex; align-items: center; justify-content: flex-end; gap: 12px; flex-wrap: wrap;
+  margin: 18px -22px 0; padding: 12px 22px 16px;
+  border-top: 1px solid var(--color-border); background: var(--color-surface);
+}
+.pdp-guide-foot[hidden] { display: none; }
+.size-chart.pdp-guide:has(.pdp-guide-foot[hidden]) { padding-bottom: 22px; }
+.pdp-guide-next { margin-right: auto; font-size: 14.5px; font-weight: 600; color: var(--color-text); }
+.pdp-guide-next:empty { display: none; }
+.pdp-guide-done { min-height: 46px; padding: 0 22px; }
+.pdp-guide-done[hidden] { display: none; }
+.fit-compare-size { margin-top: 10px; padding: 10px 12px; border-radius: var(--r); background: var(--color-surface); }
+.fit-compare-size-title { font-weight: 600; color: var(--color-text); }
+.fit-compare-size ul { margin: 6px 0 0; padding-left: 18px; }
 .pdp-guide-missing { margin-bottom: 12px; font-size: 14px; color: var(--color-warning-ink); }
 .pdp-guide .size-chart-table + .size-chart-table { margin-top: 22px; }
 .pdp-guide .compare-table th, .pdp-guide .compare-table td { white-space: nowrap; }

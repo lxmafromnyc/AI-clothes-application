@@ -2180,16 +2180,34 @@ Everything on it comes from `GET /api/size-recommendation?brand=uniqlo&detail=<c
 
 **View size measurements** opens the product's real chart in a dialog, using the
 same lookup as everywhere else (`?brand=&item=`) and the same renderer
-(`assets/size-chart.js`), so its tables, units and sources are Find Fit's own.
-The chosen colour and size are carried in: they are named at the top, the
-product's sizes can be chosen there too, and the chosen size's row is marked
-("Your size") in every table — or, when the chart lacks that size, it says so.
-A chart from Fynd's own record says it is recorded per product, not per colour;
-a general chart never claims to be the product's own. **Back to product** (or
-Esc) returns with the colour and size as they were. Under the chart,
-`assets/fit-compare.js` (shared with Find Fit) adds what a saved fit profile can
-say. Only a checked finished-garment chart is compared; a body or
-general chart never is. The chosen colour and size stay in the address (`&colour=09&size=M`).
+(`assets/size-chart.js`, in its product-page form: `render(chart, url, { garment })`),
+so its tables, units and sources are Find Fit's own. The dialog is a place to
+choose a size:
+
+- **Sizes first.** The product's sizes, from Fynd's record, as large buttons
+  under "Choose your size". Choosing one marks it, marks its row ("Your size")
+  in every table, and updates the product page and the address at once. Until a
+  size is chosen, the foot says **Choose a size to continue**; after, it offers
+  **Continue with size M**, which returns to the product. **Back to product** (or
+  Esc) does too. The colour is named under the title and never changes here.
+  Without a size list, the dialog says so and offers no sizes: a chart's rows
+  aren't the product's sizes.
+- **The chart, said once.** Each table has one heading and one line saying what
+  it measures and in what unit ("The body each size fits, not the hoodie itself
+  · Inches"; "The hoodie itself, as the brand measured it · Inches"). A general
+  chart is titled **General UNIQLO US sizing guide**, labelled body measurements,
+  and its one note says they describe the body, not the hoodie. Everything else,
+  including that Fynd's record is per product rather than per colour, is under
+  the closed **Source details**.
+- **The fit profile.** `assets/fit-compare.js` (shared with Find Fit) adds what a
+  saved fit profile can say. Only a checked finished-garment chart is compared,
+  and then `FitCompare.focus(container, size)` also shows how the size being
+  considered differs from the reference, from the engine's own per-size figures,
+  following each new choice without asking again. A body or general chart is
+  never compared; it says why.
+
+The chosen colour and size stay in the address (`&colour=09&size=M`), so they
+survive closing the dialog and reloading the page.
 
 **Adding a brand:** write a module beside `api/_sizing/brands/uniqlo.js` with
 `id`, `name`, `market`, `coverage`, `products()` and `find(code)`, and add it to
