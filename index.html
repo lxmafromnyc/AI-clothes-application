@@ -53,25 +53,46 @@
 
 <main id="main">
 
-  <!-- Find Fit: the product's link is the input, its sizing chart the
-       output. assets/find-fit.js sends the link to
-       /api/size-recommendation?chart= (api/_sizing/chart.js), which reads
-       the product's own page — or the size guide it links to — and
-       answers with the chart as published, or why there isn't one. No
-       account is needed; a saved fit profile adds a comparison only
-       where the chart supports one. -->
+  <!-- Find Fit: choose a brand, pick one of its products, see its
+       sizing chart. assets/brand-browser.js lists the brand's products
+       (/api/size-recommendation?brand=, api/_sizing/brands); picking one
+       asks for its chart by the product's code (assets/find-fit.js),
+       which the server looks up through the same pipeline a pasted link
+       takes (api/_sizing/chart.js). A link from another shop can still
+       be pasted, below. No account is needed; a saved fit profile adds a
+       comparison only where the chart supports one. -->
   <section class="container hero shop-hero" id="find-fit" aria-labelledby="find-fit-title">
     <h1 id="find-fit-title">Find Fit</h1>
-    <p class="lead">Paste any clothing product link. Get its sizing chart, understand the measurements, and compare the fit with clothes you already own.</p>
+    <p class="lead">Choose a brand, pick a product, and see its sizing chart &mdash; what it measures, where it comes from, and how it compares with clothes you already own.</p>
 
-    <div class="shop-card">
-      <form class="shop-search fit-url" id="fit-url-form" novalidate>
-        <label class="sr-only" for="fit-url">Clothing product link</label>
-        <input class="profile-input" type="url" id="fit-url" name="url" inputmode="url" maxlength="2000" autocomplete="off" spellcheck="false" placeholder="Paste a clothing product URL..." aria-describedby="fit-url-hint fit-url-error">
-        <button class="btn btn-primary" type="submit" id="fit-url-submit">Find sizing chart</button>
-      </form>
-      <p class="fit-url-hint" id="fit-url-hint">A link to one product&rsquo;s page &mdash; from Nike, UNIQLO, Zara, H&amp;M or another shop.</p>
-      <p class="form-error" id="fit-url-error" role="alert"></p>
+    <div class="shop-card fit-browser" id="fit-browser" data-state="loading">
+      <div class="fit-brand-row">
+        <label class="fit-brand-label" for="fit-brand">Choose a brand</label>
+        <select class="profile-input fit-brand" id="fit-brand" name="brand">
+          <option value="uniqlo" selected>UNIQLO</option>
+        </select>
+        <p class="fit-brand-planned" id="fit-brand-planned"></p>
+      </div>
+      <div class="fit-browser-tools">
+        <label class="sr-only" for="fit-product-search">Search this brand&rsquo;s products</label>
+        <input class="profile-input fit-product-search" type="search" id="fit-product-search" placeholder="Search products" autocomplete="off" maxlength="80">
+        <div class="fit-filters" id="fit-product-filters"></div>
+      </div>
+      <p class="fit-browser-status" id="fit-browser-status" role="status">Loading products&hellip;</p>
+      <div class="fit-products" id="fit-products" aria-label="Products"></div>
+      <button class="btn btn-secondary fit-products-more" id="fit-products-more" type="button" hidden>Show more</button>
+      <p class="fit-coverage" id="fit-coverage"></p>
+
+      <details class="fit-link-alt" id="fit-link-alt">
+        <summary>Have a link to a product from another shop?</summary>
+        <form class="shop-search fit-url" id="fit-url-form" novalidate>
+          <label class="sr-only" for="fit-url">Clothing product link</label>
+          <input class="profile-input" type="url" id="fit-url" name="url" inputmode="url" maxlength="2000" autocomplete="off" spellcheck="false" placeholder="Paste a clothing product URL..." aria-describedby="fit-url-hint fit-url-error">
+          <button class="btn btn-primary" type="submit" id="fit-url-submit">Find sizing chart</button>
+        </form>
+        <p class="fit-url-hint" id="fit-url-hint">A link to one product&rsquo;s page, from any clothing shop.</p>
+        <p class="form-error" id="fit-url-error" role="alert"></p>
+      </details>
     </div>
 
     <p class="guide-alt">Saved <a class="guide-link" href="fit-profile.html">a fit profile</a>? Fynd compares a chart with the clothes you own where the chart allows it. It&rsquo;s optional.</p>
@@ -142,6 +163,7 @@
 <script src="assets/sizing-tables.js"></script>
 <script src="assets/fynd-payload.js"></script>
 <script src="assets/find-fit.js"></script>
+<script src="assets/brand-browser.js"></script>
 <script src="assets/app.js"></script>
 </body>
 </html>

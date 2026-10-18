@@ -17,6 +17,14 @@
                                                        read from its brand's own page
                                                        (api/_sizing/chart.js); needs
                                                        no account and reads no profile
+   GET ?brands=1               -> { brands, planned } the brands Find Fit can browse
+   GET ?brand=<id>             -> { brand, products } one brand's products to pick from
+                                                       (api/_sizing/brands)
+   GET ?brand=<id>&item=<code> -> { chart, item }     the chosen product's chart, looked
+                                                       up from the address the brand
+                                                       module holds for that code — never
+                                                       one the browser sent. Like ?chart=,
+                                                       no account, no profile
 
    The fit mode is the search page's: up to 24 listings it is showing, as
    the listing itself names them (brand, name, link — nothing about the
@@ -58,6 +66,7 @@ const users = require('./_users');
 const fitProfiles = require('./_fit-profile');
 const sizing = require('./_sizing/records');
 const engine = require('./_sizing/engine');
+const brands = require('./_sizing/brands');
 
 const ProfileSchema = require('../assets/fit-profile-schema.js');
 const charts = require('./_sizing/chart');
@@ -128,6 +137,37 @@ async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store, private');
 
   const early = req.query || Object.fromEntries(new URL(req.url || '/', 'http://fynd.local').searchParams);
+  /* the brands and products Find Fit browses: public, read-only */
+  if (early.brands !== undefined) {
+    return res.status(200).json({ brands: brands.list(), planned: brands.PLANNED });
+  }
+  if (early.brand !== undefined) {
+    const brand = typeof early.brand === 'string' ? brands.get(early.brand) : null;
+    if (!brand) return res.status(404).json({ error: 'Find Fit doesn’t browse that brand yet.', reason: 'unknown-brand' });
+    if (early.item === undefined) {
+      return res.status(200).json({
+        brand: { id: brand.id, name: brand.name, market: brand.market, coverage: brand.coverage },
+        products: brand.products().map((p) => ({ code: p.code, name: p.name, url: p.url, category: p.category, group: p.group, categoryLabel: p.categoryLabel, line: p.line, imageUrl: p.imageUrl, holds: p.holds, holdsText: p.holdsText }))
+      });
+    }
+    const item = brand.find(early.item);
+    if (!item) return res.status(404).json({ error: 'That product isn’t one Find Fit lists.', reason: 'unknown-product' });
+    const address = auth.addressSubject(req);
+    const gate = await limits.check('sizing:chart', address);
+    if (!gate.allowed) {
+      res.setHeader('Retry-After', String(gate.retryAfter || 60));
+      return res.status(429).json({ error: 'Too many sizing charts at once. Try again in a few minutes.', reason: 'rate-limited' });
+    }
+    await limits.note('sizing:chart', address);
+    try {
+      const chart = await charts.chartFor(item.url);
+      return res.status(200).json({ chart, item: { brand: brand.id, code: item.code, name: item.name, url: item.url } });
+    } catch (err) {
+      console.error('Sizing chart failed', err && err.message);
+      return res.status(500).json({ error: 'Could not read the sizing chart. Try again in a moment.' });
+    }
+  }
+
   /* a product's sizing chart: for anyone browsing, signed in or not */
   if (early.chart !== undefined) {
     const address = auth.addressSubject(req);

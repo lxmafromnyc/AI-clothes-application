@@ -1,0 +1,9 @@
+{
+  "about": "Photos for UNIQLO products Fynd lists without one, found on UNIQLO's own image host by scripts/find-uniqlo-photos.js (GitHub Actions run 39082168769, 2026-10-18). Each address carries the product's own code (…/imagesgoods/<code>/item/goods_<colour>_<code>_3x4.jpg) and answered with an image, so it is that product's photo, in colour 09.",
+  "photos": {
+    "E471808-000": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/471808/item/goods_09_471808_3x4.jpg",
+    "E475378-000": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/475378/item/goods_09_475378_3x4.jpg",
+    "E475377-000": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/475377/item/goods_09_475377_3x4.jpg",
+    "E455365-000": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/455365/item/goods_09_455365_3x4.jpg"
+  }
+}

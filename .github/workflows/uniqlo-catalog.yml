@@ -1,0 +1,65 @@
+# Fynd — a snapshot of UNIQLO US products, read off uniqlo.com
+#
+# Runs scripts/fetch-uniqlo-catalog.js where uniqlo.com can be reached
+# (the development container and the Vercel deployment can't reach it).
+# The script reads robots.txt first and skips anything it disallows,
+# names itself honestly, reads one page at a time with pauses, and
+# clicks nothing. It writes api/_sizing/brands/uniqlo-catalog.json and
+# prints it to the log; the file is uploaded as an artifact. Nothing is
+# committed by this workflow: a person reads the snapshot and commits it.
+#
+# It holds no secret and calls no paid service. It is not one of the
+# required checks.
+
+name: UNIQLO catalogue snapshot
+
+# By hand only. Its first runs (18 October 2026, runs 39081940293,
+# 39082036637, 39082168769) found that www.uniqlo.com accepts the
+# runner's connection and then resets every request — robots.txt
+# included, under curl's own user agent and Fynd's — while
+# image.uniqlo.com answers. So the catalogue can't be read from here,
+# and it isn't asked again on every push.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: uniqlo-catalog
+  cancel-in-progress: false
+
+jobs:
+  snapshot:
+    name: Read UNIQLO US category pages
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npx playwright install --with-deps chromium
+      - name: Can uniqlo.com be reached from here at all?
+        # A diagnostic only, so a refusal can be told apart from silence:
+        # the connection itself, then robots.txt asked by curl under its
+        # own name. Nothing here is used to read the catalogue.
+        continue-on-error: true
+        run: |
+          curl -sS -m 20 -o /dev/null -w 'TCP connect %{time_connect}s, TLS %{time_appconnect}s, status %{http_code}, total %{time_total}s (curl, own user agent)\n' https://www.uniqlo.com/robots.txt || echo "curl: no answer"
+          curl -sS -m 20 -o /dev/null -A 'Mozilla/5.0 (compatible; FyndCatalog/1.0; +https://ai-clothes-application.vercel.app/about.html)' -w 'status %{http_code}, total %{time_total}s (Fynd user agent)\n' https://www.uniqlo.com/robots.txt || echo "curl as Fynd: no answer"
+          curl -sS -m 20 -o /dev/null -w 'image host: status %{http_code}, total %{time_total}s\n' https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/429066/item/goods_03_429066_3x4.jpg || echo "image host: no answer"
+      - name: Read the catalogue
+        continue-on-error: true
+        run: node scripts/fetch-uniqlo-catalog.js --print --out uniqlo-catalog.json
+      - name: Find photos on UNIQLO's image host for listed products without one
+        run: node scripts/find-uniqlo-photos.js
+      - name: Keep the snapshot
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: uniqlo-catalog
+          path: uniqlo-catalog.json
+          if-no-files-found: warn
