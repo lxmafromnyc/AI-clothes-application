@@ -259,7 +259,8 @@
        product's chart — only the brand and the product's code travel */
     brands: () => call('size-recommendation?brands=1'),
     catalog: (brand) => call(`size-recommendation?brand=${encodeURIComponent(brand)}`),
-    item: (brand, code) => call(`size-recommendation?brand=${encodeURIComponent(brand)}&item=${encodeURIComponent(code)}`)
+    item: (brand, code) => call(`size-recommendation?brand=${encodeURIComponent(brand)}&item=${encodeURIComponent(code)}`),
+    detail: (brand, code) => call(`size-recommendation?brand=${encodeURIComponent(brand)}&detail=${encodeURIComponent(code)}`)
   };
 
   /* After a checkout the browser comes back before Stripe's webhook has

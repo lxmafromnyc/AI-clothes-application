@@ -141,60 +141,10 @@
     if (chart.status === 'ok' || chart.status === 'fallback') compareWith(chart, ask);
   }
 
-  /* The fit profile's part: only where the chart supports it. */
-  async function compareWith(chart, ask) {
-    const kinds = (chart.charts || []).map((c) => c.measures);
-    const lines = [];
-    if (!chart.comparable) {
-      if (kinds.includes('finished-garment') || kinds.includes('not-stated')) {
-        lines.push(chart.verification === 'unverified'
-          ? 'These measurements haven’t been checked against the brand yet, so Fynd won’t compare them with a garment you own.'
-          : 'Fynd can’t compare this chart with a garment you own yet: it can’t confirm exactly how each measurement was taken, and two garments are only comparable when measured the same way.');
-      } else {
-        lines.push('This chart describes bodies, not garments, so it can’t be set beside a garment you own.');
-      }
-      show(lines);
-      return;
-    }
-    const account = global.Account;
-    if (!account.state()) await account.load();
-    if (ask !== latest) return;
-    const state = account.state();
-    if (!state || !state.signedIn) {
-      const p = el('p', null, 'These finished-garment measurements are checked. With a reference garment saved on ');
-      p.append(safeLinkLocal('fit-profile.html', 'your fit profile'), doc.createTextNode(', Fynd can compare every size with it.'));
-      show([], [p]);
-      return;
-    }
-    const got = await account.sizing.compare(chart.productId);
-    if (ask !== latest) return;
-    const c = got.ok && got.data && got.data.comparison;
-    if (!c) { show(['The comparison with your fit profile couldn’t be worked out just now.']); return; }
-    if (c.status === 'ok' || c.status === 'partial') {
-      lines.push(c.summary);
-      if (c.reliability) lines.push(`Reliability: ${c.reliability}.`);
-      (c.caveats || []).slice(0, 2).forEach((x) => lines.push(x));
-      const more = el('p');
-      more.append(safeLinkLocal('compare.html', 'See every size beside your reference on Compare'));
-      show(lines, [more], 'Compared with your reference');
-      return;
-    }
-    (c.missing || []).slice(0, 1).forEach((m) => lines.push(m.message));
-    (c.next || []).slice(0, 1).forEach((n) => lines.push(n));
-    const fix = el('p');
-    fix.append(safeLinkLocal('fit-profile.html', 'Open your fit profile'));
-    show(lines, [fix]);
-  }
-
-  function safeLinkLocal(href, text) {
-    const a = el('a', 'guide-link', text);
-    a.href = href;
-    return a;
-  }
-
-  function show(lines, extra, title) {
-    compare.replaceChildren(el('h3', 'fit-compare-title', title || 'Your fit profile'), ...lines.map((t) => el('p', null, t)), ...(extra || []));
-    compare.hidden = false;
+  /* The fit profile's part, only where the chart supports it: drawn by
+     assets/fit-compare.js, shared with the product page's Size Guide. */
+  function compareWith(chart, ask) {
+    return global.FitCompare.show(chart, compare, () => ask === latest);
   }
 
   function submit() {

@@ -3,11 +3,10 @@
 
    The home page starts here: choose a brand (UNIQLO first — only brands
    with a working way to pick a product are offered), browse its
-   products as cards, and pick one. Picking hands the product's brand
-   and code to Find Fit (FindFit.findItem in assets/find-fit.js), which
-   asks the server for its chart; the server looks the product's address
-   up itself (api/_sizing/brands), so nothing the page holds is trusted
-   for it.
+   products as cards, and pick one. Each card opens the product's own
+   page (product.html, assets/product-page.js) by its brand and code;
+   the server looks the product up itself (api/_sizing/brands), so
+   nothing the page holds is trusted for it.
 
    The products are the brand's real ones that Fynd has sourced, with
    the brand's own names and photos (or drawn artwork where no photo
@@ -65,7 +64,6 @@
   let category = 'all';
   let line = 'all';
   let shownCount = 0;
-  let picked = null;
   let asking = 0;
   const PAGE = 24;
   const groupOf = (p) => p.group || p.category;
@@ -73,11 +71,11 @@
 
   const IMAGE_HOSTS = /^https:\/\/image\.uniqlo\.com\//;
 
+  /* a product opens its own page (product.html), as a shop's grid does */
   function card(p) {
-    const b = el('button', 'fit-product');
-    b.type = 'button';
+    const b = el('a', 'fit-product');
+    b.href = `product.html?${new URLSearchParams({ brand: brand.id, item: p.code })}`;
     b.dataset.code = p.code;
-    b.setAttribute('aria-pressed', String(picked === p.code));
     const media = el('span', 'fit-product-media');
     if (p.imageUrl && IMAGE_HOSTS.test(p.imageUrl)) {
       const img = el('img');
@@ -96,14 +94,7 @@
       el('span', 'fit-product-name', p.name),
       el('span', `fit-product-holds fit-product-holds--${p.holds}`, p.holdsText));
     b.append(media, text);
-    b.addEventListener('click', () => choose(p));
     return b;
-  }
-
-  function choose(p) {
-    picked = p.code;
-    grid.querySelectorAll('.fit-product').forEach((c) => c.setAttribute('aria-pressed', String(c.dataset.code === p.code)));
-    if (global.FindFit && global.FindFit.findItem) global.FindFit.findItem({ id: brand.id, name: brand.name }, p);
   }
 
   /* the products matching the filters, a page at a time */
@@ -206,5 +197,5 @@
   search.addEventListener('input', () => draw());
   start();
 
-  global.BrandBrowser = { load, choose: (code) => { const p = products.find((x) => x.code === code); if (p) choose(p); } };
+  global.BrandBrowser = { load };
 })(typeof window !== 'undefined' ? window : globalThis);
