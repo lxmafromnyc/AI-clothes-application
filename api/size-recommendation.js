@@ -20,6 +20,8 @@
    GET ?brands=1               -> { brands, planned } the brands Find Fit can browse
    GET ?brand=<id>             -> { brand, products } one brand's products to pick from
                                                        (api/_sizing/brands)
+   GET ?brand=<id>&detail=<code> -> { product }     its product page: photos by colour,
+                                                       sizes, fabric, fit, each sourced
    GET ?brand=<id>&item=<code> -> { chart, item }     the chosen product's chart, looked
                                                        up from the address the brand
                                                        module holds for that code — never
@@ -144,6 +146,12 @@ async function handler(req, res) {
   if (early.brand !== undefined) {
     const brand = typeof early.brand === 'string' ? brands.get(early.brand) : null;
     if (!brand) return res.status(404).json({ error: 'Find Fit doesn’t browse that brand yet.', reason: 'unknown-brand' });
+    /* one product's page, from what Fynd holds */
+    if (early.detail !== undefined) {
+      const product = typeof brand.detail === 'function' ? brand.detail(early.detail) : null;
+      if (!product) return res.status(404).json({ error: 'That product isn’t one Find Fit lists.', reason: 'unknown-product' });
+      return res.status(200).json({ product });
+    }
     if (early.item === undefined) {
       return res.status(200).json({
         brand: { id: brand.id, name: brand.name, market: brand.market, coverage: brand.coverage },

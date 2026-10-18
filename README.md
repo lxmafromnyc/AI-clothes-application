@@ -2148,6 +2148,38 @@ carrying each product's code).
   so UNIQLO's site in a frame couldn't start a lookup. Its framing headers
   couldn't be read either: the reset came before any headers.
 
+### A product's page
+
+Clicking a product card opens its own page,
+`product.html?brand=uniqlo&item=E475378-000` (`assets/product-page.js`). It is
+laid out the way a shop lays out a product: a large photo with thumbnails,
+brand, name, product ID and category, colour swatches, size buttons with
+**Size Guide** beside them, **View on UNIQLO**, and expandable sections
+(Description & features, Materials & care, Fit & sizing, Availability &
+shipping, About this information).
+
+Everything on it comes from `GET /api/size-recommendation?brand=uniqlo&detail=<code>`
+(the brand module's `detail(code)`), and each fact carries its source:
+
+- **Photos and colours:** photos only from `image.uniqlo.com`, at addresses
+  carrying the product's code. A colour is one UNIQLO has photographed
+  (`uniqlo-images.json`, found by `scripts/find-uniqlo-images.js`). It is
+  named by UNIQLO's two-digit colour code ("Colour 09"), never a guessed name,
+  and is not claimed to be on sale.
+- **Sizes, fabric and fit:** only from Fynd's saved record for the product,
+  with the date it was copied. Without a record, the page says Fynd doesn't
+  hold them.
+- **Not held, and said in place:** price, description, care, reviews, and
+  stock or availability by size. The retailer's page is one click away.
+
+**Size Guide** opens the product's real chart in a dialog, using the same lookup
+as everywhere else (`?brand=&item=`) and the same renderer
+(`assets/size-chart.js`). The chosen colour and size are carried in: they are
+named at the top, and the chosen size's row is marked in every table. Under the
+chart, `assets/fit-compare.js` (shared with Find Fit) adds what a saved fit
+profile can say. Only a checked finished-garment chart is compared; a body or
+general chart never is. The chosen colour and size stay in the address (`&colour=09&size=M`).
+
 **Adding a brand:** write a module beside `api/_sizing/brands/uniqlo.js` with
 `id`, `name`, `market`, `coverage`, `products()` and `find(code)`, and add it to
 `BRANDS` in `api/_sizing/brands/index.js`. Find Fit needs no change.

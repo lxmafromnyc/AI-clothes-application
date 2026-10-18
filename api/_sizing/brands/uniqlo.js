@@ -46,6 +46,10 @@ const schema = require('../schema');
 const listings = require('./uniqlo-listings.json');
 const { SNAPSHOT } = require('./uniqlo-snapshot');
 const { photos: PHOTOS } = require('./uniqlo-photos.json');
+/* the colours and photos UNIQLO's image host holds for each product,
+   found by scripts/find-uniqlo-images.js; absent, a product has its one photo */
+let IMAGES = {};
+try { IMAGES = require('./uniqlo-images.json').products || {}; } catch (err) { IMAGES = {}; }
 
 const CODE = /^E\d{6}-\d{3}$/;
 /* the filter a product sits under: records' own categories and the
@@ -110,6 +114,60 @@ function build() {
 
 const PRODUCTS = build();
 
+const IMAGE = /^https:\/\/image\.uniqlo\.com\/UQ\/ST3\/WesternCommon\/imagesgoods\/(\d{6})\//;
+const COLOUR = /^\d{2}$/;
+
+/* Everything Fynd can show on a product's page, each with where it came
+   from — and, by name, what it doesn't have. Nothing is filled in. */
+function detail(code) {
+  const p = module.exports.find(code);
+  if (!p) return null;
+  const record = RECORDS.find((r) => r.brand === 'UNIQLO' && r.product.code === p.code) || null;
+  const short = p.code.slice(1, 7);
+  const ours = (url) => typeof url === 'string' && (IMAGE.exec(url) || [])[1] === short;
+  const found = IMAGES[p.code] || null;
+  const colours = [];
+  if (found && Array.isArray(found.colours)) {
+    found.colours.filter((c) => COLOUR.test(c)).slice(0, 40).forEach((c) => {
+      const image = `https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/${short}/item/goods_${c}_${short}_3x4.jpg`;
+      const chip = found.chips && ours(found.chips[c]) ? found.chips[c] : null;
+      colours.push({ code: c, label: `Colour ${c}`, image, chip });
+    });
+  }
+  if (!colours.length && p.imageUrl) {
+    const c = (/goods_(\d{2})_\d{6}_3x4/.exec(p.imageUrl) || [])[1] || null;
+    colours.push({ code: c, label: c ? `Colour ${c}` : 'Photo', image: p.imageUrl, chip: null });
+  }
+  const gallery = found && Array.isArray(found.subs) ? found.subs.filter(ours).slice(0, 12) : [];
+  const missing = ['price', 'description', 'care', 'reviews', 'availability'];
+  if (!record) missing.push('sizes', 'fabric', 'fit');
+  return {
+    brand: 'UNIQLO',
+    market: 'US',
+    code: p.code,
+    name: p.name,
+    url: p.url,
+    category: p.category,
+    categoryLabel: p.categoryLabel,
+    line: p.line,
+    holds: p.holds,
+    holdsText: p.holdsText,
+    colours,
+    /* the colour the product's card shows, so the page opens on the same photo */
+    defaultColour: ((/goods_(\d{2})_\d{6}_3x4/.exec(p.imageUrl || '') || [])[1]) || (colours[0] && colours[0].code) || null,
+    coloursNote: found
+      ? 'Colours UNIQLO has photographed for this product, from its image host — not proof that each is on sale now.'
+      : 'Only one photo of this product is known to Fynd, so its other colours aren’t shown.',
+    gallery,
+    sizes: record ? { list: record.sizes.slice(), source: `Fynd’s record of this product, copied from UNIQLO’s page on ${record.retrievedAt}` } : null,
+    fit: record && record.fit ? { words: record.fit.brandWords, source: record.fit.source } : null,
+    material: record && record.material ? { text: record.material.composition, source: record.material.source } : null,
+    recordedAt: record ? record.retrievedAt : null,
+    imagesFrom: found ? 'image.uniqlo.com, at addresses carrying this product’s code' : (p.imageUrl ? 'image.uniqlo.com' : null),
+    missing
+  };
+}
+
 module.exports = {
   id: 'uniqlo',
   name: 'UNIQLO',
@@ -120,5 +178,7 @@ module.exports = {
   snapshotAt: SNAPSHOT.fetchedAt,
   products: () => PRODUCTS,
   /* a product by its exact code, or null */
-  find: (code) => (typeof code === 'string' && CODE.test(code) ? PRODUCTS.find((p) => p.code === code) || null : null)
+  find: (code) => (typeof code === 'string' && CODE.test(code) ? PRODUCTS.find((p) => p.code === code) || null : null),
+  /* a product's page: what Fynd holds, with sources, and what it doesn't */
+  detail
 };

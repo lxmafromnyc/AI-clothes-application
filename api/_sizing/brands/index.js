@@ -10,6 +10,9 @@
                         imageUrl, holds, holdsText }
      find(code)         one product by its exact code, or null — the
                         product's address always comes from here
+     detail(code)       the product's page: photos by colour, sizes,
+                        fabric, fit — each with its source — and a list
+                        of what isn't known (price, reviews, stock…)
 
    The chart for a chosen product is then looked up exactly as a pasted
    link is (api/_sizing/chart.js: Fynd's record, the live page, an

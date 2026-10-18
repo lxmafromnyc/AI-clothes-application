@@ -1560,6 +1560,31 @@ await test('a catalogue snapshot (FIXTURE) adds UNIQLO’s listed products: rows
   assert.deepStrictEqual([out.womenTee, out.menKnit, out.uk], [null, null, null], 'women’s tops, knitwear and another market never get the men’s chart');
 });
 
+await test('a product’s page holds only what Fynd has, each with its source, and names what it doesn’t — no price, description, care, reviews or stock', () => {
+  const hoodie = uniqloBrand.detail('E475378-000');
+  assert.deepStrictEqual([hoodie.name, hoodie.code, hoodie.url, hoodie.market], ['Sweat Pullover Hoodie', 'E475378-000', 'https://www.uniqlo.com/us/en/products/E475378-000/00', 'US']);
+  assert.deepStrictEqual(hoodie.sizes.list, ['XXS', 'XS', 'S', 'M', 'L', 'XL', 'XXL', '3XL']);
+  assert.match(hoodie.sizes.source, /Fynd’s record of this product, copied from UNIQLO’s page on 2026-10-10/);
+  assert.deepStrictEqual(hoodie.fit, { words: 'Regular', source: 'product page, product details: "Fit: Regular"' });
+  assert.match(hoodie.material.text, /^Body: 100% Cotton/);
+  assert.deepStrictEqual(hoodie.missing, ['price', 'description', 'care', 'reviews', 'availability']);
+  assert.ok(!('price' in hoodie) && !('rating' in hoodie) && !('stock' in hoodie));
+  assert.ok(hoodie.colours.length >= 1);
+  hoodie.colours.forEach((c) => {
+    assert.match(c.code, /^\d{2}$/);
+    assert.strictEqual(c.label, `Colour ${c.code}`, 'a colour is named by UNIQLO’s code, never by a guessed name');
+    assert.strictEqual(c.image, `https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/475378/item/goods_${c.code}_475378_3x4.jpg`);
+    if (c.chip) assert.match(c.chip, /^https:\/\/image\.uniqlo\.com\/.*\/475378\//);
+  });
+  hoodie.gallery.forEach((u) => assert.match(u, /^https:\/\/image\.uniqlo\.com\/UQ\/ST3\/WesternCommon\/imagesgoods\/475378\//));
+  /* no record: no sizes, fabric or fit — said, not filled */
+  const oversized = uniqloBrand.detail('E471808-000');
+  assert.deepStrictEqual([oversized.sizes, oversized.fit, oversized.material], [null, null, null]);
+  assert.ok(['sizes', 'fabric', 'fit'].every((m) => oversized.missing.includes(m)));
+  assert.strictEqual(uniqloBrand.detail('E999999-000'), null);
+  assert.strictEqual(uniqloBrand.detail('https://www.uniqlo.com/us/en/products/E475378-000/00'), null);
+});
+
 await test('a product is found by its exact code only — never by a link, a near code or anything else the browser sends', () => {
   assert.strictEqual(uniqloBrand.find('E475378-000').name, 'Sweat Pullover Hoodie');
   for (const bad of ['E475378', 'e475378-000', 'E475378-0000', 'https://www.uniqlo.com/us/en/products/E475378-000/00', 'E999999-000', ' E475378-000', null, {}, ['E475378-000']]) {
@@ -1575,6 +1600,10 @@ await test('/api/size-recommendation lists brands and products, and looks a chos
     const get = (query, o) => call(recommendEndpoint, Object.assign({ method: 'GET', jar: {}, query, url: '/api/size-recommendation' }, o));
     const listed = await get({ brands: '1' });
     assert.deepStrictEqual([listed.status, listed.body.brands.map((b) => b.name), listed.body.planned], [200, ['UNIQLO'], ['Nike', 'Zara', 'H&M']]);
+    const page = await get({ brand: 'uniqlo', detail: 'E475378-000' });
+    assert.deepStrictEqual([page.status, page.body.product.name, page.body.product.sizes.list.length], [200, 'Sweat Pullover Hoodie', 8]);
+    assert.deepStrictEqual([(await get({ brand: 'uniqlo', detail: 'E999999-000' })).status, (await get({ brand: 'uniqlo', detail: '../x' })).status], [404, 404]);
+    assert.deepStrictEqual(asked, [], 'a product page reads nothing from the retailer');
     const catalog = await get({ brand: 'uniqlo' });
     assert.strictEqual(catalog.status, 200);
     assert.strictEqual(catalog.body.products.length, uniqloBrand.products().length);

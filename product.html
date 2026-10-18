@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Product — Fynd</title>
+<meta name="description" content="A product's photos, colours, sizes and details, with its real sizing chart one click away.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23111111'/><text x='16' y='23' font-family='Helvetica,Arial,sans-serif' font-size='19' font-weight='700' fill='white' text-anchor='middle'>F</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/styles.css">
+<!-- Where the API lives. The functions are deployed on Vercel because
+     GitHub Pages cannot run server code. See README.md. -->
+<meta name="findwear-api" content="https://ai-clothes-application.vercel.app/api/interpret">
+<script>document.documentElement.classList.add('js');</script>
+</head>
+<body>
+
+<a class="skip-link" href="#product">Skip to the product</a>
+
+<header class="site-header">
+  <div class="container">
+    <div class="nav">
+      <a class="brand" href="index.html" aria-label="Fynd — home">
+        <span class="brand-mark" aria-hidden="true">F</span>
+        <span class="brand-word">Fynd</span>
+      </a>
+      <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" aria-label="Open menu"><span></span></button>
+      <nav aria-label="Main">
+        <ul class="nav-links" id="site-nav">
+          <li><a href="index.html">Find Fit</a></li>
+          <li><a href="compare.html">Compare</a></li>
+          <li><a href="fit-profile.html">Fit profile</a></li>
+          <li><a href="pricing.html">Pricing</a></li>
+          <li><a href="about.html">About</a></li>
+          <li><a href="account.html">Account</a></li>
+        </ul>
+      </nav>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+  <!-- One product, laid out the way a shop lays out its product page:
+       photos by colour, the product's facts, colours, sizes and, beside
+       the sizes, Fynd's Size Guide — the product's real chart, drawn by
+       assets/size-chart.js. Everything shown comes from what Fynd holds
+       for the product (/api/size-recommendation?brand=&detail=, see
+       api/_sizing/brands), and what it doesn't hold is said, never
+       filled in. Drawn by assets/product-page.js. -->
+  <article class="container pdp" id="product" data-state="loading" aria-busy="true">
+    <nav class="pdp-crumbs" aria-label="Breadcrumb">
+      <a href="index.html">Find Fit</a><span aria-hidden="true">/</span><span id="pdp-crumb-brand">UNIQLO</span><span aria-hidden="true">/</span><span id="pdp-crumb-category"></span>
+    </nav>
+
+    <p class="pdp-status" id="pdp-status" role="status">Loading the product…</p>
+
+    <div class="pdp-grid" id="pdp-grid" hidden>
+      <section class="pdp-gallery" aria-label="Photos">
+        <div class="pdp-main-image" id="pdp-main-image"></div>
+        <div class="pdp-thumbs" id="pdp-thumbs" role="group" aria-label="More photos"></div>
+        <p class="pdp-photo-note" id="pdp-photo-note"></p>
+      </section>
+
+      <section class="pdp-info" aria-labelledby="pdp-name">
+        <p class="pdp-brand" id="pdp-brand"></p>
+        <h1 class="pdp-name" id="pdp-name"></h1>
+        <p class="pdp-meta" id="pdp-meta"></p>
+        <p class="pdp-price" id="pdp-price"></p>
+
+        <div class="pdp-option" id="pdp-colours-block">
+          <p class="pdp-option-label">Colour: <span id="pdp-colour-name"></span></p>
+          <div class="pdp-swatches" id="pdp-colours" role="radiogroup" aria-label="Colour"></div>
+          <p class="pdp-option-note" id="pdp-colours-note"></p>
+        </div>
+
+        <div class="pdp-option" id="pdp-sizes-block">
+          <div class="pdp-option-head">
+            <p class="pdp-option-label">Size: <span id="pdp-size-name">Choose a size</span></p>
+            <button class="pdp-size-guide" id="pdp-size-guide" type="button" aria-haspopup="dialog">Size Guide</button>
+          </div>
+          <div class="pdp-sizes" id="pdp-sizes" role="radiogroup" aria-label="Size"></div>
+          <p class="pdp-option-note" id="pdp-sizes-note"></p>
+        </div>
+
+        <p class="pdp-holds" id="pdp-holds"></p>
+
+        <div class="pdp-actions">
+          <a class="btn btn-primary pdp-retailer" id="pdp-retailer" target="_blank" rel="noopener noreferrer">View on UNIQLO</a>
+        </div>
+        <p class="pdp-retailer-note">Price, stock and checkout are on the retailer&rsquo;s own page.</p>
+
+        <div class="pdp-sections" id="pdp-sections"></div>
+      </section>
+    </div>
+  </article>
+
+  <!-- the Size Guide: the product's chart, without leaving the page -->
+  <dialog class="size-chart pdp-guide" id="pdp-guide" aria-labelledby="pdp-guide-title">
+    <div class="size-chart-head">
+      <div>
+        <h2 class="size-chart-title" id="pdp-guide-title">Size Guide</h2>
+        <p class="size-chart-product" id="pdp-guide-product"></p>
+      </div>
+      <button class="btn btn-secondary size-chart-close" id="pdp-guide-close" type="button">Close</button>
+    </div>
+    <p class="pdp-guide-selected" id="pdp-guide-selected"></p>
+    <div class="size-chart-body" id="pdp-guide-body" aria-live="polite"></div>
+    <div class="fit-compare" id="pdp-guide-compare" hidden></div>
+  </dialog>
+</main>
+
+<footer class="site-footer">
+  <div class="container">
+    <div class="footer-inner">
+      <a class="brand" href="index.html" aria-label="Fynd — home">
+        <span class="brand-mark" aria-hidden="true">F</span>
+        <span class="brand-word">Fynd</span>
+      </a>
+      <nav aria-label="Footer">
+        <ul class="footer-links">
+          <li><a href="index.html">Find Fit</a></li>
+          <li><a href="find-clothes.html">Search</a></li>
+          <li><a href="compare.html">Compare</a></li>
+          <li><a href="fit-profile.html">Fit profile</a></li>
+          <li><a href="pricing.html">Pricing</a></li>
+          <li><a href="about.html">About</a></li>
+          <li><a href="account.html">Account</a></li>
+        </ul>
+      </nav>
+    </div>
+    <p class="footer-note">Fynd is a demo experience. Live results come from a connected product source; when none is connected, sample items are shown and labelled as such.</p>
+  </div>
+</footer>
+
+<script src="assets/account.js"></script>
+<script src="assets/size-chart.js"></script>
+<script src="assets/fit-compare.js"></script>
+<script src="assets/product-page.js"></script>
+<script src="assets/app.js"></script>
+</body>
+</html>

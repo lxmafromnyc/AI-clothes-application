@@ -1523,56 +1523,98 @@ const linkFromInbox = (pattern) => {
     const photos = await page.$$eval('.fit-product img', (is) => is.map((i) => i.getAttribute('src')));
     assert.ok(photos.every((src) => src.startsWith('https://image.uniqlo.com/')), photos.join(' '));
 
-    /* a checked record: its own body and garment charts, by its code — no link typed, no page fetched */
+    /* a card is a link to the product's own page, by brand and code */
+    assert.strictEqual(await page.getAttribute('.fit-product[data-code="E475378-000"]', 'href'), 'product.html?brand=uniqlo&item=E475378-000');
     transportAsked.length = 0;
     const lookups = () => apiRequests.filter((r) => r.path === '/api/size-recommendation' && /item=/.test(r.search || '')).length;
+    const guide = async (p, state) => {
+      await p.click('#pdp-size-guide');
+      await p.waitForSelector(`#pdp-guide[open][data-state="${state}"]`);
+    };
+
+    /* a checked record: a full product page — photo, facts, sizes, sections — then its own charts in the Size Guide */
     await page.click('.fit-product[data-code="E475378-000"]');
-    await page.waitForSelector('#fit-result[data-item="E475378-000"][data-state="ok"]');
-    assert.strictEqual(await page.getAttribute('.fit-product[data-code="E475378-000"]', 'aria-pressed'), 'true');
-    assert.strictEqual(await page.textContent('#fit-result-title'), 'UNIQLO · Sweat Pullover Hoodie');
-    assert.strictEqual(await page.getAttribute('#fit-result-product a', 'href'), 'https://www.uniqlo.com/us/en/products/E475378-000/00');
-    assert.deepStrictEqual(await page.$$eval('#fit-result .size-chart-kind', (ns) => ns.map((n) => n.textContent)), ['Body measurements — the body each size fits, not the garment', 'Finished-garment measurements — the clothing itself']);
-    assert.strictEqual(await page.textContent('#fit-result .size-chart-caveat'), 'This product’s own chart, checked against UNIQLO’s page.');
+    await page.waitForURL(/product\.html\?brand=uniqlo&item=E475378-000$/);
+    await page.waitForSelector('#product[data-state="ready"]');
+    assert.strictEqual(await page.textContent('#pdp-brand'), 'UNIQLO');
+    assert.strictEqual(await page.textContent('#pdp-name'), 'Sweat Pullover Hoodie');
+    assert.strictEqual(await page.textContent('#pdp-meta'), 'Product ID 475378 · Sweatshirts & Hoodies · Unisex');
+    assert.match(await page.textContent('#pdp-price'), /Price isn’t held by Fynd/, 'no price invented');
+    assert.ok((await page.getAttribute('#pdp-main-image', 'data-src')).startsWith('https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/475378/'), 'the product’s own photo, from UNIQLO’s image host');
+    assert.deepStrictEqual(await page.$$eval('.pdp-size', (bs) => bs.map((b) => b.textContent)), ['XXS', 'XS', 'S', 'M', 'L', 'XL', 'XXL', '3XL']);
+    assert.match(await page.textContent('#pdp-sizes-note'), /Fynd doesn’t know which sizes are in stock/);
+    assert.strictEqual(await page.getAttribute('#pdp-retailer', 'href'), 'https://www.uniqlo.com/us/en/products/E475378-000/00');
+    assert.strictEqual(await page.textContent('#pdp-retailer'), 'View on UNIQLO');
+    assert.deepStrictEqual(await page.$$eval('.pdp-section > summary', (ns) => ns.map((n) => n.textContent)), ['Description & features', 'Materials & care', 'Fit & sizing', 'Availability & shipping', 'About this information']);
+    await page.click('.pdp-section > summary:has-text("Materials & care")');
+    assert.match(await page.textContent('#pdp-sections'), /Body: 100% Cotton \/ Rib: 82% Cotton, 18% Polyester[\s\S]*Source: product page, Materials/);
+    assert.ok(!/★|\d+ reviews?\b|\bIn stock\b|Only \d+ left|Out of stock/.test(await page.innerText('#product')), 'no reviews or stock invented');
+    /* choose a colour and a size: both kept in the address, and carried into the Size Guide */
+    assert.strictEqual(await page.textContent('#pdp-colour-name'), 'Colour 09', 'opens on the colour its card shows');
+    assert.strictEqual(await page.$$eval('.pdp-swatch', (bs) => bs.length), 11, 'the colours UNIQLO has photographed');
+    assert.match(await page.textContent('#pdp-colours-note'), /not proof that each is on sale now/);
+    const firstColour = await page.getAttribute('.pdp-swatch', 'data-code');
+    await page.click('.pdp-swatch');
+    assert.strictEqual(await page.getAttribute('#pdp-main-image', 'data-src'), `https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/475378/item/goods_${firstColour}_475378_3x4.jpg`, 'the photo follows the colour');
+    const thumbs = await page.$$eval('.pdp-thumb', (bs) => bs.map((b) => b.dataset.src));
+    assert.ok(thumbs.every((src) => src.startsWith('https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/475378/')), 'thumbnails only of this product, from UNIQLO’s image host');
+    await page.click('.pdp-size:has-text("M") >> nth=0');
+    assert.strictEqual(await page.getAttribute('.pdp-size[data-size="M"]', 'aria-checked'), 'true');
+    assert.ok(page.url().endsWith(`&colour=${firstColour}&size=M`), page.url());
+    await guide(page, 'ok');
+    assert.strictEqual(await page.textContent('#pdp-guide-selected'), `Selected: Colour ${firstColour} · Size M`);
+    assert.deepStrictEqual(await page.$$eval('#pdp-guide .size-chart-kind', (ns) => ns.map((n) => n.textContent)), ['Body measurements — the body each size fits, not the garment', 'Finished-garment measurements — the clothing itself']);
+    assert.strictEqual(await page.textContent('#pdp-guide .size-chart-caveat'), 'This product’s own chart, checked against UNIQLO’s page.');
+    assert.deepStrictEqual(await page.$$eval('#pdp-guide tr.is-chosen th', (ns) => ns.map((n) => n.textContent)), ['M', 'M'], 'the chosen size marked in both tables');
     assert.deepStrictEqual(transportAsked, [], 'Fynd’s record answered');
-    assert.strictEqual(await page.inputValue('#fit-url'), '', 'nothing was pasted');
-    await page.waitForSelector('#fit-compare:not([hidden])');
-    assert.match(await page.textContent('#fit-compare'), /With a reference garment saved on your fit profile, Fynd can compare every size with it/);
+    await page.waitForSelector('#pdp-guide-compare:not([hidden])');
+    assert.match(await page.textContent('#pdp-guide-compare'), /With a reference garment saved on your fit profile, Fynd can compare every size with it/);
+    await page.click('#pdp-guide-close');
+    assert.strictEqual(await page.$eval('#pdp-guide', (d) => d.open), false);
+    /* reloaded, the choices come back from the address */
+    await page.reload();
+    await page.waitForSelector('#product[data-state="ready"]');
+    assert.strictEqual(await page.getAttribute('.pdp-size[data-size="M"]', 'aria-checked'), 'true');
 
-    /* E471808: its page doesn't answer — the general body-size fallback, for this product only, never compared */
-    await page.fill('#fit-product-search', 'Oversized');
-    await page.click('.fit-product[data-code="E471808-000"]');
-    await page.waitForSelector('#fit-result[data-item="E471808-000"][data-state="fallback"]');
-    assert.strictEqual(await page.textContent('#fit-result .size-chart-name'), 'UNIQLO US body-size chart');
-    assert.strictEqual(await page.textContent('#fit-result .size-chart-caveat'), 'A general UNIQLO sizing guide — not measurements confirmed for this exact product.');
+    /* E471808: no size list held, said so; the Size Guide is the general body fallback, never compared */
+    await open(page, 'product.html?brand=uniqlo&item=E471808-000');
+    await page.waitForSelector('#product[data-state="ready"]');
+    assert.strictEqual(await page.$$eval('.pdp-size', (bs) => bs.length), 0, 'no sizes invented');
+    assert.match(await page.textContent('#pdp-sizes-note'), /Fynd doesn’t hold this product’s size list/);
+    await guide(page, 'fallback');
+    assert.strictEqual(await page.textContent('#pdp-guide .size-chart-name'), 'UNIQLO US body-size chart');
+    assert.strictEqual(await page.textContent('#pdp-guide .size-chart-caveat'), 'A general UNIQLO sizing guide — not measurements confirmed for this exact product.');
     assert.deepStrictEqual(transportAsked, ['https://www.uniqlo.com/us/en/products/E471808-000/00']);
-    await page.waitForSelector('#fit-compare:not([hidden])');
-    assert.match(await page.textContent('#fit-compare'), /describes bodies, not garments/);
+    await page.waitForSelector('#pdp-guide-compare:not([hidden])');
+    assert.match(await page.textContent('#pdp-guide-compare'), /describes bodies, not garments/);
 
-    /* E429066: nothing saved and its page can't be read — unavailable, with its name and page, and not E471808's fallback */
-    await page.fill('#fit-product-search', 'Extra Fine Merino');
-    await page.click('.fit-product[data-code="E429066-000"]');
-    await page.waitForSelector('#fit-result[data-item="E429066-000"][data-state="unavailable"]');
-    assert.strictEqual(await page.textContent('#fit-result-title'), 'UNIQLO · Men\'s Extra Fine Merino Crew Neck Long-Sleeve Sweater');
-    assert.strictEqual(await page.textContent('#fit-result .size-chart-status'), 'Couldn’t read the product page');
-    assert.strictEqual(await page.$$eval('#fit-result table', (ns) => ns.length), 0);
-    assert.strictEqual(await page.getAttribute('#fit-result-product a', 'href'), 'https://www.uniqlo.com/us/en/products/E429066-000/00');
-    assert.ok(!/body-size chart|general UNIQLO/.test(await page.innerText('#fit-result')));
-    assert.ok(lookups() >= 3, 'each pick asked by its code');
+    /* E429066: nothing saved and its page can't be read — the Size Guide says so, not E471808's fallback */
+    await open(page, 'product.html?brand=uniqlo&item=E429066-000');
+    await page.waitForSelector('#product[data-state="ready"]');
+    await guide(page, 'unavailable');
+    assert.strictEqual(await page.textContent('#pdp-guide .size-chart-status'), 'Couldn’t read the product page');
+    assert.strictEqual(await page.$$eval('#pdp-guide table', (ns) => ns.length), 0);
+    assert.ok(!/body-size chart|general UNIQLO/.test(await page.innerText('#pdp-guide')));
+    assert.ok(lookups() >= 3, 'each Size Guide asked by the product’s code');
 
-    /* a snapshot product in men's sweatshirts & hoodies: its page doesn't answer, so the general men's body chart, said to be general */
-    await page.fill('#fit-product-search', 'Sweat Hoodie 01');
-    await page.click('.fit-product[data-code="E900001-000"]');
-    await page.waitForSelector('#fit-result[data-item="E900001-000"][data-state="fallback"]');
-    assert.strictEqual(await page.textContent('#fit-result .size-chart-name'), 'UNIQLO US body-size chart');
-    assert.strictEqual(await page.textContent('#fit-result .size-chart-caveat'), 'A general UNIQLO sizing guide — not measurements confirmed for this exact product.');
-    await page.click('#fit-result .size-chart-details summary');
-    assert.match(await page.textContent('#fit-result .size-chart-details'), /Listed on UNIQLO’s Sweatshirts & Hoodies page|fallback chart/);
-    /* a women's snapshot product: outside the men's chart, so honestly none */
-    await page.fill('#fit-product-search', 'Crew Neck T-Shirt 01');
-    await page.click('.fit-product[data-code="E900019-000"]');
-    await page.waitForSelector('#fit-result[data-item="E900019-000"][data-state="unavailable"]');
-    assert.strictEqual(await page.$$eval('#fit-result table', (ns) => ns.length), 0);
-    assert.ok(apiRequests.filter((r) => r.path === '/api/size-recommendation' && /item=/.test(r.search || '')).every((r) => !/http/.test(decodeURIComponent(r.search))), 'no address travels with a pick');
+    /* a snapshot product in men's sweatshirts & hoodies gets the general men's chart; a women's one honestly none */
+    await open(page, 'product.html?brand=uniqlo&item=E900001-000');
+    await page.waitForSelector('#product[data-state="ready"]');
+    await guide(page, 'fallback');
+    await page.click('#pdp-guide .size-chart-details summary');
+    assert.match(await page.textContent('#pdp-guide .size-chart-details'), /Listed on UNIQLO’s Sweatshirts & Hoodies page|fallback chart/);
+    await open(page, 'product.html?brand=uniqlo&item=E900019-000');
+    await page.waitForSelector('#product[data-state="ready"]');
+    await guide(page, 'unavailable');
+    assert.ok(apiRequests.filter((r) => r.path === '/api/size-recommendation' && /item=|detail=/.test(r.search || '')).every((r) => !/http/.test(decodeURIComponent(r.search))), 'no address travels with a product');
+
+    /* a product Find Fit doesn't list, or a malformed one: said plainly, nothing drawn */
+    for (const bad of ['product.html?brand=uniqlo&item=E999999-000', 'product.html?brand=uniqlo&item=%3Cscript%3E', 'product.html?brand=nike&item=E475378-000']) {
+      await open(page, bad);
+      await page.waitForSelector('#product[data-state="unknown"]');
+      assert.match(await page.textContent('#pdp-status'), /isn’t a product Find Fit lists/);
+      assert.strictEqual(await page.isHidden('#pdp-grid'), true);
+    }
     await context.close();
   });
 
@@ -1593,17 +1635,24 @@ const linkFromInbox = (pattern) => {
     assert.ok(fits, 'no sideways scrolling');
     const widths = await phone.$$eval('.fit-product', (bs) => bs.map((b) => b.getBoundingClientRect().width));
     assert.ok(widths.every((w) => w > 120), `cards are tappable: ${widths}`);
-    /* while a pick is looked up, it says so, under the product's own name */
+    /* the product page on a phone: one column, no sideways scroll; the Size Guide says it is looking while it looks */
+    await phone.click('.fit-product[data-code="E475377-000"]');
+    await phone.waitForSelector('#product[data-state="ready"]');
+    assert.ok(await phone.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'no sideways scrolling on the product page');
     let release;
     const held = new Promise((r) => { release = r; });
     await phone.route('**/api/size-recommendation?brand=uniqlo&item=*', async (route) => { await held; await route.continue(); });
-    await phone.click('.fit-product[data-code="E475377-000"]');
-    await phone.waitForSelector('#fit-result[data-state="loading"]');
-    assert.strictEqual(await phone.textContent('#fit-result-title'), 'UNIQLO · Sweatshirt');
-    assert.match(await phone.textContent('#fit-result .size-chart-loading'), /Looking up this product’s sizing chart/);
+    await phone.click('#pdp-size-guide');
+    await phone.waitForSelector('#pdp-guide[open][data-state="loading"]');
+    assert.match(await phone.textContent('#pdp-guide .size-chart-loading'), /Looking up this product’s sizing chart/);
     release();
-    await phone.waitForSelector('#fit-result[data-item="E475377-000"][data-state="ok"]');
-    assert.strictEqual(await phone.textContent('#fit-result-title'), 'UNIQLO · Sweatshirt');
+    await phone.waitForSelector('#pdp-guide[data-state="ok"]');
+    assert.strictEqual(await phone.textContent('#pdp-guide-product'), 'UNIQLO · Sweatshirt');
+    /* a product page whose details can't be loaded says so */
+    await phone.route('**/api/size-recommendation?brand=uniqlo&detail=*', (route) => route.fulfill({ status: 503, contentType: 'application/json', body: '{}' }));
+    await phone.goto(phone.url());
+    await phone.waitForSelector('#product[data-state="unavailable"]');
+    assert.match(await phone.textContent('#pdp-status'), /couldn’t be loaded just now/);
     await context.close();
   });
 
@@ -1627,6 +1676,14 @@ const linkFromInbox = (pattern) => {
     const sent = apiRequests.filter((r) => r.path === '/api/size-recommendation');
     assert.ok(sent.length >= 2);
     assert.ok(!/Carhartt|chestWidth|58/.test(page.url()));
+    /* the same comparison from the product page's Size Guide */
+    await open(page, 'product.html?brand=uniqlo&item=E475378-000&size=L');
+    await page.waitForSelector('#product[data-state="ready"]');
+    await page.click('#pdp-size-guide');
+    await page.waitForSelector('#pdp-guide-compare:not([hidden]) .fit-compare-title');
+    assert.strictEqual((await page.textContent('#pdp-guide-compare .fit-compare-title')).trim(), 'Compared with your reference');
+    assert.match(await page.textContent('#pdp-guide-compare'), /closest on chest and shoulders/);
+    assert.ok(!/Carhartt|chestWidth|58/.test(page.url()), 'nothing from the profile in the address');
     /* signed out, the same chart says what a profile would add */
     const out = await (await openContext()).newPage();
     await open(out, 'index.html');
