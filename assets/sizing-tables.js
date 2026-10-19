@@ -75,7 +75,8 @@
      garment claim, only when its columns agree.
 
      How the garment was measured ("laid flat", "from the centre back",
-     "body width", "garment measurements") says it is the garment. A
+     "body width", "garment measurements", UNIQLO's "the actual
+     measurements of the product") says it is the garment. A
      bare label — "Product size", "Item measurements" — does not prove it
      alone: such a table counts as the garment only when its columns are
      the garment's own geometry (a length, a width, a sleeve, the
@@ -83,7 +84,7 @@
      hips). Any garment claim whose columns include a body-only measure
      is "not stated": a size chart that mixes the two can't say which
      each value is. */
-  const SAYS_GARMENT = /\bgarment\s+(measurements?|size|dimensions?)\b|\blaid flat\b|\bmeasured flat\b|\bflat measurements?\b|\bfrom (the )?cent(?:er|re) back\b|\bbody width\b/i;
+  const SAYS_GARMENT = /\bgarment\s+(measurements?|size|dimensions?)\b|\blaid flat\b|\bmeasured flat\b|\bflat measurements?\b|\bfrom (the )?cent(?:er|re) back\b|\bbody width\b|\bactual measurements of the (product|garment|item)\b/i;
   const LABELS_GARMENT = /\b(product|item|clothing)\s+(measurements?|size|dimensions?)\b/i;
   const SAYS_BODY = /\bbody (measurements?|size)\b|\byour (body|measurements)\b|\bmeasure (yourself|your body)\b|\bto fit\b|\bbody chart\b/i;
   const BODY_ONLY_COLUMN = /\b(height|weight|bust|hips?|seat)\b/i;

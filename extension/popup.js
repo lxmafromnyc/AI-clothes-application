@@ -83,7 +83,9 @@
     choose();
   }
 
-  /* several tables could each be the chart: the shopper says which */
+  /* several tables could each be the chart: the shopper says which,
+     each saying what it measures, as its own words do */
+  const MEASURES_SHORT = { 'finished-garment': 'Garment measurements', body: 'Body measurements', 'not-stated': 'Body or garment not stated' };
   function choose() {
     $('choose-text').textContent = `This page has ${found.list.length} tables that look like size charts. Choose the one for this product.`;
     const list = $('choices');
@@ -92,7 +94,7 @@
       const b = el('button', 'pop-choice');
       b.type = 'button';
       b.append(el('span', 'pop-choice-name', c.heading || c.chart.title || `Table ${i + 1}`),
-        el('span', 'pop-choice-cols', `${c.chart.rows.length} sizes · ${c.chart.columns.join(', ')}${c.inDialog ? ' · in the open size guide' : c.visible ? '' : ' · not in view'}`));
+        el('span', 'pop-choice-cols', `${MEASURES_SHORT[c.chart.measures]} · ${c.chart.rows.length} sizes · ${c.chart.columns.join(', ')}${c.inDialog ? ' · in the open size guide' : c.visible ? '' : ' · not in view'}`));
       b.addEventListener('click', () => finish(i));
       const li = el('li');
       li.append(b);

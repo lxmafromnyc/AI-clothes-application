@@ -13,8 +13,9 @@
        structured data (JSON-LD), or its og: tags and main heading
      * a fit the page states under a "Fit" label
      * up to 12 tables: their cells, caption and the words just before
-       them, whether each is in view, and whether it sits in an open
-       dialog (a size guide the shopper opened)
+       them (in a tabbed size guide, its tab's name), whether each is in
+       view, and whether it sits in an open dialog (a size guide the
+       shopper opened)
      * up to 3 links whose words say "size guide" / "size chart"
 
    It never reads form fields or anything typed, skips any table holding
@@ -93,12 +94,27 @@ function fyndCollect() {
     const style = getComputedStyle(el);
     return style.visibility !== 'hidden' && style.display !== 'none';
   };
+  /* the tab a tab panel belongs to (role="tab"), by the panel's
+     aria-labelledby or the tab's aria-controls: its name, or '' */
+  const tabOf = (panel) => {
+    if (!panel) return '';
+    const ids = fold(panel.getAttribute('aria-labelledby'), 200).split(' ').filter(Boolean);
+    const named = ids.map((id) => text(document.getElementById(id), 60)).filter(Boolean).join(' ');
+    if (named) return named;
+    const tab = panel.id && Array.from(document.querySelectorAll('[role="tab"][aria-controls]')).slice(0, 50)
+      .find((t) => t.getAttribute('aria-controls').split(/\s+/).includes(panel.id));
+    return text(tab, 60);
+  };
   /* the words just before a table: its heading, a tab's name — never
      past another table, so a "Body size" heading over one table doesn't
-     speak for the "Product size" table that follows it */
+     speak for the "Product size" table that follows it. In a tab panel,
+     only the panel's own words and its tab's name: the tab list beside
+     it names every tab, so it would speak for all of them */
   const wordsBefore = (table) => {
     let heading = '';
     const parts = [];
+    const panel = table.closest('[role="tabpanel"]');
+    const tab = tabOf(panel);
     let node = table;
     for (let steps = 0; node && steps < 12 && parts.join(' ').length < 300; steps++) {
       const prev = node.previousElementSibling;
@@ -110,11 +126,13 @@ function fyndCollect() {
         if (t) parts.unshift(t);
         if (!heading && /^H[1-6]$/.test(prev.tagName)) heading = t;
       } else {
+        if (node.parentElement === panel) break;
         node = node.parentElement;
         if (!node || node === document.body) break;
       }
     }
-    return { before: fold(parts.join(' '), 300).slice(-300), heading: heading || null };
+    const words = fold(parts.join(' '), 300);
+    return { before: tab ? fold(`${tab} ${words.slice(-(299 - tab.length))}`, 300) : words.slice(-300), heading: heading || tab || null, tab: tab || null };
   };
   const tables = [];
   for (const table of Array.from(document.querySelectorAll('table')).slice(0, 40)) {
@@ -130,6 +148,7 @@ function fyndCollect() {
       caption: text(table.caption, 160),
       before: around.before,
       heading: around.heading,
+      tab: around.tab,
       visible: inView(table),
       inDialog: Boolean(table.closest('dialog[open], [role="dialog"], [aria-modal="true"]'))
     });

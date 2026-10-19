@@ -1302,6 +1302,48 @@ await test('a page with both a body chart and the garment’s own: the garment c
   assert.deepStrictEqual([r.verification, r.comparable], ['not-verified', false], 'read just now: never verified, never compared');
 });
 
+await test('a size guide in UNIQLO’s words (FIXTURE values): Product Size first, “Chest” kept as published, the Body Size tab still body', async () => {
+  /* the tab sentences are UNIQLO's (as recorded in uniqlo-e475378's notes); every value here is invented */
+  const both = `<h3>Body Size</h3><p>The dimensions shown below are body size measurements that correspond with a product’s size. Inches</p>
+    ${fixtureTable('', ['Chest'], [['S', '34 - 37'], ['M', '37 - 40']])}
+    <h3>Product Size</h3><p>The dimensions shown below are the actual measurements of the product. Inches</p>
+    ${fixtureTable('', ['Length (back)', 'Shoulder width (seam to seam)', 'Chest', 'Sleeve Length (center back)'], [['S', '26', '21', '23', '33'], ['M', '27', '22', '24', '34']])}`;
+  const r = await read(SHOP, { [SHOP]: { body: page(both) } });
+  assert.deepStrictEqual(r.charts.map((c) => [c.measures, c.unit]), [['finished-garment', 'in'], ['body', 'in']]);
+  assert.deepStrictEqual(r.charts[0].columns, ['Length (back)', 'Shoulder width (seam to seam)', 'Chest', 'Sleeve Length (center back)'], 'columns as published: “Chest” is not renamed a circumference or a width');
+  assert.deepStrictEqual(r.charts[0].rows.find((x) => x.size === 'M').values, ['27', '22', '24', '34']);
+  assert.ok(!('methods' in r.charts[0]), 'a page read just now states no method Fynd hasn’t confirmed');
+  assert.deepStrictEqual([r.verification, r.comparable], ['not-verified', false]);
+  /* the classifier itself */
+  const T = require('../assets/sizing-tables');
+  const PRODUCT = 'Product Size The dimensions shown below are the actual measurements of the product.';
+  const BODY = 'Body Size The dimensions shown below are body size measurements that correspond with a product’s size.';
+  assert.strictEqual(T.kindOf(`${PRODUCT} Chest`, ['Chest']), 'finished-garment', 'the brand’s statement, not the tab’s name, makes a chest-only table the garment');
+  assert.strictEqual(T.kindOf(`${PRODUCT} Height Chest`, ['Height', 'Chest']), 'not-stated', 'a body-only column still vetoes it');
+  assert.strictEqual(T.kindOf(`${BODY} Chest`, ['Chest']), 'body', '“a product’s size” is not a product-size label');
+  assert.strictEqual(T.kindOf('Body Size Product Size Chest', ['Chest']), 'not-stated', 'a tab list naming both tabs speaks for neither');
+  assert.strictEqual(T.kindOf('Product Size Chest', ['Chest']), 'not-stated', 'the tab’s name alone is not proof');
+});
+
+await test('every record with the garment’s own chart lists it first, with its unit and each column’s method; body-only records stay body', () => {
+  const recs = require('../api/_sizing/records');
+  const all = recs.RECORDS;
+  assert.ok(Array.isArray(all) && all.length >= 10, 'every record is checked');
+  all.forEach((rec) => {
+    const r = charts.fromRecord(rec, null);
+    const kinds = r.charts.map((c) => c.measures);
+    if (rec.charts.garment) {
+      assert.strictEqual(kinds[0], 'finished-garment', rec.id);
+      const g = r.charts[0];
+      assert.strictEqual(g.unit, rec.units, rec.id);
+      assert.deepStrictEqual(g.methods, Object.values(rec.charts.garment.dimensions).map((d) => engine.METHOD_WORDS[d.method] || null), rec.id);
+    } else {
+      assert.deepStrictEqual(kinds, ['body'], rec.id);
+      assert.strictEqual(r.comparable, false, `${rec.id}: a body chart is never comparable`);
+    }
+  });
+});
+
 await test('no table on the page: the size guide it links to is read, and labelled as the retailer’s guide, not the product’s own', async () => {
   const GUIDE = 'https://shop.example.com/pages/size-guide';
   const product = page('<a href="/pages/size-guide">Size guide</a><a href="/cart">Cart</a><a href="https://other.example.org/size-chart">Size chart elsewhere</a>',
@@ -1494,6 +1536,18 @@ await test('a body-size fallback can never start a garment comparison', async ()
   assert.match(r.note.join(' '), /can’t be set beside a garment you own/);
 });
 
+await test('E471808’s own Product Size chart is said to be missing — with when and how it was looked for — and nothing stands in for it', async () => {
+  const r = await read(UQ_OVERSIZED, { [UQ_OVERSIZED]: { throws: 'abort' } });
+  assert.strictEqual(r.productSize.status, 'not-retrieved');
+  assert.strictEqual(r.productSize.checkedAt, '2026-10-19');
+  assert.ok(r.productSize.tried.length >= 3);
+  assert.ok(r.productSize.tried.some((t) => /refuses www\.uniqlo\.com/.test(t)), 'this environment’s refusal is recorded');
+  assert.ok(!('values' in r.productSize) && !('sizes' in r.productSize), 'no garment value is held for it');
+  assert.deepStrictEqual(r.charts.map((c) => c.measures), ['body'], 'no garment chart is made up from the body chart');
+  assert.ok(r.note.some((n) => /Product Size tab.*aren’t held by Fynd \(last looked for 2026-10-19\)\. None are shown, and none are worked out from the body chart\./.test(n)));
+  assert.deepStrictEqual([r.comparable, r.verification], [false, 'official-general']);
+});
+
 await test('a page that loads but holds no chart gets the same fallback, saying the page was read', async () => {
   const shell = '<!doctype html><html><head><title>Sweat Oversized Pullover Hoodie | UNIQLO US</title></head><body><div id="root"></div><script src="/app.js"></script></body></html>';
   const r = await read(UQ_OVERSIZED, { [UQ_OVERSIZED]: { body: shell } });
@@ -1533,6 +1587,11 @@ await test('the official-chart loader refuses a chart that disagrees with its so
   assert.ok(variant((c) => { c.evidence[0].recordId = 'zara-00761810-basic-heavyweight-hoodie-us'; }).length, 'evidence from another brand');
   assert.ok(variant((c) => { c.evidence[0].url = 'https://uniqlloshop.it.com/product/sweat-pullover-hoodie/'; }).length, 'evidence off the brand’s site');
   assert.ok(variant((c) => { delete c.products[0].identity; }).length, 'a product with no account of how it is known');
+  /* a fallback product's productSize may only say it wasn't retrieved: garment values belong in a record */
+  assert.ok(variant((c) => { c.products[0].productSize.status = 'verified'; }).some((e) => /productSize may only say it was not retrieved/.test(e)), 'a claimed Product Size');
+  assert.ok(variant((c) => { c.products[0].productSize.values = { M: { chestWidth: '24' } }; }).some((e) => /productSize may only say/.test(e)), 'garment values in a fallback');
+  assert.ok(variant((c) => { c.products[0].productSize.tried = []; }).some((e) => /its date and what was tried/.test(e)), 'no account of what was tried');
+  assert.deepStrictEqual(variant((c) => { delete c.products[0].productSize; }), [], 'saying nothing about it is allowed');
 });
 
 await test('redirects are followed by hand, and every new address is checked again', async () => {

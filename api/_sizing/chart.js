@@ -77,7 +77,8 @@ const MAX_BYTES = 3000000;
 const MAX_REDIRECTS = 3;
 const CACHE_OK_SECONDS = 6 * 60 * 60;
 const CACHE_MISS_SECONDS = 30 * 60;
-const CACHE_VERSION = 'v2';
+/* v3: UNIQLO's Product Size wording reads as the garment; fallbacks carry productSize */
+const CACHE_VERSION = 'v3';
 /* How a size table is recognised, read and labelled: shared with the
    Fynd browser extension, so a table reads the same either way. */
 const { MAX_CELL, MAX_ROWS, MAX_COLUMNS, GUIDE_WORDS, sizeTable, unitOf, kindOf, labelTable } = require('../../assets/sizing-tables');
@@ -597,6 +598,14 @@ function fromOfficial(found, checked, live) {
     }],
     sizes: chart.sizes.slice(),
     fit: null,
+    /* the product's own garment measurements: never held for a
+       fallback, and said so — with when and how they were looked for,
+       where Fynd recorded that */
+    productSize: {
+      status: 'not-retrieved',
+      checkedAt: (product.productSize && product.productSize.checkedAt) || null,
+      tried: ((product.productSize && product.productSize.tried) || []).slice()
+    },
     evidenceDate: chart.evidenceDate,
     provenance: chart.provenance,
     verification: 'official-general',
@@ -675,6 +684,8 @@ function noteFor(result) {
     lines.push(`So this is a fallback chart, not one extracted from the product’s page: ${result.product.brand}’s general Body Size chart for its ${c.title.replace(/ —.*$/, '').replace(`${result.product.brand} `, '')}, which this product is one of.`);
     lines.push(`${result.product.brand} publishes this same chart, value for value, on ${result.otherSources.length + 1} of those products; Fynd copied it from them by ${result.evidenceDate}. It hasn’t been confirmed on this product’s own page, and this product may be sold in fewer sizes.`);
     lines.push(`Units: ${c.unit === 'in' ? 'inches' : 'centimetres'}, as published. It gives ${listOf(c.columns)}.`);
+    const ps = result.productSize || {};
+    lines.push(`${result.product.brand}’s own measurements of this product — its Size Guide’s Product Size tab, where it has one — aren’t held by Fynd${ps.checkedAt ? ` (last looked for ${ps.checkedAt})` : ''}. None are shown, and none are worked out from the body chart.`);
     lines.push('There are no finished-garment measurements here, so this can’t be set beside a garment you own.');
     return lines;
   }

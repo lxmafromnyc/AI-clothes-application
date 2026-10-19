@@ -134,6 +134,11 @@
 
     const brand = (chart.product && chart.product.brand) || chart.retailer;
     const general = chart.scope === 'brand-general';
+    /* the product's own measurements come first; when Fynd doesn't hold
+       them, that is said first, before any general body chart */
+    if (chart.productSize && chart.productSize.status === 'not-retrieved') {
+      out.push(el('p', 'size-chart-missing', `Product measurements${o.garment ? ` of this ${o.garment}` : ''}: not available. Fynd doesn’t hold ${brand ? `${brand}’s` : 'the brand’s'} Product Size chart for ${o.garment ? 'it' : 'this product'}, so none are shown or estimated.`));
+    }
     (chart.charts || []).forEach((c, i) => {
       const section = el('section', 'size-chart-table');
       if (o.garment) {
@@ -217,7 +222,16 @@
       fact('Chart', SCOPE[chart.scope]);
       fact('Status', STATUS[chart.verification]);
     }
+    if (chart.productSize && chart.productSize.status === 'not-retrieved') {
+      fact('Product Size', `Not retrieved${chart.productSize.checkedAt ? ` (last looked for ${chart.productSize.checkedAt})` : ''}`);
+    }
     if (facts.childNodes.length) box.append(facts);
+    if (chart.productSize && (chart.productSize.tried || []).length) {
+      box.append(el('p', 'size-chart-tried-head', 'Where the Product Size chart was looked for:'));
+      const tried = el('ul', 'size-chart-tried');
+      chart.productSize.tried.forEach((t) => tried.append(el('li', null, t)));
+      box.append(tried);
+    }
 
     const src = chart.source || {};
     const link = (label, url, text) => {

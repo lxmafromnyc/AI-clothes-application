@@ -240,6 +240,23 @@ async function launch(extDir) {
     await popup.close();
   });
 
+  await test('a tabbed size guide open on Body Size: its Product Size tab is the chart, each table named by its own tab', async () => {
+    const { shop, popup } = await check('tabbed-guide.html');
+    assert.strictEqual(await popup.getAttribute('body', 'data-state'), 'result', 'no question asked: the garment tab of the open guide');
+    assert.strictEqual(await popup.textContent('#result .size-chart-name'), 'Finished-garment measurements');
+    assert.match(await popup.textContent('#result .size-chart-unit'), /inches, as published/);
+    assert.deepStrictEqual(await popup.$$eval('#result thead th', (ns) => ns.map((n) => n.textContent)), ['Size', 'Length (back)', 'Shoulder width (seam to seam)', 'Chest', 'Sleeve Length (center back)']);
+    assert.deepStrictEqual(await popup.$$eval('#result tbody tr', (trs) => trs.map((tr) => [...tr.children].map((c) => c.textContent))), [['S', '26', '21', '23', '33'], ['M', '27', '22', '24', '34'], ['L', '28', '23', '25', '35']]);
+    /* the body tab is still there to choose, saying what it measures */
+    await popup.click('#other-button');
+    const choices = await popup.$$eval('.pop-choice', (bs) => bs.map((b) => b.innerText.replace(/\s+/g, ' ')));
+    assert.strictEqual(choices.length, 2);
+    assert.match(choices[0], /^Product Size Garment measurements · 3 sizes/);
+    assert.match(choices[1], /^Body Size Body measurements · 3 sizes · Chest · in the open size guide/);
+    await shop.close();
+    await popup.close();
+  });
+
   await test('sizes but no measurements: labels only, said plainly', async () => {
     const { shop, popup } = await check('labels-only.html');
     assert.strictEqual(await popup.getAttribute('body', 'data-result'), 'labels-only');
