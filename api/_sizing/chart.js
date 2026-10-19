@@ -5,7 +5,12 @@
    shop; the search page's "View sizing chart" asks the same question
    for one of its results. Both come here (GET /api/size-recommendation
    ?chart=<link>), and the answer is what the product's own pages
-   actually publish, or why there is nothing to show. In order:
+   actually publish, or why there is nothing to show. The UNIQLO browser
+   and a product's own page ask by brand and code (?brand=&item=), which
+   resolves to the product's address and comes here too; the browser
+   extension reads the same tables with the same code
+   (assets/sizing-tables.js). Every product is looked for its own
+   finished-garment measurements first. In order:
 
      1  the address    http or https, no credentials, no unusual port,
                        a public host: never localhost, a private or
@@ -15,30 +20,44 @@
                        somewhere private is refused even if it changed
                        its answer since the last look.
      2  Fynd's record  a sizing record for exactly this product (on its
-                       brand's own site, by its code — as a favourite
-                       piece is found) is used as it stands: body and
-                       finished-garment charts kept apart, values as the
-                       brand wrote them, and its own verification status.
+                       brand's own site, by its whole code, in its own
+                       market) that holds the garment's own measurements
+                       is used as it stands: body and finished-garment
+                       charts kept apart, values as the brand wrote them,
+                       its own verification status, and no page read.
      3  the page       otherwise the product page, read once: redirects
                        followed by hand, each new address checked again;
                        a time limit; a size limit; HTML only. Its size
                        tables are read deterministically (no model): a
                        table counts only with a size column and at least
                        one measurement column.
-     4  its size guide when the page has no table but links to a size
-                       guide on the same site ("Size guide", "Size chart",
-                       …), up to two such pages are read the same way.
+     4  its size guide when the page has no finished-garment table but
+                       links to a size guide on the same site ("Size
+                       guide", "Size chart", …), up to two such pages are
+                       read the same way.
                        Their tables are labelled as the retailer's size
                        guide linked from the page — possibly a general
                        chart, never presented as this product's own.
-     5  labels         the sizes the product is sold in, from its JSON-LD,
+     5  body record    a record of this product holding only the
+                       brand's body chart joins what the page gave, after
+                       any garment chart the page or its guide had; when
+                       they had none, the record is the answer.
+     6  labels         the sizes the product is sold in, from its JSON-LD,
                        when no table was found anywhere.
-     6  fallback       when the page couldn't be read or held no chart, and
+     7  fallback       when the page couldn't be read or held no chart, and
                        Fynd knows this exact product belongs to a category
                        its brand publishes one official chart for
                        (official-charts.js), that chart — labelled as the
                        brand's general chart and as a fallback, never as
                        the product's own or as read just now.
+
+   Every chart says where it came from (`origin`: fynd-record,
+   product-page, linked-size-guide, official-general) and its own
+   `verification`, so a page's garment table and a record's body chart
+   can stand in one answer without either borrowing the other's status.
+   An answer with no finished-garment chart says so (`productSize`: not
+   retrieved, the page couldn't be read; or not found, it was read and
+   had none), with the date it was looked for — never filled in.
 
    What a table measures — the body, the finished garment, or "not
    stated" — and its unit come only from the page's own words. Values are
@@ -48,8 +67,9 @@
    guide link it had — never a chart from somewhere else. Nothing read is
    ever run; only short plain strings come back, drawn as text.
 
-   Results are cached by address (without tracking parameters): a chart
-   for six hours, a failure for thirty minutes.
+   The page's own answer is cached by address (without tracking
+   parameters): a chart for six hours, a failure for thirty minutes.
+   Records are joined to it afresh on every lookup.
    ========================================================= */
 
 'use strict';
@@ -77,8 +97,8 @@ const MAX_BYTES = 3000000;
 const MAX_REDIRECTS = 3;
 const CACHE_OK_SECONDS = 6 * 60 * 60;
 const CACHE_MISS_SECONDS = 30 * 60;
-/* v3: UNIQLO's Product Size wording reads as the garment; fallbacks carry productSize */
-const CACHE_VERSION = 'v3';
+/* v4: only the page's own answer is cached; charts carry origin and methods */
+const CACHE_VERSION = 'v4';
 /* How a size table is recognised, read and labelled: shared with the
    Fynd browser extension, so a table reads the same either way. */
 const { MAX_CELL, MAX_ROWS, MAX_COLUMNS, GUIDE_WORDS, sizeTable, unitOf, kindOf, labelTable } = require('../../assets/sizing-tables');
@@ -542,6 +562,9 @@ function fromRecord(record, checked) {
       title: chart.label || null,
       unit: record.units,
       source: { url: chart.source && /^https:/.test(chart.source.url || '') ? chart.source.url : record.product.url, title: null },
+      origin: 'fynd-record',
+      verification: sizingSchema.isVerified(record) ? 'verified' : 'unverified',
+      retrievedAt: chart.retrievedAt || record.retrievedAt,
       columns: keys.map((k) => chart.dimensions[k].label || k),
       methods: keys.map((k) => engine.METHOD_WORDS[chart.dimensions[k].method] || null),
       rows: record.sizes.filter((s) => chart.sizes[s]).map((s) => ({ size: s, values: keys.map((k) => (chart.sizes[s][k] ? String(chart.sizes[s][k].text) : '')) }))
@@ -589,6 +612,8 @@ function fromOfficial(found, checked, live) {
     line: product.line,
     charts: [{
       measures: 'body',
+      origin: 'official-general',
+      verification: 'official-general',
       label: chart.label,
       title: chart.title,
       unit: chart.units,
@@ -598,14 +623,9 @@ function fromOfficial(found, checked, live) {
     }],
     sizes: chart.sizes.slice(),
     fit: null,
-    /* the product's own garment measurements: never held for a
-       fallback, and said so — with when and how they were looked for,
-       where Fynd recorded that */
-    productSize: {
-      status: 'not-retrieved',
-      checkedAt: (product.productSize && product.productSize.checkedAt) || null,
-      tried: ((product.productSize && product.productSize.tried) || []).slice()
-    },
+    /* where else this product's own measurements were looked for, when
+       Fynd recorded that (chartFor adds this attempt) */
+    triedBefore: ((product.productSize && product.productSize.tried) || []).slice(),
     evidenceDate: chart.evidenceDate,
     provenance: chart.provenance,
     verification: 'official-general',
@@ -615,14 +635,15 @@ function fromOfficial(found, checked, live) {
 }
 
 /* The size tables in one page, each labelled with where it came from. */
-function chartsIn(html, pageUrl, title) {
+function chartsIn(html, pageUrl, title, origin) {
   const out = [];
   tablesOf(html).forEach((t) => {
     const chart = labelTable(t);
-    if (chart) out.push(Object.assign(chart, { source: { url: pageUrl, title: title || null } }));
+    if (chart) out.push(Object.assign(chart, { origin: origin || 'product-page', verification: 'not-verified', source: { url: pageUrl, title: title || null } }));
   });
   return out;
 }
+const isGarment = (c) => c.measures === 'finished-garment';
 
 /* What the product page — and, failing that, the size guide it links
    to — gave. `guides` are the pages read: [{ url, html }]. */
@@ -630,12 +651,16 @@ function fromPage(html, checked, landedUrl, guides) {
   const data = productData(html);
   const pageUrl = landedUrl || checked.url;
   const pageTitle = titleOf(html);
-  let charts = chartsIn(html, pageUrl, pageTitle);
-  let scope = 'product-page';
-  if (!charts.length) {
-    (guides || []).forEach((g) => { if (g.html) charts = charts.concat(chartsIn(g.html, g.url, titleOf(g.html))); });
-    scope = 'linked-size-guide';
-  }
+  const own = chartsIn(html, pageUrl, pageTitle, 'product-page');
+  let fromGuides = [];
+  (guides || []).forEach((g) => { if (g.html) fromGuides = fromGuides.concat(chartsIn(g.html, g.url, titleOf(g.html), 'linked-size-guide')); });
+  /* the page's own tables first; a guide's are read only when the page
+     has no garment table, and only its garment tables join a page that
+     already has a body one — a general guide's body chart adds nothing */
+  const charts = own.length ? own.concat(fromGuides.filter(isGarment)) : fromGuides;
+  /* the answer is named for its first chart: a guide's garment table
+     leads a page that only had the body's */
+  const scope = charts.length && byKind(charts)[0].origin === 'linked-size-guide' ? 'linked-size-guide' : 'product-page';
   const base = {
     from: 'live-page',
     product: { brand: data.brand || checked.brand || null, name: data.name, code: data.sku },
@@ -684,8 +709,7 @@ function noteFor(result) {
     lines.push(`So this is a fallback chart, not one extracted from the product’s page: ${result.product.brand}’s general Body Size chart for its ${c.title.replace(/ —.*$/, '').replace(`${result.product.brand} `, '')}, which this product is one of.`);
     lines.push(`${result.product.brand} publishes this same chart, value for value, on ${result.otherSources.length + 1} of those products; Fynd copied it from them by ${result.evidenceDate}. It hasn’t been confirmed on this product’s own page, and this product may be sold in fewer sizes.`);
     lines.push(`Units: ${c.unit === 'in' ? 'inches' : 'centimetres'}, as published. It gives ${listOf(c.columns)}.`);
-    const ps = result.productSize || {};
-    lines.push(`${result.product.brand}’s own measurements of this product — its Size Guide’s Product Size tab, where it has one — aren’t held by Fynd${ps.checkedAt ? ` (last looked for ${ps.checkedAt})` : ''}. None are shown, and none are worked out from the body chart.`);
+    lines.push(productSizeLine(result));
     lines.push('There are no finished-garment measurements here, so this can’t be set beside a garment you own.');
     return lines;
   }
@@ -694,17 +718,27 @@ function noteFor(result) {
     return lines;
   }
   if (result.scope === 'linked-size-guide') {
-    lines.push('The product page has no size table of its own. This chart is from the retailer’s size guide linked from that page — it may be a general chart for the category, not one for this product only.');
+    lines.push(result.charts.some((c) => c.origin === 'product-page')
+      ? 'The product page has no garment measurements of its own. The garment chart is from the retailer’s size guide linked from that page — it may be a general chart for the category, not one for this product only.'
+      : 'The product page has no size table of its own. This chart is from the retailer’s size guide linked from that page — it may be a general chart for the category, not one for this product only.');
   }
   result.charts.forEach((c) => {
     const unit = c.unit === 'in' ? ', in inches' : c.unit === 'cm' ? ', in centimetres' : c.unit === 'both' ? ', in inches and centimetres' : ', with no unit stated — check the source';
     lines.push(`${c.title ? `“${c.title}”: ` : ''}${KIND_WORDS[c.measures]}${unit}. It gives ${listOf(c.columns)}.`);
   });
   const kinds = result.charts.map((c) => c.measures);
+  if (!kinds.includes('finished-garment') && result.productSize) lines.push(productSizeLine(result));
   if (kinds.includes('body') && !kinds.includes('finished-garment')) lines.push('There are no finished-garment measurements here, so this can’t be set beside a garment you own.');
+  const origins = new Set(result.charts.map((c) => c.origin));
+  if (origins.has('fynd-record') && origins.size > 1) {
+    const rec = result.charts.find((c) => c.origin === 'fynd-record');
+    lines.push(`The ${rec.measures === 'body' ? 'body' : 'garment'} chart is from Fynd’s record of this product, copied from ${result.product.brand}’s page on ${rec.retrievedAt}${rec.verification === 'verified' ? ' and checked against it' : ', not yet checked'}; the other${result.charts.length > 2 ? 's were' : ' was'} read just now and ${result.charts.length > 2 ? 'are' : 'is'} not checked.`);
+  }
   if (kinds.includes('not-stated')) lines.push('The page doesn’t say whether these are body or garment measurements, so Fynd doesn’t assume either.');
   if (result.fit) lines.push(`${result.product.brand} describes the fit as “${result.fit.words}” (${result.fit.source}).`);
-  if (result.from === 'fynd-record') {
+  if (origins.size > 1 && origins.has('fynd-record')) {
+    /* said above, chart by chart */
+  } else if (result.from === 'fynd-record') {
     lines.push(result.verification === 'verified'
       ? `From Fynd’s record of this product, copied from ${result.product.brand}’s page on ${result.source.retrievedAt} and checked against it.`
       : `From Fynd’s record of this product, copied from ${result.product.brand}’s page on ${result.source.retrievedAt} and not yet checked against it.`);
@@ -720,20 +754,10 @@ const listOf = (items) => {
 
 const cacheKey = (checked) => `sizechart:${CACHE_VERSION}:${crypto.createHash('sha256').update(checked.url).digest('hex').slice(0, 32)}`;
 
-/* The chart for one listing link: { chart } as the endpoint sends it. */
-async function chartFor(rawUrl, options) {
-  const opts = options || {};
-  const checked = checkUrl(rawUrl);
-  if (checked.error) {
-    const result = unavailable(null, checked.error);
-    return Object.assign(result, { note: noteFor(result) });
-  }
-  const match = checked.brand ? recordFor(checked) : null;
-  if (match) {
-    const result = fromRecord(match, checked);
-    return Object.assign(result, { note: noteFor(result) });
-  }
-
+/* What the product's own page (and the size guide it links to) gave,
+   read once and cached by address: the part of an answer that depends
+   on the retailer, never on Fynd's records. */
+async function liveFor(checked, opts) {
   const key = cacheKey(checked);
   if (!opts.noCache) {
     const cached = await store.get(key).catch(() => null);
@@ -747,10 +771,10 @@ async function chartFor(rawUrl, options) {
   if (page.failed) {
     result = unavailable(checked, page.failed, page.status ? { httpStatus: page.status } : null);
   } else {
-    /* no table on the page: the size guide it links to, read the same
-       way, in what is left of the deadline */
+    /* no garment table on the page: the size guide it links to, read
+       the same way, in what is left of the deadline */
     let guides = [];
-    if (!chartsIn(page.html, page.url).length) {
+    if (!chartsIn(page.html, page.url).some(isGarment)) {
       guides = await Promise.all(guideLinks(page.html, page.url).slice(0, 2).map(async (url) => {
         const g = checkUrl(url);
         if (g.error) return { url, failed: g.error };
@@ -761,32 +785,99 @@ async function chartFor(rawUrl, options) {
     }
     result = fromPage(page.html, checked, page.url, guides);
   }
-  /* the page gave no chart: a general official chart, only for a
-     product Fynd knows belongs to its category */
-  if (result.status === 'unavailable' || result.status === 'labels-only') {
-    const found = officialCharts.fallbackFor(checked);
-    if (found) result = fromOfficial(found, checked, result);
-  }
-  /* what was asked for, and what came back: no profile, nothing private */
   result.trace = traces.filter(Boolean);
-  result.note = noteFor(result);
+  result.checkedAt = new Date().toISOString().slice(0, 10);
   /* only kept under the address it was asked for */
   if (result.source) result.source.url = result.source.url || checked.url;
-  /* a fallback is kept only as long as a failure: the page may answer next time */
-  const ttl = result.status === 'unavailable' || result.status === 'fallback' ? CACHE_MISS_SECONDS : CACHE_OK_SECONDS;
+  const ttl = result.status === 'unavailable' ? CACHE_MISS_SECONDS : CACHE_OK_SECONDS;
   if (!opts.noCache) await store.set(key, Object.assign({}, result, { source: Object.assign({}, result.source, { url: checked.url }) }), { ttlSeconds: ttl }).catch(() => {});
   return result;
 }
 
-/* Fynd's record for exactly this product, by the code in its link, the
-   way a favourite piece is found (engine.matchProduct, which looks in
-   one category at a time; a chart is for any). */
+/* Whether this lookup found the product's own finished-garment
+   measurements, and if not, why: the page couldn't be read
+   ("not-retrieved") or it was read and had none ("not-found"). */
+function productSizeOf(live) {
+  const read = live.status !== 'unavailable' || PAGE_READ.includes(live.reason);
+  return { status: read ? 'not-found' : 'not-retrieved', reason: live.status === 'unavailable' ? live.reason : live.status, checkedAt: live.checkedAt || null, guides: (live.guides || []).length > 0 };
+}
+function productSizeLine(result) {
+  const ps = result.productSize || {};
+  const brand = (result.product && result.product.brand) || 'the brand';
+  const when = ps.checkedAt ? ` (looked for ${ps.checkedAt})` : '';
+  return ps.status === 'not-retrieved'
+    ? `This product’s own measurements — a Product Size chart, where ${brand} publishes one — weren’t found${when}: its page couldn’t be read. None are shown, and none are worked out from a body chart.`
+    : `This product’s page${ps.guides ? ' and the size guide it links to' : ''} had no finished-garment measurements${when}. None are shown, and none are worked out from a body chart.`;
+}
+
+/* A record of this product that holds only the brand's body chart,
+   joined to the garment chart the page gave: the page's garment and
+   unlabelled tables, then the record's body chart in place of the
+   page's own (the record's is checked or dated; the same brand's). */
+function withRecordBody(live, record, checked) {
+  const rec = fromRecord(record, checked);
+  return Object.assign({}, live, {
+    product: rec.product,
+    productId: record.id,
+    line: rec.line,
+    market: rec.market,
+    sizes: record.sizes.slice(),
+    fit: rec.fit,
+    charts: live.charts.filter((c) => c.measures !== 'body').concat(rec.charts),
+    otherSources: [{ url: record.product.url, what: `Fynd’s record of this product (body chart), copied ${record.retrievedAt}` }],
+    comparable: false
+  });
+}
+
+/* The chart for one listing link: { chart } as the endpoint sends it. */
+async function chartFor(rawUrl, options) {
+  const opts = options || {};
+  const checked = checkUrl(rawUrl);
+  if (checked.error) {
+    const result = unavailable(null, checked.error);
+    return Object.assign(result, { note: noteFor(result) });
+  }
+  const record = checked.brand ? recordFor(checked) : null;
+  const finish = (result) => Object.assign(result, { note: noteFor(result) });
+  /* 1: a record of exactly this product with the garment's own
+     measurements answers without reading anything */
+  if (record && record.charts.garment) return finish(fromRecord(record, checked));
+
+  /* 2: everything else is looked for on the product's own page first */
+  const live = await liveFor(checked, opts);
+  const liveGarment = live.status === 'ok' && live.charts.some(isGarment);
+  let result;
+  if (record) {
+    result = liveGarment ? withRecordBody(live, record, checked)
+      : Object.assign(fromRecord(record, checked), { trace: live.trace, guides: live.guides || [], productSize: productSizeOf(live) });
+  } else {
+    result = Object.assign({}, live);
+    /* the page gave no chart: a general official chart, only for a
+       product Fynd knows belongs to its category */
+    if (result.status === 'unavailable' || result.status === 'labels-only') {
+      const found = officialCharts.fallbackFor(checked);
+      if (found) result = Object.assign(fromOfficial(found, checked, live), { trace: live.trace });
+    }
+    if (!liveGarment && result.status !== 'unavailable') {
+      result.productSize = productSizeOf(live);
+      if (result.triedBefore && result.triedBefore.length) result.productSize.tried = result.triedBefore;
+    }
+    delete result.triedBefore;
+  }
+  if (!result.charts.some(isGarment) && !result.productSize && result.status !== 'unavailable') result.productSize = productSizeOf(live);
+  return finish(result);
+}
+
+/* Fynd's record for exactly this product: its brand's own site, its
+   whole code in the link (engine.matchProduct, which looks in one
+   category at a time; a chart is for any), and — when the link names a
+   market — that market. A US record never answers for a UK page. */
 function recordFor(checked) {
   for (const category of new Set(RECORDS.map((r) => r.category))) {
     const m = engine.matchProduct({ brand: checked.brand, product: { url: checked.url } }, RECORDS, category);
-    if (m) return m.record;
+    if (m && m.by === 'link' && (!checked.market || m.record.region === checked.market)) return m.record;
   }
   return null;
 }
 
-module.exports = { request, DEADLINE_MS, HEADERS_MS, PAGE_READ, chartFor, checkUrl, isPublicAddress, guardedLookup, marketOf, fetchPage, setTransport, productData, tablesOf, sizeTable, guideLinks, drawnByScript, unitOf, kindOf, fromPage, fromRecord, fromOfficial, noteFor, plain, SUPPORTED_BRANDS, MAX_BYTES, COULD_NOT };
+module.exports = { request, liveFor, recordFor, productSizeLine, DEADLINE_MS, HEADERS_MS, PAGE_READ, chartFor, checkUrl, isPublicAddress, guardedLookup, marketOf, fetchPage, setTransport, productData, tablesOf, sizeTable, guideLinks, drawnByScript, unitOf, kindOf, fromPage, fromRecord, fromOfficial, noteFor, plain, SUPPORTED_BRANDS, MAX_BYTES, COULD_NOT };

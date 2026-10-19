@@ -182,6 +182,15 @@ const SHOP_PAGES = {
   'https://shop.example.test/products/script-tee': '<!doctype html><html><head><title>Shop</title></head><body><div id="root"></div></body></html>',
   'https://shop.example.test/products/labels-tee': shopPage('Illustrative Labels Tee', '<p>Choose a size.</p>',
     `<script type="application/ld+json">${JSON.stringify({ '@type': 'ProductGroup', name: 'Illustrative Labels Tee', hasVariant: ['S', 'M', 'L'].map((size) => ({ size })) })}</script>`),
+  /* FIXTURE: a listed product with no record whose own page has both
+     tabs' tables, the garment's laid out after the body's; and a product
+     whose record holds only the body chart, its page the garment's.
+     Every value invented. */
+  'https://www.uniqlo.com/us/en/products/E900002-000/00': shopPage('FIXTURE Men’s Sweat Hoodie 02 | UNIQLO US',
+    '<h3>Body Size</h3><p>The dimensions shown below are body size measurements that correspond with a product’s size. Inches</p><table><tr><th>Size</th><th>Chest</th></tr><tr><td>S</td><td>34 - 37</td></tr><tr><td>M</td><td>37 - 40</td></tr></table>'
+    + '<h3>Product Size</h3><p>The dimensions shown below are the actual measurements of the product. Inches</p><table><tr><th>Size</th><th>Length (back)</th><th>Shoulder width (seam to seam)</th><th>Chest</th><th>Sleeve Length (center back)</th></tr><tr><td>S</td><td>26</td><td>21</td><td>23</td><td>33</td></tr><tr><td>M</td><td>27</td><td>22</td><td>24</td><td>34</td></tr></table>'),
+  'https://www.nike.com/t/club-mens-fleece-crew-RU1Il4yl/FN3886-010': shopPage('FIXTURE Club Fleece Crew page',
+    '<h3>Product measurements</h3><p>Garment measurements, laid flat, in inches.</p><table><tr><th>Size</th><th>Chest width</th><th>Body length</th><th>Sleeve length (center back)</th></tr><tr><td>S</td><td>20</td><td>26</td><td>33</td></tr><tr><td>M</td><td>21.5</td><td>27</td><td></td></tr></table>'),
   /* the shape of the first real failure: the page loads, names the
      product, its fit and fabric, and carries no chart at all */
   'https://shop.example.test/products/details-shorts': shopPage('Illustrative Sweat Shorts', '<p>Pick a size.</p>',
@@ -1455,7 +1464,7 @@ const linkFromInbox = (pattern) => {
     await page.waitForSelector('#fit-result[data-state="fallback"]');
     assert.strictEqual(await page.textContent('#fit-result-title'), 'UNIQLO · Sweat Oversized Pullover Hoodie');
     /* first: the product's own measurements aren't held — said, not filled in from the body chart */
-    assert.strictEqual(await page.textContent('#fit-result .size-chart-missing'), 'Product measurements: not available. Fynd doesn’t hold UNIQLO’s Product Size chart for this product, so none are shown or estimated.');
+    assert.strictEqual(await page.textContent('#fit-result .size-chart-missing'), 'Product measurements: not available. This product’s page couldn’t be read, so its own measurements weren’t found. None are shown or estimated.');
     assert.ok(await page.$eval('#fit-result .size-chart-missing', (n) => Boolean(n.compareDocumentPosition(document.querySelector('#fit-result table')) & Node.DOCUMENT_POSITION_FOLLOWING)), 'said before the body chart');
     assert.strictEqual(await page.textContent('#fit-result .size-chart-name'), 'UNIQLO US body-size chart');
     assert.strictEqual(await page.textContent('#fit-result .size-chart-kind'), 'General sizing guide · Body measurements, not garment measurements');
@@ -1478,8 +1487,8 @@ const linkFromInbox = (pattern) => {
     assert.match(details, /The brand’s general chart for this kind of product — a fallback, not this product’s own/);
     assert.match(details, /not read from this product’s page/);
     assert.match(details, /What Fynd tried/);
-    assert.match(details, /Product Size\s*Not retrieved \(last looked for 2026-10-19\)/);
-    assert.match(details, /Where the Product Size chart was looked for:[\s\S]*refuses www\.uniqlo\.com/);
+    assert.match(details, /Product Size\s*Not retrieved — the page couldn’t be read \(looked for \d{4}-\d{2}-\d{2}\)/);
+    assert.match(details, /Where else the Product Size chart was looked for:[\s\S]*refuses www\.uniqlo\.com/);
     const text = await page.textContent('#fit-result');
     assert.ok(!/Verified —|Read just now/.test(text), 'never presented as checked for this product, or read live');
     const links = await page.$$eval('#fit-result .size-chart-source a', (as) => as.map((a) => a.href));
@@ -1487,6 +1496,27 @@ const linkFromInbox = (pattern) => {
     assert.ok(links.includes('https://www.uniqlo.com/us/en/products/E471808-000/00'), 'the product’s own page');
     assert.match(await page.textContent('#fit-compare'), /describes bodies, not garments/);
     assert.deepStrictEqual(transportAsked, ['https://www.uniqlo.com/us/en/products/E471808-000/00'], 'the canonical page was tried first, once');
+    await context.close();
+  });
+
+  await test('a product whose record holds only the body chart: Find Fit reads its page for the garment’s own measurements, shows them first, and says where each chart is from', async () => {
+    const context = await openContext();
+    const page = await context.newPage();
+    await open(page, 'index.html');
+    transportAsked.length = 0;
+    await linkBox(page);
+    await page.fill('#fit-url', 'https://www.nike.com/t/club-mens-fleece-crew-RU1Il4yl/FN3886-010');
+    await page.press('#fit-url', 'Enter');
+    await page.waitForSelector('#fit-result[data-state="ok"]');
+    assert.deepStrictEqual(transportAsked, ['https://www.nike.com/t/club-mens-fleece-crew-RU1Il4yl/FN3886-010']);
+    assert.deepStrictEqual(await page.$$eval('#fit-result .size-chart-name', (ns) => ns.map((n) => n.textContent)), ['Finished-garment measurements', 'Body measurements']);
+    const copied = require('../api/_sizing/records').byId('nike-fn3886-club-fleece-crew-us').charts.body.retrievedAt;
+    assert.deepStrictEqual(await page.$$eval('#fit-result .size-chart-origin', (ns) => ns.map((n) => n.textContent)),
+      ['Read from this product’s page just now — not checked.', `From Fynd’s record of this product, copied from Nike’s page on ${copied} — checked.`]);
+    assert.match(await page.textContent('#fit-result .size-chart-gaps'), /Not published for every size: Sleeve length \(center back\)/);
+    const first = await page.$eval('#fit-result table', (t) => [...t.querySelectorAll('tbody tr')].map((tr) => [...tr.children].map((c) => c.textContent)));
+    assert.deepStrictEqual(first, [['S', '20', '26', '33'], ['M', '21.5', '27', '—']], 'a missing value stays missing');
+    assert.match(await page.textContent('#fit-compare'), /can’t compare this chart with a garment you own yet/);
     await context.close();
   });
 
@@ -1694,7 +1724,7 @@ const linkFromInbox = (pattern) => {
     assert.match(await page.textContent('#pdp-size-guide'), /View size measurements\s*UNIQLO’s general chart only/, 'said before it is pressed');
     await guide(page, 'fallback');
     /* a general guide, kept in view, called one, and said once to be about bodies, not this hoodie */
-    assert.strictEqual(await page.textContent('#pdp-guide .size-chart-missing'), 'Product measurements of this hoodie: not available. Fynd doesn’t hold UNIQLO’s Product Size chart for it, so none are shown or estimated.');
+    assert.strictEqual(await page.textContent('#pdp-guide .size-chart-missing'), 'Product measurements of this hoodie: not available. This product’s page couldn’t be read, so its own measurements weren’t found. None are shown or estimated.');
     assert.strictEqual(await page.textContent('#pdp-guide .size-chart-name'), 'General UNIQLO US sizing guide');
     assert.strictEqual(await page.textContent('#pdp-guide .size-chart-kind'), 'Body measurements · Inches');
     assert.ok(await page.isVisible('#pdp-guide table'));
@@ -1726,6 +1756,20 @@ const linkFromInbox = (pattern) => {
     await guide(page, 'fallback');
     await page.click('#pdp-guide .size-chart-details summary');
     assert.match(await page.textContent('#pdp-guide .size-chart-details'), /Listed on UNIQLO’s Sweatshirts & Hoodies page|fallback chart/);
+    /* any listed product: its own page is read for the garment's own
+       measurements, which lead even when its body table comes first */
+    await open(page, 'product.html?brand=uniqlo&item=E900002-000');
+    await page.waitForSelector('#product[data-state="ready"]');
+    await guide(page, 'ok');
+    assert.deepStrictEqual(await page.$$eval('#pdp-guide .size-chart-name', (ns) => ns.map((n) => n.textContent)), ['Finished-garment measurements', 'Body measurements']);
+    assert.deepStrictEqual(await page.$eval('#pdp-guide table', (t) => [...t.querySelectorAll('thead th')].map((n) => n.textContent)),
+      ['Size', 'Length (back)', 'Shoulder width (seam to seam)', 'Chest', 'Sleeve Length (center back)']);
+    assert.match(await page.textContent('#pdp-guide .size-chart-method'), /^How it’s measured, in the page’s words — Shoulder width \(seam to seam\): seam to seam · Sleeve Length \(center back\): center back$/);
+    assert.strictEqual(await page.$$eval('#pdp-guide .size-chart-missing', (ns) => ns.length), 0, 'its own measurements were found');
+    assert.ok(!/General UNIQLO/.test(await page.innerText('#pdp-guide')), 'no general fallback when the product’s own chart is there');
+    await page.waitForSelector('#pdp-guide-compare:not([hidden])');
+    assert.match(await page.textContent('#pdp-guide-compare'), /can’t compare this chart with a garment you own yet/, 'read just now: shown, never compared');
+    assert.ok(transportAsked.includes('https://www.uniqlo.com/us/en/products/E900002-000/00'));
     await open(page, 'product.html?brand=uniqlo&item=E900019-000');
     await page.waitForSelector('#product[data-state="ready"]');
     await guide(page, 'unavailable');

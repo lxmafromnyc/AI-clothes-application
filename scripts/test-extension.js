@@ -154,6 +154,25 @@ const raw = (tables, extra) => Object.assign({
     assert.strictEqual(found.confident, false);
   });
 
+  await test('a garment table carries how its columns were measured, in the page’s own words; a body table says the garment’s own are not in it', () => {
+    const p = Payload.build(raw([bodyTab, productTab]), 0);
+    assert.deepStrictEqual(p.chart.methods, [null, 'seam to seam', null, 'center back']);
+    const back = Payload.decode(Payload.encode(p));
+    assert.ok(!back.error, back.error);
+    const drawn = Payload.toChart(back.payload);
+    assert.deepStrictEqual([drawn.charts[0].origin, drawn.charts[0].verification, drawn.charts[0].methods], ['browser-size-guide', 'not-verified', [null, 'seam to seam', null, 'center back']]);
+    assert.strictEqual(drawn.productSize, undefined);
+    assert.strictEqual(drawn.comparable, false);
+    /* methods on a body chart, or not one per column, or not text: refused, never repaired */
+    const bad = (f) => { const x = JSON.parse(JSON.stringify(p)); f(x); return Payload.validate(x).error; };
+    assert.strictEqual(bad((x) => { x.chart.methods = ['seam to seam']; }), 'bad methods');
+    assert.strictEqual(bad((x) => { x.chart.methods[0] = { evil: 1 }; }), 'bad methods');
+    assert.strictEqual(bad((x) => { x.chart.measures = 'body'; }), 'bad methods');
+    /* only the body tab read: drawn, and said to hold no garment measurements */
+    const bodyOnly = Payload.toChart(Payload.build(raw([bodyTab]), 0));
+    assert.deepStrictEqual([bodyOnly.charts[0].measures, bodyOnly.productSize.status], ['body', 'not-in-browser']);
+  });
+
   await test('two size tables, both in view: not confident — the shopper chooses', () => {
     const pants = { rows: [['Size', 'Waist width', 'Inseam'], ['S', '38', '76'], ['M', '40', '78']], before: 'Pants — garment measurements (cm)', visible: true, inDialog: false };
     const found = Payload.candidates(raw([garmentTable, pants]));
