@@ -818,6 +818,39 @@ await test('all four signed differences are worked out for every size, in the re
   assert.ok(r.sizes.every((x) => typeof x.rank === 'number'));
 });
 
+await test('each size is compared on its own published measurements: the candidate is that size’s value, the difference is it minus yours', () => {
+  const rec = ILLUSTRATIVE();
+  const r = engine.compare(hoodieRef({ measurements: REF_CM }), rec);
+  assert.deepStrictEqual(r.sizes.map((x) => x.size), rec.sizes);
+  r.sizes.forEach((x) => ['chestWidth', 'bodyLength', 'shoulderWidth', 'sleeveLength'].forEach((d) => {
+    const v = x.dimensions[d];
+    assert.strictEqual(v.candidate, rec.charts.garment.sizes[x.size][d].value, `${x.size} ${d}: that size’s own value`);
+    assert.strictEqual(v.reference, REF_CM[d]);
+    assert.strictEqual(v.difference, Math.round((v.candidate - v.reference) * 100) / 100);
+  }));
+  /* the illustration in the brief, on fixture data: yours 58 cm, M 60 cm — 2 cm wider */
+  const m = r.sizes.find((x) => x.size === 'M').dimensions.chestWidth;
+  assert.deepStrictEqual([m.reference, m.candidate, m.words], [58, 60, 'Chest: 2 cm wider']);
+});
+
+await test('a reference with only its chest measured is compared on the chest alone: nothing filled in, no recommendation from one dimension', () => {
+  const r = engine.compare(hoodieRef({ measurements: { unit: 'cm', chestWidth: 58 } }), ILLUSTRATIVE());
+  assert.deepStrictEqual([r.status, r.recommended, r.reliability], ['partial', null, 'low']);
+  assert.deepStrictEqual(r.dimensionsCompared, ['chestWidth']);
+  const m = r.sizes.find((x) => x.size === 'M').dimensions;
+  ['bodyLength', 'shoulderWidth', 'sleeveLength'].forEach((d) => {
+    assert.strictEqual(m[d].compared, false, d);
+    assert.ok(!('difference' in m[d]) && !('reference' in m[d]), `${d}: no difference, no reference value invented`);
+    assert.match(m[d].why, /didn't measure it/);
+  });
+});
+
+await test('a reference the shopper measured is named for what it is — a hoodie, never "the T-shirt you measured"', () => {
+  const said = JSON.stringify(engine.recommend(hoodieRef({ measurements: REF_CM }), ILLUSTRATIVE()));
+  assert.ok(!/T-shirt you measured/.test(said), 'not called a T-shirt');
+  assert.ok(/the hoodie you measured/.test(said), 'named a hoodie');
+});
+
 await test('the size recommended is the closest by measurement, not the same letter', () => {
   /* the reference says L on its label; this product's M is closer */
   const r = engine.compare(hoodieRef({ size: 'L', measurements: REF_CM }), ILLUSTRATIVE());
@@ -1196,8 +1229,16 @@ await test('a product Fynd has a record for: its own body and garment charts, as
   assert.strictEqual(r.productId, 'uniqlo-e475378-sweat-pullover-hoodie-us');
   assert.strictEqual(r.scope, 'product-specific');
   assert.strictEqual(r.verification, 'verified');
-  assert.deepStrictEqual(r.charts.map((c) => [c.measures, c.unit]), [['body', 'in'], ['finished-garment', 'in']]);
-  assert.deepStrictEqual(r.charts[0].rows.find((x) => x.size === 'M').values, ['37 ¾ - 41'], 'values kept exactly as published');
+  assert.deepStrictEqual(r.charts.map((c) => [c.measures, c.unit]), [['finished-garment', 'in'], ['body', 'in']], 'the garment’s own measurements first');
+  assert.deepStrictEqual(r.charts[1].rows.find((x) => x.size === 'M').values, ['37 ¾ - 41'], 'values kept exactly as published');
+  /* each column says how the brand measured it: a flat width, never a circumference */
+  const garment = r.charts[0];
+  const methodOf = (label) => garment.methods[garment.columns.findIndex((c) => label.test(c))];
+  assert.strictEqual(garment.methods.length, garment.columns.length);
+  assert.strictEqual(methodOf(/^chest/i), 'flat, armpit to armpit');
+  assert.strictEqual(methodOf(/length \(back\)/i), 'from the centre back');
+  assert.strictEqual(methodOf(/shoulder/i), 'seam to seam');
+  assert.deepStrictEqual(r.charts[1].methods, ['around the body'], 'the body chest is a circumference of the body');
   assert.ok(r.comparable);
   const tee = await read('https://www.zara.com/us/en/basic-medium-weight-t-shirt--02-p01887411.html', {});
   assert.deepStrictEqual([tee.verification, tee.comparable], ['unverified', false]);
@@ -1230,6 +1271,35 @@ await test('a body chart is called a body chart, never the garment; an unlabelle
   const r = await read(SHOP, { [SHOP]: { body: html } });
   assert.deepStrictEqual([r.charts[0].measures, r.charts[0].unit], ['not-stated', null]);
   assert.ok(r.note.some((n) => /doesn’t say whether these are body or garment/.test(n)));
+});
+
+/* Illustrative tables only (FIXTURE): invented sizes and numbers in the
+   shapes size guides take, to test how a table is labelled. */
+const fixtureTable = (caption, cols, rows) => `<table><caption>${caption}</caption><tr><th>Size</th>${cols.map((c) => `<th>${c}</th>`).join('')}</tr>${rows.map((r) => `<tr>${r.map((v) => `<td>${v}</td>`).join('')}</tr>`).join('')}</table>`;
+const kindsOf = async (inner) => (await read(SHOP, { [SHOP]: { body: page(inner) } })).charts.map((c) => c.measures);
+
+await test('a "Product size" label alone doesn’t make a table the garment: its columns must be the garment’s own, and a body-only column makes it "not stated"', async () => {
+  /* the garment's own geometry under a product-size label: the garment */
+  assert.deepStrictEqual(await kindsOf(fixtureTable('Product size (cm)', ['Body length', 'Body width', 'Sleeve length'], [['S', '66', '50', '60'], ['M', '68', '53', '61']])), ['finished-garment']);
+  /* a product-size label over height, chest and waist: those describe a person — not stated */
+  assert.deepStrictEqual(await kindsOf(fixtureTable('Product size', ['Height', 'Chest', 'Waist'], [['S', '165-170', '86-90', '70-74'], ['M', '170-175', '90-94', '74-78']])), ['not-stated']);
+  /* a product-size label over chest and waist alone: nothing says which, so not stated */
+  assert.deepStrictEqual(await kindsOf(fixtureTable('Product size', ['Chest', 'Waist'], [['S', '96', '80'], ['M', '102', '86']])), ['not-stated']);
+  /* even a method-stated garment table is not stated once it mixes in a body-only measure */
+  assert.deepStrictEqual(await kindsOf(`<h3>Garment measurements</h3><p>Measured laid flat.</p>${fixtureTable('', ['Chest width', 'Hip'], [['S', '51', '92'], ['M', '54', '96']])}`), ['not-stated']);
+  /* a body chart keeps its body columns, and stays a body chart */
+  assert.deepStrictEqual(await kindsOf(`<h3>Body size</h3><p>Body measurements, in inches.</p>${fixtureTable('', ['Height', 'Chest', 'Waist'], [['S', '65-67', '35-37', '29-31'], ['M', '67-69', '38-40', '32-34']])}`), ['body']);
+});
+
+await test('a page with both a body chart and the garment’s own: the garment comes first, each labelled by its own heading, and nothing is verified', async () => {
+  const both = `<h3>Body size</h3><p>Body measurements, in inches. Use these to find the size made to fit your body.</p>
+    ${fixtureTable('', ['Chest', 'Waist'], [['S', '35-37', '29-31'], ['M', '38-40', '32-34']])}
+    <h3>Product size</h3><p>Garment measurements, laid flat, in inches.</p>
+    ${fixtureTable('', ['Body length', 'Body width', 'Sleeve length'], [['S', '26', '20', '24'], ['M', '27', '21', '24.5']])}`;
+  const r = await read(SHOP, { [SHOP]: { body: page(both) } });
+  assert.deepStrictEqual(r.charts.map((c) => [c.measures, c.unit, c.columns[0]]), [['finished-garment', 'in', 'Body length'], ['body', 'in', 'Chest']],
+    'the garment first; the body heading above the first table doesn’t speak for the second');
+  assert.deepStrictEqual([r.verification, r.comparable], ['not-verified', false], 'read just now: never verified, never compared');
 });
 
 await test('no table on the page: the size guide it links to is read, and labelled as the retailer’s guide, not the product’s own', async () => {

@@ -489,7 +489,20 @@ strong { font-weight: 600; }
 .pdp-guide-done[hidden] { display: none; }
 .fit-compare-size { margin-top: 10px; padding: 10px 12px; border-radius: var(--r); background: var(--color-surface); }
 .fit-compare-size-title { font-weight: 600; color: var(--color-text); }
-.fit-compare-size ul { margin: 6px 0 0; padding-left: 18px; }
+.fit-compare-table { width: 100%; margin-top: 6px; border-collapse: collapse; font-size: 14px; }
+.fit-compare-table th, .fit-compare-table td { padding: 5px 8px 5px 0; text-align: left; vertical-align: top; border-bottom: 1px solid var(--color-border); }
+.fit-compare-table thead th { font-size: 12.5px; font-weight: 600; color: var(--color-text-muted); }
+.fit-compare-table td:nth-child(2), .fit-compare-table td:nth-child(3) { white-space: nowrap; }
+.fit-compare-table tr.is-skipped td:last-child { color: var(--color-text-muted); }
+.fit-compare-size-note { margin-top: 6px; font-size: 13px; color: var(--color-text-muted); }
+@media (max-width: 520px) {
+  /* on a phone each dimension is a heading over its three values, labelled */
+  .fit-compare-table thead { display: none; }
+  .fit-compare-table tr { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); column-gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--color-border); }
+  .fit-compare-table th, .fit-compare-table td { padding: 0; border: 0; }
+  .fit-compare-table th[scope="row"] { grid-column: 1 / -1; margin-bottom: 2px; }
+  .fit-compare-table td::before { content: attr(data-label); display: block; font-size: 11.5px; color: var(--color-text-muted); }
+}
 .pdp-guide-missing { margin-bottom: 12px; font-size: 14px; color: var(--color-warning-ink); }
 .pdp-guide .size-chart-table + .size-chart-table { margin-top: 22px; }
 .pdp-guide .compare-table th, .pdp-guide .compare-table td { white-space: nowrap; }
@@ -624,6 +637,7 @@ strong { font-weight: 600; }
 .size-chart-details[open] > summary { margin-bottom: 10px; }
 .size-chart-details .size-chart-notes { margin-bottom: 10px; }
 .size-chart-trace-title { margin-top: 12px; font-weight: 500; color: var(--color-text); }
+.size-chart-method { margin-top: 2px; font-size: 13px; color: var(--color-text-muted); }
 .size-chart-caption, .size-chart-unit { margin-top: 2px; font-size: 13px; color: var(--color-text-muted); }
 .size-chart-scroll { margin-top: 8px; overflow-x: auto; }
 .size-chart .compare-table { min-width: 0; }

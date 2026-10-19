@@ -1595,8 +1595,17 @@ const linkFromInbox = (pattern) => {
     assert.strictEqual(await page.textContent('#pdp-guide-selected'), 'Your size: M');
     assert.strictEqual(await page.getAttribute('#pdp-guide-sizes .pdp-size[data-size="M"]', 'aria-checked'), 'true');
     /* each table says once what it measures, and in what unit */
-    assert.deepStrictEqual(await page.$$eval('#pdp-guide .size-chart-name', (ns) => ns.map((n) => n.textContent)), ['Body measurements', 'Finished-garment measurements']);
-    assert.deepStrictEqual(await page.$$eval('#pdp-guide .size-chart-kind', (ns) => ns.map((n) => n.textContent)), ['The body each size fits, not the hoodie itself · Inches', 'The hoodie itself, as the brand measured it · Inches']);
+    /* the hoodie's own measurements first, then the body each size is cut for */
+    assert.deepStrictEqual(await page.$$eval('#pdp-guide .size-chart-name', (ns) => ns.map((n) => n.textContent)), ['Finished-garment measurements', 'Body measurements']);
+    assert.deepStrictEqual(await page.$$eval('#pdp-guide .size-chart-kind', (ns) => ns.map((n) => n.textContent)), ['The hoodie itself, as the brand measured it · Inches', 'The body each size fits, not the hoodie itself · Inches']);
+    /* how each column was measured, from Fynd's record: a flat chest, not a circumference */
+    const methodLines = await page.$$eval('#pdp-guide .size-chart-method', (ns) => ns.map((n) => n.textContent));
+    assert.strictEqual(methodLines.length, 2);
+    assert.match(methodLines[0], /^How it’s measured — /);
+    assert.match(methodLines[0], /Chest: flat, armpit to armpit/);
+    assert.match(methodLines[0], /seam to seam/);
+    assert.match(methodLines[0], /from the centre back/);
+    assert.strictEqual(methodLines[1], 'How it’s measured — Chest: around the body');
     assert.strictEqual(await page.$$eval('#pdp-guide .size-chart-unit, #pdp-guide .size-chart-facts:not(.size-chart-details *)', (ns) => ns.length), 0, 'no second units line, no extra facts in view');
     /* one note in view; the rest — the colour note included — under Source details */
     assert.deepStrictEqual(await page.$$eval('#pdp-guide .size-chart-caveat', (ns) => ns.map((n) => n.textContent)), ['This product’s own chart, checked against UNIQLO’s page.']);
@@ -1643,7 +1652,7 @@ const linkFromInbox = (pattern) => {
     await page.press('#fit-url', 'Enter');
     await page.waitForSelector('#fit-result[data-state="ok"]');
     assert.deepStrictEqual(await page.$$eval('#fit-result table', (ts) => ts.map((t) => t.innerText)), guideTables, 'the very measurements Find Fit shows');
-    assert.deepStrictEqual(await page.$$eval('#fit-result .size-chart-kind', (ns) => ns.map((n) => n.textContent)), ['Body measurements — the body each size fits, not the garment', 'Finished-garment measurements — the clothing itself']);
+    assert.deepStrictEqual(await page.$$eval('#fit-result .size-chart-kind', (ns) => ns.map((n) => n.textContent)), ['Finished-garment measurements — the clothing itself', 'Body measurements — the body each size fits, not the garment']);
     assert.strictEqual(await page.textContent('#fit-result .size-chart-caveat'), 'This product’s own chart, checked against UNIQLO’s page.');
     const pageCode = fs.readFileSync(path.join(REPO, 'assets/product-page.js'), 'utf8');
     assert.ok(!/fetch\(|size-recommendation|<table|createElement\('table'\)|el\('table'/.test(pageCode), 'the product page neither asks for nor draws a chart itself');
@@ -1830,10 +1839,23 @@ const linkFromInbox = (pattern) => {
     /* the size being considered, beside the reference: the engine's own figures for it */
     await page.waitForSelector('#pdp-guide-compare .fit-compare-size');
     assert.strictEqual(await page.textContent('#pdp-guide-compare .fit-compare-size-title'), 'Size L beside your reference');
-    assert.deepStrictEqual(await page.$$eval('#pdp-guide-compare .fit-compare-size li', (ns) => ns.map((n) => n.textContent)), ['Chest: 5.5 cm wider', 'Shoulders: 2.7 cm wider']);
+    /* yours, this size's, and the difference — only where measured the same way; the rest say why, with no difference */
+    const sizeRows = () => page.$$eval('#pdp-guide-compare .fit-compare-table tbody tr', (trs) => trs.map((tr) => [...tr.children].map((c) => c.textContent)));
+    const lRows = await sizeRows();
+    assert.deepStrictEqual(lRows.map((r) => r[0]), ['Chest', 'Body length', 'Shoulders', 'Sleeves']);
+    assert.deepStrictEqual(lRows[0], ['Chest', '58 cm', '63.5 cm', '5.5 cm wider'], 'UNIQLO’s L chest, 25 in flat, beside a 58 cm flat chest');
+    assert.deepStrictEqual(lRows[2].slice(1, 2).concat(lRows[2].slice(3)), ['50 cm', '2.7 cm wider']);
+    [lRows[1], lRows[3]].forEach((r) => {
+      assert.strictEqual(r[1], '—', `${r[0]}: no reference value invented`);
+      assert.strictEqual(r[3], 'Not compared', `${r[0]}: no difference shown`);
+    });
+    /* why, said once — in the engine's own caveat, not again per row */
+    assert.match(await page.textContent('#pdp-guide-compare'), /length: measured differently — UNIQLO's from the centre back, yours from the top of the shoulder; sleeves: measured differently/);
     await page.click('#pdp-guide-sizes .pdp-size[data-size="S"]');
     assert.strictEqual(await page.textContent('#pdp-guide-compare .fit-compare-size-title'), 'Size S beside your reference', 'follows the size, without asking again');
-    assert.ok((await page.$$eval('#pdp-guide-compare .fit-compare-size li', (ns) => ns.length)) > 0);
+    const sRows = await sizeRows();
+    assert.strictEqual(sRows[0][1], '58 cm');
+    assert.notStrictEqual(sRows[0][2], lRows[0][2], 'S is compared on S’s own chest, not L’s');
     /* reopened while the comparison is slow: no other size's figures meanwhile, then the size chosen during the wait */
     await page.click('#pdp-guide-close');
     let letCompare;
@@ -2008,11 +2030,12 @@ const linkFromInbox = (pattern) => {
     assert.strictEqual(chartsAsked(), before + 1, 'one request, for this product only');
     assert.match(await page.textContent('#size-chart-product'), /UNIQLO · Sweat Pullover Hoodie/);
     const kinds = await page.$$eval('#size-chart .size-chart-kind', (ns) => ns.map((n) => n.textContent));
-    assert.deepStrictEqual(kinds, ['Body measurements — the body each size fits, not the garment', 'Finished-garment measurements — the clothing itself']);
+    assert.deepStrictEqual(kinds, ['Finished-garment measurements — the clothing itself', 'Body measurements — the body each size fits, not the garment'], 'the garment’s own first');
     assert.match(await page.textContent('#size-chart'), /Verified — checked by a person/);
     assert.match(await page.textContent('#size-chart'), /This product’s own chart/);
     assert.match(await page.textContent('#size-chart'), /Units: inches/);
-    const mRow = await page.$$eval('#size-chart-t0 tbody tr', (rows) => rows.map((r) => r.textContent).find((t) => t.startsWith('M')));
+    /* the body chart, now second, keeps its values as published */
+    const mRow = await page.$$eval('#size-chart-t1 tbody tr', (rows) => rows.map((r) => r.textContent).find((t) => t.startsWith('M')));
     assert.strictEqual(mRow, 'M37 ¾ - 41');
     assert.strictEqual(await page.getAttribute('#size-chart .size-chart-details .size-chart-source a', 'href'), 'https://www.uniqlo.com/us/en/products/E475378-000/00');
     assert.ok(!/runs (small|large)|true to size/i.test(await page.textContent('#size-chart')), 'no claim about how it runs');

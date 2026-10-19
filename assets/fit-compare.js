@@ -75,19 +75,63 @@
     put(compare, lines, [fix]);
   }
 
-  /* the chosen size beside the reference, in the engine's words */
+  /* A length as the Compare page shows it: centimetres to the
+     millimetre, inches to the quarter. */
+  function measure(v, unit) {
+    if (typeof v !== 'number') return '—';
+    if (unit === 'cm') return `${Math.round(v * 10) / 10} cm`;
+    const q = Math.round(v * 4) / 4;
+    const whole = Math.floor(q);
+    const glyph = { 0: '', 0.25: '¼', 0.5: '½', 0.75: '¾' }[Math.round((q - whole) * 100) / 100];
+    return `${whole}${glyph} in`;
+  }
+  const DIM_LABEL = { chestWidth: 'Chest', bodyLength: 'Body length', shoulderWidth: 'Shoulders', sleeveLength: 'Sleeves' };
+
+  /* The chosen size beside the reference: for each dimension the
+     engine compared, the reference's value, this size's and the
+     difference — the engine's own figures, in the comparison's unit,
+     nothing worked out here. A dimension it couldn't compare says why,
+     and shows no difference. */
   function focus(compare, size) {
     const d = drawn.get(compare);
     if (!d) return;
     const nodes = [];
     if (size) {
       const row = (d.comparison.sizes || []).find((s) => s.size === size);
+      const unit = d.comparison.unit;
       const box = el('div', 'fit-compare-size');
       box.append(el('p', 'fit-compare-size-title', `Size ${size} beside your reference`));
       if (row) {
-        const list = el('ul');
-        Object.values(row.dimensions).filter((x) => x.compared).forEach((x) => list.append(el('li', null, x.words)));
-        if (list.childNodes.length) box.append(list);
+        const table = el('table', 'fit-compare-table');
+        const head = el('tr');
+        ['', 'Yours', `Size ${size}`, 'Difference'].forEach((h) => { const th = el('th', null, h); th.scope = 'col'; head.append(th); });
+        const thead = el('thead');
+        thead.append(head);
+        const tbody = el('tbody');
+        const notes = [];
+        const labels = ['Yours', `Size ${size}`, 'Difference'];
+        Object.keys(DIM_LABEL).filter((k) => row.dimensions[k]).forEach((k) => {
+          const x = row.dimensions[k];
+          const tr = el('tr');
+          const th = el('th', null, DIM_LABEL[k]);
+          th.scope = 'row';
+          if (x.compared) {
+            tr.append(th, el('td', null, measure(x.reference, unit)), el('td', null, measure(x.candidate, unit)), el('td', null, x.words.replace(/^[^:]+: /, '')));
+            if (x.estimated) notes.push(`${DIM_LABEL[k]}: yours is ${x.estimated}, estimated.`);
+          } else {
+            tr.classList.add('is-skipped');
+            /* why is said once, in the engine's caveat under the table */
+            tr.append(th, el('td', null, '—'), el('td', null, measure(x.candidate, unit)), el('td', null, 'Not compared'));
+          }
+          tbody.append(tr);
+        });
+        /* each value says what it is, for a phone, where the table reads as a list */
+        tbody.querySelectorAll('tr').forEach((tr) => tr.querySelectorAll('td').forEach((td, i) => { td.dataset.label = labels[i]; }));
+        table.append(thead, tbody);
+        const wrap = el('div', 'size-chart-scroll');
+        wrap.append(table);
+        box.append(wrap);
+        notes.forEach((t) => box.append(el('p', 'fit-compare-size-note', t)));
         if (row.unranked) box.append(el('p', null, row.unranked));
       } else {
         box.append(el('p', null, `Fynd has no garment measurements for size ${size} to set beside your reference.`));

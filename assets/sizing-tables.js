@@ -71,14 +71,36 @@
     return cm ? 'cm' : inch ? 'in' : null;
   }
 
-  /* What the table measures, only when its words say so. */
-  const SAYS_GARMENT = /\b(garment|product|item|clothing)\s+(measurements?|size|dimensions?)\b|\blaid flat\b|\bmeasured flat\b|\bflat measurements?\b|\bfrom (the )?cent(?:er|re) back\b|\bbody width\b/i;
+  /* What the table measures, only when its words say so — and, for a
+     garment claim, only when its columns agree.
+
+     How the garment was measured ("laid flat", "from the centre back",
+     "body width", "garment measurements") says it is the garment. A
+     bare label — "Product size", "Item measurements" — does not prove it
+     alone: such a table counts as the garment only when its columns are
+     the garment's own geometry (a length, a width, a sleeve, the
+     shoulders) and none is a body-only measure (height, weight, bust,
+     hips). Any garment claim whose columns include a body-only measure
+     is "not stated": a size chart that mixes the two can't say which
+     each value is. */
+  const SAYS_GARMENT = /\bgarment\s+(measurements?|size|dimensions?)\b|\blaid flat\b|\bmeasured flat\b|\bflat measurements?\b|\bfrom (the )?cent(?:er|re) back\b|\bbody width\b/i;
+  const LABELS_GARMENT = /\b(product|item|clothing)\s+(measurements?|size|dimensions?)\b/i;
   const SAYS_BODY = /\bbody (measurements?|size)\b|\byour (body|measurements)\b|\bmeasure (yourself|your body)\b|\bto fit\b|\bbody chart\b/i;
-  function kindOf(text) {
-    const garment = SAYS_GARMENT.test(text);
+  const BODY_ONLY_COLUMN = /\b(height|weight|bust|hips?|seat)\b/i;
+  const GARMENT_COLUMN = /\b(length|width|sleeves?|shoulders?|hem|across|opening|rise)\b/i;
+  function kindOf(text, columns) {
+    const cols = columns || [];
+    const garmentSaid = SAYS_GARMENT.test(text);
+    const garmentLabel = !garmentSaid && LABELS_GARMENT.test(text);
     const body = SAYS_BODY.test(text);
-    if (garment && !body) return 'finished-garment';
-    if (body && !garment) return 'body';
+    const bodyColumn = cols.some((c) => BODY_ONLY_COLUMN.test(c));
+    const garmentShaped = cols.some((c) => GARMENT_COLUMN.test(c));
+    if ((garmentSaid || garmentLabel) && !body) {
+      if (bodyColumn) return 'not-stated';
+      if (garmentLabel && !garmentShaped) return 'not-stated';
+      return 'finished-garment';
+    }
+    if (body && !garmentSaid && !garmentLabel) return 'body';
     return 'not-stated';
   }
 
@@ -91,7 +113,7 @@
     const caption = t.caption || '';
     const before = t.before || '';
     return {
-      measures: kindOf(`${before} ${caption} ${table.columns.join(' ')}`),
+      measures: kindOf(`${before} ${caption} ${table.columns.join(' ')}`, table.columns),
       title: caption || null,
       unit: unitOf(`${caption} ${table.columns.join(' ')} ${before.slice(-120)}`),
       columns: table.columns,

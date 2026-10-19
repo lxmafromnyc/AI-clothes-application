@@ -146,6 +146,10 @@
           : KIND[c.measures] || KIND['not-stated']));
         section.append(el('p', 'size-chart-unit', `Units: ${UNIT[c.unit] || UNIT.null}`));
       }
+      /* how each column was measured, when the source says (Fynd's
+         records do): a flat width is never mistaken for a circumference */
+      const how = (c.methods || []).map((m, j) => (m ? `${c.columns[j]}: ${m}` : null)).filter(Boolean);
+      if (how.length) section.append(el('p', 'size-chart-method', `How it’s measured — ${how.join(' · ')}`));
       const wrap = el('div', 'size-chart-scroll');
       const table = el('table', 'compare-table');
       table.id = `size-chart-t${i}`;

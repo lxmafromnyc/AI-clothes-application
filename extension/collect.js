@@ -93,7 +93,9 @@ function fyndCollect() {
     const style = getComputedStyle(el);
     return style.visibility !== 'hidden' && style.display !== 'none';
   };
-  /* the words just before a table: its heading, a tab's name */
+  /* the words just before a table: its heading, a tab's name — never
+     past another table, so a "Body size" heading over one table doesn't
+     speak for the "Product size" table that follows it */
   const wordsBefore = (table) => {
     let heading = '';
     const parts = [];
@@ -102,7 +104,8 @@ function fyndCollect() {
       const prev = node.previousElementSibling;
       if (prev) {
         node = prev;
-        if (prev.tagName === 'SCRIPT' || prev.tagName === 'STYLE' || prev.tagName === 'TABLE') continue;
+        if (prev.tagName === 'TABLE' || (prev.querySelector && prev.querySelector('table'))) break;
+        if (prev.tagName === 'SCRIPT' || prev.tagName === 'STYLE') continue;
         const t = text(prev, 300);
         if (t) parts.unshift(t);
         if (!heading && /^H[1-6]$/.test(prev.tagName)) heading = t;

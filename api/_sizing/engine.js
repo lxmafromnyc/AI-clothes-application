@@ -301,7 +301,8 @@ function measuredRecord(anchor, category) {
   return {
     id: 'your-measurements',
     brand: anchor.brand || 'Your',
-    product: { name: 'T-shirt you measured' },
+    /* named by what it is: a measured hoodie is not "the T-shirt you measured" */
+    product: { name: `${CATEGORY_WORDS[category] || 'garment'} you measured` },
     category,
     units: m.unit,
     sizes: [size],
@@ -335,7 +336,8 @@ const METHOD_WORDS = {
   'high-point-shoulder-to-hem': 'from the top of the shoulder',
   'center-back-to-cuff': 'from the centre back',
   'shoulder-seam-to-cuff': 'from the shoulder seam',
-  'seam-to-seam': 'seam to seam'
+  'seam-to-seam': 'seam to seam',
+  'body-circumference': 'around the body'
 };
 
 /* How much each dimension counts, from what the shopper said about the
@@ -736,7 +738,7 @@ function assessSizes(record, method, shopper, scored) {
         out[d] = {
           class: classesOf(d)[step(diff, -inU(b.about), inU(b.about), inU(b.slight - b.about)) + 2],
           measurements: basisOf([record, ref.record], estimated),
-          against: ref.measured ? 'the T-shirt you measured' : `${ref.record.brand} ${ref.record.product.name} in ${ref.size}`,
+          against: ref.measured ? `the ${ref.record.product.name}` : `${ref.record.brand} ${ref.record.product.name} in ${ref.size}`,
           difference: round(diff, 2),
           estimated
         };
@@ -957,7 +959,7 @@ function recommend(profile, record, opts) {
      measured differently), is no comparison at all */
   const shared = hasGarment && shopper.garmentRef && Object.keys(comparable(record, shopper).used).length > 0;
   if (hasGarment && shopper.garmentRef && !shared) {
-    shopper.notes.push(`The ${shopper.garmentRef.measured ? 'T-shirt you measured' : `${shopper.garmentRef.record.brand} ${shopper.garmentRef.size} you said fits`} shares no measurement taken the same way with this product, so it wasn't compared.`);
+    shopper.notes.push(`The ${shopper.garmentRef.measured ? shopper.garmentRef.record.product.name : `${shopper.garmentRef.record.brand} ${shopper.garmentRef.size} you said fits`} shares no measurement taken the same way with this product, so it wasn't compared.`);
   }
   let method = null;
   if (shared) method = 'reference-garment';
@@ -1111,7 +1113,7 @@ function recommend(profile, record, opts) {
     fitBySize,
     fitScale: {
       basis: method === 'reference-garment' ? 'garment-vs-reference' : method === 'body-plus-ease' ? 'garment-vs-body' : 'body-chart',
-      relativeTo: method === 'reference-garment' ? (shopper.garmentRef.measured ? 'the T-shirt you measured' : `the ${shopper.garmentRef.record.brand} ${shopper.garmentRef.size} you said fits`)
+      relativeTo: method === 'reference-garment' ? (shopper.garmentRef.measured ? `the ${shopper.garmentRef.record.product.name}` : `the ${shopper.garmentRef.record.brand} ${shopper.garmentRef.size} you said fits`)
         : method === 'body-plus-ease' ? `the ${GOAL_WORDS[shopper.goal]} fit you asked for` : null,
       classes: { girth: GIRTH_CLASSES, length: LENGTH_CLASSES },
       units: record.units,
@@ -1397,4 +1399,4 @@ function compare(profile, record, opts) {
   };
 }
 
-module.exports = { recommend, compare, matchProduct, CATEGORY_PARAMS, TROUBLE_FACTOR, ALTERNATIVE_MARGIN, sizeOffset, bodyRange, contextOf };
+module.exports = { recommend, compare, matchProduct, CATEGORY_PARAMS, TROUBLE_FACTOR, ALTERNATIVE_MARGIN, METHOD_WORDS, sizeOffset, bodyRange, contextOf };
