@@ -1454,6 +1454,9 @@ const linkFromInbox = (pattern) => {
     await page.press('#fit-url', 'Enter');
     await page.waitForSelector('#fit-result[data-state="fallback"]');
     assert.strictEqual(await page.textContent('#fit-result-title'), 'UNIQLO · Sweat Oversized Pullover Hoodie');
+    /* first: the product's own measurements aren't held — said, not filled in from the body chart */
+    assert.strictEqual(await page.textContent('#fit-result .size-chart-missing'), 'Product measurements: not available. Fynd doesn’t hold UNIQLO’s Product Size chart for this product, so none are shown or estimated.');
+    assert.ok(await page.$eval('#fit-result .size-chart-missing', (n) => Boolean(n.compareDocumentPosition(document.querySelector('#fit-result table')) & Node.DOCUMENT_POSITION_FOLLOWING)), 'said before the body chart');
     assert.strictEqual(await page.textContent('#fit-result .size-chart-name'), 'UNIQLO US body-size chart');
     assert.strictEqual(await page.textContent('#fit-result .size-chart-kind'), 'General sizing guide · Body measurements, not garment measurements');
     assert.strictEqual(await page.textContent('#fit-result .size-chart-caveat'), 'A general UNIQLO sizing guide — not measurements confirmed for this exact product.');
@@ -1475,6 +1478,8 @@ const linkFromInbox = (pattern) => {
     assert.match(details, /The brand’s general chart for this kind of product — a fallback, not this product’s own/);
     assert.match(details, /not read from this product’s page/);
     assert.match(details, /What Fynd tried/);
+    assert.match(details, /Product Size\s*Not retrieved \(last looked for 2026-10-19\)/);
+    assert.match(details, /Where the Product Size chart was looked for:[\s\S]*refuses www\.uniqlo\.com/);
     const text = await page.textContent('#fit-result');
     assert.ok(!/Verified —|Read just now/.test(text), 'never presented as checked for this product, or read live');
     const links = await page.$$eval('#fit-result .size-chart-source a', (as) => as.map((a) => a.href));
@@ -1689,6 +1694,7 @@ const linkFromInbox = (pattern) => {
     assert.match(await page.textContent('#pdp-size-guide'), /View size measurements\s*UNIQLO’s general chart only/, 'said before it is pressed');
     await guide(page, 'fallback');
     /* a general guide, kept in view, called one, and said once to be about bodies, not this hoodie */
+    assert.strictEqual(await page.textContent('#pdp-guide .size-chart-missing'), 'Product measurements of this hoodie: not available. Fynd doesn’t hold UNIQLO’s Product Size chart for it, so none are shown or estimated.');
     assert.strictEqual(await page.textContent('#pdp-guide .size-chart-name'), 'General UNIQLO US sizing guide');
     assert.strictEqual(await page.textContent('#pdp-guide .size-chart-kind'), 'Body measurements · Inches');
     assert.ok(await page.isVisible('#pdp-guide table'));

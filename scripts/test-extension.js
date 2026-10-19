@@ -120,6 +120,40 @@ const raw = (tables, extra) => Object.assign({
     assert.strictEqual(hidden.list[0].visible, true);
   });
 
+  /* a tabbed size guide shaped like UNIQLO's: its Body Size tab in view,
+     its Product Size tab beside it (FIXTURE values, not UNIQLO's) */
+  const bodyTab = { rows: [['Size', 'Chest'], ['S', '34 - 37'], ['M', '37 - 40']], before: 'Body Size The dimensions shown below are body size measurements that correspond with a product’s size. Inches', heading: 'Body Size', tab: 'Body Size', caption: '', visible: true, inDialog: true };
+  const productTab = { rows: [['Size', 'Length (back)', 'Shoulder width (seam to seam)', 'Chest', 'Sleeve Length (center back)'], ['S', '26', '19', '22', '33'], ['M', '27', '20', '23', '34']], before: 'Product Size The dimensions shown below are the actual measurements of the product. Inches', heading: 'Product Size', tab: 'Product Size', caption: '', visible: false, inDialog: true };
+
+  await test('a size guide opened on its Body Size tab: the Product Size tab beside it is the chart, clearly', () => {
+    const found = Payload.candidates(raw([bodyTab, productTab]));
+    assert.deepStrictEqual(found.list.map((c) => [c.tab, c.chart.measures]), [['Product Size', 'finished-garment'], ['Body Size', 'body']]);
+    assert.ok(found.confident, 'no question to ask: the garment’s own measurements, from the same guide');
+    const p = Payload.build(raw([bodyTab, productTab]), 0);
+    assert.deepStrictEqual([p.chart.measures, p.chart.unit, p.chart.title, p.chart.where], ['finished-garment', 'in', 'Product Size', 'size-guide-dialog']);
+    assert.deepStrictEqual(p.chart.columns, ['Length (back)', 'Shoulder width (seam to seam)', 'Chest', 'Sleeve Length (center back)'], 'every column as published, “Chest” not renamed');
+    /* tab panels outside any dialog are one guide too */
+    const onPage = Payload.candidates(raw([Object.assign({}, bodyTab, { inDialog: false }), Object.assign({}, productTab, { inDialog: false })]));
+    assert.deepStrictEqual([onPage.list[0].tab, onPage.confident], ['Product Size', true]);
+  });
+
+  await test('a “Product Size” tab whose columns are the body is not promoted; nor is a garment table outside the open guide', () => {
+    const bodyish = Object.assign({}, productTab, { rows: [['Size', 'Height', 'Chest'], ['S', '165-170', '34-37'], ['M', '170-175', '37-40']], before: 'Product Size' });
+    const a = Payload.candidates(raw([bodyTab, bodyish]));
+    assert.strictEqual(a.list[0].tab, 'Body Size');
+    assert.strictEqual(a.list.find((c) => c.tab === 'Product Size').chart.measures, 'not-stated');
+    const elsewhere = Object.assign({}, garmentTable, { visible: false });
+    const b = Payload.candidates(raw([bodyTab, elsewhere]));
+    assert.deepStrictEqual([b.list[0].chart.measures, b.list[0].inDialog], ['body', true], 'a hidden garment table elsewhere never displaces the open guide');
+  });
+
+  await test('two garment tables in one guide: not confident — the shopper chooses', () => {
+    const second = Object.assign({}, productTab, { tab: 'Product Size (Tall)', before: 'Product Size (Tall) The dimensions shown below are the actual measurements of the product. Inches' });
+    const found = Payload.candidates(raw([bodyTab, productTab, second]));
+    assert.strictEqual(found.list[0].chart.measures, 'finished-garment');
+    assert.strictEqual(found.confident, false);
+  });
+
   await test('two size tables, both in view: not confident — the shopper chooses', () => {
     const pants = { rows: [['Size', 'Waist width', 'Inseam'], ['S', '38', '76'], ['M', '40', '78']], before: 'Pants — garment measurements (cm)', visible: true, inDialog: false };
     const found = Payload.candidates(raw([garmentTable, pants]));

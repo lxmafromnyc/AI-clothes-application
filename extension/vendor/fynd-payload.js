@@ -67,7 +67,15 @@
   /* Every size table the extension saw, labelled the way the server
      labels one, best first; and whether the best is clearly the chart
      (the only one, or the only one in view, or the only one in an open
-     size guide). Otherwise the shopper chooses. */
+     size guide). Otherwise the shopper chooses.
+
+     Within one size guide — both tables in the open dialog, or in
+     sibling tab panels — the garment's own measurements come first,
+     even when the guide opened on its body-size tab: a shop's "Body
+     size" tab is often the one in view, its "Product size" tab beside
+     it. The garment table is then clearly the chart when no other
+     garment table shares that guide. Nothing is promoted across guides,
+     so a hidden garment table elsewhere never displaces the one open. */
   function candidates(raw) {
     const list = [];
     ((raw && raw.tables) || []).slice(0, 12).forEach((t, index) => {
@@ -75,12 +83,19 @@
       if (!chart) return;
       const words = `${t.caption || ''} ${t.before || ''}`;
       const score = (t.visible ? 4 : 0) + (t.inDialog ? 3 : 0) + (SIZE_WORDS.test(words) ? 2 : 0) + Math.min(chart.columns.length, 4) * 0.5;
-      list.push({ index, chart, visible: Boolean(t.visible), inDialog: Boolean(t.inDialog), heading: clean(t.heading || t.caption || t.before, 80) || null, score });
+      list.push({ index, chart, visible: Boolean(t.visible), inDialog: Boolean(t.inDialog), tab: clean(t.tab, 60) || null, heading: clean(t.heading || t.caption || t.before, 80) || null, score });
     });
     list.sort((a, b) => b.score - a.score || a.index - b.index);
+    const garment = (c) => c.chart.measures === 'finished-garment';
+    const sameGuide = (a, b) => (a.inDialog && b.inDialog) || Boolean(a.tab && b.tab);
+    const top = list[0];
+    const own = top && !garment(top) ? list.find((c) => garment(c) && sameGuide(c, top)) : null;
+    if (own) list.splice(0, list.length, own, ...list.filter((c) => c !== own));
     const [first, second] = list;
+    const onlyGarment = (c) => garment(c) && list.filter((x) => garment(x) && sameGuide(x, c)).length === 1;
     const confident = list.length === 1 || Boolean(first && second && (
-      (first.visible && !second.visible) || (first.inDialog && !second.inDialog)));
+      (first.visible && !second.visible) || (first.inDialog && !second.inDialog) ||
+      (onlyGarment(first) && !garment(second) && sameGuide(first, second))));
     return { list, confident };
   }
 

@@ -65,6 +65,15 @@ function validate(c) {
     if (!schema.officialUrl(c.brand, p.url)) fail(`product ${p.code}: not on ${c.brand}’s own site`);
     if (!c.appliesTo.categories.includes(p.category) || !c.appliesTo.lines.includes(p.line)) fail(`product ${p.code}: outside the chart’s categories or lines`);
     if (!p.identity) fail(`product ${p.code}: no account of how it is known`);
+    /* what is known of the product's own Product Size tab: only that it
+       wasn't retrieved, and how that was tried. Garment values never
+       live here — they belong in a record of the product (step 1) */
+    const ps = p.productSize;
+    if (ps !== undefined) {
+      const extra = ps && typeof ps === 'object' ? Object.keys(ps).filter((k) => !['status', 'checkedAt', 'tried'].includes(k)) : [];
+      if (!ps || ps.status !== 'not-retrieved' || extra.length) fail(`product ${p.code}: productSize may only say it was not retrieved`);
+      else if (!/^\d{4}-\d{2}-\d{2}$/.test(ps.checkedAt || '') || !Array.isArray(ps.tried) || !ps.tried.length || !ps.tried.every((t) => typeof t === 'string' && t)) fail(`product ${p.code}: productSize needs its date and what was tried`);
+    }
   });
   return errors;
 }

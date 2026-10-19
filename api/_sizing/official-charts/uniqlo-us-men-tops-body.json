@@ -58,7 +58,18 @@
       "name": "Sweat Oversized Pullover Hoodie",
       "category": "hoodies",
       "line": "men",
-      "identity": "The product’s name and line are from UNIQLO’s listing title as shown in search results (“UNIQLO Men’s Sweat Oversized Pullover Hoodie”, assets/demo/demo-recording.json) and from the product’s owner; Fynd has not read its product page. Its own Size Guide has not been copied, so this general chart is used only when that page can’t be read."
+      "identity": "The product’s name and line are from UNIQLO’s listing title as shown in search results (“UNIQLO Men’s Sweat Oversized Pullover Hoodie”, assets/demo/demo-recording.json) and from the product’s owner; Fynd has not read its product page. Its own Size Guide has not been copied, so this general chart is used only when that page can’t be read.",
+      "productSize": {
+        "status": "not-retrieved",
+        "checkedAt": "2026-10-19",
+        "tried": [
+          "Fynd’s deployed server: uniqlo.com does not answer its requests.",
+          "GitHub’s runners (.github/workflows/uniqlo-catalog.yml): www.uniqlo.com reset every request, robots.txt included.",
+          "Fynd’s development environment, 19 October 2026: its network policy refuses www.uniqlo.com and image.uniqlo.com.",
+          "Web search, 19 October 2026: the indexed copies of this page carry only the Size Guide’s Body Size text (chest ranges), no Product Size table.",
+          "UNIQLO publishes no product or size-chart API; Fynd does not call its site’s internal commerce backend."
+        ]
+      }
     }
   ]
 }

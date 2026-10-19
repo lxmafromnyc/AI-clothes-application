@@ -2102,7 +2102,7 @@ product Fynd can source:
   | Sweat Pullover Hoodie | E475378-000 | its own body and garment charts, checked |
   | Sweatshirt | E475377-000 | its own body and garment charts, checked |
   | SUPIMA Cotton T-Shirt | E455365-000 | its own charts, not yet checked |
-  | Sweat Oversized Pullover Hoodie | E471808-000 | UNIQLO's general US men's tops body chart, used only when its page can't be read |
+  | Sweat Oversized Pullover Hoodie | E471808-000 | UNIQLO's general US men's tops body chart, used only when its page can't be read; its own Product Size chart not retrieved (below) |
   | Extra Fine Merino Crew Neck Sweater | E429066-000 | a listing only; its chart is looked up live |
 
 - **A catalogue snapshot**, when one has been committed
@@ -2301,17 +2301,51 @@ reads no profile, and only the link travels. It is rate limited per client
    the deployment. E471808's own Size Guide has not been copied: when it is, a
    record of its own replaces this fallback (step 2 comes first).
 
+   **E471808's Product Size tab: not retrieved** (looked for 19 October 2026).
+   Its listing under the chart says so (`productSize`: `status:
+   "not-retrieved"`, the date, and each place tried), and the loader refuses
+   anything else there: a fallback product can hold no garment values. What
+   was tried:
+   - the deployed server and GitHub's runners, as above: no answer, or every
+     request reset;
+   - Fynd's development environment: its network policy refuses
+     `www.uniqlo.com` and `image.uniqlo.com`, and its web fetch could not
+     resolve the host;
+   - web search: the indexed copies of this page hold only the Size Guide's
+     Body Size text (chest ranges), no Product Size table;
+   - no official API: UNIQLO publishes none, and Fynd doesn't call its site's
+     internal commerce backend.
+
+   So no garment measurement of E471808 is shown: none is copied from the
+   Sweat Pullover Hoodie (E475378, a different, regular-fit product) or worked
+   out from body ranges. The answer carries `productSize`, its note says the
+   product's own measurements aren't held, and the chart drawing says it
+   first, above the general body chart: "Product measurements of this hoodie:
+   not available…". Source details list where it was looked for. Whether the
+   tab holds a garment table for this product at all is unconfirmed. To add
+   it: open the page in a normal browser, open Size Guide → Product Size, and
+   either read it with the Fynd extension (which now picks that tab, below) or
+   copy it into a record (`api/_sizing/records/`) with its source and date,
+   unverified until a person checks it.
+
 What a table measures — **body**, **finished garment** or **not stated** — and its
 unit come only from the words around it ("in" as an ordinary word is not
 inches), and only the words after the table before it: a "Body size" heading
 over one table never speaks for the "Product size" table that follows (the
-server's `tablesOf` and the extension's `collect.js` both stop there).
+server's `tablesOf` and the extension's `collect.js` both stop there). In a
+tabbed size guide (`role="tabpanel"`), the extension reads only the panel's own
+words and the name of its tab (by `aria-labelledby` or the tab's
+`aria-controls`): the tab list beside the panels names every tab, so it speaks
+for none.
 
 A garment claim must agree with the table's columns
 (`assets/sizing-tables.js`, `kindOf`):
 
 - How it was measured ("laid flat", "from the centre back", "body width",
-  "garment measurements") says it is the garment.
+  "garment measurements", UNIQLO's Product Size sentence "the actual
+  measurements of the product") says it is the garment. UNIQLO's Body Size
+  sentence ("body size measurements that correspond with a product's size")
+  stays body.
 - A bare label — **"Product size"**, "Item measurements" — is not enough alone:
   the table counts as the garment only when a column is the garment's own
   geometry (a length, a width, a sleeve, the shoulders, a hem).
@@ -2387,8 +2421,13 @@ Installation steps, permissions and tests are in
   the page's tables and structured data and recognises size tables with the same
   code the server uses (`assets/sizing-tables.js`). It shows the chart with
   Find Fit's own renderer.
-- **Several possible charts:** the customer chooses which one. A closed size
-  guide is never opened for them.
+- **Several possible charts:** the customer chooses which one, each saying what
+  it measures. One exception: within one size guide (both tables in the open
+  dialog, or in sibling tab panels), the garment's own table is picked over a
+  body or unlabelled one, even when the guide opened on its Body Size tab, so
+  long as it is the guide's only garment table. A hidden garment table
+  elsewhere on the page never displaces the open guide. A closed size guide is
+  never opened for them, and no tab is clicked.
 - **Handover to Find Fit:** **Open in Fynd** carries the chart in Find Fit's
   address fragment (`#fynd-chart=…`, `assets/fynd-payload.js`). That part of the
   address never reaches a server. Find Fit validates the payload (bounded text,

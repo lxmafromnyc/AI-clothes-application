@@ -37,8 +37,12 @@ What you'll see:
     stated);
   - its unit, or that the page doesn't give one;
   - one line saying where it came from.
-- **Several tables that could each be the chart:** you choose which one. Fynd
-  never picks for you.
+- **Several tables that could each be the chart:** you choose which one, each
+  saying whether it measures the body or the garment. One exception: in a size
+  guide with a body tab and a product tab (both open in its dialog, or tab
+  panels side by side), the product's own garment table is shown first,
+  even if the guide opened on the body tab. The body tab stays one click away
+  under **Choose another table on this page**.
 - **Sizes only, no measurements:** the sizes, and a note that no measurements
   were found.
 - **No chart:** why, and what to try next, such as opening the retailer's size

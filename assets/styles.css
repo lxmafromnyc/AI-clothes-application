@@ -631,6 +631,9 @@ strong { font-weight: 600; }
 .size-chart-caveat { margin-top: 12px; padding: 8px 12px; border: 1px solid var(--color-warning-line); border-radius: var(--r); background: var(--color-warning-soft); font-size: 14px; color: var(--color-warning-ink); }
 .size-chart-status { font-size: 16px; font-weight: 600; color: var(--color-text); }
 .size-chart-note { margin-top: 4px; font-size: 14.5px; color: var(--color-text-2); }
+.size-chart-missing { margin-top: 4px; font-size: 14.5px; font-weight: 500; color: var(--color-text); }
+.size-chart-tried-head { margin-top: 10px; font-weight: 500; color: var(--color-text); }
+.size-chart-tried { display: grid; gap: 4px; margin: 6px 0 0; padding-left: 18px; overflow-wrap: anywhere; }
 .size-chart-hint { margin-top: 4px; font-size: 14px; color: var(--color-text-muted); }
 .size-chart-details { margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--color-border); font-size: 13.5px; color: var(--color-text-2); }
 .size-chart-details > summary { cursor: pointer; font-weight: 500; color: var(--color-text); }
