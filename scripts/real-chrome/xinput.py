@@ -10,6 +10,8 @@ an Xvfb display, after finding Fynd's button on a screenshot of the toolbar.
   xinput.py DISPLAY find                 print "x y" of Fynd's toolbar button
   xinput.py DISPLAY click-fynd           find it and click it; print "x y"
   xinput.py DISPLAY click X Y            click at a point
+  xinput.py DISPLAY ready                wait (up to 15 s) until the display accepts connections
+  xinput.py DISPLAY describe             the screen's size and its most common colours
 
 Finding the button: Fynd's own icon (extension/icons, a dark square with a
 white "F") is matched against the toolbar band of the screenshot, at the
@@ -101,8 +103,27 @@ def click(disp, x, y):
     d.close()
 
 
+def ready(disp):
+    for _ in range(60):
+        try:
+            display.Display(disp).close()
+            return True
+        except Exception:
+            time.sleep(0.25)
+    return False
+
+
 def main(argv):
     disp, cmd = argv[1], argv[2]
+    if cmd == 'ready':
+        ok = ready(disp)
+        print('ready' if ok else 'not ready')
+        return 0 if ok else 2
+    if cmd == 'describe':
+        im = shot(disp)
+        colours = sorted(im.getcolors(1 << 24) or [], reverse=True)
+        print(f'{im.size[0]}x{im.size[1]}, {len(colours)} colours, most common: {colours[:4]}')
+        return 0
     if cmd == 'shot':
         shot(disp).save(argv[3])
     elif cmd == 'find':

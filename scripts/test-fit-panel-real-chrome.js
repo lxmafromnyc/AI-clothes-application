@@ -66,6 +66,8 @@ async function test(name, fn) {
   catch (err) { failures.push(name); console.log(`  FAIL  ${name}\n        ${String(err && err.stack || err).split('\n').slice(0, 10).join('\n        ')}`); }
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+let chromeLog = '';
+const chromeTail = () => chromeLog.split('\n').filter(Boolean).slice(-15).join('\n          ');
 
 /* ---------- prerequisites: say what's missing, never pass silently ---------- */
 
@@ -116,11 +118,15 @@ async function launch(display, port) {
        ignore --load-extension unless this is switched back off */
     '--disable-features=Translate,OptimizationHints,MediaRouter,HttpsUpgrades,HttpsFirstBalancedModeAutoEnable,DisableLoadExtensionCommandLineSwitch', '--password-store=basic',
     '--window-position=0,0', '--window-size=1400,900', `--remote-debugging-port=${debug}`,
+    /* draw on the X display, never another backend */
+    '--ozone-platform=x11',
     `--load-extension=${EXT}`, `--disable-extensions-except=${EXT}`,
     `--host-resolver-rules=MAP www.uniqlo.com:80 127.0.0.1:${port}`,
     'about:blank'
   ];
-  const proc = spawn(CHROME, args, { env: Object.assign({}, process.env, { DISPLAY: display }), stdio: 'ignore' });
+  const proc = spawn(CHROME, args, { env: Object.assign({}, process.env, { DISPLAY: display }), stdio: ['ignore', 'ignore', 'pipe'] });
+  /* Chrome's own complaints, for when something goes wrong */
+  proc.stderr.on('data', (d) => { chromeLog = (chromeLog + d).slice(-20000); });
   for (let i = 0; i < 60; i++) {
     try { const r = await fetch(`http://127.0.0.1:${debug}/json/version`); if (r.ok) break; } catch (err) { /* starting */ }
     await sleep(250);
@@ -136,6 +142,7 @@ async function launch(display, port) {
   }
   const version = await browser.version();
   proc.kill();
+  console.log(`Chrome’s last output:\n          ${chromeTail()}`);
   throw new Error(`the extension did not load in ${version} (no chrome-extension://${id}/background.js worker; targets: ${targets.map((t) => `${t.type} ${t.url}`).join(', ') || 'none'})`);
 }
 
@@ -149,7 +156,12 @@ async function launch(display, port) {
   }
   const display = `:${90 + Math.floor(Math.random() * 9)}`;
   const xvfb = spawn('Xvfb', [display, '-screen', '0', '1400x900x24', '-nolisten', 'tcp'], { stdio: 'ignore' });
-  await sleep(800);
+  /* Chrome must not start before the display accepts it */
+  try { xinput(display, 'ready'); } catch (err) {
+    console.log(`  FAIL  the virtual display ${display} starts\n        it never accepted a connection\n\n0 passed, 1 failed`);
+    xvfb.kill();
+    process.exit(1);
+  }
   const server = await serve();
   const port = server.address().port;
   const local = (p) => `http://127.0.0.1:${port}${p}`;
@@ -194,7 +206,11 @@ async function launch(display, port) {
   const clickFynd = async () => {
     let at = 'none';
     try { at = xinput(display, 'click-fynd'); } catch (err) { at = String(err.stdout || '').trim() || 'none'; }
-    if (at === 'none') throw new Error(`Fynd’s toolbar button wasn’t found on screen (screen: ${shot(`no-button-${Date.now()}`)})`);
+    if (at === 'none') {
+      let screen = '';
+      try { screen = xinput(display, 'describe'); } catch (err) { screen = `couldn’t describe it: ${err.message}`; }
+      throw new Error(`Fynd’s toolbar button wasn’t found on screen (${screen}; saved: ${shot(`no-button-${Date.now()}`)})\n        Chrome’s last output:\n          ${chromeTail() || '(none)'}`);
+    }
     panel = await panelPage();
     if (!watched) { watch(panel); watched = true; }
     await sleep(900);
