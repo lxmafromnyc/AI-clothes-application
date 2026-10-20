@@ -36,9 +36,9 @@
    A page in a frame can't tell Find Fit which product was clicked, so
    UNIQLO's site in an iframe couldn't start a lookup either.
 
-   scripts/fetch-uniqlo-catalog.js reads UNIQLO's US category pages from
-   any machine uniqlo.com does answer, and writes uniqlo-catalog.json;
-   this module lists every product in it, with no change anywhere else.
+   The category-page reader (scripts/fetch-uniqlo-catalog.js) has been
+   retired: Fynd doesn't read uniqlo.com to build its list. The snapshot
+   is read only from a test's fixture (uniqlo-snapshot.js).
 
    A product is chosen by its code; its address comes from here, never
    from the browser. A catalogue product is matched to Fynd's sizing
