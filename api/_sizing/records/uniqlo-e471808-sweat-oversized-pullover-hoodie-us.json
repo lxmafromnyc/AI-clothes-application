@@ -1,0 +1,274 @@
+{
+  "sizingVersion": 2,
+  "id": "uniqlo-e471808-sweat-oversized-pullover-hoodie-us",
+  "brand": "UNIQLO",
+  "product": {
+    "name": "Sweat Oversized Pullover Hoodie",
+    "code": "E471808-000",
+    "retailerProductId": "489933",
+    "url": "https://www.uniqlo.com/us/en/products/E471808-000/00",
+    "garmentType": "pullover-hoodie"
+  },
+  "category": "hoodies",
+  "region": "US",
+  "line": "men",
+  "sizeScale": "men",
+  "units": "in",
+  "sizes": [
+    "XXS",
+    "XS",
+    "S",
+    "M",
+    "L",
+    "XL",
+    "XXL",
+    "3XL"
+  ],
+  "lengthOptions": [
+    "regular"
+  ],
+  "fit": {
+    "brandWords": "Oversized",
+    "fitClass": "oversized",
+    "source": "product name: \"Sweat Oversized Pullover Hoodie\""
+  },
+  "material": {
+    "composition": null,
+    "stretch": null,
+    "source": "not recorded: Fynd has not read this product's Materials section"
+  },
+  "charts": {
+    "garment": {
+      "measures": "finished-garment",
+      "label": "Size Guide, Product Size tab (inches)",
+      "source": "https://www.uniqlo.com/us/en/products/E471808-000/00/size?sizeDisplayCode=005&measurementUnit=inch",
+      "retrievedAt": "2026-10-20",
+      "dimensions": {
+        "bodyLength": {
+          "label": "Length (back)",
+          "method": "center-back-to-hem",
+          "methodSource": {
+            "url": "https://faq-us.uniqlo.com/articles/en_US/FAQ/How-to-Measure",
+            "says": "How to Measure Clothing, Tops: \"C. Body Length: The length in the back of the garment in the center to the bottom (hem).\" (read 2026-10-10 for Fynd's other UNIQLO records; UNIQLO's general instructions for tops). The product table labels it \"Length (back)\"."
+          }
+        },
+        "shoulderWidth": {
+          "label": "Shoulder width",
+          "method": "broadest-part-of-shoulders",
+          "methodSource": {
+            "url": "https://faq-us.uniqlo.com/articles/en_US/FAQ/How-to-Measure",
+            "says": "How to Measure Clothing, Tops: \"A. Shoulder Width: The length between the broadest part of the shoulders.\" (read 2026-10-10). The supplied table header says only \"Shoulder width\", not \"seam to seam\", so it is not recorded as seam to seam."
+          }
+        },
+        "chestWidth": {
+          "label": "Chest",
+          "method": "flat-width-armpit-to-armpit",
+          "derivedCircumference": {
+            "status": "estimated",
+            "factor": 2,
+            "derivation": "UNIQLO's measuring instructions give this as a flat width, armpit to armpit, not a circumference. Where Fynd needs the garment's chest around, it takes 2 × the published flat width and labels the result estimated: it assumes the front and back are the same width and ignores fabric give. The derived value is never stored here, and it is never compared with UNIQLO's body chest ranges, which are a separate chart."
+          },
+          "methodSource": {
+            "url": "https://faq-us.uniqlo.com/articles/en_US/FAQ/How-to-Measure",
+            "says": "How to Measure Clothing, Tops: \"B. Body Width: The length from armpit to armpit.\" (read 2026-10-10). The product table labels this column only \"Chest\"; its values (24 3/4 in for M, below M's 37 3/4 - 41 in body chest) cannot be a circumference."
+          }
+        },
+        "sleeveLength": {
+          "label": "Sleeve length (center back)",
+          "method": "center-back-to-cuff",
+          "methodSource": {
+            "url": "https://www.uniqlo.com/us/en/products/E471808-000/00/size?sizeDisplayCode=005&measurementUnit=inch",
+            "says": "Product Size table header \"Sleeve length (center back)\", as transcribed from this Size Guide and supplied to Fynd on 2026-10-20. Fynd has not read the page itself."
+          }
+        }
+      },
+      "sizes": {
+        "XXS": {
+          "bodyLength": {
+            "value": 25.25,
+            "text": "25 1/4"
+          },
+          "shoulderWidth": {
+            "value": 21.5,
+            "text": "21 1/2"
+          },
+          "chestWidth": {
+            "value": 21.25,
+            "text": "21 1/4"
+          },
+          "sleeveLength": {
+            "value": 32.25,
+            "text": "32 1/4"
+          }
+        },
+        "XS": {
+          "bodyLength": {
+            "value": 26,
+            "text": "26"
+          },
+          "shoulderWidth": {
+            "value": 22,
+            "text": "22"
+          },
+          "chestWidth": {
+            "value": 22.5,
+            "text": "22 1/2"
+          },
+          "sleeveLength": {
+            "value": 32.75,
+            "text": "32 3/4"
+          }
+        },
+        "S": {
+          "bodyLength": {
+            "value": 27.25,
+            "text": "27 1/4"
+          },
+          "shoulderWidth": {
+            "value": 22.75,
+            "text": "22 3/4"
+          },
+          "chestWidth": {
+            "value": 23.5,
+            "text": "23 1/2"
+          },
+          "sleeveLength": {
+            "value": 33.75,
+            "text": "33 3/4"
+          }
+        },
+        "M": {
+          "bodyLength": {
+            "value": 28.25,
+            "text": "28 1/4"
+          },
+          "shoulderWidth": {
+            "value": 23.25,
+            "text": "23 1/4"
+          },
+          "chestWidth": {
+            "value": 24.75,
+            "text": "24 3/4"
+          },
+          "sleeveLength": {
+            "value": 34.75,
+            "text": "34 3/4"
+          }
+        },
+        "L": {
+          "bodyLength": {
+            "value": 29.5,
+            "text": "29 1/2"
+          },
+          "shoulderWidth": {
+            "value": 24,
+            "text": "24"
+          },
+          "chestWidth": {
+            "value": 26.5,
+            "text": "26 1/2"
+          },
+          "sleeveLength": {
+            "value": 35.75,
+            "text": "35 3/4"
+          }
+        },
+        "XL": {
+          "bodyLength": {
+            "value": 30.25,
+            "text": "30 1/4"
+          },
+          "shoulderWidth": {
+            "value": 24.75,
+            "text": "24 3/4"
+          },
+          "chestWidth": {
+            "value": 28,
+            "text": "28"
+          },
+          "sleeveLength": {
+            "value": 36.25,
+            "text": "36 1/4"
+          }
+        },
+        "XXL": {
+          "bodyLength": {
+            "value": 30.5,
+            "text": "30 1/2"
+          },
+          "shoulderWidth": {
+            "value": 25.5,
+            "text": "25 1/2"
+          },
+          "chestWidth": {
+            "value": 29.25,
+            "text": "29 1/4"
+          },
+          "sleeveLength": {
+            "value": 36.5,
+            "text": "36 1/2"
+          }
+        },
+        "3XL": {
+          "bodyLength": {
+            "value": 31.25,
+            "text": "31 1/4"
+          },
+          "shoulderWidth": {
+            "value": 26.5,
+            "text": "26 1/2"
+          },
+          "chestWidth": {
+            "value": 30.75,
+            "text": "30 3/4"
+          },
+          "sleeveLength": {
+            "value": 37,
+            "text": "37"
+          }
+        }
+      }
+    }
+  },
+  "sources": [
+    {
+      "url": "https://www.uniqlo.com/us/en/products/E471808-000/00/size?sizeDisplayCode=005&measurementUnit=inch",
+      "what": "Size Guide, Product Size tab (inches): transcribed from UNIQLO's official table and supplied to Fynd on 2026-10-20; Fynd has not read it",
+      "retrievedAt": "2026-10-20"
+    },
+    {
+      "url": "https://www.uniqlo.com/us/en/products/E471808-000/00",
+      "what": "The product's official page, which the Size Guide belongs to (UNIQLO product ID 489933, as supplied)",
+      "retrievedAt": "2026-10-20"
+    },
+    {
+      "url": "https://faq-us.uniqlo.com/articles/en_US/FAQ/How-to-Measure",
+      "what": "How to Measure Clothing, Tops: how each column is measured (UNIQLO's general instructions, read 2026-10-10 for Fynd's other UNIQLO records)",
+      "retrievedAt": "2026-10-10"
+    }
+  ],
+  "retrievedAt": "2026-10-20",
+  "capture": {
+    "how": "supplied-transcription",
+    "by": "the product owner, in a Fynd working session",
+    "at": "2026-10-20",
+    "note": "The eight rows and four columns were supplied as a transcription of UNIQLO's official Product Size table for this product. Fynd's own requests to uniqlo.com are refused or go unanswered, so Fynd has not read this page; nothing here was retrieved live."
+  },
+  "verification": {
+    "status": "unverified",
+    "checkedBy": null,
+    "checkedAt": null
+  },
+  "review": {
+    "status": "pending",
+    "needs": "An independent check of every value, the unit and each column's header against UNIQLO's official Size Guide for E471808 (the source above), under the same audit as Fynd's other records. Until then it is shown as pending review and never compared."
+  },
+  "notes": [
+    "Product Size only. UNIQLO's Body Size tab for this product has not been recorded here; Fynd shows UNIQLO's general US men's tops body chart beside it, labelled as general (api/_sizing/official-charts/uniqlo-us-men-tops-body.json).",
+    "Values are kept exactly as supplied (\"25 1/4\"), in inches; the size guide link names measurementUnit=inch.",
+    "\"Chest\" is recorded as a flat width armpit to armpit on UNIQLO's general measuring instructions, as for Fynd's other UNIQLO records; the table itself doesn't say so.",
+    "\"Shoulder width\" is recorded by UNIQLO's own instruction (the broadest part of the shoulders), not as seam to seam: the supplied header doesn't say seam to seam, so it is never compared with a shoulder measured seam to seam.",
+    "Fit is from the product's name (\"Oversized\") only; Fynd has not read its product details or materials.",
+    "Fynd's catalogue lists this product under men's (from a \"Men's Sweat Oversized Pullover Hoodie\" listing title); some UNIQLO US titles for it read \"Unisex\". Its sizes follow the men's scale either way."
+  ]
+}

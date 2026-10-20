@@ -257,6 +257,43 @@ async function launch(extDir) {
     await popup.close();
   });
 
+  await test('a guide that draws only the chosen tab: on Body Size the popup says the garment’s own aren’t there; the shopper picks Product Size, checks again, inspects it, and hands Find Fit only that chart', async () => {
+    const { shop, popup } = await check('one-tab-at-a-time.html');
+    assert.strictEqual(await popup.getAttribute('body', 'data-state'), 'result');
+    assert.strictEqual(await popup.textContent('#result .size-chart-name'), 'Body measurements');
+    assert.strictEqual(await popup.textContent('#result .size-chart-missing'), 'Product measurements: none in the table read from your browser. If the retailer’s size guide has a Product Size tab, open it and check again.');
+    await popup.close();
+    /* the shopper chooses Product Size on the retailer's own page; Fynd clicks nothing */
+    await shop.click('#tab-product');
+    const again = await context.newPage();
+    await again.goto(`chrome-extension://${id}/popup.html`);
+    const tabId = await again.evaluate((u) => new Promise((r) => chrome.tabs.query({}, (tabs) => r((tabs.find((t) => t.url === u) || {}).id))), shop.url());
+    await again.goto(`chrome-extension://${id}/popup.html?tab=${tabId}`);
+    await again.click('#check');
+    await again.waitForFunction(() => document.body.dataset.state === 'result');
+    /* what was read, to inspect before handing it on: the garment's own table, its tab's words, its units and methods */
+    assert.strictEqual(await again.textContent('#result .size-chart-name'), 'Finished-garment measurements');
+    assert.strictEqual(await again.$$eval('#result .size-chart-missing', (ns) => ns.length), 0);
+    assert.deepStrictEqual(await again.$$eval('#result thead th', (ns) => ns.map((n) => n.textContent)), ['Size', 'Length (back)', 'Shoulder width', 'Chest', 'Sleeve length (center back)']);
+    assert.deepStrictEqual(await again.$$eval('#result tbody tr', (trs) => trs.map((tr) => [...tr.children].map((c) => c.textContent))),
+      [['S', '27', '22 1/2', '23 1/2', '33 1/2'], ['M', '28', '23', '24 1/2', '34 1/2'], ['L', '29 1/2', '24', '26', '35 1/2']]);
+    assert.match(await again.textContent('#result .size-chart-unit'), /inches, as published/);
+    assert.match(await again.textContent('#result .size-chart-method'), /^How it’s measured, in the page’s words — Sleeve length \(center back\): center back$/);
+    assert.strictEqual(await again.getAttribute('#result-product a', 'href'), 'https://shop.example.test/products/FIX-HOOD-8/00', 'tied to the product’s canonical page');
+    /* accepted: only the chart travels, in the address fragment, and Find Fit draws it unverified */
+    const asked = apiAsked.length;
+    const page = await openInFynd(again);
+    await page.waitForSelector('#fit-result[data-from="extension"][data-state="ok"]');
+    assert.strictEqual(await page.textContent('#fit-result .size-chart-name'), 'Finished-garment measurements');
+    assert.match(await page.textContent('#fit-result .size-chart-method'), /center back/);
+    assert.strictEqual(apiAsked.length, asked, 'nothing was sent to Fynd’s server');
+    await page.waitForSelector('#fit-compare:not([hidden])');
+    assert.match(await page.textContent('#fit-compare'), /can’t confirm exactly how each measurement was taken/, 'read, not checked: never compared');
+    await page.close();
+    await shop.close();
+    await again.close();
+  });
+
   await test('sizes but no measurements: labels only, said plainly', async () => {
     const { shop, popup } = await check('labels-only.html');
     assert.strictEqual(await popup.getAttribute('body', 'data-result'), 'labels-only');

@@ -150,9 +150,9 @@ section('sizing records');
    other record waits for its own approved check */
 const VERIFIED_IDS = [UQ_HOODIE, UQ_SWEAT, NIKE_HOODIE, NIKE_CREW, CARHARTT_HOODIE, CARHARTT_CREW];
 
-await test('all fourteen records load, each from the brand\'s own site: the six audited fleece tops verified, every other record not yet', () => {
+await test('all fifteen records load, each from the brand\'s own site: the six audited fleece tops verified, every other record not yet', () => {
   assert.deepStrictEqual(sizing.problems, []);
-  assert.strictEqual(sizing.RECORDS.length, 14);
+  assert.strictEqual(sizing.RECORDS.length, 15);
   assert.deepStrictEqual([...new Set(sizing.RECORDS.map((r) => r.brand))].sort(), ['Carhartt', 'H&M', 'Nike', 'UNIQLO', 'Zara']);
   assert.deepStrictEqual([...new Set(sizing.RECORDS.map((r) => r.category))].sort(), ['hoodies', 'sweatshirts', 'tshirts']);
   sizing.RECORDS.forEach((r) => {
@@ -207,8 +207,9 @@ await test('records keep exactly what each brand publishes: UNIQLO both charts, 
   assert.strictEqual(sizing.byId(NIKE_HOODIE).material.composition, null);
   /* every value's text reads as its number */
   sizing.RECORDS.forEach((r) => Object.values(r.charts).forEach((chart) => Object.values(chart.sizes).forEach((row) => Object.values(row).forEach((cell) => {
-    /* "23 ½" and H&M's "30¾-33¾" alike */
-    const n = (t) => t.replace(/ ?¼/g, '.25').replace(/ ?½/g, '.5').replace(/ ?¾/g, '.75').replace(/\s*-\s*/, ' - ');
+    /* "23 ½", H&M's "30¾-33¾" and the "25 1/4" of a table transcribed as supplied alike */
+    const n = (t) => t.replace(/ 1\/4\b/g, '.25').replace(/ 1\/2\b/g, '.5').replace(/ 3\/4\b/g, '.75')
+      .replace(/ ?¼/g, '.25').replace(/ ?½/g, '.5').replace(/ ?¾/g, '.75').replace(/\s*-\s*/, ' - ');
     if ('value' in cell) assert.strictEqual(Number(n(cell.text)), cell.value, `${r.id}: ${cell.text}`);
     else assert.strictEqual(n(cell.text), `${cell.min} - ${cell.max}`, `${r.id}: ${cell.text}`);
   }))));
@@ -443,7 +444,7 @@ await test('signed out it answers 401; it is GET only and no-store', async () =>
   const list = await suggest(jar);
   assert.strictEqual(list.status, 200);
   assert.strictEqual(list.res.getHeader('cache-control'), 'no-store, private');
-  assert.strictEqual(list.body.products.length, 14);
+  assert.strictEqual(list.body.products.length, 15);
   assert.ok(list.body.products.every((p) => p.verified === VERIFIED_IDS.includes(p.id)), 'only the audited records say they are verified');
   /* only a checked record with finished-garment measurements can be compared */
   assert.deepStrictEqual(list.body.products.filter((p) => p.comparable).map((p) => p.id).sort(), [UQ_SWEAT, UQ_HOODIE].sort());
@@ -1507,12 +1508,21 @@ await test('the real request path: compressed pages are inflated, the size limit
 
 const officialCharts = require('../api/_sizing/official-charts');
 const UQ_OVERSIZED = 'https://www.uniqlo.com/us/en/products/E471808-000/00';
+/* A FIXTURE product listed under UNIQLO's general chart with no record
+   of its own (E471808, listed there, now has one): added to the chart's
+   list for one test, then taken off. Its code is invented. */
+const UQ_LISTED = 'https://www.uniqlo.com/us/en/products/E900099-000/00';
+const listedUnderGeneral = async (fn) => {
+  const entry = { code: 'E900099-000', url: UQ_LISTED, name: 'FIXTURE Listed Hoodie', category: 'hoodies', line: 'men', identity: 'FIXTURE: listed for one test only.' };
+  officialCharts.CHARTS[0].products.push(entry);
+  try { return await fn(); } finally { officialCharts.CHARTS[0].products.splice(officialCharts.CHARTS[0].products.indexOf(entry), 1); }
+};
 
-await test('a product page that times out still shows its brand’s applicable official chart — as a fallback, labelled body-size, with every value’s source', async () => {
-  const pasted = `${UQ_OVERSIZED}?colorDisplayCode=03&sizeDisplayCode=005&utm_campaign=pmax&utm_source=google&utm_medium=cpc`;
-  const r = await read(pasted, { [UQ_OVERSIZED]: { throws: 'abort' } });
+await test('a product page that times out still shows its brand’s applicable official chart — as a fallback, labelled body-size, with every value’s source', () => listedUnderGeneral(async () => {
+  const pasted = `${UQ_LISTED}?colorDisplayCode=03&sizeDisplayCode=005&utm_campaign=pmax&utm_source=google&utm_medium=cpc`;
+  const r = await read(pasted, { [UQ_LISTED]: { throws: 'abort' } });
   assert.deepStrictEqual([r.status, r.from, r.fallback.reason, r.scope], ['fallback', 'official-fallback', 'no-answer', 'brand-general']);
-  assert.deepStrictEqual(r.product, { brand: 'UNIQLO', name: 'Sweat Oversized Pullover Hoodie', code: 'E471808-000' });
+  assert.deepStrictEqual(r.product, { brand: 'UNIQLO', name: 'FIXTURE Listed Hoodie', code: 'E900099-000' });
   const c = r.charts[0];
   assert.strictEqual(c.label, 'Official UNIQLO body-size chart — not garment measurements.');
   assert.deepStrictEqual([c.measures, c.unit, c.columns], ['body', 'in', ['Chest']]);
@@ -1524,60 +1534,52 @@ await test('a product page that times out still shows its brand’s applicable o
   assert.deepStrictEqual(r.otherSources.map((o) => o.url), ['https://www.uniqlo.com/us/en/products/E475377-000/00', 'https://www.uniqlo.com/us/en/products/E455365-000/00']);
   assert.ok([c.source.url, ...r.otherSources.map((o) => o.url)].every((u) => new URL(u).hostname === 'www.uniqlo.com'), 'every source is UNIQLO’s own site');
   /* never presented as read live, or as this product's own */
-  assert.strictEqual(r.source.url, UQ_OVERSIZED);
+  assert.strictEqual(r.source.url, UQ_LISTED);
   assert.strictEqual(r.source.retrievedAt, null, 'the product page was not read');
   assert.strictEqual(r.verification, 'official-general');
   assert.match(r.note[0], /^Reading this product’s page directly timed out/);
   assert.match(r.note[1], /fallback chart, not one extracted from the product’s page/);
   assert.match(r.note.join(' '), /hasn’t been confirmed on this product’s own page/);
   assert.strictEqual(r.trace[0].phase, 'connect', 'what was tried is still reported');
-});
+}));
 
-await test('a body-size fallback can never start a garment comparison', async () => {
-  const r = await read(UQ_OVERSIZED, { [UQ_OVERSIZED]: { throws: 'abort' } });
+await test('a body-size fallback can never start a garment comparison, and says the product’s own measurements weren’t found', () => listedUnderGeneral(async () => {
+  const r = await read(UQ_LISTED, { [UQ_LISTED]: { throws: 'abort' } });
   assert.strictEqual(r.comparable, false);
   assert.strictEqual(r.productId, undefined, 'no record to compare against');
-  assert.ok(!r.charts.some((c) => c.measures === 'finished-garment'));
+  assert.ok(!r.charts.some((c) => c.measures === 'finished-garment'), 'no garment chart is made up from the body chart');
   assert.strictEqual(require('../api/_sizing/records').byId(r.fallback.chartId), null, 'the chart is not a sizing record the compare endpoint would accept');
   assert.match(r.note.join(' '), /can’t be set beside a garment you own/);
-});
-
-await test('E471808’s own Product Size chart is said to be missing — with when and how it was looked for — and nothing stands in for it', async () => {
-  const r = await read(UQ_OVERSIZED, { [UQ_OVERSIZED]: { throws: 'abort' } });
-  assert.strictEqual(r.productSize.status, 'not-retrieved');
-  assert.strictEqual(r.productSize.checkedAt, new Date().toISOString().slice(0, 10), 'the date of this attempt');
-  assert.ok(r.productSize.tried.length >= 3, 'and where else it was looked for, as recorded');
-  assert.ok(r.productSize.tried.some((t) => /refuses www\.uniqlo\.com/.test(t)), 'this environment’s refusal is recorded');
-  assert.ok(!('values' in r.productSize) && !('sizes' in r.productSize), 'no garment value is held for it');
-  assert.deepStrictEqual(r.charts.map((c) => c.measures), ['body'], 'no garment chart is made up from the body chart');
+  assert.deepStrictEqual([r.productSize.status, r.productSize.checkedAt], ['not-retrieved', new Date().toISOString().slice(0, 10)]);
   assert.ok(r.note.some((n) => /^This product’s own measurements — a Product Size chart, where UNIQLO publishes one — weren’t found \(looked for \d{4}-\d{2}-\d{2}\): its page couldn’t be read\. None are shown, and none are worked out from a body chart\.$/.test(n)));
-  assert.deepStrictEqual([r.comparable, r.verification], [false, 'official-general']);
-});
+}));
 
-await test('a page that loads but holds no chart gets the same fallback, saying the page was read', async () => {
-  const shell = '<!doctype html><html><head><title>Sweat Oversized Pullover Hoodie | UNIQLO US</title></head><body><div id="root"></div><script src="/app.js"></script></body></html>';
-  const r = await read(UQ_OVERSIZED, { [UQ_OVERSIZED]: { body: shell } });
+await test('a page that loads but holds no chart gets the same fallback, saying the page was read', () => listedUnderGeneral(async () => {
+  const shell = '<!doctype html><html><head><title>FIXTURE Listed Hoodie | UNIQLO US</title></head><body><div id="root"></div><script src="/app.js"></script></body></html>';
+  const r = await read(UQ_LISTED, { [UQ_LISTED]: { body: shell } });
   assert.deepStrictEqual([r.status, r.fallback.reason], ['fallback', 'needs-script']);
   assert.match(r.note[0], /^Fynd read this product’s page, but found no size chart in it/);
   assert.ok(!/timed out/.test(r.note.join(' ')));
-});
+}));
 
 await test('no fallback is invented: another UNIQLO product, another market, or another shop stays honestly unavailable', async () => {
   const other = 'https://www.uniqlo.com/us/en/products/E999999-000/00';
   const a = await read(other, { [other]: { throws: 'abort' } });
   assert.deepStrictEqual([a.status, a.reason, a.charts], ['unavailable', 'no-answer', []]);
   assert.strictEqual(a.source.url, other, 'the official page is still linked');
+  /* E471808 in another market: neither its US record nor the US general chart */
   const uk = 'https://www.uniqlo.com/uk/en/products/E471808-000/00';
-  assert.strictEqual((await read(uk, { [uk]: { throws: 'abort' } })).status, 'unavailable');
+  const ukr = await read(uk, { [uk]: { throws: 'abort' } });
+  assert.deepStrictEqual([ukr.status, ukr.charts, ukr.productId], ['unavailable', [], undefined]);
   const b = await read(SHOP, { [SHOP]: { throws: 'abort' } });
   assert.deepStrictEqual([b.status, b.reason], ['unavailable', 'no-answer']);
   assert.strictEqual(officialCharts.fallbackFor(charts.checkUrl('https://www.uniqlo.com/us/en/products/E4718080-000/00')), null, 'a code is matched whole');
 });
 
-await test('a page that does give its own chart is used, not the fallback', async () => {
-  const r = await read(UQ_OVERSIZED, { [UQ_OVERSIZED]: { body: BODY_IN } });
+await test('a page that does give its own chart is used, not the fallback', () => listedUnderGeneral(async () => {
+  const r = await read(UQ_LISTED, { [UQ_LISTED]: { body: BODY_IN } });
   assert.deepStrictEqual([r.status, r.from, r.scope], ['ok', 'live-page', 'product-page']);
-});
+}));
 
 await test('the official-chart loader refuses a chart that disagrees with its sources, isn’t a body chart, or reaches past its category', () => {
   assert.deepStrictEqual(officialCharts.problems, []);
@@ -1594,9 +1596,11 @@ await test('the official-chart loader refuses a chart that disagrees with its so
   assert.ok(variant((c) => { c.evidence[0].url = 'https://uniqlloshop.it.com/product/sweat-pullover-hoodie/'; }).length, 'evidence off the brand’s site');
   assert.ok(variant((c) => { delete c.products[0].identity; }).length, 'a product with no account of how it is known');
   /* a fallback product's productSize may only say it wasn't retrieved: garment values belong in a record */
-  assert.ok(variant((c) => { c.products[0].productSize.status = 'verified'; }).some((e) => /productSize may only say it was not retrieved/.test(e)), 'a claimed Product Size');
-  assert.ok(variant((c) => { c.products[0].productSize.values = { M: { chestWidth: '24' } }; }).some((e) => /productSize may only say/.test(e)), 'garment values in a fallback');
-  assert.ok(variant((c) => { c.products[0].productSize.tried = []; }).some((e) => /its date and what was tried/.test(e)), 'no account of what was tried');
+  const ps = (extra) => (c) => { c.products[0].productSize = Object.assign({ status: 'not-retrieved', checkedAt: '2026-10-19', tried: ['FIXTURE: somewhere'] }, extra); };
+  assert.deepStrictEqual(variant(ps({})), [], 'saying where it was looked for is allowed');
+  assert.ok(variant((c) => { ps({})(c); c.products[0].productSize.status = 'verified'; }).some((e) => /productSize may only say it was not retrieved/.test(e)), 'a claimed Product Size');
+  assert.ok(variant(ps({ values: { M: { chestWidth: '24' } } })).some((e) => /productSize may only say/.test(e)), 'garment values in a fallback');
+  assert.ok(variant(ps({ tried: [] })).some((e) => /its date and what was tried/.test(e)), 'no account of what was tried');
   assert.deepStrictEqual(variant((c) => { delete c.products[0].productSize; }), [], 'saying nothing about it is allowed');
 });
 
@@ -1771,6 +1775,86 @@ await test('a draft record from extracted tables: the product’s identity, ever
   assert.strictEqual(draftFrom({ status: 'unavailable', reason: 'no-answer' }).draft, null);
 });
 
+section('E471808: the Product Size table supplied for it, pending review');
+
+/* The table as it was supplied (transcribed from UNIQLO's official
+   Product Size tab for E471808, inches). These are the record's own
+   values, not a fixture; Fynd has not read them from uniqlo.com. */
+const E471808_SUPPLIED = [
+  ['XXS', '25 1/4', '21 1/2', '21 1/4', '32 1/4'], ['XS', '26', '22', '22 1/2', '32 3/4'], ['S', '27 1/4', '22 3/4', '23 1/2', '33 3/4'],
+  ['M', '28 1/4', '23 1/4', '24 3/4', '34 3/4'], ['L', '29 1/2', '24', '26 1/2', '35 3/4'], ['XL', '30 1/4', '24 3/4', '28', '36 1/4'],
+  ['XXL', '30 1/2', '25 1/2', '29 1/4', '36 1/2'], ['3XL', '31 1/4', '26 1/2', '30 3/4', '37']
+];
+const E471808_ID = 'uniqlo-e471808-sweat-oversized-pullover-hoodie-us';
+
+await test('E471808: its own Product Size chart — eight sizes, four columns, inches, as supplied — leads UNIQLO’s general body chart, pending review, with nothing read', async () => {
+  const log = [];
+  const r = await read(`${UQ_OVERSIZED}?colorDisplayCode=09&sizeDisplayCode=005`, {}, log);
+  assert.deepStrictEqual(log, [], 'the record answers; uniqlo.com is not asked');
+  assert.deepStrictEqual([r.status, r.from, r.productId, r.verification, r.comparable, r.capture], ['ok', 'fynd-record', E471808_ID, 'unverified', false, 'supplied-transcription']);
+  assert.deepStrictEqual(r.product, { brand: 'UNIQLO', name: 'Sweat Oversized Pullover Hoodie', code: 'E471808-000' });
+  assert.deepStrictEqual(r.charts.map((c) => [c.measures, c.origin, c.verification]), [['finished-garment', 'fynd-record', 'unverified'], ['body', 'official-general', 'official-general']]);
+  const g = r.charts[0];
+  assert.deepStrictEqual(g.columns, ['Length (back)', 'Shoulder width', 'Chest', 'Sleeve length (center back)'], 'the dimensions’ own names');
+  assert.strictEqual(g.unit, 'in');
+  assert.deepStrictEqual(g.rows.map((x) => [x.size, ...x.values]), E471808_SUPPLIED, 'every value exactly as supplied');
+  assert.deepStrictEqual(g.methods, ['from the centre back', 'across the broadest part of the shoulders', 'flat, armpit to armpit', 'from the centre back'], 'shoulders by UNIQLO’s own instruction, never assumed seam to seam');
+  assert.strictEqual(g.source.url, 'https://www.uniqlo.com/us/en/products/E471808-000/00/size?sizeDisplayCode=005&measurementUnit=inch');
+  assert.match(g.recordFrom, /^transcribed from UNIQLO’s official size guide and supplied to Fynd on 2026-10-20 — Fynd hasn’t read the page itself$/);
+  assert.strictEqual(r.source.url, UQ_OVERSIZED);
+  assert.ok(r.otherSources.some((o) => o.url === 'https://faq-us.uniqlo.com/articles/en_US/FAQ/How-to-Measure'), 'how each column is measured, sourced');
+  /* the general body chart beside it is labelled general, and comes second */
+  assert.strictEqual(r.charts[1].label, 'Official UNIQLO body-size chart — not garment measurements.');
+  assert.ok(!r.productSize, 'the product’s own measurements are held');
+  assert.ok(r.note.some((n) => /^The garment chart is from Fynd’s record of this product, transcribed from UNIQLO’s official size guide and supplied to Fynd on 2026-10-20 — Fynd hasn’t read the page itself; not yet checked\.$/.test(n)));
+  assert.ok(r.note.some((n) => /^The body chart is UNIQLO’s general chart for this kind of product, not this product’s own\.$/.test(n)));
+  /* the record says how it was captured and that its check is pending; the schema won't let it be both */
+  const rec = sizing.byId(E471808_ID);
+  assert.deepStrictEqual([rec.capture.how, rec.review.status, rec.verification.status, rec.product.retailerProductId], ['supplied-transcription', 'pending', 'unverified', '489933']);
+  const both = JSON.parse(JSON.stringify(rec));
+  both.verification = { status: 'verified', checkedBy: 'Someone', checkedAt: '2026-10-20' };
+  assert.ok(sizingSchema.validate(both).some((e) => e.field === 'review'), 'still pending review: can’t be verified');
+  both.review.status = 'done';
+  assert.deepStrictEqual(sizingSchema.validate(both), [], 'checked and approved, it can be');
+});
+
+await test('a general body chart joins a garment-only record only where it applies to that exact product; a record with its own body chart keeps its own', async () => {
+  const hoodie = await read('https://www.uniqlo.com/us/en/products/E475378-000/00', {});
+  assert.deepStrictEqual(hoodie.charts.map((c) => c.origin), ['fynd-record', 'fynd-record'], 'its own body chart, not the general one');
+  const zara = await read('https://www.zara.com/us/en/basic-heavyweight-hoodie-p00761810.html', {});
+  assert.deepStrictEqual(zara.charts.map((c) => [c.measures, c.origin]), [['finished-garment', 'fynd-record']], 'no general chart is listed for it');
+  /* E471808's record answers only E471808 in the US */
+  const near = 'https://www.uniqlo.com/us/en/products/E4718080-000/00';
+  const n = await read(near, { [near]: { throws: 'abort' } });
+  assert.ok(n.productId !== E471808_ID && !n.charts.length);
+  const other = 'https://www.uniqlo.com/us/en/products/E475377-000/00';
+  assert.strictEqual((await read(other, {})).productId, 'uniqlo-e475377-sweatshirt-us', 'another UNIQLO hoodie-like top keeps its own record');
+});
+
+await test('only verified, compatible garment measurements are compared: E471808 is refused while pending; once checked, only what was measured the same way is compared', () => {
+  const rec = sizing.byId(E471808_ID);
+  const measured = hoodieRef({ brand: 'Carhartt', size: 'L', measurements: { unit: 'in', chestWidth: 24, bodyLength: 28, shoulderWidth: 22, sleeveLength: 34 } });
+  const refused = engine.compare(measured, rec);
+  assert.deepStrictEqual([refused.status, refused.missing[0].code], ['insufficient', 'unverified-data']);
+  assert.strictEqual(sizing.summary(rec).comparable, false);
+  /* the same record, as if checked and approved (a copy made here; the file stays pending) */
+  const checked = JSON.parse(JSON.stringify(rec));
+  checked.verification = { status: 'verified', checkedBy: 'Test checker', checkedAt: '2026-10-20' };
+  checked.review.status = 'done';
+  const home = engine.compare(measured, checked);
+  assert.deepStrictEqual(home.dimensionsCompared, ['chestWidth'], 'a reference measured at home shares only the flat chest with UNIQLO’s methods');
+  assert.deepStrictEqual(home.notCompared.map((x) => x.dim).sort(), ['bodyLength', 'shoulderWidth', 'sleeveLength']);
+  /* against UNIQLO's own checked hoodie, M: chest, length and sleeves measured alike; shoulders not */
+  const uq = engine.compare(hoodieRef({ brand: 'UNIQLO', size: 'M', product: { url: 'https://www.uniqlo.com/us/en/products/E475378-000/00' } }), checked);
+  assert.deepStrictEqual(uq.dimensionsCompared, ['chestWidth', 'bodyLength', 'sleeveLength']);
+  const m = uq.sizes.find((x) => x.size === 'M').dimensions;
+  assert.deepStrictEqual([m.chestWidth.candidate, m.chestWidth.reference, m.chestWidth.difference], [24.75, 23.5, 1.25], 'this product’s M against the reference’s M — its own values');
+  assert.ok(!m.shoulderWidth || !m.shoulderWidth.compared);
+  assert.ok(uq.caveats.some((c) => /shoulders: measured differently/.test(c)));
+  /* a body chart never: the general chart beside it is not a record */
+  assert.strictEqual(sizing.byId('uniqlo-us-men-tops-body'), null);
+});
+
 section('browsing a brand in Find Fit');
 
 const brandsIndex = require('../api/_sizing/brands');
@@ -1795,7 +1879,7 @@ await test('every UNIQLO product listed is a real one Fynd sourced: a sizing rec
     if (p.imageUrl) assert.match(p.imageUrl, new RegExp(`^https://image\\.uniqlo\\.com/.*${p.code.slice(1, 7)}`), 'a photo carries its product’s code');
   });
   const holds = Object.fromEntries(products.map((p) => [p.code, p.holds]));
-  assert.deepStrictEqual(holds, { 'E475378-000': 'checked-chart', 'E475377-000': 'checked-chart', 'E455365-000': 'unchecked-chart', 'E471808-000': 'general-chart', 'E429066-000': 'live-only' });
+  assert.deepStrictEqual(holds, { 'E475378-000': 'checked-chart', 'E475377-000': 'checked-chart', 'E455365-000': 'unchecked-chart', 'E471808-000': 'unchecked-chart', 'E429066-000': 'live-only' });
 });
 
 await test('a catalogue snapshot (FIXTURE) adds UNIQLO’s listed products: rows that break a rule are dropped, known products keep what Fynd holds, and only men’s tops in UNIQLO’s own categories fall under the general men’s chart', () => {
@@ -1841,9 +1925,15 @@ await test('a product’s page holds only what Fynd has, each with its source, a
   });
   hoodie.gallery.forEach((u) => assert.match(u, /^https:\/\/image\.uniqlo\.com\/UQ\/ST3\/WesternCommon\/imagesgoods\/475378\//));
   /* no record: no sizes, fabric or fit — said, not filled */
+  const merino = uniqloBrand.detail('E429066-000');
+  assert.deepStrictEqual([merino.sizes, merino.fit, merino.material], [null, null, null]);
+  assert.ok(['sizes', 'fabric', 'fit'].every((m) => merino.missing.includes(m)));
+  /* a record supplied as a transcription: its sizes and fit, said to be transcribed and unchecked; no fabric it doesn't hold */
   const oversized = uniqloBrand.detail('E471808-000');
-  assert.deepStrictEqual([oversized.sizes, oversized.fit, oversized.material], [null, null, null]);
-  assert.ok(['sizes', 'fabric', 'fit'].every((m) => oversized.missing.includes(m)));
+  assert.deepStrictEqual(oversized.sizes.list, ['XXS', 'XS', 'S', 'M', 'L', 'XL', 'XXL', '3XL']);
+  assert.match(oversized.sizes.source, /transcribed from UNIQLO’s official size guide and supplied to Fynd on 2026-10-20 — Fynd hasn’t read the page itself/);
+  assert.deepStrictEqual([oversized.fit.words, oversized.material, oversized.recordVerified], ['Oversized', null, false]);
+  assert.ok(oversized.missing.includes('fabric') && !oversized.missing.includes('sizes'));
   assert.strictEqual(uniqloBrand.detail('E999999-000'), null);
   assert.strictEqual(uniqloBrand.detail('https://www.uniqlo.com/us/en/products/E475378-000/00'), null);
 });
@@ -1877,11 +1967,12 @@ await test('/api/size-recommendation lists brands and products, and looks a chos
     const hoodie = await get({ brand: 'uniqlo', item: 'E475378-000' });
     assert.deepStrictEqual([hoodie.status, hoodie.body.chart.from, hoodie.body.chart.verification, hoodie.body.item.code], [200, 'fynd-record', 'verified', 'E475378-000']);
     assert.deepStrictEqual(asked, []);
-    /* E471808: its page doesn't answer, so UNIQLO's general body chart — a fallback, never comparable */
+    /* E471808: its own Product Size record first (pending review, never compared), UNIQLO's general body chart after it; nothing read */
     const oversized = await get({ brand: 'uniqlo', item: 'E471808-000' });
-    assert.deepStrictEqual([oversized.body.chart.status, oversized.body.chart.from, oversized.body.chart.scope, oversized.body.chart.comparable], ['fallback', 'official-fallback', 'brand-general', false]);
-    assert.deepStrictEqual(oversized.body.chart.charts.map((c) => c.measures), ['body']);
-    assert.deepStrictEqual(asked, [UQ_OVERSIZED_URL], 'the address came from the brand module');
+    assert.deepStrictEqual([oversized.body.chart.status, oversized.body.chart.from, oversized.body.chart.verification, oversized.body.chart.comparable], ['ok', 'fynd-record', 'unverified', false]);
+    assert.deepStrictEqual(oversized.body.chart.charts.map((c) => [c.measures, c.origin]), [['finished-garment', 'fynd-record'], ['body', 'official-general']]);
+    assert.deepStrictEqual(asked, [], 'a record of the product’s own measurements needs no read');
+    assert.strictEqual(UQ_OVERSIZED_URL, oversized.body.item.url, 'the address came from the brand module');
     /* E429066: no record, no general chart — its page doesn't answer, so honestly unavailable, never E471808's fallback */
     const merino = await get({ brand: 'uniqlo', item: 'E429066-000' });
     assert.deepStrictEqual([merino.body.chart.status, merino.body.chart.reason, merino.body.chart.charts], ['unavailable', 'no-answer', []]);

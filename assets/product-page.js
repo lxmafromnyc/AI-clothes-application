@@ -219,7 +219,7 @@
     /* where everything on the page came from, and what Fynd doesn't hold */
     const sources = [
       p(`Product ID ${product.code.slice(1, 7)} (${product.code}), UNIQLO ${product.market}.`),
-      p(product.recordedAt ? `Sizes, fabric and fit are from Fynd’s saved record, copied from UNIQLO’s page on ${product.recordedAt} — not read live.` : 'Fynd has no saved record of this product’s details; only its listing and photos.'),
+      p(product.recordedAt ? `Sizes, fabric and fit are from Fynd’s saved record, ${product.recordFrom || `copied from UNIQLO’s page on ${product.recordedAt}`} — not read live${product.recordVerified === false ? ', and not yet checked' : ''}.` : 'Fynd has no saved record of this product’s details; only its listing and photos.'),
       product.sizes ? p(`Sizes from ${product.sizes.source}. Fynd doesn’t know which sizes are in stock.`) : null,
       p(product.coloursNote),
       p(product.imagesFrom ? `Photos from ${product.imagesFrom}.` : 'Fynd holds no photo of this product.'),

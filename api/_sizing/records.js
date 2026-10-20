@@ -18,6 +18,7 @@ const FILES = [
   require('./records/carhartt-k121-loose-fit-midweight-hoodie-us.json'),
   require('./records/carhartt-k124-loose-fit-midweight-crewneck-us.json'),
   require('./records/uniqlo-e455365-supima-cotton-tshirt-us.json'),
+  require('./records/uniqlo-e471808-sweat-oversized-pullover-hoodie-us.json'),
   require('./records/nike-ih1121-premium-essentials-tshirt-us.json'),
   require('./records/hm-0685816-regular-fit-tshirt-us.json'),
   require('./records/zara-01887411-basic-medium-weight-tshirt-us.json'),
@@ -64,4 +65,17 @@ const summary = (record) => {
   };
 };
 
-module.exports = { RECORDS, byId, summary, problems };
+/* How a record's values reached Fynd (schema.js, `capture`), in the
+   words every place that shows the record uses. */
+function recordFrom(record) {
+  const how = (record.capture && record.capture.how) || 'copied-from-page';
+  const at = (record.capture && record.capture.at) || record.retrievedAt;
+  return {
+    'copied-from-page': `copied from ${record.brand}’s page on ${at}`,
+    'supplied-transcription': `transcribed from ${record.brand}’s official size guide and supplied to Fynd on ${at} — Fynd hasn’t read the page itself`,
+    'browser-extension': `read by the Fynd extension from ${record.brand}’s page on ${at}`,
+    'server-read': `read by Fynd from ${record.brand}’s page on ${at}`
+  }[how];
+}
+
+module.exports = { RECORDS, byId, summary, problems, recordFrom };

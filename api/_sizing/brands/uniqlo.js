@@ -40,7 +40,7 @@
 
 'use strict';
 
-const { RECORDS } = require('../records');
+const { RECORDS, recordFrom } = require('../records');
 const officialCharts = require('../official-charts');
 const schema = require('../schema');
 const listings = require('./uniqlo-listings.json');
@@ -141,6 +141,7 @@ function detail(code) {
   const gallery = found && Array.isArray(found.subs) ? found.subs.filter(ours).slice(0, 12) : [];
   const missing = ['price', 'description', 'care', 'reviews', 'availability'];
   if (!record) missing.push('sizes', 'fabric', 'fit');
+  else if (!record.material || !record.material.composition) missing.push('fabric');
   return {
     brand: 'UNIQLO',
     market: 'US',
@@ -159,10 +160,12 @@ function detail(code) {
       ? 'Colours UNIQLO has photographed for this product, from its image host — not proof that each is on sale now.'
       : 'Only one photo of this product is known to Fynd, so its other colours aren’t shown.',
     gallery,
-    sizes: record ? { list: record.sizes.slice(), source: `Fynd’s record of this product, copied from UNIQLO’s page on ${record.retrievedAt}` } : null,
+    sizes: record ? { list: record.sizes.slice(), source: `Fynd’s record of this product, ${recordFrom(record)}` } : null,
     fit: record && record.fit ? { words: record.fit.brandWords, source: record.fit.source } : null,
-    material: record && record.material ? { text: record.material.composition, source: record.material.source } : null,
+    material: record && record.material && record.material.composition ? { text: record.material.composition, source: record.material.source } : null,
     recordedAt: record ? record.retrievedAt : null,
+    recordFrom: record ? recordFrom(record) : null,
+    recordVerified: record ? schema.isVerified(record) : null,
     imagesFrom: found ? 'image.uniqlo.com, at addresses carrying this product’s code' : (p.imageUrl ? 'image.uniqlo.com' : null),
     missing
   };

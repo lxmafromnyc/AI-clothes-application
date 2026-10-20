@@ -627,6 +627,7 @@ strong { font-weight: 600; }
 .size-chart-facts dd { margin: 0; color: var(--color-text); }
 .size-chart-table { margin-top: 16px; }
 .size-chart-name { font-size: 16px; }
+.size-chart-pending { display: inline-block; margin-left: 8px; padding: 1px 8px; border: 1px solid var(--color-warning-line); border-radius: 999px; background: var(--color-warning-soft); font-size: 12px; font-weight: 500; color: var(--color-warning-ink); vertical-align: middle; }
 .size-chart-kind { margin-top: 2px; font-size: 14px; color: var(--color-text-2); }
 .size-chart-caveat { margin-top: 12px; padding: 8px 12px; border: 1px solid var(--color-warning-line); border-radius: var(--r); background: var(--color-warning-soft); font-size: 14px; color: var(--color-warning-ink); }
 .size-chart-status { font-size: 16px; font-weight: 600; color: var(--color-text); }
@@ -644,6 +645,7 @@ strong { font-weight: 600; }
 .size-chart-origin, .size-chart-gaps { margin-top: 2px; font-size: 13px; color: var(--color-text-muted); }
 .size-chart-caption, .size-chart-unit { margin-top: 2px; font-size: 13px; color: var(--color-text-muted); }
 .size-chart-scroll { margin-top: 8px; overflow-x: auto; }
+.size-chart-scroll td { white-space: nowrap; }
 .size-chart .compare-table { min-width: 0; }
 .size-chart-labels, .size-chart-fit { margin-top: 14px; font-size: 14px; color: var(--color-text-2); }
 .size-chart-trace { font-size: 13px; color: var(--color-text-2); }

@@ -78,7 +78,7 @@
     if (chart.scope === 'browser-page') return 'Read from the product page open in your browser. Not checked by Fynd.';
     if (chart.scope === 'linked-size-guide') return 'From the retailer’s size guide — possibly a general chart, not this product’s own.';
     if (chart.verification === 'verified') return `This product’s own chart, checked against ${brand}’s page.`;
-    if (chart.verification === 'unverified') return `This product’s own chart, copied from ${brand}’s page — not yet checked.`;
+    if (chart.verification === 'unverified') return `This product’s own chart, ${chart.recordFrom || `copied from ${brand}’s page`} — pending review, not yet checked.`;
     return 'Read from the product page just now — not checked by a person.';
   }
 
@@ -129,6 +129,7 @@
         if (o.linked) hint.textContent = 'The product page may have its own size guide.';
         else hint.append(el('span', null, 'The product page may have its own size guide: '), safeLink(src.url, 'open the product page'));
         out.push(hint);
+        if (!PAGE_READ.includes(chart.reason)) out.push(el('p', 'size-chart-hint', EXTENSION_HINT));
       }
     }
 
@@ -138,18 +139,28 @@
        that is said first, before any body chart */
     if (chart.productSize && ((chart.charts || []).length || chart.status === 'labels-only')) {
       out.push(el('p', 'size-chart-missing', missingLine(chart, o.garment)));
+      if (chart.productSize.status === 'not-retrieved') out.push(el('p', 'size-chart-hint', EXTENSION_HINT));
     }
     /* an answer whose charts come from different places says, chart by
        chart, where each is from and whether it was checked */
     const mixed = new Set((chart.charts || []).map((c) => c.origin || '')).size > 1;
     (chart.charts || []).forEach((c, i) => {
       const section = el('section', 'size-chart-table');
+      /* a brand's general chart is called one, whether it is the whole
+         answer or sits beside the product's own */
+      const generalOne = general || c.origin === 'official-general';
+      const name = (text) => {
+        const h = el('h3', 'size-chart-name', text);
+        /* a record's chart nobody has checked yet says so where it is named */
+        if (c.origin === 'fynd-record' && c.verification === 'unverified') h.append(el('span', 'size-chart-pending', 'Pending review'));
+        return h;
+      };
       if (o.garment) {
-        section.append(el('h3', 'size-chart-name', general ? `General ${[brand, chart.market].filter(Boolean).join(' ')} sizing guide` : KIND_NAME[c.measures] || KIND_NAME['not-stated']));
-        section.append(el('p', 'size-chart-kind', `${kindFor(c.measures, o.garment, general)} · ${UNIT_SHORT[c.unit] || UNIT_SHORT.null}`));
+        section.append(name(generalOne ? `General ${[brand, chart.market].filter(Boolean).join(' ')} sizing guide` : KIND_NAME[c.measures] || KIND_NAME['not-stated']));
+        section.append(el('p', 'size-chart-kind', `${kindFor(c.measures, o.garment, generalOne)} · ${UNIT_SHORT[c.unit] || UNIT_SHORT.null}`));
       } else {
-        section.append(el('h3', 'size-chart-name', general ? `${[brand, chart.market].filter(Boolean).join(' ')} ${c.measures === 'body' ? 'body-size' : 'size'} chart` : KIND_NAME[c.measures] || KIND_NAME['not-stated']));
-        section.append(el('p', 'size-chart-kind', general
+        section.append(name(generalOne ? `${[brand, chart.market].filter(Boolean).join(' ')} ${c.measures === 'body' ? 'body-size' : 'size'} chart` : KIND_NAME[c.measures] || KIND_NAME['not-stated']));
+        section.append(el('p', 'size-chart-kind', generalOne
           ? `General sizing guide · ${c.measures === 'body' ? 'Body measurements, not garment measurements' : KIND[c.measures]}`
           : KIND[c.measures] || KIND['not-stated']));
         section.append(el('p', 'size-chart-unit', `Units: ${UNIT[c.unit] || UNIT.null}`));
@@ -206,11 +217,15 @@
 
   /* Where one chart in a mixed answer is from. */
   const ORIGIN = {
-    'fynd-record': (c, brand) => `From Fynd’s record of this product, copied from ${brand || 'the brand'}’s page${c.retrievedAt ? ` on ${c.retrievedAt}` : ''} — ${c.verification === 'verified' ? 'checked' : 'not yet checked'}.`,
+    'fynd-record': (c, brand) => `From Fynd’s record of this product, ${c.recordFrom || `copied from ${brand || 'the brand'}’s page${c.retrievedAt ? ` on ${c.retrievedAt}` : ''}`} — ${c.verification === 'verified' ? 'checked' : 'pending review, not yet checked'}.`,
     'product-page': () => 'Read from this product’s page just now — not checked.',
     'linked-size-guide': () => 'From the size guide this product’s page links to — possibly a general chart. Not checked.',
     'official-general': (c, brand) => `${brand || 'The brand'}’s general chart — not this product’s own.`
   };
+
+  /* Where else the measurements can be read when Fynd's server can't
+     read the page: the shopper's own browser, when they ask */
+  const EXTENSION_HINT = 'With the Fynd browser extension: open the size guide on the retailer’s page, choose its Product Size tab if it has one, and check from there.';
 
   /* What is said when the product's own measurements weren't found. */
   function missingLine(chart, garment) {
