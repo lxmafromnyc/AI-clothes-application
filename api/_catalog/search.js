@@ -4,7 +4,8 @@
    An index built once, when the brand's products load, so a typed
    query is answered from it and never by scanning every name:
 
-     words      name, category, line and colour names, lower-cased,
+     words      name, category, line, colour names and description,
+                lower-cased,
                 accents and ®/™ dropped, simple plurals folded
                 ("hoodies" → "hoodie"), and a few shop words made one
                 ("tee", "t-shirt", "t shirt" → "tshirt"; "hoody" →
@@ -18,7 +19,10 @@
                 hoodie" on a catalogue with no colour names says that
                 "black" matched nothing rather than pretending it did.
      filters    category, line (a unisex product is in both men's and
-                women's) and, where stock is known, in stock only
+                women's), colour (by family, from the source's own colour
+                names), size and, where stock is known, in stock only —
+                per colour and size together where the source gives
+                stock per variant
      pages      offset and limit (at most MAX_LIMIT), so a catalogue of
                 thousands is never sent, or drawn, all at once
 
@@ -26,6 +30,9 @@
    ========================================================= */
 
 'use strict';
+
+const { colourFamily, COLOUR_FAMILIES } = require('./product');
+const { sortSizes } = require('./import');
 
 const MAX_QUERY = 120;
 const MAX_TERMS = 8;
@@ -43,9 +50,9 @@ function stem(w) {
 }
 
 /* text → [{ raw, term }], in order, without stop words */
-function words(value) {
+function words(value, max) {
   if (typeof value !== 'string') return [];
-  const s = value.slice(0, 400).normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase()
+  const s = value.slice(0, max || 400).normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase()
     .replace(/[®™©]/g, '')
     .replace(/\bt[\s-]?shirts?\b/g, ' tshirt ')
     .replace(/\b(wo)?men['’]s\b/g, (m, wo) => (wo ? ' women ' : ' men '));
@@ -60,13 +67,28 @@ function words(value) {
 
 const LINE_WORDS = { men: ['men'], women: ['women'], unisex: ['unisex', 'men', 'women'], kids: ['kid', 'kids'], baby: ['baby'] };
 
+/* what a product offers to filter on: its own fields, or its catalogue's */
+function factsOf(p) {
+  const c = p.catalogue || {};
+  return {
+    colours: p.colours || c.colours || [],
+    sizes: p.sizeLabels || p.sizes || c.sizes || [],
+    availability: p.availability || c.availability || null,
+    sizeAvailability: p.sizeAvailability || c.sizeAvailability || null,
+    variants: p.variants || c.variants || null,
+    description: p.description || c.description || ''
+  };
+}
+
 /* the words one product is found by */
 function productWords(p) {
+  const facts = factsOf(p);
   const name = new Set(words(p.name).map((w) => w.term));
   const all = new Set(name);
   words(p.categoryLabel || '').forEach((w) => all.add(w.term));
   (LINE_WORDS[p.line] || []).forEach((w) => all.add(w));
-  (p.colours || (p.catalogue && p.catalogue.colours) || []).forEach((c) => words(c && c.name ? c.name : '').forEach((w) => all.add(w.term)));
+  facts.colours.forEach((c) => words(c && c.name ? c.name : '').forEach((w) => all.add(w.term)));
+  words(facts.description, 2000).forEach((w) => all.add(w.term));
   if (typeof p.code === 'string') {
     const code = p.code.toLowerCase();
     all.add(code.replace(/[^a-z0-9]/g, ''));
@@ -94,6 +116,8 @@ function readQuery(raw) {
     q,
     category: word(raw && raw.category),
     line: word(raw && raw.line),
+    colour: raw && COLOUR_FAMILIES.includes(raw.colour) ? raw.colour : 'all',
+    size: raw && typeof raw.size === 'string' && /^[A-Za-z0-9][A-Za-z0-9./ -]{0,11}$/.test(raw.size.trim()) ? raw.size.trim().toUpperCase() : 'all',
     inStock: Boolean(raw && (raw.inStock === '1' || raw.inStock === true)),
     offset: clampInt(raw && raw.offset, 0, MAX_OFFSET, 0),
     limit: clampInt(raw && raw.limit, 1, MAX_LIMIT, DEFAULT_LIMIT)
@@ -105,6 +129,29 @@ function createIndex(products, options) {
   const list = products.slice();
   const order = opts.categoryOrder || [];
   const bag = list.map(productWords);
+  const facts = list.map(factsOf);
+  const families = facts.map((f) => new Set(f.colours.map((c) => colourFamily(c && c.name)).filter(Boolean)));
+  const familyOf = facts.map((f) => new Map(f.colours.map((c) => [c.code, colourFamily(c && c.name)])));
+  const sizeSets = facts.map((f) => new Set(f.sizes.map((x) => String(x).toUpperCase())));
+
+  /* whether product i passes the colour, size and in-stock filters; where
+     stock is known per variant, a colour and size must be in stock together */
+  function offered(i, query, stockKnown) {
+    if (query.colour !== 'all' && !families[i].has(query.colour)) return false;
+    if (query.size !== 'all' && !sizeSets[i].has(query.size)) return false;
+    if (!query.inStock || !stockKnown) return true;
+    const f = facts[i];
+    if (Array.isArray(f.variants) && f.variants.length) {
+      return f.variants.some((v) => IN_STOCK.has(v.availability)
+        && (query.colour === 'all' || familyOf[i].get(v.colour) === query.colour)
+        && (query.size === 'all' || String(v.size).toUpperCase() === query.size));
+    }
+    if (query.size !== 'all' && f.sizeAvailability) {
+      const label = Object.keys(f.sizeAvailability).find((k) => k.toUpperCase() === query.size);
+      if (label) return IN_STOCK.has(f.sizeAvailability[label]);
+    }
+    return IN_STOCK.has(f.availability);
+  }
   const postings = new Map();
   bag.forEach((b, i) => b.all.forEach((w) => {
     if (!postings.has(w)) postings.set(w, []);
@@ -133,25 +180,32 @@ function createIndex(products, options) {
   const facets = (() => {
     const cats = new Map();
     const lines = new Map();
-    list.forEach((p) => {
+    const colours = new Map();
+    const sizes = new Map();
+    list.forEach((p, i) => {
       const g = groupOf(p);
       if (!cats.has(g)) cats.set(g, { value: g, label: p.categoryLabel || g, count: 0 });
       cats.get(g).count += 1;
       lines.set(p.line, (lines.get(p.line) || 0) + 1);
+      families[i].forEach((f) => colours.set(f, (colours.get(f) || 0) + 1));
+      sizeSets[i].forEach((x) => sizes.set(x, (sizes.get(x) || 0) + 1));
     });
     const rank = (v) => { const i = order.indexOf(v); return i >= 0 ? i : order.length; };
     return {
       categories: [...cats.values()].sort((a, b) => rank(a.value) - rank(b.value)),
-      lines: [...lines.entries()].map(([value, count]) => ({ value, count }))
+      lines: [...lines.entries()].map(([value, count]) => ({ value, count })),
+      colours: COLOUR_FAMILIES.filter((f) => colours.has(f)).map((value) => ({ value, count: colours.get(value) })),
+      /* the sizes most products come in, in size order */
+      sizes: sortSizes([...sizes.entries()].sort((a, b) => b[1] - a[1]).slice(0, 30).map(([v]) => v)).map((value) => ({ value, count: sizes.get(value) }))
     };
   })();
 
   function search(raw, settings) {
     const query = readQuery(raw);
     const stockKnown = Boolean(settings && settings.stockKnown);
-    const keep = list.map((p) => (query.category === 'all' || groupOf(p) === query.category)
+    const keep = list.map((p, i) => (query.category === 'all' || groupOf(p) === query.category)
       && inLine(p, query.line)
-      && (!query.inStock || !stockKnown || IN_STOCK.has(p.availability || (p.catalogue && p.catalogue.availability))));
+      && offered(i, query, stockKnown));
     const parsed = words(query.q).slice(0, MAX_TERMS);
     let picked;
     let partial = false;

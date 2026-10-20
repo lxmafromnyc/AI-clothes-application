@@ -18,6 +18,7 @@
      sizes           size labels, smallest first                 'sizes'
      price           { currency, amount, was } in minor units    'price'
      availability    the product's, and per size and variant     'stock'
+     description     plain text, ≤ 2,000 characters              'description'
 
    A field the licence doesn't cover is dropped as the product is read —
    never kept and hidden later. Catalogue records hold no garment
@@ -50,10 +51,37 @@ const CATEGORIES = {
 };
 const LINES = ['men', 'women', 'unisex', 'kids', 'baby'];
 /* what a licence may cover beyond the core fields */
-const LICENSABLE = ['images', 'colours', 'sizes', 'price', 'stock'];
+const LICENSABLE = ['images', 'colours', 'sizes', 'price', 'stock', 'description'];
 const AVAILABILITY = ['in_stock', 'limited', 'out_of_stock', 'preorder'];
 
-const LIMITS = { name: 160, colourName: 40, size: 12, images: 12, colours: 60, sizes: 40, variants: 2400 };
+const LIMITS = { name: 160, colourName: 40, size: 12, images: 12, colours: 60, sizes: 40, variants: 2400, description: 2000 };
+
+/* The colour a shopper filters by, from the source's own colour name:
+   "09 BLACK", "Dark Gray", "Off White" → black, gray, white. A name no
+   word here matches has no family, and is found only by searching for
+   it — never guessed into one. */
+const FAMILIES = [
+  ['white', /\b(white|off[ -]?white|ivory|cream|ecru)\b/],
+  ['black', /\bblack\b/],
+  ['gray', /\b(gr[ae]y|charcoal|heather)\b/],
+  ['navy', /\bnavy\b/],
+  ['blue', /\b(blue|indigo|denim|sky)\b/],
+  ['green', /\b(green|olive|khaki|sage|mint)\b/],
+  ['beige', /\b(beige|natural|sand|camel|oatmeal|taupe)\b/],
+  ['brown', /\b(brown|chocolate|mocha|tan)\b/],
+  ['red', /\b(red|wine|burgundy|maroon)\b/],
+  ['pink', /\b(pink|rose|coral)\b/],
+  ['purple', /\b(purple|lavender|lilac|violet)\b/],
+  ['yellow', /\b(yellow|mustard)\b/],
+  ['orange', /\borange\b/]
+];
+const COLOUR_FAMILIES = FAMILIES.map(([f]) => f);
+function colourFamily(name) {
+  if (typeof name !== 'string') return null;
+  const s = name.toLowerCase();
+  const hit = FAMILIES.find(([, re]) => re.test(s));
+  return hit ? hit[0] : null;
+}
 
 const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 const isPlain = (o) => o !== null && typeof o === 'object' && !Array.isArray(o);
@@ -127,6 +155,11 @@ function optional(raw, adapter, code, licensed, problems, stored) {
     const sizes = [...new Set(raw.sizes.map((s) => text(isPlain(s) ? s.label : s, LIMITS.size)).filter(Boolean))].slice(0, LIMITS.sizes);
     if (sizes.length) out.sizes = sizes;
   }
+  if (licensed.has('description') && raw.description !== undefined && raw.description !== null) {
+    const d = text(raw.description, LIMITS.description);
+    if (d) out.description = d;
+    else problems.push('a description with markup, control characters or over 2,000 characters was dropped');
+  }
   if (licensed.has('price') && stored && raw.price !== undefined && raw.price !== null) {
     /* a catalogue Fynd wrote: minor units already, checked as such */
     const p = raw.price;
@@ -191,4 +224,4 @@ function normalise(raw, adapter, licensed, options) {
   return { product, problems };
 }
 
-module.exports = { CATEGORIES, LINES, LICENSABLE, AVAILABILITY, LIMITS, normalise, text, httpsOn, money, availability, isPlain };
+module.exports = { CATEGORIES, LINES, LICENSABLE, AVAILABILITY, LIMITS, COLOUR_FAMILIES, colourFamily, normalise, text, httpsOn, money, availability, isPlain };

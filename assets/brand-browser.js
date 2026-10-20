@@ -18,7 +18,9 @@
 
    Searching and filtering are the server's (api/_catalog/search.js):
    what is typed is sent once typing pauses, and one page of matches
-   comes back; "Show more" asks for the next page. Only the newest
+   comes back; "Show more" asks for the next page. Filters — type, who
+   it's for, colour, size, in stock — are offered only where the data has
+   them. Only the newest
    answer is drawn. When no product matches every word typed, the
    closest are shown and the words nothing matched are named. When the
    list can't be fetched, it says so; when nothing matches, it says that.
@@ -73,6 +75,8 @@
   let facets = null;
   let category = 'all';
   let line = 'all';
+  let colour = 'all';
+  let size = 'all';
   let inStock = false;
   let asking = 0;
   let typing = null;
@@ -137,7 +141,7 @@
     more.textContent = `Show more (${total - items.length} more)`;
     root.dataset.matching = String(total);
     root.dataset.query = answer.query ? answer.query.q : '';
-    const filtered = category !== 'all' || line !== 'all' || inStock || Boolean(answer.query && answer.query.q);
+    const filtered = category !== 'all' || line !== 'all' || colour !== 'all' || size !== 'all' || inStock || Boolean(answer.query && answer.query.q);
     if (!total && !filtered) return say('No products to show for this brand yet.');
     if (!total) {
       return say(answer.unmatched && answer.unmatched.length && answer.query && answer.query.q
@@ -184,6 +188,19 @@
       lineRow.append(chip('line', 'all', 'Everyone', (v) => { line = v; }), ...lines.map((l) => chip('line', l, LINE_LABELS[l], (v) => { line = v; })));
       rows.push(lineRow);
     }
+    /* colour and size only where the data has them: a catalogue's colour
+       names and size labels, or Fynd's records' sizes */
+    const row = (label, group, values, set, name) => {
+      const r = el('div', 'fit-filter-row');
+      r.setAttribute('role', 'group');
+      r.setAttribute('aria-label', label);
+      r.append(chip(group, 'all', 'Any', set), ...values.map((v) => chip(group, v, name(v), set)));
+      return r;
+    };
+    const colours = ((facets && facets.colours) || []).map((c) => c.value);
+    const sizes = ((facets && facets.sizes) || []).map((c) => c.value);
+    if (colours.length > 1) rows.push(row('Colour', 'colour', colours, (v) => { colour = v; }, (v) => v[0].toUpperCase() + v.slice(1)));
+    if (sizes.length > 1) rows.push(row('Size', 'size', sizes, (v) => { size = v; }, (v) => v));
     if (facets && facets.inStock) {
       const stockRow = el('div', 'fit-filter-row');
       const b = el('button', 'fit-filter', 'In stock only');
@@ -203,7 +220,7 @@
     clearTimeout(typing);
     const sizing = global.Account && global.Account.sizing;
     if (append) { more.disabled = true; } else { root.dataset.state = 'loading'; }
-    const query = { q: search.value.trim(), category, line, inStock, offset: append ? items.length : 0 };
+    const query = { q: search.value.trim(), category, line, colour, size, inStock, offset: append ? items.length : 0 };
     const answer = sizing ? await sizing.catalog(brandSelect.value, query) : { ok: false };
     if (mine !== asking) return;
     if (!(answer.ok && answer.data && Array.isArray(answer.data.products) && answer.data.brand)) {
@@ -241,6 +258,8 @@
     total = 0;
     category = 'all';
     line = 'all';
+    colour = 'all';
+    size = 'all';
     inStock = false;
     grid.replaceChildren();
     filters.replaceChildren();

@@ -11,7 +11,8 @@
       "colours",
       "sizes",
       "price",
-      "stock"
+      "stock",
+      "description"
     ]
   },
   "generatedAt": "2026-10-20T06:00:00.000Z",
@@ -54,6 +55,7 @@
       ],
       "price": "49.90",
       "wasPrice": "59.90",
+      "description": "FIXTURE description: heavyweight fleece with a lined hood and a kangaroo pocket.",
       "availability": "in_stock",
       "variants": [
         {
@@ -905,6 +907,7 @@
         "XXL"
       ],
       "price": "34.90",
+      "description": "FIXTURE description: button-down collar in a cotton oxford weave.",
       "availability": "in_stock",
       "variants": [
         {
@@ -1091,6 +1094,7 @@
         "XXL"
       ],
       "price": "49.90",
+      "description": "FIXTURE description: relaxed denim with a wide leg, made from 100% cotton.",
       "availability": "in_stock",
       "variants": [
         {
@@ -1372,6 +1376,7 @@
       ],
       "price": "59.90",
       "wasPrice": "69.90",
+      "description": "FIXTURE description: water-repellent shell that packs into its own pocket.",
       "availability": "in_stock",
       "variants": [
         {

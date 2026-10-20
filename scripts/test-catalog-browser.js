@@ -50,7 +50,7 @@ for (let i = 0; i < 1200; i += 1) {
   const code = `E${950000 + i}-000`;
   feed.products.push({ id: code, name: `FIXTURE Bulk Crew Neck T-Shirt ${i + 1}`, url: `https://www.uniqlo.com/us/en/products/${code}/00`, category: 'Men > Tops > T-Shirts', gender: 'men', price: '9.90' });
 }
-const synced = sync(null, read(JSON.stringify(feed), adapter, { licensed: ['images', 'colours', 'sizes', 'price', 'stock'] }), adapter, { now: new Date().toISOString(), allowFixture: true });
+const synced = sync(null, read(JSON.stringify(feed), adapter, { licensed: ['images', 'colours', 'sizes', 'price', 'stock', 'description'] }), adapter, { now: new Date().toISOString(), allowFixture: true });
 assert.ok(synced.ok, synced.error);
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'fynd-catalog-browser-'));
 const catalogFile = path.join(tmp, 'uniqlo-us.json');
@@ -213,6 +213,26 @@ async function test(name, fn) {
     await page.context().close();
   });
 
+  await test('colour and size chips come from the catalogue’s own colours and sizes, and narrow the list on the server — with in stock, per colour and size together', async () => {
+    const page = await openPage('index.html');
+    await ready(page);
+    const colours = await page.$$eval('.fit-filter[data-group="colour"]', (bs) => bs.map((b) => b.textContent));
+    assert.deepStrictEqual(colours, ['Any', 'White', 'Black', 'Gray', 'Navy', 'Green', 'Beige']);
+    const sizes = await page.$$eval('.fit-filter[data-group="size"]', (bs) => bs.map((b) => b.textContent));
+    assert.ok(['Any', 'XS', 'S', 'M', 'L', 'XL', '110'].every((x) => sizes.includes(x)), sizes.join(' '));
+    await answered(page, () => page.click('.fit-filter[data-group="kind"]:has-text("Sweatshirts & Hoodies")'));
+    await answered(page, () => page.click('.fit-filter[data-group="colour"][data-value="black"]'));
+    await answered(page, () => page.click('.fit-filter[data-group="size"][data-value="XS"]'));
+    const blackXs = await codes(page);
+    assert.ok(blackXs.includes('E910001-000') && blackXs.includes('E910002-000'), blackXs.join(' '));
+    await answered(page, () => page.click('.fit-filter[data-group="stock"]'));
+    const stocked = await codes(page);
+    assert.ok(!stocked.includes('E910001-000') && stocked.includes('E910002-000'), `E910001 is sold out in black XS: ${stocked.join(' ')}`);
+    await answered(page, () => page.click('.fit-filter[data-group="colour"][data-value="all"]'));
+    assert.ok((await codes(page)).length >= stocked.length);
+    await page.context().close();
+  });
+
   await test('only the newest answer is drawn: a slow earlier answer arriving late never replaces a later one', async () => {
     const page = await openPage('index.html');
     await ready(page);
@@ -273,7 +293,16 @@ async function test(name, fn) {
     assert.match(sources, /Sizes from FIXTURE UNIQLO US feed, updated \d{4}-\d{2}-\d{2} — size labels only, not measurements\. Stock as the catalogue said on/);
     assert.match(sources, /Price from FIXTURE UNIQLO US feed/);
     assert.match(sources, /Listed in FIXTURE UNIQLO US feed, updated/);
-    assert.match(sources, /Not held by Fynd: description, care, reviews, fabric, fit\./);
+    assert.match(sources, /Not held by Fynd: care, reviews, fabric, fit\./, 'its licensed description is held');
+    await page.context().close();
+  });
+
+  await test('a licensed description is shown under Description & features, with where it came from', async () => {
+    const page = await openPage('product.html?brand=uniqlo&item=E910016-000');
+    await page.waitForSelector('#product[data-state="ready"]');
+    await page.click('.pdp-section > summary:has-text("Description & features")');
+    const text = await page.textContent('#pdp-sections .pdp-section:first-child');
+    assert.match(text, /FIXTURE description: water-repellent shell that packs into its own pocket\.Source: FIXTURE UNIQLO US feed, updated \d{4}-\d{2}-\d{2}Read it on UNIQLO/);
     await page.context().close();
   });
 

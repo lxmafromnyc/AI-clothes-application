@@ -31,7 +31,7 @@
 
 const DEFAULTS = { maxRejectRatio: 0.1, maxRemovalRatio: 0.5, massRemovalFloor: 20, unseenDays: 30, removedKept: 500 };
 const VOLATILE = ['price', 'availability', 'sizeAvailability', 'variants'];
-const FIELD_OF = { images: ['images'], colours: ['colours'], sizes: ['sizes'], price: ['price'], stock: ['availability', 'sizeAvailability', 'variants'] };
+const FIELD_OF = { images: ['images'], colours: ['colours'], sizes: ['sizes'], price: ['price'], stock: ['availability', 'sizeAvailability', 'variants'], description: ['description'] };
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -44,6 +44,19 @@ function within(product, licensed) {
 }
 
 const sameFacts = (a, b) => JSON.stringify(Object.assign({}, a, { firstSeenAt: 0, lastSeenAt: 0 })) === JSON.stringify(Object.assign({}, b, { firstSeenAt: 0, lastSeenAt: 0 }));
+
+/* what the catalogue covers: products by category and line, and how many
+   carry each optional field — so a thin feed is seen, not assumed full */
+function coverage(products) {
+  const by = (key) => products.reduce((m, p) => Object.assign(m, { [p[key]]: (m[p[key]] || 0) + 1 }), {});
+  const having = (k) => products.filter((p) => p[k] !== undefined && p[k] !== null).length;
+  return {
+    products: products.length,
+    categories: by('category'),
+    lines: by('line'),
+    with: { images: having('images'), colours: having('colours'), sizes: having('sizes'), price: having('price'), availability: having('availability'), variants: having('variants'), description: having('description') }
+  };
+}
 
 function sync(previous, imported, adapter, options) {
   const opts = Object.assign({}, DEFAULTS, options || {});
@@ -139,7 +152,7 @@ function sync(previous, imported, adapter, options) {
     products: [...next.values()].sort((a, b) => a.code.localeCompare(b.code)),
     removed: removed.concat((prev && Array.isArray(prev.removed) ? prev.removed : []).filter((r) => !next.has(r.code))).slice(0, opts.removedKept)
   };
-  return { ok: true, catalog, report: Object.assign(summary(), { total: catalog.products.length, lastSuccessfulSync: now }) };
+  return { ok: true, catalog, report: Object.assign(summary(), { total: catalog.products.length, lastSuccessfulSync: now, coverage: coverage(catalog.products) }) };
 }
 
-module.exports = { sync, within, DEFAULTS };
+module.exports = { sync, within, coverage, DEFAULTS };

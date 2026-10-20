@@ -1,6 +1,7 @@
 # Fynd — sync UNIQLO's catalogue from its authorized feed
 #
-# By hand only. Runs scripts/sync-catalog.js --api against the feed named
+# By hand, or daily once switched on (UNIQLO_FEED_SCHEDULE). Runs
+# scripts/sync-catalog.js --api against the feed named
 # by the repository secrets below, and uploads the validated catalogue
 # and the sync report as an artifact. It commits nothing: a person reads
 # the report, downloads the artifact, and commits
@@ -11,7 +12,14 @@
 #      (a reviewed change, naming the agreement)
 #   2  set the repository secrets UNIQLO_FEED_URL and UNIQLO_FEED_TOKEN
 #   3  set the repository variable UNIQLO_FEED_LICENSED_FIELDS to what the
-#      licence covers (images, colours, sizes, price, stock)
+#      licence covers (images, colours, sizes, price, stock, description)
+#   4  only if the terms allow a daily pull, set UNIQLO_FEED_SCHEDULE to
+#      "enabled"
+#
+# A scheduled run, like a manual one, uploads the refreshed catalogue as an
+# artifact and commits nothing: what customers see changes only when a
+# person commits it. Prices and stock stop showing 48 hours after the last
+# committed sync, so a daily schedule needs a daily commit to keep them.
 #
 # The credential reaches only the sync step, as an environment variable;
 # the script never prints it. Not one of the required checks.
@@ -19,6 +27,13 @@
 name: UNIQLO catalogue sync
 
 on:
+  # Daily, but only once the sync is switched on (the job's `if` below):
+  # set the repository variable UNIQLO_FEED_SCHEDULE to "enabled" when the
+  # agreement's refresh terms allow a daily pull. Until then a scheduled
+  # run is skipped before any step runs. Change the time to suit the feed's
+  # own refresh, as its terms say.
+  schedule:
+    - cron: '17 7 * * *'
   workflow_dispatch:
     inputs:
       allow_mass_removal:
@@ -26,6 +41,7 @@ on:
         type: boolean
         default: false
 
+# One run at a time; a scheduled run never needs more than reading the repo.
 permissions:
   contents: read
 
@@ -36,6 +52,7 @@ concurrency:
 jobs:
   sync:
     name: Sync the UNIQLO US catalogue
+    if: ${{ github.event_name == 'workflow_dispatch' || vars.UNIQLO_FEED_SCHEDULE == 'enabled' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

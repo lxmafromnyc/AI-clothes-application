@@ -11,7 +11,7 @@
           "source": { "name": "…", "licence": "…", "licensedFields": ["price", …] },
           "generatedAt": "2026-10-20T06:00:00Z",
           "complete": true,            // every live product is listed
-          "products": [ { "id", "name", "url", "category", "gender",
+          "products": [ { "id", "name", "description", "url", "category", "gender",
                           "status": "active" | "discontinued",
                           "images", "colours": [{ "code", "name", "image" }],
                           "sizes", "price", "wasPrice", "availability",
@@ -19,9 +19,11 @@
                           "variants": [{ "colour", "size", "availability" }] } ] }
 
    2  Product-feed rows, one per variant, in the field names shopping
-      product feeds commonly use — a JSON array or JSON Lines:
+      product feeds commonly use (Google Merchant Center's product data
+      specification) — a JSON array, JSON Lines, or a tab- or
+      comma-separated file with a header row:
 
-        { "id", "item_group_id", "title", "link", "image_link",
+        { "id", "item_group_id", "title", "description", "link", "image_link",
           "additional_image_link", "product_type", "gender", "age_group",
           "color", "color_code", "size", "price": "39.90 USD",
           "sale_price", "availability": "in stock" }
@@ -59,6 +61,8 @@ function parse(body) {
   if (Buffer.byteLength(body) > LIMITS.bytes) throw new FeedError(`The feed is larger than ${LIMITS.bytes / 1024 / 1024} MB.`, 'too-large');
   const trimmed = body.replace(/^﻿/, '').trim();
   if (!trimmed) throw new FeedError('The feed is empty.', 'empty');
+  /* a delimited file keeps its trailing empty fields: only line breaks are trimmed */
+  if (trimmed[0] !== '{' && trimmed[0] !== '[') return delimited(body.replace(/^\uFEFF/, '').replace(/^[\r\n]+|[\r\n]+$/g, ''));
   if (trimmed[0] === '{' || trimmed[0] === '[') {
     try { return JSON.parse(trimmed, reviver); } catch (err) {
       /* a JSON Lines file starts with "{" too */
@@ -69,6 +73,47 @@ function parse(body) {
   if (lines.length > LIMITS.rows) throw new FeedError(`The feed has more than ${LIMITS.rows} rows.`, 'too-many-rows');
   return lines.map((line, i) => {
     try { return JSON.parse(line, reviver); } catch (err) { throw new FeedError(`Line ${i + 1} is not valid JSON.`, 'bad-json'); }
+  });
+}
+
+/* A delimited file — tab- or comma-separated, with a header row of the
+   product-feed field names (id, item_group_id, title, link, …), as
+   product feeds are commonly delivered — into rows. Quoted fields may hold
+   the delimiter, doubled quotes and line breaks. Read as text only. */
+function delimited(body) {
+  const firstLine = body.slice(0, body.search(/\r?\n|$/));
+  const sep = firstLine.includes('\t') ? '\t' : ',';
+  const records = [];
+  let row = [];
+  let field = '';
+  let quoted = false;
+  for (let i = 0; i < body.length; i += 1) {
+    const ch = body[i];
+    if (quoted) {
+      if (ch === '"' && body[i + 1] === '"') { field += '"'; i += 1; } else if (ch === '"') quoted = false; else field += ch;
+    } else if (ch === '"' && field === '') quoted = true;
+    else if (ch === sep) { row.push(field); field = ''; }
+    else if (ch === '\n' || ch === '\r') {
+      if (ch === '\r' && body[i + 1] === '\n') i += 1;
+      row.push(field); field = '';
+      if (row.some((f) => f !== '')) records.push(row);
+      row = [];
+      if (records.length > LIMITS.rows + 1) throw new FeedError(`The feed has more than ${LIMITS.rows} rows.`, 'too-many-rows');
+    } else field += ch;
+  }
+  if (quoted) throw new FeedError('The feed ends inside a quoted field.', 'bad-delimited');
+  row.push(field);
+  if (row.some((f) => f !== '')) records.push(row);
+  const header = (records.shift() || []).map((h) => h.trim().toLowerCase());
+  if (!header.includes('id') || !header.includes('title') || !header.includes('link')) {
+    throw new FeedError('This isn’t a feed this import reads: a delimited file needs a header row naming at least id, title and link.', 'unknown-format');
+  }
+  if (new Set(header).size !== header.length) throw new FeedError('The header row names a column twice.', 'bad-delimited');
+  return records.map((r, n) => {
+    if (r.length !== header.length) throw new FeedError(`Row ${n + 2} has ${r.length} columns; the header has ${header.length}.`, 'bad-delimited');
+    const o = {};
+    header.forEach((h, k) => { if (r[k] !== '' && h !== '__proto__' && h !== 'constructor' && h !== 'prototype') o[h] = r[k]; });
+    return o;
   });
 }
 
@@ -93,6 +138,7 @@ function fromFyndRow(row, adapter) {
     url: row.url,
     category: adapter.category(row.category),
     line: adapter.line(row.gender, row.category),
+    description: row.description,
     images: row.images,
     colours: row.colours,
     sizes: Array.isArray(row.sizes) ? sortSizes(row.sizes.filter((s) => typeof s === 'string')) : row.sizes,
@@ -147,6 +193,7 @@ function fromVariantRows(rows, adapter, rejected) {
       record: {
         code,
         name: first.title,
+        description: (group.find((r) => typeof r.description === 'string' && r.description.trim()) || {}).description,
         url: first.link,
         category: adapter.category(first.product_type),
         line: adapter.line([first.gender, first.age_group].filter((g) => typeof g === 'string' && g !== 'adult').join(' '), first.product_type),
@@ -234,4 +281,4 @@ function read(body, adapter, options) {
   return { header, products, discontinued, rejected, duplicates, notes };
 }
 
-module.exports = { read, parse, licensedSet, sortSizes, FeedError, LIMITS };
+module.exports = { read, parse, delimited, licensedSet, sortSizes, FeedError, LIMITS };

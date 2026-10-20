@@ -96,6 +96,8 @@ function build(withCatalogue) {
   };
   RECORDS.filter((r) => r.brand === 'UNIQLO' && r.region === 'US').forEach((r) => add({
     code: r.product.code, name: r.product.name, url: r.product.url, category: r.category, line: r.line, imageUrl: null,
+    /* the sizes it is sold in, from Fynd's record, so a size filter finds it */
+    sizeLabels: r.sizes.slice(),
     holds: schema.isVerified(r) ? 'checked-chart' : 'unchecked-chart', source: `sizing record ${r.id}`
   }));
   officialCharts.CHARTS.filter((c) => c.brand === 'UNIQLO' && c.market === 'US').forEach((c) => (c.products || []).forEach((p) => add({
@@ -127,7 +129,8 @@ function build(withCatalogue) {
       const facts = { catalogue: c };
       const known = out.get(c.code);
       if (known) {
-        out.set(c.code, Object.freeze(Object.assign({}, known, facts, { imageUrl: known.imageUrl || (c.images && c.images[0]) || null })));
+        /* Fynd's record of its sizes wins over the catalogue's */
+        out.set(c.code, Object.freeze(Object.assign({}, known, facts, { imageUrl: known.imageUrl || (c.images && c.images[0]) || null, sizeLabels: known.sizeLabels || c.sizes || undefined })));
         return;
       }
       const general = officialCharts.CHARTS.some((ch) => ch.market === 'US' && officialCharts.covers(ch, c));
@@ -213,7 +216,8 @@ function detail(code, now) {
     sizes.variants = c.variants ? c.variants.map((v) => Object.assign({}, v)) : null;
     sizes.stockAsOf = asOf;
   }
-  const missing = ['price', 'description', 'care', 'reviews', 'availability'].filter((m) => !(m === 'price' && price) && !(m === 'availability' && stock));
+  const description = c && c.description ? { text: c.description, source: `${catalogueName()}, updated ${asOf}` } : null;
+  const missing = ['price', 'description', 'care', 'reviews', 'availability'].filter((m) => !(m === 'price' && price) && !(m === 'availability' && stock) && !(m === 'description' && description));
   if (!record) missing.push(...(sizes ? [] : ['sizes']), 'fabric', 'fit');
   else if (!record.material || !record.material.composition) missing.push('fabric');
   const out = {
@@ -246,6 +250,7 @@ function detail(code, now) {
     missing
   };
   if (price) out.price = price;
+  if (description) out.description = description;
   if (stock && c.availability) out.availability = { state: c.availability, asOf };
   if (c) {
     out.catalogue = {
@@ -280,6 +285,9 @@ function coverage(now) {
 }
 function notice(now) {
   const v = view(now);
+  if (v.fresh.served && !v.fresh.volatile && (licensed('price') || licensed('stock'))) {
+    return `Prices and stock aren’t shown: UNIQLO’s product catalogue was last updated on ${day(feed.LOADED.catalog.lastSuccessfulSync)}, too long ago for them to be current. Check them on UNIQLO’s own page.`;
+  }
   if (v.fresh.served) return null;
   if (feed.LOADED.state === 'loaded') {
     return `Limited selection: UNIQLO’s product catalogue was last updated on ${day(feed.LOADED.catalog.lastSuccessfulSync)}, too long ago to show, so only the products Fynd sourced itself are listed. For any other UNIQLO product, paste its link below.`;
@@ -299,7 +307,7 @@ function search(query, now) {
     query: found.query,
     partial: found.partial,
     unmatched: found.unmatched,
-    facets: { categories: found.facets.categories, lines: found.facets.lines, inStock: stockKnown },
+    facets: { categories: found.facets.categories, lines: found.facets.lines, colours: found.facets.colours, sizes: found.facets.sizes, inStock: stockKnown },
     products: found.items.map((p) => card(p, v.fresh))
   };
 }

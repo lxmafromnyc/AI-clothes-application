@@ -263,7 +263,7 @@
     catalog: (brand, query) => {
       const q = new URLSearchParams({ brand });
       Object.entries(query || {}).forEach(([k, v]) => {
-        if (['q', 'category', 'line', 'inStock', 'offset', 'limit'].includes(k) && v !== undefined && v !== null && v !== '' && v !== 'all' && v !== false && v !== 0) q.set(k, v === true ? '1' : String(v));
+        if (['q', 'category', 'line', 'colour', 'size', 'inStock', 'offset', 'limit'].includes(k) && v !== undefined && v !== null && v !== '' && v !== 'all' && v !== false && v !== 0) q.set(k, v === true ? '1' : String(v));
       });
       return call(`size-recommendation?${q}`);
     },

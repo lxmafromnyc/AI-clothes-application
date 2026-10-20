@@ -224,8 +224,16 @@
     retailer.href = product.url;
     retailer.target = '_blank';
     retailer.rel = 'noopener noreferrer';
-    const describe = p('Fynd doesn’t hold UNIQLO’s description or feature list for this product. ');
-    describe.append(retailer);
+    let describe;
+    if (product.description) {
+      describe = sourced(product.description.text, product.description.source);
+      const more = p('');
+      more.append(retailer);
+      describe.append(more);
+    } else {
+      describe = p('Fynd doesn’t hold UNIQLO’s description or feature list for this product. ');
+      describe.append(retailer);
+    }
 
     const fitNodes = [];
     if (product.fit) fitNodes.push(sourced(`Fit: ${product.fit.words}`, product.fit.source));

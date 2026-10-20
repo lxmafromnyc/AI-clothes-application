@@ -106,7 +106,9 @@ async function main(argv, deps) {
       reason,
       error: safe,
       lastSuccessfulSync: previous && previous.lastSuccessfulSync ? previous.lastSuccessfulSync : null,
-      products: previous && Array.isArray(previous.products) ? previous.products.length : 0
+      products: previous && Array.isArray(previous.products) ? previous.products.length : 0,
+      /* this attempt's feed, when it got far enough to be read */
+      feed: report ? { rows: report.read + report.rejected + report.discontinued + report.duplicateCount, read: report.read, rejected: report.rejected, duplicates: report.duplicateCount, rejectedRows: report.rejectedRows.slice(0, 20) } : null
     });
     return 1;
   };
@@ -151,7 +153,9 @@ async function main(argv, deps) {
     reason: null,
     error: null,
     lastSuccessfulSync: result.catalog.lastSuccessfulSync,
-    products: result.catalog.products.length
+    products: result.catalog.products.length,
+    feed: { rows: result.report.read + result.report.rejected + result.report.discontinued + result.report.duplicateCount, read: result.report.read, rejected: result.report.rejected, duplicates: result.report.duplicateCount, rejectedRows: result.report.rejectedRows.slice(0, 20) },
+    coverage: result.report.coverage
   });
   d.log(`Wrote ${result.catalog.products.length} products to ${path.relative(REPO, out)}. Read the report and the diff before committing it.`);
   return 0;

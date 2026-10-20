@@ -2223,6 +2223,23 @@ Nothing here reads UNIQLO's website, and no catalogue — real or test — is
 committed. Fynd will not claim full-catalogue support until a real feed has
 been imported and validated.
 
+**Where an authorized feed could come from** (looked into 20 October 2026, from
+public listings only — none of it verified from inside a network account):
+
+| Route | What was found | What it would take |
+| --- | --- | --- |
+| UNIQLO directly | No public product API, feed or data-licensing programme for the US site. | Written permission from UNIQLO USA naming the feed, the fields Fynd may show, refresh and retention terms. |
+| Rakuten Advertising | Third-party directories list a "UNIQLO USA" programme on Rakuten. | A Rakuten publisher account, approval by UNIQLO's programme, then the programme's product-feed access (if it offers one) and its terms. |
+| FlexOffers | FlexOffers' own listing shows the UNIQLO USA programme as **Deactivated** (last updated 31 July 2026). | Not available unless reactivated. |
+| LinkConnector | A directory says the UNIQLO campaign's links come "from the product feed or link manager". | A LinkConnector publisher account and approval; then confirm the feed's coverage and terms. |
+| Third-party scraping APIs (e.g. storefront scrapers) | Exist. | **Not used**: unauthorized. |
+
+A daily-refreshed UNIQLO feed is mentioned only by secondary sources. Whether
+any of these feeds covers the full US catalogue, carries online availability,
+or may be stored and indexed by Fynd can only be read from the network's own
+feed documentation and programme terms once approved. Until then the questions
+in "Connecting a real feed" below are unanswered, and nothing is connected.
+
 **The pieces** (`api/_catalog/`), each knowing nothing of the UI:
 
 | File | Does |
@@ -2245,20 +2262,25 @@ been imported and validated.
    `colours` (`code`, `name`, `image`), `sizes`, `price`, `wasPrice`,
    `availability`, `sizeAvailability`, `variants` (`colour`, `size`,
    `availability`).
-2. *Product-feed rows*, one per variant, in the field names shopping product
-   feeds use: `id`, `item_group_id` (the product's exact ID), `title`, `link`,
-   `image_link`, `additional_image_link`, `product_type`, `gender`,
-   `age_group`, `color`, `color_code`, `size`, `price` (`"39.90 USD"`),
-   `sale_price`, `availability`. They carry no header, so `--complete` and
-   `--generated-at` say what the file can't.
+2. *Product-feed rows*, one per variant, in the field names of Google Merchant
+   Center's product data specification, which affiliate networks' feeds
+   commonly follow: `id`, `item_group_id` (the product's exact ID), `title`,
+   `description`, `link`, `image_link`, `additional_image_link`,
+   `product_type`, `gender`, `age_group`, `color`, `color_code`, `size`,
+   `price` (`"39.90 USD"`), `sale_price`, `availability`. As a JSON array, JSON
+   Lines, or a tab- or comma-separated file with a header row (quoted fields
+   may hold the delimiter, quotes and line breaks). They carry no header
+   saying what they cover, so `--complete` and `--generated-at` say what the
+   file can't.
 
 A real feed in another shape needs only a new reader in `import.js` mapping it
 onto the same fields; nothing after the import changes.
 
 **What is kept.** The ID, name, canonical link (rebuilt as
 `https://www.uniqlo.com/us/en/products/<ID>/00`, and only from a link to that
-product's own page), category and line, always. Photos, colours, sizes, price
-and stock **only when the feed supplies them and the licence covers them**:
+product's own page), category and line, always. Photos, colours, sizes,
+price, stock and a description **only when the feed supplies them and the
+licence covers them**:
 the licence is what the operator records (`UNIQLO_FEED_LICENSED_FIELDS` or
 `--licensed`), narrowed by what the feed itself declares. A catalogue never
 holds garment measurements.
@@ -2283,7 +2305,13 @@ reads the report and the diff and commits it. A sync:
   with its reason, kept in `removed`, never served;
 - never carries last sync's price or stock as current, and strips whatever a
   narrower licence no longer covers;
-- records `lastSuccessfulSync` only on success.
+- records `lastSuccessfulSync` only on success;
+- writes `api/_catalog/data/uniqlo-us.status.json` on every attempt: when,
+  whether it succeeded and why not, the last successful sync, the feed's rows
+  read / rejected / duplicated with the first rejected rows and their reasons,
+  and — on success — coverage: products by category and line, and how many
+  carry photos, colours, sizes, a price, stock and a description. A thin feed
+  shows up there; nothing assumes it is complete.
 
 It **refuses**, leaving the catalogue byte for byte as it was and recording the
 failed attempt, for: a feed with no valid products; more than 10% of rows
@@ -2296,8 +2324,10 @@ than the one already imported; a fixture.
 redirect followed. The credential (`UNIQLO_FEED_TOKEN`) is sent only as a
 bearer header to that host and is never printed, logged or written. A timeout,
 a size cap read as the body streams, and any answer but a 200 with JSON are
-plain failures. `.github/workflows/catalog-sync.yml` runs it by hand from
-repository secrets and uploads the result; it commits nothing.
+plain failures. `.github/workflows/catalog-sync.yml` runs it from repository
+secrets, by hand or — only once the repository variable `UNIQLO_FEED_SCHEDULE`
+is `enabled`, which it isn't — daily, and uploads the result; it commits
+nothing, so what customers see changes only when a person commits a sync.
 
 **Serving.** The deployed functions read only the committed file, and check
 every product again as it loads. A file marked as a fixture is refused there.
@@ -2308,13 +2338,25 @@ date. The coverage line names the source, the count and the date — never
 "full".
 
 **Searching.** `GET /api/size-recommendation?brand=uniqlo&q=black+oversized+hoodie`
-`[&category=][&line=][&inStock=1][&offset=][&limit=]` answers one page (24, at
-most 48) from an index built once. Every word must match the product's name,
-category, line, a colour name or its ID — the word being typed as a prefix —
+`[&category=][&line=][&colour=][&size=][&inStock=1][&offset=][&limit=]` answers
+one page (24, at most 48) with the total and the filters' choices, from an
+index built once. Every word must match the product's name, category, line, a
+colour name, its description or its ID — names ranking first, the word being
+typed as a prefix —
 with plurals and shop words folded (`tee` → T-shirt, `hoody` → hoodie). When
 nothing matches every word, the closest are shown and the words nothing
 matched are named, so "black" is never quietly ignored. The page asks once
 typing pauses and draws only the newest answer.
+
+Filters are offered only where the data has them:
+
+| Filter | From | Without a catalogue |
+| --- | --- | --- |
+| Type | the category the adapter mapped | the five products' types |
+| Men / Women / Kids | the source's gender and age words; unisex counts as both | Men / Women |
+| Colour | the source's colour names, grouped into families (black, white, gray, navy, blue, green, beige, brown, red, pink, purple, yellow, orange); a name no family matches is found by search only, never guessed | none — Fynd holds no colour names |
+| Size | the source's size labels, or Fynd's records' sizes | the four records' sizes |
+| In stock only | the source's stock — per colour and size together where it gives stock per variant — only while current (48 hours) | none |
 
 **Sizing, by exact identity.** A catalogue product is matched to Fynd's
 sizing by its exact code and canonical link only. One Fynd holds a record for
@@ -2342,12 +2384,15 @@ general and never compared; otherwise an honest "unavailable".
 7. Re-sync at least every 48 hours if prices and stock are licensed, and every
    30 days at most in any case.
 
-**Testing it:** `node scripts/test-catalog-feed.js` (import, duplicates, URLs,
-licensing, sync and stale removal, the API fetch, the command, loading,
-search, filters, pages, staleness, product selection and sizing) and
+**Testing it:** `node scripts/test-catalog-feed.js` (import of the Fynd feed,
+JSON/JSON Lines rows and a tab-separated Merchant-format file, duplicates,
+URLs, licensing, descriptions, sync and stale removal, the status record, the
+API fetch, the command, loading, search, colour/size/stock filters, pages,
+staleness, product selection, sizing and verification status) and
 `node scripts/test-catalog-browser.js` (Find Fit and the product page in
 Chromium). Both use FIXTURE feeds in `scripts/fixtures/catalog-feed/`; every
-code from E910001 and every "FIXTURE" name is invented.
+code from E910001 and every "FIXTURE" name is invented. They prove the
+importer and the page work; they say nothing about any real feed's coverage.
 
 ### A product's page
 

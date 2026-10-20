@@ -46,7 +46,7 @@ let passed = 0;
 const failures = [];
 async function test(name, fn) {
   try { await fn(); passed += 1; console.log(`  ok    ${name}`); }
-  catch (err) { failures.push(name); console.log(`  FAIL  ${name}\n        ${err && err.stack ? err.stack.split('\n').slice(0, 3).join('\n        ') : err}`); }
+  catch (err) { failures.push(name); console.log(`  FAIL  ${name}\n        ${err && err.stack ? err.stack.split('\n').slice(0, 14).join('\n        ') : err}`); }
 }
 const section = (name) => console.log(`\n${name}`);
 
@@ -114,6 +114,34 @@ function inChild(env, code) {
     assert.deepStrictEqual([r.products[1].category, r.products[1].line, r.products[2].category, r.products[2].line], ['shirts', 'women', 'outerwear', 'kids']);
     const complete = read(fs.readFileSync(FEED_ROWS, 'utf8'), adapter, { licensed: ALL, complete: true });
     assert.strictEqual(complete.header.complete, true);
+  });
+
+  await test('a tab-separated product feed in the Merchant field names is read: quoted fields, grouped variants, colour families, sale prices, stock per colour and size, descriptions', () => {
+    const r = read(fs.readFileSync(path.join(FIXTURES, 'uniqlo-feed-rows.tsv'), 'utf8'), adapter, { licensed: ALL.concat('description') });
+    assert.strictEqual(r.header.format, 'product-feed-rows');
+    assert.deepStrictEqual([r.header.rows, r.rejected.length], [16, 0]);
+    assert.deepStrictEqual(r.products.map((p) => [p.code, p.category, p.line]), [['E940001-000', 'sweatshirts-hoodies', 'men'], ['E940002-000', 'pants', 'women'], ['E940003-000', 'shirts', 'men']]);
+    const [hoodie, pants, shirt] = r.products;
+    assert.strictEqual(hoodie.description, 'FIXTURE description: soft brushed-back fleece, "relaxed" fit.', 'a quoted field, its doubled quotes undone');
+    assert.deepStrictEqual(hoodie.colours.map((c) => [c.code, c.name, product.colourFamily(c.name)]), [['09', 'BLACK', 'black'], ['03', 'GRAY', 'gray']]);
+    assert.deepStrictEqual(hoodie.sizes, ['S', 'M', 'L', 'XL']);
+    assert.deepStrictEqual(hoodie.price, { currency: 'USD', amount: 2990, was: 3990 });
+    assert.deepStrictEqual(hoodie.variants.filter((v) => v.availability === 'out_of_stock'), [{ colour: '09', size: 'M', availability: 'out_of_stock' }]);
+    assert.strictEqual(pants.variants.filter((v) => v.colour === '69').every((v) => v.availability === 'out_of_stock'), true);
+    assert.strictEqual(shirt.description, undefined, 'an empty column is no description');
+    assert.strictEqual(product.colourFamily(shirt.colours[0].name), 'white');
+    assert.ok(read(fs.readFileSync(path.join(FIXTURES, 'uniqlo-feed-rows.tsv'), 'utf8'), adapter, { licensed: ALL }).products.every((p) => !('description' in p)), 'a description only when licensed');
+    const bad = (body) => { try { read(body, adapter, {}); return 'read'; } catch (err) { return err.reason; } };
+    assert.strictEqual(bad('id\ttitle\tlink\nE940001-000\tFIXTURE\n'), 'bad-delimited', 'a row short of the header');
+    assert.strictEqual(bad('id\ttitle\tlink\tid\nE1\tx\ty\tz\n'), 'bad-delimited', 'a column named twice');
+    assert.strictEqual(bad('id,title,link\nE1,"unterminated,x\n'), 'bad-delimited');
+    assert.strictEqual(bad('sku,name\n1,x\n'), 'unknown-format');
+  });
+
+  await test('a description is plain text within 2,000 characters, or dropped with a note — the product kept', () => {
+    const r = read(feedOf([row(1, { description: 'FIXTURE <script>alert(1)</script>' }), row(2, { description: 'x'.repeat(2001) }), row(3, { description: 'FIXTURE fine\nover two lines' })]), adapter, { licensed: ['description'] });
+    assert.deepStrictEqual(r.products.map((p) => p.description || null), [null, null, 'FIXTURE fine over two lines']);
+    assert.strictEqual(r.notes.filter((n) => /description/.test(n)).length, 2);
   });
 
   await test('only licensed fields are kept: with no licence recorded, price, stock, sizes, colours and photos are dropped — and a feed can only narrow the operator’s licence, never widen it', () => {
@@ -200,7 +228,7 @@ function inChild(env, code) {
     assert.strictEqual(reason('{"format":"something-else","products":[]}'), 'unknown-format');
     assert.strictEqual(reason('{"format":"fynd-catalog-feed","version":2,"products":[]}'), 'unknown-version');
     assert.strictEqual(reason('{"format":"fynd-catalog-feed","version":1}'), 'no-products');
-    assert.strictEqual(reason('<html>Access denied</html>'), 'bad-json');
+    assert.strictEqual(reason('<html>Access denied</html>'), 'unknown-format', 'an error page is no delimited feed: it has no id, title and link header');
     assert.strictEqual(reason(' '.repeat(10) + 'x'.repeat(LIMITS.bytes)), 'too-large');
     assert.strictEqual(reason(feedOf(new Array(LIMITS.products + 1).fill(0))), 'too-many-products');
   });
@@ -355,14 +383,18 @@ function inChild(env, code) {
     assert.strictEqual(ok.code, 0, ok.out);
     const written = fs.readFileSync(out, 'utf8');
     assert.strictEqual(JSON.parse(written).products.length, 26);
-    assert.deepStrictEqual(JSON.parse(fs.readFileSync(status, 'utf8')), { source: 'uniqlo-us', lastAttempt: NOW, lastAttemptOk: true, reason: null, error: null, lastSuccessfulSync: NOW, products: 26 });
+    const okStatus = JSON.parse(fs.readFileSync(status, 'utf8'));
+    assert.deepStrictEqual([okStatus.source, okStatus.lastAttempt, okStatus.lastAttemptOk, okStatus.reason, okStatus.error, okStatus.lastSuccessfulSync, okStatus.products], ['uniqlo-us', NOW, true, null, null, NOW, 26]);
+    assert.deepStrictEqual([okStatus.feed.rows, okStatus.feed.read, okStatus.feed.rejected, okStatus.feed.duplicates], [30, 26, 2, 1], 'every row accounted for: read, rejected, duplicate or discontinued');
+    assert.deepStrictEqual(okStatus.feed.rejectedRows.map((r) => r.code), ['E910101-000', 'E910102-000']);
+    assert.deepStrictEqual([okStatus.coverage.products, okStatus.coverage.categories['sweatshirts-hoodies'], okStatus.coverage.lines.kids, okStatus.coverage.with.price, okStatus.coverage.with.description], [26, 7, 2, 25, 0], 'descriptions weren’t licensed for this sync');
     const bad = path.join(tmp, 'bad.json');
     fs.writeFileSync(bad, '{"format":"fynd-catalog-feed","version":1,"products":"nope"}');
     const failed = await run(['--source', 'uniqlo-us', '--file', bad, '--out', out, '--status', status, '--now', at(NOW, 1)]);
     assert.strictEqual(failed.code, 1);
     assert.strictEqual(fs.readFileSync(out, 'utf8'), written, 'the catalogue as it was');
     const st = JSON.parse(fs.readFileSync(status, 'utf8'));
-    assert.deepStrictEqual([st.lastAttemptOk, st.reason, st.lastSuccessfulSync, st.products], [false, 'no-products', NOW, 26]);
+    assert.deepStrictEqual([st.lastAttemptOk, st.reason, st.lastSuccessfulSync, st.products, st.coverage], [false, 'no-products', NOW, 26, undefined], 'the last successful sync and its count are kept; no coverage claimed for a failed one');
     const missing = await run(['--source', 'uniqlo-us', '--file', path.join(tmp, 'nope.json'), '--out', out, '--status', status]);
     assert.strictEqual(missing.code, 1);
     assert.strictEqual(fs.readFileSync(out, 'utf8'), written);
@@ -535,6 +567,34 @@ function inChild(env, code) {
     assert.deepStrictEqual([end.items.length, end.offset], [0, 20000]);
   });
 
+  await test('descriptions are searched too, after names: "kangaroo pocket" finds the hoodie whose description says so', () => {
+    const withText = read(feedText, adapter, { licensed: ALL.concat('description') }).products.map((p) => Object.assign({}, p, { categoryLabel: product.CATEGORIES[p.category] }));
+    const di = createIndex(withText);
+    assert.deepStrictEqual(di.search({ q: 'kangaroo pocket' }).items.map((p) => p.code), ['E910001-000']);
+    assert.deepStrictEqual(di.search({ q: 'water-repellent' }).items.map((p) => p.code), ['E910016-000']);
+    const pocket = di.search({ q: 'pocket' }).items.map((p) => p.code);
+    assert.strictEqual(pocket[0], 'E910016-000', 'a name match (Pocketable) before a description match');
+    assert.ok(pocket.includes('E910001-000'));
+  });
+
+  await test('colour and size filters: by colour family and size label, with facets of what exists — and with stock known, the colour and size must be in stock together', () => {
+    const black = index.search({ colour: 'black', limit: '48' });
+    assert.ok(black.items.length > 5 && black.items.every((p) => p.colours.some((c) => c.name === 'Black')));
+    assert.deepStrictEqual(index.facets.colours.map((c) => c.value), ['white', 'black', 'gray', 'navy', 'green', 'beige']);
+    assert.ok(index.facets.sizes.map((x) => x.value).slice(0, 4).join() === 'XXS,XS,S,M', JSON.stringify(index.facets.sizes));
+    const kids = index.search({ size: '120' });
+    assert.deepStrictEqual(kids.items.map((p) => p.code).sort(), ['E910019-000', 'E910020-000']);
+    assert.strictEqual(index.search({ size: 'm' }).total, index.search({ size: 'M' }).total, 'a size label in either case');
+    /* E910001 Black XS is sold out (FIXTURE rule: (row + colour + size) % 7 === 0) */
+    const blackXs = index.search({ colour: 'black', size: 'XS', category: 'sweatshirts-hoodies' }).items.map((p) => p.code);
+    assert.ok(blackXs.includes('E910001-000'));
+    const stocked = index.search({ colour: 'black', size: 'XS', category: 'sweatshirts-hoodies', inStock: '1' }, { stockKnown: true }).items.map((p) => p.code);
+    assert.ok(!stocked.includes('E910001-000'), 'black in XS is sold out for it');
+    assert.strictEqual(readQuery({ colour: 'olive' }).colour, 'all');
+    assert.deepStrictEqual(index.search({ colour: 'green', size: 'XS' }).items.map((p) => p.code).sort(), ['E910001-000', 'E910015-000', 'E910016-000'], 'olive is filed under green');
+    assert.deepStrictEqual([readQuery({ size: '<b>' }).size, readQuery({ size: 'x'.repeat(13) }).size], ['all', 'all']);
+  });
+
   section('Find Fit’s UNIQLO list, and each product’s sizing');
 
   const served = path.join(tmp, 'served.json');
@@ -667,10 +727,34 @@ function inChild(env, code) {
     assert.deepStrictEqual([r.women.status, r.kids.status], ['unavailable', 'unavailable'], 'a women’s or kids’ product never gets the men’s chart');
   });
 
+  await test('the five-product fallback offers a size filter from Fynd’s own records, and no colour filter it has no names for', () => {
+    const r = inChild({}, browseCode(`{ facets: b.browse(u, {}).facets, big: b.browse(u, { size: '3XL' }).products.map((p) => p.code), black: b.browse(u, { colour: 'black' }).total }`));
+    assert.deepStrictEqual(r.facets.colours, []);
+    assert.deepStrictEqual(r.facets.sizes.map((x) => x.value), ['XXS', 'XS', 'S', 'M', 'L', 'XL', 'XXL', '3XL']);
+    assert.deepStrictEqual(r.big.sort(), ['E455365-000', 'E471808-000', 'E475377-000', 'E475378-000'], 'the merino sweater has no record, so no known sizes');
+    assert.strictEqual(r.black, 0);
+  });
+
+  await test('/api/size-recommendation filters by colour and size, and a product page shows a licensed description with its source', () => {
+    const described = path.join(tmp, 'described.json');
+    const s = sync(null, read(feedText, adapter, { licensed: ALL.concat('description') }), adapter, { now: new Date().toISOString(), allowFixture: true });
+    fs.writeFileSync(described, JSON.stringify(s.catalog));
+    const r = inChild({ FYND_CATALOG_UNIQLO_US: described }, browseCode(`{
+      navyM: b.browse(u, { colour: 'navy', size: 'M', limit: '48' }).products.map((p) => p.code),
+      facets: b.browse(u, {}).facets,
+      d: u.detail('E910016-000'),
+      e: u.detail('E910002-000')
+    }`));
+    assert.deepStrictEqual(r.navyM.sort(), ['E910002-000', 'E910005-000', 'E910007-000', 'E910010-000', 'E910011-000', 'E910012-000', 'E910023-000']);
+    assert.ok(r.facets.colours.length >= 5 && r.facets.sizes.length >= 8);
+    assert.deepStrictEqual([r.d.description.text, /FIXTURE UNIQLO US feed, updated/.test(r.d.description.source)], ['FIXTURE description: water-repellent shell that packs into its own pocket.', true]);
+    assert.ok(!r.d.missing.includes('description') && r.e.missing.includes('description'));
+  });
+
   await test('stale data: after 48 hours prices and stock are withheld and said to be; after 30 days the catalogue isn’t served at all and the page says how old it is', () => {
     const later = (hours) => `Date.now() + ${hours} * 3600 * 1000`;
     const r = inChild(WITH, browseCode(`{
-      stale: { page: u.search({ q: 'black oversized hoodie' }, ${later(49)}), detail: u.detail('E910001-000', ${later(49)}), catalogue: u.catalogue(${later(49)}) },
+      stale: { page: u.search({ q: 'black oversized hoodie' }, ${later(49)}), detail: u.detail('E910001-000', ${later(49)}), catalogue: u.catalogue(${later(49)}), notice: u.noticeAt(${later(49)}) },
       expired: { page: u.search({}, ${later(24 * 31)}), find: u.find('E910001-000', ${later(24 * 31)}), coverage: u.coverageAt(${later(24 * 31)}), notice: u.noticeAt(${later(24 * 31)}), record: u.find('E475378-000', ${later(24 * 31)}) !== null }
     }`));
     assert.ok(r.stale.page.products.every((p) => !('price' in p) && !('availability' in p)));
@@ -679,6 +763,7 @@ function inChild(env, code) {
     assert.ok(r.stale.detail.missing.includes('price') && r.stale.detail.missing.includes('availability'));
     assert.strictEqual(r.stale.detail.catalogue.withheld, true);
     assert.deepStrictEqual([r.stale.catalogue.connected, r.stale.catalogue.pricesShown], [true, false]);
+    assert.match(r.stale.notice, /^Prices and stock aren’t shown: UNIQLO’s product catalogue was last updated on \d{4}-\d{2}-\d{2}, too long ago for them to be current\./);
     assert.strictEqual(r.expired.page.total, 5);
     assert.strictEqual(r.expired.find, null);
     assert.strictEqual(r.expired.record, true, 'the five stay');
