@@ -145,9 +145,12 @@ function draftFrom(answer, opts) {
     charts,
     sources: url ? [{ url, what: `Size tables read ${answer.from === 'browser-extension' ? 'by the Fynd extension in a shopper’s browser' : 'by Fynd’s server'}`, retrievedAt: read }] : [],
     retrievedAt: read,
-    verification: { status: 'unverified' },
+    /* how the values reached Fynd; never a check */
+    capture: { how: answer.from === 'browser-extension' ? 'browser-extension' : 'server-read', by: 'scripts/draft-sizing-record.js', at: read },
+    verification: { status: 'unverified', checkedBy: null, checkedAt: null },
     review: {
       status: 'pending',
+      needs: 'Every value, the unit, each column’s heading and how each was measured, checked against the source; then a method and methodSource for each dimension.',
       draftedBy: 'scripts/draft-sizing-record.js',
       draftedAt: new Date().toISOString().slice(0, 10),
       readFrom: answer.from || null,

@@ -337,6 +337,7 @@ const METHOD_WORDS = {
   'center-back-to-cuff': 'from the centre back',
   'shoulder-seam-to-cuff': 'from the shoulder seam',
   'seam-to-seam': 'seam to seam',
+  'broadest-part-of-shoulders': 'across the broadest part of the shoulders',
   'body-circumference': 'around the body'
 };
 
@@ -1249,7 +1250,7 @@ function compare(profile, record, opts) {
   if (!params) return no('category-not-covered', 'Comparisons cover hoodies, sweatshirts and T-shirts so far.');
   const productContext = contextOf(record);
   if (!sizingSchema.isVerified(record) && !options.includeUnverified) {
-    return no('unverified-data', `This product's measurements were copied from ${record.brand}'s own page but haven't been checked yet, so Fynd won't compare them.`,
+    return no('unverified-data', `This product's measurements haven't been checked against ${record.brand}'s own page yet, so Fynd won't compare them.`,
       ['Check back once its sizing has been verified.'], { product: { brand: record.brand, name: record.product.name }, context: productContext, dataStatus: 'unverified' });
   }
   if (!record.charts.garment) {

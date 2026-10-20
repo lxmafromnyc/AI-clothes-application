@@ -2042,6 +2042,39 @@ the engine will use them:
 Each record's notes list what needs checking (Zara's "arm circumference" values
 equal its sleeve lengths as shown, for one).
 
+**E471808's Product Size chart is in, pending review.** UNIQLO's Sweat Oversized
+Pullover Hoodie (E471808, UNIQLO product ID 489933) has its own record:
+- **Its values:** the Product Size table from UNIQLO's official Size Guide
+  (`…/products/E471808-000/00/size?sizeDisplayCode=005&measurementUnit=inch`),
+  in inches, eight sizes XXS–3XL. It has four columns, each under its own name:
+  Length (back), Shoulder width, Chest, Sleeve length (center back). Values are
+  kept exactly as supplied ("25 1/4").
+- **How it reached Fynd:** the table was transcribed and supplied to Fynd on
+  2026-10-20; Fynd has not read the page itself (`capture.how:
+  "supplied-transcription"`).
+- **Its status:** `verification.status: "unverified"` with
+  `review.status: "pending"`. The schema refuses a record that is both pending
+  and verified, and the engine refuses to compare it until it is checked.
+
+How each column was measured:
+- **Length and sleeve:** from the centre back. The headers say so, and UNIQLO's
+  How to Measure page agrees.
+- **Chest:** a flat width, armpit to armpit. This is UNIQLO's How to Measure
+  instruction, as for its other records; the values can't be circumferences.
+- **Shoulders:** "the broadest part of the shoulders", UNIQLO's own words. The
+  supplied header doesn't say seam to seam, so it isn't recorded as seam to
+  seam. Even once the record is checked, shoulders are never set beside a
+  shoulder measured seam to seam.
+
+It has no body chart of its own. UNIQLO's general body chart is shown after it,
+labelled general.
+
+**How a record's values reached Fynd** is part of the record (`capture.how`):
+`copied-from-page` (every record before this one, and the default),
+`supplied-transcription`, `browser-extension` or `server-read`. The chart,
+the product page and the notes all say it in those words. None of them is a
+check: only `verification` marks a record verified.
+
 ### The favourite T-shirt
 
 For a T-shirt, the shopper's favourite (from the fit profile) is read strongest first:
@@ -2084,7 +2117,9 @@ The server finds the product's address in its own brand module
 (`api/_sizing/brands`) and looks it up through the same pipeline a pasted link
 takes (`api/_sizing/chart.js`):
 1. Fynd's record of that exact product, when it holds the garment's own
-   measurements.
+   measurements. A record without a body chart of its own gets the brand's
+   general body chart after it, when one applies to that exact product,
+   labelled general.
 2. Otherwise its live page, and the size guide that page links to, looked
    through for the garment's own measurements first.
 3. A record holding only the brand's body chart joins what the page gave, or
@@ -2121,7 +2156,7 @@ product Fynd can source:
   | Sweat Pullover Hoodie | E475378-000 | its own body and garment charts, checked |
   | Sweatshirt | E475377-000 | its own body and garment charts, checked |
   | SUPIMA Cotton T-Shirt | E455365-000 | its own charts, not yet checked |
-  | Sweat Oversized Pullover Hoodie | E471808-000 | UNIQLO's general US men's tops body chart, used only when its page can't be read; its own Product Size chart not retrieved (below) |
+  | Sweat Oversized Pullover Hoodie | E471808-000 | its own Product Size chart, supplied as a transcription and pending review, with UNIQLO's general US men's tops body chart beside it (below) |
   | Extra Fine Merino Crew Neck Sweater | E429066-000 | a listing only; its chart is looked up live |
 
 - **A catalogue snapshot**, when one has been committed
@@ -2331,15 +2366,15 @@ reads no profile, and only the link travels. It is rate limited per client
    Pullover Hoodie (E475378), Sweatshirt (E475377) and SUPIMA Cotton T-Shirt
    (E455365) pages Fynd has records for. It is listed for **E471808, the Sweat
    Oversized Pullover Hoodie**, whose page doesn't answer Fynd's requests from
-   the deployment. E471808's own Size Guide has not been copied: when it is, a
-   record of its own replaces this fallback (step 2 comes first).
+   the deployment. E471808 now has its own Product Size record, which comes
+   first. The record has no body chart, so this general chart is shown beside
+   it, labelled general, never in its place.
 
-   **E471808's Product Size tab: not retrieved.** It goes through the same
-   steps as every product; nothing in the code names it. Its listing under the
-   chart only records where else its measurements were looked for
-   (`productSize.tried`, shown under Source details), and the loader refuses
-   anything else there: a fallback product can hold no garment values. What
-   was tried (19 October 2026):
+   A product listed under a chart may record where else its own measurements
+   were looked for (`productSize.tried`, shown under Source details). The
+   loader refuses anything else there: a listed product can hold no garment
+   values. Fynd's own attempts to read E471808's Product Size tab (19 October
+   2026) all failed:
    - the deployed server and GitHub's runners, as above: no answer, or every
      request reset;
    - Fynd's development environment: its network policy refuses
@@ -2350,12 +2385,14 @@ reads no profile, and only the link travels. It is rate limited per client
    - no official API: UNIQLO publishes none, and Fynd doesn't call its site's
      internal commerce backend.
 
-   So no garment measurement of E471808 is shown: none is copied from the
-   Sweat Pullover Hoodie (E475378, a different, regular-fit product) or worked
-   out from body ranges. Whether the tab holds a garment table for this
-   product at all is unconfirmed. To add it: open the page in a normal browser,
-   open Size Guide → Product Size, and read it with the Fynd extension; then
-   draft a record from what it read (`scripts/draft-sizing-record.js`, below).
+   Its record's values came from the supplied transcription instead (above,
+   "E471808's Product Size chart is in, pending review"), never from another
+   product such as the Sweat Pullover Hoodie (E475378, a different, regular-fit
+   product). For any other product, the way in is the same: open the page in a
+   normal browser, open Size Guide → Product Size, and read it with the Fynd
+   extension; then draft a record from what it read
+   (`scripts/draft-sizing-record.js`, below). When Fynd's server can't read a
+   page, the Size Guide says so and points to that route.
 
 What a table measures — **body**, **finished garment** or **not stated** — and its
 unit come only from the words around it ("in" as an ordinary word is not

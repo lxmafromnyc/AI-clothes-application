@@ -93,8 +93,26 @@ const GARMENT_DIMENSIONS = {
   chestWidth: { methods: ['flat-width-armpit-to-armpit', 'garment-circumference'] },
   bodyLength: { methods: ['center-back-to-hem', 'high-point-shoulder-to-hem'] },
   sleeveLength: { methods: ['center-back-to-cuff', 'shoulder-seam-to-cuff'] },
-  shoulderWidth: { methods: ['seam-to-seam'] }
+  /* "broadest-part-of-shoulders" is UNIQLO's own instruction ("the length
+     between the broadest part of the shoulders"), kept apart from
+     seam to seam when the product's table doesn't say seam to seam:
+     a drop-shoulder hoodie's broadest point need not be its seams */
+  shoulderWidth: { methods: ['seam-to-seam', 'broadest-part-of-shoulders'] }
 };
+
+/* How a record's values reached Fynd (`capture.how`). Absent reads as
+   "copied-from-page", which is how every record before it was made.
+     copied-from-page        copied from the brand's page by whoever made
+                             the record
+     supplied-transcription  transcribed from the brand's official table
+                             by someone else and supplied to Fynd; Fynd
+                             didn't read the page itself
+     browser-extension       read by the Fynd extension from the page
+                             open in a shopper's browser
+     server-read             read by Fynd's server from the page
+   None of them is a check: a record is verified only by its own
+   verification, never by how it was captured. */
+const CAPTURES = ['copied-from-page', 'supplied-transcription', 'browser-extension', 'server-read'];
 
 /* The brands' own sites. A source on any other host is refused. */
 const OFFICIAL_HOSTS = {
@@ -249,7 +267,21 @@ function validate(record) {
     else if (!isDate(s.retrievedAt)) fail(`sources.${i}.retrievedAt`, 'Give the date it was read, as YYYY-MM-DD.');
   });
 
+  if (r.capture !== undefined) {
+    const c = r.capture;
+    if (!isPlainObject(c) || !CAPTURES.includes(c.how)) fail('capture.how', `How the values reached Fynd is one of ${CAPTURES.join(', ')}.`);
+    else if (!isDate(c.at) || typeof c.by !== 'string' || !c.by.trim()) fail('capture', 'Say who captured the values and when.');
+  }
+
   if (!isDate(r.retrievedAt)) fail('retrievedAt', 'Give the date the record was read from its sources, as YYYY-MM-DD.');
+
+  /* what a reviewer still has to check: a record waiting on that check
+     is "pending" and can't also be verified */
+  if (r.review !== undefined) {
+    const rv = r.review;
+    if (!isPlainObject(rv) || !['pending', 'done'].includes(rv.status) || typeof rv.needs !== 'string' || !rv.needs) fail('review', 'A review is "pending" or "done", and says what it checks.');
+    else if (rv.status === 'pending' && isPlainObject(r.verification) && r.verification.status === 'verified') fail('review', 'A record still pending review can\'t be verified.');
+  }
 
   const v = isPlainObject(r.verification) ? r.verification : {};
   if (!VERIFICATION.includes(v.status)) fail('verification.status', 'Verification is "unverified" or "verified".');
@@ -269,6 +301,7 @@ module.exports = {
   STRETCH,
   SLEEVE_TYPES,
   ORIGINS,
+  CAPTURES,
   GARMENT_TYPES,
   BODY_DIMENSIONS,
   GARMENT_DIMENSIONS,

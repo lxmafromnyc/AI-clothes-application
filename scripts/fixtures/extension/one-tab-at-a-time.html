@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>FIXTURE Oversized Hoodie | Illustrative Shop</title>
+<link rel="canonical" href="https://shop.example.test/products/FIX-HOOD-8/00">
+<meta property="og:site_name" content="Illustrative Shop"><script type="application/ld+json">{"@context": "https://schema.org", "@type": "Product", "name": "FIXTURE Oversized Hoodie", "brand": {"name": "Illustrative Brand"}, "sku": "FIX-HOOD-8"}</script></head>
+<body><p class="fixture-banner">FIXTURE — invented for Fynd’s extension tests, shaped like a size guide that draws only the chosen tab’s table (it opens on Body Size; choosing Product Size replaces it). Not a real retailer’s page; no real product or measurement.</p>
+
+<h1>FIXTURE Oversized Hoodie</h1>
+<div role="dialog" aria-modal="true" aria-label="Size Guide">
+  <h2>Size Guide</h2>
+  <div role="tablist">
+    <button type="button" role="tab" id="tab-body" aria-selected="true" aria-controls="panel">Body Size</button>
+    <button type="button" role="tab" id="tab-product" aria-selected="false" aria-controls="panel">Product Size</button>
+  </div>
+  <div role="tabpanel" id="panel" aria-labelledby="tab-body"></div>
+</div>
+<script>
+  /* the shop's own script, as such guides work: one panel, redrawn for the chosen tab */
+  var TABS = {
+    'tab-body': '<p>The dimensions shown below are body size measurements that correspond with a product’s size. Inches</p>'
+      + '<table><tr><th>Size</th><th>Chest</th></tr><tr><td>S</td><td>34 - 37</td></tr><tr><td>M</td><td>37 - 40</td></tr><tr><td>L</td><td>40 - 43</td></tr></table>',
+    'tab-product': '<p>The dimensions shown below are the actual measurements of the product. Inches</p>'
+      + '<table><tr><th>Size</th><th>Length (back)</th><th>Shoulder width</th><th>Chest</th><th>Sleeve length (center back)</th></tr>'
+      + '<tr><td>S</td><td>27</td><td>22 1/2</td><td>23 1/2</td><td>33 1/2</td></tr><tr><td>M</td><td>28</td><td>23</td><td>24 1/2</td><td>34 1/2</td></tr><tr><td>L</td><td>29 1/2</td><td>24</td><td>26</td><td>35 1/2</td></tr></table>'
+  };
+  function choose(id) {
+    document.querySelectorAll('[role="tab"]').forEach(function (t) { t.setAttribute('aria-selected', String(t.id === id)); });
+    var panel = document.getElementById('panel');
+    panel.setAttribute('aria-labelledby', id);
+    panel.innerHTML = TABS[id];
+  }
+  document.querySelectorAll('[role="tab"]').forEach(function (t) { t.addEventListener('click', function () { choose(t.id); }); });
+  choose('tab-body');
+</script>
+</body></html>

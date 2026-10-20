@@ -82,7 +82,7 @@ const https = require('https');
 const zlib = require('zlib');
 const store = require('../_store');
 const sizingSchema = require('./schema');
-const { RECORDS } = require('./records');
+const { RECORDS, recordFrom } = require('./records');
 const officialCharts = require('./official-charts');
 const engine = require('./engine');
 
@@ -554,6 +554,7 @@ const byKind = (charts) => charts.map((c, i) => [c, i]).sort((a, b) => (KIND_ORD
    engine's words), so a flat width is never read as a circumference. */
 function fromRecord(record, checked) {
   const charts = [];
+  const from = recordFrom(record);
   const add = (chart, measures) => {
     if (!chart) return;
     const keys = Object.keys(chart.dimensions);
@@ -561,8 +562,9 @@ function fromRecord(record, checked) {
       measures,
       title: chart.label || null,
       unit: record.units,
-      source: { url: chart.source && /^https:/.test(chart.source.url || '') ? chart.source.url : record.product.url, title: null },
+      source: { url: /^https:/.test(chart.source || '') ? chart.source : record.product.url, title: null },
       origin: 'fynd-record',
+      recordFrom: from,
       verification: sizingSchema.isVerified(record) ? 'verified' : 'unverified',
       retrievedAt: chart.retrievedAt || record.retrievedAt,
       columns: keys.map((k) => chart.dimensions[k].label || k),
@@ -587,6 +589,8 @@ function fromRecord(record, checked) {
     sizes: record.sizes.slice(),
     fit: record.fit && record.fit.brandWords ? { words: record.fit.brandWords, source: plain(record.fit.source || '', 160) } : null,
     verification: sizingSchema.isVerified(record) ? 'verified' : 'unverified',
+    recordFrom: from,
+    capture: (record.capture && record.capture.how) || 'copied-from-page',
     comparable: sizingSchema.isVerified(record) && Boolean(record.charts.garment)
   };
 }
@@ -595,9 +599,25 @@ function fromRecord(record, checked) {
    page couldn't be read (`live` is what that attempt answered). Shown
    as the brand's chart for the category and as a fallback; a body chart,
    so never comparable with a garment. */
+/* The general chart itself, as one chart of an answer. */
+function officialChartOf(chart) {
+  const first = chart.evidence[0];
+  return {
+    measures: 'body',
+    origin: 'official-general',
+    verification: 'official-general',
+    label: chart.label,
+    title: chart.title,
+    unit: chart.units,
+    source: { url: first.url, title: `${chart.brand}’s ${first.what}, read ${first.retrievedAt}` },
+    columns: chart.columns.map((c) => c.label),
+    rows: chart.sizes.map((s) => ({ size: s, values: chart.columns.map((c) => chart.values[s][c.key]) }))
+  };
+}
+const officialSources = (chart) => chart.evidence.slice(1).map((e) => ({ url: e.url, what: `The same chart on ${chart.brand}’s ${e.what}, read ${e.retrievedAt}` }));
+
 function fromOfficial(found, checked, live) {
   const { chart, product } = found;
-  const [first, ...rest] = chart.evidence;
   return {
     status: 'fallback',
     from: 'official-fallback',
@@ -606,21 +626,11 @@ function fromOfficial(found, checked, live) {
     details: live.details || null,
     retailer: chart.brand,
     source: { title: `${chart.brand} product page (not read)`, url: checked.url, kind: 'product-page', retrievedAt: null },
-    otherSources: rest.map((e) => ({ url: e.url, what: `The same chart on ${chart.brand}’s ${e.what}, read ${e.retrievedAt}` })),
+    otherSources: officialSources(chart),
     scope: 'brand-general',
     market: chart.market,
     line: product.line,
-    charts: [{
-      measures: 'body',
-      origin: 'official-general',
-      verification: 'official-general',
-      label: chart.label,
-      title: chart.title,
-      unit: chart.units,
-      source: { url: first.url, title: `${chart.brand}’s ${first.what}, read ${first.retrievedAt}` },
-      columns: chart.columns.map((c) => c.label),
-      rows: chart.sizes.map((s) => ({ size: s, values: chart.columns.map((c) => chart.values[s][c.key]) }))
-    }],
+    charts: [officialChartOf(chart)],
     sizes: chart.sizes.slice(),
     fit: null,
     /* where else this product's own measurements were looked for, when
@@ -730,22 +740,29 @@ function noteFor(result) {
   if (!kinds.includes('finished-garment') && result.productSize) lines.push(productSizeLine(result));
   if (kinds.includes('body') && !kinds.includes('finished-garment')) lines.push('There are no finished-garment measurements here, so this can’t be set beside a garment you own.');
   const origins = new Set(result.charts.map((c) => c.origin));
-  if (origins.has('fynd-record') && origins.size > 1) {
-    const rec = result.charts.find((c) => c.origin === 'fynd-record');
-    lines.push(`The ${rec.measures === 'body' ? 'body' : 'garment'} chart is from Fynd’s record of this product, copied from ${result.product.brand}’s page on ${rec.retrievedAt}${rec.verification === 'verified' ? ' and checked against it' : ', not yet checked'}; the other${result.charts.length > 2 ? 's were' : ' was'} read just now and ${result.charts.length > 2 ? 'are' : 'is'} not checked.`);
-  }
+  /* charts from different places: where each is from, chart by chart */
+  const mixed = origins.size > 1;
+  if (mixed) result.charts.forEach((c) => lines.push(originNote(c, result.product.brand)));
   if (kinds.includes('not-stated')) lines.push('The page doesn’t say whether these are body or garment measurements, so Fynd doesn’t assume either.');
   if (result.fit) lines.push(`${result.product.brand} describes the fit as “${result.fit.words}” (${result.fit.source}).`);
-  if (origins.size > 1 && origins.has('fynd-record')) {
+  if (mixed) {
     /* said above, chart by chart */
   } else if (result.from === 'fynd-record') {
     lines.push(result.verification === 'verified'
-      ? `From Fynd’s record of this product, copied from ${result.product.brand}’s page on ${result.source.retrievedAt} and checked against it.`
-      : `From Fynd’s record of this product, copied from ${result.product.brand}’s page on ${result.source.retrievedAt} and not yet checked against it.`);
+      ? `From Fynd’s record of this product, ${result.recordFrom}, and checked against it.`
+      : `From Fynd’s record of this product, ${result.recordFrom}. Not yet checked against it, so it isn’t compared with a garment you own.`);
   } else {
     lines.push('Read just now from the retailer’s page and not checked by a person. Check the source for how each measurement is taken.');
   }
   return lines;
+}
+/* Where one chart of a mixed answer is from, for the notes. */
+function originNote(c, brand) {
+  const what = c.measures === 'finished-garment' ? 'garment' : c.measures === 'body' ? 'body' : 'unlabelled';
+  if (c.origin === 'fynd-record') return `The ${what} chart is from Fynd’s record of this product, ${c.recordFrom}${c.verification === 'verified' ? ', and checked against it' : '; not yet checked'}.`;
+  if (c.origin === 'official-general') return `The ${what} chart is ${brand}’s general chart for this kind of product, not this product’s own.`;
+  if (c.origin === 'linked-size-guide') return `The ${what} chart is from the size guide the product’s page links to — possibly a general chart — read just now and not checked.`;
+  return `The ${what} chart was read from the product’s page just now and isn’t checked.`;
 }
 const listOf = (items) => {
   const xs = items.map((x) => x.toLowerCase());
@@ -841,7 +858,18 @@ async function chartFor(rawUrl, options) {
   const finish = (result) => Object.assign(result, { note: noteFor(result) });
   /* 1: a record of exactly this product with the garment's own
      measurements answers without reading anything */
-  if (record && record.charts.garment) return finish(fromRecord(record, checked));
+  if (record && record.charts.garment) {
+    const result = fromRecord(record, checked);
+    /* a record without the brand's body chart: a general one that
+       applies to this exact product goes beside it, after the garment's
+       and labelled general — never instead of it */
+    const general = record.charts.body ? null : officialCharts.fallbackFor(checked);
+    if (general) {
+      result.charts.push(officialChartOf(general.chart));
+      result.otherSources = result.otherSources.concat(officialSources(general.chart));
+    }
+    return finish(result);
+  }
 
   /* 2: everything else is looked for on the product's own page first */
   const live = await liveFor(checked, opts);
