@@ -641,6 +641,7 @@ strong { font-weight: 600; }
 .size-chart-details .size-chart-notes { margin-bottom: 10px; }
 .size-chart-trace-title { margin-top: 12px; font-weight: 500; color: var(--color-text); }
 .size-chart-method { margin-top: 2px; font-size: 13px; color: var(--color-text-muted); }
+.size-chart-origin, .size-chart-gaps { margin-top: 2px; font-size: 13px; color: var(--color-text-muted); }
 .size-chart-caption, .size-chart-unit { margin-top: 2px; font-size: 13px; color: var(--color-text-muted); }
 .size-chart-scroll { margin-top: 8px; overflow-x: auto; }
 .size-chart .compare-table { min-width: 0; }

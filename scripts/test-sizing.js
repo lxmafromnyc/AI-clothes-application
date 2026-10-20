@@ -1285,8 +1285,13 @@ await test('a "Product size" label alone doesn’t make a table the garment: its
   assert.deepStrictEqual(await kindsOf(fixtureTable('Product size', ['Height', 'Chest', 'Waist'], [['S', '165-170', '86-90', '70-74'], ['M', '170-175', '90-94', '74-78']])), ['not-stated']);
   /* a product-size label over chest and waist alone: nothing says which, so not stated */
   assert.deepStrictEqual(await kindsOf(fixtureTable('Product size', ['Chest', 'Waist'], [['S', '96', '80'], ['M', '102', '86']])), ['not-stated']);
-  /* even a method-stated garment table is not stated once it mixes in a body-only measure */
-  assert.deepStrictEqual(await kindsOf(`<h3>Garment measurements</h3><p>Measured laid flat.</p>${fixtureTable('', ['Chest width', 'Hip'], [['S', '51', '92'], ['M', '54', '96']])}`), ['not-stated']);
+  /* even a method-stated garment table is not stated once it has a measure of the wearer */
+  assert.deepStrictEqual(await kindsOf(`<h3>Garment measurements</h3><p>Measured laid flat.</p>${fixtureTable('', ['Chest width', 'Height'], [['S', '51', '165-170'], ['M', '54', '170-175']])}`), ['not-stated']);
+  /* a stated garment table may measure bust or hip: a dress's, a pair of jeans' — laid flat */
+  assert.deepStrictEqual(await kindsOf(`<h3>Garment measurements</h3><p>Measured laid flat.</p>${fixtureTable('', ['Waist', 'Hip', 'Inseam'], [['30', '40', '52', '81'], ['32', '42', '54', '81']])}`), ['finished-garment']);
+  /* but a bare label over hip and waist says nothing: those could be the wearer's */
+  assert.deepStrictEqual(await kindsOf(fixtureTable('Product size', ['Waist', 'Hip', 'Inseam'], [['30', '76', '96', '81'], ['32', '81', '101', '81']])), ['not-stated']);
+  assert.deepStrictEqual(await kindsOf(fixtureTable('Product size', ['Bust width', 'Length'], [['S', '44', '90'], ['M', '46', '92']])), ['finished-garment'], 'unless the column itself says width');
   /* a body chart keeps its body columns, and stays a body chart */
   assert.deepStrictEqual(await kindsOf(`<h3>Body size</h3><p>Body measurements, in inches.</p>${fixtureTable('', ['Height', 'Chest', 'Waist'], [['S', '65-67', '35-37', '29-31'], ['M', '67-69', '38-40', '32-34']])}`), ['body']);
 });
@@ -1312,7 +1317,8 @@ await test('a size guide in UNIQLO’s words (FIXTURE values): Product Size firs
   assert.deepStrictEqual(r.charts.map((c) => [c.measures, c.unit]), [['finished-garment', 'in'], ['body', 'in']]);
   assert.deepStrictEqual(r.charts[0].columns, ['Length (back)', 'Shoulder width (seam to seam)', 'Chest', 'Sleeve Length (center back)'], 'columns as published: “Chest” is not renamed a circumference or a width');
   assert.deepStrictEqual(r.charts[0].rows.find((x) => x.size === 'M').values, ['27', '22', '24', '34']);
-  assert.ok(!('methods' in r.charts[0]), 'a page read just now states no method Fynd hasn’t confirmed');
+  assert.deepStrictEqual(r.charts[0].methods, [null, 'seam to seam', null, 'center back'], 'a method only in the column’s own words; “Chest” says none');
+  assert.ok(!('methods' in r.charts[1]), 'a body chart has no garment method');
   assert.deepStrictEqual([r.verification, r.comparable], ['not-verified', false]);
   /* the classifier itself */
   const T = require('../assets/sizing-tables');
@@ -1539,12 +1545,12 @@ await test('a body-size fallback can never start a garment comparison', async ()
 await test('E471808’s own Product Size chart is said to be missing — with when and how it was looked for — and nothing stands in for it', async () => {
   const r = await read(UQ_OVERSIZED, { [UQ_OVERSIZED]: { throws: 'abort' } });
   assert.strictEqual(r.productSize.status, 'not-retrieved');
-  assert.strictEqual(r.productSize.checkedAt, '2026-10-19');
-  assert.ok(r.productSize.tried.length >= 3);
+  assert.strictEqual(r.productSize.checkedAt, new Date().toISOString().slice(0, 10), 'the date of this attempt');
+  assert.ok(r.productSize.tried.length >= 3, 'and where else it was looked for, as recorded');
   assert.ok(r.productSize.tried.some((t) => /refuses www\.uniqlo\.com/.test(t)), 'this environment’s refusal is recorded');
   assert.ok(!('values' in r.productSize) && !('sizes' in r.productSize), 'no garment value is held for it');
   assert.deepStrictEqual(r.charts.map((c) => c.measures), ['body'], 'no garment chart is made up from the body chart');
-  assert.ok(r.note.some((n) => /Product Size tab.*aren’t held by Fynd \(last looked for 2026-10-19\)\. None are shown, and none are worked out from the body chart\./.test(n)));
+  assert.ok(r.note.some((n) => /^This product’s own measurements — a Product Size chart, where UNIQLO publishes one — weren’t found \(looked for \d{4}-\d{2}-\d{2}\): its page couldn’t be read\. None are shown, and none are worked out from a body chart\.$/.test(n)));
   assert.deepStrictEqual([r.comparable, r.verification], [false, 'official-general']);
 });
 
@@ -1635,6 +1641,134 @@ await test('/api/size-recommendation?chart= needs no account, reads no profile, 
     for (let i = 0; i < 41; i += 1) last = await chartCall('not a url', { headers });
     assert.deepStrictEqual([last.status, last.body.reason], [429, 'rate-limited']);
   } finally { charts.setTransport(null); }
+});
+
+section('every product: its own finished-garment measurements first (FIXTURE pages)');
+
+/* ILLUSTRATIVE FIXTURES — invented pages in the shapes real ones take.
+   Every number is made up; none is evidence about any product. The
+   retailers' addresses are used only so the brand rules apply; nothing
+   is fetched from them. */
+const NIKE_CREW_URL = 'https://www.nike.com/t/club-mens-fleece-crew-RU1Il4yl/FN3886-010';
+const garmentTableIn = (heading, words, cols, rows) => `<h3>${heading}</h3><p>${words}</p>${fixtureTable('', cols, rows)}`;
+const NIKE_GARMENT = page(garmentTableIn('Product measurements', 'Garment measurements, laid flat, in inches.', ['Chest width', 'Body length', 'Sleeve length (center back)'],
+  [['S', '20', '26', '33'], ['M', '21.5', '27', '34'], ['L', '23', '28', '35']]));
+
+await test('a product whose record holds only the body chart still has its page read for the garment’s own measurements, which lead', async () => {
+  const log = [];
+  const r = await read(NIKE_CREW_URL, { [NIKE_CREW_URL]: { body: NIKE_GARMENT } }, log);
+  assert.deepStrictEqual(log.map((x) => x.url), [NIKE_CREW_URL], 'the exact product’s page was asked');
+  assert.deepStrictEqual(r.charts.map((c) => [c.measures, c.origin, c.verification]),
+    [['finished-garment', 'product-page', 'not-verified'], ['body', 'fynd-record', 'verified']], 'the page’s garment chart first; the record’s checked body chart kept apart');
+  assert.deepStrictEqual(r.charts[0].columns, ['Chest width', 'Body length', 'Sleeve length (center back)']);
+  assert.deepStrictEqual(r.charts[0].methods, ['laid flat (said of the whole table)', null, 'center back'], 'methods only in the page’s own words');
+  assert.deepStrictEqual(r.charts[1].columns, ['Chest/Bust (in)'], 'the record’s body chart as the brand labels it');
+  assert.strictEqual(r.productId, 'nike-fn3886-club-fleece-crew-us');
+  assert.strictEqual(r.comparable, false, 'a garment table read just now is never compared');
+  assert.ok(!r.productSize, 'the garment’s own measurements were found');
+  assert.ok(r.note.some((n) => /body chart is from Fynd’s record of this product/.test(n)));
+});
+
+await test('the same product, its page read but with no garment table: the record’s body chart, and the missing measurements said', async () => {
+  const bodyOnly = page(`<h3>Body size</h3><p>Body measurements, in inches.</p>${fixtureTable('', ['Chest'], [['S', '35-37.5'], ['M', '37.5-41']])}`);
+  const r = await read(NIKE_CREW_URL, { [NIKE_CREW_URL]: { body: bodyOnly } });
+  assert.deepStrictEqual(r.charts.map((c) => [c.measures, c.origin]), [['body', 'fynd-record']], 'one body chart: the record’s, not the page’s again');
+  assert.deepStrictEqual([r.productSize.status, r.productSize.checkedAt], ['not-found', new Date().toISOString().slice(0, 10)]);
+  assert.ok(r.note.some((n) => /^This product’s page had no finished-garment measurements/.test(n)));
+  const slow = await read(NIKE_CREW_URL, { [NIKE_CREW_URL]: { throws: 'abort' } });
+  assert.deepStrictEqual([slow.from, slow.productSize.status, slow.productSize.reason], ['fynd-record', 'not-retrieved', 'no-answer']);
+  assert.ok(slow.note.some((n) => /weren’t found \(looked for [\d-]+\): its page couldn’t be read/.test(n)));
+});
+
+await test('a record with the garment’s own chart answers without a read; only the exact product, in its own market, matches it', async () => {
+  const log = [];
+  await read('https://www.uniqlo.com/us/en/products/E475378-000/00', {}, log);
+  assert.deepStrictEqual(log, []);
+  /* a longer code that starts the same is another product */
+  const near = 'https://www.uniqlo.com/us/en/products/E4753780-000/00';
+  const a = await read(near, { [near]: { throws: 'abort' } });
+  assert.ok(!a.productId && !a.charts.some((c) => c.origin === 'fynd-record'), 'E4753780 is not E475378');
+  /* the same product in another market is not the US record */
+  const uk = 'https://www.uniqlo.com/uk/en/products/E475378-000/00';
+  const b = await read(uk, { [uk]: { throws: 'abort' } });
+  assert.deepStrictEqual([b.status, b.charts], ['unavailable', []], 'a US record never answers for a UK page');
+  /* each brand's own code forms */
+  const schemaMod = require('../api/_sizing/schema');
+  assert.ok(schemaMod.codeIn('/us/en/basic-heavyweight-hoodie-p00761810.html', 'Zara', '00761810'));
+  assert.ok(!schemaMod.codeIn('/us/en/x-p007618109.html', 'Zara', '00761810'));
+  assert.ok(schemaMod.codeIn('/en_us/productpage.0685816001.html', 'H&M', '0685816'), 'H&M’s colour after the code');
+  assert.ok(!schemaMod.codeIn('/product/K1210/x', 'Carhartt', 'K121'));
+});
+
+await test('a page with only a body chart: the garment chart from the size guide it links to leads, labelled as the guide’s', async () => {
+  const guide = 'https://shop.example.com/pages/size-guide';
+  const withLink = page(`<h3>Body size</h3><p>Body measurements, in inches.</p>${fixtureTable('', ['Chest', 'Waist'], [['S', '35-37', '29-31'], ['M', '38-40', '32-34']])}
+    <p><a href="/pages/size-guide">Size guide</a></p>`);
+  const guidePage = page(`${garmentTableIn('Tees — garment measurements', 'Laid flat, in inches.', ['Chest width', 'Body length'], [['S', '19', '27'], ['M', '20.5', '28']])}
+    <h3>Tees — body size</h3><p>Body measurements, in inches.</p>${fixtureTable('', ['Chest'], [['S', '34-36'], ['M', '37-39']])}`);
+  const r = await read(SHOP, { [SHOP]: { body: withLink }, [guide]: { body: guidePage } });
+  assert.deepStrictEqual(r.charts.map((c) => [c.measures, c.origin]), [['finished-garment', 'linked-size-guide'], ['body', 'product-page']],
+    'the guide’s garment chart first, the page’s own body chart kept; the guide’s general body chart adds nothing');
+  assert.strictEqual(r.scope, 'linked-size-guide');
+  assert.strictEqual(r.charts[0].source.url, guide);
+  assert.ok(r.note.some((n) => /^The product page has no garment measurements of its own\. The garment chart is from the retailer’s size guide/.test(n)));
+  /* a page that has its own garment table never reaches for a guide */
+  const log = [];
+  await read(SHOP, { [SHOP]: { body: GARMENT_CM.replace('</body>', '<a href="/pages/size-guide">Size guide</a></body>') } }, log);
+  assert.deepStrictEqual(log.map((x) => x.url), [SHOP]);
+});
+
+await test('each kind of garment keeps its own measurements: tops, jeans and a dress, two tables on one page never merged', async () => {
+  const jeans = garmentTableIn('Jeans — product measurements', 'Garment measurements, laid flat, in cm.', ['Waist', 'Hip', 'Front rise', 'Thigh', 'Leg opening', 'Inseam'],
+    [['28', '37', '48', '27', '29', '18', '81'], ['30', '39', '50', '28', '30', '19', '81'], ['32', '41', '52', '29', '31', '20', '81']]);
+  const tops = garmentTableIn('Overshirt — product measurements', 'Garment measurements, laid flat, in cm.', ['Chest width', 'Body length', 'Shoulder width', 'Sleeve length'],
+    [['S', '54', '72', '45', '62'], ['M', '57', '74', '47', '63']]);
+  const r = await read(SHOP, { [SHOP]: { body: page(tops + jeans) } });
+  assert.deepStrictEqual(r.charts.map((c) => [c.measures, c.unit, c.columns.length]), [['finished-garment', 'cm', 4], ['finished-garment', 'cm', 6]]);
+  assert.deepStrictEqual(r.charts[1].columns, ['Waist', 'Hip', 'Front rise', 'Thigh', 'Leg opening', 'Inseam'], 'a bottom’s own columns, not a hoodie’s four');
+  assert.deepStrictEqual(r.charts[1].rows.map((x) => x.size), ['28', '30', '32']);
+  assert.deepStrictEqual(r.charts[1].methods, ['laid flat (said of the whole table)', 'laid flat (said of the whole table)', null, 'laid flat (said of the whole table)', 'laid flat (said of the whole table)', null]);
+  assert.deepStrictEqual(r.charts[0].rows[0].values, ['54', '72', '45', '62'], 'the first table’s values stay its own');
+  const dress = garmentTableIn('Product measurements', 'Garment measurements, laid flat, in inches.', ['Bust', 'Waist', 'Length (shoulder to hem)'], [['XS', '16', '13', '35'], ['S', '17', '14', '35.5']]);
+  const d = await read(SHOP, { [SHOP]: { body: page(dress) } });
+  assert.deepStrictEqual([d.charts[0].measures, d.charts[0].columns], ['finished-garment', ['Bust', 'Waist', 'Length (shoulder to hem)']], 'a stated garment table may measure a bust');
+});
+
+await test('a missing value stays missing; a page with no table it can read, or an unlisted product, gets no chart from elsewhere', async () => {
+  const gaps = garmentTableIn('Product measurements', 'Garment measurements, laid flat, in inches.', ['Chest width', 'Body length', 'Sleeve length'], [['S', '20', '26', ''], ['M', '21', '27', '34']]);
+  const r = await read(SHOP, { [SHOP]: { body: page(gaps) } });
+  assert.deepStrictEqual(r.charts[0].rows[0].values, ['20', '26', ''], 'nothing filled in from M');
+  const divs = page('<div class="chart"><div>S</div><div>Chest 20</div><div>M</div><div>Chest 21</div></div>');
+  const n = await read(SHOP, { [SHOP]: { body: divs } });
+  assert.deepStrictEqual([n.status, n.charts, n.productSize], ['unavailable', [], undefined], 'no chart, and no measurement promised');
+  const other = 'https://www.uniqlo.com/us/en/products/E999998-000/00';
+  const o = await read(other, { [other]: { body: page('<p>No size table here.</p>') } });
+  assert.ok(!o.fallback && !o.charts.length, 'E471808’s general fallback is not lent to an unlisted product');
+});
+
+await test('a draft record from extracted tables: the product’s identity, every value as text and number, methods left for a person — always unverified, never loaded', async () => {
+  const { draftFrom } = require('./draft-sizing-record');
+  const r = await read(NIKE_CREW_URL.replace('FN3886', 'FX0000'), { [NIKE_CREW_URL.replace('FN3886', 'FX0000')]: { body: NIKE_GARMENT } });
+  assert.strictEqual(r.from, 'live-page');
+  const { draft, problems } = draftFrom(r, { category: 'sweatshirts', line: 'men' });
+  assert.strictEqual(draft.verification.status, 'unverified');
+  assert.strictEqual(draft.review.status, 'pending');
+  assert.strictEqual(draft.product.url, NIKE_CREW_URL.replace('FN3886', 'FX0000'));
+  assert.deepStrictEqual(Object.keys(draft.charts), ['garment']);
+  const g = draft.charts.garment;
+  assert.deepStrictEqual(Object.keys(g.dimensions), ['chestWidth', 'bodyLength', 'sleeveLength']);
+  assert.deepStrictEqual([g.dimensions.chestWidth.method, g.dimensions.chestWidth.pageSays], [null, 'laid flat (said of the whole table)'], 'the page’s words kept; the method is a person’s to set');
+  assert.deepStrictEqual(g.sizes.M.chestWidth, { value: 21.5, text: '21.5' });
+  assert.ok(problems.some((p) => /method/i.test(p)), 'the schema’s refusals are the checklist');
+  assert.ok(require('../api/_sizing/schema').validate(draft).length > 0, 'a draft can’t pass as a record');
+  assert.ok(!require('../api/_sizing/records').RECORDS.some((x) => x.id === draft.id), 'and is never loaded');
+  /* columns the schema has no dimension for are kept, not dropped */
+  const jeans = await read(SHOP, { [SHOP]: { body: page(garmentTableIn('Product measurements', 'Garment measurements, laid flat, in cm.', ['Waist', 'Inseam'], [['30', '39', '81'], ['32', '41', '81']])) } });
+  const dj = draftFrom(jeans, {});
+  assert.deepStrictEqual(dj.draft.review.unmapped.map((u) => u.column), ['Waist', 'Inseam']);
+  assert.deepStrictEqual(dj.draft.review.unmapped[1].values, { 30: '81', 32: '81' });
+  /* nothing to draft from a body-only or failed answer's garment */
+  assert.strictEqual(draftFrom({ status: 'unavailable', reason: 'no-answer' }).draft, null);
 });
 
 section('browsing a brand in Find Fit');

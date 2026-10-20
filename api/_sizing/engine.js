@@ -266,7 +266,7 @@ function matchProduct(anchor, pool, category) {
     if (u) {
       const path = u.pathname.toLowerCase();
       const byUrl = same.filter((r) => (sizingSchema.OFFICIAL_HOSTS[r.brand] || []).includes(u.hostname)
-        && r.product.code && path.includes(String(r.product.code).split('-')[0].toLowerCase()));
+        && r.product.code && sizingSchema.codeIn(path, r.brand, r.product.code));
       if (byUrl.length === 1) return { record: byUrl[0], by: 'link' };
     }
   }

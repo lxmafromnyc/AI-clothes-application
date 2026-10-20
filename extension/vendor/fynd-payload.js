@@ -117,14 +117,14 @@
       fit: textOrNull(r.fit, 60),
       sizes: ((r.product && r.product.sizes) || []).map((s) => clean(s, 20)).filter(Boolean).slice(0, MAX_SIZES),
       guide,
-      chart: c ? {
+      chart: c ? Object.assign({
         where: c.inDialog ? 'size-guide-dialog' : 'product-page',
         measures: c.chart.measures,
         unit: c.chart.unit,
         title: textOrNull(c.chart.title || c.heading),
         columns: c.chart.columns.slice(),
         rows: c.chart.rows.map((row) => ({ size: row.size, values: row.values.slice() }))
-      } : null
+      }, c.chart.methods ? { methods: c.chart.methods.slice() } : {}) : null
     };
   }
 
@@ -174,11 +174,16 @@
       }
       const title = str(c.title, MAX_TEXT);
       if (title === undefined) return fail('bad chart title');
+      /* how each column was measured, in the page's words: optional, one
+         per column, only for a garment chart */
+      if (c.methods !== undefined && (c.measures !== 'finished-garment' || !Array.isArray(c.methods) || c.methods.length !== c.columns.length
+        || !c.methods.every((m) => m === null || (cell(m) && clean(m))))) return fail('bad methods');
       out.chart = {
         where: c.where, measures: c.measures, unit: c.unit === undefined ? null : c.unit, title,
         columns: c.columns.map((h) => clean(h, Tables.MAX_CELL)),
         rows: c.rows.map((row) => ({ size: clean(row.size, Tables.MAX_CELL), values: row.values.map((v) => clean(v, Tables.MAX_CELL)) }))
       };
+      if (c.methods) out.chart.methods = c.methods.map((m) => (m === null ? null : clean(m, Tables.MAX_CELL)));
     }
     return { payload: out };
   }
@@ -241,7 +246,10 @@
       scope: c && c.where === 'size-guide-dialog' ? 'browser-size-guide' : 'browser-page',
       market: null,
       line: null,
-      charts: c ? [{ measures: c.measures, title: c.title, unit: c.unit, source: { url: p.page.url, title: p.page.title }, columns: c.columns, rows: c.rows }] : [],
+      charts: c ? [Object.assign({ measures: c.measures, origin: c.where === 'size-guide-dialog' ? 'browser-size-guide' : 'browser-page', verification: 'not-verified', title: c.title, unit: c.unit, source: { url: p.page.url, title: p.page.title }, columns: c.columns, rows: c.rows }, c.methods ? { methods: c.methods } : {})] : [],
+      /* a table read without the garment's own measurements: said, and
+         where else they may be (another tab of the same guide) */
+      productSize: c && c.measures !== 'finished-garment' ? { status: 'not-in-browser', checkedAt: p.readAt } : undefined,
       sizes: p.sizes,
       otherSources: p.guide ? [{ url: p.guide.url, what: `The page’s size guide link${p.guide.text ? ` (“${p.guide.text}”)` : ''}` }] : [],
       verification: 'not-verified',

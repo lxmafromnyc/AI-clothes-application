@@ -2083,10 +2083,29 @@ code (`GET /api/size-recommendation?brand=uniqlo&item=E475378-000`).
 The server finds the product's address in its own brand module
 (`api/_sizing/brands`) and looks it up through the same pipeline a pasted link
 takes (`api/_sizing/chart.js`):
-1. Fynd's record for that product.
-2. Otherwise, its live page.
-3. Otherwise, a general official chart, only for a product listed under one.
-4. Otherwise, the reason there is no chart.
+1. Fynd's record of that exact product, when it holds the garment's own
+   measurements.
+2. Otherwise its live page, and the size guide that page links to, looked
+   through for the garment's own measurements first.
+3. A record holding only the brand's body chart joins what the page gave, or
+   answers alone when the page had no garment table.
+4. Otherwise, a general official chart, only for a product listed under one.
+5. Otherwise, the reason there is no chart.
+
+**Every product, the same way.** Whichever way a product is chosen, its chart
+comes from this one pipeline (`chartFor` in `api/_sizing/chart.js`), and its
+tables are recognised by one shared reader (`assets/sizing-tables.js`):
+
+| How the product is chosen | Asks |
+|---|---|
+| A card in the UNIQLO browser (Find Fit) | `?brand=uniqlo&item=<code>` → the product's address → `chartFor` |
+| Size Guide on a product's page (`product.html`) | the same `?brand=&item=` lookup |
+| A pasted or typed product link (Find Fit) | `?chart=<link>` → `chartFor` |
+| "View sizing chart" on a search result | `?chart=<link>` → `chartFor` |
+| The browser extension | reads the open page with the same shared reader; with no chart there, `#fynd-url=` asks `chartFor` |
+
+No product's values live in this code: a chart belongs to the product whose
+page or record it was read from.
 
 No address the browser sends is used, and a code that isn't listed is refused
 before anything is fetched. The listing and lookup modes are public and
@@ -2255,10 +2274,22 @@ reads no profile, and only the link travels. It is rate limited per client
    `…/products/E471808-000/00?colorDisplayCode=03&sizeDisplayCode=005&utm_…` is
    read as `…/products/E471808-000/00`. Other shops keep any non-tracking query,
    since some name the product there (`product.do?pid=…`).
-2. **Fynd's own record of exactly that product** (on its brand's own site, by its
-   code, as a favourite piece is found) is used as it stands: body chart and
+2. **Fynd's own record of exactly that product**, when it holds the garment's
+   own measurements, is used as it stands, and nothing is read: body chart and
    finished-garment chart kept apart, every value in the brand's words and units,
-   its sources, and its own verification status.
+   its sources, and its own verification status. A record matches only:
+   - on its brand's own site;
+   - by its **whole** code in the link (`schema.codeIn`): K121 is not K1210,
+     E475378 is not E4753780. Zara's code follows a "p" and H&M's carries a
+     three-digit colour after it;
+   - in its own market, when the link names one: a US record never answers for
+     a UK page.
+
+   A record that holds **only** the brand's body chart (Nike, Carhartt, H&M
+   today) doesn't stop the search. The page is still read for the garment's own
+   measurements; if it has them, they lead and the record's body chart follows
+   in place of the page's own. If not, the record answers, saying the garment's
+   own weren't found.
 3. **The product page**, read once: redirects followed by hand (at most three),
    every new address checked again; HTML only; 3 MB after decompression (gzip,
    deflate and Brotli are asked for, since large shop pages are slow
@@ -2267,11 +2298,13 @@ reads no profile, and only the link travels. It is rate limited per client
    start answering within 6 seconds of it. Its `<table>`s are read
    deterministically (no model): a table counts only with a size column and at
    least one measurement column (sideways tables are turned).
-4. **The size guide it links to**, when the page has no table: up to two links on
-   the same site whose words or address say "size guide", "size chart", "sizing"…
-   are read the same way. Their charts are labelled **the retailer's size guide
-   linked from the product page — possibly a general chart, not this product's
-   own**, with the guide's own link.
+4. **The size guide it links to**, when the page has no finished-garment table:
+   up to two links on the same site whose words or address say "size guide",
+   "size chart", "sizing"… are read the same way. Their charts are labelled
+   **the retailer's size guide linked from the product page — possibly a general
+   chart, not this product's own**, with the guide's own link. When the page
+   had a body table of its own, only the guide's garment tables join it (a
+   general guide's body chart adds nothing).
 5. **Labels only**: the sizes in the product's JSON-LD, when no table was found.
 6. **An official fallback** (`api/_sizing/official-charts.js`), when the page
    couldn't be read or held no chart: a brand's **general** official chart for a
@@ -2301,11 +2334,12 @@ reads no profile, and only the link travels. It is rate limited per client
    the deployment. E471808's own Size Guide has not been copied: when it is, a
    record of its own replaces this fallback (step 2 comes first).
 
-   **E471808's Product Size tab: not retrieved** (looked for 19 October 2026).
-   Its listing under the chart says so (`productSize`: `status:
-   "not-retrieved"`, the date, and each place tried), and the loader refuses
+   **E471808's Product Size tab: not retrieved.** It goes through the same
+   steps as every product; nothing in the code names it. Its listing under the
+   chart only records where else its measurements were looked for
+   (`productSize.tried`, shown under Source details), and the loader refuses
    anything else there: a fallback product can hold no garment values. What
-   was tried:
+   was tried (19 October 2026):
    - the deployed server and GitHub's runners, as above: no answer, or every
      request reset;
    - Fynd's development environment: its network policy refuses
@@ -2318,15 +2352,10 @@ reads no profile, and only the link travels. It is rate limited per client
 
    So no garment measurement of E471808 is shown: none is copied from the
    Sweat Pullover Hoodie (E475378, a different, regular-fit product) or worked
-   out from body ranges. The answer carries `productSize`, its note says the
-   product's own measurements aren't held, and the chart drawing says it
-   first, above the general body chart: "Product measurements of this hoodie:
-   not available…". Source details list where it was looked for. Whether the
-   tab holds a garment table for this product at all is unconfirmed. To add
-   it: open the page in a normal browser, open Size Guide → Product Size, and
-   either read it with the Fynd extension (which now picks that tab, below) or
-   copy it into a record (`api/_sizing/records/`) with its source and date,
-   unverified until a person checks it.
+   out from body ranges. Whether the tab holds a garment table for this
+   product at all is unconfirmed. To add it: open the page in a normal browser,
+   open Size Guide → Product Size, and read it with the Fynd extension; then
+   draft a record from what it read (`scripts/draft-sizing-record.js`, below).
 
 What a table measures — **body**, **finished garment** or **not stated** — and its
 unit come only from the words around it ("in" as an ordinary word is not
@@ -2338,6 +2367,23 @@ words and the name of its tab (by `aria-labelledby` or the tab's
 `aria-controls`): the tab list beside the panels names every tab, so it speaks
 for none.
 
+**Every chart says where it is from** (`origin`): `fynd-record`,
+`product-page`, `linked-size-guide`, `official-general`, or, from the
+extension, `browser-page` / `browser-size-guide`. Each also carries its own
+`verification`. When one answer holds charts from different places, each table
+says where it is from and whether it was checked, in place of one caveat for
+all.
+
+**When the garment's own measurements weren't found**, the answer says so
+(`productSize`) with the date it looked:
+- `not-retrieved`: the page couldn't be read;
+- `not-found`: the page, and any guide it links to, had none;
+- `not-in-browser`: the table the extension read wasn't the garment's.
+
+The chart drawing says it first, above any body chart: "Product measurements of
+this hoodie: none found on this product's page…". Nothing is estimated from a
+body chart.
+
 A garment claim must agree with the table's columns
 (`assets/sizing-tables.js`, `kindOf`):
 
@@ -2348,13 +2394,56 @@ A garment claim must agree with the table's columns
   stays body.
 - A bare label — **"Product size"**, "Item measurements" — is not enough alone:
   the table counts as the garment only when a column is the garment's own
-  geometry (a length, a width, a sleeve, the shoulders, a hem).
-- Any garment claim with a body-only column (height, weight, bust, hips) is
-  **not stated**: a chart that mixes the two can't say which each value is.
+  geometry (a length, a width, a sleeve, the shoulders, a hem, an inseam, a
+  rise, a thigh). It must also have no column that could be the wearer's:
+  bust, hips or seat count only when the column itself says width, flat or
+  half.
+- A garment claim with height or weight is **not stated**, however it's
+  worded: a chart that mixes the two can't say which each value is. A stated
+  garment table ("laid flat", "garment measurements") may measure a dress's bust
+  or a pair of jeans' hip.
+
+Each kind of garment keeps the columns its page publishes: a hoodie's chest,
+length, shoulders and sleeve; jeans' waist, hip, rise, thigh, leg opening and
+inseam; a dress's bust, waist and length. Nothing is forced into four columns.
+
+**How each column was measured, as the page says it.** A garment table read
+from a page keeps the method words its own headings carry ("Shoulder width (seam
+to seam)" → "seam to seam"; "center back"; "armpit to armpit"; "HPS"). A table
+that says it was measured "laid flat" gives that to its width columns (chest,
+waist, hip, thigh, hem), marked as said of the whole table. These are shown "in
+the page's words" and never mapped onto the engine's methods, so they can't
+start a comparison. A body chart has none. A column some sizes leave empty is
+named under the table ("Not published for every size"), its cells shown as —.
 
 Values are kept exactly as written and nothing is converted; a missing value
 stays missing, and a chest-only chart stays chest-only. A chart read this way is
-**not verified** and never compared: reading is not checking.
+**not verified** and never compared: reading is not checking. Only a verified
+record's finished-garment chart is compared with a fit profile (step 2), by the
+engine, measurement by measurement and only where both were measured the same
+way.
+
+**From a chart read to a record:** `scripts/draft-sizing-record.js` turns the
+tables Fynd actually read into a draft record in the schema's shape. It reads
+from:
+- a product link (`--url`: the same lookup as Find Fit, so only from a machine
+  the retailer answers);
+- an extension chart (`--payload`: the `#fynd-chart=` value);
+- a saved answer (`--chart`).
+
+The draft keeps:
+- the product's identity, link and market as read;
+- every value as its text and its number ("23 ½" → 23.5, "30 ¾ - 33" →
+  30.75–33);
+- body and garment tables apart;
+- the page's method words (`pageSays`).
+
+`method` and `methodSource` are left empty for a person to set from the brand's
+own words. Columns the schema has no dimension for yet (a waist, an inseam) are
+kept under `review.unmapped`. The draft is always `unverified` with
+`review.status: "pending"`, and its remaining schema problems are printed as the
+reviewer's checklist. Nothing is written into `api/_sizing/records/`, and a draft
+is never loaded: `records.js` loads only the files it names.
 
 **The garment's own measurements come first.** Every answer lists its charts
 finished-garment first, then not stated, then body — from Fynd's records and

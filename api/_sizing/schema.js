@@ -105,6 +105,21 @@ const OFFICIAL_HOSTS = {
   Zara: ['www.zara.com']
 };
 
+/* How each brand writes a product's code in its own links, around the
+   code a record keeps: Zara after a "p" (…-p00761810.html); H&M with a
+   three-digit colour after it (productpage.0685816001.html), which a
+   record's chart doesn't depend on. Every other brand: the code alone. */
+const CODE_FORMS = { Zara: { before: 'p?' }, 'H&M': { after: '(?:\\d{3})?' } };
+
+/* Whether a link's path names this product: its whole code, never part
+   of a longer one (K121 is not K1210; E475378 is not E4753780). */
+function codeIn(path, brand, code) {
+  const form = CODE_FORMS[brand] || {};
+  const own = String(code).split('-')[0].toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (!own) return false;
+  return new RegExp(`(?:^|[^a-z0-9])${form.before || ''}${own}${form.after || ''}(?:[^a-z0-9]|$)`).test(String(path).toLowerCase());
+}
+
 const isPlainObject = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
 const isNumber = (v) => typeof v === 'number' && Number.isFinite(v) && v > 0;
 const isDate = (v) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(v));
@@ -259,6 +274,7 @@ module.exports = {
   GARMENT_DIMENSIONS,
   OFFICIAL_HOSTS,
   officialUrl,
+  codeIn,
   validate,
   isVerified
 };

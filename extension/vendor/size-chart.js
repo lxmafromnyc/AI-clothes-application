@@ -134,11 +134,14 @@
 
     const brand = (chart.product && chart.product.brand) || chart.retailer;
     const general = chart.scope === 'brand-general';
-    /* the product's own measurements come first; when Fynd doesn't hold
-       them, that is said first, before any general body chart */
-    if (chart.productSize && chart.productSize.status === 'not-retrieved') {
-      out.push(el('p', 'size-chart-missing', `Product measurements${o.garment ? ` of this ${o.garment}` : ''}: not available. Fynd doesn’t hold ${brand ? `${brand}’s` : 'the brand’s'} Product Size chart for ${o.garment ? 'it' : 'this product'}, so none are shown or estimated.`));
+    /* the product's own measurements come first; when none were found,
+       that is said first, before any body chart */
+    if (chart.productSize && ((chart.charts || []).length || chart.status === 'labels-only')) {
+      out.push(el('p', 'size-chart-missing', missingLine(chart, o.garment)));
     }
+    /* an answer whose charts come from different places says, chart by
+       chart, where each is from and whether it was checked */
+    const mixed = new Set((chart.charts || []).map((c) => c.origin || '')).size > 1;
     (chart.charts || []).forEach((c, i) => {
       const section = el('section', 'size-chart-table');
       if (o.garment) {
@@ -151,10 +154,14 @@
           : KIND[c.measures] || KIND['not-stated']));
         section.append(el('p', 'size-chart-unit', `Units: ${UNIT[c.unit] || UNIT.null}`));
       }
-      /* how each column was measured, when the source says (Fynd's
-         records do): a flat width is never mistaken for a circumference */
+      if (mixed && ORIGIN[c.origin]) section.append(el('p', 'size-chart-origin', ORIGIN[c.origin](c, brand)));
+      /* how each column was measured, when the source says: Fynd's
+         records in the engine's words, a page read just now only in its
+         own — a flat width is never mistaken for a circumference */
       const how = (c.methods || []).map((m, j) => (m ? `${c.columns[j]}: ${m}` : null)).filter(Boolean);
-      if (how.length) section.append(el('p', 'size-chart-method', `How it’s measured — ${how.join(' · ')}`));
+      if (how.length) section.append(el('p', 'size-chart-method', `${c.origin === 'fynd-record' ? 'How it’s measured' : 'How it’s measured, in the page’s words'} — ${how.join(' · ')}`));
+      const missing = c.columns.filter((_, j) => c.rows.some((r) => !r.values[j]));
+      if (missing.length) section.append(el('p', 'size-chart-gaps', `Not published for every size: ${missing.join(', ')} (shown as —).`));
       const wrap = el('div', 'size-chart-scroll');
       const table = el('table', 'compare-table');
       table.id = `size-chart-t${i}`;
@@ -176,7 +183,8 @@
       section.append(wrap);
       out.push(section);
     });
-    if (!unavailable && (chart.charts || []).length) {
+    /* one caveat for the answer — unless its charts each said their own */
+    if (!unavailable && (chart.charts || []).length && !mixed) {
       out.push(el('p', 'size-chart-caveat', o.garment && general && chart.charts.every((c) => c.measures === 'body')
         ? `These describe the body each size fits, not this ${o.garment} itself.`
         : caveatOf(chart)));
@@ -194,6 +202,23 @@
 
     out.push(detailsOf(chart, pageUrl));
     return out;
+  }
+
+  /* Where one chart in a mixed answer is from. */
+  const ORIGIN = {
+    'fynd-record': (c, brand) => `From Fynd’s record of this product, copied from ${brand || 'the brand'}’s page${c.retrievedAt ? ` on ${c.retrievedAt}` : ''} — ${c.verification === 'verified' ? 'checked' : 'not yet checked'}.`,
+    'product-page': () => 'Read from this product’s page just now — not checked.',
+    'linked-size-guide': () => 'From the size guide this product’s page links to — possibly a general chart. Not checked.',
+    'official-general': (c, brand) => `${brand || 'The brand'}’s general chart — not this product’s own.`
+  };
+
+  /* What is said when the product's own measurements weren't found. */
+  function missingLine(chart, garment) {
+    const ps = chart.productSize;
+    const what = `Product measurements${garment ? ` of this ${garment}` : ''}`;
+    if (ps.status === 'not-in-browser') return `${what}: none in the table read from your browser. If the retailer’s size guide has a Product Size tab, open it and check again.`;
+    if (ps.status === 'not-retrieved') return `${what}: not available. This product’s page couldn’t be read, so its own measurements weren’t found. None are shown or estimated.`;
+    return `${what}: none found on this product’s page${ps.guides ? ' or the size guide it links to' : ''}. None are shown or estimated.`;
   }
 
   /* What one table measures, in the product page's words: once, with
@@ -222,12 +247,13 @@
       fact('Chart', SCOPE[chart.scope]);
       fact('Status', STATUS[chart.verification]);
     }
-    if (chart.productSize && chart.productSize.status === 'not-retrieved') {
-      fact('Product Size', `Not retrieved${chart.productSize.checkedAt ? ` (last looked for ${chart.productSize.checkedAt})` : ''}`);
+    if (chart.productSize) {
+      const said = { 'not-retrieved': 'Not retrieved — the page couldn’t be read', 'not-found': 'Not found on the page', 'not-in-browser': 'Not in the table read from your browser' };
+      fact('Product Size', `${said[chart.productSize.status] || 'Not found'}${chart.productSize.checkedAt ? ` (looked for ${chart.productSize.checkedAt})` : ''}`);
     }
     if (facts.childNodes.length) box.append(facts);
     if (chart.productSize && (chart.productSize.tried || []).length) {
-      box.append(el('p', 'size-chart-tried-head', 'Where the Product Size chart was looked for:'));
+      box.append(el('p', 'size-chart-tried-head', 'Where else the Product Size chart was looked for:'));
       const tried = el('ul', 'size-chart-tried');
       chart.productSize.tried.forEach((t) => tried.append(el('li', null, t)));
       box.append(tried);
