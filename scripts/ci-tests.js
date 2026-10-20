@@ -63,6 +63,7 @@ const GROUPS = {
     ['test-fit-profile', 'the shopper fit profile: its schema, units, and who may read or change it'],
     ['test-sizing', 'sizing records, the size engine, /api/size-recommendation and fit feedback'],
     ['test-page-access', 'which retailer pages the sizing reader may fetch: reviewed terms, then robots.txt, and nothing otherwise'],
+    ['test-fit-anchor', 'the Fit Anchor comparison: units, methods, broken charts, categories, fit preferences, outcomes and confidence'],
     ['test-extension', 'the browser extension: its permissions, its copies of the shared sizing code, and the chart payload it hands to Find Fit'],
     ['test-size-eval', 'the size engine against hand-worked expectations from published charts'],
     ['test-catalog-audit', 'the catalogue audit: every card proved from its row'],
@@ -73,6 +74,7 @@ const GROUPS = {
   browser: [
     ['test-ui', 'the interface: the search box, its progress and allowance, palette, contrast, pricing and account pages'],
     ['test-e2e', 'the whole sign-in flow in a real browser, against the real handlers'],
+    ['test-fit-panel-browser', "the extension's Fit panel in Chromium: onboarding, UNIQLO US and other shops, recommendation, corrections, outcomes, and what is sent"],
     ['test-extension-browser', 'the unpacked browser extension in Chromium, on fixture pages, handing its charts to Find Fit'],
     ['test-cross-origin', 'the GitHub Pages copy calling the API across origins: preflights, cross-site cookies, logout, checkout'],
     ['test-catalog-images', "the catalogue image extractor's gates, including its browser path"],

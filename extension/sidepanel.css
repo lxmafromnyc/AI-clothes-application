@@ -1,0 +1,46 @@
+/* Fynd Fit panel — on top of popup.css (the site's tokens and the
+   size-chart styles), widened to the side panel Chrome gives it. */
+
+body { width: auto; min-width: 300px; max-height: none; }
+.fp-main { display: grid; gap: 14px; padding: 14px; }
+.pop-head { position: sticky; top: 0; z-index: 2; background: var(--color-bg); }
+.fp-unit { margin-left: auto; display: inline-flex; gap: 4px; }
+.fp-card { display: grid; gap: 8px; padding: 14px; border: 1px solid var(--color-border); border-radius: var(--r); background: var(--color-surface); }
+.fp-row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.fp-h2 { font-size: 15px; font-weight: 600; }
+.fp-status { padding: 10px 12px; border-radius: var(--r); background: var(--color-warning-soft); border: 1px solid var(--color-warning-line); color: var(--color-warning-ink); font-size: 13.5px; }
+.fp-form { display: grid; gap: 6px; }
+.fp-label { font-size: 13px; font-weight: 600; margin-top: 4px; }
+.fp-input { width: 100%; min-height: 38px; padding: 6px 10px; border: 1px solid var(--color-border-strong); border-radius: 10px; font: inherit; background: var(--color-bg); color: var(--color-text); }
+.fp-scale { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 4px 0 0; padding: 0; border: 0; }
+.fp-scale legend { width: 100%; margin-bottom: 4px; padding: 0; }
+.fp-scale label { display: inline-flex; align-items: center; gap: 6px; font-size: 13.5px; }
+.fp-more > summary { cursor: pointer; font-size: 13px; color: var(--color-text-2); margin-top: 4px; }
+.fp-more[open] > summary { margin-bottom: 6px; }
+.fp-error:empty { display: none; }
+.fp-options, .fp-anchors, .fp-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.fp-list { padding-left: 18px; list-style: disc; font-size: 13px; color: var(--color-text-2); }
+.fp-manual { display: grid; grid-template-columns: 1fr 90px; gap: 6px 8px; align-items: center; }
+.fp-manual label { font-size: 13px; }
+.fp-note { display: grid; gap: 8px; padding: 10px 12px; border-radius: 10px; background: var(--color-bg-subtle); font-size: 13.5px; }
+.fp-chip { min-height: 32px; padding: 4px 10px; border: 1px solid var(--color-border-strong); border-radius: 999px; background: var(--color-bg); color: var(--color-text); font: inherit; font-size: 13px; cursor: pointer; }
+.fp-chip[aria-pressed="true"] { background: var(--color-primary); border-color: var(--color-primary); color: var(--color-text-on-primary); }
+.fp-outcomes { display: flex; flex-wrap: wrap; gap: 6px; }
+.fp-rec { border-color: var(--color-primary); }
+.fp-eyebrow { font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--color-text-muted); }
+.fp-rec-size { font-size: 26px; font-weight: 700; letter-spacing: -.02em; }
+.fp-confidence { font-size: 13px; font-weight: 600; }
+.fp-confidence[data-level="high"] { color: #1F6B3A; }
+.fp-confidence[data-level="medium"] { color: var(--color-warning-ink); }
+.fp-confidence[data-level="low"] { color: #8A2A1F; }
+.fp-explain { display: grid; gap: 6px; font-size: 14px; }
+.fp-compare { width: 100%; border-collapse: collapse; font-size: 12.5px; margin: 6px 0; }
+.fp-compare th, .fp-compare td { padding: 4px 6px; border-bottom: 1px solid var(--color-border); text-align: left; vertical-align: top; }
+.fp-compare tr.is-best td, .fp-compare tr.is-best th { background: var(--color-warning-soft); font-weight: 600; }
+.fp-anchor { display: grid; gap: 4px; padding: 10px; border: 1px solid var(--color-border); border-radius: 10px; }
+.fp-anchor-name { font-weight: 600; }
+.fp-anchor-dims { font-size: 12.5px; color: var(--color-text-2); }
+.fp-anchor-actions { display: flex; gap: 10px; }
+.fp-edit-table input { width: 64px; min-height: 28px; padding: 2px 4px; font: inherit; font-size: 12.5px; }
+.fp-privacy > summary { cursor: pointer; font-size: 13px; color: var(--color-text-muted); }
+.fp-privacy[open] > summary { margin-bottom: 6px; }

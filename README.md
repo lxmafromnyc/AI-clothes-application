@@ -2864,6 +2864,78 @@ answers the server, or a chart that is only shown once the customer opens the
 size guide. It doesn't get around a retailer's protections. Extraction has been
 tested on invented fixture pages only, not yet on live retailer pages.
 
+### The Fit panel and Fit Anchors
+
+The extension's side panel (`extension/sidepanel.*`) compares the product a
+shopper is looking at with a garment they already own and like: a **Fit
+Anchor**. The model and comparison are `assets/fit-anchor.js`, shared with the
+extension as `extension/vendor/fit-anchor.js`. It runs in the browser; the
+anchors are kept in `chrome.storage.local` and are never sent. What the panel
+reads, stores and sends, and which retailers it supports, is in
+[`extension/README.md`](extension/README.md#the-fit-panel). It sits beside the
+fit profile and `engine.compare()` rather than replacing them: Find Fit and
+Compare are unchanged.
+
+**An anchor keeps four things apart:**
+
+- **Known dimensions.** Finished-garment measurements, each in inches with its
+  `method`, `source` and `verified` flag. Sources, in order of trust:
+  `fynd-record` (a verified record: high; unverified: medium),
+  `retailer-page` (the product's own garment chart, read from the page: high),
+  `shopper` (entered or corrected: medium), `similar-product` (the same brand,
+  kind and size from another record: low, always worded as an estimate).
+- **Reported feel.** Tight, just right or loose; short, just right or long.
+- **Inferred preference.** A range per dimension, worked out from the two
+  above by `preferred()`: "just right" keeps the reference ± a small band;
+  "feels tight" moves the range above the reference by between ¼ in and 1½ in
+  for a chest (not one arbitrary inch). Outcomes replace that guess where they
+  speak.
+- **Confidence.** Worked out from the data, never from the score.
+
+**How a size is chosen (`recommend()`):**
+
+1. **Read the chart.** Values are parsed (fractions, ranges, decimal commas)
+   and normalised to inches. Widths become flat widths: a circumference is
+   halved. When a chart doesn't give its unit or whether a width is flat or
+   all the way around, it is inferred from what the numbers can plausibly be
+   and marked as inferred; if they can't tell, that dimension is not used.
+   Lengths are compared only when both sides measure them the same way
+   (centre back and shoulder seam sleeves are never compared).
+2. **Check it.** Values that don't grow with size, a step far out of line with
+   the chart's others, and duplicate sizes are flagged. A problem in the
+   category's main dimension (chest for tops, waist for bottoms) stops that
+   dimension from being used.
+3. **Compare.** For each size and each shared dimension:
+   miss = distance outside the preferred range ÷ tolerance + a small centring
+   term, plus `repeatPenalty` when the size repeats the shopper's complaint (no
+   wider than a reference they said feels tight, until an outcome speaks). The
+   score is √(Σ w·miss² / Σ w), with w = the category's weight × the shopper's
+   priority × `reportedBoost` on an axis they said was off. A size without the
+   main dimension ranks last.
+4. **Say how sure it is.** Confidence starts high and is capped by: the
+   anchor's source, the chart's source, inferred units or methods, a flagged
+   chart, a length without a stated method, a different kind of garment, a
+   preference estimated from one answer (medium at most), conflicting
+   outcomes, a runner-up within `tieMargin` or `clearMargin`, and a best score
+   that is still far off. Each reason is shown.
+5. **Explain.** The main dimension first, then each other one, in the
+   shopper's unit; exact numbers only for measured or published values,
+   "about" for estimates.
+
+Anything short of a garment chart gives no size: a body chart, sizes only, or
+no shared measurement return `body-chart`, `labels-only` or `insufficient`,
+with what's missing and, where the brand matches, the same label at low
+confidence.
+
+**The constants are hypotheses.** Every weight, tolerance and shift is in
+`HEURISTICS`, overridable per call for testing, and none has been fitted to
+real outcomes. Fynd claims **no accuracy figure**: outcomes are stored only in
+the shopper's own browser, and an accuracy number needs outcomes collected
+with consent and a documented evaluation, which don't exist yet.
+
+**Tests:** `scripts/test-fit-anchor.js` (the model) and
+`scripts/test-fit-panel-browser.js` (the panel in Chromium, on fixtures).
+
 ## Compare before buying (hoodies and sweatshirts)
 
 `compare.html` (in the main navigation as **Compare**) walks a shopper through
