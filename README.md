@@ -2360,6 +2360,41 @@ live page, or UNIQLO's general body chart when the catalogue places it in that
 chart's category and line (a men's hoodie, sweatshirt or T-shirt), labelled as
 general and never compared; otherwise an honest "unavailable".
 
+**Until a feed is approved: the rest of UNIQLO US, searched live.** Under
+Find Fit's list, once something is typed, **Search UNIQLO US for "…"** runs
+one search through the product source Fynd's Search page already uses
+(OpenWeb Ninja's Real-Time Product Search, which searches the listings UNIQLO
+publishes to Google Shopping). It is `POST /api/search` with
+`{ scope: "uniqlo-us", q }`: the route's own budget, 30-minute search cache,
+verification gate and per-shopper allowance (one search, charged only when the
+source answers), with UNIQLO named as the brand (`api/_catalog/live.js`).
+
+- Only a result that is a UNIQLO US product page is kept, by the product code
+  in its own link, rebuilt as `https://www.uniqlo.com/us/en/products/<code>/00`,
+  once per code. Everything else is counted under `dropped`, by reason.
+- A product Fynd already lists keeps its own name and sizing holds, and opens
+  its product page. Any other opens its sizing chart through the same lookup a
+  pasted link takes, by its canonical page: Fynd's record when there is one,
+  UNIQLO's page read live (which the deployment can't reach today, so
+  usually an honest "unavailable"), never another product's chart.
+- What the source doesn't carry — colours and sizes, for a search result — is
+  counted under `missing` and never filled in. Photos are the source's own
+  Google Shopping thumbnails or `image.uniqlo.com`, nothing else.
+- It runs on OpenWeb Ninja alone, with no fallback: Serper's organic path reads
+  listings off shops' own pages, which would mean Fynd reading uniqlo.com to
+  build a listing, so a scoped search under any other source is refused (503
+  `unsupported-source`), and one whose source is out of searches fails rather
+  than falling back.
+- Nothing found this way is stored in the catalogue or indexed; the page says
+  so. Whether OpenWeb Ninja's terms allow *storing* its results hasn't been
+  confirmed, so they aren't. (Its terms grant a commercial licence to API data
+  used inside a broader product, excluding resale as a standalone data
+  product.)
+
+This is a search, not a catalogue: it finds what the source ranks for the
+words typed (up to 24 a search), so it can't list "every UNIQLO hoodie", and
+it offers no colour, size or stock filters. Those wait for an authorized feed.
+
 **Connecting a real feed**, once access is approved:
 
 1. Record the agreement: which feed, which fields it licenses, any display or

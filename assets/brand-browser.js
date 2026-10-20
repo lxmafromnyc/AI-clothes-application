@@ -286,9 +286,107 @@
     load();
   }
 
+  /* ---------- the rest of UNIQLO US, searched live on request ----------
+
+     Offered once something is typed, run only when asked (it spends one
+     of the shopper's searches), and drawn apart from Fynd's own list.
+     A result Fynd already lists opens its product page; any other opens
+     its sizing chart through the same lookup a pasted link takes
+     (assets/find-fit.js → chartFor), by its own canonical UNIQLO page. */
+  const live = $('fit-live');
+  const liveRun = $('fit-live-run');
+  const liveStatus = $('fit-live-status');
+  const liveGrid = $('fit-live-products');
+  const LIVE_IMAGES = /^https:\/\/(image\.uniqlo\.com\/|encrypted-tbn\d\.gstatic\.com\/shopping\?)/;
+  let liveAsk = 0;
+
+  function liveSay(text, state) {
+    liveStatus.textContent = text;
+    liveStatus.hidden = !text;
+    live.dataset.state = state;
+  }
+
+  /* shown for UNIQLO once there are words to search for */
+  function offerLive() {
+    const q = search.value.trim();
+    live.hidden = !(brand && brand.id === 'uniqlo' && q);
+    liveRun.textContent = q ? `Search UNIQLO US for “${q.slice(0, 60)}”` : 'Search UNIQLO US';
+  }
+
+  function liveCard(p) {
+    const box = el('div', 'fit-product fit-product--live');
+    box.dataset.code = p.code;
+    const media = el('span', 'fit-product-media');
+    if (p.imageUrl && LIVE_IMAGES.test(p.imageUrl)) {
+      const img = el('img');
+      img.src = p.imageUrl;
+      img.alt = '';
+      img.loading = 'lazy';
+      img.decoding = 'async';
+      img.referrerPolicy = 'no-referrer';
+      img.addEventListener('error', () => img.replaceWith(art('tshirts')), { once: true });
+      media.append(img);
+    } else media.append(art('tshirts'));
+    const text = el('span', 'fit-product-text');
+    text.append(el('span', 'fit-product-kind', `UNIQLO · ${p.code}`), el('span', 'fit-product-name', p.name));
+    const price = money(p.price);
+    if (price) text.append(el('span', 'fit-product-price', price));
+    text.append(el('span', `fit-product-holds fit-product-holds--${p.holds}`, p.holdsText));
+    const actions = el('span', 'fit-live-actions');
+    if (p.listed) {
+      const open = el('a', 'btn btn-secondary', 'Open in Fynd');
+      open.href = `product.html?${new URLSearchParams({ brand: 'uniqlo', item: p.code })}`;
+      actions.append(open);
+    } else {
+      const chart = el('button', 'btn btn-secondary fit-live-chart', 'Size chart');
+      chart.type = 'button';
+      chart.addEventListener('click', () => {
+        const alt = $('fit-link-alt');
+        if (alt) alt.open = true;
+        if (global.FindFit) global.FindFit.find(p.url);
+      });
+      actions.append(chart);
+    }
+    const shop = el('a', 'guide-link', 'View on UNIQLO');
+    shop.href = p.url;
+    shop.target = '_blank';
+    shop.rel = 'noopener noreferrer';
+    actions.append(shop);
+    text.append(actions);
+    box.append(media, text);
+    return box;
+  }
+
+  async function runLive() {
+    const q = search.value.trim();
+    if (!q) return;
+    const mine = ++liveAsk;
+    liveRun.disabled = true;
+    liveGrid.replaceChildren();
+    liveSay('Searching UNIQLO US…', 'loading');
+    const sizing = global.Account && global.Account.sizing;
+    const answer = sizing ? await sizing.live(q) : { ok: false };
+    if (mine !== liveAsk) return;
+    liveRun.disabled = false;
+    const data = answer.data || {};
+    if (!answer.ok) {
+      const why = answer.status === 503 ? 'Fynd’s product source isn’t connected here, so UNIQLO can’t be searched live.'
+        : answer.status === 429 ? (data.reason === 'over-limit' && data.error ? `${data.error} Fynd’s own list above is still searchable.` : 'Too many searches at once. Try again in a moment.')
+          : answer.status === 400 ? 'Type what you’re looking for first.'
+            : 'UNIQLO couldn’t be searched just now. Try again in a moment.';
+      return liveSay(why, 'error');
+    }
+    const products = Array.isArray(data.products) ? data.products : [];
+    liveGrid.replaceChildren(...products.map(liveCard));
+    live.dataset.found = String(products.length);
+    if (!products.length) return liveSay(`No UNIQLO US products came back for “${data.query || q}”. Try other words.`, 'empty');
+    liveSay(`${products.length} UNIQLO US product${products.length === 1 ? '' : 's'} found live for “${data.query || q}”, ${data.servedFromCache ? 'from a search made in the last half hour' : 'just now'}. Prices are the listing’s; check them on UNIQLO. Colours and sizes are on UNIQLO’s page.`, 'ready');
+  }
+  liveRun.addEventListener('click', runLive);
+
   brandSelect.addEventListener('change', () => load());
   /* sent once typing pauses; Enter sends it at once */
-  search.addEventListener('input', () => { clearTimeout(typing); typing = setTimeout(() => ask(false), 220); });
+  search.addEventListener('input', () => { clearTimeout(typing); typing = setTimeout(() => ask(false), 220); offerLive(); });
   search.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); ask(false); } });
   start();
 
