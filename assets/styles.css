@@ -397,7 +397,6 @@ strong { font-weight: 600; }
 .fit-product-price { font-size: 14px; font-weight: 600; }
 .fit-product-stock { font-size: 13px; color: var(--color-warning-ink); }
 .fit-coverage:empty { display: none; }
-.fit-list-title { margin: 22px 0 10px; font-size: 17px; font-weight: 600; }
 .fit-link-alt { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--color-border); }
 .fit-link-alt > summary { cursor: pointer; font-size: 14px; color: var(--color-text-2); }
 .fit-link-alt[open] > summary { margin-bottom: 12px; }
