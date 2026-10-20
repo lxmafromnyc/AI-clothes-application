@@ -16,12 +16,13 @@
        them (in a tabbed size guide, its tab's name), whether each is in
        view, and whether it sits in an open dialog (a size guide the
        shopper opened)
-     * up to 3 links whose words say "size guide" / "size chart"
+     * up to 3 links whose words say "size guide" / "size chart", and
+       the words of up to 3 buttons that do (to say what to open)
 
    It never reads form fields or anything typed, skips any table holding
    a form control, clicks nothing, opens nothing, and runs nothing it
-   finds: JSON-LD is parsed as data. What it returns stays in the popup
-   unless the shopper chooses "Open in Fynd".
+   finds: JSON-LD is parsed as data. What it returns stays in the Fit
+   panel (or the popup) unless the shopper chooses "Open in Find Fit".
    ========================================================= */
 
 /* exported fyndCollect */
@@ -164,6 +165,15 @@ function fyndCollect() {
     if (url && !guides.some((g) => g.url === url)) guides.push({ url, text: text(a, 80) || null });
   }
 
+  /* size-guide buttons (many shops open their guide from a button, not a
+     link): their words only, to tell the shopper what to open */
+  const guideButtons = [];
+  for (const b of Array.from(document.querySelectorAll('button, [role="button"], summary')).slice(0, 2000)) {
+    if (guideButtons.length >= 3) break;
+    const words = text(b, 80) || fold(b.getAttribute('aria-label'), 80);
+    if (words && GUIDE_WORDS.test(words) && !guideButtons.includes(words)) guideButtons.push(words);
+  }
+
   const canonical = document.querySelector('link[rel="canonical"]');
   return {
     url: location.href,
@@ -174,6 +184,7 @@ function fyndCollect() {
     fit,
     tables,
     guides,
+    guideButtons,
     dialogOpen: Boolean(document.querySelector('dialog[open], [role="dialog"], [aria-modal="true"]'))
   };
 }

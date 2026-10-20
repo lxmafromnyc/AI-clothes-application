@@ -1,12 +1,11 @@
 {
   "manifest_version": 3,
-  "name": "Fynd — size check and Fit panel",
+  "name": "Fynd — Fit panel",
   "short_name": "Fynd",
-  "version": "0.2.0",
-  "description": "Reads the sizing chart on the clothing product page you have open, when you ask, and compares it with a garment you own that fits you well.",
+  "version": "0.3.0",
+  "description": "Opens beside the clothing product page you are on, reads its size chart when you click Fynd, and compares it with a garment you own that fits you well.",
   "action": {
-    "default_title": "Check sizing with Fynd",
-    "default_popup": "popup.html",
+    "default_title": "Open Fynd Fit — compare this product with clothes that fit you",
     "default_icon": {
       "16": "icons/icon-16.png",
       "32": "icons/icon-32.png",
@@ -20,6 +19,9 @@
     "48": "icons/icon-48.png",
     "128": "icons/icon-128.png"
   },
+  "background": {
+    "service_worker": "background.js"
+  },
   "side_panel": {
     "default_path": "sidepanel.html"
   },
@@ -29,11 +31,8 @@
     "sidePanel",
     "storage"
   ],
-  "host_permissions": [
-    "https://ai-clothes-application.vercel.app/*"
-  ],
   "optional_host_permissions": [
-    "https://www.uniqlo.com/*"
+    "https://*/*"
   ],
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'none'; base-uri 'none'"

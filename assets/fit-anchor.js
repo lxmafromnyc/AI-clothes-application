@@ -106,7 +106,7 @@
      the chart's words don't say, and marked inferred. */
   const DIMENSIONS = {
     chestWidth: { label: 'chest', phrase: 'chest width', axis: 'fit', kind: 'width', match: /\b(chest|bust|pit[\s-]*to[\s-]*pit|armpit[\s-]*to[\s-]*armpit|body width)\b/i, flatMax: 31, aroundMin: 33 },
-    shoulderWidth: { label: 'shoulders', phrase: 'shoulder width', axis: 'fit', kind: 'length', match: /\bshoulders?\b/i, plausible: [12, 26] },
+    shoulderWidth: { label: 'shoulders', phrase: 'shoulder width', axis: 'fit', kind: 'length', match: /\b(shoulders?|back width|across back)\b/i, plausible: [12, 26] },
     bodyLength: { label: 'length', phrase: 'body length', axis: 'length', kind: 'length', match: /\b(body length|back length|total length|garment length|front length|length)\b/i, not: /\b(sleeve|inseam|outseam|rise|leg|arm)\b/i, plausible: [17, 48] },
     sleeveLength: { label: 'sleeve', phrase: 'sleeve length', axis: 'length', kind: 'length', match: /\b(sleeves?|arm length)\b/i, plausible: [3, 38] },
     waist: { label: 'waist', phrase: 'waist', axis: 'fit', kind: 'width', match: /\bwaist\b/i, flatMax: 23, aroundMin: 24 },
@@ -174,7 +174,15 @@
     repeatPenalty: 1,
     /* a step between neighbouring sizes this many times the chart's
        typical step is out of line */
-    stepOutlier: 4
+    stepOutlier: 4,
+    /* one other product of the same brand stands in for the shopper's
+       garment: theirs may be cut differently, so its value is widened by
+       this much (inches) either way. Several products give their own
+       spread instead. */
+    oneProductSpread: { chestWidth: 0.75, shoulderWidth: 0.75, bodyLength: 1, sleeveLength: 1, waist: 0.75, hip: 0.75, thigh: 0.5, rise: 0.5, inseam: 1, legOpening: 0.5 },
+    /* garment room (circumference, inches) from a body chart: at least
+       this wide a spread, however closely the few products agree */
+    minEaseSpread: 2
   };
 
   /* ---------- small helpers ---------- */
@@ -184,6 +192,8 @@
   /* "a T-shirt", "a jacket or coat", but "jeans": pairs take no article */
   const PAIRS = { jeans: true, pants: true, shorts: true };
   const aNoun = (category) => (PAIRS[category] ? noun(category) : `a ${noun(category)}`);
+  /* "T-shirts", "sweatshirts or hoodies", "jeans" */
+  const kindPlural = (category) => (PAIRS[category] ? noun(category) : noun(category).split(' or ').map((w) => `${w}s`).join(' or '));
 
   const LEVELS = ['low', 'medium', 'high'];
   const cap = (level, at) => LEVELS[Math.min(LEVELS.indexOf(level), LEVELS.indexOf(at))];
@@ -215,7 +225,17 @@
     if (n) return 100 + Number(n[1]);
     return null;
   }
-  const sameSize = (a, b) => String(a || '').trim().toUpperCase().replace(/\s+/g, '') === String(b || '').trim().toUpperCase().replace(/\s+/g, '');
+  /* "Medium" and "M", "X-Large" and "XL", "2XL" and "XXL" are one size */
+  const SIZE_WORDS = [[/^EXTRA[\s-]*SMALL$/, 'XS'], [/^SMALL$/, 'S'], [/^MEDIUM$/, 'M'], [/^LARGE$/, 'L'], [/^(?:EXTRA|X)[\s-]*LARGE$/, 'XL'], [/^(?:XX|2X)[\s-]*LARGE$/, 'XXL']];
+  function sizeKey(label) {
+    let s = String(label || '').trim().toUpperCase();
+    const word = SIZE_WORDS.find(([re]) => re.test(s));
+    if (word) s = word[1];
+    s = s.replace(/\s+/g, '');
+    const rank = Object.prototype.hasOwnProperty.call(LETTER_RANK, s) ? LETTER_RANK[s] : null;
+    return rank !== null ? `#${rank}` : s;
+  }
+  const sameSize = (a, b) => sizeKey(a) !== '' && sizeKey(a) === sizeKey(b);
 
   /* "20", "20.5", "20,5", "20 1/2", "20½", "51–53", "51 cm", 20" → { value, unit, range } */
   const UNICODE_FRAC = { '¼': 0.25, '½': 0.5, '¾': 0.75, '⅛': 0.125, '⅜': 0.375, '⅝': 0.625, '⅞': 0.875 };
@@ -266,7 +286,10 @@
      isn't a back length. null: not said. */
   const LENGTH_METHODS = {
     sleeveLength: [[/cent(?:er|re)[\s-]*back|\bCB\b/i, 'center-back'], [/shoulder|seam/i, 'shoulder-seam']],
-    bodyLength: [[/\bfront\b/i, 'front'], [/\bHPS\b|high(?:est)?[\s-]*point|from (?:the )?shoulder/i, 'hps'], [/\bback\b|cent(?:er|re)[\s-]*back/i, 'back']],
+    /* a front length is taken from the high point of the shoulder: the
+       same quantity as an HPS length (Zara: "Front length", measured
+       "from the highest point of the shoulder") */
+    bodyLength: [[/\bfront\b|\bHPS\b|high(?:est)?[\s-]*point|from (?:the )?shoulder/i, 'hps'], [/\bback\b|cent(?:er|re)[\s-]*back/i, 'back']],
     shoulderWidth: [[/seam[\s-]*to[\s-]*seam/i, 'seam-to-seam'], [/broadest/i, 'broadest']],
     inseam: [], rise: [[/\bfront\b/i, 'front'], [/\bback\b/i, 'back']]
   };
@@ -277,7 +300,7 @@
     const hit = rules.find(([re]) => re.test(words || ''));
     return hit ? hit[1] : null;
   }
-  const METHOD_LABELS = { 'center-back': 'from the centre back', 'shoulder-seam': 'from the shoulder seam', front: 'front length', back: 'back length', hps: 'from the top of the shoulder', 'seam-to-seam': 'seam to seam', broadest: 'at the broadest point' };
+  const METHOD_LABELS = { 'center-back': 'from the centre back', 'shoulder-seam': 'from the shoulder seam', front: 'down the front', back: 'down the centre back', hps: 'from the top of the shoulder (front length)', 'seam-to-seam': 'seam to seam', broadest: 'at the broadest point' };
 
   function dimensionOf(header, allowed) {
     for (const id of allowed) {
@@ -427,7 +450,7 @@
 
   const FEEL_FIT = ['tight', 'right', 'loose'];
   const FEEL_LENGTH = ['short', 'right', 'long'];
-  const SOURCES = ['fynd-record', 'retailer-page', 'shopper', 'similar-product'];
+  const SOURCES = ['fynd-record', 'retailer-page', 'shopper', 'similar-product', 'estimate'];
 
   /* A plain object → a checked anchor, or { error }. Only known fields
      survive; every measurement keeps its source. */
@@ -448,6 +471,7 @@
     const allowed = CATEGORIES[category].dims;
     Object.entries(o.dims && typeof o.dims === 'object' ? o.dims : {}).forEach(([id, m]) => {
       if (!allowed.includes(id) || !m || !isNum(m.value) || m.value <= 0 || m.value > 80 || !SOURCES.includes(m.source)) return;
+      const ranged = isNum(m.low) && isNum(m.high) && m.low <= m.value && m.value <= m.high;
       dims[id] = {
         value: round(m.value, 3),
         unit: 'in',
@@ -456,7 +480,18 @@
         verified: m.source === 'fynd-record' && m.verified === true,
         note: text(m.note, 200)
       };
+      /* an estimate is a range: how far apart its evidence is */
+      if (ranged && (m.low < m.value || m.high > m.value)) { dims[id].low = round(m.low, 3); dims[id].high = round(m.high, 3); }
     });
+    /* what the measurements rest on, when Fynd estimated them */
+    const r = o.reference && typeof o.reference === 'object' ? o.reference : null;
+    const reference = r && REFERENCE_TIERS.includes(r.tier)
+      ? {
+        tier: r.tier,
+        summary: text(r.summary, 400),
+        basis: (Array.isArray(r.basis) ? r.basis : []).slice(0, 12).map((b) => ({ name: text(b && b.name, 160), brand: text(b && b.brand, 60), url: /^https:\/\//.test(b && b.url || '') && b.url.length < 600 ? b.url : null, verification: b && b.verification === 'verified' ? 'verified' : 'unverified', retrievedAt: text(b && b.retrievedAt, 20) })).filter((b) => b.name)
+      }
+      : null;
     const product = o.product && typeof o.product === 'object'
       ? { name: text(o.product.name, 160), url: /^https:\/\//.test(o.product.url || '') && o.product.url.length < 600 ? o.product.url : null, code: text(o.product.code, 40) }
       : null;
@@ -467,24 +502,30 @@
         id: text(o.id, 40) || `a${Date.now().toString(36)}`,
         brand, category, size, feel, priority,
         product: product && (product.name || product.url || product.code) ? product : null,
+        cut: CUTS.includes(o.cut) ? o.cut : null,
+        reference,
         dims,
         feedback,
         createdAt: text(o.createdAt, 40) || new Date().toISOString()
       }
     };
   }
+  const REFERENCE_TIERS = ['exact', 'same-brand', 'brand-body-chart', 'category', 'none', 'page', 'shopper'];
+  /* a garment's cut, as brands publish it (fit.fitClass in Fynd's records) */
+  const CUTS = ['slim', 'regular', 'relaxed', 'oversized'];
   function clampPriority(v) { return isNum(v) ? Math.min(2, Math.max(0.25, v)) : 1; }
 
   /* how sure a measurement is, by where it came from (a Fynd record
      nobody has checked against its source is only as good as a typed one) */
-  const SOURCE_TRUST = { 'fynd-record': 'high', 'fynd-record-unverified': 'medium', 'retailer-page': 'high', shopper: 'medium', 'similar-product': 'low' };
+  const SOURCE_TRUST = { 'fynd-record': 'high', 'fynd-record-unverified': 'medium', 'retailer-page': 'high', shopper: 'medium', 'similar-product': 'low', estimate: 'low' };
   const trustKey = (m) => (m.source === 'fynd-record' && !m.verified ? 'fynd-record-unverified' : m.source);
   const SOURCE_WORDS = {
     'fynd-record': 'verified by Fynd',
     'fynd-record-unverified': 'from Fynd’s record, not yet checked',
     'retailer-page': 'from the retailer’s published chart',
     shopper: 'as you entered or corrected it',
-    'similar-product': 'estimated from a similar product'
+    'similar-product': 'estimated from the same brand’s published measurements',
+    estimate: 'estimated from published size charts'
   };
 
   /* ---------- outcomes ---------- */
@@ -561,11 +602,20 @@
       }
       /* a measured outcome replaces the one-answer guess on the side it
          speaks to, keeping the guess's width beyond it */
+      /* an estimated reference is a range, not a point: the preference
+         is as wide as the evidence is uncertain */
+      const spreadLow = isNum(m.low) ? m.value - m.low : 0;
+      const spreadHigh = isNum(m.high) ? m.high - m.value : 0;
+      if (spreadLow || spreadHigh) {
+        low -= spreadLow;
+        high += spreadHigh;
+        basis.push(`your garment’s own ${DIMENSIONS[id].label} is estimated (${round(m.low, 2)}–${round(m.high, 2)} in)`);
+      }
       const width = high - low;
       if (Number.isFinite(oLow) && Number.isFinite(oHigh)) { low = oLow; high = oHigh; }
       else if (Number.isFinite(oLow)) { low = oLow; high = Math.max(high, oLow + width); }
       else if (Number.isFinite(oHigh)) { high = oHigh; low = Math.min(low, oHigh - width); }
-      out[id] = { low: round(low, 3), high: round(high, 3), center: round((low + high) / 2, 3), reference: m.value, method: m.method, source: trustKey(m), adjusted: Boolean(shift), toward: shift ? Math.sign(shift[0]) : 0, outcomes: (anchor.feedback || []).filter((f) => isNum(f.dims[id])).length, conflict, basis };
+      out[id] = { low: round(low, 3), high: round(high, 3), center: round((low + high) / 2, 3), reference: m.value, referenceLow: isNum(m.low) ? m.low : null, referenceHigh: isNum(m.high) ? m.high : null, method: m.method, source: trustKey(m), adjusted: Boolean(shift), toward: shift ? Math.sign(shift[0]) : 0, outcomes: (anchor.feedback || []).filter((f) => isNum(f.dims[id])).length, conflict, basis };
     });
     return out;
   }
@@ -645,7 +695,7 @@
         const w = weightOf(id) * (read.columns[id].suspect ? 0.5 : 1);
         sum += w * miss * miss;
         wsum += w;
-        diffs.push({ dim: id, label: DIMENSIONS[id].label, target: t.value, reference: p.reference, preferredLow: p.low, preferredHigh: p.high, diff: round(t.value - p.reference, 3), verdict: verdictOf(id, t.value, p), source: p.source, targetUnitBy: t.unitBy, targetMethodBy: t.methodBy, referenceMethod: p.method, targetMethod: t.method });
+        diffs.push({ dim: id, label: DIMENSIONS[id].label, target: t.value, reference: p.reference, preferredLow: p.low, preferredHigh: p.high, diff: round(t.value - p.reference, 3), referenceLow: p.referenceLow, referenceHigh: p.referenceHigh, verdict: verdictOf(id, t.value, p), source: p.source, targetUnitBy: t.unitBy, targetMethodBy: t.methodBy, referenceMethod: p.method, targetMethod: t.method });
       });
       const covered = diffs.length;
       return { size: s.size, rank: s.rank, score: covered ? round(Math.sqrt(sum / wsum), 3) : null, covered, diffs, dims: s.dims };
@@ -716,9 +766,10 @@
     const lines = [];
     const kind = noun(anchor.category);
     const sorted = best.diffs.slice().sort((a, b) => (DIMENSIONS[a.dim].axis === 'fit' ? 0 : 1) - (DIMENSIONS[b.dim].axis === 'fit' ? 0 : 1));
-    const exact = (d) => d.source !== 'similar-product';
+    const exact = (d) => d.source !== 'similar-product' && d.source !== 'estimate';
     const lead = sorted[0];
-    const ref = (d) => `${exact(d) ? '' : 'about '}${format(d.reference, unit)}`;
+    const range = (d) => (isNum(d.referenceLow) && isNum(d.referenceHigh) && d.referenceHigh - d.referenceLow >= 0.125 ? `, somewhere between ${format(d.referenceLow, unit)} and ${format(d.referenceHigh, unit)}` : '');
+    const ref = (d) => `${exact(d) ? '' : 'about '}${format(d.reference, unit)}${range(d)}`;
     const targetWords = (d) => `${d.targetUnitBy === 'inferred' || d.targetMethodBy === 'inferred' ? 'about ' : ''}${format(d.target, unit)}`;
     const flat = (d) => (DIMENSIONS[d.dim].kind === 'width' ? 'flat ' : '');
     lines.push(`Your reference ${kind} (${anchor.brand} ${anchor.size}) has a ${flat(lead)}${DIMENSIONS[lead.dim].phrase} of ${ref(lead)} (${SOURCE_WORDS[lead.source]}). This ${best.size} measures ${targetWords(lead)} — ${lead.verdict}.`);
@@ -776,6 +827,189 @@
     return family[0] || null;
   }
 
+  /* ---------- a reference garment from brand, kind and size ---------- */
+
+  /* estimateReference(data, { brand, category, size, cut?, productId? })
+     → { tier, dims, basis, candidates, summary, missing }
+
+     `data` is assets/fit-reference-data.js: measurements read off brands'
+     own pages (Fynd's records), each with its source. In order, the
+     reference garment's measurements come from:
+
+       exact             the product itself (the shopper picked it):
+                         its published garment chart, in their size
+       same-brand        the same brand's other products of this kind, in
+                         this size: their median, and their spread as the
+                         range (one product: widened by oneProductSpread)
+       brand-body-chart  the brand publishes only who a size is cut for:
+                         its chest range, plus the room garments of this
+                         kind have over the body they're cut for, from the
+                         products that publish both charts — chest only
+       category          nothing from this brand: the range across every
+                         brand's product of this kind in this size label
+       none              no published garment of this kind in this size
+
+     No tier invents a number: each dimension is a published value or a
+     median and spread of published values, and says what it rests on. */
+  const brandKey = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+  const median = (xs) => { const a = xs.slice().sort((x, y) => x - y); const m = Math.floor(a.length / 2); return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2; };
+  const rowFor = (sizes, size) => { const k = Object.keys(sizes || {}).find((z) => sameSize(z, size)); return k ? sizes[k] : null; };
+  const basisOf = (p) => ({ id: p.id, name: p.name, brand: p.brand, url: p.url, verification: p.verification, retrievedAt: p.retrievedAt, fit: p.fit || null });
+
+  /* several products' rows → per dimension: median, min, max, of the
+     measuring method most of them use (methods are never pooled). A
+     stand-in is never the shopper's own garment, so the range is at
+     least oneProductSpread either side, however closely they agree. */
+  function pool(rows, H) {
+    const dims = {};
+    const allIds = new Set();
+    rows.forEach((r) => Object.keys(r.row).forEach((id) => allIds.add(id)));
+    allIds.forEach((id) => {
+      const byMethod = {};
+      rows.forEach((r) => { const m = r.row[id]; if (m && isNum(m.value)) (byMethod[m.method] = byMethod[m.method] || []).push(m.value); });
+      const [method, values] = Object.entries(byMethod).sort((a, b) => b[1].length - a[1].length)[0] || [];
+      if (!values) return;
+      const value = median(values);
+      const w = (H.oneProductSpread || {})[id] || 0.75;
+      const low = Math.min(value - w, ...values);
+      const high = Math.max(value + w, ...values);
+      dims[id] = { value: round(value, 3), low: round(low, 3), high: round(high, 3), method: method === 'flat' ? 'flat' : method, n: values.length };
+    });
+    return dims;
+  }
+
+  function estimateReference(data, query, opts) {
+    const H = Object.assign({}, HEURISTICS, opts && opts.heuristics);
+    const q = query || {};
+    const cat = CATEGORIES[q.category];
+    const out = { tier: 'none', dims: {}, basis: [], candidates: [], summary: '', missing: [] };
+    if (!cat || !q.size) { out.summary = 'Choose the kind of garment and the size on its label.'; return out; }
+    const kind = noun(q.category);
+    const products = (data && data.products || []).filter((p) => p.category === q.category && p.garment && p.garment.sizes);
+    const mine = products.filter((p) => brandKey(p.brand) === brandKey(q.brand));
+    /* the brand as it writes its own name, once Fynd knows it */
+    const knownBrand = ((data && data.bodyCharts || []).concat(data && data.products || [])).find((x) => brandKey(x.brand) === brandKey(q.brand));
+    const brand = knownBrand ? knownBrand.brand : q.brand;
+    out.candidates = mine.filter((p) => rowFor(p.garment.sizes, q.size)).map(basisOf);
+    const finish = (tier, dims, basis, source, summary) => {
+      out.tier = tier;
+      out.basis = basis;
+      out.summary = summary;
+      Object.entries(dims).forEach(([id, d]) => {
+        if (!cat.dims.includes(id)) return;
+        out.dims[id] = { value: d.value, method: d.method, source, verified: source === 'fynd-record' && d.verified === true };
+        if (isNum(d.low) && isNum(d.high) && (d.low < d.value || d.high > d.value)) { out.dims[id].low = d.low; out.dims[id].high = d.high; }
+      });
+      out.missing = cat.dims.filter((id) => !out.dims[id]);
+      return out;
+    };
+
+    /* 1 the exact product */
+    const exact = q.productId ? products.find((p) => p.id === q.productId) : null;
+    const exactRow = exact && rowFor(exact.garment.sizes, q.size);
+    if (exactRow) {
+      const dims = {};
+      Object.entries(exactRow).forEach(([id, m]) => { dims[id] = { value: m.value, method: m.method, verified: exact.verification === 'verified' }; });
+      return finish('exact', dims, [basisOf(exact)], 'fynd-record', `Measurements of ${exact.brand}’s ${exact.name} in ${q.size}, from ${exact.brand}’s own product page${exact.verification === 'verified' ? ', checked by Fynd' : ' (not yet checked by Fynd)'}.`);
+    }
+
+    /* 2 the same brand's products of this kind, in this size (its cut, if given) */
+    let same = mine.map((p) => ({ p, row: rowFor(p.garment.sizes, q.size) })).filter((x) => x.row);
+    const cutNote = [];
+    if (q.cut && same.length) {
+      const cut = same.filter((x) => x.p.fit === q.cut);
+      if (cut.length) same = cut;
+      else cutNote.push(`${same.length === 1 ? 'it isn’t' : 'none of them is'} sold as ${q.cut}`);
+    }
+    if (same.length) {
+      const dims = pool(same, H);
+      const names = same.map((x) => x.p.name);
+      return finish('same-brand', dims, same.map((x) => basisOf(x.p)), 'similar-product',
+        `Estimated from ${same.length === 1 ? 'one' : same.length} ${brand} ${same.length === 1 ? kind : kindPlural(q.category)} in ${q.size} (${names.join('; ')}), as ${brand} publishes ${same.length === 1 ? 'it' : 'them'}. Yours may be cut differently, so Fynd treats it as a range${cutNote.length ? ` (${cutNote.join('; ')})` : ''}.`);
+    }
+
+    /* 3 the brand's body chart, plus the room this kind of garment has */
+    const body = (data && data.bodyCharts || []).find((b) => brandKey(b.brand) === brandKey(q.brand) && b.categories.includes(q.category) && rowFor(b.sizes, q.size));
+    if (body) {
+      const ease = [];
+      const easeFrom = [];
+      products.filter((p) => p.body).forEach((p) => {
+        let used = false;
+        Object.entries(p.garment.sizes).forEach(([z, row]) => {
+          const b = rowFor(p.body, z);
+          if (b && row.chestWidth && row.chestWidth.method === 'flat') { ease.push(2 * row.chestWidth.value - (b.chestLow + b.chestHigh) / 2); used = true; }
+        });
+        if (used) easeFrom.push(p);
+      });
+      if (ease.length) {
+        const b = rowFor(body.sizes, q.size);
+        const mid = median(ease);
+        let lo = Math.min(...ease);
+        let hi = Math.max(...ease);
+        if (hi - lo < H.minEaseSpread) { lo = mid - H.minEaseSpread / 2; hi = mid + H.minEaseSpread / 2; }
+        const chest = { value: round(((b.chestLow + b.chestHigh) / 2 + mid) / 2, 3), low: round((b.chestLow + lo) / 2, 3), high: round((b.chestHigh + hi) / 2, 3), method: 'flat' };
+        const from = easeFrom.map((p) => `${p.brand} ${p.name}`);
+        return finish('brand-body-chart', { chestWidth: chest }, easeFrom.map(basisOf).concat([{ id: `body:${body.brand}`, name: body.title || `${body.brand} size chart`, brand: body.brand, url: body.source, verification: body.verification, retrievedAt: body.retrievedAt, fit: null }]),
+          'estimate',
+          `${brand} publishes who its ${q.size} is cut for (chest ${format(b.chestLow, 'in')}–${format(b.chestHigh, 'in')} around the body), not the garment’s own measurements. Fynd estimated the garment’s chest from that and the room ${kindPlural(q.category)} have over the body in brands that publish both (${from.join('; ')}). Only the chest is estimated; lengths are unknown.`);
+      }
+    }
+
+    /* 4 every brand's products of this kind, in this size label */
+    const all = products.map((p) => ({ p, row: rowFor(p.garment.sizes, q.size) })).filter((x) => x.row);
+    if (all.length) {
+      const dims = pool(all, H);
+      const brands = [...new Set(all.map((x) => x.p.brand))];
+      return finish('category', dims, all.map((x) => basisOf(x.p)), 'estimate',
+        `Fynd has no published measurements for ${brand} ${kindPlural(q.category)}. This is the range of ${all.length} ${kindPlural(q.category)} labelled ${q.size} from ${brands.join(' and ')} — sizes differ between brands, so treat it as a rough guide.`);
+    }
+
+    out.missing = cat.dims.slice();
+    out.summary = `Fynd has no published measurements for any ${kind} in ${q.size} yet. Fynd can still compare once it has measurements of yours: open its product page and press “This fits me”, or enter them.`;
+    return out;
+  }
+
+  /* A product from the reference data (assets/fit-reference-data.js) as
+     a chart readChart understands: its own garment measurements, each
+     column saying how it is measured, in inches to the hundredth (Zara's
+     centimetres converted carry more places than a chart writes). */
+  const COLUMN_WORDS = {
+    chestWidth: { flat: 'Chest width (flat, armpit to armpit)' },
+    bodyLength: { back: 'Body length (centre back)', hps: 'Body length (front, from high point of shoulder)' },
+    sleeveLength: { 'center-back': 'Sleeve length (centre back)', 'shoulder-seam': 'Sleeve length (from shoulder seam)' },
+    shoulderWidth: { 'seam-to-seam': 'Shoulder width (seam to seam)', broadest: 'Shoulder width (broadest)' }
+  };
+  function chartFromReference(product) {
+    const sizes = product && product.garment && product.garment.sizes;
+    if (!sizes) return null;
+    const ids = [];
+    Object.values(sizes).forEach((row) => Object.entries(row).forEach(([id, m]) => {
+      if (COLUMN_WORDS[id] && COLUMN_WORDS[id][m.method] && !ids.some((x) => x.id === id)) ids.push({ id, method: m.method });
+    }));
+    if (!ids.length) return null;
+    return {
+      measures: 'finished-garment',
+      unit: 'in',
+      title: `${product.brand} ${product.name}`,
+      columns: ids.map((x) => COLUMN_WORDS[x.id][x.method]),
+      rows: Object.entries(sizes).map(([size, row]) => ({ size, values: ids.map((x) => (row[x.id] && row[x.id].method === x.method ? String(round(row[x.id].value, 2)) : '')) }))
+    };
+  }
+
+  /* The product in the reference data a page is about: by its address
+     (scheme, host and path; UNIQLO's colour suffix and query ignored) or
+     the product code a retailer module recognised. */
+  const addressKey = (u) => { try { const x = new URL(u); return `${x.host}${x.pathname}`.toLowerCase().replace(/\/+$/, ''); } catch (err) { return null; } };
+  function referenceProductFor(data, page) {
+    const list = data && data.products || [];
+    const p = page || {};
+    const keys = [p.url, p.canonical].map(addressKey).filter(Boolean);
+    const code = p.code ? String(p.code).toLowerCase() : null;
+    return list.find((x) => keys.includes(addressKey(x.url)))
+      || (code ? list.find((x) => x.code && x.code.toLowerCase() === code && (!p.brand || brandKey(p.brand) === brandKey(x.brand))) : null)
+      || null;
+  }
+
   /* A product's kind, from its own words (name, breadcrumb): or null */
   const KIND_WORDS = [
     [/\b(jeans|denim pants?)\b/i, 'jeans'],
@@ -793,5 +1027,5 @@
     return hit ? hit[1] : null;
   }
 
-  return { SOURCE_TRUST, METHOD_LABELS, CATEGORIES, DIMENSIONS, HEURISTICS, FEEL_FIT, FEEL_LENGTH, SOURCES, SOURCE_WORDS, OUTCOMES, format, parseCell, sizeRank, readChart, makeAnchor, preferred, recommend, outcome, dimsFromChart, anchorFor, categoryOf };
+  return { estimateReference, chartFromReference, referenceProductFor, sizeKey, CUTS, REFERENCE_TIERS, SOURCE_TRUST, METHOD_LABELS, CATEGORIES, DIMENSIONS, HEURISTICS, FEEL_FIT, FEEL_LENGTH, SOURCES, SOURCE_WORDS, OUTCOMES, format, parseCell, sizeRank, readChart, makeAnchor, preferred, recommend, outcome, dimsFromChart, anchorFor, categoryOf };
 });

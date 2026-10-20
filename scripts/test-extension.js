@@ -57,24 +57,31 @@ const raw = (tables, extra) => Object.assign({
 (async () => {
   section('what the extension may do');
 
-  await test('Manifest V3 with only what the size check and Fit panel need: no content scripts, no background page, no broad host access', () => {
+  await test('Manifest V3 with only what the Fit panel needs: no host access at install, no content scripts, a background worker that only opens the panel', () => {
     const m = JSON.parse(fs.readFileSync(path.join(EXT, 'manifest.json'), 'utf8'));
     assert.strictEqual(m.manifest_version, 3);
     /* activeTab + scripting: read a page only after the toolbar press;
        sidePanel: the Fit panel; storage: references, on this device */
     assert.deepStrictEqual(m.permissions, ['activeTab', 'scripting', 'sidePanel', 'storage']);
-    /* the only host it may always reach is Fynd's own site, for its records */
-    assert.deepStrictEqual(m.host_permissions, ['https://ai-clothes-application.vercel.app/*']);
-    /* supported retailers only, and only if the shopper grants them */
-    assert.deepStrictEqual(m.optional_host_permissions, ['https://www.uniqlo.com/*']);
-    for (const key of ['content_scripts', 'background', 'externally_connectable', 'web_accessible_resources']) {
+    /* no site at install, Fynd's own included: the panel makes no request */
+    assert.strictEqual(m.host_permissions, undefined);
+    /* a site is added only when the shopper asks for that one site
+       (permissions.request with its own origin, in sidepanel.js) */
+    assert.deepStrictEqual(m.optional_host_permissions, ['https://*/*']);
+    for (const key of ['content_scripts', 'externally_connectable', 'web_accessible_resources']) {
       assert.strictEqual(m[key], undefined, `${key} must not be requested`);
     }
     assert.ok(!m.permissions.includes('tabs') && !m.permissions.includes('history') && !m.permissions.includes('<all_urls>'));
-    assert.strictEqual(m.action.default_popup, 'popup.html');
+    /* the toolbar button opens the panel (background.js), not a popup */
+    assert.strictEqual(m.action.default_popup, undefined);
+    assert.deepStrictEqual(m.background, { service_worker: 'background.js' });
     assert.strictEqual(m.side_panel.default_path, 'sidepanel.html');
     assert.match(m.content_security_policy.extension_pages, /script-src 'self'/);
     Object.values(m.icons).forEach((f) => assert.ok(fs.existsSync(path.join(EXT, f)), f));
+    const bg = fs.readFileSync(path.join(EXT, 'background.js'), 'utf8');
+    assert.ok(!/\bfetch\s*\(|XMLHttpRequest|executeScript|storage\.local|permissions\.request/.test(bg), 'the worker reads nothing and fetches nothing');
+    /* sidePanel.open is the first thing in the click, before any await */
+    assert.match(bg, /onClicked\.addListener\(\(tab\) => \{\s*const opening = chrome\.sidePanel\.open\(/);
   });
 
   await test('the popup and the page collector make no request and run nothing they read', () => {
@@ -88,25 +95,27 @@ const raw = (tables, extra) => Object.assign({
     }
   });
 
-  await test('the Fit panel: one request path, to Fynd’s own site only, with no cookies; storage on this device only; nothing it reads is run', () => {
+  await test('the Fit panel: no network request at all; storage on this device only; one site at a time; nothing it reads is run', () => {
     const src = fs.readFileSync(path.join(EXT, 'sidepanel.js'), 'utf8');
-    assert.ok(!/XMLHttpRequest|sendBeacon|WebSocket|\beval\s*\(|new Function|innerHTML|insertAdjacentHTML|document\.write/.test(src));
-    const fetches = src.match(/\bfetch\s*\(/g) || [];
-    assert.strictEqual(fetches.length, 1, 'one place that makes a request');
-    assert.match(src, /fetch\(url, \{ credentials: 'omit'/);
-    assert.match(src, /const url = `\$\{FYND_SITE\.replace\(\/\\\/\$\/, ''\)\}\/api\/size-recommendation\?/);
-    assert.ok(!/storage\.sync|localStorage|sessionStorage|indexedDB|document\.cookie/.test(src), 'chrome.storage.local only');
-    /* every supported retailer's origin is optional in the manifest, and nothing else is */
-    const m = JSON.parse(fs.readFileSync(path.join(EXT, 'manifest.json'), 'utf8'));
+    assert.ok(!/\bfetch\s*\(|XMLHttpRequest|sendBeacon|WebSocket|\beval\s*\(|new Function|innerHTML|insertAdjacentHTML|document\.write/.test(src));
+    assert.ok(!/storage\.sync|localStorage|sessionStorage|indexedDB|document\.cookie/.test(src), 'chrome.storage only');
+    /* the only access it asks for: the one site the shopper is on */
+    const asks = src.match(/permissions\.request\(\{ origins: \[origin\] \}\)/g) || [];
+    assert.strictEqual(asks.length, 1);
+    assert.match(src, /const origin = `\$\{new URL\(tab\.url\)\.origin\}\/\*`;/);
+    /* retailer modules: product recognition only */
     const vm = require('vm');
     const sandbox = { URL };
     vm.runInNewContext(`${fs.readFileSync(path.join(EXT, 'retailers.js'), 'utf8')}; this.R = FyndRetailers;`, sandbox);
-    /* (compared as JSON: the sandbox's arrays come from another realm) */
-    assert.strictEqual(JSON.stringify(sandbox.R.RETAILERS.flatMap((r) => r.origins).sort()), JSON.stringify(m.optional_host_permissions.slice().sort()));
-    assert.strictEqual(JSON.stringify(sandbox.R.match('https://www.uniqlo.com/us/en/products/E475377-000/00?colorDisplayCode=09').product), JSON.stringify({ code: 'E475377-000', canonical: 'https://www.uniqlo.com/us/en/products/E475377-000/00' }));
+    const j = (v) => JSON.stringify(v);
+    assert.strictEqual(j(sandbox.R.match('https://www.uniqlo.com/us/en/products/E475377-000/00?colorDisplayCode=09').product), j({ code: 'E475377-000', canonical: 'https://www.uniqlo.com/us/en/products/E475377-000/00' }));
     assert.strictEqual(sandbox.R.match('https://www.uniqlo.com/us/en/spl/men').product, null, 'a UNIQLO page that isn’t a product');
     assert.strictEqual(sandbox.R.match('https://www.uniqlo.com.evil.example/us/en/products/E475377-000/00'), null);
-    assert.strictEqual(sandbox.R.match('https://www.zara.com/us/en/x-p01887411.html'), null);
+    assert.strictEqual(sandbox.R.match('https://www.zara.com/us/en/basic-medium-weight-t-shirt--02-p01887411.html').product.code, '01887411');
+    assert.strictEqual(sandbox.R.match('https://www2.hm.com/en_us/productpage.0685816001.html').product.code, '0685816');
+    assert.strictEqual(sandbox.R.match('https://www.nike.com/t/sportswear-premium-essentials-mens-t-shirt-KvYyYtT6/IH1121-491').product.code, 'IH1121');
+    assert.strictEqual(sandbox.R.match('https://www.nike.com/w/mens-tops-t-shirts').product, null);
+    assert.ok(sandbox.R.RETAILERS.every((r) => r.liveChecked === false), 'no module claims live-checked until it is');
   });
 
   await test('the collector reads no form field and skips any table holding one', () => {

@@ -14,6 +14,7 @@
 'use strict';
 
 const assert = require('assert');
+const fs = require('fs');
 const F = require('../assets/fit-anchor');
 
 let passed = 0;
@@ -219,7 +220,7 @@ test('lengths measured from different points are never compared: a centre-back s
   assert.deepStrictEqual(r.compared, ['chestWidth']);
   const why = Object.fromEntries(r.notCompared.map((n) => [n.dim, n.why]));
   assert.match(why.sleeveLength, /centre back, this chart’s from the shoulder seam/);
-  assert.match(why.bodyLength, /back length, this chart’s front length/);
+  assert.match(why.bodyLength, /down the centre back, this chart’s from the top of the shoulder \(front length\)/);
   assert.notStrictEqual(r.confidence, 'high');
   /* a sleeve whose method neither chart states isn't compared either */
   const unsaid = F.recommend(anchor({ dims: { chestWidth: { value: 22, source: 'fynd-record', verified: true }, sleeveLength: { value: 8.5, source: 'fynd-record', verified: true } } }), { measures: 'finished-garment', unit: 'in', columns: ['Chest width', 'Sleeve length'], rows: [{ size: 'M', values: ['20.5', '8'] }, { size: 'L', values: ['22', '8.5'] }] });
@@ -240,7 +241,7 @@ test('high confidence only with trusted measurements on both sides, several dime
   const similar = anchor({ dims: { chestWidth: { value: 22, source: 'similar-product' }, bodyLength: { value: 29, source: 'similar-product', method: 'back' } } });
   const s = F.recommend(similar, clear);
   assert.strictEqual(s.confidence, 'low');
-  assert.match(s.explanation[0], /of about 22 in \(estimated from a similar product\)/, 'an estimate is never stated as exact');
+  assert.match(s.explanation[0], /of about 22 in \(estimated from the same brand’s published measurements\)/, 'an estimate is never stated as exact');
   const inferred = F.recommend(anchor(), { measures: 'finished-garment', unit: null, columns: ['Chest', 'Length', 'Sleeve'], rows: clear.rows });
   assert.notStrictEqual(inferred.confidence, 'high');
   assert.ok(inferred.explanation.some((l) => /about/.test(l)));
@@ -332,6 +333,108 @@ test('a product’s kind from its own words; size order across letters, numbers 
   const order = ['XL', 'S', 'M', 'XS', 'L'].sort((a, b) => F.sizeRank(a) - F.sizeRank(b));
   assert.deepStrictEqual(order, ['XS', 'S', 'M', 'L', 'XL']);
   assert.ok(F.sizeRank('32x30') < F.sizeRank('32x32') && F.sizeRank('32x34') < F.sizeRank('34x30'));
+});
+
+section('a reference from brand, kind and size — Fynd’s sourced data');
+
+const D = require('../assets/fit-reference-data.js');
+const builder = require('./build-fit-references.js');
+
+test('the reference data is generated from Fynd’s records and up to date; every product keeps its identity, source and verification', () => {
+  assert.strictEqual(fs.readFileSync(builder.OUT, 'utf8'), builder.render(builder.build()), 'assets/fit-reference-data.js is stale: run node scripts/build-fit-references.js');
+  assert.ok(D.products.length >= 9);
+  D.products.forEach((p) => {
+    assert.ok(p.brand && p.name && /^https:\/\//.test(p.url) && p.retrievedAt && ['verified', 'unverified'].includes(p.verification), p.id);
+    assert.ok(p.sources.length && p.sources.every((x) => /^https:\/\//.test(x.url)), p.id);
+    Object.values(p.garment.sizes).forEach((row) => Object.entries(row).forEach(([id, m]) => assert.ok(F.DIMENSIONS[id] && typeof m.value === 'number' && m.method, `${p.id} ${id}`)));
+  });
+  assert.ok(D.bodyCharts.every((b) => b.source && Object.values(b.sizes).every((z) => z.chestLow <= z.chestHigh)));
+  /* the two products Fynd has checked */
+  assert.deepStrictEqual(D.products.filter((p) => p.verification === 'verified').map((p) => p.id).sort(), ['uniqlo-e475377-sweatshirt-us', 'uniqlo-e475378-sweat-pullover-hoodie-us']);
+});
+
+test('same brand, kind and size: the median of that brand’s products, their spread (never narrower than one product’s allowance), and what it rests on', () => {
+  const one = F.estimateReference(D, { brand: 'UNIQLO', category: 'tshirt', size: 'M' });
+  assert.strictEqual(one.tier, 'same-brand');
+  assert.deepStrictEqual([one.dims.chestWidth.value, one.dims.chestWidth.low, one.dims.chestWidth.high, one.dims.chestWidth.source], [21.5, 20.75, 22.25, 'similar-product']);
+  assert.strictEqual(one.dims.sleeveLength.method, 'center-back');
+  assert.match(one.summary, /one UNIQLO T-shirt in M \(SUPIMA® Cotton T-Shirt\)/);
+  const many = F.estimateReference(D, { brand: 'uniqlo', category: 'sweatshirt', size: 'Medium' });
+  assert.strictEqual(many.basis.length, 3);
+  assert.deepStrictEqual([many.dims.chestWidth.value, many.dims.chestWidth.low, many.dims.chestWidth.high], [23.5, 22.75, 24.75], 'the oversized hoodie widens the range');
+  /* methods are never pooled: the oversized hoodie's shoulders are "broadest", the others seam to seam */
+  assert.strictEqual(many.dims.shoulderWidth.method, 'seam-to-seam');
+  const cut = F.estimateReference(D, { brand: 'UNIQLO', category: 'sweatshirt', size: 'M', cut: 'regular' });
+  assert.deepStrictEqual(cut.basis.map((b) => b.name), ['Sweatshirt', 'Sweat Pullover Hoodie']);
+  assert.deepStrictEqual([cut.dims.chestWidth.low, cut.dims.chestWidth.high], [22.75, 24.25], 'identical stand-ins still aren’t the shopper’s garment');
+  const exact = F.estimateReference(D, { brand: 'UNIQLO', category: 'sweatshirt', size: 'M', productId: 'uniqlo-e475377-sweatshirt-us' });
+  assert.strictEqual(exact.tier, 'exact');
+  assert.deepStrictEqual([exact.dims.chestWidth.value, exact.dims.chestWidth.low, exact.dims.chestWidth.source, exact.dims.chestWidth.verified], [23.5, undefined, 'fynd-record', true]);
+});
+
+test('a brand that publishes body charts only: the garment chest from its body range plus the room garments of that kind have in brands publishing both — chest only, a wide range, said so', () => {
+  const r = F.estimateReference(D, { brand: 'Nike', category: 'tshirt', size: 'L' });
+  assert.strictEqual(r.tier, 'brand-body-chart');
+  assert.deepStrictEqual(Object.keys(r.dims), ['chestWidth']);
+  assert.deepStrictEqual(r.missing, ['bodyLength', 'sleeveLength', 'shoulderWidth']);
+  assert.strictEqual(r.dims.chestWidth.source, 'estimate');
+  assert.ok(r.dims.chestWidth.high - r.dims.chestWidth.low >= 2.5, 'wide');
+  assert.match(r.summary, /Nike publishes who its L is cut for \(chest 41 in–44 in around the body\), not the garment’s own measurements/);
+  assert.match(r.summary, /UNIQLO SUPIMA® Cotton T-Shirt/);
+  assert.ok(r.basis.some((b) => /Men's Tops & Tees Size Chart/.test(b.name) && b.url === 'https://www.nike.com/size-fit/mens_tops_alpha'));
+});
+
+test('nothing from the brand: other brands’ range in that size label, as a rough guide; nothing at all: no dimensions, and the way to add them', () => {
+  const r = F.estimateReference(D, { brand: 'Gap', category: 'tshirt', size: 'M' });
+  assert.strictEqual(r.tier, 'category');
+  assert.match(r.summary, /from UNIQLO and Zara — sizes differ between brands/);
+  assert.ok(Object.values(r.dims).every((m) => m.source === 'estimate'));
+  const none = F.estimateReference(D, { brand: 'Levi’s', category: 'jeans', size: '32x30' });
+  assert.deepStrictEqual([none.tier, none.dims], ['none', {}]);
+  assert.match(none.summary, /no published measurements for any jeans in 32x30/);
+  const odd = F.estimateReference(D, { brand: 'UNIQLO', category: 'tshirt', size: '5XL' });
+  assert.strictEqual(odd.tier, 'none', 'a size nobody publishes isn’t borrowed from a neighbour');
+});
+
+test('an estimated reference widens the preference by its own spread, and is never stated as exact or as confident', () => {
+  const est = F.estimateReference(D, { brand: 'UNIQLO', category: 'tshirt', size: 'M' });
+  const a = F.makeAnchor({ brand: 'UNIQLO', category: 'tshirt', size: 'M', dims: est.dims, reference: { tier: est.tier, summary: est.summary, basis: est.basis } }).anchor;
+  assert.strictEqual(a.reference.tier, 'same-brand');
+  const pref = F.preferred(a).chestWidth;
+  assert.deepStrictEqual([pref.low, pref.high], [20.25, 22.75], 'about-right ±½ in, plus the estimate’s own ±¾ in');
+  const chart = { measures: 'finished-garment', unit: 'in', columns: ['Chest width (flat)', 'Body length (centre back)'], rows: [{ size: 'S', values: ['20', '27'] }, { size: 'M', values: ['21.5', '28'] }, { size: 'L', values: ['23', '29'] }] };
+  const r = F.recommend(a, chart);
+  assert.strictEqual(r.size, 'M');
+  assert.strictEqual(r.confidence, 'low');
+  assert.match(r.explanation[0], /of about 21½ in, somewhere between 20¾ in and 22¼ in \(estimated from the same brand’s published measurements\)/);
+  /* a range is kept only when it is a range around the value */
+  const bad = F.makeAnchor({ brand: 'X', category: 'tshirt', size: 'M', dims: { chestWidth: { value: 21, low: 22, high: 23, source: 'estimate' } } }).anchor;
+  assert.strictEqual(bad.dims.chestWidth.low, undefined);
+});
+
+test('the product a page is about, by address or code; its measurements as a chart Fynd reads back exactly', () => {
+  assert.strictEqual(F.referenceProductFor(D, { url: 'https://www.uniqlo.com/us/en/products/E475377-000/00?colorDisplayCode=09' }).id, 'uniqlo-e475377-sweatshirt-us');
+  assert.strictEqual(F.referenceProductFor(D, { canonical: 'https://www.zara.com/us/en/basic-medium-weight-t-shirt--02-p01887411.html' }).id, 'zara-01887411-basic-medium-weight-tshirt-us');
+  assert.strictEqual(F.referenceProductFor(D, { code: '01887411', brand: 'Zara' }).id, 'zara-01887411-basic-medium-weight-tshirt-us');
+  assert.strictEqual(F.referenceProductFor(D, { code: '01887411', brand: 'Nike' }), null);
+  assert.strictEqual(F.referenceProductFor(D, { url: 'https://example.com/tee' }), null);
+  D.products.forEach((p) => {
+    const read = F.readChart(F.chartFromReference(p), p.category);
+    assert.deepStrictEqual(read.issues.filter((i) => i.severity === 'blocking'), [], p.id);
+    const m = read.sizes.find((z) => z.size === 'M');
+    Object.entries(p.garment.sizes.M).forEach(([id, d]) => {
+      assert.ok(Math.abs(m.dims[id].value - d.value) < 0.006, `${p.id} ${id}`);
+      if (d.method !== 'flat') assert.strictEqual(m.dims[id].method, d.method, `${p.id} ${id} method`);
+    });
+  });
+});
+
+test('size labels as people write them: Medium is M, X-Large is XL, 2XL is XXL; 32x30 is itself', () => {
+  assert.strictEqual(F.sizeKey('Medium'), F.sizeKey('M'));
+  assert.strictEqual(F.sizeKey('X-Large'), F.sizeKey('XL'));
+  assert.strictEqual(F.sizeKey('2XL'), F.sizeKey('XXL'));
+  assert.notStrictEqual(F.sizeKey('M'), F.sizeKey('L'));
+  assert.strictEqual(F.sizeKey('32 x 30'), F.sizeKey('32x30'));
 });
 
 console.log(`\n${passed} passed, ${failures.length} failed`);

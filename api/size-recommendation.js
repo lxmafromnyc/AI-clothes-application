@@ -135,43 +135,6 @@ function fitFor(profile, type, items) {
   return { type, covered, items: sized };
 }
 
-/* Fit Anchor stand-ins (extension/, assets/fit-anchor.js): the garment
-   measurements Fynd's own records hold for OTHER products of the same
-   brand and kind, in the same size label — offered to the extension as
-   "similar product" references, which it labels as estimates, never as
-   the shopper's own garment. Each says whether Fynd has checked it.
-   ?reference=1&rbrand=UNIQLO&rcategory=sweatshirt&rsize=M */
-const ANCHOR_TO_RECORD = { tshirt: ['tshirts'], sweatshirt: ['hoodies', 'sweatshirts'] };
-async function referencesFor(brand, category, size) {
-  const text = (v, max) => (typeof v === 'string' && v.trim() && v.trim().length <= max ? v.trim() : null);
-  const b = text(brand, 60);
-  const s = text(size, 16);
-  const cats = ANCHOR_TO_RECORD[category] || null;
-  if (!b || !s || !cats) return [];
-  const key = ProfileSchema.brandKey(b);
-  const out = [];
-  for (const record of sizing.RECORDS) {
-    if (ProfileSchema.brandKey(record.brand) !== key || !cats.includes(record.category)) continue;
-    const garment = record.charts && record.charts.garment;
-    if (!garment || !garment.sizes || !Object.keys(garment.sizes).some((z) => z.toUpperCase() === s.toUpperCase())) continue;
-    const answer = await charts.chartFor(record.product.url);
-    const chart = (answer.charts || []).find((c) => c.measures === 'finished-garment' && c.origin === 'fynd-record');
-    if (!chart) continue;
-    out.push({
-      id: record.id,
-      brand: record.brand,
-      name: record.product.name,
-      code: record.product.code || null,
-      url: record.product.url,
-      category: record.category,
-      verification: record.verification && record.verification.status === 'verified' ? 'verified' : 'unverified',
-      chart: { measures: chart.measures, unit: chart.unit, columns: chart.columns, rows: chart.rows, methods: chart.methods || null }
-    });
-  }
-  /* checked records first */
-  return out.sort((x, y) => (x.verification === 'verified' ? 0 : 1) - (y.verification === 'verified' ? 0 : 1));
-}
-
 async function handler(req, res) {
   if (handledPreflight(req, res)) return;
   if (req.method !== 'GET') return res.status(405).json({ error: 'Use GET.' });
@@ -179,11 +142,6 @@ async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store, private');
 
   const early = req.query || Object.fromEntries(new URL(req.url || '/', 'http://fynd.local').searchParams);
-  /* a Fit Anchor's stand-in reference (the browser extension): public,
-     read-only, nothing about the shopper beyond the three words asked */
-  if (early.reference !== undefined) {
-    return res.status(200).json({ references: await referencesFor(early.rbrand, early.rcategory, early.rsize) });
-  }
   /* the brands and products Find Fit browses: public, read-only */
   if (early.brands !== undefined) {
     return res.status(200).json({ brands: brands.list(), planned: brands.PLANNED });

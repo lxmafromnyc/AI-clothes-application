@@ -23,7 +23,7 @@
     <!-- ===== Onboarding: a garment that already fits ===== -->
     <section id="onboard" class="fp-card" hidden aria-labelledby="onboard-title">
       <h1 class="pop-title" id="onboard-title">Which clothes already fit you the way you like?</h1>
-      <p class="pop-text">Pick one piece you own. No tape measure needed.</p>
+      <p class="pop-text">Pick one piece you own. No tape measure and no product link needed: Fynd looks up what its brand publishes for that size.</p>
       <form id="anchor-form" class="fp-form" novalidate>
         <label class="fp-label" for="a-brand">Brand</label>
         <input class="fp-input" id="a-brand" list="brands" autocomplete="off" maxlength="60" placeholder="e.g. UNIQLO" required>
@@ -35,6 +35,15 @@
         <label class="fp-label" for="a-size">Size on its label</label>
         <input class="fp-input" id="a-size" list="sizes" autocomplete="off" maxlength="16" placeholder="e.g. M, 32x30" required>
         <datalist id="sizes"><option value="XS"><option value="S"><option value="M"><option value="L"><option value="XL"><option value="XXL"><option value="30x30"><option value="32x30"><option value="32x32"><option value="34x32"></datalist>
+
+        <label class="fp-label" for="a-cut">Its cut, if you know it</label>
+        <select class="fp-input" id="a-cut">
+          <option value="">Not sure</option>
+          <option value="slim">Slim</option>
+          <option value="regular">Regular</option>
+          <option value="relaxed">Relaxed</option>
+          <option value="oversized">Oversized or boxy</option>
+        </select>
 
         <fieldset class="fp-scale">
           <legend class="fp-label">How does it fit you?</legend>
@@ -53,8 +62,7 @@
           <summary>Know the exact product? (optional)</summary>
           <label class="fp-label" for="a-url">Its product page link</label>
           <input class="fp-input" id="a-url" type="url" maxlength="600" placeholder="https://…">
-          <label class="fp-label" for="a-name">Or its name</label>
-          <input class="fp-input" id="a-name" maxlength="160" placeholder="e.g. Supima Cotton Crew Neck T-Shirt">
+          <p class="pop-small">Only used to find it in Fynd’s data on this computer; it isn’t sent anywhere.</p>
         </details>
 
         <p class="form-error fp-error" id="anchor-error" role="alert"></p>
@@ -65,18 +73,28 @@
       </form>
     </section>
 
-    <!-- ===== Finding the reference's measurements ===== -->
+    <!-- ===== What the reference's measurements rest on ===== -->
     <section id="resolve" class="fp-card" hidden aria-labelledby="resolve-title">
-      <h1 class="pop-title" id="resolve-title">Its measurements</h1>
+      <h1 class="pop-title" id="resolve-title">Your reference</h1>
+      <p class="pop-product" id="ref-name"></p>
+      <p class="fp-confidence" id="ref-tier"></p>
       <p class="pop-text" id="resolve-text"></p>
-      <ul class="fp-options" id="resolve-options"></ul>
+      <ul class="fp-list" id="ref-dims"></ul>
+      <details class="fp-more" id="ref-sources-box">
+        <summary>Where these numbers come from</summary>
+        <ul class="fp-list" id="ref-sources"></ul>
+      </details>
+      <div id="ref-pick" hidden>
+        <p class="fp-label">Is yours one of these? Pick it to use its own measurements.</p>
+        <ul class="fp-options" id="resolve-options"></ul>
+      </div>
       <details class="fp-more" id="manual">
-        <summary>Enter its measurements yourself</summary>
+        <summary>Enter its measurements yourself instead (optional)</summary>
         <p class="pop-small">Lay it flat. Widths across the front, armpit to armpit or edge to edge.</p>
         <div id="manual-fields" class="fp-manual"></div>
         <div class="pop-actions"><button class="btn btn-secondary" type="button" id="manual-save">Use these measurements</button></div>
       </details>
-      <div class="pop-actions"><button class="btn btn-secondary" type="button" id="resolve-skip">Continue without measurements</button></div>
+      <div class="pop-actions"><button class="btn btn-primary" type="button" id="resolve-skip">Done — compare products with it</button></div>
     </section>
 
     <!-- ===== The product being viewed ===== -->
@@ -87,17 +105,26 @@
       </div>
       <p class="pop-product" id="product-name"></p>
       <p class="pop-small" id="product-meta"></p>
+      <div id="problem" class="fp-problem" hidden role="alert">
+        <p class="fp-problem-title" id="problem-title"></p>
+        <p id="problem-text"></p>
+        <details class="fp-diag" id="diag">
+          <summary>Technical details</summary>
+          <pre id="diag-text"></pre>
+        </details>
+      </div>
       <label class="fp-label" for="p-category">Kind of garment</label>
       <select class="fp-input" id="p-category"></select>
       <div id="grant" class="fp-note" hidden>
         <p id="grant-text"></p>
-        <button class="btn btn-secondary" type="button" id="grant-button">Let Fynd read these pages</button>
+        <button class="btn btn-secondary" type="button" id="grant-button"></button>
       </div>
       <div id="chart-area"></div>
       <ul class="pop-choices" id="chart-choices" hidden></ul>
       <div class="pop-actions" id="chart-actions" hidden>
         <button class="btn btn-secondary" type="button" id="correct">Correct a measurement</button>
         <button class="btn btn-secondary" type="button" id="use-as-anchor">This fits me — use as a reference</button>
+        <button class="btn btn-secondary" type="button" id="open-fynd">Open in Find Fit</button>
       </div>
       <div id="confirm-kind" class="fp-note" hidden>
         <p>The chart doesn’t say whether it measures the garment or the body.</p>
@@ -146,15 +173,16 @@
     <details class="fp-privacy">
       <summary>What Fynd reads and sends</summary>
       <ul class="fp-list">
-        <li>It reads a page only after you press the Fynd button on it — or, if you allowed it, a page on a retailer listed here. It reads the product’s name, sizes and size tables, never form fields or anything you type.</li>
+        <li>It reads a page only after you click the Fynd button in Chrome’s toolbar on it — or, on a site you chose to let Fynd read, as you move between its pages. It reads the product’s name, brand, sizes and size tables, never form fields or anything you type.</li>
         <li>Your references and how purchases fit are kept in this browser only (Chrome’s extension storage). They are never sent anywhere.</li>
-        <li>To find measurements, it may send Fynd’s server a product’s page address (on a supported retailer, or a link you typed), or a brand, kind of garment and size label. Nothing about you, and no other browsing, is sent.</li>
+        <li>The measurements Fynd uses for your reference ship with the extension. Looking them up sends nothing: the panel makes no network requests. “Open in Find Fit” opens Fynd’s site with the chart in the page address after #, which browsers don’t send to servers.</li>
       </ul>
     </details>
   </main>
 
   <script src="config.js"></script>
   <script src="retailers.js"></script>
+  <script src="vendor/fit-reference-data.js"></script>
   <script src="vendor/sizing-tables.js"></script>
   <script src="vendor/fynd-payload.js"></script>
   <script src="vendor/size-chart.js"></script>

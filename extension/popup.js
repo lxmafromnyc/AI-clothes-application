@@ -19,8 +19,7 @@
         chart, with the page's address (#fynd-url=…), so Find Fit can
         look in Fynd's catalog of checked charts
 
-   The popup makes no network request of its own. "Find my size" opens
-   the Fit panel (sidepanel.js) beside the tab.
+   The popup makes no network request of its own.
 
    For tests only, ?tab=<id> names the tab to read: it reaches nothing
    the extension isn't already allowed to read, since without a press
@@ -135,23 +134,6 @@
     chrome.tabs.create({ url });
   }
 
-  /* the Fit panel (sidepanel.html), beside this tab: it reads the page
-     under the grant this toolbar press gave, and stays open while the
-     shopper moves on */
-  /* the tab is looked up as the popup opens: sidePanel.open() must run in
-     the click itself, and an await before it can lose the user gesture */
-  let panelTab = null;
-  activeTab().then((tab) => { panelTab = tab; }, () => {});
-  function openFitPanel() {
-    if (!panelTab || !chrome.sidePanel || !chrome.sidePanel.open) {
-      problem('The Fit panel isn’t available', 'This version of Chrome doesn’t support extension side panels (Chrome 116 or later does).');
-      return;
-    }
-    chrome.sidePanel.open({ tabId: panelTab.id }).then(() => window.close(), (err) => problem('The Fit panel didn’t open', String(err && err.message || err)));
-  }
-
-  $('fit-panel').addEventListener('click', openFitPanel);
-  $('fit-panel-2').addEventListener('click', openFitPanel);
   $('check').addEventListener('click', check);
   $('retry').addEventListener('click', check);
   $('again').addEventListener('click', check);

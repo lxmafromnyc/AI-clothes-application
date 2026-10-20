@@ -2829,14 +2829,18 @@ against real pages before retailer-specific reading is added.
 
 ### The Fynd browser extension
 
-`extension/` is a Manifest V3 Chrome extension. It lets a customer check the
-sizing on the product page they already have open, without copying its link.
-Installation steps, permissions and tests are in
-[`extension/README.md`](extension/README.md). In short:
+`extension/` is a Manifest V3 Chrome extension. Fynd's toolbar button opens
+the Fit panel beside the product page the customer has open (below, under
+**The Fit panel and Fit Anchors**). Installation steps, permissions and tests
+are in [`extension/README.md`](extension/README.md).
 
-- **When it reads the page:** only when the customer clicks Fynd's toolbar button
-  and presses **Check sizing with Fynd**. It requests `activeTab` and `scripting`
-  only.
+The page reading and the hand-over to Find Fit described here are shared by
+the panel and by the earlier popup page (`extension/popup.*`, no longer on
+the toolbar). In short:
+
+- **When it reads the page:** only after the customer clicks Fynd's toolbar
+  button on it (`activeTab`), or on one site they chose to let Fynd read. The
+  extension asks for no site at install.
 - **Where the reading happens:** in the customer's browser. The extension reads
   the page's tables and structured data and recognises size tables with the same
   code the server uses (`assets/sizing-tables.js`). It shows the chart with
@@ -2866,75 +2870,107 @@ tested on invented fixture pages only, not yet on live retailer pages.
 
 ### The Fit panel and Fit Anchors
 
-The extension's side panel (`extension/sidepanel.*`) compares the product a
-shopper is looking at with a garment they already own and like: a **Fit
-Anchor**. The model and comparison are `assets/fit-anchor.js`, shared with the
-extension as `extension/vendor/fit-anchor.js`. It runs in the browser; the
-anchors are kept in `chrome.storage.local` and are never sent. What the panel
-reads, stores and sends, and which retailers it supports, is in
-[`extension/README.md`](extension/README.md#the-fit-panel). It sits beside the
-fit profile and `engine.compare()` rather than replacing them: Find Fit and
-Compare are unchanged.
+The extension's side panel (`extension/sidepanel.*`) is the shopping tool:
+
+- Click Fynd's toolbar button on a product page; the panel opens beside it
+  (`extension/background.js`).
+- It compares the product with a garment the shopper already owns and likes:
+  a **Fit Anchor**, or *reference*.
+
+Where the code lives:
+
+- **The model and comparison:** `assets/fit-anchor.js` (shared with the
+  extension as `extension/vendor/fit-anchor.js`).
+- **The reference data:** `assets/fit-reference-data.js`, generated from
+  `api/_sizing/records` by `scripts/build-fit-references.js`.
+
+Everything runs in the browser. References are kept in `chrome.storage.local`,
+and the panel makes no network request. How to use it, what it reads, stores
+and sends, the retailer modules, and how it is tested are in
+[`extension/README.md`](extension/README.md). It sits beside the fit profile
+and `engine.compare()` rather than replacing them: Find Fit and Compare are
+unchanged.
+
+**A reference without a tape measure.** Brand, kind and size label are
+enough. `estimateReference()` takes the first of these that exists, and says
+which:
+
+1. **The exact product's** published garment measurements.
+2. **The same brand's products of that kind, in that size:**
+   - their median, with their spread as the range;
+   - never narrower than `oneProductSpread`, because a stand-in isn't the
+     shopper's garment.
+3. **The brand's body chart, chest only:** the body range, plus the room
+   garments of that kind have over the body in products that publish both
+   charts (at least `minEaseSpread` wide).
+4. **Other brands'** products of that kind and size label: a rough guide.
+5. **Nothing:** no dimensions are invented. The shopper can add measurements,
+   or use a product page's own chart.
+
+Measuring methods are never pooled. Every estimate keeps the products and
+sources it rests on.
 
 **An anchor keeps four things apart:**
 
 - **Known dimensions.** Finished-garment measurements, each in inches with its
-  `method`, `source` and `verified` flag. Sources, in order of trust:
-  `fynd-record` (a verified record: high; unverified: medium),
-  `retailer-page` (the product's own garment chart, read from the page: high),
-  `shopper` (entered or corrected: medium), `similar-product` (the same brand,
-  kind and size from another record: low, always worded as an estimate).
+  `method`, `source` and `verified` flag. An estimate also has `low` and `high`.
+  Sources, by trust:
+  - `fynd-record`: high when Fynd has checked it, medium when not;
+  - `retailer-page` (the product's own garment chart, read from the page):
+    high;
+  - `shopper` (entered or corrected): medium;
+  - `similar-product` (the same brand's other products): low;
+  - `estimate` (a body chart or other brands): low.
 - **Reported feel.** Tight, just right or loose; short, just right or long.
-- **Inferred preference.** A range per dimension, worked out from the two
-  above by `preferred()`: "just right" keeps the reference ± a small band;
-  "feels tight" moves the range above the reference by between ¼ in and 1½ in
-  for a chest (not one arbitrary inch). Outcomes replace that guess where they
-  speak.
+- **Inferred preference.** A range per dimension, worked out by
+  `preferred()`:
+  - "just right" keeps the reference ± a small band;
+  - "feels tight" moves the range above the reference by between ¼ in and
+    1½ in for a chest, not by one fixed amount;
+  - an estimated reference widens the range by its own spread;
+  - outcomes replace the guess where they speak.
 - **Confidence.** Worked out from the data, never from the score.
 
 **How a size is chosen (`recommend()`):**
 
-1. **Read the chart.** Values are parsed (fractions, ranges, decimal commas)
-   and normalised to inches. Widths become flat widths: a circumference is
-   halved. When a chart doesn't give its unit or whether a width is flat or
-   all the way around, it is inferred from what the numbers can plausibly be
-   and marked as inferred; if they can't tell, that dimension is not used.
-   Lengths are compared only when both sides measure them the same way
-   (centre back and shoulder seam sleeves are never compared).
-2. **Check it.** Values that don't grow with size, a step far out of line with
-   the chart's others, and duplicate sizes are flagged. A problem in the
-   category's main dimension (chest for tops, waist for bottoms) stops that
-   dimension from being used.
-3. **Compare.** For each size and each shared dimension:
-   miss = distance outside the preferred range ÷ tolerance + a small centring
-   term, plus `repeatPenalty` when the size repeats the shopper's complaint (no
-   wider than a reference they said feels tight, until an outcome speaks). The
-   score is √(Σ w·miss² / Σ w), with w = the category's weight × the shopper's
-   priority × `reportedBoost` on an axis they said was off. A size without the
-   main dimension ranks last.
-4. **Say how sure it is.** Confidence starts high and is capped by: the
-   anchor's source, the chart's source, inferred units or methods, a flagged
-   chart, a length without a stated method, a different kind of garment, a
-   preference estimated from one answer (medium at most), conflicting
-   outcomes, a runner-up within `tieMargin` or `clearMargin`, and a best score
-   that is still far off. Each reason is shown.
-5. **Explain.** The main dimension first, then each other one, in the
-   shopper's unit; exact numbers only for measured or published values,
-   "about" for estimates.
+1. **Read the chart.**
+   - Values are parsed and normalised to inches.
+   - Widths become flat widths.
+   - A unit or method that has to be inferred is marked as inferred.
+   - Lengths are compared only when both sides measure them the same way. A
+     front length is the high-point-of-shoulder length; it is never a
+     centre-back length.
+2. **Check it.** Values that don't grow with size, outlying steps and
+   duplicate sizes are flagged. A problem in the main dimension stops it being
+   used.
+3. **Compare.** For each size, each dimension's miss is how far it falls
+   outside the preferred range, divided by its tolerance, plus:
+   - a small centring term;
+   - `repeatPenalty`, when the size repeats the shopper's complaint.
 
-Anything short of a garment chart gives no size: a body chart, sizes only, or
-no shared measurement return `body-chart`, `labels-only` or `insufficient`,
-with what's missing and, where the brand matches, the same label at low
-confidence.
+   The misses are combined with weights for the category, the shopper's
+   priority, and `reportedBoost` on an axis they said was off.
+4. **Say how sure it is.** Every reason the confidence isn't higher is shown.
+5. **Explain.** Exact numbers only for published or measured values; "about",
+   with the range, for estimates.
+
+A body chart, sizes only, or no shared measurement give no size: the result
+is `body-chart`, `labels-only` or `insufficient`, saying what is missing.
 
 **The constants are hypotheses.** Every weight, tolerance and shift is in
-`HEURISTICS`, overridable per call for testing, and none has been fitted to
-real outcomes. Fynd claims **no accuracy figure**: outcomes are stored only in
-the shopper's own browser, and an accuracy number needs outcomes collected
-with consent and a documented evaluation, which don't exist yet.
+`HEURISTICS` and none has been fitted to real outcomes. Fynd claims **no
+accuracy figure**. Outcomes stay in the shopper's browser; an accuracy number
+needs outcomes collected with consent and a documented evaluation, and neither
+exists yet.
 
-**Tests:** `scripts/test-fit-anchor.js` (the model) and
-`scripts/test-fit-panel-browser.js` (the panel in Chromium, on fixtures).
+**Tests:**
+
+- `scripts/test-fit-anchor.js`: the model and the data.
+- `scripts/test-fit-panel-browser.js`: the panel, headless, on fixtures.
+- `scripts/test-fit-panel-real-chrome.js`: the whole workflow in a visible
+  Chrome, through real clicks on the toolbar button. Its `--live` mode is the
+  check against real retailer pages; none has been run yet, because the
+  environment it was built in could not reach them.
 
 ## Compare before buying (hoodies and sweatshirts)
 

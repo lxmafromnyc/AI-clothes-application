@@ -5,11 +5,13 @@
      node scripts/test-fit-panel-browser.js
 
    The extension's Fit panel (extension/sidepanel.html) runs in
-   Playwright's Chromium against invented FIXTURE pages
-   (scripts/fixtures/fit-panel/), with Fynd's sizing endpoint answered
-   in-process by the real handler (api/size-recommendation.js, Fynd's own
-   records; no shop's page is ever fetched). Every request the panel
-   makes is recorded, to check what leaves the browser.
+   Playwright's headless Chromium against invented FIXTURE pages
+   (scripts/fixtures/fit-panel/). The panel makes no network request;
+   every request it attempts is recorded, to check that.
+
+   scripts/test-fit-panel-real-chrome.js is the end-to-end check: a
+   visible Chrome, the extension as shipped, a real click on its
+   toolbar button. This suite covers the many states quickly.
 
    As in test-extension-browser.js: Chrome grants activeTab only on a
    real toolbar press, so the suite loads a copy whose manifest also
@@ -39,9 +41,6 @@ const CHROME = process.env.CHROME_PATH || '/opt/pw-browsers/chromium-1194/chrome
 let chromium;
 try { ({ chromium } = require(process.env.PLAYWRIGHT_PATH || 'playwright')); } catch (err) { chromium = null; }
 
-process.env.AUTH_SECRET = process.env.AUTH_SECRET || 'fit-panel-test-secret-of-sufficient-length';
-require('../api/_sizing/chart').setTransport(async () => { throw new Error('unreachable'); });
-const handler = require('../api/size-recommendation');
 
 let passed = 0;
 const failures = [];
@@ -55,13 +54,6 @@ const asked = [];
 function serve() {
   const server = http.createServer(async (req, res) => {
     const u = new URL(req.url, 'http://127.0.0.1');
-    if (u.pathname === '/api/size-recommendation') {
-      asked.push(Object.fromEntries(u.searchParams));
-      req.query = Object.fromEntries(u.searchParams);
-      res.status = (c) => { res.statusCode = c; return res; };
-      res.json = (p) => { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify(p)); return res; };
-      return handler(req, res);
-    }
     /* the UNIQLO-shaped address the adapter recognises */
     const product = /^\/us\/en\/products\/(E\d{6}-\d{3})\/00$/.exec(u.pathname);
     const file = product ? path.join(FIXTURES, 'uniqlo-product.html') : u.pathname.startsWith('/fixtures/') ? path.join(FIXTURES, path.basename(u.pathname)) : null;
@@ -77,6 +69,7 @@ function copy(site, testHosts) {
   fs.cpSync(path.join(REPO, 'extension'), dir, { recursive: true });
   if (testHosts) {
     const manifest = JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8'));
+    /* the test copy only: so ?tab= can read this machine's pages without the toolbar press */
     manifest.host_permissions = ['http://127.0.0.1/*', 'http://localhost/*'];
     fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify(manifest, null, 2));
     fs.writeFileSync(path.join(dir, 'config.js'), `const FYND_SITE = '${site}';\nconst FYND_RETAILER_HOSTS = { 'uniqlo-us': ['localhost'] };\n`);
@@ -109,6 +102,7 @@ async function launch(dir) {
     await shop.goto(`${pathname.startsWith('/us/en/products/') ? site.replace('127.0.0.1', 'localhost') : site}${pathname}`);
     const panel = await context.newPage();
     await panel.setViewportSize({ width: 420, height: 900 });
+    panel.on('request', (r) => { if (!/^(chrome-extension|data|blob):/.test(r.url())) asked.push(r.url()); });
     await panel.goto(`chrome-extension://${id}/sidepanel.html`);
     if (!(opts && opts.keep)) await panel.evaluate(() => chrome.storage.local.clear());
     if (opts && opts.anchors) await panel.evaluate((a) => chrome.storage.local.set({ fyndAnchors: a }), opts.anchors);
@@ -124,93 +118,98 @@ async function launch(dir) {
 
   section('Fit Anchor onboarding');
 
-  await test('first run asks which clothes already fit; a brand, kind and size with no exact product offers Fynd’s similar-product measurements, labelled as an estimate', async () => {
+  await test('first run asks which clothes already fit; brand, kind and size alone give a saved reference with sourced measurements and their spread — no link, no tape measure, no request', async () => {
     const { shop, panel } = await open('/fixtures/garment-tee.html');
     await panel.waitForSelector('#onboard:not([hidden])');
     assert.strictEqual(await panel.textContent('#onboard-title'), 'Which clothes already fit you the way you like?');
-    assert.strictEqual(await panel.isVisible('#manual'), false, 'no tape measure up front');
     asked.length = 0;
-    await panel.fill('#a-brand', 'UNIQLO');
+    await panel.fill('#a-brand', 'uniqlo');
     await panel.selectOption('#a-category', 'sweatshirt');
-    await panel.fill('#a-size', 'M');
+    await panel.fill('#a-size', 'Medium');
     await panel.check('input[name="a-fit"][value="tight"]');
     await panel.click('#anchor-form button[type="submit"]');
-    await panel.waitForSelector('#resolve-options .pop-choice');
-    assert.match(await panel.textContent('#resolve-text'), /similar products — the same brand, kind and size, but not your garment\. Using one gives an estimate/);
+    await panel.waitForSelector('#resolve:not([hidden])');
+    assert.strictEqual(await panel.textContent('#ref-tier'), 'Estimated from the same brand’s products');
+    assert.match(await panel.textContent('#resolve-text'), /Estimated from 3 UNIQLO sweatshirts or hoodies in Medium \(Sweat Oversized Pullover Hoodie; Sweatshirt; Sweat Pullover Hoodie\)/);
     const offered = await panel.$$eval('#resolve-options .pop-choice-name', (ns) => ns.map((n) => n.textContent));
-    assert.ok(offered.some((t) => /UNIQLO Sweat Pullover Hoodie, size M/.test(t)), offered.join(' | '));
-    assert.match(await panel.textContent('#resolve-options .pop-choice-cols'), /checked by Fynd · an estimate for yours/);
-    assert.deepStrictEqual(asked, [{ reference: '1', rbrand: 'UNIQLO', rcategory: 'sweatshirt', rsize: 'M' }], 'only the brand, kind and size label were sent');
-    await panel.click('#resolve-options .pop-choice');
-    await panel.waitForSelector('#anchors:not([hidden]) .fp-anchor');
+    assert.deepStrictEqual(offered, ['UNIQLO Sweat Oversized Pullover Hoodie', 'UNIQLO Sweatshirt', 'UNIQLO Sweat Pullover Hoodie']);
     const saved = await stored(panel);
-    assert.strictEqual(saved.length, 1);
-    assert.deepStrictEqual([saved[0].brand, saved[0].category, saved[0].size, saved[0].feel.fit], ['UNIQLO', 'sweatshirt', 'M', 'tight']);
-    assert.ok(Object.values(saved[0].dims).every((m) => m.source === 'similar-product' && m.verified === false));
-    assert.match(await panel.textContent('.fp-anchor-dims'), /estimated from a similar product/);
+    assert.strictEqual(saved.length, 1, 'saved at once: nothing blocks the start');
+    assert.deepStrictEqual([saved[0].brand, saved[0].category, saved[0].size, saved[0].feel.fit, saved[0].reference.tier], ['uniqlo', 'sweatshirt', 'Medium', 'tight', 'same-brand']);
+    assert.ok(Object.values(saved[0].dims).every((m) => m.source === 'similar-product' && m.verified === false && m.low < m.value + 0.001 && m.high > m.value - 0.001));
+    assert.deepStrictEqual(asked, [], 'the lookup is local');
+    /* "mine is this one": its own published measurements */
+    await panel.click('#resolve-options li:nth-child(2) .pop-choice');
+    await panel.waitForFunction(() => document.getElementById('ref-tier').textContent === 'Its own published measurements');
+    const exact = await stored(panel);
+    assert.strictEqual(exact.length, 1);
+    assert.strictEqual(exact[0].dims.chestWidth.value, 23.5);
+    assert.ok(Object.values(exact[0].dims).every((m) => m.source === 'fynd-record' && m.verified === true && m.low === undefined));
     await shop.close(); await panel.close();
   });
 
-  await test('the exact product, by its link: Fynd’s own record of it, verified, with nothing else asked; a label alone keeps no measurements', async () => {
+  await test('every tier says what it rests on: a brand that publishes body charts only (chest only, wide range), a brand Fynd has nothing for (other brands’ range), and a kind with no data at all (nothing invented)', async () => {
     const { shop, panel } = await open('/fixtures/garment-tee.html');
     await panel.waitForSelector('#onboard:not([hidden])');
-    await panel.fill('#a-brand', 'UNIQLO');
-    await panel.selectOption('#a-category', 'sweatshirt');
-    await panel.fill('#a-size', 'M');
-    await panel.click('#onboard details summary');
-    await panel.fill('#a-url', 'https://www.uniqlo.com/us/en/products/E475378-000/00?colorDisplayCode=09');
-    await panel.click('#anchor-form button[type="submit"]');
-    await panel.waitForSelector('#anchors:not([hidden]) .fp-anchor');
+    const add = async (brand, category, size) => {
+      if (await panel.isVisible('#add-anchor')) await panel.click('#add-anchor');
+      await panel.fill('#a-brand', brand);
+      await panel.selectOption('#a-category', category);
+      await panel.fill('#a-size', size);
+      await panel.click('#anchor-form button[type="submit"]');
+      await panel.waitForSelector('#resolve:not([hidden])');
+      return { tier: await panel.textContent('#ref-tier'), text: await panel.textContent('#resolve-text'), dims: await panel.$$eval('#ref-dims li', (ls) => ls.map((l) => l.textContent)) };
+    };
+    const nike = await add('Nike', 'tshirt', 'L');
+    assert.strictEqual(nike.tier, 'Estimated from the brand’s size chart — chest only');
+    assert.match(nike.text, /Nike publishes who its L is cut for \(chest 41 in–44 in around the body\)/);
+    assert.deepStrictEqual(nike.dims.length, 1);
+    assert.match(nike.dims[0], /^chest width: about 23 in \(somewhere 21¾ in–24½ in\), laid flat$/);
+    const gap = await add('Gap', 'tshirt', 'M');
+    assert.strictEqual(gap.tier, 'Rough estimate from other brands');
+    assert.match(gap.text, /no published measurements for Gap T-shirts\. This is the range of 2 T-shirts labelled M from UNIQLO and Zara/);
+    const levis = await add('Levi’s', 'jeans', '32x30');
+    assert.strictEqual(levis.tier, 'No measurements yet');
+    assert.deepStrictEqual(levis.dims, []);
+    assert.strictEqual(await panel.isVisible('#manual-fields'), true, 'measurements offered, never required');
     const saved = await stored(panel);
-    assert.ok(Object.values(saved[0].dims).length >= 3);
-    assert.ok(Object.values(saved[0].dims).every((m) => m.source === 'fynd-record' && m.verified === true));
-    assert.match(await panel.textContent('.fp-anchor-dims'), /verified by Fynd/);
-    /* a second reference, label only */
-    await panel.click('#add-anchor');
-    await panel.fill('#a-brand', 'Gap');
-    await panel.selectOption('#a-category', 'jeans');
-    await panel.fill('#a-size', '32x30');
-    await panel.click('#anchor-form button[type="submit"]');
-    await panel.waitForSelector('#resolve:not([hidden])');
-    await panel.waitForFunction(() => /no measurements for Gap jeans in 32x30/.test(document.getElementById('resolve-text').textContent));
-    await panel.click('#resolve-skip');
-    await panel.waitForFunction(() => document.querySelectorAll('.fp-anchor').length === 2);
-    const both = await stored(panel);
-    assert.deepStrictEqual(both[1].dims, {}, 'a letter is not a measurement');
+    assert.deepStrictEqual(saved.find((a) => a.category === 'jeans').dims, {}, 'a label is not a measurement');
     await shop.close(); await panel.close();
   });
 
   section('reading the product and recommending a size');
 
-  await test('UNIQLO US (supported): the product recognised by its address, Fynd’s checked record of it compared with a checked reference — the size, the confidence and the measured reasons', async () => {
+  await test('UNIQLO US: the product recognised by its address and compared from the measurements Fynd holds for it — the size, the confidence and the measured reasons, with nothing sent', async () => {
     asked.length = 0;
     const hoodie = { id: 'h', brand: 'UNIQLO', category: 'sweatshirt', size: 'M', feel: { fit: 'right', length: 'right' }, product: { url: 'https://www.uniqlo.com/us/en/products/E475378-000/00' }, dims: { chestWidth: { value: 23.5, source: 'fynd-record', verified: true }, bodyLength: { value: 26.75, source: 'fynd-record', verified: true, method: 'back' }, sleeveLength: { value: 34.75, source: 'fynd-record', verified: true, method: 'center-back' }, shoulderWidth: { value: 20, source: 'fynd-record', verified: true, method: 'seam-to-seam' } } };
     const { shop, panel } = await open('/us/en/products/E475377-000/00', { anchors: [hoodie] });
     await recShown(panel);
-    assert.match(await panel.textContent('#product-meta'), /supported: UNIQLO US · product E475377-000/);
+    assert.match(await panel.textContent('#product-meta'), /UNIQLO US product E475377-000 · Fynd holds this product’s measurements/);
     assert.strictEqual(await panel.inputValue('#p-category'), 'sweatshirt');
-    assert.match(await panel.textContent('#chart-area'), /from Fynd’s record, checked by Fynd/);
+    assert.match(await panel.textContent('#chart-area'), /Fynd’s data, checked by Fynd/);
     assert.ok(/^(S|M|L)$/.test(await panel.textContent('#rec-title')));
     assert.match(await panel.textContent('#rec-confidence'), /^(High|Medium) confidence$/);
     const lines = await panel.$$eval('#rec-explain p', (ps) => ps.map((p) => p.textContent));
     assert.match(lines[0], /^Your reference sweatshirt or hoodie \(UNIQLO M\) has a flat chest width of 23½ in \(verified by Fynd\)\. This \w+ measures [\d½¼¾⅛⅜⅝⅞]+ in — /);
-    /* only the product's canonical address went to Fynd — no reference, no feel, no browsing */
-    assert.deepStrictEqual(asked, [{ chart: 'https://www.uniqlo.com/us/en/products/E475377-000/00' }]);
+    assert.deepStrictEqual(asked, []);
     await shop.close(); await panel.close();
   });
 
-  await test('another shop (not supported): its own garment chart, read from the page; “This fits me” makes it a reference; the same chart then recommends that size, labelled as read from the page', async () => {
+  await test('another shop, with no retailer module: its own garment chart, read from the page; “This fits me” makes it a reference; the same chart then recommends that size, labelled as read from the page', async () => {
     asked.length = 0;
     const { shop, panel } = await open('/fixtures/garment-tee.html', { anchors: [Object.assign({}, teeFromPage, { id: 'old', brand: 'Placeholder', size: 'M', dims: { chestWidth: { value: 20.5, source: 'shopper' } } })] });
     await recShown(panel);
-    assert.match(await panel.textContent('#product-meta'), /not a supported retailer/);
+    assert.match(await panel.textContent('#product-meta'), /Illustrative Brand · 127\.0\.0\.1/);
     assert.match(await panel.textContent('#chart-area'), /Garment measurements · in inches · read from this page in your browser/);
-    assert.deepStrictEqual(asked, [], 'nothing sent to Fynd for an unsupported shop’s page');
+    assert.deepStrictEqual(asked, [], 'nothing sent anywhere');
     await panel.click('#use-as-anchor');
     await panel.waitForSelector('#onboard:not([hidden])');
     assert.strictEqual(await panel.inputValue('#a-brand'), 'Illustrative Brand');
     await panel.fill('#a-size', 'L');
     await panel.click('#anchor-form button[type="submit"]');
+    await panel.waitForSelector('#resolve:not([hidden])');
+    assert.strictEqual(await panel.textContent('#ref-tier'), 'Read from its product page');
+    await panel.click('#resolve-skip');
     await recShown(panel);
     const saved = await stored(panel);
     const ref = saved.find((a) => a.size === 'L');
@@ -299,18 +298,15 @@ async function launch(dir) {
 
   section('privacy');
 
-  await test('nothing about the shopper ever reaches Fynd’s server: every request carried a product address or a brand, kind and size label only', async () => {
-    const keys = new Set(asked.flatMap((q) => Object.keys(q)));
-    keys.forEach((k) => assert.ok(['chart', 'reference', 'rbrand', 'rcategory', 'rsize'].includes(k), k));
-    const said = JSON.stringify(asked);
-    for (const word of ['feel', 'tight', 'feedback', 'dims', 'chestWidth', 'Placeholder']) assert.ok(!said.includes(word), word);
+  await test('the panel made no network request in any of the above', async () => {
+    assert.deepStrictEqual(asked, []);
   });
 
   await context.close();
 
   section('the extension as shipped');
 
-  await test('without a toolbar press or a granted retailer, the panel reads nothing — it says so, and offers to read UNIQLO US pages', async () => {
+  await test('without a toolbar press, the panel reads nothing — it says to click Fynd, keeps the technical detail, and shows no recommendation', async () => {
     const shipped = await launch(copy(site, false));
     const shop = await shipped.context.newPage();
     await shop.goto(`${site}/fixtures/garment-tee.html`);
@@ -319,9 +315,9 @@ async function launch(dir) {
     await panel.evaluate((a) => chrome.storage.local.set({ fyndAnchors: a }), [teeFromPage]);
     const tabId = await panel.evaluate((u) => new Promise((r) => chrome.tabs.query({}, (tabs) => r((tabs.find((t) => t.url === u || !t.url) || {}).id))), shop.url());
     await panel.goto(`chrome-extension://${shipped.id}/sidepanel.html?tab=${tabId}`);
-    await panel.waitForFunction(() => /Press the Fynd button/.test(document.getElementById('product-meta').textContent));
-    await panel.waitForSelector('#grant:not([hidden])');
-    assert.match(await panel.textContent('#grant-text'), /UNIQLO US/);
+    await panel.waitForSelector('#problem:not([hidden])');
+    assert.strictEqual(await panel.textContent('#problem-title'), 'Click Fynd to read this page');
+    assert.match(await panel.textContent('#diag-text'), /"kind": "no-access"/);
     assert.strictEqual(await panel.isHidden('#rec'), true);
     await shipped.context.close();
   });
