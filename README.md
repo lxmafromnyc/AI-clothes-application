@@ -120,11 +120,15 @@ api/_fit-profile.js     where a fit profile is kept: one record per account
 api/size-recommendation.js  a size suggestion for one product, from the caller's own fit profile (read-only)
 api/_fit-feedback.js    where fit feedback is kept, and its consent rules
 api/_sizing/            product sizing records (records/*.json), their schema, and the size engine
+api/_catalog/           a brand's authorized catalogue: feed import, sync, API fetch, the committed catalogue (data/), and its search
 assets/fit-profile-schema.js  the fit profile's versioned schema; the page and the server share it
 assets/fit-profile-ui.js       draws the fit profile page
 assets/fit-for-you.js          the search page's fit panel: which type a search is for, and that type's profile, used on the results
 scripts/test-fit-profile.js    offline test of the schema, units, per-type answers, readiness, and who may read or change a profile
 scripts/test-sizing.js         offline test of the sizing records, the size engine and both of its endpoints
+scripts/sync-catalog.js        syncs a brand's catalogue from its authorized feed (a file or the API)
+scripts/test-catalog-feed.js   offline test of the catalogue: import, sync, fetch, search, staleness, and each product's sizing
+scripts/test-catalog-browser.js  Find Fit searching and paging a catalogue, and a product's page, in a real browser
 scripts/test-size-eval.js      the size engine against hand-worked expectations (scripts/fixtures/size-eval.json)
 api/_store.js           the key/value store: Vercel KV / Upstash, or memory
 api/_providers/openwebninja.js OpenWeb Ninja Real-Time Product Search adapter
@@ -2171,7 +2175,9 @@ product Fynd can source:
   back to UNIQLO's general men's body chart, labelled as general.
 
 The list shows products with a saved chart first, 24 at a time (**Show more**).
-It can be filtered by type and by Men/Women, and searched by name. Each card
+It can be filtered by type and by who it's for, and searched by what the
+shopper types — on the server, a page at a time (see
+[UNIQLO's authorized catalogue](#uniqlos-authorized-catalogue)). Each card
 says what Fynd holds, never that a chart was read. Photos come from UNIQLO's
 image host only. All five products listed today have one
 (`uniqlo-photos.json`: found by `scripts/find-uniqlo-photos.js` at addresses
@@ -2195,6 +2201,192 @@ carrying each product's code).
 - **Framing:** a page in an iframe can't tell Find Fit which product was clicked,
   so UNIQLO's site in a frame couldn't start a lookup. Its framing headers
   couldn't be read either: the reset came before any headers.
+
+### UNIQLO's authorized catalogue
+
+Find Fit is built to list UNIQLO's whole US range from an **authorized**
+catalogue — an API or product-feed file UNIQLO (or a licensed distributor)
+grants access to. **None has been granted yet**, so today Find Fit lists the
+five products above and says, above the list, that coverage is limited:
+
+> Limited selection: Fynd isn't connected to UNIQLO's product catalogue yet,
+> so most UNIQLO products aren't listed here. For any other UNIQLO product,
+> paste its link below.
+
+Nothing here reads UNIQLO's website, and no catalogue — real or test — is
+committed. Fynd will not claim full-catalogue support until a real feed has
+been imported and validated.
+
+**Where an authorized feed could come from** (looked into 20 October 2026, from
+public listings only — none of it verified from inside a network account):
+
+| Route | What was found | What it would take |
+| --- | --- | --- |
+| UNIQLO directly | No public product API, feed or data-licensing programme for the US site. | Written permission from UNIQLO USA naming the feed, the fields Fynd may show, refresh and retention terms. |
+| Rakuten Advertising | Third-party directories list a "UNIQLO USA" programme on Rakuten. | A Rakuten publisher account, approval by UNIQLO's programme, then the programme's product-feed access (if it offers one) and its terms. |
+| FlexOffers | FlexOffers' own listing shows the UNIQLO USA programme as **Deactivated** (last updated 31 July 2026). | Not available unless reactivated. |
+| LinkConnector | A directory says the UNIQLO campaign's links come "from the product feed or link manager". | A LinkConnector publisher account and approval; then confirm the feed's coverage and terms. |
+| Third-party scraping APIs (e.g. storefront scrapers) | Exist. | **Not used**: unauthorized. |
+
+A daily-refreshed UNIQLO feed is mentioned only by secondary sources. Whether
+any of these feeds covers the full US catalogue, carries online availability,
+or may be stored and indexed by Fynd can only be read from the network's own
+feed documentation and programme terms once approved. Until then the questions
+in "Connecting a real feed" below are unanswered, and nothing is connected.
+
+**The pieces** (`api/_catalog/`), each knowing nothing of the UI:
+
+| File | Does |
+| --- | --- |
+| `sources/uniqlo-us.js` | Everything UNIQLO-specific: its ID format, its product-page and image hosts, how its category and gender words map to Fynd's, the hosts a feed may be fetched from (`FEED_HOSTS`, empty), the fields its licence covers (`LICENSED`, empty), how old a catalogue may be |
+| `product.js` | The one product shape, and the checks every source's rows pass: plain text only, https on the brand's hosts only, the product's own ID in its own link |
+| `import.js` | Reads a feed: the Fynd catalogue feed (JSON) or product-feed variant rows (JSON array or JSON Lines), row by row |
+| `sync.js` | Merges a feed with the last catalogue: adds, updates, removes with a reason, or refuses |
+| `fetch.js` | Fetches a feed from an authorized API |
+| `store.js` | Loads the committed catalogue and checks every product again |
+| `search.js` | The search index, filters and pages |
+
+**Feed formats.** Either:
+
+1. *Fynd catalogue feed v1*: `{ "format": "fynd-catalog-feed", "version": 1,
+   "source": { "name", "licence", "licensedFields" }, "generatedAt",
+   "complete", "products": [...] }`, one entry per product: `id`, `name`,
+   `url`, `category` (the source's own path, e.g. `Men > Tops > T-Shirts`),
+   `gender`, `status` (`active` / `discontinued`), and when licensed `images`,
+   `colours` (`code`, `name`, `image`), `sizes`, `price`, `wasPrice`,
+   `availability`, `sizeAvailability`, `variants` (`colour`, `size`,
+   `availability`).
+2. *Product-feed rows*, one per variant, in the field names of Google Merchant
+   Center's product data specification, which affiliate networks' feeds
+   commonly follow: `id`, `item_group_id` (the product's exact ID), `title`,
+   `description`, `link`, `image_link`, `additional_image_link`,
+   `product_type`, `gender`, `age_group`, `color`, `color_code`, `size`,
+   `price` (`"39.90 USD"`), `sale_price`, `availability`. As a JSON array, JSON
+   Lines, or a tab- or comma-separated file with a header row (quoted fields
+   may hold the delimiter, quotes and line breaks). They carry no header
+   saying what they cover, so `--complete` and `--generated-at` say what the
+   file can't.
+
+A real feed in another shape needs only a new reader in `import.js` mapping it
+onto the same fields; nothing after the import changes.
+
+**What is kept.** The ID, name, canonical link (rebuilt as
+`https://www.uniqlo.com/us/en/products/<ID>/00`, and only from a link to that
+product's own page), category and line, always. Photos, colours, sizes,
+price, stock and a description **only when the feed supplies them and the
+licence covers them**:
+the licence is what the operator records (`UNIQLO_FEED_LICENSED_FIELDS` or
+`--licensed`), narrowed by what the feed itself declares. A catalogue never
+holds garment measurements.
+
+**Every row is checked, never repaired.** A row is rejected, with its reason,
+for an ID not in UNIQLO's exact format; a name with markup, control
+characters or over 160 characters; a link off `www.uniqlo.com`, over http, with
+credentials, a port or a fragment, or to another product's ID; an unmappable
+category or line. A photo off `image.uniqlo.com`, or of another product, and a
+price that isn't a plain amount in dollars, are dropped and the product kept.
+A repeated ID keeps its first row. The feed is parsed as data only (no key that
+could reach a prototype survives), within caps: 64 MB, 50,000 products,
+400,000 rows.
+
+**Syncing.** `node scripts/sync-catalog.js --source uniqlo-us --file <feed>` (or
+`--api`) writes `api/_catalog/data/uniqlo-us.json` and a status file; a person
+reads the report and the diff and commits it. A sync:
+
+- adds and updates by exact ID, so nothing is listed twice;
+- removes a product the feed marks discontinued, one a complete feed no
+  longer lists, and one a partial feed hasn't mentioned in 30 days — each
+  with its reason, kept in `removed`, never served;
+- never carries last sync's price or stock as current, and strips whatever a
+  narrower licence no longer covers;
+- records `lastSuccessfulSync` only on success;
+- writes `api/_catalog/data/uniqlo-us.status.json` on every attempt: when,
+  whether it succeeded and why not, the last successful sync, the feed's rows
+  read / rejected / duplicated with the first rejected rows and their reasons,
+  and — on success — coverage: products by category and line, and how many
+  carry photos, colours, sizes, a price, stock and a description. A thin feed
+  shows up there; nothing assumes it is complete.
+
+It **refuses**, leaving the catalogue byte for byte as it was and recording the
+failed attempt, for: a feed with no valid products; more than 10% of rows
+rejected (a format change); a complete feed removing over half the catalogue
+(a truncated download — `--allow-mass-removal` when it is real); a feed older
+than the one already imported; a fixture.
+
+**Fetching from an API.** Only over https, only to a host listed in
+`FEED_HOSTS` (added in a reviewed change once an agreement names it), with no
+redirect followed. The credential (`UNIQLO_FEED_TOKEN`) is sent only as a
+bearer header to that host and is never printed, logged or written. A timeout,
+a size cap read as the body streams, and any answer but a 200 with JSON are
+plain failures. `.github/workflows/catalog-sync.yml` runs it from repository
+secrets, by hand or — only once the repository variable `UNIQLO_FEED_SCHEDULE`
+is `enabled`, which it isn't — daily, and uploads the result; it commits
+nothing, so what customers see changes only when a person commits a sync.
+
+**Serving.** The deployed functions read only the committed file, and check
+every product again as it loads. A file marked as a fixture is refused there.
+Its age is asked on every request: prices and stock are shown for 48 hours
+after the last successful sync, the catalogue itself for 30 days. After that
+Find Fit falls back to the five products and says the catalogue is out of
+date. The coverage line names the source, the count and the date — never
+"full".
+
+**Searching.** `GET /api/size-recommendation?brand=uniqlo&q=black+oversized+hoodie`
+`[&category=][&line=][&colour=][&size=][&inStock=1][&offset=][&limit=]` answers
+one page (24, at most 48) with the total and the filters' choices, from an
+index built once. Every word must match the product's name, category, line, a
+colour name, its description or its ID — names ranking first, the word being
+typed as a prefix —
+with plurals and shop words folded (`tee` → T-shirt, `hoody` → hoodie). When
+nothing matches every word, the closest are shown and the words nothing
+matched are named, so "black" is never quietly ignored. The page asks once
+typing pauses and draws only the newest answer.
+
+Filters are offered only where the data has them:
+
+| Filter | From | Without a catalogue |
+| --- | --- | --- |
+| Type | the category the adapter mapped | the five products' types |
+| Men / Women / Kids | the source's gender and age words; unisex counts as both | Men / Women |
+| Colour | the source's colour names, grouped into families (black, white, gray, navy, blue, green, beige, brown, red, pink, purple, yellow, orange); a name no family matches is found by search only, never guessed | none — Fynd holds no colour names |
+| Size | the source's size labels, or Fynd's records' sizes | the four records' sizes |
+| In stock only | the source's stock — per colour and size together where it gives stock per variant — only while current (48 hours) | none |
+
+**Sizing, by exact identity.** A catalogue product is matched to Fynd's
+sizing by its exact code and canonical link only. One Fynd holds a record for
+keeps that record's name, sizes, fit and chart, and gains the catalogue's
+price and colours. Any other gets the same pipeline as a pasted link: its
+live page, or UNIQLO's general body chart when the catalogue places it in that
+chart's category and line (a men's hoodie, sweatshirt or T-shirt), labelled as
+general and never compared; otherwise an honest "unavailable".
+
+**Connecting a real feed**, once access is approved:
+
+1. Record the agreement: which feed, which fields it licenses, any display or
+   caching terms.
+2. Add the feed's host to `FEED_HOSTS` in `api/_catalog/sources/uniqlo-us.js`
+   in a pull request.
+3. If the feed isn't in one of the two formats, add its reader to `import.js`
+   and a fixture and tests in its shape.
+4. Set `UNIQLO_FEED_URL`, `UNIQLO_FEED_TOKEN` and
+   `UNIQLO_FEED_LICENSED_FIELDS` (repository secrets and variable for the
+   workflow, or the shell).
+5. `node scripts/sync-catalog.js --source uniqlo-us --api --dry-run`, read the
+   report, then run it without `--dry-run`.
+6. Read `api/_catalog/data/uniqlo-us.json`'s diff, check a sample of products
+   against UNIQLO's pages, and commit it in a pull request.
+7. Re-sync at least every 48 hours if prices and stock are licensed, and every
+   30 days at most in any case.
+
+**Testing it:** `node scripts/test-catalog-feed.js` (import of the Fynd feed,
+JSON/JSON Lines rows and a tab-separated Merchant-format file, duplicates,
+URLs, licensing, descriptions, sync and stale removal, the status record, the
+API fetch, the command, loading, search, colour/size/stock filters, pages,
+staleness, product selection, sizing and verification status) and
+`node scripts/test-catalog-browser.js` (Find Fit and the product page in
+Chromium). Both use FIXTURE feeds in `scripts/fixtures/catalog-feed/`; every
+code from E910001 and every "FIXTURE" name is invented. They prove the
+importer and the page work; they say nothing about any real feed's coverage.
 
 ### A product's page
 

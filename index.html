@@ -54,8 +54,9 @@
 <main id="main">
 
   <!-- Find Fit: choose a brand, pick one of its products, see its
-       sizing chart. assets/brand-browser.js lists the brand's products
-       (/api/size-recommendation?brand=, api/_sizing/brands); picking one
+       sizing chart. assets/brand-browser.js searches the brand's products
+       a page at a time (/api/size-recommendation?brand=&q=,
+       api/_sizing/brands, api/_catalog/search.js); picking one
        asks for its chart by the product's code (assets/find-fit.js),
        which the server looks up through the same pipeline a pasted link
        takes (api/_sizing/chart.js). A link from another shop can still
@@ -75,9 +76,12 @@
       </div>
       <div class="fit-browser-tools">
         <label class="sr-only" for="fit-product-search">Search this brand&rsquo;s products</label>
-        <input class="profile-input fit-product-search" type="search" id="fit-product-search" placeholder="Search products" autocomplete="off" maxlength="80">
+        <input class="profile-input fit-product-search" type="search" id="fit-product-search" placeholder="Search products, e.g. black oversized hoodie" autocomplete="off" maxlength="120" enterkeyhint="search">
         <div class="fit-filters" id="fit-product-filters"></div>
       </div>
+      <!-- How much of the brand is listed, said before the list whenever
+           it is only the products Fynd sourced itself (brand.notice). -->
+      <p class="fit-catalog-note" id="fit-catalog-note" hidden></p>
       <p class="fit-browser-status" id="fit-browser-status" role="status">Loading products&hellip;</p>
       <div class="fit-products" id="fit-products" aria-label="Products"></div>
       <button class="btn btn-secondary fit-products-more" id="fit-products-more" type="button" hidden>Show more</button>

@@ -13,7 +13,9 @@
      1  Fynd's record of exactly that product (chart.js, before any of this)
      2  the product's page, read live (chart.js)
      3  here: a general official chart, only for a product listed by its
-        code under a chart whose category and line it belongs to
+        code under a chart whose category and line it belongs to — by
+        the chart itself, UNIQLO's category pages (the snapshot), or
+        UNIQLO's authorized catalogue (api/_catalog)
      4  otherwise unavailable, with the page's link
 
    Nothing is guessed from a link alone: an unlisted product, or another
@@ -27,6 +29,8 @@
 
 const { byId } = require('./records');
 const uniqloSnapshot = require('./brands/uniqlo-snapshot');
+const uniqloFeed = require('./brands/uniqlo-feed');
+const { CATEGORIES } = require('../_catalog/product');
 const schema = require('./schema');
 
 const FILES = [
@@ -94,6 +98,10 @@ function covers(chart, product) {
   const cats = SNAPSHOT_CATEGORIES[product.category] || [];
   return chart.brand === 'UNIQLO' && chart.appliesTo.lines.includes(product.line) && cats.some((c) => chart.appliesTo.categories.includes(c));
 }
+const fromFeed = (p) => ({
+  code: p.code, url: p.url, name: p.name, category: p.category, line: p.line,
+  identity: `Listed under ${CATEGORIES[p.category] || p.category} for ${p.line} in ${uniqloFeed.LOADED.catalog.sourceName || 'UNIQLO’s authorized product feed'}, updated ${uniqloFeed.LOADED.catalog.lastSuccessfulSync.slice(0, 10)}.`
+});
 const listedProduct = (snap) => ({
   code: snap.code, url: snap.url, name: snap.name, category: snap.category, line: snap.line,
   identity: `Listed on UNIQLO’s ${snap.categoryLabel || snap.category} page for ${snap.line} (${snap.listedOn}), read ${uniqloSnapshot.SNAPSHOT.fetchedAt || 'from uniqlo.com'}.`
@@ -113,6 +121,9 @@ function fallbackFor(checked) {
     if (product) return { chart, product };
     const snap = code && checked.brand === 'UNIQLO' && chart.market === 'US' ? uniqloSnapshot.byCode(code) : null;
     if (snap && checked.url.startsWith('https://www.uniqlo.com/us/') && covers(chart, snap)) return { chart, product: listedProduct(snap) };
+    /* or one UNIQLO's authorized catalogue places there, by its exact code */
+    const listed = !snap && code && checked.brand === 'UNIQLO' && chart.market === 'US' ? uniqloFeed.byCode(code) : null;
+    if (listed && checked.url === listed.url && covers(chart, listed)) return { chart, product: fromFeed(listed) };
   }
   return null;
 }

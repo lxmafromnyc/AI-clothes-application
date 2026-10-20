@@ -8,12 +8,22 @@
    the server looks the product up itself (api/_sizing/brands), so
    nothing the page holds is trusted for it.
 
-   The products are the brand's real ones that Fynd has sourced, with
-   the brand's own names and photos (or drawn artwork where no photo
-   was verified), and each card says what Fynd holds for its sizing —
-   never that a chart was read before it was. The list says how much of
-   the brand's range it covers. When the list can't be fetched, it says
-   so; when a filter matches nothing, it says that.
+   The products are the brand's real ones that Fynd has sourced — and,
+   once one is connected, its authorized catalogue — with the brand's
+   own names and photos (or drawn artwork where no photo was verified),
+   and each card says what Fynd holds for its sizing — never that a
+   chart was read before it was. The list says how much of the brand's
+   range it covers, and while that is only a few products, says so
+   above the list.
+
+   Searching and filtering are the server's (api/_catalog/search.js):
+   what is typed is sent once typing pauses, and one page of matches
+   comes back; "Show more" asks for the next page. Filters — type, who
+   it's for, colour, size, in stock — are offered only where the data has
+   them. Only the newest
+   answer is drawn. When no product matches every word typed, the
+   closest are shown and the words nothing matched are named. When the
+   list can't be fetched, it says so; when nothing matches, it says that.
 
    Everything from the server is drawn as text; photos load with no
    referrer, from the brand's own image host only.
@@ -60,16 +70,31 @@
   }
 
   let brand = null;
-  let products = [];
+  let items = [];
+  let total = 0;
+  let facets = null;
   let category = 'all';
   let line = 'all';
-  let shownCount = 0;
+  let colour = 'all';
+  let size = 'all';
+  let inStock = false;
   let asking = 0;
-  const PAGE = 24;
-  const groupOf = (p) => p.group || p.category;
+  let typing = null;
+  /* how many answers have been drawn, so a test (or anyone) can tell the
+     newest one has arrived */
+  let answered = 0;
+  const done = () => { root.dataset.answers = String(answered += 1); };
   const more = $('fit-products-more');
+  const note = $('fit-catalog-note');
 
   const IMAGE_HOSTS = /^https:\/\/image\.uniqlo\.com\//;
+  const LINE_LABELS = { men: 'Men', women: 'Women', unisex: 'Unisex', kids: 'Kids', baby: 'Baby' };
+
+  function money(price) {
+    if (!price || !Number.isInteger(price.amount) || !/^[A-Z]{3}$/.test(price.currency || '')) return '';
+    const f = (n) => new Intl.NumberFormat('en-US', { style: 'currency', currency: price.currency }).format(n / 100);
+    return `${price.varies ? 'From ' : ''}${f(price.amount)}${Number.isInteger(price.was) && price.was > price.amount ? ` (was ${f(price.was)})` : ''}`;
+  }
 
   /* a product opens its own page (product.html), as a shop's grid does */
   function card(p) {
@@ -90,29 +115,15 @@
       media.append(art(p.category));
     }
     const text = el('span', 'fit-product-text');
-    text.append(el('span', 'fit-product-kind', [p.categoryLabel, p.line === 'men' ? 'Men' : p.line === 'women' ? 'Women' : p.line === 'unisex' ? 'Unisex' : ''].filter(Boolean).join(' · ')),
-      el('span', 'fit-product-name', p.name),
-      el('span', `fit-product-holds fit-product-holds--${p.holds}`, p.holdsText));
+    text.append(el('span', 'fit-product-kind', [p.categoryLabel, LINE_LABELS[p.line] || ''].filter(Boolean).join(' · ')),
+      el('span', 'fit-product-name', p.name));
+    const price = money(p.price);
+    if (price) text.append(el('span', 'fit-product-price', price));
+    if (p.availability === 'out_of_stock') text.append(el('span', 'fit-product-stock', 'Out of stock'));
+    text.append(el('span', `fit-product-holds fit-product-holds--${p.holds}`, p.holdsText));
     b.append(media, text);
     return b;
   }
-
-  /* the products matching the filters, a page at a time */
-  function draw(keep) {
-    const words = search.value.trim().toLowerCase();
-    const matching = products.filter((p) => (category === 'all' || groupOf(p) === category)
-      && (line === 'all' || p.line === line || p.line === 'unisex')
-      && (!words || p.name.toLowerCase().includes(words)));
-    shownCount = keep ? Math.min(Math.max(shownCount, PAGE), matching.length) : Math.min(PAGE, matching.length);
-    grid.replaceChildren(...matching.slice(0, shownCount).map(card));
-    more.hidden = shownCount >= matching.length;
-    more.textContent = `Show more (${matching.length - shownCount} more)`;
-    root.dataset.matching = String(matching.length);
-    if (!products.length) say('No products to show for this brand yet.');
-    else if (!matching.length) say('No products match. Clear the search or choose another type.');
-    else say(matching.length > shownCount ? `Showing ${shownCount} of ${matching.length}` : '', 'ready');
-  }
-  more.addEventListener('click', () => { shownCount += PAGE; draw(true); });
 
   function say(text, state) {
     status.textContent = text;
@@ -120,60 +131,142 @@
     root.dataset.state = state || (text ? 'empty' : 'ready');
   }
 
+  const quote = (words) => words.map((w) => `“${w}”`).join(', ');
+
+  /* what came back, drawn: the cards, how many there are, and why */
+  function draw(answer) {
+    grid.replaceChildren(...items.map(card));
+    more.hidden = items.length >= total;
+    more.disabled = false;
+    more.textContent = `Show more (${total - items.length} more)`;
+    root.dataset.matching = String(total);
+    root.dataset.query = answer.query ? answer.query.q : '';
+    const filtered = category !== 'all' || line !== 'all' || colour !== 'all' || size !== 'all' || inStock || Boolean(answer.query && answer.query.q);
+    if (!total && !filtered) return say('No products to show for this brand yet.');
+    if (!total) {
+      return say(answer.unmatched && answer.unmatched.length && answer.query && answer.query.q
+        ? `No products match. Nothing here matched ${quote(answer.unmatched)}. Clear the search or choose another type.`
+        : 'No products match. Clear the search or choose another type.');
+    }
+    const parts = [];
+    if (answer.partial) {
+      parts.push(answer.unmatched && answer.unmatched.length
+        ? `No product here matches every word — nothing matched ${quote(answer.unmatched)}, so the closest matches are shown.`
+        : 'No product here matches every word, so the closest matches are shown.');
+    }
+    if (total > items.length) parts.push(`Showing ${items.length} of ${total}`);
+    say(parts.join(' '), 'ready');
+  }
+
+  /* the filters, from the whole catalogue's choices: they stay put as a
+     search narrows */
   function drawFilters() {
-    const kinds = [...new Map(products.map((p) => [groupOf(p), p.categoryLabel])).entries()];
-    const lines = [...new Set(products.map((p) => p.line).filter((l) => l === 'men' || l === 'women'))];
     const chip = (group, value, label, set) => {
       const b = el('button', 'fit-filter', label);
       b.type = 'button';
       b.dataset.group = group;
+      b.dataset.value = value;
       b.setAttribute('aria-pressed', String(value === 'all'));
       b.addEventListener('click', () => {
         set(value);
         filters.querySelectorAll(`.fit-filter[data-group="${group}"]`).forEach((f) => f.setAttribute('aria-pressed', String(f === b)));
-        draw();
+        ask(false);
       });
       return b;
     };
-    const setKind = (v) => { category = v; };
-    const setLine = (v) => { line = v; };
+    const kinds = (facets && facets.categories) || [];
+    const lines = ((facets && facets.lines) || []).map((l) => l.value).filter((l) => l !== 'unisex' && LINE_LABELS[l]);
     const kindRow = el('div', 'fit-filter-row');
     kindRow.setAttribute('role', 'group');
     kindRow.setAttribute('aria-label', 'Type of clothing');
-    kindRow.append(chip('kind', 'all', 'All', setKind), ...kinds.map(([value, label]) => chip('kind', value, label, setKind)));
+    kindRow.append(chip('kind', 'all', 'All', (v) => { category = v; }), ...kinds.map((k) => chip('kind', k.value, k.label, (v) => { category = v; })));
     const rows = [kindRow];
     if (lines.length > 1) {
       const lineRow = el('div', 'fit-filter-row');
       lineRow.setAttribute('role', 'group');
-      lineRow.setAttribute('aria-label', 'Men or women');
-      lineRow.append(chip('line', 'all', 'Everyone', setLine), ...lines.map((l) => chip('line', l, l === 'men' ? 'Men' : 'Women', setLine)));
+      lineRow.setAttribute('aria-label', 'Who it’s for');
+      lineRow.append(chip('line', 'all', 'Everyone', (v) => { line = v; }), ...lines.map((l) => chip('line', l, LINE_LABELS[l], (v) => { line = v; })));
       rows.push(lineRow);
+    }
+    /* colour and size only where the data has them: a catalogue's colour
+       names and size labels, or Fynd's records' sizes */
+    const row = (label, group, values, set, name) => {
+      const r = el('div', 'fit-filter-row');
+      r.setAttribute('role', 'group');
+      r.setAttribute('aria-label', label);
+      r.append(chip(group, 'all', 'Any', set), ...values.map((v) => chip(group, v, name(v), set)));
+      return r;
+    };
+    const colours = ((facets && facets.colours) || []).map((c) => c.value);
+    const sizes = ((facets && facets.sizes) || []).map((c) => c.value);
+    if (colours.length > 1) rows.push(row('Colour', 'colour', colours, (v) => { colour = v; }, (v) => v[0].toUpperCase() + v.slice(1)));
+    if (sizes.length > 1) rows.push(row('Size', 'size', sizes, (v) => { size = v; }, (v) => v));
+    if (facets && facets.inStock) {
+      const stockRow = el('div', 'fit-filter-row');
+      const b = el('button', 'fit-filter', 'In stock only');
+      b.type = 'button';
+      b.dataset.group = 'stock';
+      b.setAttribute('aria-pressed', 'false');
+      b.addEventListener('click', () => { inStock = !inStock; b.setAttribute('aria-pressed', String(inStock)); ask(false); });
+      stockRow.append(b);
+      rows.push(stockRow);
     }
     filters.replaceChildren(...rows);
   }
 
-  async function load(id) {
-    const ask = ++asking;
-    root.dataset.state = 'loading';
+  /* one page from the server: the first for a new search, or the next */
+  async function ask(append) {
+    const mine = ++asking;
+    clearTimeout(typing);
+    const sizing = global.Account && global.Account.sizing;
+    if (append) { more.disabled = true; } else { root.dataset.state = 'loading'; }
+    const query = { q: search.value.trim(), category, line, colour, size, inStock, offset: append ? items.length : 0 };
+    const answer = sizing ? await sizing.catalog(brandSelect.value, query) : { ok: false };
+    if (mine !== asking) return;
+    if (!(answer.ok && answer.data && Array.isArray(answer.data.products) && answer.data.brand)) {
+      if (append) {
+        more.disabled = false;
+        say('More products couldn’t be loaded just now. Try “Show more” again in a moment.', 'ready');
+        return done();
+      }
+      items = [];
+      total = 0;
+      grid.replaceChildren();
+      more.hidden = true;
+      say('This brand’s products couldn’t be loaded just now. Try again in a moment, or paste a product’s link below.', 'unavailable');
+      return done();
+    }
+    const data = answer.data;
+    brand = data.brand;
+    total = Number.isInteger(data.total) ? data.total : data.products.length;
+    items = append ? items.concat(data.products) : data.products;
+    coverage.textContent = brand.coverage || '';
+    note.textContent = brand.notice || '';
+    note.hidden = !brand.notice;
+    if (!facets) { facets = data.facets || null; drawFilters(); }
+    draw(data);
+    done();
+  }
+
+  more.addEventListener('click', () => ask(true));
+
+  async function load() {
+    asking += 1;
+    brand = null;
+    facets = null;
+    items = [];
+    total = 0;
+    category = 'all';
+    line = 'all';
+    colour = 'all';
+    size = 'all';
+    inStock = false;
     grid.replaceChildren();
     filters.replaceChildren();
     coverage.textContent = '';
+    note.hidden = true;
     say('Loading products…', 'loading');
-    const sizing = global.Account && global.Account.sizing;
-    const answer = sizing ? await sizing.catalog(id) : { ok: false };
-    if (ask !== asking) return;
-    if (!(answer.ok && answer.data && Array.isArray(answer.data.products))) {
-      products = [];
-      say('This brand’s products couldn’t be loaded just now. Try again in a moment, or paste a product’s link below.', 'unavailable');
-      return;
-    }
-    brand = answer.data.brand;
-    products = answer.data.products;
-    category = 'all';
-    line = 'all';
-    coverage.textContent = brand.coverage || '';
-    drawFilters();
-    draw();
+    await ask(false);
   }
 
   async function start() {
@@ -190,11 +283,13 @@
       const later = (answer.data.planned || []).filter((name) => !answer.data.brands.some((b) => b.name === name));
       planned.textContent = later.length ? `${later.join(', ')} — coming later.` : '';
     }
-    load(brandSelect.value);
+    load();
   }
 
-  brandSelect.addEventListener('change', () => load(brandSelect.value));
-  search.addEventListener('input', () => draw());
+  brandSelect.addEventListener('change', () => load());
+  /* sent once typing pauses; Enter sends it at once */
+  search.addEventListener('input', () => { clearTimeout(typing); typing = setTimeout(() => ask(false), 220); });
+  search.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); ask(false); } });
   start();
 
   global.BrandBrowser = { load };

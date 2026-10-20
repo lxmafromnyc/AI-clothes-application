@@ -156,7 +156,7 @@ const server = http.createServer((req, res) => {
       if (url.searchParams.has('brands')) return res.end(JSON.stringify({ brands: brands.list(), planned: brands.PLANNED }));
       const brand = brands.get(url.searchParams.get('brand'));
       if (!brand) { res.statusCode = 404; return res.end('{}'); }
-      if (!url.searchParams.has('item')) return res.end(JSON.stringify({ brand: { id: brand.id, name: brand.name, coverage: brand.coverage }, products: brand.products() }));
+      if (!url.searchParams.has('item')) return res.end(JSON.stringify(brands.browse(brand, Object.fromEntries(url.searchParams))));
       const item = brand.find(url.searchParams.get('item'));
       if (!item) { res.statusCode = 404; return res.end('{}'); }
       return require('../api/_sizing/chart').chartFor(item.url, { noCache: true, fetch: async () => { throw new Error('offline'); } })

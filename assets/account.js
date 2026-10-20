@@ -258,7 +258,15 @@
     /* the brands Find Fit browses, one brand's products, and a chosen
        product's chart — only the brand and the product's code travel */
     brands: () => call('size-recommendation?brands=1'),
-    catalog: (brand) => call(`size-recommendation?brand=${encodeURIComponent(brand)}`),
+    /* one page of a brand's products matching a search: only the brand,
+       the words typed and the filters travel */
+    catalog: (brand, query) => {
+      const q = new URLSearchParams({ brand });
+      Object.entries(query || {}).forEach(([k, v]) => {
+        if (['q', 'category', 'line', 'colour', 'size', 'inStock', 'offset', 'limit'].includes(k) && v !== undefined && v !== null && v !== '' && v !== 'all' && v !== false && v !== 0) q.set(k, v === true ? '1' : String(v));
+      });
+      return call(`size-recommendation?${q}`);
+    },
     item: (brand, code) => call(`size-recommendation?brand=${encodeURIComponent(brand)}&item=${encodeURIComponent(code)}`),
     detail: (brand, code) => call(`size-recommendation?brand=${encodeURIComponent(brand)}&detail=${encodeURIComponent(code)}`)
   };

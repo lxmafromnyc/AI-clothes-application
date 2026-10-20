@@ -1560,27 +1560,36 @@ const linkFromInbox = (pattern) => {
     assert.deepStrictEqual(cards.slice(0, 4).map((c) => c[0]), ['E475378-000', 'E475377-000', 'E471808-000', 'E455365-000'], 'products with a saved chart first, checked before not yet checked');
     assert.ok(cards.some(([code, name, holds]) => code === 'E471808-000' && name === 'Sweat Oversized Pullover Hoodie' && holds === 'Fynd has this product’s chart, not yet checked'));
     assert.match(await page.textContent('#fit-coverage'), /36 UNIQLO US products, as listed on uniqlo\.com’s own category pages on 2026-10-18 — not UNIQLO’s full range\./);
+    /* no authorized catalogue is connected: said above the list, not only in the small print */
+    assert.strictEqual(await page.isVisible('#fit-catalog-note'), true);
+    assert.match(await page.textContent('#fit-catalog-note'), /^Limited selection: Fynd isn’t connected to UNIQLO’s product catalogue yet, so most UNIQLO products aren’t listed here\./);
     assert.match(await page.textContent('#fit-browser-status'), /Showing 24 of 36/);
-    await page.click('#fit-products-more');
+    /* the search and filters are the server's: each change waits for its own answer */
+    const answered = async (action) => {
+      const before = Number(await page.getAttribute('#fit-browser', 'data-answers'));
+      await action();
+      await page.waitForFunction((n) => Number(document.getElementById('fit-browser').dataset.answers) > n, before);
+    };
+    await answered(() => page.click('#fit-products-more'));
     assert.strictEqual(await page.$$eval('.fit-product', (bs) => bs.length), 36);
     assert.strictEqual(await page.isHidden('#fit-products-more'), true);
     /* filters and search */
-    await page.click('.fit-filter[data-group="kind"]:has-text("Sweatshirts & Hoodies")');
+    await answered(() => page.click('.fit-filter[data-group="kind"]:has-text("Sweatshirts & Hoodies")'));
     const hoodies = await page.$$eval('.fit-product', (bs) => bs.map((b) => b.dataset.code));
     assert.strictEqual(hoodies.length, 21);
     assert.ok(['E471808-000', 'E475378-000', 'E475377-000', 'E900001-000'].every((c) => hoodies.includes(c)));
-    await page.click('.fit-filter[data-group="line"]:has-text("Women")');
+    await answered(() => page.click('.fit-filter[data-group="line"]:has-text("Women")'));
     assert.deepStrictEqual(await page.$$eval('.fit-product', (bs) => bs.map((b) => b.dataset.code)), ['E475378-000'], 'only the unisex hoodie');
-    await page.click('.fit-filter[data-group="kind"]:has-text("T-shirts")');
+    await answered(() => page.click('.fit-filter[data-group="kind"]:has-text("T-shirts")'));
     const tees = await page.$$eval('.fit-product', (bs) => bs.map((b) => b.dataset.code));
     assert.ok(tees.length === 9 && tees.includes('E455365-000') && tees.includes('E900019-000'), `women's tees and the unisex one: ${tees}`);
-    await page.click('.fit-filter[data-group="line"]:has-text("Everyone")');
-    await page.click('.fit-filter[data-group="kind"]:has-text("All")');
-    await page.fill('#fit-product-search', 'oversized');
+    await answered(() => page.click('.fit-filter[data-group="line"]:has-text("Everyone")'));
+    await answered(() => page.click('.fit-filter[data-group="kind"]:has-text("All")'));
+    await answered(() => page.fill('#fit-product-search', 'oversized'));
     assert.deepStrictEqual(await page.$$eval('.fit-product', (bs) => bs.map((b) => b.dataset.code)), ['E471808-000']);
-    await page.fill('#fit-product-search', 'parka');
+    await answered(() => page.fill('#fit-product-search', 'parka'));
     assert.match(await page.textContent('#fit-browser-status'), /No products match/);
-    await page.fill('#fit-product-search', '');
+    await answered(() => page.fill('#fit-product-search', ''));
     /* photos only from UNIQLO's image host; the snapshot's foreign one was dropped */
     const photos = await page.$$eval('.fit-product img', (is) => is.map((i) => i.getAttribute('src')));
     assert.ok(photos.every((src) => src.startsWith('https://image.uniqlo.com/')), photos.join(' '));

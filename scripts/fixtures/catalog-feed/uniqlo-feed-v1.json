@@ -1,0 +1,2092 @@
+{
+  "format": "fynd-catalog-feed",
+  "version": 1,
+  "fixture": true,
+  "about": "FIXTURE — invented for Fynd’s catalogue tests in the Fynd catalogue feed format (api/_catalog/import.js). Not UNIQLO’s products: every code from E910001 is made up and every name says FIXTURE; E471808-000 is a real code with an invented name, to test that Fynd keeps its own record of it. Never served to customers: marked \"fixture\", which the catalogue store refuses outside a test.",
+  "source": {
+    "name": "FIXTURE UNIQLO US feed",
+    "licence": "FIXTURE — no licence; test data only",
+    "licensedFields": [
+      "images",
+      "colours",
+      "sizes",
+      "price",
+      "stock",
+      "description"
+    ]
+  },
+  "generatedAt": "2026-10-20T06:00:00.000Z",
+  "complete": true,
+  "products": [
+    {
+      "id": "E910001-000",
+      "name": "FIXTURE Oversized Sweat Hoodie",
+      "url": "https://www.uniqlo.com/us/en/products/E910001-000/00",
+      "category": "Men > Tops > Sweatshirts & Hoodies",
+      "gender": "men",
+      "status": "active",
+      "images": [
+        "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910001/item/goods_09_910001_3x4.jpg"
+      ],
+      "colours": [
+        {
+          "code": "09",
+          "name": "Black",
+          "image": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910001/item/goods_09_910001_3x4.jpg"
+        },
+        {
+          "code": "03",
+          "name": "Gray",
+          "image": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910001/item/goods_03_910001_3x4.jpg"
+        },
+        {
+          "code": "56",
+          "name": "Olive",
+          "image": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910001/item/goods_56_910001_3x4.jpg"
+        }
+      ],
+      "sizes": [
+        "XS",
+        "S",
+        "M",
+        "L",
+        "XL",
+        "XXL"
+      ],
+      "price": "49.90",
+      "wasPrice": "59.90",
+      "description": "FIXTURE description: heavyweight fleece with a lined hood and a kangaroo pocket.",
+      "availability": "in_stock",
+      "variants": [
+        {
+          "colour": "09",
+          "size": "XS",
+          "availability": "out_of_stock"
+        },
+        {
+          "colour": "09",
+          "size": "S",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "09",
+          "size": "M",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "09",
+          "size": "L",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "09",
+          "size": "XL",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "09",
+          "size": "XXL",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "03",
+          "size": "XS",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "03",
+          "size": "S",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "03",
+          "size": "M",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "03",
+          "size": "L",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "03",
+          "size": "XL",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "03",
+          "size": "XXL",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "56",
+          "size": "XS",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "56",
+          "size": "S",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "56",
+          "size": "M",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "56",
+          "size": "L",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "56",
+          "size": "XL",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "56",
+          "size": "XXL",
+          "availability": "out_of_stock"
+        }
+      ]
+    },
+    {
+      "id": "E910002-000",
+      "name": "FIXTURE Sweat Full-Zip Hoodie",
+      "url": "https://www.uniqlo.com/us/en/products/E910002-000/00",
+      "category": "Men > Tops > Sweatshirts & Hoodies",
+      "gender": "men",
+      "status": "active",
+      "images": [
+        "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910002/item/goods_09_910002_3x4.jpg"
+      ],
+      "colours": [
+        {
+          "code": "09",
+          "name": "Black",
+          "image": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910002/item/goods_09_910002_3x4.jpg"
+        },
+        {
+          "code": "69",
+          "name": "Navy",
+          "image": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910002/item/goods_69_910002_3x4.jpg"
+        }
+      ],
+      "sizes": [
+        "XS",
+        "S",
+        "M",
+        "L",
+        "XL",
+        "XXL"
+      ],
+      "price": "39.90",
+      "availability": "in_stock",
+      "variants": [
+        {
+          "colour": "09",
+          "size": "XS",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "09",
+          "size": "S",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "09",
+          "size": "M",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "09",
+          "size": "L",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "09",
+          "size": "XL",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "09",
+          "size": "XXL",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "69",
+          "size": "XS",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "69",
+          "size": "S",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "69",
+          "size": "M",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "69",
+          "size": "L",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "69",
+          "size": "XL",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "69",
+          "size": "XXL",
+          "availability": "out_of_stock"
+        }
+      ]
+    },
+    {
+      "id": "E910003-000",
+      "name": "FIXTURE Oversized Crew Neck Sweatshirt",
+      "url": "https://www.uniqlo.com/us/en/products/E910003-000/00",
+      "category": "Women > Tops > Sweatshirts & Hoodies",
+      "gender": "women",
+      "status": "active",
+      "images": [
+        "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910003/item/goods_00_910003_3x4.jpg"
+      ],
+      "colours": [
+        {
+          "code": "00",
+          "name": "White",
+          "image": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910003/item/goods_00_910003_3x4.jpg"
+        },
+        {
+          "code": "32",
+          "name": "Beige",
+          "image": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910003/item/goods_32_910003_3x4.jpg"
+        }
+      ],
+      "sizes": [
+        "XXS",
+        "XS",
+        "S",
+        "M",
+        "L",
+        "XL"
+      ],
+      "price": "39.90",
+      "availability": "in_stock",
+      "variants": [
+        {
+          "colour": "00",
+          "size": "XXS",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "00",
+          "size": "XS",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "00",
+          "size": "S",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "00",
+          "size": "M",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "00",
+          "size": "L",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "00",
+          "size": "XL",
+          "availability": "out_of_stock"
+        },
+        {
+          "colour": "32",
+          "size": "XXS",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "32",
+          "size": "XS",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "32",
+          "size": "S",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "32",
+          "size": "M",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "32",
+          "size": "L",
+          "availability": "out_of_stock"
+        },
+        {
+          "colour": "32",
+          "size": "XL",
+          "availability": "in_stock"
+        }
+      ]
+    },
+    {
+      "id": "E910004-000",
+      "name": "FIXTURE Cropped Hoodie",
+      "url": "https://www.uniqlo.com/us/en/products/E910004-000/00",
+      "category": "Women > Tops > Sweatshirts & Hoodies",
+      "gender": "women",
+      "status": "active",
+      "images": [
+        "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910004/item/goods_09_910004_3x4.jpg"
+      ],
+      "colours": [
+        {
+          "code": "09",
+          "name": "Black",
+          "image": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910004/item/goods_09_910004_3x4.jpg"
+        },
+        {
+          "code": "00",
+          "name": "White",
+          "image": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910004/item/goods_00_910004_3x4.jpg"
+        }
+      ],
+      "sizes": [
+        "XXS",
+        "XS",
+        "S",
+        "M",
+        "L",
+        "XL"
+      ],
+      "price": "29.90",
+      "availability": "out_of_stock",
+      "variants": [
+        {
+          "colour": "09",
+          "size": "XXS",
+          "availability": "out_of_stock"
+        },
+        {
+          "colour": "09",
+          "size": "XS",
+          "availability": "out_of_stock"
+        },
+        {
+          "colour": "09",
+          "size": "S",
+          "availability": "out_of_stock"
+        },
+        {
+          "colour": "09",
+          "size": "M",
+          "availability": "out_of_stock"
+        },
+        {
+          "colour": "09",
+          "size": "L",
+          "availability": "out_of_stock"
+        },
+        {
+          "colour": "09",
+          "size": "XL",
+          "availability": "out_of_stock"
+        },
+        {
+          "colour": "00",
+          "size": "XXS",
+          "availability": "out_of_stock"
+        },
+        {
+          "colour": "00",
+          "size": "XS",
+          "availability": "out_of_stock"
+        },
+        {
+          "colour": "00",
+          "size": "S",
+          "availability": "out_of_stock"
+        },
+        {
+          "colour": "00",
+          "size": "M",
+          "availability": "out_of_stock"
+        },
+        {
+          "colour": "00",
+          "size": "L",
+          "availability": "out_of_stock"
+        },
+        {
+          "colour": "00",
+          "size": "XL",
+          "availability": "out_of_stock"
+        }
+      ]
+    },
+    {
+      "id": "E910005-000",
+      "name": "FIXTURE Supima Cotton Crew Neck T-Shirt",
+      "url": "https://www.uniqlo.com/us/en/products/E910005-000/00",
+      "category": "Men > Tops > T-Shirts",
+      "gender": "men",
+      "status": "active",
+      "images": [
+        "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910005/item/goods_00_910005_3x4.jpg"
+      ],
+      "colours": [
+        {
+          "code": "00",
+          "name": "White",
+          "image": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910005/item/goods_00_910005_3x4.jpg"
+        },
+        {
+          "code": "09",
+          "name": "Black",
+          "image": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910005/item/goods_09_910005_3x4.jpg"
+        },
+        {
+          "code": "69",
+          "name": "Navy",
+          "image": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910005/item/goods_69_910005_3x4.jpg"
+        }
+      ],
+      "sizes": [
+        "XS",
+        "S",
+        "M",
+        "L",
+        "XL",
+        "XXL"
+      ],
+      "price": "14.90",
+      "availability": "in_stock",
+      "variants": [
+        {
+          "colour": "00",
+          "size": "XS",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "00",
+          "size": "S",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "00",
+          "size": "M",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "00",
+          "size": "L",
+          "availability": "out_of_stock"
+        },
+        {
+          "colour": "00",
+          "size": "XL",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "00",
+          "size": "XXL",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "09",
+          "size": "XS",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "09",
+          "size": "S",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "09",
+          "size": "M",
+          "availability": "out_of_stock"
+        },
+        {
+          "colour": "09",
+          "size": "L",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "09",
+          "size": "XL",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "09",
+          "size": "XXL",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "69",
+          "size": "XS",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "69",
+          "size": "S",
+          "availability": "out_of_stock"
+        },
+        {
+          "colour": "69",
+          "size": "M",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "69",
+          "size": "L",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "69",
+          "size": "XL",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "69",
+          "size": "XXL",
+          "availability": "in_stock"
+        }
+      ]
+    },
+    {
+      "id": "E910006-000",
+      "name": "FIXTURE Oversized Short-Sleeve T-Shirt",
+      "url": "https://www.uniqlo.com/us/en/products/E910006-000/00",
+      "category": "Women > Tops > T-Shirts",
+      "gender": "women",
+      "status": "active",
+      "images": [
+        "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910006/item/goods_00_910006_3x4.jpg"
+      ],
+      "colours": [
+        {
+          "code": "00",
+          "name": "White",
+          "image": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910006/item/goods_00_910006_3x4.jpg"
+        },
+        {
+          "code": "09",
+          "name": "Black",
+          "image": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910006/item/goods_09_910006_3x4.jpg"
+        }
+      ],
+      "sizes": [
+        "XXS",
+        "XS",
+        "S",
+        "M",
+        "L",
+        "XL"
+      ],
+      "price": "19.90",
+      "wasPrice": "29.90",
+      "availability": "in_stock",
+      "variants": [
+        {
+          "colour": "00",
+          "size": "XXS",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "00",
+          "size": "XS",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "00",
+          "size": "S",
+          "availability": "out_of_stock"
+        },
+        {
+          "colour": "00",
+          "size": "M",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "00",
+          "size": "L",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "00",
+          "size": "XL",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "09",
+          "size": "XXS",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "09",
+          "size": "XS",
+          "availability": "out_of_stock"
+        },
+        {
+          "colour": "09",
+          "size": "S",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "09",
+          "size": "M",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "09",
+          "size": "L",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "09",
+          "size": "XL",
+          "availability": "in_stock"
+        }
+      ]
+    },
+    {
+      "id": "E910007-000",
+      "name": "FIXTURE Dry Pique Polo Shirt",
+      "url": "https://www.uniqlo.com/us/en/products/E910007-000/00",
+      "category": "Men > Tops > Polo Shirts",
+      "gender": "men",
+      "status": "active",
+      "images": [
+        "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910007/item/goods_69_910007_3x4.jpg"
+      ],
+      "colours": [
+        {
+          "code": "69",
+          "name": "Navy",
+          "image": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910007/item/goods_69_910007_3x4.jpg"
+        }
+      ],
+      "sizes": [
+        "XS",
+        "S",
+        "M",
+        "L",
+        "XL",
+        "XXL"
+      ],
+      "price": "24.90",
+      "availability": "in_stock",
+      "variants": [
+        {
+          "colour": "69",
+          "size": "XS",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "69",
+          "size": "S",
+          "availability": "out_of_stock"
+        },
+        {
+          "colour": "69",
+          "size": "M",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "69",
+          "size": "L",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "69",
+          "size": "XL",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "69",
+          "size": "XXL",
+          "availability": "in_stock"
+        }
+      ]
+    },
+    {
+      "id": "E910008-000",
+      "name": "FIXTURE Extra Fine Merino Crew Neck Sweater",
+      "url": "https://www.uniqlo.com/us/en/products/E910008-000/00",
+      "category": "Men > Tops > Sweaters & Cardigans",
+      "gender": "men",
+      "status": "active",
+      "images": [
+        "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910008/item/goods_09_910008_3x4.jpg"
+      ],
+      "colours": [
+        {
+          "code": "09",
+          "name": "Black",
+          "image": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910008/item/goods_09_910008_3x4.jpg"
+        },
+        {
+          "code": "03",
+          "name": "Gray",
+          "image": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910008/item/goods_03_910008_3x4.jpg"
+        }
+      ],
+      "sizes": [
+        "XS",
+        "S",
+        "M",
+        "L",
+        "XL",
+        "XXL"
+      ],
+      "price": "39.90",
+      "availability": "in_stock",
+      "variants": [
+        {
+          "colour": "09",
+          "size": "XS",
+          "availability": "out_of_stock"
+        },
+        {
+          "colour": "09",
+          "size": "S",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "09",
+          "size": "M",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "09",
+          "size": "L",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "09",
+          "size": "XL",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "09",
+          "size": "XXL",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "03",
+          "size": "XS",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "03",
+          "size": "S",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "03",
+          "size": "M",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "03",
+          "size": "L",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "03",
+          "size": "XL",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "03",
+          "size": "XXL",
+          "availability": "in_stock"
+        }
+      ]
+    },
+    {
+      "id": "E910009-000",
+      "name": "FIXTURE Souffle Yarn Cardigan",
+      "url": "https://www.uniqlo.com/us/en/products/E910009-000/00",
+      "category": "Women > Tops > Sweaters & Cardigans",
+      "gender": "women",
+      "status": "active",
+      "images": [
+        "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910009/item/goods_32_910009_3x4.jpg"
+      ],
+      "colours": [
+        {
+          "code": "32",
+          "name": "Beige",
+          "image": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910009/item/goods_32_910009_3x4.jpg"
+        }
+      ],
+      "sizes": [
+        "XXS",
+        "XS",
+        "S",
+        "M",
+        "L",
+        "XL"
+      ],
+      "price": "49.90",
+      "availability": "in_stock",
+      "variants": [
+        {
+          "colour": "32",
+          "size": "XXS",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "32",
+          "size": "XS",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "32",
+          "size": "S",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "32",
+          "size": "M",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "32",
+          "size": "L",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "32",
+          "size": "XL",
+          "availability": "in_stock"
+        }
+      ]
+    },
+    {
+      "id": "E910010-000",
+      "name": "FIXTURE Oxford Slim-Fit Shirt",
+      "url": "https://www.uniqlo.com/us/en/products/E910010-000/00",
+      "category": "Men > Tops > Casual Shirts",
+      "gender": "men",
+      "status": "active",
+      "images": [
+        "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910010/item/goods_00_910010_3x4.jpg"
+      ],
+      "colours": [
+        {
+          "code": "00",
+          "name": "White",
+          "image": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910010/item/goods_00_910010_3x4.jpg"
+        },
+        {
+          "code": "69",
+          "name": "Navy",
+          "image": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910010/item/goods_69_910010_3x4.jpg"
+        }
+      ],
+      "sizes": [
+        "XS",
+        "S",
+        "M",
+        "L",
+        "XL",
+        "XXL"
+      ],
+      "price": "34.90",
+      "description": "FIXTURE description: button-down collar in a cotton oxford weave.",
+      "availability": "in_stock",
+      "variants": [
+        {
+          "colour": "00",
+          "size": "XS",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "00",
+          "size": "S",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "00",
+          "size": "M",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "00",
+          "size": "L",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "00",
+          "size": "XL",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "00",
+          "size": "XXL",
+          "availability": "out_of_stock"
+        },
+        {
+          "colour": "69",
+          "size": "XS",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "69",
+          "size": "S",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "69",
+          "size": "M",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "69",
+          "size": "L",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "69",
+          "size": "XL",
+          "availability": "out_of_stock"
+        },
+        {
+          "colour": "69",
+          "size": "XXL",
+          "availability": "in_stock"
+        }
+      ]
+    },
+    {
+      "id": "E910011-000",
+      "name": "FIXTURE Ultra Stretch Skinny Jeans",
+      "url": "https://www.uniqlo.com/us/en/products/E910011-000/00",
+      "category": "Women > Bottoms > Jeans",
+      "gender": "women",
+      "status": "active",
+      "images": [
+        "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910011/item/goods_69_910011_3x4.jpg"
+      ],
+      "colours": [
+        {
+          "code": "69",
+          "name": "Navy",
+          "image": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910011/item/goods_69_910011_3x4.jpg"
+        },
+        {
+          "code": "09",
+          "name": "Black",
+          "image": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910011/item/goods_09_910011_3x4.jpg"
+        }
+      ],
+      "sizes": [
+        "XXS",
+        "XS",
+        "S",
+        "M",
+        "L",
+        "XL"
+      ],
+      "price": "49.90",
+      "wasPrice": "59.90",
+      "availability": "in_stock",
+      "variants": [
+        {
+          "colour": "69",
+          "size": "XXS",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "69",
+          "size": "XS",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "69",
+          "size": "S",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "69",
+          "size": "M",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "69",
+          "size": "L",
+          "availability": "out_of_stock"
+        },
+        {
+          "colour": "69",
+          "size": "XL",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "09",
+          "size": "XXS",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "09",
+          "size": "XS",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "09",
+          "size": "S",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "09",
+          "size": "M",
+          "availability": "out_of_stock"
+        },
+        {
+          "colour": "09",
+          "size": "L",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "09",
+          "size": "XL",
+          "availability": "in_stock"
+        }
+      ]
+    },
+    {
+      "id": "E910012-000",
+      "name": "FIXTURE Baggy Jeans",
+      "url": "https://www.uniqlo.com/us/en/products/E910012-000/00",
+      "category": "Men > Bottoms > Jeans",
+      "gender": "men",
+      "status": "active",
+      "images": [
+        "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910012/item/goods_69_910012_3x4.jpg"
+      ],
+      "colours": [
+        {
+          "code": "69",
+          "name": "Navy",
+          "image": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910012/item/goods_69_910012_3x4.jpg"
+        }
+      ],
+      "sizes": [
+        "XS",
+        "S",
+        "M",
+        "L",
+        "XL",
+        "XXL"
+      ],
+      "price": "49.90",
+      "description": "FIXTURE description: relaxed denim with a wide leg, made from 100% cotton.",
+      "availability": "in_stock",
+      "variants": [
+        {
+          "colour": "69",
+          "size": "XS",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "69",
+          "size": "S",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "69",
+          "size": "M",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "69",
+          "size": "L",
+          "availability": "out_of_stock"
+        },
+        {
+          "colour": "69",
+          "size": "XL",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "69",
+          "size": "XXL",
+          "availability": "in_stock"
+        }
+      ]
+    },
+    {
+      "id": "E910013-000",
+      "name": "FIXTURE Smart Ankle Pants",
+      "url": "https://www.uniqlo.com/us/en/products/E910013-000/00",
+      "category": "Men > Bottoms > Pants",
+      "gender": "men",
+      "status": "active",
+      "images": [
+        "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910013/item/goods_09_910013_3x4.jpg"
+      ],
+      "colours": [
+        {
+          "code": "09",
+          "name": "Black",
+          "image": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910013/item/goods_09_910013_3x4.jpg"
+        },
+        {
+          "code": "32",
+          "name": "Beige",
+          "image": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910013/item/goods_32_910013_3x4.jpg"
+        }
+      ],
+      "sizes": [
+        "XS",
+        "S",
+        "M",
+        "L",
+        "XL",
+        "XXL"
+      ],
+      "price": "49.90",
+      "availability": "in_stock",
+      "variants": [
+        {
+          "colour": "09",
+          "size": "XS",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "09",
+          "size": "S",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "09",
+          "size": "M",
+          "availability": "out_of_stock"
+        },
+        {
+          "colour": "09",
+          "size": "L",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "09",
+          "size": "XL",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "09",
+          "size": "XXL",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "32",
+          "size": "XS",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "32",
+          "size": "S",
+          "availability": "out_of_stock"
+        },
+        {
+          "colour": "32",
+          "size": "M",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "32",
+          "size": "L",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "32",
+          "size": "XL",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "32",
+          "size": "XXL",
+          "availability": "in_stock"
+        }
+      ]
+    },
+    {
+      "id": "E910014-000",
+      "name": "FIXTURE Wide Straight Sweatpants",
+      "url": "https://www.uniqlo.com/us/en/products/E910014-000/00",
+      "category": "Women > Bottoms > Pants",
+      "gender": "women",
+      "status": "active",
+      "images": [
+        "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910014/item/goods_03_910014_3x4.jpg"
+      ],
+      "colours": [
+        {
+          "code": "03",
+          "name": "Gray",
+          "image": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910014/item/goods_03_910014_3x4.jpg"
+        }
+      ],
+      "sizes": [
+        "XXS",
+        "XS",
+        "S",
+        "M",
+        "L",
+        "XL"
+      ],
+      "price": "39.90",
+      "availability": "in_stock",
+      "variants": [
+        {
+          "colour": "03",
+          "size": "XXS",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "03",
+          "size": "XS",
+          "availability": "out_of_stock"
+        },
+        {
+          "colour": "03",
+          "size": "S",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "03",
+          "size": "M",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "03",
+          "size": "L",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "03",
+          "size": "XL",
+          "availability": "in_stock"
+        }
+      ]
+    },
+    {
+      "id": "E910015-000",
+      "name": "FIXTURE Stretch Shorts",
+      "url": "https://www.uniqlo.com/us/en/products/E910015-000/00",
+      "category": "Men > Bottoms > Shorts",
+      "gender": "men",
+      "status": "active",
+      "images": [
+        "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910015/item/goods_56_910015_3x4.jpg"
+      ],
+      "colours": [
+        {
+          "code": "56",
+          "name": "Olive",
+          "image": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910015/item/goods_56_910015_3x4.jpg"
+        }
+      ],
+      "sizes": [
+        "XS",
+        "S",
+        "M",
+        "L",
+        "XL",
+        "XXL"
+      ],
+      "price": "29.90",
+      "availability": "in_stock",
+      "variants": [
+        {
+          "colour": "56",
+          "size": "XS",
+          "availability": "out_of_stock"
+        },
+        {
+          "colour": "56",
+          "size": "S",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "56",
+          "size": "M",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "56",
+          "size": "L",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "56",
+          "size": "XL",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "56",
+          "size": "XXL",
+          "availability": "in_stock"
+        }
+      ]
+    },
+    {
+      "id": "E910016-000",
+      "name": "FIXTURE Pocketable Parka",
+      "url": "https://www.uniqlo.com/us/en/products/E910016-000/00",
+      "category": "Men > Outerwear > Jackets & Coats",
+      "gender": "men",
+      "status": "active",
+      "images": [
+        "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910016/item/goods_09_910016_3x4.jpg"
+      ],
+      "colours": [
+        {
+          "code": "09",
+          "name": "Black",
+          "image": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910016/item/goods_09_910016_3x4.jpg"
+        },
+        {
+          "code": "56",
+          "name": "Olive",
+          "image": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910016/item/goods_56_910016_3x4.jpg"
+        }
+      ],
+      "sizes": [
+        "XS",
+        "S",
+        "M",
+        "L",
+        "XL",
+        "XXL"
+      ],
+      "price": "59.90",
+      "wasPrice": "69.90",
+      "description": "FIXTURE description: water-repellent shell that packs into its own pocket.",
+      "availability": "in_stock",
+      "variants": [
+        {
+          "colour": "09",
+          "size": "XS",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "09",
+          "size": "S",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "09",
+          "size": "M",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "09",
+          "size": "L",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "09",
+          "size": "XL",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "09",
+          "size": "XXL",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "56",
+          "size": "XS",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "56",
+          "size": "S",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "56",
+          "size": "M",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "56",
+          "size": "L",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "56",
+          "size": "XL",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "56",
+          "size": "XXL",
+          "availability": "out_of_stock"
+        }
+      ]
+    },
+    {
+      "id": "E910017-000",
+      "name": "FIXTURE Ultra Light Down Jacket",
+      "url": "https://www.uniqlo.com/us/en/products/E910017-000/00",
+      "category": "Women > Outerwear > Down Jackets",
+      "gender": "women",
+      "status": "active",
+      "images": [
+        "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910017/item/goods_09_910017_3x4.jpg"
+      ],
+      "colours": [
+        {
+          "code": "09",
+          "name": "Black",
+          "image": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910017/item/goods_09_910017_3x4.jpg"
+        },
+        {
+          "code": "32",
+          "name": "Beige",
+          "image": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910017/item/goods_32_910017_3x4.jpg"
+        }
+      ],
+      "sizes": [
+        "XXS",
+        "XS",
+        "S",
+        "M",
+        "L",
+        "XL"
+      ],
+      "price": "69.90",
+      "availability": "in_stock",
+      "variants": [
+        {
+          "colour": "09",
+          "size": "XXS",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "09",
+          "size": "XS",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "09",
+          "size": "S",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "09",
+          "size": "M",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "09",
+          "size": "L",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "09",
+          "size": "XL",
+          "availability": "out_of_stock"
+        },
+        {
+          "colour": "32",
+          "size": "XXS",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "32",
+          "size": "XS",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "32",
+          "size": "S",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "32",
+          "size": "M",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "32",
+          "size": "L",
+          "availability": "out_of_stock"
+        },
+        {
+          "colour": "32",
+          "size": "XL",
+          "availability": "in_stock"
+        }
+      ]
+    },
+    {
+      "id": "E910018-000",
+      "name": "FIXTURE Pleated Midi Skirt",
+      "url": "https://www.uniqlo.com/us/en/products/E910018-000/00",
+      "category": "Women > Bottoms > Skirts",
+      "gender": "women",
+      "status": "active",
+      "images": [
+        "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910018/item/goods_09_910018_3x4.jpg"
+      ],
+      "colours": [
+        {
+          "code": "09",
+          "name": "Black",
+          "image": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910018/item/goods_09_910018_3x4.jpg"
+        }
+      ],
+      "sizes": [
+        "XXS",
+        "XS",
+        "S",
+        "M",
+        "L",
+        "XL"
+      ],
+      "price": "39.90",
+      "availability": "in_stock",
+      "variants": [
+        {
+          "colour": "09",
+          "size": "XXS",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "09",
+          "size": "XS",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "09",
+          "size": "S",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "09",
+          "size": "M",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "09",
+          "size": "L",
+          "availability": "out_of_stock"
+        },
+        {
+          "colour": "09",
+          "size": "XL",
+          "availability": "in_stock"
+        }
+      ]
+    },
+    {
+      "id": "E910019-000",
+      "name": "FIXTURE Kids Sweat Pullover Hoodie",
+      "url": "https://www.uniqlo.com/us/en/products/E910019-000/00",
+      "category": "Kids > Tops > Sweatshirts & Hoodies",
+      "gender": "kids",
+      "status": "active",
+      "images": [
+        "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910019/item/goods_09_910019_3x4.jpg"
+      ],
+      "colours": [
+        {
+          "code": "09",
+          "name": "Black",
+          "image": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910019/item/goods_09_910019_3x4.jpg"
+        },
+        {
+          "code": "00",
+          "name": "White",
+          "image": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910019/item/goods_00_910019_3x4.jpg"
+        }
+      ],
+      "sizes": [
+        "110",
+        "120",
+        "130",
+        "140",
+        "150"
+      ],
+      "price": "19.90",
+      "availability": "in_stock",
+      "variants": [
+        {
+          "colour": "09",
+          "size": "110",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "09",
+          "size": "120",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "09",
+          "size": "130",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "09",
+          "size": "140",
+          "availability": "out_of_stock"
+        },
+        {
+          "colour": "09",
+          "size": "150",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "00",
+          "size": "110",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "00",
+          "size": "120",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "00",
+          "size": "130",
+          "availability": "out_of_stock"
+        },
+        {
+          "colour": "00",
+          "size": "140",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "00",
+          "size": "150",
+          "availability": "in_stock"
+        }
+      ]
+    },
+    {
+      "id": "E910020-000",
+      "name": "FIXTURE Kids Graphic T-Shirt",
+      "url": "https://www.uniqlo.com/us/en/products/E910020-000/00",
+      "category": "Kids > Tops > T-Shirts",
+      "gender": "kids",
+      "status": "active",
+      "images": [
+        "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910020/item/goods_00_910020_3x4.jpg"
+      ],
+      "colours": [
+        {
+          "code": "00",
+          "name": "White",
+          "image": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910020/item/goods_00_910020_3x4.jpg"
+        }
+      ],
+      "sizes": [
+        "110",
+        "120",
+        "130",
+        "140",
+        "150"
+      ],
+      "price": "9.90",
+      "availability": "in_stock",
+      "variants": [
+        {
+          "colour": "00",
+          "size": "110",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "00",
+          "size": "120",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "00",
+          "size": "130",
+          "availability": "out_of_stock"
+        },
+        {
+          "colour": "00",
+          "size": "140",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "00",
+          "size": "150",
+          "availability": "in_stock"
+        }
+      ]
+    },
+    {
+      "id": "E910021-000",
+      "name": "FIXTURE AIRism Cotton Boxer Briefs",
+      "url": "https://www.uniqlo.com/us/en/products/E910021-000/00",
+      "category": "Men > Innerwear > Underwear",
+      "gender": "men",
+      "status": "active",
+      "images": [
+        "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910021/item/goods_09_910021_3x4.jpg"
+      ],
+      "colours": [
+        {
+          "code": "09",
+          "name": "Black",
+          "image": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910021/item/goods_09_910021_3x4.jpg"
+        }
+      ],
+      "sizes": [
+        "XS",
+        "S",
+        "M",
+        "L",
+        "XL",
+        "XXL"
+      ],
+      "price": "12.90",
+      "wasPrice": "22.90",
+      "availability": "in_stock",
+      "variants": [
+        {
+          "colour": "09",
+          "size": "XS",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "09",
+          "size": "S",
+          "availability": "out_of_stock"
+        },
+        {
+          "colour": "09",
+          "size": "M",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "09",
+          "size": "L",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "09",
+          "size": "XL",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "09",
+          "size": "XXL",
+          "availability": "in_stock"
+        }
+      ]
+    },
+    {
+      "id": "E910022-000",
+      "name": "FIXTURE Cotton Lounge Set",
+      "url": "https://www.uniqlo.com/us/en/products/E910022-000/00",
+      "category": "Women > Loungewear",
+      "gender": "women",
+      "status": "active",
+      "images": [
+        "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910022/item/goods_03_910022_3x4.jpg"
+      ],
+      "colours": [
+        {
+          "code": "03",
+          "name": "Gray",
+          "image": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910022/item/goods_03_910022_3x4.jpg"
+        }
+      ],
+      "sizes": [
+        "XXS",
+        "XS",
+        "S",
+        "M",
+        "L",
+        "XL"
+      ],
+      "price": "39.90",
+      "availability": "in_stock",
+      "variants": [
+        {
+          "colour": "03",
+          "size": "XXS",
+          "availability": "out_of_stock"
+        },
+        {
+          "colour": "03",
+          "size": "XS",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "03",
+          "size": "S",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "03",
+          "size": "M",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "03",
+          "size": "L",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "03",
+          "size": "XL",
+          "availability": "in_stock"
+        }
+      ]
+    },
+    {
+      "id": "E910023-000",
+      "name": "FIXTURE Unisex Sweat Pullover Hoodie",
+      "url": "https://www.uniqlo.com/us/en/products/E910023-000/00",
+      "category": "Unisex > Tops > Sweatshirts & Hoodies",
+      "gender": "unisex",
+      "status": "active",
+      "images": [
+        "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910023/item/goods_09_910023_3x4.jpg"
+      ],
+      "colours": [
+        {
+          "code": "09",
+          "name": "Black",
+          "image": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910023/item/goods_09_910023_3x4.jpg"
+        },
+        {
+          "code": "03",
+          "name": "Gray",
+          "image": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910023/item/goods_03_910023_3x4.jpg"
+        },
+        {
+          "code": "69",
+          "name": "Navy",
+          "image": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910023/item/goods_69_910023_3x4.jpg"
+        }
+      ],
+      "sizes": [
+        "XS",
+        "S",
+        "M",
+        "L",
+        "XL"
+      ],
+      "price": "39.90",
+      "availability": "in_stock",
+      "variants": [
+        {
+          "colour": "09",
+          "size": "XS",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "09",
+          "size": "S",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "09",
+          "size": "M",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "09",
+          "size": "L",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "09",
+          "size": "XL",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "03",
+          "size": "XS",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "03",
+          "size": "S",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "03",
+          "size": "M",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "03",
+          "size": "L",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "03",
+          "size": "XL",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "69",
+          "size": "XS",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "69",
+          "size": "S",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "69",
+          "size": "M",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "69",
+          "size": "L",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "69",
+          "size": "XL",
+          "availability": "out_of_stock"
+        }
+      ]
+    },
+    {
+      "id": "E910024-000",
+      "name": "FIXTURE Bucket Hat",
+      "url": "https://www.uniqlo.com/us/en/products/E910024-000/00",
+      "category": "Accessories > Hats",
+      "gender": "unisex",
+      "status": "active",
+      "images": [
+        "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910024/item/goods_09_910024_3x4.jpg"
+      ],
+      "colours": [
+        {
+          "code": "09",
+          "name": "Black",
+          "image": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/910024/item/goods_09_910024_3x4.jpg"
+        }
+      ],
+      "sizes": [
+        "XS",
+        "S",
+        "M",
+        "L",
+        "XL"
+      ],
+      "price": "19.90",
+      "availability": "in_stock",
+      "variants": [
+        {
+          "colour": "09",
+          "size": "XS",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "09",
+          "size": "S",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "09",
+          "size": "M",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "09",
+          "size": "L",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "09",
+          "size": "XL",
+          "availability": "in_stock"
+        }
+      ]
+    },
+    {
+      "id": "E471808-000",
+      "name": "FIXTURE name for a real code — Fynd keeps its own",
+      "url": "https://www.uniqlo.com/us/en/products/E471808-000/02",
+      "category": "Men > Tops > Sweatshirts & Hoodies",
+      "gender": "men",
+      "images": [
+        "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/471808/item/goods_09_471808_3x4.jpg"
+      ],
+      "colours": [
+        {
+          "code": "09",
+          "name": "Black",
+          "image": "https://image.uniqlo.com/UQ/ST3/WesternCommon/imagesgoods/471808/item/goods_09_471808_3x4.jpg"
+        }
+      ],
+      "sizes": [
+        "S",
+        "M",
+        "L"
+      ],
+      "price": "49.90",
+      "availability": "in_stock"
+    },
+    {
+      "id": "E910001-000",
+      "name": "FIXTURE duplicate of the first row",
+      "url": "https://www.uniqlo.com/us/en/products/E910001-000/00",
+      "category": "Men > Tops > T-Shirts",
+      "gender": "men"
+    },
+    {
+      "id": "E910101-000",
+      "name": "FIXTURE Off-Site Link",
+      "url": "https://uniqlo.example/us/en/products/E910101-000/00",
+      "category": "Men > Tops > T-Shirts",
+      "gender": "men"
+    },
+    {
+      "id": "E910102-000",
+      "name": "FIXTURE <script>alert(1)</script>",
+      "url": "https://www.uniqlo.com/us/en/products/E910102-000/00",
+      "category": "Men > Tops > T-Shirts",
+      "gender": "men"
+    },
+    {
+      "id": "E910105-000",
+      "name": "FIXTURE Foreign Photo",
+      "url": "https://www.uniqlo.com/us/en/products/E910105-000/00",
+      "category": "Women > Tops > T-Shirts",
+      "gender": "women",
+      "images": [
+        "https://tracker.example/pixel.gif?id=910105",
+        "javascript:alert(1)"
+      ],
+      "price": "free"
+    },
+    {
+      "id": "E910106-000",
+      "name": "FIXTURE Discontinued Tee",
+      "url": "https://www.uniqlo.com/us/en/products/E910106-000/00",
+      "category": "Men > Tops > T-Shirts",
+      "gender": "men",
+      "status": "discontinued"
+    }
+  ]
+}
