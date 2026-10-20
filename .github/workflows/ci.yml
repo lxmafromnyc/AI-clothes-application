@@ -93,4 +93,13 @@ jobs:
         # it on a screenshot (ImageMagick's import, Pillow)
         run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends xvfb imagemagick python3-xlib python3-pil
       - name: Run the real-Chrome suite
-        run: node scripts/ci-tests.js real-chrome
+        env:
+          FYND_SHOTS: ${{ runner.temp }}/fynd-shots
+        run: mkdir -p "$FYND_SHOTS" && node scripts/ci-tests.js real-chrome
+      - name: Keep its screenshots
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: fit-panel-real-chrome-screenshots
+          path: ${{ runner.temp }}/fynd-shots
+          if-no-files-found: ignore

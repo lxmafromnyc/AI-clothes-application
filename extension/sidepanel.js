@@ -57,7 +57,8 @@
     lastResult: null,
     editing: false,
     reading: 0,             /* the latest read wins */
-    log: []                 /* recent problems, for "Technical details" */
+    log: [],                /* recent problems, for "Technical details" */
+    lastRead: null          /* how and when the page was last read, and any problem */
   };
 
   /* ---------- storage: this browser only ---------- */
@@ -336,6 +337,7 @@
     const o = opts || {};
     if (!state.anchors.length) return;
     const ticket = ++state.reading;
+    state.lastRead = { how: o.how || 'auto', at: new Date().toISOString(), problem: null };
     state.corrected = null;
     state.confirmedGarment = false;
     state.editing = false;
@@ -408,6 +410,8 @@
   function productProblem(kind, entry) {
     const [title, text] = PROBLEMS[kind] || PROBLEMS.unknown;
     state.page = null;
+    state.lastResult = null;
+    if (state.lastRead) state.lastRead.problem = kind;
     show(['product', 'anchors']);
     $('product-name').textContent = '';
     $('product-meta').textContent = '';
@@ -420,6 +424,7 @@
     $('chart-area').replaceChildren();
     $('chart-choices').hidden = true;
     $('chart-actions').hidden = true;
+    $('open-fynd-note').textContent = '';
     kindPicker(false);
     $('rec').hidden = true;
     $('feedback').hidden = true;
@@ -473,12 +478,14 @@
       const sizes = c.product && c.product.sizes && c.product.sizes.length ? ` The page lists sizes ${c.product.sizes.slice(0, 10).join(', ')}, but no measurements.` : '';
       area.replaceChildren(el('p', 'fp-note', `No size chart found on this page.${sizes} ${hint}`));
       $('chart-actions').hidden = true;
+      $('open-fynd-note').textContent = '';
       $('confirm-kind').hidden = true;
       return;
     }
     const head = el('p', 'pop-small', `${MEASURES[chart.measures]} · ${chart.unit ? `in ${chart.unit === 'cm' ? 'centimetres' : chart.unit === 'in' ? 'inches' : 'inches and centimetres'}` : 'unit not stated'} · ${SOURCE_LINE[currentSource()] || ''}`);
     area.replaceChildren(head, chartTable(chart));
     $('chart-actions').hidden = false;
+    drawHandover();
     $('use-as-anchor').hidden = chart.measures !== 'finished-garment' && !state.confirmedGarment;
     $('confirm-kind').hidden = !(chart.measures === 'not-stated' && !state.confirmedGarment);
     $('correct').textContent = state.editing ? 'Save corrections' : 'Correct a measurement';
@@ -534,14 +541,99 @@
   }
 
   /* the chart in view, to Find Fit: in the address fragment only */
-  function openInFynd() {
+  /* What "Open in Find Fit" hands over, and so what Fynd's server sees:
+       a table read from this page  → #fynd-chart=… : the chart stays in
+                                      the address fragment, never sent
+       Fynd's own data for it       → #fynd-url=…   : Find Fit looks the
+                                      product's address up on Fynd's server
+                                      (/api/size-recommendation?chart=)
+     Either way, opening Fynd's site is a visit like any other: the page
+     loads and asks Fynd's server for the visitor's account. */
+  function handover() {
     const p = state.page;
-    if (!p) return;
-    const pageIndex = p.chosen && p.chosen.startsWith('page-') ? Number(p.chosen.slice(5)) : null;
-    const payload = build(p.collected, pageIndex);
+    if (!p) return null;
     const base = `${FYND_SITE.replace(/\/$/, '')}/index.html`;
-    const url = payload.chart || payload.sizes.length ? `${base}#fynd-chart=${encode(payload)}` : `${base}#fynd-url=${encodeURIComponent(payload.page.url)}`;
-    chrome.tabs.create({ url });
+    const pageIndex = p.chosen && p.chosen.startsWith('page-') ? Number(p.chosen.slice(5)) : null;
+    if (pageIndex !== null) {
+      const payload = build(p.collected, pageIndex);
+      if (payload.chart) return { url: `${base}#fynd-chart=${encode(payload)}`, sends: false };
+    }
+    const address = p.match && p.match.product ? p.match.product.canonical : (p.ref ? p.ref.url : build(p.collected, null).page.url);
+    return address ? { url: `${base}#fynd-url=${encodeURIComponent(address)}`, sends: true, address } : null;
+  }
+  function openInFynd() {
+    const h = handover();
+    if (h) chrome.tabs.create({ url: h.url });
+  }
+  function drawHandover() {
+    const h = handover();
+    $('open-fynd').hidden = !h;
+    $('open-fynd-note').textContent = !h ? ''
+      : h.sends
+        ? `Open in Find Fit opens Fynd’s website in a new tab and sends this product’s address (${h.address.replace(/^https?:\/\//, '')}) to Fynd’s server, to show Fynd’s record of it.`
+        : 'Open in Find Fit opens Fynd’s website in a new tab with this chart in the address after “#”, which browsers don’t send to the server. The site loads as on any visit (with your Fynd account, if you’re signed in).';
+  }
+
+  /* ---------- the test report: what was read and how it compared ----------
+
+     For checking a live page by hand, or reporting a problem: plain
+     data, copied to the clipboard when the shopper presses the button,
+     never sent. The page's address without its query string. */
+  function report() {
+    const p = state.page;
+    const out = {
+      fynd: { version: chrome.runtime.getManifest().version, at: new Date().toISOString(), userAgent: navigator.userAgent },
+      read: state.lastRead,
+      problems: state.log
+    };
+    if (p) {
+      const c = p.collected;
+      let address = null;
+      try { const u = new URL(p.tab.url || c.url); address = `${u.origin}${u.pathname}`; } catch (err) { address = null; }
+      const category = $('p-category').value || p.category;
+      out.page = { address, title: c.title, dialogOpen: c.dialogOpen, guideLinks: (c.guides || []).map((g) => g.text), guideButtons: c.guideButtons || [] };
+      out.identified = {
+        name: c.product && c.product.name, brand: c.product && c.product.brand, code: c.product && c.product.code,
+        sizesListed: c.product ? c.product.sizes : [], fit: c.fit,
+        retailerModule: p.match && p.match.retailer ? { id: p.match.retailer.id, product: p.match.product } : null,
+        kindGuessed: p.category, kindUsed: category,
+        fyndHolds: p.ref ? { id: p.ref.id, verification: p.ref.verification } : null
+      };
+      out.tablesFound = (c.tables || []).length;
+      out.charts = p.options.map((o) => ({ key: o.key, label: o.label, source: o.source, where: o.where, measures: o.chart.measures, unit: o.chart.unit || null, columns: o.chart.columns, sizes: o.chart.rows.map((r) => r.size) }));
+      out.chosen = p.chosen;
+      out.corrected = Boolean(state.corrected);
+      const chart = currentChart();
+      if (chart) {
+        const read = F.readChart(chart, category);
+        out.normalised = {
+          columns: read.columns,
+          issues: read.issues,
+          sizes: read.sizes.map((z) => ({ size: z.size, dims: Object.fromEntries(Object.entries(z.dims).map(([id, m]) => [id, { inches: m.value, raw: m.raw, method: m.method, unitBy: m.unitBy, methodBy: m.methodBy }])) }))
+        };
+      }
+      const anchor = F.anchorFor(state.anchors, category);
+      out.reference = anchor ? { brand: anchor.brand, category: anchor.category, size: anchor.size, cut: anchor.cut, feel: anchor.feel, tier: anchor.reference ? anchor.reference.tier : null, dims: anchor.dims, outcomes: anchor.feedback.length } : null;
+      const r = state.lastResult;
+      out.recommendation = r ? { status: r.status, size: r.size || null, confidence: r.confidence || null, confidenceWhy: r.confidenceWhy || [], alternative: r.alternative || null, compared: r.compared || [], notCompared: r.notCompared || [], labelMatch: r.labelMatch || null, explanation: r.explanation, reason: r.reason || null, missing: r.missing || [] } : null;
+    }
+    return JSON.stringify(out, null, 2);
+  }
+  async function copyReport() {
+    const text = report();
+    const box = $('report-text');
+    box.value = text;
+    try {
+      await navigator.clipboard.writeText(text);
+      box.hidden = true;
+      status('Test report copied. Paste it wherever you’re reporting the result.');
+    } catch (err) {
+      note('copy the test report', err);
+      box.hidden = false;
+      box.focus();
+      box.select();
+      status('Couldn’t copy automatically: the report is below, selected — press Ctrl+C (⌘C on a Mac).');
+    }
   }
 
   /* ---------- the recommendation ---------- */
@@ -674,6 +766,7 @@
   $('p-category').addEventListener('change', () => { if (state.page) { state.page.category = $('p-category').value; recommendNow(); } });
   $('correct').addEventListener('click', toggleCorrect);
   $('open-fynd').addEventListener('click', openInFynd);
+  $('copy-report').addEventListener('click', copyReport);
   $('confirm-garment').addEventListener('click', () => { state.confirmedGarment = true; drawChart(); recommendNow(); });
   $('use-as-anchor').addEventListener('click', () => {
     const p = state.page;

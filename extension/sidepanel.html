@@ -126,6 +126,9 @@
         <button class="btn btn-secondary" type="button" id="use-as-anchor">This fits me — use as a reference</button>
         <button class="btn btn-secondary" type="button" id="open-fynd">Open in Find Fit</button>
       </div>
+      <p class="pop-small" id="open-fynd-note"></p>
+      <p class="pop-small"><button class="link-button" type="button" id="copy-report">Copy test report</button> — what Fynd read on this page and how it compared, for checking a page or reporting a problem. It is copied to your clipboard only; nothing is sent.</p>
+      <textarea class="fp-input fp-report" id="report-text" rows="8" readonly hidden aria-label="Test report"></textarea>
       <div id="confirm-kind" class="fp-note" hidden>
         <p>The chart doesn’t say whether it measures the garment or the body.</p>
         <button class="btn btn-secondary" type="button" id="confirm-garment">It measures the garment</button>
@@ -175,7 +178,9 @@
       <ul class="fp-list">
         <li>It reads a page only after you click the Fynd button in Chrome’s toolbar on it — or, on a site you chose to let Fynd read, as you move between its pages. It reads the product’s name, brand, sizes and size tables, never form fields or anything you type.</li>
         <li>Your references and how purchases fit are kept in this browser only (Chrome’s extension storage). They are never sent anywhere.</li>
-        <li>The measurements Fynd uses for your reference ship with the extension. Looking them up sends nothing: the panel makes no network requests. “Open in Find Fit” opens Fynd’s site with the chart in the page address after #, which browsers don’t send to servers.</li>
+        <li>The measurements Fynd uses for your reference ship with the extension. Looking them up sends nothing: the panel itself makes no network requests.</li>
+        <li>Only “Open in Find Fit” reaches Fynd’s server, and only when you press it. It opens Fynd’s website in a new tab, which loads like any visit (and asks for your Fynd account, if you’re signed in). A chart read from this page goes in the address after “#”, which browsers don’t send. For a product Fynd holds measurements for, it sends that product’s address to Fynd, to show Fynd’s record; the panel says which before you press it.</li>
+        <li>“Copy test report” copies what Fynd read and compared to your clipboard. It sends nothing.</li>
       </ul>
     </details>
   </main>

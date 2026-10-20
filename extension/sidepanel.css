@@ -58,3 +58,4 @@ html, body { overflow-x: hidden; }
 .fp-card .pop-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .fp-card .pop-actions .btn { flex: 1 1 auto; min-width: 0; white-space: normal; }
 .fp-anchor-dims, .fp-explain p, #resolve-text, #ref-dims li { overflow-wrap: anywhere; }
+.fp-report { font: 11.5px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; min-height: 120px; }

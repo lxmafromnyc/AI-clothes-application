@@ -2885,7 +2885,10 @@ Where the code lives:
   `api/_sizing/records` by `scripts/build-fit-references.js`.
 
 Everything runs in the browser. References are kept in `chrome.storage.local`,
-and the panel makes no network request. How to use it, what it reads, stores
+and the panel makes no network request while the shopper shops. The one path
+to Fynd's server is the shopper pressing **Open in Find Fit**. That opens the
+site, and for a product Fynd holds, Find Fit sends its address to
+`/api/size-recommendation?chart=`. The panel says which, under the button. How to use it, what it reads, stores
 and sends, the retailer modules, and how it is tested are in
 [`extension/README.md`](extension/README.md). It sits beside the fit profile
 and `engine.compare()` rather than replacing them: Find Fit and Compare are

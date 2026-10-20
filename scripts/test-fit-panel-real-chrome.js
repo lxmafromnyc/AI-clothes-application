@@ -112,7 +112,9 @@ async function launch(display, port) {
   const debug = await freePort();
   const args = [
     '--no-sandbox', `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check',
-    '--disable-features=Translate,OptimizationHints,MediaRouter,HttpsUpgrades,HttpsFirstBalancedModeAutoEnable', '--password-store=basic',
+    /* DisableLoadExtensionCommandLineSwitch: newer Chrome builds (137+)
+       ignore --load-extension unless this is switched back off */
+    '--disable-features=Translate,OptimizationHints,MediaRouter,HttpsUpgrades,HttpsFirstBalancedModeAutoEnable,DisableLoadExtensionCommandLineSwitch', '--password-store=basic',
     '--window-position=0,0', '--window-size=1400,900', `--remote-debugging-port=${debug}`,
     `--load-extension=${EXT}`, `--disable-extensions-except=${EXT}`,
     `--host-resolver-rules=MAP www.uniqlo.com:80 127.0.0.1:${port}`,
@@ -124,7 +126,17 @@ async function launch(display, port) {
     await sleep(250);
   }
   const browser = await chromium.connectOverCDP(`http://127.0.0.1:${debug}`);
-  return { proc, browser, id, profile, debug };
+  /* the extension must actually be running before anything is clicked:
+     its background worker is the proof */
+  let targets = [];
+  for (let i = 0; i < 40; i++) {
+    targets = await (await fetch(`http://127.0.0.1:${debug}/json/list`)).json();
+    if (targets.some((t) => t.url === `chrome-extension://${id}/background.js`)) return { proc, browser, id, profile, debug };
+    await sleep(250);
+  }
+  const version = await browser.version();
+  proc.kill();
+  throw new Error(`the extension did not load in ${version} (no chrome-extension://${id}/background.js worker; targets: ${targets.map((t) => `${t.type} ${t.url}`).join(', ') || 'none'})`);
 }
 
 /* ---------- the run ---------- */
@@ -141,7 +153,13 @@ async function launch(display, port) {
   const server = await serve();
   const port = server.address().port;
   const local = (p) => `http://127.0.0.1:${port}${p}`;
-  const { proc, browser, id, debug } = await launch(display, port);
+  let launched;
+  try { launched = await launch(display, port); } catch (err) {
+    console.log(`  FAIL  Chromium starts with the extension loaded\n        ${err.message}\n\n0 passed, 1 failed`);
+    xvfb.kill(); server.close();
+    process.exit(1);
+  }
+  const { proc, browser, id, debug } = launched;
   const context = browser.contexts()[0];
   const shot = (name) => { const file = path.join(SHOTS, `${name}.png`); xinput(display, 'shot', file); return file; };
 
@@ -174,8 +192,9 @@ async function launch(display, port) {
   let panel = null;
   let watched = false;
   const clickFynd = async () => {
-    const at = xinput(display, 'click-fynd');
-    assert.notStrictEqual(at, 'none', 'Fynd’s toolbar button wasn’t found on screen');
+    let at = 'none';
+    try { at = xinput(display, 'click-fynd'); } catch (err) { at = String(err.stdout || '').trim() || 'none'; }
+    if (at === 'none') throw new Error(`Fynd’s toolbar button wasn’t found on screen (screen: ${shot(`no-button-${Date.now()}`)})`);
     panel = await panelPage();
     if (!watched) { watch(panel); watched = true; }
     await sleep(900);
@@ -233,6 +252,9 @@ async function launch(display, port) {
     await clickFynd();
     await panel.waitForSelector('#onboard:not([hidden])');
     assert.match(await text('#onboard-title'), /Which clothes already fit you the way you like\?/);
+    /* one click, straight to the panel: no popup in between */
+    const targets = await (await fetch(`http://127.0.0.1:${debug}/json/list`)).json();
+    assert.ok(!targets.some((t) => /popup\.html/.test(t.url)), `a popup opened: ${targets.map((t) => t.url).join(', ')}`);
     shot('01-panel-opened-onboarding');
   });
 
@@ -297,6 +319,22 @@ async function launch(display, port) {
     shot('05-recommendation');
   });
 
+  await test('the test report: what was identified, every table found, the chosen chart normalised to inches, the reference and the recommendation — copied, never sent', async () => {
+    await panel.click('#copy-report');
+    await sleep(300);
+    const r = JSON.parse(await panel.inputValue('#report-text'));
+    assert.strictEqual(r.read.how, 'button');
+    assert.strictEqual(r.page.address, local('/shop/tee.html'));
+    assert.deepStrictEqual([r.identified.name, r.identified.brand, r.identified.code, r.identified.kindUsed], ['Everyday Crew Tee', 'Northwind', 'NW-TEE-100', 'tshirt']);
+    assert.deepStrictEqual(r.identified.sizesListed, ['XS', 'S', 'M', 'L', 'XL', 'XXL']);
+    assert.ok(r.charts.some((c) => c.measures === 'body') && r.charts.some((c) => c.measures === 'finished-garment'));
+    const m = r.normalised.sizes.find((z) => z.size === 'M').dims;
+    assert.deepStrictEqual([m.chestWidth.inches, m.chestWidth.method, m.bodyLength.method, m.sleeveLength.method], [20.5, 'flat', 'hps', 'shoulder-seam']);
+    assert.deepStrictEqual([r.recommendation.status, r.recommendation.size, r.recommendation.confidence], ['ok', 'L', 'low']);
+    assert.strictEqual(r.reference.tier, 'same-brand');
+    assert.match(await text('#open-fynd-note'), /address after “#”, which browsers don’t send to the server/);
+  });
+
   await test('another page on the same site: Chrome keeps Fynd’s access for that site, so the panel follows without another click — and a body-measurement chart is never compared with a garment', async () => {
     await shop.goto(local('/shop/body-only.html'));
     await panel.waitForFunction(() => document.getElementById('product-name').textContent === 'Relaxed Tee', null, { timeout: 8000 });
@@ -328,6 +366,22 @@ async function launch(display, port) {
     shot('08-no-chart');
   });
 
+  await test('a chart drawn with ARIA table roles instead of a <table>, in centimetres: read, normalised to inches, and compared', async () => {
+    await shop.goto(`http://localhost:${port}/shop/grid-tee.html`);
+    await panel.waitForFunction(() => document.getElementById('product-name').textContent === 'Loop Knit Tee', null, { timeout: 8000 });
+    await panel.waitForSelector('#rec-title:not(:empty)');
+    await sleep(300);
+    assert.match(await text('#chart-area'), /Garment measurements · in centimetres · read from this page in your browser/);
+    await panel.click('#copy-report');
+    await sleep(200);
+    const r = JSON.parse(await panel.inputValue('#report-text'));
+    const m = r.normalised.sizes.find((z) => z.size === 'M').dims;
+    assert.ok(Math.abs(m.chestWidth.inches - 52 / 2.54) < 0.01, 'cm to inches');
+    assert.strictEqual(r.recommendation.status, 'ok');
+    assert.strictEqual(await text('#rec-title'), r.recommendation.size);
+    shot('08b-aria-grid-cm');
+  });
+
   await test('a second reference (a UNIQLO sweatshirt that feels tight), then UNIQLO US’s product address: recognised, and compared from the measurements Fynd holds for it', async () => {
     await panel.click('#add-anchor');
     await panel.fill('#a-brand', 'UNIQLO');
@@ -348,6 +402,8 @@ async function launch(display, port) {
     assert.match(await text('#chart-area'), /Fynd’s data, checked by Fynd/);
     assert.strictEqual(await text('#rec-title'), 'L');
     assert.match(await text('#rec-anchor'), /Compared with your UNIQLO sweatshirt or hoodie in M/);
+    /* from Fynd's data, Find Fit would look the product up on Fynd's server: said before it happens */
+    assert.match(await text('#open-fynd-note'), /sends this product’s address \(www\.uniqlo\.com\/us\/en\/products\/E475377-000\/00\) to Fynd’s server/);
     shot('09-uniqlo-address');
   });
 

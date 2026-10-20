@@ -11,10 +11,13 @@ an Xvfb display, after finding Fynd's button on a screenshot of the toolbar.
   xinput.py DISPLAY click-fynd           find it and click it; print "x y"
   xinput.py DISPLAY click X Y            click at a point
 
-Fynd's 16 px toolbar icon is a near-black filled square with a white "F";
-other toolbar icons are thin outlines, so the first 12 px block that is mostly
-near-black in the toolbar band, right of the address bar, is Fynd's.
+Finding the button: Fynd's own icon (extension/icons, a dark square with a
+white "F") is matched against the toolbar band of the screenshot, at the
+sizes Chrome draws toolbar icons; failing a close match, the first 12 px
+block that is mostly near-black right of the address bar (other toolbar
+icons are thin outlines). Prints "none" and exits 2 when neither finds it.
 """
+import os
 import subprocess
 import sys
 import time
@@ -24,26 +27,65 @@ from PIL import Image
 from Xlib import X, display
 from Xlib.ext import xtest
 
+ICONS = os.path.join(os.path.dirname(__file__), '..', '..', 'extension', 'icons')
+
 
 def shot(disp):
     png = subprocess.run(['import', '-display', disp, '-window', 'root', 'png:-'], check=True, capture_output=True).stdout
     return Image.open(BytesIO(png)).convert('RGB')
 
 
-def find(disp):
-    im = shot(disp)
+def dark_mask(im):
+    w, h = im.size
+    px = im.load()
+    return [[sum(px[x, y]) < 160 for x in range(w)] for y in range(h)]
+
+
+def match(im):
+    """the icon's dark/light pattern, slid over the toolbar band"""
+    w, h = im.size
+    band = im.crop((int(w * 0.5), 30, w, min(h, 110)))
+    bw, bh = band.size
+    screen = dark_mask(band)
+    best = None
+    for size in (16, 18, 20, 24, 32):
+        icon = Image.open(os.path.join(ICONS, 'icon-32.png')).convert('RGBA').resize((size, size))
+        ipx = icon.load()
+        cells = [(x, y, sum(ipx[x, y][:3]) < 160) for x in range(size) for y in range(size) if ipx[x, y][3] > 200]
+        if not cells:
+            continue
+        for oy in range(0, bh - size):
+            for ox in range(0, bw - size):
+                if not screen[oy + size // 2][ox + size // 2] and not screen[oy + 2][ox + 2]:
+                    continue
+                agree = sum(1 for x, y, d in cells if screen[oy + y][ox + x] == d)
+                score = agree / len(cells)
+                if best is None or score > best[0]:
+                    best = (score, int(w * 0.5) + ox + size // 2, 30 + oy + size // 2)
+    return best if best and best[0] >= 0.85 else None
+
+
+def block(im):
     w, h = im.size
     px = im.load()
     dark = lambda x, y: sum(px[x, y]) < 120
-    block = 12
-    for y in range(40, min(90, h - block)):
-        for x in range(int(w * 0.55), w - block):
+    size = 12
+    for y in range(40, min(90, h - size)):
+        for x in range(int(w * 0.55), w - size):
             if not dark(x, y):
                 continue
-            hits = sum(1 for dx in range(block) for dy in range(block) if dark(x + dx, y + dy))
-            if hits >= block * block * 0.6:
-                return x + block // 2, y + block // 2
+            hits = sum(1 for dx in range(size) for dy in range(size) if dark(x + dx, y + dy))
+            if hits >= size * size * 0.6:
+                return x + size // 2, y + size // 2
     return None
+
+
+def find(disp):
+    im = shot(disp)
+    m = match(im)
+    if m:
+        return m[1], m[2]
+    return block(im)
 
 
 def click(disp, x, y):

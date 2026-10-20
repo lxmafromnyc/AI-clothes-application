@@ -12,8 +12,9 @@ It is a first version, loaded unpacked. It isn't on the Chrome Web Store.
 **What has been verified, and what hasn't** (details under [Tests](#tests)):
 
 - The whole workflow runs in a real, visible Chrome with the extension as
-  shipped. That includes a real click on the toolbar button, on invented shop
-  pages served from the test machine.
+  shipped. That includes a real click on the toolbar button, but only on
+  **synthetic shop pages** served from the test machine. That is not live
+  retailer validation.
 - **No real retailer's page has been checked.** The environment it was built
   in could not reach any retailer. `node scripts/test-fit-panel-real-chrome.js
   --live <url> …` runs the same check against real pages wherever they can be
@@ -68,7 +69,68 @@ You can also:
   confidence can't be high.
 - **This fits me — use as a reference:** make the product in view a reference
   from its own chart.
-- **Open in Find Fit:** take the chart to Fynd's site.
+- **Open in Find Fit:** take the chart to Fynd's site (what that sends is
+  below, and is shown under the button).
+- **Copy test report:** copy what Fynd read on the page and how it compared,
+  to check a live page or report a problem.
+
+## Test it on a real shop page
+
+This is the check that hasn't been done yet: every automated test uses
+invented pages. In your own Chrome, about five minutes:
+
+1. **Load the extension.**
+   1. Get this branch: `git fetch origin && git checkout claude/exciting-curie-n0rfdq`,
+      or download it as a ZIP from GitHub.
+   2. In `chrome://extensions`, turn on **Developer mode**, click **Load
+      unpacked** and choose `extension/`. If Fynd is already loaded, press its
+      reload icon.
+   3. Pin Fynd from the puzzle-piece menu.
+2. **Open a product page:**
+   https://www.uniqlo.com/us/en/products/E475377-000/00 (UNIQLO Sweatshirt).
+3. **Click Fynd's toolbar icon** (once; no popup should appear). The side panel
+   should open on the right.
+4. **Create a reference.** In the panel: Brand `UNIQLO`, *Sweatshirt or
+   hoodie*, Size `M`, Cut *Regular*, *Feels tight*. Press **Save this
+   reference**, then **Done — compare products with it**.
+5. **Check the result.** In the panel:
+   - **Product:** "Sweatshirt", with "UNIQLO US product E475377-000 · Fynd
+     holds this product's measurements".
+   - **Recommendation:** with the published measurements Fynd holds, it should
+     be **L**.
+6. **Read UNIQLO's own chart.** On the page, open **Size guide**, choose its
+   **Product Size** tab, then press **Read this page** in the panel. Look in
+   the list of charts for one "read from this page", and select it.
+7. **Copy the report.** Press **Copy test report** and paste the result back.
+8. **Try a second shop.** Repeat steps 2–7 on a Zara product page, e.g.
+   https://www.zara.com/us/en/basic-medium-weight-t-shirt--02-p01887411.html.
+   Open its "Product measurements" before pressing **Read this page**.
+
+**What to send back:**
+
+- the copied test report for each page (JSON; the page address without its
+  query string, what was identified, every chart found, the chart normalised
+  to inches, the recommendation);
+- a screenshot of the panel;
+- if something failed:
+  - your Chrome version (`chrome://version`);
+  - anything under **Technical details** in the panel;
+  - any red **Errors** button on Fynd's card in `chrome://extensions`.
+
+**What the outcomes mean:**
+
+| You see | It means |
+|---|---|
+| No side panel after clicking the icon | The toolbar flow failed in your Chrome; send the version and the Errors |
+| "Click Fynd to read this page" | Chrome hasn't given Fynd this page yet; click the icon again on this page |
+| "No size chart found on this page" with the guide open, and `tablesFound: 0` in the report | The shop draws its chart in a way Fynd can't read: an iframe, an image or canvas, or text laid out without table or ARIA table markup. This is a real failure to fix. |
+| A chart read, but "Body measurements" only | The shop publishes body sizes, not garment measurements; Fynd won't compare those |
+| A recommendation | Check it against the chart: the report has every number Fynd used |
+
+`node scripts/test-fit-panel-real-chrome.js --live <url> …` does steps 2–7
+automatically, in a Chrome it controls. It works anywhere the shop can be
+reached, and some shops block automated browsers, which the manual check
+avoids.
 
 ## Where your reference's measurements come from
 
@@ -168,7 +230,8 @@ read. To add one, add an entry to `retailers.js` and a test in
   - the address, canonical address and title;
   - the product's name, brand, code and sizes from its structured data;
   - a "Fit" it states;
-  - up to 12 tables, as text;
+  - up to 12 tables, as text (`<table>` elements, or grids marked up with ARIA
+    table roles);
   - the words of up to 3 size-guide links or buttons.
 
   It never reads form fields or anything you type. It clicks nothing, opens
@@ -177,9 +240,23 @@ read. To add one, add an entry to `retailers.js` and a test in
   measurements and sources, your outcomes, and inches or centimetres. Nothing
   is synced. The tab you last clicked Fynd on is kept in
   `chrome.storage.session` (memory only) so the panel can read it as it opens.
-- **What it sends:** nothing. The panel makes no network request, and the
-  tests check that. **Open in Find Fit** opens Fynd's site with the chart after
-  `#` in the address, which browsers never send to a server.
+- **What it sends.** Checked against the source: the panel and
+  `background.js` contain no `fetch`, XHR, beacon or socket, and the tests
+  check that the panel makes no request while you shop. One button reaches
+  Fynd's server, and only when you press it:
+
+  | You press | What reaches Fynd's server | Why |
+  |---|---|---|
+  | **Open in Find Fit**, with a table read from the page selected | A normal visit to Fynd's website (`index.html` and its assets) and its account check (`GET /api/account`, with your Fynd session cookie if you're signed in). The chart travels after `#` in the address, which browsers don't send. | To show the chart on Find Fit |
+  | **Open in Find Fit**, with Fynd's own data for the product selected | The same visit, plus the product's address: `GET /api/size-recommendation?chart=<product address>` | So Find Fit can show Fynd's record of that product |
+  | Nothing (shopping, reading pages, creating references, recording outcomes) | Nothing | — |
+
+  The panel says which of the two hand-overs **Open in Find Fit** will make,
+  under the button, before it is pressed. Your references, fit answers,
+  outcomes and browsing never go to Fynd. **Copy test report** copies a report
+  of what was read to your clipboard; it sends nothing. (Before `17bd22c` the
+  panel did call Fynd's API on its own, for product records and reference
+  lookups; that code is gone.)
 - **When something goes wrong,** the panel says what happened and what to do:
   - "Click Fynd to read this page";
   - "Chrome doesn't let extensions read this page";

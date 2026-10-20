@@ -107,7 +107,7 @@ const NOT_RUN = {
 /* What a suite inherits from the shell. Nothing else: no key, no store
    URL, no provider choice. */
 const ENV_PASSED = ['PATH', 'HOME', 'TMPDIR', 'TMP', 'TEMP', 'LANG', 'LC_ALL', 'TZ', 'CI', 'GITHUB_ACTIONS',
-  'CHROME_PATH', 'PLAYWRIGHT_PATH', 'PLAYWRIGHT_BROWSERS_PATH', 'FFMPEG_PATH', 'DISPLAY', 'XDG_RUNTIME_DIR'];
+  'CHROME_PATH', 'PLAYWRIGHT_PATH', 'PLAYWRIGHT_BROWSERS_PATH', 'FFMPEG_PATH', 'DISPLAY', 'XDG_RUNTIME_DIR', 'FYND_SHOTS'];
 
 const SUITE_TIMEOUT_MS = 10 * 60 * 1000;
 const COUNT = /(\d+) passed, (\d+) failed(?:, (\d+) skipped)?/g;

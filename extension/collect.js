@@ -12,7 +12,8 @@
      * the product's name, brand, code and sizes from the page's own
        structured data (JSON-LD), or its og: tags and main heading
      * a fit the page states under a "Fit" label
-     * up to 12 tables: their cells, caption and the words just before
+     * up to 12 tables (<table>, or ARIA role="table"/"grid" built from
+       other elements): their cells, caption and the words just before
        them (in a tabbed size guide, its tab's name), whether each is in
        view, and whether it sits in an open dialog (a size guide the
        shopper opened)
@@ -121,7 +122,7 @@ function fyndCollect() {
       const prev = node.previousElementSibling;
       if (prev) {
         node = prev;
-        if (prev.tagName === 'TABLE' || (prev.querySelector && prev.querySelector('table'))) break;
+        if (prev.matches('table, [role="table"], [role="grid"]') || prev.querySelector('table, [role="table"], [role="grid"]')) break;
         if (prev.tagName === 'SCRIPT' || prev.tagName === 'STYLE') continue;
         const t = text(prev, 300);
         if (t) parts.unshift(t);
@@ -135,18 +136,30 @@ function fyndCollect() {
     const words = fold(parts.join(' '), 300);
     return { before: tab ? fold(`${tab} ${words.slice(-(299 - tab.length))}`, 300) : words.slice(-300), heading: heading || tab || null, tab: tab || null };
   };
+  /* A size chart is a <table>, or a grid built from other elements with
+     the standard ARIA table roles (role="table" or "grid", its rows
+     role="row", its cells role="cell", "gridcell", "columnheader" or
+     "rowheader") — how many shops draw theirs. Each is read the same way. */
+  const CELL_ROLES = '[role="cell"], [role="gridcell"], [role="columnheader"], [role="rowheader"]';
+  const rowsOf = (table) => (table.tagName === 'TABLE'
+    ? Array.from(table.rows).map((tr) => Array.from(tr.cells))
+    : Array.from(table.querySelectorAll('[role="row"]')).filter((r) => r.closest('table, [role="table"], [role="grid"]') === table)
+      .map((r) => Array.from(r.querySelectorAll(CELL_ROLES)).filter((c) => c.closest('[role="row"]') === r)));
   const tables = [];
-  for (const table of Array.from(document.querySelectorAll('table')).slice(0, 40)) {
+  const found = Array.from(document.querySelectorAll('table, [role="table"], [role="grid"]'))
+    .filter((t) => t.tagName === 'TABLE' || !t.closest('table'))
+    .slice(0, 40);
+  for (const table of found) {
     if (tables.length >= MAX_TABLES) break;
     if (table.querySelector('input, select, textarea, button')) continue;
-    const rows = Array.from(table.rows).slice(0, MAX_ROWS)
-      .map((tr) => Array.from(tr.cells).slice(0, MAX_COLUMNS).map((cell) => text(cell, MAX_CELL)))
+    const rows = rowsOf(table).slice(0, MAX_ROWS)
+      .map((cells) => cells.slice(0, MAX_COLUMNS).map((cell) => text(cell, MAX_CELL)))
       .filter((cells) => cells.some(Boolean));
     if (rows.length < 2) continue;
     const around = wordsBefore(table);
     tables.push({
       rows,
-      caption: text(table.caption, 160),
+      caption: text(table.tagName === 'TABLE' ? table.caption : document.getElementById(table.getAttribute('aria-labelledby') || '') || null, 160) || fold(table.getAttribute('aria-label'), 160) || null,
       before: around.before,
       heading: around.heading,
       tab: around.tab,
