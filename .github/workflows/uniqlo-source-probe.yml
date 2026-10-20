@@ -27,9 +27,6 @@ jobs:
     steps:
       - name: uniqlo.com — robots.txt, terms, sitemaps (as published for automated readers)
         continue-on-error: true
-        continue-on-error: true
-        continue-on-error: true
-        continue-on-error: true
         run: |
           set +e
           get() { echo "::group::$1"; curl -sS -m 20 -A "$UA" -o /tmp/body -D /tmp/head -w "HTTP %{http_code} %{size_download}B %{content_type}\n" "$1" || echo "no answer: exit $?"; head -c 600 /tmp/head 2>/dev/null; echo; head -c 3000 /tmp/body 2>/dev/null; echo; echo "::endgroup::"; }
@@ -44,6 +41,7 @@ jobs:
           get https://image.uniqlo.com/robots.txt
 
       - name: Common Crawl — how many UNIQLO US product pages an open, robots-respecting crawl holds (URL index only)
+        continue-on-error: true
         run: |
           set +e
           coll=$(curl -sS -m 30 https://index.commoncrawl.org/collinfo.json | python3 -c 'import json,sys; c=json.load(sys.stdin); print(" ".join(x["id"] for x in c[:3]))')
@@ -74,6 +72,7 @@ jobs:
           done
 
       - name: Rakuten Advertising — the published Product Catalog feed specification
+        continue-on-error: true
         run: |
           set +e
           sudo apt-get -qq install -y poppler-utils >/dev/null 2>&1
@@ -89,6 +88,7 @@ jobs:
           done
 
       - name: FlexOffers — UNIQLO USA programme status
+        continue-on-error: true
         run: |
           set +e
           curl -sS -L -m 30 -A "$UA" https://www.flexoffers.com/affiliate-programs/uniqlo-usa-affiliate-program/ | python3 -c "import re,html,sys; t=sys.stdin.read(); t=re.sub(r'(?s)<(script|style).*?</\1>','',t); t=re.sub(r'<[^>]+>',' ',t); t=html.unescape(re.sub(r'\s+',' ',t)); i=t.find('UNIQLO'); print(t[max(0,i-200):i+3000])"
