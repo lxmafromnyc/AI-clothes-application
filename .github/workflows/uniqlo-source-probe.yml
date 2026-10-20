@@ -1,0 +1,87 @@
+# Fynd — TEMPORARY, read-only probe of UNIQLO product-data sources.
+#
+# Runs once on a push to this branch and is removed in the next commit.
+# It reads only files published for automated readers or public
+# documentation: UNIQLO's robots.txt, terms page and the sitemaps
+# robots.txt lists; Common Crawl's public URL index (counts only, no
+# page content); Rakuten Advertising's public feed documentation; and
+# FlexOffers' public programme page. One request each, an honest user
+# agent, no retries, nothing disguised, nothing stored or committed.
+
+name: UNIQLO source probe (temporary)
+
+on:
+  push:
+    branches: [claude/uniqlo-catalog-popup]
+    paths: [.github/workflows/uniqlo-source-probe.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      UA: 'FyndResearch/1.0 (+https://ai-clothes-application.vercel.app/about.html)'
+    steps:
+      - name: uniqlo.com — robots.txt, terms, sitemaps (as published for automated readers)
+        run: |
+          get() { echo "::group::$1"; curl -sS -m 20 -A "$UA" -o /tmp/body -D /tmp/head -w "HTTP %{http_code} %{size_download}B %{content_type}\n" "$1" || echo "no answer: exit $?"; head -c 600 /tmp/head 2>/dev/null; echo; head -c 3000 /tmp/body 2>/dev/null; echo; echo "::endgroup::"; }
+          get https://www.uniqlo.com/robots.txt
+          get https://www.uniqlo.com/us/robots.txt
+          get https://www.uniqlo.com/us/en/help/terms-of-use
+          get https://faq-us.uniqlo.com/articles/en_US/FAQ/Terms-of-Use
+          if [ -s /tmp/body ]; then :; fi
+          curl -sS -m 20 -A "$UA" https://www.uniqlo.com/robots.txt 2>/dev/null | grep -i '^sitemap:' | head -20 > /tmp/sitemaps || true
+          echo "sitemaps listed:"; cat /tmp/sitemaps
+          for s in $(awk '{print $2}' /tmp/sitemaps | tr -d '\r' | grep -i '/us/' | head -5); do get "$s"; done
+          get https://image.uniqlo.com/robots.txt
+
+      - name: Common Crawl — how many UNIQLO US product pages an open, robots-respecting crawl holds (URL index only)
+        run: |
+          set +e
+          coll=$(curl -sS -m 30 https://index.commoncrawl.org/collinfo.json | python3 -c 'import json,sys; c=json.load(sys.stdin); print(" ".join(x["id"] for x in c[:3]))')
+          echo "latest collections: $coll"
+          for id in $coll; do
+            echo "::group::$id"
+            curl -sS -m 120 -A "$UA" "https://index.commoncrawl.org/${id}-index?url=www.uniqlo.com/us/en/products/*&output=json&fl=url,status,timestamp,mime&limit=20000" -o /tmp/cc.jsonl
+            python3 - <<'PY'
+          import json, re, collections
+          rows=[]
+          for line in open('/tmp/cc.jsonl'):
+              try: rows.append(json.loads(line))
+              except Exception: pass
+          codes=collections.Counter()
+          status=collections.Counter(r.get('status') for r in rows)
+          ok=set()
+          for r in rows:
+              m=re.search(r'/products/(E\d{6}-\d{3})', r.get('url',''))
+              if m:
+                  codes[m.group(1)]+=1
+                  if r.get('status')=='200': ok.add(m.group(1))
+          print('index rows', len(rows), 'status', dict(status))
+          print('distinct product codes', len(codes), 'with a 200 capture', len(ok))
+          print('sample', [r.get('url') for r in rows[:5]])
+          print('newest capture', max((r.get('timestamp','') for r in rows), default=None))
+          PY
+            echo "::endgroup::"
+          done
+
+      - name: Rakuten Advertising — the published Product Catalog feed specification
+        run: |
+          sudo apt-get -qq install -y poppler-utils >/dev/null 2>&1
+          for u in \
+            https://pubhelp.rakutenadvertising.com/hc/en-us/article_attachments/22365119792013 \
+            https://pubhelp.rakutenadvertising.com/hc/en-us/articles/11258487715981-Product-Catalog-Data-Feed-Implementation-Guidelines \
+            https://pubhelp.rakutenadvertising.com/hc/en-us/articles/4412243880333-Download-Product-Catalog-Data-Feed-Files \
+            https://pubhelp.rakutenadvertising.com/hc/en-us/articles/32202924750989-Request-Access-to-Advertisers-Product-Feeds-Video; do
+            echo "::group::$u"
+            curl -sS -L -m 30 -A "$UA" -o /tmp/doc -w "HTTP %{http_code} %{content_type}\n" "$u"
+            if file /tmp/doc | grep -qi pdf; then pdftotext -layout /tmp/doc - | head -400; else python3 -c "import re,html,sys; t=open('/tmp/doc',errors='ignore').read(); t=re.sub(r'(?s)<(script|style).*?</\1>','',t); t=re.sub(r'<[^>]+>',' ',t); t=html.unescape(re.sub(r'\s+',' ',t)); print(t[:6000])"; fi
+            echo "::endgroup::"
+          done
+
+      - name: FlexOffers — UNIQLO USA programme status
+        run: |
+          curl -sS -L -m 30 -A "$UA" https://www.flexoffers.com/affiliate-programs/uniqlo-usa-affiliate-program/ | python3 -c "import re,html,sys; t=sys.stdin.read(); t=re.sub(r'(?s)<(script|style).*?</\1>','',t); t=re.sub(r'<[^>]+>',' ',t); t=html.unescape(re.sub(r'\s+',' ',t)); i=t.find('UNIQLO'); print(t[max(0,i-200):i+3000])"
