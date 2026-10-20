@@ -1907,6 +1907,21 @@ await test('a catalogue snapshot (FIXTURE) adds UNIQLO’s listed products: rows
   assert.deepStrictEqual([out.womenTee, out.menKnit, out.uk], [null, null, null], 'women’s tops, knitwear and another market never get the men’s chart');
 });
 
+await test('a snapshot committed beside the brand module is never read: the category-page reader is retired, and only a test’s own fixture is loaded', () => {
+  const { execFileSync } = require('child_process');
+  const path = require('path');
+  const fs = require('fs');
+  const committed = path.join(__dirname, '../api/_sizing/brands/uniqlo-catalog.json');
+  assert.ok(!fs.existsSync(committed));
+  fs.copyFileSync(path.join(__dirname, 'fixtures/uniqlo-catalog-fixture.json'), committed);
+  try {
+    const env = Object.assign({}, process.env);
+    delete env.FYND_UNIQLO_CATALOG;
+    const out = JSON.parse(execFileSync(process.execPath, ['-e', `const s = require('./api/_sizing/brands/uniqlo-snapshot'); const b = require('./api/_sizing/brands/uniqlo'); console.log(JSON.stringify({ snap: s.SNAPSHOT.products.length, listed: b.products().length }))`], { cwd: path.join(__dirname, '..'), env }).toString());
+    assert.deepStrictEqual(out, { snap: 0, listed: 5 });
+  } finally { fs.unlinkSync(committed); }
+});
+
 await test('a product’s page holds only what Fynd has, each with its source, and names what it doesn’t — no price, description, care, reviews or stock', () => {
   const hoodie = uniqloBrand.detail('E475378-000');
   assert.deepStrictEqual([hoodie.name, hoodie.code, hoodie.url, hoodie.market], ['Sweat Pullover Hoodie', 'E475378-000', 'https://www.uniqlo.com/us/en/products/E475378-000/00', 'US']);

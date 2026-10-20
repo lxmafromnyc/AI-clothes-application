@@ -2159,21 +2159,16 @@ product Fynd can source:
   | Sweat Oversized Pullover Hoodie | E471808-000 | its own Product Size chart, supplied as a transcription and pending review, with UNIQLO's general US men's tops body chart beside it (below) |
   | Extra Fine Merino Crew Neck Sweater | E429066-000 | a listing only; its chart is looked up live |
 
-- **A catalogue snapshot**, when one has been committed
-  (`api/_sizing/brands/uniqlo-catalog.json`). It holds the products on UNIQLO's
-  own US category pages: Sweatshirts & Hoodies, T-shirts, and Sweaters &
-  Cardigans for men and women. `scripts/fetch-uniqlo-catalog.js` writes it, and
-  `uniqlo-snapshot.js` checks it as it loads. A row is dropped if:
-  - its code doesn't match its own canonical link;
-  - its category or line is unknown;
-  - it wasn't listed on a uniqlo.com category page.
-
-  A photo is kept only if it is on `image.uniqlo.com` and carries the product's
-  code. A product already known keeps what Fynd holds for it. A men's
-  sweatshirt, hoodie or T-shirt that UNIQLO's own page placed there may fall
-  back to UNIQLO's general men's body chart, labelled as general. Anything else,
-  including every women's product and all knitwear, gets its live page or an
-  honest "unavailable".
+- **A catalogue snapshot** — retired. Fynd used to be able to read UNIQLO's US
+  category pages into `api/_sizing/brands/uniqlo-catalog.json`
+  (`scripts/fetch-uniqlo-catalog.js`); that reader and its workflow have been
+  removed, because Fynd doesn't build its catalogue by reading uniqlo.com
+  without UNIQLO's permission. `uniqlo-snapshot.js` now reads a snapshot only
+  from a test's own fixture (`FYND_UNIQLO_CATALOG`), never a committed file. In
+  tests, a snapshot row is dropped if its code doesn't match its own canonical
+  link, its category or line is unknown, or it wasn't listed on a uniqlo.com
+  category page; a men's sweatshirt, hoodie or T-shirt listed there may fall
+  back to UNIQLO's general men's body chart, labelled as general.
 
 The list shows products with a saved chart first, 24 at a time (**Show more**).
 It can be filtered by type and by Men/Women, and searched by name. Each card
@@ -2194,10 +2189,9 @@ carrying each product's code).
   connection and then reset every request (`HTTP/2 INTERNAL_ERROR`):
   robots.txt included, under curl's own user agent and Fynd's.
   `image.uniqlo.com` answered.
-- **Fynd doesn't disguise itself** to get past this, so no snapshot has been
-  written yet. Run `node scripts/fetch-uniqlo-catalog.js` from a machine
-  uniqlo.com answers, read the file, and commit it. The page then lists every
-  product in it with no other change.
+- **Fynd doesn't disguise itself** to get past this, so no snapshot was ever
+  written. The category-page reader and its workflow have since been removed:
+  a fuller list needs UNIQLO's permission, through an authorized feed.
 - **Framing:** a page in an iframe can't tell Find Fit which product was clicked,
   so UNIQLO's site in a frame couldn't start a lookup. Its framing headers
   couldn't be read either: the reset came before any headers.
