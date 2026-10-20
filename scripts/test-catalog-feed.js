@@ -430,6 +430,19 @@ function inChild(env, code) {
     } finally { console.error = quiet; }
   });
 
+  await test('a committed catalogue can’t serve a field its own licence doesn’t cover, and catalogue rows can’t carry measurements or a verification status', () => {
+    const raw = Object.assign(JSON.parse(fs.readFileSync(catalogFile, 'utf8')), { fixture: false, licensed: ['sizes'] });
+    raw.products = raw.products.map((p) => Object.assign({}, p, { measurements: { chest: '40' }, charts: { garment: {} }, verification: { status: 'verified' }, holds: 'checked-chart' }));
+    const loaded = store.load(withCommitted(raw));
+    assert.strictEqual(loaded.products.length, 26);
+    loaded.products.forEach((p) => {
+      assert.ok(!p.price && !p.availability && !p.variants && !p.colours && !p.images, p.code);
+      assert.ok(!('measurements' in p) && !('charts' in p) && !('verification' in p) && !('holds' in p), p.code);
+    });
+    const fed = read(feedOf([row(1, { measurements: { chest: 40 }, sizeChart: [[1]], verification: 'verified', sizes: ['M'] })]), adapter, { licensed: ALL });
+    assert.deepStrictEqual(Object.keys(fed.products[0]).sort(), ['category', 'code', 'line', 'name', 'sizes', 'url']);
+  });
+
   await test('freshness is asked at each use: price and stock for 48 hours, the catalogue for 30 days, and never one dated in the future', () => {
     const raw = Object.assign(JSON.parse(fs.readFileSync(catalogFile, 'utf8')), { fixture: false });
     const loaded = store.load(withCommitted(raw));
@@ -539,6 +552,40 @@ function inChild(env, code) {
     assert.deepStrictEqual(r.catalogue, { connected: false, lastSuccessfulSync: null, pricesShown: false, stockShown: false });
     assert.ok(!JSON.stringify(r).includes('FIXTURE'), 'no fixture product reaches a customer');
     assert.ok(r.list.products.every((p) => !('price' in p) && !('availability' in p)));
+  });
+
+  await test('with no catalogue, the five products are searched, filtered, paged and chosen through the same API', () => {
+    const r = inChild({}, browseCode(`{
+      oversized: b.browse(u, { q: 'oversized' }).products.map((p) => p.code),
+      typed: b.browse(u, { q: 'black oversized hoodie' }),
+      hoodies: b.browse(u, { category: 'sweatshirts-hoodies' }).products.map((p) => p.code),
+      women: b.browse(u, { category: 'sweatshirts-hoodies', line: 'women' }).products.map((p) => p.code),
+      tees: b.browse(u, { q: 'tee' }).products.map((p) => p.code),
+      pages: [0, 2, 4].map((o) => b.browse(u, { offset: String(o), limit: '2' }).products.map((p) => p.code)),
+      facets: b.browse(u, {}).facets,
+      chosen: [u.find('E471808-000') && u.find('E471808-000').name, u.detail('E429066-000').missing, u.find('E910001-000')]
+    }`));
+    assert.deepStrictEqual(r.oversized, ['E471808-000']);
+    assert.deepStrictEqual([r.typed.products.map((p) => p.code), r.typed.partial, r.typed.unmatched], [['E471808-000'], true, ['black']], 'no colour names without a catalogue: "black" is named, not ignored');
+    assert.deepStrictEqual(r.hoodies.sort(), ['E471808-000', 'E475377-000', 'E475378-000']);
+    assert.deepStrictEqual(r.women, ['E475378-000'], 'only the unisex hoodie');
+    assert.deepStrictEqual(r.tees, ['E455365-000']);
+    assert.deepStrictEqual(r.pages, [['E475378-000', 'E475377-000'], ['E471808-000', 'E455365-000'], ['E429066-000']]);
+    assert.deepStrictEqual([r.facets.inStock, r.facets.categories.map((c) => c.value).sort()], [false, ['knitwear', 'sweatshirts-hoodies', 'tshirts']]);
+    assert.deepStrictEqual(r.chosen, ['Sweat Oversized Pullover Hoodie', ['price', 'description', 'care', 'reviews', 'availability', 'sizes', 'fabric', 'fit'], null]);
+  });
+
+  await test('a catalogue changes no sizing record: every record product keeps its verification status, sizes and charts, with or without one', () => {
+    const probe = `const u = require('./api/_sizing/brands').get('uniqlo'); const rec = require('./api/_sizing/records');
+      return { holds: u.products().filter((p) => rec.RECORDS.some((r) => r.product.code === p.code)).map((p) => [p.code, p.holds]).sort(),
+        details: ['E475378-000', 'E475377-000', 'E471808-000', 'E455365-000'].map((c) => { const d = u.detail(c); return [c, d.recordVerified, d.sizes.list.join(','), d.fit && d.fit.words]; }),
+        records: JSON.stringify(rec.RECORDS) };`;
+    const without = inChild({}, probe);
+    const withFeed = inChild(WITH, probe);
+    assert.deepStrictEqual(withFeed.holds, without.holds);
+    assert.deepStrictEqual(withFeed.details, without.details);
+    assert.strictEqual(withFeed.records, without.records, 'the records themselves, byte for byte');
+    assert.deepStrictEqual(without.holds, [['E455365-000', 'unchecked-chart'], ['E471808-000', 'unchecked-chart'], ['E475377-000', 'checked-chart'], ['E475378-000', 'checked-chart']]);
   });
 
   await test('with a catalogue: its products join the five, each once; the five keep their own names and sizing holds; the coverage line names the source and date and never claims the full range', () => {
