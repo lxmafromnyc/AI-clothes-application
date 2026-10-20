@@ -66,6 +66,7 @@ const GROUPS = {
     ['test-size-eval', 'the size engine against hand-worked expectations from published charts'],
     ['test-catalog-audit', 'the catalogue audit: every card proved from its row'],
     ['test-catalog-feed', "a brand's authorized catalogue: feed import, sync, the API fetch, search, filters, pages, staleness, and each product's sizing by its exact code"],
+    ['test-catalog-live', "Find Fit's live UNIQLO US search: the route's own search and allowance, UNIQLO US product pages only, by their own codes"],
     ['test-demo-audio', "the landing demo's sound: loudness, ducking, captions"],
     ['test-demo-film', "the landing demo film: length, order, every store frame real"]
   ],

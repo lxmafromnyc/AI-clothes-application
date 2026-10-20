@@ -87,6 +87,18 @@
       <button class="btn btn-secondary fit-products-more" id="fit-products-more" type="button" hidden>Show more</button>
       <p class="fit-coverage" id="fit-coverage"></p>
 
+      <!-- The rest of UNIQLO's US range, searched live on request through
+           Fynd's product source (/api/search, scope uniqlo-us; see
+           api/_catalog/live.js): offered once something is typed, never
+           run on its own, and counted as one search. -->
+      <section class="fit-live" id="fit-live" hidden aria-labelledby="fit-live-title">
+        <h2 class="fit-live-title" id="fit-live-title">Not here? Search all of UNIQLO US</h2>
+        <p class="fit-live-note" id="fit-live-note">A live search of the listings UNIQLO publishes to Google Shopping, through Fynd&rsquo;s product source. It uses one of your searches. Results aren&rsquo;t saved to Fynd&rsquo;s list.</p>
+        <button class="btn btn-secondary fit-live-run" id="fit-live-run" type="button">Search UNIQLO US</button>
+        <p class="fit-browser-status fit-live-status" id="fit-live-status" role="status" hidden></p>
+        <div class="fit-products fit-live-products" id="fit-live-products" aria-label="UNIQLO US products found live"></div>
+      </section>
+
       <details class="fit-link-alt" id="fit-link-alt">
         <summary>Have a link to a product from another shop?</summary>
         <form class="shop-search fit-url" id="fit-url-form" novalidate>

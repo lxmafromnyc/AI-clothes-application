@@ -14,10 +14,9 @@
      listings          uniqlo-listings.json (a product Fynd has a
                        listing for and nothing more: its chart is
                        looked up live)
-     the snapshot      uniqlo-catalog.json, when there is one: the
-                       products on UNIQLO's own US category pages, read
-                       by scripts/fetch-uniqlo-catalog.js and checked as
-                       it loads (uniqlo-snapshot.js)
+     the snapshot      a test's fixture only (uniqlo-snapshot.js): the
+                       category-page reader that wrote one is retired,
+                       and a committed snapshot is never read
      the catalogue     UNIQLO's authorized product catalogue, when one
                        has been synced (api/_catalog, uniqlo-feed.js):
                        every product it lists, with the photos, colours,

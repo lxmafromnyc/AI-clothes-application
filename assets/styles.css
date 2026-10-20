@@ -377,6 +377,13 @@ strong { font-weight: 600; }
 .fit-product-price { font-size: 14px; font-weight: 600; }
 .fit-product-stock { font-size: 13px; color: var(--color-warning-ink); }
 .fit-coverage:empty { display: none; }
+.fit-live { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--color-border); }
+.fit-live[hidden] { display: none; }
+.fit-live-title { margin: 0; font-size: 16px; font-weight: 600; }
+.fit-live-note { margin: 6px 0 10px; font-size: 13px; color: var(--color-text-2); }
+.fit-live-run { max-width: 100%; white-space: normal; text-align: left; }
+.fit-live-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 6px; }
+.fit-live-actions .btn { padding: 6px 12px; font-size: 13px; }
 .fit-link-alt { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--color-border); }
 .fit-link-alt > summary { cursor: pointer; font-size: 14px; color: var(--color-text-2); }
 .fit-link-alt[open] > summary { margin-bottom: 12px; }
