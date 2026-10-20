@@ -178,6 +178,15 @@ const unquote = (value) => {
 
 const apiKey = () => unquote(process.env.OPENWEBNINJA_API_KEY);
 
+/* Whether the OpenWeb Ninja subscription is said to be active. A key alone
+   isn't enough: a key left in a dashboard after the plan lapsed would
+   have every search call a source that refuses it, and the page would
+   look like it works while every answer failed. Off unless the
+   deployment says OPENWEBNINJA_SUBSCRIPTION=active — so with it unset,
+   nothing calls OpenWeb Ninja at all, and every page says no product
+   source is connected. */
+const subscriptionActive = () => unquote(process.env.OPENWEBNINJA_SUBSCRIPTION).toLowerCase() === 'active';
+
 /* The headers every call sends: the key as a header, never in the query
    string. One place, so the probe and the search cannot send different
    ones. */
@@ -670,6 +679,8 @@ function legTimeout(deadline, reserve) {
 async function apiGet(url, params, timeout, options) {
   const key = apiKey();
   if (!key) throw new Error('OPENWEBNINJA_API_KEY is not set');
+  /* never a request on a subscription nobody says is active, whoever asks */
+  if (!subscriptionActive()) throw Object.assign(new Error('OpenWeb Ninja subscription is not active (OPENWEBNINJA_SUBSCRIPTION is not "active"); no request was made'), { inactive: true });
   /* `options.signal` cancels the call (the search no longer needs it);
      `options.timing` is filled with how long the response headers and
      then the whole body took — milliseconds, nothing else */
@@ -1192,7 +1203,9 @@ module.exports = {
      spanning many stores has no single retailer to fall back on, and
      naming one would attribute a product to the wrong shop. */
   defaultRetailer: null,
-  configured: () => Boolean(apiKey()),
+  /* a key, and a subscription the deployment says is active */
+  configured: () => Boolean(apiKey()) && subscriptionActive(),
+  subscriptionActive,
   search,
   searchRequest,
   region,

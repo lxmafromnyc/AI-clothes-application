@@ -320,7 +320,7 @@ function fellBackFrom(outcome) {
 async function probe(options) {
   const o = Object.assign({ query: 'black oversized hoodie' }, options || {});
   /* the key first: with none, the route has no source at all and answers 503 */
-  if (!provider.configured()) throw new Error('OPENWEBNINJA_API_KEY is not set in this environment');
+  if (!provider.configured()) throw new Error(provider.apiKey() ? 'OPENWEBNINJA_SUBSCRIPTION is not "active" in this environment, so OpenWeb Ninja is not contacted' : 'OPENWEBNINJA_API_KEY is not set in this environment');
   const source = getProvider();
   if (source.name !== provider.name) throw new Error(`the configured product source is ${source.name}, not OpenWeb Ninja`);
 
@@ -378,7 +378,9 @@ function flags(argv) {
 async function main() {
   const o = flags(process.argv.slice(2));
   if (!provider.configured()) {
-    console.error('OPENWEBNINJA_API_KEY is not set. Run with: node --env-file=.env.local scripts/probe-openwebninja.js "..."');
+    console.error(provider.apiKey()
+      ? 'OPENWEBNINJA_SUBSCRIPTION is not "active", so OpenWeb Ninja is not contacted. Set it only while the subscription is paid for.'
+      : 'OPENWEBNINJA_API_KEY is not set. Run with: node --env-file=.env.local scripts/probe-openwebninja.js "..."');
     console.error(`env: ${JSON.stringify(envReport())}`);
     process.exit(2);
   }

@@ -144,14 +144,7 @@
     const filtered = category !== 'all' || line !== 'all' || colour !== 'all' || size !== 'all' || inStock || Boolean(answer.query && answer.query.q);
     if (!total && !filtered) return say('No products to show for this brand yet.');
     if (!total) {
-      const typed = answer.query && answer.query.q;
-      /* nothing in Fynd's own list: where live search can run, point to it,
-         with the words already in its box — but never run it unasked */
-      if (typed && liveAvailable()) {
-        if (!liveQ.value.trim()) liveQ.value = typed;
-        return say(`Nothing in Fynd’s list matches “${typed}”. Search all of UNIQLO US above to find it in UNIQLO’s live listings.`);
-      }
-      return say(answer.unmatched && answer.unmatched.length && typed
+      return say(answer.unmatched && answer.unmatched.length && answer.query && answer.query.q
         ? `No products match. Nothing here matched ${quote(answer.unmatched)}. Clear the search or choose another type.`
         : 'No products match. Clear the search or choose another type.');
     }
@@ -250,8 +243,6 @@
     coverage.textContent = brand.coverage || '';
     note.textContent = brand.notice || '';
     note.hidden = !brand.notice;
-    /* the live search, offered whenever the server says it can run here */
-    live.hidden = !liveAvailable();
     if (!facets) { facets = data.facets || null; drawFilters(); }
     draw(data);
     done();
@@ -274,7 +265,6 @@
     filters.replaceChildren();
     coverage.textContent = '';
     note.hidden = true;
-    live.hidden = true;
     say('Loading products…', 'loading');
     await ask(false);
   }
@@ -295,106 +285,6 @@
     }
     load();
   }
-
-  /* ---------- the rest of UNIQLO US, searched live on request ----------
-
-     Shown, above Fynd's own list, whenever the server says it can run
-     here (brand.live.available), with its own box and button: it runs
-     only when the button is pressed (or Enter in its box), since each run
-     spends one of the shopper's searches — typing never does. Drawn apart
-     from Fynd's own list. A result Fynd already lists opens its product
-     page; any other opens its sizing chart through the same lookup a
-     pasted link takes (assets/find-fit.js → chartFor), by its own
-     canonical UNIQLO page. */
-  const live = $('fit-live');
-  const liveForm = $('fit-live-form');
-  const liveQ = $('fit-live-q');
-  const liveRun = $('fit-live-run');
-  const liveStatus = $('fit-live-status');
-  const liveGrid = $('fit-live-products');
-  const LIVE_IMAGES = /^https:\/\/(image\.uniqlo\.com\/|encrypted-tbn\d\.gstatic\.com\/shopping\?)/;
-  let liveAsk = 0;
-
-  function liveAvailable() {
-    return Boolean(brand && brand.id === 'uniqlo' && brand.live && brand.live.available);
-  }
-
-  function liveSay(text, state) {
-    liveStatus.textContent = text;
-    liveStatus.hidden = !text;
-    live.dataset.state = state;
-  }
-
-  function liveCard(p) {
-    const box = el('div', 'fit-product fit-product--live');
-    box.dataset.code = p.code;
-    const media = el('span', 'fit-product-media');
-    if (p.imageUrl && LIVE_IMAGES.test(p.imageUrl)) {
-      const img = el('img');
-      img.src = p.imageUrl;
-      img.alt = '';
-      img.loading = 'lazy';
-      img.decoding = 'async';
-      img.referrerPolicy = 'no-referrer';
-      img.addEventListener('error', () => img.replaceWith(art('tshirts')), { once: true });
-      media.append(img);
-    } else media.append(art('tshirts'));
-    const text = el('span', 'fit-product-text');
-    text.append(el('span', 'fit-product-kind', `UNIQLO · ${p.code}`), el('span', 'fit-product-name', p.name));
-    const price = money(p.price);
-    if (price) text.append(el('span', 'fit-product-price', price));
-    text.append(el('span', `fit-product-holds fit-product-holds--${p.holds}`, p.holdsText));
-    const actions = el('span', 'fit-live-actions');
-    if (p.listed) {
-      const open = el('a', 'btn btn-secondary', 'Open in Fynd');
-      open.href = `product.html?${new URLSearchParams({ brand: 'uniqlo', item: p.code })}`;
-      actions.append(open);
-    } else {
-      const chart = el('button', 'btn btn-secondary fit-live-chart', 'Size chart');
-      chart.type = 'button';
-      chart.addEventListener('click', () => {
-        const alt = $('fit-link-alt');
-        if (alt) alt.open = true;
-        if (global.FindFit) global.FindFit.find(p.url);
-      });
-      actions.append(chart);
-    }
-    const shop = el('a', 'guide-link', 'View on UNIQLO');
-    shop.href = p.url;
-    shop.target = '_blank';
-    shop.rel = 'noopener noreferrer';
-    actions.append(shop);
-    text.append(actions);
-    box.append(media, text);
-    return box;
-  }
-
-  async function runLive() {
-    const q = liveQ.value.trim();
-    if (!q) { liveSay('Type what you’re looking for, then press Search UNIQLO US.', 'empty'); liveQ.focus(); return; }
-    const mine = ++liveAsk;
-    liveRun.disabled = true;
-    liveGrid.replaceChildren();
-    liveSay('Searching UNIQLO US…', 'loading');
-    const sizing = global.Account && global.Account.sizing;
-    const answer = sizing ? await sizing.live(q) : { ok: false };
-    if (mine !== liveAsk) return;
-    liveRun.disabled = false;
-    const data = answer.data || {};
-    if (!answer.ok) {
-      const why = answer.status === 503 ? 'Fynd’s product source isn’t connected here, so UNIQLO can’t be searched live.'
-        : answer.status === 429 ? (data.reason === 'over-limit' && data.error ? `${data.error} Fynd’s own list below can still be filtered, and a product’s link can still be pasted.` : 'Too many searches at once. Try again in a moment.')
-          : answer.status === 400 ? 'Type what you’re looking for first.'
-            : 'UNIQLO couldn’t be searched just now. Try again in a moment.';
-      return liveSay(why, 'error');
-    }
-    const products = Array.isArray(data.products) ? data.products : [];
-    liveGrid.replaceChildren(...products.map(liveCard));
-    live.dataset.found = String(products.length);
-    if (!products.length) return liveSay(`No UNIQLO US products came back for “${data.query || q}”. Try other words, or paste the product’s link at the bottom of this box.`, 'empty');
-    liveSay(`${products.length} UNIQLO US product${products.length === 1 ? '' : 's'} found live for “${data.query || q}”, ${data.servedFromCache ? 'from a search made in the last half hour' : 'just now'}. Prices are the listing’s; check them on UNIQLO. Colours and sizes are on UNIQLO’s page.`, 'ready');
-  }
-  liveForm.addEventListener('submit', (event) => { event.preventDefault(); runLive(); });
 
   brandSelect.addEventListener('change', () => load());
   /* Fynd's own list, filtered on the server once typing pauses (free: no

@@ -76,26 +76,8 @@
       </div>
       <!-- How much of the brand is listed, said before anything else
            whenever it is only the products Fynd sourced itself
-           (brand.notice) — and, where live search can run, where to find
-           the rest. -->
+           (brand.notice), and the one other way in: a pasted link. -->
       <p class="fit-catalog-note" id="fit-catalog-note" hidden></p>
-
-      <!-- The rest of UNIQLO's US range, searched live (/api/search, scope
-           uniqlo-us; see api/_catalog/live.js). Shown whenever the server
-           says it can run here (brand.live.available); its own box and an
-           explicit button, so nothing is searched — or charged — until the
-           button is pressed. -->
-      <section class="fit-live" id="fit-live" hidden aria-labelledby="fit-live-title">
-        <h2 class="fit-live-title" id="fit-live-title">Search all of UNIQLO US</h2>
-        <p class="fit-live-note" id="fit-live-note">Live results from the listings UNIQLO publishes to Google Shopping, through Fynd&rsquo;s product source &mdash; not a saved catalogue. Each search uses one of your searches, and results aren&rsquo;t saved to Fynd&rsquo;s list.</p>
-        <form class="shop-search fit-live-form" id="fit-live-form" role="search" novalidate>
-          <label class="sr-only" for="fit-live-q">Search all of UNIQLO US</label>
-          <input class="profile-input fit-live-q" type="search" id="fit-live-q" name="q" placeholder="e.g. black oversized hoodie" autocomplete="off" maxlength="120" enterkeyhint="search">
-          <button class="btn btn-primary fit-live-run" id="fit-live-run" type="submit">Search UNIQLO US</button>
-        </form>
-        <p class="fit-browser-status fit-live-status" id="fit-live-status" role="status" hidden></p>
-        <div class="fit-products fit-live-products" id="fit-live-products" aria-label="UNIQLO US products found live"></div>
-      </section>
 
       <!-- Fynd's own list for the brand: the products it holds, filtered and
            paged on the server as you type (no paid search). -->

@@ -22,6 +22,10 @@
 
 'use strict';
 
+/* OpenWeb Ninja counts as configured only on a subscription marked
+   active; these tests stand it in, so they mark it so */
+process.env.OPENWEBNINJA_SUBSCRIPTION = 'active';
+
 const assert = require('assert');
 const crypto = require('crypto');
 

@@ -79,10 +79,6 @@ const { envReport } = require('./_env-report');
 const meter = require('./_meter');
 const cache = require('./_cache');
 const { SEARCHES } = require('./_plans');
-/* Find Fit's live UNIQLO US search (api/_catalog/live.js) */
-const liveCatalog = require('./_catalog/live');
-const uniqloSource = require('./_catalog/sources/uniqlo-us');
-const brands = require('./_sizing/brands');
 
 const MAX_LIMIT = 24;
 const DEFAULT_LIMIT = 12;
@@ -189,10 +185,8 @@ function readBody(req) {
    the same verification gate. Any other failure is thrown as it always
    was. The answer says which source it came from and, when it fell
    back, from what and why. */
-async function searchWithFallback(primary, intent, limit, stats, deadline, options) {
-  /* a scoped search asks its own source only: no fallback, and so never
-     an organic search that reads listings off a shop's own pages */
-  const chain = options && options.onlyPrimary ? [primary] : providerChain(primary);
+async function searchWithFallback(primary, intent, limit, stats, deadline) {
+  const chain = providerChain(primary);
   let refused = null;
   for (let at = 0; at < chain.length; at += 1) {
     const provider = chain[at];
@@ -471,7 +465,7 @@ async function runSearch(body, options) {
 
   let found;
   try {
-    found = await searchWithFallback(provider, intent, limit, cacheStats, deadline, { onlyPrimary: Boolean(o.onlyPrimary) });
+    found = await searchWithFallback(provider, intent, limit, cacheStats, deadline);
   } catch (err) {
     /* A stage of ours failed on an answer the provider did give: that is
        not the source being unavailable, and is not reported as if it
@@ -663,50 +657,15 @@ module.exports = async function handler(req, res) {
   if (blocked) return meter.overLimit(res, state);
 
   const body = await readBody(req);
-  /* Find Fit's "search all of UNIQLO US": the same search, with UNIQLO
-     named as the brand, answered with UNIQLO US product pages only (see
-     api/_catalog/live.js). Nothing to search for costs nothing. */
-  const scoped = Boolean(body && body.scope === 'uniqlo-us');
-  const live = scoped ? liveCatalog.searchBody(body, MAX_LIMIT) : null;
-  if (scoped && !live) return res.status(400).json({ error: 'Type what you’re looking for.', reason: 'empty-query' });
-  /* only through a source that searches published shopping listings and
-     reads no shop's pages: OpenWeb Ninja, on its own */
-  if (scoped && !liveCatalog.LIVE_SOURCES.includes(provider.name)) {
-    return res.status(503).json({ error: 'UNIQLO can’t be searched live with this product source.', reason: 'unsupported-source', source: null });
-  }
-  const outcome = await runSearch(scoped ? live.body : body, { provider, startedAt, budgetMs, deadline, onlyPrimary: scoped });
+  const outcome = await runSearch(body, { provider, startedAt, budgetMs, deadline });
   if (outcome.status !== 200) return res.status(outcome.status).json(outcome.body);
 
   /* The search happened — from the provider or from the cache — whatever
      the gate then makes of the records: the quota was spent either way,
      and it is the shopper's one search either way. */
   const after = await meter.spend(identity, SEARCHES, 1);
-  const answer = outcome.compose(meter.report(after || state));
-  return res.status(200).json(scoped ? liveAnswer(answer, live.q) : answer);
+  return res.status(200).json(outcome.compose(meter.report(after || state)));
 };
-
-/* A scoped search's answer: the UNIQLO US products it found, each once,
-   with what was left out and what the source didn't carry, counted. */
-function liveAnswer(answer, q) {
-  const uniqlo = brands.get('uniqlo');
-  const found = liveCatalog.cards(answer.products, uniqloSource, (code) => uniqlo.find(code));
-  return {
-    scope: 'uniqlo-us',
-    query: q,
-    source: answer.source,
-    live: true,
-    searchedAt: new Date().toISOString(),
-    servedFromCache: Boolean(answer.diagnostics && answer.diagnostics.cache && answer.diagnostics.cache.servedFromCache),
-    products: found.products,
-    /* what the source returned, what the gate verified, and what of that is a UNIQLO US product */
-    returned: answer.returned,
-    verified: answer.products.length,
-    kept: found.products.length,
-    dropped: Object.assign({}, answer.rejected, found.dropped),
-    missing: found.missing,
-    usage: answer.usage
-  };
-}
 
 module.exports.shapeIntent = shapeIntent;
 module.exports.shapeAttachments = shapeAttachments;

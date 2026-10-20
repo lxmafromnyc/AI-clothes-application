@@ -28,6 +28,10 @@
 
 'use strict';
 
+/* OpenWeb Ninja counts as configured only on a subscription marked
+   active; these tests stand it in, so they mark it so */
+process.env.OPENWEBNINJA_SUBSCRIPTION = 'active';
+
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
@@ -1562,11 +1566,9 @@ const linkFromInbox = (pattern) => {
     assert.match(await page.textContent('#fit-coverage'), /36 UNIQLO US products, as listed on uniqlo\.com’s own category pages on 2026-10-18 — not UNIQLO’s full range\./);
     /* no authorized catalogue is connected: said above the list, not only in the small print */
     assert.strictEqual(await page.isVisible('#fit-catalog-note'), true);
-    assert.strictEqual(await page.textContent('#fit-catalog-note'), 'Fynd’s own list holds only 36 UNIQLO US products — it isn’t connected to UNIQLO’s full catalogue. To find any other UNIQLO US product, use “Search all of UNIQLO US” below, which searches UNIQLO’s live listings. If a product still doesn’t turn up, paste its link at the bottom of this box.');
-    /* the product source is configured here, so the live search is offered, in view, before the list */
-    assert.strictEqual(await page.isVisible('#fit-live'), true);
-    assert.strictEqual(await page.isVisible('#fit-live-q'), true);
-    assert.strictEqual(await page.textContent('#fit-live-run'), 'Search UNIQLO US');
+    assert.strictEqual(await page.textContent('#fit-catalog-note'), 'Fynd’s own list holds only 36 UNIQLO US products — it isn’t connected to UNIQLO’s full catalogue. For any other UNIQLO product, paste its link at the bottom of this box: Fynd shows its size chart where it holds one or can read one from the product’s page, and says so plainly when it can’t.');
+    /* a product source is configured here, and still no live UNIQLO search is offered: Find Fit never depends on one */
+    assert.strictEqual(await page.$('#fit-live'), null);
     assert.match(await page.textContent('#fit-browser-status'), /Showing 24 of 36/);
     /* the search and filters are the server's: each change waits for its own answer */
     const answered = async (action) => {
@@ -1593,8 +1595,7 @@ const linkFromInbox = (pattern) => {
     assert.deepStrictEqual(await page.$$eval('.fit-product', (bs) => bs.map((b) => b.dataset.code)), ['E471808-000']);
     const searchesBefore = apiHits.filter((h) => h === '/api/search').length;
     await answered(() => page.fill('#fit-product-search', 'parka'));
-    assert.strictEqual(await page.textContent('#fit-browser-status'), 'Nothing in Fynd’s list matches “parka”. Search all of UNIQLO US above to find it in UNIQLO’s live listings.');
-    assert.strictEqual(await page.inputValue('#fit-live-q'), 'parka', 'the live box is filled, not run');
+    assert.match(await page.textContent('#fit-browser-status'), /^No products match\./);
     assert.strictEqual(apiHits.filter((h) => h === '/api/search').length, searchesBefore, 'filtering Fynd’s list never asks the product source');
     await answered(() => page.fill('#fit-product-search', ''));
     /* photos only from UNIQLO's image host; the snapshot's foreign one was dropped */

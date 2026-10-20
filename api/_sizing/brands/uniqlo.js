@@ -282,12 +282,12 @@ function coverage(now) {
     ? `${n} UNIQLO US products, as listed on uniqlo.com’s own category pages on ${SNAPSHOT.fetchedAt} — not UNIQLO’s full range.`
     : `${n} UNIQLO US products Fynd has read off uniqlo.com — not UNIQLO’s full range.`;
 }
-/* `options.live`: whether the live UNIQLO US search (api/_catalog/live.js)
-   can run on this deployment. Where it can, the notice points to it first
-   and to a pasted link after; where it can't, to the link only. */
-function notice(now, options) {
+/* While Find Fit lists only the products Fynd sourced itself: how few,
+   that it isn't UNIQLO's catalogue, and the one other way in — a pasted
+   link, whose chart is shown only where Fynd holds one or can read one
+   from the product's own page. No paid product search stands behind it. */
+function notice(now) {
   const v = view(now);
-  const live = Boolean(options && options.live);
   if (v.fresh.served && !v.fresh.volatile && (licensed('price') || licensed('stock'))) {
     return `Prices and stock aren’t shown: UNIQLO’s product catalogue was last updated on ${day(feed.LOADED.catalog.lastSuccessfulSync)}, too long ago for them to be current. Check them on UNIQLO’s own page.`;
   }
@@ -296,9 +296,7 @@ function notice(now, options) {
   const why = feed.LOADED.state === 'loaded'
     ? `UNIQLO’s product catalogue was last updated on ${day(feed.LOADED.catalog.lastSuccessfulSync)}, too long ago to show, so Fynd’s own list holds only the ${n} UNIQLO US products it sourced itself.`
     : `Fynd’s own list holds only ${n} UNIQLO US products — it isn’t connected to UNIQLO’s full catalogue.`;
-  return live
-    ? `${why} To find any other UNIQLO US product, use “Search all of UNIQLO US” below, which searches UNIQLO’s live listings. If a product still doesn’t turn up, paste its link at the bottom of this box.`
-    : `${why} For any other UNIQLO product, paste its link at the bottom of this box.`;
+  return `${why} For any other UNIQLO product, paste its link at the bottom of this box: Fynd shows its size chart where it holds one or can read one from the product’s page, and says so plainly when it can’t.`;
 }
 
 /* one page of the products matching a query and filters */

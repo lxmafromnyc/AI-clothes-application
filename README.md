@@ -279,8 +279,9 @@ and the function share an origin, `/api/interpret` resolves by default, and
 | `GEMINI_API_KEY` | only for `AI_PROVIDER=gemini` | A Google AI Studio key. Production does not need it, and never sees it: it is read inside the function, sent as a header, and redacted out of anything logged. |
 | `GEMINI_MODEL` | no | Which model to call. Defaults to `gemini-3.6-flash`. |
 | `GEMINI_THINKING_LEVEL` / `GEMINI_THINKING_BUDGET` | no | How much thinking to allow: `thinkingLevel` (`minimal`, the default, through `high`) on a 3.x model, `thinkingBudget` (`0`, off, by default) on a 2.5 one. |
-| `OPENWEBNINJA_API_KEY` | yes | The product source's key. Without it `/api/search` returns 503 and the frontend falls back to the sample catalogue, labelled as such. |
-| `PRODUCT_SOURCE` | no | Which adapter in `api/_providers/` finds the products. Unset runs `openwebninja`, which is what this deployment uses. |
+| `OPENWEBNINJA_API_KEY` | for live search | The product source's key. Without it `/api/search` returns 503 and the frontend falls back to the sample catalogue, labelled as such. |
+| `OPENWEBNINJA_SUBSCRIPTION` | for live search | `active` while the OpenWeb Ninja plan is paid for. Otherwise OpenWeb Ninja is never called, key or no key, and `/api/search` returns the same 503. Unset in production today: the plan has lapsed. |
+| `PRODUCT_SOURCE` | no | Which adapter in `api/_providers/` finds the products. Unset runs `openwebninja` when its key is set and its subscription is marked active; otherwise no source, and `/api/search` answers 503. Nothing falls back to another paid source unless it is named here. |
 | `ALLOWED_ORIGIN` | no | Extra browser origins allowed to call the endpoints, comma-separated. The deployment's own origin is always allowed without configuration, so this is only needed for a frontend hosted elsewhere — GitHub Pages calling functions on Vercel. See [Cross-origin access](#cross-origin-access). |
 | `STRIPE_SECRET_KEY` | for billing | Your Stripe key. `sk_test_…` until launch. Without it the paid plans cannot be bought and the pricing page says so. |
 | `STRIPE_WEBHOOK_SECRET` | for billing | The signing secret of the webhook endpoint (`whsec_…`). Without it every delivery is refused, so no plan ever changes. |
@@ -934,8 +935,9 @@ than one shop's catalogue. Set these in the server environment:
 
 | Variable | Required | Purpose |
 | --- | --- | --- |
-| `OPENWEBNINJA_API_KEY` | yes | Your API key, sent as the `x-api-key` header. This is the only variable the product search needs. |
-| `PRODUCT_SOURCE` | no | Which adapter to run. Left unset, the OpenWeb Ninja adapter is used when its key is present. Set it only to run a different one. |
+| `OPENWEBNINJA_API_KEY` | yes | Your API key, sent as the `x-api-key` header. |
+| `OPENWEBNINJA_SUBSCRIPTION` | yes | `active` only while the OpenWeb Ninja plan is paid for. Anything else — unset included — and the adapter counts as not configured and makes **no request at all**, even with a key present: `/api/search` answers 503 and the Search page shows its labelled sample items. |
+| `PRODUCT_SOURCE` | no | Which adapter to run. Left unset, the OpenWeb Ninja adapter is used when its key is present and `OPENWEBNINJA_SUBSCRIPTION` is `active`. Set it only to run a different one. |
 | `OPENWEBNINJA_COUNTRY` | no | Marketplace to search, ISO 3166-1 alpha-2. Defaults to `us` |
 | `OPENWEBNINJA_LANGUAGE` | no | Result language, ISO 639-1. Defaults to `en` |
 
@@ -2360,48 +2362,26 @@ live page, or UNIQLO's general body chart when the catalogue places it in that
 chart's category and line (a men's hoodie, sweatshirt or T-shirt), labelled as
 general and never compared; otherwise an honest "unavailable".
 
-**Until a feed is approved: the rest of UNIQLO US, searched live.** Find
-Fit shows **Search all of UNIQLO US** right under its notice and above
-Fynd's own list — its own box and a **Search UNIQLO US** button, offered
-whenever the server says it can run (`brand.live.available`: UNIQLO, and the
-deployment's product source is OpenWeb Ninja with its key). The notice then
-says Fynd's own list is limited, points to the live search, and keeps a pasted
-link as the fallback; where live search can't run, it points to the link only.
-The box above Fynd's list filters that list only (free, no product source),
-and when nothing in it matches, the words are put in the live search's box —
-never run. Pressing the button runs
-one search through the product source Fynd's Search page already uses
-(OpenWeb Ninja's Real-Time Product Search, which searches the listings UNIQLO
-publishes to Google Shopping). It is `POST /api/search` with
-`{ scope: "uniqlo-us", q }`: the route's own budget, 30-minute search cache,
-verification gate and per-shopper allowance (one search, charged only when the
-source answers), with UNIQLO named as the brand (`api/_catalog/live.js`).
+**Until a feed is approved: Fynd's list, and a pasted link.** Find Fit lists
+only the products Fynd sourced itself (five UNIQLO US products, with the
+sizing records Fynd holds for them), says so in its notice, and offers one other way in:
+paste a product's link at the bottom of the box. There is no live UNIQLO
+search. One existed, through OpenWeb Ninja's Real-Time Product Search; it was
+removed when that subscription lapsed, rather than left as a box that would
+only ever answer with an error. The box above Fynd's list filters that list
+only, on the server, and asks no product source.
 
-- Only a result that is a UNIQLO US product page is kept, by the product code
-  in its own link, rebuilt as `https://www.uniqlo.com/us/en/products/<code>/00`,
-  once per code. Everything else is counted under `dropped`, by reason.
-- A product Fynd already lists keeps its own name and sizing holds, and opens
-  its product page. Any other opens its sizing chart through the same lookup a
-  pasted link takes, by its canonical page: Fynd's record when there is one,
-  UNIQLO's page read live (which the deployment can't reach today, so
-  usually an honest "unavailable"), never another product's chart.
-- What the source doesn't carry — colours and sizes, for a search result — is
-  counted under `missing` and never filled in. Photos are the source's own
-  Google Shopping thumbnails or `image.uniqlo.com`, nothing else.
-- It runs on OpenWeb Ninja alone, with no fallback: Serper's organic path reads
-  listings off shops' own pages, which would mean Fynd reading uniqlo.com to
-  build a listing, so a scoped search under any other source is refused (503
-  `unsupported-source`), and one whose source is out of searches fails rather
-  than falling back.
-- Nothing found this way is stored in the catalogue or indexed; the page says
-  so. Whether OpenWeb Ninja's terms allow *storing* its results hasn't been
-  confirmed, so they aren't. (Its terms grant a commercial licence to API data
-  used inside a broader product, excluding resale as a standalone data
-  product.)
+A pasted link goes through `chartFor` (`api/_sizing/chart.js`) and needs no
+product source and no paid service: Fynd's record by the link's exact product
+code, else the product's own page read once on request (and, from it, up to two
+size-guide pages it links to), else the brand's official general body chart
+where Fynd holds one, labelled as general — else an honest "unavailable". The
+deployment can't reach uniqlo.com today, so a UNIQLO product without a record
+gets UNIQLO's general chart where its category fits one, and "unavailable"
+otherwise.
 
-This is a search, not a catalogue: it finds what the source ranks for the
-words typed (up to 24 a search), so it can't list "every UNIQLO hoodie", and
-it offers no colour, size or stock filters. Those wait for an authorized feed.
+A broader UNIQLO US list needs an authorized catalogue feed (below). Nothing
+here falls back to another paid search or reads UNIQLO's site to build a list.
 
 **Connecting a real feed**, once access is approved:
 
