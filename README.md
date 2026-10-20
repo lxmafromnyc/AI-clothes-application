@@ -2114,10 +2114,26 @@ compared, and why.
 
 ### Choosing a brand and a product
 
-Find Fit opens on a brand menu and that brand's products, so no link has to be
-pasted (`assets/brand-browser.js`). The customer chooses a brand and picks a
-product card. Find Fit then asks for that product's chart by brand and product
-code (`GET /api/size-recommendation?brand=uniqlo&item=E475378-000`).
+Find Fit opens on a button for each brand it can browse
+(`GET /api/size-recommendation?brands=1`), so no link has to be pasted
+(`assets/brand-browser.js`). Choosing UNIQLO opens its products in a popup over
+the page: a modal `<dialog>` (full screen on a phone) with a search box, the
+filters the data supports, product cards and "Show more". Nothing is fetched
+until the brand is chosen; the search, filters and paging are the server's
+(`GET /api/size-recommendation?brand=uniqlo&q=…&offset=…`, `api/_catalog/search.js`),
+so the page never holds the catalogue. Closing the popup (Escape, its close
+button, or a click outside) returns focus to the brand, and reopening it keeps
+the search as it was; a list that failed to load is asked for again. A card
+opens the product's Fynd page (`product.html?brand=uniqlo&item=…`), whose Size
+Guide asks for that product's chart by brand and product code
+(`GET /api/size-recommendation?brand=uniqlo&item=E475378-000`) and links to the
+product on UNIQLO.
+
+What the popup lists is whatever the brand module holds: today the five UNIQLO
+US products Fynd sourced itself (said so at the top of the popup), and, once an
+authorized catalogue feed is synced (see *UNIQLO's authorized catalogue* below), that
+catalogue — the same popup, paged, with the feed's photos, prices, colours,
+sizes and stock where its licence covers them.
 
 The server finds the product's address in its own brand module
 (`api/_sizing/brands`) and looks it up through the same pipeline a pasted link
@@ -2208,12 +2224,13 @@ carrying each product's code).
 
 Find Fit is built to list UNIQLO's whole US range from an **authorized**
 catalogue — an API or product-feed file UNIQLO (or a licensed distributor)
-grants access to. **None has been granted yet**, so today Find Fit lists the
-five products above and says, above the list, that coverage is limited:
+grants access to. **None has been granted yet**, so today Find Fit's UNIQLO popup lists
+the five products above and says, above the list, that coverage is limited:
 
-> Limited selection: Fynd isn't connected to UNIQLO's product catalogue yet,
-> so most UNIQLO products aren't listed here. For any other UNIQLO product,
-> paste its link below.
+> Fynd's own list holds only 5 UNIQLO US products — it isn't connected to
+> UNIQLO's full catalogue. For any other UNIQLO product, close this list and
+> paste the product's link in Find Fit: Fynd shows its size chart where it
+> holds one, and says so plainly when it can't.
 
 Nothing here reads UNIQLO's website, and no catalogue — real or test — is
 committed. Fynd will not claim full-catalogue support until a real feed has

@@ -79,7 +79,7 @@ const HOLDS = {
   'checked-chart': 'Fynd has this product’s chart, checked',
   'unchecked-chart': 'Fynd has this product’s chart, not yet checked',
   'general-chart': 'UNIQLO’s general chart only',
-  'live-only': 'No saved chart — read from UNIQLO when chosen'
+  'live-only': 'No saved chart for this product'
 };
 
 function build(withCatalogue) {
@@ -296,7 +296,7 @@ function notice(now) {
   const why = feed.LOADED.state === 'loaded'
     ? `UNIQLO’s product catalogue was last updated on ${day(feed.LOADED.catalog.lastSuccessfulSync)}, too long ago to show, so Fynd’s own list holds only the ${n} UNIQLO US products it sourced itself.`
     : `Fynd’s own list holds only ${n} UNIQLO US products — it isn’t connected to UNIQLO’s full catalogue.`;
-  return `${why} For any other UNIQLO product, paste its link at the bottom of this box: Fynd shows its size chart where it holds one or can read one from the product’s page, and says so plainly when it can’t.`;
+  return `${why} For any other UNIQLO product, close this list and paste the product’s link in Find Fit: Fynd shows its size chart where it holds one, and says so plainly when it can’t.`;
 }
 
 /* one page of the products matching a query and filters */

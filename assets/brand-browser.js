@@ -2,8 +2,10 @@
    Fynd — Find Fit's brand menu and product browser
 
    The home page starts here: choose a brand (UNIQLO first — only brands
-   with a working way to pick a product are offered), browse its
-   products as cards, and pick one. Each card opens the product's own
+   with a working way to pick a product are offered), and its products
+   open in a popup over the page (a modal <dialog>: Escape, the close
+   button or a click outside closes it, and focus goes back to the brand
+   chosen). Browse them as cards, and pick one. Each card opens the product's own
    page (product.html, assets/product-page.js) by its brand and code;
    the server looks the product up itself (api/_sizing/brands), so
    nothing the page holds is trusted for it.
@@ -38,7 +40,9 @@
 
   const $ = (id) => doc.getElementById(id);
   const { el } = global.SizeChart;
-  const brandSelect = $('fit-brand');
+  const brandList = $('fit-brands');
+  const dialog = $('fit-brand-dialog');
+  const dialogTitle = $('fit-brand-dialog-title');
   const grid = $('fit-products');
   const status = $('fit-browser-status');
   const coverage = $('fit-coverage');
@@ -69,6 +73,10 @@
     return svg;
   }
 
+  /* the brand chosen, and the brand whose products the popup holds */
+  let current = 'uniqlo';
+  let loadedFor = null;
+  let opener = null;
   let brand = null;
   let items = [];
   let total = 0;
@@ -129,6 +137,7 @@
     status.textContent = text;
     status.hidden = !text;
     root.dataset.state = state || (text ? 'empty' : 'ready');
+    dialog.dataset.state = root.dataset.state;
   }
 
   const quote = (words) => words.map((w) => `“${w}”`).join(', ');
@@ -219,9 +228,9 @@
     const mine = ++asking;
     clearTimeout(typing);
     const sizing = global.Account && global.Account.sizing;
-    if (append) { more.disabled = true; } else { root.dataset.state = 'loading'; }
+    if (append) { more.disabled = true; } else { root.dataset.state = 'loading'; dialog.dataset.state = 'loading'; }
     const query = { q: search.value.trim(), category, line, colour, size, inStock, offset: append ? items.length : 0 };
-    const answer = sizing ? await sizing.catalog(brandSelect.value, query) : { ok: false };
+    const answer = sizing ? await sizing.catalog(current, query) : { ok: false };
     if (mine !== asking) return;
     if (!(answer.ok && answer.data && Array.isArray(answer.data.products) && answer.data.brand)) {
       if (append) {
@@ -233,11 +242,13 @@
       total = 0;
       grid.replaceChildren();
       more.hidden = true;
-      say('This brand’s products couldn’t be loaded just now. Try again in a moment, or paste a product’s link below.', 'unavailable');
+      loadedFor = null;
+      say('This brand’s products couldn’t be loaded just now. Try again in a moment, or close this and paste a product’s link instead.', 'unavailable');
       return done();
     }
     const data = answer.data;
     brand = data.brand;
+    dialogTitle.textContent = brand.name;
     total = Number.isInteger(data.total) ? data.total : data.products.length;
     items = append ? items.concat(data.products) : data.products;
     coverage.textContent = brand.coverage || '';
@@ -252,6 +263,7 @@
 
   async function load() {
     asking += 1;
+    loadedFor = current;
     brand = null;
     facets = null;
     items = [];
@@ -269,29 +281,60 @@
     await ask(false);
   }
 
+  /* the popup, for one brand: its products are asked for the first time
+     it opens (or when another brand is chosen), and kept while it's
+     closed, with the search and filters as they were */
+  function open(id, from) {
+    if (id) current = id;
+    opener = from || null;
+    if (!dialog.open) {
+      if (typeof dialog.showModal === 'function') dialog.showModal(); else dialog.setAttribute('open', '');
+    }
+    if (loadedFor !== current) { search.value = ''; load(); }
+    search.focus();
+  }
+  function close() {
+    if (typeof dialog.close === 'function') dialog.close(); else { dialog.removeAttribute('open'); dialog.dispatchEvent(new Event('close')); }
+  }
+  dialog.addEventListener('close', () => { if (opener && doc.contains(opener)) opener.focus(); });
+  $('fit-brand-dialog-close').addEventListener('click', close);
+  /* a click on the backdrop — the dialog itself, outside its content — closes it */
+  dialog.addEventListener('click', (event) => { if (event.target === dialog) close(); });
+
+  function brandButton(b) {
+    const button = el('button', 'fit-brand-choice');
+    button.type = 'button';
+    button.dataset.brand = b.id;
+    button.setAttribute('aria-haspopup', 'dialog');
+    button.setAttribute('aria-controls', 'fit-brand-dialog');
+    button.append(el('span', 'fit-brand-name', b.name),
+      el('span', 'fit-brand-meta', Number.isInteger(b.count) ? `${b.count} product${b.count === 1 ? '' : 's'} · Browse` : 'Browse products'));
+    return button;
+  }
+  brandList.addEventListener('click', (event) => {
+    const button = event.target.closest('.fit-brand-choice');
+    if (button && brandList.contains(button)) open(button.dataset.brand, button);
+  });
+
+  /* the brands the server offers; until it answers (or if it can't), the
+     UNIQLO button in the page opens the popup all the same */
   async function start() {
     const sizing = global.Account && global.Account.sizing;
     const answer = sizing ? await sizing.brands() : { ok: false };
     if (answer.ok && answer.data && Array.isArray(answer.data.brands) && answer.data.brands.length) {
-      const current = brandSelect.value;
-      brandSelect.replaceChildren(...answer.data.brands.map((b) => {
-        const o = el('option', null, b.name);
-        o.value = b.id;
-        return o;
-      }));
-      brandSelect.value = answer.data.brands.some((b) => b.id === current) ? current : answer.data.brands[0].id;
+      brandList.replaceChildren(...answer.data.brands.map(brandButton));
+      if (!answer.data.brands.some((b) => b.id === current)) current = answer.data.brands[0].id;
       const later = (answer.data.planned || []).filter((name) => !answer.data.brands.some((b) => b.name === name));
       planned.textContent = later.length ? `${later.join(', ')} — coming later.` : '';
     }
-    load();
+    root.dataset.brands = 'ready';
   }
 
-  brandSelect.addEventListener('change', () => load());
   /* Fynd's own list, filtered on the server once typing pauses (free: no
      product source is asked); Enter sends it at once */
   search.addEventListener('input', () => { clearTimeout(typing); typing = setTimeout(() => ask(false), 220); });
   search.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); ask(false); } });
   start();
 
-  global.BrandBrowser = { load };
+  global.BrandBrowser = { load, open, close };
 })(typeof window !== 'undefined' ? window : globalThis);

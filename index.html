@@ -66,31 +66,18 @@
     <h1 id="find-fit-title">Find Fit</h1>
     <p class="lead">Choose a brand, pick a product, and see its sizing chart &mdash; what it measures, where it comes from, and how it compares with clothes you already own.</p>
 
-    <div class="shop-card fit-browser" id="fit-browser" data-state="loading">
-      <div class="fit-brand-row">
-        <label class="fit-brand-label" for="fit-brand">Choose a brand</label>
-        <select class="profile-input fit-brand" id="fit-brand" name="brand">
-          <option value="uniqlo" selected>UNIQLO</option>
-        </select>
-        <p class="fit-brand-planned" id="fit-brand-planned"></p>
+    <div class="shop-card fit-browser" id="fit-browser" data-state="idle">
+      <!-- The brands Find Fit can browse, one button each (filled in from
+           /api/size-recommendation?brands=1 by assets/brand-browser.js).
+           Choosing one opens its products in a popup over the page. -->
+      <h2 class="fit-brand-label" id="fit-brand-label">Choose a brand</h2>
+      <div class="fit-brands" id="fit-brands" role="group" aria-labelledby="fit-brand-label">
+        <button class="fit-brand-choice" type="button" data-brand="uniqlo" aria-haspopup="dialog" aria-controls="fit-brand-dialog">
+          <span class="fit-brand-name">UNIQLO</span>
+          <span class="fit-brand-meta">Browse products</span>
+        </button>
       </div>
-      <!-- How much of the brand is listed, said before anything else
-           whenever it is only the products Fynd sourced itself
-           (brand.notice), and the one other way in: a pasted link. -->
-      <p class="fit-catalog-note" id="fit-catalog-note" hidden></p>
-
-      <!-- Fynd's own list for the brand: the products it holds, filtered and
-           paged on the server as you type (no paid search). -->
-      <h2 class="fit-list-title" id="fit-list-title">Fynd&rsquo;s list</h2>
-      <div class="fit-browser-tools">
-        <label class="sr-only" for="fit-product-search">Filter Fynd&rsquo;s list</label>
-        <input class="profile-input fit-product-search" type="search" id="fit-product-search" placeholder="Filter Fynd&rsquo;s list, e.g. hoodie" autocomplete="off" maxlength="120" enterkeyhint="search">
-        <div class="fit-filters" id="fit-product-filters"></div>
-      </div>
-      <p class="fit-browser-status" id="fit-browser-status" role="status">Loading products&hellip;</p>
-      <div class="fit-products" id="fit-products" aria-label="Products in Fynd’s list"></div>
-      <button class="btn btn-secondary fit-products-more" id="fit-products-more" type="button" hidden>Show more</button>
-      <p class="fit-coverage" id="fit-coverage"></p>
+      <p class="fit-brand-planned" id="fit-brand-planned"></p>
 
       <details class="fit-link-alt" id="fit-link-alt">
         <summary>Can&rsquo;t find a product? Paste its link &mdash; from UNIQLO or any other shop</summary>
@@ -118,6 +105,35 @@
       <div class="fit-compare" id="fit-compare" hidden></div>
     </div>
   </section>
+
+  <!-- One brand's products, in a popup over Find Fit (assets/brand-browser.js):
+       searched, filtered and paged on the server
+       (/api/size-recommendation?brand=&q=, api/_catalog/search.js), never
+       held in the page. A product opens its own page and Size Guide
+       (product.html). -->
+  <dialog class="size-chart brand-dialog" id="fit-brand-dialog" aria-labelledby="fit-brand-dialog-title">
+    <div class="size-chart-head brand-dialog-head">
+      <div>
+        <h2 class="size-chart-title" id="fit-brand-dialog-title">UNIQLO</h2>
+        <p class="size-chart-product fit-coverage" id="fit-coverage"></p>
+      </div>
+      <button class="icon-btn size-chart-close" type="button" id="fit-brand-dialog-close" aria-label="Close the product list">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+    <!-- How much of the brand is listed, said before anything else
+         whenever it is only the products Fynd sourced itself
+         (brand.notice), and the one other way in: a pasted link. -->
+    <p class="fit-catalog-note" id="fit-catalog-note" hidden></p>
+    <div class="fit-browser-tools">
+      <label class="sr-only" for="fit-product-search">Search this brand’s products</label>
+      <input class="profile-input fit-product-search" type="search" id="fit-product-search" placeholder="Search, e.g. hoodie" autocomplete="off" maxlength="120" enterkeyhint="search">
+      <div class="fit-filters" id="fit-product-filters"></div>
+    </div>
+    <p class="fit-browser-status" id="fit-browser-status" role="status">Loading products&hellip;</p>
+    <div class="fit-products" id="fit-products" aria-label="Products"></div>
+    <button class="btn btn-secondary fit-products-more" id="fit-products-more" type="button" hidden>Show more</button>
+  </dialog>
 
   <section class="section section--flush" id="how">
     <div class="container">

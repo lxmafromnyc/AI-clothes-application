@@ -608,7 +608,7 @@ function inChild(env, code) {
     assert.deepStrictEqual(r.list.products.map((p) => p.code), ['E475378-000', 'E475377-000', 'E471808-000', 'E455365-000', 'E429066-000']);
     assert.strictEqual(r.list.total, 5);
     assert.match(r.list.brand.coverage, /^5 UNIQLO US products Fynd has read off uniqlo\.com — not UNIQLO’s full range\.$/);
-    assert.strictEqual(r.notice, 'Fynd’s own list holds only 5 UNIQLO US products — it isn’t connected to UNIQLO’s full catalogue. For any other UNIQLO product, paste its link at the bottom of this box: Fynd shows its size chart where it holds one or can read one from the product’s page, and says so plainly when it can’t.', 'no live search: the link is the way');
+    assert.strictEqual(r.notice, 'Fynd’s own list holds only 5 UNIQLO US products — it isn’t connected to UNIQLO’s full catalogue. For any other UNIQLO product, close this list and paste the product’s link in Find Fit: Fynd shows its size chart where it holds one, and says so plainly when it can’t.', 'no live search: the link is the way');
     assert.strictEqual(r.list.brand.notice, r.notice);
     assert.ok(!('live' in r.list.brand), 'Find Fit offers no live search');
     assert.deepStrictEqual(r.catalogue, { connected: false, lastSuccessfulSync: null, pricesShown: false, stockShown: false });
@@ -625,7 +625,7 @@ function inChild(env, code) {
       return { brand: found.brand, total: found.total, asked };`);
     assert.ok(!('live' in r.brand));
     assert.strictEqual(r.total, 0);
-    assert.match(r.brand.notice, /For any other UNIQLO product, paste its link/);
+    assert.match(r.brand.notice, /For any other UNIQLO product, close this list and paste the product’s link/);
     assert.ok(!/Search all of UNIQLO US|live listings/.test(r.brand.notice));
     assert.deepStrictEqual(r.asked, []);
   });
@@ -784,7 +784,7 @@ function inChild(env, code) {
     assert.strictEqual(r.expired.find, null);
     assert.strictEqual(r.expired.record, true, 'the five stay');
     assert.match(r.expired.coverage, /^5 UNIQLO US products Fynd has read off uniqlo\.com/);
-    assert.match(r.expired.notice, /^UNIQLO’s product catalogue was last updated on \d{4}-\d{2}-\d{2}, too long ago to show, so Fynd’s own list holds only the 5 UNIQLO US products it sourced itself\. For any other UNIQLO product, paste its link/);
+    assert.match(r.expired.notice, /^UNIQLO’s product catalogue was last updated on \d{4}-\d{2}-\d{2}, too long ago to show, so Fynd’s own list holds only the 5 UNIQLO US products it sourced itself\. For any other UNIQLO product, close this list and paste the product’s link/);
   });
 
   await test('an unreadable or broken catalogue file is no catalogue: the five products, and the limited-coverage notice', () => {
