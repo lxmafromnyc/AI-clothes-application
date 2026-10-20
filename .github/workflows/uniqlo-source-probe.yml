@@ -47,6 +47,11 @@ jobs:
           coll=$(curl -sS -m 30 https://index.commoncrawl.org/collinfo.json | python3 -c 'import json,sys; c=json.load(sys.stdin); print(" ".join(x["id"] for x in c[:3]))')
           echo "latest collections: $coll"
           for id in $coll; do
+            echo "::group::$id domain-wide"
+            curl -sS -m 120 -A "$UA" -w "\nHTTP %{http_code}\n" "https://index.commoncrawl.org/${id}-index?url=uniqlo.com&matchType=domain&output=json&fl=url,status&limit=50" | head -60
+            echo "::endgroup::"
+          done
+          for id in $coll; do
             echo "::group::$id"
             curl -sS -m 120 -A "$UA" "https://index.commoncrawl.org/${id}-index?url=www.uniqlo.com/us/en/products/*&output=json&fl=url,status,timestamp,mime&limit=20000" -o /tmp/cc.jsonl
             python3 - <<'PY'
@@ -83,7 +88,7 @@ jobs:
             https://pubhelp.rakutenadvertising.com/hc/en-us/articles/32202924750989-Request-Access-to-Advertisers-Product-Feeds-Video; do
             echo "::group::$u"
             curl -sS -L -m 30 -A "$UA" -o /tmp/doc -w "HTTP %{http_code} %{content_type}\n" "$u"
-            if file /tmp/doc | grep -qi pdf; then pdftotext -layout /tmp/doc - | head -400; else python3 -c "import re,html,sys; t=open('/tmp/doc',errors='ignore').read(); t=re.sub(r'(?s)<(script|style).*?</\1>','',t); t=re.sub(r'<[^>]+>',' ',t); t=html.unescape(re.sub(r'\s+',' ',t)); print(t[:6000])"; fi
+            if file /tmp/doc | grep -qi pdf; then pdftotext -layout -f 17 -l 23 /tmp/doc - ; echo '----- APPENDIX D -----'; pdftotext -layout -f 31 -l 33 /tmp/doc - ; echo '----- FAQ -----'; pdftotext -layout -f 15 -l 16 /tmp/doc - ; else python3 -c "import re,html,sys; t=open('/tmp/doc',errors='ignore').read(); t=re.sub(r'(?s)<(script|style).*?</\1>','',t); t=re.sub(r'<[^>]+>',' ',t); t=html.unescape(re.sub(r'\s+',' ',t)); print(t[:6000])"; fi
             echo "::endgroup::"
           done
 
