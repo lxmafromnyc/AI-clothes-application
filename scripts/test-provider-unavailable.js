@@ -160,7 +160,7 @@ async function nodeTests() {
     assert.deepStrictEqual(found.products.map((p) => p.code), FIVE);
     assert.strictEqual(found.total, 5);
     assert.ok(!('live' in found.brand));
-    assert.strictEqual(found.brand.notice, 'Fynd’s own list holds only 5 UNIQLO US products — it isn’t connected to UNIQLO’s full catalogue. For any other UNIQLO product, paste its link at the bottom of this box: Fynd shows its size chart where it holds one or can read one from the product’s page, and says so plainly when it can’t.');
+    assert.strictEqual(found.brand.notice, 'Fynd’s own list holds only 5 UNIQLO US products — it isn’t connected to UNIQLO’s full catalogue. For any other UNIQLO product, close this list and paste the product’s link in Find Fit: Fynd shows its size chart where it holds one, and says so plainly when it can’t.');
     assert.ok(!/Search all of UNIQLO|live listings|full catalogue\./.test(found.brand.notice.replace('isn’t connected to UNIQLO’s full catalogue.', '')));
   });
 
@@ -275,10 +275,12 @@ async function browserTests() {
       hits.length = 0;
       requested.length = 0;
       const page = await openPage('index.html');
+      await page.waitForSelector('#fit-browser[data-brands="ready"]');
+      await page.click('.fit-brand-choice[data-brand="uniqlo"]');
       await page.waitForFunction(() => document.querySelectorAll('.fit-product').length === 5);
       assert.deepStrictEqual(await page.$$eval('.fit-product', (bs) => bs.map((b) => b.dataset.code)), FIVE);
       assert.strictEqual(await page.isVisible('#fit-catalog-note'), true);
-      assert.match(await page.textContent('#fit-catalog-note'), /^Fynd’s own list holds only 5 UNIQLO US products — it isn’t connected to UNIQLO’s full catalogue\. For any other UNIQLO product, paste its link/);
+      assert.match(await page.textContent('#fit-catalog-note'), /^Fynd’s own list holds only 5 UNIQLO US products — it isn’t connected to UNIQLO’s full catalogue\. For any other UNIQLO product, close this list and paste the product’s link/);
       assert.strictEqual(await page.$('#fit-live'), null, 'no box that would only ever answer with an error');
       assert.strictEqual(await page.$('text=Search all of UNIQLO US'), null);
       await page.fill('#fit-product-search', 'parka');

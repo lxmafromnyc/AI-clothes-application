@@ -45,6 +45,7 @@
 'use strict';
 
 const { normalise, LICENSABLE, isPlain, text, money, availability } = require('./product');
+const rakuten = require('./rakuten');
 
 const LIMITS = { bytes: 64 * 1024 * 1024, products: 50000, rows: 400000 };
 const SIZE_ORDER = ['XXXS', 'XXS', 'XS', 'S', 'M', 'L', 'XL', 'XXL', '3XL', '4XL', '5XL'];
@@ -195,6 +196,7 @@ function fromVariantRows(rows, adapter, rejected) {
         name: first.title,
         description: (group.find((r) => typeof r.description === 'string' && r.description.trim()) || {}).description,
         url: first.link,
+        affiliateUrl: (group.find((r) => typeof r.affiliate_link === 'string' && r.affiliate_link) || {}).affiliate_link,
         category: adapter.category(first.product_type),
         line: adapter.line([first.gender, first.age_group].filter((g) => typeof g === 'string' && g !== 'adult').join(' '), first.product_type),
         images,
@@ -216,8 +218,19 @@ function fromVariantRows(rows, adapter, rejected) {
    for what the file can't say about itself. */
 function read(body, adapter, options) {
   const opts = options || {};
-  const data = typeof body === 'string' ? parse(body) : body;
   const rejected = [];
+  /* a Rakuten Advertising Product Catalog file: read into product-feed rows */
+  let fromRakuten = null;
+  if (rakuten.isRakuten(body)) {
+    if (Buffer.byteLength(body) > LIMITS.bytes) throw new FeedError(`The feed is larger than ${LIMITS.bytes / 1024 / 1024} MB.`, 'too-large');
+    try { fromRakuten = rakuten.read(body, adapter, { mid: opts.mid, now: opts.now }); } catch (err) {
+      if (err instanceof rakuten.RakutenError) throw new FeedError(err.message, err.reason);
+      throw err;
+    }
+    if (fromRakuten.rows.length > LIMITS.rows) throw new FeedError(`The feed has more than ${LIMITS.rows} rows.`, 'too-many-rows');
+    fromRakuten.rejected.forEach((r) => rejected.push(r));
+  }
+  const data = fromRakuten ? fromRakuten.rows : typeof body === 'string' ? parse(body) : body;
   const duplicates = [];
   const notes = [];
   let header;
@@ -241,6 +254,22 @@ function read(body, adapter, options) {
     mapped = data.products.map((row, i) => (isPlain(row)
       ? { index: i + 1, discontinued: typeof row.status === 'string' && row.status.toLowerCase() === 'discontinued', record: fromFyndRow(row, adapter) }
       : { index: i + 1, invalid: true }));
+  } else if (fromRakuten) {
+    const h = fromRakuten.header;
+    header = {
+      format: h.delta ? 'rakuten-product-catalog/delta' : 'rakuten-product-catalog',
+      sourceName: text(`Rakuten Advertising Product Catalog — ${h.name || 'advertiser'} (MID ${h.mid})`, 120),
+      licence: null,
+      declaredLicensed: null,
+      generatedAt: h.generatedAt,
+      /* a full file is the advertiser's whole catalogue (its trailer was checked); a delta isn't */
+      complete: !h.delta,
+      fixture: h.fixture,
+      rows: data.length,
+      advertiser: h.mid
+    };
+    mapped = fromVariantRows(data, adapter, rejected).map((m, i) => Object.assign({ index: i + 1 }, m));
+    if (mapped.length > LIMITS.products) throw new FeedError(`The feed lists more than ${LIMITS.products} products.`, 'too-many-products');
   } else if (Array.isArray(data)) {
     header = {
       format: 'product-feed-rows',

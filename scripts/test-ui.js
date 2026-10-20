@@ -2804,8 +2804,9 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     const page = await openPage(file);
     const built = {
       /* the home page is Find Fit: a brand's products, from the sizing
-         endpoint, so the cards are audited too */
-      'index.html': '.fit-product',
+         endpoint, in the popup UNIQLO opens — opened below, so the cards
+         are audited too */
+      'index.html': '#fit-browser[data-brands="ready"]',
       /* the search page reads the live searches left from /api/account;
          the audit waits for the count so its ink is checked too */
       'find-clothes.html': '#ask-usage:not(:empty)',
@@ -2823,6 +2824,10 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
       'compare.html': '#compare-signed-out:not([hidden])'
     }[file];
     if (built) await page.waitForSelector(built, { timeout: 10000 });
+    if (file === 'index.html') {
+      await page.click('.fit-brand-choice[data-brand="uniqlo"]');
+      await page.waitForSelector('.fit-product', { timeout: 10000 });
+    }
     return page;
   };
 
@@ -2986,7 +2991,7 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     accountState = accountReply({});
     for (const viewport of [{ width: 1280, height: 900 }, { width: 360, height: 740 }]) {
       const page = await openPage('index.html', { viewport });
-      await page.waitForSelector('.fit-product', { timeout: 10000 });
+      await page.waitForSelector('#fit-browser[data-brands="ready"]', { timeout: 10000 });
       await page.evaluate(() => { document.getElementById('fit-link-alt').open = true; });
       const audit = guideAudit(page, viewport);
       await page.fill('#fit-url', 'not a link');
@@ -3065,7 +3070,7 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     accountState = accountReply({});
     const page = await openPage('index.html');
     await page.emulateMedia({ reducedMotion: 'reduce' });
-    await page.waitForSelector('.fit-product', { timeout: 10000 });
+    await page.waitForSelector('#fit-browser[data-brands="ready"]', { timeout: 10000 });
       await page.evaluate(() => { document.getElementById('fit-link-alt').open = true; });
     await page.fill('#fit-url', 'https://www.uniqlo.com/us/en/products/E475378-000/00');
     await page.press('#fit-url', 'Enter');

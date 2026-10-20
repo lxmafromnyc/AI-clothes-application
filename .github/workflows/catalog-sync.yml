@@ -1,28 +1,41 @@
 # Fynd — sync UNIQLO's catalogue from its authorized feed
 #
-# By hand, or daily once switched on (UNIQLO_FEED_SCHEDULE). Runs
-# scripts/sync-catalog.js --api against the feed named
-# by the repository secrets below, and uploads the validated catalogue
-# and the sync report as an artifact. It commits nothing: a person reads
-# the report, downloads the artifact, and commits
-# api/_catalog/data/uniqlo-us.json in a pull request.
+# By hand, or daily once switched on (UNIQLO_FEED_SCHEDULE). Two sources,
+# whichever is configured:
 #
-# It does nothing useful until a feed is authorized. Then:
-#   1  add the feed's host to FEED_HOSTS in api/_catalog/sources/uniqlo-us.js
-#      (a reviewed change, naming the agreement)
-#   2  set the repository secrets UNIQLO_FEED_URL and UNIQLO_FEED_TOKEN
-#   3  set the repository variable UNIQLO_FEED_LICENSED_FIELDS to what the
-#      licence covers (images, colours, sizes, price, stock, description)
-#   4  only if the terms allow a daily pull, set UNIQLO_FEED_SCHEDULE to
-#      "enabled"
+#   Rakuten Advertising Product Catalog (SFTP)
+#     Rakuten deposits the advertiser's full catalogue as a pipe-delimited
+#     file, MID_SID_mp.txt.gz, in the publisher's SFTP account
+#     (aftp.linksynergy.com). Needs, once both Rakuten and UNIQLO USA have
+#     approved Fynd for UNIQLO's Product Catalog:
+#       secrets   RAKUTEN_SFTP_USER, RAKUTEN_SFTP_PASSWORD
+#       variables RAKUTEN_UNIQLO_MID (UNIQLO USA's advertiser ID),
+#                 RAKUTEN_SID (Fynd's publisher channel ID),
+#                 RAKUTEN_SFTP_HOSTKEY_SHA256 (the server's host key,
+#                 base64 SHA-256, read once from the welcome email or
+#                 Rakuten support — never trusted on first use)
+#     and "aftp.linksynergy.com" recorded as the feed host in
+#     api/_catalog/sources/uniqlo-us.js (RAKUTEN.host), a reviewed change.
 #
-# A scheduled run, like a manual one, uploads the refreshed catalogue as an
-# artifact and commits nothing: what customers see changes only when a
-# person commits it. Prices and stock stop showing 48 hours after the last
-# committed sync, so a daily schedule needs a daily commit to keep them.
+#   An HTTPS API (UNIQLO_FEED_URL, UNIQLO_FEED_TOKEN), as before.
 #
-# The credential reaches only the sync step, as an environment variable;
-# the script never prints it. Not one of the required checks.
+# Then scripts/sync-catalog.js checks every row and merges it with the
+# committed catalogue (refusing a truncated, malformed or mass-removing
+# feed), and the result is uploaded as an artifact. With the variable
+# UNIQLO_FEED_AUTOPR set to "enabled", a successful sync that changed
+# anything also opens (or updates) a pull request with the refreshed
+# catalogue and its report, so new, changed and discontinued products
+# arrive without anyone adding them by hand — and nothing reaches
+# customers until that pull request is merged.
+#
+# It does nothing useful until a feed is authorized. Then set
+# UNIQLO_FEED_LICENSED_FIELDS to what the licence covers (images, colours,
+# sizes, price, stock, description), and only if the terms allow a daily
+# pull, UNIQLO_FEED_SCHEDULE to "enabled". Prices and stock stop showing
+# 48 hours after the last merged sync.
+#
+# Credentials reach only the step that uses them, as environment
+# variables, and are never printed. Not one of the required checks.
 
 name: UNIQLO catalogue sync
 
@@ -41,9 +54,11 @@ on:
         type: boolean
         default: false
 
-# One run at a time; a scheduled run never needs more than reading the repo.
+# Reading the repo; writing only the refresh branch and its pull request,
+# and only when UNIQLO_FEED_AUTOPR is enabled.
 permissions:
-  contents: read
+  contents: write
+  pull-requests: write
 
 concurrency:
   group: uniqlo-catalog-sync
@@ -60,15 +75,72 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Download UNIQLO's Product Catalog from Rakuten (SFTP)
+        id: rakuten
+        if: ${{ vars.RAKUTEN_UNIQLO_MID != '' }}
+        env:
+          RAKUTEN_SFTP_USER: ${{ secrets.RAKUTEN_SFTP_USER }}
+          RAKUTEN_SFTP_PASSWORD: ${{ secrets.RAKUTEN_SFTP_PASSWORD }}
+          MID: ${{ vars.RAKUTEN_UNIQLO_MID }}
+          SID: ${{ vars.RAKUTEN_SID }}
+          HOSTKEY: ${{ vars.RAKUTEN_SFTP_HOSTKEY_SHA256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for v in RAKUTEN_SFTP_USER RAKUTEN_SFTP_PASSWORD MID SID HOSTKEY; do
+            [ -n "${!v}" ] || { echo "::error::$v is not set, so the Rakuten feed can't be fetched."; exit 1; }
+          done
+          [[ "$MID" =~ ^[0-9]+$ && "$SID" =~ ^[0-9]+$ ]] || { echo "::error::RAKUTEN_UNIQLO_MID and RAKUTEN_SID must be numbers."; exit 1; }
+          host=$(node -e "process.stdout.write(require('./api/_catalog/sources/uniqlo-us').RAKUTEN.host || '')")
+          [ -n "$host" ] || { echo "::error::No Rakuten feed host is recorded in api/_catalog/sources/uniqlo-us.js (RAKUTEN.host), so nothing is fetched."; exit 1; }
+          # the full file: every live product (Rakuten's own naming, MID_SID_mp.txt.gz)
+          curl --fail --silent --show-error --max-time 600 \
+            --hostpubsha256 "$HOSTKEY" \
+            --user "$RAKUTEN_SFTP_USER:$RAKUTEN_SFTP_PASSWORD" \
+            "sftp://$host/${MID}_${SID}_mp.txt.gz" -o "$RUNNER_TEMP/uniqlo-feed.txt.gz"
+          gunzip -f "$RUNNER_TEMP/uniqlo-feed.txt.gz"
+          echo "file=$RUNNER_TEMP/uniqlo-feed.txt" >> "$GITHUB_OUTPUT"
+          echo "Downloaded $(wc -l < "$RUNNER_TEMP/uniqlo-feed.txt") lines."
+
       - name: Sync from the authorized feed
         env:
           UNIQLO_FEED_URL: ${{ secrets.UNIQLO_FEED_URL }}
           UNIQLO_FEED_TOKEN: ${{ secrets.UNIQLO_FEED_TOKEN }}
           UNIQLO_FEED_LICENSED_FIELDS: ${{ vars.UNIQLO_FEED_LICENSED_FIELDS }}
           MASS_REMOVAL: ${{ inputs.allow_mass_removal && '--allow-mass-removal' || '' }}
+          FEED_FILE: ${{ steps.rakuten.outputs.file }}
         # bash, so pipefail keeps a refused sync red
         shell: bash
-        run: node scripts/sync-catalog.js --source uniqlo-us --api $MASS_REMOVAL 2>&1 | tee sync-report.txt
+        run: |
+          set -o pipefail
+          # a Rakuten file says itself whether it is complete (its trailer's count)
+          if [ -n "$FEED_FILE" ]; then from=(--file "$FEED_FILE"); else from=(--api); fi
+          node scripts/sync-catalog.js --source uniqlo-us "${from[@]}" $MASS_REMOVAL 2>&1 | tee sync-report.txt
+          node scripts/catalog-coverage.js --source uniqlo-us 2>&1 | tee -a sync-report.txt
+
+      - name: Propose the refreshed catalogue as a pull request
+        if: ${{ success() && vars.UNIQLO_FEED_AUTOPR == 'enabled' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- api/_catalog/data/uniqlo-us.json; then echo "No product changed; nothing to propose."; exit 0; fi
+          branch=catalog/uniqlo-us-sync
+          git config user.name "fynd-catalog-sync"
+          git config user.email "fynd-catalog-sync@users.noreply.github.com"
+          git switch -C "$branch"
+          git add api/_catalog/data/uniqlo-us.json api/_catalog/data/uniqlo-us.status.json
+          git commit -m "Catalogue: UNIQLO US sync $(date -u +%Y-%m-%d)" -m "$(head -c 60000 sync-report.txt)"
+          git push --force origin "$branch"
+          if gh pr view "$branch" --json state -q .state 2>/dev/null | grep -q OPEN; then
+            gh pr comment "$branch" --body-file <(printf 'Refreshed by the scheduled sync on %s.\n\n```\n%s\n```\n' "$(date -u +%FT%TZ)" "$(tail -c 50000 sync-report.txt)")
+          else
+            gh pr create --head "$branch" --base "${{ github.event.repository.default_branch }}" \
+              --title "Catalogue: refresh UNIQLO US from its authorized feed" \
+              --body-file <(printf 'The scheduled sync read the authorized feed, checked every row and found changes. Read the report below and the diff before merging: nothing reaches customers until this is merged.\n\n```\n%s\n```\n' "$(tail -c 50000 sync-report.txt)")
+          fi
+
       - name: Keep the catalogue and the report
         if: ${{ always() }}
         uses: actions/upload-artifact@v4

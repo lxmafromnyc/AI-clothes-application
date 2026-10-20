@@ -125,14 +125,20 @@ async function test(name, fn) {
     await page.waitForFunction((n) => Number(document.getElementById('fit-browser').dataset.answers) > n, before);
   };
   const codes = (page) => page.$$eval('.fit-product', (bs) => bs.map((b) => b.dataset.code));
-  const ready = (page) => page.waitForSelector('#fit-browser[data-answers="1"]');
+  /* Find Fit's brands, then UNIQLO chosen: its products open in the popup */
+  const openUniqlo = async (page) => {
+    await page.waitForSelector('#fit-browser[data-brands="ready"]');
+    await page.click('.fit-brand-choice[data-brand="uniqlo"]');
+  };
+  const ready = async (page) => { await openUniqlo(page); await page.waitForSelector('#fit-browser[data-answers="1"]'); };
 
   console.log('\nFind Fit, with UNIQLO’s catalogue connected');
 
   await test('choosing UNIQLO lists the catalogue a page at a time: 24 cards of 1,230, the source and date named, no limited-coverage notice, and never "full"', async () => {
     const page = await openPage('index.html');
     await ready(page);
-    assert.strictEqual(await page.$eval('#fit-brand', (s) => s.value), 'uniqlo');
+    assert.strictEqual(await page.$eval('#fit-brand-dialog', (d) => d.open), true, 'the products are in the popup');
+    assert.strictEqual(await page.textContent('#fit-brand-dialog-title'), 'UNIQLO');
     assert.strictEqual((await codes(page)).length, 24);
     assert.match(await page.textContent('#fit-browser-status'), /^Showing 24 of 1230$/);
     assert.match(await page.textContent('#fit-coverage'), /^1230 UNIQLO US products from FIXTURE UNIQLO US feed, updated \d{4}-\d{2}-\d{2}\.$/);
@@ -252,11 +258,17 @@ async function test(name, fn) {
   await test('when the catalogue can’t be fetched, Find Fit says so and offers the link box; a failed "Show more" keeps what is shown', async () => {
     failCatalog = (u) => u.searchParams.get('brand') === 'uniqlo' && !u.searchParams.has('detail') && !u.searchParams.has('item');
     const page = await openPage('index.html');
+    await openUniqlo(page);
     await page.waitForSelector('#fit-browser[data-state="unavailable"]');
-    assert.match(await page.textContent('#fit-browser-status'), /couldn’t be loaded just now.*paste a product’s link below/);
+    assert.match(await page.textContent('#fit-browser-status'), /couldn’t be loaded just now.*close this and paste a product’s link instead/);
     assert.strictEqual((await codes(page)).length, 0);
-    await page.context().close();
+    /* closing it, the link box is right there; opening it again asks again */
+    await page.click('#fit-brand-dialog-close');
+    assert.strictEqual(await page.isVisible('#fit-link-alt'), true);
     failCatalog = null;
+    await answered(page, () => page.click('.fit-brand-choice[data-brand="uniqlo"]'));
+    assert.strictEqual((await codes(page)).length, 24, 'a failed load is retried on the next open');
+    await page.context().close();
     const again = await openPage('index.html');
     await ready(again);
     failCatalog = (u) => u.searchParams.has('offset');
@@ -265,6 +277,66 @@ async function test(name, fn) {
     assert.match(await again.textContent('#fit-browser-status'), /More products couldn’t be loaded just now/);
     failCatalog = null;
     await again.context().close();
+  });
+
+  console.log('\nthe UNIQLO popup');
+
+  await test('nothing is fetched until UNIQLO is chosen; then the popup opens over Find Fit with the search box focused', async () => {
+    const start = asked.length;
+    const page = await openPage('index.html');
+    await page.waitForSelector('#fit-browser[data-brands="ready"]');
+    await page.waitForTimeout(300);
+    assert.deepStrictEqual(asked.slice(start), ['?brands=1'], 'only the brand list is asked for on page load');
+    assert.strictEqual(await page.$eval('#fit-brand-dialog', (d) => d.open), false);
+    assert.match(await page.textContent('.fit-brand-choice[data-brand="uniqlo"]'), /UNIQLO\s*1230 products · Browse/);
+    await openUniqlo(page);
+    await page.waitForSelector('#fit-browser[data-answers="1"]');
+    assert.strictEqual(await page.evaluate(() => document.activeElement.id), 'fit-product-search');
+    assert.strictEqual(await page.$eval('#fit-brand-dialog', (d) => d.matches(':modal')), true, 'modal: the page behind is inert');
+    await page.context().close();
+  });
+
+  await test('Escape, the close button and a click outside each close it, focus returns to UNIQLO, and the search is kept for the next open', async () => {
+    const page = await openPage('index.html');
+    await ready(page);
+    await answered(page, () => page.fill('#fit-product-search', 'black oversized hoodie'));
+    const found = await codes(page);
+    /* Escape from the list (not the search box, where it first clears the words, as any search box does) */
+    await page.focus('#fit-brand-dialog-close');
+    await page.keyboard.press('Escape');
+    assert.strictEqual(await page.$eval('#fit-brand-dialog', (d) => d.open), false);
+    assert.strictEqual(await page.evaluate(() => document.activeElement.dataset.brand), 'uniqlo');
+    const calls = asked.length;
+    await page.click('.fit-brand-choice[data-brand="uniqlo"]');
+    assert.strictEqual(await page.inputValue('#fit-product-search'), 'black oversized hoodie');
+    assert.deepStrictEqual(await codes(page), found);
+    assert.strictEqual(asked.length, calls, 'reopening asks nothing again');
+    await page.click('#fit-brand-dialog-close');
+    assert.strictEqual(await page.$eval('#fit-brand-dialog', (d) => d.open), false);
+    await page.click('.fit-brand-choice[data-brand="uniqlo"]');
+    await page.mouse.click(5, 5);
+    assert.strictEqual(await page.$eval('#fit-brand-dialog', (d) => d.open), false, 'a click on the backdrop closes it');
+    await page.context().close();
+  });
+
+  await test('choosing a product in the popup continues into Fynd’s product page and its Size Guide — Fynd, not UNIQLO', async () => {
+    const page = await openPage('index.html');
+    await ready(page);
+    const first = (await codes(page))[0];
+    await Promise.all([page.waitForURL(/product\.html\?brand=uniqlo&item=/), page.click(`.fit-product[data-code="${first}"]`)]);
+    assert.strictEqual(new URL(page.url()).origin, ORIGIN);
+    assert.strictEqual(new URL(page.url()).searchParams.get('item'), first);
+    await page.waitForSelector('#product[data-state="ready"]');
+    await page.context().close();
+  });
+
+  await test('on a phone the popup fills the screen and scrolls inside, with no sideways scroll', async () => {
+    const page = await openPage('index.html', { width: 375, height: 700 });
+    await ready(page);
+    const box = await page.$eval('#fit-brand-dialog', (d) => { const r = d.getBoundingClientRect(); return { w: r.width, h: r.height, scroll: d.scrollWidth - d.clientWidth }; });
+    assert.ok(box.w >= 370 && box.h >= 690, JSON.stringify(box));
+    assert.ok(box.scroll <= 0, `${box.scroll}px sideways inside the popup`);
+    await page.context().close();
   });
 
   console.log('\nchoosing a catalogue product');
