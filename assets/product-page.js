@@ -20,9 +20,14 @@
    Everything shown is what Fynd holds for the product
    (Account.sizing.detail; api/_sizing/brands): photos only from the
    brand's image host, sizes, fabric and fit only from Fynd's record,
-   each with its source. What Fynd doesn't hold — price, description,
-   care, reviews, stock — is said in its place, and the retailer's own
-   page is one click away. Nothing is filled in to complete the layout.
+   each with its source. A product from the brand's authorized
+   catalogue (api/_catalog) may add its colour names, size labels, and —
+   only while the catalogue is current and its licence covers them — a
+   price and which sizes are in stock, each said to be the catalogue's
+   and dated. What Fynd doesn't hold — description, care, reviews, and
+   otherwise price and stock — is said in its place, and the retailer's
+   own page is one click away. Nothing is filled in to complete the
+   layout.
    ========================================================= */
 
 (function (global) {
@@ -118,6 +123,8 @@
       if (r.left < b.left || r.right > b.right) box.scrollLeft += r.left - b.left - (b.width - r.width) / 2;
     }
     if (c) showImage(c.image, `${product.name}, ${c.label}`);
+    /* stock is per colour where the catalogue says so */
+    if (!quiet && product.sizes && Array.isArray(product.sizes.variants)) { drawSizes(); chooseSize(size, true); }
     if (!quiet) remember();
   }
 
@@ -155,14 +162,30 @@
     if (!quiet) remember();
   }
 
-  /* the product's sizes as buttons — only those in Fynd's record, none
-     marked unavailable: Fynd doesn't know which are in stock */
+  /* whether a size is out of stock in the chosen colour, as the
+     catalogue last said — null when Fynd doesn't know */
+  function sizeOut(s) {
+    const sizes = product.sizes || {};
+    if (Array.isArray(sizes.variants) && colour && colour.code) {
+      const v = sizes.variants.find((x) => x.colour === colour.code && x.size === s);
+      if (v) return v.availability === 'out_of_stock';
+      if (sizes.variants.some((x) => x.colour === colour.code)) return true;
+    }
+    if (sizes.availability && sizes.availability[s]) return sizes.availability[s] === 'out_of_stock';
+    return null;
+  }
+
+  /* the product's sizes as buttons — from Fynd's record, or the
+     catalogue's size labels. One is marked out of stock only when the
+     catalogue said so, and can still be chosen to read its chart. */
   function sizeButtons() {
     return product.sizes.list.map((s) => {
-      const b = el('button', 'pdp-size', s);
+      const out = sizeOut(s);
+      const b = el('button', `pdp-size${out ? ' is-out' : ''}`, s);
       b.type = 'button';
       b.setAttribute('role', 'radio');
       b.setAttribute('aria-checked', String(s === size));
+      if (out) { b.setAttribute('aria-label', `${s}, out of stock`); b.title = 'Out of stock'; }
       b.dataset.size = s;
       b.addEventListener('click', () => chooseSize(s));
       return b;
@@ -178,8 +201,9 @@
       return;
     }
     box.replaceChildren(...sizeButtons());
-    $('pdp-sizes-note').textContent = '';
-    $('pdp-sizes-note').hidden = true;
+    const out = product.sizes.list.filter((s) => sizeOut(s));
+    $('pdp-sizes-note').textContent = out.length ? `Out of stock${colour && Array.isArray(product.sizes.variants) ? ' in this colour' : ''}: ${out.join(', ')} (as of ${product.sizes.stockAsOf}).` : '';
+    $('pdp-sizes-note').hidden = !out.length;
   }
 
   /* the expandable sections a shop's page has, each saying what Fynd holds */
@@ -220,7 +244,13 @@
     const sources = [
       p(`Product ID ${product.code.slice(1, 7)} (${product.code}), UNIQLO ${product.market}.`),
       p(product.recordedAt ? `Sizes, fabric and fit are from Fynd’s saved record, ${product.recordFrom || `copied from UNIQLO’s page on ${product.recordedAt}`} — not read live${product.recordVerified === false ? ', and not yet checked' : ''}.` : 'Fynd has no saved record of this product’s details; only its listing and photos.'),
-      product.sizes ? p(`Sizes from ${product.sizes.source}. Fynd doesn’t know which sizes are in stock.`) : null,
+      product.sizes ? p(product.sizes.stockAsOf
+        ? `Sizes from ${product.sizes.source}. Stock as the catalogue said on ${product.sizes.stockAsOf} — check UNIQLO’s page before buying.`
+        : `Sizes from ${product.sizes.source}. Fynd doesn’t know which sizes are in stock.`) : null,
+      product.price ? p(`Price from ${product.price.source}.`) : null,
+      product.catalogue ? p(product.catalogue.withheld
+        ? `Listed in ${product.catalogue.name}, updated ${product.catalogue.updatedAt} — too long ago for its price and stock to be shown.`
+        : `Listed in ${product.catalogue.name}, updated ${product.catalogue.updatedAt}.`) : null,
       p(product.coloursNote),
       p(product.imagesFrom ? `Photos from ${product.imagesFrom}.` : 'Fynd holds no photo of this product.'),
       p(`Not held by Fynd: ${product.missing.join(', ')}.`)
@@ -248,8 +278,23 @@
     const link = $('pdp-retailer');
     link.href = product.url;
     link.textContent = `View on ${retailerName}`;
-    /* no price, and no stock: neither is held, so neither is shown */
-    $('pdp-retailer-note').textContent = `Price, stock and checkout are on ${retailerName}’s own page — Fynd doesn’t know which colours or sizes are in stock.`;
+    /* a price only when the catalogue supplies a current one; otherwise
+       none is held, so none is shown */
+    const price = product.price && Number.isInteger(product.price.amount) && /^[A-Z]{3}$/.test(product.price.currency || '') ? product.price : null;
+    /* the price line exists only when there is a price to put on it */
+    const oldPrice = $('pdp-price');
+    if (oldPrice) oldPrice.remove();
+    if (price) {
+      const f = (n) => new Intl.NumberFormat('en-US', { style: 'currency', currency: price.currency }).format(n / 100);
+      const priceEl = el('p', 'pdp-price', `${price.varies ? 'From ' : ''}${f(price.amount)}`);
+      priceEl.id = 'pdp-price';
+      if (Number.isInteger(price.was) && price.was > price.amount) priceEl.append(el('span', 'pdp-price-was', f(price.was)));
+      $('pdp-meta').after(priceEl);
+    }
+    const stockKnown = Boolean(product.availability || (product.sizes && product.sizes.stockAsOf));
+    $('pdp-retailer-note').textContent = price || stockKnown
+      ? `${price ? (stockKnown ? 'Price and stock' : 'Price') : 'Stock'} as ${retailerName}’s catalogue said on ${(product.catalogue && product.catalogue.updatedAt) || 'its last update'} — checkout, and the current figures, are on ${retailerName}’s own page.`
+      : `Price, stock and checkout are on ${retailerName}’s own page — Fynd doesn’t know which colours or sizes are in stock.`;
     drawGallery();
     drawColours();
     drawSizes();
@@ -257,6 +302,7 @@
     $('pdp-grid').hidden = false;
     const wantColour = params.get('colour');
     chooseColour(product.colours.find((c) => c.code === wantColour) || product.colours.find((c) => c.code === product.defaultColour) || product.colours[0] || null, true);
+    if (product.sizes && Array.isArray(product.sizes.variants)) drawSizes();
     const wantSize = params.get('size');
     chooseSize(product.sizes && product.sizes.list.includes(wantSize) ? wantSize : null, true);
     status('', 'ready');

@@ -1,0 +1,64 @@
+# Fynd — sync UNIQLO's catalogue from its authorized feed
+#
+# By hand only. Runs scripts/sync-catalog.js --api against the feed named
+# by the repository secrets below, and uploads the validated catalogue
+# and the sync report as an artifact. It commits nothing: a person reads
+# the report, downloads the artifact, and commits
+# api/_catalog/data/uniqlo-us.json in a pull request.
+#
+# It does nothing useful until a feed is authorized. Then:
+#   1  add the feed's host to FEED_HOSTS in api/_catalog/sources/uniqlo-us.js
+#      (a reviewed change, naming the agreement)
+#   2  set the repository secrets UNIQLO_FEED_URL and UNIQLO_FEED_TOKEN
+#   3  set the repository variable UNIQLO_FEED_LICENSED_FIELDS to what the
+#      licence covers (images, colours, sizes, price, stock)
+#
+# The credential reaches only the sync step, as an environment variable;
+# the script never prints it. Not one of the required checks.
+
+name: UNIQLO catalogue sync
+
+on:
+  workflow_dispatch:
+    inputs:
+      allow_mass_removal:
+        description: 'Accept a complete feed that removes more than half the catalogue'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: uniqlo-catalog-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Sync the UNIQLO US catalogue
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Sync from the authorized feed
+        env:
+          UNIQLO_FEED_URL: ${{ secrets.UNIQLO_FEED_URL }}
+          UNIQLO_FEED_TOKEN: ${{ secrets.UNIQLO_FEED_TOKEN }}
+          UNIQLO_FEED_LICENSED_FIELDS: ${{ vars.UNIQLO_FEED_LICENSED_FIELDS }}
+          MASS_REMOVAL: ${{ inputs.allow_mass_removal && '--allow-mass-removal' || '' }}
+        # bash, so pipefail keeps a refused sync red
+        shell: bash
+        run: node scripts/sync-catalog.js --source uniqlo-us --api $MASS_REMOVAL 2>&1 | tee sync-report.txt
+      - name: Keep the catalogue and the report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: uniqlo-catalogue
+          path: |
+            api/_catalog/data/uniqlo-us.json
+            api/_catalog/data/uniqlo-us.status.json
+            sync-report.txt
+          if-no-files-found: warn

@@ -18,8 +18,11 @@
                                                        (api/_sizing/chart.js); needs
                                                        no account and reads no profile
    GET ?brands=1               -> { brands, planned } the brands Find Fit can browse
-   GET ?brand=<id>             -> { brand, products } one brand's products to pick from
-                                                       (api/_sizing/brands)
+   GET ?brand=<id>[&q=<words>][&category=][&line=][&inStock=1][&offset=][&limit=]
+                               -> { brand, products, total, offset, limit, facets,
+                                    partial, unmatched }  one page of a brand's products
+                                                       matching a search (api/_sizing/brands,
+                                                       api/_catalog/search.js); at most 48
    GET ?brand=<id>&detail=<code> -> { product }     its product page: photos by colour,
                                                        sizes, fabric, fit, each sourced
    GET ?brand=<id>&item=<code> -> { chart, item }     the chosen product's chart, looked
@@ -152,12 +155,7 @@ async function handler(req, res) {
       if (!product) return res.status(404).json({ error: 'That product isn’t one Find Fit lists.', reason: 'unknown-product' });
       return res.status(200).json({ product });
     }
-    if (early.item === undefined) {
-      return res.status(200).json({
-        brand: { id: brand.id, name: brand.name, market: brand.market, coverage: brand.coverage },
-        products: brand.products().map((p) => ({ code: p.code, name: p.name, url: p.url, category: p.category, group: p.group, categoryLabel: p.categoryLabel, line: p.line, imageUrl: p.imageUrl, holds: p.holds, holdsText: p.holdsText }))
-      });
-    }
+    if (early.item === undefined) return res.status(200).json(brands.browse(brand, early));
     const item = brand.find(early.item);
     if (!item) return res.status(404).json({ error: 'That product isn’t one Find Fit lists.', reason: 'unknown-product' });
     const address = auth.addressSubject(req);
