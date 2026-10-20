@@ -225,6 +225,10 @@ function detail(code, now) {
     code: p.code,
     name: p.name,
     url: p.url,
+    /* where "View on UNIQLO" goes: the affiliate network's tracking link
+       to this same page when the catalogue came from an affiliate feed
+       (checked as it was read: api/_catalog/product.js), else the page */
+    buyUrl: (c && c.affiliateUrl) || p.url,
     category: p.category,
     categoryLabel: p.categoryLabel,
     line: p.line,

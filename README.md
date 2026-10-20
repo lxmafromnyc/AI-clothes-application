@@ -2424,32 +2424,73 @@ add a test to `scripts/test-page-access.js`.
 A broader UNIQLO US list needs an authorized catalogue feed (below). Nothing
 here falls back to another paid search or reads UNIQLO's site to build a list.
 
-**Connecting a real feed**, once access is approved:
+**The feed it is built for: UNIQLO USA's Product Catalog on Rakuten
+Advertising.** UNIQLO USA runs its affiliate programme on Rakuten
+Advertising, and Rakuten delivers an advertiser's whole catalogue to
+approved publishers as a file — every product, with its page, photo, retail
+and sale price, availability and, for clothing (Class 60), its colour, size,
+gender and age — deposited daily over SFTP. Fynd reads that file as it is
+(`api/_catalog/rakuten.js`, to Rakuten's *Product Catalog Data Feed
+Implementation Guidelines for Publishers*, December 2023):
 
-1. Record the agreement: which feed, which fields it licenses, any display or
-   caching terms.
-2. Add the feed's host to `FEED_HOSTS` in `api/_catalog/sources/uniqlo-us.js`
-   in a pull request.
-3. If the feed isn't in one of the two formats, add its reader to `import.js`
-   and a fixture and tests in its shape.
-4. Set `UNIQLO_FEED_URL`, `UNIQLO_FEED_TOKEN` and
-   `UNIQLO_FEED_LICENSED_FIELDS` (repository secrets and variable for the
-   workflow, or the shell).
-5. `node scripts/sync-catalog.js --source uniqlo-us --api --dry-run`, read the
-   report, then run it without `--dry-run`.
-6. Read `api/_catalog/data/uniqlo-us.json`'s diff, check a sample of products
-   against UNIQLO's pages, and commit it in a pull request.
-7. Re-sync at least every 48 hours if prices and stock are licensed, and every
-   30 days at most in any case.
+- `HDR|MID|name|time`, one product variant per line (38 pipe-delimited
+  fields; 39 in a delta file), `TRL|count`. A file whose trailer doesn't
+  match its lines, or that has no trailer, is refused whole; a file from
+  another advertiser than `RAKUTEN_UNIQLO_MID` is refused.
+- The Product URL is Rakuten's tracking link; the product's page is read
+  from its `murl`, and only a UNIQLO US page with the product's code counts.
+  The tracking link is kept (`affiliateUrl`) only when it leads to that same
+  page, and "View on UNIQLO" uses it.
+- Variants are grouped into products by that code, so colours, sizes, the
+  lowest price (and the retail price it's discounted from) and per-variant
+  stock come from the lines themselves.
+- A full file is the whole catalogue: a product it no longer lists is
+  removed. A delta file inserts, updates and deletes (I/U/D) only what it
+  names. A product whose End Date has passed is discontinued.
 
-**Testing it:** `node scripts/test-catalog-feed.js` (import of the Fynd feed,
+Measured on a FIXTURE file at catalogue scale (`scripts/test-catalog-rakuten.js`:
+2,400 products, 24,000 variant lines): the catalogue file is about 6 MB and a
+cold start loads, checks and indexes it in about a quarter of a second. A real
+UNIQLO file's size isn't known until one is delivered; if it is many times
+that, the catalogue should move from a committed file to the KV store.
+
+**Connecting it**, once Rakuten and UNIQLO USA have approved Fynd's access to
+UNIQLO's Product Catalog:
+
+1. Record the agreement: the feed, which fields it licenses, and any display,
+   caching or link terms.
+2. Set, in the repository: secrets `RAKUTEN_SFTP_USER`,
+   `RAKUTEN_SFTP_PASSWORD`; variables `RAKUTEN_UNIQLO_MID` (UNIQLO USA's
+   advertiser ID), `RAKUTEN_SID` (Fynd's publisher channel ID),
+   `RAKUTEN_SFTP_HOSTKEY_SHA256` (the server's host key, from Rakuten — never
+   taken on first use) and `UNIQLO_FEED_LICENSED_FIELDS`.
+3. Run **UNIQLO catalogue sync** by hand. It downloads `MID_SID_mp.txt.gz`,
+   syncs it, measures coverage (`scripts/catalog-coverage.js`) and uploads the
+   catalogue and report.
+4. Read the report — products, rejected rows and why, field coverage — check
+   a sample against UNIQLO's pages, and commit the catalogue in a pull request.
+5. To keep it current without anyone adding products by hand: set
+   `UNIQLO_FEED_AUTOPR` to `enabled` (each sync that changes anything opens or
+   updates a pull request) and, if the terms allow a daily pull,
+   `UNIQLO_FEED_SCHEDULE` to `enabled`. Prices and stock stop showing 48 hours
+   after the last merged sync.
+
+Any other feed (an HTTPS API in the Fynd or Merchant formats): add its host
+to `FEED_HOSTS`, set `UNIQLO_FEED_URL` / `UNIQLO_FEED_TOKEN`, and run
+`node scripts/sync-catalog.js --source uniqlo-us --api --dry-run` first.
+
+**Testing it:** `node scripts/test-catalog-rakuten.js` (the Rakuten reader,
+a 2,400-product sync, a removing full file, a delta, refused files, coverage,
+the catalogue API, a product's page and chart, and the popup in Chromium),
+`node scripts/test-catalog-feed.js` (import of the Fynd feed,
 JSON/JSON Lines rows and a tab-separated Merchant-format file, duplicates,
 URLs, licensing, descriptions, sync and stale removal, the status record, the
 API fetch, the command, loading, search, colour/size/stock filters, pages,
 staleness, product selection, sizing and verification status) and
 `node scripts/test-catalog-browser.js` (Find Fit and the product page in
-Chromium). Both use FIXTURE feeds in `scripts/fixtures/catalog-feed/`; every
-code from E910001 and every "FIXTURE" name is invented. They prove the
+Chromium). They use FIXTURE feeds (in `scripts/fixtures/catalog-feed/`, or
+written by the test); every code from E910001 or E960000 and every "FIXTURE"
+name is invented. They prove the
 importer and the page work; they say nothing about any real feed's coverage.
 
 ### A product's page

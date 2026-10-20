@@ -9,7 +9,8 @@
    diff, and commits the file; nothing here commits or deploys.
 
    Usage:
-     node scripts/sync-catalog.js --source uniqlo-us --file <feed.json|.jsonl>
+     node scripts/sync-catalog.js --source uniqlo-us --file <feed.json|.jsonl|.tsv|.csv>
+     node scripts/sync-catalog.js --source uniqlo-us --file <MID_SID_mp.txt>   (Rakuten Product Catalog)
      node scripts/sync-catalog.js --source uniqlo-us --api
 
    Options:
@@ -129,7 +130,15 @@ async function main(argv, deps) {
 
   let imported;
   try {
-    imported = read(body, adapter, { licensed, complete: o.complete === true, generatedAt: o['generated-at'] ? new Date(o['generated-at']).toISOString() : null, fixture: false });
+    imported = read(body, adapter, {
+      licensed,
+      complete: o.complete === true,
+      generatedAt: o['generated-at'] ? new Date(o['generated-at']).toISOString() : null,
+      fixture: false,
+      /* a Rakuten file must be from the advertiser configured for this source */
+      mid: adapter.RAKUTEN && d.env[adapter.RAKUTEN.midEnv] ? d.env[adapter.RAKUTEN.midEnv] : null,
+      now: now.toISOString()
+    });
   } catch (err) {
     return fail(err instanceof FeedError ? err.reason : 'invalid-feed', err.message);
   }

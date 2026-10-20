@@ -78,6 +78,7 @@ const GROUPS = {
     ['test-catalog-images', "the catalogue image extractor's gates, including its browser path"],
     ['test-record-demo', "the demo recorder's tool paths and rules, and its retailer test in a browser"],
     ['test-catalog-browser', "Find Fit searching and paging an authorized catalogue in a browser, and a chosen product's page and Size Guide"],
+    ['test-catalog-rakuten', "UNIQLO's catalogue from a Rakuten Product Catalog file: reader, sync at catalogue scale, refresh, coverage, and the popup over it"],
     ['test-provider-unavailable', 'with no paid product source: OpenWeb Ninja never asked, no silent fallback, and what Find Fit and the Search page show']
   ]
 };

@@ -284,7 +284,8 @@
     /* what Fynd holds for the measurements, said before anything is looked up */
     $('pdp-holds').textContent = product.holdsText || '';
     const link = $('pdp-retailer');
-    link.href = product.url;
+    /* the page itself, or the affiliate network's tracking link to it (the server checked it leads there) */
+    link.href = /^https:\/\/(www\.uniqlo\.com|click\.linksynergy\.com)\//.test(product.buyUrl || '') ? product.buyUrl : product.url;
     link.textContent = `View on ${retailerName}`;
     /* a price only when the catalogue supplies a current one; otherwise
        none is held, so none is shown */
