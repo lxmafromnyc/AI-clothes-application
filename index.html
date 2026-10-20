@@ -74,33 +74,44 @@
         </select>
         <p class="fit-brand-planned" id="fit-brand-planned"></p>
       </div>
-      <div class="fit-browser-tools">
-        <label class="sr-only" for="fit-product-search">Search this brand&rsquo;s products</label>
-        <input class="profile-input fit-product-search" type="search" id="fit-product-search" placeholder="Search products, e.g. black oversized hoodie" autocomplete="off" maxlength="120" enterkeyhint="search">
-        <div class="fit-filters" id="fit-product-filters"></div>
-      </div>
-      <!-- How much of the brand is listed, said before the list whenever
-           it is only the products Fynd sourced itself (brand.notice). -->
+      <!-- How much of the brand is listed, said before anything else
+           whenever it is only the products Fynd sourced itself
+           (brand.notice) — and, where live search can run, where to find
+           the rest. -->
       <p class="fit-catalog-note" id="fit-catalog-note" hidden></p>
-      <p class="fit-browser-status" id="fit-browser-status" role="status">Loading products&hellip;</p>
-      <div class="fit-products" id="fit-products" aria-label="Products"></div>
-      <button class="btn btn-secondary fit-products-more" id="fit-products-more" type="button" hidden>Show more</button>
-      <p class="fit-coverage" id="fit-coverage"></p>
 
-      <!-- The rest of UNIQLO's US range, searched live on request through
-           Fynd's product source (/api/search, scope uniqlo-us; see
-           api/_catalog/live.js): offered once something is typed, never
-           run on its own, and counted as one search. -->
+      <!-- The rest of UNIQLO's US range, searched live (/api/search, scope
+           uniqlo-us; see api/_catalog/live.js). Shown whenever the server
+           says it can run here (brand.live.available); its own box and an
+           explicit button, so nothing is searched — or charged — until the
+           button is pressed. -->
       <section class="fit-live" id="fit-live" hidden aria-labelledby="fit-live-title">
-        <h2 class="fit-live-title" id="fit-live-title">Not here? Search all of UNIQLO US</h2>
-        <p class="fit-live-note" id="fit-live-note">A live search of the listings UNIQLO publishes to Google Shopping, through Fynd&rsquo;s product source. It uses one of your searches. Results aren&rsquo;t saved to Fynd&rsquo;s list.</p>
-        <button class="btn btn-secondary fit-live-run" id="fit-live-run" type="button">Search UNIQLO US</button>
+        <h2 class="fit-live-title" id="fit-live-title">Search all of UNIQLO US</h2>
+        <p class="fit-live-note" id="fit-live-note">Live results from the listings UNIQLO publishes to Google Shopping, through Fynd&rsquo;s product source &mdash; not a saved catalogue. Each search uses one of your searches, and results aren&rsquo;t saved to Fynd&rsquo;s list.</p>
+        <form class="shop-search fit-live-form" id="fit-live-form" role="search" novalidate>
+          <label class="sr-only" for="fit-live-q">Search all of UNIQLO US</label>
+          <input class="profile-input fit-live-q" type="search" id="fit-live-q" name="q" placeholder="e.g. black oversized hoodie" autocomplete="off" maxlength="120" enterkeyhint="search">
+          <button class="btn btn-primary fit-live-run" id="fit-live-run" type="submit">Search UNIQLO US</button>
+        </form>
         <p class="fit-browser-status fit-live-status" id="fit-live-status" role="status" hidden></p>
         <div class="fit-products fit-live-products" id="fit-live-products" aria-label="UNIQLO US products found live"></div>
       </section>
 
+      <!-- Fynd's own list for the brand: the products it holds, filtered and
+           paged on the server as you type (no paid search). -->
+      <h2 class="fit-list-title" id="fit-list-title">Fynd&rsquo;s list</h2>
+      <div class="fit-browser-tools">
+        <label class="sr-only" for="fit-product-search">Filter Fynd&rsquo;s list</label>
+        <input class="profile-input fit-product-search" type="search" id="fit-product-search" placeholder="Filter Fynd&rsquo;s list, e.g. hoodie" autocomplete="off" maxlength="120" enterkeyhint="search">
+        <div class="fit-filters" id="fit-product-filters"></div>
+      </div>
+      <p class="fit-browser-status" id="fit-browser-status" role="status">Loading products&hellip;</p>
+      <div class="fit-products" id="fit-products" aria-label="Products in Fynd’s list"></div>
+      <button class="btn btn-secondary fit-products-more" id="fit-products-more" type="button" hidden>Show more</button>
+      <p class="fit-coverage" id="fit-coverage"></p>
+
       <details class="fit-link-alt" id="fit-link-alt">
-        <summary>Have a link to a product from another shop?</summary>
+        <summary>Can&rsquo;t find a product? Paste its link &mdash; from UNIQLO or any other shop</summary>
         <form class="shop-search fit-url" id="fit-url-form" novalidate>
           <label class="sr-only" for="fit-url">Clothing product link</label>
           <input class="profile-input" type="url" id="fit-url" name="url" inputmode="url" maxlength="2000" autocomplete="off" spellcheck="false" placeholder="Paste a clothing product URL..." aria-describedby="fit-url-hint fit-url-error">
