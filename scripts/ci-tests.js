@@ -62,6 +62,7 @@ const GROUPS = {
     ['test-stripe', 'payments and subscriptions'],
     ['test-fit-profile', 'the shopper fit profile: its schema, units, and who may read or change it'],
     ['test-sizing', 'sizing records, the size engine, /api/size-recommendation and fit feedback'],
+    ['test-page-access', 'which retailer pages the sizing reader may fetch: reviewed terms, then robots.txt, and nothing otherwise'],
     ['test-extension', 'the browser extension: its permissions, its copies of the shared sizing code, and the chart payload it hands to Find Fit'],
     ['test-size-eval', 'the size engine against hand-worked expectations from published charts'],
     ['test-catalog-audit', 'the catalogue audit: every card proved from its row'],

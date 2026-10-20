@@ -2374,11 +2374,35 @@ only, on the server, and asks no product source.
 A pasted link goes through `chartFor` (`api/_sizing/chart.js`) and needs no
 product source and no paid service: Fynd's record by the link's exact product
 code, else the product's own page read once on request (and, from it, up to two
-size-guide pages it links to), else the brand's official general body chart
-where Fynd holds one, labelled as general — else an honest "unavailable". The
-deployment can't reach uniqlo.com today, so a UNIQLO product without a record
-gets UNIQLO's general chart where its category fits one, and "unavailable"
-otherwise.
+size-guide pages it links to) **where that site permits it** (below), else the
+brand's official general body chart where Fynd holds one, labelled as general —
+else an honest "unavailable". No retailer is permitted today, so a pasted link
+is answered from Fynd's records and official charts only: the five UNIQLO
+products answer from their records (four) or say no chart is available
+(E429066, a listing without one), and any other shop's link says Fynd doesn't
+read that retailer's pages, with the link to open it.
+
+**Which pages may be read** (`api/_sizing/page-access.js`). A page is fetched
+only when both hold, for the page, every redirect and every size guide:
+
+1. **Permission.** The site's current terms of use were read and don't forbid
+   automated retrieval of a product page. Each permitted domain is recorded in
+   `DOMAINS` with the clause (or its absence), the URL and the date. A domain
+   that isn't listed hasn't been reviewed and is treated as **not permitted** —
+   nothing is fetched, robots.txt included. The list is **empty**: a first
+   review of the 28 retailer domains Fynd links to (its five sizing-record
+   brands and the demo catalogue's shops) couldn't retrieve a single terms page
+   or robots.txt from the environment it ran in, so permission isn't
+   established for any of them, and the common retail clause forbidding
+   "robots, spiders, scrapers or other automated means" would rule most out.
+2. **robots.txt** (RFC 9309), read with the same guarded transport and cached
+   for a day: the group for Fynd's product token `FyndSizing`, else `*`;
+   longest match wins, Allow on a tie. A 4xx means the site has none; a 5xx,
+   429, timeout or unreadable file means **nothing** is fetched.
+
+robots.txt is never taken as permission on its own: it can only narrow what a
+reviewed domain allows. To permit a domain, record its review in `DOMAINS` and
+add a test to `scripts/test-page-access.js`.
 
 A broader UNIQLO US list needs an authorized catalogue feed (below). Nothing
 here falls back to another paid search or reads UNIQLO's site to build a list.
@@ -2530,11 +2554,14 @@ reads no profile, and only the link travels. It is rate limited per client
      a UK page.
 
    A record that holds **only** the brand's body chart (Nike, Carhartt, H&M
-   today) doesn't stop the search. The page is still read for the garment's own
-   measurements; if it has them, they lead and the record's body chart follows
-   in place of the page's own. If not, the record answers, saying the garment's
-   own weren't found.
-3. **The product page**, read once: redirects followed by hand (at most three),
+   today) doesn't stop the search. Where the brand's site permits it, the page
+   is still read for the garment's own measurements; if it has them, they lead and the record's body chart follows
+   in place of the page's own. If not — or where the page isn't read — the
+   record answers, saying the garment's own weren't found or weren't looked for.
+3. **The product page**, only where `page-access.js` permits it (its terms
+   reviewed and allowing it, and its robots.txt allowing the path — see
+   *Which pages may be read*; no domain is permitted today), read once:
+   redirects followed by hand (at most three),
    every new address checked again; HTML only; 3 MB after decompression (gzip,
    deflate and Brotli are asked for, since large shop pages are slow
    uncompressed). One 9-second budget covers the page **and** any guides it

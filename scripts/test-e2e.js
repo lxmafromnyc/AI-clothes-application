@@ -200,7 +200,14 @@ const SHOP_PAGES = {
   'https://shop.example.test/products/details-shorts': shopPage('Illustrative Sweat Shorts', '<p>Pick a size.</p>',
     `<script type="application/ld+json">${JSON.stringify({ '@type': 'Product', name: 'Illustrative Sweat Shorts', brand: { name: 'Illustrative Brand' }, material: '100% Cotton', additionalProperty: [{ '@type': 'PropertyValue', name: 'Fit', value: 'Relaxed' }] })}</script>`)
 };
+/* What Find Fit draws from a page it may read: these stubbed shops are
+   marked permitted for this suite only (api/_sizing/page-access.js). As
+   deployed, no domain is; scripts/test-page-access.js and
+   scripts/test-provider-unavailable.js hold that. None has a robots.txt. */
+require('../api/_sizing/page-access').setPolicy(Object.fromEntries(['example.test', 'uniqlo.com', 'nike.com', 'zara.com', 'carhartt.com', 'hm.com']
+  .map((d) => [d, { access: 'permitted', basis: 'this test suite only; stubbed pages, never fetched' }])));
 charts.setTransport(async (url) => {
+  if (/\/robots\.txt$/.test(url)) return { status: 404, ok: false, headers: { get: () => null }, text: async () => '' };
   transportAsked.push(url);
   const html = (u) => ({ status: 200, ok: true, headers: { get: (k) => (k.toLowerCase() === 'content-type' ? 'text/html' : null) }, text: async () => u });
   if (url.startsWith('https://www.zara.com/')) return { status: 403, ok: false, headers: { get: () => null }, text: async () => 'Access denied' };
@@ -2141,7 +2148,8 @@ const linkFromInbox = (pattern) => {
     await page.click(`${NOW} .item-card:nth-child(2) .item-chart`);
     await page.waitForSelector('#size-chart[data-state="unavailable"]');
     assert.strictEqual(await page.$$eval('#size-chart table', (ns) => ns.length), 0);
-    assert.strictEqual(await page.textContent('#size-chart .size-chart-note'), 'The retailer’s site couldn’t be reached.');
+    /* a retailer whose terms Fynd hasn't reviewed: its page isn't fetched, and that is what is said */
+    assert.strictEqual(await page.textContent('#size-chart .size-chart-note'), 'Fynd doesn’t read this retailer’s pages: it hasn’t confirmed their terms allow it.');
     assert.match(await page.textContent('#size-chart .size-chart-hint'), /open the product page/);
     await page.click('#size-chart-close');
     /* a brand page that refuses to be read: why, and the link, never a chart */

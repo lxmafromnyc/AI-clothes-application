@@ -25,7 +25,15 @@
                        is used as it stands: body and finished-garment
                        charts kept apart, values as the brand wrote them,
                        its own verification status, and no page read.
-     3  the page       otherwise the product page, read once: redirects
+     3  the page       otherwise the product page — but only where
+                       page-access.js permits it: the site's terms
+                       reviewed and found to allow it, and its robots.txt
+                       allowing the path, checked for every address
+                       fetched. As deployed no domain is permitted, so
+                       this step and step 4 fetch nothing and the answer
+                       comes from steps 5–7 or says why there is none
+                       ('unreviewed', 'not-permitted', 'robots-…').
+                       Where permitted: read once, redirects
                        followed by hand, each new address checked again;
                        a time limit; a size limit; HTML only. Its size
                        tables are read deterministically (no model): a
@@ -85,6 +93,7 @@ const sizingSchema = require('./schema');
 const { RECORDS, recordFrom } = require('./records');
 const officialCharts = require('./official-charts');
 const engine = require('./engine');
+const pageAccess = require('./page-access');
 
 /* One deadline for the whole lookup — the product page, its redirects
    and any size guide it links to — kept inside what a serverless
@@ -97,8 +106,9 @@ const MAX_BYTES = 3000000;
 const MAX_REDIRECTS = 3;
 const CACHE_OK_SECONDS = 6 * 60 * 60;
 const CACHE_MISS_SECONDS = 30 * 60;
-/* v4: only the page's own answer is cached; charts carry origin and methods */
-const CACHE_VERSION = 'v4';
+/* v5: pages are read only where page-access.js permits it, so nothing
+   read before that rule is served */
+const CACHE_VERSION = 'v5';
 /* How a size table is recognised, read and labelled: shared with the
    Fynd browser extension, so a table reads the same either way. */
 const { MAX_CELL, MAX_ROWS, MAX_COLUMNS, GUIDE_WORDS, sizeTable, unitOf, kindOf, labelTable } = require('../../assets/sizing-tables');
@@ -275,7 +285,7 @@ const budgetOf = (ms) => { const until = Date.now() + ms; return { left: () => M
                  by the deadline
      refused     401, 403 or 429 — said, never worked around
      …           and the rest below */
-async function fetchPage(checked, fetchImpl, budget) {
+async function fetchPage(checked, fetchImpl, budget, options) {
   const doFetch = fetchImpl || transport;
   const clock = budget || budgetOf(DEADLINE_MS);
   const started = Date.now();
@@ -289,6 +299,10 @@ async function fetchPage(checked, fetchImpl, budget) {
     for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
       trace.url = url;
       trace.phase = 'connect';
+      /* the site's terms reviewed and permitting it, and its robots.txt
+         allowing this path — for every address, redirects included */
+      const access = await pageAccess.check(url, doFetch, { 'User-Agent': UA }, clock, options);
+      if (!access.allowed) { trace.access = access.reason; return finish({ failed: access.reason }); }
       const headersTimer = setTimeout(() => controller.abort(), Math.min(HEADERS_MS, clock.left()));
       let response;
       try {
@@ -534,10 +548,16 @@ const REASONS = {
   'too-large': 'The page was too large to read.',
   unreadable: 'The page couldn’t be read.',
   'needs-script': 'This page builds its content with JavaScript after it loads, which Fynd doesn’t run, so no size table was in what it received.',
-  'no-chart': 'The page Fynd received has no size table it could read, and no size guide it could read was linked from it.'
+  'no-chart': 'The page Fynd received has no size table it could read, and no size guide it could read was linked from it.',
+  unreviewed: 'Fynd hasn’t confirmed that this retailer allows its pages to be read automatically, so it didn’t fetch this one.',
+  'not-permitted': 'This retailer’s terms don’t allow its pages to be read automatically, so Fynd didn’t fetch this one.',
+  'robots-disallowed': 'This retailer’s robots.txt asks automated readers not to fetch this page, so Fynd didn’t.',
+  'robots-unavailable': 'Fynd couldn’t read this retailer’s robots.txt, so it didn’t fetch the page.'
 };
 /* the page itself was read: what failed was finding a chart in it */
 const PAGE_READ = ['no-chart', 'needs-script', 'guide-unreadable'];
+/* the page was never asked for: page-access.js said not to */
+const NOT_FETCHED = ['unreviewed', 'not-permitted', 'robots-disallowed', 'robots-unavailable'];
 const COULD_NOT = 'We couldn’t retrieve a usable sizing chart from this product page. You can open the original product page or try the retailer’s official size guide.';
 
 
@@ -712,6 +732,8 @@ function noteFor(result) {
     const said = (t) => t.charAt(0).toLowerCase() + t.slice(1);
     if (PAGE_READ.includes(why) || why === 'labels-only') {
       lines.push(`Fynd read this product’s page, but found no size chart in it: ${why === 'labels-only' ? 'only size labels.' : said(REASONS[why])}`);
+    } else if (NOT_FETCHED.includes(why)) {
+      lines.push(`Fynd didn’t read this product’s page. ${REASONS[why]}`);
     } else {
       lines.push(`${why === 'no-answer' || why === 'slow-page' ? 'Reading this product’s page directly timed out' : 'This product’s page couldn’t be read'}: ${said(REASONS[why] || REASONS.unreadable)}`);
     }
@@ -775,6 +797,13 @@ const cacheKey = (checked) => `sizechart:${CACHE_VERSION}:${crypto.createHash('s
    read once and cached by address: the part of an answer that depends
    on the retailer, never on Fynd's records. */
 async function liveFor(checked, opts) {
+  /* a site whose terms haven't been reviewed and found to permit it is
+     never fetched, and nothing read from it before is served */
+  const may = pageAccess.permission(checked.host);
+  if (!may.allowed) {
+    const refused = unavailable(checked, may.reason);
+    return Object.assign(refused, { trace: [], checkedAt: new Date().toISOString().slice(0, 10) });
+  }
   const key = cacheKey(checked);
   if (!opts.noCache) {
     const cached = await store.get(key).catch(() => null);
@@ -782,7 +811,7 @@ async function liveFor(checked, opts) {
   }
   /* one deadline for the page, its redirects and its size guides */
   const budget = budgetOf(opts.deadlineMs || DEADLINE_MS);
-  const page = await fetchPage(checked, opts.fetch, budget);
+  const page = await fetchPage(checked, opts.fetch, budget, opts);
   const traces = [page.trace];
   let result;
   if (page.failed) {
@@ -795,7 +824,7 @@ async function liveFor(checked, opts) {
       guides = await Promise.all(guideLinks(page.html, page.url).slice(0, 2).map(async (url) => {
         const g = checkUrl(url);
         if (g.error) return { url, failed: g.error };
-        const got = await fetchPage(g, opts.fetch, budget);
+        const got = await fetchPage(g, opts.fetch, budget, opts);
         traces.push(got.trace);
         return got.failed ? { url, failed: got.failed } : { url: got.url, html: got.html };
       }));
@@ -822,6 +851,9 @@ function productSizeLine(result) {
   const ps = result.productSize || {};
   const brand = (result.product && result.product.brand) || 'the brand';
   const when = ps.checkedAt ? ` (looked for ${ps.checkedAt})` : '';
+  if (ps.status === 'not-retrieved' && NOT_FETCHED.includes(ps.reason)) {
+    return `This product’s own measurements — a Product Size chart, where ${brand} publishes one — weren’t looked for${when}: Fynd doesn’t read ${brand}’s pages without confirmed permission. None are shown, and none are worked out from a body chart.`;
+  }
   return ps.status === 'not-retrieved'
     ? `This product’s own measurements — a Product Size chart, where ${brand} publishes one — weren’t found${when}: its page couldn’t be read. None are shown, and none are worked out from a body chart.`
     : `This product’s page${ps.guides ? ' and the size guide it links to' : ''} had no finished-garment measurements${when}. None are shown, and none are worked out from a body chart.`;
@@ -908,4 +940,4 @@ function recordFor(checked) {
   return null;
 }
 
-module.exports = { request, liveFor, recordFor, productSizeLine, DEADLINE_MS, HEADERS_MS, PAGE_READ, chartFor, checkUrl, isPublicAddress, guardedLookup, marketOf, fetchPage, setTransport, productData, tablesOf, sizeTable, guideLinks, drawnByScript, unitOf, kindOf, fromPage, fromRecord, fromOfficial, noteFor, plain, SUPPORTED_BRANDS, MAX_BYTES, COULD_NOT };
+module.exports = { request, liveFor, recordFor, productSizeLine, DEADLINE_MS, HEADERS_MS, PAGE_READ, chartFor, checkUrl, isPublicAddress, guardedLookup, marketOf, fetchPage, setTransport, productData, tablesOf, sizeTable, guideLinks, drawnByScript, unitOf, kindOf, fromPage, fromRecord, fromOfficial, noteFor, plain, SUPPORTED_BRANDS, MAX_BYTES, COULD_NOT, NOT_FETCHED };

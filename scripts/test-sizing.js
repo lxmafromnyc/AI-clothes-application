@@ -1179,9 +1179,20 @@ const GARMENT_CM = page(`<h2>Garment measurements</h2><p>Measured laid flat, in 
   `<meta property="og:site_name" content="Example Shop"><meta property="og:locale" content="en_GB">${LD({ '@context': 'https://schema.org', '@type': 'Product', name: 'Illustrative Tee', brand: { '@type': 'Brand', name: 'Example Brand' }, sku: 'TEST001' })}`);
 const BODY_IN = page(`<h3>Body measurements</h3><p>Use these to find the size made to fit your body. Inches.</p>
   <table><tr><th>Size</th><th>Chest</th><th>Waist</th></tr><tr><td>S</td><td>35 - 37.5</td><td>29 - 32</td></tr><tr><td>M</td><td>37.5 - 41</td><td>32 - 35</td></tr></table>`);
+/* What the reader does with a page it may read, on stubbed pages: the
+   shops are marked permitted for this suite only (api/_sizing/page-access.js).
+   In production no domain is, so none of these pages would be fetched —
+   scripts/test-page-access.js holds that. A shop with no robots.txt route
+   has none (404), which sets no rules. */
+const pageAccess = require('../api/_sizing/page-access');
+const TEST_SHOPS = Object.fromEntries(['example.com', 'example.test', 'uniqlo.com', 'nike.com', 'carhartt.com', 'hm.com', 'zara.com', 'gap.com']
+  .map((d) => [d, { access: 'permitted', basis: 'this test suite only; stubbed pages, never fetched' }]));
+pageAccess.setPolicy(TEST_SHOPS);
+const NO_ROBOTS = { status: 404, headers: { 'content-type': 'text/plain' }, body: 'not found' };
 const fakeFetch = (routes, log) => async (url, opts) => {
-  if (log) log.push({ url, redirect: opts && opts.redirect });
-  const r = routes[url];
+  const robots = /\/robots\.txt$/.test(url);
+  if (log && !robots) log.push({ url, redirect: opts && opts.redirect });
+  const r = routes[url] || (robots ? NO_ROBOTS : null);
   if (!r) throw new Error('unreachable');
   if (r.throws) { const e = new Error(r.throws); e.name = r.throws === 'abort' ? 'AbortError' : 'Error'; if (r.throws === 'blocked') e.code = 'EBLOCKED'; throw e; }
   const headers = new Map(Object.entries(Object.assign({ 'content-type': 'text/html; charset=utf-8' }, r.headers || {})));
@@ -1429,6 +1440,7 @@ await test('a link with a brand’s variant and advertising parameters is read a
 /* A transport that holds its answer until the request is aborted —
    a shop that never starts answering, or one whose page stops arriving. */
 const holding = (whenAnswered) => async (url, init) => new Promise((resolve, reject) => {
+  if (/\/robots\.txt$/.test(url)) return resolve({ status: 404, ok: false, headers: { get: () => null }, text: async () => '' });
   const abort = () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
   if (!whenAnswered) { init.signal.addEventListener('abort', abort); return; }
   resolve({ status: 200, ok: true, headers: { get: (k) => (k === 'content-type' ? 'text/html' : null) },
@@ -1644,7 +1656,7 @@ await test('/api/size-recommendation?chart= needs no account, reads no profile, 
     let last;
     for (let i = 0; i < 41; i += 1) last = await chartCall('not a url', { headers });
     assert.deepStrictEqual([last.status, last.body.reason], [429, 'rate-limited']);
-  } finally { charts.setTransport(null); }
+  } finally { charts.setTransport(null); pageAccess.setPolicy(TEST_SHOPS); }
 });
 
 section('every product: its own finished-garment measurements first (FIXTURE pages)');
@@ -1964,6 +1976,8 @@ await test('/api/size-recommendation lists brands and products, and looks a chos
   const UQ_OVERSIZED_URL = 'https://www.uniqlo.com/us/en/products/E471808-000/00';
   const asked = [];
   charts.setTransport(async (url) => { asked.push(url); throw Object.assign(new Error('aborted'), { name: 'AbortError' }); });
+  /* the deployment's own policy: no retailer domain is permitted */
+  pageAccess.setPolicy(null);
   try {
     const get = (query, o) => call(recommendEndpoint, Object.assign({ method: 'GET', jar: {}, query, url: '/api/size-recommendation' }, o));
     const listed = await get({ brands: '1' });
@@ -1988,9 +2002,10 @@ await test('/api/size-recommendation lists brands and products, and looks a chos
     assert.deepStrictEqual(oversized.body.chart.charts.map((c) => [c.measures, c.origin]), [['finished-garment', 'fynd-record'], ['body', 'official-general']]);
     assert.deepStrictEqual(asked, [], 'a record of the product’s own measurements needs no read');
     assert.strictEqual(UQ_OVERSIZED_URL, oversized.body.item.url, 'the address came from the brand module');
-    /* E429066: no record, no general chart — its page doesn't answer, so honestly unavailable, never E471808's fallback */
+    /* E429066: no record, no general chart, and UNIQLO's pages aren't read without confirmed permission — so honestly unavailable, never E471808's fallback, and nothing fetched */
     const merino = await get({ brand: 'uniqlo', item: 'E429066-000' });
-    assert.deepStrictEqual([merino.body.chart.status, merino.body.chart.reason, merino.body.chart.charts], ['unavailable', 'no-answer', []]);
+    assert.deepStrictEqual([merino.body.chart.status, merino.body.chart.reason, merino.body.chart.charts], ['unavailable', 'unreviewed', []]);
+    assert.deepStrictEqual(asked, [], 'not even its robots.txt');
     assert.ok(!merino.body.chart.fallback);
     assert.strictEqual(merino.body.chart.source.url, 'https://www.uniqlo.com/us/en/products/E429066-000/00', 'the official page is still linked');
     /* anything not listed by its exact code is refused before anything is fetched */
@@ -2004,7 +2019,7 @@ await test('/api/size-recommendation lists brands and products, and looks a chos
     let last;
     for (let i = 0; i < 41; i += 1) last = await get({ brand: 'uniqlo', item: 'E475378-000' }, { headers });
     assert.deepStrictEqual([last.status, last.body.reason], [429, 'rate-limited']);
-  } finally { charts.setTransport(null); }
+  } finally { charts.setTransport(null); pageAccess.setPolicy(TEST_SHOPS); }
 });
 
 section('privacy');

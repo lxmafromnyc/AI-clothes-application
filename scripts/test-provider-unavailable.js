@@ -55,8 +55,9 @@ const sizingHandler = require('../api/size-recommendation');
 const chart = require('../api/_sizing/chart');
 const brands = require('../api/_sizing/brands');
 
-/* UNIQLO's pages, and any other shop's, are never read here */
-chart.setTransport(async () => { throw Object.assign(new Error('offline'), { name: 'AbortError' }); });
+/* UNIQLO's pages, and any other shop's, are never read here — and any
+   attempt the page reader makes is counted with the rest */
+chart.setTransport(async (u) => { requested.push(String(u)); throw Object.assign(new Error('offline'), { name: 'AbortError' }); });
 
 const withEnv = async (env, fn) => {
   const saved = {};
