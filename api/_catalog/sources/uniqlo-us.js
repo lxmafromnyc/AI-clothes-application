@@ -8,8 +8,10 @@
    sync (../sync.js) and the search (../search.js) are the same for
    every source; Find Fit's pages never see this file.
 
-   No feed has been authorized yet. Until UNIQLO (or a licensed
-   distributor) grants access:
+   The feed this is built for is UNIQLO USA's Product Catalog on Rakuten
+   Advertising (api/_catalog/rakuten.js), delivered over SFTP (RAKUTEN
+   below; .github/workflows/catalog-sync.yml). No feed has been
+   authorized yet. Until Rakuten and UNIQLO USA approve Fynd:
 
      FEED_HOSTS is empty, so an API sync refuses every address — the
      authorized host is added here, in a reviewed change, once there is
@@ -81,6 +83,20 @@ module.exports = {
     const s = typeof value === 'string' ? value.trim() : '';
     return CODE.test(s) ? s : null;
   },
+
+  /* the product code a UNIQLO US product page carries in its path, or null */
+  codeFromUrl(value) {
+    const url = httpsOn(String(value || '').replace(/^http:\/\//, 'https://'), ['www.uniqlo.com']);
+    const m = url ? PAGE.exec(new URL(url).pathname) : null;
+    return m ? m[1] : null;
+  },
+
+  /* Rakuten Advertising's Product Catalog, delivered over SFTP
+     (api/_catalog/rakuten.js, .github/workflows/catalog-sync.yml): its
+     documented server. Nothing is fetched until both Rakuten and UNIQLO
+     USA have approved Fynd and the workflow's credentials and advertiser
+     ID (RAKUTEN_UNIQLO_MID) are set. */
+  RAKUTEN: { host: 'aftp.linksynergy.com', midEnv: 'RAKUTEN_UNIQLO_MID' },
 
   /* the product's page on uniqlo.com, rebuilt from the code — only when
      the address the source gave is that product's own page */

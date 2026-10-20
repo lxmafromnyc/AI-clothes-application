@@ -608,24 +608,26 @@ function inChild(env, code) {
     assert.deepStrictEqual(r.list.products.map((p) => p.code), ['E475378-000', 'E475377-000', 'E471808-000', 'E455365-000', 'E429066-000']);
     assert.strictEqual(r.list.total, 5);
     assert.match(r.list.brand.coverage, /^5 UNIQLO US products Fynd has read off uniqlo\.com — not UNIQLO’s full range\.$/);
-    assert.strictEqual(r.notice, 'Fynd’s own list holds only 5 UNIQLO US products — it isn’t connected to UNIQLO’s full catalogue. For any other UNIQLO product, paste its link at the bottom of this box.', 'with no live search here, the link is the way');
+    assert.strictEqual(r.notice, 'Fynd’s own list holds only 5 UNIQLO US products — it isn’t connected to UNIQLO’s full catalogue. For any other UNIQLO product, close this list and paste the product’s link in Find Fit: Fynd shows its size chart where it holds one, and says so plainly when it can’t.', 'no live search: the link is the way');
     assert.strictEqual(r.list.brand.notice, r.notice);
-    assert.deepStrictEqual(r.list.brand.live, { available: false }, 'no product source configured in this process');
+    assert.ok(!('live' in r.list.brand), 'Find Fit offers no live search');
     assert.deepStrictEqual(r.catalogue, { connected: false, lastSuccessfulSync: null, pricesShown: false, stockShown: false });
     assert.ok(!JSON.stringify(r).includes('FIXTURE'), 'no fixture product reaches a customer');
     assert.ok(r.list.products.every((p) => !('price' in p) && !('availability' in p)));
   });
 
-  await test('where the live UNIQLO US search can run, the notice points to it first and to a pasted link after — never claiming the full catalogue', () => {
-    const r = inChild({ OPENWEBNINJA_API_KEY: 'notice-test-key' }, browseCode(`b.browse(u, {}).brand`));
-    assert.deepStrictEqual(r.live, { available: true });
-    assert.strictEqual(r.notice, 'Fynd’s own list holds only 5 UNIQLO US products — it isn’t connected to UNIQLO’s full catalogue. To find any other UNIQLO US product, use “Search all of UNIQLO US” below, which searches UNIQLO’s live listings. If a product still doesn’t turn up, paste its link at the bottom of this box.');
-    assert.ok(!/connected to UNIQLO’s (full )?catalogue\./.test(r.notice.replace('isn’t connected', '')), 'never says it is connected');
-    /* a source a live search may not run on (its fallback reads shops' pages): no live search offered */
-    const serper = inChild({ SERPER_API_KEY: 'k', PRODUCT_SOURCE: 'serper' }, browseCode(`b.browse(u, {}).brand`));
-    assert.deepStrictEqual(serper.live, { available: false });
-    assert.match(serper.notice, /For any other UNIQLO product, paste its link/);
-    assert.ok(!/Search all of UNIQLO US/.test(serper.notice));
+  await test('a configured product source changes nothing in Find Fit: no live search, the same link-only notice, and no request made', () => {
+    const r = inChild({ OPENWEBNINJA_API_KEY: 'notice-test-key', OPENWEBNINJA_SUBSCRIPTION: 'active' }, `
+      const asked = [];
+      global.fetch = async (u) => { asked.push(String(u)); throw new Error('no request expected'); };
+      const b = require('./api/_sizing/brands'); const u = b.get('uniqlo');
+      const found = b.browse(u, { q: 'parka' });
+      return { brand: found.brand, total: found.total, asked };`);
+    assert.ok(!('live' in r.brand));
+    assert.strictEqual(r.total, 0);
+    assert.match(r.brand.notice, /For any other UNIQLO product, close this list and paste the product’s link/);
+    assert.ok(!/Search all of UNIQLO US|live listings/.test(r.brand.notice));
+    assert.deepStrictEqual(r.asked, []);
   });
 
   await test('with no catalogue, the five products are searched, filtered, paged and chosen through the same API', () => {
@@ -782,7 +784,7 @@ function inChild(env, code) {
     assert.strictEqual(r.expired.find, null);
     assert.strictEqual(r.expired.record, true, 'the five stay');
     assert.match(r.expired.coverage, /^5 UNIQLO US products Fynd has read off uniqlo\.com/);
-    assert.match(r.expired.notice, /^UNIQLO’s product catalogue was last updated on \d{4}-\d{2}-\d{2}, too long ago to show, so Fynd’s own list holds only the 5 UNIQLO US products it sourced itself\. For any other UNIQLO product, paste its link/);
+    assert.match(r.expired.notice, /^UNIQLO’s product catalogue was last updated on \d{4}-\d{2}-\d{2}, too long ago to show, so Fynd’s own list holds only the 5 UNIQLO US products it sourced itself\. For any other UNIQLO product, close this list and paste the product’s link/);
   });
 
   await test('an unreadable or broken catalogue file is no catalogue: the five products, and the limited-coverage notice', () => {

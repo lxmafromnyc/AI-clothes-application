@@ -183,6 +183,7 @@ async function runPass(world, label) {
   const real = global.fetch;
   global.fetch = stubFor(world, counters);
   process.env.OPENWEBNINJA_API_KEY = 'bench';
+  process.env.OPENWEBNINJA_SUBSCRIPTION = 'active';
 
   const started = Date.now();
   let found;

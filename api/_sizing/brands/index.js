@@ -31,8 +31,6 @@
 'use strict';
 
 const { createIndex } = require('../../_catalog/search');
-const { getProvider } = require('../../_providers/product-source');
-const { LIVE_SOURCES } = require('../../_catalog/live');
 
 const BRANDS = [require('./uniqlo')];
 
@@ -45,34 +43,19 @@ const list = () => BRANDS.map((b) => ({ id: b.id, name: b.name, market: b.market
 const CARD = ['code', 'name', 'url', 'category', 'group', 'categoryLabel', 'line', 'imageUrl', 'holds', 'holdsText', 'price', 'availability'];
 const pick = (p) => Object.fromEntries(CARD.filter((k) => p[k] !== undefined).map((k) => [k, p[k]]));
 
-/* Whether Find Fit can search the rest of this brand live: UNIQLO only,
-   and only when the deployment's product source is one a live search may
-   run on (api/_catalog/live.js) and has its key. Said to the page, so the
-   panel is offered only where pressing it can work. */
-function liveSearch(brand) {
-  if (!brand || brand.id !== 'uniqlo') return { available: false };
-  try {
-    const provider = getProvider();
-    return { available: Boolean(provider && provider.configured() && LIVE_SOURCES.includes(provider.name)) };
-  } catch (err) {
-    return { available: false };
-  }
-}
-
 /* One page of a brand's products for Find Fit: the brand's own search
-   where it has one, else its whole list, paged the same way. */
+   where it has one, else its whole list, paged the same way. Nothing here
+   calls a product source: Find Fit's list is the products Fynd holds. */
 function browse(brand, query) {
   const found = typeof brand.search === 'function' ? brand.search(query || {}) : createIndex(brand.products()).search(query || {});
-  const live = liveSearch(brand);
   return {
     brand: {
       id: brand.id,
       name: brand.name,
       market: brand.market,
       coverage: brand.coverage,
-      notice: (typeof brand.noticeAt === 'function' ? brand.noticeAt(undefined, { live: live.available }) : brand.notice) || null,
-      catalogue: typeof brand.catalogue === 'function' ? brand.catalogue() : null,
-      live
+      notice: brand.notice || null,
+      catalogue: typeof brand.catalogue === 'function' ? brand.catalogue() : null
     },
     products: (found.products || found.items).map(pick),
     total: found.total,

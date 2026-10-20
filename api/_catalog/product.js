@@ -10,6 +10,10 @@
      name            plain text, ≤ 160 characters, no markup
      url             the product's canonical page on the brand's own
                      site, rebuilt by the adapter from the code
+     affiliateUrl    optional: the affiliate network's tracking link to
+                     that same page, when the source is an affiliate feed
+                     (only on the network's click host, and only when it
+                     leads to `url`)
      category        one of CATEGORIES (the adapter maps the source's own)
      line            one of LINES
      — and only when the source supplies it AND the licence covers it:
@@ -203,6 +207,20 @@ function optional(raw, adapter, code, licensed, problems, stored) {
   return out;
 }
 
+/* A tracking link on an affiliate network's click host whose
+   destination (murl) is this product's canonical page, or null. */
+const AFFILIATE_HOSTS = ['click.linksynergy.com'];
+function affiliateLink(value, canonical, adapter) {
+  const link = httpsOn(value, AFFILIATE_HOSTS);
+  if (!link) return null;
+  /* the destination as the network wrote it, compared over https (the
+     only form the brand's page is accepted in) */
+  const murl = (new URL(link).searchParams.get('murl') || '').replace(/^http:\/\//i, 'https://');
+  if (!murl || typeof adapter.codeFromUrl !== 'function') return null;
+  const code = adapter.codeFromUrl(murl);
+  return code && adapter.canonicalUrl(murl, code) === canonical ? link : null;
+}
+
 /* One source record → { product } or { error }. `raw` is the adapter's
    already-mapped record ({ code, name, url, category, line, … }); the
    rules here are the same for every source. { stored: true } when it is
@@ -221,6 +239,11 @@ function normalise(raw, adapter, licensed, options) {
   if (!LINES.includes(raw.line)) return { error: 'no line (men, women, unisex, kids or baby)', code };
   const problems = [];
   const product = Object.assign({ code, name, url, category, line: raw.line }, optional(raw, adapter, code, licensed, problems, stored));
+  if (raw.affiliateUrl !== undefined && raw.affiliateUrl !== null) {
+    const link = affiliateLink(raw.affiliateUrl, url, adapter);
+    if (link) product.affiliateUrl = link;
+    else problems.push('an affiliate link off the network’s click host, or not leading to this product’s page, was dropped');
+  }
   return { product, problems };
 }
 

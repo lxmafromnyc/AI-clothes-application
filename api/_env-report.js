@@ -32,7 +32,7 @@
 /* The variables whose absence explains a 503, and nothing else. Adding a
    name here makes its STATE loggable; it never makes its value loggable. */
 const REPORTED = [
-  'OPENAI_API_KEY', 'OPENWEBNINJA_API_KEY', 'ALLOWED_ORIGIN', 'VERCEL_ENV',
+  'OPENAI_API_KEY', 'OPENWEBNINJA_API_KEY', 'OPENWEBNINJA_SUBSCRIPTION', 'ALLOWED_ORIGIN', 'VERCEL_ENV',
   /* the interpreter a deployment is running, and the key the
      alternative one needs. A 503 from /api/interpret on a deployment
      that is testing Gemini is one of these two, and the state of both

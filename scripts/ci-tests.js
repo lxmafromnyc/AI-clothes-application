@@ -62,11 +62,11 @@ const GROUPS = {
     ['test-stripe', 'payments and subscriptions'],
     ['test-fit-profile', 'the shopper fit profile: its schema, units, and who may read or change it'],
     ['test-sizing', 'sizing records, the size engine, /api/size-recommendation and fit feedback'],
+    ['test-page-access', 'which retailer pages the sizing reader may fetch: reviewed terms, then robots.txt, and nothing otherwise'],
     ['test-extension', 'the browser extension: its permissions, its copies of the shared sizing code, and the chart payload it hands to Find Fit'],
     ['test-size-eval', 'the size engine against hand-worked expectations from published charts'],
     ['test-catalog-audit', 'the catalogue audit: every card proved from its row'],
     ['test-catalog-feed', "a brand's authorized catalogue: feed import, sync, the API fetch, search, filters, pages, staleness, and each product's sizing by its exact code"],
-    ['test-catalog-live', "Find Fit's live UNIQLO US search: the route's own search and allowance, UNIQLO US product pages only, by their own codes"],
     ['test-demo-audio', "the landing demo's sound: loudness, ducking, captions"],
     ['test-demo-film', "the landing demo film: length, order, every store frame real"]
   ],
@@ -77,7 +77,9 @@ const GROUPS = {
     ['test-cross-origin', 'the GitHub Pages copy calling the API across origins: preflights, cross-site cookies, logout, checkout'],
     ['test-catalog-images', "the catalogue image extractor's gates, including its browser path"],
     ['test-record-demo', "the demo recorder's tool paths and rules, and its retailer test in a browser"],
-    ['test-catalog-browser', "Find Fit searching and paging an authorized catalogue in a browser, and a chosen product's page and Size Guide"]
+    ['test-catalog-browser', "Find Fit searching and paging an authorized catalogue in a browser, and a chosen product's page and Size Guide"],
+    ['test-catalog-rakuten', "UNIQLO's catalogue from a Rakuten Product Catalog file: reader, sync at catalogue scale, refresh, coverage, and the popup over it"],
+    ['test-provider-unavailable', 'with no paid product source: OpenWeb Ninja never asked, no silent fallback, and what Find Fit and the Search page show']
   ]
 };
 

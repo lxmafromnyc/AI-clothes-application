@@ -16,7 +16,10 @@
 #              this commit, the real handlers, a memory store — with
 #              OPENWEBNINJA_API_KEY and OPENAI_API_KEY from this
 #              repository's Actions secrets. Without them it says so and
-#              stops; it never runs on stand-ins.
+#              stops; it never runs on stand-ins. It also stops, and so
+#              does the keyless connection timing, unless the repository
+#              variable OPENWEBNINJA_SUBSCRIPTION is "active": nothing here
+#              contacts OpenWeb Ninja while the subscription is inactive.
 #
 # Runs when this file changes on the branch, or by hand. Nothing it
 # writes contains a key: the scripts print states, never values, and the
@@ -118,6 +121,7 @@ jobs:
           done
 
       - name: OpenWeb Ninja's connection, timed without a key (DNS, TCP, TLS, first byte of a refused request)
+        if: vars.OPENWEBNINJA_SUBSCRIPTION == 'active'
         run: |
           # no key is sent, so each request is refused at once: what is left
           # is the cost of reaching the API at all, apart from its processing
@@ -169,6 +173,7 @@ jobs:
     timeout-minutes: 120
     env:
       OPENWEBNINJA_API_KEY: ${{ secrets.OPENWEBNINJA_API_KEY }}
+      OPENWEBNINJA_SUBSCRIPTION: ${{ vars.OPENWEBNINJA_SUBSCRIPTION }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       PREVIEW_URL: ${{ needs.deployments.outputs.preview }}
     steps:
@@ -185,7 +190,9 @@ jobs:
           for v in OPENWEBNINJA_API_KEY OPENAI_API_KEY; do
             if [ -n "${!v}" ]; then echo "$v: set"; else echo "$v: NOT set"; fi
           done
-          if [ -n "$OPENWEBNINJA_API_KEY" ]; then
+          if [ "$OPENWEBNINJA_SUBSCRIPTION" != active ]; then
+            echo "::warning::OPENWEBNINJA_SUBSCRIPTION is not \"active\" (repository variable), so OpenWeb Ninja is not contacted. Not run, and not reported as run."
+          elif [ -n "$OPENWEBNINJA_API_KEY" ]; then
             echo "ready=true" >> "$GITHUB_OUTPUT"
           else
             echo "::warning::OPENWEBNINJA_API_KEY is not a repository Actions secret, so nothing below can search. Not run, and not reported as run."

@@ -279,8 +279,9 @@ and the function share an origin, `/api/interpret` resolves by default, and
 | `GEMINI_API_KEY` | only for `AI_PROVIDER=gemini` | A Google AI Studio key. Production does not need it, and never sees it: it is read inside the function, sent as a header, and redacted out of anything logged. |
 | `GEMINI_MODEL` | no | Which model to call. Defaults to `gemini-3.6-flash`. |
 | `GEMINI_THINKING_LEVEL` / `GEMINI_THINKING_BUDGET` | no | How much thinking to allow: `thinkingLevel` (`minimal`, the default, through `high`) on a 3.x model, `thinkingBudget` (`0`, off, by default) on a 2.5 one. |
-| `OPENWEBNINJA_API_KEY` | yes | The product source's key. Without it `/api/search` returns 503 and the frontend falls back to the sample catalogue, labelled as such. |
-| `PRODUCT_SOURCE` | no | Which adapter in `api/_providers/` finds the products. Unset runs `openwebninja`, which is what this deployment uses. |
+| `OPENWEBNINJA_API_KEY` | for live search | The product source's key. Without it `/api/search` returns 503 and the frontend falls back to the sample catalogue, labelled as such. |
+| `OPENWEBNINJA_SUBSCRIPTION` | for live search | `active` while the OpenWeb Ninja plan is paid for. Otherwise OpenWeb Ninja is never called, key or no key, and `/api/search` returns the same 503. Unset in production today: the plan has lapsed. |
+| `PRODUCT_SOURCE` | no | Which adapter in `api/_providers/` finds the products. Unset runs `openwebninja` when its key is set and its subscription is marked active; otherwise no source, and `/api/search` answers 503. Nothing falls back to another paid source unless it is named here. |
 | `ALLOWED_ORIGIN` | no | Extra browser origins allowed to call the endpoints, comma-separated. The deployment's own origin is always allowed without configuration, so this is only needed for a frontend hosted elsewhere — GitHub Pages calling functions on Vercel. See [Cross-origin access](#cross-origin-access). |
 | `STRIPE_SECRET_KEY` | for billing | Your Stripe key. `sk_test_…` until launch. Without it the paid plans cannot be bought and the pricing page says so. |
 | `STRIPE_WEBHOOK_SECRET` | for billing | The signing secret of the webhook endpoint (`whsec_…`). Without it every delivery is refused, so no plan ever changes. |
@@ -934,8 +935,9 @@ than one shop's catalogue. Set these in the server environment:
 
 | Variable | Required | Purpose |
 | --- | --- | --- |
-| `OPENWEBNINJA_API_KEY` | yes | Your API key, sent as the `x-api-key` header. This is the only variable the product search needs. |
-| `PRODUCT_SOURCE` | no | Which adapter to run. Left unset, the OpenWeb Ninja adapter is used when its key is present. Set it only to run a different one. |
+| `OPENWEBNINJA_API_KEY` | yes | Your API key, sent as the `x-api-key` header. |
+| `OPENWEBNINJA_SUBSCRIPTION` | yes | `active` only while the OpenWeb Ninja plan is paid for. Anything else — unset included — and the adapter counts as not configured and makes **no request at all**, even with a key present: `/api/search` answers 503 and the Search page shows its labelled sample items. |
+| `PRODUCT_SOURCE` | no | Which adapter to run. Left unset, the OpenWeb Ninja adapter is used when its key is present and `OPENWEBNINJA_SUBSCRIPTION` is `active`. Set it only to run a different one. |
 | `OPENWEBNINJA_COUNTRY` | no | Marketplace to search, ISO 3166-1 alpha-2. Defaults to `us` |
 | `OPENWEBNINJA_LANGUAGE` | no | Result language, ISO 639-1. Defaults to `en` |
 
@@ -2112,10 +2114,26 @@ compared, and why.
 
 ### Choosing a brand and a product
 
-Find Fit opens on a brand menu and that brand's products, so no link has to be
-pasted (`assets/brand-browser.js`). The customer chooses a brand and picks a
-product card. Find Fit then asks for that product's chart by brand and product
-code (`GET /api/size-recommendation?brand=uniqlo&item=E475378-000`).
+Find Fit opens on a button for each brand it can browse
+(`GET /api/size-recommendation?brands=1`), so no link has to be pasted
+(`assets/brand-browser.js`). Choosing UNIQLO opens its products in a popup over
+the page: a modal `<dialog>` (full screen on a phone) with a search box, the
+filters the data supports, product cards and "Show more". Nothing is fetched
+until the brand is chosen; the search, filters and paging are the server's
+(`GET /api/size-recommendation?brand=uniqlo&q=…&offset=…`, `api/_catalog/search.js`),
+so the page never holds the catalogue. Closing the popup (Escape, its close
+button, or a click outside) returns focus to the brand, and reopening it keeps
+the search as it was; a list that failed to load is asked for again. A card
+opens the product's Fynd page (`product.html?brand=uniqlo&item=…`), whose Size
+Guide asks for that product's chart by brand and product code
+(`GET /api/size-recommendation?brand=uniqlo&item=E475378-000`) and links to the
+product on UNIQLO.
+
+What the popup lists is whatever the brand module holds: today the five UNIQLO
+US products Fynd sourced itself (said so at the top of the popup), and, once an
+authorized catalogue feed is synced (see *UNIQLO's authorized catalogue* below), that
+catalogue — the same popup, paged, with the feed's photos, prices, colours,
+sizes and stock where its licence covers them.
 
 The server finds the product's address in its own brand module
 (`api/_sizing/brands`) and looks it up through the same pipeline a pasted link
@@ -2206,12 +2224,13 @@ carrying each product's code).
 
 Find Fit is built to list UNIQLO's whole US range from an **authorized**
 catalogue — an API or product-feed file UNIQLO (or a licensed distributor)
-grants access to. **None has been granted yet**, so today Find Fit lists the
-five products above and says, above the list, that coverage is limited:
+grants access to. **None has been granted yet**, so today Find Fit's UNIQLO popup lists
+the five products above and says, above the list, that coverage is limited:
 
-> Limited selection: Fynd isn't connected to UNIQLO's product catalogue yet,
-> so most UNIQLO products aren't listed here. For any other UNIQLO product,
-> paste its link below.
+> Fynd's own list holds only 5 UNIQLO US products — it isn't connected to
+> UNIQLO's full catalogue. For any other UNIQLO product, close this list and
+> paste the product's link in Find Fit: Fynd shows its size chart where it
+> holds one, and says so plainly when it can't.
 
 Nothing here reads UNIQLO's website, and no catalogue — real or test — is
 committed. Fynd will not claim full-catalogue support until a real feed has
@@ -2360,75 +2379,118 @@ live page, or UNIQLO's general body chart when the catalogue places it in that
 chart's category and line (a men's hoodie, sweatshirt or T-shirt), labelled as
 general and never compared; otherwise an honest "unavailable".
 
-**Until a feed is approved: the rest of UNIQLO US, searched live.** Find
-Fit shows **Search all of UNIQLO US** right under its notice and above
-Fynd's own list — its own box and a **Search UNIQLO US** button, offered
-whenever the server says it can run (`brand.live.available`: UNIQLO, and the
-deployment's product source is OpenWeb Ninja with its key). The notice then
-says Fynd's own list is limited, points to the live search, and keeps a pasted
-link as the fallback; where live search can't run, it points to the link only.
-The box above Fynd's list filters that list only (free, no product source),
-and when nothing in it matches, the words are put in the live search's box —
-never run. Pressing the button runs
-one search through the product source Fynd's Search page already uses
-(OpenWeb Ninja's Real-Time Product Search, which searches the listings UNIQLO
-publishes to Google Shopping). It is `POST /api/search` with
-`{ scope: "uniqlo-us", q }`: the route's own budget, 30-minute search cache,
-verification gate and per-shopper allowance (one search, charged only when the
-source answers), with UNIQLO named as the brand (`api/_catalog/live.js`).
+**Until a feed is approved: Fynd's list, and a pasted link.** Find Fit lists
+only the products Fynd sourced itself (five UNIQLO US products, with the
+sizing records Fynd holds for them), says so in its notice, and offers one other way in:
+paste a product's link at the bottom of the box. There is no live UNIQLO
+search. One existed, through OpenWeb Ninja's Real-Time Product Search; it was
+removed when that subscription lapsed, rather than left as a box that would
+only ever answer with an error. The box above Fynd's list filters that list
+only, on the server, and asks no product source.
 
-- Only a result that is a UNIQLO US product page is kept, by the product code
-  in its own link, rebuilt as `https://www.uniqlo.com/us/en/products/<code>/00`,
-  once per code. Everything else is counted under `dropped`, by reason.
-- A product Fynd already lists keeps its own name and sizing holds, and opens
-  its product page. Any other opens its sizing chart through the same lookup a
-  pasted link takes, by its canonical page: Fynd's record when there is one,
-  UNIQLO's page read live (which the deployment can't reach today, so
-  usually an honest "unavailable"), never another product's chart.
-- What the source doesn't carry — colours and sizes, for a search result — is
-  counted under `missing` and never filled in. Photos are the source's own
-  Google Shopping thumbnails or `image.uniqlo.com`, nothing else.
-- It runs on OpenWeb Ninja alone, with no fallback: Serper's organic path reads
-  listings off shops' own pages, which would mean Fynd reading uniqlo.com to
-  build a listing, so a scoped search under any other source is refused (503
-  `unsupported-source`), and one whose source is out of searches fails rather
-  than falling back.
-- Nothing found this way is stored in the catalogue or indexed; the page says
-  so. Whether OpenWeb Ninja's terms allow *storing* its results hasn't been
-  confirmed, so they aren't. (Its terms grant a commercial licence to API data
-  used inside a broader product, excluding resale as a standalone data
-  product.)
+A pasted link goes through `chartFor` (`api/_sizing/chart.js`) and needs no
+product source and no paid service: Fynd's record by the link's exact product
+code, else the product's own page read once on request (and, from it, up to two
+size-guide pages it links to) **where that site permits it** (below), else the
+brand's official general body chart where Fynd holds one, labelled as general —
+else an honest "unavailable". No retailer is permitted today, so a pasted link
+is answered from Fynd's records and official charts only: the five UNIQLO
+products answer from their records (four) or say no chart is available
+(E429066, a listing without one), and any other shop's link says Fynd doesn't
+read that retailer's pages, with the link to open it.
 
-This is a search, not a catalogue: it finds what the source ranks for the
-words typed (up to 24 a search), so it can't list "every UNIQLO hoodie", and
-it offers no colour, size or stock filters. Those wait for an authorized feed.
+**Which pages may be read** (`api/_sizing/page-access.js`). A page is fetched
+only when both hold, for the page, every redirect and every size guide:
 
-**Connecting a real feed**, once access is approved:
+1. **Permission.** The site's current terms of use were read and don't forbid
+   automated retrieval of a product page. Each permitted domain is recorded in
+   `DOMAINS` with the clause (or its absence), the URL and the date. A domain
+   that isn't listed hasn't been reviewed and is treated as **not permitted** —
+   nothing is fetched, robots.txt included. The list is **empty**: a first
+   review of the 28 retailer domains Fynd links to (its five sizing-record
+   brands and the demo catalogue's shops) couldn't retrieve a single terms page
+   or robots.txt from the environment it ran in, so permission isn't
+   established for any of them, and the common retail clause forbidding
+   "robots, spiders, scrapers or other automated means" would rule most out.
+2. **robots.txt** (RFC 9309), read with the same guarded transport and cached
+   for a day: the group for Fynd's product token `FyndSizing`, else `*`;
+   longest match wins, Allow on a tie. A 4xx means the site has none; a 5xx,
+   429, timeout or unreadable file means **nothing** is fetched.
 
-1. Record the agreement: which feed, which fields it licenses, any display or
-   caching terms.
-2. Add the feed's host to `FEED_HOSTS` in `api/_catalog/sources/uniqlo-us.js`
-   in a pull request.
-3. If the feed isn't in one of the two formats, add its reader to `import.js`
-   and a fixture and tests in its shape.
-4. Set `UNIQLO_FEED_URL`, `UNIQLO_FEED_TOKEN` and
-   `UNIQLO_FEED_LICENSED_FIELDS` (repository secrets and variable for the
-   workflow, or the shell).
-5. `node scripts/sync-catalog.js --source uniqlo-us --api --dry-run`, read the
-   report, then run it without `--dry-run`.
-6. Read `api/_catalog/data/uniqlo-us.json`'s diff, check a sample of products
-   against UNIQLO's pages, and commit it in a pull request.
-7. Re-sync at least every 48 hours if prices and stock are licensed, and every
-   30 days at most in any case.
+robots.txt is never taken as permission on its own: it can only narrow what a
+reviewed domain allows. To permit a domain, record its review in `DOMAINS` and
+add a test to `scripts/test-page-access.js`.
 
-**Testing it:** `node scripts/test-catalog-feed.js` (import of the Fynd feed,
+A broader UNIQLO US list needs an authorized catalogue feed (below). Nothing
+here falls back to another paid search or reads UNIQLO's site to build a list.
+
+**The feed it is built for: UNIQLO USA's Product Catalog on Rakuten
+Advertising.** UNIQLO USA runs its affiliate programme on Rakuten
+Advertising, and Rakuten delivers an advertiser's whole catalogue to
+approved publishers as a file — every product, with its page, photo, retail
+and sale price, availability and, for clothing (Class 60), its colour, size,
+gender and age — deposited daily over SFTP. Fynd reads that file as it is
+(`api/_catalog/rakuten.js`, to Rakuten's *Product Catalog Data Feed
+Implementation Guidelines for Publishers*, December 2023):
+
+- `HDR|MID|name|time`, one product variant per line (38 pipe-delimited
+  fields; 39 in a delta file), `TRL|count`. A file whose trailer doesn't
+  match its lines, or that has no trailer, is refused whole; a file from
+  another advertiser than `RAKUTEN_UNIQLO_MID` is refused.
+- The Product URL is Rakuten's tracking link; the product's page is read
+  from its `murl`, and only a UNIQLO US page with the product's code counts.
+  The tracking link is kept (`affiliateUrl`) only when it leads to that same
+  page, and "View on UNIQLO" uses it.
+- Variants are grouped into products by that code, so colours, sizes, the
+  lowest price (and the retail price it's discounted from) and per-variant
+  stock come from the lines themselves.
+- A full file is the whole catalogue: a product it no longer lists is
+  removed. A delta file inserts, updates and deletes (I/U/D) only what it
+  names. A product whose End Date has passed is discontinued.
+
+Measured on a FIXTURE file at catalogue scale (`scripts/test-catalog-rakuten.js`:
+2,400 products, 24,000 variant lines): the catalogue file is about 6 MB and a
+cold start loads, checks and indexes it in about a quarter of a second. A real
+UNIQLO file's size isn't known until one is delivered; if it is many times
+that, the catalogue should move from a committed file to the KV store.
+
+**Connecting it**, once Rakuten and UNIQLO USA have approved Fynd's access to
+UNIQLO's Product Catalog:
+
+1. Record the agreement: the feed, which fields it licenses, and any display,
+   caching or link terms.
+2. Set, in the repository: secrets `RAKUTEN_SFTP_USER`,
+   `RAKUTEN_SFTP_PASSWORD`; variables `RAKUTEN_UNIQLO_MID` (UNIQLO USA's
+   advertiser ID), `RAKUTEN_SID` (Fynd's publisher channel ID),
+   `RAKUTEN_SFTP_HOSTKEY_SHA256` (the server's host key, from Rakuten — never
+   taken on first use) and `UNIQLO_FEED_LICENSED_FIELDS`.
+3. Run **UNIQLO catalogue sync** by hand. It downloads `MID_SID_mp.txt.gz`,
+   syncs it, measures coverage (`scripts/catalog-coverage.js`) and uploads the
+   catalogue and report.
+4. Read the report — products, rejected rows and why, field coverage — check
+   a sample against UNIQLO's pages, and commit the catalogue in a pull request.
+5. To keep it current without anyone adding products by hand: set
+   `UNIQLO_FEED_AUTOPR` to `enabled` (each sync that changes anything opens or
+   updates a pull request) and, if the terms allow a daily pull,
+   `UNIQLO_FEED_SCHEDULE` to `enabled`. Prices and stock stop showing 48 hours
+   after the last merged sync.
+
+Any other feed (an HTTPS API in the Fynd or Merchant formats): add its host
+to `FEED_HOSTS`, set `UNIQLO_FEED_URL` / `UNIQLO_FEED_TOKEN`, and run
+`node scripts/sync-catalog.js --source uniqlo-us --api --dry-run` first.
+
+**Testing it:** `node scripts/test-catalog-rakuten.js` (the Rakuten reader,
+a 2,400-product sync, a removing full file, a delta, refused files, coverage,
+the catalogue API, a product's page and chart, and the popup in Chromium),
+`node scripts/test-catalog-feed.js` (import of the Fynd feed,
 JSON/JSON Lines rows and a tab-separated Merchant-format file, duplicates,
 URLs, licensing, descriptions, sync and stale removal, the status record, the
 API fetch, the command, loading, search, colour/size/stock filters, pages,
 staleness, product selection, sizing and verification status) and
 `node scripts/test-catalog-browser.js` (Find Fit and the product page in
-Chromium). Both use FIXTURE feeds in `scripts/fixtures/catalog-feed/`; every
-code from E910001 and every "FIXTURE" name is invented. They prove the
+Chromium). They use FIXTURE feeds (in `scripts/fixtures/catalog-feed/`, or
+written by the test); every code from E910001 or E960000 and every "FIXTURE"
+name is invented. They prove the
 importer and the page work; they say nothing about any real feed's coverage.
 
 ### A product's page
@@ -2550,11 +2612,14 @@ reads no profile, and only the link travels. It is rate limited per client
      a UK page.
 
    A record that holds **only** the brand's body chart (Nike, Carhartt, H&M
-   today) doesn't stop the search. The page is still read for the garment's own
-   measurements; if it has them, they lead and the record's body chart follows
-   in place of the page's own. If not, the record answers, saying the garment's
-   own weren't found.
-3. **The product page**, read once: redirects followed by hand (at most three),
+   today) doesn't stop the search. Where the brand's site permits it, the page
+   is still read for the garment's own measurements; if it has them, they lead and the record's body chart follows
+   in place of the page's own. If not — or where the page isn't read — the
+   record answers, saying the garment's own weren't found or weren't looked for.
+3. **The product page**, only where `page-access.js` permits it (its terms
+   reviewed and allowing it, and its robots.txt allowing the path — see
+   *Which pages may be read*; no domain is permitted today), read once:
+   redirects followed by hand (at most three),
    every new address checked again; HTML only; 3 MB after decompression (gzip,
    deflate and Brotli are asked for, since large shop pages are slow
    uncompressed). One 9-second budget covers the page **and** any guides it

@@ -87,6 +87,10 @@
     'no-answer': 'The retailer’s site didn’t respond in time.',
     'slow-page': 'The retailer’s page didn’t finish loading in time.',
     refused: 'The retailer’s site doesn’t allow Fynd to read this page.',
+    unreviewed: 'Fynd doesn’t read this retailer’s pages: it hasn’t confirmed their terms allow it.',
+    'not-permitted': 'This retailer’s terms don’t allow Fynd to read its pages.',
+    'robots-disallowed': 'This retailer’s robots.txt asks Fynd not to read this page.',
+    'robots-unavailable': 'Fynd couldn’t check this retailer’s robots.txt, so it didn’t read the page.',
     'http-error': 'The retailer’s page returned an error.',
     unreachable: 'The retailer’s site couldn’t be reached.',
     'not-html': 'This link doesn’t lead to a product page Fynd can read.',
@@ -100,7 +104,9 @@
     'guide-not-open': 'The page links to a size guide, but it isn’t open. Open the retailer’s size guide on the page, then check again.'
   };
   const PAGE_READ = ['no-chart', 'needs-script', 'guide-unreadable', 'guide-not-open'];
-  const statusOf = (chart) => (PAGE_READ.includes(chart.reason) ? 'No sizing chart found on this page' : 'Couldn’t read the product page');
+  const NOT_FETCHED = ['unreviewed', 'not-permitted', 'robots-disallowed', 'robots-unavailable'];
+  const statusOf = (chart) => (PAGE_READ.includes(chart.reason) ? 'No sizing chart found on this page'
+    : NOT_FETCHED.includes(chart.reason) ? 'Fynd doesn’t read this site’s pages' : 'Couldn’t read the product page');
 
   /* The nodes for one answer from /api/size-recommendation?chart=:
      what the server said, drawn as text. The visible part is the chart,

@@ -61,27 +61,6 @@ const handler = require('../api/size-recommendation');
 /* UNIQLO's pages are never read here */
 require('../api/_sizing/chart').setTransport(async () => { throw Object.assign(new Error('offline'), { name: 'AbortError' }); });
 
-/* The live UNIQLO US search: the real /api/search, with OpenWeb Ninja
-   answered in-process in the shape the adapter reads. E491096-000 is the
-   shape of a genuine recorded result; E960001 is a FIXTURE. */
-process.env.OPENWEBNINJA_API_KEY = 'browser-test-key';
-process.env.FYND_CACHE = 'off';
-const searchHandler = require('../api/search');
-const liveRecord = (id, title, url, price, photo) => ({ product_id: id, product_title: title, product_photos: [photo], offer: { offer_page_url: url, price: `$${price}`, store_name: 'uniqlo.com' } });
-const LIVE_RESULTS = [
-  liveRecord('g1', "UNIQLO Men's Zip-Up Blouson Jacket", 'https://www.uniqlo.com/us/en/products/E491096-000/00?colorDisplayCode=57', '49.90', 'https://encrypted-tbn2.gstatic.com/shopping?q=tbn:FIXTURE'),
-  liveRecord('f1', 'FIXTURE UNIQLO Live Oversized Hoodie', 'https://www.uniqlo.com/us/en/products/E960001-000/00', '39.90', 'https://tracker.example/pixel.png'),
-  liveRecord('f2', 'FIXTURE retailer title for a listed product', 'https://www.uniqlo.com/us/en/products/E475378-000/00', '39.90', 'https://encrypted-tbn3.gstatic.com/shopping?q=tbn:FIXTURE'),
-  liveRecord('x1', 'FIXTURE Hoodie on Another Shop', 'https://www.othershop.example/p/1', '25.00', 'https://encrypted-tbn1.gstatic.com/shopping?q=tbn:FIXTURE')
-];
-const providerAsked = [];
-let liveStatus = 200;
-global.fetch = async (u) => {
-  providerAsked.push(String(u));
-  const body = { status: 'OK', request_id: 'r', data: LIVE_RESULTS };
-  return { ok: liveStatus === 200, status: liveStatus, headers: { get: () => 'application/json' }, json: async () => body, text: async () => JSON.stringify(body) };
-};
-
 /* ---------- the server ---------- */
 
 const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml' };
@@ -97,12 +76,6 @@ const server = http.createServer(async (req, res) => {
     res.status = (code) => { res.statusCode = code; return res; };
     res.json = (payload) => { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(payload)); return res; };
     try { await handler(req, res); } catch (err) { console.error('handler threw', err && err.message); if (!res.writableEnded) { res.statusCode = 500; res.end('{}'); } }
-    return undefined;
-  }
-  if (url.pathname === '/api/search') {
-    res.status = (code) => { res.statusCode = code; return res; };
-    res.json = (payload) => { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(payload)); return res; };
-    try { await searchHandler(req, res); } catch (err) { console.error('search threw', err && err.message); if (!res.writableEnded) { res.statusCode = 500; res.end('{}'); } }
     return undefined;
   }
   if (url.pathname.startsWith('/api/')) {
@@ -152,14 +125,20 @@ async function test(name, fn) {
     await page.waitForFunction((n) => Number(document.getElementById('fit-browser').dataset.answers) > n, before);
   };
   const codes = (page) => page.$$eval('.fit-product', (bs) => bs.map((b) => b.dataset.code));
-  const ready = (page) => page.waitForSelector('#fit-browser[data-answers="1"]');
+  /* Find Fit's brands, then UNIQLO chosen: its products open in the popup */
+  const openUniqlo = async (page) => {
+    await page.waitForSelector('#fit-browser[data-brands="ready"]');
+    await page.click('.fit-brand-choice[data-brand="uniqlo"]');
+  };
+  const ready = async (page) => { await openUniqlo(page); await page.waitForSelector('#fit-browser[data-answers="1"]'); };
 
   console.log('\nFind Fit, with UNIQLO’s catalogue connected');
 
   await test('choosing UNIQLO lists the catalogue a page at a time: 24 cards of 1,230, the source and date named, no limited-coverage notice, and never "full"', async () => {
     const page = await openPage('index.html');
     await ready(page);
-    assert.strictEqual(await page.$eval('#fit-brand', (s) => s.value), 'uniqlo');
+    assert.strictEqual(await page.$eval('#fit-brand-dialog', (d) => d.open), true, 'the products are in the popup');
+    assert.strictEqual(await page.textContent('#fit-brand-dialog-title'), 'UNIQLO');
     assert.strictEqual((await codes(page)).length, 24);
     assert.match(await page.textContent('#fit-browser-status'), /^Showing 24 of 1230$/);
     assert.match(await page.textContent('#fit-coverage'), /^1230 UNIQLO US products from FIXTURE UNIQLO US feed, updated \d{4}-\d{2}-\d{2}\.$/);
@@ -194,7 +173,7 @@ async function test(name, fn) {
     assert.match(await page.textContent('#fit-browser-status'), /No product here matches every word — nothing matched “magenta”, so the closest matches are shown\./);
     await answered(page, () => page.fill('#fit-product-search', 'tuxedo'));
     assert.strictEqual((await codes(page)).length, 0);
-    assert.strictEqual(await page.textContent('#fit-browser-status'), 'Nothing in Fynd’s list matches “tuxedo”. Search all of UNIQLO US above to find it in UNIQLO’s live listings.', 'live search runs here, so that is where to look next');
+    assert.strictEqual(await page.textContent('#fit-browser-status'), 'No products match. Nothing here matched “tuxedo”. Clear the search or choose another type.');
     await answered(page, () => page.fill('#fit-product-search', '<img src=x onerror="window.__owned=1">'));
     assert.strictEqual(await page.evaluate(() => window.__owned), undefined);
     assert.strictEqual(await page.$$eval('#fit-browser img:not(.fit-product img)', (is) => is.length), 0, 'nothing typed became an element');
@@ -279,11 +258,17 @@ async function test(name, fn) {
   await test('when the catalogue can’t be fetched, Find Fit says so and offers the link box; a failed "Show more" keeps what is shown', async () => {
     failCatalog = (u) => u.searchParams.get('brand') === 'uniqlo' && !u.searchParams.has('detail') && !u.searchParams.has('item');
     const page = await openPage('index.html');
+    await openUniqlo(page);
     await page.waitForSelector('#fit-browser[data-state="unavailable"]');
-    assert.match(await page.textContent('#fit-browser-status'), /couldn’t be loaded just now.*paste a product’s link below/);
+    assert.match(await page.textContent('#fit-browser-status'), /couldn’t be loaded just now.*close this and paste a product’s link instead/);
     assert.strictEqual((await codes(page)).length, 0);
-    await page.context().close();
+    /* closing it, the link box is right there; opening it again asks again */
+    await page.click('#fit-brand-dialog-close');
+    assert.strictEqual(await page.isVisible('#fit-link-alt'), true);
     failCatalog = null;
+    await answered(page, () => page.click('.fit-brand-choice[data-brand="uniqlo"]'));
+    assert.strictEqual((await codes(page)).length, 24, 'a failed load is retried on the next open');
+    await page.context().close();
     const again = await openPage('index.html');
     await ready(again);
     failCatalog = (u) => u.searchParams.has('offset');
@@ -294,84 +279,63 @@ async function test(name, fn) {
     await again.context().close();
   });
 
-  console.log('\nsearching all of UNIQLO US live');
+  console.log('\nthe UNIQLO popup');
 
-  await test('the live search is in view from the start, above Fynd’s list, with its own box and a Search button — and runs only when the button is pressed', async () => {
+  await test('nothing is fetched until UNIQLO is chosen; then the popup opens over Find Fit with the search box focused', async () => {
+    const start = asked.length;
     const page = await openPage('index.html');
-    await ready(page);
-    assert.strictEqual(await page.isVisible('#fit-live'), true, 'offered before anything is typed');
-    assert.strictEqual(await page.textContent('#fit-live-title'), 'Search all of UNIQLO US');
-    assert.strictEqual(await page.getAttribute('#fit-live-q', 'type'), 'search');
-    assert.strictEqual(await page.textContent('#fit-live-run'), 'Search UNIQLO US');
-    assert.strictEqual(await page.getAttribute('#fit-live-run', 'type'), 'submit');
-    assert.match(await page.textContent('#fit-live-note'), /not a saved catalogue\. Each search uses one of your searches, and results aren’t saved to Fynd’s list\./);
-    const order = await page.evaluate(() => ['fit-live', 'fit-list-title', 'fit-products', 'fit-link-alt'].map((id) => document.getElementById(id).getBoundingClientRect().top));
-    assert.ok(order[0] < order[1] && order[1] < order[2] && order[2] < order[3], `live search, then Fynd’s list, then the link box: ${order}`);
-    assert.strictEqual(await page.getAttribute('#fit-product-search', 'placeholder'), 'Filter Fynd’s list, e.g. hoodie');
-    assert.match(await page.textContent('#fit-link-alt summary'), /^Can’t find a product\? Paste its link/);
-    providerAsked.length = 0;
-    /* typing in either box, and filtering Fynd's list, never spends a search */
-    await answered(page, () => page.fill('#fit-product-search', 'blouson jacket'));
-    await page.type('#fit-live-q', 'blouson jacket', { delay: 20 });
-    await page.waitForTimeout(400);
-    assert.strictEqual(providerAsked.length, 0, 'typing never spends a search');
-    await page.click('#fit-live-run');
-    await page.waitForSelector('#fit-live[data-state="ready"]');
-    assert.strictEqual(providerAsked.length, 1);
-    assert.strictEqual(new URL(providerAsked[0]).searchParams.get('q'), 'uniqlo blouson jacket');
-    const live = await page.$$eval('#fit-live-products .fit-product', (bs) => bs.map((b) => b.dataset.code));
-    assert.deepStrictEqual(live, ['E491096-000', 'E960001-000', 'E475378-000'], 'another shop’s hoodie is left out');
-    assert.match(await page.textContent('#fit-live-status'), /^3 UNIQLO US products found live for “blouson jacket”, just now\./);
-    assert.strictEqual(await page.getAttribute('.fit-product--live[data-code="E491096-000"] .guide-link', 'href'), 'https://www.uniqlo.com/us/en/products/E491096-000/00');
-    assert.strictEqual(await page.textContent('.fit-product--live[data-code="E491096-000"] .fit-product-price'), '$49.90');
-    assert.strictEqual(await page.$$eval('.fit-product--live[data-code="E960001-000"] img', (is) => is.length), 0, 'a photo off the allowed hosts is never drawn');
-    /* one Fynd already lists opens its own product page; any other, its chart */
-    assert.strictEqual(await page.getAttribute('.fit-product--live[data-code="E475378-000"] a.btn', 'href'), 'product.html?brand=uniqlo&item=E475378-000');
-    assert.strictEqual(await page.textContent('.fit-product--live[data-code="E475378-000"] .fit-product-name'), 'Sweat Pullover Hoodie');
-    asked.length = 0;
-    await page.click('.fit-product--live[data-code="E491096-000"] .fit-live-chart');
-    await page.waitForSelector('#fit-result:not([hidden])');
-    await page.waitForFunction(() => document.getElementById('fit-result').dataset.state !== 'loading');
-    assert.ok(asked.some((q) => q === `?chart=${encodeURIComponent('https://www.uniqlo.com/us/en/products/E491096-000/00')}`), `its chart asked for by its own canonical page: ${asked.join(' ')}`);
-    assert.notStrictEqual(await page.getAttribute('#fit-result', 'data-state'), 'ok', 'no saved chart, and UNIQLO’s page isn’t read here: said, not invented');
+    await page.waitForSelector('#fit-browser[data-brands="ready"]');
+    await page.waitForTimeout(300);
+    assert.deepStrictEqual(asked.slice(start), ['?brands=1'], 'only the brand list is asked for on page load');
+    assert.strictEqual(await page.$eval('#fit-brand-dialog', (d) => d.open), false);
+    assert.match(await page.textContent('.fit-brand-choice[data-brand="uniqlo"]'), /UNIQLO\s*1230 products · Browse/);
+    await openUniqlo(page);
+    await page.waitForSelector('#fit-browser[data-answers="1"]');
+    assert.strictEqual(await page.evaluate(() => document.activeElement.id), 'fit-product-search');
+    assert.strictEqual(await page.$eval('#fit-brand-dialog', (d) => d.matches(':modal')), true, 'modal: the page behind is inert');
     await page.context().close();
   });
 
-  await test('Enter in the live box searches; an empty box asks for words and spends nothing; nothing in Fynd’s list points to the live search with the words ready', async () => {
+  await test('Escape, the close button and a click outside each close it, focus returns to UNIQLO, and the search is kept for the next open', async () => {
     const page = await openPage('index.html');
     await ready(page);
-    providerAsked.length = 0;
-    await page.click('#fit-live-run');
-    await page.waitForSelector('#fit-live[data-state="empty"]');
-    assert.match(await page.textContent('#fit-live-status'), /^Type what you’re looking for, then press Search UNIQLO US\./);
-    assert.strictEqual(providerAsked.length, 0);
-    /* Fynd's list has no blouson: the status says where to look, and the live box is filled — not run */
-    await answered(page, () => page.fill('#fit-product-search', 'blouson'));
-    assert.strictEqual(await page.textContent('#fit-browser-status'), 'Nothing in Fynd’s list matches “blouson”. Search all of UNIQLO US above to find it in UNIQLO’s live listings.');
-    assert.strictEqual(await page.inputValue('#fit-live-q'), 'blouson');
-    assert.strictEqual(providerAsked.length, 0, 'filled in, never run on its own');
-    await page.press('#fit-live-q', 'Enter');
-    await page.waitForSelector('#fit-live[data-state="ready"]');
-    assert.strictEqual(new URL(providerAsked[0]).searchParams.get('q'), 'uniqlo blouson');
+    await answered(page, () => page.fill('#fit-product-search', 'black oversized hoodie'));
+    const found = await codes(page);
+    /* Escape from the list (not the search box, where it first clears the words, as any search box does) */
+    await page.focus('#fit-brand-dialog-close');
+    await page.keyboard.press('Escape');
+    assert.strictEqual(await page.$eval('#fit-brand-dialog', (d) => d.open), false);
+    assert.strictEqual(await page.evaluate(() => document.activeElement.dataset.brand), 'uniqlo');
+    const calls = asked.length;
+    await page.click('.fit-brand-choice[data-brand="uniqlo"]');
+    assert.strictEqual(await page.inputValue('#fit-product-search'), 'black oversized hoodie');
+    assert.deepStrictEqual(await codes(page), found);
+    assert.strictEqual(asked.length, calls, 'reopening asks nothing again');
+    await page.click('#fit-brand-dialog-close');
+    assert.strictEqual(await page.$eval('#fit-brand-dialog', (d) => d.open), false);
+    await page.click('.fit-brand-choice[data-brand="uniqlo"]');
+    await page.mouse.click(5, 5);
+    assert.strictEqual(await page.$eval('#fit-brand-dialog', (d) => d.open), false, 'a click on the backdrop closes it');
     await page.context().close();
   });
 
-  await test('when the product source fails, or isn’t connected, the live search says so and Fynd’s own list stays', async () => {
+  await test('choosing a product in the popup continues into Fynd’s product page and its Size Guide — Fynd, not UNIQLO', async () => {
     const page = await openPage('index.html');
     await ready(page);
-    await page.fill('#fit-live-q', 'hoodie');
-    liveStatus = 500;
-    await page.click('#fit-live-run');
-    await page.waitForSelector('#fit-live[data-state="error"]');
-    assert.match(await page.textContent('#fit-live-status'), /UNIQLO couldn’t be searched just now/);
-    assert.ok((await codes(page)).length > 0, 'the list is untouched');
-    liveStatus = 200;
-    const key = process.env.OPENWEBNINJA_API_KEY;
-    delete process.env.OPENWEBNINJA_API_KEY;
-    await page.click('#fit-live-run');
-    await page.waitForSelector('#fit-live[data-state="error"]');
-    await page.waitForFunction(() => /isn’t connected here/.test(document.getElementById('fit-live-status').textContent));
-    process.env.OPENWEBNINJA_API_KEY = key;
+    const first = (await codes(page))[0];
+    await Promise.all([page.waitForURL(/product\.html\?brand=uniqlo&item=/), page.click(`.fit-product[data-code="${first}"]`)]);
+    assert.strictEqual(new URL(page.url()).origin, ORIGIN);
+    assert.strictEqual(new URL(page.url()).searchParams.get('item'), first);
+    await page.waitForSelector('#product[data-state="ready"]');
+    await page.context().close();
+  });
+
+  await test('on a phone the popup fills the screen and scrolls inside, with no sideways scroll', async () => {
+    const page = await openPage('index.html', { width: 375, height: 700 });
+    await ready(page);
+    const box = await page.$eval('#fit-brand-dialog', (d) => { const r = d.getBoundingClientRect(); return { w: r.width, h: r.height, scroll: d.scrollWidth - d.clientWidth }; });
+    assert.ok(box.w >= 370 && box.h >= 690, JSON.stringify(box));
+    assert.ok(box.scroll <= 0, `${box.scroll}px sideways inside the popup`);
     await page.context().close();
   });
 

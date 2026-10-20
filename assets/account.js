@@ -267,9 +267,6 @@
       });
       return call(`size-recommendation?${q}`);
     },
-    /* the rest of UNIQLO's US range, searched live through Fynd's product
-       source: only the words typed travel, and it counts as one search */
-    live: (q) => call('search', { body: { scope: 'uniqlo-us', q } }),
     item: (brand, code) => call(`size-recommendation?brand=${encodeURIComponent(brand)}&item=${encodeURIComponent(code)}`),
     detail: (brand, code) => call(`size-recommendation?brand=${encodeURIComponent(brand)}&detail=${encodeURIComponent(code)}`)
   };

@@ -19,6 +19,10 @@
 
 'use strict';
 
+/* OpenWeb Ninja counts as configured only on a subscription marked
+   active; these tests stand it in, so they mark it so */
+process.env.OPENWEBNINJA_SUBSCRIPTION = 'active';
+
 const assert = require('assert');
 const provider = require('../api/_providers/openwebninja');
 const { verifyAll, linkFault, toHttpsUrl } = require('../api/_providers/product-source');
@@ -265,7 +269,7 @@ test('the report cannot reveal a value length', () => {
    arriving without this test being updated fails the build. */
 test('only the named variables are ever reported', () => {
   assert.deepStrictEqual(REPORTED, [
-    'OPENAI_API_KEY', 'OPENWEBNINJA_API_KEY', 'ALLOWED_ORIGIN', 'VERCEL_ENV',
+    'OPENAI_API_KEY', 'OPENWEBNINJA_API_KEY', 'OPENWEBNINJA_SUBSCRIPTION', 'ALLOWED_ORIGIN', 'VERCEL_ENV',
     /* added on purpose: a 503 from /api/interpret on a deployment that
        is testing an alternative interpreter is one of these two, and
        their states say which. Neither value can be printed. */

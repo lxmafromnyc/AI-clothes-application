@@ -173,7 +173,7 @@ const FILTER_REASONS = new Set(['contradicts-the-requested-garment', 'ruled-out-
 
 async function run(root, cases) {
   const list = cases || CASES;
-  Object.assign(process.env, { OPENWEBNINJA_API_KEY: 'bench', OPENAI_API_KEY: 'bench', FYND_CACHE: 'off' });
+  Object.assign(process.env, { OPENWEBNINJA_API_KEY: 'bench', OPENWEBNINJA_SUBSCRIPTION: 'active', OPENAI_API_KEY: 'bench', FYND_CACHE: 'off' });
   ['PRODUCT_SOURCE', 'SERPER_API_KEY', 'SERPAPI_API_KEY', 'AI_PROVIDER'].forEach((key) => { delete process.env[key]; });
   const from = (file) => require(path.join(root, file));
   from('assets/interpret.js');
