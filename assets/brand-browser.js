@@ -144,7 +144,14 @@
     const filtered = category !== 'all' || line !== 'all' || colour !== 'all' || size !== 'all' || inStock || Boolean(answer.query && answer.query.q);
     if (!total && !filtered) return say('No products to show for this brand yet.');
     if (!total) {
-      return say(answer.unmatched && answer.unmatched.length && answer.query && answer.query.q
+      const typed = answer.query && answer.query.q;
+      /* nothing in Fynd's own list: where live search can run, point to it,
+         with the words already in its box — but never run it unasked */
+      if (typed && liveAvailable()) {
+        if (!liveQ.value.trim()) liveQ.value = typed;
+        return say(`Nothing in Fynd’s list matches “${typed}”. Search all of UNIQLO US above to find it in UNIQLO’s live listings.`);
+      }
+      return say(answer.unmatched && answer.unmatched.length && typed
         ? `No products match. Nothing here matched ${quote(answer.unmatched)}. Clear the search or choose another type.`
         : 'No products match. Clear the search or choose another type.');
     }
@@ -243,6 +250,8 @@
     coverage.textContent = brand.coverage || '';
     note.textContent = brand.notice || '';
     note.hidden = !brand.notice;
+    /* the live search, offered whenever the server says it can run here */
+    live.hidden = !liveAvailable();
     if (!facets) { facets = data.facets || null; drawFilters(); }
     draw(data);
     done();
@@ -265,6 +274,7 @@
     filters.replaceChildren();
     coverage.textContent = '';
     note.hidden = true;
+    live.hidden = true;
     say('Loading products…', 'loading');
     await ask(false);
   }
@@ -288,29 +298,31 @@
 
   /* ---------- the rest of UNIQLO US, searched live on request ----------
 
-     Offered once something is typed, run only when asked (it spends one
-     of the shopper's searches), and drawn apart from Fynd's own list.
-     A result Fynd already lists opens its product page; any other opens
-     its sizing chart through the same lookup a pasted link takes
-     (assets/find-fit.js → chartFor), by its own canonical UNIQLO page. */
+     Shown, above Fynd's own list, whenever the server says it can run
+     here (brand.live.available), with its own box and button: it runs
+     only when the button is pressed (or Enter in its box), since each run
+     spends one of the shopper's searches — typing never does. Drawn apart
+     from Fynd's own list. A result Fynd already lists opens its product
+     page; any other opens its sizing chart through the same lookup a
+     pasted link takes (assets/find-fit.js → chartFor), by its own
+     canonical UNIQLO page. */
   const live = $('fit-live');
+  const liveForm = $('fit-live-form');
+  const liveQ = $('fit-live-q');
   const liveRun = $('fit-live-run');
   const liveStatus = $('fit-live-status');
   const liveGrid = $('fit-live-products');
   const LIVE_IMAGES = /^https:\/\/(image\.uniqlo\.com\/|encrypted-tbn\d\.gstatic\.com\/shopping\?)/;
   let liveAsk = 0;
 
+  function liveAvailable() {
+    return Boolean(brand && brand.id === 'uniqlo' && brand.live && brand.live.available);
+  }
+
   function liveSay(text, state) {
     liveStatus.textContent = text;
     liveStatus.hidden = !text;
     live.dataset.state = state;
-  }
-
-  /* shown for UNIQLO once there are words to search for */
-  function offerLive() {
-    const q = search.value.trim();
-    live.hidden = !(brand && brand.id === 'uniqlo' && q);
-    liveRun.textContent = q ? `Search UNIQLO US for “${q.slice(0, 60)}”` : 'Search UNIQLO US';
   }
 
   function liveCard(p) {
@@ -358,8 +370,8 @@
   }
 
   async function runLive() {
-    const q = search.value.trim();
-    if (!q) return;
+    const q = liveQ.value.trim();
+    if (!q) { liveSay('Type what you’re looking for, then press Search UNIQLO US.', 'empty'); liveQ.focus(); return; }
     const mine = ++liveAsk;
     liveRun.disabled = true;
     liveGrid.replaceChildren();
@@ -371,7 +383,7 @@
     const data = answer.data || {};
     if (!answer.ok) {
       const why = answer.status === 503 ? 'Fynd’s product source isn’t connected here, so UNIQLO can’t be searched live.'
-        : answer.status === 429 ? (data.reason === 'over-limit' && data.error ? `${data.error} Fynd’s own list above is still searchable.` : 'Too many searches at once. Try again in a moment.')
+        : answer.status === 429 ? (data.reason === 'over-limit' && data.error ? `${data.error} Fynd’s own list below can still be filtered, and a product’s link can still be pasted.` : 'Too many searches at once. Try again in a moment.')
           : answer.status === 400 ? 'Type what you’re looking for first.'
             : 'UNIQLO couldn’t be searched just now. Try again in a moment.';
       return liveSay(why, 'error');
@@ -379,14 +391,15 @@
     const products = Array.isArray(data.products) ? data.products : [];
     liveGrid.replaceChildren(...products.map(liveCard));
     live.dataset.found = String(products.length);
-    if (!products.length) return liveSay(`No UNIQLO US products came back for “${data.query || q}”. Try other words.`, 'empty');
+    if (!products.length) return liveSay(`No UNIQLO US products came back for “${data.query || q}”. Try other words, or paste the product’s link at the bottom of this box.`, 'empty');
     liveSay(`${products.length} UNIQLO US product${products.length === 1 ? '' : 's'} found live for “${data.query || q}”, ${data.servedFromCache ? 'from a search made in the last half hour' : 'just now'}. Prices are the listing’s; check them on UNIQLO. Colours and sizes are on UNIQLO’s page.`, 'ready');
   }
-  liveRun.addEventListener('click', runLive);
+  liveForm.addEventListener('submit', (event) => { event.preventDefault(); runLive(); });
 
   brandSelect.addEventListener('change', () => load());
-  /* sent once typing pauses; Enter sends it at once */
-  search.addEventListener('input', () => { clearTimeout(typing); typing = setTimeout(() => ask(false), 220); offerLive(); });
+  /* Fynd's own list, filtered on the server once typing pauses (free: no
+     product source is asked); Enter sends it at once */
+  search.addEventListener('input', () => { clearTimeout(typing); typing = setTimeout(() => ask(false), 220); });
   search.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); ask(false); } });
   start();
 

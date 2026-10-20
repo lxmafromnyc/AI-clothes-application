@@ -282,16 +282,23 @@ function coverage(now) {
     ? `${n} UNIQLO US products, as listed on uniqlo.com’s own category pages on ${SNAPSHOT.fetchedAt} — not UNIQLO’s full range.`
     : `${n} UNIQLO US products Fynd has read off uniqlo.com — not UNIQLO’s full range.`;
 }
-function notice(now) {
+/* `options.live`: whether the live UNIQLO US search (api/_catalog/live.js)
+   can run on this deployment. Where it can, the notice points to it first
+   and to a pasted link after; where it can't, to the link only. */
+function notice(now, options) {
   const v = view(now);
+  const live = Boolean(options && options.live);
   if (v.fresh.served && !v.fresh.volatile && (licensed('price') || licensed('stock'))) {
     return `Prices and stock aren’t shown: UNIQLO’s product catalogue was last updated on ${day(feed.LOADED.catalog.lastSuccessfulSync)}, too long ago for them to be current. Check them on UNIQLO’s own page.`;
   }
   if (v.fresh.served) return null;
-  if (feed.LOADED.state === 'loaded') {
-    return `Limited selection: UNIQLO’s product catalogue was last updated on ${day(feed.LOADED.catalog.lastSuccessfulSync)}, too long ago to show, so only the products Fynd sourced itself are listed. For any other UNIQLO product, paste its link below.`;
-  }
-  return 'Limited selection: Fynd isn’t connected to UNIQLO’s product catalogue yet, so most UNIQLO products aren’t listed here. For any other UNIQLO product, paste its link below.';
+  const n = v.products.length;
+  const why = feed.LOADED.state === 'loaded'
+    ? `UNIQLO’s product catalogue was last updated on ${day(feed.LOADED.catalog.lastSuccessfulSync)}, too long ago to show, so Fynd’s own list holds only the ${n} UNIQLO US products it sourced itself.`
+    : `Fynd’s own list holds only ${n} UNIQLO US products — it isn’t connected to UNIQLO’s full catalogue.`;
+  return live
+    ? `${why} To find any other UNIQLO US product, use “Search all of UNIQLO US” below, which searches UNIQLO’s live listings. If a product still doesn’t turn up, paste its link at the bottom of this box.`
+    : `${why} For any other UNIQLO product, paste its link at the bottom of this box.`;
 }
 
 /* one page of the products matching a query and filters */

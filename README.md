@@ -2360,8 +2360,16 @@ live page, or UNIQLO's general body chart when the catalogue places it in that
 chart's category and line (a men's hoodie, sweatshirt or T-shirt), labelled as
 general and never compared; otherwise an honest "unavailable".
 
-**Until a feed is approved: the rest of UNIQLO US, searched live.** Under
-Find Fit's list, once something is typed, **Search UNIQLO US for "…"** runs
+**Until a feed is approved: the rest of UNIQLO US, searched live.** Find
+Fit shows **Search all of UNIQLO US** right under its notice and above
+Fynd's own list — its own box and a **Search UNIQLO US** button, offered
+whenever the server says it can run (`brand.live.available`: UNIQLO, and the
+deployment's product source is OpenWeb Ninja with its key). The notice then
+says Fynd's own list is limited, points to the live search, and keeps a pasted
+link as the fallback; where live search can't run, it points to the link only.
+The box above Fynd's list filters that list only (free, no product source),
+and when nothing in it matches, the words are put in the live search's box —
+never run. Pressing the button runs
 one search through the product source Fynd's Search page already uses
 (OpenWeb Ninja's Real-Time Product Search, which searches the listings UNIQLO
 publishes to Google Shopping). It is `POST /api/search` with

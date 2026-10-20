@@ -194,7 +194,7 @@ async function test(name, fn) {
     assert.match(await page.textContent('#fit-browser-status'), /No product here matches every word — nothing matched “magenta”, so the closest matches are shown\./);
     await answered(page, () => page.fill('#fit-product-search', 'tuxedo'));
     assert.strictEqual((await codes(page)).length, 0);
-    assert.strictEqual(await page.textContent('#fit-browser-status'), 'No products match. Nothing here matched “tuxedo”. Clear the search or choose another type.');
+    assert.strictEqual(await page.textContent('#fit-browser-status'), 'Nothing in Fynd’s list matches “tuxedo”. Search all of UNIQLO US above to find it in UNIQLO’s live listings.', 'live search runs here, so that is where to look next');
     await answered(page, () => page.fill('#fit-product-search', '<img src=x onerror="window.__owned=1">'));
     assert.strictEqual(await page.evaluate(() => window.__owned), undefined);
     assert.strictEqual(await page.$$eval('#fit-browser img:not(.fit-product img)', (is) => is.length), 0, 'nothing typed became an element');
@@ -296,15 +296,23 @@ async function test(name, fn) {
 
   console.log('\nsearching all of UNIQLO US live');
 
-  await test('the live search is offered once words are typed, runs only when asked, and shows UNIQLO US products only — each with a link to its own page', async () => {
+  await test('the live search is in view from the start, above Fynd’s list, with its own box and a Search button — and runs only when the button is pressed', async () => {
     const page = await openPage('index.html');
     await ready(page);
-    assert.strictEqual(await page.isHidden('#fit-live'), true, 'nothing typed, nothing offered');
+    assert.strictEqual(await page.isVisible('#fit-live'), true, 'offered before anything is typed');
+    assert.strictEqual(await page.textContent('#fit-live-title'), 'Search all of UNIQLO US');
+    assert.strictEqual(await page.getAttribute('#fit-live-q', 'type'), 'search');
+    assert.strictEqual(await page.textContent('#fit-live-run'), 'Search UNIQLO US');
+    assert.strictEqual(await page.getAttribute('#fit-live-run', 'type'), 'submit');
+    assert.match(await page.textContent('#fit-live-note'), /not a saved catalogue\. Each search uses one of your searches, and results aren’t saved to Fynd’s list\./);
+    const order = await page.evaluate(() => ['fit-live', 'fit-list-title', 'fit-products', 'fit-link-alt'].map((id) => document.getElementById(id).getBoundingClientRect().top));
+    assert.ok(order[0] < order[1] && order[1] < order[2] && order[2] < order[3], `live search, then Fynd’s list, then the link box: ${order}`);
+    assert.strictEqual(await page.getAttribute('#fit-product-search', 'placeholder'), 'Filter Fynd’s list, e.g. hoodie');
+    assert.match(await page.textContent('#fit-link-alt summary'), /^Can’t find a product\? Paste its link/);
     providerAsked.length = 0;
+    /* typing in either box, and filtering Fynd's list, never spends a search */
     await answered(page, () => page.fill('#fit-product-search', 'blouson jacket'));
-    assert.strictEqual(await page.isVisible('#fit-live'), true);
-    assert.strictEqual(await page.textContent('#fit-live-run'), 'Search UNIQLO US for “blouson jacket”');
-    assert.match(await page.textContent('#fit-live-note'), /uses one of your searches\. Results aren’t saved to Fynd’s list\./);
+    await page.type('#fit-live-q', 'blouson jacket', { delay: 20 });
     await page.waitForTimeout(400);
     assert.strictEqual(providerAsked.length, 0, 'typing never spends a search');
     await page.click('#fit-live-run');
@@ -329,10 +337,29 @@ async function test(name, fn) {
     await page.context().close();
   });
 
+  await test('Enter in the live box searches; an empty box asks for words and spends nothing; nothing in Fynd’s list points to the live search with the words ready', async () => {
+    const page = await openPage('index.html');
+    await ready(page);
+    providerAsked.length = 0;
+    await page.click('#fit-live-run');
+    await page.waitForSelector('#fit-live[data-state="empty"]');
+    assert.match(await page.textContent('#fit-live-status'), /^Type what you’re looking for, then press Search UNIQLO US\./);
+    assert.strictEqual(providerAsked.length, 0);
+    /* Fynd's list has no blouson: the status says where to look, and the live box is filled — not run */
+    await answered(page, () => page.fill('#fit-product-search', 'blouson'));
+    assert.strictEqual(await page.textContent('#fit-browser-status'), 'Nothing in Fynd’s list matches “blouson”. Search all of UNIQLO US above to find it in UNIQLO’s live listings.');
+    assert.strictEqual(await page.inputValue('#fit-live-q'), 'blouson');
+    assert.strictEqual(providerAsked.length, 0, 'filled in, never run on its own');
+    await page.press('#fit-live-q', 'Enter');
+    await page.waitForSelector('#fit-live[data-state="ready"]');
+    assert.strictEqual(new URL(providerAsked[0]).searchParams.get('q'), 'uniqlo blouson');
+    await page.context().close();
+  });
+
   await test('when the product source fails, or isn’t connected, the live search says so and Fynd’s own list stays', async () => {
     const page = await openPage('index.html');
     await ready(page);
-    await answered(page, () => page.fill('#fit-product-search', 'hoodie'));
+    await page.fill('#fit-live-q', 'hoodie');
     liveStatus = 500;
     await page.click('#fit-live-run');
     await page.waitForSelector('#fit-live[data-state="error"]');
