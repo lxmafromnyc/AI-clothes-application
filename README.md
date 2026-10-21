@@ -3080,6 +3080,28 @@ No brand states stretch; none publishes neck openings or hem widths; there is no
 women's chart for any of the six. Each record's `sources` and `notes` say exactly
 where every value came from and what was left out.
 
+**A record from a product page's own text.** `api/_sizing/page-record.js`
+turns the Fit panel's test report into a draft record
+(`node scripts/record-from-report.js report.json [--write]`). The report holds
+the page's address and title, the product's structured data, and every size
+chart with its cells exactly as the page wrote them; it is text only, with no
+images. The draft:
+
+- keeps each value in the chart's own unit, with its text;
+- keeps body and garment charts apart, and never derives one from the other;
+- takes a measuring method only from the column's words, or from the brand's
+  own measuring guide already cited in the records (UNIQLO's How to Measure);
+- is captured `browser-extension`, `unverified`, with its review `pending`.
+
+Anything the page didn't give (fabric and stretch, a method, the line) is
+listed as missing, and the draft won't validate until a person supplies it.
+Drafts go to `api/_sizing/drafts/`, which is never loaded.
+
+`scripts/test-page-record.js` rebuilds each record's page from the text the
+record kept, and checks every value comes back exactly. That shows the
+conversion is faithful; it says nothing about whether the live pages still
+show those tables.
+
 ### How a size is chosen
 
 `api/_sizing/engine.js`. What the profile says becomes a range, never an exact

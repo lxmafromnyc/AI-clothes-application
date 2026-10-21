@@ -591,7 +591,7 @@
       let address = null;
       try { const u = new URL(p.tab.url || c.url); address = `${u.origin}${u.pathname}`; } catch (err) { address = null; }
       const category = $('p-category').value || p.category;
-      out.page = { address, title: c.title, dialogOpen: c.dialogOpen, guideLinks: (c.guides || []).map((g) => g.text), guideButtons: c.guideButtons || [] };
+      out.page = { address, canonical: c.canonical || null, title: c.title, dialogOpen: c.dialogOpen, guideLinks: (c.guides || []).map((g) => g.text), guideButtons: c.guideButtons || [] };
       out.identified = {
         name: c.product && c.product.name, brand: c.product && c.product.brand, code: c.product && c.product.code,
         sizesListed: c.product ? c.product.sizes : [], fit: c.fit,
@@ -600,7 +600,9 @@
         fyndHolds: p.ref ? { id: p.ref.id, verification: p.ref.verification } : null
       };
       out.tablesFound = (c.tables || []).length;
-      out.charts = p.options.map((o) => ({ key: o.key, label: o.label, source: o.source, where: o.where, measures: o.chart.measures, unit: o.chart.unit || null, columns: o.chart.columns, sizes: o.chart.rows.map((r) => r.size) }));
+      /* every chart found, with its cells exactly as the page wrote them:
+         what scripts/record-from-report.js turns into a draft record */
+      out.charts = p.options.map((o) => ({ key: o.key, label: o.label, source: o.source, where: o.where, measures: o.chart.measures, unit: o.chart.unit || null, title: o.chart.title || null, methods: o.chart.methods || null, columns: o.chart.columns, sizes: o.chart.rows.map((r) => r.size), rows: o.chart.rows.map((r) => ({ size: r.size, values: r.values.slice() })) }));
       out.chosen = p.chosen;
       out.corrected = Boolean(state.corrected);
       const chart = currentChart();

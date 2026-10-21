@@ -159,4 +159,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { build, render, OUT };
+module.exports = { build, render, OUT, garmentOf, bodyOf };

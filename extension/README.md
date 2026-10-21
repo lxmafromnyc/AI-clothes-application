@@ -106,6 +106,27 @@ invented pages. In your own Chrome, about five minutes:
    https://www.zara.com/us/en/basic-medium-weight-t-shirt--02-p01887411.html.
    Open its "Product measurements" before pressing **Read this page**.
 
+**Turning the report into a record (text only).** Save the copied report as
+`report.json` and run `node scripts/record-from-report.js report.json`. It
+prints:
+
+- the product's brand, name, address, code, kind and sizes;
+- each chart, labelled garment or body, with every cell as published and in
+  inches;
+- every field the page didn't give.
+
+With `--write`, the draft goes to `api/_sizing/drafts/`, which Fynd never
+loads. Nothing is guessed:
+
+- a missing measuring method, unit, fabric or line stays missing, and the draft
+  won't validate until a person supplies it from the page;
+- a body chart never becomes garment measurements;
+- no image is read or kept.
+
+To make a draft a record, check every value against the page and fill what's
+missing. Then move it into `api/_sizing/records/`, list it in `records.js`, and
+run `node scripts/build-fit-references.js && node scripts/sync-extension.js`.
+
 **What to send back:**
 
 - the copied test report for each page (JSON; the page address without its

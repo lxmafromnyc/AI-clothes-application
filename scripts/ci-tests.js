@@ -67,6 +67,7 @@ const GROUPS = {
     ['test-fit-profile', 'the shopper fit profile: its schema, units, and who may read or change it'],
     ['test-sizing', 'sizing records, the size engine, /api/size-recommendation and fit feedback'],
     ['test-page-access', 'which retailer pages the sizing reader may fetch: reviewed terms, then robots.txt, and nothing otherwise'],
+    ['test-page-record', "a draft sizing record from a product page's own text: every UNIQLO record rebuilt from its page's cells, body-only and unlabelled charts, refusals, no images"],
     ['test-fit-anchor', 'the Fit Anchor comparison: units, methods, broken charts, categories, fit preferences, outcomes and confidence'],
     ['test-extension', 'the browser extension: its permissions, its copies of the shared sizing code, and the chart payload it hands to Find Fit'],
     ['test-size-eval', 'the size engine against hand-worked expectations from published charts'],

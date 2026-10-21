@@ -55,6 +55,7 @@ const SHOP = path.join(__dirname, 'fixtures/fit-panel/shop');
 const XINPUT = path.join(__dirname, 'real-chrome/xinput.py');
 const CHROME = process.env.CHROME_PATH || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
 const LIVE = process.argv.includes('--live') ? process.argv.slice(process.argv.indexOf('--live') + 1) : null;
+const { recordFromReport } = require('../api/_sizing/page-record');
 const SHOTS = process.env.FYND_SHOTS || fs.mkdtempSync(path.join(os.tmpdir(), 'fynd-real-chrome-'));
 let chromium;
 try { ({ chromium } = require(process.env.PLAYWRIGHT_PATH || 'playwright')); } catch (err) { chromium = null; }
@@ -423,6 +424,31 @@ async function launch(display, port) {
     shot('09-uniqlo-address');
   });
 
+  await test('text-only extraction on the UNIQLO-address page: its size guide opened and read, the test report turned into a draft record — product, sizes, Product Size and Body Size kept apart, the published text and values, nothing invented', async () => {
+    await shop.click('#open-guide');
+    await panel.click('#read');
+    await panel.waitForFunction(() => /Fynd’s data/.test(document.getElementById('chart-area').textContent));
+    await sleep(300);
+    await panel.click('#copy-report');
+    await sleep(200);
+    const report = JSON.parse(await panel.inputValue('#report-text'));
+    const fromPage = report.charts.filter((c) => c.source === 'retailer-page');
+    assert.deepStrictEqual(fromPage.map((c) => c.measures).sort(), ['body', 'finished-garment']);
+    const out = recordFromReport(report);
+    const rec = require('../api/_sizing/records/uniqlo-e475377-sweatshirt-us.json');
+    const d = out.record;
+    assert.deepStrictEqual([d.brand, d.product.name, d.product.url, d.product.code, d.category, d.line, d.units, d.sizes.join(',')],
+      /* the address as read: this machine serves it over http, and the record keeps what was read */
+      ['UNIQLO', 'Sweatshirt', 'http://www.uniqlo.com/us/en/products/E475377-000/00', 'E475377-000', 'sweatshirts', 'men', 'in', rec.sizes.join(',')]);
+    assert.deepStrictEqual(d.fit, { brandWords: 'Regular', fitClass: 'regular', source: 'product page, read by the Fynd extension' });
+    Object.entries(rec.charts.garment.sizes).forEach(([size, row]) => Object.entries(row).forEach(([dim, cell]) => assert.deepStrictEqual(d.charts.garment.sizes[size][dim], { value: cell.value, text: cell.text }, `${size} ${dim}`)));
+    Object.entries(rec.charts.body.sizes).forEach(([size, row]) => assert.deepStrictEqual(d.charts.body.sizes[size].chest, row.chest, `body ${size}`));
+    assert.deepStrictEqual(out.missing.map((m) => m.field), ['material']);
+    assert.deepStrictEqual([d.verification.status, d.capture.how], ['unverified', 'browser-extension']);
+    /* what keeps it from loading: the missing fabric, and (here only) the http address */
+    assert.ok(out.errors.length && out.errors.every((e) => e.field === 'material.stretch' || /url|source|methodSource/i.test(e.field)), JSON.stringify(out.errors));
+  });
+
   await test('how it fit: “Too tight” in L is stored with L’s measurements and moves the recommendation', async () => {
     await panel.selectOption('#f-size', 'L');
     await panel.click('[data-outcome="too-tight"]');
@@ -434,6 +460,31 @@ async function launch(display, port) {
     assert.strictEqual(hoodie.feedback[0].outcome, 'too-tight');
     assert.strictEqual(hoodie.feedback[0].dims.chestWidth, 25);
     shot('10-outcome');
+  });
+
+  await test('text-only extraction on a body-only page and a page with no chart: no garment measurement is produced from either', async () => {
+    await shop.goto(local('/shop/body-only.html'));
+    await sleep(600);
+    await clickFynd();
+    await panel.waitForFunction(() => document.getElementById('product-name').textContent === 'Relaxed Tee');
+    await panel.click('#copy-report');
+    await sleep(200);
+    const body = JSON.parse(await panel.inputValue('#report-text'));
+    assert.deepStrictEqual(body.charts.map((c) => c.measures), ['body']);
+    /* an invented shop isn't a brand a record may hold: refused, not guessed */
+    assert.strictEqual(recordFromReport(body).status, 'refused');
+    /* the same body-only chart on a brand's own address: body chest only */
+    const asBrand = Object.assign({}, body, { page: Object.assign({}, body.page, { address: 'https://www2.hm.com/en_us/productpage.0685816001.html' }) });
+    const out = recordFromReport(asBrand);
+    assert.deepStrictEqual(Object.keys(out.record.charts), ['body']);
+    assert.ok(out.notRecorded.some((n) => /None is worked out from a body chart/.test(n)));
+    await shop.goto(local('/shop/no-chart.html'));
+    await sleep(600);
+    await panel.click('#copy-report');
+    await sleep(200);
+    const none = JSON.parse(await panel.inputValue('#report-text'));
+    assert.deepStrictEqual(none.charts, []);
+    assert.strictEqual(recordFromReport(Object.assign({}, none, { page: Object.assign({}, none.page, { address: 'https://www.uniqlo.com/us/en/products/E475377-000/00' }) })).status, 'refused');
   });
 
   await test('pages Chrome won’t let any extension read, and pages that didn’t load: an explanation, not an empty panel', async () => {

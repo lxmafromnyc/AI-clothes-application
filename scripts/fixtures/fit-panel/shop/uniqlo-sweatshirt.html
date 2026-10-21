@@ -1,8 +1,55 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><title>Sweatshirt | UNIQLO US</title>
-<script type="application/ld+json">{"@context":"https://schema.org","@type":"ProductGroup","name":"Sweatshirt","brand":{"@type":"Brand","name":"UNIQLO"},"productID":"E475377-000","hasVariant":[{"@type":"Product","size":"XS"},{"@type":"Product","size":"S"},{"@type":"Product","size":"M"},{"@type":"Product","size":"L"},{"@type":"Product","size":"XL"}]}</script></head>
+<html lang="en"><head><meta charset="utf-8"><title>Men's Sweatshirt | UNIQLO US</title>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"ProductGroup","name":"Sweatshirt","brand":{"@type":"Brand","name":"UNIQLO"},"productID":"E475377-000","hasVariant":[{"@type":"Product","size":"XXS"},{"@type":"Product","size":"XS"},{"@type":"Product","size":"S"},{"@type":"Product","size":"M"},{"@type":"Product","size":"L"},{"@type":"Product","size":"XL"},{"@type":"Product","size":"XXL"},{"@type":"Product","size":"3XL"}]}</script></head>
 <body>
-<p>FIXTURE — served at UNIQLO US’s product address by the test’s own server (Chrome is told to resolve www.uniqlo.com to it). It is not UNIQLO’s page and has none of UNIQLO’s markup; it only checks that Fynd recognises the address and uses the measurements it holds for that product.</p>
+<p>FIXTURE — served at UNIQLO US’s product address by the test’s own server (Chrome is told to resolve www.uniqlo.com to it). It is not UNIQLO’s page: the markup is invented. The size-guide cells are the text Fynd’s record uniqlo-e475377-sweatshirt-us copied from UNIQLO’s page on 2026-10-10, so the browser path is tested on real published values. It shows nothing about whether the live page still shows them.</p>
 <h1>Sweatshirt</h1>
-<p>Size guide (closed)</p>
+<dl><dt>Fit</dt><dd>Regular</dd></dl>
+<p><button type="button" id="open-guide">Size guide</button></p>
+<dialog id="guide" aria-label="Size guide"></dialog>
+<template id="guide-content">
+ <h2>Size guide</h2>
+ <div role="tablist">
+  <button type="button" role="tab" id="tab-body" aria-selected="true" aria-controls="panel-body">Body Size</button>
+  <button type="button" role="tab" id="tab-product" aria-selected="false" aria-controls="panel-product">Product Size</button>
+ </div>
+ <div role="tabpanel" id="panel-body" aria-labelledby="tab-body">
+  <p>The dimensions shown below are body size measurements that correspond with a product's size. Inches</p>
+  <table><tr><th>Size</th><th>Chest</th></tr>
+   <tr><td>XXS</td><td>30 ¾ - 33</td></tr>
+   <tr><td>XS</td><td>31 ½ - 34 ¾</td></tr>
+   <tr><td>S</td><td>34 ¾ - 37 ¾</td></tr>
+   <tr><td>M</td><td>37 ¾ - 41</td></tr>
+   <tr><td>L</td><td>41 - 44</td></tr>
+   <tr><td>XL</td><td>44 - 47 ¼</td></tr>
+   <tr><td>XXL</td><td>47 ¼ - 50 ½</td></tr>
+   <tr><td>3XL</td><td>50 ½ - 53 ½</td></tr></table>
+ </div>
+ <div role="tabpanel" id="panel-product" aria-labelledby="tab-product" hidden>
+  <p>The dimensions shown below are the actual measurements of the product. Inches</p>
+  <table><tr><th>Size</th><th>Length (back)</th><th>Shoulder width (seam to seam)</th><th>Chest</th><th>Sleeve Length (center back)</th></tr>
+   <tr><td>XXS</td><td>23 ½</td><td>18</td><td>20</td><td>32 ¼</td></tr>
+   <tr><td>XS</td><td>24 ½</td><td>18 ¾</td><td>21</td><td>32 ¾</td></tr>
+   <tr><td>S</td><td>25 ½</td><td>19 ¼</td><td>22 ¼</td><td>33 ¾</td></tr>
+   <tr><td>M</td><td>26 ¾</td><td>20</td><td>23 ½</td><td>34 ¾</td></tr>
+   <tr><td>L</td><td>28</td><td>20 ¾</td><td>25</td><td>35 ¾</td></tr>
+   <tr><td>XL</td><td>28 ¾</td><td>21 ½</td><td>26 ½</td><td>36 ¼</td></tr>
+   <tr><td>XXL</td><td>29</td><td>22 ¼</td><td>27 ¾</td><td>36 ½</td></tr>
+   <tr><td>3XL</td><td>29 ¾</td><td>23</td><td>29 ¼</td><td>37</td></tr></table>
+ </div>
+ <p><button type="button" id="close-guide">Close</button></p>
+</template>
+<script>
+ const g = document.getElementById('guide');
+ document.getElementById('open-guide').onclick = () => {
+  if (!g.firstElementChild) {
+   g.append(document.getElementById('guide-content').content.cloneNode(true));
+   document.getElementById('close-guide').onclick = () => g.close();
+   g.querySelectorAll('[role=tab]').forEach((t) => t.onclick = () => {
+    g.querySelectorAll('[role=tab]').forEach((x) => { x.setAttribute('aria-selected', String(x === t)); document.getElementById(x.getAttribute('aria-controls')).hidden = x !== t; });
+   });
+  }
+  g.showModal();
+ };
+</script>
 </body></html>
