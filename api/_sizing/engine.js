@@ -531,6 +531,15 @@ function comparable(record, shopper) {
   return { used, skipped };
 }
 
+/* a dimension's tolerance in the product's unit and method: the chest's
+   is a flat width's, so a chest published around misses by twice as
+   many inches for the same fit */
+function tolOf(params, d, record) {
+  const dim = record.charts.garment.dimensions[d];
+  const around = d === 'chestWidth' && dim && dim.method === 'garment-circumference';
+  return toUnits(params.garment[d].tol, 'in', record.units) * (around ? 2 : 1);
+}
+
 function scoreReferenceGarment(record, shopper) {
   const ref = shopper.garmentRef;
   const { used } = comparable(record, shopper);
@@ -543,10 +552,10 @@ function scoreReferenceGarment(record, shopper) {
     const parts = [];
     Object.keys(used).forEach((d) => {
       if (!row[d]) return;
-      const { weight, tol } = shopper.params.garment[d];
+      const { weight } = shopper.params.garment[d];
       const target = toUnits(used[d].value, ref.record.units, record.units);
       const diff = row[d].value - target;
-      let c = weight * weights[d] * (diff / toUnits(tol, 'in', record.units)) ** 2;
+      let c = weight * weights[d] * (diff / tolOf(shopper.params, d, record)) ** 2;
       if (trouble[d] && diff < 0) c *= TROUBLE_FACTOR;
       cost += c;
       parts.push({ dim: d, value: row[d].value, target, diff, estimated: used[d].estimated });
@@ -1168,7 +1177,8 @@ function recommend(profile, record, opts) {
 
    over the dimensions both sides measured the same way, with the
    category's own weights and tolerances (CATEGORY_PARAMS.garment):
-   chest counts most (weight 1, a 1 in flat tolerance), because it sets
+   chest counts most (weight 1, a 1 in flat tolerance — 2 in when the
+   product publishes it around), because it sets
    how much room the whole top has; body and sleeve length next (0.6);
    shoulders least (0.3, but a tighter ¾ in tolerance), since a
    shoulder seam's place shifts with the cut. The shopper's "what
@@ -1235,17 +1245,23 @@ function contextOf(record) {
    or more — the "tighter / similar / roomier" line Find Fit draws. It
    reads only the girths the engine compared (chest, shoulders): lengths
    say longer or shorter, not tighter or roomier, and are left to the
-   table. Each girth's difference (this size minus the reference, chest
-   as twice a flat width when it is measured flat) is divided by its
-   `about` band in fitBands.reference, and the girths are averaged with
-   their scoring weights. Inside ±1 band is "similar"; beyond, "tighter"
-   or "roomier". The position is clamped to ±3 bands for drawing. No
-   girth compared, no gauge: a length alone never says how roomy. */
+   table. Each girth's difference (this size minus the reference, in
+   the product's own method) is put in the band's terms — the chest band
+   is around, so a flat chest difference counts twice, a circumference
+   once — divided by its `about` band in fitBands.reference, and the
+   girths are averaged with their scoring weights. Only a method listed
+   in GAUGE_FACTOR is read: any other leaves that girth out, never
+   guessed. Inside ±1 band is "similar"; beyond, "tighter" or "roomier".
+   The position is clamped to ±3 bands for drawing. No girth compared,
+   no gauge: a length alone never says how roomy. */
 const GAUGE_DIMS = ['chestWidth', 'shoulderWidth'];
 const GAUGE_SPAN = 3;
-function fitGauge(record, params, row, unit) {
+const GAUGE_FACTOR = {
+  chestWidth: { 'flat-width-armpit-to-armpit': 2, 'garment-circumference': 1 },
+  shoulderWidth: { 'seam-to-seam': 1, 'broadest-part-of-shoulders': 1 }
+};
+function fitGauge(params, row, unit) {
   if (!row) return null;
-  const dims = record.charts.garment.dimensions;
   let sum = 0;
   let weights = 0;
   const basis = [];
@@ -1253,15 +1269,17 @@ function fitGauge(record, params, row, unit) {
   let estimated = false;
   GAUGE_DIMS.forEach((d) => {
     const x = row.dimensions[d];
-    if (!x || !x.compared) return;
-    const scale = d === 'chestWidth' && dims[d].method === 'flat-width-armpit-to-armpit' ? 2 : 1;
+    if (!x || !x.compared || typeof x.difference !== 'number' || !Number.isFinite(x.difference)) return;
+    const factor = GAUGE_FACTOR[d][x.method];
+    if (!factor) return;
     const bands = toUnits(params.fitBands.reference[d].about, 'in', unit);
     const { weight } = params.garment[d];
-    sum += weight * ((x.difference * scale) / bands);
+    sum += weight * ((x.difference * factor) / bands);
     weights += weight;
     basis.push(d);
-    /* "similar" means within this much, said as the band is: chest around */
-    within[d] = { value: round(bands, 2), around: d === 'chestWidth' };
+    /* "similar" means within this much, said as the band is: chest
+       around; factor 2 when the difference shown is a flat width */
+    within[d] = { value: round(bands, 2), around: d === 'chestWidth', factor };
     if (x.estimated) estimated = true;
   });
   if (!weights) return null;
@@ -1366,14 +1384,15 @@ function compare(profile, record, opts) {
       }
       const target = toUnits(v.value, ref.record.units, record.units);
       const diffRecord = row[d].value - target;
-      const { weight, tol } = params.garment[d];
-      score += weight * weights[d] * (diffRecord / toUnits(tol, 'in', record.units)) ** 2;
+      const { weight } = params.garment[d];
+      score += weight * weights[d] * (diffRecord / tolOf(params, d, record)) ** 2;
       const difference = round(toUnits(diffRecord, record.units, unit), 2);
       out[d] = {
         compared: true,
         candidate: show(row[d].value, record.units),
         reference: show(target, record.units),
         difference,
+        method: record.charts.garment.dimensions[d].method,
         words: differenceWords(d, difference, unit),
         estimated: v.estimated || null
       };
@@ -1417,7 +1436,7 @@ function compare(profile, record, opts) {
 
   const verified = sizingSchema.isVerified(record);
   const recommended = enough && verified ? closest.size : null;
-  const fit = fitGauge(record, params, sizes.find((x) => x.size === (recommended || closest.size)), unit);
+  const fit = fitGauge(params, sizes.find((x) => x.size === (recommended || closest.size)), unit);
   const named = listWords(dims.map((d) => DIM_NAMES[d]));
   const summary = recommended
     ? `${recommended} is the closest to your reference across ${named}.`
@@ -1449,4 +1468,4 @@ function compare(profile, record, opts) {
   };
 }
 
-module.exports = { recommend, compare, matchProduct, CATEGORY_PARAMS, TROUBLE_FACTOR, ALTERNATIVE_MARGIN, METHOD_WORDS, sizeOffset, bodyRange, contextOf };
+module.exports = { recommend, compare, fitGauge, matchProduct, CATEGORY_PARAMS, TROUBLE_FACTOR, ALTERNATIVE_MARGIN, METHOD_WORDS, sizeOffset, bodyRange, contextOf };

@@ -2560,12 +2560,15 @@ choose a size:
   too few measurements taken the same way it says **Closest size X — not a
   recommendation**), **Fits most like your BRAND SIZE**, and a Tighter ─
   Similar ─ Roomier gauge, with the size chart folded under **Size chart**.
-  The gauge is the engine's `fit`: chest (around, twice a flat width) and
-  shoulder differences for that size, each divided by its `about` band in
-  `fitBands.reference`, averaged by scoring weight; within ±1 band is
-  "similar", clamped to ±3 for drawing; no girth compared, no gauge. **See why
-  this size is recommended** opens the size-minus-reference difference for each
-  measurement (+ larger, − smaller, 0 a match to 0.1 cm or ¼ in), the reason
+  The gauge is the engine's `fit`: chest and shoulder differences for that
+  size, each divided by its `about` band in `fitBands.reference`, averaged by
+  scoring weight; within ±1 band is "similar", clamped to ±3 for drawing; no
+  girth compared, no gauge. The chest band is around: a difference the product
+  publishes flat counts twice, one it publishes around (`garment-circumference`)
+  once, and a girth whose method isn't one of those is left out, never
+  guessed. **See why this size is recommended** opens the size-minus-reference
+  difference for each measurement (+ larger, − smaller, 0 a match to 0.1 cm or
+  ¼ in; the chest row says **flat** or **around**), the reason
   any measurement wasn't compared, the sources, reliability and caveats.
   Body charts, unchecked charts, unknown methods and missing references say
   "Not enough verified measurements to compare these items yet." and why.

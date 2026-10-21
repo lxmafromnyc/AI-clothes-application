@@ -1947,11 +1947,12 @@ const linkFromInbox = (pattern) => {
     assert.strictEqual(await page.textContent('#fit-check .fit-check-detail-title'), 'Compared with your Carhartt, size L');
     const whyRows = await page.$$eval('#fit-check .fit-check-table tbody tr', (trs) => trs.map((tr) => [tr.querySelector('th').textContent, tr.querySelector('.fit-check-delta').textContent, tr.querySelector('.fit-check-meaning').textContent]));
     assert.deepStrictEqual(whyRows, [
-      ['Chest', '−1.5 cm', 'narrower'],
+      ['Chest, flat', '−1.5 cm', 'narrower'],
       ['Body length', 'Not compared', "measured differently — UNIQLO's from the centre back, yours from the top of the shoulder"],
       ['Shoulders', '−1.1 cm', 'narrower'],
       ['Sleeves', 'Not compared', "measured differently — UNIQLO's from the centre back, yours from the shoulder seam"]
     ], 'target minus yours; centre-back sleeves never set beside shoulder-seam ones');
+    assert.match(await page.textContent('#fit-check .fit-check-note'), /“similar” is within about 2\.54 cm around the chest and 0\.95 cm across the shoulders\. The chest difference above is a flat width, so it counts twice around\./);
     assert.match(await page.textContent('#fit-check .fit-check-legend'), /^\+ size S is larger than yours · − smaller · 0 the same, to the nearest 0\.1 cm/);
     assert.match(await page.textContent('#fit-check .fit-check-facts'), /Your referenceMeasured by you, from your fit profile\./);
     assert.match(await page.textContent('#fit-check .fit-check-facts'), /ReliabilityLow\.|Reliabilitylow\./);

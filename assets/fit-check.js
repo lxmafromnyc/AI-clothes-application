@@ -35,6 +35,10 @@
     bodyLength: ['longer', 'shorter'], sleeveLength: ['longer', 'shorter']
   };
   const GAUGE_WORDS = { tighter: 'Tighter', similar: 'Similar', roomier: 'Roomier' };
+  /* how a compared chest was taken, so a flat difference is never read
+     as one around (the engine's method on each compared row) */
+  const CHEST_HOW = { 'flat-width-armpit-to-armpit': 'flat', 'garment-circumference': 'around' };
+  const rowLabel = (d, x) => (d === 'chestWidth' && x.compared && CHEST_HOW[x.method] ? `Chest, ${CHEST_HOW[x.method]}` : DIM_LABEL[d]);
   let uid = 0;
 
   async function show(chart, box, current) {
@@ -183,7 +187,7 @@
       const x = row.dimensions[d];
       const tr = el('tr');
       tr.dataset.dim = d;
-      const th = el('th', null, DIM_LABEL[d]);
+      const th = el('th', null, rowLabel(d, x));
       th.scope = 'row';
       const td = el('td');
       if (x.compared) {
@@ -206,7 +210,9 @@
         const w = c.fit.within[d];
         return `${w.value} ${unit} ${w.around ? 'around the chest' : `across the ${DIM_LABEL[d].toLowerCase()}`}`;
       });
-      panel.append(el('p', 'fit-check-note', `Tighter, similar or roomier reads ${c.fit.basis.map((d) => DIM_LABEL[d].toLowerCase()).join(' and ')} only; “similar” is within about ${bands.join(' and ')}.`));
+      const doubled = c.fit.within.chestWidth && c.fit.within.chestWidth.factor === 2
+        ? ' The chest difference above is a flat width, so it counts twice around.' : '';
+      panel.append(el('p', 'fit-check-note', `Tighter, similar or roomier reads ${c.fit.basis.map((d) => DIM_LABEL[d].toLowerCase()).join(' and ')} only; “similar” is within about ${bands.join(' and ')}.${doubled}`));
     }
     estimated.forEach((t) => panel.append(el('p', 'fit-check-note', t)));
     if (row && row.unranked) panel.append(el('p', 'fit-check-note', row.unranked));

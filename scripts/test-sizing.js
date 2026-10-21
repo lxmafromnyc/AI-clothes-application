@@ -996,7 +996,7 @@ const expectedGauge = (r, size) => {
   const row = r.sizes.find((s) => s.size === size).dimensions;
   let sum = 0; let w = 0;
   ['chestWidth', 'shoulderWidth'].filter((d) => row[d].compared).forEach((d) => {
-    const scale = d === 'chestWidth' ? 2 : 1;   /* the fixture's chest is flat */
+    const scale = d === 'chestWidth' && row[d].method === 'flat-width-armpit-to-armpit' ? 2 : 1;   /* the chest band is around */
     const band = P.fitBands.reference[d].about * (r.unit === 'cm' ? 2.54 : 1);
     sum += P.garment[d].weight * (row[d].difference * scale) / band;
     w += P.garment[d].weight;
@@ -1012,7 +1012,7 @@ await test('the gauge is for the size recommended, from the compared girths, sig
   /* M is 2 cm wider flat (4 cm around) and 1 cm wider across: more room */
   assert.ok(r.fit.position > 1);
   assert.strictEqual(r.fit.label, 'roomier');
-  assert.deepStrictEqual(r.fit.within, { chestWidth: { value: 2.54, around: true }, shoulderWidth: { value: 0.95, around: false } });
+  assert.deepStrictEqual(r.fit.within, { chestWidth: { value: 2.54, around: true, factor: 2 }, shoulderWidth: { value: 0.95, around: false, factor: 1 } });
 });
 
 await test('a reference measured the same as a size reads "similar" at 0; one larger than every size reads "tighter"', () => {
@@ -1036,7 +1036,7 @@ await test('the gauge reads the same in inches and centimetres', () => {
   assert.strictEqual(inch.unit, 'in');
   assert.ok(Math.abs(inch.fit.position - cm.fit.position) < 0.02, `${inch.fit.position} vs ${cm.fit.position}`);
   assert.strictEqual(inch.fit.label, cm.fit.label);
-  assert.deepStrictEqual(inch.fit.within, { chestWidth: { value: 1, around: true }, shoulderWidth: { value: 0.38, around: false } });
+  assert.deepStrictEqual(inch.fit.within, { chestWidth: { value: 1, around: true, factor: 2 }, shoulderWidth: { value: 0.38, around: false, factor: 1 } });
 });
 
 await test('no girth compared, no gauge: a lengths-only reference says nothing about room', () => {
@@ -1071,6 +1071,122 @@ await test('a body chart, an unverified chart or a missing reference has no gaug
     assert.strictEqual(r.status, 'insufficient');
     assert.ok(!('fit' in r) && !('recommended' in r) && !('closest' in r), JSON.stringify(Object.keys(r)));
   });
+});
+
+/* the illustrative hoodie with its chest published all the way around
+   (twice each flat width), as a brand that measures it so would */
+const AROUND = () => {
+  const r = ILLUSTRATIVE();
+  const chest = r.charts.garment.dimensions.chestWidth;
+  chest.method = 'garment-circumference';
+  delete chest.derivedCircumference;
+  Object.values(r.charts.garment.sizes).forEach((row) => { row.chestWidth = { value: row.chestWidth.value * 2, text: String(row.chestWidth.value * 2) }; });
+  return r;
+};
+/* the illustrative hoodie published in inches */
+const IN_INCHES = () => {
+  const r = ILLUSTRATIVE();
+  r.units = 'in';
+  Object.values(r.charts.garment.sizes).forEach((row) => Object.keys(row).forEach((d) => { row[d] = { value: row[d].value / 2.54, text: String(row[d].value / 2.54) }; }));
+  return r;
+};
+
+await test('a flat chest: the difference shown is flat, and only it is doubled for the around band', () => {
+  const r = engine.compare(hoodieRef({ measurements: REF_CM }), ILLUSTRATIVE());
+  const m = r.sizes.find((s) => s.size === 'M').dimensions;
+  assert.strictEqual(m.chestWidth.method, 'flat-width-armpit-to-armpit');
+  assert.strictEqual(m.chestWidth.difference, 2, 'M is 2 cm wider flat; shown flat, not doubled');
+  assert.strictEqual(m.chestWidth.estimated, null, 'flat beside flat is not an estimate');
+  assert.strictEqual(m.shoulderWidth.difference, 1);
+  /* chest 2 cm flat = 4 cm around over a 2.54 cm band (weight 1); shoulders 1 cm over 0.9525 cm (weight 0.3) */
+  const P = engine.CATEGORY_PARAMS.hoodies;
+  const want = (P.garment.chestWidth.weight * (4 / 2.54) + P.garment.shoulderWidth.weight * (1 / (0.375 * 2.54))) / (P.garment.chestWidth.weight + P.garment.shoulderWidth.weight);
+  assert.ok(Math.abs(r.fit.position - want) < 0.01, `${r.fit.position} vs ${want}`);
+});
+
+await test('a chest published around is compared around and never doubled again', () => {
+  const flat = engine.compare(hoodieRef({ measurements: REF_CM }), ILLUSTRATIVE());
+  const around = engine.compare(hoodieRef({ measurements: REF_CM }), AROUND());
+  assert.deepStrictEqual(sizingSchema.validate(AROUND()), []);
+  const m = around.sizes.find((s) => s.size === 'M').dimensions.chestWidth;
+  assert.strictEqual(m.method, 'garment-circumference');
+  assert.strictEqual(m.reference, 116, 'your 58 cm flat, as 116 cm around');
+  assert.strictEqual(m.difference, 4, 'M is 4 cm more around');
+  assert.match(m.estimated, /twice its flat width/, 'a worked-out circumference is said to be one');
+  assert.strictEqual(around.fit.within.chestWidth.factor, 1);
+  assert.strictEqual(around.recommended, flat.recommended);
+  assert.ok(Math.abs(around.fit.position - flat.fit.position) < 0.01, `the same garment reads the same either way: ${around.fit.position} vs ${flat.fit.position}`);
+  assert.strictEqual(around.fit.label, flat.fit.label);
+  assert.strictEqual(around.fit.estimated, true);
+  assert.deepStrictEqual(around.sizes.map((x) => x.score), flat.sizes.map((x) => x.score), 'ranked the same: the chest tolerance is around too');
+  const recFlat = engine.recommend(hoodieRef({ measurements: REF_CM }), ILLUSTRATIVE());
+  const recAround = engine.recommend(hoodieRef({ measurements: REF_CM }), AROUND());
+  assert.deepStrictEqual(recAround.ranking, recFlat.ranking, 'and the recommendation ranks it the same');
+});
+
+await test('a product in inches against a reference in centimetres: converted before it is compared, the gauge unchanged', () => {
+  const cm = engine.compare(hoodieRef({ measurements: REF_CM }), ILLUSTRATIVE());
+  const inches = engine.compare(hoodieRef({ measurements: REF_CM }), IN_INCHES());
+  assert.strictEqual(inches.unit, 'cm', 'shown in the reference\'s unit');
+  assert.strictEqual(inches.recommended, cm.recommended);
+  ['chestWidth', 'shoulderWidth', 'bodyLength', 'sleeveLength'].forEach((d) => {
+    const a = inches.sizes.find((s) => s.size === 'M').dimensions[d].difference;
+    const b = cm.sizes.find((s) => s.size === 'M').dimensions[d].difference;
+    assert.ok(Math.abs(a - b) < 0.02, `${d}: ${a} vs ${b}`);
+  });
+  assert.ok(Math.abs(inches.fit.position - cm.fit.position) < 0.02);
+  const asked = engine.compare(hoodieRef({ measurements: REF_CM }), IN_INCHES(), { unit: 'in' });
+  assert.strictEqual(asked.fit.within.chestWidth.value, 1, 'the band in the unit shown');
+  assert.ok(Math.abs(asked.fit.position - cm.fit.position) < 0.02);
+});
+
+await test('missing method metadata is never compared: the chart is refused, and the gauge reads no girth it can\'t place', () => {
+  const r = ILLUSTRATIVE();
+  delete r.charts.garment.dimensions.chestWidth.method;
+  assert.ok(sizingSchema.validate(r).some((e) => /chestWidth\.method/.test(e.path || e.field || JSON.stringify(e))), JSON.stringify(sizingSchema.validate(r)));
+  const out = engine.compare(hoodieRef({ measurements: REF_CM }), r, { includeUnverified: true });
+  assert.strictEqual(out.status, 'insufficient');
+  assert.ok(!('fit' in out));
+  /* the gauge itself: a compared row without its method, or without a number, is left out — never read as 0 or as flat */
+  const P = engine.CATEGORY_PARAMS.hoodies;
+  assert.strictEqual(engine.fitGauge(P, { size: 'M', dimensions: { chestWidth: { compared: true, difference: 2 } } }, 'cm'), null);
+  assert.strictEqual(engine.fitGauge(P, { size: 'M', dimensions: { chestWidth: { compared: true, method: 'flat-width-armpit-to-armpit', difference: null } } }, 'cm'), null);
+  assert.strictEqual(engine.fitGauge(P, { size: 'M', dimensions: { chestWidth: { compared: true, method: 'flat-width-armpit-to-armpit' } } }, 'cm'), null);
+  assert.strictEqual(engine.fitGauge(P, { size: 'M', dimensions: { chestWidth: { compared: false, why: 'x' } } }, 'cm'), null);
+  const shouldersOnly = engine.fitGauge(P, { size: 'M', dimensions: {
+    chestWidth: { compared: true, difference: 9 },
+    shoulderWidth: { compared: true, method: 'seam-to-seam', difference: 0 }
+  } }, 'cm');
+  assert.deepStrictEqual([shouldersOnly.basis, shouldersOnly.position], [['shoulderWidth'], 0], 'the chest without a method adds nothing, not a 9 cm guess');
+});
+
+await test('a measurement of the wrong kind is never in the gauge: a body circumference in a garment chart is refused', () => {
+  const r = ILLUSTRATIVE();
+  r.charts.garment.dimensions.chestWidth.method = 'body-circumference';
+  assert.ok(sizingSchema.validate(r).length, 'a body measurement is not a garment one');
+  const out = engine.compare(hoodieRef({ measurements: REF_CM }), r, { includeUnverified: true });
+  assert.strictEqual(out.status, 'insufficient');
+  assert.ok(!('fit' in out));
+  const P = engine.CATEGORY_PARAMS.hoodies;
+  assert.strictEqual(engine.fitGauge(P, { size: 'M', dimensions: { chestWidth: { compared: true, method: 'body-circumference', difference: 2 } } }, 'cm'), null);
+  assert.strictEqual(engine.fitGauge(P, { size: 'M', dimensions: { shoulderWidth: { compared: true, method: 'flat-width-armpit-to-armpit', difference: 2 } } }, 'cm'), null, 'a chest method on the shoulders is not read');
+});
+
+await test('a product reference published around, beside a flat product: halved to flat, said to be an estimate, then doubled once for the band', () => {
+  const refRecord = AROUND();
+  refRecord.id = 'illustrative-around-reference';
+  refRecord.product = Object.assign({}, refRecord.product, { name: 'Illustrative around reference', code: 'TEST0002', url: 'https://www.zara.com/us/en/test-p00000002.html' });
+  const pool = [refRecord];
+  const p = hoodieRef({ brand: refRecord.brand, size: 'M', product: { name: refRecord.product.name } });
+  const out = engine.compare(p, ILLUSTRATIVE(), { records: pool });
+  assert.strictEqual(out.reference.source, 'product', JSON.stringify(out.missing || out.notes));
+  assert.strictEqual(out.reference.methods.chestWidth, 'garment-circumference');
+  const m = out.sizes.find((s) => s.size === 'M').dimensions.chestWidth;
+  assert.strictEqual(m.method, 'flat-width-armpit-to-armpit');
+  assert.strictEqual(m.reference, 60, 'M\'s 120 cm around, as 60 cm flat');
+  assert.strictEqual(m.difference, 0);
+  assert.match(m.estimated, /half its way around/);
+  assert.deepStrictEqual([out.recommended, out.fit.position, out.fit.label, out.fit.within.chestWidth.factor], ['M', 0, 'similar', 2]);
 });
 
 section('fit feedback against the reference');
