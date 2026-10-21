@@ -73,3 +73,33 @@ jobs:
         if: ${{ !cancelled() }}
         continue-on-error: true
         run: node scripts/ci-tests.js known-failing
+
+  real-chrome:
+    name: Extension in a real Chrome (toolbar click)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Install Playwright's Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Install a virtual display and real X11 input
+        # test-fit-panel-real-chrome runs Chromium headed on Xvfb and clicks
+        # the extension's toolbar button with XTEST (python-xlib), finding
+        # it on a screenshot (ImageMagick's import, Pillow)
+        run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends xvfb imagemagick python3-xlib python3-pil
+      - name: Run the real-Chrome suite
+        env:
+          FYND_SHOTS: ${{ runner.temp }}/fynd-shots
+        run: mkdir -p "$FYND_SHOTS" && node scripts/ci-tests.js real-chrome
+      - name: Keep its screenshots
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: fit-panel-real-chrome-screenshots
+          path: ${{ runner.temp }}/fynd-shots
+          if-no-files-found: ignore

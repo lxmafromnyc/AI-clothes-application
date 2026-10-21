@@ -20,3 +20,4 @@ npm-debug.log*
 
 # what scripts/bench-messy-live.js writes: run output, never source
 bench-results/
+__pycache__/

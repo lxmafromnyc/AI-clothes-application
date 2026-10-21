@@ -24,13 +24,17 @@
    anyone deciding it should.
 
    Usage:
-     node scripts/ci-tests.js                 the required suites, both groups
+     node scripts/ci-tests.js                 the required suites, all three groups
      node scripts/ci-tests.js node            no browser needed: npm ci, and ffmpeg on
                                                 the PATH (test-demo-film unpacks the
                                                 recorded session with it)
      node scripts/ci-tests.js browser         needs Playwright's Chromium:
                                                 npm ci && npx playwright install chromium
                                                 (or CHROME_PATH and PLAYWRIGHT_PATH naming others)
+     node scripts/ci-tests.js real-chrome     a visible Chromium on a virtual display, clicked
+                                                with real X11 input: the browser group's needs,
+                                                plus Xvfb, ImageMagick and python3 with
+                                                python-xlib and Pillow
      node scripts/ci-tests.js known-failing   NOT_RUN's failing suites, on their own;
                                                 CI runs this where it cannot fail the check
    ========================================================= */
@@ -63,6 +67,7 @@ const GROUPS = {
     ['test-fit-profile', 'the shopper fit profile: its schema, units, and who may read or change it'],
     ['test-sizing', 'sizing records, the size engine, /api/size-recommendation and fit feedback'],
     ['test-page-access', 'which retailer pages the sizing reader may fetch: reviewed terms, then robots.txt, and nothing otherwise'],
+    ['test-fit-anchor', 'the Fit Anchor comparison: units, methods, broken charts, categories, fit preferences, outcomes and confidence'],
     ['test-extension', 'the browser extension: its permissions, its copies of the shared sizing code, and the chart payload it hands to Find Fit'],
     ['test-size-eval', 'the size engine against hand-worked expectations from published charts'],
     ['test-catalog-audit', 'the catalogue audit: every card proved from its row'],
@@ -73,6 +78,7 @@ const GROUPS = {
   browser: [
     ['test-ui', 'the interface: the search box, its progress and allowance, palette, contrast, pricing and account pages'],
     ['test-e2e', 'the whole sign-in flow in a real browser, against the real handlers'],
+    ['test-fit-panel-browser', "the extension's Fit panel in Chromium: onboarding, UNIQLO US and other shops, recommendation, corrections, outcomes, and what is sent"],
     ['test-extension-browser', 'the unpacked browser extension in Chromium, on fixture pages, handing its charts to Find Fit'],
     ['test-cross-origin', 'the GitHub Pages copy calling the API across origins: preflights, cross-site cookies, logout, checkout'],
     ['test-catalog-images', "the catalogue image extractor's gates, including its browser path"],
@@ -80,6 +86,9 @@ const GROUPS = {
     ['test-catalog-browser', "Find Fit searching and paging an authorized catalogue in a browser, and a chosen product's page and Size Guide"],
     ['test-catalog-rakuten', "UNIQLO's catalogue from a Rakuten Product Catalog file: reader, sync at catalogue scale, refresh, coverage, and the popup over it"],
     ['test-provider-unavailable', 'with no paid product source: OpenWeb Ninja never asked, no silent fallback, and what Find Fit and the Search page show']
+  ],
+  'real-chrome': [
+    ['test-fit-panel-real-chrome', 'the Fit panel end to end in a visible Chrome: the extension as shipped, a real click on its toolbar button, a reference from brand and size, a size guide opened and read, a recommendation, other pages, errors, outcomes — on invented shop pages']
   ]
 };
 
@@ -98,14 +107,14 @@ const NOT_RUN = {
 /* What a suite inherits from the shell. Nothing else: no key, no store
    URL, no provider choice. */
 const ENV_PASSED = ['PATH', 'HOME', 'TMPDIR', 'TMP', 'TEMP', 'LANG', 'LC_ALL', 'TZ', 'CI', 'GITHUB_ACTIONS',
-  'CHROME_PATH', 'PLAYWRIGHT_PATH', 'PLAYWRIGHT_BROWSERS_PATH', 'FFMPEG_PATH', 'DISPLAY', 'XDG_RUNTIME_DIR'];
+  'CHROME_PATH', 'PLAYWRIGHT_PATH', 'PLAYWRIGHT_BROWSERS_PATH', 'FFMPEG_PATH', 'DISPLAY', 'XDG_RUNTIME_DIR', 'FYND_SHOTS'];
 
 const SUITE_TIMEOUT_MS = 10 * 60 * 1000;
 const COUNT = /(\d+) passed, (\d+) failed(?:, (\d+) skipped)?/g;
 const ACTIONS = process.env.GITHUB_ACTIONS === 'true';
 
 function unlisted() {
-  const named = new Set([...GROUPS.node, ...GROUPS.browser].map(([name]) => name).concat(Object.keys(NOT_RUN)));
+  const named = new Set(Object.values(GROUPS).flat().map(([name]) => name).concat(Object.keys(NOT_RUN)));
   return fs.readdirSync(__dirname)
     .filter((f) => /^test-.*\.js$/.test(f))
     .map((f) => f.replace(/\.js$/, ''))
@@ -207,7 +216,7 @@ function reportNotRun() {
 
 async function main() {
   const which = process.argv[2] || 'required';
-  const choices = ['required', 'node', 'browser', 'known-failing'];
+  const choices = ['required', 'node', 'browser', 'real-chrome', 'known-failing'];
   if (!choices.includes(which)) {
     console.error(`usage: node scripts/ci-tests.js [${choices.join('|')}]`);
     process.exit(2);
@@ -236,7 +245,7 @@ async function main() {
     process.exit(failed ? 1 : 0);
   }
 
-  const groups = which === 'required' ? ['node', 'browser'] : [which];
+  const groups = which === 'required' ? ['node', 'browser', 'real-chrome'] : [which];
   let failed = 0;
   for (const group of groups) {
     console.log(`\n${group} suites\n`);

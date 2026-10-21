@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Everyday Crew Tee | Northwind Supply Co.</title>
+<meta property="og:site_name" content="Northwind Supply Co.">
+<link rel="canonical" href="http://127.0.0.1/shop/tee.html">
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"ProductGroup","name":"Everyday Crew Tee","brand":{"@type":"Brand","name":"Northwind"},"sku":"NW-TEE-100","category":"Men > Tops > T-Shirts","hasVariant":[{"@type":"Product","size":"XS"},{"@type":"Product","size":"S"},{"@type":"Product","size":"M"},{"@type":"Product","size":"L"},{"@type":"Product","size":"XL"},{"@type":"Product","size":"XXL"}]}</script>
+<style>
+ body{font:15px/1.45 system-ui,sans-serif;margin:0;color:#222} header,main{padding:12px 28px} header{border-bottom:1px solid #ddd;display:flex;gap:24px}
+ .banner{background:#fff3c4;padding:6px 28px;font-size:12px} .sizes button{min-width:48px;margin:2px;padding:8px} dialog{width:640px;max-width:90vw}
+ [role=tab][aria-selected=true]{font-weight:700;border-bottom:2px solid #222} table{border-collapse:collapse} td,th{border:1px solid #ccc;padding:4px 8px}
+</style></head>
+<body>
+<p class="banner">FIXTURE — an invented shop page for Fynd’s browser tests (Northwind is not a real brand). Its measurements are invented and prove nothing about any real retailer.</p>
+<header><strong>Northwind Supply Co.</strong><nav>Men · Women · Sale</nav><form role="search"><input name="q" placeholder="Search"></form></header>
+<main>
+ <nav aria-label="Breadcrumb">Men / Tops / T-Shirts</nav>
+ <h1>Everyday Crew Tee</h1>
+ <p>$24.00 · Regular fit · 100% cotton jersey</p>
+ <div class="sizes" role="group" aria-label="Size">
+  <button type="button">XS</button><button type="button">S</button><button type="button">M</button><button type="button">L</button><button type="button">XL</button><button type="button">XXL</button>
+ </div>
+ <p><button type="button" id="open-guide">Size guide</button> <button type="button">Add to bag</button></p>
+ <section><h2>Details</h2><p>A midweight crew neck tee with a straight hem.</p></section>
+</main>
+<!-- the size guide is built only when it is opened, as many shops do -->
+<dialog id="guide" aria-label="Size guide"></dialog>
+<template id="guide-content">
+ <h2>Size guide</h2>
+ <div role="tablist">
+  <button type="button" role="tab" id="tab-body" aria-selected="true" aria-controls="panel-body">Body measurements</button>
+  <button type="button" role="tab" id="tab-product" aria-selected="false" aria-controls="panel-product">Product measurements</button>
+ </div>
+ <div role="tabpanel" id="panel-body" aria-labelledby="tab-body">
+  <p>Your body measurements, in inches. Measure around the fullest part of your chest.</p>
+  <table><tr><th>Size</th><th>Chest</th></tr>
+  <tr><td>XS</td><td>32 - 34</td></tr><tr><td>S</td><td>35 - 37</td></tr><tr><td>M</td><td>38 - 40</td></tr><tr><td>L</td><td>41 - 43</td></tr><tr><td>XL</td><td>44 - 46</td></tr><tr><td>XXL</td><td>47 - 49</td></tr></table>
+ </div>
+ <div role="tabpanel" id="panel-product" aria-labelledby="tab-product" hidden>
+  <p>The garment’s own measurements, laid flat, in inches.</p>
+  <table><tr><th>Size</th><th>Chest width (flat)</th><th>Front length (from high point of shoulder)</th><th>Sleeve length (from shoulder seam)</th><th>Shoulder width (seam to seam)</th></tr>
+  <tr><td>XS</td><td>18</td><td>26.5</td><td>7.5</td><td>16.5</td></tr>
+  <tr><td>S</td><td>19</td><td>27.25</td><td>7.75</td><td>17.25</td></tr>
+  <tr><td>M</td><td>20.5</td><td>28</td><td>8</td><td>18</td></tr>
+  <tr><td>L</td><td>22</td><td>28.75</td><td>8.25</td><td>18.75</td></tr>
+  <tr><td>XL</td><td>23.5</td><td>29.5</td><td>8.5</td><td>19.5</td></tr>
+  <tr><td>XXL</td><td>25</td><td>30.25</td><td>8.75</td><td>20.25</td></tr></table>
+ </div>
+ <p><button type="button" id="close-guide">Close</button></p>
+</template>
+<script>
+ const g = document.getElementById('guide');
+ document.getElementById('open-guide').onclick = () => {
+  if (!g.firstElementChild) {
+   g.append(document.getElementById('guide-content').content.cloneNode(true));
+   document.getElementById('close-guide').onclick = () => g.close();
+   g.querySelectorAll('[role=tab]').forEach((t) => t.onclick = () => {
+    g.querySelectorAll('[role=tab]').forEach((x) => { x.setAttribute('aria-selected', String(x === t)); document.getElementById(x.getAttribute('aria-controls')).hidden = x !== t; });
+   });
+  }
+  g.showModal();
+ };
+</script>
+</body></html>
