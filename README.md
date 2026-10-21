@@ -2544,7 +2544,7 @@ choose a size:
   and its one note says they describe the body, not the hoodie. Everything else,
   including that Fynd's record is per product rather than per colour, is under
   the closed **Source details**.
-- **The fit profile.** `assets/fit-compare.js` (shared with Find Fit) adds what a
+- **The fit profile.** `assets/fit-compare.js` adds what a
   saved fit profile can say. Only a checked finished-garment chart is compared,
   and then `FitCompare.focus(container, size)` also shows the size being
   considered beside the reference: for each of chest, body length, shoulders and
@@ -2555,6 +2555,20 @@ choose a size:
   a difference; the engine's caveat says why, once. On a phone each dimension
   reads as a heading over its three labelled values. A body or general chart is
   never compared; it says why.
+- **Find Fit's Fit Check.** On Find Fit, `assets/fit-check.js` replaces it with
+  one answer: **Get size X** (only when `engine.compare` recommends one; with
+  too few measurements taken the same way it says **Closest size X — not a
+  recommendation**), **Fits most like your BRAND SIZE**, and a Tighter ─
+  Similar ─ Roomier gauge, with the size chart folded under **Size chart**.
+  The gauge is the engine's `fit`: chest (around, twice a flat width) and
+  shoulder differences for that size, each divided by its `about` band in
+  `fitBands.reference`, averaged by scoring weight; within ±1 band is
+  "similar", clamped to ±3 for drawing; no girth compared, no gauge. **See why
+  this size is recommended** opens the size-minus-reference difference for each
+  measurement (+ larger, − smaller, 0 a match to 0.1 cm or ¼ in), the reason
+  any measurement wasn't compared, the sources, reliability and caveats.
+  Body charts, unchecked charts, unknown methods and missing references say
+  "Not enough verified measurements to compare these items yet." and why.
 
 The chosen colour and size stay in the address (`&colour=09&size=M`), so they
 survive closing the dialog and reloading the page.

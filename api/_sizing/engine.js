@@ -1230,6 +1230,53 @@ function contextOf(record) {
   };
 }
 
+/* THE FIT GAUGE: for the size the comparison shows (recommended, else
+   closest), whether it has less room than the reference, about the same,
+   or more — the "tighter / similar / roomier" line Find Fit draws. It
+   reads only the girths the engine compared (chest, shoulders): lengths
+   say longer or shorter, not tighter or roomier, and are left to the
+   table. Each girth's difference (this size minus the reference, chest
+   as twice a flat width when it is measured flat) is divided by its
+   `about` band in fitBands.reference, and the girths are averaged with
+   their scoring weights. Inside ±1 band is "similar"; beyond, "tighter"
+   or "roomier". The position is clamped to ±3 bands for drawing. No
+   girth compared, no gauge: a length alone never says how roomy. */
+const GAUGE_DIMS = ['chestWidth', 'shoulderWidth'];
+const GAUGE_SPAN = 3;
+function fitGauge(record, params, row, unit) {
+  if (!row) return null;
+  const dims = record.charts.garment.dimensions;
+  let sum = 0;
+  let weights = 0;
+  const basis = [];
+  const within = {};
+  let estimated = false;
+  GAUGE_DIMS.forEach((d) => {
+    const x = row.dimensions[d];
+    if (!x || !x.compared) return;
+    const scale = d === 'chestWidth' && dims[d].method === 'flat-width-armpit-to-armpit' ? 2 : 1;
+    const bands = toUnits(params.fitBands.reference[d].about, 'in', unit);
+    const { weight } = params.garment[d];
+    sum += weight * ((x.difference * scale) / bands);
+    weights += weight;
+    basis.push(d);
+    /* "similar" means within this much, said as the band is: chest around */
+    within[d] = { value: round(bands, 2), around: d === 'chestWidth' };
+    if (x.estimated) estimated = true;
+  });
+  if (!weights) return null;
+  const position = round(Math.max(-GAUGE_SPAN, Math.min(GAUGE_SPAN, sum / weights)), 2);
+  return {
+    size: row.size,
+    position,
+    span: GAUGE_SPAN,
+    label: position < -1 ? 'tighter' : position > 1 ? 'roomier' : 'similar',
+    basis,
+    within,
+    estimated
+  };
+}
+
 /* the shopper's reference for this product's type, or the other
    fleece top's: { category, entry, crossCategory } or null */
 function referenceEntry(profile, category) {
@@ -1370,6 +1417,7 @@ function compare(profile, record, opts) {
 
   const verified = sizingSchema.isVerified(record);
   const recommended = enough && verified ? closest.size : null;
+  const fit = fitGauge(record, params, sizes.find((x) => x.size === (recommended || closest.size)), unit);
   const named = listWords(dims.map((d) => DIM_NAMES[d]));
   const summary = recommended
     ? `${recommended} is the closest to your reference across ${named}.`
@@ -1386,6 +1434,7 @@ function compare(profile, record, opts) {
     recommended,
     closest: closest.size,
     alternative: nearTie ? second.size : null,
+    fit,
     summary,
     reliability,
     dimensionsCompared: dims,

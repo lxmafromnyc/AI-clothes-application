@@ -29,10 +29,12 @@
 
    No account is needed. Signed in, a chart Fynd has checked
    finished-garment measurements for is also set beside the shopper's
-   saved reference garment (Account.sizing.compare: the engine's own
-   comparison, read from their own profile on the server — nothing from
-   the profile travels in any address). Any other chart says why it
-   can't be compared; a chart is never a recommendation by itself.
+   saved reference garment, and the Fit Check above the chart says which
+   size (assets/fit-check.js: the engine's own comparison, read from
+   their own profile on the server — nothing from the profile travels in
+   any address). Any other chart says why it can't be compared; a chart
+   is never a recommendation by itself. Once a Fit Check stands, the
+   chart folds away under "Size chart"; it stays open otherwise.
    ========================================================= */
 
 (function (global) {
@@ -47,7 +49,8 @@
   const error = $('fit-url-error');
   const result = $('fit-result');
   const body = $('fit-result-body');
-  const compare = $('fit-compare');
+  const check = $('fit-check');
+  const chartBox = $('fit-chart-details');
   const { el, safeLink, render, renderFailure, headingFor, cleanUrl } = global.SizeChart;
 
   let latest = 0;
@@ -107,8 +110,7 @@
     delete result.dataset.from;
     if (product) result.dataset.item = product.code;
     else delete result.dataset.item;
-    compare.hidden = true;
-    compare.replaceChildren();
+    clearCheck();
     productLink(cleanUrl(url));
     $('fit-result-title').textContent = title;
     body.replaceChildren(el('p', 'size-chart-loading', waiting));
@@ -141,10 +143,19 @@
     if (chart.status === 'ok' || chart.status === 'fallback') compareWith(chart, ask);
   }
 
-  /* The fit profile's part, only where the chart supports it: drawn by
-     assets/fit-compare.js, shared with the product page's Size Guide. */
-  function compareWith(chart, ask) {
-    return global.FitCompare.show(chart, compare, () => ask === latest);
+  /* The Fit Check, only where the chart supports it (assets/fit-check.js).
+     The chart folds away under it once there is a size to show. */
+  async function compareWith(chart, ask) {
+    const c = await global.FitCheck.show(chart, check, () => ask === latest);
+    if (ask === latest && c && (c.status === 'ok' || c.status === 'partial')) chartBox.open = false;
+    return c;
+  }
+
+  function clearCheck() {
+    check.hidden = true;
+    check.replaceChildren();
+    delete check.dataset.state;
+    chartBox.open = true;
   }
 
   function submit() {
@@ -178,8 +189,7 @@
     result.hidden = false;
     result.dataset.state = chart.status;
     result.dataset.from = 'extension';
-    compare.hidden = true;
-    compare.replaceChildren();
+    clearCheck();
     $('fit-result-title').textContent = headingFor(chart);
     productLink(url);
     const lookup = el('button', 'btn btn-secondary fit-catalog', 'Check Fynd’s catalog for this product');
@@ -216,6 +226,7 @@
       result.hidden = false;
       result.dataset.state = 'error';
       result.dataset.from = 'extension';
+      clearCheck();
       $('fit-result-title').textContent = 'This chart couldn’t be opened';
       $('fit-result-product').replaceChildren();
       body.replaceChildren(el('p', 'size-chart-note', 'The link from the Fynd extension wasn’t a chart Fynd could read, so nothing from it is shown. Check the product page again with the extension, or paste the product’s link above.'));

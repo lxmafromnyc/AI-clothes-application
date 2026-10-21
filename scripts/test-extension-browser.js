@@ -287,8 +287,8 @@ async function launch(extDir) {
     assert.strictEqual(await page.textContent('#fit-result .size-chart-name'), 'Finished-garment measurements');
     assert.match(await page.textContent('#fit-result .size-chart-method'), /center back/);
     assert.strictEqual(apiAsked.length, asked, 'nothing was sent to Fynd’s server');
-    await page.waitForSelector('#fit-compare:not([hidden])');
-    assert.match(await page.textContent('#fit-compare'), /can’t confirm exactly how each measurement was taken/, 'read, not checked: never compared');
+    await page.waitForSelector('#fit-check:not([hidden])');
+    assert.match(await page.textContent('#fit-check'), /can’t confirm exactly how each measurement was taken/, 'read, not checked: never compared');
     await page.close();
     await shop.close();
     await again.close();
@@ -376,8 +376,8 @@ async function launch(extDir) {
     assert.match(await page.textContent('#fit-result .size-chart-details'), /Not verified — read automatically just now/);
     assert.ok(!/Verified —/.test(await page.textContent('#fit-result')));
     /* never compared: how each measurement was taken isn't known */
-    await page.waitForSelector('#fit-compare:not([hidden])');
-    assert.match(await page.textContent('#fit-compare'), /can’t confirm exactly how each measurement was taken/);
+    await page.waitForSelector('#fit-check:not([hidden])');
+    assert.match(await page.textContent('#fit-check'), /can’t confirm exactly how each measurement was taken/);
     assert.strictEqual(apiAsked.length, asked, 'nothing was sent to Fynd’s server');
     assert.strictEqual(await page.inputValue('#fit-url'), `${site}/products/garment-tee`);
     await page.close();
@@ -390,8 +390,8 @@ async function launch(extDir) {
     const page = await openInFynd(popup);
     await page.waitForSelector('#fit-result[data-from="extension"]');
     assert.strictEqual(await page.textContent('#fit-result .size-chart-kind'), 'Body measurements — the body each size fits, not the garment');
-    await page.waitForSelector('#fit-compare:not([hidden])');
-    assert.match(await page.textContent('#fit-compare'), /describes bodies, not garments/);
+    await page.waitForSelector('#fit-check:not([hidden])');
+    assert.match(await page.textContent('#fit-check'), /describes bodies, not garments/);
     await page.close();
     await shop.close();
     await popup.close();

@@ -64,7 +64,7 @@
        comparison only where the chart supports one. -->
   <section class="container hero shop-hero" id="find-fit" aria-labelledby="find-fit-title">
     <h1 id="find-fit-title">Find Fit</h1>
-    <p class="lead">Choose a brand, pick a product, and see its sizing chart &mdash; what it measures, where it comes from, and how it compares with clothes you already own.</p>
+    <p class="lead">Pick a product. Fynd sets its sizes beside a garment you own.</p>
 
     <div class="shop-card fit-browser" id="fit-browser" data-state="idle">
       <!-- The brands Find Fit can browse, one button each (filled in from
@@ -91,7 +91,7 @@
       </details>
     </div>
 
-    <p class="guide-alt">Saved <a class="guide-link" href="fit-profile.html">a fit profile</a>? Fynd compares a chart with the clothes you own where the chart allows it. It&rsquo;s optional.</p>
+    <p class="guide-alt">Your reference garment: <a class="guide-link" href="fit-profile.html">fit profile</a></p>
   </section>
 
   <!-- The answer, on this page: the product, its chart and what it
@@ -101,8 +101,15 @@
     <div class="fit-result-card" id="fit-result-card">
       <h2 class="fit-result-title" id="fit-result-title" tabindex="-1">Sizing chart</h2>
       <p class="fit-result-product" id="fit-result-product"></p>
-      <div class="size-chart-body" id="fit-result-body" aria-live="polite"></div>
-      <div class="fit-compare" id="fit-compare" hidden></div>
+      <!-- Fynd Fit Check (assets/fit-check.js): the size, the reference
+           it was set beside, tighter to roomier, and why on request. -->
+      <div class="fit-check" id="fit-check" aria-live="polite" hidden></div>
+      <!-- The chart as published, folded away once a Fit Check stands
+           above it; open when there's nothing to compare. -->
+      <details class="fit-chart-details" id="fit-chart-details" open>
+        <summary>Size chart</summary>
+        <div class="size-chart-body" id="fit-result-body" aria-live="polite"></div>
+      </details>
     </div>
   </section>
 
@@ -187,7 +194,7 @@
 <script src="assets/size-chart.js"></script>
 <script src="assets/sizing-tables.js"></script>
 <script src="assets/fynd-payload.js"></script>
-<script src="assets/fit-compare.js"></script>
+<script src="assets/fit-check.js"></script>
 <script src="assets/find-fit.js"></script>
 <script src="assets/brand-browser.js"></script>
 <script src="assets/app.js"></script>

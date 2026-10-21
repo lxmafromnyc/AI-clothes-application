@@ -3001,15 +3001,49 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
       await page.fill('#fit-url', 'https://www.uniqlo.com/us/en/products/E475378-000/00');
       await page.press('#fit-url', 'Enter');
       await page.waitForSelector('#fit-result[data-state="ok"]');
-      await page.waitForSelector('#fit-compare:not([hidden])');
+      await page.waitForSelector('#fit-check:not([hidden])');
       assert.strictEqual(await page.$$eval('#fit-result table', (ns) => ns.length), 2);
+      assert.strictEqual(await page.$eval('#fit-chart-details', (d) => d.open), true, 'no Fit Check without a reference: the chart stays open');
       await audit('a record’s body and garment charts, with what a fit profile adds');
       await page.fill('#fit-url', 'https://shop.example.com/products/anything');
       await page.press('#fit-url', 'Enter');
       await page.waitForSelector('#fit-result[data-state="unavailable"]');
+      assert.strictEqual(await page.isVisible('#fit-check'), false, 'a failed lookup: no Fit Check left over');
       await audit('a page that couldn’t be read');
       await page.close();
     }
+  });
+
+  await test('Find Fit Check — the size, the reference, the gauge, and the details opened and hidden — is set in a palette ink, legible, and fits a phone', async () => {
+    accountState = accountReply({ extra: SIGNED_IN });
+    /* the reference is UNIQLO's own Sweatshirt, found by its link: real records, the real engine */
+    fitProfileState = fitProfileReply(Object.assign(require('../assets/fit-profile-schema.js').empty(), {
+      garments: { sweatshirts: { favorite: 'perfect', fitGoal: null, troubleZones: null, line: null, anchor: { brand: 'UNIQLO', size: 'M', product: { name: null, url: 'https://www.uniqlo.com/us/en/products/E475377-000/00' } } } }
+    }));
+    for (const viewport of [{ width: 1280, height: 900 }, { width: 360, height: 740 }]) {
+      const page = await openPage('index.html', { viewport });
+      await page.waitForSelector('#fit-browser[data-brands="ready"]', { timeout: 10000 });
+      await page.evaluate(() => { document.getElementById('fit-link-alt').open = true; });
+      const audit = guideAudit(page, viewport);
+      await page.fill('#fit-url', 'https://www.uniqlo.com/us/en/products/E475378-000/00');
+      await page.press('#fit-url', 'Enter');
+      await page.waitForSelector('#fit-check[data-state="recommended"]');
+      assert.match(await page.textContent('#fit-check .fit-check-size'), /^Get size \S+$/);
+      assert.strictEqual(await page.$eval('#fit-chart-details', (d) => d.open), false, 'the chart folds away');
+      /* the default view: three lines and a gauge, no table */
+      assert.strictEqual(await page.$$eval('#fit-result table', (ts) => ts.filter((t) => t.checkVisibility()).length), 0);
+      const marker = await page.$eval('#fit-check .fit-check-marker', (m) => { const r = m.getBoundingClientRect(); const t = m.parentElement.getBoundingClientRect(); return [r.left + r.width / 2, t.left, t.right]; });
+      assert.ok(marker[0] >= marker[1] - 0.5 && marker[0] <= marker[2] + 0.5, `marker on its track: ${marker}`);
+      await audit('the Fit Check, by default');
+      await page.click('#fit-check .fit-check-why summary');
+      assert.ok(await page.isVisible('#fit-check .fit-check-table'));
+      await audit('the Fit Check, with why');
+      await page.click('#fit-check .fit-check-hide');
+      assert.strictEqual(await page.isVisible('#fit-check .fit-check-table'), false);
+      await page.close();
+    }
+    accountState = accountReply({});
+    fitProfileState = fitProfileReply(null);
   });
 
   await test('the sizing chart dialog — loading, a record’s body and garment tables, and an unavailable answer — is set in a palette ink, legible, and fits a phone', async () => {

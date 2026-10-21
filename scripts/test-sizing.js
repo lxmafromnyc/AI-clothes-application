@@ -987,6 +987,92 @@ await test('/api/size-recommendation compares only the caller\'s own reference, 
   assert.strictEqual(JSON.stringify((await fitProfiles.read(ada.user.id)).profile), before);
 });
 
+section('the Fit Check gauge: tighter, similar or roomier');
+
+/* the gauge, worked out here from the engine's own published parameters
+   and the size's own differences — so a change to either is caught */
+const expectedGauge = (r, size) => {
+  const P = engine.CATEGORY_PARAMS[r.product.category];
+  const row = r.sizes.find((s) => s.size === size).dimensions;
+  let sum = 0; let w = 0;
+  ['chestWidth', 'shoulderWidth'].filter((d) => row[d].compared).forEach((d) => {
+    const scale = d === 'chestWidth' ? 2 : 1;   /* the fixture's chest is flat */
+    const band = P.fitBands.reference[d].about * (r.unit === 'cm' ? 2.54 : 1);
+    sum += P.garment[d].weight * (row[d].difference * scale) / band;
+    w += P.garment[d].weight;
+  });
+  return Math.max(-3, Math.min(3, sum / w));
+};
+
+await test('the gauge is for the size recommended, from the compared girths, signed as target minus reference', () => {
+  const r = engine.compare(hoodieRef({ measurements: REF_CM }), ILLUSTRATIVE());
+  assert.strictEqual(r.fit.size, r.recommended);
+  assert.deepStrictEqual(r.fit.basis, ['chestWidth', 'shoulderWidth'], 'lengths never say tighter or roomier');
+  assert.ok(Math.abs(r.fit.position - expectedGauge(r, r.recommended)) < 0.01, `${r.fit.position}`);
+  /* M is 2 cm wider flat (4 cm around) and 1 cm wider across: more room */
+  assert.ok(r.fit.position > 1);
+  assert.strictEqual(r.fit.label, 'roomier');
+  assert.deepStrictEqual(r.fit.within, { chestWidth: { value: 2.54, around: true }, shoulderWidth: { value: 0.95, around: false } });
+});
+
+await test('a reference measured the same as a size reads "similar" at 0; one larger than every size reads "tighter"', () => {
+  const same = engine.compare(hoodieRef({ measurements: { unit: 'cm', chestWidth: 60, bodyLength: 67, shoulderWidth: 51, sleeveLength: 62 } }), ILLUSTRATIVE());
+  assert.strictEqual(same.recommended, 'M');
+  assert.deepStrictEqual([same.fit.position, same.fit.label], [0, 'similar']);
+  const m = same.sizes.find((s) => s.size === 'M').dimensions;
+  ['chestWidth', 'bodyLength', 'shoulderWidth', 'sleeveLength'].forEach((d) => assert.strictEqual(m[d].difference, 0, `${d}: a match is 0`));
+  const big = engine.compare(hoodieRef({ measurements: { unit: 'cm', chestWidth: 72, bodyLength: 71, shoulderWidth: 59, sleeveLength: 64 } }), ILLUSTRATIVE());
+  assert.strictEqual(big.closest, 'XL');
+  assert.ok(big.sizes.find((s) => s.size === 'XL').dimensions.chestWidth.difference < 0, 'smaller than yours is negative');
+  assert.strictEqual(big.fit.label, 'tighter');
+  assert.strictEqual(big.fit.position, -3, 'clamped to the drawn span');
+});
+
+await test('the gauge reads the same in inches and centimetres', () => {
+  const inches = {};
+  Object.entries(REF_CM).forEach(([k, v]) => { inches[k] = k === 'unit' ? 'in' : v / 2.54; });
+  const cm = engine.compare(hoodieRef({ measurements: REF_CM }), ILLUSTRATIVE());
+  const inch = engine.compare(hoodieRef({ measurements: inches }), ILLUSTRATIVE());
+  assert.strictEqual(inch.unit, 'in');
+  assert.ok(Math.abs(inch.fit.position - cm.fit.position) < 0.02, `${inch.fit.position} vs ${cm.fit.position}`);
+  assert.strictEqual(inch.fit.label, cm.fit.label);
+  assert.deepStrictEqual(inch.fit.within, { chestWidth: { value: 1, around: true }, shoulderWidth: { value: 0.38, around: false } });
+});
+
+await test('no girth compared, no gauge: a lengths-only reference says nothing about room', () => {
+  const r = engine.compare(hoodieRef({ measurements: { unit: 'cm', bodyLength: 68, sleeveLength: 62 } }), ILLUSTRATIVE());
+  assert.strictEqual(r.status, 'partial');
+  assert.strictEqual(r.recommended, null, 'no chest, no recommendation');
+  assert.strictEqual(r.fit, null);
+});
+
+await test('chest only: the gauge says it rests on the chest alone, and the size is closest, not recommended', () => {
+  const r = engine.compare(hoodieRef({ measurements: { unit: 'cm', chestWidth: 58 } }), ILLUSTRATIVE());
+  assert.strictEqual(r.recommended, null);
+  assert.strictEqual(r.fit.size, r.closest);
+  assert.deepStrictEqual(r.fit.basis, ['chestWidth']);
+  assert.deepStrictEqual(Object.keys(r.fit.within), ['chestWidth']);
+});
+
+await test('methods that differ are never in the gauge or the differences: UNIQLO centre-back sleeves are not set beside shoulder-seam ones', () => {
+  const r = engine.compare(hoodieRef({ measurements: REF_CM }), sizing.byId(UQ_HOODIE));
+  assert.ok(!r.dimensionsCompared.includes('sleeveLength'));
+  const m = r.sizes.find((s) => s.size === r.closest).dimensions.sleeveLength;
+  assert.strictEqual(m.compared, false);
+  assert.ok(!('difference' in m));
+  assert.match(m.why, /measured differently — UNIQLO's from the centre back, yours from the shoulder seam/);
+  assert.ok(r.fit.basis.every((d) => r.dimensionsCompared.includes(d)));
+});
+
+await test('a body chart, an unverified chart or a missing reference has no gauge and no size', () => {
+  [engine.compare(hoodieRef({ measurements: REF_CM }), sizing.byId(NIKE_HOODIE)),
+    engine.compare(hoodieRef({ measurements: REF_CM }), sizing.byId('zara-00761810-basic-heavyweight-hoodie-us')),
+    engine.compare(Schema.empty(), ILLUSTRATIVE())].forEach((r) => {
+    assert.strictEqual(r.status, 'insufficient');
+    assert.ok(!('fit' in r) && !('recommended' in r) && !('closest' in r), JSON.stringify(Object.keys(r)));
+  });
+});
+
 section('fit feedback against the reference');
 
 const TRIED = () => ({ productId: UQ_HOODIE, sizeTried: 'M', asExpected: false, issues: ['too-long', 'too-wide'], notes: '  sleeves   a bit long ' });
