@@ -12,6 +12,15 @@
      FitCompare.show(chart, container, stillCurrent?)   (a promise)
      FitCompare.focus(container, size)
 
+   A comparison the engine can stand behind (status "ok") is drawn
+   compactly: the size it recommends, the reference it was set beside
+   (brand and the size on its label), how that size differs in plain
+   words, and — folded away — each compared dimension's signed
+   difference (this size minus the reference: "−1.0 in chest width" is
+   an inch narrower). Every figure is the engine's own. Anything less
+   (a partial comparison, or none) recommends nothing and says there
+   isn't enough reliable measurement evidence, then the engine's reason.
+
    focus() adds, to a comparison already drawn, how one size differs
    from the reference, measurement by measurement — the engine's own
    figures for that size, nothing worked out here — and redraws only
@@ -59,15 +68,17 @@
     const c = got.ok && got.data && got.data.comparison;
     if (!c) { put(compare, ['The comparison with your fit profile couldn’t be worked out just now.']); return; }
     if (c.status === 'ok' || c.status === 'partial') {
-      lines.push(c.summary);
-      if (c.reliability) lines.push(`Reliability: ${c.reliability}.`);
-      (c.caveats || []).slice(0, 2).forEach((x) => lines.push(x));
+      const lead = c.status === 'ok' && c.recommended ? recommendation(c) : [el('p', 'fit-compare-fallback', NOT_ENOUGH), el('p', null, c.summary)];
+      const rest = [];
+      if (c.reliability) rest.push(`Reliability: ${c.reliability}.`);
+      (c.caveats || []).slice(0, 2).forEach((x) => rest.push(x));
       const more = el('p');
       more.append(safeLinkLocal('compare.html', 'See every size beside your reference on Compare'));
-      drawn.set(compare, { comparison: c, lines, extra: [more] });
+      drawn.set(compare, { comparison: c, lead, rest, extra: [more] });
       focus(compare, null);
       return;
     }
+    lines.push(NOT_ENOUGH);
     (c.missing || []).slice(0, 1).forEach((m) => lines.push(m.message));
     (c.next || []).slice(0, 1).forEach((n) => lines.push(n));
     const fix = el('p');
@@ -86,6 +97,73 @@
     return `${whole}${glyph} in`;
   }
   const DIM_LABEL = { chestWidth: 'Chest', bodyLength: 'Body length', shoulderWidth: 'Shoulders', sleeveLength: 'Sleeves' };
+  const DIM_NAME = { chestWidth: 'chest width', bodyLength: 'garment length', shoulderWidth: 'shoulder width', sleeveLength: 'sleeve length' };
+  const NOT_ENOUGH = 'No size recommendation: there isn’t enough reliable measurement evidence for this product and your reference.';
+
+  /* The engine's signed difference, to a tenth: "+0.5 in", "−1.0 in"
+     (a true minus sign), and "0.0 in" with no sign when it rounds to
+     nothing. */
+  function signed(v, unit) {
+    const tenth = Math.round(v * 10) / 10;
+    if (tenth === 0) return `0.0 ${unit}`;
+    return `${tenth > 0 ? '+' : '\u2212'}${Math.abs(tenth).toFixed(1)} ${unit}`;
+  }
+  /* the engine's words for one difference, without its dimension name */
+  const meaning = (x) => x.words.replace(/^[^:]+: /, '');
+
+  /* the reference, as the shopper knows it: its brand and the size on
+     its label, and where its measurements came from */
+  function referenceWords(ref) {
+    if (ref.source === 'product' && ref.product) return `${ref.product.brand} ${ref.product.name}, size ${ref.size || '—'} (published measurements)`;
+    const named = [ref.brand, ref.size].filter(Boolean).join(' ');
+    return `${named || 'Your reference garment'} (measured at home)`;
+  }
+
+  /* An "ok" comparison: the size recommended, the reference, how that
+     size differs in words, and its signed differences folded away. */
+  function recommendation(c) {
+    const size = c.recommended;
+    const row = (c.sizes || []).find((s) => s.size === size);
+    const compared = row ? (c.dimensionsCompared || []).filter((d) => row.dimensions[d] && row.dimensions[d].compared) : [];
+    const nodes = [];
+    const pick = el('p', 'fit-compare-recommended');
+    pick.append(doc.createTextNode('Recommended size: '), el('strong', null, size));
+    nodes.push(pick);
+    nodes.push(el('p', 'fit-compare-reference', `Compared with: ${referenceWords(c.reference)}.`));
+    nodes.push(el('p', null, c.summary));
+    if (compared.length) {
+      nodes.push(el('p', 'fit-compare-differs', `Size ${size} against your reference: ${compared.map((d) => `${DIM_NAME[d]} ${meaning(row.dimensions[d])}`).join(', ')}.`));
+      const box = el('details', 'size-chart-details fit-compare-differences');
+      box.append(el('summary', null, 'Measurement differences'));
+      box.append(el('p', 'fit-compare-size-note', `Size ${size} minus your reference, in ${c.unit}: positive is larger, negative is smaller.`));
+      const table = el('table', 'fit-compare-table');
+      const head = el('tr');
+      ['Measurement', 'Difference', 'Means'].forEach((h) => { const th = el('th', null, h); th.scope = 'col'; head.append(th); });
+      const thead = el('thead');
+      thead.append(head);
+      const tbody = el('tbody');
+      compared.forEach((d) => {
+        const x = row.dimensions[d];
+        const tr = el('tr');
+        const th = el('th', null, DIM_NAME[d].replace(/^./, (ch) => ch.toUpperCase()));
+        th.scope = 'row';
+        const diff = el('td', null, signed(x.difference, c.unit));
+        diff.dataset.label = 'Difference';
+        diff.dataset.difference = String(x.difference);
+        const means = el('td', null, x.estimated ? `${meaning(x)} (estimated)` : meaning(x));
+        means.dataset.label = 'Means';
+        tr.dataset.dim = d;
+        tr.append(th, diff, means);
+        tbody.append(tr);
+      });
+      table.append(thead, tbody);
+      const wrap = el('div', 'size-chart-scroll');
+      wrap.append(table);
+      box.append(wrap);
+      nodes.push(box);
+    }
+    return nodes;
+  }
 
   /* The chosen size beside the reference: for each dimension the
      engine compared, the reference's value, this size's and the
@@ -138,9 +216,9 @@
       }
       nodes.push(box);
     }
-    /* the summary, then the size being considered, then the caveats */
-    const [summary, ...rest] = d.lines;
-    put(compare, [], [el('p', null, summary), ...nodes, ...rest.map((t) => el('p', null, t)), ...d.extra], 'Compared with your reference');
+    /* the summary (and, when recommended, the size and its differences),
+       then the size being considered, then the caveats */
+    put(compare, [], [...d.lead, ...nodes, ...d.rest.map((t) => el('p', null, t)), ...d.extra], 'Compared with your reference');
   }
 
   function safeLinkLocal(href, text) {

@@ -1931,6 +1931,9 @@ const linkFromInbox = (pattern) => {
     await page.waitForSelector('#fit-compare:not([hidden]) .fit-compare-title');
     assert.strictEqual((await page.textContent('#fit-compare .fit-compare-title')).trim(), 'Compared with your reference');
     assert.match(await page.textContent('#fit-compare'), /closest on chest and shoulders, but that's 2 of 4 dimensions — not enough for a recommendation/);
+    /* partial: said plainly, with no size recommended and no differences drawn */
+    assert.match(await page.textContent('#fit-compare .fit-compare-fallback'), /No size recommendation: there isn’t enough reliable measurement evidence/);
+    assert.strictEqual(await page.$$eval('#fit-compare .fit-compare-recommended, #fit-compare .fit-compare-differences', (ns) => ns.length), 0);
     assert.deepStrictEqual(transportAsked, [], 'Fynd’s record answered: the shop was not asked');
     const sent = apiRequests.filter((r) => r.path === '/api/size-recommendation');
     assert.ok(sent.length >= 2);
@@ -1984,6 +1987,52 @@ const linkFromInbox = (pattern) => {
     await out.press('#fit-url', 'Enter');
     await out.waitForSelector('#fit-compare:not([hidden])');
     assert.match(await out.textContent('#fit-compare'), /With a reference garment saved on your fit profile, Fynd can compare every size with it/);
+    await context.close();
+  });
+
+  await test('Find Fit with a checked reference product: the recommended size, the reference, how it differs, and signed differences folded away — the engine’s own, through the real endpoint', async () => {
+    const context = await openContext();
+    const page = await signedIn(context, 'ines@e2e.test');
+    const user = await users.byEmail('ines@e2e.test');
+    /* UNIQLO's checked Sweatshirt, size S, found by its link: its published garment measurements are the reference */
+    await fitProfiles.saveGuide(user.id, { garments: { sweatshirts: { favorite: 'perfect', anchor: { brand: 'UNIQLO', size: 'S', product: { url: 'https://www.uniqlo.com/us/en/products/E475377-000/00' } } } } });
+    const expected = require('../api/_sizing/engine').compare((await fitProfiles.read(user.id)).profile, require('../api/_sizing/records').byId('uniqlo-e475378-sweat-pullover-hoodie-us'));
+    assert.strictEqual(expected.status, 'ok');
+    await open(page, 'index.html');
+    await linkBox(page);
+    await page.fill('#fit-url', 'https://www.uniqlo.com/us/en/products/E475378-000/00');
+    await page.press('#fit-url', 'Enter');
+    await page.waitForSelector('#fit-compare:not([hidden]) .fit-compare-recommended');
+    assert.strictEqual((await page.textContent('#fit-compare .fit-compare-recommended')).trim(), `Recommended size: ${expected.recommended}`);
+    assert.strictEqual(await page.textContent('#fit-compare .fit-compare-reference'), 'Compared with: UNIQLO Sweatshirt, size S (published measurements).');
+    assert.match(await page.textContent('#fit-compare'), new RegExp(expected.summary.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    assert.match(await page.textContent('#fit-compare .fit-compare-differs'), new RegExp(`^Size ${expected.recommended} against your reference: chest width .+, garment length .+, shoulder width .+, sleeve length .+\\.$`));
+    assert.strictEqual(await page.$$eval('#fit-compare .fit-compare-fallback', (ns) => ns.length), 0);
+    /* folded away until asked for */
+    assert.strictEqual(await page.$eval('#fit-compare .fit-compare-differences', (d) => d.open), false);
+    await page.click('#fit-compare .fit-compare-differences > summary');
+    const rows = await page.$$eval('#fit-compare .fit-compare-differences tbody tr', (trs) => trs.map((tr) => ({ dim: tr.dataset.dim, diff: Number(tr.children[1].dataset.difference), shown: tr.children[1].textContent })));
+    const row = expected.sizes.find((x) => x.size === expected.recommended);
+    assert.deepStrictEqual(rows.map((r) => r.dim), expected.dimensionsCompared);
+    rows.forEach((r) => {
+      const want = row.dimensions[r.dim].difference;
+      assert.strictEqual(r.diff, want, `${r.dim}: the engine's own signed difference`);
+      const tenth = Math.round(want * 10) / 10;
+      assert.strictEqual(r.shown, tenth === 0 ? '0.0 in' : `${tenth > 0 ? '+' : '\u2212'}${Math.abs(tenth).toFixed(1)} in`);
+    });
+    assert.ok(!/UNIQLO|E475377|Sweatshirt/.test(page.url()), 'nothing from the profile in the address');
+    /* no reference saved: no size, and why */
+    const bareContext = await openContext();
+    const bare = await signedIn(bareContext, 'jude@e2e.test');
+    await open(bare, 'index.html');
+    await linkBox(bare);
+    await bare.fill('#fit-url', 'https://www.uniqlo.com/us/en/products/E475378-000/00');
+    await bare.press('#fit-url', 'Enter');
+    await bare.waitForSelector('#fit-compare:not([hidden])');
+    await bare.waitForFunction(() => /No size recommendation/.test(document.getElementById('fit-compare').textContent));
+    assert.match(await bare.textContent('#fit-compare'), /No size recommendation: there isn’t enough reliable measurement evidence[\s\S]*Save a hoodie that fits you well/);
+    assert.strictEqual(await bare.$$eval('#fit-compare .fit-compare-recommended, #fit-compare .fit-compare-differences', (ns) => ns.length), 0);
+    await bareContext.close();
     await context.close();
   });
 

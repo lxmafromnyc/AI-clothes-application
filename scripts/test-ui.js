@@ -3012,6 +3012,79 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     }
   });
 
+  await test('Find Fit’s comparison — a recommended size with its reference and signed differences opened, and the fallback when evidence is too thin — is set in a palette ink, legible, and fits a phone', async () => {
+    const Schema = require('../assets/fit-profile-schema.js');
+    const withReference = (garments) => fitProfileReply(Object.assign(Schema.empty(), { garments }));
+    for (const viewport of [{ width: 1280, height: 900 }, { width: 360, height: 740 }]) {
+      accountState = accountReply({ extra: SIGNED_IN });
+      /* UNIQLO's checked Sweatshirt, by its link, beside UNIQLO's checked hoodie */
+      fitProfileState = withReference({ sweatshirts: Object.assign(Schema.emptyGarment('sweatshirts'), { favorite: 'perfect', anchor: { brand: 'UNIQLO', size: 'S', product: { name: null, url: 'https://www.uniqlo.com/us/en/products/E475377-000/00' } } }) });
+      let page = await openPage('index.html', { viewport });
+      await page.waitForSelector('#fit-browser[data-brands="ready"]', { timeout: 10000 });
+      await page.evaluate(() => { document.getElementById('fit-link-alt').open = true; });
+      let audit = guideAudit(page, viewport);
+      await page.fill('#fit-url', 'https://www.uniqlo.com/us/en/products/E475378-000/00');
+      await page.press('#fit-url', 'Enter');
+      await page.waitForSelector('#fit-compare:not([hidden]) .fit-compare-recommended');
+      await audit('a recommended size, its reference and how it differs');
+      await page.click('#fit-compare .fit-compare-differences > summary');
+      const shown = await page.$$eval('#fit-compare .fit-compare-differences tbody td:nth-child(2)', (tds) => tds.map((td) => td.textContent));
+      assert.ok(shown.length === 4 && shown.every((t) => /^([+\u2212]\d+\.\d|0\.0) in$/.test(t)), JSON.stringify(shown));
+      await audit('the signed differences, opened');
+      await page.close();
+
+      /* a home-measured hoodie: only two dimensions measured the same way as UNIQLO's — no recommendation */
+      fitProfileState = withReference({ hoodies: Object.assign(Schema.emptyGarment('hoodies'), { favorite: 'perfect', anchor: { brand: 'Carhartt', size: 'L', measurements: { unit: 'cm', chestWidth: 58, bodyLength: 68, shoulderWidth: 50, sleeveLength: 62 } } }) });
+      page = await openPage('index.html', { viewport });
+      await page.waitForSelector('#fit-browser[data-brands="ready"]', { timeout: 10000 });
+      await page.evaluate(() => { document.getElementById('fit-link-alt').open = true; });
+      audit = guideAudit(page, viewport);
+      await page.fill('#fit-url', 'https://www.uniqlo.com/us/en/products/E475378-000/00');
+      await page.press('#fit-url', 'Enter');
+      await page.waitForSelector('#fit-compare:not([hidden]) .fit-compare-fallback');
+      assert.strictEqual(await page.$$eval('#fit-compare .fit-compare-recommended, #fit-compare .fit-compare-differences', (ns) => ns.length), 0);
+      await audit('not enough reliable measurement evidence');
+      await page.close();
+    }
+
+    /* the signs, drawn as the engine gives them. UNIQLO's two checked
+       products publish the same measurements, so a real pair differs by
+       nothing; this answer is the real engine's on an ILLUSTRATIVE
+       FIXTURE (invented numbers, marked verified only here). */
+    const fixture = JSON.parse(JSON.stringify(sizingRecords.byId('zara-00761810-basic-heavyweight-hoodie-us')));
+    fixture.id = 'illustrative-test-hoodie';
+    fixture.sizes = ['S', 'M', 'L'];
+    const cells = (c, l, sh, sl) => ({ chestWidth: { value: c, text: String(c) }, bodyLength: { value: l, text: String(l) }, shoulderWidth: { value: sh, text: String(sh) }, sleeveLength: { value: sl, text: String(sl) } });
+    fixture.charts.garment.sizes = { S: cells(57, 65, 49, 61), M: cells(60, 67, 51, 62), L: cells(63, 69, 53, 63) };
+    fixture.verification = { status: 'verified', checkedBy: 'Test checker', checkedAt: '2026-10-16' };
+    const fixtureProfile = Object.assign(Schema.empty(), { garments: { hoodies: Object.assign(Schema.emptyGarment('hoodies'), { favorite: 'perfect', anchor: { brand: 'Carhartt', size: 'L', measurements: { unit: 'cm', chestWidth: 58, bodyLength: 68, shoulderWidth: 50, sleeveLength: 62 } } }) } });
+    const answer = sizingEngine.compare(fixtureProfile, fixture);
+    assert.strictEqual(answer.recommended, 'M');
+    accountState = accountReply({ extra: SIGNED_IN });
+    fitProfileState = fitProfileReply(fixtureProfile);
+    const page = await openPage('index.html', { viewport: { width: 1280, height: 900 } });
+    await page.route('**/api/size-recommendation?product=*', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ comparison: answer }) }));
+    await page.waitForSelector('#fit-browser[data-brands="ready"]', { timeout: 10000 });
+    await page.evaluate(() => { document.getElementById('fit-link-alt').open = true; });
+    await page.fill('#fit-url', 'https://www.uniqlo.com/us/en/products/E475378-000/00');
+    await page.press('#fit-url', 'Enter');
+    await page.waitForSelector('#fit-compare .fit-compare-differences');
+    assert.strictEqual(await page.textContent('#fit-compare .fit-compare-reference'), 'Compared with: Carhartt L (measured at home).');
+    assert.strictEqual(await page.textContent('#fit-compare .fit-compare-differs'),
+      'Size M against your reference: chest width 2 cm wider, garment length 1 cm shorter, shoulder width 1 cm wider, sleeve length the same as your reference.');
+    await page.click('#fit-compare .fit-compare-differences > summary');
+    const rows = await page.$$eval('#fit-compare .fit-compare-differences tbody tr', (trs) => trs.map((tr) => [...tr.children].map((c) => c.textContent)));
+    assert.deepStrictEqual(rows, [
+      ['Chest width', '+2.0 cm', '2 cm wider'],
+      ['Garment length', '\u22121.0 cm', '1 cm shorter'],
+      ['Shoulder width', '+1.0 cm', '1 cm wider'],
+      ['Sleeve length', '0.0 cm', 'the same as your reference']
+    ]);
+    await page.close();
+    accountState = accountReply({});
+    fitProfileState = fitProfileReply(null);
+  });
+
   await test('the sizing chart dialog — loading, a record’s body and garment tables, and an unavailable answer — is set in a palette ink, legible, and fits a phone', async () => {
     const UQ = { id: 'uq', name: 'Sweat Pullover Hoodie', brand: 'UNIQLO', price: 39.9, currency: 'USD', imageUrl: null,
       productUrl: 'https://www.uniqlo.com/us/en/products/E475378-000/00', retailer: 'UNIQLO', category: '', colors: [], sizes: [] };

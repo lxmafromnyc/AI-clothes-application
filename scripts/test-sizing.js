@@ -987,6 +987,245 @@ await test('/api/size-recommendation compares only the caller\'s own reference, 
   assert.strictEqual(JSON.stringify((await fitProfiles.read(ada.user.id)).profile), before);
 });
 
+section('each garment measurement: its unit, method, source and status');
+
+const DIMS4 = ['chestWidth', 'bodyLength', 'shoulderWidth', 'sleeveLength'];
+/* the illustrative fixture in inches: the same garment, converted once */
+const ILLUSTRATIVE_IN = () => {
+  const r = ILLUSTRATIVE();
+  r.units = 'in';
+  Object.values(r.charts.garment.sizes).forEach((row) => Object.values(row).forEach((cell) => { cell.value /= 2.54; cell.text = String(cell.value); }));
+  return r;
+};
+/* a sweatshirt reference found by its link: UNIQLO's checked Sweatshirt */
+const uqSweatshirtRef = (size) => {
+  const p = Schema.empty();
+  p.garments.sweatshirts = Object.assign(Schema.emptyGarment('sweatshirts'), { favorite: 'perfect', anchor: { brand: 'UNIQLO', size, product: { name: null, url: 'https://www.uniqlo.com/us/en/products/E475377-000/00' } } });
+  return p;
+};
+
+await test('a record\'s measurement is read whole from the record — value, unit, method, source, status — and every existing record still loads without the new fields', () => {
+  sizing.RECORDS.forEach((r) => assert.deepStrictEqual(sizingSchema.validate(r), [], r.id));
+  const m = sizingSchema.measurementOf(sizing.byId(UQ_HOODIE), 'M', 'chestWidth');
+  assert.deepStrictEqual(Object.keys(m), ['value', 'unit', 'method', 'source', 'status']);
+  assert.strictEqual(m.unit, 'in');
+  assert.strictEqual(m.method, 'flat-width-armpit-to-armpit');
+  assert.strictEqual(m.status, 'verified');
+  assert.ok(m.value > 0);
+  assert.ok(sizingSchema.officialUrl('UNIQLO', m.source.url));
+  assert.strictEqual(sizingSchema.measurementOf(sizing.byId(UQ_HOODIE), 'M', 'notADimension'), null);
+  assert.strictEqual(sizingSchema.measurementOf(sizing.byId(NIKE_HOODIE), 'M', 'chestWidth'), null, 'a body chart holds no garment measurement');
+  /* an unchecked record's measurements are unverified, never verified */
+  assert.strictEqual(sizingSchema.measurementStatus(sizing.byId('zara-00761810-basic-heavyweight-hoodie-us'), 'chestWidth'), 'unverified');
+  /* a physical length is never negative or zero */
+  const neg = ILLUSTRATIVE();
+  neg.charts.garment.sizes.M.chestWidth.value = -60;
+  assert.ok(sizingSchema.validate(neg).some((e) => e.field === 'charts.garment.sizes.M.chestWidth'));
+});
+
+await test('crowdsourced measurements name who gathered them and when, are never verified, and a dimension can only lower its own status', () => {
+  const crowd = ILLUSTRATIVE();
+  crowd.charts.garment.origin = 'crowdsourced';
+  assert.ok(sizingSchema.validate(crowd).some((e) => e.field === 'charts.garment.origin'), 'who and when are required');
+  Object.assign(crowd.charts.garment, { measuredBy: 'Fynd shopper submissions (test)', measuredAt: '2026-10-20' });
+  assert.deepStrictEqual(sizingSchema.validate(crowd), []);
+  assert.ok(sizingSchema.isVerified(crowd), 'the record itself is checked');
+  DIMS4.forEach((d) => assert.strictEqual(sizingSchema.measurementStatus(crowd, d), 'crowdsourced', `${d}: still crowdsourced`));
+
+  const own = ILLUSTRATIVE();
+  own.charts.garment.dimensions.shoulderWidth.status = 'unverified';
+  own.charts.garment.dimensions.chestWidth.status = 'crowdsourced';
+  assert.deepStrictEqual(sizingSchema.validate(own), []);
+  assert.deepStrictEqual(DIMS4.map((d) => sizingSchema.measurementStatus(own, d)), ['crowdsourced', 'verified', 'unverified', 'verified']);
+  own.charts.garment.dimensions.bodyLength.status = 'verified';
+  assert.ok(sizingSchema.validate(own).some((e) => e.field === 'charts.garment.dimensions.bodyLength.status'), 'a dimension cannot call itself verified');
+  const body = copy(NIKE_HOODIE);
+  body.charts.body.dimensions.chest.status = 'unverified';
+  assert.ok(sizingSchema.validate(body).some((e) => e.field === 'charts.body.dimensions.chest.status'), 'only garment measurements keep a status');
+});
+
+await test('missing reference measurements: no comparison, no recommendation, and the shopper is told what to add', () => {
+  const r = engine.compare(hoodieRef({ measurements: null }), ILLUSTRATIVE());
+  assert.strictEqual(r.status, 'insufficient');
+  assert.strictEqual(r.missing[0].code, 'no-reference');
+  assert.ok(!('recommended' in r) && !('sizes' in r));
+  /* a reference named but with nothing Fynd can measure */
+  const named = engine.compare(hoodieRef({ product: { name: 'Unknown hoodie', url: null }, measurements: null }), ILLUSTRATIVE());
+  assert.strictEqual(named.missing[0].code, 'no-reference-measurements');
+  assert.ok(named.next.length);
+});
+
+await test('missing target measurements: a dimension the product doesn\'t publish is not compared, and too few gives no recommendation', () => {
+  const thin = ILLUSTRATIVE();
+  ['bodyLength', 'sleeveLength'].forEach((d) => {
+    delete thin.charts.garment.dimensions[d];
+    Object.values(thin.charts.garment.sizes).forEach((row) => delete row[d]);
+  });
+  const r = engine.compare(hoodieRef({ measurements: REF_CM }), thin);
+  assert.deepStrictEqual([r.status, r.recommended], ['partial', null]);
+  assert.deepStrictEqual(r.dimensionsCompared, ['chestWidth', 'shoulderWidth']);
+  assert.ok(r.notCompared.every((x) => /doesn't publish it/.test(x.why)), JSON.stringify(r.notCompared));
+  const m = r.sizes.find((s) => s.size === 'M').dimensions.bodyLength;
+  assert.strictEqual(m.compared, false);
+  assert.ok(!('difference' in m), 'no difference invented');
+});
+
+await test('a centimetre reference against an inch product: converted before the difference, the same answer in either unit', () => {
+  const cmProduct = engine.compare(hoodieRef({ measurements: REF_CM }), ILLUSTRATIVE());
+  const inProduct = engine.compare(hoodieRef({ measurements: REF_CM }), ILLUSTRATIVE_IN());
+  assert.strictEqual(inProduct.unit, 'cm', 'shown in the reference\'s own unit');
+  assert.strictEqual(inProduct.recommended, cmProduct.recommended);
+  inProduct.sizes.forEach((s) => DIMS4.forEach((d) => {
+    const want = cmProduct.sizes.find((x) => x.size === s.size).dimensions[d].difference;
+    assert.ok(Math.abs(s.dimensions[d].difference - want) < 0.02, `${s.size} ${d}: ${s.dimensions[d].difference} vs ${want}`);
+  }));
+  /* each side keeps its own unit as given */
+  assert.strictEqual(inProduct.reference.measurements.chestWidth.unit, 'cm');
+  assert.strictEqual(inProduct.reference.measurements.chestWidth.value, 58);
+  assert.strictEqual(inProduct.sizes[0].dimensions.chestWidth.measurement.unit, 'in');
+  /* asked for in inches, a 2 cm difference reads as 2 / 2.54 in */
+  const asIn = engine.compare(hoodieRef({ measurements: REF_CM }), ILLUSTRATIVE_IN(), { unit: 'in' });
+  assert.ok(Math.abs(asIn.sizes.find((s) => s.size === 'M').dimensions.chestWidth.difference - 2 / 2.54) < 0.01);
+});
+
+await test('every difference is signed target minus reference: positive is larger, negative smaller, and the words agree', () => {
+  const rec = ILLUSTRATIVE();
+  /* a reference exactly the product's M: M differs by nothing, S is smaller in every dimension, L larger */
+  const mRow = rec.charts.garment.sizes.M;
+  const ref = Object.assign({ unit: 'cm' }, Object.fromEntries(DIMS4.map((d) => [d, mRow[d].value])));
+  const r = engine.compare(hoodieRef({ measurements: ref }), rec);
+  assert.strictEqual(r.recommended, 'M');
+  const at = (size) => r.sizes.find((s) => s.size === size).dimensions;
+  DIMS4.forEach((d) => {
+    assert.strictEqual(at('M')[d].difference, 0, `M ${d}`);
+    assert.ok(at('S')[d].difference < 0, `S ${d} is smaller`);
+    assert.ok(at('L')[d].difference > 0, `L ${d} is larger`);
+    assert.ok(/narrower|shorter/.test(at('S')[d].words), at('S')[d].words);
+    assert.ok(/wider|longer/.test(at('L')[d].words), at('L')[d].words);
+  });
+  r.sizes.forEach((s) => DIMS4.forEach((d) => {
+    const x = s.dimensions[d];
+    assert.strictEqual(x.difference, Math.round((x.candidate - x.reference) * 100) / 100, 'candidate − reference, never the reverse');
+    assert.strictEqual(x.measurement.value, rec.charts.garment.sizes[s.size][d].value, 'the published value, unsigned');
+    assert.ok(x.measurement.value > 0 && x.reference > 0 && x.candidate > 0);
+  }));
+});
+
+await test('incompatible measurement methods are never compared — listed with why, no difference shown, no recommendation', () => {
+  const rec = ILLUSTRATIVE();
+  Object.assign(rec.charts.garment.dimensions.bodyLength, { method: 'center-back-to-hem' });
+  Object.assign(rec.charts.garment.dimensions.sleeveLength, { method: 'center-back-to-cuff' });
+  Object.assign(rec.charts.garment.dimensions.shoulderWidth, { method: 'broadest-part-of-shoulders' });
+  assert.deepStrictEqual(sizingSchema.validate(rec), []);
+  const r = engine.compare(hoodieRef({ measurements: REF_CM }), rec);
+  assert.deepStrictEqual([r.status, r.recommended, r.dimensionsCompared], ['partial', null, ['chestWidth']]);
+  assert.deepStrictEqual(r.notCompared.map((x) => x.dim), ['bodyLength', 'sleeveLength', 'shoulderWidth']);
+  assert.ok(r.notCompared.every((x) => /measured differently/.test(x.why)));
+  r.sizes.forEach((s) => ['bodyLength', 'sleeveLength', 'shoulderWidth'].forEach((d) => assert.ok(!('difference' in s.dimensions[d]), `${s.size} ${d}`)));
+});
+
+await test('a body measurement is never set against a garment measurement', () => {
+  /* a chest measurement alone is not a reference garment */
+  const body = Object.assign(Schema.empty(), { measurements: Object.assign(Schema.empty().measurements, { unit: 'in', chest: 40 }) });
+  body.garments.hoodies = Object.assign(Schema.emptyGarment('hoodies'), { fitGoal: 'true-to-size', line: 'men' });
+  const r = engine.compare(body, ILLUSTRATIVE());
+  assert.strictEqual(r.missing[0].code, 'no-reference');
+  assert.ok(!('sizes' in r));
+  /* a reference garment against a product that publishes only body measurements */
+  const nike = engine.compare(hoodieRef({ measurements: REF_CM }), sizing.byId(NIKE_HOODIE));
+  assert.strictEqual(nike.missing[0].code, 'body-chart-only');
+  assert.ok(!('sizes' in nike) && !('recommended' in nike));
+  /* and the suggestion from a body chest uses the room a fit wants, never chest = chest */
+  const s = engine.recommend(body, ILLUSTRATIVE());
+  assert.strictEqual(s.method, 'body-plus-ease');
+});
+
+await test('crowdsourced or unchecked measurements give no recommendation: a crowdsourced chart is refused, a crowdsourced dimension is not compared', () => {
+  const crowd = ILLUSTRATIVE();
+  Object.assign(crowd.charts.garment, { origin: 'crowdsourced', measuredBy: 'Fynd shopper submissions (test)', measuredAt: '2026-10-20' });
+  const r = engine.compare(hoodieRef({ measurements: REF_CM }), crowd);
+  assert.deepStrictEqual([r.status, r.missing[0].code, r.dataStatus], ['insufficient', 'crowdsourced-data', 'crowdsourced']);
+  assert.ok(!('sizes' in r) && !('recommended' in r));
+  /* not even the evaluation suite compares crowdsourced numbers */
+  assert.strictEqual(engine.compare(hoodieRef({ measurements: REF_CM }), crowd, { includeUnverified: true }).missing[0].code, 'crowdsourced-data');
+  /* nor does the suggestion from a body chest lean on a crowdsourced chest */
+  const body = Object.assign(Schema.empty(), { measurements: Object.assign(Schema.empty().measurements, { unit: 'in', chest: 40 }) });
+  body.garments.hoodies = Object.assign(Schema.emptyGarment('hoodies'), { fitGoal: 'true-to-size', line: 'men' });
+  assert.notStrictEqual(engine.recommend(body, crowd).method, 'body-plus-ease');
+
+  /* one crowdsourced dimension, the chest: never compared, so never recommended */
+  const chest = ILLUSTRATIVE();
+  chest.charts.garment.dimensions.chestWidth.status = 'crowdsourced';
+  const c = engine.compare(hoodieRef({ measurements: REF_CM }), chest);
+  assert.deepStrictEqual([c.status, c.recommended], ['partial', null]);
+  assert.ok(!c.dimensionsCompared.includes('chestWidth'));
+  assert.match(c.notCompared.find((x) => x.dim === 'chestWidth').why, /gathered from shoppers/);
+  assert.strictEqual(c.sizes[0].dimensions.chestWidth.measurement.status, 'crowdsourced');
+  assert.ok(!('difference' in c.sizes[0].dimensions.chestWidth));
+
+  /* an unchecked shoulder on a checked record: left out; the three checked ones, chest among them, still stand */
+  const shoulder = ILLUSTRATIVE();
+  shoulder.charts.garment.dimensions.shoulderWidth.status = 'unverified';
+  const u = engine.compare(hoodieRef({ measurements: REF_CM }), shoulder);
+  assert.deepStrictEqual(u.dimensionsCompared, ['chestWidth', 'bodyLength', 'sleeveLength']);
+  assert.match(u.notCompared.find((x) => x.dim === 'shoulderWidth').why, /not yet checked/);
+  assert.strictEqual(u.recommended, 'M');
+
+  /* an unverified product: no numbers at all (production) */
+  const zara = engine.compare(hoodieRef({ measurements: REF_CM }), sizing.byId('zara-00761810-basic-heavyweight-hoodie-us'));
+  assert.strictEqual(zara.missing[0].code, 'unverified-data');
+});
+
+await test('a reference product\'s measurements are given whole and checked the same way; a crowdsourced one is not compared', () => {
+  const r = engine.compare(uqSweatshirtRef('M'), sizing.byId(UQ_HOODIE));
+  assert.strictEqual(r.status, 'ok');
+  DIMS4.forEach((d) => {
+    const m = r.reference.measurements[d];
+    assert.strictEqual(m.status, 'verified');
+    assert.strictEqual(m.unit, 'in');
+    assert.strictEqual(m.source.url, 'https://www.uniqlo.com/us/en/products/E475377-000/00');
+  });
+  /* the shopper's own measurements are called what they are */
+  const home = engine.compare(hoodieRef({ measurements: REF_CM }), ILLUSTRATIVE());
+  assert.deepStrictEqual(home.reference.measurements.chestWidth, { value: 58, unit: 'cm', method: 'flat-width-armpit-to-armpit', source: { origin: 'shopper-measured' }, status: 'shopper-measured' });
+  /* a reference product whose chest was crowdsourced: that dimension is left out */
+  const pool = sizing.RECORDS.map((x) => (x.id === 'uniqlo-e475377-sweatshirt-us' ? (() => { const y = JSON.parse(JSON.stringify(x)); y.charts.garment.dimensions.chestWidth.status = 'crowdsourced'; return y; })() : x));
+  const c = engine.compare(uqSweatshirtRef('M'), sizing.byId(UQ_HOODIE), { records: pool });
+  assert.ok(!c.dimensionsCompared.includes('chestWidth'));
+  assert.match(c.notCompared.find((x) => x.dim === 'chestWidth').why, /your UNIQLO reference's chest is gathered from shoppers/);
+  assert.strictEqual(c.recommended, null, 'no chest, no recommendation');
+});
+
+await test('the extension\'s reference data calls a product verified only when every garment measurement is', () => {
+  const builder = require('./build-fit-references.js');
+  const live = sizing.byId(UQ_HOODIE);
+  const product = () => builder.build().products.find((x) => x.id === UQ_HOODIE);
+  assert.strictEqual(product().verification, 'verified');
+  const dim = live.charts.garment.dimensions.shoulderWidth;
+  dim.status = 'crowdsourced';
+  try {
+    assert.strictEqual(product().verification, 'unverified');
+  } finally {
+    delete dim.status;
+  }
+  assert.strictEqual(product().verification, 'verified');
+});
+
+await test('through /api/size-recommendation, a checked comparison carries its signed differences and each measurement\'s provenance', async () => {
+  const { jar, user } = await signUp('cleo@example.test');
+  await fitProfiles.saveGuide(user.id, { garments: { sweatshirts: { favorite: 'perfect', anchor: { brand: 'UNIQLO', size: 'M', product: { url: 'https://www.uniqlo.com/us/en/products/E475377-000/00' } } } } });
+  const got = await compareCall(jar, UQ_HOODIE);
+  assert.strictEqual(got.status, 200);
+  const c = got.body.comparison;
+  assert.deepStrictEqual([c.status, c.recommended, c.reference.brand, c.reference.size], ['ok', 'M', 'UNIQLO', 'M']);
+  const s = c.sizes.find((x) => x.size === 'S').dimensions.chestWidth;
+  assert.ok(s.difference < 0, 'S is narrower than the M reference');
+  assert.strictEqual(s.measurement.status, 'verified');
+  /* the same product with no reference saved: nothing recommended */
+  const none = await compareCall((await signUp('dov@example.test')).jar, UQ_HOODIE);
+  assert.deepStrictEqual([none.body.comparison.status, none.body.comparison.missing[0].code], ['insufficient', 'no-reference']);
+});
+
 section('fit feedback against the reference');
 
 const TRIED = () => ({ productId: UQ_HOODIE, sizeTried: 'M', asExpected: false, issues: ['too-long', 'too-wide'], notes: '  sleeves   a bit long ' });
