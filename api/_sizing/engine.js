@@ -363,7 +363,8 @@ const METHOD_WORDS = {
   'shoulder-seam-to-cuff': 'from the shoulder seam',
   'seam-to-seam': 'seam to seam',
   'broadest-part-of-shoulders': 'across the broadest part of the shoulders',
-  'body-circumference': 'around the body'
+  'body-circumference': 'around the body',
+  'not-stated': 'by a method not stated'
 };
 
 /* How much each dimension counts, from what the shopper said about the
@@ -549,6 +550,11 @@ function comparable(record, shopper) {
     if (!refDims[d] || !refRow[d]) { skipped.push({ dim: d, why: ref.measured ? 'you didn\'t measure it' : `${ref.record.brand} doesn't publish it for ${ref.size}` }); return; }
     if (!usableDim(record, d, shopper.includeUnverified)) { skipped.push({ dim: d, why: `${record.brand}'s ${DIM_NAMES[d]} is ${STATUS_WHY[sizingSchema.measurementStatus(record, d)]}` }); return; }
     if (!usableDim(ref.record, d, shopper.includeUnverified)) { skipped.push({ dim: d, why: `your ${ref.record.brand} reference's ${DIM_NAMES[d]} is ${STATUS_WHY[sizingSchema.measurementStatus(ref.record, d)]}` }); return; }
+    /* a value published without its method is never compared — not even
+       with another whose method is also unstated: two unknowns need not
+       be the same method */
+    if (dims[d].method === 'not-stated') { skipped.push({ dim: d, why: `${record.brand} doesn't say how its ${DIM_NAMES[d]} ${d === 'sleeveLength' || d === 'shoulderWidth' ? 'are' : 'is'} measured` }); return; }
+    if (refDims[d].method === 'not-stated') { skipped.push({ dim: d, why: `${ref.measured ? 'your' : `${ref.record.brand}'s`} ${DIM_NAMES[d]} ${d === 'sleeveLength' || d === 'shoulderWidth' ? 'have' : 'has'} no stated method` }); return; }
     const v = inMethodOf(d, ref.record, refRow, dims[d].method);
     if (!v) {
       skipped.push({ dim: d, why: `measured differently — ${record.brand}'s ${METHOD_WORDS[dims[d].method] || dims[d].method}, ${ref.measured ? 'yours' : `${ref.record.brand}'s`} ${METHOD_WORDS[refDims[d].method] || refDims[d].method}` });
@@ -985,7 +991,10 @@ function recommend(profile, record, opts) {
 
   const shopper = readShopper(profile, record, pool, options);
 
-  const hasGarment = Boolean(record.charts.garment && record.charts.garment.dimensions.chestWidth && usableDim(record, 'chestWidth', options.includeUnverified));
+  /* a chest published without its method is neither a width nor a
+     circumference Fynd can set against a body */
+  const hasGarment = Boolean(record.charts.garment && record.charts.garment.dimensions.chestWidth
+    && record.charts.garment.dimensions.chestWidth.method !== 'not-stated' && usableDim(record, 'chestWidth', options.includeUnverified));
   const hasBody = Boolean(record.charts.body);
   /* a garment that fits, sharing no measurement with this product (all
      measured differently), is no comparison at all */
@@ -1225,6 +1234,17 @@ function recommend(profile, record, opts) {
    the closest size and every difference it can, calls the comparison
    partial, and recommends nothing. An unverified product gives no
    numbers at all outside the evaluation suite.
+
+   The closest size by the total can still miss on one measurement — a
+   chest that matches beside a length 3 in longer. Each compared
+   dimension says whether it is within its tolerance (withinTolerance,
+   with the tolerance in the unit shown), and `tradeoffs` lists every
+   one of the closest size's that isn't, with a caveat saying so. This
+   reports; it doesn't change the ranking or whether a size is
+   recommended.
+
+   A value published without its method ("not-stated") is never
+   compared, with either side's reason given.
    ========================================================= */
 
 const COMPARE_DIMS = ['chestWidth', 'bodyLength', 'shoulderWidth', 'sleeveLength'];
@@ -1371,7 +1391,8 @@ function compare(profile, record, opts) {
       const target = toUnits(v.value, ref.record.units, record.units);
       const diffRecord = row[d].value - target;
       const { weight } = params.garment[d];
-      score += weight * weights[d] * (diffRecord / toleranceOf(d, record, params)) ** 2;
+      const tol = toleranceOf(d, record, params);
+      score += weight * weights[d] * (diffRecord / tol) ** 2;
       const difference = round(toUnits(diffRecord, record.units, unit), 2);
       out[d] = {
         compared: true,
@@ -1379,6 +1400,10 @@ function compare(profile, record, opts) {
         reference: show(target, record.units),
         /* signed: this size minus the reference, so positive is larger */
         difference,
+        /* the miss the score counts as one unit (params.garment tol), in
+           the unit shown; within it, the two are treated as similar */
+        tolerance: show(tol, record.units),
+        withinTolerance: Math.abs(diffRecord) <= tol + EPS,
         measurement: sizingSchema.measurementOf(record, size, d),
         words: differenceWords(d, difference, unit),
         estimated: v.estimated || null
@@ -1419,6 +1444,14 @@ function compare(profile, record, opts) {
   const nearTie = second && second.score - closest.score < TIE_MARGIN;
   if (nearTie) { reliability = lower(reliability); caveats.push(`${closest.size} and ${second.size} are about as close as each other.`); }
   if (ref.product && !sizingSchema.isVerified(ref.record)) caveats.push(`The measurements used for your ${ref.record.brand} reference haven't been checked yet.`);
+  /* the closest size by the total can still be off on a measurement: each
+     one further than its tolerance is a trade-off, listed, never folded
+     into the total unsaid */
+  const tradeoffs = dims.filter((d) => !closest.dimensions[d].withinTolerance).map((d) => {
+    const x = closest.dimensions[d];
+    return { size: closest.size, dim: d, difference: x.difference, tolerance: x.tolerance, words: x.words };
+  });
+  if (tradeoffs.length) caveats.push(`${closest.size} differs from your reference by more than Fynd treats as similar on ${listWords(tradeoffs.map((t) => DIM_NAMES[t.dim]))}.`);
   caveats.push('Matching measurements don\'t guarantee the same fit or feel: fabric, stretch and cut change how a garment wears.');
 
   const verified = sizingSchema.isVerified(record);
@@ -1439,6 +1472,7 @@ function compare(profile, record, opts) {
     recommended,
     closest: closest.size,
     alternative: nearTie ? second.size : null,
+    tradeoffs,
     summary,
     reliability,
     dimensionsCompared: dims,

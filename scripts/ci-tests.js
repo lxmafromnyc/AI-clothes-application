@@ -66,6 +66,7 @@ const GROUPS = {
     ['test-stripe', 'payments and subscriptions'],
     ['test-fit-profile', 'the shopper fit profile: its schema, units, and who may read or change it'],
     ['test-sizing', 'sizing records, the size engine, /api/size-recommendation and fit feedback'],
+    ['test-sizing-cross-brand', 'the size engine on UNIQLO records and an illustrative Everlane fixture: provenance, signed differences, units, methods, trade-offs, unverified data'],
     ['test-page-access', 'which retailer pages the sizing reader may fetch: reviewed terms, then robots.txt, and nothing otherwise'],
     ['test-fit-anchor', 'the Fit Anchor comparison: units, methods, broken charts, categories, fit preferences, outcomes and confidence'],
     ['test-extension', 'the browser extension: its permissions, its copies of the shared sizing code, and the chart payload it hands to Find Fit'],
