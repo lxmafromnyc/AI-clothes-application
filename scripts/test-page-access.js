@@ -166,7 +166,8 @@ Allow: /products/E1
 
   await test('the five UNIQLO products: the four with records answer from them, unchanged, with nothing fetched; the one without says so', async () => {
     const s = shop({});
-    const expect = { 'E475378-000': 'verified', 'E475377-000': 'verified', 'E471808-000': 'unverified', 'E455365-000': 'unverified' };
+    /* each record's own status: the UNIQLO pair is pending review */
+    const expect = { 'E475378-000': 'unverified', 'E475377-000': 'unverified', 'E471808-000': 'unverified', 'E455365-000': 'unverified' };
     for (const code of ['E475378-000', 'E475377-000', 'E471808-000', 'E455365-000', 'E429066-000']) {
       const r = await charts.chartFor(`https://www.uniqlo.com/us/en/products/${code}/00`, { noCache: true, fetch: s.fetch });
       if (expect[code]) {

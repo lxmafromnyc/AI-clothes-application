@@ -84,8 +84,9 @@ const quietly = async (fn) => {
 
 /* the five UNIQLO US products Fynd sourced itself, and what each one's
    pasted link answers with no product source and no page read */
-const FIVE = ['E475378-000', 'E475377-000', 'E471808-000', 'E455365-000', 'E429066-000'];
-const RECORDS = { 'E475378-000': 'verified', 'E475377-000': 'verified', 'E471808-000': 'unverified', 'E455365-000': 'unverified' };
+/* in the order Find Fit lists them: the four with a saved chart (none checked: the UNIQLO pair is pending review) in the list's own order, then the one without */
+const FIVE = ['E471808-000', 'E475378-000', 'E475377-000', 'E455365-000', 'E429066-000'];
+const RECORDS = { 'E475378-000': 'unverified', 'E475377-000': 'unverified', 'E471808-000': 'unverified', 'E455365-000': 'unverified' };
 const uniqloUrl = (code) => `https://www.uniqlo.com/us/en/products/${code}/00`;
 
 let passed = 0;
@@ -194,7 +195,7 @@ async function nodeTests() {
     const res = fakeRes();
     await sizingHandler({ method: 'GET', headers: {}, query: { chart: uniqloUrl('E475378-000') }, url: `/api/size-recommendation?chart=${encodeURIComponent(uniqloUrl('E475378-000'))}` }, res);
     assert.strictEqual(res.statusCode, 200);
-    assert.deepStrictEqual([res.body.chart.status, res.body.chart.from, res.body.chart.verification], ['ok', 'fynd-record', 'verified']);
+    assert.deepStrictEqual([res.body.chart.status, res.body.chart.from, res.body.chart.verification], ['ok', 'fynd-record', 'unverified'], 'its record’s own status: pending review');
   });
 }
 

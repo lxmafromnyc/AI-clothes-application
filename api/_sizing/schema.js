@@ -47,6 +47,32 @@
    titles "Gender Neutral (Men's Based)". A chart keeps its own `title`
    and `designation` when the brand gives one.
 
+   ---------------------------------------------------------
+   Each garment measurement, and how far it may be trusted
+   ---------------------------------------------------------
+   A garment chart's cell is one measurement: its value (positive, a
+   physical length — never signed), in the record's `units`, by the
+   method its dimension names, from the chart's `source`. Its status is
+   worked out, never stored on the cell (measurementStatus, below):
+
+     verified       the record is verified, and nothing below lowers it
+     crowdsourced   the chart's numbers were gathered from shoppers'
+                    own measurements (`origin: "crowdsourced"`), or the
+                    dimension says so (`status: "crowdsourced"`)
+     unverified     anything else, including a dimension a reviewer
+                    marked `status: "unverified"` on a checked record
+
+   A dimension's `status` can only lower what the record says, never
+   raise it: "verified" is not accepted there. Crowdsourced numbers are
+   never verified, whoever checked the rest of the record. The size
+   engine compares and recommends only from verified measurements.
+
+   The three measurements a comparison rests on most are chestWidth
+   (chest width), bodyLength (garment length) and shoulderWidth
+   (shoulder width); sleeveLength is the fourth. These are the only
+   names: the shopper's fit profile uses the same ones
+   (assets/fit-profile-schema.js GARMENT_MEASURES).
+
    A flat garment width is not a circumference. A record holding one
    says how a circumference is worked out from it
    (`derivedCircumference`: always "estimated", the factor, and why),
@@ -77,7 +103,14 @@ const SLEEVE_TYPES = ['set-in', 'raglan', 'drop-shoulder'];
      physical-measurement   somebody measured the garment itself, laid
                             flat; names who and when
    Absent reads as official-published. Estimates are never stored. */
-const ORIGINS = ['official-published', 'physical-measurement'];
+/*   crowdsourced           gathered from shoppers' own measurements of
+                            the garment; names who gathered them and
+                            when, and is never verified */
+const ORIGINS = ['official-published', 'physical-measurement', 'crowdsourced'];
+/* what one measurement may be called (measurementStatus); a dimension
+   may lower its own to one of DIMENSION_STATUSES */
+const MEASUREMENT_STATUSES = ['verified', 'crowdsourced', 'unverified'];
+const DIMENSION_STATUSES = ['crowdsourced', 'unverified'];
 /* the garment each category holds, stored apart from the brand's own
    name for the product */
 const GARMENT_TYPES = { hoodies: ['pullover-hoodie'], sweatshirts: ['crewneck-sweatshirt'], tshirts: ['crewneck-tshirt'] };
@@ -203,8 +236,10 @@ function validate(record) {
   if (isPlainObject(charts.garment) && charts.garment.origin !== undefined) {
     const g = charts.garment;
     if (!ORIGINS.includes(g.origin)) fail('charts.garment.origin', `Origin is ${ORIGINS.join(' or ')}.`);
-    else if (g.origin === 'physical-measurement' && (typeof g.measuredBy !== 'string' || !g.measuredBy.trim() || !isDate(g.measuredAt))) {
-      fail('charts.garment.origin', 'A garment measured by hand names who measured it and the date.');
+    else if ((g.origin === 'physical-measurement' || g.origin === 'crowdsourced') && (typeof g.measuredBy !== 'string' || !g.measuredBy.trim() || !isDate(g.measuredAt))) {
+      fail('charts.garment.origin', g.origin === 'crowdsourced'
+        ? 'Crowdsourced measurements name who gathered them and the date.'
+        : 'A garment measured by hand names who measured it and the date.');
     }
   }
   if (!charts.body && !charts.garment) fail('charts', 'A record needs a body chart, a garment chart, or both.');
@@ -236,6 +271,11 @@ function validate(record) {
         }
       }
       if (allowed.kinds && !allowed.kinds.includes(spec.kind)) fail(`${at}.dimensions.${dim}.kind`, `Kind must be one of ${allowed.kinds.join(', ')}.`);
+      if (isPlainObject(spec) && spec.status !== undefined && (kind !== 'garment' || !DIMENSION_STATUSES.includes(spec.status))) {
+        fail(`${at}.dimensions.${dim}.status`, kind !== 'garment'
+          ? 'Only a garment measurement keeps its own status.'
+          : `A measurement's own status, when kept, is ${DIMENSION_STATUSES.join(' or ')}: only the record's verification makes it verified.`);
+      }
     });
     const rows = isPlainObject(chart.sizes) ? chart.sizes : {};
     Object.keys(rows).forEach((size) => {
@@ -293,6 +333,34 @@ function validate(record) {
 
 const isVerified = (record) => Boolean(record && record.verification && record.verification.status === 'verified');
 
+/* One garment dimension's status (see the header): "verified",
+   "crowdsourced" or "unverified"; null when the record has no such
+   garment dimension. */
+function measurementStatus(record, dim) {
+  const chart = record && record.charts && record.charts.garment;
+  const spec = chart && chart.dimensions && chart.dimensions[dim];
+  if (!spec) return null;
+  if (chart.origin === 'crowdsourced' || spec.status === 'crowdsourced') return 'crowdsourced';
+  if (spec.status === 'unverified') return 'unverified';
+  return isVerified(record) ? 'verified' : 'unverified';
+}
+
+/* One size's garment measurement as a whole: { value, unit, method,
+   source, status }, read from the record (never stored apart from it),
+   or null when the record publishes none for that size. */
+function measurementOf(record, size, dim) {
+  const chart = record && record.charts && record.charts.garment;
+  const cell = chart && chart.sizes && chart.sizes[size] && chart.sizes[size][dim];
+  if (!cell || !chart.dimensions[dim]) return null;
+  return {
+    value: cell.value,
+    unit: record.units,
+    method: chart.dimensions[dim].method,
+    source: { url: chart.source || null, origin: chart.origin || 'official-published', retrievedAt: chart.retrievedAt || null },
+    status: measurementStatus(record, dim)
+  };
+}
+
 module.exports = {
   SIZING_VERSION,
   CATEGORIES,
@@ -301,6 +369,7 @@ module.exports = {
   STRETCH,
   SLEEVE_TYPES,
   ORIGINS,
+  MEASUREMENT_STATUSES,
   CAPTURES,
   GARMENT_TYPES,
   BODY_DIMENSIONS,
@@ -309,5 +378,7 @@ module.exports = {
   officialUrl,
   codeIn,
   validate,
-  isVerified
+  isVerified,
+  measurementStatus,
+  measurementOf
 };

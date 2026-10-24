@@ -349,8 +349,9 @@ test('the reference data is generated from Fynd’s records and up to date; ever
     Object.values(p.garment.sizes).forEach((row) => Object.entries(row).forEach(([id, m]) => assert.ok(F.DIMENSIONS[id] && typeof m.value === 'number' && m.method, `${p.id} ${id}`)));
   });
   assert.ok(D.bodyCharts.every((b) => b.source && Object.values(b.sizes).every((z) => z.chestLow <= z.chestHigh)));
-  /* the two products Fynd has checked */
-  assert.deepStrictEqual(D.products.filter((p) => p.verification === 'verified').map((p) => p.id).sort(), ['uniqlo-e475377-sweatshirt-us', 'uniqlo-e475378-sweat-pullover-hoodie-us']);
+  /* none checked: the UNIQLO pair is pending review (their review.needs), and the verified records publish body charts only */
+  assert.deepStrictEqual(D.products.filter((p) => p.verification === 'verified').map((p) => p.id), []);
+  ['uniqlo-e475377-sweatshirt-us', 'uniqlo-e475378-sweat-pullover-hoodie-us'].forEach((id) => assert.strictEqual(D.products.find((p) => p.id === id).verification, 'unverified', id));
 });
 
 test('same brand, kind and size: the median of that brand’s products, their spread (never narrower than one product’s allowance), and what it rests on', () => {
@@ -369,7 +370,7 @@ test('same brand, kind and size: the median of that brand’s products, their sp
   assert.deepStrictEqual([cut.dims.chestWidth.low, cut.dims.chestWidth.high], [22.75, 24.25], 'identical stand-ins still aren’t the shopper’s garment');
   const exact = F.estimateReference(D, { brand: 'UNIQLO', category: 'sweatshirt', size: 'M', productId: 'uniqlo-e475377-sweatshirt-us' });
   assert.strictEqual(exact.tier, 'exact');
-  assert.deepStrictEqual([exact.dims.chestWidth.value, exact.dims.chestWidth.low, exact.dims.chestWidth.source, exact.dims.chestWidth.verified], [23.5, undefined, 'fynd-record', true]);
+  assert.deepStrictEqual([exact.dims.chestWidth.value, exact.dims.chestWidth.low, exact.dims.chestWidth.source, exact.dims.chestWidth.verified], [23.5, undefined, 'fynd-record', false], 'the record’s own value, said to be unverified');
 });
 
 test('a brand that publishes body charts only: the garment chest from its body range plus the room garments of that kind have in brands publishing both — chest only, a wide range, said so', () => {

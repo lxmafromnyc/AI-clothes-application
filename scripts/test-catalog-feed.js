@@ -605,7 +605,8 @@ function inChild(env, code) {
 
   await test('with no catalogue connected, the five products Fynd sourced are listed as they were, and the page is told plainly that most of UNIQLO isn’t there', () => {
     const r = inChild({}, browseCode(`{ list: b.browse(u, {}), notice: u.notice, catalogue: u.catalogue() }`));
-    assert.deepStrictEqual(r.list.products.map((p) => p.code), ['E475378-000', 'E475377-000', 'E471808-000', 'E455365-000', 'E429066-000']);
+    /* the four with records hold an unchecked chart (the UNIQLO pair is pending review), so they keep the list's own order; the one without comes last */
+    assert.deepStrictEqual(r.list.products.map((p) => p.code), ['E471808-000', 'E475378-000', 'E475377-000', 'E455365-000', 'E429066-000']);
     assert.strictEqual(r.list.total, 5);
     assert.match(r.list.brand.coverage, /^5 UNIQLO US products Fynd has read off uniqlo\.com — not UNIQLO’s full range\.$/);
     assert.strictEqual(r.notice, 'Fynd’s own list holds only 5 UNIQLO US products — it isn’t connected to UNIQLO’s full catalogue. For any other UNIQLO product, close this list and paste the product’s link in Find Fit: Fynd shows its size chart where it holds one, and says so plainly when it can’t.', 'no live search: the link is the way');
@@ -646,7 +647,7 @@ function inChild(env, code) {
     assert.deepStrictEqual(r.hoodies.sort(), ['E471808-000', 'E475377-000', 'E475378-000']);
     assert.deepStrictEqual(r.women, ['E475378-000'], 'only the unisex hoodie');
     assert.deepStrictEqual(r.tees, ['E455365-000']);
-    assert.deepStrictEqual(r.pages, [['E475378-000', 'E475377-000'], ['E471808-000', 'E455365-000'], ['E429066-000']]);
+    assert.deepStrictEqual(r.pages, [['E471808-000', 'E475378-000'], ['E475377-000', 'E455365-000'], ['E429066-000']]);
     assert.deepStrictEqual([r.facets.inStock, r.facets.categories.map((c) => c.value).sort()], [false, ['knitwear', 'sweatshirts-hoodies', 'tshirts']]);
     assert.deepStrictEqual(r.chosen, ['Sweat Oversized Pullover Hoodie', ['price', 'description', 'care', 'reviews', 'availability', 'sizes', 'fabric', 'fit'], null]);
   });
@@ -661,7 +662,9 @@ function inChild(env, code) {
     assert.deepStrictEqual(withFeed.holds, without.holds);
     assert.deepStrictEqual(withFeed.details, without.details);
     assert.strictEqual(withFeed.records, without.records, 'the records themselves, byte for byte');
-    assert.deepStrictEqual(without.holds, [['E455365-000', 'unchecked-chart'], ['E471808-000', 'unchecked-chart'], ['E475377-000', 'checked-chart'], ['E475378-000', 'checked-chart']]);
+    /* none checked: the UNIQLO pair is pending review */
+    assert.deepStrictEqual(without.holds, [['E455365-000', 'unchecked-chart'], ['E471808-000', 'unchecked-chart'], ['E475377-000', 'unchecked-chart'], ['E475378-000', 'unchecked-chart']]);
+    assert.ok(without.details.every((d) => d[1] === false), 'no record product is said to be verified');
   });
 
   await test('with a catalogue: its products join the five, each once; the five keep their own names and sizing holds; the coverage line names the source and date and never claims the full range', () => {
@@ -670,14 +673,14 @@ function inChild(env, code) {
     assert.strictEqual(new Set(r.all.map((p) => p[0])).size, 30);
     const held = Object.fromEntries(r.all.map(([code, name, holds]) => [code, [name, holds]]));
     assert.deepStrictEqual(held['E471808-000'], ['Sweat Oversized Pullover Hoodie', 'unchecked-chart'], 'Fynd’s own record of E471808, not the catalogue’s name');
-    assert.deepStrictEqual(held['E475378-000'][1], 'checked-chart');
+    assert.deepStrictEqual(held['E475378-000'][1], 'unchecked-chart', 'its record’s own status, pending review — not raised by the catalogue');
     assert.strictEqual(held['E910001-000'][1], 'general-chart', 'a men’s hoodie the catalogue places in UNIQLO’s general chart’s category');
     assert.strictEqual(held['E910003-000'][1], 'live-only', 'a women’s top: no general chart');
     assert.match(r.page.brand.coverage, /^30 UNIQLO US products from FIXTURE UNIQLO US feed, updated \d{4}-\d{2}-\d{2}\.$/);
     assert.ok(!/full/i.test(r.page.brand.coverage));
     assert.strictEqual(r.notice, null);
     assert.deepStrictEqual([r.page.products.length, r.page.total, r.page.limit], [24, 30, 24]);
-    assert.deepStrictEqual(r.page.products.slice(0, 4).map((p) => p.code), ['E475378-000', 'E475377-000', 'E471808-000', 'E455365-000'], 'a saved chart first, as before');
+    assert.deepStrictEqual(r.page.products.slice(0, 4).map((p) => p.code), ['E471808-000', 'E475378-000', 'E475377-000', 'E455365-000'], 'a saved chart first, as before');
     assert.ok(r.page.products.every((p) => !('catalogue' in p) && !('source' in p)), 'bookkeeping stays on the server');
   });
 

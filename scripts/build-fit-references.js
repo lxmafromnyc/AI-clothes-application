@@ -26,6 +26,7 @@ const path = require('path');
 const ROOT = path.join(__dirname, '..');
 const OUT = path.join(ROOT, 'assets', 'fit-reference-data.js');
 const { RECORDS } = require('../api/_sizing/records');
+const sizingSchema = require('../api/_sizing/schema');
 
 /* a record's category → the Fit Anchor's kind of garment */
 const CATEGORY = { tshirts: 'tshirt', hoodies: 'sweatshirt', sweatshirts: 'sweatshirt' };
@@ -87,6 +88,9 @@ function build() {
     const verification = r.verification && r.verification.status === 'verified' ? 'verified' : 'unverified';
     const garment = garmentOf(r);
     if (garment) {
+      /* a garment chart is checked only when each of its measurements is:
+         a crowdsourced or unchecked one keeps the whole product unverified */
+      const garmentChecked = Object.keys(r.charts.garment.dimensions).every((d) => sizingSchema.measurementStatus(r, d) === 'verified');
       products.push({
         id: r.id,
         brand: r.brand,
@@ -96,7 +100,7 @@ function build() {
         url: r.product.url,
         audience: r.product.audience || null,
         fit: r.fit && r.fit.fitClass || null,
-        verification,
+        verification: garmentChecked ? verification : 'unverified',
         retrievedAt: r.retrievedAt,
         sources: (r.sources || []).map((s) => ({ url: s.url, what: s.what })),
         garment,

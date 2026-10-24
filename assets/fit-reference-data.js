@@ -403,7 +403,7 @@
         "url": "https://www.uniqlo.com/us/en/products/E475377-000/00",
         "audience": null,
         "fit": "regular",
-        "verification": "verified",
+        "verification": "unverified",
         "retrievedAt": "2026-10-10",
         "sources": [
           {
@@ -610,7 +610,7 @@
         "url": "https://www.uniqlo.com/us/en/products/E475378-000/00",
         "audience": null,
         "fit": "regular",
-        "verification": "verified",
+        "verification": "unverified",
         "retrievedAt": "2026-10-10",
         "sources": [
           {
@@ -1553,7 +1553,7 @@
         "title": "Size Guide, Body Size tab (inches)",
         "source": "https://www.uniqlo.com/us/en/products/E455365-000/00",
         "retrievedAt": "2026-10-14",
-        "verification": "verified",
+        "verification": "unverified",
         "records": [
           "uniqlo-e455365-supima-cotton-tshirt-us",
           "uniqlo-e475377-sweatshirt-us",

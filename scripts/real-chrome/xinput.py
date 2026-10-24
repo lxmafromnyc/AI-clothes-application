@@ -11,7 +11,14 @@ an Xvfb display, after finding Fynd's button on a screenshot of the toolbar.
   xinput.py DISPLAY click-fynd           find it and click it; print "x y"
   xinput.py DISPLAY click X Y            click at a point
   xinput.py DISPLAY ready                wait (up to 15 s) until the display accepts connections
+  xinput.py DISPLAY painted              wait (up to 30 s) until Chrome has drawn its window
   xinput.py DISPLAY describe             the screen's size and its most common colours
+
+Painted: Chrome maps its window seconds before it draws into it, and until
+then the display holds one flat colour (black before the window is mapped,
+then the window's empty background), whatever the browser has loaded behind
+it. A drawn browser window has hundreds of colours; PAINTED_COLOURS is far
+below that and far above an empty window's one or two.
 
 Finding the button: Fynd's own icon (extension/icons, a dark square with a
 white "F") is matched against the toolbar band of the screenshot, at the
@@ -103,6 +110,24 @@ def click(disp, x, y):
     d.close()
 
 
+PAINTED_COLOURS = 16
+
+
+def describe(im):
+    colours = sorted(im.getcolors(1 << 24) or [], reverse=True)
+    return f'{im.size[0]}x{im.size[1]}, {len(colours)} colours, most common: {colours[:4]}'
+
+
+def painted(disp, seconds=30):
+    """(True, description) once the screen has more than PAINTED_COLOURS colours"""
+    end = time.time() + seconds
+    while True:
+        im = shot(disp)
+        if len(im.getcolors(1 << 24) or []) > PAINTED_COLOURS or time.time() >= end:
+            return len(im.getcolors(1 << 24) or []) > PAINTED_COLOURS, describe(im)
+        time.sleep(0.25)
+
+
 def ready(disp):
     for _ in range(60):
         try:
@@ -120,10 +145,12 @@ def main(argv):
         print('ready' if ok else 'not ready')
         return 0 if ok else 2
     if cmd == 'describe':
-        im = shot(disp)
-        colours = sorted(im.getcolors(1 << 24) or [], reverse=True)
-        print(f'{im.size[0]}x{im.size[1]}, {len(colours)} colours, most common: {colours[:4]}')
+        print(describe(shot(disp)))
         return 0
+    if cmd == 'painted':
+        ok, said = painted(disp)
+        print(said)
+        return 0 if ok else 2
     if cmd == 'shot':
         shot(disp).save(argv[3])
     elif cmd == 'find':

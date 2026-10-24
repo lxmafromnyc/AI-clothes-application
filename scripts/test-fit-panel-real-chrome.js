@@ -135,15 +135,27 @@ async function launch(display, port) {
   /* the extension must actually be running before anything is clicked:
      its background worker is the proof */
   let targets = [];
-  for (let i = 0; i < 40; i++) {
+  let loaded = false;
+  for (let i = 0; i < 40 && !loaded; i++) {
     targets = await (await fetch(`http://127.0.0.1:${debug}/json/list`)).json();
-    if (targets.some((t) => t.url === `chrome-extension://${id}/background.js`)) return { proc, browser, id, profile, debug };
-    await sleep(250);
+    loaded = targets.some((t) => t.url === `chrome-extension://${id}/background.js`);
+    if (!loaded) await sleep(250);
   }
-  const version = await browser.version();
-  proc.kill();
-  console.log(`Chrome’s last output:\n          ${chromeTail()}`);
-  throw new Error(`the extension did not load in ${version} (no chrome-extension://${id}/background.js worker; targets: ${targets.map((t) => `${t.type} ${t.url}`).join(', ') || 'none'})`);
+  if (!loaded) {
+    const version = await browser.version();
+    proc.kill();
+    console.log(`Chrome’s last output:\n          ${chromeTail()}`);
+    throw new Error(`the extension did not load in ${version} (no chrome-extension://${id}/background.js worker; targets: ${targets.map((t) => `${t.type} ${t.url}`).join(', ') || 'none'})`);
+  }
+  /* and Chrome must have drawn its window: it maps the window seconds
+     before it paints into it, and the extension's worker can be running
+     long before that. Until then the display is one flat colour — CI saw
+     "2 colours, (246, 245, 244)" and found no toolbar button to click. */
+  try { xinput(display, 'painted'); } catch (err) {
+    proc.kill();
+    throw new Error(`Chrome never drew its window (${String(err.stdout || '').trim() || err.message})\n        Chrome’s last output:\n          ${chromeTail() || '(none)'}`);
+  }
+  return { proc, browser, id, profile, debug };
 }
 
 /* ---------- the run ---------- */
@@ -415,7 +427,9 @@ async function launch(display, port) {
     await panel.waitForSelector('#rec-title:not(:empty)');
     await sleep(500);
     assert.match(await text('#product-meta'), /UNIQLO US product E475377-000 · Fynd holds this product’s measurements/);
-    assert.match(await text('#chart-area'), /Fynd’s data, checked by Fynd/);
+    /* Fynd's record of it, as published: the UNIQLO pair is pending review */
+    assert.match(await text('#chart-area'), /Fynd’s data, as published — not yet checked/);
+    assert.ok(!/checked by Fynd/.test(await text('#chart-area')), 'never called checked while pending review');
     assert.strictEqual(await text('#rec-title'), 'L');
     assert.match(await text('#rec-anchor'), /Compared with your UNIQLO sweatshirt or hoodie in M/);
     /* from Fynd's data, Find Fit would look the product up on Fynd's server: said before it happens */

@@ -32,10 +32,16 @@
    published data. Whether that method is right for real shoppers is a
    question only fit feedback can answer.
 
-   The records are verified, so this suite asks the engine exactly as
-   the endpoint does, without includeUnverified. It also checks the
-   gate: with each record marked unverified, every answer is
-   "insufficient".
+   Some of these records are verified and some are pending review (the
+   UNIQLO pair: see their review.needs). This suite is the evaluation
+   the engine allows to read unverified data, so it asks with
+   includeUnverified and holds every answer to say which it rests on
+   (dataStatus, and each class's measurements). For every case on a
+   record that isn't verified it also asks exactly as the endpoint
+   does, and that answer must be "insufficient: unverified-data". And
+   it checks the gate on every case: with each record marked
+   unverified, every answer is "insufficient". A case on a verified
+   product is asked exactly as the endpoint asks.
    ========================================================= */
 
 'use strict';
@@ -47,6 +53,9 @@ const Schema = require('../assets/fit-profile-schema.js');
 const engine = require('../api/_sizing/engine');
 const sizing = require('../api/_sizing/records');
 const fixture = require(path.join(__dirname, 'fixtures', 'size-eval.json'));
+const sizingSchema = require('../api/_sizing/schema');
+/* the evaluation's own way of asking: unverified data allowed, and said */
+const EVAL = { includeUnverified: true };
 
 /* A full profile from a case's short form. */
 function profileOf(c) {
@@ -71,7 +80,7 @@ function profileOf(c) {
 /* What every per-size answer must hold to, whatever the case: every
    size ranked is assessed, a dimension with no class says why, a body
    chart never gives a class, and an estimate is said to be one. */
-function checkFitBySize(result, record) {
+function checkFitBySize(result, record, basis) {
   const dims = ['chestWidth', 'bodyLength', 'sleeveLength', 'shoulderWidth'];
   assert.deepStrictEqual(result.fitBySize.map((f) => f.size).sort(), result.ranking.map((r) => r.size).sort(), 'every ranked size is assessed');
   result.fitBySize.forEach((f) => {
@@ -82,9 +91,9 @@ function checkFitBySize(result, record) {
         assert.ok(typeof x.reason === 'string' && x.reason, `${f.size} ${d}: no class, and says why`);
         assert.strictEqual(x.measurements, 'unknown', `${f.size} ${d}: no class rests on unknown measurements`);
       } else {
-        /* verified, or estimated with what was estimated listed — never unknown, never both */
+        /* verified (or unverified, when the record is), or estimated with what was estimated listed — never unknown, never both */
         assert.ok(Array.isArray(x.estimated), `${f.size} ${d}: estimated is a list`);
-        assert.strictEqual(x.measurements, x.estimated.length ? 'estimated' : 'verified', `${f.size} ${d}: ${x.measurements} with ${x.estimated.length} estimates`);
+        assert.strictEqual(x.measurements, x.estimated.length ? 'estimated' : basis, `${f.size} ${d}: ${x.measurements} with ${x.estimated.length} estimates`);
       }
       if (result.fitScale.basis === 'body-chart') assert.strictEqual(x.class, null, `${f.size} ${d}: a body chart gives no class`);
       if (result.fitScale.basis === 'garment-vs-body' && d !== 'chestWidth') assert.strictEqual(x.class, null, `${f.size} ${d}: no body measurement to meet`);
@@ -98,6 +107,12 @@ function checkFitBySize(result, record) {
   assert.ok(result.tradeoffs.length >= 1 && result.tradeoffs[0].startsWith(`${result.leading}:`), 'the leading size\'s trade-offs come first');
 }
 
+/* what an unestimated class must say it rests on: the product's own
+   status. A verified product is asked without includeUnverified, so it
+   reads no unverified record; an unverified one makes every class
+   unverified. */
+const basisOf = (record) => (sizingSchema.isVerified(record) ? 'verified' : 'unverified');
+
 let passed = 0;
 const failures = [];
 const tally = { leading: [0, 0], topTwo: [0, 0], insufficient: [0, 0], confidence: [0, 0] };
@@ -107,8 +122,17 @@ const count = (name, ok) => { tally[name][1] += 1; if (ok) tally[name][0] += 1; 
 function check(c) {
   const record = sizing.byId(c.product);
   assert.ok(record, `no record ${c.product}`);
-  assert.ok(sizing.problems.length === 0 && record.verification.status === 'verified', `${c.product} is not verified`);
-  const result = engine.recommend(profileOf(c), record);
+  assert.strictEqual(sizing.problems.length, 0);
+  const status = sizingSchema.isVerified(record) ? 'verified' : 'unverified';
+  if (status === 'unverified') {
+    /* the endpoint's own call: no size from a record nobody has checked */
+    const live = engine.recommend(profileOf(c), record);
+    assert.strictEqual(live.status, 'insufficient', `${c.product} is unverified, but the endpoint's call gave ${live.status}`);
+    assert.strictEqual(live.missing[0].code, 'unverified-data');
+    assert.ok(!('leading' in live));
+  }
+  /* a verified product is asked exactly as the endpoint asks */
+  const result = engine.recommend(profileOf(c), record, status === 'verified' ? {} : EVAL);
   const e = c.expect;
 
   const insufficientOk = (result.status === 'insufficient') === (e.status === 'insufficient');
@@ -145,8 +169,8 @@ function check(c) {
   const words = JSON.stringify([result.reasons, result.caveats]);
   assert.ok(!/will fit|guarantee|perfect fit|exact fit/i.test(words), `promises a fit: ${words}`);
   assert.ok(result.caveats.some((x) => /not a promise of fit/.test(x)), 'says it is a suggestion');
-  assert.strictEqual(result.dataStatus, 'verified', 'says the data is verified');
-  checkFitBySize(result, record);
+  assert.strictEqual(result.dataStatus, status, `says the data is ${status}`);
+  checkFitBySize(result, record, basisOf(record));
   return result;
 }
 
@@ -187,10 +211,10 @@ let perSizeChecked = 0;
 fixture.perSize.forEach((c) => {
   try {
     const record = sizing.byId(c.product);
-    const result = engine.recommend(profileOf(c), record);
+    const result = engine.recommend(profileOf(c), record, sizingSchema.isVerified(record) ? {} : EVAL);
     assert.strictEqual(result.status, 'ok', `status ${result.status}`);
     assert.strictEqual(result.fitScale.basis, c.expect.basis);
-    checkFitBySize(result, record);
+    checkFitBySize(result, record, basisOf(record));
     Object.entries(c.expect.sizes).forEach(([size, want]) => {
       const got = result.fitBySize.find((f) => f.size === size);
       assert.ok(got, `${size} is assessed`);

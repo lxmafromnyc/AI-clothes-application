@@ -312,6 +312,20 @@ function measuredRecord(anchor, category) {
 }
 const isShopperMeasured = (record) => Boolean(record && record.verification && record.verification.status === SHOPPER_MEASURED);
 
+/* Whether one garment dimension of a record may be compared at all: a
+   verified measurement (sizingSchema.measurementStatus), or the
+   shopper's own; an unverified one only for the evaluation suite.
+   Crowdsourced measurements never. */
+function usableDim(record, d, includeUnverified) {
+  if (isShopperMeasured(record)) return true;
+  const status = sizingSchema.measurementStatus(record, d);
+  return status === 'verified' || (Boolean(includeUnverified) && status === 'unverified');
+}
+const STATUS_WHY = {
+  crowdsourced: 'gathered from shoppers, not checked against the brand',
+  unverified: 'not yet checked against the brand'
+};
+
 /* One garment dimension of a reference, in the method another record
    uses for it: { value, estimated } in the reference's units, or null
    when the two can't be compared. */
@@ -327,6 +341,17 @@ function inMethodOf(d, refRecord, refRow, method) {
      by where the shoulder seam sits, which no chart publishes (a dropped
      shoulder moves it): not converted */
   return null;
+}
+
+/* One dimension's tolerance for this record, in its units. The chest's
+   is stated as a flat width (TOPS.garment); a chest the product
+   publishes all the way around is twice as far for the same cut, so its
+   tolerance is twice as wide — otherwise the same garment would rank
+   differently depending only on how its chart is written. */
+function toleranceOf(d, record, params) {
+  const around = d === 'chestWidth' && record.charts.garment.dimensions.chestWidth
+    && record.charts.garment.dimensions.chestWidth.method === 'garment-circumference';
+  return toUnits(params.garment[d].tol * (around ? 2 : 1), 'in', record.units);
 }
 
 const METHOD_WORDS = {
@@ -499,7 +524,8 @@ function readShopper(profile, record, pool, options) {
      brand's fit words don't move the chart a size on an assumed one */
   const unmoved = Boolean(favorite) && goalSource === 'assumed' && (Boolean(STRICT_ANCHOR[category]) || favorite.source !== 'brand-size');
   return {
-    unmoved, entry, goal, goalSource, line, scale, measured, references, garmentRef, body, conflict, troubles, notes, params, favorite };
+    unmoved, entry, goal, goalSource, line, scale, measured, references, garmentRef, body, conflict, troubles, notes, params, favorite,
+    includeUnverified: Boolean(options.includeUnverified) };
 }
 
 /* ---------------------------------------------------------
@@ -521,6 +547,8 @@ function comparable(record, shopper) {
   Object.keys(shopper.params.garment).forEach((d) => {
     if (!dims[d]) { skipped.push({ dim: d, why: `${record.brand} doesn't publish it` }); return; }
     if (!refDims[d] || !refRow[d]) { skipped.push({ dim: d, why: ref.measured ? 'you didn\'t measure it' : `${ref.record.brand} doesn't publish it for ${ref.size}` }); return; }
+    if (!usableDim(record, d, shopper.includeUnverified)) { skipped.push({ dim: d, why: `${record.brand}'s ${DIM_NAMES[d]} is ${STATUS_WHY[sizingSchema.measurementStatus(record, d)]}` }); return; }
+    if (!usableDim(ref.record, d, shopper.includeUnverified)) { skipped.push({ dim: d, why: `your ${ref.record.brand} reference's ${DIM_NAMES[d]} is ${STATUS_WHY[sizingSchema.measurementStatus(ref.record, d)]}` }); return; }
     const v = inMethodOf(d, ref.record, refRow, dims[d].method);
     if (!v) {
       skipped.push({ dim: d, why: `measured differently — ${record.brand}'s ${METHOD_WORDS[dims[d].method] || dims[d].method}, ${ref.measured ? 'yours' : `${ref.record.brand}'s`} ${METHOD_WORDS[refDims[d].method] || refDims[d].method}` });
@@ -543,10 +571,10 @@ function scoreReferenceGarment(record, shopper) {
     const parts = [];
     Object.keys(used).forEach((d) => {
       if (!row[d]) return;
-      const { weight, tol } = shopper.params.garment[d];
+      const { weight } = shopper.params.garment[d];
       const target = toUnits(used[d].value, ref.record.units, record.units);
       const diff = row[d].value - target;
-      let c = weight * weights[d] * (diff / toUnits(tol, 'in', record.units)) ** 2;
+      let c = weight * weights[d] * (diff / toleranceOf(d, record, shopper.params)) ** 2;
       if (trouble[d] && diff < 0) c *= TROUBLE_FACTOR;
       cost += c;
       parts.push({ dim: d, value: row[d].value, target, diff, estimated: used[d].estimated });
@@ -703,9 +731,12 @@ function assessSizes(record, method, shopper, scored) {
   const garmentDims = record.charts.garment ? record.charts.garment.dimensions : {};
   const flat = garmentDims.chestWidth && garmentDims.chestWidth.method === 'flat-width-armpit-to-armpit';
   const unclassed = (reason, extra) => Object.assign({ class: null, measurements: 'unknown', reason }, extra || {});
-  /* what a class rests on, given the records it read and what was worked out */
+  /* what a class rests on, given the records it read and what was worked
+     out: a garment the shopper measured themselves is "shopper-measured",
+     never verified, however well the product's own side is checked */
   const basisOf = (records, estimated) => (estimated.length ? 'estimated'
-    : records.filter((r) => !isShopperMeasured(r)).every((r) => sizingSchema.isVerified(r)) ? 'verified' : 'unverified');
+    : !records.filter((r) => !isShopperMeasured(r)).every((r) => sizingSchema.isVerified(r)) ? 'unverified'
+      : records.some(isShopperMeasured) ? SHOPPER_MEASURED : 'verified');
   const compare = method === 'reference-garment' ? comparable(record, shopper) : null;
 
   const forSize = (size) => {
@@ -954,7 +985,7 @@ function recommend(profile, record, opts) {
 
   const shopper = readShopper(profile, record, pool, options);
 
-  const hasGarment = Boolean(record.charts.garment && record.charts.garment.dimensions.chestWidth);
+  const hasGarment = Boolean(record.charts.garment && record.charts.garment.dimensions.chestWidth && usableDim(record, 'chestWidth', options.includeUnverified));
   const hasBody = Boolean(record.charts.body);
   /* a garment that fits, sharing no measurement with this product (all
      measured differently), is no comparison at all */
@@ -1159,6 +1190,14 @@ function recommend(profile, record, opts) {
    and called estimated). Every other dimension is listed as not
    compared, with why.
 
+   Every difference is signed, in the unit shown, after converting the
+   reference into it: difference = this size − the reference, so a
+   positive chest is wider and a negative one narrower. Each side's
+   measurement is also given whole (value, unit, method, source and
+   status: sizingSchema.measurementOf), and only verified ones — or the
+   shopper's own — are compared; a crowdsourced or unchecked one is
+   listed as not compared, with why.
+
    ---------------------------------------------------------
    How sizes are ranked
    ---------------------------------------------------------
@@ -1168,7 +1207,8 @@ function recommend(profile, record, opts) {
 
    over the dimensions both sides measured the same way, with the
    category's own weights and tolerances (CATEGORY_PARAMS.garment):
-   chest counts most (weight 1, a 1 in flat tolerance), because it sets
+   chest counts most (weight 1, a 1 in flat tolerance — 2 in for a chest
+   published all the way around: toleranceOf), because it sets
    how much room the whole top has; body and sleeve length next (0.6);
    shoulders least (0.3, but a tighter ¾ in tolerance), since a
    shoulder seam's place shifts with the cut. The shopper's "what
@@ -1258,6 +1298,12 @@ function compare(profile, record, opts) {
       [], { product: { brand: record.brand, name: record.product.name }, context: productContext });
   }
 
+  const garmentDimsOf = Object.keys(record.charts.garment.dimensions);
+  if (garmentDimsOf.length && garmentDimsOf.every((d) => sizingSchema.measurementStatus(record, d) === 'crowdsourced')) {
+    return no('crowdsourced-data', `This product's garment measurements were gathered from shoppers, not checked against ${record.brand}'s own page, so Fynd won't compare them.`,
+      [], { product: { brand: record.brand, name: record.product.name }, context: productContext, dataStatus: 'crowdsourced' });
+  }
+
   const found = referenceEntry(profile, record.category);
   if (!found) {
     return no('no-reference', `Save a ${CATEGORY_WORDS[record.category]} that fits you well, with its measurements, to compare against.`,
@@ -1281,7 +1327,7 @@ function compare(profile, record, opts) {
   }
 
   const favorite = { answer: found.entry.favorite || null, likes: anchor.likes || null };
-  const shopper = { garmentRef: ref, params, favorite };
+  const shopper = { garmentRef: ref, params, favorite, includeUnverified: options.includeUnverified };
   const { used, skipped } = comparable(record, shopper);
   const weights = dimWeights(shopper);
   const unit = options.unit === 'in' || options.unit === 'cm' ? options.unit
@@ -1301,6 +1347,11 @@ function compare(profile, record, opts) {
     answer: favorite.answer,
     unit,
     values: Object.fromEntries(COMPARE_DIMS.map((d) => [d, refRow[d] ? show(refRow[d].value, ref.record.units) : null])),
+    /* each measurement as it was given: its own value and unit, method,
+       source and status — the shopper's own are "shopper-measured" */
+    measurements: Object.fromEntries(COMPARE_DIMS.map((d) => [d, !refRow[d] ? null : ref.measured
+      ? { value: refRow[d].value, unit: ref.record.units, method: ref.record.charts.garment.dimensions[d].method, source: { origin: SHOPPER_MEASURED }, status: SHOPPER_MEASURED }
+      : sizingSchema.measurementOf(ref.record, ref.size, d)])),
     methods: Object.fromEntries(COMPARE_DIMS.map((d) => [d, ref.record.charts.garment.dimensions[d] ? ref.record.charts.garment.dimensions[d].method : null])),
     context: ref.product ? contextOf(ref.record) : null
   };
@@ -1314,19 +1365,21 @@ function compare(profile, record, opts) {
       const v = used[d];
       if (!v || !row[d]) {
         const skip = skipped.find((x) => x.dim === d);
-        out[d] = { compared: false, candidate: row[d] ? show(row[d].value, record.units) : null, why: skip ? skip.why : `${record.brand} publishes no ${DIM_NAMES[d]} for ${size}` };
+        out[d] = { compared: false, candidate: row[d] ? show(row[d].value, record.units) : null, measurement: sizingSchema.measurementOf(record, size, d), why: skip ? skip.why : `${record.brand} publishes no ${DIM_NAMES[d]} for ${size}` };
         return;
       }
       const target = toUnits(v.value, ref.record.units, record.units);
       const diffRecord = row[d].value - target;
-      const { weight, tol } = params.garment[d];
-      score += weight * weights[d] * (diffRecord / toUnits(tol, 'in', record.units)) ** 2;
+      const { weight } = params.garment[d];
+      score += weight * weights[d] * (diffRecord / toleranceOf(d, record, params)) ** 2;
       const difference = round(toUnits(diffRecord, record.units, unit), 2);
       out[d] = {
         compared: true,
         candidate: show(row[d].value, record.units),
         reference: show(target, record.units),
+        /* signed: this size minus the reference, so positive is larger */
         difference,
+        measurement: sizingSchema.measurementOf(record, size, d),
         words: differenceWords(d, difference, unit),
         estimated: v.estimated || null
       };
