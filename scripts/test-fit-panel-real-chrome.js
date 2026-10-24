@@ -415,7 +415,9 @@ async function launch(display, port) {
     await panel.waitForSelector('#rec-title:not(:empty)');
     await sleep(500);
     assert.match(await text('#product-meta'), /UNIQLO US product E475377-000 · Fynd holds this product’s measurements/);
-    assert.match(await text('#chart-area'), /Fynd’s data, checked by Fynd/);
+    /* Fynd's record of it, as published: the UNIQLO pair is pending review */
+    assert.match(await text('#chart-area'), /Fynd’s data, as published — not yet checked/);
+    assert.ok(!/checked by Fynd/.test(await text('#chart-area')), 'never called checked while pending review');
     assert.strictEqual(await text('#rec-title'), 'L');
     assert.match(await text('#rec-anchor'), /Compared with your UNIQLO sweatshirt or hoodie in M/);
     /* from Fynd's data, Find Fit would look the product up on Fynd's server: said before it happens */
