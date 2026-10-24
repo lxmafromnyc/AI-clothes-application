@@ -1993,8 +1993,9 @@ node scripts/test-ui.js            # the fit profile's cards and account step, a
 ### Not built yet
 
 - Size recommendations for shoppers: the engine and its API exist (see
-  [Size recommendations](#size-recommendations-first-version)) and the six
-  hoodie and sweatshirt records are verified, but no page shows a suggestion yet.
+  [Size recommendations](#size-recommendations-first-version)) and four of the
+  six hoodie and sweatshirt records (Nike's and Carhartt's) are verified; UNIQLO's
+  two are pending review. No page shows a suggestion yet.
   The favourite T-shirt is saved and read by the engine, but its four T-shirt
   records await verification.
 - Usual sizes by brand still cover hoodies and sweatshirts only, beside each
@@ -2026,10 +2027,15 @@ likes that kind of garment to fit — not a letter-to-letter conversion — and 
 how sure it is from the quality of the data, not from its own score. It never
 says a size will fit.
 
-**The six hoodie and sweatshirt records are verified.** Each was checked against its official sources
+**Four of the six hoodie and sweatshirt records are verified.** Each was checked against its official sources
 and, with the owners' approval, marked
-`{ "status": "verified", "checkedBy": "claude-code-source-audit", "checkedAt": "2026-10-10" }`;
-each keeps its official source URLs and the brand's own words for every
+`{ "status": "verified", "checkedBy": "claude-code-source-audit", "checkedAt": "2026-10-10" }`.
+UNIQLO's two (Sweat Pullover Hoodie E475378, Sweatshirt E475377) were marked the
+same way and are now **pending review** (`review.status: "pending"`): that check was
+an automated source audit, and no person has confirmed that the two products
+really publish identical Product Size tables, as the Sweatshirt's own note asks.
+Their `review.needs` says what the check is. Every record
+keeps its official source URLs and the brand's own words for every
 measurement. The engine still refuses to suggest from any record that is not
 verified ("not enough data: unverified"), and the code never sets that status.
 There is no product-card panel yet; this is the API and its evaluation.
@@ -2175,8 +2181,8 @@ product Fynd can source:
 
   | Product | Code | What Fynd holds for its sizing |
   |---|---|---|
-  | Sweat Pullover Hoodie | E475378-000 | its own body and garment charts, checked |
-  | Sweatshirt | E475377-000 | its own body and garment charts, checked |
+  | Sweat Pullover Hoodie | E475378-000 | its own body and garment charts, pending review (not yet checked) |
+  | Sweatshirt | E475377-000 | its own body and garment charts, pending review (not yet checked) |
   | SUPIMA Cotton T-Shirt | E455365-000 | its own charts, not yet checked |
   | Sweat Oversized Pullover Hoodie | E471808-000 | its own Product Size chart, supplied as a transcription and pending review, with UNIQLO's general US men's tops body chart beside it (below) |
   | Extra Fine Merino Crew Neck Sweater | E429066-000 | a listing only; its chart is looked up live |
@@ -3029,8 +3035,9 @@ four steps, each backed by the systems above rather than new ones:
    and size, reads nothing below ten accounts, and flags opposite reports; nothing
    in the engine reads feedback.
 
-**What production can compare today.** Only the two verified UNIQLO records (Sweat
-Pullover Hoodie, Sweatshirt) publish finished-garment measurements, and UNIQLO
+**What production can compare today.** Nothing: the only records publishing
+finished-garment measurements are UNIQLO's two, pending review, and Zara's, unverified,
+and the engine compares none of them. Once UNIQLO's pair is checked: UNIQLO
 measures body length and sleeve from the **centre back**, while a reference is
 measured from the shoulder. So a home-measured reference against UNIQLO compares
 chest and shoulders only — partial, never a recommendation. A reference that *is* a

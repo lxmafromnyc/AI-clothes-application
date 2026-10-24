@@ -144,7 +144,8 @@ async function launch(dir) {
     const exact = await stored(panel);
     assert.strictEqual(exact.length, 1);
     assert.strictEqual(exact[0].dims.chestWidth.value, 23.5);
-    assert.ok(Object.values(exact[0].dims).every((m) => m.source === 'fynd-record' && m.verified === true && m.low === undefined));
+    /* the record's own values, said to be unverified: the UNIQLO pair is pending review */
+    assert.ok(Object.values(exact[0].dims).every((m) => m.source === 'fynd-record' && m.verified === false && m.low === undefined));
     await shop.close(); await panel.close();
   });
 
@@ -186,7 +187,8 @@ async function launch(dir) {
     await recShown(panel);
     assert.match(await panel.textContent('#product-meta'), /UNIQLO US product E475377-000 · Fynd holds this product’s measurements/);
     assert.strictEqual(await panel.inputValue('#p-category'), 'sweatshirt');
-    assert.match(await panel.textContent('#chart-area'), /Fynd’s data, checked by Fynd/);
+    assert.match(await panel.textContent('#chart-area'), /Fynd’s data, as published — not yet checked/);
+    assert.ok(!/checked by Fynd/.test(await panel.textContent('#chart-area')), 'never called checked while pending review');
     assert.ok(/^(S|M|L)$/.test(await panel.textContent('#rec-title')));
     assert.match(await panel.textContent('#rec-confidence'), /^(High|Medium) confidence$/);
     const lines = await panel.$$eval('#rec-explain p', (ps) => ps.map((p) => p.textContent));

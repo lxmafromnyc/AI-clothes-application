@@ -126,7 +126,10 @@ const CARHARTT_HOODIE = 'carhartt-k121-loose-fit-midweight-hoodie-us';
 const CARHARTT_CREW = 'carhartt-k124-loose-fit-midweight-crewneck-us';
 const copy = (id) => JSON.parse(JSON.stringify(sizing.byId(id)));
 const unverifiedCopy = (id) => Object.assign(copy(id), { verification: { status: 'unverified', checkedBy: null, checkedAt: null } });
-const verifiedCopy = (id) => Object.assign(copy(id), { verification: { status: 'verified', checkedBy: 'Test checker', checkedAt: '2026-10-10' } });
+/* a copy marked checked in this test's memory: verified, with no review left pending */
+const verifiedCopy = (id) => { const r = Object.assign(copy(id), { verification: { status: 'verified', checkedBy: 'Test checker', checkedAt: '2026-10-10' } }); delete r.review; return r; };
+/* the UNIQLO pair, marked checked in memory for a test of logic on their real numbers */
+const { asChecked, UQ_PAIR } = require('./fixtures/as-checked');
 const profileWith = (garment, extra) => {
   const p = Object.assign(Schema.empty(), extra || {});
   p.garments.hoodies = Object.assign(Schema.emptyGarment('hoodies'), garment);
@@ -148,9 +151,17 @@ section('sizing records');
 
 /* the six records approved by the source audit of 2026-10-10; every
    other record waits for its own approved check */
-const VERIFIED_IDS = [UQ_HOODIE, UQ_SWEAT, NIKE_HOODIE, NIKE_CREW, CARHARTT_HOODIE, CARHARTT_CREW];
+const VERIFIED_IDS = [NIKE_HOODIE, NIKE_CREW, CARHARTT_HOODIE, CARHARTT_CREW];
 
-await test('all fifteen records load, each from the brand\'s own site: the six audited fleece tops verified, every other record not yet', () => {
+await test('all fifteen records load, each from the brand\'s own site: the four audited body-chart records verified, the UNIQLO pair pending review, every other record not yet', () => {
+  /* the UNIQLO pair: their only check was an automated source audit, and their identical tables still need a person to confirm them */
+  UQ_PAIR.forEach((id) => {
+    const r = sizing.byId(id);
+    assert.ok(!sizingSchema.isVerified(r), id);
+    assert.strictEqual(r.review.status, 'pending', id);
+    assert.match(r.review.needs, /A person compares the Product Size tab/, id);
+    assert.ok(r.notes.some((n) => /verification withdrawn/.test(n) && /claude-code-source-audit/.test(n)), `${id}: says why, and what the old check was`);
+  });
   assert.deepStrictEqual(sizing.problems, []);
   assert.strictEqual(sizing.RECORDS.length, 15);
   assert.deepStrictEqual([...new Set(sizing.RECORDS.map((r) => r.brand))].sort(), ['Carhartt', 'H&M', 'Nike', 'UNIQLO', 'Zara']);
@@ -279,7 +290,7 @@ await test('a record that claims more than it has is refused', () => {
 
 section('the engine');
 
-await test('unverified data never gives a size; verified data does, and says so', () => {
+await test('unverified data never gives a size; verified data does, and says so', () => asChecked(UQ_PAIR, () => {
   const profile = profileWith({ fitGoal: 'true-to-size', line: 'men' }, chest(40));
   const refused = engine.recommend(profile, unverifiedCopy(UQ_HOODIE));
   assert.strictEqual(refused.status, 'insufficient');
@@ -291,7 +302,7 @@ await test('unverified data never gives a size; verified data does, and says so'
   assert.strictEqual(ok.dataStatus, 'verified');
   assert.ok(ok.dataQuality.verified.includes('garment chest'));
   assert.deepStrictEqual(ok.dataQuality.unverified, []);
-});
+}));
 
 await test('a body measurement is never compared with a garment one: body-only products are scored on their body chart', () => {
   const profile = profileWith({ fitGoal: 'true-to-size', line: 'men' }, chest(40));
@@ -333,7 +344,7 @@ await test('a chest in centimetres is converted exactly, never relabelled', () =
   assert.deepStrictEqual(classes(cm), classes(inches));
 });
 
-await test('each size is assessed dimension by dimension, and only where the evidence reaches', () => {
+await test('each size is assessed dimension by dimension, and only where the evidence reaches', () => asChecked(UQ_PAIR, () => {
   const r = engine.recommend(profileWith({ fitGoal: 'true-to-size', line: 'men' }, chest(40)), sizing.byId(UQ_HOODIE));
   assert.strictEqual(r.fitScale.basis, 'garment-vs-body');
   assert.match(r.fitScale.note, /hypotheses/);
@@ -356,9 +367,9 @@ await test('each size is assessed dimension by dimension, and only where the evi
   assert.match(nike.fitScale.note, /can't say how much room any size has/);
   nike.fitBySize.forEach((f) => Object.values(f.dimensions).forEach((x) => assert.strictEqual(x.class, null, f.size)));
   assert.strictEqual(nike.fitBySize.find((f) => f.size === 'M').dimensions.chestWidth.chart.yourChest, 'inside');
-});
+}));
 
-await test('each class says whether it rests on verified, estimated or unknown measurements', () => {
+await test('each class says whether it rests on verified, estimated or unknown measurements', () => asChecked(UQ_PAIR, () => {
   const tts = { fitGoal: 'true-to-size', line: 'men' };
   /* a doubled flat width is an estimate; what has no class is unknown */
   const m = engine.recommend(profileWith(tts, chest(40)), sizing.byId(UQ_HOODIE)).fitBySize.find((f) => f.size === 'M').dimensions;
@@ -378,7 +389,7 @@ await test('each class says whether it rests on verified, estimated or unknown m
   const pool = [unverifiedCopy(UQ_HOODIE)];
   const unchecked = engine.recommend(profileWith(Object.assign({ anchor: { brand: 'UNIQLO', size: 'L' } }, tts)), pool[0], { includeUnverified: true, records: pool });
   assert.strictEqual(unchecked.fitBySize.find((f) => f.size === 'M').dimensions.bodyLength.measurements, 'unverified');
-});
+}));
 
 await test('a letter size is read only with its sizing line, and never from a brand without a chart', () => {
   const r = engine.recommend(profileWith({ anchor: { brand: 'Nike', size: 'M' }, fitGoal: 'true-to-size', line: null }), sizing.byId(UQ_HOODIE), { includeUnverified: true });
@@ -446,8 +457,8 @@ await test('signed out it answers 401; it is GET only and no-store', async () =>
   assert.strictEqual(list.res.getHeader('cache-control'), 'no-store, private');
   assert.strictEqual(list.body.products.length, 15);
   assert.ok(list.body.products.every((p) => p.verified === VERIFIED_IDS.includes(p.id)), 'only the audited records say they are verified');
-  /* only a checked record with finished-garment measurements can be compared */
-  assert.deepStrictEqual(list.body.products.filter((p) => p.comparable).map((p) => p.id).sort(), [UQ_SWEAT, UQ_HOODIE].sort());
+  /* only a checked record with finished-garment measurements can be compared: none, while the UNIQLO pair is pending review */
+  assert.deepStrictEqual(list.body.products.filter((p) => p.comparable).map((p) => p.id), []);
 });
 
 await test('an unknown or malformed product id is refused, and nothing is guessed', async () => {
@@ -468,7 +479,7 @@ await test('with unverified records every suggestion is an honest "insufficient"
   }
 }));
 
-await test('verified, it suggests from the caller\'s own profile and nobody else\'s', async () => {
+await test('verified, it suggests from the caller\'s own profile and nobody else\'s', () => asChecked(UQ_PAIR, async () => {
   const ada = await signUp('ada@example.test');
   const bea = await signUp('bea@example.test');
   await fitProfiles.save(ada.user.id, { schemaVersion: 4, measurements: { unit: 'in', chest: 40 } });
@@ -492,7 +503,7 @@ await test('verified, it suggests from the caller\'s own profile and nobody else
   const before = await store.get(fitProfiles.profileKey(ada.user.id));
   await suggest(ada.jar, NIKE_HOODIE);
   assert.deepStrictEqual(await store.get(fitProfiles.profileKey(ada.user.id)), before);
-});
+}));
 
 await test('a signed-in caller with no profile is told what is missing, not given a size', async () => {
   const { jar } = await signUp('ada@example.test');
@@ -730,7 +741,7 @@ await test('unverified T-shirt data gives no size: neither the product shopped f
   assert.ok(half.notes.some((n) => /hasn't been checked against UNIQLO's chart yet/.test(n)), half.notes.join(' | '));
 });
 
-await test('a favourite T-shirt never stands in for a hoodie, and a T-shirt chart never for a hoodie\'s', () => {
+await test('a favourite T-shirt never stands in for a hoodie, and a T-shirt chart never for a hoodie\'s', () => asChecked(UQ_PAIR, () => {
   const profile = tee({ favorite: 'perfect', anchor: { brand: 'UNIQLO', size: 'M', product: { url: UQ_TEE_LINK }, measurements: MEASURED } });
   const r = engine.recommend(profile, sizing.byId(UQ_HOODIE), { records: [verifiedCopy(UQ_TEE), sizing.byId(UQ_HOODIE)] });
   assert.strictEqual(r.status, 'insufficient');
@@ -738,7 +749,7 @@ await test('a favourite T-shirt never stands in for a hoodie, and a T-shirt char
   /* a usual hoodie size never stands in for a T-shirt's garment */
   const viaHoodie = engine.recommend(tee({}, { brandSizes: [{ brand: 'UNIQLO', category: 'hoodies', size: 'M', fit: 'about-right' }] }), verifiedCopy(ZARA_TEE), { records: [sizing.byId(UQ_HOODIE), verifiedCopy(ZARA_TEE)] });
   assert.notStrictEqual(viaHoodie.method, 'reference-garment');
-});
+}));
 
 await test('/api/size-recommendation reads the saved favourite, for its owner only, and says honestly when the data is unchecked', async () => {
   const { jar, user } = await signUp('ada@example.test');
@@ -931,7 +942,7 @@ await test('an unverified product gives no numbers at all; production compares o
   assert.ok(/haven't been checked, so it isn't a recommendation/.test(evalRun.summary));
 });
 
-await test('against UNIQLO\'s checked hoodie, a home-measured reference compares only what is measured the same way', () => {
+await test('against UNIQLO\'s checked hoodie, a home-measured reference compares only what is measured the same way', () => asChecked(UQ_PAIR, () => {
   const r = engine.compare(hoodieRef({ measurements: REF_CM }), sizing.byId(UQ_HOODIE));
   assert.strictEqual(r.status, 'partial');
   assert.deepStrictEqual(r.dimensionsCompared, ['chestWidth', 'shoulderWidth']);
@@ -941,9 +952,9 @@ await test('against UNIQLO\'s checked hoodie, a home-measured reference compares
   const m = r.sizes.find((s) => s.size === 'M').dimensions;
   assert.strictEqual(m.bodyLength.compared, false);
   assert.ok(typeof m.bodyLength.candidate === 'number');
-});
+}));
 
-await test('a reference found in the catalogue uses its published measurements; fabric and construction are said, never scored', () => {
+await test('a reference found in the catalogue uses its published measurements; fabric and construction are said, never scored', () => asChecked(UQ_PAIR, () => {
   /* the shopper's sweatshirt is UNIQLO's (found by its link); comparing UNIQLO's hoodie */
   const p = Schema.empty();
   p.garments.sweatshirts = Object.assign(Schema.emptyGarment('sweatshirts'), { favorite: 'perfect', anchor: { brand: 'UNIQLO', size: 'M', product: { name: null, url: 'https://www.uniqlo.com/us/en/products/E475377-000/00' } } });
@@ -963,9 +974,9 @@ await test('a reference found in the catalogue uses its published measurements; 
   /* no fabric word turns into a claim about fit */
   assert.ok(!/stretch|fabric|cotton/i.test(r.summary));
   assert.ok(!r.sizes.some((s) => Object.values(s.dimensions).some((d) => /stretch|fabric/i.test(d.words || ''))));
-});
+}));
 
-await test('/api/size-recommendation compares only the caller\'s own reference, read-only and no-store', async () => {
+await test('/api/size-recommendation compares only the caller\'s own reference, read-only and no-store', () => asChecked(UQ_PAIR, async () => {
   const ada = await signUp('ada@example.test');
   const bob = await signUp('bob@example.test');
   assert.strictEqual((await compareCall({}, UQ_HOODIE)).status, 401);
@@ -985,7 +996,7 @@ await test('/api/size-recommendation compares only the caller\'s own reference, 
   const before = JSON.stringify((await fitProfiles.read(ada.user.id)).profile);
   await compareCall(ada.jar, UQ_HOODIE);
   assert.strictEqual(JSON.stringify((await fitProfiles.read(ada.user.id)).profile), before);
-});
+}));
 
 section('each garment measurement: its unit, method, source and status');
 
@@ -1004,7 +1015,7 @@ const uqSweatshirtRef = (size) => {
   return p;
 };
 
-await test('a record\'s measurement is read whole from the record — value, unit, method, source, status — and every existing record still loads without the new fields', () => {
+await test('a record\'s measurement is read whole from the record — value, unit, method, source, status — and every existing record still loads without the new fields', () => asChecked(UQ_PAIR, () => {
   sizing.RECORDS.forEach((r) => assert.deepStrictEqual(sizingSchema.validate(r), [], r.id));
   const m = sizingSchema.measurementOf(sizing.byId(UQ_HOODIE), 'M', 'chestWidth');
   assert.deepStrictEqual(Object.keys(m), ['value', 'unit', 'method', 'source', 'status']);
@@ -1021,7 +1032,7 @@ await test('a record\'s measurement is read whole from the record — value, uni
   const neg = ILLUSTRATIVE();
   neg.charts.garment.sizes.M.chestWidth.value = -60;
   assert.ok(sizingSchema.validate(neg).some((e) => e.field === 'charts.garment.sizes.M.chestWidth'));
-});
+}));
 
 await test('crowdsourced measurements name who gathered them and when, are never verified, and a dimension can only lower its own status', () => {
   const crowd = ILLUSTRATIVE();
@@ -1176,7 +1187,7 @@ await test('crowdsourced or unchecked measurements give no recommendation: a cro
   assert.strictEqual(zara.missing[0].code, 'unverified-data');
 });
 
-await test('a reference product\'s measurements are given whole and checked the same way; a crowdsourced one is not compared', () => {
+await test('a reference product\'s measurements are given whole and checked the same way; a crowdsourced one is not compared', () => asChecked(UQ_PAIR, () => {
   const r = engine.compare(uqSweatshirtRef('M'), sizing.byId(UQ_HOODIE));
   assert.strictEqual(r.status, 'ok');
   DIMS4.forEach((d) => {
@@ -1194,7 +1205,7 @@ await test('a reference product\'s measurements are given whole and checked the 
   assert.ok(!c.dimensionsCompared.includes('chestWidth'));
   assert.match(c.notCompared.find((x) => x.dim === 'chestWidth').why, /your UNIQLO reference's chest is gathered from shoppers/);
   assert.strictEqual(c.recommended, null, 'no chest, no recommendation');
-});
+}));
 
 await test('a size judged against the shopper\'s own measurements is "shopper-measured", never "verified", even on a checked product', () => {
   const r = engine.recommend(hoodieRef({ measurements: REF_CM }), ILLUSTRATIVE());
@@ -1242,7 +1253,7 @@ await test('a chest published all the way around is scored with a tolerance twic
   circIn.sizes.forEach((x, i) => assert.ok(Math.abs(x.score - flat.sizes[i].score) < 1e-6, `${x.size}: ${x.score} vs ${flat.sizes[i].score}`));
 });
 
-await test('the extension\'s reference data calls a product verified only when every garment measurement is', () => {
+await test('the extension\'s reference data calls a product verified only when every garment measurement is', () => asChecked(UQ_PAIR, () => {
   const builder = require('./build-fit-references.js');
   const live = sizing.byId(UQ_HOODIE);
   const product = () => builder.build().products.find((x) => x.id === UQ_HOODIE);
@@ -1255,9 +1266,9 @@ await test('the extension\'s reference data calls a product verified only when e
     delete dim.status;
   }
   assert.strictEqual(product().verification, 'verified');
-});
+}));
 
-await test('real checked records: UNIQLO\'s Sweatshirt in M against every size of its Sweat Pullover Hoodie — zero only at M, signed elsewhere, from the published text', () => {
+await test('real checked records: UNIQLO\'s Sweatshirt in M against every size of its Sweat Pullover Hoodie — zero only at M, signed elsewhere, from the published text', () => asChecked(UQ_PAIR, () => {
   /* The two records hold identical Product Size tables (the Sweatshirt's
      own note says so, as published), so the matching size differs by
      nothing; every other size differs by what UNIQLO publishes. */
@@ -1286,9 +1297,9 @@ await test('real checked records: UNIQLO\'s Sweatshirt in M against every size o
   assert.strictEqual(cm.recommended, 'M');
   /* a reference in L moves the recommendation to L: the label matched by measurement, not copied */
   assert.strictEqual(engine.compare(uqSweatshirtRef('L'), hood).recommended, 'L');
-});
+}));
 
-await test('through /api/size-recommendation, a checked comparison carries its signed differences and each measurement\'s provenance', async () => {
+await test('through /api/size-recommendation, a checked comparison carries its signed differences and each measurement\'s provenance', () => asChecked(UQ_PAIR, async () => {
   const { jar, user } = await signUp('cleo@example.test');
   await fitProfiles.saveGuide(user.id, { garments: { sweatshirts: { favorite: 'perfect', anchor: { brand: 'UNIQLO', size: 'M', product: { url: 'https://www.uniqlo.com/us/en/products/E475377-000/00' } } } } });
   const got = await compareCall(jar, UQ_HOODIE);
@@ -1301,7 +1312,7 @@ await test('through /api/size-recommendation, a checked comparison carries its s
   /* the same product with no reference saved: nothing recommended */
   const none = await compareCall((await signUp('dov@example.test')).jar, UQ_HOODIE);
   assert.deepStrictEqual([none.body.comparison.status, none.body.comparison.missing[0].code], ['insufficient', 'no-reference']);
-});
+}));
 
 section('fit feedback against the reference');
 
@@ -1413,7 +1424,7 @@ await test('signed out it answers 401; a type or list it cannot read is refused'
   assert.strictEqual((await fitCall(jar, 'hoodies', Array.from({ length: 25 }, () => LISTINGS[1]))).status, 400, 'at most 24');
 });
 
-await test('only a listing that matches a sizing record is sized; the rest are left out, never guessed', async () => {
+await test('only a listing that matches a sizing record is sized; the rest are left out, never guessed', () => asChecked(UQ_PAIR, async () => {
   const { jar, user } = await signUp('ada@example.test');
   await fitProfiles.save(user.id, { schemaVersion: 5, measurements: { unit: 'in', chest: 40 } });
   await fitProfiles.saveGuide(user.id, { garments: { hoodies: { fitGoal: 'true-to-size', line: 'men' } } });
@@ -1435,9 +1446,9 @@ await test('only a listing that matches a sizing record is sized; the rest are l
   const before = await store.get(fitProfiles.profileKey(user.id));
   await fitCall(jar, 'hoodies', LISTINGS);
   assert.deepStrictEqual(await store.get(fitProfiles.profileKey(user.id)), before);
-});
+}));
 
-await test('a hoodie reference compares a hoodie search, and is never read for jeans or T-shirts', async () => {
+await test('a hoodie reference compares a hoodie search, and is never read for jeans or T-shirts', () => asChecked(UQ_PAIR, async () => {
   const { jar, user } = await signUp('ada@example.test');
   await fitProfiles.saveGuide(user.id, { garments: { hoodies: { favorite: 'perfect', anchor: { brand: 'Carhartt', size: 'L', measurements: { unit: 'cm', chestWidth: '58', bodyLength: '68', shoulderWidth: '50', sleeveLength: '62' } } } } });
   const hoodie = (await fitCall(jar, 'hoodies', LISTINGS)).body.fit.items[0];
@@ -1451,7 +1462,7 @@ await test('a hoodie reference compares a hoodie search, and is never read for j
   assert.deepStrictEqual(jeans.items, [], 'jeans are never sized from a hoodie');
   const tees = (await fitCall(jar, 'tshirts', LISTINGS)).body.fit;
   assert.deepStrictEqual(tees.items, [], 'a hoodie listing is not a T-shirt');
-});
+}));
 
 await test('a T-shirt reference is not used for a hoodie, and an unchecked T-shirt record gives no size', async () => {
   const { jar, user } = await signUp('ada@example.test');
@@ -1466,7 +1477,7 @@ await test('a T-shirt reference is not used for a hoodie, and an unchecked T-shi
   assert.ok(tee.missing.some((m) => /hasn't been checked|haven't been checked/.test(m)), tee.missing.join(' | '));
 });
 
-await test('each caller’s listings are sized from their own profile, whatever the request names', async () => {
+await test('each caller’s listings are sized from their own profile, whatever the request names', () => asChecked(UQ_PAIR, async () => {
   const ada = await signUp('ada@example.test');
   const bea = await signUp('bea@example.test');
   await fitProfiles.save(ada.user.id, { schemaVersion: 5, measurements: { unit: 'in', chest: 40 } });
@@ -1476,7 +1487,7 @@ await test('each caller’s listings are sized from their own profile, whatever 
   const beas = await fitCall(bea.jar, 'hoodies', LISTINGS, { headers: { 'x-user-id': ada.user.id } });
   assert.strictEqual(beas.body.fit.items[0].size, 'XL');
   assert.strictEqual((await fitCall(ada.jar, 'hoodies', LISTINGS)).body.fit.items[0].size, 'M');
-});
+}));
 
 section('sizing charts from a product link (api/_sizing/chart.js)');
 
@@ -1556,7 +1567,7 @@ await test('a product Fynd has a record for: its own body and garment charts, as
   assert.strictEqual(r.from, 'fynd-record');
   assert.strictEqual(r.productId, 'uniqlo-e475378-sweat-pullover-hoodie-us');
   assert.strictEqual(r.scope, 'product-specific');
-  assert.strictEqual(r.verification, 'verified');
+  assert.strictEqual(r.verification, 'unverified', 'the record’s own status: the UNIQLO pair is pending review');
   assert.deepStrictEqual(r.charts.map((c) => [c.measures, c.unit]), [['finished-garment', 'in'], ['body', 'in']], 'the garment’s own measurements first');
   assert.deepStrictEqual(r.charts[1].rows.find((x) => x.size === 'M').values, ['37 ¾ - 41'], 'values kept exactly as published');
   /* each column says how the brand measured it: a flat width, never a circumference */
@@ -1567,7 +1578,7 @@ await test('a product Fynd has a record for: its own body and garment charts, as
   assert.strictEqual(methodOf(/length \(back\)/i), 'from the centre back');
   assert.strictEqual(methodOf(/shoulder/i), 'seam to seam');
   assert.deepStrictEqual(r.charts[1].methods, ['around the body'], 'the body chest is a circumference of the body');
-  assert.ok(r.comparable);
+  assert.strictEqual(r.comparable, false, 'pending review: never set beside a garment the shopper owns');
   const tee = await read('https://www.zara.com/us/en/basic-medium-weight-t-shirt--02-p01887411.html', {});
   assert.deepStrictEqual([tee.verification, tee.comparable], ['unverified', false]);
   const nike = await read('https://www.nike.com/t/club-mens-fleece-crew-RU1Il4yl/FN3886-010', {});
@@ -2159,7 +2170,7 @@ await test('a general body chart joins a garment-only record only where it appli
   assert.strictEqual((await read(other, {})).productId, 'uniqlo-e475377-sweatshirt-us', 'another UNIQLO hoodie-like top keeps its own record');
 });
 
-await test('only verified, compatible garment measurements are compared: E471808 is refused while pending; once checked, only what was measured the same way is compared', () => {
+await test('only verified, compatible garment measurements are compared: E471808 is refused while pending; once checked, only what was measured the same way is compared', () => asChecked(UQ_PAIR, () => {
   const rec = sizing.byId(E471808_ID);
   const measured = hoodieRef({ brand: 'Carhartt', size: 'L', measurements: { unit: 'in', chestWidth: 24, bodyLength: 28, shoulderWidth: 22, sleeveLength: 34 } });
   const refused = engine.compare(measured, rec);
@@ -2181,7 +2192,7 @@ await test('only verified, compatible garment measurements are compared: E471808
   assert.ok(uq.caveats.some((c) => /shoulders: measured differently/.test(c)));
   /* a body chart never: the general chart beside it is not a record */
   assert.strictEqual(sizing.byId('uniqlo-us-men-tops-body'), null);
-});
+}));
 
 section('browsing a brand in Find Fit');
 
@@ -2207,7 +2218,7 @@ await test('every UNIQLO product listed is a real one Fynd sourced: a sizing rec
     if (p.imageUrl) assert.match(p.imageUrl, new RegExp(`^https://image\\.uniqlo\\.com/.*${p.code.slice(1, 7)}`), 'a photo carries its product’s code');
   });
   const holds = Object.fromEntries(products.map((p) => [p.code, p.holds]));
-  assert.deepStrictEqual(holds, { 'E475378-000': 'checked-chart', 'E475377-000': 'checked-chart', 'E455365-000': 'unchecked-chart', 'E471808-000': 'unchecked-chart', 'E429066-000': 'live-only' });
+  assert.deepStrictEqual(holds, { 'E475378-000': 'unchecked-chart', 'E475377-000': 'unchecked-chart', 'E455365-000': 'unchecked-chart', 'E471808-000': 'unchecked-chart', 'E429066-000': 'live-only' });
 });
 
 await test('a catalogue snapshot (FIXTURE) adds UNIQLO’s listed products: rows that break a rule are dropped, known products keep what Fynd holds, and only men’s tops in UNIQLO’s own categories fall under the general men’s chart', () => {
@@ -2226,8 +2237,8 @@ await test('a catalogue snapshot (FIXTURE) adds UNIQLO’s listed products: rows
   ['E9BAD-000', 'E999901-000', 'E999903-000', 'E999904-000'].forEach((c) => assert.ok(!codes.includes(c), `${c} dropped`));
   assert.strictEqual(out.products.find((p) => p.code === 'E999902-000').imageUrl, null, 'a photo off UNIQLO’s image host is dropped, the product kept');
   const known = out.products.find((p) => p.code === 'E475378-000');
-  assert.deepStrictEqual([known.holds, known.line, known.category], ['checked-chart', 'unisex', 'hoodies'], 'the snapshot changes nothing Fynd holds');
-  assert.deepStrictEqual(out.products.slice(0, 3).map((p) => p.holds), ['checked-chart', 'checked-chart', 'unchecked-chart']);
+  assert.deepStrictEqual([known.holds, known.line, known.category], ['unchecked-chart', 'unisex', 'hoodies'], 'the snapshot changes nothing Fynd holds');
+  assert.deepStrictEqual(out.products.slice(0, 3).map((p) => p.holds), ['unchecked-chart', 'unchecked-chart', 'unchecked-chart']);
   assert.strictEqual(out.products.find((p) => p.code === 'E900001-000').holds, 'general-chart');
   assert.strictEqual(out.products.find((p) => p.code === 'E900019-000').holds, 'live-only');
   assert.strictEqual(out.products.find((p) => p.code === 'E900027-000').holds, 'live-only');
@@ -2310,7 +2321,7 @@ await test('/api/size-recommendation lists brands and products, and looks a chos
 
     /* a checked record: its own charts, no page asked */
     const hoodie = await get({ brand: 'uniqlo', item: 'E475378-000' });
-    assert.deepStrictEqual([hoodie.status, hoodie.body.chart.from, hoodie.body.chart.verification, hoodie.body.item.code], [200, 'fynd-record', 'verified', 'E475378-000']);
+    assert.deepStrictEqual([hoodie.status, hoodie.body.chart.from, hoodie.body.chart.verification, hoodie.body.item.code], [200, 'fynd-record', 'unverified', 'E475378-000'], 'its record’s own status: pending review');
     assert.deepStrictEqual(asked, []);
     /* E471808: its own Product Size record first (pending review, never compared), UNIQLO's general body chart after it; nothing read */
     const oversized = await get({ brand: 'uniqlo', item: 'E471808-000' });

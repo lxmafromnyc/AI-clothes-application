@@ -410,7 +410,7 @@ async function launch(extDir) {
     await popup.close();
   });
 
-  await test('from the extension’s chart, "Check Fynd’s catalog" finds a product Fynd has checked', async () => {
+  await test('from the extension’s chart, "Check Fynd’s catalog" finds the product Fynd holds a record for, with that record’s own status', async () => {
     const page = await context.newPage();
     const Payload = require('../assets/fynd-payload');
     const payload = Payload.validate({ v: 1, kind: Payload.KIND, readAt: '2026-10-17', page: { url: 'https://www.uniqlo.com/us/en/products/E475378-000/00', title: 'Sweat Pullover Hoodie' }, product: { name: 'Sweat Pullover Hoodie', brand: 'UNIQLO' }, sizes: [], chart: { where: 'product-page', measures: 'not-stated', unit: null, title: null, columns: ['Chest'], rows: [{ size: 'S', values: ['1'] }, { size: 'M', values: ['2'] }] } }).payload;
@@ -418,7 +418,8 @@ async function launch(extDir) {
     await page.waitForSelector('#fit-result[data-from="extension"]');
     await page.click('.fit-catalog');
     await page.waitForFunction(() => document.getElementById('fit-result').dataset.state === 'ok' && !document.getElementById('fit-result').dataset.from);
-    assert.strictEqual(await page.textContent('#fit-result .size-chart-caveat'), 'This product’s own chart, checked against UNIQLO’s page.');
+    /* the record's own status: the UNIQLO pair is pending review */
+    assert.strictEqual(await page.textContent('#fit-result .size-chart-caveat'), 'This product’s own chart, copied from UNIQLO’s page on 2026-10-10 — pending review, not yet checked.');
     await page.close();
   });
 

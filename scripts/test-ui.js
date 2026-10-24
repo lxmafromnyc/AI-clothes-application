@@ -135,6 +135,8 @@ const withRowField = (id, field, value) => {
    includeUnverified, so the audit sees a whole table; the engine's own
    gating is tested in test-sizing.js and test-e2e.js. */
 const sizingRecords = require('../api/_sizing/records');
+/* the UNIQLO pair, marked checked in memory for a test of the comparison on their real numbers */
+const { asChecked, UQ_PAIR } = require('./fixtures/as-checked');
 const sizingEngine = require('../api/_sizing/engine');
 const sizingEndpoint = require('../api/size-recommendation');
 
@@ -3012,7 +3014,7 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     }
   });
 
-  await test('Find Fit’s comparison — a recommended size with its reference and signed differences opened, and the fallback when evidence is too thin — is set in a palette ink, legible, and fits a phone', async () => {
+  await test('Find Fit’s comparison — a recommended size with its reference and signed differences opened, and the fallback when evidence is too thin — is set in a palette ink, legible, and fits a phone', () => asChecked(UQ_PAIR, async () => {
     const Schema = require('../assets/fit-profile-schema.js');
     const withReference = (garments) => fitProfileReply(Object.assign(Schema.empty(), { garments }));
     for (const viewport of [{ width: 1280, height: 900 }, { width: 360, height: 740 }]) {
@@ -3106,7 +3108,7 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     await aroundPage.close();
     accountState = accountReply({});
     fitProfileState = fitProfileReply(null);
-  });
+  }));
 
   await test('the sizing chart dialog — loading, a record’s body and garment tables, and an unavailable answer — is set in a palette ink, legible, and fits a phone', async () => {
     const UQ = { id: 'uq', name: 'Sweat Pullover Hoodie', brand: 'UNIQLO', price: 39.9, currency: 'USD', imageUrl: null,
