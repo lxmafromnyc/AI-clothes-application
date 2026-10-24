@@ -132,6 +132,7 @@
     if (product) result.dataset.item = product.code;
     else delete result.dataset.item;
     hideChart();
+    if (global.FindFitSave) global.FindFitSave.hide();
     verdict('Comparing…', [el('p', 'size-chart-loading', waiting)], 'loading');
     productLink(cleanUrl(url));
     $('fit-result-title').textContent = title;
@@ -147,6 +148,7 @@
       result.dataset.state = 'error';
       $('fit-result-title').textContent = product ? product.named : 'Sizing chart unavailable';
       verdict(UNSUPPORTED, renderFailure(answer, url, { linked: true }), 'unsupported');
+      attempted(ask);
       return;
     }
     const chart = answer.data.chart;
@@ -170,13 +172,23 @@
     $('fit-result-title').focus({ preventScroll: true });
     result.scrollIntoView({ block: 'start', behavior: 'auto' });
     /* a fallback says why it can't be compared, like any body chart */
-    if (chart.status === 'ok' || chart.status === 'fallback') compareWith(chart, ask);
+    if (chart.status === 'ok' || chart.status === 'fallback') await compareWith(chart, ask);
+    attempted(ask);
   }
 
   /* The comparison, only where the chart supports it: the engine's own,
-     drawn by assets/fit-compare.js in Find Fit's verdict layout. */
+     drawn by assets/fit-compare.js in Find Fit's verdict layout — with
+     the saved reference, or else the garment described this visit
+     (sent in the request body, kept nowhere). */
   function compareWith(chart, ask) {
-    return global.FitCompare.show(chart, compare, () => ask === latest, { verdict: true });
+    const reference = global.FindFitReference ? global.FindFitReference.unsaved() : null;
+    return global.FitCompare.show(chart, compare, () => ask === latest, Object.assign({ verdict: true }, reference ? { reference } : {}));
+  }
+
+  /* once the result of a comparison is on screen, and only then: the
+     offer to save this visit's garment (assets/find-fit-save.js) */
+  function attempted(ask) {
+    if (ask === latest && global.FindFitSave) global.FindFitSave.offer();
   }
 
   /* A product picked in the brand browser becomes the item: named, with

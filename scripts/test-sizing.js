@@ -461,6 +461,72 @@ await test('signed out it answers 401; it is GET only and no-store', async () =>
   assert.deepStrictEqual(list.body.products.filter((p) => p.comparable).map((p) => p.id), []);
 });
 
+/* a comparison with a garment that isn't saved: POST, the garment in the body */
+const compareUnsaved = (jar, product, body, query) => call(recommendEndpoint, {
+  jar, method: 'POST', body,
+  query: Object.assign({ product, compare: '1' }, query || {}),
+  url: `/api/size-recommendation?product=${product}&compare=1`
+});
+const UQ_REF = { type: 'sweatshirts', garment: { favorite: 'perfect', line: 'men', anchor: { brand: 'UNIQLO', size: 'S', product: { url: 'https://www.uniqlo.com/us/en/products/E475377-000/00' } } } };
+
+await test('a garment not saved is compared without an account: the same engine and rules, the garment from the body only — production\'s unchecked pair gives no numbers', async () => {
+  const unchecked = await compareUnsaved({}, UQ_HOODIE, { reference: UQ_REF });
+  assert.strictEqual(unchecked.status, 200);
+  assert.strictEqual(unchecked.res.getHeader('cache-control'), 'no-store, private');
+  assert.deepStrictEqual([unchecked.body.comparison.status, unchecked.body.comparison.missing[0].code], ['insufficient', 'unverified-data']);
+  assert.ok(!('sizes' in unchecked.body.comparison) && !('recommended' in unchecked.body.comparison), 'not even a number for a guest');
+  await asChecked(UQ_PAIR, async () => {
+    const got = await compareUnsaved({}, UQ_HOODIE, { reference: UQ_REF }, { unit: 'cm' });
+    const profile = Object.assign(Schema.empty(), { garments: { sweatshirts: Object.assign(Schema.emptyGarment('sweatshirts'), UQ_REF.garment) } });
+    assert.deepStrictEqual(got.body.comparison, JSON.parse(JSON.stringify(engine.compare(profile, sizing.byId(UQ_HOODIE), { unit: 'cm' }))), 'exactly the engine\'s answer');
+    assert.strictEqual(got.body.comparison.recommended, 'S');
+  });
+});
+
+await test('a garment not saved never reads or writes a stored profile: signed in, the posted garment is the one compared, and the saved profile is unchanged', () => asChecked(UQ_PAIR, async () => {
+  const { jar, user } = await signUp('ines@example.test');
+  await fitProfiles.saveGuide(user.id, { garments: { sweatshirts: { favorite: 'perfect', anchor: { brand: 'UNIQLO', size: 'XL', product: { url: 'https://www.uniqlo.com/us/en/products/E475377-000/00' } } } } });
+  const before = JSON.stringify(await fitProfiles.read(user.id));
+  const got = await compareUnsaved(jar, UQ_HOODIE, { reference: UQ_REF });
+  assert.strictEqual(got.body.comparison.reference.size, 'S', 'the posted garment, not the saved XL');
+  assert.strictEqual(got.body.comparison.recommended, 'S');
+  assert.strictEqual(JSON.stringify(await fitProfiles.read(user.id)), before, 'nothing saved');
+  /* and a guest leaves nothing behind */
+  const guestBefore = logged.length;
+  await compareUnsaved({}, UQ_HOODIE, { reference: UQ_REF });
+  assert.strictEqual(logged.length, guestBefore, 'nothing logged');
+}));
+
+await test('a garment not saved is checked by the fit profile\'s own validator, and anything else is refused with why', async () => {
+  const bad = async (body, reason, field) => {
+    const r = await compareUnsaved({}, UQ_HOODIE, body);
+    assert.strictEqual(r.status, 400, JSON.stringify(body));
+    assert.strictEqual(r.body.reason, reason);
+    if (field) assert.ok(r.body.errors.some((e) => e.field === field), JSON.stringify(r.body.errors));
+    assert.ok(!('comparison' in r.body));
+  };
+  await bad({}, 'invalid-reference');
+  await bad({ reference: { type: 'jeans', garment: { anchor: { brand: 'Levi’s', size: '32' } } } }, 'invalid-reference');
+  await bad({ reference: { type: 'hoodies', garment: [] } }, 'invalid-reference');
+  await bad({ reference: { type: 'hoodies', garment: { anchor: { brand: 'Carhartt', size: 'L', measurements: { unit: 'cm', chestWidth: 120 } } } } }, 'invalid-reference', 'garments.hoodies.anchor.measurements.chestWidth');
+  await bad({ reference: { type: 'hoodies', garment: { anchor: { brand: 'Carhartt', size: 'Huge' } } } }, 'invalid-reference', 'garments.hoodies.anchor.size');
+  await bad({ reference: { type: 'hoodies', garment: { anchor: { brand: 'Carhartt', size: 'L', product: { url: 'javascript:alert(1)' } } } } }, 'invalid-reference', 'garments.hoodies.anchor.product.url');
+  const unknown = await compareUnsaved({}, 'no-such-product', { reference: UQ_REF });
+  assert.strictEqual(unknown.status, 404);
+  const malformed = await compareUnsaved({}, 'NOT a product', { reference: UQ_REF });
+  assert.strictEqual(malformed.status, 400);
+  /* without an account, kept to a shopper's pace */
+  const limits = require('../api/_ratelimit');
+  const pace = (n) => call(recommendEndpoint, { jar: {}, method: 'POST', body: { reference: UQ_REF }, query: { product: UQ_HOODIE, compare: '1' }, url: '/api/size-recommendation', headers: { 'x-forwarded-for': '198.51.100.77' } });
+  let last = null;
+  for (let i = 0; i <= limits.LIMITS['sizing:compare-unsaved'].max; i += 1) last = await pace(i);
+  assert.strictEqual(last.status, 429);
+  assert.strictEqual(last.body.reason, 'rate-limited');
+  /* POST is only for this comparison */
+  const other = await call(recommendEndpoint, { jar: {}, method: 'POST', body: { reference: UQ_REF }, query: { product: UQ_HOODIE }, url: `/api/size-recommendation?product=${UQ_HOODIE}` });
+  assert.strictEqual(other.status, 405);
+});
+
 await test('an unknown or malformed product id is refused, and nothing is guessed', async () => {
   const { jar } = await signUp('ada@example.test');
   assert.strictEqual((await suggest(jar, 'not a product')).status, 400);

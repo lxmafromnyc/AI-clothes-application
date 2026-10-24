@@ -118,16 +118,32 @@
       return;
     }
     const account = global.Account;
-    if (!account.state()) await account.load();
-    if (!stillCurrent()) return;
-    const state = account.state();
-    if (!state || !state.signedIn) {
-      const p = el('p', null, 'These finished-garment measurements are checked. With a reference garment saved on ');
-      p.append(safeLinkLocal(profileHref, 'your fit profile'), doc.createTextNode(', Fynd can compare every size with it.'));
-      put(compare, [], [p], verdict ? 'Add a garment that fits to compare' : null, verdict && 'sign-in');
-      return;
+    /* a garment described on Find Fit and not saved: compared through
+       the same engine, sent in the request body, by anyone */
+    const unsaved = opts && opts.reference;
+    let got;
+    if (unsaved) {
+      got = await account.sizing.compareWith(chart.productId, unsaved);
+    } else {
+      if (!account.state()) await account.load();
+      if (!stillCurrent()) return;
+      const state = account.state();
+      if (!state || !state.signedIn) {
+        if (verdict) {
+          /* Find Fit asks for the garment right on the page */
+          const p = el('p', null, 'These finished-garment measurements are checked. Describe a garment that fits you in step 1 — no account needed — and Fynd compares every size with it.');
+          const go = el('p', 'fit-compare-action');
+          go.append(safeLinkLocal('#ff-step-reference', 'Describe a garment that fits'));
+          put(compare, [], [p, go], 'Add a garment that fits to compare', 'sign-in');
+        } else {
+          const p = el('p', null, 'These finished-garment measurements are checked. With a reference garment saved on ');
+          p.append(safeLinkLocal(profileHref, 'your fit profile'), doc.createTextNode(', Fynd can compare every size with it.'));
+          put(compare, [], [p], null, null);
+        }
+        return;
+      }
+      got = await account.sizing.compare(chart.productId);
     }
-    const got = await account.sizing.compare(chart.productId);
     if (!stillCurrent()) return;
     const c = got && got.ok && got.data && got.data.comparison;
     if (!c || typeof c !== 'object' || !['ok', 'partial', 'insufficient'].includes(c.status)) { failed(compare, verdict); return; }
@@ -147,16 +163,22 @@
     /* insufficient: the engine's own reason (missing[0].code), as one of
        Find Fit's states, with only the action that can change it */
     const why = Array.isArray(c.missing) && c.missing[0] && typeof c.missing[0] === 'object' ? c.missing[0] : {};
-    const reason = INSUFFICIENT[why.code] || 'no-recommendation';
+    let reason = INSUFFICIENT[why.code] || 'no-recommendation';
+    /* a garment described on Find Fit, but with nothing to set beside the
+       item: its own measurements, or a product Fynd holds checked ones for */
+    if (verdict && unsaved && reason === 'needs-reference') reason = 'needs-measurements';
     if (!verdict || reason === 'no-recommendation') lines.push(NOT_ENOUGH);
-    if (typeof why.message === 'string' && why.message) lines.push(why.message);
+    if (reason === 'needs-measurements') lines.push('Fynd compares measurements, not size labels. Add this garment’s measurements in step 1 — laid flat — or name a product Fynd holds checked measurements for.');
+    else if (typeof why.message === 'string' && why.message) lines.push(why.message);
     const next = Array.isArray(c.next) && typeof c.next[0] === 'string' ? c.next[0] : null;
-    if (next && ACTIONABLE[reason]) lines.push(next);
+    if (next && ACTIONABLE[reason] && reason !== 'needs-measurements') lines.push(next);
     const extra = [];
     if (reason === 'methods') extra.push(notComparedList(c));
     if (ACTIONABLE[reason]) {
       const fix = el('p', 'fit-compare-action');
-      fix.append(safeLinkLocal(profileHref, reason === 'needs-reference' ? 'Add a garment on your fit profile' : 'Check your reference’s measurements'));
+      /* on Find Fit the garment is described right there, in step 1 */
+      if (verdict && (unsaved || reason === 'needs-reference')) fix.append(safeLinkLocal('#ff-step-reference', reason === 'needs-reference' ? 'Describe a garment that fits' : 'Add its measurements in step 1'));
+      else fix.append(safeLinkLocal(profileHref, reason === 'needs-reference' ? 'Add a garment on your fit profile' : 'Check your reference’s measurements'));
       extra.push(fix);
     }
     put(compare, lines, extra, verdict ? HEADING[reason] : null, verdict && reason);
@@ -231,6 +253,7 @@
     'body-only': 'Only body measurements for this item',
     methods: 'These measurements can’t be matched to your reference',
     'needs-reference': 'Add a garment that fits to compare',
+    'needs-measurements': 'Fynd needs this garment’s measurements',
     'no-recommendation': NO_SIZE
   };
   /* the engine's insufficient reasons (compare(): missing[0].code) */
@@ -245,7 +268,7 @@
     'no-reference-measurements': 'needs-reference'
   };
   /* where the shopper's own profile can change the answer */
-  const ACTIONABLE = { methods: true, 'needs-reference': true };
+  const ACTIONABLE = { methods: true, 'needs-reference': true, 'needs-measurements': true };
   const GIRTH = { chestWidth: true, shoulderWidth: true };
 
   /* The engine's signed difference, to a tenth: "+0.5 in", "−1.0 in"

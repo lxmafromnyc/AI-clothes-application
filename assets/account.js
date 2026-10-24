@@ -249,6 +249,11 @@
   const sizing = {
     products: () => call('size-recommendation'),
     compare: (productId, unit) => call(`size-recommendation?product=${encodeURIComponent(productId)}&compare=1${unit === 'in' || unit === 'cm' ? `&unit=${unit}` : ''}`),
+    /* the same, with a reference garment that isn't saved — { type,
+       garment } in the fit profile's own shape — sent in the body, never
+       the address; used for that one answer and kept nowhere, so no
+       account is needed */
+    compareWith: (productId, reference, unit) => call(`size-recommendation?product=${encodeURIComponent(productId)}&compare=1${unit === 'in' || unit === 'cm' ? `&unit=${unit}` : ''}`, { body: { reference } }),
     /* the search page's listings, sized from one type of clothing's
        profile: only what the listings themselves say travels */
     fit: (type, items) => call(`size-recommendation?fit=${encodeURIComponent(type)}&items=${encodeURIComponent(JSON.stringify(items))}`),

@@ -3205,6 +3205,41 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     fitProfileState = fitProfileReply(null);
   })));
 
+  await test('Find Fit for a guest — the garment form with an error, the garment kept for the visit, the result, and the offer to save and its sign-in — is set in a palette ink, legible, and fits a phone', () => asChecked(UQ_PAIR, async () => {
+    const Schema = require('../assets/fit-profile-schema.js');
+    const reference = { type: 'hoodies', garment: { favorite: 'perfect', line: null, anchor: { brand: 'Carhartt', size: 'L', measurements: { unit: 'cm', chestWidth: 58, bodyLength: 68, shoulderWidth: 50, sleeveLength: 62 } } } };
+    const answer = sizingEngine.compare(Object.assign(Schema.empty(), { garments: { hoodies: Object.assign(Schema.emptyGarment('hoodies'), reference.garment) } }), sizingRecords.byId('uniqlo-e475378-sweat-pullover-hoodie-us'));
+    accountState = accountReply({});
+    for (const viewport of [{ width: 1280, height: 900 }, { width: 360, height: 740 }]) {
+      const page = await openPage('index.html', { viewport });
+      await page.route('**/api/size-recommendation?product=*', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ comparison: answer }) }));
+      await page.waitForSelector('#ff-reference[data-state="signed-out"] .ffr-form', { timeout: 10000 });
+      const audit = guideAudit(page, viewport);
+      await page.click('.ffr-measure > summary');
+      await page.click('#ffr-use');
+      await page.waitForSelector('#ffr-brand-error.show');
+      await audit('the garment form, measurements open, with an error');
+      await page.selectOption('#ffr-size', 'L');
+      await page.fill('#ffr-brand', 'Carhartt');
+      for (const [k, v] of Object.entries({ chestWidth: 58, bodyLength: 68, shoulderWidth: 50, sleeveLength: 62 })) await page.fill(`#ffr-m-${k}`, String(v));
+      await page.selectOption('#ffr-unit', 'cm');
+      await page.click('#ffr-use');
+      await page.waitForSelector('.ff-ref--visit');
+      await audit('the garment kept for this visit');
+      await page.fill('#fit-url', 'https://www.uniqlo.com/us/en/products/E475378-000/00');
+      await page.press('#fit-url', 'Enter');
+      await page.waitForSelector('#ff-save[data-state="offer"]');
+      assert.notStrictEqual(await page.getAttribute('#fit-compare', 'data-verdict'), 'loading');
+      await audit('the result, and the offer to save');
+      await page.click('#ff-save .ff-save-signin');
+      await page.waitForSelector('#ff-save[data-state="auth"]');
+      await page.click('#ff-save .ff-save-submit');
+      await page.waitForSelector('#ff-save .form-error.show');
+      await audit('signing in to save, with an error');
+      await page.close();
+    }
+  }));
+
   await test('the sizing chart dialog — loading, a record’s body and garment tables, and an unavailable answer — is set in a palette ink, legible, and fits a phone', async () => {
     const UQ = { id: 'uq', name: 'Sweat Pullover Hoodie', brand: 'UNIQLO', price: 39.9, currency: 'USD', imageUrl: null,
       productUrl: 'https://www.uniqlo.com/us/en/products/E475378-000/00', retailer: 'UNIQLO', category: '', colors: [], sizes: [] };
