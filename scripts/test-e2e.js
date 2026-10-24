@@ -1392,8 +1392,11 @@ const linkFromInbox = (pattern) => {
     assert.match(facts, /Not verified — read automatically just now/);
     assert.match(await page.textContent('#fit-result'), /Units: centimetres, as published/);
     assert.strictEqual(await page.getAttribute('#fit-result .size-chart-details .size-chart-source a', 'href'), 'https://shop.example.test/products/garment-tee');
-    /* a chart read live isn't offered as a comparison */
-    assert.match(await page.textContent('#fit-compare'), /can’t confirm exactly how each measurement was taken/);
+    /* a chart read live isn't offered as a comparison: nobody has checked it */
+    await page.waitForSelector('#fit-compare[data-verdict="unsupported"]');
+    assert.strictEqual(await page.textContent('#fit-compare .fit-compare-title'), 'Fynd can’t compare this item yet');
+    assert.match(await page.textContent('#fit-compare'), /Fynd holds no checked garment measurements for this item, so it won’t compare it/);
+    assert.strictEqual(await page.$$eval('#fit-compare a', (as) => as.length), 0, 'no action the shopper\'s profile could change');
     assert.ok(!/runs (small|large)|true to size|your size is/i.test(await page.textContent('#fit-result')), 'no recommendation from a chart alone');
 
     /* no table on the page: its own size guide, labelled as the retailer's general guide */
@@ -2067,9 +2070,9 @@ const linkFromInbox = (pattern) => {
     assert.strictEqual(await page.isHidden('#fit-result'), true, 'nothing compared until asked');
     /* Compare fit: the real endpoint, the real records — pending review, so no size */
     await page.click('#fit-url-submit');
-    await page.waitForSelector('#fit-compare[data-verdict="unavailable"]');
+    await page.waitForSelector('#fit-compare[data-verdict="unsupported"]');
     assert.strictEqual(await page.textContent('#fit-result-title'), 'UNIQLO · Sweat Pullover Hoodie');
-    assert.strictEqual(await page.textContent('#fit-compare .fit-compare-title'), 'No size recommendation for this item');
+    assert.strictEqual(await page.textContent('#fit-compare .fit-compare-title'), 'Fynd can’t compare this item yet');
     assert.strictEqual(await page.$$eval('#fit-compare .fit-compare-recommended, #fit-compare .ff-scale, #fit-compare table', (ns) => ns.length), 0);
     /* editing the link drops the pick */
     await page.fill('#fit-url', 'https://shop.example.test/products/garment-tee');
@@ -2092,7 +2095,7 @@ const linkFromInbox = (pattern) => {
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'no sideways scrolling');
     await page.fill('#fit-url', 'https://www.uniqlo.com/us/en/products/E475378-000/00');
     await page.press('#fit-url', 'Enter');
-    await page.waitForSelector('#fit-compare[data-verdict="unavailable"]');
+    await page.waitForSelector('#fit-compare[data-verdict="unsupported"]');
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'no sideways scrolling with a result');
     const [v, c] = await page.$$eval('#fit-compare, #fit-chart-details', (ns) => ns.map((n) => n.getBoundingClientRect().top));
     assert.ok(v < c, 'the verdict leads');
@@ -2113,8 +2116,8 @@ const linkFromInbox = (pattern) => {
     assert.match(await page.textContent('#fit-compare'), /haven’t been checked against the brand yet, so Fynd won’t compare them/);
     assert.strictEqual(await page.$$eval('#fit-compare .fit-compare-recommended, #fit-compare .fit-compare-differences, #fit-compare .fit-compare-table', (ns) => ns.length), 0, 'no size, no differences');
     /* the unavailable verdict: said first, with what would change it — no scale, no figure, no confidence */
-    assert.strictEqual(await page.getAttribute('#fit-compare', 'data-verdict'), 'unavailable');
-    assert.strictEqual(await page.textContent('#fit-compare .fit-compare-title'), 'No size recommendation for this item');
+    assert.strictEqual(await page.getAttribute('#fit-compare', 'data-verdict'), 'unsupported');
+    assert.strictEqual(await page.textContent('#fit-compare .fit-compare-title'), 'Fynd can’t compare this item yet');
     assert.match(await page.textContent('#fit-compare'), /What would change that: a person checking this chart against the brand’s own page\./);
     assert.strictEqual(await page.$$eval('#fit-compare .ff-scale', (ns) => ns.length), 0);
     assert.ok(!/%|confiden/i.test(await page.textContent('#fit-compare')), 'no percentage or confidence invented');
@@ -2200,8 +2203,10 @@ const linkFromInbox = (pattern) => {
     await bare.fill('#fit-url', 'https://www.uniqlo.com/us/en/products/E475378-000/00');
     await bare.press('#fit-url', 'Enter');
     await bare.waitForSelector('#fit-compare:not([hidden])');
-    await bare.waitForFunction(() => /No size recommendation/.test(document.getElementById('fit-compare').textContent));
-    assert.match(await bare.textContent('#fit-compare'), /No size recommendation: there isn’t enough reliable measurement evidence[\s\S]*Save a hoodie that fits you well/);
+    await bare.waitForSelector('#fit-compare[data-verdict="needs-reference"]');
+    assert.strictEqual(await bare.textContent('#fit-compare .fit-compare-title'), 'Add a garment that fits to compare');
+    assert.match(await bare.textContent('#fit-compare'), /Save a hoodie that fits you well/);
+    assert.deepStrictEqual(await bare.$$eval('#fit-compare a', (as) => as.map((a) => a.getAttribute('href'))), ['fit-profile.html?from=find-fit'], 'the one action that helps');
     assert.strictEqual(await bare.$$eval('#fit-compare .fit-compare-recommended, #fit-compare .fit-compare-differences', (ns) => ns.length), 0);
     await bareContext.close();
     await context.close();
