@@ -55,6 +55,9 @@
   /* a product picked in the brand browser: { brand, product }, until the link changes */
   let choice = null;
 
+  /* no checked garment measurements to compare: Find Fit's own heading for it */
+  const UNSUPPORTED = 'Fynd can’t compare this item yet';
+
   /* The result's lead: the verdict — what was found out, or why nothing
      could be — in the place a shopper looks first. */
   function verdict(title, nodes, state) {
@@ -143,7 +146,7 @@
     if (!(answer.ok && answer.data && answer.data.chart)) {
       result.dataset.state = 'error';
       $('fit-result-title').textContent = product ? product.named : 'Sizing chart unavailable';
-      verdict('No size recommendation for this item', renderFailure(answer, url, { linked: true }), 'unavailable');
+      verdict(UNSUPPORTED, renderFailure(answer, url, { linked: true }), 'unsupported');
       return;
     }
     const chart = answer.data.chart;
@@ -162,7 +165,7 @@
       verdict('Comparing…', [el('p', 'size-chart-loading', 'Setting this item beside your reference…')], 'loading');
     } else {
       hideChart();
-      verdict('No size recommendation for this item', drawn, 'unavailable');
+      verdict(UNSUPPORTED, drawn, 'unsupported');
     }
     $('fit-result-title').focus({ preventScroll: true });
     result.scrollIntoView({ block: 'start', behavior: 'auto' });
@@ -245,12 +248,14 @@
     const offer = el('p', 'fit-catalog-line');
     offer.append(el('span', null, 'Fynd may have a checked chart for this product. '), lookup);
     showChart(render(chart, url, { linked: true }));
-    verdict('No size recommendation for this item', [
+    /* what the chart itself is — body only, measured how it doesn't say,
+       or not checked — with the same reasons a pasted link's would give */
+    const state = global.FitCompare ? global.FitCompare.chartState(chart) : 'unsupported';
+    verdict(global.FitCompare ? global.FitCompare.HEADING[state] : UNSUPPORTED, [
       el('p', null, 'This chart was read from the page open in your browser and hasn’t been checked, so Fynd won’t compare it with a garment you own.'),
-      /* and what the chart itself is: the same reasons a pasted link's would give */
       ...(global.FitCompare ? global.FitCompare.whyNot(chart, true) : []).map((t) => el('p', null, t)),
       offer
-    ], 'unavailable');
+    ], state);
     $('fit-result-title').focus({ preventScroll: true });
     result.scrollIntoView({ block: 'start', behavior: 'auto' });
   }
@@ -280,7 +285,7 @@
       $('fit-result-title').textContent = 'This chart couldn’t be opened';
       $('fit-result-product').replaceChildren();
       hideChart();
-      verdict('No size recommendation for this item', [el('p', 'size-chart-note', 'The link from the Fynd extension wasn’t a chart Fynd could read, so nothing from it is shown. Check the product page again with the extension, or paste the product’s link above.')], 'unavailable');
+      verdict(UNSUPPORTED, [el('p', 'size-chart-note', 'The link from the Fynd extension wasn’t a chart Fynd could read, so nothing from it is shown. Check the product page again with the extension, or paste the product’s link above.')], 'unsupported');
       return;
     }
     showExtensionChart(got.payload);

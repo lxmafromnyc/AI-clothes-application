@@ -30,10 +30,31 @@
    stillCurrent, { verdict: true })): the same engine answer, led by
    what the shopper came for — the size, or a heading that says there
    is none and why — with a fit scale per compared measurement (tighter,
-   similar or roomier; shorter, similar or longer), placed only from the
-   engine's own words for each difference, the sources, and every
-   caveat. The container says which it drew (data-verdict). The product
-   page's Size Guide keeps the layout below.
+   similar or roomier; shorter, similar or longer), placed from the
+   engine's own answer for each difference, the sources (each side's
+   recorded origin and check, never assumed from the brand), and every
+   caveat. The container says which it drew (data-verdict):
+
+     recommended       an "ok" answer: the size, any trade-off it has
+     closest-mismatch  partial, withheld "outside-tolerance": the
+                       closest size, never called a recommendation
+     no-recommendation partial on too little evidence
+     unsupported       no checked garment measurements: a chart not
+                       checked, or the engine's no-record /
+                       unverified-data / crowdsourced-data /
+                       category-not-covered
+     body-only         only body measurements (body-chart-only)
+     methods           a table that doesn't say what it measures, or
+                       nothing measured the same way (nothing-comparable),
+                       each measurement with the engine's reason
+     needs-reference   nothing saved to compare with
+     sign-in, error    signed out; an answer missing or malformed, which
+                       draws no size and no figure
+
+   Each offers only the action that can change it: the fit profile for
+   methods and needs-reference, Compare for a size, nothing otherwise.
+   Every word from the engine or a record is set as text. The product
+   page's Size Guide keeps the layout below, with the same reasons.
 
    focus() adds, to a comparison already drawn, how one size differs
    from the reference, measurement by measurement — the engine's own
@@ -51,23 +72,37 @@
   /* what each container last drew, so a new size redraws only its part */
   const drawn = new WeakMap();
 
-  /* Why a chart can't be set beside a garment — and, for Find Fit's
-     verdict, what would change that. */
+  /* Why a chart the server called not comparable can't be set beside a
+     garment, from what the chart itself says (chart.charts[].measures,
+     chart.verification — api/_sizing/chart.js):
+       body-only     every table describes bodies, not garments
+       methods       its tables don't say whether they measure the body
+                     or the garment, so how each was taken is unknown
+       unsupported   anything else: no checked garment measurements
+                     (a Fynd record not yet checked, or a table read from
+                     a page or the shopper's browser, which nobody has) */
+  function chartState(chart) {
+    const kinds = (Array.isArray(chart && chart.charts) ? chart.charts : []).map((c) => c && c.measures);
+    if (kinds.length && kinds.every((k) => k === 'body')) return 'body-only';
+    if (!kinds.includes('finished-garment') && kinds.includes('not-stated')) return 'methods';
+    return 'unsupported';
+  }
   function whyNot(chart, verdict) {
-    const lines = [];
-    const kinds = (chart.charts || []).map((c) => c.measures);
-    if (kinds.includes('finished-garment') || kinds.includes('not-stated')) {
-      lines.push(chart.verification === 'unverified'
-        ? 'These measurements haven’t been checked against the brand yet, so Fynd won’t compare them with a garment you own.'
-        : 'Fynd can’t compare this chart with a garment you own yet: it can’t confirm exactly how each measurement was taken, and two garments are only comparable when measured the same way.');
-      if (verdict) lines.push(chart.verification === 'unverified'
-        ? 'What would change that: a person checking this chart against the brand’s own page.'
-        : 'What would change that: the brand saying how each measurement is taken.');
-    } else {
-      lines.push('This chart describes bodies, not garments, so it can’t be set beside a garment you own.');
-      if (verdict) lines.push('What would change that: the brand publishing what the garment itself measures, size by size.');
+    const state = chartState(chart);
+    if (state === 'body-only') {
+      return ['This chart describes bodies, not garments, so it can’t be set beside a garment you own.']
+        .concat(verdict ? ['What would change that: the brand publishing what the garment itself measures, size by size.'] : []);
     }
-    return lines;
+    if (state === 'methods') {
+      return ['The page doesn’t say whether these measure the body or the garment, or how each was taken, so Fynd can’t set them beside a garment you own.']
+        .concat(verdict ? ['What would change that: the brand saying what each measurement is and how it’s taken.'] : []);
+    }
+    if (chart && chart.verification === 'unverified') {
+      return ['These measurements haven’t been checked against the brand yet, so Fynd won’t compare them with a garment you own.']
+        .concat(verdict ? ['What would change that: a person checking this chart against the brand’s own page.'] : []);
+    }
+    return ['Fynd holds no checked garment measurements for this item, so it won’t compare it with a garment you own.']
+      .concat(verdict ? ['What would change that: a checked record of this product’s garment measurements in Fynd’s catalogue.'] : []);
   }
 
   async function show(chart, compare, current, opts) {
@@ -77,8 +112,9 @@
     const profileHref = verdict ? 'fit-profile.html?from=find-fit' : 'fit-profile.html';
     drawn.delete(compare);
     const lines = [];
-    if (!chart.comparable) {
-      put(compare, whyNot(chart, verdict), [], verdict ? NO_SIZE : null, verdict && 'unavailable');
+    if (!chart || !chart.comparable) {
+      const state = chartState(chart);
+      put(compare, whyNot(chart, verdict), [], verdict ? HEADING[state] : null, verdict && state);
       return;
     }
     const account = global.Account;
@@ -93,9 +129,10 @@
     }
     const got = await account.sizing.compare(chart.productId);
     if (!stillCurrent()) return;
-    const c = got.ok && got.data && got.data.comparison;
-    if (!c) { put(compare, ['The comparison with your fit profile couldn’t be worked out just now.'], [], verdict ? NO_SIZE : null, verdict && 'error'); return; }
+    const c = got && got.ok && got.data && got.data.comparison;
+    if (!c || typeof c !== 'object' || !['ok', 'partial', 'insufficient'].includes(c.status)) { failed(compare, verdict); return; }
     if (c.status === 'ok' || c.status === 'partial') {
+      if (!wellFormed(c)) { failed(compare, verdict); return; }
       const outcome = outcomeOf(c);
       const lead = outcome === 'no-recommendation' ? [el('p', 'fit-compare-fallback', NOT_ENOUGH), el('p', null, c.summary)] : recommendation(c, verdict);
       const rest = [];
@@ -107,12 +144,55 @@
       focus(compare, null);
       return;
     }
-    lines.push(NOT_ENOUGH);
-    (c.missing || []).slice(0, 1).forEach((m) => lines.push(m.message));
-    (c.next || []).slice(0, 1).forEach((n) => lines.push(n));
-    const fix = el('p');
-    fix.append(safeLinkLocal(profileHref, 'Open your fit profile'));
-    put(compare, lines, [fix], verdict ? NO_SIZE : null, verdict && 'no-recommendation');
+    /* insufficient: the engine's own reason (missing[0].code), as one of
+       Find Fit's states, with only the action that can change it */
+    const why = Array.isArray(c.missing) && c.missing[0] && typeof c.missing[0] === 'object' ? c.missing[0] : {};
+    const reason = INSUFFICIENT[why.code] || 'no-recommendation';
+    if (!verdict || reason === 'no-recommendation') lines.push(NOT_ENOUGH);
+    if (typeof why.message === 'string' && why.message) lines.push(why.message);
+    const next = Array.isArray(c.next) && typeof c.next[0] === 'string' ? c.next[0] : null;
+    if (next && ACTIONABLE[reason]) lines.push(next);
+    const extra = [];
+    if (reason === 'methods') extra.push(notComparedList(c));
+    if (ACTIONABLE[reason]) {
+      const fix = el('p', 'fit-compare-action');
+      fix.append(safeLinkLocal(profileHref, reason === 'needs-reference' ? 'Add a garment on your fit profile' : 'Check your reference’s measurements'));
+      extra.push(fix);
+    }
+    put(compare, lines, extra, verdict ? HEADING[reason] : null, verdict && reason);
+  }
+
+  /* An answer that doesn't hold together draws nothing from it: no
+     size, no figure — only that it couldn't be worked out. */
+  function failed(compare, verdict) {
+    drawn.delete(compare);
+    put(compare, ['The comparison with your fit profile couldn’t be worked out just now, so no size is shown.'], [], verdict ? NO_SIZE : null, verdict && 'error');
+  }
+
+  /* Whether an ok or partial answer has what its drawing reads, each of
+     the expected type: a unit, the sizes, the size it names among them,
+     a reference. Anything else is refused whole, never half drawn. */
+  function wellFormed(c) {
+    if (c.unit !== 'in' && c.unit !== 'cm') return false;
+    if (!Array.isArray(c.sizes) || !Array.isArray(c.dimensionsCompared) || !c.reference || typeof c.reference !== 'object') return false;
+    if (!c.sizes.every((s) => s && typeof s.size === 'string' && s.dimensions && typeof s.dimensions === 'object')) return false;
+    const named = c.status === 'ok' ? c.recommended : c.closest;
+    if (c.status === 'ok' && (typeof named !== 'string' || !c.sizes.some((s) => s.size === named))) return false;
+    if (c.status === 'partial' && named != null && (typeof named !== 'string' || !c.sizes.some((s) => s.size === named))) return false;
+    if (c.tradeoffs !== undefined && !Array.isArray(c.tradeoffs)) return false;
+    return typeof c.summary === 'string';
+  }
+
+  /* each measurement the engine couldn't set beside the reference, and its reason */
+  function notComparedList(c) {
+    const box = el('ul', 'fit-compare-not-compared');
+    (Array.isArray(c.notCompared) ? c.notCompared : []).forEach((x) => {
+      if (!x || !DIM_LABEL[x.dim] || typeof x.why !== 'string') return;
+      const li = el('li', null, `${DIM_LABEL[x.dim]}: ${x.why}`);
+      li.dataset.dim = x.dim;
+      box.append(li);
+    });
+    return box;
   }
 
   /* A length as the Compare page shows it: centimetres to the
@@ -140,12 +220,39 @@
   const outcomeOf = (c) => (c.status === 'ok' && c.recommended ? 'recommended'
     : c.status === 'partial' && c.withheld === 'outside-tolerance' && c.closest ? 'closest-mismatch' : 'no-recommendation');
   const TITLE = { recommended: 'Compared with your reference', 'closest-mismatch': 'No size matches your reference', 'no-recommendation': NO_SIZE };
+  /* Find Fit's headings when nothing is compared, by why (data-verdict):
+       unsupported      no checked garment measurements for this item
+       body-only        only the body each size is cut for
+       methods          measured in ways that can't be matched to the
+                        reference, or not said how
+       needs-reference  nothing saved to compare with */
+  const HEADING = {
+    unsupported: 'Fynd can’t compare this item yet',
+    'body-only': 'Only body measurements for this item',
+    methods: 'These measurements can’t be matched to your reference',
+    'needs-reference': 'Add a garment that fits to compare',
+    'no-recommendation': NO_SIZE
+  };
+  /* the engine's insufficient reasons (compare(): missing[0].code) */
+  const INSUFFICIENT = {
+    'no-record': 'unsupported',
+    'category-not-covered': 'unsupported',
+    'unverified-data': 'unsupported',
+    'crowdsourced-data': 'unsupported',
+    'body-chart-only': 'body-only',
+    'nothing-comparable': 'methods',
+    'no-reference': 'needs-reference',
+    'no-reference-measurements': 'needs-reference'
+  };
+  /* where the shopper's own profile can change the answer */
+  const ACTIONABLE = { methods: true, 'needs-reference': true };
   const GIRTH = { chestWidth: true, shoulderWidth: true };
 
   /* The engine's signed difference, to a tenth: "+0.5 in", "−1.0 in"
      (a true minus sign), and "0.0 in" with no sign when it rounds to
      nothing. */
   function signed(v, unit) {
+    if (typeof v !== 'number' || !Number.isFinite(v)) return '—';
     const tenth = Math.round(v * 10) / 10;
     if (tenth === 0) return `0.0 ${unit}`;
     return `${tenth > 0 ? '+' : '\u2212'}${Math.abs(tenth).toFixed(1)} ${unit}`;
@@ -154,15 +261,20 @@
      body is a circumference, not a width (twice as far for the same cut) */
   const nameOf = (d, x) => (d === 'chestWidth' && x.measurement && x.measurement.method === 'garment-circumference' ? 'chest circumference' : DIM_NAME[d]);
   /* the engine's words for one difference, without its dimension name */
-  const meaning = (x) => x.words.replace(/^[^:]+: /, '');
+  const meaning = (x) => (typeof x.words === 'string' ? x.words.replace(/^[^:]+: /, '') : '');
 
   /* the reference, as the shopper knows it: its brand and the size on
      its label, and where its measurements came from */
   function referenceWords(ref) {
-    if (ref.source === 'product' && ref.product) return `${ref.product.brand} ${ref.product.name}, size ${ref.size || '—'} (published measurements)`;
+    if (ref.source === 'product' && ref.product) return `${ref.product.brand} ${ref.product.name}, size ${ref.size || '—'} (${originWords(originOf(ref.measurements), 'reference')})`;
     const named = [ref.brand, ref.size].filter(Boolean).join(' ');
     return `${named || 'Your reference garment'} (measured at home)`;
   }
+
+  /* the engine's trade-offs that can be drawn whole — a known dimension,
+     its words and its signed difference; the box shows only when one is */
+  const shownTradeoffs = (c) => (Array.isArray(c.tradeoffs) ? c.tradeoffs : [])
+    .filter((t) => t && DIM_LABEL[t.dim] && typeof t.words === 'string' && typeof t.difference === 'number');
 
   /* Each measurement of that size further from the reference than the
      engine treats as similar, with the tolerance it used — the scoring's
@@ -171,7 +283,7 @@
     const box = el('div', 'fit-compare-tradeoffs');
     box.append(el('p', 'fit-compare-tradeoffs-title', recommended ? `Where size ${size} still differs` : `Why size ${size} isn’t recommended`));
     const ul = el('ul');
-    c.tradeoffs.forEach((t) => {
+    shownTradeoffs(c).forEach((t) => {
       const li = el('li', null, `${t.words} — Fynd treats up to ${measure(t.tolerance, c.unit)} as similar`);
       li.dataset.dim = t.dim;
       li.dataset.difference = String(t.difference);
@@ -219,12 +331,31 @@
     return list;
   }
 
+  /* Where a side's measurements came from, as each one's record says
+     (sizingSchema.measurementOf: source.origin) — never assumed from the
+     brand: "official-published" (the brand's own table),
+     "physical-measurement" (someone measured the garment, as the record
+     names), or none known. */
+  function originOf(measurements) {
+    const all = Object.values(measurements && typeof measurements === 'object' ? measurements : {})
+      .map((m) => m && m.source && m.source.origin).filter(Boolean);
+    return all.length && all.every((o) => o === all[0]) ? all[0] : null;
+  }
+  function originWords(origin, side) {
+    if (origin === 'official-published') return side === 'reference' ? 'published measurements' : 'published finished-garment measurements';
+    if (origin === 'physical-measurement') return side === 'reference' ? 'measured from the garment' : 'finished-garment measurements taken from the garment itself';
+    return side === 'reference' ? 'its recorded measurements' : 'recorded finished-garment measurements';
+  }
   /* where the numbers came from, and how far each side is checked */
   function sources(c) {
-    const item = c.product ? `${c.product.brand}’s published finished-garment measurements for this item` : 'This item’s published finished-garment measurements';
-    const checked = c.dataStatus === 'verified' ? 'checked against the brand’s page' : 'not yet checked';
-    const ref = c.reference && c.reference.source === 'product'
-      ? `your reference’s published measurements${c.reference.product && c.reference.product.brand ? ` (${c.reference.product.brand})` : ''}`
+    const row = c.sizes.find((s) => s.size === (c.recommended || c.closest));
+    const origin = originOf(row ? Object.fromEntries(Object.entries(row.dimensions).map(([d, x]) => [d, x && x.measurement])) : null);
+    const brand = c.product && typeof c.product.brand === 'string' ? c.product.brand : null;
+    const item = `${brand ? `${brand}’s` : 'This item’s'} ${originWords(origin, 'item')} for this item`;
+    const checked = c.dataStatus !== 'verified' ? 'not yet checked'
+      : origin === 'official-published' ? 'checked against the brand’s page' : 'checked against its sources';
+    const ref = c.reference.source === 'product'
+      ? `your reference’s ${originWords(originOf(c.reference.measurements), 'reference')}${c.reference.product && c.reference.product.brand ? ` (${c.reference.product.brand})` : ''}`
       : 'the measurements you took of your reference at home';
     return el('p', 'ff-sources', `Sources: ${item}, ${checked}; ${ref}.`);
   }
@@ -238,7 +369,7 @@
     const recommended = Boolean(c.recommended);
     const size = recommended ? c.recommended : c.closest;
     const row = (c.sizes || []).find((s) => s.size === size);
-    const compared = row ? (c.dimensionsCompared || []).filter((d) => row.dimensions[d] && row.dimensions[d].compared) : [];
+    const compared = row ? c.dimensionsCompared.filter((d) => DIM_LABEL[d] && row.dimensions[d] && row.dimensions[d].compared && typeof row.dimensions[d].difference === 'number') : [];
     const nodes = [];
     if (recommended) {
       const pick = el('p', 'fit-compare-recommended');
@@ -251,7 +382,7 @@
     }
     nodes.push(el('p', 'fit-compare-reference', `Compared with: ${referenceWords(c.reference)}.`));
     nodes.push(el('p', null, c.summary));
-    if ((c.tradeoffs || []).length) nodes.push(tradeoffList(c, size, recommended));
+    if (shownTradeoffs(c).length) nodes.push(tradeoffList(c, size, recommended));
     if (compared.length) {
       nodes.push(el('p', 'fit-compare-differs', `Size ${size} against your reference: ${compared.map((d) => `${nameOf(d, row.dimensions[d])} ${meaning(row.dimensions[d])}`).join(', ')}.`));
       if (verdict) nodes.push(fitScale(compared, row));
@@ -317,7 +448,7 @@
           const th = el('th', null, DIM_LABEL[k]);
           th.scope = 'row';
           if (x.compared) {
-            tr.append(th, el('td', null, measure(x.reference, unit)), el('td', null, measure(x.candidate, unit)), el('td', null, x.words.replace(/^[^:]+: /, '')));
+            tr.append(th, el('td', null, measure(x.reference, unit)), el('td', null, measure(x.candidate, unit)), el('td', null, meaning(x)));
             if (x.estimated) notes.push(`${DIM_LABEL[k]}: yours is ${x.estimated}, estimated.`);
           } else {
             tr.classList.add('is-skipped');
@@ -367,5 +498,5 @@
     compare.hidden = false;
   }
 
-  global.FitCompare = { show, focus, whyNot };
+  global.FitCompare = { show, focus, whyNot, chartState, HEADING };
 })(typeof window !== 'undefined' ? window : globalThis);

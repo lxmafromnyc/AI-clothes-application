@@ -288,7 +288,8 @@ async function launch(extDir) {
     assert.match(await page.textContent('#fit-result .size-chart-method'), /center back/);
     assert.strictEqual(apiAsked.length, asked, 'nothing was sent to Fynd’s server');
     await page.waitForSelector('#fit-compare:not([hidden])');
-    assert.match(await page.textContent('#fit-compare'), /can’t confirm exactly how each measurement was taken/, 'read, not checked: never compared');
+    assert.match(await page.textContent('#fit-compare'), /Fynd holds no checked garment measurements for this item/, 'read, not checked: never compared');
+    assert.strictEqual(await page.getAttribute('#fit-compare', 'data-verdict'), 'unsupported');
     await page.close();
     await shop.close();
     await again.close();
@@ -375,9 +376,10 @@ async function launch(extDir) {
     assert.strictEqual(await page.textContent('#fit-result .size-chart-caveat'), 'Read from the product page open in your browser. Not checked by Fynd.');
     assert.match(await page.textContent('#fit-result .size-chart-details'), /Not verified — read automatically just now/);
     assert.ok(!/Verified —/.test(await page.textContent('#fit-result')));
-    /* never compared: how each measurement was taken isn't known */
+    /* never compared: read in the browser, checked by nobody */
     await page.waitForSelector('#fit-compare:not([hidden])');
-    assert.match(await page.textContent('#fit-compare'), /can’t confirm exactly how each measurement was taken/);
+    assert.strictEqual(await page.textContent('#fit-compare .fit-compare-title'), 'Fynd can’t compare this item yet');
+    assert.match(await page.textContent('#fit-compare'), /hasn’t been checked, so Fynd won’t compare it[\s\S]*Fynd holds no checked garment measurements for this item/);
     assert.strictEqual(apiAsked.length, asked, 'nothing was sent to Fynd’s server');
     assert.strictEqual(await page.inputValue('#fit-url'), `${site}/products/garment-tee`);
     await page.close();
@@ -392,6 +394,7 @@ async function launch(extDir) {
     assert.strictEqual(await page.textContent('#fit-result .size-chart-kind'), 'Body measurements — the body each size fits, not the garment');
     await page.waitForSelector('#fit-compare:not([hidden])');
     assert.match(await page.textContent('#fit-compare'), /describes bodies, not garments/);
+    assert.deepStrictEqual([await page.getAttribute('#fit-compare', 'data-verdict'), await page.textContent('#fit-compare .fit-compare-title')], ['body-only', 'Only body measurements for this item']);
     await page.close();
     await shop.close();
     await popup.close();

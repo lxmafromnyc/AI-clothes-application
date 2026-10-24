@@ -1773,7 +1773,10 @@ strong { font-weight: 600; }
 .ff .ff-verdict { margin-top: 4px; padding: 18px 20px; font-size: 15px; }
 .ff .ff-verdict .fit-compare-title { font-size: 19px; letter-spacing: -.01em; }
 .ff .ff-verdict[data-verdict="recommended"] { border-color: var(--color-accent-line); background: var(--color-accent-soft); }
-.ff .ff-verdict[data-verdict="unavailable"],
+.ff .ff-verdict[data-verdict="unsupported"],
+.ff .ff-verdict[data-verdict="body-only"],
+.ff .ff-verdict[data-verdict="methods"],
+.ff .ff-verdict[data-verdict="needs-reference"],
 .ff .ff-verdict[data-verdict="no-recommendation"],
 .ff .ff-verdict[data-verdict="closest-mismatch"],
 .ff .ff-verdict[data-verdict="error"] { border-color: var(--color-warning-line); background: var(--color-warning-soft); }
@@ -1784,6 +1787,8 @@ strong { font-weight: 600; }
 .ff .ff-verdict .fit-compare-tradeoffs-title { font-size: 14px; font-weight: 600; color: var(--color-text); }
 .ff .ff-verdict .fit-compare-tradeoffs ul { margin-top: 4px; padding-left: 18px; font-size: 14px; color: var(--color-text); }
 .ff .ff-verdict .fit-compare-tradeoffs-note { margin-top: 6px; font-size: 13px; color: var(--color-text-2); }
+.ff .ff-verdict .fit-compare-not-compared { margin-top: 8px; padding-left: 18px; font-size: 14px; color: var(--color-text); }
+.ff .ff-verdict .fit-compare-action { margin-top: 10px; }
 .ff .ff-verdict .fit-compare-recommended strong { display: inline-block; margin-left: 4px; padding: 2px 12px; border-radius: var(--r-pill); background: var(--color-primary); color: var(--color-text-on-primary); font-size: 22px; }
 .ff .ff-verdict .fit-compare-reference { font-weight: 500; color: var(--color-text); }
 

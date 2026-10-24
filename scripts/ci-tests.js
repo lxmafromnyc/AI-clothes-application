@@ -86,7 +86,8 @@ const GROUPS = {
     ['test-record-demo', "the demo recorder's tool paths and rules, and its retailer test in a browser"],
     ['test-catalog-browser', "Find Fit searching and paging an authorized catalogue in a browser, and a chosen product's page and Size Guide"],
     ['test-catalog-rakuten', "UNIQLO's catalogue from a Rakuten Product Catalog file: reader, sync at catalogue scale, refresh, coverage, and the popup over it"],
-    ['test-provider-unavailable', 'with no paid product source: OpenWeb Ninja never asked, no silent fallback, and what Find Fit and the Search page show']
+    ['test-provider-unavailable', 'with no paid product source: OpenWeb Ninja never asked, no silent fallback, and what Find Fit and the Search page show'],
+    ['test-fit-states', "Find Fit's comparison states drawn by the real renderer from real engine answers: unsupported, body-only, methods, closest-mismatch, recommended, malformed"]
   ],
   'real-chrome': [
     ['test-fit-panel-real-chrome', 'the Fit panel end to end in a visible Chrome: the extension as shipped, a real click on its toolbar button, a reference from brand and size, a size guide opened and read, a recommendation, other pages, errors, outcomes — on invented shop pages']
