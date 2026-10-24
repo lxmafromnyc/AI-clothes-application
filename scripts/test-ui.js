@@ -137,6 +137,7 @@ const withRowField = (id, field, value) => {
 const sizingRecords = require('../api/_sizing/records');
 /* the UNIQLO pair, marked checked in memory for a test of the comparison on their real numbers */
 const { asChecked, UQ_PAIR } = require('./fixtures/as-checked');
+const X = require('./fixtures/cross-brand');
 const sizingEngine = require('../api/_sizing/engine');
 const sizingEndpoint = require('../api/size-recommendation');
 
@@ -3117,6 +3118,92 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     accountState = accountReply({});
     fitProfileState = fitProfileReply(null);
   }));
+
+  await test('Find Fit tells the three outcomes apart — a recommended size (with any measurement it misses), a closest size that misses every tolerance (never called recommended), and too little evidence — set in a palette ink, legible, and on a phone', () => asChecked(UQ_PAIR, () => X.withFixtureBrand(async () => {
+    /* the real engine's answers on the ILLUSTRATIVE Everlane fixture (stand-in
+       numbers, never Everlane's; checked here in memory only), beside
+       UNIQLO's published Sweatshirt M */
+    const Schema = require('../assets/fit-profile-schema.js');
+    const IF_STATED = { chestWidth: 'garment-circumference', bodyLength: 'center-back-to-hem', shoulderWidth: 'seam-to-seam', sleeveLength: 'shoulder-seam-to-cuff' };
+    const reference = Object.assign(Schema.empty(), { garments: { sweatshirts: Object.assign(Schema.emptyGarment('sweatshirts'), { favorite: 'perfect', line: 'men', anchor: { brand: 'UNIQLO', size: 'M', product: { name: null, url: 'https://www.uniqlo.com/us/en/products/E475377-000/00' } } }) } });
+    const table = (sizes) => X.asCheckedCopy(X.everlaneRecord(X.everlanePublished(Object.assign({}, X.EVERLANE_PUBLISHED, { sizes })), IF_STATED));
+    const base = X.EVERLANE_PUBLISHED.sizes;
+    const narrowS = Object.assign({}, base, { S: Object.assign({}, base.S, { chest_circumference: '43' }) });
+    const noShoulders = Object.fromEntries(Object.entries(base).map(([k, { shoulder_width: _, ...row }]) => [k, row]));
+    const answers = {
+      recommended: sizingEngine.compare(reference, table(narrowS)),
+      'closest-mismatch': sizingEngine.compare(reference, table(base)),
+      'closest-mismatch-cm': sizingEngine.compare(reference, table(base), { unit: 'cm' }),
+      'no-recommendation': sizingEngine.compare(reference, table(noShoulders))
+    };
+    assert.deepStrictEqual([answers.recommended.status, answers.recommended.recommended, answers.recommended.tradeoffs.length], ['ok', 'M', 1]);
+    assert.deepStrictEqual([answers['closest-mismatch'].status, answers['closest-mismatch'].withheld, answers['closest-mismatch'].closest], ['partial', 'outside-tolerance', 'S']);
+    assert.deepStrictEqual([answers['no-recommendation'].status, answers['no-recommendation'].withheld], ['partial', 'too-few-dimensions']);
+    accountState = accountReply({ extra: SIGNED_IN });
+    fitProfileState = fitProfileReply(reference);
+    const showing = async (viewport, key) => {
+      const page = await openPage('index.html', { viewport });
+      await page.route('**/api/size-recommendation?product=*', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ comparison: answers[key] }) }));
+      await page.waitForSelector('#fit-browser[data-brands="ready"]', { timeout: 10000 });
+      await page.fill('#fit-url', 'https://www.uniqlo.com/us/en/products/E475378-000/00');
+      await page.press('#fit-url', 'Enter');
+      await page.waitForSelector('#fit-compare:not([hidden]):not([data-verdict="loading"]) .fit-compare-title');
+      return page;
+    };
+    for (const viewport of [{ width: 1280, height: 900 }, { width: 360, height: 740 }]) {
+      /* 1. recommended, with the length it misses named */
+      let page = await showing(viewport, 'recommended');
+      let audit = guideAudit(page, viewport);
+      assert.strictEqual(await page.getAttribute('#fit-compare', 'data-verdict'), 'recommended');
+      assert.strictEqual((await page.textContent('#fit-compare .fit-compare-recommended')).trim(), 'Recommended size: M');
+      assert.strictEqual(await page.textContent('#fit-compare .fit-compare-tradeoffs-title'), 'Where size M still differs');
+      assert.deepStrictEqual(await page.$$eval('#fit-compare .fit-compare-tradeoffs li', (ls) => ls.map((l) => [l.dataset.dim, l.dataset.difference, l.textContent])), [['bodyLength', '3', 'Body length: 3 in longer — Fynd treats up to 1 in as similar']]);
+      assert.strictEqual(await page.textContent('#fit-compare .fit-compare-tradeoffs-note'), '“Similar” uses Fynd’s working tolerances, not tested fit limits.');
+      assert.deepStrictEqual(await page.$$eval('#fit-compare .ff-scale-row', (ls) => ls.map((l) => [l.dataset.dim, l.dataset.place])), [['chestWidth', 'same'], ['bodyLength', 'more'], ['shoulderWidth', 'same']], 'the scale agrees with the trade-offs');
+      await audit('a recommended size, with the measurement it misses');
+      await page.close();
+
+      /* 2. the closest size misses every tolerance: shown, never recommended */
+      page = await showing(viewport, 'closest-mismatch');
+      audit = guideAudit(page, viewport);
+      assert.strictEqual(await page.getAttribute('#fit-compare', 'data-verdict'), 'closest-mismatch');
+      assert.strictEqual(await page.textContent('#fit-compare .fit-compare-title'), 'No size matches your reference');
+      assert.strictEqual(await page.$$eval('#fit-compare .fit-compare-recommended', (ns) => ns.length), 0, 'no size called recommended');
+      assert.ok(!/Recommended size/.test(await page.textContent('#fit-compare')));
+      assert.strictEqual((await page.textContent('#fit-compare .fit-compare-closest')).trim(), 'Closest size: S — not a recommendation');
+      assert.strictEqual(await page.textContent('#fit-compare .fit-compare-tradeoffs-title'), 'Why size S isn’t recommended');
+      assert.deepStrictEqual(await page.$$eval('#fit-compare .fit-compare-tradeoffs li', (ls) => ls.map((l) => l.textContent)), [
+        'Chest: 2½ in narrower — Fynd treats up to 2 in as similar',
+        'Body length: 1¾ in longer — Fynd treats up to 1 in as similar',
+        'Shoulders: 1 in narrower — Fynd treats up to ¾ in as similar'
+      ]);
+      /* the signed differences stay, as explanation */
+      await page.click('#fit-compare .fit-compare-differences > summary');
+      assert.deepStrictEqual(await page.$$eval('#fit-compare .fit-compare-differences tbody td:nth-child(2)', (tds) => tds.map((td) => td.textContent)), ['−2.5 in', '+1.8 in', '−1.0 in']);
+      await audit('the closest size, missing every tolerance, with its differences opened');
+      await page.close();
+
+      /* 3. too little evidence: no size at all */
+      page = await showing(viewport, 'no-recommendation');
+      audit = guideAudit(page, viewport);
+      assert.strictEqual(await page.getAttribute('#fit-compare', 'data-verdict'), 'no-recommendation');
+      assert.strictEqual(await page.textContent('#fit-compare .fit-compare-title'), 'No size recommendation for this item');
+      assert.strictEqual(await page.$$eval('#fit-compare .fit-compare-recommended, #fit-compare .fit-compare-closest, #fit-compare .fit-compare-tradeoffs', (ns) => ns.length), 0);
+      assert.match(await page.textContent('#fit-compare .fit-compare-fallback'), /isn’t enough reliable measurement evidence/);
+      await audit('too little evidence for a size');
+      await page.close();
+    }
+    /* in centimetres: the engine's own converted figures and tolerances */
+    const page = await showing({ width: 1280, height: 900 }, 'closest-mismatch-cm');
+    assert.deepStrictEqual(await page.$$eval('#fit-compare .fit-compare-tradeoffs li', (ls) => ls.map((l) => l.textContent)), [
+      'Chest: 6.4 cm narrower — Fynd treats up to 5.1 cm as similar',
+      'Body length: 4.5 cm longer — Fynd treats up to 2.5 cm as similar',
+      'Shoulders: 2.5 cm narrower — Fynd treats up to 1.9 cm as similar'
+    ]);
+    await page.close();
+    accountState = accountReply({});
+    fitProfileState = fitProfileReply(null);
+  })));
 
   await test('the sizing chart dialog — loading, a record’s body and garment tables, and an unavailable answer — is set in a palette ink, legible, and fits a phone', async () => {
     const UQ = { id: 'uq', name: 'Sweat Pullover Hoodie', brand: 'UNIQLO', price: 39.9, currency: 'USD', imageUrl: null,

@@ -17,9 +17,14 @@
    (brand and the size on its label), how that size differs in plain
    words, and — folded away — each compared dimension's signed
    difference (this size minus the reference: "−1.0 in chest width" is
-   an inch narrower). Every figure is the engine's own. Anything less
-   (a partial comparison, or none) recommends nothing and says there
-   isn't enough reliable measurement evidence, then the engine's reason.
+   an inch narrower), and each measurement it still misses (the
+   engine's tradeoffs). When the closest size misses every compared
+   measurement's tolerance (withheld "outside-tolerance"), it is shown
+   as the closest size — "not a recommendation" — with why, and the
+   same differences. Every figure is the engine's own. Anything less (a
+   partial comparison on too little, or none) recommends nothing and
+   says there isn't enough reliable measurement evidence, then the
+   engine's reason.
 
    Find Fit asks for its verdict layout (show(chart, container,
    stillCurrent, { verdict: true })): the same engine answer, led by
@@ -91,14 +96,14 @@
     const c = got.ok && got.data && got.data.comparison;
     if (!c) { put(compare, ['The comparison with your fit profile couldn’t be worked out just now.'], [], verdict ? NO_SIZE : null, verdict && 'error'); return; }
     if (c.status === 'ok' || c.status === 'partial') {
-      const recommended = c.status === 'ok' && c.recommended;
-      const lead = recommended ? recommendation(c, verdict) : [el('p', 'fit-compare-fallback', NOT_ENOUGH), el('p', null, c.summary)];
+      const outcome = outcomeOf(c);
+      const lead = outcome === 'no-recommendation' ? [el('p', 'fit-compare-fallback', NOT_ENOUGH), el('p', null, c.summary)] : recommendation(c, verdict);
       const rest = [];
       if (c.reliability) rest.push(`Reliability: ${c.reliability}.`);
       (c.caveats || []).slice(0, verdict ? undefined : 2).forEach((x) => rest.push(x));
       const more = el('p');
       more.append(safeLinkLocal('compare.html', 'See every size beside your reference on Compare'));
-      drawn.set(compare, { comparison: c, lead, rest, extra: [more], verdict: verdict && (recommended ? 'recommended' : 'no-recommendation') });
+      drawn.set(compare, { comparison: c, lead, rest, extra: [more], outcome, verdict: verdict && outcome });
       focus(compare, null);
       return;
     }
@@ -118,12 +123,23 @@
     const q = Math.round(v * 4) / 4;
     const whole = Math.floor(q);
     const glyph = { 0: '', 0.25: '¼', 0.5: '½', 0.75: '¾' }[Math.round((q - whole) * 100) / 100];
-    return `${whole}${glyph} in`;
+    /* "¾ in", not "0¾ in"; nothing at all is "0 in" */
+    return `${whole || !glyph ? whole : ''}${glyph} in`;
   }
   const DIM_LABEL = { chestWidth: 'Chest', bodyLength: 'Body length', shoulderWidth: 'Shoulders', sleeveLength: 'Sleeves' };
   const DIM_NAME = { chestWidth: 'chest width', bodyLength: 'garment length', shoulderWidth: 'shoulder width', sleeveLength: 'sleeve length' };
   const NOT_ENOUGH = 'No size recommendation: there isn’t enough reliable measurement evidence for this product and your reference.';
   const NO_SIZE = 'No size recommendation for this item';
+  /* the three things a comparison can say (data-verdict in Find Fit):
+       recommended        a size the engine recommends (status "ok"),
+                          with any measurement it misses named
+       closest-mismatch   the closest size misses every compared
+                          measurement's tolerance (withheld
+                          "outside-tolerance"): shown, never recommended
+       no-recommendation  too little checked, comparable evidence */
+  const outcomeOf = (c) => (c.status === 'ok' && c.recommended ? 'recommended'
+    : c.status === 'partial' && c.withheld === 'outside-tolerance' && c.closest ? 'closest-mismatch' : 'no-recommendation');
+  const TITLE = { recommended: 'Compared with your reference', 'closest-mismatch': 'No size matches your reference', 'no-recommendation': NO_SIZE };
   const GIRTH = { chestWidth: true, shoulderWidth: true };
 
   /* The engine's signed difference, to a tenth: "+0.5 in", "−1.0 in"
@@ -148,13 +164,30 @@
     return `${named || 'Your reference garment'} (measured at home)`;
   }
 
-  /* An "ok" comparison: the size recommended, the reference, how that
-     size differs in words, and its signed differences folded away. */
-  /* where one compared difference falls, from the engine's own words
-     for it — never from a threshold worked out here */
+  /* Each measurement of that size further from the reference than the
+     engine treats as similar, with the tolerance it used — the scoring's
+     working values, said to be no more than that. */
+  function tradeoffList(c, size, recommended) {
+    const box = el('div', 'fit-compare-tradeoffs');
+    box.append(el('p', 'fit-compare-tradeoffs-title', recommended ? `Where size ${size} still differs` : `Why size ${size} isn’t recommended`));
+    const ul = el('ul');
+    c.tradeoffs.forEach((t) => {
+      const li = el('li', null, `${t.words} — Fynd treats up to ${measure(t.tolerance, c.unit)} as similar`);
+      li.dataset.dim = t.dim;
+      li.dataset.difference = String(t.difference);
+      ul.append(li);
+    });
+    box.append(ul);
+    box.append(el('p', 'fit-compare-tradeoffs-note', '“Similar” uses Fynd’s working tolerances, not tested fit limits.'));
+    return box;
+  }
+
+  /* where one compared difference falls, from the engine's own answer —
+     within its tolerance is "similar", as the trade-offs say; otherwise
+     its words — never from a threshold worked out here */
   function placeOf(x) {
     const said = meaning(x);
-    if (/the same/.test(said)) return 'same';
+    if (x.withinTolerance === true || /the same/.test(said)) return 'same';
     if (/wider|longer/.test(said)) return 'more';
     if (/narrower|shorter/.test(said)) return 'less';
     return null;
@@ -196,16 +229,29 @@
     return el('p', 'ff-sources', `Sources: ${item}, ${checked}; ${ref}.`);
   }
 
+  /* A size the engine recommends, or — when every measurement compared
+     misses its tolerance — the closest one, said not to be a
+     recommendation. Either way: the reference, how that size differs,
+     each measurement it misses (c.tradeoffs), and its signed
+     differences folded away. */
   function recommendation(c, verdict) {
-    const size = c.recommended;
+    const recommended = Boolean(c.recommended);
+    const size = recommended ? c.recommended : c.closest;
     const row = (c.sizes || []).find((s) => s.size === size);
     const compared = row ? (c.dimensionsCompared || []).filter((d) => row.dimensions[d] && row.dimensions[d].compared) : [];
     const nodes = [];
-    const pick = el('p', 'fit-compare-recommended');
-    pick.append(doc.createTextNode('Recommended size: '), el('strong', null, size));
-    nodes.push(pick);
+    if (recommended) {
+      const pick = el('p', 'fit-compare-recommended');
+      pick.append(doc.createTextNode('Recommended size: '), el('strong', null, size));
+      nodes.push(pick);
+    } else {
+      const pick = el('p', 'fit-compare-closest');
+      pick.append(doc.createTextNode('Closest size: '), el('strong', null, size), doc.createTextNode(' — not a recommendation'));
+      nodes.push(pick);
+    }
     nodes.push(el('p', 'fit-compare-reference', `Compared with: ${referenceWords(c.reference)}.`));
     nodes.push(el('p', null, c.summary));
+    if ((c.tradeoffs || []).length) nodes.push(tradeoffList(c, size, recommended));
     if (compared.length) {
       nodes.push(el('p', 'fit-compare-differs', `Size ${size} against your reference: ${compared.map((d) => `${nameOf(d, row.dimensions[d])} ${meaning(row.dimensions[d])}`).join(', ')}.`));
       if (verdict) nodes.push(fitScale(compared, row));
@@ -296,7 +342,7 @@
     /* the summary (and, when recommended, the size and its differences),
        then the size being considered, then the caveats */
     const rest = d.verdict ? [limits(d.rest)] : d.rest.map((t) => el('p', null, t));
-    put(compare, [], [...d.lead, ...nodes, ...rest, ...d.extra], d.verdict === 'no-recommendation' ? NO_SIZE : 'Compared with your reference', d.verdict);
+    put(compare, [], [...d.lead, ...nodes, ...rest, ...d.extra], d.verdict ? TITLE[d.outcome] : 'Compared with your reference', d.verdict);
   }
 
   /* the caveats, as a list a shopper can scan */

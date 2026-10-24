@@ -122,15 +122,18 @@ const MEASURES = { body: 'body', garment: 'finished-garment' };
 const BODY_DIMENSIONS = {
   chest: { kinds: ['range', 'point'], methods: ['body-circumference'] }
 };
+/* "not-stated": the brand publishes the value but doesn't say how it
+   was taken — a column called "chest" or "chest_circumference" with no
+   instruction. Kept as published, and never compared (engine.js). */
 const GARMENT_DIMENSIONS = {
-  chestWidth: { methods: ['flat-width-armpit-to-armpit', 'garment-circumference'] },
-  bodyLength: { methods: ['center-back-to-hem', 'high-point-shoulder-to-hem'] },
-  sleeveLength: { methods: ['center-back-to-cuff', 'shoulder-seam-to-cuff'] },
+  chestWidth: { methods: ['flat-width-armpit-to-armpit', 'garment-circumference', 'not-stated'] },
+  bodyLength: { methods: ['center-back-to-hem', 'high-point-shoulder-to-hem', 'not-stated'] },
+  sleeveLength: { methods: ['center-back-to-cuff', 'shoulder-seam-to-cuff', 'not-stated'] },
   /* "broadest-part-of-shoulders" is UNIQLO's own instruction ("the length
      between the broadest part of the shoulders"), kept apart from
      seam to seam when the product's table doesn't say seam to seam:
      a drop-shoulder hoodie's broadest point need not be its seams */
-  shoulderWidth: { methods: ['seam-to-seam', 'broadest-part-of-shoulders'] }
+  shoulderWidth: { methods: ['seam-to-seam', 'broadest-part-of-shoulders', 'not-stated'] }
 };
 
 /* How a record's values reached Fynd (`capture.how`). Absent reads as
