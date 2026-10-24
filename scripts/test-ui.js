@@ -3081,6 +3081,29 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
       ['Sleeve length', '0.0 cm', 'the same as your reference']
     ]);
     await page.close();
+
+    /* the same fixture with its chest published all the way around: the
+       reference's flat width is doubled (estimated), and the difference
+       is named a circumference, never a width */
+    const around = JSON.parse(JSON.stringify(fixture));
+    around.charts.garment.dimensions.chestWidth = { method: 'garment-circumference', methodSource: fixture.charts.garment.dimensions.chestWidth.methodSource };
+    Object.values(around.charts.garment.sizes).forEach((row) => { row.chestWidth = { value: row.chestWidth.value * 2, text: String(row.chestWidth.value * 2) }; });
+    assert.deepStrictEqual(require('../api/_sizing/schema').validate(around), []);
+    const aroundAnswer = sizingEngine.compare(fixtureProfile, around);
+    /* a circumference difference is scored with the chest's flat tolerance, so S (2 cm under) beats M (4 cm over) */
+    assert.strictEqual(aroundAnswer.recommended, 'S');
+    const aroundPage = await openPage('index.html', { viewport: { width: 1280, height: 900 } });
+    await aroundPage.route('**/api/size-recommendation?product=*', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ comparison: aroundAnswer }) }));
+    await aroundPage.waitForSelector('#fit-browser[data-brands="ready"]', { timeout: 10000 });
+    await aroundPage.evaluate(() => { document.getElementById('fit-link-alt').open = true; });
+    await aroundPage.fill('#fit-url', 'https://www.uniqlo.com/us/en/products/E475378-000/00');
+    await aroundPage.press('#fit-url', 'Enter');
+    await aroundPage.waitForSelector('#fit-compare .fit-compare-differences');
+    assert.match(await aroundPage.textContent('#fit-compare .fit-compare-differs'), /^Size S against your reference: chest circumference 2 cm narrower, /);
+    await aroundPage.click('#fit-compare .fit-compare-differences > summary');
+    const chestRow = await aroundPage.$eval('#fit-compare .fit-compare-differences tbody tr[data-dim="chestWidth"]', (tr) => [...tr.children].map((c) => c.textContent));
+    assert.deepStrictEqual(chestRow, ['Chest circumference', '\u22122.0 cm', '2 cm narrower (estimated)']);
+    await aroundPage.close();
     accountState = accountReply({});
     fitProfileState = fitProfileReply(null);
   });

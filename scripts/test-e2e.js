@@ -2021,6 +2021,26 @@ const linkFromInbox = (pattern) => {
       assert.strictEqual(r.shown, tenth === 0 ? '0.0 in' : `${tenth > 0 ? '+' : '\u2212'}${Math.abs(tenth).toFixed(1)} in`);
     });
     assert.ok(!/UNIQLO|E475377|Sweatshirt/.test(page.url()), 'nothing from the profile in the address');
+    /* real records, a real nonzero difference: the Sweatshirt in M beside the hoodie's L, on the product page's Size Guide */
+    const mContext = await openContext();
+    const mPage = await signedIn(mContext, 'kofi@e2e.test');
+    await fitProfiles.saveGuide((await users.byEmail('kofi@e2e.test')).id, { garments: { sweatshirts: { favorite: 'perfect', anchor: { brand: 'UNIQLO', size: 'M', product: { url: 'https://www.uniqlo.com/us/en/products/E475377-000/00' } } } } });
+    await open(mPage, 'product.html?brand=uniqlo&item=E475378-000&size=L');
+    await mPage.waitForSelector('#product[data-state="ready"]');
+    await mPage.click('#pdp-size-guide');
+    await mPage.waitForSelector('#pdp-guide-compare .fit-compare-size');
+    assert.strictEqual((await mPage.textContent('#pdp-guide-compare .fit-compare-recommended')).trim(), 'Recommended size: M');
+    const lTable = await mPage.$$eval('#pdp-guide-compare .fit-compare-size tbody tr', (trs) => trs.map((tr) => [...tr.children].map((c) => c.textContent)));
+    assert.deepStrictEqual(lTable, [
+      ['Chest', '23½ in', '25 in', '1½ in wider'],
+      ['Body length', '26¾ in', '28 in', '1¼ in longer'],
+      ['Shoulders', '20 in', '20¾ in', '¾ in wider'],
+      ['Sleeves', '34¾ in', '35¾ in', '1 in longer']
+    ], 'UNIQLO’s published L beside its published M');
+    await mPage.click('#pdp-guide-sizes .pdp-size[data-size="S"]');
+    const sChest = await mPage.$eval('#pdp-guide-compare .fit-compare-size tbody tr', (tr) => [...tr.children].map((c) => c.textContent));
+    assert.deepStrictEqual(sChest, ['Chest', '23½ in', '22¼ in', '1¼ in narrower']);
+    await mContext.close();
     /* no reference saved: no size, and why */
     const bareContext = await openContext();
     const bare = await signedIn(bareContext, 'jude@e2e.test');

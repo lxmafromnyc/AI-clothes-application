@@ -108,6 +108,9 @@
     if (tenth === 0) return `0.0 ${unit}`;
     return `${tenth > 0 ? '+' : '\u2212'}${Math.abs(tenth).toFixed(1)} ${unit}`;
   }
+  /* what one compared difference measures: a chest taken around the
+     body is a circumference, not a width (twice as far for the same cut) */
+  const nameOf = (d, x) => (d === 'chestWidth' && x.measurement && x.measurement.method === 'garment-circumference' ? 'chest circumference' : DIM_NAME[d]);
   /* the engine's words for one difference, without its dimension name */
   const meaning = (x) => x.words.replace(/^[^:]+: /, '');
 
@@ -132,7 +135,7 @@
     nodes.push(el('p', 'fit-compare-reference', `Compared with: ${referenceWords(c.reference)}.`));
     nodes.push(el('p', null, c.summary));
     if (compared.length) {
-      nodes.push(el('p', 'fit-compare-differs', `Size ${size} against your reference: ${compared.map((d) => `${DIM_NAME[d]} ${meaning(row.dimensions[d])}`).join(', ')}.`));
+      nodes.push(el('p', 'fit-compare-differs', `Size ${size} against your reference: ${compared.map((d) => `${nameOf(d, row.dimensions[d])} ${meaning(row.dimensions[d])}`).join(', ')}.`));
       const box = el('details', 'size-chart-details fit-compare-differences');
       box.append(el('summary', null, 'Measurement differences'));
       box.append(el('p', 'fit-compare-size-note', `Size ${size} minus your reference, in ${c.unit}: positive is larger, negative is smaller.`));
@@ -145,7 +148,7 @@
       compared.forEach((d) => {
         const x = row.dimensions[d];
         const tr = el('tr');
-        const th = el('th', null, DIM_NAME[d].replace(/^./, (ch) => ch.toUpperCase()));
+        const th = el('th', null, nameOf(d, x).replace(/^./, (ch) => ch.toUpperCase()));
         th.scope = 'row';
         const diff = el('td', null, signed(x.difference, c.unit));
         diff.dataset.label = 'Difference';

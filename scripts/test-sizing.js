@@ -1196,6 +1196,16 @@ await test('a reference product\'s measurements are given whole and checked the 
   assert.strictEqual(c.recommended, null, 'no chest, no recommendation');
 });
 
+await test('a size judged against the shopper\'s own measurements is "shopper-measured", never "verified", even on a checked product', () => {
+  const r = engine.recommend(hoodieRef({ measurements: REF_CM }), ILLUSTRATIVE());
+  assert.strictEqual(r.method, 'reference-garment');
+  const classed = r.fitBySize.flatMap((f) => Object.values(f.dimensions)).filter((x) => x.class);
+  assert.ok(classed.length, 'something was judged');
+  classed.forEach((x) => assert.ok(['shopper-measured', 'estimated'].includes(x.measurements), x.measurements));
+  assert.ok(classed.some((x) => x.measurements === 'shopper-measured'));
+  /* (verified, against checked charts only: test-size-eval's checkFitBySize) */
+});
+
 await test('the extension\'s reference data calls a product verified only when every garment measurement is', () => {
   const builder = require('./build-fit-references.js');
   const live = sizing.byId(UQ_HOODIE);
@@ -1209,6 +1219,37 @@ await test('the extension\'s reference data calls a product verified only when e
     delete dim.status;
   }
   assert.strictEqual(product().verification, 'verified');
+});
+
+await test('real checked records: UNIQLO\'s Sweatshirt in M against every size of its Sweat Pullover Hoodie — zero only at M, signed elsewhere, from the published text', () => {
+  /* The two records hold identical Product Size tables (the Sweatshirt's
+     own note says so, as published), so the matching size differs by
+     nothing; every other size differs by what UNIQLO publishes. */
+  const sweat = sizing.byId('uniqlo-e475377-sweatshirt-us');
+  const hood = sizing.byId(UQ_HOODIE);
+  hood.sizes.forEach((size) => DIMS4.forEach((d) => assert.strictEqual(sweat.charts.garment.sizes[size][d].text, hood.charts.garment.sizes[size][d].text, `${size} ${d}: as recorded`)));
+  const r = engine.compare(uqSweatshirtRef('M'), hood);
+  assert.deepStrictEqual([r.status, r.recommended, r.unit], ['ok', 'M', 'in']);
+  const diffs = (size) => DIMS4.map((d) => r.sizes.find((s) => s.size === size).dimensions[d].difference);
+  assert.deepStrictEqual(diffs('M'), [0, 0, 0, 0]);
+  /* L: chest 25 vs 23 ½, length 28 vs 26 ¾, shoulders 20 ¾ vs 20, sleeves 35 ¾ vs 34 ¾ */
+  assert.deepStrictEqual(diffs('L'), [1.5, 1.25, 0.75, 1]);
+  /* S: chest 22 ¼, length 25 ½, shoulders 19 ¼, sleeves 33 ¾ */
+  assert.deepStrictEqual(diffs('S'), [-1.25, -1.25, -0.75, -1]);
+  assert.strictEqual(r.sizes.find((s) => s.size === 'L').dimensions.chestWidth.words, 'Chest: 1½ in wider');
+  assert.strictEqual(r.sizes.find((s) => s.size === 'S').dimensions.bodyLength.words, 'Body length: 1¼ in shorter');
+  /* every size: the hoodie's own value minus the sweatshirt's M, in order */
+  const ranked = r.sizes.map((s) => s.dimensions.chestWidth.difference);
+  assert.deepStrictEqual(ranked, ranked.slice().sort((a, b) => a - b), 'chest differences rise with the size');
+  /* the same, shown in centimetres: converted once, sign kept */
+  const cm = engine.compare(uqSweatshirtRef('M'), hood, { unit: 'cm' });
+  assert.strictEqual(cm.unit, 'cm');
+  assert.strictEqual(cm.sizes.find((s) => s.size === 'L').dimensions.chestWidth.difference, 3.81);
+  const sCm = cm.sizes.find((s) => s.size === 'S').dimensions.chestWidth.difference;
+  assert.ok(sCm < 0 && Math.abs(sCm - (-1.25 * 2.54)) <= 0.005, `S chest in cm: ${sCm}`);
+  assert.strictEqual(cm.recommended, 'M');
+  /* a reference in L moves the recommendation to L: the label matched by measurement, not copied */
+  assert.strictEqual(engine.compare(uqSweatshirtRef('L'), hood).recommended, 'L');
 });
 
 await test('through /api/size-recommendation, a checked comparison carries its signed differences and each measurement\'s provenance', async () => {

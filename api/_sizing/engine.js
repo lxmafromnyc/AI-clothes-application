@@ -720,9 +720,12 @@ function assessSizes(record, method, shopper, scored) {
   const garmentDims = record.charts.garment ? record.charts.garment.dimensions : {};
   const flat = garmentDims.chestWidth && garmentDims.chestWidth.method === 'flat-width-armpit-to-armpit';
   const unclassed = (reason, extra) => Object.assign({ class: null, measurements: 'unknown', reason }, extra || {});
-  /* what a class rests on, given the records it read and what was worked out */
+  /* what a class rests on, given the records it read and what was worked
+     out: a garment the shopper measured themselves is "shopper-measured",
+     never verified, however well the product's own side is checked */
   const basisOf = (records, estimated) => (estimated.length ? 'estimated'
-    : records.filter((r) => !isShopperMeasured(r)).every((r) => sizingSchema.isVerified(r)) ? 'verified' : 'unverified');
+    : !records.filter((r) => !isShopperMeasured(r)).every((r) => sizingSchema.isVerified(r)) ? 'unverified'
+      : records.some(isShopperMeasured) ? SHOPPER_MEASURED : 'verified');
   const compare = method === 'reference-garment' ? comparable(record, shopper) : null;
 
   const forSize = (size) => {
