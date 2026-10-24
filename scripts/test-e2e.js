@@ -225,6 +225,7 @@ charts.setTransport(async (url) => {
 
 /* the UNIQLO pair, marked checked in memory for a test of the comparison on their real numbers */
 const { asChecked, UQ_PAIR } = require('./fixtures/as-checked');
+const Schema = require('../assets/fit-profile-schema.js');
 const HANDLERS = {
   '/api/auth': require('../api/auth'),
   '/api/account': require('../api/account'),
@@ -1326,14 +1327,13 @@ const linkFromInbox = (pattern) => {
     assert.strictEqual((await page.textContent('#find-fit-title')).trim(), 'Find the size that fits like your favorite clothes.');
     assert.match(await page.textContent('#find-fit .ff-lead'), /suggests a size only when the measurements support one/);
     assert.deepStrictEqual(await page.$$eval('.ff-step-title', (hs) => hs.map((h) => h.textContent)), ['A garment that fits you well', 'The item you’re considering']);
-    /* signed out: how to start, never an example garment shown as theirs */
-    await page.waitForSelector('#ff-reference[data-state="signed-out"]');
-    assert.deepStrictEqual(await page.$$eval('#ff-reference .ff-add-btn', (as) => as.map((a) => [a.textContent, a.getAttribute('href')])), [
-      ['Add a hoodie', 'fit-profile.html?for=hoodies&from=find-fit'],
-      ['Add a sweatshirt', 'fit-profile.html?for=sweatshirts&from=find-fit'],
-      ['Add a T-shirt', 'fit-profile.html?for=tshirts&from=find-fit']
-    ]);
+    /* signed out: a garment described right here, no account needed — every field empty, never an example shown as theirs */
+    await page.waitForSelector('#ff-reference[data-state="signed-out"] .ffr-form');
+    assert.match(await page.textContent('#ff-reference'), /Describe a garment you own that fits the way you like\. No account needed\./);
+    assert.deepStrictEqual(await page.$$eval('#ff-reference input[type="text"]', (is) => is.map((i) => i.value)), ['', '', '', '', '', ''], 'nothing filled in');
+    assert.strictEqual(await page.inputValue('#ffr-size'), '', 'no size chosen for them');
     assert.strictEqual(await page.$('#ff-reference .ff-ref'), null);
+    assert.strictEqual(await page.isHidden('#ff-save'), true, 'no offer to save before anything is compared');
     await page.waitForSelector('#fit-browser[data-brands="ready"] .fit-brand-choice[data-brand="uniqlo"]');
     assert.strictEqual(await page.isVisible('#fit-url'), true, 'the link box is in view');
     assert.strictEqual(await page.getAttribute('#fit-url', 'placeholder'), 'https://… a product page');
@@ -2027,60 +2027,226 @@ const linkFromInbox = (pattern) => {
     await out.fill('#fit-url', 'https://www.uniqlo.com/us/en/products/E475378-000/00');
     await out.press('#fit-url', 'Enter');
     await out.waitForSelector('#fit-compare:not([hidden])');
-    assert.match(await out.textContent('#fit-compare'), /With a reference garment saved on your fit profile, Fynd can compare every size with it/);
+    await out.waitForSelector('#fit-compare[data-verdict="sign-in"]');
+    assert.match(await out.textContent('#fit-compare'), /Describe a garment that fits you in step 1 — no account needed/);
+    assert.strictEqual(await out.getAttribute('#fit-compare a', 'href'), '#ff-step-reference', 'the form on the page, not another page');
     await context.close();
   }));
 
-  await test('Find Fit, first time: no reference yet → Add a hoodie → saved on the fit profile → back to Find Fit, where it is shown as saved and can be changed; a product picked from UNIQLO is compared, and while the pair is pending review the result says so', async () => {
-    const context = await openContext();
-    const page = await signedIn(context, 'tova@e2e.test');
-    await open(page, 'index.html');
-    await page.waitForSelector('#ff-reference[data-state="none"]');
-    assert.match(await page.textContent('#ff-reference'), /You haven’t saved a garment to compare against yet\./);
-    assert.strictEqual(await page.$('#ff-reference .ff-ref'), null, 'no example garment shown as theirs');
-    /* step 1: into the fit profile's own hoodie card, and back */
-    await page.click('#ff-reference .ff-add-btn:has-text("Add a hoodie")');
-    await page.waitForURL(/fit-profile\.html\?for=hoodies&from=find-fit$/);
-    await page.waitForSelector('#card-hoodies');
-    assert.strictEqual(await page.textContent('#profile-return-link'), 'Back to Find Fit');
-    await page.check('input[name="g-hoodies-favorite"][value="perfect"]');
-    await page.selectOption('#g-hoodies-brand', 'Carhartt');
-    await page.selectOption('#g-hoodies-size', 'L');
-    await page.click('#card-hoodies .garment-more-summary');
-    await page.check('input[name="g-hoodies-unit"][value="cm"]');
-    await page.fill('#g-hoodies-m-chestWidth', '58');
-    await page.fill('#g-hoodies-m-bodyLength', '68');
-    await page.fill('#g-hoodies-m-shoulderWidth', '50');
-    await page.fill('#g-hoodies-m-sleeveLength', '62');
-    await saveAndWait(page);
-    assert.strictEqual(await page.textContent('#profile-return-text'), 'Saved. Find Fit will compare items with it.');
-    assert.strictEqual(await page.getAttribute('#profile-return-link', 'href'), 'index.html');
-    await page.click('#profile-return-link');
-    await page.waitForURL(/index\.html$/);
-    /* the saved reference, as saved, with a way to change it */
-    await page.waitForSelector('#ff-reference[data-state="saved"] .ff-ref[data-kind="hoodies"]');
-    assert.strictEqual(await page.textContent('.ff-ref[data-kind="hoodies"] .ff-ref-name'), 'Carhartt · size L');
-    assert.match(await page.textContent('.ff-ref[data-kind="hoodies"]'), /Measured: .*58 cm/);
-    assert.strictEqual(await page.getAttribute('.ff-ref[data-kind="hoodies"] .ff-ref-change', 'href'), 'fit-profile.html?for=hoodies&from=find-fit');
-    assert.match(await page.textContent('#ff-reference'), /Add another: sweatshirt · T-shirt/);
-    /* step 2: a product picked from the brand's list becomes the item */
-    await page.waitForSelector('#fit-browser[data-brands="ready"]');
-    await page.click('.fit-brand-choice[data-brand="uniqlo"]');
-    await page.waitForSelector('#fit-brand-dialog[open] .fit-product[data-code="E475378-000"]');
-    await page.click('.fit-product[data-code="E475378-000"]');
-    await page.waitForSelector('#ff-picked:not([hidden])');
-    assert.strictEqual(await page.inputValue('#fit-url'), 'https://www.uniqlo.com/us/en/products/E475378-000/00');
-    assert.strictEqual(await page.isHidden('#fit-result'), true, 'nothing compared until asked');
-    /* Compare fit: the real endpoint, the real records — pending review, so no size */
+  /* a garment described on Find Fit, in the form's own fields */
+  const describe = async (page, g) => {
+    await page.waitForSelector('#ff-reference .ffr-form');
+    await page.selectOption('#ffr-type', g.type);
+    await page.selectOption('#ffr-size', g.size);
+    await page.fill('#ffr-brand', g.brand);
+    if (g.product) await page.fill('#ffr-product', g.product);
+    if (g.measurements) {
+      await page.click('.ffr-measure > summary');
+      await page.selectOption('#ffr-unit', g.measurements.unit);
+      for (const [k, v] of Object.entries(g.measurements)) if (k !== 'unit') await page.fill(`#ffr-m-${k}`, String(v));
+    }
+    await page.click('#ffr-use');
+    await page.waitForSelector('#ff-reference[data-visit="set"] .ff-ref--visit');
+  };
+  const compareItem = async (page, url) => {
+    await page.fill('#fit-url', url);
     await page.click('#fit-url-submit');
-    await page.waitForSelector('#fit-compare[data-verdict="unsupported"]');
-    assert.strictEqual(await page.textContent('#fit-result-title'), 'UNIQLO · Sweat Pullover Hoodie');
+    await page.waitForSelector('#fit-compare:not([hidden]):not([data-verdict="loading"]) .fit-compare-title');
+  };
+  const CARHARTT = { type: 'hoodies', size: 'L', brand: 'Carhartt', measurements: { unit: 'cm', chestWidth: 58, bodyLength: 68, shoulderWidth: 50, sleeveLength: 62 } };
+
+  await test('a guest describes a garment without signing in, tries a real item, and gets the honest answer — then, only then, the offer to save; "Not now" leaves the result, and the garment stays for the visit', async () => {
+    const context = await openContext();
+    const page = await context.newPage();
+    await open(page, 'index.html');
+    await page.waitForSelector('#ff-reference[data-state="signed-out"]');
+    /* the form says what's wrong, in the profile's own words, and keeps nothing until it reads */
+    await page.click('#ffr-use');
+    assert.strictEqual(await page.textContent('#ffr-brand-error'), 'Enter the brand on its label.');
+    assert.strictEqual(await page.getAttribute('#ffr-brand', 'aria-invalid'), 'true');
+    await page.selectOption('#ffr-size', 'L');
+    await page.fill('#ffr-brand', 'Carhartt');
+    await page.click('.ffr-measure > summary');
+    await page.fill('#ffr-m-chestWidth', '120');
+    await page.click('#ffr-use');
+    await page.waitForSelector('#ffr-m-chestWidth-error.show');
+    assert.match(await page.textContent('#ffr-m-chestWidth-error'), /Chest, flat should be between .* Measure it laid flat, armpit to armpit/);
+    assert.strictEqual(await page.$('#ff-reference .ff-ref--visit'), null, 'nothing kept while a value is wrong');
+    await page.fill('#ffr-m-chestWidth', '');
+    await page.reload();
+    await describe(page, CARHARTT);
+    assert.match(await page.textContent('.ff-ref--visit'), /Hoodie · this visit[\s\S]*Carhartt · size L[\s\S]*Measured: Chest, flat 58 cm[\s\S]*Not saved — kept in this tab until you close it\./);
+    assert.strictEqual(await page.isHidden('#ff-save'), true, 'still no offer: nothing compared yet');
+    /* a real item, the real records: UNIQLO's pair is pending review, so no size — and said */
+    await compareItem(page, 'https://www.uniqlo.com/us/en/products/E475378-000/00');
+    assert.strictEqual(await page.getAttribute('#fit-compare', 'data-verdict'), 'unsupported');
     assert.strictEqual(await page.textContent('#fit-compare .fit-compare-title'), 'Fynd can’t compare this item yet');
-    assert.strictEqual(await page.$$eval('#fit-compare .fit-compare-recommended, #fit-compare .ff-scale, #fit-compare table', (ns) => ns.length), 0);
-    /* editing the link drops the pick */
-    await page.fill('#fit-url', 'https://shop.example.test/products/garment-tee');
-    assert.strictEqual(await page.isHidden('#ff-picked'), true);
-    assert.ok(!/Carhartt|chestWidth|58/.test(page.url()), 'nothing from the profile in the address');
+    assert.strictEqual(await page.$$eval('#fit-compare .fit-compare-recommended, #fit-compare .fit-compare-closest', (ns) => ns.length), 0, 'no size invented for a guest');
+    /* after the result: the offer, beneath it */
+    await page.waitForSelector('#ff-save[data-state="offer"]');
+    assert.strictEqual(await page.textContent('#ff-save .ff-save-title'), 'Save this garment for next time?');
+    assert.match(await page.textContent('#ff-save'), /Sign in to save it to your free fit profile, so you can compare future items against it\.[\s\S]*Only your account can read your fit profile\./);
+    assert.deepStrictEqual(await page.$$eval('#ff-save button', (bs) => bs.map((b) => b.textContent)), ['Sign in to save', 'Not now']);
+    assert.ok(await page.$eval('#fit-compare', (v) => Boolean(v.compareDocumentPosition(document.getElementById('ff-save')) & Node.DOCUMENT_POSITION_FOLLOWING)), 'after the result, never in its place');
+    const before = await page.textContent('#fit-compare');
+    await page.click('#ff-save .ff-save-dismiss');
+    assert.strictEqual(await page.isHidden('#ff-save'), true);
+    assert.strictEqual(await page.textContent('#fit-compare'), before, 'the result is still there, unchanged');
+    assert.strictEqual(await page.isVisible('#fit-compare'), true);
+    /* nothing about the garment in any address, and nothing stored for a guest */
+    assert.ok(!/Carhartt|chestWidth|58/.test(page.url()));
+    assert.ok(!apiRequests.some((r) => /Carhartt|chestWidth/.test(r.search || '')));
+    /* the garment stays for the visit; turned down once, the offer isn't repeated for it */
+    await page.reload();
+    await page.waitForSelector('#ff-reference .ff-ref--visit');
+    await compareItem(page, 'https://www.uniqlo.com/us/en/products/E475378-000/00');
+    assert.strictEqual(await page.isHidden('#ff-save'), true, 'not offered again for the same garment');
+    /* removed: back to an empty form */
+    await page.click('.ff-ref-remove');
+    await page.waitForSelector('#ff-reference[data-visit="empty"] .ffr-form');
+    await context.close();
+  });
+
+  await test('a guest\'s garment is compared through the real engine (UNIQLO pair checked in memory): sent in the body, never the address — then signing in keeps it and the result, and saving waits for an explicit yes', () => asChecked(UQ_PAIR, async () => {
+    const context = await openContext();
+    const page = await context.newPage();
+    const posted = [];
+    page.on('request', (r) => { if (r.method() === 'POST' && /size-recommendation/.test(r.url())) posted.push({ url: r.url(), body: r.postDataJSON() }); });
+    await open(page, 'index.html');
+    await describe(page, { type: 'sweatshirts', size: 'M', brand: 'UNIQLO', product: 'https://www.uniqlo.com/us/en/products/E475377-000/00?colorDisplayCode=09' });
+    await compareItem(page, 'https://www.uniqlo.com/us/en/products/E475378-000/00');
+    const expected = require('../api/_sizing/engine').compare(
+      Object.assign(Schema.empty(), { garments: { sweatshirts: Object.assign(Schema.emptyGarment('sweatshirts'), { favorite: 'perfect', anchor: { brand: 'UNIQLO', size: 'M', product: { name: null, url: 'https://www.uniqlo.com/us/en/products/E475377-000/00' } } }) } }),
+      require('../api/_sizing/records').byId('uniqlo-e475378-sweat-pullover-hoodie-us'));
+    assert.strictEqual(expected.status, 'ok');
+    assert.strictEqual(await page.getAttribute('#fit-compare', 'data-verdict'), 'recommended');
+    assert.strictEqual((await page.textContent('#fit-compare .fit-compare-recommended')).trim(), `Recommended size: ${expected.recommended}`, 'the engine\'s own answer');
+    /* the one request that carried the garment: a POST, the garment in its body, only the product id in the address */
+    assert.strictEqual(posted.length, 1);
+    assert.match(posted[0].url, /\/api\/size-recommendation\?product=uniqlo-e475378-sweat-pullover-hoodie-us&compare=1$/);
+    assert.deepStrictEqual(posted[0].body.reference.type, 'sweatshirts');
+    assert.strictEqual(posted[0].body.reference.garment.anchor.product.url, 'https://www.uniqlo.com/us/en/products/E475377-000/00', 'the link kept without its tracking');
+    const result = await page.textContent('#fit-compare');
+    /* sign in to save: an account made right here, the page and the result kept */
+    await page.waitForSelector('#ff-save[data-state="offer"]');
+    await page.click('#ff-save .ff-save-signin');
+    await page.waitForSelector('#ff-save[data-state="auth"]');
+    await page.click('#ff-save .ff-save-mode');
+    await page.fill('#ffs-name', 'Vera');
+    await page.fill('#ffs-email', 'vera@e2e.test');
+    await page.fill('#ffs-password', PASSWORD);
+    await page.fill('#ffs-confirm', PASSWORD);
+    await page.click('#ff-save .ff-save-submit');
+    await page.waitForSelector('#ff-save[data-state="confirm"]');
+    assert.ok(/index\.html$/.test(page.url()), 'still on Find Fit');
+    assert.strictEqual(await page.textContent('#fit-compare'), result, 'the result untouched');
+    assert.match(await page.textContent('#ff-save'), /Save your UNIQLO sweatshirt in size M to your free fit profile, so you can compare future items against it\./);
+    /* signed in, and still nothing saved: saving is its own yes */
+    assert.strictEqual(await savedProfile('vera@e2e.test'), null, 'signing in saved nothing');
+    assert.match(await page.textContent('.ff-ref--visit'), /UNIQLO · size M/, 'the garment kept across signing in');
+    await page.click('#ff-save .ff-save-confirm');
+    await page.waitForSelector('#ff-save[data-state="saved"]');
+    const stored = (await savedProfile('vera@e2e.test')).garments.sweatshirts;
+    assert.deepStrictEqual([stored.favorite, stored.anchor.brand, stored.anchor.size, stored.anchor.product.url], ['perfect', 'UNIQLO', 'M', 'https://www.uniqlo.com/us/en/products/E475377-000/00']);
+    /* now the saved one is the reference, and the visit's is cleared */
+    await page.waitForSelector('#ff-reference[data-state="saved"] .ff-ref[data-kind="sweatshirts"]');
+    assert.strictEqual(await page.evaluate(() => sessionStorage.getItem('fynd:find-fit:reference')), null);
+    await context.close();
+  }));
+
+  await test('a guest\'s garment with only a brand and a size: Fynd says it compares measurements, not labels — no size — and offers to save it all the same', () => asChecked(UQ_PAIR, async () => {
+    const context = await openContext();
+    const page = await context.newPage();
+    await open(page, 'index.html');
+    await describe(page, { type: 'hoodies', size: 'L', brand: 'Champion' });
+    await compareItem(page, 'https://www.uniqlo.com/us/en/products/E475378-000/00');
+    assert.strictEqual(await page.getAttribute('#fit-compare', 'data-verdict'), 'needs-measurements');
+    assert.strictEqual(await page.textContent('#fit-compare .fit-compare-title'), 'Fynd needs this garment’s measurements');
+    assert.match(await page.textContent('#fit-compare'), /Fynd compares measurements, not size labels/);
+    assert.deepStrictEqual(await page.$$eval('#fit-compare a', (as) => as.map((a) => a.getAttribute('href'))), ['#ff-step-reference']);
+    assert.strictEqual(await page.$$eval('#fit-compare .fit-compare-recommended, #fit-compare .fit-compare-closest', (ns) => ns.length), 0);
+    await page.waitForSelector('#ff-save[data-state="offer"]');
+    await context.close();
+  }));
+
+  await test('signing in to an account that already holds a garment of that kind: the offer says it would replace it, and "Not now" saves nothing', async () => {
+    const context = await openContext();
+    const setup = await signedIn(context, 'wren@e2e.test');
+    await fitProfiles.saveGuide((await users.byEmail('wren@e2e.test')).id, { garments: { hoodies: { favorite: 'perfect', anchor: { brand: 'Nike', size: 'M' } } } });
+    await setup.evaluate(() => window.Account.logout());
+    const page = await context.newPage();
+    await open(page, 'index.html');
+    await describe(page, CARHARTT);
+    await compareItem(page, 'https://www.uniqlo.com/us/en/products/E475378-000/00');
+    await page.waitForSelector('#ff-save[data-state="offer"]');
+    await page.click('#ff-save .ff-save-signin');
+    await page.fill('#ffs-email', 'wren@e2e.test');
+    await page.fill('#ffs-password', 'wrong-password-here');
+    await page.click('#ff-save .ff-save-submit');
+    await page.waitForSelector('#ff-save .form-error.show');
+    assert.strictEqual(await page.getAttribute('#ff-save', 'data-state'), 'auth', 'a wrong password keeps the form');
+    await page.fill('#ffs-password', PASSWORD);
+    await page.click('#ff-save .ff-save-submit');
+    await page.waitForSelector('#ff-save[data-state="confirm"]');
+    assert.match(await page.textContent('#ff-save .ff-save-replace'), /This replaces the hoodie saved on your fit profile \(Nike, M\)\./);
+    await page.click('#ff-save .ff-save-dismiss');
+    assert.strictEqual(await page.isHidden('#ff-save'), true);
+    assert.strictEqual(await page.getAttribute('#fit-compare', 'data-verdict'), 'unsupported', 'the result stays');
+    const stored = (await savedProfile('wren@e2e.test')).garments.hoodies;
+    assert.deepStrictEqual([stored.anchor.brand, stored.anchor.size], ['Nike', 'M'], 'nothing replaced without a yes');
+    await context.close();
+  });
+
+  await test('signed in with a saved reference: Find Fit uses it as before — no form, no offer to save', async () => {
+    const context = await openContext();
+    const page = await signedIn(context, 'xia@e2e.test');
+    await fitProfiles.saveGuide((await users.byEmail('xia@e2e.test')).id, { garments: { hoodies: { favorite: 'perfect', anchor: { brand: 'Carhartt', size: 'L', measurements: { unit: 'cm', chestWidth: 58, bodyLength: 68, shoulderWidth: 50, sleeveLength: 62 } } } } });
+    await open(page, 'index.html');
+    await page.waitForSelector('#ff-reference[data-state="saved"] .ff-ref[data-kind="hoodies"]');
+    assert.strictEqual(await page.$('#ff-reference .ffr-form'), null);
+    assert.strictEqual(await page.getAttribute('.ff-ref[data-kind="hoodies"] .ff-ref-change', 'href'), 'fit-profile.html?for=hoodies&from=find-fit');
+    await compareItem(page, 'https://www.uniqlo.com/us/en/products/E475378-000/00');
+    assert.strictEqual(await page.getAttribute('#fit-compare', 'data-verdict'), 'unsupported');
+    assert.strictEqual(await page.isHidden('#ff-save'), true, 'nothing to save');
+    await context.close();
+  });
+
+  await test('signed in with nothing saved: the same form; after a comparison the offer asks only for the yes, and saving keeps every other garment', async () => {
+    const context = await openContext();
+    const page = await signedIn(context, 'yael@e2e.test');
+    await fitProfiles.saveGuide((await users.byEmail('yael@e2e.test')).id, { garments: { jeans: { anchor: { brand: 'Levi’s', size: '32', length: '32' } } } });
+    await open(page, 'index.html');
+    await page.waitForSelector('#ff-reference[data-state="none"] .ffr-form');
+    await describe(page, CARHARTT);
+    await compareItem(page, 'https://www.uniqlo.com/us/en/products/E475378-000/00');
+    await page.waitForSelector('#ff-save[data-state="confirm"]');
+    assert.deepStrictEqual(await page.$$eval('#ff-save button', (bs) => bs.map((b) => b.textContent)), ['Save to my fit profile', 'Not now']);
+    await page.click('#ff-save .ff-save-confirm');
+    await page.waitForSelector('#ff-save[data-state="saved"]');
+    const stored = await savedProfile('yael@e2e.test');
+    assert.deepStrictEqual(stored.garments.hoodies.anchor.measurements, { unit: 'cm', chestWidth: 58, shoulderWidth: 50, sleeveLength: 62, bodyLength: 68 });
+    assert.strictEqual(stored.garments.jeans.anchor.brand, 'Levi’s', 'the rest of the profile kept');
+    await page.waitForSelector('#ff-reference[data-state="saved"] .ff-ref[data-kind="hoodies"]');
+    await context.close();
+  });
+
+  await test('the guest flow on a phone: the form in one column, the result and the offer fit, nothing sideways', async () => {
+    const context = await openContext();
+    const page = await context.newPage();
+    await page.setViewportSize({ width: 375, height: 760 });
+    await open(page, 'index.html');
+    await page.waitForSelector('#ff-reference .ffr-form');
+    const widths = await page.$$eval('#ff-reference .profile-input', (ns) => ns.filter((n) => n.offsetParent).map((n) => n.getBoundingClientRect().right));
+    assert.ok(widths.every((r) => r <= 375), JSON.stringify(widths));
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'no sideways scroll with the form');
+    await describe(page, CARHARTT);
+    await compareItem(page, 'https://www.uniqlo.com/us/en/products/E475378-000/00');
+    await page.waitForSelector('#ff-save[data-state="offer"]');
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'no sideways scroll with the result and the offer');
+    const buttons = await page.$$eval('#ff-save button', (bs) => bs.map((b) => { const r = b.getBoundingClientRect(); return [r.height, r.right]; }));
+    assert.ok(buttons.every(([h, r]) => h >= 44 && r <= 375), JSON.stringify(buttons));
+    await page.click('#ff-save .ff-save-signin');
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'the sign-in fields fit');
     await context.close();
   });
 
@@ -2209,7 +2375,7 @@ const linkFromInbox = (pattern) => {
     await bare.waitForSelector('#fit-compare[data-verdict="needs-reference"]');
     assert.strictEqual(await bare.textContent('#fit-compare .fit-compare-title'), 'Add a garment that fits to compare');
     assert.match(await bare.textContent('#fit-compare'), /Save a hoodie that fits you well/);
-    assert.deepStrictEqual(await bare.$$eval('#fit-compare a', (as) => as.map((a) => a.getAttribute('href'))), ['fit-profile.html?from=find-fit'], 'the one action that helps');
+    assert.deepStrictEqual(await bare.$$eval('#fit-compare a', (as) => as.map((a) => a.getAttribute('href'))), ['#ff-step-reference'], 'the one action that helps: the form in step 1');
     assert.strictEqual(await bare.$$eval('#fit-compare .fit-compare-recommended, #fit-compare .fit-compare-differences', (ns) => ns.length), 0);
     await bareContext.close();
     await context.close();

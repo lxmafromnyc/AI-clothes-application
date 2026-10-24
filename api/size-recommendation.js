@@ -7,6 +7,11 @@
    GET ?product=<id>&compare=1[&unit=in|cm]
                             -> { comparison }          their fit reference beside
                                                        every size (engine.compare)
+   POST ?product=<id>&compare=1[&unit=in|cm]  { reference: { type, garment } }
+                            -> { comparison }          the same, for a reference
+                                                       garment not saved: a visitor
+                                                       without an account trying Find
+                                                       Fit (see A reference not saved)
    GET ?fit=<type>&items=<JSON [{ brand, name, url }]>
                             -> { fit }                 search results, each matched
                                                        to a sizing record where one
@@ -50,7 +55,22 @@
    Whose profile
    ---------------------------------------------------------
    Always the signed-in caller's, from the session cookie; no id in the
-   query or headers is read. Signed out, every request answers 401.
+   query or headers is read. Signed out, every GET that reads a profile
+   answers 401.
+
+   ---------------------------------------------------------
+   A reference not saved
+   ---------------------------------------------------------
+   POST compares one product with a reference garment sent in the body
+   — never the address — as { type, garment }: one type's answers in the
+   fit profile's own shape, checked by its own validator
+   (FitProfileSchema.normaliseGuide), so there is no second reference
+   format. It is used for this one answer through the same engine, with
+   the same verification and method rules, and kept nowhere: no session
+   or stored profile is read or written, nothing is logged, and the
+   answer is no-store. It needs no account and changes nothing, so no
+   CSRF token either. Saving the garment is a separate, explicit step on
+   /api/fit-profile, with an account.
    Answers are no-store, and nothing about the profile or the
    suggestion is logged.
 
@@ -77,6 +97,7 @@ const ProfileSchema = require('../assets/fit-profile-schema.js');
 const charts = require('./_sizing/chart');
 const limits = require('./_ratelimit');
 const auth = require('./_auth');
+const { readJson } = require('./_body');
 
 const PRODUCT_ID = /^[a-z0-9]+(?:-[a-z0-9]+){0,12}$/;
 const MAX_ITEMS = 24;
@@ -135,11 +156,51 @@ function fitFor(profile, type, items) {
   return { type, covered, items: sized };
 }
 
+/* A comparison with a reference garment that isn't saved (see "A
+   reference not saved"): validated, used once, kept nowhere. */
+async function compareUnsaved(req, res) {
+  const query = req.query || Object.fromEntries(new URL(req.url || '/', 'http://fynd.local').searchParams);
+  if (query.compare !== '1') return res.status(405).json({ error: 'Use GET.' });
+  const product = typeof query.product === 'string' ? query.product.trim() : '';
+  if (!PRODUCT_ID.test(product)) return res.status(400).json({ error: 'That is not a product id.', reason: 'invalid-product' });
+  const record = sizing.byId(product);
+  if (!record) return res.status(404).json({ error: 'Fynd has no sizing data for that product.', reason: 'unknown-product' });
+  const address = auth.addressSubject(req);
+  const gate = await limits.check('sizing:compare-unsaved', address);
+  if (!gate.allowed) {
+    res.setHeader('Retry-After', String(gate.retryAfter || 60));
+    return res.status(429).json({ error: 'Too many comparisons at once. Try again in a few minutes.', reason: 'rate-limited' });
+  }
+  await limits.note('sizing:compare-unsaved', address);
+  const body = await readJson(req);
+  const reference = body && typeof body === 'object' && !Array.isArray(body) ? body.reference : null;
+  const type = reference && typeof reference.type === 'string' ? reference.type : '';
+  if (!ProfileSchema.SIZED_TYPES.includes(type) || !reference.garment || typeof reference.garment !== 'object' || Array.isArray(reference.garment)) {
+    return res.status(400).json({ error: 'Describe a hoodie, sweatshirt or T-shirt that fits you, to compare with.', reason: 'invalid-reference' });
+  }
+  const { answers, errors } = ProfileSchema.normaliseGuide({ garments: { [type]: reference.garment } });
+  if (errors.length || !answers.garments || !answers.garments[type]) {
+    return res.status(400).json({ error: (errors[0] && errors[0].message) || 'That garment couldn’t be read.', reason: 'invalid-reference', errors: errors.map((e) => ({ field: e.field, message: e.message })) });
+  }
+  const profile = ProfileSchema.empty();
+  profile.garments = ProfileSchema.mergeGarments({}, answers.garments);
+  const unit = query.unit === 'in' || query.unit === 'cm' ? query.unit : undefined;
+  return res.status(200).json({ comparison: engine.compare(profile, record, { unit }) });
+}
+
 async function handler(req, res) {
   if (handledPreflight(req, res)) return;
-  if (req.method !== 'GET') return res.status(405).json({ error: 'Use GET.' });
+  if (req.method !== 'GET' && req.method !== 'POST') return res.status(405).json({ error: 'Use GET.' });
 
   res.setHeader('Cache-Control', 'no-store, private');
+  if (req.method === 'POST') {
+    try {
+      return await compareUnsaved(req, res);
+    } catch (err) {
+      console.error('Size comparison failed', err && err.message);
+      return res.status(500).json({ error: 'Could not work out a comparison. Try again in a moment.' });
+    }
+  }
 
   const early = req.query || Object.fromEntries(new URL(req.url || '/', 'http://fynd.local').searchParams);
   /* the brands and products Find Fit browses: public, read-only */

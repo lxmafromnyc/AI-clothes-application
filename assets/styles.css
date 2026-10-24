@@ -1777,6 +1777,7 @@ strong { font-weight: 600; }
 .ff .ff-verdict[data-verdict="body-only"],
 .ff .ff-verdict[data-verdict="methods"],
 .ff .ff-verdict[data-verdict="needs-reference"],
+.ff .ff-verdict[data-verdict="needs-measurements"],
 .ff .ff-verdict[data-verdict="no-recommendation"],
 .ff .ff-verdict[data-verdict="closest-mismatch"],
 .ff .ff-verdict[data-verdict="error"] { border-color: var(--color-warning-line); background: var(--color-warning-soft); }
@@ -1824,4 +1825,34 @@ strong { font-weight: 600; }
   .ff .ff-result-card { padding: 18px 16px; }
   .ff .ff-verdict { padding: 14px; }
   .ff .ff-scale-row { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Find Fit: a garment described right here, and the offer to save it */
+.ff .ffr-form { display: flex; flex-direction: column; gap: 12px; }
+.ff .ffr-title { font-size: 14.5px; color: var(--color-text-2); }
+.ff .ffr-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.ff .ffr-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.ff .ffr-field .profile-input { width: 100%; min-height: 44px; }
+.ff .ffr-hint { font-size: 13px; color: var(--color-text-2); }
+.ff .ffr-error:empty { display: none; }
+.ff .ffr-measure > summary { cursor: pointer; font-size: 14px; font-weight: 500; color: var(--color-text); padding-block: 6px; }
+.ff .ffr-measure[open] > summary { margin-bottom: 6px; }
+.ff .ffr-measure > .ffr-hint { margin-bottom: 8px; }
+.ff .ffr-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 10px; }
+.ff .ffr-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.ff .ffr-actions .btn { min-height: 44px; }
+.ff .ff-ref-actions { display: flex; gap: 12px; }
+.ff .ff-ref-actions .link-btn { font-size: 13.5px; }
+.ff .ff-save { margin-top: 14px; padding: 16px 18px; border: 1px solid var(--color-border); border-radius: var(--r); background: var(--color-surface); }
+.ff .ff-save[hidden] { display: none; }
+.ff .ff-save-title { font-size: 17px; margin-bottom: 4px; color: var(--color-text); }
+.ff .ff-save p { font-size: 14.5px; color: var(--color-text-2); }
+.ff .ff-save-privacy { margin-top: 6px; font-size: 13px; }
+.ff .ff-save-replace { margin-top: 6px; color: var(--color-warning-ink); }
+.ff .ff-save-fields { display: grid; gap: 10px; margin-top: 10px; max-width: 420px; }
+.ff .ff-save-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.ff .ff-save-actions .btn { min-height: 44px; }
+.ff .ff-save-switch { margin-top: 8px; }
+@media (max-width: 520px) {
+  .ff .ffr-row, .ff .ffr-grid { grid-template-columns: 1fr; }
 }

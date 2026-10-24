@@ -115,7 +115,10 @@ const HARNESS = `<!doctype html><html lang="en"><head><meta charset="utf-8"><met
 <script>
   /* the shopper's session, as Account gives it — answers set by each test */
   window.__answer = null;
-  window.Account = { state: () => ({ signedIn: window.__signedIn !== false }), load: async () => {}, sizing: { compare: async () => window.__answer } };
+  window.Account = { state: () => ({ signedIn: window.__signedIn !== false }), load: async () => {}, sizing: {
+    compare: async () => window.__answer,
+    compareWith: async (productId, reference) => { window.__sent = { productId, reference }; return window.__answer; }
+  } };
 </script>
 <script src="/assets/size-chart.js"></script>
 <script src="/assets/fit-compare.js"></script>
@@ -258,7 +261,7 @@ async function test(name, fn) {
     const s = await seen();
     assert.deepStrictEqual([s.verdict, s.heading], ['needs-reference', 'Add a garment that fits to compare']);
     assert.match(s.text, /Save a hoodie that fits you well/);
-    assert.deepStrictEqual(s.links, [{ text: 'Add a garment on your fit profile', href: 'fit-profile.html?from=find-fit' }]);
+    assert.deepStrictEqual(s.links, [{ text: 'Describe a garment that fits', href: '#ff-step-reference' }], 'on Find Fit, the form in step 1');
     noSize(s);
   });
 
@@ -437,7 +440,30 @@ async function test(name, fn) {
     await show(C.checkedChart, answer(C.ok), { signedOut: true });
     const s = await seen();
     assert.deepStrictEqual([s.verdict, s.heading], ['sign-in', 'Add a garment that fits to compare']);
-    assert.deepStrictEqual(s.links, [{ text: 'your fit profile', href: 'fit-profile.html?from=find-fit' }]);
+    assert.deepStrictEqual(s.links, [{ text: 'Describe a garment that fits', href: '#ff-step-reference' }], 'the form on the page, no account needed');
+    noSize(s);
+  });
+
+  await test('a garment described on Find Fit and not saved: compared with it (sent to compareWith, signed in or not) — and with only a brand and size, the gap said plainly', async () => {
+    const reference = { type: 'hoodies', garment: { favorite: 'perfect', line: null, anchor: { brand: 'Carhartt', size: 'L' } } };
+    const drawWith = (got, signedOut) => page.evaluate(async ({ chart, got, reference, signedIn }) => {
+      window.__answer = got;
+      window.__signedIn = signedIn;
+      window.__sent = null;
+      await window.FitCompare.show(chart, document.getElementById('fit-compare'), null, { verdict: true, reference });
+      return window.__sent;
+    }, { chart: C.checkedChart, got, reference, signedIn: !signedOut });
+    const sent = await drawWith(answer(C.ok), true);
+    assert.deepStrictEqual(sent, { productId: C.checkedChart.productId, reference }, 'the garment went to compareWith, signed out');
+    let s = await seen();
+    assert.deepStrictEqual([s.verdict, s.recommended], ['recommended', 1]);
+    const noRef = clone(C.noReference);
+    await drawWith(answer(noRef), false);
+    s = await seen();
+    assert.deepStrictEqual([s.verdict, s.heading], ['needs-measurements', 'Fynd needs this garment’s measurements']);
+    assert.match(s.text, /Fynd compares measurements, not size labels/);
+    assert.ok(!/Save a hoodie/.test(s.text), 'not told to save what they just described');
+    assert.deepStrictEqual(s.links, [{ text: 'Add its measurements in step 1', href: '#ff-step-reference' }]);
     noSize(s);
   });
 

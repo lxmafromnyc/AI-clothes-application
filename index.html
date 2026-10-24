@@ -56,10 +56,10 @@
   <!-- Find Fit: which size of an item is most likely to fit like a
        garment the shopper already owns.
 
-         1  the reference: the garments saved on the fit profile
-            (assets/find-fit-reference.js, read with the shopper's own
-            session; set up on fit-profile.html, which offers an account
-            where there is none)
+         1  the reference: the garments saved on the fit profile (read
+            with the shopper's own session), or one described right here
+            for this visit, no account needed
+            (assets/find-fit-reference.js)
          2  the item: a pasted product link, or a product picked from the
             brand browser (assets/brand-browser.js)
          →  Compare fit: the item's sizing chart (assets/find-fit.js,
@@ -68,7 +68,10 @@
             (assets/fit-compare.js: /api/size-recommendation?product=
             &compare=1, engine.compare()). A size is shown only when the
             engine recommends one; otherwise the result says what is
-            missing. The chart itself sits under "Size chart and source". -->
+            missing. The chart itself sits under "Size chart and source".
+         →  after the result, an offer to save a garment described here
+            to a fit profile (assets/find-fit-save.js): sign in, then
+            save, each the shopper's own choice -->
   <section class="container ff-hero" id="find-fit" aria-labelledby="find-fit-title">
     <h1 id="find-fit-title">Find the size that fits like your favorite clothes.</h1>
     <p class="lead ff-lead">Choose a garment you own that fits well and the item you&rsquo;re considering. Fynd sets their measurements side by side and suggests a size only when the measurements support one.</p>
@@ -79,8 +82,8 @@
           <span class="step-num" aria-hidden="true">1</span>
           <h2 class="ff-step-title" id="ff-step-reference-title">A garment that fits you well</h2>
         </div>
-        <!-- the saved reference garments, or how to add one: drawn by
-             assets/find-fit-reference.js from the shopper's own profile -->
+        <!-- the saved reference garments, or a garment described right
+             here for this visit: drawn by assets/find-fit-reference.js -->
         <div class="ff-reference" id="ff-reference" aria-live="polite">
           <p class="ff-muted">Checking for a saved reference garment&hellip;</p>
         </div>
@@ -127,6 +130,10 @@
       <h2 class="fit-result-title" id="fit-result-title" tabindex="-1">Sizing chart</h2>
       <p class="fit-result-product" id="fit-result-product"></p>
       <div class="fit-compare ff-verdict" id="fit-compare" aria-live="polite" hidden></div>
+      <!-- after a comparison with a garment described here, and only
+           then: an offer to save it (assets/find-fit-save.js) — beside
+           the result, never in its place -->
+      <div class="ff-save" id="ff-save" aria-live="polite" hidden></div>
       <details class="ff-chart" id="fit-chart-details" hidden>
         <summary>Size chart and source</summary>
         <div class="size-chart-body" id="fit-result-body"></div>
@@ -162,7 +169,7 @@
     <button class="btn btn-secondary fit-products-more" id="fit-products-more" type="button" hidden>Show more</button>
   </dialog>
 
-  <p class="container ff-footnote">Your profile never travels in a link: Fynd reads it with your own session, and only the item&rsquo;s product id is sent to compare. <a class="guide-link" href="about.html">About Fynd</a></p>
+  <p class="container ff-footnote">Nothing about you travels in a link. A saved fit profile is read with your own session. A garment described here without saving is kept in this tab, sent only to work out each comparison, and not stored by Fynd. <a class="guide-link" href="about.html">About Fynd</a></p>
 
 </main>
 
@@ -196,6 +203,7 @@
 <script src="assets/fit-profile-schema.js"></script>
 <script src="assets/fit-compare.js"></script>
 <script src="assets/find-fit-reference.js"></script>
+<script src="assets/find-fit-save.js"></script>
 <script src="assets/find-fit.js"></script>
 <script src="assets/brand-browser.js"></script>
 <script src="assets/app.js"></script>
