@@ -1572,7 +1572,9 @@ const linkFromInbox = (pattern) => {
     assert.match(await page.textContent('#fit-result .size-chart-gaps'), /Not published for every size: Sleeve length \(center back\)/);
     const first = await page.$eval('#fit-result table', (t) => [...t.querySelectorAll('tbody tr')].map((tr) => [...tr.children].map((c) => c.textContent)));
     assert.deepStrictEqual(first, [['S', '20', '26', '33'], ['M', '21.5', '27', '—']], 'a missing value stays missing');
-    assert.match(await page.textContent('#fit-compare'), /can’t compare this chart with a garment you own yet/);
+    /* its own garment table, read live, is checked by nobody: not compared, and said so */
+    await page.waitForSelector('#fit-compare[data-verdict="unsupported"]');
+    assert.match(await page.textContent('#fit-compare'), /Fynd holds no checked garment measurements for this item, so it won’t compare it/);
     await context.close();
   });
 
@@ -1850,7 +1852,8 @@ const linkFromInbox = (pattern) => {
     assert.strictEqual(await page.$$eval('#pdp-guide .size-chart-missing', (ns) => ns.length), 0, 'its own measurements were found');
     assert.ok(!/General UNIQLO/.test(await page.innerText('#pdp-guide')), 'no general fallback when the product’s own chart is there');
     await page.waitForSelector('#pdp-guide-compare:not([hidden])');
-    assert.match(await page.textContent('#pdp-guide-compare'), /can’t compare this chart with a garment you own yet/, 'read just now: shown, never compared');
+    assert.match(await page.textContent('#pdp-guide-compare'), /Fynd holds no checked garment measurements for this item, so it won’t compare it/, 'read just now: shown, never compared');
+    assert.strictEqual(await page.$$eval('#pdp-guide-compare .fit-compare-recommended, #pdp-guide-compare .fit-compare-differences', (ns) => ns.length), 0);
     assert.ok(transportAsked.includes('https://www.uniqlo.com/us/en/products/E900002-000/00'));
     await open(page, 'product.html?brand=uniqlo&item=E900019-000');
     await page.waitForSelector('#product[data-state="ready"]');

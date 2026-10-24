@@ -30,10 +30,31 @@
    stillCurrent, { verdict: true })): the same engine answer, led by
    what the shopper came for — the size, or a heading that says there
    is none and why — with a fit scale per compared measurement (tighter,
-   similar or roomier; shorter, similar or longer), placed only from the
-   engine's own words for each difference, the sources, and every
-   caveat. The container says which it drew (data-verdict). The product
-   page's Size Guide keeps the layout below.
+   similar or roomier; shorter, similar or longer), placed from the
+   engine's own answer for each difference, the sources (each side's
+   recorded origin and check, never assumed from the brand), and every
+   caveat. The container says which it drew (data-verdict):
+
+     recommended       an "ok" answer: the size, any trade-off it has
+     closest-mismatch  partial, withheld "outside-tolerance": the
+                       closest size, never called a recommendation
+     no-recommendation partial on too little evidence
+     unsupported       no checked garment measurements: a chart not
+                       checked, or the engine's no-record /
+                       unverified-data / crowdsourced-data /
+                       category-not-covered
+     body-only         only body measurements (body-chart-only)
+     methods           a table that doesn't say what it measures, or
+                       nothing measured the same way (nothing-comparable),
+                       each measurement with the engine's reason
+     needs-reference   nothing saved to compare with
+     sign-in, error    signed out; an answer missing or malformed, which
+                       draws no size and no figure
+
+   Each offers only the action that can change it: the fit profile for
+   methods and needs-reference, Compare for a size, nothing otherwise.
+   Every word from the engine or a record is set as text. The product
+   page's Size Guide keeps the layout below, with the same reasons.
 
    focus() adds, to a comparison already drawn, how one size differs
    from the reference, measurement by measurement — the engine's own
@@ -250,6 +271,11 @@
     return `${named || 'Your reference garment'} (measured at home)`;
   }
 
+  /* the engine's trade-offs that can be drawn whole — a known dimension,
+     its words and its signed difference; the box shows only when one is */
+  const shownTradeoffs = (c) => (Array.isArray(c.tradeoffs) ? c.tradeoffs : [])
+    .filter((t) => t && DIM_LABEL[t.dim] && typeof t.words === 'string' && typeof t.difference === 'number');
+
   /* Each measurement of that size further from the reference than the
      engine treats as similar, with the tolerance it used — the scoring's
      working values, said to be no more than that. */
@@ -257,7 +283,7 @@
     const box = el('div', 'fit-compare-tradeoffs');
     box.append(el('p', 'fit-compare-tradeoffs-title', recommended ? `Where size ${size} still differs` : `Why size ${size} isn’t recommended`));
     const ul = el('ul');
-    c.tradeoffs.filter((t) => t && DIM_LABEL[t.dim] && typeof t.words === 'string' && typeof t.difference === 'number').forEach((t) => {
+    shownTradeoffs(c).forEach((t) => {
       const li = el('li', null, `${t.words} — Fynd treats up to ${measure(t.tolerance, c.unit)} as similar`);
       li.dataset.dim = t.dim;
       li.dataset.difference = String(t.difference);
@@ -356,7 +382,7 @@
     }
     nodes.push(el('p', 'fit-compare-reference', `Compared with: ${referenceWords(c.reference)}.`));
     nodes.push(el('p', null, c.summary));
-    if ((c.tradeoffs || []).some((t) => t && DIM_LABEL[t.dim])) nodes.push(tradeoffList(c, size, recommended));
+    if (shownTradeoffs(c).length) nodes.push(tradeoffList(c, size, recommended));
     if (compared.length) {
       nodes.push(el('p', 'fit-compare-differs', `Size ${size} against your reference: ${compared.map((d) => `${nameOf(d, row.dimensions[d])} ${meaning(row.dimensions[d])}`).join(', ')}.`));
       if (verdict) nodes.push(fitScale(compared, row));

@@ -389,6 +389,17 @@ async function test(name, fn) {
     assert.deepStrictEqual(errors, []);
   });
 
+  await test('a trade-off section appears only with a trade-off it can draw: none at all, or only malformed ones, leave no empty box', async () => {
+    for (const tradeoffs of [[], [{ dim: 'chestWidth', difference: 'a lot' }, { dim: 'waist', difference: 2, words: 'Waist: 2 in wider' }, null]]) {
+      await show(C.checkedChart, answer(Object.assign(clone(C.tradeoff), { tradeoffs })));
+      const box = await page.evaluate(() => ({ boxes: document.querySelectorAll('#fit-compare .fit-compare-tradeoffs').length, items: document.querySelectorAll('#fit-compare .fit-compare-tradeoffs li').length, verdict: document.getElementById('fit-compare').dataset.verdict }));
+      assert.deepStrictEqual(box, { boxes: 0, items: 0, verdict: 'recommended' }, JSON.stringify(tradeoffs));
+    }
+    await show(C.checkedChart, answer(C.tradeoff));
+    const shown = await page.evaluate(() => [...document.querySelectorAll('#fit-compare .fit-compare-tradeoffs')].map((b) => b.querySelectorAll('li').length));
+    assert.deepStrictEqual(shown, [1], 'one box, with its one trade-off');
+  });
+
   await test('engine text and names are drawn as text, never markup: a brand, a size and a reason carrying HTML run nothing', async () => {
     const hostile = clone(C.closest);
     const payload = '<img src=x onerror="window.__pwned=1">';
