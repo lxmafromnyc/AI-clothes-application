@@ -424,7 +424,9 @@ async function browserTests() {
       const first = await page.$eval('.fit-product', (b) => b.dataset.code);
       assert.strictEqual(first, 'E961001-000');
       assert.match(await page.textContent('.fit-product[data-code="E961001-000"] .fit-product-price'), /^\$39\.90$/);
-      await Promise.all([page.waitForURL(/product\.html\?brand=uniqlo&item=E961001-000/), page.click('.fit-product[data-code="E961001-000"]')]);
+      await page.click('.fit-product[data-code="E961001-000"]');
+      await page.waitForSelector('#ff-picked:not([hidden])');
+      await Promise.all([page.waitForURL(/product\.html\?brand=uniqlo&item=E961001-000/), page.click('#ff-picked .ff-picked-page')]);
       await page.waitForSelector('#product[data-state="ready"]');
       assert.match(await page.getAttribute('#pdp-retailer', 'href'), /^https:\/\/click\.linksynergy\.com\//);
       await context.close();

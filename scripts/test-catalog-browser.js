@@ -319,11 +319,13 @@ async function test(name, fn) {
     await page.context().close();
   });
 
-  await test('choosing a product in the popup continues into Fynd’s product page and its Size Guide — Fynd, not UNIQLO', async () => {
+  await test('choosing a product in the popup makes it the item to compare, with Fynd’s product page a link away — Fynd, not UNIQLO', async () => {
     const page = await openPage('index.html');
     await ready(page);
     const first = (await codes(page))[0];
-    await Promise.all([page.waitForURL(/product\.html\?brand=uniqlo&item=/), page.click(`.fit-product[data-code="${first}"]`)]);
+    await page.click(`.fit-product[data-code="${first}"]`);
+    await page.waitForSelector('#ff-picked:not([hidden])');
+    await Promise.all([page.waitForURL(/product\.html\?brand=uniqlo&item=/), page.click('#ff-picked .ff-picked-page')]);
     assert.strictEqual(new URL(page.url()).origin, ORIGIN);
     assert.strictEqual(new URL(page.url()).searchParams.get('item'), first);
     await page.waitForSelector('#product[data-state="ready"]');
@@ -341,12 +343,14 @@ async function test(name, fn) {
 
   console.log('\nchoosing a catalogue product');
 
-  await test('a card opens the product’s Fynd page by its exact code: the catalogue’s colour names, size labels, price, and per-colour stock — each said to be the catalogue’s', async () => {
+  await test('a picked card links to the product’s Fynd page by its exact code: the catalogue’s colour names, size labels, price, and per-colour stock — each said to be the catalogue’s', async () => {
     const page = await openPage('index.html');
     await ready(page);
     await answered(page, () => page.fill('#fit-product-search', 'black oversized hoodie'));
     assert.strictEqual(await page.getAttribute('.fit-product[data-code="E910001-000"]', 'href'), 'product.html?brand=uniqlo&item=E910001-000');
     await page.click('.fit-product[data-code="E910001-000"]');
+    await page.waitForSelector('#ff-picked:not([hidden])');
+    await page.click('#ff-picked .ff-picked-page');
     await page.waitForSelector('#product[data-state="ready"]');
     assert.strictEqual(await page.textContent('#pdp-name'), 'FIXTURE Oversized Sweat Hoodie');
     assert.strictEqual(await page.textContent('#pdp-price'), '$49.90$59.90');

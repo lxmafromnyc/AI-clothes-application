@@ -2996,6 +2996,8 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
       await page.waitForSelector('#fit-browser[data-brands="ready"]', { timeout: 10000 });
       await page.evaluate(() => { document.getElementById('fit-link-alt').open = true; });
       const audit = guideAudit(page, viewport);
+      await page.waitForSelector('#ff-reference[data-state="signed-out"]');
+      await audit('step 1 signed out: how to add a reference garment');
       await page.fill('#fit-url', 'not a link');
       await page.click('#fit-url-submit');
       await page.waitForSelector('#fit-url-error.show');
@@ -3025,9 +3027,12 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
       await page.waitForSelector('#fit-browser[data-brands="ready"]', { timeout: 10000 });
       await page.evaluate(() => { document.getElementById('fit-link-alt').open = true; });
       let audit = guideAudit(page, viewport);
+      await page.waitForSelector('#ff-reference[data-state="saved"] .ff-ref[data-kind="sweatshirts"]');
+      await audit('step 1: the saved reference, with a way to change it');
       await page.fill('#fit-url', 'https://www.uniqlo.com/us/en/products/E475378-000/00');
       await page.press('#fit-url', 'Enter');
       await page.waitForSelector('#fit-compare:not([hidden]) .fit-compare-recommended');
+      assert.strictEqual(await page.$$eval('#fit-compare .ff-scale-row', (ns) => ns.length), 4, 'the three-step scale, one row per measurement');
       await audit('a recommended size, its reference and how it differs');
       await page.click('#fit-compare .fit-compare-differences > summary');
       const shown = await page.$$eval('#fit-compare .fit-compare-differences tbody td:nth-child(2)', (tds) => tds.map((td) => td.textContent));
@@ -3044,7 +3049,10 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
       await page.fill('#fit-url', 'https://www.uniqlo.com/us/en/products/E475378-000/00');
       await page.press('#fit-url', 'Enter');
       await page.waitForSelector('#fit-compare:not([hidden]) .fit-compare-fallback');
-      assert.strictEqual(await page.$$eval('#fit-compare .fit-compare-recommended, #fit-compare .fit-compare-differences', (ns) => ns.length), 0);
+      assert.strictEqual(await page.$$eval('#fit-compare .fit-compare-recommended, #fit-compare .fit-compare-differences, #fit-compare .ff-scale', (ns) => ns.length), 0);
+      /* the chart, opened from under the verdict, audited too */
+      await page.click('#fit-chart-details > summary');
+      await audit('the size chart and its source, opened under the verdict');
       await audit('not enough reliable measurement evidence');
       await page.close();
     }
@@ -3214,7 +3222,7 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
 
   await test('the headline is plain type, not a gradient fill', async () => {
     const page = await settled('index.html');
-    const grad = await page.$eval('.hero h1', (n) => {
+    const grad = await page.$eval('#find-fit-title', (n) => {
       const cs = getComputedStyle(n);
       return {
         color: cs.color,

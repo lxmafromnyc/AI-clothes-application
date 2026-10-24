@@ -28,6 +28,10 @@
    the profile. Signed out, an account is made right here, so the page
    — and the way back — are not lost.
 
+   Find Fit (index.html) links here the same way, as
+   fit-profile.html?for=<type>&from=find-fit, to add or change the
+   reference garment it compares with; the way back is to Find Fit.
+
    ---------------------------------------------------------
    What this file is allowed to decide
    ---------------------------------------------------------
@@ -904,13 +908,23 @@
     const params = new URLSearchParams(global.location.search);
     const type = Schema && Schema.garmentOf(params.get('for')) ? params.get('for') : null;
     const fromSearch = params.get('from') === 'search';
+    const fromFindFit = params.get('from') === 'find-fit';
     const q = fromSearch ? String(params.get('q') || '').trim().slice(0, 400) : '';
-    return { type, fromSearch, q };
+    return { type, fromSearch, fromFindFit, q };
   })();
 
   /* The way back: the search page, with its own type and words, which it
      runs again exactly as if they had been typed. */
   function paintReturn(afterSave) {
+    if (arrival.fromFindFit) {
+      const link = $('profile-return-link');
+      link.href = 'index.html';
+      link.textContent = 'Back to Find Fit';
+      setText('profile-return-text', afterSave ? 'Saved. Find Fit will compare items with it.' : 'You came here from Find Fit.');
+      $('profile-return').classList.toggle('profile-return--saved', Boolean(afterSave));
+      show('profile-return', true);
+      return;
+    }
     if (!arrival.fromSearch) return;
     const back = new URLSearchParams();
     if (arrival.type) back.set('shop', arrival.type);

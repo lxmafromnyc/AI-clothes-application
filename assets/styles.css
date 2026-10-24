@@ -1696,3 +1696,120 @@ strong { font-weight: 600; }
   .compare-ref-list { grid-template-columns: minmax(0, 1fr); gap: 2px 0; }
   .compare-ref-list dd { margin-bottom: 8px; }
 }
+
+/* ---------- Find Fit: reference → item → compare ----------
+   index.html only: every rule here is scoped to .ff (the page's <main>),
+   and every colour is a token. Two steps side by side on a wide screen
+   (the garment that fits, the item considered), one primary action,
+   then the result: the verdict first, the chart folded under it. */
+
+.ff .ff-hero { padding-block: 36px 28px; text-align: center; }
+.ff .ff-hero h1 {
+  max-width: 820px; margin-inline: auto;
+  font-size: clamp(30px, 4.4vw, 46px); line-height: 1.08; font-weight: 700;
+  letter-spacing: -.035em; text-wrap: balance;
+}
+.ff .ff-lead { max-width: 620px; margin: 14px auto 0; font-size: 17px; line-height: 1.5; color: var(--color-text-muted); text-wrap: pretty; }
+
+.ff .ff-flow {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px;
+  max-width: 980px; margin: 28px auto 0; text-align: left;
+}
+.ff .ff-step {
+  display: flex; flex-direction: column; gap: 12px;
+  padding: 22px 22px 20px;
+  border: 1px solid var(--color-border); border-radius: var(--r-lg);
+  background: var(--color-surface); box-shadow: var(--shadow);
+}
+.ff .ff-step-head { display: flex; align-items: center; gap: 10px; }
+.ff .ff-step-head .step-num { margin-bottom: 0; flex: none; }
+.ff .ff-step-title { font-size: 17px; font-weight: 600; letter-spacing: -.01em; }
+.ff .ff-muted { font-size: 13.5px; color: var(--color-text-muted); }
+.ff .ff-reference-intro { font-size: 14.5px; color: var(--color-text-2); }
+
+/* step 1: the saved garments, or how to add one */
+.ff .ff-reference { display: flex; flex-direction: column; gap: 10px; }
+.ff .ff-refs { display: flex; flex-direction: column; gap: 8px; list-style: none; }
+.ff .ff-ref { padding: 12px 14px; border: 1px solid var(--color-border); border-radius: var(--r); background: var(--color-bg-subtle); }
+.ff .ff-ref-top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.ff .ff-ref-kind { font-size: 12.5px; font-weight: 600; letter-spacing: .02em; text-transform: uppercase; color: var(--color-text-muted); }
+.ff .ff-ref-change { font-size: 13.5px; }
+.ff .ff-ref-name { margin-top: 2px; font-size: 16px; font-weight: 600; color: var(--color-text); }
+.ff .ff-ref-detail { margin-top: 2px; font-size: 13.5px; color: var(--color-text-2); overflow-wrap: anywhere; }
+.ff .ff-ref-status { margin-top: 6px; font-size: 13.5px; color: var(--color-warning-ink); }
+.ff .ff-ref--compare .ff-ref-status { color: var(--color-success-ink); }
+.ff .ff-add-label { font-size: 14px; font-weight: 500; color: var(--color-text); }
+.ff .ff-add-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.ff .ff-add-btn { min-height: 44px; }
+
+/* step 2: a link, or a product picked from a brand */
+.ff .ff-target-entry { margin: 0; padding: 0; border: 0; display: flex; flex-direction: column; gap: 6px; }
+.ff .ff-target-entry .profile-input { height: 48px; font-size: 16px; }
+.ff .ff-target-entry .fit-url-hint { margin-top: 0; }
+.ff .ff-browse { padding-top: 12px; border-top: 1px solid var(--color-border); }
+.ff .ff-browse-label { font-size: 14px; font-weight: 500; color: var(--color-text); }
+.ff .ff-browse .fit-brands { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); margin-top: 8px; }
+/* brands not offered yet aren't a choice, so Find Fit doesn't list them */
+.ff .fit-brand-planned { display: none; }
+.ff .ff-picked { padding: 12px 14px; border: 1px solid var(--color-accent-line); border-radius: var(--r); background: var(--color-accent-soft); font-size: 14px; color: var(--color-text-2); }
+.ff .ff-picked[hidden] { display: none; }
+.ff .ff-picked-name strong { color: var(--color-text); }
+.ff .ff-picked-holds { margin-top: 2px; }
+.ff .ff-picked-actions { display: flex; align-items: center; gap: 14px; margin-top: 8px; }
+.ff .ff-picked-clear {
+  min-height: 44px; padding: 0 2px; border: 0; background: none;
+  font: inherit; color: var(--color-text); text-decoration: underline; text-underline-offset: 3px; cursor: pointer;
+}
+.ff .ff-picked-clear:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+
+/* the one action */
+.ff .ff-action { grid-column: 1 / -1; display: flex; justify-content: center; }
+.ff .ff-compare-btn { min-width: 240px; height: 52px; font-size: 16px; }
+
+/* the result: the verdict leads */
+.ff .ff-result { max-width: 860px; margin-top: 8px; }
+.ff .ff-result-card { padding: 24px 26px; }
+.ff .ff-result-kicker { font-size: 12.5px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--color-text-muted); }
+.ff .ff-verdict { margin-top: 4px; padding: 18px 20px; font-size: 15px; }
+.ff .ff-verdict .fit-compare-title { font-size: 19px; letter-spacing: -.01em; }
+.ff .ff-verdict[data-verdict="recommended"] { border-color: var(--color-accent-line); background: var(--color-accent-soft); }
+.ff .ff-verdict[data-verdict="unavailable"],
+.ff .ff-verdict[data-verdict="no-recommendation"],
+.ff .ff-verdict[data-verdict="error"] { border-color: var(--color-warning-line); background: var(--color-warning-soft); }
+.ff .ff-verdict .fit-compare-recommended { font-size: 17px; color: var(--color-text); }
+.ff .ff-verdict .fit-compare-recommended strong { display: inline-block; margin-left: 4px; padding: 2px 12px; border-radius: var(--r-pill); background: var(--color-primary); color: var(--color-text-on-primary); font-size: 22px; }
+.ff .ff-verdict .fit-compare-reference { font-weight: 500; color: var(--color-text); }
+
+/* how each measurement compares: three steps, the engine's answer marked */
+.ff .ff-scale { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; list-style: none; }
+.ff .ff-scale-row { display: grid; grid-template-columns: minmax(110px, 160px) minmax(0, 1fr); align-items: center; gap: 4px 12px; }
+.ff .ff-scale-name { font-size: 14px; font-weight: 500; color: var(--color-text); }
+.ff .ff-scale-steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
+.ff .ff-scale-step {
+  padding: 5px 6px; border: 1px solid var(--color-border); border-radius: var(--r-sm);
+  background: var(--color-surface); text-align: center; font-size: 12.5px; color: var(--color-text-muted);
+}
+.ff .ff-scale-step.is-here { border-color: var(--color-accent); background: var(--color-surface); color: var(--color-accent-ink); font-weight: 600; }
+.ff .ff-sources { margin-top: 12px; font-size: 13.5px; color: var(--color-text-2); }
+.ff .ff-limits { margin-top: 12px; }
+.ff .ff-limits-title { font-size: 13.5px; font-weight: 600; color: var(--color-text); }
+.ff .ff-limits ul { margin-top: 4px; padding-left: 18px; font-size: 13.5px; color: var(--color-text-2); }
+.ff .ff-limits li + li { margin-top: 2px; }
+
+/* the chart, folded under the verdict */
+.ff .ff-chart[hidden] { display: none; }
+.ff .ff-chart { margin-top: 18px; padding-top: 0; border-top: 1px solid var(--color-border); color: var(--color-text-2); }
+.ff .ff-chart > summary { cursor: pointer; font-weight: 500; color: var(--color-text); padding-block: 12px; font-size: 14.5px; }
+.ff .ff-chart[open] > summary { margin-bottom: 6px; }
+.ff .ff-footnote { max-width: 860px; margin: 8px auto 48px; text-align: center; font-size: 13.5px; color: var(--color-text-muted); }
+
+@media (max-width: 820px) {
+  .ff .ff-flow { grid-template-columns: minmax(0, 1fr); }
+  .ff .ff-compare-btn { width: 100%; }
+}
+@media (max-width: 520px) {
+  .ff .ff-step { padding: 18px 16px; }
+  .ff .ff-result-card { padding: 18px 16px; }
+  .ff .ff-verdict { padding: 14px; }
+  .ff .ff-scale-row { grid-template-columns: minmax(0, 1fr); }
+}

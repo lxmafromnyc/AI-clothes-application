@@ -294,7 +294,7 @@ async function browserTests() {
     await test('Find Fit: a pasted UNIQLO link gets its size chart from Fynd’s record; a link Fynd holds nothing for says so', async () => {
       requested.length = 0;
       const page = await openPage('index.html');
-      await page.click('#fit-link-alt summary');
+      assert.strictEqual(await page.isVisible('#fit-url'), true, 'the link box is in view, not folded away');
       await page.fill('#fit-url', uniqloUrl('E475378-000'));
       await page.click('#fit-url-submit');
       await page.waitForSelector('#fit-result[data-state="ok"]');

@@ -21,6 +21,15 @@
    (a partial comparison, or none) recommends nothing and says there
    isn't enough reliable measurement evidence, then the engine's reason.
 
+   Find Fit asks for its verdict layout (show(chart, container,
+   stillCurrent, { verdict: true })): the same engine answer, led by
+   what the shopper came for — the size, or a heading that says there
+   is none and why — with a fit scale per compared measurement (tighter,
+   similar or roomier; shorter, similar or longer), placed only from the
+   engine's own words for each difference, the sources, and every
+   caveat. The container says which it drew (data-verdict). The product
+   page's Size Guide keeps the layout below.
+
    focus() adds, to a comparison already drawn, how one size differs
    from the reference, measurement by measurement — the engine's own
    figures for that size, nothing worked out here — and redraws only
@@ -37,20 +46,34 @@
   /* what each container last drew, so a new size redraws only its part */
   const drawn = new WeakMap();
 
-  async function show(chart, compare, current) {
-    const stillCurrent = current || (() => true);
-    drawn.delete(compare);
+  /* Why a chart can't be set beside a garment — and, for Find Fit's
+     verdict, what would change that. */
+  function whyNot(chart, verdict) {
     const lines = [];
     const kinds = (chart.charts || []).map((c) => c.measures);
+    if (kinds.includes('finished-garment') || kinds.includes('not-stated')) {
+      lines.push(chart.verification === 'unverified'
+        ? 'These measurements haven’t been checked against the brand yet, so Fynd won’t compare them with a garment you own.'
+        : 'Fynd can’t compare this chart with a garment you own yet: it can’t confirm exactly how each measurement was taken, and two garments are only comparable when measured the same way.');
+      if (verdict) lines.push(chart.verification === 'unverified'
+        ? 'What would change that: a person checking this chart against the brand’s own page.'
+        : 'What would change that: the brand saying how each measurement is taken.');
+    } else {
+      lines.push('This chart describes bodies, not garments, so it can’t be set beside a garment you own.');
+      if (verdict) lines.push('What would change that: the brand publishing what the garment itself measures, size by size.');
+    }
+    return lines;
+  }
+
+  async function show(chart, compare, current, opts) {
+    const stillCurrent = current || (() => true);
+    const verdict = Boolean(opts && opts.verdict);
+    /* where the fit profile's links come back to */
+    const profileHref = verdict ? 'fit-profile.html?from=find-fit' : 'fit-profile.html';
+    drawn.delete(compare);
+    const lines = [];
     if (!chart.comparable) {
-      if (kinds.includes('finished-garment') || kinds.includes('not-stated')) {
-        lines.push(chart.verification === 'unverified'
-          ? 'These measurements haven’t been checked against the brand yet, so Fynd won’t compare them with a garment you own.'
-          : 'Fynd can’t compare this chart with a garment you own yet: it can’t confirm exactly how each measurement was taken, and two garments are only comparable when measured the same way.');
-      } else {
-        lines.push('This chart describes bodies, not garments, so it can’t be set beside a garment you own.');
-      }
-      put(compare, lines);
+      put(compare, whyNot(chart, verdict), [], verdict ? NO_SIZE : null, verdict && 'unavailable');
       return;
     }
     const account = global.Account;
@@ -59,22 +82,23 @@
     const state = account.state();
     if (!state || !state.signedIn) {
       const p = el('p', null, 'These finished-garment measurements are checked. With a reference garment saved on ');
-      p.append(safeLinkLocal('fit-profile.html', 'your fit profile'), doc.createTextNode(', Fynd can compare every size with it.'));
-      put(compare, [], [p]);
+      p.append(safeLinkLocal(profileHref, 'your fit profile'), doc.createTextNode(', Fynd can compare every size with it.'));
+      put(compare, [], [p], verdict ? 'Add a garment that fits to compare' : null, verdict && 'sign-in');
       return;
     }
     const got = await account.sizing.compare(chart.productId);
     if (!stillCurrent()) return;
     const c = got.ok && got.data && got.data.comparison;
-    if (!c) { put(compare, ['The comparison with your fit profile couldn’t be worked out just now.']); return; }
+    if (!c) { put(compare, ['The comparison with your fit profile couldn’t be worked out just now.'], [], verdict ? NO_SIZE : null, verdict && 'error'); return; }
     if (c.status === 'ok' || c.status === 'partial') {
-      const lead = c.status === 'ok' && c.recommended ? recommendation(c) : [el('p', 'fit-compare-fallback', NOT_ENOUGH), el('p', null, c.summary)];
+      const recommended = c.status === 'ok' && c.recommended;
+      const lead = recommended ? recommendation(c, verdict) : [el('p', 'fit-compare-fallback', NOT_ENOUGH), el('p', null, c.summary)];
       const rest = [];
       if (c.reliability) rest.push(`Reliability: ${c.reliability}.`);
-      (c.caveats || []).slice(0, 2).forEach((x) => rest.push(x));
+      (c.caveats || []).slice(0, verdict ? undefined : 2).forEach((x) => rest.push(x));
       const more = el('p');
       more.append(safeLinkLocal('compare.html', 'See every size beside your reference on Compare'));
-      drawn.set(compare, { comparison: c, lead, rest, extra: [more] });
+      drawn.set(compare, { comparison: c, lead, rest, extra: [more], verdict: verdict && (recommended ? 'recommended' : 'no-recommendation') });
       focus(compare, null);
       return;
     }
@@ -82,8 +106,8 @@
     (c.missing || []).slice(0, 1).forEach((m) => lines.push(m.message));
     (c.next || []).slice(0, 1).forEach((n) => lines.push(n));
     const fix = el('p');
-    fix.append(safeLinkLocal('fit-profile.html', 'Open your fit profile'));
-    put(compare, lines, [fix]);
+    fix.append(safeLinkLocal(profileHref, 'Open your fit profile'));
+    put(compare, lines, [fix], verdict ? NO_SIZE : null, verdict && 'no-recommendation');
   }
 
   /* A length as the Compare page shows it: centimetres to the
@@ -99,6 +123,8 @@
   const DIM_LABEL = { chestWidth: 'Chest', bodyLength: 'Body length', shoulderWidth: 'Shoulders', sleeveLength: 'Sleeves' };
   const DIM_NAME = { chestWidth: 'chest width', bodyLength: 'garment length', shoulderWidth: 'shoulder width', sleeveLength: 'sleeve length' };
   const NOT_ENOUGH = 'No size recommendation: there isn’t enough reliable measurement evidence for this product and your reference.';
+  const NO_SIZE = 'No size recommendation for this item';
+  const GIRTH = { chestWidth: true, shoulderWidth: true };
 
   /* The engine's signed difference, to a tenth: "+0.5 in", "−1.0 in"
      (a true minus sign), and "0.0 in" with no sign when it rounds to
@@ -124,7 +150,53 @@
 
   /* An "ok" comparison: the size recommended, the reference, how that
      size differs in words, and its signed differences folded away. */
-  function recommendation(c) {
+  /* where one compared difference falls, from the engine's own words
+     for it — never from a threshold worked out here */
+  function placeOf(x) {
+    const said = meaning(x);
+    if (/the same/.test(said)) return 'same';
+    if (/wider|longer/.test(said)) return 'more';
+    if (/narrower|shorter/.test(said)) return 'less';
+    return null;
+  }
+
+  /* each compared measurement on a three-step scale: tighter, similar,
+     roomier (shorter, similar, longer for a length) */
+  function fitScale(compared, row) {
+    const list = el('ul', 'ff-scale');
+    list.setAttribute('aria-label', 'How each measurement compares with your reference');
+    compared.forEach((d) => {
+      const x = row.dimensions[d];
+      const place = placeOf(x);
+      if (!place) return;
+      const words = GIRTH[d] ? ['Tighter', 'Similar', 'Roomier'] : ['Shorter', 'Similar', 'Longer'];
+      const li = el('li', 'ff-scale-row');
+      li.dataset.dim = d;
+      li.dataset.place = place;
+      li.append(el('span', 'ff-scale-name', nameOf(d, x).replace(/^./, (ch) => ch.toUpperCase())));
+      const steps = el('span', 'ff-scale-steps');
+      ['less', 'same', 'more'].forEach((p, i) => {
+        const step = el('span', `ff-scale-step${p === place ? ' is-here' : ''}`, words[i]);
+        if (p !== place) step.setAttribute('aria-hidden', 'true');
+        steps.append(step);
+      });
+      li.append(steps);
+      list.append(li);
+    });
+    return list;
+  }
+
+  /* where the numbers came from, and how far each side is checked */
+  function sources(c) {
+    const item = c.product ? `${c.product.brand}’s published finished-garment measurements for this item` : 'This item’s published finished-garment measurements';
+    const checked = c.dataStatus === 'verified' ? 'checked against the brand’s page' : 'not yet checked';
+    const ref = c.reference && c.reference.source === 'product'
+      ? `your reference’s published measurements${c.reference.product && c.reference.product.brand ? ` (${c.reference.product.brand})` : ''}`
+      : 'the measurements you took of your reference at home';
+    return el('p', 'ff-sources', `Sources: ${item}, ${checked}; ${ref}.`);
+  }
+
+  function recommendation(c, verdict) {
     const size = c.recommended;
     const row = (c.sizes || []).find((s) => s.size === size);
     const compared = row ? (c.dimensionsCompared || []).filter((d) => row.dimensions[d] && row.dimensions[d].compared) : [];
@@ -136,6 +208,7 @@
     nodes.push(el('p', null, c.summary));
     if (compared.length) {
       nodes.push(el('p', 'fit-compare-differs', `Size ${size} against your reference: ${compared.map((d) => `${nameOf(d, row.dimensions[d])} ${meaning(row.dimensions[d])}`).join(', ')}.`));
+      if (verdict) nodes.push(fitScale(compared, row));
       const box = el('details', 'size-chart-details fit-compare-differences');
       box.append(el('summary', null, 'Measurement differences'));
       box.append(el('p', 'fit-compare-size-note', `Size ${size} minus your reference, in ${c.unit}: positive is larger, negative is smaller.`));
@@ -165,6 +238,7 @@
       box.append(wrap);
       nodes.push(box);
     }
+    if (verdict) nodes.push(sources(c));
     return nodes;
   }
 
@@ -221,7 +295,18 @@
     }
     /* the summary (and, when recommended, the size and its differences),
        then the size being considered, then the caveats */
-    put(compare, [], [...d.lead, ...nodes, ...d.rest.map((t) => el('p', null, t)), ...d.extra], 'Compared with your reference');
+    const rest = d.verdict ? [limits(d.rest)] : d.rest.map((t) => el('p', null, t));
+    put(compare, [], [...d.lead, ...nodes, ...rest, ...d.extra], d.verdict === 'no-recommendation' ? NO_SIZE : 'Compared with your reference', d.verdict);
+  }
+
+  /* the caveats, as a list a shopper can scan */
+  function limits(lines) {
+    const box = el('div', 'ff-limits');
+    box.append(el('p', 'ff-limits-title', 'Limits of this comparison'));
+    const ul = el('ul');
+    lines.forEach((t) => ul.append(el('li', null, t)));
+    box.append(ul);
+    return box;
   }
 
   function safeLinkLocal(href, text) {
@@ -230,10 +315,11 @@
     return a;
   }
 
-  function put(compare, lines, extra, title) {
+  function put(compare, lines, extra, title, verdict) {
     compare.replaceChildren(el('h3', 'fit-compare-title', title || 'Your fit profile'), ...lines.map((t) => el('p', null, t)), ...(extra || []));
+    if (verdict) compare.dataset.verdict = verdict; else delete compare.dataset.verdict;
     compare.hidden = false;
   }
 
-  global.FitCompare = { show, focus };
+  global.FitCompare = { show, focus, whyNot };
 })(typeof window !== 'undefined' ? window : globalThis);
