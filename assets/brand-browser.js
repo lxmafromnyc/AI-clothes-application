@@ -5,10 +5,13 @@
    with a working way to pick a product are offered), and its products
    open in a popup over the page (a modal <dialog>: Escape, the close
    button or a click outside closes it, and focus goes back to the brand
-   chosen). Browse them as cards, and pick one. Each card opens the product's own
-   page (product.html, assets/product-page.js) by its brand and code;
-   the server looks the product up itself (api/_sizing/brands), so
-   nothing the page holds is trusted for it.
+   chosen). Browse them as cards, and pick one: on Find Fit, picking a
+   card makes it the item to compare (FindFit.select, assets/find-fit.js)
+   and closes the popup. Each card is still a link to the product's own
+   page (product.html, assets/product-page.js) by its brand and code, so
+   opening it in a new tab still works; the server looks the product up
+   itself (api/_sizing/brands), so nothing the page holds is trusted for
+   it.
 
    The products are the brand's real ones that Fynd has sourced — and,
    once one is connected, its authorized catalogue — with the brand's
@@ -104,11 +107,20 @@
     return `${price.varies ? 'From ' : ''}${f(price.amount)}${Number.isInteger(price.was) && price.was > price.amount ? ` (was ${f(price.was)})` : ''}`;
   }
 
-  /* a product opens its own page (product.html), as a shop's grid does */
+  /* a product is a link to its own page (product.html), as a shop's grid
+     is; a plain click on Find Fit makes it the item to compare instead */
   function card(p) {
     const b = el('a', 'fit-product');
     b.href = `product.html?${new URLSearchParams({ brand: brand.id, item: p.code })}`;
     b.dataset.code = p.code;
+    const chosenBrand = brand;
+    b.addEventListener('click', (event) => {
+      if (!global.FindFit || typeof global.FindFit.select !== 'function') return;
+      if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      event.preventDefault();
+      close();
+      global.FindFit.select(chosenBrand, p);
+    });
     const media = el('span', 'fit-product-media');
     if (p.imageUrl && IMAGE_HOSTS.test(p.imageUrl)) {
       const img = el('img');

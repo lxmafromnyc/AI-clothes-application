@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Fynd — Find Fit: any product’s sizing chart</title>
-<meta name="description" content="Paste any clothing product link. Fynd retrieves its sizing chart, explains what it measures, and compares the fit with clothes you already own.">
+<title>Fynd — Find Fit: the size that fits like your favorite clothes</title>
+<meta name="description" content="Compare an item you are considering with a garment you already own that fits well. Fynd suggests a size only when the measurements support one.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23111111'/><text x='16' y='23' font-family='Helvetica,Arial,sans-serif' font-size='19' font-weight='700' fill='white' text-anchor='middle'>F</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -51,66 +51,93 @@
   </div>
 </header>
 
-<main id="main">
+<main id="main" class="ff">
 
-  <!-- Find Fit: choose a brand, pick one of its products, see its
-       sizing chart. assets/brand-browser.js searches the brand's products
-       a page at a time (/api/size-recommendation?brand=&q=,
-       api/_sizing/brands, api/_catalog/search.js); picking one
-       asks for its chart by the product's code (assets/find-fit.js),
-       which the server looks up through the same pipeline a pasted link
-       takes (api/_sizing/chart.js). A link from another shop can still
-       be pasted, below. No account is needed; a saved fit profile adds a
-       comparison only where the chart supports one. -->
-  <section class="container hero shop-hero" id="find-fit" aria-labelledby="find-fit-title">
-    <h1 id="find-fit-title">Find Fit</h1>
-    <p class="lead">Choose a brand, pick a product, and see its sizing chart &mdash; what it measures, where it comes from, and how it compares with clothes you already own.</p>
+  <!-- Find Fit: which size of an item is most likely to fit like a
+       garment the shopper already owns.
 
-    <div class="shop-card fit-browser" id="fit-browser" data-state="idle">
-      <!-- The brands Find Fit can browse, one button each (filled in from
-           /api/size-recommendation?brands=1 by assets/brand-browser.js).
-           Choosing one opens its products in a popup over the page. -->
-      <h2 class="fit-brand-label" id="fit-brand-label">Choose a brand</h2>
-      <div class="fit-brands" id="fit-brands" role="group" aria-labelledby="fit-brand-label">
-        <button class="fit-brand-choice" type="button" data-brand="uniqlo" aria-haspopup="dialog" aria-controls="fit-brand-dialog">
-          <span class="fit-brand-name">UNIQLO</span>
-          <span class="fit-brand-meta">Browse products</span>
-        </button>
+         1  the reference: the garments saved on the fit profile
+            (assets/find-fit-reference.js, read with the shopper's own
+            session; set up on fit-profile.html, which offers an account
+            where there is none)
+         2  the item: a pasted product link, or a product picked from the
+            brand browser (assets/brand-browser.js)
+         →  Compare fit: the item's sizing chart (assets/find-fit.js,
+            /api/size-recommendation?chart= or ?brand=&item=), then the
+            engine's own comparison with the saved reference
+            (assets/fit-compare.js: /api/size-recommendation?product=
+            &compare=1, engine.compare()). A size is shown only when the
+            engine recommends one; otherwise the result says what is
+            missing. The chart itself sits under "Size chart and source". -->
+  <section class="container ff-hero" id="find-fit" aria-labelledby="find-fit-title">
+    <h1 id="find-fit-title">Find the size that fits like your favorite clothes.</h1>
+    <p class="lead ff-lead">Choose a garment you own that fits well and the item you&rsquo;re considering. Fynd sets their measurements side by side and suggests a size only when the measurements support one.</p>
+
+    <form class="ff-flow" id="fit-url-form" novalidate>
+      <section class="ff-step" id="ff-step-reference" aria-labelledby="ff-step-reference-title">
+        <div class="ff-step-head">
+          <span class="step-num" aria-hidden="true">1</span>
+          <h2 class="ff-step-title" id="ff-step-reference-title">A garment that fits you well</h2>
+        </div>
+        <!-- the saved reference garments, or how to add one: drawn by
+             assets/find-fit-reference.js from the shopper's own profile -->
+        <div class="ff-reference" id="ff-reference" aria-live="polite">
+          <p class="ff-muted">Checking for a saved reference garment&hellip;</p>
+        </div>
+      </section>
+
+      <section class="ff-step" id="ff-step-target" aria-labelledby="ff-step-target-title">
+        <div class="ff-step-head">
+          <span class="step-num" aria-hidden="true">2</span>
+          <h2 class="ff-step-title" id="ff-step-target-title">The item you&rsquo;re considering</h2>
+        </div>
+        <div class="ff-target-entry" id="fit-link-alt">
+          <label class="profile-label" for="fit-url">Product link</label>
+          <input class="profile-input" type="url" id="fit-url" name="url" inputmode="url" maxlength="2000" autocomplete="off" spellcheck="false" placeholder="https://&hellip; a product page" aria-describedby="fit-url-hint fit-url-error">
+          <p class="fit-url-hint" id="fit-url-hint">Fynd compares sizes only for products it holds checked garment measurements for. For any other link it shows the size chart it can read, and says why it can&rsquo;t compare.</p>
+          <p class="form-error" id="fit-url-error" role="alert"></p>
+        </div>
+        <!-- or pick one: the brands Find Fit can browse (assets/brand-browser.js);
+             a product picked there becomes the item, below -->
+        <div class="fit-browser ff-browse" id="fit-browser" data-state="idle">
+          <p class="ff-browse-label" id="fit-brand-label">Or pick a product</p>
+          <div class="fit-brands" id="fit-brands" role="group" aria-labelledby="fit-brand-label">
+            <button class="fit-brand-choice" type="button" data-brand="uniqlo" aria-haspopup="dialog" aria-controls="fit-brand-dialog">
+              <span class="fit-brand-name">UNIQLO</span>
+              <span class="fit-brand-meta">Browse products</span>
+            </button>
+          </div>
+          <p class="fit-brand-planned" id="fit-brand-planned"></p>
+        </div>
+        <div class="ff-picked" id="ff-picked" hidden></div>
+      </section>
+
+      <div class="ff-action">
+        <button class="btn btn-primary ff-compare-btn" type="submit" id="fit-url-submit">Compare fit</button>
       </div>
-      <p class="fit-brand-planned" id="fit-brand-planned"></p>
-
-      <details class="fit-link-alt" id="fit-link-alt">
-        <summary>Can&rsquo;t find a product? Paste its link &mdash; from UNIQLO or any other shop</summary>
-        <form class="shop-search fit-url" id="fit-url-form" novalidate>
-          <label class="sr-only" for="fit-url">Clothing product link</label>
-          <input class="profile-input" type="url" id="fit-url" name="url" inputmode="url" maxlength="2000" autocomplete="off" spellcheck="false" placeholder="Paste a clothing product URL..." aria-describedby="fit-url-hint fit-url-error">
-          <button class="btn btn-primary" type="submit" id="fit-url-submit">Find sizing chart</button>
-        </form>
-        <p class="fit-url-hint" id="fit-url-hint">A link to one product&rsquo;s page, from any clothing shop.</p>
-        <p class="form-error" id="fit-url-error" role="alert"></p>
-      </details>
-    </div>
-
-    <p class="guide-alt">Saved <a class="guide-link" href="fit-profile.html">a fit profile</a>? Fynd compares a chart with the clothes you own where the chart allows it. It&rsquo;s optional.</p>
+    </form>
   </section>
 
-  <!-- The answer, on this page: the product, its chart and what it
-       measures; where it came from is under "Source details". Drawn as
-       text by assets/size-chart.js. -->
-  <section class="container fit-result" id="fit-result" aria-labelledby="fit-result-title" hidden>
-    <div class="fit-result-card" id="fit-result-card">
+  <!-- The result: the verdict first (assets/fit-compare.js — a size only
+       when the engine recommends one), then the item, then its chart and
+       where it came from, folded away (assets/size-chart.js). -->
+  <section class="container fit-result ff-result" id="fit-result" aria-labelledby="fit-result-title" hidden>
+    <div class="fit-result-card ff-result-card" id="fit-result-card">
+      <p class="ff-result-kicker">Fit comparison</p>
       <h2 class="fit-result-title" id="fit-result-title" tabindex="-1">Sizing chart</h2>
       <p class="fit-result-product" id="fit-result-product"></p>
-      <div class="size-chart-body" id="fit-result-body" aria-live="polite"></div>
-      <div class="fit-compare" id="fit-compare" hidden></div>
+      <div class="fit-compare ff-verdict" id="fit-compare" aria-live="polite" hidden></div>
+      <details class="ff-chart" id="fit-chart-details" hidden>
+        <summary>Size chart and source</summary>
+        <div class="size-chart-body" id="fit-result-body"></div>
+      </details>
     </div>
   </section>
 
   <!-- One brand's products, in a popup over Find Fit (assets/brand-browser.js):
        searched, filtered and paged on the server
        (/api/size-recommendation?brand=&q=, api/_catalog/search.js), never
-       held in the page. A product opens its own page and Size Guide
-       (product.html). -->
+       held in the page. Picking one makes it the item to compare. -->
   <dialog class="size-chart brand-dialog" id="fit-brand-dialog" aria-labelledby="fit-brand-dialog-title">
     <div class="size-chart-head brand-dialog-head">
       <div>
@@ -135,28 +162,7 @@
     <button class="btn btn-secondary fit-products-more" id="fit-products-more" type="button" hidden>Show more</button>
   </dialog>
 
-  <section class="section section--flush" id="how">
-    <div class="container">
-      <div class="section-head"><h2>How Fynd works</h2></div>
-      <ol class="steps">
-        <li class="step">
-          <span class="step-num">1</span>
-          <h3>Paste a product link</h3>
-          <p>Any clothing product page. Fynd reads that page on its own server &mdash; never anything private, and never your profile.</p>
-        </li>
-        <li class="step">
-          <span class="step-num">2</span>
-          <h3>See its sizing chart</h3>
-          <p>The chart as the shop publishes it, with its units and source, and a note on what it measures: your body, the garment, or only size labels.</p>
-        </li>
-        <li class="step">
-          <span class="step-num">3</span>
-          <h3>Compare with what fits</h3>
-          <p>With a reference garment on your fit profile, Fynd sets its measurements beside the chart &mdash; only where the chart&rsquo;s measurements can be checked against yours.</p>
-        </li>
-      </ol>
-    </div>
-  </section>
+  <p class="container ff-footnote">Your profile never travels in a link: Fynd reads it with your own session, and only the item&rsquo;s product id is sent to compare. <a class="guide-link" href="about.html">About Fynd</a></p>
 
 </main>
 
@@ -187,7 +193,9 @@
 <script src="assets/size-chart.js"></script>
 <script src="assets/sizing-tables.js"></script>
 <script src="assets/fynd-payload.js"></script>
+<script src="assets/fit-profile-schema.js"></script>
 <script src="assets/fit-compare.js"></script>
+<script src="assets/find-fit-reference.js"></script>
 <script src="assets/find-fit.js"></script>
 <script src="assets/brand-browser.js"></script>
 <script src="assets/app.js"></script>
