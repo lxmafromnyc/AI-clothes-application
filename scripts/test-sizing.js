@@ -1206,6 +1206,42 @@ await test('a size judged against the shopper\'s own measurements is "shopper-me
   /* (verified, against checked charts only: test-size-eval's checkFitBySize) */
 });
 
+/* the illustrative fixture with its chest published all the way around:
+   the same garment, its chest written as twice the flat width */
+const ILLUSTRATIVE_AROUND = () => {
+  const r = ILLUSTRATIVE();
+  r.charts.garment.dimensions.chestWidth = { method: 'garment-circumference', methodSource: r.charts.garment.dimensions.chestWidth.methodSource };
+  Object.values(r.charts.garment.sizes).forEach((row) => { row.chestWidth = { value: row.chestWidth.value * 2, text: String(row.chestWidth.value * 2) }; });
+  return r;
+};
+
+await test('a chest published all the way around is scored with a tolerance twice the flat one: the same garment ranks the same however its chart is written', () => {
+  const around = ILLUSTRATIVE_AROUND();
+  assert.deepStrictEqual(sizingSchema.validate(around), []);
+  const flat = engine.compare(hoodieRef({ measurements: REF_CM }), ILLUSTRATIVE());
+  const circ = engine.compare(hoodieRef({ measurements: REF_CM }), around);
+  assert.strictEqual(circ.recommended, flat.recommended, 'M either way (it was S before the fix)');
+  assert.strictEqual(circ.recommended, 'M');
+  assert.deepStrictEqual(circ.sizes.map((x) => x.score), flat.sizes.map((x) => x.score), 'identical scores, size by size');
+  assert.deepStrictEqual(circ.sizes.map((x) => x.rank), flat.sizes.map((x) => x.rank));
+  /* the difference itself is around the chest — twice the flat one — and marked estimated */
+  const m = circ.sizes.find((x) => x.size === 'M').dimensions.chestWidth;
+  assert.strictEqual(m.difference, 2 * flat.sizes.find((x) => x.size === 'M').dimensions.chestWidth.difference);
+  assert.match(m.estimated, /twice its flat width/);
+  /* recommend()'s reference-garment score: the same */
+  const rFlat = engine.recommend(hoodieRef({ measurements: REF_CM }), ILLUSTRATIVE());
+  const rCirc = engine.recommend(hoodieRef({ measurements: REF_CM }), around);
+  assert.strictEqual(rCirc.method, 'reference-garment');
+  assert.strictEqual(rCirc.leading, rFlat.leading);
+  assert.deepStrictEqual(rCirc.ranking.map((x) => x.size), rFlat.ranking.map((x) => x.size));
+  /* in inches too: the tolerance is converted with the record's own units */
+  const inAround = ILLUSTRATIVE_AROUND();
+  inAround.units = 'in';
+  Object.values(inAround.charts.garment.sizes).forEach((row) => Object.values(row).forEach((c) => { c.value /= 2.54; c.text = String(c.value); }));
+  const circIn = engine.compare(hoodieRef({ measurements: REF_CM }), inAround);
+  circIn.sizes.forEach((x, i) => assert.ok(Math.abs(x.score - flat.sizes[i].score) < 1e-6, `${x.size}: ${x.score} vs ${flat.sizes[i].score}`));
+});
+
 await test('the extension\'s reference data calls a product verified only when every garment measurement is', () => {
   const builder = require('./build-fit-references.js');
   const live = sizing.byId(UQ_HOODIE);

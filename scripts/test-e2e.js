@@ -1927,7 +1927,10 @@ const linkFromInbox = (pattern) => {
     await page.press('#fit-url', 'Enter');
     await page.waitForSelector('#fit-result[data-state="ok"]');
     assert.strictEqual(await page.textContent('#fit-result .size-chart-caveat'), 'This product’s own chart, checked against UNIQLO’s page.');
-    assert.match(await page.textContent('#fit-result .size-chart-details .size-chart-facts'), /Verified — checked by a person/);
+    /* the record names an automated source audit as its checker, so the label never says a person checked it */
+    const facts = await page.textContent('#fit-result .size-chart-details .size-chart-facts');
+    assert.match(facts, /Verified — checked against the brand’s page/);
+    assert.ok(!/by a person/.test(facts), facts);
     await page.waitForSelector('#fit-compare:not([hidden]) .fit-compare-title');
     assert.strictEqual((await page.textContent('#fit-compare .fit-compare-title')).trim(), 'Compared with your reference');
     assert.match(await page.textContent('#fit-compare'), /closest on chest and shoulders, but that's 2 of 4 dimensions — not enough for a recommendation/);
@@ -2206,7 +2209,8 @@ const linkFromInbox = (pattern) => {
     assert.match(await page.textContent('#size-chart-product'), /UNIQLO · Sweat Pullover Hoodie/);
     const kinds = await page.$$eval('#size-chart .size-chart-kind', (ns) => ns.map((n) => n.textContent));
     assert.deepStrictEqual(kinds, ['Finished-garment measurements — the clothing itself', 'Body measurements — the body each size fits, not the garment'], 'the garment’s own first');
-    assert.match(await page.textContent('#size-chart'), /Verified — checked by a person/);
+    assert.match(await page.textContent('#size-chart'), /Verified — checked against the brand’s page/);
+    assert.ok(!/Verified — checked by a person/.test(await page.textContent('#size-chart')));
     assert.match(await page.textContent('#size-chart'), /This product’s own chart/);
     assert.match(await page.textContent('#size-chart'), /Units: inches/);
     /* the body chart, now second, keeps its values as published */

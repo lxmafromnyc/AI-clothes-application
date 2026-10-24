@@ -60,7 +60,7 @@
     'browser-size-guide': 'Read by the Fynd extension from the retailer’s size guide open in your browser — possibly a general chart, not this product’s own'
   };
   const STATUS = {
-    verified: 'Verified — checked by a person against the brand’s page',
+    verified: 'Verified — checked against the brand’s page',
     unverified: 'Unverified — copied from the brand’s page, not yet checked',
     'not-verified': 'Not verified — read automatically just now',
     'official-general': 'Official values, copied from the brand’s own pages — not read from this product’s page'

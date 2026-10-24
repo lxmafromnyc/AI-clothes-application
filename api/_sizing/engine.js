@@ -343,6 +343,17 @@ function inMethodOf(d, refRecord, refRow, method) {
   return null;
 }
 
+/* One dimension's tolerance for this record, in its units. The chest's
+   is stated as a flat width (TOPS.garment); a chest the product
+   publishes all the way around is twice as far for the same cut, so its
+   tolerance is twice as wide — otherwise the same garment would rank
+   differently depending only on how its chart is written. */
+function toleranceOf(d, record, params) {
+  const around = d === 'chestWidth' && record.charts.garment.dimensions.chestWidth
+    && record.charts.garment.dimensions.chestWidth.method === 'garment-circumference';
+  return toUnits(params.garment[d].tol * (around ? 2 : 1), 'in', record.units);
+}
+
 const METHOD_WORDS = {
   'flat-width-armpit-to-armpit': 'flat, armpit to armpit',
   'garment-circumference': 'all the way around',
@@ -560,10 +571,10 @@ function scoreReferenceGarment(record, shopper) {
     const parts = [];
     Object.keys(used).forEach((d) => {
       if (!row[d]) return;
-      const { weight, tol } = shopper.params.garment[d];
+      const { weight } = shopper.params.garment[d];
       const target = toUnits(used[d].value, ref.record.units, record.units);
       const diff = row[d].value - target;
-      let c = weight * weights[d] * (diff / toUnits(tol, 'in', record.units)) ** 2;
+      let c = weight * weights[d] * (diff / toleranceOf(d, record, shopper.params)) ** 2;
       if (trouble[d] && diff < 0) c *= TROUBLE_FACTOR;
       cost += c;
       parts.push({ dim: d, value: row[d].value, target, diff, estimated: used[d].estimated });
@@ -1196,7 +1207,8 @@ function recommend(profile, record, opts) {
 
    over the dimensions both sides measured the same way, with the
    category's own weights and tolerances (CATEGORY_PARAMS.garment):
-   chest counts most (weight 1, a 1 in flat tolerance), because it sets
+   chest counts most (weight 1, a 1 in flat tolerance — 2 in for a chest
+   published all the way around: toleranceOf), because it sets
    how much room the whole top has; body and sleeve length next (0.6);
    shoulders least (0.3, but a tighter ¾ in tolerance), since a
    shoulder seam's place shifts with the cut. The shopper's "what
@@ -1358,8 +1370,8 @@ function compare(profile, record, opts) {
       }
       const target = toUnits(v.value, ref.record.units, record.units);
       const diffRecord = row[d].value - target;
-      const { weight, tol } = params.garment[d];
-      score += weight * weights[d] * (diffRecord / toUnits(tol, 'in', record.units)) ** 2;
+      const { weight } = params.garment[d];
+      score += weight * weights[d] * (diffRecord / toleranceOf(d, record, params)) ** 2;
       const difference = round(toUnits(diffRecord, record.units, unit), 2);
       out[d] = {
         compared: true,
