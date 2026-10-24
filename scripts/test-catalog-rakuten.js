@@ -131,10 +131,17 @@ const rakuten = require('../api/_catalog/rakuten');
 const adapter = require('../api/_catalog/sources/uniqlo-us');
 const { read } = require('../api/_catalog/import');
 
-async function sync(feed, extra) {
+/* The time each sync records (`--now`): the moment this suite started,
+   unless a test names another. The server judges a catalogue's
+   freshness by its own clock (prices and stock for 48 hours, the
+   catalogue for 30 days), so a fixed date here goes stale on its own;
+   the files' order (10/20, then 10/21) comes from their headers, not
+   from this. */
+const SUITE_NOW = new Date().toISOString();
+async function sync(feed, extra, now) {
   const logs = [];
   const errors = [];
-  const code = await require('./sync-catalog').main(['--source', 'uniqlo-us', '--file', feed, '--out', out, '--status', statusFile, '--licensed', LICENSED, '--allow-fixture', '--now', '2026-10-20T07:00:00Z'].concat(extra || []), { env: { RAKUTEN_UNIQLO_MID: MID }, log: (l) => logs.push(l), error: (l) => errors.push(l) });
+  const code = await require('./sync-catalog').main(['--source', 'uniqlo-us', '--file', feed, '--out', out, '--status', statusFile, '--licensed', LICENSED, '--allow-fixture', '--now', now || SUITE_NOW].concat(extra || []), { env: { RAKUTEN_UNIQLO_MID: MID }, log: (l) => logs.push(l), error: (l) => errors.push(l) });
   return { code, logs: logs.join('\n'), errors: errors.join('\n') };
 }
 /* the catalogue API, in a child with the synced catalogue as Find Fit's */
@@ -286,7 +293,9 @@ function inChild(code) {
 
   section('Find Fit over the synced catalogue');
 
-  /* a fresh sync of the full file, for what follows */
+  /* a fresh sync of the full file, for what follows: as current as a
+     catalogue imported moments before it is served */
+  const SERVED_AT = SUITE_NOW;
   fs.rmSync(out, { force: true });
   assert.strictEqual((await sync(feedFile)).code, 0);
 
@@ -306,7 +315,7 @@ function inChild(code) {
     assert.strictEqual(r.women, PRODUCTS / 8 * 3 + 2, 'women’s, and the two unisex products Fynd sourced (unisex is offered to both)');
     assert.ok(r.page2);
     assert.deepStrictEqual(r.q, ['E961001-000']);
-    assert.match(r.coverage, /^2405 UNIQLO US products from Rakuten Advertising Product Catalog — FIXTURE UNIQLO USA \(MID 44210\), updated 2026-10-20\.$/);
+    assert.strictEqual(r.coverage, `2405 UNIQLO US products from Rakuten Advertising Product Catalog — FIXTURE UNIQLO USA (MID 44210), updated ${SERVED_AT.slice(0, 10)}.`);
     assert.ok(!/full/i.test(r.coverage));
     assert.strictEqual(r.notice, null, 'no limited-coverage notice once a current catalogue is served');
     assert.ok(r.five);
@@ -336,6 +345,19 @@ function inChild(code) {
   });
 
   await browserTests();
+
+  /* the same catalogue synced three days before it is served: past the
+     48 hours prices and stock may be shown, so both are withheld and said */
+  await test('a catalogue synced three days ago is still served, but its prices and stock are withheld, and the notice says why', async () => {
+    const STALE_AT = new Date(Date.parse(SERVED_AT) - 3 * 24 * 3600 * 1000).toISOString();
+    fs.rmSync(out, { force: true });
+    assert.strictEqual((await sync(feedFile, [], STALE_AT)).code, 0);
+    const r = inChild(`const b = require('./api/_sizing/brands'); const u = b.get('uniqlo'); const all = b.browse(u, {}); const d = u.detail('${code(10)}'); return { total: all.total, notice: all.brand.notice, hasPrice: 'price' in d, hasStock: 'availability' in d, withheld: d.catalogue.withheld, missing: d.missing };`);
+    assert.strictEqual(r.total, PRODUCTS + 5, 'still served: well inside 30 days');
+    assert.strictEqual(r.notice, `Prices and stock aren’t shown: UNIQLO’s product catalogue was last updated on ${STALE_AT.slice(0, 10)}, too long ago for them to be current. Check them on UNIQLO’s own page.`);
+    assert.deepStrictEqual([r.hasPrice, r.hasStock, r.withheld], [false, false, true], 'no price or stock shown, and said to be withheld');
+    assert.ok(r.missing.includes('price') && r.missing.includes('availability'), r.missing.join(','));
+  });
 
   console.log(`\n${passed} passed, ${failures.length} failed`);
   fs.rmSync(tmp, { recursive: true, force: true });
