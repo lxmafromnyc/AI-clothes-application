@@ -1239,9 +1239,12 @@ function recommend(profile, record, opts) {
    chest that matches beside a length 3 in longer. Each compared
    dimension says whether it is within its tolerance (withinTolerance,
    with the tolerance in the unit shown), and `tradeoffs` lists every
-   one of the closest size's that isn't, with a caveat saying so. This
-   reports; it doesn't change the ranking or whether a size is
-   recommended.
+   one of the closest size's that isn't, with a caveat saying so. The
+   ranking is unchanged; but when every compared measurement of the
+   closest size is outside its tolerance, nothing is recommended: the
+   comparison is partial, `withheld` says "outside-tolerance", and the
+   size and its differences stay as explanation. (The tolerances are
+   the scoring's own starting values, not validated limits.)
 
    A value published without its method ("not-stated") is never
    compared, with either side's reason given.
@@ -1455,13 +1458,19 @@ function compare(profile, record, opts) {
   caveats.push('Matching measurements don\'t guarantee the same fit or feel: fabric, stretch and cut change how a garment wears.');
 
   const verified = sizingSchema.isVerified(record);
-  const recommended = enough && verified ? closest.size : null;
+  /* closest is not the same as close: when every measurement compared
+     misses its tolerance, the size is shown, never recommended */
+  const allOutside = tradeoffs.length === dims.length;
+  const withheld = !verified ? 'unverified' : !enough ? 'too-few-dimensions' : allOutside ? 'outside-tolerance' : null;
+  const recommended = withheld ? null : closest.size;
   const named = listWords(dims.map((d) => DIM_NAMES[d]));
   const summary = recommended
     ? `${recommended} is the closest to your reference across ${named}.`
-    : !verified
+    : withheld === 'unverified'
       ? `${closest.size} is the closest on ${named}, but this product's measurements haven't been checked, so it isn't a recommendation.`
-      : `${closest.size} is the closest on ${named}, but that's ${dims.length === 1 ? 'one dimension' : `${dims.length} of 4 dimensions`} — not enough for a recommendation.`;
+      : withheld === 'too-few-dimensions'
+        ? `${closest.size} is the closest on ${named}, but that's ${dims.length === 1 ? 'one dimension' : `${dims.length} of 4 dimensions`} — not enough for a recommendation.`
+        : `${closest.size} is the closest size, but its ${named} all differ from your reference by more than Fynd treats as similar, so it isn't a recommendation.`;
 
   return {
     status: recommended ? 'ok' : 'partial',
@@ -1470,6 +1479,9 @@ function compare(profile, record, opts) {
     unit,
     reference,
     recommended,
+    /* why there is no recommendation: "unverified", "too-few-dimensions"
+       or "outside-tolerance"; null when there is one */
+    withheld,
     closest: closest.size,
     alternative: nearTie ? second.size : null,
     tradeoffs,

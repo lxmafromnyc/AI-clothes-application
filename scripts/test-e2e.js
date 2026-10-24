@@ -2152,9 +2152,9 @@ const linkFromInbox = (pattern) => {
     const recRow = expected.sizes.find((x) => x.size === expected.recommended);
     assert.deepStrictEqual(scale.map((s) => s[0]), expected.dimensionsCompared, 'one step per compared measurement');
     scale.forEach(([dim, place]) => {
-      const words = recRow.dimensions[dim].words;
-      const want = /the same/.test(words) ? 'same' : /wider|longer/.test(words) ? 'more' : 'less';
-      assert.strictEqual(place, want, `${dim}: placed by the engine's words (${words})`);
+      const { words, withinTolerance } = recRow.dimensions[dim];
+      const want = withinTolerance || /the same/.test(words) ? 'same' : /wider|longer/.test(words) ? 'more' : 'less';
+      assert.strictEqual(place, want, `${dim}: placed by the engine's own answer (${words}, within tolerance: ${withinTolerance})`);
     });
     assert.match(await page.textContent('#fit-compare .ff-sources'), /^Sources: UNIQLO’s published finished-garment measurements for this item, checked against the brand’s page; your reference’s published measurements/);
     assert.strictEqual(await page.textContent('#fit-compare .ff-limits-title'), 'Limits of this comparison');

@@ -1775,8 +1775,15 @@ strong { font-weight: 600; }
 .ff .ff-verdict[data-verdict="recommended"] { border-color: var(--color-accent-line); background: var(--color-accent-soft); }
 .ff .ff-verdict[data-verdict="unavailable"],
 .ff .ff-verdict[data-verdict="no-recommendation"],
+.ff .ff-verdict[data-verdict="closest-mismatch"],
 .ff .ff-verdict[data-verdict="error"] { border-color: var(--color-warning-line); background: var(--color-warning-soft); }
 .ff .ff-verdict .fit-compare-recommended { font-size: 17px; color: var(--color-text); }
+.ff .ff-verdict .fit-compare-closest { font-size: 17px; color: var(--color-text); }
+.ff .ff-verdict .fit-compare-closest strong { display: inline-block; margin: 0 4px; padding: 1px 11px; border: 1px solid var(--color-text); border-radius: var(--r-pill); font-size: 20px; }
+.ff .ff-verdict .fit-compare-tradeoffs { margin-top: 12px; padding: 10px 12px; border: 1px solid var(--color-warning-line); border-radius: var(--r-sm); background: var(--color-surface); }
+.ff .ff-verdict .fit-compare-tradeoffs-title { font-size: 14px; font-weight: 600; color: var(--color-text); }
+.ff .ff-verdict .fit-compare-tradeoffs ul { margin-top: 4px; padding-left: 18px; font-size: 14px; color: var(--color-text); }
+.ff .ff-verdict .fit-compare-tradeoffs-note { margin-top: 6px; font-size: 13px; color: var(--color-text-2); }
 .ff .ff-verdict .fit-compare-recommended strong { display: inline-block; margin-left: 4px; padding: 2px 12px; border-radius: var(--r-pill); background: var(--color-primary); color: var(--color-text-on-primary); font-size: 22px; }
 .ff .ff-verdict .fit-compare-reference { font-weight: 500; color: var(--color-text); }
 

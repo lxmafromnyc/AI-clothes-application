@@ -22,6 +22,9 @@
        is never compared, and says why
      - a size that matches on chest but not on length is reported with
        that trade-off, not as a plain match
+     - the closest size is never recommended when every measurement
+       compared misses its tolerance: partial, withheld
+       "outside-tolerance", its differences kept as explanation
      - unverified or missing data never gives a recommendation
    ========================================================= */
 
@@ -139,6 +142,7 @@ const diffs = (c, size) => Object.fromEntries(Object.entries(rowOf(c, size).dime
     assert.strictEqual(c.reference.crossCategory, true, 'a sweatshirt reference for a hoodie');
     assert.strictEqual(c.reliability, 'medium', 'and lowered for it');
     assert.deepStrictEqual(c.tradeoffs, [], 'S matches on every measurement');
+    assert.strictEqual(c.withheld, null);
   }));
 
   await test('centimetres: every value and difference is the inch figure × 2.54, and the published inches are kept on each measurement', () => asChecked(['uniqlo-e475378-sweat-pullover-hoodie-us', 'uniqlo-e475377-sweatshirt-us'], () => {
@@ -223,7 +227,30 @@ const diffs = (c, size) => Object.fromEntries(Object.entries(rowOf(c, size).dime
     const m = rowOf(c, 'M').dimensions;
     assert.deepStrictEqual([m.chestWidth.withinTolerance, m.bodyLength.withinTolerance, m.shoulderWidth.withinTolerance], [true, false, true], 'M: chest and shoulders match, the length doesn\'t');
     assert.ok(c.caveats.includes('S differs from your reference by more than Fynd treats as similar on chest, length and shoulders.'), 'said with the comparison\'s limits');
+    /* closest is not close: every compared measurement misses its tolerance, so nothing is recommended — the size and its differences stay, as explanation */
+    assert.deepStrictEqual([c.status, c.recommended, c.withheld], ['partial', null, 'outside-tolerance']);
+    assert.strictEqual(c.summary, 'S is the closest size, but its chest, length and shoulders all differ from your reference by more than Fynd treats as similar, so it isn\'t a recommendation.');
+    assert.strictEqual(rowOf(c, 'S').dimensions.chestWidth.difference, -2.5, 'the signed differences are kept');
   })));
+
+  await test('a chest match beside a substantial length mismatch, ranked closest: recommended — the measurements within tolerance support it — with the length named as a trade-off', () => asChecked(['uniqlo-e475377-sweatshirt-us'], () => X.withFixtureBrand(() => {
+    /* a variant of the illustrative table: S narrower, so M (chest and shoulders matching, 3 in longer) ranks first */
+    const f = X.everlanePublished(Object.assign({}, X.EVERLANE_PUBLISHED, { sizes: Object.assign({}, X.EVERLANE_PUBLISHED.sizes, { S: Object.assign({}, X.EVERLANE_PUBLISHED.sizes.S, { chest_circumference: '43' }) }) }));
+    const c = engine.compare(uniqloRef('M'), X.asCheckedCopy(X.everlaneRecord(f, IF_STATED)));
+    assert.strictEqual(c.closest, 'M');
+    assert.deepStrictEqual(diffs(c, 'M'), { chestWidth: 0, bodyLength: 3, shoulderWidth: 0 });
+    assert.deepStrictEqual([c.status, c.recommended, c.withheld], ['ok', 'M', null]);
+    assert.deepStrictEqual(c.tradeoffs, [{ size: 'M', dim: 'bodyLength', difference: 3, tolerance: 1, words: 'Body length: 3 in longer' }]);
+    assert.ok(c.caveats.includes('M differs from your reference by more than Fynd treats as similar on length.'));
+    assert.strictEqual(c.reliability, 'medium', 'compared on three of four, one of them worked out');
+  })));
+
+  await test('a candidate that meets the fit criteria: every compared measurement within tolerance, recommended, no trade-off', () => asChecked(['uniqlo-e475378-sweat-pullover-hoodie-us', 'uniqlo-e475377-sweatshirt-us'], () => {
+    const c = engine.compare(uniqloRef('M'), sizing.byId(X.UQ_HOODIE));
+    assert.deepStrictEqual([c.status, c.recommended, c.withheld, c.tradeoffs], ['ok', 'M', null, []]);
+    assert.ok(Object.values(rowOf(c, 'M').dimensions).every((x) => x.withinTolerance === true));
+    assert.ok(Object.values(rowOf(c, 'L').dimensions).some((x) => x.withinTolerance === false), 'the next size up does miss');
+  }));
 
   out('\nmissing, mismatched and unverified data\n');
 
@@ -250,6 +277,7 @@ const diffs = (c, size) => Object.fromEntries(Object.entries(rowOf(c, size).dime
     assert.ok(c.notCompared.some((x) => x.dim === 'shoulderWidth' && x.why === 'Everlane doesn\'t publish it'));
     assert.strictEqual(c.status, 'partial');
     assert.strictEqual(c.recommended, null);
+    assert.strictEqual(c.withheld, 'too-few-dimensions');
     assert.match(c.summary, /2 of 4 dimensions — not enough for a recommendation/);
   })));
 
@@ -273,7 +301,7 @@ const diffs = (c, size) => Object.fromEntries(Object.entries(rowOf(c, size).dime
     assert.deepStrictEqual([c.status, c.missing[0].code], ['insufficient', 'no-reference-measurements']);
     /* the evaluation suite may look at unverified numbers, and is still never given a recommendation */
     const d = asChecked(['uniqlo-e475377-sweatshirt-us'], () => engine.compare(uniqloRef('M'), ever, { includeUnverified: true }));
-    assert.deepStrictEqual([d.status, d.recommended, d.dataStatus], ['partial', null, 'unverified']);
+    assert.deepStrictEqual([d.status, d.recommended, d.dataStatus, d.withheld], ['partial', null, 'unverified', 'unverified']);
     assert.match(d.summary, /haven't been checked, so it isn't a recommendation/);
   }));
 
