@@ -286,6 +286,10 @@ async function launch(extDir) {
     await page.waitForSelector('#fit-result[data-from="extension"][data-state="ok"]');
     assert.strictEqual(await page.textContent('#fit-result .size-chart-name'), 'Finished-garment measurements');
     assert.match(await page.textContent('#fit-result .size-chart-method'), /center back/);
+    /* once step 1 has read the shopper's state — the moment an early check could ask — still nothing sent */
+    await page.waitForSelector('#ff-reference[data-state]');
+    await page.waitForTimeout(600);
+    assert.strictEqual(await page.isHidden('#ff-check'), true, 'no check of a link the extension handed over');
     assert.strictEqual(apiAsked.length, asked, 'nothing was sent to Fynd’s server');
     await page.waitForSelector('#fit-compare:not([hidden])');
     assert.match(await page.textContent('#fit-compare'), /Fynd holds no checked garment measurements for this item/, 'read, not checked: never compared');
@@ -406,6 +410,8 @@ async function launch(extDir) {
     const page = await openInFynd(popup);
     await page.waitForFunction(() => document.getElementById('fit-result').dataset.state === 'unavailable');
     assert.strictEqual(new URL(page.url()).hash, '');
+    await page.waitForSelector('#ff-reference[data-state]');
+    await page.waitForTimeout(600);
     assert.strictEqual(apiAsked.length, asked + 1, 'one lookup, for this product');
     assert.ok(decodeURIComponent(apiAsked[apiAsked.length - 1]).includes('/fixtures/guide-closed.html'));
     await page.close();

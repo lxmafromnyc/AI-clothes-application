@@ -67,6 +67,9 @@
   const checkBox = $('ff-check');
   const submitButton = $('fit-url-submit');
   let blocked = false;
+  /* a link the Fynd extension handed over: nothing about it is sent
+     anywhere until the shopper asks (Check Fynd's catalog) or edits it */
+  let quietUrl = null;
   let checkAsk = 0;
   let checkTimer = null;
   const CHECK_HEADING = {
@@ -94,6 +97,7 @@
   }
   /* the item as it stands: a picked product, or a whole link — or none */
   function targetNow() {
+    if (quietUrl && input.value === quietUrl) return null;
     if (choice && input.value.trim() === (choice.product.url || '')) return { brand: choice.brand.id, code: choice.product.code };
     const link = readLink(input.value);
     return link.error ? null : { url: link.url };
@@ -370,6 +374,7 @@
     }, 0);
   });
   input.addEventListener('input', () => {
+    quietUrl = null;
     if (error.textContent) say('');
     if (choice && input.value.trim() !== (choice.product.url || '')) unselect();
     scheduleCheck();
@@ -382,6 +387,8 @@
     ++latest;
     const url = payload.page.url;
     lastAsked = url;
+    quietUrl = url;
+    clearCheck();
     input.value = url;
     say('');
     const chart = global.FyndPayload.toChart(payload);
@@ -421,6 +428,8 @@
       try { raw = decodeURIComponent(urlIn[1]); } catch (err) { /* refused below */ }
       const link = readLink(raw);
       if (link.error) { say(link.error); return; }
+      /* the extension asked for one lookup of this product: that, and nothing more */
+      quietUrl = link.url;
       input.value = link.url;
       find(link.url);
       return;
