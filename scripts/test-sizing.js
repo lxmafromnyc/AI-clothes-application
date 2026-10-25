@@ -1955,8 +1955,10 @@ await test('a body-size fallback can never start a garment comparison, and says 
   assert.ok(!r.charts.some((c) => c.measures === 'finished-garment'), 'no garment chart is made up from the body chart');
   assert.strictEqual(require('../api/_sizing/records').byId(r.fallback.chartId), null, 'the chart is not a sizing record the compare endpoint would accept');
   assert.match(r.note.join(' '), /can’t be set beside a garment you own/);
-  assert.deepStrictEqual([r.productSize.status, r.productSize.checkedAt], ['not-retrieved', new Date().toISOString().slice(0, 10)]);
-  assert.ok(r.note.some((n) => /^This product’s own measurements — a Product Size chart, where UNIQLO publishes one — weren’t found \(looked for \d{4}-\d{2}-\d{2}\): its page couldn’t be read\. None are shown, and none are worked out from a body chart\.$/.test(n)));
+  assert.strictEqual(r.productSize.status, 'not-retrieved');
+  /* the moment it was looked for, as an ISO timestamp — never a UTC calendar date that can read as tomorrow */
+  assert.ok(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(r.productSize.checkedAt) && Math.abs(Date.now() - Date.parse(r.productSize.checkedAt)) < 60000, r.productSize.checkedAt);
+  assert.ok(r.note.some((n) => /^This product’s own measurements — a Product Size chart, where UNIQLO publishes one — weren’t found: its page couldn’t be read\. None are shown, and none are worked out from a body chart\.$/.test(n)), 'the note names no date: the page shows it in the viewer\'s time zone');
 }));
 
 await test('a page that loads but holds no chart gets the same fallback, saying the page was read', () => listedUnderGeneral(async () => {
@@ -2082,11 +2084,12 @@ await test('the same product, its page read but with no garment table: the recor
   const bodyOnly = page(`<h3>Body size</h3><p>Body measurements, in inches.</p>${fixtureTable('', ['Chest'], [['S', '35-37.5'], ['M', '37.5-41']])}`);
   const r = await read(NIKE_CREW_URL, { [NIKE_CREW_URL]: { body: bodyOnly } });
   assert.deepStrictEqual(r.charts.map((c) => [c.measures, c.origin]), [['body', 'fynd-record']], 'one body chart: the record’s, not the page’s again');
-  assert.deepStrictEqual([r.productSize.status, r.productSize.checkedAt], ['not-found', new Date().toISOString().slice(0, 10)]);
+  assert.strictEqual(r.productSize.status, 'not-found');
+  assert.ok(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(r.productSize.checkedAt), r.productSize.checkedAt);
   assert.ok(r.note.some((n) => /^This product’s page had no finished-garment measurements/.test(n)));
   const slow = await read(NIKE_CREW_URL, { [NIKE_CREW_URL]: { throws: 'abort' } });
   assert.deepStrictEqual([slow.from, slow.productSize.status, slow.productSize.reason], ['fynd-record', 'not-retrieved', 'no-answer']);
-  assert.ok(slow.note.some((n) => /weren’t found \(looked for [\d-]+\): its page couldn’t be read/.test(n)));
+  assert.ok(slow.note.some((n) => /weren’t found: its page couldn’t be read/.test(n)));
 });
 
 await test('a record with the garment’s own chart answers without a read; only the exact product, in its own market, matches it', async () => {

@@ -185,7 +185,7 @@ Allow: /products/E1
     const r = await charts.chartFor('https://www.nike.com/t/club-mens-fleece-crew-RU1Il4yl/FN3886-010', { noCache: true, fetch: s.fetch });
     assert.deepStrictEqual([r.status, r.from, s.asked], ['ok', 'fynd-record', []]);
     assert.ok(r.charts.length > 0 && r.charts.every((c) => c.measures === 'body'));
-    assert.ok(r.note.some((n) => /weren’t looked for .*: Fynd doesn’t read Nike’s pages without confirmed permission\./.test(n)), r.note.join('\n'));
+    assert.ok(r.note.some((n) => /weren’t looked for: Fynd doesn’t read Nike’s pages without confirmed permission\./.test(n)), r.note.join('\n'));
   });
 
   await test('another shop’s link: nothing fetched, an honest unavailable, and the page linked', async () => {

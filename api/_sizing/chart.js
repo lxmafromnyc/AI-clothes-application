@@ -700,7 +700,8 @@ function fromPage(html, checked, landedUrl, guides) {
     product: { brand: data.brand || checked.brand || null, name: data.name, code: data.sku },
     details: { material: data.material, fit: data.fit },
     retailer: retailerOf(html, new URL(pageUrl).hostname),
-    source: { title: pageTitle, url: pageUrl, kind: 'product-page', retrievedAt: new Date().toISOString().slice(0, 10) },
+    /* the moment it was read (ISO, UTC): the page shows its date in the viewer's time zone */
+    source: { title: pageTitle, url: pageUrl, kind: 'product-page', retrievedAt: new Date().toISOString() },
     guides: (guides || []).map((g) => ({ url: g.url, read: Boolean(g.html), reason: g.failed || null })),
     scope,
     market: checked.market || localeMarket(html),
@@ -806,7 +807,7 @@ async function liveFor(checked, opts) {
   const may = pageAccess.permission(checked.host);
   if (!may.allowed) {
     const refused = unavailable(checked, may.reason);
-    return Object.assign(refused, { trace: [], checkedAt: new Date().toISOString().slice(0, 10) });
+    return Object.assign(refused, { trace: [], checkedAt: new Date().toISOString() });
   }
   const key = cacheKey(checked);
   if (!opts.noCache) {
@@ -836,7 +837,7 @@ async function liveFor(checked, opts) {
     result = fromPage(page.html, checked, page.url, guides);
   }
   result.trace = traces.filter(Boolean);
-  result.checkedAt = new Date().toISOString().slice(0, 10);
+  result.checkedAt = new Date().toISOString();
   /* only kept under the address it was asked for */
   if (result.source) result.source.url = result.source.url || checked.url;
   const ttl = result.status === 'unavailable' ? CACHE_MISS_SECONDS : CACHE_OK_SECONDS;
@@ -854,13 +855,15 @@ function productSizeOf(live) {
 function productSizeLine(result) {
   const ps = result.productSize || {};
   const brand = (result.product && result.product.brand) || 'the brand';
-  const when = ps.checkedAt ? ` (looked for ${ps.checkedAt})` : '';
+  /* when it was looked for is kept (checkedAt, a moment) and shown by
+     the page in the viewer's own time zone; a note written here can't
+     know that zone, so it names no date */
   if (ps.status === 'not-retrieved' && NOT_FETCHED.includes(ps.reason)) {
-    return `This product’s own measurements — a Product Size chart, where ${brand} publishes one — weren’t looked for${when}: Fynd doesn’t read ${brand}’s pages without confirmed permission. None are shown, and none are worked out from a body chart.`;
+    return `This product’s own measurements — a Product Size chart, where ${brand} publishes one — weren’t looked for: Fynd doesn’t read ${brand}’s pages without confirmed permission. None are shown, and none are worked out from a body chart.`;
   }
   return ps.status === 'not-retrieved'
-    ? `This product’s own measurements — a Product Size chart, where ${brand} publishes one — weren’t found${when}: its page couldn’t be read. None are shown, and none are worked out from a body chart.`
-    : `This product’s page${ps.guides ? ' and the size guide it links to' : ''} had no finished-garment measurements${when}. None are shown, and none are worked out from a body chart.`;
+    ? `This product’s own measurements — a Product Size chart, where ${brand} publishes one — weren’t found: its page couldn’t be read. None are shown, and none are worked out from a body chart.`
+    : `This product’s page${ps.guides ? ' and the size guide it links to' : ''} had no finished-garment measurements. None are shown, and none are worked out from a body chart.`;
 }
 
 /* A record of this product that holds only the brand's body chart,

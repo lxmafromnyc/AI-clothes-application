@@ -1519,7 +1519,8 @@ const linkFromInbox = (pattern) => {
     assert.match(details, /The brand’s general chart for this kind of product — a fallback, not this product’s own/);
     assert.match(details, /not read from this product’s page/);
     assert.match(details, /What Fynd tried/);
-    assert.match(details, /Product Size\s*Not retrieved — the page couldn’t be read \(looked for \d{4}-\d{2}-\d{2}\)/);
+    /* the moment it was looked for, as a date in the viewer's own time zone, named */
+    assert.match(details, /Product Size\s*Not retrieved — the page couldn’t be read \(looked for [A-Z][a-z]{2} \d{1,2}, \d{4}, (UTC|GMT[+-]?[\d:]*)\)/);
     const text = await page.textContent('#fit-result');
     assert.ok(!/Verified —|Read just now/.test(text), 'never presented as checked for this product, or read live');
     const links = await page.$$eval('#fit-result .size-chart-source a', (as) => as.map((a) => a.href));

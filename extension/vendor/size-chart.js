@@ -69,6 +69,24 @@
   const UNIT_SHORT = { in: 'Inches', cm: 'Centimetres', both: 'Inches and centimetres', null: 'Units not stated' };
   const LINE = { men: 'men’s', women: 'women’s', unisex: 'unisex' };
 
+  /* A date to show. A calendar date as recorded ("2026-10-10", a
+     record's own) is shown as it is. A moment — a lookup's ISO
+     timestamp — is shown as its calendar date in the viewer's own time
+     zone, named, so a lookup late in the evening never reads as
+     tomorrow (the UTC date it once was). `timeZone` only for tests. */
+  function dateOf(value, timeZone) {
+    const text = String(value || '');
+    if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
+    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(text) || Number.isNaN(Date.parse(text))) return '';
+    const opts = { year: 'numeric', month: 'short', day: 'numeric', timeZoneName: 'short' };
+    if (timeZone) opts.timeZone = timeZone;
+    try {
+      return new Intl.DateTimeFormat('en-US', opts).format(new Date(text));
+    } catch (err) {
+      return `${new Date(text).toISOString().slice(0, 10)} (UTC)`;
+    }
+  }
+
   /* how the chart's values reached Fynd — never a check in itself */
   const EXTRACTED = {
     'fynd-record': 'Copied from the brand’s own page into Fynd’s record',
@@ -296,7 +314,8 @@
     }
     if (chart.productSize) {
       const said = { 'not-retrieved': 'Not retrieved — the page couldn’t be read', 'not-found': 'Not found on the page', 'not-in-browser': 'Not in the table read from your browser' };
-      fact('Product Size', `${said[chart.productSize.status] || 'Not found'}${chart.productSize.checkedAt ? ` (looked for ${chart.productSize.checkedAt})` : ''}`);
+      const when = dateOf(chart.productSize.checkedAt);
+      fact('Product Size', `${said[chart.productSize.status] || 'Not found'}${when ? ` (looked for ${when})` : ''}`);
     }
     if (facts.childNodes.length) box.append(facts);
     if (chart.productSize && (chart.productSize.tried || []).length) {
@@ -315,7 +334,7 @@
     /* the product page is a source only when a chart was read from it */
     const fromPage = chart.status === 'ok' || chart.status === 'labels-only';
     link(fromPage ? 'Source: ' : 'Product page: ', pageUrl, src.title || pageUrl);
-    if (src.retrievedAt && fromPage) box.lastChild.append(el('span', null, ` · read ${src.retrievedAt}`));
+    if (dateOf(src.retrievedAt) && fromPage) box.lastChild.append(el('span', null, ` · read ${dateOf(src.retrievedAt)}`));
     (chart.charts || []).forEach((c) => {
       if (c.source && c.source.url && c.source.url !== pageUrl) link('Chart from: ', c.source.url, c.source.title || c.source.url);
     });
@@ -383,7 +402,7 @@
     }
   }
 
-  global.SizeChart = { render, renderFailure, headingFor, cleanUrl, el, safeLink };
+  global.SizeChart = { render, renderFailure, headingFor, cleanUrl, el, safeLink, dateOf };
 
   /* ---------- the search page's dialog ---------- */
 

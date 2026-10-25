@@ -467,6 +467,50 @@ async function test(name, fn) {
     noSize(s);
   });
 
+  console.log('\nlookup dates, in the viewer\'s own time zone');
+
+  await test('a lookup at 03:30 UTC on the 25th reads as the 24th in Los Angeles and the 25th in Tokyo — the zone named; a record\'s calendar date stays as written', async () => {
+    const moment = '2026-10-25T03:30:00.000Z';
+    const inZone = async (timezoneId) => {
+      const ctx = await browser.newContext({ timezoneId });
+      await ctx.route((u) => !String(u).startsWith(origin), (route) => route.abort());
+      const p = await ctx.newPage();
+      await p.goto(`${origin}/harness.html`);
+      const out = await p.evaluate(({ moment, chart }) => {
+        const text = (nodes) => nodes.map((n) => n.textContent).join(' ');
+        return {
+          moment: window.SizeChart.dateOf(moment),
+          recorded: window.SizeChart.dateOf('2026-10-10'),
+          junk: [window.SizeChart.dateOf('yesterday'), window.SizeChart.dateOf(''), window.SizeChart.dateOf(null), window.SizeChart.dateOf('2026-13-45T99:99')],
+          drawn: text(window.SizeChart.render(chart, chart.source.url, { linked: true }))
+        };
+      }, { moment, chart: Object.assign(clone(C.unverifiedChart), { productSize: { status: 'not-retrieved', reason: 'no-answer', checkedAt: moment, guides: false } }) });
+      await ctx.close();
+      return out;
+    };
+    const la = await inZone('America/Los_Angeles');
+    assert.strictEqual(la.moment, 'Oct 24, 2026, PDT', 'still the 24th in Los Angeles');
+    assert.match(la.drawn, /looked for Oct 24, 2026, PDT/);
+    const tokyo = await inZone('Asia/Tokyo');
+    assert.strictEqual(tokyo.moment, 'Oct 25, 2026, GMT+9');
+    const utc = await inZone('UTC');
+    assert.strictEqual(utc.moment, 'Oct 25, 2026, UTC');
+    for (const z of [la, tokyo, utc]) {
+      assert.strictEqual(z.recorded, '2026-10-10', 'a recorded calendar date is never shifted');
+      assert.deepStrictEqual(z.junk, ['', '', '', ''], 'nothing that isn\'t a date is shown as one');
+    }
+    /* the day before a boundary, either side of it */
+    const edge = await (async () => {
+      const ctx = await browser.newContext({ timezoneId: 'America/New_York' });
+      const p = await ctx.newPage();
+      await p.goto(`${origin}/harness.html`);
+      const r = await p.evaluate(() => [window.SizeChart.dateOf('2026-11-01T03:59:59.000Z'), window.SizeChart.dateOf('2026-11-01T04:00:00.000Z')]);
+      await ctx.close();
+      return r;
+    })();
+    assert.deepStrictEqual(edge, ['Oct 31, 2026, EDT', 'Nov 1, 2026, EDT'], 'midnight in New York, to the second');
+  });
+
   await browser.close();
   server.close();
   console.log(`\n${passed} passed, ${failures.length} failed\n`);
