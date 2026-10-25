@@ -316,6 +316,102 @@ const diffs = (c, size) => Object.fromEntries(Object.entries(rowOf(c, size).dime
     assert.deepStrictEqual([stated.status, stated.method], ['ok', 'body-plus-ease'], 'the what-if, stated as a circumference, is scored as one');
   }));
 
+  out('\nvalidate(): can this be compared, before any size is scored\n');
+
+  const sizingSchema2 = require('../api/_sizing/schema');
+  const measured = (m) => profileWith('hoodies', { brand: 'Carhartt', size: 'L', measurements: Object.assign({ unit: 'in' }, m) });
+  /* validate() and compare() agree: ready exactly when compare() compares */
+  const agree = (v, c) => assert.strictEqual(v.ready, c.status !== 'insufficient', `validate ${v.status} vs compare ${c.status}`);
+
+  await test('each method is a kind — flat, circumference, length, width, body or unknown — from the method alone, never a column\'s name', () => {
+    assert.deepStrictEqual(['flat-width-armpit-to-armpit', 'garment-circumference', 'center-back-to-hem', 'seam-to-seam', 'body-circumference', 'not-stated', 'chest_circumference'].map(sizingSchema2.methodKind),
+      ['flat', 'circumference', 'length', 'width', 'body', 'unknown', 'unknown']);
+    X.withFixtureBrand(() => {
+      const rec = X.everlaneRecord(X.everlanePublished());
+      assert.strictEqual(sizingSchema2.methodKind(rec.charts.garment.dimensions.chestWidth.method), 'unknown', 'published as "chest_circumference", method not stated: unknown');
+    });
+  });
+
+  await test('ready: both sides measured the same way, each dimension with its method, kind and status; a recommendation possible on enough of them', () => asChecked(['uniqlo-e475378-sweat-pullover-hoodie-us', 'uniqlo-e475377-sweatshirt-us'], () => {
+    const v = engine.validate(uniqloRef('S'), sizing.byId(X.UQ_HOODIE));
+    assert.deepStrictEqual([v.status, v.ready, v.canRecommend, v.code], ['ready', true, true, null]);
+    assert.match(v.explanation, /^Ready to compare on chest, length, shoulders and sleeves\.$/);
+    const chest = v.dimensions.find((d) => d.dim === 'chestWidth');
+    assert.deepStrictEqual(chest, { dim: 'chestWidth', compared: true, code: null, why: null, target: { method: 'flat-width-armpit-to-armpit', kind: 'flat', status: 'verified' }, reference: { method: 'flat-width-armpit-to-armpit', kind: 'flat', status: 'verified' }, derived: null });
+    agree(v, engine.compare(uniqloRef('S'), sizing.byId(X.UQ_HOODIE)));
+  }));
+
+  await test('ready on too few: two dimensions compare, and validate says no recommendation can follow — compare() agrees', () => asChecked(['uniqlo-e475378-sweat-pullover-hoodie-us'], () => {
+    const p = measured({ chestWidth: 23.5, shoulderWidth: 20 });
+    const v = engine.validate(p, sizing.byId(X.UQ_HOODIE));
+    assert.deepStrictEqual([v.status, v.ready, v.canRecommend], ['ready', true, false]);
+    assert.match(v.explanation, /too few measurements are shared for a recommendation/);
+    const c = engine.compare(p, sizing.byId(X.UQ_HOODIE));
+    assert.deepStrictEqual([c.status, c.withheld], ['partial', 'too-few-dimensions']);
+    agree(v, c);
+  }));
+
+  await test('a circumference beside a flat width: ready, the converted value named derived, and both source methods kept as they are', () => asChecked(['uniqlo-e475377-sweatshirt-us'], () => X.withFixtureBrand(() => {
+    const ever = X.asCheckedCopy(X.everlaneRecord(X.everlanePublished(), IF_STATED));
+    const v = engine.validate(uniqloRef('M'), ever);
+    assert.strictEqual(v.status, 'ready');
+    const chest = v.dimensions.find((d) => d.dim === 'chestWidth');
+    assert.deepStrictEqual([chest.target.kind, chest.reference.kind], ['circumference', 'flat']);
+    assert.deepStrictEqual(chest.derived, { rule: 'chest around, as twice its flat width', from: 'flat-width-armpit-to-armpit', to: 'garment-circumference' });
+    assert.strictEqual(ever.charts.garment.sizes.M.chestWidth.value, 47, 'the source value untouched');
+    agree(v, engine.compare(uniqloRef('M'), ever));
+  })));
+
+  await test('missing reference: no garment of this kind, or one without measurements or a matched product — the reason, and what to add', () => asChecked(['uniqlo-e475378-sweat-pullover-hoodie-us'], () => {
+    const none = engine.validate(Schema.empty(), sizing.byId(X.UQ_HOODIE));
+    assert.deepStrictEqual([none.status, none.ready, none.code], ['missing-reference', false, 'no-reference']);
+    const labelOnly = engine.validate(profileWith('hoodies', { brand: 'Champion', size: 'L' }), sizing.byId(X.UQ_HOODIE));
+    assert.deepStrictEqual([labelOnly.status, labelOnly.code], ['missing-reference', 'no-reference']);
+    const unmatched = engine.validate(profileWith('hoodies', { brand: 'Champion', size: 'L', product: { name: 'Reverse Weave' } }), sizing.byId(X.UQ_HOODIE));
+    assert.deepStrictEqual([unmatched.status, unmatched.code], ['missing-reference', 'no-reference-measurements']);
+    assert.ok(unmatched.next.some((n) => /measurements, laid flat/.test(n)), JSON.stringify(unmatched.next));
+    agree(none, engine.compare(Schema.empty(), sizing.byId(X.UQ_HOODIE)));
+  }));
+
+  await test('missing target: no record, a kind not covered — never a guess', () => {
+    const v = engine.validate(uniqloRef('M'), null);
+    assert.deepStrictEqual([v.status, v.ready, v.code, v.dimensions], ['missing-target', false, 'no-record', []]);
+  });
+
+  await test('body-only: a record with only the body each size is cut for is never set beside a garment', () => {
+    const nike = sizing.byId('nike-fn3859-club-pullover-fleece-hoodie-us');
+    assert.ok(nike.charts.body && !nike.charts.garment && sizingSchema2.isVerified(nike), 'a verified record, body chart only');
+    const v = engine.validate(measured({ chestWidth: 23.5 }), nike);
+    assert.deepStrictEqual([v.status, v.code], ['body-only', 'body-chart-only']);
+    assert.match(v.explanation, /publishes who each size is cut for, not what the garment itself measures/);
+    agree(v, engine.compare(measured({ chestWidth: 23.5 }), nike));
+  });
+
+  await test('methods: values whose method isn\'t stated, or measured differently, say which and why', () => asChecked(['uniqlo-e475377-sweatshirt-us', 'uniqlo-e475378-sweat-pullover-hoodie-us'], () => X.withFixtureBrand(() => {
+    const unknown = engine.validate(uniqloRef('M'), X.asCheckedCopy(X.everlaneRecord(X.everlanePublished())));
+    assert.deepStrictEqual([unknown.status, unknown.code], ['methods', 'nothing-comparable']);
+    assert.ok(unknown.dimensions.every((d) => d.code === 'method-unknown' && d.target.kind === 'unknown'), JSON.stringify(unknown.dimensions));
+    /* the shopper's length and sleeve are taken from the shoulder; UNIQLO's from the centre back */
+    const mismatch = engine.validate(measured({ bodyLength: 27, sleeveLength: 24 }), sizing.byId(X.UQ_HOODIE));
+    assert.strictEqual(mismatch.status, 'methods');
+    assert.deepStrictEqual(mismatch.dimensions.filter((d) => d.code === 'method-mismatch').map((d) => d.dim), ['bodyLength', 'sleeveLength']);
+    agree(mismatch, engine.compare(measured({ bodyLength: 27, sleeveLength: 24 }), sizing.byId(X.UQ_HOODIE)));
+  })));
+
+  await test('unverified: a record not checked, crowdsourced numbers, or a checked record whose garment measurements a reviewer marked unverified — present, never compared', () => {
+    const v = engine.validate(uniqloRef('M'), sizing.byId(X.UQ_HOODIE));
+    assert.deepStrictEqual([v.status, v.code], ['unverified', 'unverified-data'], 'production: pending review');
+    asChecked(['uniqlo-e475378-sweat-pullover-hoodie-us', 'uniqlo-e475377-sweatshirt-us'], () => {
+      /* extracted and the record checked, but each garment measurement marked unverified: not verified */
+      const lowered = JSON.parse(JSON.stringify(sizing.byId(X.UQ_HOODIE)));
+      Object.values(lowered.charts.garment.dimensions).forEach((d) => { d.status = 'unverified'; });
+      const w = engine.validate(uniqloRef('M'), lowered);
+      assert.deepStrictEqual([w.status, w.ready], ['unverified', false]);
+      assert.ok(w.dimensions.every((d) => d.code === 'target-unverified' && d.target.status === 'unverified'));
+      agree(w, engine.compare(uniqloRef('M'), lowered));
+    });
+  });
+
   out(`\n${passed} passed, ${failures.length} failed\n\n`);
   process.exit(failures.length ? 1 : 0);
 })();

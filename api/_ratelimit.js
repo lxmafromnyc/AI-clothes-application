@@ -44,7 +44,9 @@ const LIMITS = {
   'sizing:chart': { max: 40, windowSeconds: 60 * 10 },
   /* a comparison with a garment not saved needs no account: kept to the
      same kind of pace (each one follows a chart lookup) */
-  'sizing:compare-unsaved': { max: 60, windowSeconds: 60 * 10 }
+  'sizing:compare-unsaved': { max: 60, windowSeconds: 60 * 10 },
+  /* checking an item before comparing reads nothing, but needs no account either */
+  'sizing:check': { max: 120, windowSeconds: 60 * 10 }
 };
 
 const countKey = (name, subject) => `ratelimit:${name}:${subject}`;

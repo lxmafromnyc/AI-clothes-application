@@ -589,6 +589,10 @@ function fromRecord(record, checked) {
       retrievedAt: chart.retrievedAt || record.retrievedAt,
       columns: keys.map((k) => chart.dimensions[k].label || k),
       methods: keys.map((k) => engine.METHOD_WORDS[chart.dimensions[k].method] || null),
+      /* each column's method as the record holds it (schema.js), so a
+         reader can tell a flat width from a circumference, a body
+         measurement, or one whose method the source doesn't state */
+      methodIds: keys.map((k) => chart.dimensions[k].method),
       rows: record.sizes.filter((s) => chart.sizes[s]).map((s) => ({ size: s, values: keys.map((k) => (chart.sizes[s][k] ? String(chart.sizes[s][k].text) : '')) }))
     });
   };

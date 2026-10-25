@@ -2449,6 +2449,69 @@ await test('a store that fails answers a plain 500 and logs only the store’s o
   assert.ok(/Fit feedback failed store GET failed with 500/.test(all));
 });
 
+section('checking an item before comparing');
+
+const checkFirst = (jar, body, headers) => call(recommendEndpoint, { jar, method: 'POST', body, query: { check: '1' }, url: '/api/size-recommendation?check=1', headers });
+
+await test('checking reads nothing from any shop: a UNIQLO link with a record, a UNIQLO product Fynd has no record of, another shop, and malformed or private addresses — each said apart', async () => {
+  const access = require('../api/_sizing/page-access');
+  const asked = [];
+  charts.setTransport(async (url) => { asked.push(url); throw new Error('nothing should be fetched'); });
+  access.setPolicy({});  /* production: no shop's pages are cleared for reading */
+  try {
+    const record = (await checkFirst({}, { target: { url: 'https://www.uniqlo.com/us/en/products/E475378-000/00?colorDisplayCode=09&utm_source=x' } })).body.check;
+    assert.deepStrictEqual([record.target.status, record.target.url, record.target.pages, record.chart, record.comparable], ['record', 'https://www.uniqlo.com/us/en/products/E475378-000/00', 'unreviewed', 'record', false]);
+    assert.deepStrictEqual([record.validation.status, record.validation.code], ['unverified', 'unverified-data'], 'production: pending review');
+    const unknown = (await checkFirst({}, { target: { url: 'https://www.uniqlo.com/us/en/products/E999999-000/00' } })).body.check;
+    assert.deepStrictEqual([unknown.target.status, unknown.chart, unknown.validation.status, unknown.comparable], ['no-record', 'none', 'missing-target', false]);
+    assert.match(unknown.validation.explanation, /Fynd holds no checked garment measurements for this UNIQLO product/);
+    const shop = (await checkFirst({}, { target: { url: 'https://shop.example.test/products/tee' } })).body.check;
+    assert.deepStrictEqual([shop.target.status, shop.target.pages, shop.chart, shop.validation.status], ['unsupported-retailer', 'unreviewed', 'none', 'missing-target']);
+    assert.match(shop.validation.explanation, /Fynd holds no sizing for products from shop\.example\.test, and hasn’t been cleared to read its pages/);
+    const bad = (await checkFirst({}, { target: { url: 'not a link' } })).body.check;
+    assert.deepStrictEqual([bad.target.status, bad.comparable, bad.validation], ['invalid-url', false, null]);
+    const local = (await checkFirst({}, { target: { url: 'http://127.0.0.1/admin' } })).body.check;
+    assert.strictEqual(local.target.status, 'blocked-address');
+    const js = (await checkFirst({}, { target: { url: 'javascript:alert(1)' } })).body.check;
+    assert.strictEqual(js.target.status, 'invalid-url');
+    /* a shop whose pages are cleared for reading: no record, but a chart may be readable */
+    access.setPolicy({ 'example.test': { access: 'permitted', basis: 'this test only' } });
+    const readable = (await checkFirst({}, { target: { url: 'https://shop.example.test/products/tee' } })).body.check;
+    assert.deepStrictEqual([readable.target.status, readable.target.pages, readable.chart, readable.comparable], ['no-record', 'readable', 'page', false]);
+    assert.deepStrictEqual(asked, [], 'no request to any shop, ever, to answer a check');
+  } finally {
+    charts.setTransport(null);
+    access.setPolicy(TEST_SHOPS);
+  }
+});
+
+await test('checking a listed product by brand and code, with the garment sent, or the signed-in shopper\'s saved one — ready only when the engine says so', () => asChecked(UQ_PAIR, async () => {
+  const listed = (await checkFirst({}, { target: { brand: 'uniqlo', code: 'E475378-000' }, reference: UQ_REF })).body.check;
+  assert.deepStrictEqual([listed.target.status, listed.comparable, listed.validation.status, listed.validation.canRecommend], ['record', true, 'ready', true]);
+  const noRef = (await checkFirst({}, { target: { brand: 'uniqlo', code: 'E475378-000' } })).body.check;
+  assert.deepStrictEqual([noRef.comparable, noRef.validation.status], [false, 'missing-reference']);
+  const { jar, user } = await signUp('jun@example.test');
+  await fitProfiles.saveGuide(user.id, { garments: { sweatshirts: { favorite: 'perfect', anchor: { brand: 'UNIQLO', size: 'M', product: { url: 'https://www.uniqlo.com/us/en/products/E475377-000/00' } } } } });
+  const saved = (await checkFirst(jar, { target: { url: 'https://www.uniqlo.com/us/en/products/E475378-000/00' } })).body.check;
+  assert.deepStrictEqual([saved.comparable, saved.validation.status], [true, 'ready'], 'the saved reference, read with their own session');
+  const unknownItem = await checkFirst({}, { target: { brand: 'uniqlo', code: 'E000000-000' } });
+  assert.strictEqual(unknownItem.status, 404);
+  const noTarget = await checkFirst({}, {});
+  assert.strictEqual(noTarget.status, 400);
+  const badRef = await checkFirst({}, { target: { brand: 'uniqlo', code: 'E475378-000' }, reference: { type: 'hoodies', garment: { anchor: { brand: 'X', size: 'Huge' } } } });
+  assert.deepStrictEqual([badRef.status, badRef.body.reason], [400, 'invalid-reference']);
+}));
+
+await test('a record\'s chart answer names each column\'s method as the record holds it — a flat width, a circumference, a body measurement — beside the words shown', () => {
+  const answer = charts.fromRecord(sizing.byId(UQ_HOODIE));
+  const garment = answer.charts.find((c) => c.measures === 'finished-garment');
+  const body = answer.charts.find((c) => c.measures === 'body');
+  assert.deepStrictEqual(garment.methodIds.map(sizingSchema.methodKind), garment.methodIds.map((m) => ({ 'flat-width-armpit-to-armpit': 'flat', 'center-back-to-hem': 'length', 'seam-to-seam': 'width', 'center-back-to-cuff': 'length' })[m]));
+  assert.ok(garment.methodIds.includes('flat-width-armpit-to-armpit'));
+  assert.deepStrictEqual(body.methodIds, ['body-circumference']);
+  assert.strictEqual(answer.verification, 'unverified', 'copied into a record is not verified');
+});
+
 await test('no measurement, size, product or feedback answer appears in the logs', () => {
   const all = logged.join('\n');
   assert.ok(all.length > 0, 'something was logged, or this proves nothing');

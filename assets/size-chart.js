@@ -69,6 +69,27 @@
   const UNIT_SHORT = { in: 'Inches', cm: 'Centimetres', both: 'Inches and centimetres', null: 'Units not stated' };
   const LINE = { men: 'men’s', women: 'women’s', unisex: 'unisex' };
 
+  /* how the chart's values reached Fynd — never a check in itself */
+  const EXTRACTED = {
+    'fynd-record': 'Copied from the brand’s own page into Fynd’s record',
+    'live-page': 'Read automatically from the page just now',
+    'official-fallback': 'Copied from the brand’s own pages',
+    'browser-extension': 'Read by the Fynd extension in your browser'
+  };
+  /* Whether the source states how each value was measured: a record
+     names each column's method (methodIds); a page's own words are
+     shown as the page wrote them, unconfirmed. */
+  function methodsFact(chart) {
+    const garment = (chart.charts || []).filter((c) => c && c.measures === 'finished-garment');
+    if (!garment.length) return (chart.charts || []).some((c) => c && c.measures === 'body') ? 'Body measurements — not the garment’s' : null;
+    const ids = garment.flatMap((c) => (Array.isArray(c.methodIds) ? c.methodIds : []));
+    if (ids.length) {
+      const unstated = garment.flatMap((c) => (c.methodIds || []).map((m, i) => (m === 'not-stated' ? c.columns[i] : null))).filter(Boolean);
+      return unstated.length ? `Not stated by the source for: ${unstated.join(', ')}` : 'Stated by the source for each measurement';
+    }
+    return garment.some((c) => Array.isArray(c.methods) && c.methods.some(Boolean)) ? 'As the page words them — not confirmed' : 'Not stated';
+  }
+
   /* The one line a shopper needs about where a chart is from — the rest
      is under "Source details". */
   function caveatOf(chart) {
@@ -266,6 +287,11 @@
     if (chart.status !== 'unavailable') {
       fact('Market', chart.market ? `${chart.market}${chart.line && LINE[chart.line] ? ` · ${LINE[chart.line]} sizing` : ''}` : 'Not stated');
       fact('Chart', SCOPE[chart.scope]);
+      /* three different things, said apart: how the chart reached Fynd,
+         whether its source says how each value was measured, and
+         whether the garment's measurements have been verified */
+      fact('Extracted', EXTRACTED[chart.from] || null);
+      fact('Measuring methods', methodsFact(chart));
       fact('Status', STATUS[chart.verification]);
     }
     if (chart.productSize) {

@@ -1856,3 +1856,15 @@ strong { font-weight: 600; }
 @media (max-width: 520px) {
   .ff .ffr-row, .ff .ffr-grid { grid-template-columns: 1fr; }
 }
+
+/* Find Fit: whether the item can be compared, said before comparing */
+.ff .ff-check { grid-column: 1 / -1; padding: 14px 16px; border: 1px solid var(--color-warning-line); border-radius: var(--r); background: var(--color-warning-soft); font-size: 14.5px; color: var(--color-text); }
+.ff .ff-check[hidden] { display: none; }
+.ff .ff-check[data-status="ready"] { border-color: var(--color-accent-line); background: var(--color-accent-soft); }
+.ff .ff-check p + p, .ff .ff-check ul { margin-top: 6px; }
+.ff .ff-check-title { font-weight: 600; }
+.ff .ff-check-access { color: var(--color-text-2); }
+.ff .ff-check-dims { padding-left: 18px; }
+.ff .ff-check-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 10px; }
+.ff .ff-check-actions .btn { min-height: 44px; }
+.ff .ff-compare-btn:disabled { background: var(--color-surface-2); border-color: var(--color-surface-2); color: var(--color-text-2); cursor: not-allowed; }

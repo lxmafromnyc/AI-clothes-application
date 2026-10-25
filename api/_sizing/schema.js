@@ -334,6 +334,29 @@ function validate(record) {
   return errors;
 }
 
+/* What one method measures, as a class a comparison can reason about:
+     flat            a garment width laid flat (chest, armpit to armpit)
+     circumference   a garment measured all the way around
+     length          a garment length (body, sleeve)
+     width           a garment width across the shoulders
+     body            the body a size is cut for — never the garment
+     unknown         the source doesn't say how it was taken
+   From the method alone, never from a column's name: a column called
+   "chest_circumference" is "unknown" until its source states the method. */
+const METHOD_KINDS = {
+  'flat-width-armpit-to-armpit': 'flat',
+  'garment-circumference': 'circumference',
+  'center-back-to-hem': 'length',
+  'high-point-shoulder-to-hem': 'length',
+  'center-back-to-cuff': 'length',
+  'shoulder-seam-to-cuff': 'length',
+  'seam-to-seam': 'width',
+  'broadest-part-of-shoulders': 'width',
+  'body-circumference': 'body',
+  'not-stated': 'unknown'
+};
+const methodKind = (method) => METHOD_KINDS[method] || 'unknown';
+
 const isVerified = (record) => Boolean(record && record.verification && record.verification.status === 'verified');
 
 /* One garment dimension's status (see the header): "verified",
@@ -383,5 +406,7 @@ module.exports = {
   validate,
   isVerified,
   measurementStatus,
-  measurementOf
+  measurementOf,
+  METHOD_KINDS,
+  methodKind
 };

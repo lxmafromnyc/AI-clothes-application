@@ -3240,6 +3240,49 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     }
   }));
 
+  await test('Find Fit checking first — an item said not comparable, with Compare fit off and what can still be done, and one ready to compare — is set in a palette ink, legible, and fits a phone', () => asChecked(UQ_PAIR, async () => {
+    /* the real endpoint's answer to each check, called in this process */
+    const realCheck = (body) => new Promise((resolve) => {
+      const res = { statusCode: 200, headers: {}, setHeader(k, v) { this.headers[k.toLowerCase()] = v; }, getHeader(k) { return this.headers[k.toLowerCase()]; },
+        status(c) { this.statusCode = c; return this; }, json(p) { resolve({ status: this.statusCode, payload: p }); return this; }, end() { return this; } };
+      sizingEndpoint({ method: 'POST', query: { check: '1' }, url: '/api/size-recommendation?check=1', body, headers: { host: 'fynd.test' }, socket: { remoteAddress: '192.0.2.44' }, on() { return this; } }, res);
+    });
+    accountState = accountReply({});
+    for (const viewport of [{ width: 1280, height: 900 }, { width: 360, height: 740 }]) {
+      const page = await openPage('index.html', { viewport });
+      await page.route('**/api/size-recommendation?check=1', async (route) => {
+        const got = await realCheck(JSON.parse(route.request().postData() || '{}'));
+        route.fulfill({ status: got.status, contentType: 'application/json', body: JSON.stringify(got.payload) });
+      });
+      await page.waitForSelector('#ff-reference .ffr-form', { timeout: 10000 });
+      const audit = guideAudit(page, viewport);
+      /* a garment measured from the shoulder beside UNIQLO's centre-back lengths: measured differently */
+      await page.selectOption('#ffr-size', 'L');
+      await page.fill('#ffr-brand', 'Carhartt');
+      await page.click('.ffr-measure > summary');
+      await page.fill('#ffr-m-bodyLength', '27');
+      await page.fill('#ffr-m-sleeveLength', '24');
+      await page.click('#ffr-use');
+      await page.fill('#fit-url', 'https://www.uniqlo.com/us/en/products/E475378-000/00');
+      await page.waitForSelector('#ff-check[data-status="methods"]');
+      assert.strictEqual(await page.isDisabled('#fit-url-submit'), true);
+      await audit('measured differently: the reason, each measurement, Compare fit off, and what can still be done');
+      /* the same item with UNIQLO's own sweatshirt as the garment: ready */
+      await page.click('.ff-ref-edit');
+      await page.fill('#ffr-m-bodyLength', '');
+      await page.fill('#ffr-m-sleeveLength', '');
+      await page.selectOption('#ffr-type', 'sweatshirts');
+      await page.selectOption('#ffr-size', 'M');
+      await page.fill('#ffr-brand', 'UNIQLO');
+      await page.fill('#ffr-product', 'https://www.uniqlo.com/us/en/products/E475377-000/00');
+      await page.click('#ffr-use');
+      await page.waitForSelector('#ff-check[data-status="ready"]');
+      assert.strictEqual(await page.isDisabled('#fit-url-submit'), false);
+      await audit('ready to compare');
+      await page.close();
+    }
+  }));
+
   await test('the sizing chart dialog — loading, a record’s body and garment tables, and an unavailable answer — is set in a palette ink, legible, and fits a phone', async () => {
     const UQ = { id: 'uq', name: 'Sweat Pullover Hoodie', brand: 'UNIQLO', price: 39.9, currency: 'USD', imageUrl: null,
       productUrl: 'https://www.uniqlo.com/us/en/products/E475378-000/00', retailer: 'UNIQLO', category: '', colors: [], sizes: [] };

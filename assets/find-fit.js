@@ -55,6 +55,131 @@
   /* a product picked in the brand browser: { brand, product }, until the link changes */
   let choice = null;
 
+  /* ---------- checking first ----------
+     As soon as there is an item and a reference, Find Fit asks whether
+     they can be compared at all (Account.sizing.check: Fynd's records
+     and the engine's own preconditions, engine.validate — nothing
+     fetched). When the answer confirms a comparison can't happen, it is
+     said right under the item, before anything is compared, and
+     Compare fit is turned off; viewing the chart, opening the product
+     page and editing the reference stay. Any doubt — no answer, an
+     error — leaves Compare fit as it was. */
+  const checkBox = $('ff-check');
+  const submitButton = $('fit-url-submit');
+  let blocked = false;
+  let checkAsk = 0;
+  let checkTimer = null;
+  const CHECK_HEADING = {
+    'invalid-url': 'That isn’t a product link Fynd can use',
+    'blocked-address': 'Fynd doesn’t look up that address',
+    'unsupported-retailer': 'Fynd doesn’t support this shop yet',
+    'missing-target': 'No checked measurements for this item',
+    unverified: 'This item’s measurements aren’t verified yet',
+    'body-only': 'Only body measurements for this item',
+    methods: 'Measured differently from your garment',
+    'missing-reference': 'Your garment’s measurements are missing'
+  };
+  function setBlocked(on) {
+    blocked = on;
+    submitButton.disabled = on;
+    if (on) submitButton.setAttribute('aria-describedby', 'ff-check');
+    else submitButton.removeAttribute('aria-describedby');
+  }
+  function clearCheck() {
+    checkAsk += 1;
+    checkBox.replaceChildren();
+    checkBox.hidden = true;
+    delete checkBox.dataset.status;
+    setBlocked(false);
+  }
+  /* the item as it stands: a picked product, or a whole link — or none */
+  function targetNow() {
+    if (choice && input.value.trim() === (choice.product.url || '')) return { brand: choice.brand.id, code: choice.product.code };
+    const link = readLink(input.value);
+    return link.error ? null : { url: link.url };
+  }
+  /* a new item or reference makes the last answer stale: it goes at
+     once, and Compare fit is back until the new one says otherwise */
+  function scheduleCheck(now) {
+    clearCheck();
+    global.clearTimeout(checkTimer);
+    checkTimer = global.setTimeout(runCheck, now ? 0 : 400);
+  }
+  async function runCheck() {
+    const target = targetNow();
+    if (!target) { clearCheck(); return; }
+    const sizing = global.Account && global.Account.sizing;
+    if (!sizing || !sizing.check) return;
+    const ask = ++checkAsk;
+    const reference = global.FindFitReference ? global.FindFitReference.unsaved() : null;
+    const got = await sizing.check(target, reference);
+    if (ask !== checkAsk) return;
+    const check = got && got.ok && got.data && got.data.check;
+    if (!check || typeof check !== 'object') { clearCheck(); return; }
+    drawCheck(check, target);
+  }
+  function drawCheck(check, target) {
+    const v = check.validation && typeof check.validation === 'object' ? check.validation : null;
+    const t = check.target || {};
+    const status = ['invalid-url', 'blocked-address', 'unsupported-retailer'].includes(t.status) ? t.status : (v && v.status) || 'missing-target';
+    if (check.comparable && v && v.ready) {
+      setBlocked(false);
+      const lines = [el('p', 'ff-check-ok', v.explanation)];
+      checkBox.replaceChildren(...lines);
+      checkBox.dataset.status = 'ready';
+      checkBox.hidden = false;
+      return;
+    }
+    const nodes = [el('p', 'ff-check-title', CHECK_HEADING[status] || CHECK_HEADING['missing-target'])];
+    if (v && typeof v.explanation === 'string') nodes.push(el('p', null, v.explanation));
+    else if (status === 'invalid-url') nodes.push(el('p', null, 'Paste the full address of a clothing product’s page.'));
+    else if (status === 'blocked-address') nodes.push(el('p', null, 'Fynd only looks up public product pages.'));
+    /* which retailer can't be read is not the same as which measurements are missing */
+    if (t.pages && t.pages !== 'readable' && status !== 'invalid-url' && status !== 'blocked-address') {
+      nodes.push(el('p', 'ff-check-access', t.pages === 'not-permitted'
+        ? `${t.host || 'This shop'}’s terms don’t allow Fynd to read its pages.`
+        : `Fynd doesn’t read ${t.host || 'this shop'}’s pages: it hasn’t confirmed their terms allow it.`));
+    }
+    const dims = v && Array.isArray(v.dimensions) ? v.dimensions.filter((d) => d && !d.compared && typeof d.why === 'string') : [];
+    if (status === 'methods' && dims.length) {
+      const ul = el('ul', 'ff-check-dims');
+      dims.forEach((d) => { const li = el('li', null, `${DIM_WORDS[d.dim] || d.dim}: ${d.why}`); li.dataset.dim = d.dim; ul.append(li); });
+      nodes.push(ul);
+    }
+    if (v && Array.isArray(v.next) && typeof v.next[0] === 'string') nodes.push(el('p', 'ff-check-next', v.next[v.next.length - 1]));
+    /* what can still be done */
+    const actions = el('p', 'ff-check-actions');
+    if (check.chart && check.chart !== 'none') {
+      const view = el('button', 'btn btn-secondary ff-check-view', 'View size chart');
+      view.type = 'button';
+      view.addEventListener('click', () => lookupTarget(target));
+      actions.append(view);
+    }
+    if (t.url && /^https:\/\//.test(t.url)) {
+      const open = safeLink(t.url, 'Open product page');
+      open.classList.add('ff-check-open');
+      open.target = '_blank';
+      open.rel = 'noopener noreferrer';
+      actions.append(open);
+    }
+    if (status === 'missing-reference' || status === 'methods') {
+      const edit = el('a', 'guide-link ff-check-edit', 'Edit your garment');
+      edit.href = '#ff-step-reference';
+      actions.append(edit);
+    }
+    if (actions.childNodes.length) nodes.push(actions);
+    checkBox.replaceChildren(...nodes);
+    checkBox.dataset.status = status;
+    checkBox.hidden = false;
+    setBlocked(true);
+  }
+  const DIM_WORDS = { chestWidth: 'Chest', bodyLength: 'Length', shoulderWidth: 'Shoulders', sleeveLength: 'Sleeves' };
+  /* the chart, looked up as Compare fit would, even while comparing is off */
+  function lookupTarget(target) {
+    if (target.brand && choice) return findItem(choice.brand, choice.product);
+    return target.url ? find(target.url) : undefined;
+  }
+
   /* no checked garment measurements to compare: Find Fit's own heading for it */
   const UNSUPPORTED = 'Fynd can’t compare this item yet';
 
@@ -136,13 +261,13 @@
     verdict('Comparing…', [el('p', 'size-chart-loading', waiting)], 'loading');
     productLink(cleanUrl(url));
     $('fit-result-title').textContent = title;
-    $('fit-url-submit').disabled = true;
+    submitButton.disabled = true;
     if (product) result.scrollIntoView({ block: 'start', behavior: 'auto' });
 
     const sizing = global.Account && global.Account.sizing;
     const answer = sizing ? await request(sizing) : { ok: false, unreachable: true };
     if (ask !== latest) return;
-    $('fit-url-submit').disabled = false;
+    submitButton.disabled = blocked;
 
     if (!(answer.ok && answer.data && answer.data.chart)) {
       result.dataset.state = 'error';
@@ -209,15 +334,24 @@
     actions.append(page, clear);
     picked.replaceChildren(line, el('p', 'ff-picked-holds', product.holdsText || ''), actions);
     picked.hidden = false;
+    scheduleCheck(true);
     $('fit-url-submit').focus();
   }
   function unselect() {
     choice = null;
     picked.replaceChildren();
     picked.hidden = true;
+    scheduleCheck();
   }
 
   function submit() {
+    /* known not to be comparable: Enter shows what can still be shown —
+       the item's chart, with why it isn't compared — never a comparison */
+    if (blocked) {
+      const target = targetNow();
+      if (target) lookupTarget(target);
+      return;
+    }
     if (choice && input.value.trim() === (choice.product.url || '')) { findItem(choice.brand, choice.product); return; }
     const link = readLink(input.value);
     if (link.error) { say(link.error); input.focus(); return; }
@@ -238,7 +372,9 @@
   input.addEventListener('input', () => {
     if (error.textContent) say('');
     if (choice && input.value.trim() !== (choice.product.url || '')) unselect();
+    scheduleCheck();
   });
+  doc.addEventListener('fynd:reference-change', () => scheduleCheck(true));
 
   /* A chart the Fynd extension read in this browser: checked, drawn as
      read from the browser and unverified, never compared. */
