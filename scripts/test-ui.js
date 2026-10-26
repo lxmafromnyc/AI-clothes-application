@@ -3041,7 +3041,7 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
       await audit('the signed differences, opened');
       await page.close();
 
-      /* a home-measured hoodie: only two dimensions measured the same way as UNIQLO's — no recommendation */
+      /* a home-measured hoodie: only two dimensions measured the same way as UNIQLO's — too few to compare */
       fitProfileState = withReference({ hoodies: Object.assign(Schema.emptyGarment('hoodies'), { favorite: 'perfect', anchor: { brand: 'Carhartt', size: 'L', measurements: { unit: 'cm', chestWidth: 58, bodyLength: 68, shoulderWidth: 50, sleeveLength: 62 } } }) });
       page = await openPage('index.html', { viewport });
       await page.waitForSelector('#fit-browser[data-brands="ready"]', { timeout: 10000 });
@@ -3049,12 +3049,12 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
       audit = guideAudit(page, viewport);
       await page.fill('#fit-url', 'https://www.uniqlo.com/us/en/products/E475378-000/00');
       await page.press('#fit-url', 'Enter');
-      await page.waitForSelector('#fit-compare:not([hidden]) .fit-compare-fallback');
-      assert.strictEqual(await page.$$eval('#fit-compare .fit-compare-recommended, #fit-compare .fit-compare-differences, #fit-compare .ff-scale', (ns) => ns.length), 0);
+      await page.waitForSelector('#fit-compare[data-verdict="too-few"]:not([hidden]) .fit-compare-title');
+      assert.strictEqual(await page.$$eval('#fit-compare .fit-compare-recommended, #fit-compare .fit-compare-closest, #fit-compare .fit-compare-differences, #fit-compare .ff-scale', (ns) => ns.length), 0);
       /* the chart, opened from under the verdict, audited too */
       await page.click('#fit-chart-details > summary');
       await audit('the size chart and its source, opened under the verdict');
-      await audit('not enough reliable measurement evidence');
+      await audit('too few measurements in common to compare');
       await page.close();
     }
 
@@ -3138,7 +3138,8 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     };
     assert.deepStrictEqual([answers.recommended.status, answers.recommended.recommended, answers.recommended.tradeoffs.length], ['ok', 'M', 1]);
     assert.deepStrictEqual([answers['closest-mismatch'].status, answers['closest-mismatch'].withheld, answers['closest-mismatch'].closest], ['partial', 'outside-tolerance', 'S']);
-    assert.deepStrictEqual([answers['no-recommendation'].status, answers['no-recommendation'].withheld], ['partial', 'too-few-dimensions']);
+    assert.deepStrictEqual([answers['no-recommendation'].status, answers['no-recommendation'].missing[0].code], ['insufficient', 'too-few-dimensions']);
+    assert.ok(!answers['no-recommendation'].sizes && !answers['no-recommendation'].closest, 'the gate draws no sizes and no closest');
     accountState = accountReply({ extra: SIGNED_IN });
     fitProfileState = fitProfileReply(reference);
     const showing = async (viewport, key) => {
@@ -3186,10 +3187,10 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
       /* 3. too little evidence: no size at all */
       page = await showing(viewport, 'no-recommendation');
       audit = guideAudit(page, viewport);
-      assert.strictEqual(await page.getAttribute('#fit-compare', 'data-verdict'), 'no-recommendation');
-      assert.strictEqual(await page.textContent('#fit-compare .fit-compare-title'), 'No size recommendation for this item');
-      assert.strictEqual(await page.$$eval('#fit-compare .fit-compare-recommended, #fit-compare .fit-compare-closest, #fit-compare .fit-compare-tradeoffs', (ns) => ns.length), 0);
-      assert.match(await page.textContent('#fit-compare .fit-compare-fallback'), /isn’t enough reliable measurement evidence/);
+      assert.strictEqual(await page.getAttribute('#fit-compare', 'data-verdict'), 'too-few');
+      assert.strictEqual(await page.textContent('#fit-compare .fit-compare-title'), 'Too few measurements in common to compare');
+      assert.strictEqual(await page.$$eval('#fit-compare .fit-compare-recommended, #fit-compare .fit-compare-closest, #fit-compare .fit-compare-tradeoffs, #fit-compare .fit-compare-differences', (ns) => ns.length), 0);
+      assert.match(await page.textContent('#fit-compare'), /Only chest and length are measured the same way/);
       await audit('too little evidence for a size');
       await page.close();
     }

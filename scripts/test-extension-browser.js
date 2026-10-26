@@ -391,14 +391,15 @@ async function launch(extDir) {
     await popup.close();
   });
 
-  await test('a body chart from a size guide: Find Fit says it describes bodies, and never compares it with a garment', async () => {
+  await test('a body chart from a size guide: Find Fit says it measures the body, not the garment, and never compares it with a garment', async () => {
     const { shop, popup } = await check('modal-guide.html');
     const page = await openInFynd(popup);
     await page.waitForSelector('#fit-result[data-from="extension"]');
     assert.strictEqual(await page.textContent('#fit-result .size-chart-kind'), 'Body measurements — the body each size fits, not the garment');
     await page.waitForSelector('#fit-compare:not([hidden])');
-    assert.match(await page.textContent('#fit-compare'), /describes bodies, not garments/);
-    assert.deepStrictEqual([await page.getAttribute('#fit-compare', 'data-verdict'), await page.textContent('#fit-compare .fit-compare-title')], ['body-only', 'Only body measurements for this item']);
+    assert.match(await page.textContent('#fit-compare'), /Fynd cannot directly compare these measurements with your reference garment\. No size recommendation is available from this chart alone\./);
+    assert.deepStrictEqual([await page.getAttribute('#fit-compare', 'data-verdict'), await page.textContent('#fit-compare .fit-compare-title')], ['body-only', 'This chart measures the body, not the finished garment.']);
+    assert.strictEqual(await page.$$eval('#fit-compare .fit-compare-recommended, #fit-compare .fit-compare-closest, #fit-compare .fit-compare-differences', (ns) => ns.length), 0);
     await page.close();
     await shop.close();
     await popup.close();

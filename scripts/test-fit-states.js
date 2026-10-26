@@ -111,10 +111,14 @@ assert.deepStrictEqual([C.bodyChart.comparable, C.bodyChart.charts.map((c) => c.
 
 const HARNESS = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="stylesheet" href="/assets/styles.css"></head><body>
-<main class="ff"><section class="container"><div class="fit-result-card"><div class="fit-compare ff-verdict" id="fit-compare" aria-live="polite" hidden></div></div></section></main>
+<main class="ff"><section class="container"><div class="fit-result-card"><div class="fit-compare ff-verdict" id="fit-compare" aria-live="polite" hidden></div>
+<details class="ff-chart" id="fit-chart-details"><summary>Size chart and source</summary><p>chart</p></details></div>
+<button class="fit-brand-choice" type="button">UNIQLO</button></section></main>
 <script>
   /* the shopper's session, as Account gives it — answers set by each test */
   window.__answer = null;
+  window.__browsed = 0;
+  document.addEventListener('DOMContentLoaded', () => document.querySelector('.fit-brand-choice').addEventListener('click', () => { window.__browsed += 1; }));
   window.Account = { state: () => ({ signedIn: window.__signedIn !== false }), load: async () => {}, sizing: {
     compare: async () => window.__answer,
     compareWith: async (productId, reference) => { window.__sent = { productId, reference }; return window.__answer; }
@@ -221,20 +225,43 @@ async function test(name, fn) {
     }
   });
 
-  await test('body-only — a general body chart (fallback) and a record with no garment chart: says it describes bodies, offers nothing to do', async () => {
-    await show(C.bodyChart);
+  await test('body-only — a general body chart (fallback) and a record with no garment chart: the body, not the garment, said in so many words; view the chart, or try another product', async () => {
+    const BODY = ['This chart measures the body, not the finished garment.', 'Fynd cannot directly compare these measurements with your reference garment. No size recommendation is available from this chart alone.'];
+    for (const [chart, got] of [[C.bodyChart, undefined], [C.checkedChart, answer(C.bodyAnswer)]]) {
+      await show(chart, got);
+      const s = await seen();
+      assert.deepStrictEqual([s.verdict, s.heading], ['body-only', BODY[0]]);
+      assert.ok(s.text.includes(BODY[1]), s.text);
+      assert.strictEqual(s.text.split(BODY[0]).length - 1, 1, 'said once, not twice');
+      assert.ok(!/verified|checked against/i.test(s.text.replace(BODY.join(''), '')), 'no claim that anything was checked');
+      assert.deepStrictEqual(await page.$$eval('#fit-compare button', (bs) => bs.map((b) => b.textContent)), ['View the chart', 'Try a product with garment measurements']);
+      noSize(s);
+      /* the actions do what they say */
+      await page.evaluate(() => { document.getElementById('fit-chart-details').open = false; });
+      await page.click('#fit-compare .fit-compare-view-chart');
+      assert.strictEqual(await page.$eval('#fit-chart-details', (d) => d.open), true);
+      const before = await page.evaluate(() => window.__browsed);
+      await page.click('#fit-compare .fit-compare-browse');
+      assert.strictEqual(await page.evaluate(() => window.__browsed), before + 1, 'the brand browser opened');
+    }
+  });
+
+  await test('too few measured the same way: no size, no difference, each measurement\'s reason — and the profile offered only when the reference is what\'s missing', async () => {
+    const few = clone(C.methods);
+    few.missing = [{ code: 'too-few-dimensions', message: 'Only chest and shoulders are measured the same way on your reference and this product. Fynd compares sizes only on at least three of chest, length, shoulders and sleeves, the chest among them, so it sets none side by side here.' }];
+    few.dimensionsShared = ['chestWidth', 'shoulderWidth'];
+    few.notCompared = [{ dim: 'bodyLength', code: 'method-mismatch', why: 'measured differently — UNIQLO\'s from the centre back, yours from the top of the shoulder' }, { dim: 'sleeveLength', code: 'target-missing', why: 'UNIQLO doesn\'t publish it' }];
+    few.next = [];
+    await show(C.checkedChart, answer(few));
     let s = await seen();
-    assert.deepStrictEqual([s.verdict, s.heading], ['body-only', 'Only body measurements for this item']);
-    assert.match(s.text, /describes bodies, not garments/);
-    assert.match(s.text, /What would change that: the brand publishing what the garment itself measures/);
-    assert.deepStrictEqual(s.links, []);
+    assert.deepStrictEqual([s.verdict, s.heading], ['too-few', 'Too few measurements in common to compare']);
+    assert.deepStrictEqual(s.notCompared.map((x) => x.dim), ['bodyLength', 'sleeveLength']);
+    assert.deepStrictEqual(s.links, [], 'nothing the shopper\'s profile could change');
     noSize(s);
-    await show(C.checkedChart, answer(C.bodyAnswer));
+    few.next = ['Add the measurements your reference is missing, laid flat, as Fynd shows.'];
+    await show(C.checkedChart, answer(few));
     s = await seen();
-    assert.deepStrictEqual([s.verdict, s.heading], ['body-only', 'Only body measurements for this item']);
-    assert.match(s.text, /publishes who each size is cut for, not what the garment itself measures/);
-    assert.deepStrictEqual(s.links, []);
-    noSize(s);
+    assert.deepStrictEqual(s.links.map((l) => l.href), ['fit-profile.html?from=find-fit']);
   });
 
   await test('methods — a page table that doesn\'t say what it measures: unknown method, said; no action', async () => {

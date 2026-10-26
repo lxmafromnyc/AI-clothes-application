@@ -998,14 +998,25 @@ function recommend(profile, record, opts) {
   const hasBody = Boolean(record.charts.body);
   /* a garment that fits, sharing no measurement with this product (all
      measured differently), is no comparison at all */
-  const shared = hasGarment && shopper.garmentRef && Object.keys(comparable(record, shopper).used).length > 0;
+  /* the same eligibility as compare(): a garment is set beside this one
+     only on enough measurements taken the same way (enoughToRecommend) */
+  const sharedDims = hasGarment && shopper.garmentRef ? COMPARE_DIMS.filter((d) => comparable(record, shopper).used[d]) : [];
+  const shared = enoughToRecommend(sharedDims);
   if (hasGarment && shopper.garmentRef && !shared) {
-    shopper.notes.push(`The ${shopper.garmentRef.measured ? shopper.garmentRef.record.product.name : `${shopper.garmentRef.record.brand} ${shopper.garmentRef.size} you said fits`} shares no measurement taken the same way with this product, so it wasn't compared.`);
+    const named = shopper.garmentRef.measured ? shopper.garmentRef.record.product.name : `${shopper.garmentRef.record.brand} ${shopper.garmentRef.size} you said fits`;
+    shopper.notes.push(sharedDims.length
+      ? `The ${named} shares only ${listWords(sharedDims.map((d) => DIM_NAMES[d]))} measured the same way with this product — too few to compare, so it wasn't compared.`
+      : `The ${named} shares no measurement taken the same way with this product, so it wasn't compared.`);
   }
   let method = null;
   if (shared) method = 'reference-garment';
   else if (hasGarment && shopper.body) method = 'body-plus-ease';
   else if (hasBody && shopper.body) method = 'body-chart';
+  /* nothing else to size by: say the real reason, not a later one */
+  if (!method && hasGarment && shopper.garmentRef) {
+    const few = sharedDims.length ? tooFew(sharedDims, []) : { message: shopper.notes[shopper.notes.length - 1] };
+    return insufficient(record, [{ code: 'too-few-dimensions', message: few.message }], []);
+  }
 
   /* garment against garment needs no sizing line: a measurement is the
      same whoever the label was cut for. Anything read from a chart does. */
@@ -1230,10 +1241,11 @@ function recommend(profile, record, opts) {
    When it recommends
    ---------------------------------------------------------
    Only with a verified product, a reference, and at least three of the
-   four dimensions compared, the chest among them. With fewer, it shows
-   the closest size and every difference it can, calls the comparison
-   partial, and recommends nothing. An unverified product gives no
-   numbers at all outside the evaluation suite.
+   four dimensions compared, the chest among them. With fewer, nothing
+   is compared at all — "too-few-dimensions", with which are shared and
+   why the rest aren't — so no difference is ever worked out on too
+   little. An unverified product gives no numbers at all outside the
+   evaluation suite.
 
    The closest size by the total can still miss on one measurement — a
    chest that matches beside a length 3 in longer. Each compared
@@ -1303,6 +1315,9 @@ function referenceEntry(profile, category) {
   return sibling ? { category: sibling, entry: garments[sibling], crossCategory: true } : null;
 }
 
+/* A body-size chart, said the same way everywhere it can't be compared */
+const BODY_ONLY = 'This chart measures the body, not the finished garment. Fynd cannot directly compare these measurements with your reference garment. No size recommendation is available from this chart alone.';
+
 /* What a comparison needs before any size is scored, by the engine's
    own rules: a valid record of a covered kind, verified (unless the
    evaluation suite asks otherwise), with garment measurements not all
@@ -1324,8 +1339,8 @@ function prepare(profile, record, options) {
       ['Check back once its sizing has been verified.'], { product: { brand: record.brand, name: record.product.name }, context: productContext, dataStatus: 'unverified' });
   }
   if (!record.charts.garment) {
-    return no('body-chart-only', `${record.brand} publishes who each size is cut for, not what the garment itself measures, so there is nothing to set beside your reference.`,
-      [], { product: { brand: record.brand, name: record.product.name }, context: productContext });
+    return no('body-chart-only', BODY_ONLY,
+      ['You can still view the chart, or try a product Fynd holds garment measurements for.'], { product: { brand: record.brand, name: record.product.name }, context: productContext });
   }
 
   const garmentDimsOf = Object.keys(record.charts.garment.dimensions);
@@ -1364,6 +1379,16 @@ function prepare(profile, record, options) {
 
 /* the evidence a recommendation needs: three of the four dimensions, the chest among them */
 const enoughToRecommend = (dims) => dims.length >= 3 && dims.includes('chestWidth');
+/* Too few measured the same way to compare at all: said with which ones
+   are shared, and what would help. Shared by compare() and validate(),
+   so no size or difference is ever worked out on less. */
+function tooFew(dims, skipped) {
+  const shared = listWords(dims.map((d) => DIM_NAMES[d]));
+  return {
+    message: `Only ${shared} ${dims.length === 1 ? 'is' : 'are'} measured the same way on your reference and this product. Fynd compares sizes only on at least three of chest, length, shoulders and sleeves, the chest among them, so it sets none side by side here.`,
+    next: skipped.some((x) => x.code === 'reference-missing') ? ['Add the measurements your reference is missing, laid flat, as Fynd shows.'] : []
+  };
+}
 
 function compare(profile, record, opts) {
   const options = Object.assign({ includeUnverified: false, records: RECORDS }, opts || {});
@@ -1371,6 +1396,11 @@ function compare(profile, record, opts) {
   const ready = prepare(profile, record, options);
   if (ready.fail) return no(ready.fail.code, ready.fail.message, ready.fail.next, ready.fail.extra);
   const { params, productContext, found, anchor, notes, ref, favorite, shopper, used, skipped, dims } = ready.ok;
+  /* eligibility before any difference is worked out: enough measured the same way */
+  if (dims.length && !enoughToRecommend(dims)) {
+    const few = tooFew(dims, skipped);
+    return no('too-few-dimensions', few.message, few.next, { product: { brand: record.brand, name: record.product.name }, context: productContext, dimensionsShared: dims, notCompared: skipped, notes });
+  }
   const weights = dimWeights(shopper);
   const unit = options.unit === 'in' || options.unit === 'cm' ? options.unit
     : ref.measured ? ref.record.units : ((profile && profile.measurements && profile.measurements.unit) || record.units);
@@ -1479,16 +1509,15 @@ function compare(profile, record, opts) {
   /* closest is not the same as close: when every measurement compared
      misses its tolerance, the size is shown, never recommended */
   const allOutside = tradeoffs.length === dims.length;
-  const withheld = !verified ? 'unverified' : !enough ? 'too-few-dimensions' : allOutside ? 'outside-tolerance' : null;
+  /* (too few never reaches here: compare() stopped before any difference) */
+  const withheld = !verified ? 'unverified' : allOutside ? 'outside-tolerance' : null;
   const recommended = withheld ? null : closest.size;
   const named = listWords(dims.map((d) => DIM_NAMES[d]));
   const summary = recommended
     ? `${recommended} is the closest to your reference across ${named}.`
     : withheld === 'unverified'
       ? `${closest.size} is the closest on ${named}, but this product's measurements haven't been checked, so it isn't a recommendation.`
-      : withheld === 'too-few-dimensions'
-        ? `${closest.size} is the closest on ${named}, but that's ${dims.length === 1 ? 'one dimension' : `${dims.length} of 4 dimensions`} — not enough for a recommendation.`
-        : `${closest.size} is the closest size, but its ${named} all differ from your reference by more than Fynd treats as similar, so it isn't a recommendation.`;
+      : `${closest.size} is the closest size, but its ${named} all differ from your reference by more than Fynd treats as similar, so it isn't a recommendation.`;
 
   return {
     status: recommended ? 'ok' : 'partial',
@@ -1497,8 +1526,8 @@ function compare(profile, record, opts) {
     unit,
     reference,
     recommended,
-    /* why there is no recommendation: "unverified", "too-few-dimensions"
-       or "outside-tolerance"; null when there is one */
+    /* why there is no recommendation: "unverified" (the evaluation suite
+       only) or "outside-tolerance"; null when there is one */
     withheld,
     closest: closest.size,
     alternative: nearTie ? second.size : null,
@@ -1522,10 +1551,11 @@ function compare(profile, record, opts) {
    is scored? The same preconditions compare() uses (prepare()), said as
    one of:
 
-     ready              both sides have measurements taken the same way
-                        (or convertible by a stated rule); compare() will
-                        set them side by side — it may still recommend
-                        nothing, on too few or too distant measurements
+     ready              enough measurements taken the same way on both
+                        sides (or convertible by a stated rule) — three of
+                        the four, chest among them; compare() will set
+                        them side by side, and may still recommend nothing
+                        when every one is too far apart
      missing-reference  no reference of this kind, or none with
                         measurements Fynd can use
      missing-target     no record of this product, a kind not covered,
@@ -1594,19 +1624,14 @@ function validate(profile, record, opts) {
       derived: used[d] && used[d].estimated ? { rule: used[d].estimated, from: refDims[d].method, to: own[d].method } : null
     };
   });
+  if (dims.length && enoughToRecommend(dims)) {
+    return { status: 'ready', ready: true, code: null, canRecommend: true, explanation: `Ready to compare on ${listWords(dims.map((d) => DIM_NAMES[d]))}.`, next: [], product, dimensions };
+  }
   if (dims.length) {
-    const enough = enoughToRecommend(dims);
-    return {
-      status: 'ready',
-      ready: true,
-      code: null,
-      /* comparable, but a size is recommended only on enough of them */
-      canRecommend: enough,
-      explanation: `Ready to compare on ${listWords(dims.map((d) => DIM_NAMES[d]))}.${enough ? '' : ' That shows how each size differs, but too few measurements are shared for a recommendation.'}`,
-      next: enough ? [] : [NEXT_STEP['missing-reference']],
-      product,
-      dimensions
-    };
+    /* some measured the same way, but too few to compare at all: said by why the rest aren't */
+    const few = tooFew(dims, skipped);
+    const outcomes = skipped.map((x) => SKIP_OUTCOME[x.code]).filter(Boolean);
+    return { status: OUTCOME_ORDER.find((o) => outcomes.includes(o)) || 'missing-reference', ready: false, canRecommend: false, code: 'too-few-dimensions', explanation: few.message, next: few.next, product, dimensions };
   }
   const outcomes = skipped.map((x) => SKIP_OUTCOME[x.code]).filter(Boolean);
   const status = OUTCOME_ORDER.find((o) => outcomes.includes(o)) || 'missing-target';

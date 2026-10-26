@@ -78,7 +78,7 @@
     'unsupported-retailer': 'Fynd doesn’t support this shop yet',
     'missing-target': 'No checked measurements for this item',
     unverified: 'This item’s measurements aren’t verified yet',
-    'body-only': 'Only body measurements for this item',
+    'body-only': 'This chart measures the body, not the finished garment.',
     methods: 'Measured differently from your garment',
     'missing-reference': 'Your garment’s measurements are missing'
   };
@@ -135,7 +135,8 @@
       return;
     }
     const nodes = [el('p', 'ff-check-title', CHECK_HEADING[status] || CHECK_HEADING['missing-target'])];
-    if (v && typeof v.explanation === 'string') nodes.push(el('p', null, v.explanation));
+    /* the heading already says the first sentence of a body chart's explanation */
+    if (v && typeof v.explanation === 'string') nodes.push(el('p', null, v.explanation.startsWith(nodes[0].textContent) ? v.explanation.slice(nodes[0].textContent.length).trim() : v.explanation));
     else if (status === 'invalid-url') nodes.push(el('p', null, 'Paste the full address of a clothing product’s page.'));
     else if (status === 'blocked-address') nodes.push(el('p', null, 'Fynd only looks up public product pages.'));
     /* which retailer can't be read is not the same as which measurements are missing */
@@ -145,7 +146,7 @@
         : `Fynd doesn’t read ${t.host || 'this shop'}’s pages: it hasn’t confirmed their terms allow it.`));
     }
     const dims = v && Array.isArray(v.dimensions) ? v.dimensions.filter((d) => d && !d.compared && typeof d.why === 'string') : [];
-    if (status === 'methods' && dims.length) {
+    if ((status === 'methods' || (v && v.code === 'too-few-dimensions')) && dims.length) {
       const ul = el('ul', 'ff-check-dims');
       dims.forEach((d) => { const li = el('li', null, `${DIM_WORDS[d.dim] || d.dim}: ${d.why}`); li.dataset.dim = d.dim; ul.append(li); });
       nodes.push(ul);
@@ -170,6 +171,14 @@
       const edit = el('a', 'guide-link ff-check-edit', 'Edit your garment');
       edit.href = '#ff-step-reference';
       actions.append(edit);
+    }
+    /* a body-size chart: another product may have the garment's own measurements */
+    const browse = status === 'body-only' && doc.querySelector('.fit-brand-choice');
+    if (browse) {
+      const pick = el('button', 'link-btn ff-check-browse', 'Try a product with garment measurements');
+      pick.type = 'button';
+      pick.addEventListener('click', () => browse.click());
+      actions.append(pick);
     }
     if (actions.childNodes.length) nodes.push(actions);
     checkBox.replaceChildren(...nodes);

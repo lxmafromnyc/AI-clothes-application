@@ -702,21 +702,19 @@ await test('no brand is given a fit by rule: the engine\'s code names no brand',
   assert.ok(!/\b(Nike|UNIQLO|Uniqlo|H&M|Zara|Carhartt)\b/.test(code), 'a brand is named in the engine\'s logic');
 });
 
-await test('a favourite found in the catalogue by its link is compared garment to garment, and only where both measure the same way', () => {
+await test('a favourite found in the catalogue by its link is compared garment to garment only on enough measured the same way — UNIQLO\'s and Zara\'s tees share two, so it isn\'t', () => {
   const profile = tee({ favorite: 'perfect', anchor: { brand: 'UNIQLO', size: 'M', product: { name: null, url: UQ_TEE_LINK } } });
   const r = engine.recommend(profile, verifiedCopy(ZARA_TEE), { records: teePool(UQ_TEE, ZARA_TEE) });
-  assert.strictEqual(r.status, 'ok');
-  assert.strictEqual(r.method, 'reference-garment');
+  /* found, by its link — and then not used as a garment: chest and shoulders alone are too few */
   assert.deepStrictEqual(r.anchor.match, { id: UQ_TEE, by: 'link', name: 'SUPIMA® Cotton T-Shirt', size: 'M' });
   assert.strictEqual(r.anchor.source, 'product');
-  assert.deepStrictEqual(r.anchor.compared.map((c) => c.dim), ['chestWidth', 'shoulderWidth']);
-  assert.deepStrictEqual(r.anchor.notCompared.map((c) => c.dim), ['bodyLength', 'sleeveLength']);
-  assert.ok(r.anchor.notCompared.every((c) => /measured differently/.test(c.why)));
-  assert.ok(r.reasons[0].includes('UNIQLO SUPIMA® Cotton T-Shirt in M'), r.reasons[0]);
-  assert.ok(r.reasons.some((x) => /^Length: not compared — measured differently — Zara's from the top of the shoulder, UNIQLO's from the centre back/.test(x)), r.reasons.join(' | '));
-  assert.strictEqual(r.leading, 'S');
-  /* two measurements of four: not high, whatever the gap */
-  assert.strictEqual(r.confidence, 'medium');
+  assert.notStrictEqual(r.method, 'reference-garment', 'no garment-to-garment size from two measurements');
+  assert.notStrictEqual(r.anchor.usedAs, 'garment');
+  assert.deepStrictEqual(r.anchor.compared, []);
+  assert.ok(r.notes.includes('The UNIQLO M you said fits shares only chest and shoulders measured the same way with this product — too few to compare, so it wasn\'t compared.'), JSON.stringify(r.notes));
+  /* what remains is the engine's separate, labelled estimate from the brand's body chart — never high */
+  assert.strictEqual(r.method, 'body-plus-ease');
+  assert.strictEqual(r.confidence, 'low');
   /* not a letter translated: Medium in one brand is not taken as any size in the other */
   assert.ok(!r.reasons.some((x) => /M in UNIQLO is|runs (small|large)/.test(x)));
   /* the same, found by its name */
@@ -726,15 +724,16 @@ await test('a favourite found in the catalogue by its link is compared garment t
 });
 
 await test('what makes the favourite fit well decides between sizes, and "close" lowers confidence', () => {
-  const pool = teePool(UQ_TEE, ZARA_TEE);
-  const base = { brand: 'UNIQLO', size: 'M', product: { url: UQ_TEE_LINK } };
-  /* UNIQLO M is 21½ in flat and 17½ in across the shoulders; Zara S is
-     20.9 and 18.1, Zara M 21.7 and 18.9 */
+  const pool = teePool(ZARA_TEE);
+  /* a tee measured at home, all four measured as Zara measures them: its
+     chest sits nearest Zara M (21.7), its shoulders nearest Zara S (18.1) */
+  const base = { brand: 'Gap', size: 'M', measurements: { unit: 'in', chestWidth: 21.3, shoulderWidth: 17.6, bodyLength: 27.6, sleeveLength: 8.5 } };
   const chest = engine.recommend(tee({ favorite: 'close', anchor: Object.assign({ likes: ['chest'] }, base) }), verifiedCopy(ZARA_TEE), { records: pool });
   const shoulders = engine.recommend(tee({ favorite: 'close', anchor: Object.assign({ likes: ['shoulders'] }, base) }), verifiedCopy(ZARA_TEE), { records: pool });
+  assert.deepStrictEqual([chest.method, shoulders.method], ['reference-garment', 'reference-garment']);
   assert.strictEqual(chest.leading, 'M', 'the chest is what fits: the closest chest');
   assert.strictEqual(shoulders.leading, 'S', 'the shoulders are what fit: the closest shoulders');
-  assert.strictEqual(chest.confidence, 'low', 'close, two measurements');
+  assert.strictEqual(chest.confidence, 'low', 'close, and measured at home');
   assert.ok(chest.caveats.some((c) => /close to the fit you like/.test(c)));
   const perfect = engine.recommend(tee({ favorite: 'perfect', anchor: Object.assign({ likes: ['chest'] }, base) }), verifiedCopy(ZARA_TEE), { records: pool });
   assert.strictEqual(perfect.confidence, 'medium');
@@ -832,9 +831,10 @@ await test('/api/size-recommendation reads the saved favourite, for its owner on
   try {
     marks.forEach((m) => Object.assign(m, { status: 'verified', checkedBy: 'Test checker', checkedAt: '2026-10-14' }));
     const ok = (await suggest(jar, ZARA_TEE)).body.recommendation;
-    assert.strictEqual(ok.status, 'ok');
-    assert.strictEqual(ok.anchor.source, 'product');
-    assert.strictEqual(ok.leading, 'S');
+    assert.strictEqual(ok.anchor.source, 'product', 'the saved favourite, found');
+    /* found, but sharing too few measurements with Zara's tee to be set beside it */
+    assert.notStrictEqual(ok.method, 'reference-garment');
+    assert.ok(ok.notes.some((n) => /too few to compare/.test(n)), JSON.stringify(ok.notes));
     /* someone else's session reads their own (empty) profile, never Ada's */
     const bob = await signUp('bob@example.test');
     const theirs = (await suggest(bob.jar, ZARA_TEE)).body.recommendation;
@@ -911,16 +911,20 @@ await test('each size is compared on its own published measurements: the candida
   assert.deepStrictEqual([m.reference, m.candidate, m.words], [58, 60, 'Chest: 2 cm wider']);
 });
 
-await test('a reference with only its chest measured is compared on the chest alone: nothing filled in, no recommendation from one dimension', () => {
+/* too few measured the same way: nothing compared at all — no size, no closest, no difference */
+const tooFewGate = (r, shared) => {
+  assert.deepStrictEqual([r.status, r.missing[0].code], ['insufficient', 'too-few-dimensions']);
+  ['sizes', 'recommended', 'closest', 'reference', 'tradeoffs'].forEach((k) => assert.ok(!(k in r), `no ${k} worked out on too little`));
+  assert.deepStrictEqual(r.dimensionsShared, shared);
+};
+
+await test('a reference with only its chest measured is not compared on the chest alone: no size, no difference, and what is missing said', () => {
   const r = engine.compare(hoodieRef({ measurements: { unit: 'cm', chestWidth: 58 } }), ILLUSTRATIVE());
-  assert.deepStrictEqual([r.status, r.recommended, r.reliability], ['partial', null, 'low']);
-  assert.deepStrictEqual(r.dimensionsCompared, ['chestWidth']);
-  const m = r.sizes.find((x) => x.size === 'M').dimensions;
-  ['bodyLength', 'shoulderWidth', 'sleeveLength'].forEach((d) => {
-    assert.strictEqual(m[d].compared, false, d);
-    assert.ok(!('difference' in m[d]) && !('reference' in m[d]), `${d}: no difference, no reference value invented`);
-    assert.match(m[d].why, /didn't measure it/);
-  });
+  tooFewGate(r, ['chestWidth']);
+  assert.match(r.missing[0].message, /^Only chest is measured the same way on your reference and this product\. Fynd compares sizes only on at least three of chest, length, shoulders and sleeves, the chest among them/);
+  assert.deepStrictEqual(r.notCompared.map((x) => [x.dim, x.code]), [['bodyLength', 'reference-missing'], ['sleeveLength', 'reference-missing'], ['shoulderWidth', 'reference-missing']]);
+  assert.ok(r.notCompared.every((x) => /didn't measure it/.test(x.why)));
+  assert.deepStrictEqual(r.next, ['Add the measurements your reference is missing, laid flat, as Fynd shows.']);
 });
 
 await test('a reference the shopper measured is named for what it is — a hoodie, never "the T-shirt you measured"', () => {
@@ -967,11 +971,9 @@ await test('what matters most to the shopper decides between sizes, deterministi
 
 await test('missing measurements are said: a dimension not measured, and a size without one, are never compared', () => {
   const partial = engine.compare(hoodieRef({ measurements: { unit: 'cm', chestWidth: 58, shoulderWidth: 50 } }), ILLUSTRATIVE());
-  assert.strictEqual(partial.status, 'partial');
-  assert.strictEqual(partial.recommended, null, 'two of four is not a recommendation');
-  assert.strictEqual(partial.reliability, 'low');
+  tooFewGate(partial, ['chestWidth', 'shoulderWidth']);
   assert.deepStrictEqual(partial.notCompared.map((x) => [x.dim, x.why]), [['bodyLength', 'you didn\'t measure it'], ['sleeveLength', 'you didn\'t measure it']]);
-  assert.ok(/not enough for a recommendation/.test(partial.summary));
+  assert.match(partial.missing[0].message, /^Only chest and shoulders are measured the same way/);
   /* a size the product publishes no sleeve for is shown, not ranked */
   const gap = ILLUSTRATIVE();
   delete gap.charts.garment.sizes.XL.sleeveLength;
@@ -1010,14 +1012,9 @@ await test('an unverified product gives no numbers at all; production compares o
 
 await test('against UNIQLO\'s checked hoodie, a home-measured reference compares only what is measured the same way', () => asChecked(UQ_PAIR, () => {
   const r = engine.compare(hoodieRef({ measurements: REF_CM }), sizing.byId(UQ_HOODIE));
-  assert.strictEqual(r.status, 'partial');
-  assert.deepStrictEqual(r.dimensionsCompared, ['chestWidth', 'shoulderWidth']);
-  assert.strictEqual(r.recommended, null);
+  /* only chest and shoulders are measured the same way: too few to compare at all */
+  tooFewGate(r, ['chestWidth', 'shoulderWidth']);
   assert.ok(r.notCompared.every((x) => /measured differently — UNIQLO's from the centre back/.test(x.why)), JSON.stringify(r.notCompared));
-  /* the values UNIQLO publishes still show, marked not compared */
-  const m = r.sizes.find((s) => s.size === 'M').dimensions;
-  assert.strictEqual(m.bodyLength.compared, false);
-  assert.ok(typeof m.bodyLength.candidate === 'number');
 }));
 
 await test('a reference found in the catalogue uses its published measurements; fabric and construction are said, never scored', () => asChecked(UQ_PAIR, () => {
@@ -1046,14 +1043,15 @@ await test('/api/size-recommendation compares only the caller\'s own reference, 
   const ada = await signUp('ada@example.test');
   const bob = await signUp('bob@example.test');
   assert.strictEqual((await compareCall({}, UQ_HOODIE)).status, 401);
-  await fitProfiles.saveGuide(ada.user.id, { garments: { hoodies: { favorite: 'perfect', anchor: { brand: 'Carhartt', size: 'L', measurements: REF_CM } } } });
+  /* Ada's reference: UNIQLO's own sweatshirt, by its link — measured the same way as the hoodie */
+  await fitProfiles.saveGuide(ada.user.id, { garments: { sweatshirts: { favorite: 'perfect', anchor: { brand: 'UNIQLO', size: 'M', product: { url: 'https://www.uniqlo.com/us/en/products/E475377-000/00' } } } } });
   const mine = await compareCall(ada.jar, UQ_HOODIE);
   assert.strictEqual(mine.status, 200);
   assert.strictEqual(mine.res.getHeader('cache-control'), 'no-store, private');
-  assert.strictEqual(mine.body.comparison.reference.source, 'measured');
-  assert.strictEqual(mine.body.comparison.unit, 'cm');
-  const inches = await compareCall(ada.jar, UQ_HOODIE, 'in');
-  assert.strictEqual(inches.body.comparison.unit, 'in');
+  assert.strictEqual(mine.body.comparison.reference.source, 'product');
+  assert.strictEqual(mine.body.comparison.unit, 'in');
+  const cm = await compareCall(ada.jar, UQ_HOODIE, 'cm');
+  assert.strictEqual(cm.body.comparison.unit, 'cm');
   /* Bob's session reads Bob's (empty) profile, never Ada's */
   const his = await compareCall(bob.jar, UQ_HOODIE);
   assert.strictEqual(his.body.comparison.missing[0].code, 'no-reference');
@@ -1139,12 +1137,9 @@ await test('missing target measurements: a dimension the product doesn\'t publis
     Object.values(thin.charts.garment.sizes).forEach((row) => delete row[d]);
   });
   const r = engine.compare(hoodieRef({ measurements: REF_CM }), thin);
-  assert.deepStrictEqual([r.status, r.recommended], ['partial', null]);
-  assert.deepStrictEqual(r.dimensionsCompared, ['chestWidth', 'shoulderWidth']);
-  assert.ok(r.notCompared.every((x) => /doesn't publish it/.test(x.why)), JSON.stringify(r.notCompared));
-  const m = r.sizes.find((s) => s.size === 'M').dimensions.bodyLength;
-  assert.strictEqual(m.compared, false);
-  assert.ok(!('difference' in m), 'no difference invented');
+  tooFewGate(r, ['chestWidth', 'shoulderWidth']);
+  assert.ok(r.notCompared.every((x) => /doesn't publish it/.test(x.why) && x.code === 'target-missing'), JSON.stringify(r.notCompared));
+  assert.deepStrictEqual(r.next, [], 'nothing the shopper can add would help');
 });
 
 await test('a centimetre reference against an inch product: converted before the difference, the same answer in either unit', () => {
@@ -1195,10 +1190,9 @@ await test('incompatible measurement methods are never compared — listed with 
   Object.assign(rec.charts.garment.dimensions.shoulderWidth, { method: 'broadest-part-of-shoulders' });
   assert.deepStrictEqual(sizingSchema.validate(rec), []);
   const r = engine.compare(hoodieRef({ measurements: REF_CM }), rec);
-  assert.deepStrictEqual([r.status, r.recommended, r.dimensionsCompared], ['partial', null, ['chestWidth']]);
+  tooFewGate(r, ['chestWidth']);
   assert.deepStrictEqual(r.notCompared.map((x) => x.dim), ['bodyLength', 'sleeveLength', 'shoulderWidth']);
-  assert.ok(r.notCompared.every((x) => /measured differently/.test(x.why)));
-  r.sizes.forEach((s) => ['bodyLength', 'sleeveLength', 'shoulderWidth'].forEach((d) => assert.ok(!('difference' in s.dimensions[d]), `${s.size} ${d}`)));
+  assert.ok(r.notCompared.every((x) => /measured differently/.test(x.why) && x.code === 'method-mismatch'));
 });
 
 await test('a body measurement is never set against a garment measurement', () => {
@@ -1234,11 +1228,8 @@ await test('crowdsourced or unchecked measurements give no recommendation: a cro
   const chest = ILLUSTRATIVE();
   chest.charts.garment.dimensions.chestWidth.status = 'crowdsourced';
   const c = engine.compare(hoodieRef({ measurements: REF_CM }), chest);
-  assert.deepStrictEqual([c.status, c.recommended], ['partial', null]);
-  assert.ok(!c.dimensionsCompared.includes('chestWidth'));
+  tooFewGate(c, ['bodyLength', 'shoulderWidth', 'sleeveLength']);
   assert.match(c.notCompared.find((x) => x.dim === 'chestWidth').why, /gathered from shoppers/);
-  assert.strictEqual(c.sizes[0].dimensions.chestWidth.measurement.status, 'crowdsourced');
-  assert.ok(!('difference' in c.sizes[0].dimensions.chestWidth));
 
   /* an unchecked shoulder on a checked record: left out; the three checked ones, chest among them, still stand */
   const shoulder = ILLUSTRATIVE();
@@ -1268,9 +1259,9 @@ await test('a reference product\'s measurements are given whole and checked the 
   /* a reference product whose chest was crowdsourced: that dimension is left out */
   const pool = sizing.RECORDS.map((x) => (x.id === 'uniqlo-e475377-sweatshirt-us' ? (() => { const y = JSON.parse(JSON.stringify(x)); y.charts.garment.dimensions.chestWidth.status = 'crowdsourced'; return y; })() : x));
   const c = engine.compare(uqSweatshirtRef('M'), sizing.byId(UQ_HOODIE), { records: pool });
-  assert.ok(!c.dimensionsCompared.includes('chestWidth'));
+  /* no chest: not enough to compare at all — no recommendation, no difference */
+  tooFewGate(c, ['bodyLength', 'shoulderWidth', 'sleeveLength']);
   assert.match(c.notCompared.find((x) => x.dim === 'chestWidth').why, /your UNIQLO reference's chest is gathered from shoppers/);
-  assert.strictEqual(c.recommended, null, 'no chest, no recommendation');
 }));
 
 await test('a size judged against the shopper\'s own measurements is "shopper-measured", never "verified", even on a checked product', () => {
@@ -1518,11 +1509,11 @@ await test('a hoodie reference compares a hoodie search, and is never read for j
   const { jar, user } = await signUp('ada@example.test');
   await fitProfiles.saveGuide(user.id, { garments: { hoodies: { favorite: 'perfect', anchor: { brand: 'Carhartt', size: 'L', measurements: { unit: 'cm', chestWidth: '58', bodyLength: '68', shoulderWidth: '50', sleeveLength: '62' } } } } });
   const hoodie = (await fitCall(jar, 'hoodies', LISTINGS)).body.fit.items[0];
-  assert.strictEqual(hoodie.by, 'reference', 'compared with the reference');
-  /* UNIQLO measures sleeves and length from the centre back: chest and shoulders only, so no recommendation */
-  assert.strictEqual(hoodie.status, 'partial');
+  /* UNIQLO measures sleeves and length from the centre back: chest and shoulders only — too few to compare, so no size, no closest */
+  assert.strictEqual(hoodie.status, 'insufficient');
   assert.strictEqual(hoodie.size, null);
-  assert.ok(hoodie.closest);
+  assert.ok(!('closest' in hoodie));
+  assert.ok(hoodie.missing.some((m) => /^Only chest and shoulders are measured the same way on your reference and this product/.test(m)), JSON.stringify(hoodie.missing));
   const jeans = (await fitCall(jar, 'jeans', LISTINGS)).body.fit;
   assert.strictEqual(jeans.covered, false);
   assert.deepStrictEqual(jeans.items, [], 'jeans are never sized from a hoodie');
@@ -2250,7 +2241,8 @@ await test('only verified, compatible garment measurements are compared: E471808
   checked.verification = { status: 'verified', checkedBy: 'Test checker', checkedAt: '2026-10-20' };
   checked.review.status = 'done';
   const home = engine.compare(measured, checked);
-  assert.deepStrictEqual(home.dimensionsCompared, ['chestWidth'], 'a reference measured at home shares only the flat chest with UNIQLO’s methods');
+  /* a reference measured at home shares only the flat chest with UNIQLO's methods: not compared at all */
+  tooFewGate(home, ['chestWidth']);
   assert.deepStrictEqual(home.notCompared.map((x) => x.dim).sort(), ['bodyLength', 'shoulderWidth', 'sleeveLength']);
   /* against UNIQLO's own checked hoodie, M: chest, length and sleeves measured alike; shoulders not */
   const uq = engine.compare(hoodieRef({ brand: 'UNIQLO', size: 'M', product: { url: 'https://www.uniqlo.com/us/en/products/E475378-000/00' } }), checked);

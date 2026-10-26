@@ -268,25 +268,31 @@ const diffs = (c, size) => Object.fromEntries(Object.entries(rowOf(c, size).dime
     assert.notStrictEqual(c.recommended, 'M');
   })));
 
-  await test('a dimension the reference lacks is left out, with why; only chest and length in common is too little to recommend', () => asChecked(['uniqlo-e475377-sweatshirt-us'], () => X.withFixtureBrand(() => {
+  /* too few measured the same way: nothing compared — no size, no closest, no difference */
+  const tooFewGate = (c, shared) => {
+    assert.deepStrictEqual([c.status, c.missing[0].code], ['insufficient', 'too-few-dimensions']);
+    ['sizes', 'recommended', 'closest', 'reference', 'tradeoffs'].forEach((k) => assert.ok(!(k in c), `no ${k}`));
+    assert.deepStrictEqual(c.dimensionsShared, shared);
+  };
+
+  await test('a dimension the target lacks is left out, with why; only chest and length in common is too little to compare at all', () => asChecked(['uniqlo-e475377-sweatshirt-us'], () => X.withFixtureBrand(() => {
     const f = X.everlanePublished();
     Object.values(f.sizes).forEach((row) => { delete row.shoulderWidth; });
     const ever = X.asCheckedCopy(X.everlaneRecord(f, IF_STATED));
     const c = engine.compare(uniqloRef('M'), ever);
-    assert.deepStrictEqual(c.dimensionsCompared, ['chestWidth', 'bodyLength']);
-    assert.ok(c.notCompared.some((x) => x.dim === 'shoulderWidth' && x.why === 'Everlane doesn\'t publish it'));
-    assert.strictEqual(c.status, 'partial');
-    assert.strictEqual(c.recommended, null);
-    assert.strictEqual(c.withheld, 'too-few-dimensions');
-    assert.match(c.summary, /2 of 4 dimensions — not enough for a recommendation/);
+    tooFewGate(c, ['chestWidth', 'bodyLength']);
+    assert.ok(c.notCompared.some((x) => x.dim === 'shoulderWidth' && x.why === 'Everlane doesn\'t publish it' && x.code === 'target-missing'));
+    assert.match(c.missing[0].message, /^Only chest and length are measured the same way on your reference and this product/);
+    const v = engine.validate(uniqloRef('M'), ever);
+    assert.deepStrictEqual([v.ready, v.code, v.status], [false, 'too-few-dimensions', 'methods'], 'the sleeve is measured differently: that is why');
   })));
 
   await test('lengths measured differently (from the top of the shoulder vs the centre back) are never converted or compared', () => asChecked(['uniqlo-e475377-sweatshirt-us'], () => X.withFixtureBrand(() => {
     const ever = X.asCheckedCopy(X.everlaneRecord(X.everlanePublished(), Object.assign({}, IF_STATED, { bodyLength: 'high-point-shoulder-to-hem' })));
     const c = engine.compare(uniqloRef('M'), ever);
-    assert.ok(!c.dimensionsCompared.includes('bodyLength'));
+    /* length and sleeve measured differently: chest and shoulders left — too few, so no difference at all */
+    tooFewGate(c, ['chestWidth', 'shoulderWidth']);
     assert.match(c.notCompared.find((x) => x.dim === 'bodyLength').why, /measured differently — Everlane's from the top of the shoulder, UNIQLO's from the centre back/);
-    assert.ok(c.sizes.every((s) => s.dimensions.bodyLength.compared === false && s.dimensions.bodyLength.difference === undefined));
   })));
 
   await test('unverified data gives no recommendation: Everlane as supplied, UNIQLO pending review, and an unverified reference', () => X.withFixtureBrand(() => {
@@ -341,13 +347,14 @@ const diffs = (c, size) => Object.fromEntries(Object.entries(rowOf(c, size).dime
     agree(v, engine.compare(uniqloRef('S'), sizing.byId(X.UQ_HOODIE)));
   }));
 
-  await test('ready on too few: two dimensions compare, and validate says no recommendation can follow — compare() agrees', () => asChecked(['uniqlo-e475378-sweat-pullover-hoodie-us'], () => {
+  await test('too few: two dimensions measured the same way are not eligible — validate says why, and compare() works out nothing', () => asChecked(['uniqlo-e475378-sweat-pullover-hoodie-us'], () => {
     const p = measured({ chestWidth: 23.5, shoulderWidth: 20 });
     const v = engine.validate(p, sizing.byId(X.UQ_HOODIE));
-    assert.deepStrictEqual([v.status, v.ready, v.canRecommend], ['ready', true, false]);
-    assert.match(v.explanation, /too few measurements are shared for a recommendation/);
+    assert.deepStrictEqual([v.status, v.ready, v.canRecommend, v.code], ['missing-reference', false, false, 'too-few-dimensions'], 'length and sleeve weren\'t measured');
+    assert.match(v.explanation, /^Only chest and shoulders are measured the same way/);
+    assert.deepStrictEqual(v.next, ['Add the measurements your reference is missing, laid flat, as Fynd shows.']);
     const c = engine.compare(p, sizing.byId(X.UQ_HOODIE));
-    assert.deepStrictEqual([c.status, c.withheld], ['partial', 'too-few-dimensions']);
+    tooFewGate(c, ['chestWidth', 'shoulderWidth']);
     agree(v, c);
   }));
 
@@ -383,7 +390,8 @@ const diffs = (c, size) => Object.fromEntries(Object.entries(rowOf(c, size).dime
     assert.ok(nike.charts.body && !nike.charts.garment && sizingSchema2.isVerified(nike), 'a verified record, body chart only');
     const v = engine.validate(measured({ chestWidth: 23.5 }), nike);
     assert.deepStrictEqual([v.status, v.code], ['body-only', 'body-chart-only']);
-    assert.match(v.explanation, /publishes who each size is cut for, not what the garment itself measures/);
+    assert.strictEqual(v.explanation, 'This chart measures the body, not the finished garment. Fynd cannot directly compare these measurements with your reference garment. No size recommendation is available from this chart alone.');
+    assert.strictEqual(v.canRecommend, false);
     agree(v, engine.compare(measured({ chestWidth: 23.5 }), nike));
   });
 
