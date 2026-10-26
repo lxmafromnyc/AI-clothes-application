@@ -7,6 +7,10 @@
    GET ?product=<id>&compare=1[&unit=in|cm]
                             -> { comparison }          their fit reference beside
                                                        every size (engine.compare)
+   POST ?check=1  { target: { url } | { brand, code }, reference? }
+                            -> { check }               before comparing: can this
+                                                       item be compared with this
+                                                       reference? (see Checking first)
    POST ?product=<id>&compare=1[&unit=in|cm]  { reference: { type, garment } }
                             -> { comparison }          the same, for a reference
                                                        garment not saved: a visitor
@@ -59,6 +63,21 @@
    answers 401.
 
    ---------------------------------------------------------
+   Checking first
+   ---------------------------------------------------------
+   POST ?check=1 says, before any chart is read, whether a comparison
+   can happen: the item from a pasted link (checked and cleaned as a
+   chart lookup would, chart.checkUrl) or a listed product (the brand
+   module's own address for its code), matched to Fynd's record of it
+   (chart.recordFor) — nothing is fetched, ever, to answer it. Then the
+   engine's own preconditions (engine.validate): the reference sent, or
+   else the signed-in shopper's saved profile. It says apart whether
+   the retailer's pages can be read at all (page-access permission, from
+   the reviewed list alone, no request), whether Fynd holds a record or
+   a general chart for the item, and why a comparison can or can't go
+   ahead. Read-only, no-store, kept nowhere, and paced per address.
+
+   ---------------------------------------------------------
    A reference not saved
    ---------------------------------------------------------
    POST compares one product with a reference garment sent in the body
@@ -98,6 +117,8 @@ const charts = require('./_sizing/chart');
 const limits = require('./_ratelimit');
 const auth = require('./_auth');
 const { readJson } = require('./_body');
+const pageAccess = require('./_sizing/page-access');
+const officialCharts = require('./_sizing/official-charts');
 
 const PRODUCT_ID = /^[a-z0-9]+(?:-[a-z0-9]+){0,12}$/;
 const MAX_ITEMS = 24;
@@ -156,6 +177,95 @@ function fitFor(profile, type, items) {
   return { type, covered, items: sized };
 }
 
+/* a reference garment sent in a body, read by the fit profile's own
+   validator: { profile } (a profile holding just that garment), or
+   { error } with what was wrong */
+function unsavedProfile(reference) {
+  const type = reference && typeof reference.type === 'string' ? reference.type : '';
+  if (!ProfileSchema.SIZED_TYPES.includes(type) || !reference.garment || typeof reference.garment !== 'object' || Array.isArray(reference.garment)) {
+    return { error: { error: 'Describe a hoodie, sweatshirt or T-shirt that fits you, to compare with.', reason: 'invalid-reference' } };
+  }
+  const { answers, errors } = ProfileSchema.normaliseGuide({ garments: { [type]: reference.garment } });
+  if (errors.length || !answers.garments || !answers.garments[type]) {
+    return { error: { error: (errors[0] && errors[0].message) || 'That garment couldn’t be read.', reason: 'invalid-reference', errors: errors.map((e) => ({ field: e.field, message: e.message })) } };
+  }
+  const profile = ProfileSchema.empty();
+  profile.garments = ProfileSchema.mergeGarments({}, answers.garments);
+  return { profile };
+}
+
+/* Before comparing (see "Checking first"): the item, whether Fynd may
+   read its retailer's pages, what Fynd holds for it, and the engine's
+   own verdict on comparing it with this reference. Nothing fetched. */
+async function checkFirst(req, res) {
+  const address = auth.addressSubject(req);
+  const gate = await limits.check('sizing:check', address);
+  if (!gate.allowed) {
+    res.setHeader('Retry-After', String(gate.retryAfter || 60));
+    return res.status(429).json({ error: 'Too many checks at once. Try again in a few minutes.', reason: 'rate-limited' });
+  }
+  await limits.note('sizing:check', address);
+  const body = await readJson(req);
+  const target = body && typeof body === 'object' && body.target && typeof body.target === 'object' ? body.target : {};
+  let link = null;
+  if (typeof target.brand === 'string' && typeof target.code === 'string') {
+    const brand = brands.get(target.brand);
+    const item = brand ? brand.find(target.code) : null;
+    if (!item) return res.status(404).json({ error: 'That product isn’t one Find Fit lists.', reason: 'unknown-product' });
+    link = item.url;
+  } else if (typeof target.url === 'string') {
+    link = target.url;
+  } else {
+    return res.status(400).json({ error: 'Paste a product link, or pick a product.', reason: 'invalid-target' });
+  }
+  const checked = charts.checkUrl(link);
+  if (checked.error) {
+    return res.status(200).json({ check: { target: { status: checked.error === 'blocked-address' ? 'blocked-address' : 'invalid-url' }, chart: 'none', validation: null, comparable: false } });
+  }
+  const access = pageAccess.permission(checked.host);
+  const record = checked.brand ? charts.recordFor(checked) : null;
+  const general = !record && checked.brand ? officialCharts.fallbackFor(checked) : null;
+  /* what a chart lookup would be able to show, without anyone reading anything now */
+  const chart = record ? 'record' : general ? 'general' : access.allowed ? 'page' : 'none';
+  const targetOut = {
+    status: record ? 'record' : checked.brand || access.allowed ? 'no-record' : 'unsupported-retailer',
+    url: checked.url,
+    host: checked.host,
+    brand: checked.brand,
+    name: record ? record.product.name : null,
+    /* may Fynd read this retailer's pages at all — from the reviewed list only */
+    pages: access.allowed ? 'readable' : access.reason
+  };
+  let profile = null;
+  if (body && body.reference !== undefined && body.reference !== null) {
+    const read = unsavedProfile(body.reference);
+    if (read.error) return res.status(400).json(read.error);
+    profile = read.profile;
+  } else {
+    const identity = await identify(req, res, users);
+    if (identity.user) {
+      const stored = await fitProfiles.read(identity.user.id);
+      profile = stored.profile || null;
+    }
+  }
+  const validation = record ? engine.validate(profile, record)
+    : {
+      status: 'missing-target',
+      ready: false,
+      canRecommend: false,
+      code: 'no-record',
+      explanation: general
+        ? `Fynd holds only ${checked.brand}’s general body-size chart for this product — not the garment’s own measurements — so it can’t be compared.`
+        : checked.brand
+          ? `Fynd holds no checked garment measurements for this ${checked.brand} product, so it can’t be compared.`
+          : `Fynd holds no sizing for products from ${checked.host}${access.allowed ? '' : ', and hasn’t been cleared to read its pages'}, so it can’t compare this one.`,
+      next: chart === 'none' ? ['You can still open the product’s own page.'] : ['You can still view the chart Fynd can show for it.'],
+      product: null,
+      dimensions: []
+    };
+  return res.status(200).json({ check: { target: targetOut, chart, validation, comparable: Boolean(validation.ready) } });
+}
+
 /* A comparison with a reference garment that isn't saved (see "A
    reference not saved"): validated, used once, kept nowhere. */
 async function compareUnsaved(req, res) {
@@ -173,17 +283,9 @@ async function compareUnsaved(req, res) {
   }
   await limits.note('sizing:compare-unsaved', address);
   const body = await readJson(req);
-  const reference = body && typeof body === 'object' && !Array.isArray(body) ? body.reference : null;
-  const type = reference && typeof reference.type === 'string' ? reference.type : '';
-  if (!ProfileSchema.SIZED_TYPES.includes(type) || !reference.garment || typeof reference.garment !== 'object' || Array.isArray(reference.garment)) {
-    return res.status(400).json({ error: 'Describe a hoodie, sweatshirt or T-shirt that fits you, to compare with.', reason: 'invalid-reference' });
-  }
-  const { answers, errors } = ProfileSchema.normaliseGuide({ garments: { [type]: reference.garment } });
-  if (errors.length || !answers.garments || !answers.garments[type]) {
-    return res.status(400).json({ error: (errors[0] && errors[0].message) || 'That garment couldn’t be read.', reason: 'invalid-reference', errors: errors.map((e) => ({ field: e.field, message: e.message })) });
-  }
-  const profile = ProfileSchema.empty();
-  profile.garments = ProfileSchema.mergeGarments({}, answers.garments);
+  const read = unsavedProfile(body && typeof body === 'object' && !Array.isArray(body) ? body.reference : null);
+  if (read.error) return res.status(400).json(read.error);
+  const profile = read.profile;
   const unit = query.unit === 'in' || query.unit === 'cm' ? query.unit : undefined;
   return res.status(200).json({ comparison: engine.compare(profile, record, { unit }) });
 }
@@ -195,6 +297,8 @@ async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store, private');
   if (req.method === 'POST') {
     try {
+      const q = req.query || Object.fromEntries(new URL(req.url || '/', 'http://fynd.local').searchParams);
+      if (q.check === '1') return await checkFirst(req, res);
       return await compareUnsaved(req, res);
     } catch (err) {
       console.error('Size comparison failed', err && err.message);

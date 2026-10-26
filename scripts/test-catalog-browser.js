@@ -394,7 +394,7 @@ async function test(name, fn) {
     assert.match(body, /None are shown or estimated/);
     assert.match(body, /General UNIQLO US sizing guide\s*Body measurements/);
     await page.waitForSelector('#pdp-guide-compare:not([hidden])');
-    assert.match(await page.textContent('#pdp-guide-compare'), /This chart describes bodies, not garments, so it can’t be set beside a garment you own\./);
+    assert.match(await page.textContent('#pdp-guide-compare'), /This chart measures the body, not the finished garment\.\s*Fynd cannot directly compare these measurements with your reference garment\. No size recommendation is available from this chart alone\./);
     await page.context().close();
   });
 

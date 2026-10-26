@@ -111,10 +111,14 @@ assert.deepStrictEqual([C.bodyChart.comparable, C.bodyChart.charts.map((c) => c.
 
 const HARNESS = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="stylesheet" href="/assets/styles.css"></head><body>
-<main class="ff"><section class="container"><div class="fit-result-card"><div class="fit-compare ff-verdict" id="fit-compare" aria-live="polite" hidden></div></div></section></main>
+<main class="ff"><section class="container"><div class="fit-result-card"><div class="fit-compare ff-verdict" id="fit-compare" aria-live="polite" hidden></div>
+<details class="ff-chart" id="fit-chart-details"><summary>Size chart and source</summary><p>chart</p></details></div>
+<button class="fit-brand-choice" type="button">UNIQLO</button></section></main>
 <script>
   /* the shopper's session, as Account gives it — answers set by each test */
   window.__answer = null;
+  window.__browsed = 0;
+  document.addEventListener('DOMContentLoaded', () => document.querySelector('.fit-brand-choice').addEventListener('click', () => { window.__browsed += 1; }));
   window.Account = { state: () => ({ signedIn: window.__signedIn !== false }), load: async () => {}, sizing: {
     compare: async () => window.__answer,
     compareWith: async (productId, reference) => { window.__sent = { productId, reference }; return window.__answer; }
@@ -221,20 +225,43 @@ async function test(name, fn) {
     }
   });
 
-  await test('body-only — a general body chart (fallback) and a record with no garment chart: says it describes bodies, offers nothing to do', async () => {
-    await show(C.bodyChart);
+  await test('body-only — a general body chart (fallback) and a record with no garment chart: the body, not the garment, said in so many words; view the chart, or try another product', async () => {
+    const BODY = ['This chart measures the body, not the finished garment.', 'Fynd cannot directly compare these measurements with your reference garment. No size recommendation is available from this chart alone.'];
+    for (const [chart, got] of [[C.bodyChart, undefined], [C.checkedChart, answer(C.bodyAnswer)]]) {
+      await show(chart, got);
+      const s = await seen();
+      assert.deepStrictEqual([s.verdict, s.heading], ['body-only', BODY[0]]);
+      assert.ok(s.text.includes(BODY[1]), s.text);
+      assert.strictEqual(s.text.split(BODY[0]).length - 1, 1, 'said once, not twice');
+      assert.ok(!/verified|checked against/i.test(s.text.replace(BODY.join(''), '')), 'no claim that anything was checked');
+      assert.deepStrictEqual(await page.$$eval('#fit-compare button', (bs) => bs.map((b) => b.textContent)), ['View the chart', 'Try a product with garment measurements']);
+      noSize(s);
+      /* the actions do what they say */
+      await page.evaluate(() => { document.getElementById('fit-chart-details').open = false; });
+      await page.click('#fit-compare .fit-compare-view-chart');
+      assert.strictEqual(await page.$eval('#fit-chart-details', (d) => d.open), true);
+      const before = await page.evaluate(() => window.__browsed);
+      await page.click('#fit-compare .fit-compare-browse');
+      assert.strictEqual(await page.evaluate(() => window.__browsed), before + 1, 'the brand browser opened');
+    }
+  });
+
+  await test('too few measured the same way: no size, no difference, each measurement\'s reason — and the profile offered only when the reference is what\'s missing', async () => {
+    const few = clone(C.methods);
+    few.missing = [{ code: 'too-few-dimensions', message: 'Only chest and shoulders are measured the same way on your reference and this product. Fynd compares sizes only on at least three of chest, length, shoulders and sleeves, the chest among them, so it sets none side by side here.' }];
+    few.dimensionsShared = ['chestWidth', 'shoulderWidth'];
+    few.notCompared = [{ dim: 'bodyLength', code: 'method-mismatch', why: 'measured differently — UNIQLO\'s from the centre back, yours from the top of the shoulder' }, { dim: 'sleeveLength', code: 'target-missing', why: 'UNIQLO doesn\'t publish it' }];
+    few.next = [];
+    await show(C.checkedChart, answer(few));
     let s = await seen();
-    assert.deepStrictEqual([s.verdict, s.heading], ['body-only', 'Only body measurements for this item']);
-    assert.match(s.text, /describes bodies, not garments/);
-    assert.match(s.text, /What would change that: the brand publishing what the garment itself measures/);
-    assert.deepStrictEqual(s.links, []);
+    assert.deepStrictEqual([s.verdict, s.heading], ['too-few', 'Too few measurements in common to compare']);
+    assert.deepStrictEqual(s.notCompared.map((x) => x.dim), ['bodyLength', 'sleeveLength']);
+    assert.deepStrictEqual(s.links, [], 'nothing the shopper\'s profile could change');
     noSize(s);
-    await show(C.checkedChart, answer(C.bodyAnswer));
+    few.next = ['Add the measurements your reference is missing, laid flat, as Fynd shows.'];
+    await show(C.checkedChart, answer(few));
     s = await seen();
-    assert.deepStrictEqual([s.verdict, s.heading], ['body-only', 'Only body measurements for this item']);
-    assert.match(s.text, /publishes who each size is cut for, not what the garment itself measures/);
-    assert.deepStrictEqual(s.links, []);
-    noSize(s);
+    assert.deepStrictEqual(s.links.map((l) => l.href), ['fit-profile.html?from=find-fit']);
   });
 
   await test('methods — a page table that doesn\'t say what it measures: unknown method, said; no action', async () => {
@@ -465,6 +492,50 @@ async function test(name, fn) {
     assert.ok(!/Save a hoodie/.test(s.text), 'not told to save what they just described');
     assert.deepStrictEqual(s.links, [{ text: 'Add its measurements in step 1', href: '#ff-step-reference' }]);
     noSize(s);
+  });
+
+  console.log('\nlookup dates, in the viewer\'s own time zone');
+
+  await test('a lookup at 03:30 UTC on the 25th reads as the 24th in Los Angeles and the 25th in Tokyo — the zone named; a record\'s calendar date stays as written', async () => {
+    const moment = '2026-10-25T03:30:00.000Z';
+    const inZone = async (timezoneId) => {
+      const ctx = await browser.newContext({ timezoneId });
+      await ctx.route((u) => !String(u).startsWith(origin), (route) => route.abort());
+      const p = await ctx.newPage();
+      await p.goto(`${origin}/harness.html`);
+      const out = await p.evaluate(({ moment, chart }) => {
+        const text = (nodes) => nodes.map((n) => n.textContent).join(' ');
+        return {
+          moment: window.SizeChart.dateOf(moment),
+          recorded: window.SizeChart.dateOf('2026-10-10'),
+          junk: [window.SizeChart.dateOf('yesterday'), window.SizeChart.dateOf(''), window.SizeChart.dateOf(null), window.SizeChart.dateOf('2026-13-45T99:99')],
+          drawn: text(window.SizeChart.render(chart, chart.source.url, { linked: true }))
+        };
+      }, { moment, chart: Object.assign(clone(C.unverifiedChart), { productSize: { status: 'not-retrieved', reason: 'no-answer', checkedAt: moment, guides: false } }) });
+      await ctx.close();
+      return out;
+    };
+    const la = await inZone('America/Los_Angeles');
+    assert.strictEqual(la.moment, 'Oct 24, 2026, PDT', 'still the 24th in Los Angeles');
+    assert.match(la.drawn, /looked for Oct 24, 2026, PDT/);
+    const tokyo = await inZone('Asia/Tokyo');
+    assert.strictEqual(tokyo.moment, 'Oct 25, 2026, GMT+9');
+    const utc = await inZone('UTC');
+    assert.strictEqual(utc.moment, 'Oct 25, 2026, UTC');
+    for (const z of [la, tokyo, utc]) {
+      assert.strictEqual(z.recorded, '2026-10-10', 'a recorded calendar date is never shifted');
+      assert.deepStrictEqual(z.junk, ['', '', '', ''], 'nothing that isn\'t a date is shown as one');
+    }
+    /* the day before a boundary, either side of it */
+    const edge = await (async () => {
+      const ctx = await browser.newContext({ timezoneId: 'America/New_York' });
+      const p = await ctx.newPage();
+      await p.goto(`${origin}/harness.html`);
+      const r = await p.evaluate(() => [window.SizeChart.dateOf('2026-11-01T03:59:59.000Z'), window.SizeChart.dateOf('2026-11-01T04:00:00.000Z')]);
+      await ctx.close();
+      return r;
+    })();
+    assert.deepStrictEqual(edge, ['Oct 31, 2026, EDT', 'Nov 1, 2026, EDT'], 'midnight in New York, to the second');
   });
 
   await browser.close();

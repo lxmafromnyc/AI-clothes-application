@@ -284,7 +284,9 @@ const server = http.createServer(async (req, res) => {
   /* Find Fit's brand menu and product list are counted apart from
      sizing-chart lookups, so a count of lookups means lookups */
   const browsing = url.pathname === '/api/size-recommendation' && (url.searchParams.has('brands') || (url.searchParams.has('brand') && !url.searchParams.has('item')));
-  if (url.pathname.startsWith('/api/')) apiHits.push(browsing ? '/api/size-recommendation (browse)' : url.pathname);
+  /* checking an item before comparing reads nothing; counted apart too */
+  const checking = url.pathname === '/api/size-recommendation' && url.searchParams.get('check') === '1';
+  if (url.pathname.startsWith('/api/')) apiHits.push(browsing ? '/api/size-recommendation (browse)' : checking ? '/api/size-recommendation (check)' : url.pathname);
   const handler = HANDLERS[url.pathname];
 
   if (handler) {
@@ -1408,7 +1410,7 @@ const linkFromInbox = (pattern) => {
     assert.strictEqual(await page.textContent('#fit-result .size-chart-caveat'), 'From the retailer’s size guide — possibly a general chart, not this product’s own.');
     assert.deepStrictEqual(await page.$$eval('#fit-result .size-chart-kind', (ns) => ns.map((n) => n.textContent)), ['Body measurements — the body each size fits, not the garment']);
     assert.match(await page.textContent('#fit-result .size-chart-details'), /Chart from: .*Size guide/);
-    assert.match(await page.textContent('#fit-compare'), /describes bodies, not garments/);
+    assert.match(await page.textContent('#fit-compare'), /This chart measures the body, not the finished garment\.[\s\S]*No size recommendation is available from this chart alone\./);
     await context.close();
   });
 
@@ -1517,13 +1519,14 @@ const linkFromInbox = (pattern) => {
     assert.match(details, /The brand’s general chart for this kind of product — a fallback, not this product’s own/);
     assert.match(details, /not read from this product’s page/);
     assert.match(details, /What Fynd tried/);
-    assert.match(details, /Product Size\s*Not retrieved — the page couldn’t be read \(looked for \d{4}-\d{2}-\d{2}\)/);
+    /* the moment it was looked for, as a date in the viewer's own time zone, named */
+    assert.match(details, /Product Size\s*Not retrieved — the page couldn’t be read \(looked for [A-Z][a-z]{2} \d{1,2}, \d{4}, (UTC|GMT[+-]?[\d:]*)\)/);
     const text = await page.textContent('#fit-result');
     assert.ok(!/Verified —|Read just now/.test(text), 'never presented as checked for this product, or read live');
     const links = await page.$$eval('#fit-result .size-chart-source a', (as) => as.map((a) => a.href));
     assert.ok(links.includes('https://www.uniqlo.com/us/en/products/E475378-000/00'), 'the chart’s official source');
     assert.ok(links.includes('https://www.uniqlo.com/us/en/products/E900001-000/00'), 'the product’s own page');
-    assert.match(await page.textContent('#fit-compare'), /describes bodies, not garments/);
+    assert.match(await page.textContent('#fit-compare'), /This chart measures the body, not the finished garment\.[\s\S]*No size recommendation is available from this chart alone\./);
     assert.deepStrictEqual(transportAsked, ['https://www.uniqlo.com/us/en/products/E900001-000/00'], 'the canonical page was tried first, once');
     await context.close();
   });
@@ -1951,7 +1954,7 @@ const linkFromInbox = (pattern) => {
     await context.close();
   });
 
-  await test('Find Fit with a saved reference: a product Fynd has checked garment measurements for is compared with it; nothing private travels', () => asChecked(UQ_PAIR, async () => {
+  await test('Find Fit with a saved reference: a home-measured hoodie shares too few measurements with UNIQLO\'s to compare — no size, no difference, on Find Fit and in the Size Guide; a reference measured alike is compared size by size; nothing private travels', () => asChecked(UQ_PAIR, async () => {
     const context = await openContext();
     const page = await signedIn(context, 'rhea@e2e.test');
     const user = await users.byEmail('rhea@e2e.test');
@@ -1968,43 +1971,40 @@ const linkFromInbox = (pattern) => {
     assert.match(facts, /Verified — checked against the brand’s page/);
     assert.ok(!/by a person/.test(facts), facts);
     await page.waitForSelector('#fit-compare:not([hidden]):not([data-verdict="loading"]) .fit-compare-title');
-    /* the verdict leads, and says no size plainly */
-    assert.strictEqual((await page.textContent('#fit-compare .fit-compare-title')).trim(), 'No size recommendation for this item');
-    assert.strictEqual(await page.getAttribute('#fit-compare', 'data-verdict'), 'no-recommendation');
-    assert.match(await page.textContent('#fit-compare'), /closest on chest and shoulders, but that's 2 of 4 dimensions — not enough for a recommendation/);
-    /* partial: said plainly, with no size recommended and no differences drawn */
-    assert.match(await page.textContent('#fit-compare .fit-compare-fallback'), /No size recommendation: there isn’t enough reliable measurement evidence/);
-    assert.strictEqual(await page.$$eval('#fit-compare .fit-compare-recommended, #fit-compare .fit-compare-differences', (ns) => ns.length), 0);
+    /* UNIQLO measures length and sleeves from the centre back, the shopper from the shoulder: chest and shoulders only — too few */
+    assert.strictEqual((await page.textContent('#fit-compare .fit-compare-title')).trim(), 'Too few measurements in common to compare');
+    assert.strictEqual(await page.getAttribute('#fit-compare', 'data-verdict'), 'too-few');
+    assert.match(await page.textContent('#fit-compare'), /Only chest and shoulders are measured the same way on your reference and this product/);
+    assert.deepStrictEqual(await page.$$eval('#fit-compare .fit-compare-not-compared li', (ls) => ls.map((l) => l.dataset.dim)), ['bodyLength', 'sleeveLength']);
+    assert.strictEqual(await page.$$eval('#fit-compare .fit-compare-recommended, #fit-compare .fit-compare-closest, #fit-compare .fit-compare-differences, #fit-compare .ff-scale, #fit-compare table', (ns) => ns.length), 0, 'no size, no closest size, no difference');
     assert.deepStrictEqual(transportAsked, [], 'Fynd’s record answered: the shop was not asked');
     const sent = apiRequests.filter((r) => r.path === '/api/size-recommendation');
     assert.ok(sent.length >= 2);
     assert.ok(!/Carhartt|chestWidth|58/.test(page.url()));
-    /* the same comparison from the product page's Size Guide */
+    /* the same, from the product page's Size Guide: no size table, no difference, and why */
     await open(page, 'product.html?brand=uniqlo&item=E475378-000&size=L');
     await page.waitForSelector('#product[data-state="ready"]');
     await page.click('#pdp-size-guide');
     await page.waitForSelector('#pdp-guide-compare:not([hidden]) .fit-compare-title');
-    assert.strictEqual((await page.textContent('#pdp-guide-compare .fit-compare-title')).trim(), 'Compared with your reference');
-    assert.match(await page.textContent('#pdp-guide-compare'), /closest on chest and shoulders/);
-    /* the size being considered, beside the reference: the engine's own figures for it */
+    assert.match(await page.textContent('#pdp-guide-compare'), /Only chest and shoulders are measured the same way/);
+    assert.strictEqual(await page.$$eval('#pdp-guide-compare .fit-compare-size, #pdp-guide-compare .fit-compare-table, #pdp-guide-compare .fit-compare-recommended', (ns) => ns.length), 0, 'no size beside the reference on too little');
+    await page.click('#pdp-guide-close');
+    /* a reference measured the way UNIQLO measures: UNIQLO's own sweatshirt, in S — compared size by size */
+    await fitProfiles.saveGuide(user.id, { garments: { hoodies: null, sweatshirts: { favorite: 'perfect', anchor: { brand: 'UNIQLO', size: 'S', product: { url: 'https://www.uniqlo.com/us/en/products/E475377-000/00' } } } } });
+    await open(page, 'product.html?brand=uniqlo&item=E475378-000&size=L');
+    await page.waitForSelector('#product[data-state="ready"]');
+    await page.click('#pdp-size-guide');
     await page.waitForSelector('#pdp-guide-compare .fit-compare-size');
     assert.strictEqual(await page.textContent('#pdp-guide-compare .fit-compare-size-title'), 'Size L beside your reference');
-    /* yours, this size's, and the difference — only where measured the same way; the rest say why, with no difference */
-    const sizeRows = () => page.$$eval('#pdp-guide-compare .fit-compare-table tbody tr', (trs) => trs.map((tr) => [...tr.children].map((c) => c.textContent)));
+    /* yours, this size's, and the difference — the engine's own figures, each measured the same way */
+    const sizeRows = () => page.$$eval('#pdp-guide-compare .fit-compare-size .fit-compare-table tbody tr', (trs) => trs.map((tr) => [...tr.children].map((c) => c.textContent)));
     const lRows = await sizeRows();
     assert.deepStrictEqual(lRows.map((r) => r[0]), ['Chest', 'Body length', 'Shoulders', 'Sleeves']);
-    assert.deepStrictEqual(lRows[0], ['Chest', '58 cm', '63.5 cm', '5.5 cm wider'], 'UNIQLO’s L chest, 25 in flat, beside a 58 cm flat chest');
-    assert.deepStrictEqual(lRows[2].slice(1, 2).concat(lRows[2].slice(3)), ['50 cm', '2.7 cm wider']);
-    [lRows[1], lRows[3]].forEach((r) => {
-      assert.strictEqual(r[1], '—', `${r[0]}: no reference value invented`);
-      assert.strictEqual(r[3], 'Not compared', `${r[0]}: no difference shown`);
-    });
-    /* why, said once — in the engine's own caveat, not again per row */
-    assert.match(await page.textContent('#pdp-guide-compare'), /length: measured differently — UNIQLO's from the centre back, yours from the top of the shoulder; sleeves: measured differently/);
+    assert.deepStrictEqual(lRows[0], ['Chest', '22¼ in', '25 in', '2¾ in wider'], 'UNIQLO’s L chest beside its published S');
     await page.click('#pdp-guide-sizes .pdp-size[data-size="S"]');
     assert.strictEqual(await page.textContent('#pdp-guide-compare .fit-compare-size-title'), 'Size S beside your reference', 'follows the size, without asking again');
     const sRows = await sizeRows();
-    assert.strictEqual(sRows[0][1], '58 cm');
+    assert.strictEqual(sRows[0][1], '22¼ in');
     assert.notStrictEqual(sRows[0][2], lRows[0][2], 'S is compared on S’s own chest, not L’s');
     /* reopened while the comparison is slow: no other size's figures meanwhile, then the size chosen during the wait */
     await page.click('#pdp-guide-close');
@@ -2050,10 +2050,57 @@ const linkFromInbox = (pattern) => {
   };
   const compareItem = async (page, url) => {
     await page.fill('#fit-url', url);
-    await page.click('#fit-url-submit');
+    await page.press('#fit-url', 'Enter');
     await page.waitForSelector('#fit-compare:not([hidden]):not([data-verdict="loading"]) .fit-compare-title');
   };
   const CARHARTT = { type: 'hoodies', size: 'L', brand: 'Carhartt', measurements: { unit: 'cm', chestWidth: 58, bodyLength: 68, shoulderWidth: 50, sleeveLength: 62 } };
+
+  await test('the early gate cannot be bypassed from the page: a forced-open button, or a direct call to the comparison API, gets no size and no difference for an ineligible pair — the server revalidates', () => asChecked(UQ_PAIR, async () => {
+    const context = await openContext();
+    const page = await context.newPage();
+    const compared = [];
+    page.on('response', async (r) => { if (/compare=1/.test(r.url())) compared.push(await r.json().catch(() => null)); });
+    await open(page, 'index.html');
+    await page.waitForSelector('#ff-reference[data-state="signed-out"]');
+    await describe(page, CARHARTT);
+    /* a home-measured hoodie against UNIQLO's: chest and shoulders only — blocked early */
+    await page.fill('#fit-url', 'https://www.uniqlo.com/us/en/products/E475378-000/00');
+    await page.waitForSelector('#ff-check:not([hidden])');
+    await page.waitForFunction(() => document.getElementById('fit-url-submit').disabled);
+    assert.match(await page.textContent('#ff-check'), /Only chest and shoulders are measured the same way/);
+    /* forced open, and pressed */
+    await page.evaluate(() => { const b = document.getElementById('fit-url-submit'); b.disabled = false; b.removeAttribute('disabled'); b.click(); });
+    await page.waitForSelector('#fit-compare:not([hidden]):not([data-verdict="loading"]) .fit-compare-title');
+    assert.notStrictEqual(await page.getAttribute('#fit-compare', 'data-verdict'), 'recommended');
+    assert.strictEqual(await page.$$eval('#fit-compare .fit-compare-recommended, #fit-compare .fit-compare-closest, #fit-compare .fit-compare-differences, #fit-compare .ff-scale', (ns) => ns.length), 0, 'no size and no difference, however the button was pressed');
+    compared.filter(Boolean).forEach((a) => {
+      assert.strictEqual(a.comparison.status, 'insufficient');
+      assert.ok(!a.comparison.sizes && !a.comparison.recommended && !a.comparison.closest);
+    });
+    /* straight to the API, past the page: the same answer, from the server's own check */
+    const direct = (productId, reference) => page.evaluate(async ([id, ref]) => {
+      const r = await fetch(`/api/size-recommendation?product=${encodeURIComponent(id)}&compare=1`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ reference: ref }) });
+      return { status: r.status, body: await r.json() };
+    }, [productId, reference]);
+    const ref = { type: 'hoodies', garment: { favorite: 'perfect', anchor: { brand: 'Carhartt', size: 'L', measurements: CARHARTT.measurements } } };
+    const chestOnly = { type: 'hoodies', garment: { favorite: 'perfect', anchor: { brand: 'Carhartt', size: 'L', measurements: { unit: 'cm', chestWidth: 58 } } } };
+    const cases = [
+      ['too few measured alike', 'uniqlo-e475378-sweat-pullover-hoodie-us', ref, 'too-few-dimensions'],
+      ['missing dimensions', 'uniqlo-e475378-sweat-pullover-hoodie-us', chestOnly, null],
+      ['a body-only chart', 'nike-fn3859-club-pullover-fleece-hoodie-us', ref, 'body-chart-only'],
+      ['an unverified record', 'zara-00761810-basic-heavyweight-hoodie-us', ref, null]
+    ];
+    for (const [what, id, reference, code] of cases) {
+      const { status, body } = await direct(id, reference);
+      assert.strictEqual(status, 200, what);
+      const c = body.comparison;
+      assert.notStrictEqual(c.status, 'ok', `${what}: never ok`);
+      assert.ok(!c.recommended && !c.closest, `${what}: no size`);
+      assert.ok(!(c.sizes || []).some((sz) => Object.values(sz.dimensions || {}).some((d) => d && d.difference != null)), `${what}: no difference`);
+      if (code) assert.strictEqual(c.missing[0].code, code, what);
+    }
+    await context.close();
+  }));
 
   await test('a guest describes a garment without signing in, tries a real item, and gets the honest answer — then, only then, the offer to save; "Not now" leaves the result, and the garment stays for the visit', async () => {
     const context = await openContext();
@@ -2114,6 +2161,8 @@ const linkFromInbox = (pattern) => {
     page.on('request', (r) => { if (r.method() === 'POST' && /size-recommendation/.test(r.url())) posted.push({ url: r.url(), body: r.postDataJSON() }); });
     await open(page, 'index.html');
     await describe(page, { type: 'sweatshirts', size: 'M', brand: 'UNIQLO', product: 'https://www.uniqlo.com/us/en/products/E475377-000/00?colorDisplayCode=09' });
+    /* the early check also POSTs the garment, in its body — the same promise, counted on its own */
+    const checks = () => posted.filter((p) => /[?&]check=1$/.test(p.url));
     await compareItem(page, 'https://www.uniqlo.com/us/en/products/E475378-000/00');
     const expected = require('../api/_sizing/engine').compare(
       Object.assign(Schema.empty(), { garments: { sweatshirts: Object.assign(Schema.emptyGarment('sweatshirts'), { favorite: 'perfect', anchor: { brand: 'UNIQLO', size: 'M', product: { name: null, url: 'https://www.uniqlo.com/us/en/products/E475377-000/00' } } }) } }),
@@ -2121,7 +2170,9 @@ const linkFromInbox = (pattern) => {
     assert.strictEqual(expected.status, 'ok');
     assert.strictEqual(await page.getAttribute('#fit-compare', 'data-verdict'), 'recommended');
     assert.strictEqual((await page.textContent('#fit-compare .fit-compare-recommended')).trim(), `Recommended size: ${expected.recommended}`, 'the engine\'s own answer');
-    /* the one request that carried the garment: a POST, the garment in its body, only the product id in the address */
+    /* the one comparison that carried the garment: a POST, the garment in its body, only the product id in the address */
+    checks().forEach((p) => assert.ok(!/Carhartt|UNIQLO|E475377/.test(p.url), 'an early check names nothing of the garment in its address'));
+    posted.splice(0, posted.length, ...posted.filter((p) => !/[?&]check=1$/.test(p.url)));
     assert.strictEqual(posted.length, 1);
     assert.match(posted[0].url, /\/api\/size-recommendation\?product=uniqlo-e475378-sweat-pullover-hoodie-us&compare=1$/);
     assert.deepStrictEqual(posted[0].body.reference.type, 'sweatshirts');
@@ -2230,6 +2281,101 @@ const linkFromInbox = (pattern) => {
     await context.close();
   });
 
+  /* the early check: said under the item as soon as item and garment are known */
+  const checked = (page, status) => page.waitForSelector(`#ff-check:not([hidden])[data-status="${status}"]`);
+  const pickUniqlo = async (page, code) => {
+    await page.waitForSelector('#fit-browser[data-brands="ready"]');
+    await page.click('.fit-brand-choice[data-brand="uniqlo"]');
+    await page.waitForSelector(`#fit-brand-dialog[open] .fit-product[data-code="${code}"]`);
+    await page.click(`.fit-product[data-code="${code}"]`);
+    await page.waitForSelector('#ff-picked:not([hidden])');
+  };
+
+  await test('checking first: a picked UNIQLO product pending review is said not comparable before anything is compared — Compare fit off, the chart, the product page and the garment still to hand', async () => {
+    const context = await openContext();
+    const page = await context.newPage();
+    await open(page, 'index.html');
+    await describe(page, CARHARTT);
+    const lookupsBefore = apiRequests.filter((r) => /item=|chart=/.test(r.search || '')).length;
+    await pickUniqlo(page, 'E475378-000');
+    await checked(page, 'unverified');
+    assert.strictEqual(await page.textContent('#ff-check .ff-check-title'), 'This item’s measurements aren’t verified yet');
+    assert.match(await page.textContent('#ff-check'), /This product's measurements haven't been checked against UNIQLO's own page yet/);
+    assert.strictEqual(await page.isDisabled('#fit-url-submit'), true, 'Compare fit off');
+    assert.strictEqual(await page.getAttribute('#fit-url-submit', 'aria-describedby'), 'ff-check', 'and says why, to a screen reader');
+    assert.strictEqual(await page.isHidden('#fit-result'), true, 'said before any comparison');
+    assert.strictEqual(apiRequests.filter((r) => /item=|chart=/.test(r.search || '')).length, lookupsBefore, 'no chart looked up to say it');
+    const productLink = await page.$eval('#ff-check .ff-check-open', (a) => [a.getAttribute('href'), a.target, a.rel]);
+    assert.deepStrictEqual(productLink, ['https://www.uniqlo.com/us/en/products/E475378-000/00', '_blank', 'noopener noreferrer']);
+    assert.strictEqual(await page.$('#ff-check .ff-check-edit'), null, 'the garment is not what\'s missing');
+    /* the chart can still be seen, with the full reason */
+    await page.click('#ff-check .ff-check-view');
+    await page.waitForSelector('#fit-compare[data-verdict="unsupported"]');
+    assert.strictEqual(await page.isDisabled('#fit-url-submit'), true, 'still off after viewing the chart');
+    /* the garment can still be edited */
+    await page.click('.ff-ref-edit');
+    await page.waitForSelector('#ff-reference .ffr-form');
+    await context.close();
+  });
+
+  await test('checking first, the UNIQLO pair checked in memory: ready says so and leaves Compare fit on; removing the garment says what\'s missing; a garment measured differently says which and why', () => asChecked(UQ_PAIR, async () => {
+    const context = await openContext();
+    const page = await context.newPage();
+    await open(page, 'index.html');
+    await describe(page, { type: 'sweatshirts', size: 'M', brand: 'UNIQLO', product: 'https://www.uniqlo.com/us/en/products/E475377-000/00' });
+    await pickUniqlo(page, 'E475378-000');
+    await checked(page, 'ready');
+    assert.match(await page.textContent('#ff-check'), /^Ready to compare on chest, length, shoulders and sleeves\.$/);
+    assert.strictEqual(await page.isDisabled('#fit-url-submit'), false);
+    await page.click('#fit-url-submit');
+    await page.waitForSelector('#fit-compare[data-verdict="recommended"]');
+    /* no garment: what's missing is the garment's */
+    await page.click('.ff-ref-remove');
+    await checked(page, 'missing-reference');
+    assert.strictEqual(await page.textContent('#ff-check .ff-check-title'), 'Your garment’s measurements are missing');
+    assert.strictEqual(await page.isDisabled('#fit-url-submit'), true);
+    assert.strictEqual(await page.getAttribute('#ff-check .ff-check-edit', 'href'), '#ff-step-reference');
+    assert.strictEqual(await page.isVisible('#fit-compare'), true, 'the last result stays on screen');
+    /* measured from the shoulder; UNIQLO measures from the centre back */
+    await describe(page, { type: 'hoodies', size: 'L', brand: 'Carhartt', measurements: { unit: 'in', bodyLength: 27, sleeveLength: 24 } });
+    await checked(page, 'methods');
+    assert.strictEqual(await page.textContent('#ff-check .ff-check-title'), 'Measured differently from your garment');
+    /* each measurement and its reason: two measured differently, two not measured at all */
+    assert.deepStrictEqual(await page.$$eval('#ff-check .ff-check-dims li', (ls) => ls.map((l) => l.dataset.dim)), ['chestWidth', 'bodyLength', 'shoulderWidth', 'sleeveLength']);
+    assert.match(await page.textContent('#ff-check .ff-check-dims'), /Length: measured differently — UNIQLO's from the centre back, yours from the top of the shoulder/);
+    assert.match(await page.textContent('#ff-check .ff-check-dims'), /Chest: you didn't measure it/);
+    await context.close();
+  }));
+
+  await test('checking first: a shop Fynd doesn\'t support is told apart from missing measurements — nothing fetched; an unfinished link checks nothing and Compare fit stays on', async () => {
+    const context = await openContext();
+    const page = await context.newPage();
+    await open(page, 'index.html');
+    await describe(page, CARHARTT);
+    transportAsked.length = 0;
+    await page.fill('#fit-url', 'https://www.unlisted-shop.test/products/tee-1');
+    await checked(page, 'unsupported-retailer');
+    assert.strictEqual(await page.textContent('#ff-check .ff-check-title'), 'Fynd doesn’t support this shop yet');
+    assert.match(await page.textContent('#ff-check .ff-check-access'), /Fynd doesn’t read www\.unlisted-shop\.test’s pages: it hasn’t confirmed their terms allow it\./);
+    assert.strictEqual(await page.$('#ff-check .ff-check-view'), null, 'no chart to view');
+    assert.strictEqual(await page.getAttribute('#ff-check .ff-check-open', 'href'), 'https://www.unlisted-shop.test/products/tee-1');
+    assert.strictEqual(await page.isDisabled('#fit-url-submit'), true);
+    assert.deepStrictEqual(transportAsked, [], 'checking fetched nothing');
+    /* a supported shop's page, no record: missing measurements, not an unsupported shop */
+    await page.fill('#fit-url', 'https://shop.example.test/products/garment-tee');
+    await checked(page, 'missing-target');
+    assert.strictEqual(await page.textContent('#ff-check .ff-check-title'), 'No checked measurements for this item');
+    assert.strictEqual(await page.$('#ff-check .ff-check-access'), null, 'its pages can be read');
+    assert.ok(await page.$('#ff-check .ff-check-view'), 'its chart can be viewed');
+    /* a link half typed asks nothing, and nothing stale is left */
+    await page.fill('#fit-url', 'https://');
+    await page.waitForSelector('#ff-check', { state: 'hidden' });
+    assert.strictEqual(await page.isDisabled('#fit-url-submit'), false);
+    await page.click('#fit-url-submit');
+    await page.waitForSelector('#fit-url-error.show');
+    await context.close();
+  });
+
   await test('the guest flow on a phone: the form in one column, the result and the offer fit, nothing sideways', async () => {
     const context = await openContext();
     const page = await context.newPage();
@@ -2257,7 +2403,7 @@ const linkFromInbox = (pattern) => {
     await page.setViewportSize({ width: 375, height: 760 });
     await open(page, 'index.html');
     await page.waitForSelector('#ff-reference[data-state="saved"]');
-    assert.match(await page.textContent('.ff-ref[data-kind="sweatshirts"]'), /No measurements of your own: Fynd uses this product’s published ones/);
+    assert.match(await page.textContent('.ff-ref[data-kind="sweatshirts"]'), /Reference garment dimensions \(chest, length, shoulders, sleeve\): none measured\. Fynd uses this product’s published ones only where it holds checked measurements for it\./);
     const boxes = await page.$$eval('#ff-step-reference, #ff-step-target, #fit-url-submit', (ns) => ns.map((n) => { const r = n.getBoundingClientRect(); return [r.left, r.top, r.right]; }));
     assert.ok(boxes[0][1] < boxes[1][1] && boxes[1][1] < boxes[2][1], `stacked in order: ${JSON.stringify(boxes)}`);
     assert.ok(boxes.every(([l, , r]) => l >= 0 && r <= 375), JSON.stringify(boxes));
@@ -2481,9 +2627,10 @@ const linkFromInbox = (pattern) => {
     assert.match(await page.textContent(`${NOW} .fit-panel`), /Ready to compare sizes with your reference/);
     await page.waitForSelector(`${NOW} .fit-panel-matched`);
     assert.match(await page.textContent(`${NOW} .fit-panel-matched`), /1 of 3 listings matched a product Fynd has sizing for\. The other 2 get no size/);
-    /* UNIQLO measures sleeve and length from the centre back: chest and shoulders only — the closest size, never a recommendation */
+    /* UNIQLO measures sleeve and length from the centre back: chest and shoulders only — too few, so no size at all, not even a closest */
     const tags = await page.$$eval(`${NOW} .grid .item-card`, (cards) => cards.map((c) => (c.querySelector('.item-fit') || {}).textContent || null));
-    assert.match(tags[0], /^Closest to your reference: \w+ — not enough measurements to recommend$/);
+    assert.match(tags[0], /^No size for you: Only chest and shoulders are measured the same way/);
+    assert.doesNotMatch(tags[0], /Closest|Recommended|\bsize [A-Z]{1,3}\b/);
     assert.deepStrictEqual(tags.slice(1), [null, null], 'no size invented for listings Fynd has no measurements for');
 
     /* jeans: the jeans answers, said to be uncomparable, and no listing sized */
@@ -2657,15 +2804,16 @@ const linkFromInbox = (pattern) => {
     assert.match(await page.textContent('#ref-saved-list'), /Chest, flat\s*58 cm/);
     assert.strictEqual(await page.getAttribute('#ref-edit', 'href'), 'fit-profile.html?for=hoodies');
     await page.click('[data-product="uniqlo-e475378-sweat-pullover-hoodie-us"]');
-    await page.waitForSelector('#result-table-wrap:not([hidden])');
-    assert.match(await page.textContent('#result-summary'), /closest on chest and shoulders, but that's 2 of 4 dimensions — not enough for a recommendation/);
-    assert.strictEqual((await page.textContent('.compare-tag')).trim(), 'Closest', 'never "Recommended" from partial data');
+    await page.waitForFunction(() => /Only chest and shoulders are measured the same way/.test(document.querySelector('#result-summary').textContent));
+    assert.strictEqual(await page.isVisible('#result-table-wrap'), false, 'too few measured alike: no size table');
+    assert.strictEqual(await page.locator('.compare-tag').count(), 0, 'neither "Recommended" nor "Closest" from too little');
     await page.click('[data-product="zara-00761810-basic-heavyweight-hoodie-us"]');
     await page.waitForFunction(() => /haven't been checked against Zara's own page yet/.test(document.querySelector('#result-summary').textContent));
     assert.strictEqual(await page.isVisible('#result-table-wrap'), false, 'an unchecked product shows no numbers');
 
-    /* fit feedback, still on Compare, against the reference */
+    /* fit feedback, still on Compare, against the reference — once its answer is in, which redraws the form */
     await page.click('[data-product="uniqlo-e475378-sweat-pullover-hoodie-us"]');
+    await page.waitForFunction(() => /Only chest and shoulders are measured the same way/.test(document.querySelector('#result-summary').textContent));
     await page.waitForSelector('#feedback-section:not([hidden])');
     await page.selectOption('#fb-size', 'M');
     await page.check('input[name="fbExpected"][value="yes"]');

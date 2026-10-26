@@ -89,10 +89,7 @@
   }
   function whyNot(chart, verdict) {
     const state = chartState(chart);
-    if (state === 'body-only') {
-      return ['This chart describes bodies, not garments, so it can’t be set beside a garment you own.']
-        .concat(verdict ? ['What would change that: the brand publishing what the garment itself measures, size by size.'] : []);
-    }
+    if (state === 'body-only') return verdict ? [BODY_ONLY_REST] : [BODY_ONLY_LEAD, BODY_ONLY_REST];
     if (state === 'methods') {
       return ['The page doesn’t say whether these measure the body or the garment, or how each was taken, so Fynd can’t set them beside a garment you own.']
         .concat(verdict ? ['What would change that: the brand saying what each measurement is and how it’s taken.'] : []);
@@ -114,7 +111,7 @@
     const lines = [];
     if (!chart || !chart.comparable) {
       const state = chartState(chart);
-      put(compare, whyNot(chart, verdict), [], verdict ? HEADING[state] : null, verdict && state);
+      put(compare, whyNot(chart, verdict), verdict && state === 'body-only' ? bodyOnlyActions() : [], verdict ? HEADING[state] : null, verdict && state);
       return;
     }
     const account = global.Account;
@@ -168,13 +165,16 @@
        item: its own measurements, or a product Fynd holds checked ones for */
     if (verdict && unsaved && reason === 'needs-reference') reason = 'needs-measurements';
     if (!verdict || reason === 'no-recommendation') lines.push(NOT_ENOUGH);
-    if (reason === 'needs-measurements') lines.push('Fynd compares measurements, not size labels. Add this garment’s measurements in step 1 — laid flat — or name a product Fynd holds checked measurements for.');
+    if (verdict && reason === 'body-only') lines.push(BODY_ONLY_REST);
+    else if (reason === 'needs-measurements') lines.push('Fynd compares measurements, not size labels. Add this garment’s measurements in step 1 — laid flat — or name a product Fynd holds checked measurements for.');
     else if (typeof why.message === 'string' && why.message) lines.push(why.message);
     const next = Array.isArray(c.next) && typeof c.next[0] === 'string' ? c.next[0] : null;
     if (next && ACTIONABLE[reason] && reason !== 'needs-measurements') lines.push(next);
     const extra = [];
-    if (reason === 'methods') extra.push(notComparedList(c));
-    if (ACTIONABLE[reason]) {
+    if (reason === 'methods' || reason === 'too-few') extra.push(notComparedList(c));
+    if (verdict && reason === 'body-only') bodyOnlyActions().forEach((n) => extra.push(n));
+    /* too few in common: the profile helps only where the reference is what's missing (the engine says so in next) */
+    if (ACTIONABLE[reason] && (reason !== 'too-few' || next)) {
       const fix = el('p', 'fit-compare-action');
       /* on Find Fit the garment is described right there, in step 1 */
       if (verdict && (unsaved || reason === 'needs-reference')) fix.append(safeLinkLocal('#ff-step-reference', reason === 'needs-reference' ? 'Describe a garment that fits' : 'Add its measurements in step 1'));
@@ -203,6 +203,32 @@
     if (c.status === 'partial' && named != null && (typeof named !== 'string' || !c.sizes.some((s) => s.size === named))) return false;
     if (c.tradeoffs !== undefined && !Array.isArray(c.tradeoffs)) return false;
     return typeof c.summary === 'string';
+  }
+
+  /* what can still be done with a body-size chart on Find Fit: see it,
+     or pick a product with garment measurements (the brand browser) */
+  function bodyOnlyActions() {
+    const row = el('p', 'fit-compare-action');
+    const details = doc.getElementById('fit-chart-details');
+    if (details) {
+      const view = el('button', 'link-btn fit-compare-view-chart', 'View the chart');
+      view.type = 'button';
+      view.addEventListener('click', () => {
+        details.open = true;
+        const summary = details.querySelector('summary');
+        if (summary) summary.focus();
+      });
+      row.append(view);
+    }
+    const browse = doc.querySelector('.fit-brand-choice');
+    if (browse) {
+      if (row.childNodes.length) row.append(doc.createTextNode(' · '));
+      const pick = el('button', 'link-btn fit-compare-browse', 'Try a product with garment measurements');
+      pick.type = 'button';
+      pick.addEventListener('click', () => browse.click());
+      row.append(pick);
+    }
+    return row.childNodes.length ? [row] : [];
   }
 
   /* each measurement the engine couldn't set beside the reference, and its reason */
@@ -248,12 +274,16 @@
        methods          measured in ways that can't be matched to the
                         reference, or not said how
        needs-reference  nothing saved to compare with */
+  /* a body-size chart, in the same words wherever it can't be compared */
+  const BODY_ONLY_LEAD = 'This chart measures the body, not the finished garment.';
+  const BODY_ONLY_REST = 'Fynd cannot directly compare these measurements with your reference garment. No size recommendation is available from this chart alone.';
   const HEADING = {
     unsupported: 'Fynd can’t compare this item yet',
-    'body-only': 'Only body measurements for this item',
+    'body-only': BODY_ONLY_LEAD,
     methods: 'These measurements can’t be matched to your reference',
     'needs-reference': 'Add a garment that fits to compare',
     'needs-measurements': 'Fynd needs this garment’s measurements',
+    'too-few': 'Too few measurements in common to compare',
     'no-recommendation': NO_SIZE
   };
   /* the engine's insufficient reasons (compare(): missing[0].code) */
@@ -264,11 +294,12 @@
     'crowdsourced-data': 'unsupported',
     'body-chart-only': 'body-only',
     'nothing-comparable': 'methods',
+    'too-few-dimensions': 'too-few',
     'no-reference': 'needs-reference',
     'no-reference-measurements': 'needs-reference'
   };
   /* where the shopper's own profile can change the answer */
-  const ACTIONABLE = { methods: true, 'needs-reference': true, 'needs-measurements': true };
+  const ACTIONABLE = { methods: true, 'needs-reference': true, 'needs-measurements': true, 'too-few': true };
   const GIRTH = { chestWidth: true, shoulderWidth: true };
 
   /* The engine's signed difference, to a tenth: "+0.5 in", "−1.0 in"

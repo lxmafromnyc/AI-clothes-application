@@ -110,7 +110,8 @@
     return {
       v: VERSION,
       kind: KIND,
-      readAt: new Date().toISOString().slice(0, 10),
+      /* the moment it was read; shown as a date in the viewer's own time zone */
+      readAt: new Date().toISOString(),
       page: { url, title: textOrNull(r.title) },
       product: { name: textOrNull(r.product && r.product.name), brand: textOrNull(r.product && r.product.brand, 60), code: textOrNull(r.product && r.product.code, 60) },
       retailer: textOrNull(r.retailer, 60),
@@ -136,7 +137,7 @@
     if (p.v !== VERSION || p.kind !== KIND) return fail('not a Fynd extension chart');
     const url = pageUrl(p.page && p.page.url);
     if (!url) return fail('no product page address');
-    if (p.readAt !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(String(p.readAt))) return fail('bad date');
+    if (p.readAt !== undefined && !/^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z)?$/.test(String(p.readAt))) return fail('bad date');
     const str = (v, max) => (v === null || v === undefined ? null : typeof v === 'string' && v.length <= max * 2 ? textOrNull(v, max) : undefined);
     const out = {
       v: VERSION,
@@ -217,7 +218,7 @@
 
   /* The brief note: what the chart is, in the page's own terms. */
   function notesFor(p) {
-    const lines = [`Read by the Fynd extension from the page open in your browser${p.readAt ? ` on ${p.readAt}` : ''}. Not checked by Fynd.`];
+    const lines = ['Read by the Fynd extension from the page open in your browser. Not checked by Fynd.'];
     const c = p.chart;
     if (c) {
       if (c.where === 'size-guide-dialog') lines.push('Read from the retailer’s size guide open on the page — it may be a general chart, not one for this product only.');

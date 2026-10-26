@@ -72,8 +72,11 @@
     try { return checked(JSON.parse(global.sessionStorage.getItem(KEY) || 'null')); } catch (err) { return null; }
   }
   let visit = stored();
+  /* Find Fit checks the item again whenever the reference changes */
+  const changed = () => { try { doc.dispatchEvent(new global.CustomEvent('fynd:reference-change')); } catch (err) { /* no events here */ } };
   function keep(value) {
     visit = value;
+    global.setTimeout(changed, 0);
     try {
       if (value) global.sessionStorage.setItem(KEY, JSON.stringify(value));
       else global.sessionStorage.removeItem(KEY);
@@ -244,6 +247,14 @@
 
   /* ---------- drawing ---------- */
 
+  /* what the reference garment is missing, said as dimensions — never as
+     if the shopper had nothing of their own to give */
+  function missingDimensions(hasProduct) {
+    return hasProduct
+      ? 'Reference garment dimensions (chest, length, shoulders, sleeve): none measured. Fynd uses this product’s published ones only where it holds checked measurements for it.'
+      : 'Reference garment dimensions (chest, length, shoulders, sleeve): none given, so there is nothing to compare yet. Add any you can measure, laid flat.';
+  }
+
   function visitCard(value) {
     const g = Schema.garmentOf(value.type);
     const a = value.garment.anchor;
@@ -264,7 +275,7 @@
     card.append(top);
     card.append(el('p', 'ff-ref-name', [a.brand, a.size ? `size ${a.size}` : null, value.garment.line ? LINE_WORDS[value.garment.line] : null].filter(Boolean).join(' · ')));
     if (said.product) card.append(el('p', 'ff-ref-detail', said.product));
-    card.append(el('p', 'ff-ref-detail', said.measurements ? `Measured: ${said.measurements}` : 'No measurements of your own.'));
+    card.append(el('p', 'ff-ref-detail', said.measurements ? `Measured: ${said.measurements}` : missingDimensions(Boolean(said.product))));
     card.append(el('p', 'ff-ref-status', 'Not saved — kept in this tab until you close it.'));
     return card;
   }
@@ -298,9 +309,7 @@
     const label = [a.brand, a.size ? `size ${a.size}` : null, entry.line ? LINE_WORDS[entry.line] : null].filter(Boolean).join(' · ');
     card.append(el('p', 'ff-ref-name', label || `Your ${g.one}`));
     if (said.product) card.append(el('p', 'ff-ref-detail', said.product));
-    card.append(el('p', 'ff-ref-detail', said.measurements ? `Measured: ${said.measurements}`
-      : said.product ? 'No measurements of your own: Fynd uses this product’s published ones, where it holds them.'
-        : 'No measurements saved'));
+    card.append(el('p', 'ff-ref-detail', said.measurements ? `Measured: ${said.measurements}` : missingDimensions(Boolean(said.product))));
     const status = el('p', 'ff-ref-status');
     status.textContent = readiness.level === 'compare'
       ? 'Ready to compare, wherever Fynd holds an item’s checked measurements.'
@@ -358,7 +367,7 @@
       const state = account.state();
       signedIn = Boolean(state && state.signedIn);
     }
-    if (!signedIn) { unsavedState(); return; }
+    if (!signedIn) { unsavedState(); changed(); return; }
     const got = await account.fitProfile.read();
     if (ask !== asked) return;
     if (!got.ok) { unavailable(); return; }
@@ -366,6 +375,7 @@
     lastProfile = (got.data && got.data.profile) || Schema.empty();
     savedInUse = savedKinds(lastProfile).length > 0;
     redraw();
+    changed();
   }
 
   refresh();

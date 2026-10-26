@@ -546,18 +546,18 @@ function comparable(record, shopper) {
   const used = {};
   const skipped = [];
   Object.keys(shopper.params.garment).forEach((d) => {
-    if (!dims[d]) { skipped.push({ dim: d, why: `${record.brand} doesn't publish it` }); return; }
-    if (!refDims[d] || !refRow[d]) { skipped.push({ dim: d, why: ref.measured ? 'you didn\'t measure it' : `${ref.record.brand} doesn't publish it for ${ref.size}` }); return; }
-    if (!usableDim(record, d, shopper.includeUnverified)) { skipped.push({ dim: d, why: `${record.brand}'s ${DIM_NAMES[d]} is ${STATUS_WHY[sizingSchema.measurementStatus(record, d)]}` }); return; }
-    if (!usableDim(ref.record, d, shopper.includeUnverified)) { skipped.push({ dim: d, why: `your ${ref.record.brand} reference's ${DIM_NAMES[d]} is ${STATUS_WHY[sizingSchema.measurementStatus(ref.record, d)]}` }); return; }
+    if (!dims[d]) { skipped.push({ dim: d, code: 'target-missing', why: `${record.brand} doesn't publish it` }); return; }
+    if (!refDims[d] || !refRow[d]) { skipped.push({ dim: d, code: 'reference-missing', why: ref.measured ? 'you didn\'t measure it' : `${ref.record.brand} doesn't publish it for ${ref.size}` }); return; }
+    if (!usableDim(record, d, shopper.includeUnverified)) { skipped.push({ dim: d, code: 'target-unverified', why: `${record.brand}'s ${DIM_NAMES[d]} is ${STATUS_WHY[sizingSchema.measurementStatus(record, d)]}` }); return; }
+    if (!usableDim(ref.record, d, shopper.includeUnverified)) { skipped.push({ dim: d, code: 'reference-unverified', why: `your ${ref.record.brand} reference's ${DIM_NAMES[d]} is ${STATUS_WHY[sizingSchema.measurementStatus(ref.record, d)]}` }); return; }
     /* a value published without its method is never compared — not even
        with another whose method is also unstated: two unknowns need not
        be the same method */
-    if (dims[d].method === 'not-stated') { skipped.push({ dim: d, why: `${record.brand} doesn't say how its ${DIM_NAMES[d]} ${d === 'sleeveLength' || d === 'shoulderWidth' ? 'are' : 'is'} measured` }); return; }
-    if (refDims[d].method === 'not-stated') { skipped.push({ dim: d, why: `${ref.measured ? 'your' : `${ref.record.brand}'s`} ${DIM_NAMES[d]} ${d === 'sleeveLength' || d === 'shoulderWidth' ? 'have' : 'has'} no stated method` }); return; }
+    if (dims[d].method === 'not-stated') { skipped.push({ dim: d, code: 'method-unknown', why: `${record.brand} doesn't say how its ${DIM_NAMES[d]} ${d === 'sleeveLength' || d === 'shoulderWidth' ? 'are' : 'is'} measured` }); return; }
+    if (refDims[d].method === 'not-stated') { skipped.push({ dim: d, code: 'method-unknown', why: `${ref.measured ? 'your' : `${ref.record.brand}'s`} ${DIM_NAMES[d]} ${d === 'sleeveLength' || d === 'shoulderWidth' ? 'have' : 'has'} no stated method` }); return; }
     const v = inMethodOf(d, ref.record, refRow, dims[d].method);
     if (!v) {
-      skipped.push({ dim: d, why: `measured differently — ${record.brand}'s ${METHOD_WORDS[dims[d].method] || dims[d].method}, ${ref.measured ? 'yours' : `${ref.record.brand}'s`} ${METHOD_WORDS[refDims[d].method] || refDims[d].method}` });
+      skipped.push({ dim: d, code: 'method-mismatch', why: `measured differently — ${record.brand}'s ${METHOD_WORDS[dims[d].method] || dims[d].method}, ${ref.measured ? 'yours' : `${ref.record.brand}'s`} ${METHOD_WORDS[refDims[d].method] || refDims[d].method}` });
       return;
     }
     used[d] = v;
@@ -998,14 +998,25 @@ function recommend(profile, record, opts) {
   const hasBody = Boolean(record.charts.body);
   /* a garment that fits, sharing no measurement with this product (all
      measured differently), is no comparison at all */
-  const shared = hasGarment && shopper.garmentRef && Object.keys(comparable(record, shopper).used).length > 0;
+  /* the same eligibility as compare(): a garment is set beside this one
+     only on enough measurements taken the same way (enoughToRecommend) */
+  const sharedDims = hasGarment && shopper.garmentRef ? COMPARE_DIMS.filter((d) => comparable(record, shopper).used[d]) : [];
+  const shared = enoughToRecommend(sharedDims);
   if (hasGarment && shopper.garmentRef && !shared) {
-    shopper.notes.push(`The ${shopper.garmentRef.measured ? shopper.garmentRef.record.product.name : `${shopper.garmentRef.record.brand} ${shopper.garmentRef.size} you said fits`} shares no measurement taken the same way with this product, so it wasn't compared.`);
+    const named = shopper.garmentRef.measured ? shopper.garmentRef.record.product.name : `${shopper.garmentRef.record.brand} ${shopper.garmentRef.size} you said fits`;
+    shopper.notes.push(sharedDims.length
+      ? `The ${named} shares only ${listWords(sharedDims.map((d) => DIM_NAMES[d]))} measured the same way with this product — too few to compare, so it wasn't compared.`
+      : `The ${named} shares no measurement taken the same way with this product, so it wasn't compared.`);
   }
   let method = null;
   if (shared) method = 'reference-garment';
   else if (hasGarment && shopper.body) method = 'body-plus-ease';
   else if (hasBody && shopper.body) method = 'body-chart';
+  /* nothing else to size by: say the real reason, not a later one */
+  if (!method && hasGarment && shopper.garmentRef) {
+    const few = sharedDims.length ? tooFew(sharedDims, []) : { message: shopper.notes[shopper.notes.length - 1] };
+    return insufficient(record, [{ code: 'too-few-dimensions', message: few.message }], []);
+  }
 
   /* garment against garment needs no sizing line: a measurement is the
      same whoever the label was cut for. Anything read from a chart does. */
@@ -1230,10 +1241,11 @@ function recommend(profile, record, opts) {
    When it recommends
    ---------------------------------------------------------
    Only with a verified product, a reference, and at least three of the
-   four dimensions compared, the chest among them. With fewer, it shows
-   the closest size and every difference it can, calls the comparison
-   partial, and recommends nothing. An unverified product gives no
-   numbers at all outside the evaluation suite.
+   four dimensions compared, the chest among them. With fewer, nothing
+   is compared at all — "too-few-dimensions", with which are shared and
+   why the rest aren't — so no difference is ever worked out on too
+   little. An unverified product gives no numbers at all outside the
+   evaluation suite.
 
    The closest size by the total can still miss on one measurement — a
    chest that matches beside a length 3 in longer. Each compared
@@ -1303,10 +1315,20 @@ function referenceEntry(profile, category) {
   return sibling ? { category: sibling, entry: garments[sibling], crossCategory: true } : null;
 }
 
-function compare(profile, record, opts) {
-  const options = Object.assign({ includeUnverified: false, records: RECORDS }, opts || {});
+/* A body-size chart, said the same way everywhere it can't be compared */
+const BODY_ONLY = 'This chart measures the body, not the finished garment. Fynd cannot directly compare these measurements with your reference garment. No size recommendation is available from this chart alone.';
+
+/* What a comparison needs before any size is scored, by the engine's
+   own rules: a valid record of a covered kind, verified (unless the
+   evaluation suite asks otherwise), with garment measurements not all
+   crowdsourced; a reference of that kind or its sibling; and its
+   measurements — the product's published ones, or the shopper's own.
+   Then which dimensions both sides measured the same way. Shared by
+   compare() and validate(), so the rules exist once.
+   { fail: { code, message, next, extra } } or { ok: { ... } } */
+function prepare(profile, record, options) {
   const pool = options.records;
-  const no = (code, message, next, extra) => Object.assign({ status: 'insufficient', productId: record ? record.id : null, missing: [{ code, message }], next: next || [] }, extra || {});
+  const no = (code, message, next, extra) => ({ fail: { code, message, next: next || [], extra: extra || {} } });
 
   if (!record || sizingSchema.validate(record).length) return no('no-record', 'Fynd has no sizing data for this product.');
   const params = CATEGORY_PARAMS[record.category];
@@ -1317,8 +1339,8 @@ function compare(profile, record, opts) {
       ['Check back once its sizing has been verified.'], { product: { brand: record.brand, name: record.product.name }, context: productContext, dataStatus: 'unverified' });
   }
   if (!record.charts.garment) {
-    return no('body-chart-only', `${record.brand} publishes who each size is cut for, not what the garment itself measures, so there is nothing to set beside your reference.`,
-      [], { product: { brand: record.brand, name: record.product.name }, context: productContext });
+    return no('body-chart-only', BODY_ONLY,
+      ['You can still view the chart, or try a product Fynd holds garment measurements for.'], { product: { brand: record.brand, name: record.product.name }, context: productContext });
   }
 
   const garmentDimsOf = Object.keys(record.charts.garment.dimensions);
@@ -1352,11 +1374,37 @@ function compare(profile, record, opts) {
   const favorite = { answer: found.entry.favorite || null, likes: anchor.likes || null };
   const shopper = { garmentRef: ref, params, favorite, includeUnverified: options.includeUnverified };
   const { used, skipped } = comparable(record, shopper);
+  return { ok: { params, productContext, found, anchor, notes, ref, favorite, shopper, used, skipped, dims: COMPARE_DIMS.filter((d) => used[d]) } };
+}
+
+/* the evidence a recommendation needs: three of the four dimensions, the chest among them */
+const enoughToRecommend = (dims) => dims.length >= 3 && dims.includes('chestWidth');
+/* Too few measured the same way to compare at all: said with which ones
+   are shared, and what would help. Shared by compare() and validate(),
+   so no size or difference is ever worked out on less. */
+function tooFew(dims, skipped) {
+  const shared = listWords(dims.map((d) => DIM_NAMES[d]));
+  return {
+    message: `Only ${shared} ${dims.length === 1 ? 'is' : 'are'} measured the same way on your reference and this product. Fynd compares sizes only on at least three of chest, length, shoulders and sleeves, the chest among them, so it sets none side by side here.`,
+    next: skipped.some((x) => x.code === 'reference-missing') ? ['Add the measurements your reference is missing, laid flat, as Fynd shows.'] : []
+  };
+}
+
+function compare(profile, record, opts) {
+  const options = Object.assign({ includeUnverified: false, records: RECORDS }, opts || {});
+  const no = (code, message, next, extra) => Object.assign({ status: 'insufficient', productId: record ? record.id : null, missing: [{ code, message }], next: next || [] }, extra || {});
+  const ready = prepare(profile, record, options);
+  if (ready.fail) return no(ready.fail.code, ready.fail.message, ready.fail.next, ready.fail.extra);
+  const { params, productContext, found, anchor, notes, ref, favorite, shopper, used, skipped, dims } = ready.ok;
+  /* eligibility before any difference is worked out: enough measured the same way */
+  if (dims.length && !enoughToRecommend(dims)) {
+    const few = tooFew(dims, skipped);
+    return no('too-few-dimensions', few.message, few.next, { product: { brand: record.brand, name: record.product.name }, context: productContext, dimensionsShared: dims, notCompared: skipped, notes });
+  }
   const weights = dimWeights(shopper);
   const unit = options.unit === 'in' || options.unit === 'cm' ? options.unit
     : ref.measured ? ref.record.units : ((profile && profile.measurements && profile.measurements.unit) || record.units);
   const show = (v, from) => round(toUnits(v, from, unit), 2);
-  const dims = COMPARE_DIMS.filter((d) => used[d]);
 
   /* the reference, in the unit shown */
   const refRow = garmentRow(ref.record, ref.size);
@@ -1434,7 +1482,7 @@ function compare(profile, record, opts) {
   const closest = ranked[0];
   const second = ranked[1] || null;
   const complete = dims.length === COMPARE_DIMS.length;
-  const enough = dims.length >= 3 && dims.includes('chestWidth');
+  const enough = enoughToRecommend(dims);
 
   /* how far to trust it, from the data alone */
   const caveats = [];
@@ -1461,16 +1509,15 @@ function compare(profile, record, opts) {
   /* closest is not the same as close: when every measurement compared
      misses its tolerance, the size is shown, never recommended */
   const allOutside = tradeoffs.length === dims.length;
-  const withheld = !verified ? 'unverified' : !enough ? 'too-few-dimensions' : allOutside ? 'outside-tolerance' : null;
+  /* (too few never reaches here: compare() stopped before any difference) */
+  const withheld = !verified ? 'unverified' : allOutside ? 'outside-tolerance' : null;
   const recommended = withheld ? null : closest.size;
   const named = listWords(dims.map((d) => DIM_NAMES[d]));
   const summary = recommended
     ? `${recommended} is the closest to your reference across ${named}.`
     : withheld === 'unverified'
       ? `${closest.size} is the closest on ${named}, but this product's measurements haven't been checked, so it isn't a recommendation.`
-      : withheld === 'too-few-dimensions'
-        ? `${closest.size} is the closest on ${named}, but that's ${dims.length === 1 ? 'one dimension' : `${dims.length} of 4 dimensions`} — not enough for a recommendation.`
-        : `${closest.size} is the closest size, but its ${named} all differ from your reference by more than Fynd treats as similar, so it isn't a recommendation.`;
+      : `${closest.size} is the closest size, but its ${named} all differ from your reference by more than Fynd treats as similar, so it isn't a recommendation.`;
 
   return {
     status: recommended ? 'ok' : 'partial',
@@ -1479,8 +1526,8 @@ function compare(profile, record, opts) {
     unit,
     reference,
     recommended,
-    /* why there is no recommendation: "unverified", "too-few-dimensions"
-       or "outside-tolerance"; null when there is one */
+    /* why there is no recommendation: "unverified" (the evaluation suite
+       only) or "outside-tolerance"; null when there is one */
     withheld,
     closest: closest.size,
     alternative: nearTie ? second.size : null,
@@ -1499,4 +1546,105 @@ function compare(profile, record, opts) {
   };
 }
 
-module.exports = { recommend, compare, matchProduct, CATEGORY_PARAMS, TROUBLE_FACTOR, ALTERNATIVE_MARGIN, METHOD_WORDS, sizeOffset, bodyRange, contextOf };
+/* ---------------------------------------------------------
+   Can this product be compared with this reference — before any size
+   is scored? The same preconditions compare() uses (prepare()), said as
+   one of:
+
+     ready              enough measurements taken the same way on both
+                        sides (or convertible by a stated rule) — three of
+                        the four, chest among them; compare() will set
+                        them side by side, and may still recommend nothing
+                        when every one is too far apart
+     missing-reference  no reference of this kind, or none with
+                        measurements Fynd can use
+     missing-target     no record of this product, a kind not covered,
+                        or none of its measurements published
+     body-only          only who each size is cut for: body measurements,
+                        never set beside a garment
+     methods            measured in ways that can't be matched, or the
+                        source doesn't say how
+     unverified         measurements present but not verified (or
+                        crowdsourced), never compared
+
+   with an actionable explanation and, for every dimension, what each
+   side holds: its method and the kind it measures (schema methodKind),
+   its status, and whether a stated rule converts one to the other —
+   the source value kept, the converted one named as derived. No
+   tolerance or score is involved: those stay compare()'s.
+   --------------------------------------------------------- */
+const VALIDATION_OF = {
+  'no-record': 'missing-target',
+  'category-not-covered': 'missing-target',
+  'unverified-data': 'unverified',
+  'crowdsourced-data': 'unverified',
+  'body-chart-only': 'body-only',
+  'no-reference': 'missing-reference',
+  'no-reference-measurements': 'missing-reference'
+};
+const SKIP_OUTCOME = {
+  'method-unknown': 'methods',
+  'method-mismatch': 'methods',
+  'target-unverified': 'unverified',
+  'reference-unverified': 'unverified',
+  'target-missing': 'missing-target',
+  'reference-missing': 'missing-reference'
+};
+const OUTCOME_ORDER = ['methods', 'unverified', 'missing-reference', 'missing-target'];
+const NEXT_STEP = {
+  'missing-reference': 'Add your reference garment\'s measurements, laid flat — or name a product Fynd holds checked measurements for.',
+  'missing-target': 'You can still view any size chart Fynd holds or can read for it, and the product\'s own page.',
+  'body-only': 'You can still view the chart: it says which body each size is cut for.',
+  methods: 'Measurements taken differently can\'t be set side by side; where yours are the ones missing, add them as Fynd shows.',
+  unverified: 'You can still view the chart as published; Fynd compares it once its measurements are verified.'
+};
+
+function validate(profile, record, opts) {
+  const options = Object.assign({ includeUnverified: false, records: RECORDS }, opts || {});
+  const ready = prepare(profile, record, options);
+  const product = record && record.brand && record.product ? { brand: record.brand, name: record.product.name } : null;
+  if (ready.fail) {
+    const status = VALIDATION_OF[ready.fail.code] || 'missing-target';
+    return { status, ready: false, canRecommend: false, code: ready.fail.code, explanation: ready.fail.message, next: ready.fail.next.concat(NEXT_STEP[status] ? [NEXT_STEP[status]] : []), product, dimensions: [] };
+  }
+  const { ref, used, skipped, dims } = ready.ok;
+  const refDims = ref.record.charts.garment.dimensions;
+  const own = record.charts.garment.dimensions;
+  const side = (rec, d, spec) => (spec ? { method: spec.method, kind: sizingSchema.methodKind(spec.method), status: isShopperMeasured(rec) ? SHOPPER_MEASURED : sizingSchema.measurementStatus(rec, d) } : null);
+  const dimensions = COMPARE_DIMS.map((d) => {
+    const skip = skipped.find((x) => x.dim === d);
+    return {
+      dim: d,
+      compared: Boolean(used[d]),
+      code: skip ? skip.code : null,
+      why: skip ? skip.why : null,
+      target: side(record, d, own[d]),
+      reference: side(ref.record, d, refDims[d]),
+      /* a value worked out by a stated rule: the source's own stays the reference's */
+      derived: used[d] && used[d].estimated ? { rule: used[d].estimated, from: refDims[d].method, to: own[d].method } : null
+    };
+  });
+  if (dims.length && enoughToRecommend(dims)) {
+    return { status: 'ready', ready: true, code: null, canRecommend: true, explanation: `Ready to compare on ${listWords(dims.map((d) => DIM_NAMES[d]))}.`, next: [], product, dimensions };
+  }
+  if (dims.length) {
+    /* some measured the same way, but too few to compare at all: said by why the rest aren't */
+    const few = tooFew(dims, skipped);
+    const outcomes = skipped.map((x) => SKIP_OUTCOME[x.code]).filter(Boolean);
+    return { status: OUTCOME_ORDER.find((o) => outcomes.includes(o)) || 'missing-reference', ready: false, canRecommend: false, code: 'too-few-dimensions', explanation: few.message, next: few.next, product, dimensions };
+  }
+  const outcomes = skipped.map((x) => SKIP_OUTCOME[x.code]).filter(Boolean);
+  const status = OUTCOME_ORDER.find((o) => outcomes.includes(o)) || 'missing-target';
+  return {
+    status,
+    ready: false,
+    canRecommend: false,
+    code: 'nothing-comparable',
+    explanation: `Your reference and this product share no measurement Fynd can set side by side: ${skipped.map((x) => `${DIM_NAMES[x.dim]} — ${x.why}`).join('; ')}.`,
+    next: NEXT_STEP[status] ? [NEXT_STEP[status]] : [],
+    product,
+    dimensions
+  };
+}
+
+module.exports = { recommend, compare, validate, matchProduct, CATEGORY_PARAMS, TROUBLE_FACTOR, ALTERNATIVE_MARGIN, METHOD_WORDS, sizeOffset, bodyRange, contextOf };

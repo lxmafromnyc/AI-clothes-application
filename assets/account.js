@@ -253,6 +253,10 @@
        garment } in the fit profile's own shape — sent in the body, never
        the address; used for that one answer and kept nowhere, so no
        account is needed */
+    /* before comparing: can this item be compared with this reference?
+       The item is a link or a listed product; nothing is fetched to
+       answer, and the reference, when sent, travels in the body only */
+    check: (target, reference) => call('size-recommendation?check=1', { body: Object.assign({ target }, reference ? { reference } : {}) }),
     compareWith: (productId, reference, unit) => call(`size-recommendation?product=${encodeURIComponent(productId)}&compare=1${unit === 'in' || unit === 'cm' ? `&unit=${unit}` : ''}`, { body: { reference } }),
     /* the search page's listings, sized from one type of clothing's
        profile: only what the listings themselves say travels */
