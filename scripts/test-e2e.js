@@ -2161,6 +2161,8 @@ const linkFromInbox = (pattern) => {
     page.on('request', (r) => { if (r.method() === 'POST' && /size-recommendation/.test(r.url())) posted.push({ url: r.url(), body: r.postDataJSON() }); });
     await open(page, 'index.html');
     await describe(page, { type: 'sweatshirts', size: 'M', brand: 'UNIQLO', product: 'https://www.uniqlo.com/us/en/products/E475377-000/00?colorDisplayCode=09' });
+    /* the early check also POSTs the garment, in its body — the same promise, counted on its own */
+    const checks = () => posted.filter((p) => /[?&]check=1$/.test(p.url));
     await compareItem(page, 'https://www.uniqlo.com/us/en/products/E475378-000/00');
     const expected = require('../api/_sizing/engine').compare(
       Object.assign(Schema.empty(), { garments: { sweatshirts: Object.assign(Schema.emptyGarment('sweatshirts'), { favorite: 'perfect', anchor: { brand: 'UNIQLO', size: 'M', product: { name: null, url: 'https://www.uniqlo.com/us/en/products/E475377-000/00' } } }) } }),
@@ -2168,7 +2170,9 @@ const linkFromInbox = (pattern) => {
     assert.strictEqual(expected.status, 'ok');
     assert.strictEqual(await page.getAttribute('#fit-compare', 'data-verdict'), 'recommended');
     assert.strictEqual((await page.textContent('#fit-compare .fit-compare-recommended')).trim(), `Recommended size: ${expected.recommended}`, 'the engine\'s own answer');
-    /* the one request that carried the garment: a POST, the garment in its body, only the product id in the address */
+    /* the one comparison that carried the garment: a POST, the garment in its body, only the product id in the address */
+    checks().forEach((p) => assert.ok(!/Carhartt|UNIQLO|E475377/.test(p.url), 'an early check names nothing of the garment in its address'));
+    posted.splice(0, posted.length, ...posted.filter((p) => !/[?&]check=1$/.test(p.url)));
     assert.strictEqual(posted.length, 1);
     assert.match(posted[0].url, /\/api\/size-recommendation\?product=uniqlo-e475378-sweat-pullover-hoodie-us&compare=1$/);
     assert.deepStrictEqual(posted[0].body.reference.type, 'sweatshirts');
@@ -2807,8 +2811,9 @@ const linkFromInbox = (pattern) => {
     await page.waitForFunction(() => /haven't been checked against Zara's own page yet/.test(document.querySelector('#result-summary').textContent));
     assert.strictEqual(await page.isVisible('#result-table-wrap'), false, 'an unchecked product shows no numbers');
 
-    /* fit feedback, still on Compare, against the reference */
+    /* fit feedback, still on Compare, against the reference — once its answer is in, which redraws the form */
     await page.click('[data-product="uniqlo-e475378-sweat-pullover-hoodie-us"]');
+    await page.waitForFunction(() => /Only chest and shoulders are measured the same way/.test(document.querySelector('#result-summary').textContent));
     await page.waitForSelector('#feedback-section:not([hidden])');
     await page.selectOption('#fb-size', 'M');
     await page.check('input[name="fbExpected"][value="yes"]');
