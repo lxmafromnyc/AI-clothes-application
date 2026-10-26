@@ -3330,7 +3330,7 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
       /* the table may scroll sideways inside its box; the page never does */
       assert.strictEqual(await page.$$eval('#result-table tbody tr', (rows) => rows.length), 6, 'your reference and five sizes');
       await page.click('[data-product="nike-fn3859-club-pullover-fleece-hoodie-us"]');
-      await page.waitForFunction(() => /only who each size is cut for|publishes who each size is cut for/.test(document.querySelector('#result-summary').textContent));
+      await page.waitForFunction(() => /This chart measures the body, not the finished garment\./.test(document.querySelector('#result-summary').textContent));
       await audit('a product that cannot be compared');
       await page.close();
     }
