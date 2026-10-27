@@ -251,8 +251,8 @@
      if the shopper had nothing of their own to give */
   function missingDimensions(hasProduct) {
     return hasProduct
-      ? 'Reference garment dimensions (chest, length, shoulders, sleeve): none measured. Fynd uses this product’s published ones only where it holds checked measurements for it.'
-      : 'Reference garment dimensions (chest, length, shoulders, sleeve): none given, so there is nothing to compare yet. Add any you can measure, laid flat.';
+      ? 'Reference garment dimensions (chest, length, shoulders, sleeve): none measured. Fynd can use this product’s published measurements only if it has a checked record for this exact product; otherwise, edit this garment to add any dimensions you can measure, laid flat.'
+      : 'No measurements entered. Edit this garment to add any dimensions you can measure, laid flat, so Fynd has a reference to compare.';
   }
 
   function visitCard(value) {

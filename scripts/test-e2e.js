@@ -2399,11 +2399,21 @@ const linkFromInbox = (pattern) => {
   await test('Find Fit on a phone: one column, the steps in order, no sideways scroll, and the verdict before the chart', async () => {
     const context = await openContext();
     const page = await signedIn(context, 'uma@e2e.test');
-    await fitProfiles.saveGuide((await users.byEmail('uma@e2e.test')).id, { garments: { sweatshirts: { favorite: 'perfect', anchor: { brand: 'UNIQLO', size: 'M', product: { url: 'https://www.uniqlo.com/us/en/products/E475377-000/00' } } } } });
+    await fitProfiles.saveGuide((await users.byEmail('uma@e2e.test')).id, { garments: {
+      sweatshirts: { favorite: 'perfect', anchor: { brand: 'UNIQLO', size: 'M', product: { url: 'https://www.uniqlo.com/us/en/products/E475377-000/00' } } },
+      hoodies: { favorite: 'perfect', anchor: { brand: 'Carhartt', size: 'L' } }
+    } });
     await page.setViewportSize({ width: 375, height: 760 });
     await open(page, 'index.html');
     await page.waitForSelector('#ff-reference[data-state="saved"]');
-    assert.match(await page.textContent('.ff-ref[data-kind="sweatshirts"]'), /Reference garment dimensions \(chest, length, shoulders, sleeve\): none measured\. Fynd uses this product’s published ones only where it holds checked measurements for it\./);
+    /* no measurements: with a product, what Fynd can and can't use from it; without one, what to add */
+    const sweatshirt = await page.textContent('.ff-ref[data-kind="sweatshirts"]');
+    assert.ok(sweatshirt.includes('Reference garment dimensions (chest, length, shoulders, sleeve): none measured. Fynd can use this product’s published measurements only if it has a checked record for this exact product; otherwise, edit this garment to add any dimensions you can measure, laid flat.'), sweatshirt);
+    const hoodie = await page.textContent('.ff-ref[data-kind="hoodies"]');
+    assert.ok(hoodie.includes('No measurements entered. Edit this garment to add any dimensions you can measure, laid flat, so Fynd has a reference to compare.'), hoodie);
+    assert.ok(!hoodie.includes('this exact product'), 'the product wording only where there is a product');
+    /* the card holds no measurement fields, so neither message points below it */
+    assert.ok(![sweatshirt, hoodie].some((t) => /below/i.test(t)), 'no message points to fields below');
     const boxes = await page.$$eval('#ff-step-reference, #ff-step-target, #fit-url-submit', (ns) => ns.map((n) => { const r = n.getBoundingClientRect(); return [r.left, r.top, r.right]; }));
     assert.ok(boxes[0][1] < boxes[1][1] && boxes[1][1] < boxes[2][1], `stacked in order: ${JSON.stringify(boxes)}`);
     assert.ok(boxes.every(([l, , r]) => l >= 0 && r <= 375), JSON.stringify(boxes));
