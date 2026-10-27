@@ -2507,6 +2507,189 @@ await test('a record\'s chart answer names each column\'s method as the record h
   assert.strictEqual(answer.verification, 'unverified', 'copied into a record is not verified');
 });
 
+section('the shopper\'s own measurements, checked raw before anything is worked out');
+
+/* what a comparison that refused to work anything out looks like: no
+   size, no closest size, no difference, and nothing that isn't a number */
+const workedOutNothing = (c, code) => {
+  assert.deepStrictEqual([c.status, c.missing && c.missing[0].code], ['insufficient', code], JSON.stringify(c.missing));
+  ['sizes', 'closest', 'recommended', 'reference', 'dimensionsCompared'].forEach((k) => assert.ok(!(k in c), `${k} was worked out`));
+  assert.ok(!/NaN|Infinity/.test(JSON.stringify(c)), 'NaN or Infinity in the answer');
+};
+const withRef = (measurements) => hoodieRef({ measurements });
+const BAD_VALUES = [['NaN', NaN], ['Infinity', Infinity], ['-Infinity', -Infinity], ['a numeric string', '58'], ['zero', 0], ['a negative', -58], ['true', true], ['an object', { value: 58 }]];
+
+await test('valid measurements still compare exactly: centimetres as given, inches converted by 2.54, every difference a finite number', () => {
+  const cm = engine.compare(withRef(REF_CM), ILLUSTRATIVE());
+  const inch = engine.compare(withRef(REF_CM), ILLUSTRATIVE(), { unit: 'in' });
+  assert.deepStrictEqual([cm.status, cm.unit, inch.status, inch.unit, inch.recommended], ['ok', 'cm', 'ok', 'in', cm.recommended]);
+  cm.sizes.forEach((s, i) => Object.entries(s.dimensions).forEach(([d, x]) => {
+    const y = inch.sizes[i].dimensions[d];
+    assert.ok(Number.isFinite(x.difference) && Number.isFinite(y.difference), `${s.size} ${d}`);
+    assert.ok(Math.abs(y.difference * 2.54 - x.difference) < 0.02, `${s.size} ${d}: ${y.difference} in vs ${x.difference} cm`);
+  }));
+  /* the same garment measured in inches compares the same way, converted once */
+  const asInches = Object.fromEntries(Object.entries(REF_CM).map(([k, v]) => [k, k === 'unit' ? 'in' : v / 2.54]));
+  const fromInches = engine.compare(withRef(asInches), ILLUSTRATIVE(), { unit: 'cm' });
+  assert.strictEqual(fromInches.recommended, cm.recommended);
+  fromInches.sizes.forEach((s, i) => Object.keys(s.dimensions).forEach((d) => assert.ok(Math.abs(s.dimensions[d].difference - cm.sizes[i].dimensions[d].difference) < 0.02, `${s.size} ${d}`)));
+  assert.strictEqual(engine.validate(withRef(REF_CM), ILLUSTRATIVE()).status, 'ready');
+});
+
+await test('a malformed value — NaN, ±Infinity, a numeric string, zero, a negative, true, an object — stops compare(), validate() and recommend() before any difference', () => {
+  BAD_VALUES.forEach(([label, bad]) => {
+    const profile = withRef(Object.assign({}, REF_CM, { chestWidth: bad }));
+    try {
+      workedOutNothing(engine.compare(profile, ILLUSTRATIVE()), 'invalid-measurements');
+      const v = engine.validate(profile, ILLUSTRATIVE());
+      assert.deepStrictEqual([v.status, v.code, v.ready, v.canRecommend, v.dimensions], ['missing-reference', 'invalid-measurements', false, false, []]);
+      const r = engine.recommend(profile, ILLUSTRATIVE());
+      assert.deepStrictEqual([r.status, r.missing[0].code], ['insufficient', 'invalid-measurements']);
+      assert.ok(!('leading' in r) && !/NaN|Infinity/.test(JSON.stringify(r)));
+    } catch (err) { err.message = `${label}: ${err.message}`; throw err; }
+  });
+  const said = engine.compare(withRef(Object.assign({}, REF_CM, { chestWidth: NaN })), ILLUSTRATIVE());
+  assert.ok(/chest, flat isn't a number above zero/.test(said.missing[0].message), said.missing[0].message);
+  assert.ok(said.next.length && said.product && said.context, 'what to do, and which product, are still said');
+});
+
+await test('a malformed value is never dropped to compare on the rest: three good measurements beside a broken sleeve are not a comparison', () => {
+  /* without the sleeve at all, the three left are enough (the partial rule below) */
+  workedOutNothing(engine.compare(withRef(Object.assign({}, REF_CM, { sleeveLength: NaN })), ILLUSTRATIVE()), 'invalid-measurements');
+  workedOutNothing(engine.compare(withRef(Object.assign({}, REF_CM, { sleeveLength: -62 })), ILLUSTRATIVE()), 'invalid-measurements');
+  workedOutNothing(engine.compare(withRef(Object.assign({}, REF_CM, { shoulderWidth: '50' })), ILLUSTRATIVE()), 'invalid-measurements');
+});
+
+await test('a measurement not given (null, undefined or absent) is missing, not malformed: the existing partial and minimum rules decide', () => {
+  [null, undefined].forEach((gone) => {
+    const noSleeve = engine.compare(withRef(Object.assign({}, REF_CM, { sleeveLength: gone })), ILLUSTRATIVE());
+    assert.deepStrictEqual([noSleeve.status, noSleeve.reliability, noSleeve.dimensionsCompared], ['ok', 'medium', ['chestWidth', 'bodyLength', 'shoulderWidth']]);
+    assert.deepStrictEqual(noSleeve.notCompared.map((x) => [x.dim, x.code]), [['sleeveLength', 'reference-missing']]);
+    /* the chest is required: three without it is too few, as before */
+    const noChest = engine.compare(withRef(Object.assign({}, REF_CM, { chestWidth: gone })), ILLUSTRATIVE());
+    workedOutNothing(noChest, 'too-few-dimensions');
+  });
+  const { sleeveLength, ...absent } = REF_CM;
+  assert.strictEqual(engine.compare(withRef(absent), ILLUSTRATIVE()).status, 'ok');
+  /* two given: too few, and said which two are shared */
+  const two = engine.compare(withRef({ unit: 'cm', chestWidth: 58, bodyLength: 68 }), ILLUSTRATIVE());
+  workedOutNothing(two, 'too-few-dimensions');
+  assert.deepStrictEqual(two.dimensionsShared, ['chestWidth', 'bodyLength']);
+  /* a unit and nothing measured is no measurements, as before */
+  workedOutNothing(engine.compare(withRef({ unit: 'cm' }), ILLUSTRATIVE()), 'no-reference-measurements');
+});
+
+await test('a unit missing, unknown or not written as "in" or "cm" is never read as inches: the comparison stops', () => {
+  const { unit, ...noUnit } = REF_CM;
+  [['missing', noUnit], ['null', Object.assign({}, REF_CM, { unit: null })], ['mm', Object.assign({}, REF_CM, { unit: 'mm' })],
+    ['IN', Object.assign({}, REF_CM, { unit: 'IN' })], ['inches', Object.assign({}, REF_CM, { unit: 'inches' })], ['a number', Object.assign({}, REF_CM, { unit: 2.54 })]].forEach(([label, m]) => {
+    const c = engine.compare(withRef(m), ILLUSTRATIVE());
+    try { workedOutNothing(c, 'invalid-measurements'); } catch (err) { err.message = `${label}: ${err.message}`; throw err; }
+    assert.strictEqual(engine.recommend(withRef(m), ILLUSTRATIVE()).missing[0].code, 'invalid-measurements', label);
+  });
+  /* an unknown unit with nothing measured is still a unit Fynd can't read */
+  workedOutNothing(engine.compare(withRef({ unit: 'mm' }), ILLUSTRATIVE()), 'invalid-measurements');
+  /* a display unit that isn't in or cm is ignored, as before: the reference's own is used */
+  assert.strictEqual(engine.compare(withRef(REF_CM), ILLUSTRATIVE(), { unit: 'mm' }).unit, 'cm');
+});
+
+await test('the API keeps reading the units shoppers write: "IN", " cm " and "24.5" are normalised before the engine, which then compares', async () => {
+  const garment = (measurements) => ({ type: 'hoodies', garment: { favorite: 'perfect', anchor: { brand: 'Carhartt', size: 'L', measurements } } });
+  const { answers, errors } = Schema.normaliseGuide({ garments: { hoodies: garment({ unit: ' CM ', chestWidth: '58', bodyLength: 68, shoulderWidth: '50', sleeveLength: 62 }).garment } });
+  assert.deepStrictEqual(errors, []);
+  assert.deepStrictEqual(answers.garments.hoodies.anchor.measurements, REF_CM);
+  const p = Schema.empty();
+  p.garments = Schema.mergeGarments({}, answers.garments);
+  assert.strictEqual(engine.compare(p, ILLUSTRATIVE()).status, 'ok');
+  /* malformed input stops at the API's own validator, before the engine */
+  for (const [label, m] of [['NaN text', Object.assign({}, REF_CM, { chestWidth: 'NaN' })], ['mm', Object.assign({}, REF_CM, { unit: 'mm' })], ['zero', Object.assign({}, REF_CM, { chestWidth: 0 })]]) {
+    const r = await compareUnsaved({}, UQ_HOODIE, { reference: garment(m) });
+    assert.deepStrictEqual([r.status, r.body.reason], [400, 'invalid-reference'], label);
+  }
+});
+
+await test('the body measurements are checked too: a malformed chest or unit stops recommend() and compare(); a valid one still sizes', () => {
+  const tts = { fitGoal: 'true-to-size', line: 'men' };
+  const body = (m) => profileWith(tts, { measurements: Object.assign({ height: null, chest: null, waist: null, hip: null }, m) });
+  [['NaN chest', { unit: 'in', chest: NaN }], ['zero chest', { unit: 'in', chest: 0 }], ['string chest', { unit: 'in', chest: '40' }],
+    ['negative height', { unit: 'in', chest: 40, height: -70 }], ['no unit', { unit: null, chest: 40 }], ['mm', { unit: 'mm', chest: 1000 }]].forEach(([label, m]) => {
+    const r = engine.recommend(body(m), verifiedCopy(NIKE_HOODIE));
+    assert.deepStrictEqual([r.status, r.missing && r.missing[0].code], ['insufficient', 'invalid-measurements'], label);
+    workedOutNothing(engine.compare(Object.assign(body(m), { garments: withRef(REF_CM).garments }), ILLUSTRATIVE()), 'invalid-measurements');
+  });
+  const good = engine.recommend(body({ unit: 'in', chest: 40 }), verifiedCopy(NIKE_HOODIE));
+  assert.strictEqual(good.status, 'ok');
+  /* every size is scored, each score a finite number, best first, and the best is the size suggested */
+  assert.deepStrictEqual(good.ranking.map((x) => x.size).sort(), verifiedCopy(NIKE_HOODIE).sizes.slice().sort());
+  assert.ok(good.ranking.every((x) => Number.isFinite(x.score) && x.score >= 0), JSON.stringify(good.ranking));
+  assert.ok(good.ranking.every((x, i, all) => i === 0 || all[i - 1].score <= x.score), 'ranked best first');
+  assert.strictEqual(good.ranking[0].size, good.leading);
+});
+
+await test('a malformed reference can\'t be stepped over: a broken hoodie reference isn\'t replaced by the sweatshirt one', () => {
+  const p = withRef(REF_CM);
+  p.garments.sweatshirts = Object.assign(Schema.emptyGarment('sweatshirts'), { favorite: 'perfect', anchor: { brand: 'Carhartt', size: 'L', measurements: REF_CM } });
+  /* a sweatshirt reference alone can stand in for a hoodie, as before */
+  const stand = JSON.parse(JSON.stringify(p));
+  stand.garments.hoodies = Schema.emptyGarment('hoodies');
+  assert.strictEqual(engine.compare(stand, ILLUSTRATIVE()).status, 'ok');
+  [NaN, 0, '', 'cm'].forEach((broken) => {
+    const q = JSON.parse(JSON.stringify(p));
+    q.garments.hoodies.anchor.measurements = broken;
+    workedOutNothing(engine.compare(q, ILLUSTRATIVE()), 'invalid-measurements');
+  });
+  /* NaN can't travel through JSON: set it again after the copy */
+  const nan = JSON.parse(JSON.stringify(p));
+  nan.garments.hoodies.anchor.measurements = Object.assign({}, REF_CM, { chestWidth: NaN });
+  workedOutNothing(engine.compare(nan, ILLUSTRATIVE()), 'invalid-measurements');
+});
+
+await test('a pool a caller supplies is held to the record schema: a reference product with a broken published value is left out, never half-used', () => asChecked(UQ_PAIR, () => {
+  const ref = uqSweatshirtRef('S');
+  const good = engine.compare(ref, sizing.byId(UQ_HOODIE), { records: [verifiedCopy(UQ_SWEAT), sizing.byId(UQ_HOODIE)] });
+  assert.deepStrictEqual([good.status, good.reference.source], ['ok', 'product']);
+  [NaN, Infinity, 0, -22.25, '22.25'].forEach((bad) => {
+    const broken = verifiedCopy(UQ_SWEAT);
+    broken.charts.garment.sizes.S.chestWidth.value = bad;
+    const c = engine.compare(ref, sizing.byId(UQ_HOODIE), { records: [broken, sizing.byId(UQ_HOODIE)] });
+    workedOutNothing(c, 'no-reference-measurements');
+    const r = engine.recommend(ref, sizing.byId(UQ_HOODIE), { records: [broken, sizing.byId(UQ_HOODIE)] });
+    assert.ok(!/NaN|Infinity/.test(JSON.stringify(r)), String(bad));
+  });
+  /* the target is held to the same schema, as before */
+  const target = verifiedCopy(UQ_HOODIE);
+  target.charts.garment.sizes.M.chestWidth.value = NaN;
+  workedOutNothing(engine.compare(ref, target), 'no-record');
+  assert.strictEqual(engine.recommend(ref, target).missing[0].code, 'no-record');
+}));
+
+await test('a saved profile read back with a value the validator would refuse (re-shaped, never re-validated) gets no numbers through the API either', () => asChecked(UQ_PAIR, async () => {
+  const { jar, user } = await signUp('stored-malformed@example.com');
+  const stored = Schema.empty();
+  stored.garments.hoodies = Object.assign(Schema.emptyGarment('hoodies'), { favorite: 'perfect', line: 'men', anchor: { brand: 'Carhartt', size: 'L', measurements: Object.assign({}, REF_CM, { chestWidth: 0, sleeveLength: -3 }) } });
+  await store.set(fitProfiles.profileKey(user.id), stored);
+  const read = await fitProfiles.read(user.id);
+  assert.strictEqual(read.profile.garments.hoodies.anchor.measurements.chestWidth, 0, 'kept as stored: upgrade re-shapes, never re-validates');
+  const got = await compareCall(jar, UQ_HOODIE);
+  assert.strictEqual(got.status, 200);
+  workedOutNothing(got.body.comparison, 'invalid-measurements');
+  const suggested = await suggest(jar, UQ_HOODIE);
+  assert.deepStrictEqual([suggested.status, suggested.body.recommendation.status, suggested.body.recommendation.missing[0].code], [200, 'insufficient', 'invalid-measurements']);
+  /* corrected, the same reference compares as before: two shared with UNIQLO's centre-back lengths, too few */
+  stored.garments.hoodies.anchor.measurements = REF_CM;
+  await store.set(fitProfiles.profileKey(user.id), stored);
+  workedOutNothing((await compareCall(jar, UQ_HOODIE)).body.comparison, 'too-few-dimensions');
+}));
+
+await test('the existing outcomes are unchanged for valid data: ok, partial withheld outside tolerance, and insufficient', () => {
+  assert.strictEqual(engine.compare(withRef(REF_CM), ILLUSTRATIVE()).status, 'ok');
+  const far = engine.compare(withRef({ unit: 'cm', chestWidth: 80, bodyLength: 90, shoulderWidth: 70, sleeveLength: 80 }), ILLUSTRATIVE());
+  assert.deepStrictEqual([far.status, far.withheld, far.recommended], ['partial', 'outside-tolerance', null]);
+  assert.ok(far.sizes.every((s) => Object.values(s.dimensions).every((x) => Number.isFinite(x.difference))));
+  const unchecked = Object.assign(ILLUSTRATIVE(), { verification: { status: 'unverified', checkedBy: null, checkedAt: null } });
+  workedOutNothing(engine.compare(withRef(REF_CM), unchecked), 'unverified-data');
+});
+
 await test('no measurement, size, product or feedback answer appears in the logs', () => {
   const all = logged.join('\n');
   assert.ok(all.length > 0, 'something was logged, or this proves nothing');

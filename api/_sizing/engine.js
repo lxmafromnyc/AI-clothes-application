@@ -240,7 +240,71 @@ function garmentRow(record, size) {
   return chart && chart.sizes[size] ? chart.sizes[size] : null;
 }
 
-const toUnits = (value, from, to) => (from === to ? value : (from === 'in' ? value * IN_TO_CM : value / IN_TO_CM));
+const MEASURE_UNITS = ['in', 'cm'];
+/* Only inches and centimetres, both ways: anything else is a fault
+   upstream (measurementProblems and the record schema let nothing else
+   through), never read as one or the other. */
+function toUnits(value, from, to) {
+  if (!MEASURE_UNITS.includes(from) || !MEASURE_UNITS.includes(to)) throw new Error(`No conversion from "${from}" to "${to}".`);
+  return from === to ? value : (from === 'in' ? value * IN_TO_CM : value / IN_TO_CM);
+}
+
+/* ---------------------------------------------------------
+   The shopper's own measurements, checked before anything is worked
+   out from them
+
+   The fit profile's validator (normaliseGuide) checks what a shopper
+   types; a stored profile is only re-shaped when read (upgrade); a
+   direct call to the engine passes neither. So whatever reaches here is
+   checked again, raw, before any conversion, eligibility or difference:
+
+     not given     null, undefined or absent: missing, and the usual
+                   rules for missing measurements apply
+     malformed     anything else that isn't a finite number above zero
+                   (NaN, ±Infinity, "24", 0, -5, true), or a unit that
+                   isn't exactly "in" or "cm" — the form the validator
+                   stores — beside a value or on its own
+
+   Malformed is never dropped and worked around: the answer is
+   insufficient ("invalid-measurements"), before any number is worked
+   out. Plausibility ranges stay the validator's: a saved profile isn't
+   made unreadable by a range tightened later (upgrade).
+   --------------------------------------------------------- */
+const BODY_MEASURE_KEYS = Object.keys(ProfileSchema.empty().measurements).filter((k) => k !== 'unit');
+const givenValue = (v) => v !== null && v !== undefined;
+const physical = (v) => typeof v === 'number' && Number.isFinite(v) && v > 0;
+
+/* each problem with one block of measurements, in words */
+function blockProblems(m, keys, whose, labelOf) {
+  if (!givenValue(m)) return [];
+  if (typeof m !== 'object' || Array.isArray(m)) return [`${whose} measurements aren't a set of measurements`];
+  const said = keys.filter((k) => givenValue(m[k]));
+  const out = said.filter((k) => !physical(m[k])).map((k) => `${whose} ${labelOf(k)} isn't a number above zero`);
+  if ((said.length || givenValue(m.unit)) && !MEASURE_UNITS.includes(m.unit)) {
+    out.push(givenValue(m.unit) ? `${whose} measurements are in a unit Fynd doesn't read` : `${whose} measurements don't say inches or centimetres`);
+  }
+  return out;
+}
+
+/* The shopper's body measurements, and the reference garment's own:
+   the product's own type's, and any other anchor that will be read in
+   its place (a sibling type's), so a malformed one can't be stepped
+   over. [] when every given value is usable. */
+function measurementProblems(profile, category, anchor) {
+  const garmentLabel = (k) => ProfileSchema.GARMENT_MEASURES[k].label.toLowerCase();
+  const own = profile && profile.garments && profile.garments[category] ? profile.garments[category].anchor : null;
+  const anchors = [...new Set([own, anchor].filter(Boolean))];
+  return blockProblems(profile && profile.measurements, BODY_MEASURE_KEYS, 'Your', (k) => k)
+    .concat(...anchors.map((a) => blockProblems(a.measurements, ProfileSchema.GARMENT_MEASURE_KEYS, 'Your reference garment’s', garmentLabel)));
+}
+const INVALID_NEXT = ['Check the measurements on your fit profile: each a number above zero, in inches or centimetres.'];
+const invalidMessage = (problems) => `Some measurements can’t be used: ${problems.join('; ')}. Fynd compares only numbers above zero in inches or centimetres, so it hasn’t worked anything out from them.`;
+
+/* A pool of records a caller supplies is held to what records.js holds
+   the catalogue to: a record that fails its schema is left out, never
+   half-used. The catalogue itself was checked as it loaded. */
+const checkedPool = (records) => (records === RECORDS ? RECORDS
+  : (Array.isArray(records) ? records : []).filter((r) => sizingSchema.validate(r).length === 0));
 
 /* ---------------------------------------------------------
    The favourite piece: finding its product, and its own measurements
@@ -292,7 +356,7 @@ function measuredRecord(anchor, category) {
   const dims = {};
   const row = {};
   ProfileSchema.GARMENT_MEASURE_KEYS.forEach((d) => {
-    if (typeof m[d] !== 'number') return;
+    if (!physical(m[d])) return;
     dims[d] = { method: ProfileSchema.GARMENT_MEASURES[d].method };
     row[d] = { value: m[d], text: String(m[d]) };
   });
@@ -410,7 +474,7 @@ function readShopper(profile, record, pool, options) {
   /* a chest measurement, in the record's units */
   let measured = null;
   const m = profile && profile.measurements;
-  if (m && typeof m.chest === 'number' && (m.unit === 'in' || m.unit === 'cm')) {
+  if (m && physical(m.chest) && (m.unit === 'in' || m.unit === 'cm')) {
     const chest = toUnits(m.chest, m.unit, units);
     const slack = toUnits(0.5, 'in', units);
     measured = { lo: chest - slack, hi: chest + slack, value: chest, said: inches(m.chest, m.unit) };
@@ -972,7 +1036,7 @@ function insufficient(record, missing, next) {
 
 function recommend(profile, record, opts) {
   const options = Object.assign({ includeUnverified: false, records: RECORDS }, opts || {});
-  const pool = options.records;
+  const pool = checkedPool(options.records);
   const shown = record && record.id;
 
   if (!record || sizingSchema.validate(record).length) {
@@ -988,6 +1052,10 @@ function recommend(profile, record, opts) {
   if (!params) {
     return insufficient(record, [{ code: 'category-not-covered', message: 'Size suggestions cover hoodies, sweatshirts and T-shirts so far.' }], []);
   }
+
+  /* the shopper's own measurements, raw, before anything is read from them */
+  const problems = measurementProblems(profile, record.category, null);
+  if (problems.length) return insufficient(record, [{ code: 'invalid-measurements', message: invalidMessage(problems) }], INVALID_NEXT);
 
   const shopper = readShopper(profile, record, pool, options);
 
@@ -1327,7 +1395,7 @@ const BODY_ONLY = 'This chart measures the body, not the finished garment. Fynd 
    compare() and validate(), so the rules exist once.
    { fail: { code, message, next, extra } } or { ok: { ... } } */
 function prepare(profile, record, options) {
-  const pool = options.records;
+  const pool = checkedPool(options.records);
   const no = (code, message, next, extra) => ({ fail: { code, message, next: next || [], extra: extra || {} } });
 
   if (!record || sizingSchema.validate(record).length) return no('no-record', 'Fynd has no sizing data for this product.');
@@ -1350,6 +1418,11 @@ function prepare(profile, record, options) {
   }
 
   const found = referenceEntry(profile, record.category);
+  /* the shopper's own measurements, raw, before anything is read from them */
+  const problems = measurementProblems(profile, record.category, found && found.entry.anchor);
+  if (problems.length) {
+    return no('invalid-measurements', invalidMessage(problems), INVALID_NEXT, { product: { brand: record.brand, name: record.product.name }, context: productContext });
+  }
   if (!found) {
     return no('no-reference', `Save a ${CATEGORY_WORDS[record.category]} that fits you well, with its measurements, to compare against.`,
       [`Measure a ${CATEGORY_WORDS[record.category]} you like, laid flat: chest, body length, shoulders and sleeves.`], { product: { brand: record.brand, name: record.product.name }, context: productContext });
@@ -1574,6 +1647,7 @@ function compare(profile, record, opts) {
    tolerance or score is involved: those stay compare()'s.
    --------------------------------------------------------- */
 const VALIDATION_OF = {
+  'invalid-measurements': 'missing-reference',
   'no-record': 'missing-target',
   'category-not-covered': 'missing-target',
   'unverified-data': 'unverified',
