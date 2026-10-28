@@ -187,16 +187,10 @@ function checkUrl(raw) {
   };
 }
 
-/* The market the address names, or null: "/us/en/…", "/en_us/…",
-   "/en-gb/…" say it; an address that doesn't is not guessed. */
+/* The market the address names, or null (schema.marketOf: the same
+   rule the size engine matches a product's link by). */
 function marketOf(host, path) {
-  const parts = path.split('/').filter(Boolean).slice(0, 2);
-  for (const p of parts) {
-    const pair = /^[a-z]{2}[_-]([a-z]{2})$/i.exec(p);
-    if (pair) return pair[1].toUpperCase();
-    if (/^[a-z]{2}$/i.test(p) && !/^(en|fr|es|de|it|ja|zh|ko|pt|nl|sv|da|pl|t|p)$/i.test(p)) return p.toUpperCase();
-  }
-  return null;
+  return sizingSchema.marketOf(path);
 }
 
 /* ---------- reading the page ---------- */

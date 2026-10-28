@@ -83,6 +83,7 @@ const GROUPS = {
     ['test-extension-browser', 'the unpacked browser extension in Chromium, on fixture pages, handing its charts to Find Fit'],
     ['test-cross-origin', 'the GitHub Pages copy calling the API across origins: preflights, cross-site cookies, logout, checkout'],
     ['test-catalog-images', "the catalogue image extractor's gates, including its browser path"],
+    ['test-catalog-prices', "the catalogue price extractor's gates: markup only confirms, the page's own data answers"],
     ['test-record-demo', "the demo recorder's tool paths and rules, and its retailer test in a browser"],
     ['test-catalog-browser', "Find Fit searching and paging an authorized catalogue in a browser, and a chosen product's page and Size Guide"],
     ['test-catalog-rakuten', "UNIQLO's catalogue from a Rakuten Product Catalog file: reader, sync at catalogue scale, refresh, coverage, and the popup over it"],
@@ -96,15 +97,7 @@ const GROUPS = {
 
 /* Every other scripts/test-*.js, and why CI does not hold a pull request
    to it. */
-const NOT_RUN = {
-  'test-catalog-prices': {
-    knownFailing: true,
-    why: 'fails one test on main (checked at 2bac8c1) and on the messy-search branch alike — "the live shape: ' +
-      'the endpoint the page asks answers instead" expects 49.9 and reads undefined. An existing issue, investigated on its own; ' +
-      'CI runs it every time (known-failing) where it cannot fail the check, so the result stays in view. ' +
-      'Move it back into "browser" once it passes.'
-  }
-};
+const NOT_RUN = {};
 
 /* What a suite inherits from the shell. Nothing else: no key, no store
    URL, no provider choice. */
