@@ -3206,7 +3206,18 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     fitProfileState = fitProfileReply(null);
   })));
 
-  await test('Find Fit for a guest — the garment form with an error, the garment kept for the visit, the result, and the offer to save and its sign-in — is set in a palette ink, legible, and fits a phone', () => asChecked(UQ_PAIR, async () => {
+  /* Find Fit's item check, answered by the real endpoint called in this process */
+  const realCheck = (body) => new Promise((resolve) => {
+    const res = { statusCode: 200, headers: {}, setHeader(k, v) { this.headers[k.toLowerCase()] = v; }, getHeader(k) { return this.headers[k.toLowerCase()]; },
+      status(c) { this.statusCode = c; return this; }, json(p) { resolve({ status: this.statusCode, payload: p }); return this; }, end() { return this; } };
+    sizingEndpoint({ method: 'POST', query: { check: '1' }, url: '/api/size-recommendation?check=1', body, headers: { host: 'fynd.test' }, socket: { remoteAddress: '192.0.2.44' }, on() { return this; } }, res);
+  });
+  const routeRealCheck = (page) => page.route('**/api/size-recommendation?check=1', async (route) => {
+    const got = await realCheck(JSON.parse(route.request().postData() || '{}'));
+    route.fulfill({ status: got.status, contentType: 'application/json', body: JSON.stringify(got.payload) });
+  });
+
+  await test('Find Fit for a guest — the item first with the garment waiting, the item checked, the garment form with an error, the garment kept for the visit, the result, and the offer to save and its sign-in — is set in a palette ink, legible, and fits a phone', () => asChecked(UQ_PAIR, async () => {
     const Schema = require('../assets/fit-profile-schema.js');
     const reference = { type: 'hoodies', garment: { favorite: 'perfect', line: null, anchor: { brand: 'Carhartt', size: 'L', measurements: { unit: 'cm', chestWidth: 58, bodyLength: 68, shoulderWidth: 50, sleeveLength: 62 } } } };
     const answer = sizingEngine.compare(Object.assign(Schema.empty(), { garments: { hoodies: Object.assign(Schema.emptyGarment('hoodies'), reference.garment) } }), sizingRecords.byId('uniqlo-e475378-sweat-pullover-hoodie-us'));
@@ -3214,8 +3225,15 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     for (const viewport of [{ width: 1280, height: 900 }, { width: 360, height: 740 }]) {
       const page = await openPage('index.html', { viewport });
       await page.route('**/api/size-recommendation?product=*', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ comparison: answer }) }));
-      await page.waitForSelector('#ff-reference[data-state="signed-out"] .ffr-form', { timeout: 10000 });
+      await routeRealCheck(page);
+      await page.waitForSelector('#ff-reference[data-state="signed-out"][data-locked="true"]', { timeout: 10000 });
       const audit = guideAudit(page, viewport);
+      await audit('the item first: Check product, and the garment waiting');
+      await page.fill('#fit-url', 'https://www.uniqlo.com/us/en/products/E475378-000/00');
+      await page.click('#ff-check-product');
+      await page.waitForSelector('#ff-check[data-status="target-ready"]');
+      await page.waitForSelector('#ff-reference[data-state="signed-out"] .ffr-form', { timeout: 10000 });
+      await audit('the item checked: the garment asked for');
       await page.click('.ffr-measure > summary');
       await page.click('#ffr-use');
       await page.waitForSelector('#ffr-brand-error.show');
@@ -3241,22 +3259,25 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     }
   }));
 
-  await test('Find Fit checking first — an item said not comparable, with Compare fit off and what can still be done, and one ready to compare — is set in a palette ink, legible, and fits a phone', () => asChecked(UQ_PAIR, async () => {
-    /* the real endpoint's answer to each check, called in this process */
-    const realCheck = (body) => new Promise((resolve) => {
-      const res = { statusCode: 200, headers: {}, setHeader(k, v) { this.headers[k.toLowerCase()] = v; }, getHeader(k) { return this.headers[k.toLowerCase()]; },
-        status(c) { this.statusCode = c; return this; }, json(p) { resolve({ status: this.statusCode, payload: p }); return this; }, end() { return this; } };
-      sizingEndpoint({ method: 'POST', query: { check: '1' }, url: '/api/size-recommendation?check=1', body, headers: { host: 'fynd.test' }, socket: { remoteAddress: '192.0.2.44' }, on() { return this; } }, res);
-    });
+  await test('Find Fit checking first — an item that can\'t be compared with its choices and the garment set up for later, an item said not comparable with Compare fit off, one ready to compare, and a check refused for now — is set in a palette ink, legible, and fits a phone', () => asChecked(UQ_PAIR, async () => {
     accountState = accountReply({});
     for (const viewport of [{ width: 1280, height: 900 }, { width: 360, height: 740 }]) {
       const page = await openPage('index.html', { viewport });
-      await page.route('**/api/size-recommendation?check=1', async (route) => {
-        const got = await realCheck(JSON.parse(route.request().postData() || '{}'));
-        route.fulfill({ status: got.status, contentType: 'application/json', body: JSON.stringify(got.payload) });
-      });
-      await page.waitForSelector('#ff-reference .ffr-form', { timeout: 10000 });
+      await routeRealCheck(page);
       const audit = guideAudit(page, viewport);
+      /* an item whose measurements aren't checked: the limitation, its choices, and the optional garment for later */
+      await page.fill('#fit-url', 'https://www.zara.com/us/en/basic-heavyweight-hoodie-p00761810.html');
+      await page.click('#ff-check-product');
+      await page.waitForSelector('#ff-check[data-status="unverified"] .ff-check-optional');
+      await audit('an item that can\'t be compared: the chart, another product, and the optional garment for later');
+      await page.click('#ff-check .ff-check-later');
+      await page.waitForSelector('#ff-reference[data-later="true"] .ffr-form');
+      await audit('a garment set up for later, the item said not comparable');
+      /* the item first: checked garment measurements, so the garment is asked for */
+      await page.fill('#fit-url', 'https://www.uniqlo.com/us/en/products/E475378-000/00');
+      await page.click('#ff-check-product');
+      await page.waitForSelector('#ff-check[data-status="target-ready"]');
+      await page.waitForSelector('#ff-reference .ffr-form', { timeout: 10000 });
       /* a garment measured from the shoulder beside UNIQLO's centre-back lengths: measured differently */
       await page.selectOption('#ffr-size', 'L');
       await page.fill('#ffr-brand', 'Carhartt');
@@ -3280,6 +3301,12 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
       await page.waitForSelector('#ff-check[data-status="ready"]');
       assert.strictEqual(await page.isDisabled('#fit-url-submit'), false);
       await audit('ready to compare');
+      /* a check the server refuses for now: said, with Check again */
+      await page.unroute('**/api/size-recommendation?check=1');
+      await page.route('**/api/size-recommendation?check=1', (route) => route.fulfill({ status: 429, contentType: 'application/json', body: JSON.stringify({ error: 'Too many checks at once. Try again in a few minutes.', reason: 'rate-limited' }) }));
+      await page.click('#ff-check-product');
+      await page.waitForSelector('#ff-check[data-status="rate-limited"]');
+      await audit('too many checks: said, with Check again');
       await page.close();
     }
   }));
