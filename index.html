@@ -74,24 +74,12 @@
             save, each the shopper's own choice -->
   <section class="container ff-hero" id="find-fit" aria-labelledby="find-fit-title">
     <h1 id="find-fit-title">Find the size that fits like your favorite clothes.</h1>
-    <p class="lead ff-lead">Choose a garment you own that fits well and the item you&rsquo;re considering. Fynd sets their measurements side by side and suggests a size only when the measurements support one.</p>
+    <p class="lead ff-lead">Start with the item you&rsquo;re considering, then a garment you own that fits well. Fynd sets their measurements side by side and suggests a size only when the measurements support one.</p>
 
     <form class="ff-flow" id="fit-url-form" novalidate>
-      <section class="ff-step" id="ff-step-reference" aria-labelledby="ff-step-reference-title">
-        <div class="ff-step-head">
-          <span class="step-num" aria-hidden="true">1</span>
-          <h2 class="ff-step-title" id="ff-step-reference-title">A garment that fits you well</h2>
-        </div>
-        <!-- the saved reference garments, or a garment described right
-             here for this visit: drawn by assets/find-fit-reference.js -->
-        <div class="ff-reference" id="ff-reference" aria-live="polite">
-          <p class="ff-muted">Checking for a saved reference garment&hellip;</p>
-        </div>
-      </section>
-
       <section class="ff-step" id="ff-step-target" aria-labelledby="ff-step-target-title">
         <div class="ff-step-head">
-          <span class="step-num" aria-hidden="true">2</span>
+          <span class="step-num" aria-hidden="true">1</span>
           <h2 class="ff-step-title" id="ff-step-target-title">The item you&rsquo;re considering</h2>
         </div>
         <div class="ff-target-entry" id="fit-link-alt">
@@ -99,6 +87,9 @@
           <input class="profile-input" type="url" id="fit-url" name="url" inputmode="url" maxlength="2000" autocomplete="off" spellcheck="false" placeholder="https://&hellip; a product page" aria-describedby="fit-url-hint fit-url-error">
           <p class="fit-url-hint" id="fit-url-hint">Fynd compares sizes only for products it holds checked garment measurements for. For any other link it shows the size chart it can read, and says why it can&rsquo;t compare.</p>
           <p class="form-error" id="fit-url-error" role="alert"></p>
+          <!-- asks the server what Fynd holds for the item, before a
+               garment is asked for (assets/find-fit.js, checking first) -->
+          <p class="ff-check-product-row"><button class="btn btn-secondary" type="button" id="ff-check-product">Check product</button></p>
         </div>
         <!-- or pick one: the brands Find Fit can browse (assets/brand-browser.js);
              a product picked there becomes the item, below -->
@@ -113,11 +104,25 @@
           <p class="fit-brand-planned" id="fit-brand-planned"></p>
         </div>
         <div class="ff-picked" id="ff-picked" hidden></div>
+        <!-- what Fynd holds for the item, and whether it can be compared
+             with the reference (assets/find-fit.js, checking first):
+             said with the item, in its own step -->
+        <div class="ff-check" id="ff-check" role="status" aria-live="polite" hidden></div>
       </section>
 
-      <!-- whether the item can be compared with the reference, said as
-           soon as both are known (assets/find-fit.js, checking first) -->
-      <div class="ff-check" id="ff-check" role="status" aria-live="polite" hidden></div>
+      <section class="ff-step" id="ff-step-reference" aria-labelledby="ff-step-reference-title">
+        <div class="ff-step-head">
+          <span class="step-num" aria-hidden="true">2</span>
+          <h2 class="ff-step-title" id="ff-step-reference-title">A garment that fits you well</h2>
+        </div>
+        <!-- the saved reference garments, or a garment described right
+             here for this visit — asked for once the item is checked:
+             drawn by assets/find-fit-reference.js -->
+        <div class="ff-reference" id="ff-reference" aria-live="polite">
+          <p class="ff-muted">Checking for a saved reference garment&hellip;</p>
+        </div>
+      </section>
+
       <div class="ff-action">
         <button class="btn btn-primary ff-compare-btn" type="submit" id="fit-url-submit">Compare fit</button>
       </div>

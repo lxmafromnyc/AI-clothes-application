@@ -1,5 +1,5 @@
 /* =========================================================
-   Fynd — Find Fit, step 1: the garment that fits
+   Fynd — Find Fit, step 2: the garment that fits
 
    The reference the item is compared with, in one of two places:
 
@@ -25,6 +25,19 @@
      signed-out / none   the form, or the garment described this visit
      saved               the saved garments, each with Change
 
+   The form waits for the item (data-locked): it is asked for only once
+   Find Fit's check has found the item holds checked garment
+   measurements (FindFitReference.unlock(), from assets/find-fit.js),
+   or a garment is already kept for this visit. Unlocked, it stays so
+   for the visit: changing the item never takes away what was typed.
+   Whether the two can be compared is still the server's to say.
+
+   A shopper whose item can't be compared yet may still choose, as an
+   option, to set up a garment for later (FindFitReference.unlock
+   ('future')): the same form, validation and kept-for-the-visit
+   garment, under a note that says plainly the item they checked can't
+   be compared — until an item that can unlocks it the ordinary way.
+
    Which reference a comparison uses is the size engine's to decide
    (api/_sizing/engine.js referenceEntry): the one of the item's own
    kind, or for a hoodie or sweatshirt the other fleece top's. A saved
@@ -35,6 +48,10 @@
                                   when no saved reference is in use
      FindFitReference.current()   this visit's garment, saved or not in use
      FindFitReference.forget()    clear this visit's garment
+     FindFitReference.unlock()    ask for the garment: the item can be compared
+     FindFitReference.unlock('future')  the shopper's own choice: a garment
+                                  for later, the item checked can't be compared
+     FindFitReference.locked()    whether the garment is still waiting for the item
    ========================================================= */
 
 (function (global) {
@@ -251,8 +268,8 @@
      if the shopper had nothing of their own to give */
   function missingDimensions(hasProduct) {
     return hasProduct
-      ? 'Reference garment dimensions (chest, length, shoulders, sleeve): none measured. Fynd uses this product’s published ones only where it holds checked measurements for it.'
-      : 'Reference garment dimensions (chest, length, shoulders, sleeve): none given, so there is nothing to compare yet. Add any you can measure, laid flat.';
+      ? 'Reference garment dimensions (chest, length, shoulders, sleeve): none measured. Fynd can use this product’s published measurements only if it has a checked record for this exact product; otherwise, edit this garment to add any dimensions you can measure, laid flat.'
+      : 'No measurements entered. Edit this garment to add any dimensions you can measure, laid flat, so Fynd has a reference to compare.';
   }
 
   function visitCard(value) {
@@ -281,10 +298,19 @@
   }
 
   let signedIn = false;
+  /* the garment is asked for once the item is known to be comparable (see the header) */
+  let unlocked = false;
+  /* opened by the shopper's choice, for later: the item checked can't be compared */
+  let forLater = false;
   function unsavedState() {
     const nodes = [];
+    const locked = !visit && !editing && !unlocked;
+    if (forLater && !locked) nodes.push(el('p', 'ff-reference-intro ff-reference-later', 'The product you checked can’t be compared yet: Fynd doesn’t hold checked garment measurements for it. A garment you describe here is kept for future comparisons, with products Fynd can compare.'));
     if (visit && !editing) nodes.push(visitCard(visit));
+    else if (locked) nodes.push(el('p', 'ff-reference-intro ff-reference-locked', 'Check the item first. Fynd asks for a garment you own once it holds checked garment measurements for the item.'));
     else nodes.push(form(editing ? visit : null));
+    root.dataset.locked = locked ? 'true' : 'false';
+    root.dataset.later = forLater && !locked ? 'true' : 'false';
     if (!signedIn) {
       const already = el('p', 'ff-muted');
       already.append(doc.createTextNode('Saved one already? '), link(setupHref(null), 'Sign in to your fit profile'), doc.createTextNode('.'));
@@ -344,6 +370,7 @@
     }
     root.replaceChildren(list, note, ...(missing.length ? [more] : []));
     root.dataset.state = 'saved';
+    root.dataset.locked = 'false';
     root.dataset.visit = visit ? 'set' : 'empty';
   }
 
@@ -384,6 +411,15 @@
     unsaved: () => (savedInUse ? null : visit),
     current: () => visit,
     forget: () => { keep(null); redraw(); },
-    savedProfile: () => lastProfile
+    savedProfile: () => lastProfile,
+    unlock: (mode) => {
+      const later = mode === 'future';
+      /* an item that can be compared ends "for later" */
+      if (unlocked && (later || !forLater)) return;
+      unlocked = true;
+      forLater = later;
+      if (root.dataset.state === 'signed-out' || root.dataset.state === 'none') redraw();
+    },
+    locked: () => root.dataset.locked === 'true'
   };
 })(typeof window !== 'undefined' ? window : globalThis);

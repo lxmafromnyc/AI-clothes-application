@@ -288,7 +288,7 @@ async function test(name, fn) {
     const s = await seen();
     assert.deepStrictEqual([s.verdict, s.heading], ['needs-reference', 'Add a garment that fits to compare']);
     assert.match(s.text, /Save a hoodie that fits you well/);
-    assert.deepStrictEqual(s.links, [{ text: 'Describe a garment that fits', href: '#ff-step-reference' }], 'on Find Fit, the form in step 1');
+    assert.deepStrictEqual(s.links, [{ text: 'Describe a garment that fits', href: '#ff-step-reference' }], 'on Find Fit, the form in step 2');
     noSize(s);
   });
 
@@ -490,7 +490,7 @@ async function test(name, fn) {
     assert.deepStrictEqual([s.verdict, s.heading], ['needs-measurements', 'Fynd needs this garment’s measurements']);
     assert.match(s.text, /Fynd compares measurements, not size labels/);
     assert.ok(!/Save a hoodie/.test(s.text), 'not told to save what they just described');
-    assert.deepStrictEqual(s.links, [{ text: 'Add its measurements in step 1', href: '#ff-step-reference' }]);
+    assert.deepStrictEqual(s.links, [{ text: 'Add its measurements in step 2', href: '#ff-step-reference' }]);
     noSize(s);
   });
 
