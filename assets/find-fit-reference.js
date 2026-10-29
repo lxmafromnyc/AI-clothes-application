@@ -30,6 +30,17 @@
    was typed. Whether the two can be compared is still the server's to
    say (assets/find-fit.js, checking first).
 
+   Find your garment: a box at the top of the form searches Fynd's
+   catalogue and its checked records as the shopper types
+   (assets/catalog-suggest.js), a size typed with the words read apart.
+   A product picked fills the fields below — type, brand, product, fit
+   line, and a letter size the form takes — and is then checked on the
+   server (POST ?check=1, the product as the item): what Fynd holds for
+   it is said from that answer alone. Picking proves nothing: the fields
+   stay the shopper's to change, "Use this garment" still keeps it, and
+   whether a product's measurements stand in for theirs is the size
+   engine's to decide when it compares (engine.js referenceEntry).
+
    Popular Wardrobe Anchors: products a shopper may own, offered as the
    garment in one click — only those Fynd's records hold checked
    finished-garment measurements for (GET ?anchors=1, records.summary
@@ -154,7 +165,7 @@
     box.setAttribute('aria-labelledby', 'ffr-form-title');
     const title = el('p', 'ffr-title', 'Describe a garment you own that fits the way you like. No account needed.');
     title.id = 'ffr-form-title';
-    box.append(title);
+    box.append(title, finder());
 
     const row = el('div', 'ffr-row');
     row.append(
@@ -204,11 +215,106 @@
       actions.append(cancel);
     }
     box.append(actions);
-    /* Enter applies the garment here, never the item's form around it */
+    /* Enter applies the garment here, never the item's form around it —
+       except in the search box, where Enter picks a match */
     box.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && e.target && e.target.tagName === 'INPUT') { e.preventDefault(); apply(); }
+      if (e.key === 'Enter' && e.target && e.target.tagName === 'INPUT') {
+        e.preventDefault();
+        if (e.target.id !== 'ffr-search') apply();
+      }
     });
     return box;
+  }
+
+  /* ---------- Find your garment ---------- */
+
+  let pickAsk = 0;
+  function finder() {
+    const wrap = el('div', 'ffr-find');
+    const label = el('label', 'profile-label', 'Find your garment');
+    label.htmlFor = 'ffr-search';
+    const smart = el('div', 'ff-smart');
+    const search = input('ffr-search', 'text', '', {
+      placeholder: 'Search brand, item and size — e.g. Uniqlo hoodie M', maxlength: '200', autocomplete: 'off', spellcheck: 'false',
+      role: 'combobox', 'aria-autocomplete': 'list', 'aria-expanded': 'false', 'aria-controls': 'ffr-suggest', 'aria-describedby': 'ffr-search-hint'
+    });
+    const box = el('div', 'ff-suggest');
+    box.id = 'ffr-suggest-box';
+    box.hidden = true;
+    const list = el('ul', 'ff-suggest-list');
+    list.id = 'ffr-suggest';
+    list.setAttribute('role', 'listbox');
+    list.setAttribute('aria-label', 'Matching products');
+    const status = el('p', 'ff-suggest-status');
+    status.id = 'ffr-suggest-status';
+    status.setAttribute('role', 'status');
+    status.setAttribute('aria-live', 'polite');
+    box.append(list, status);
+    smart.append(search, box);
+    const hint = el('p', 'ffr-hint', 'Not listed? Fill in the details below.');
+    hint.id = 'ffr-search-hint';
+    const held = el('div', 'ffr-held');
+    held.id = 'ffr-held';
+    held.setAttribute('role', 'status');
+    held.setAttribute('aria-live', 'polite');
+    held.hidden = true;
+    wrap.append(label, smart, hint, held);
+    if (!global.FyndSuggest) { wrap.hidden = true; return wrap; }
+    const suggest = global.FyndSuggest.attach({
+      input: search, box, list, status, idPrefix: 'ffr-suggest', anchors: true,
+      onPick: (f, size) => usePicked(f, size, search, held),
+      say: {
+        unavailable: 'Search isn’t available right now. Fill in the details below instead.',
+        empty: (words) => `No products match “${words}”. Fill in the details below instead.`,
+        ready: (n) => `${n} matching product${n === 1 ? '' : 's'}. Not listed? Fill in the details below.`
+      }
+    });
+    search.addEventListener('input', () => { pickAsk += 1; held.hidden = true; suggest.soon(search.value); });
+    search.addEventListener('keydown', (e) => suggest.key(e));
+    return wrap;
+  }
+
+  /* what the server holds for a product, said from its answer alone */
+  function heldSay(check) {
+    const v = (check && check.validation) || {};
+    if (global.FyndSuggest.heldChecked(check)) return ['checked', 'Fynd holds checked garment measurements for this product. When it compares, it can use them for yours.'];
+    if (v.code === 'unverified-data' || v.code === 'crowdsourced-data') return ['unchecked', 'Fynd has this product’s chart, but it hasn’t been checked, so it won’t stand in for your garment. Add any measurements you can take, below.'];
+    if (v.code === 'body-chart-only') return ['body-only', 'Fynd holds only a body-size chart for this product, not the garment’s own measurements. Add any measurements you can take, below.'];
+    if (v.code === 'category-not-covered') return ['not-covered', 'Fynd doesn’t compare this kind of garment yet.'];
+    return ['none', 'Fynd holds no measurements for this product. Add any measurements you can take, below.'];
+  }
+  /* a match picked: the fields filled from what the server listed, then the server asked what it holds */
+  async function usePicked(f, size, search, held) {
+    const set = (id, value) => { const n = doc.getElementById(id); if (n && value !== null && value !== undefined) n.value = value; };
+    if (KINDS.includes(f.product.category)) set('ffr-type', f.product.category);
+    set('ffr-brand', f.brand.name);
+    set('ffr-product', f.product.url);
+    if (['men', 'women', 'unisex'].includes(f.product.line)) set('ffr-line', f.product.line);
+    const lines = [];
+    if (size && size.kind === 'letter' && Schema.LETTER_SIZES.includes(size.letter)) {
+      set('ffr-size', size.letter);
+      lines.push(el('p', 'ffr-held-size', `Size ${size.letter} is from your search — check it’s the size on its label.`));
+    } else if (size) {
+      lines.push(el('p', 'ffr-held-size', size.kind === 'waist-inseam'
+        ? `${size.label} is a waist and inseam; here, choose the size on the label of a top.`
+        : `Size ${size.label} isn’t one this form takes — choose the size on its label.`));
+    }
+    search.value = `${f.brand.name} · ${f.product.name}`;
+    held.dataset.status = 'checking';
+    held.replaceChildren(el('p', null, 'Checking what Fynd holds for this product…'), ...lines);
+    held.hidden = false;
+    const mine = ++pickAsk;
+    const sizing = global.Account && global.Account.sizing;
+    const target = f.brand.id && f.product.code ? { brand: f.brand.id, code: f.product.code } : { url: f.product.url };
+    const got = sizing && sizing.check ? await sizing.check(target, null) : null;
+    if (mine !== pickAsk) return;
+    const check = got && got.ok && got.data && got.data.check;
+    const [status, text] = check && typeof check === 'object' ? heldSay(check)
+      : ['unknown', 'What Fynd holds for this product couldn’t be checked just now. You can still use it — Fynd checks again when it compares.'];
+    held.dataset.status = status;
+    held.replaceChildren(el('p', null, text), ...lines);
+    const next = doc.getElementById('ffr-size');
+    if (next && !next.value) next.focus();
   }
 
   /* what the form says, in the profile's own shape */

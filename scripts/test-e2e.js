@@ -2524,7 +2524,7 @@ const linkFromInbox = (pattern) => {
         await page.waitForSelector('#ff-reference[data-state="signed-out"][data-locked="false"] .ffr-form');
         assert.strictEqual(await page.$('#ff-check .ff-check-another, #ff-check .ff-check-optional'), null, 'nothing to steer away from');
         assert.match(await page.textContent('#ff-reference'), /Describe a garment you own that fits the way you like\. No account needed\./);
-        assert.deepStrictEqual(await page.$$eval('#ff-reference input[type="text"]', (is) => is.map((i) => i.value)), ['', '', '', '', '', ''], 'nothing filled in');
+        assert.deepStrictEqual(await page.$$eval('#ff-reference input[type="text"]', (is) => is.map((i) => i.id + '=' + i.value)), ['ffr-search=', 'ffr-brand=', 'ffr-product=', 'ffr-m-chestWidth=', 'ffr-m-shoulderWidth=', 'ffr-m-sleeveLength=', 'ffr-m-bodyLength='], 'nothing filled in');
         assert.strictEqual(await page.inputValue('#ffr-size'), '', 'no size chosen for them');
         assert.strictEqual(await page.isDisabled('#fit-url-submit'), true, 'nothing to compare with yet');
       });
@@ -2647,7 +2647,10 @@ const linkFromInbox = (pattern) => {
     assert.ok(offered.length <= 6 && offered.every((n) => /sweat/i.test(n)), offered.join(' | '));
     assert.ok((await page.$$eval('#ff-suggest .ff-suggest-meta', (ns) => ns.map((n) => n.textContent))).every((t) => t.startsWith('UNIQLO · ')), 'each says its brand');
     assert.strictEqual(await page.getAttribute('#fit-url', 'aria-expanded'), 'true');
-    assert.strictEqual(await page.textContent('#ff-suggest-status'), `${offered.length} matching products. Not listed? Paste its link.`);
+    /* what the catalogue covers, in the server's own words: never a claim to the whole range */
+    const coverage = await page.evaluate(async () => (await (await fetch('/api/size-recommendation?brand=uniqlo&q=sweat&limit=6')).json()).brand.coverage);
+    assert.match(coverage, /not UNIQLO’s full range/);
+    assert.strictEqual(await page.textContent('#ff-suggest-status'), `${offered.length} matching products. Not listed? Paste its link. Fynd’s list: ${coverage}`);
     assert.deepStrictEqual(checks, [], 'words are never checked as an item');
     assert.strictEqual(await page.getAttribute('#ff-progress', 'data-item'), 'choosing');
     /* the arrow keys move through them; Escape closes them */
@@ -2690,7 +2693,7 @@ const linkFromInbox = (pattern) => {
     await page.fill('#fit-url', 'levis 511');
     await settled();
     assert.deepStrictEqual(await options(), []);
-    assert.strictEqual(await page.textContent('#ff-suggest-status'), 'No products match “levis 511”. Paste the product’s link instead.');
+    assert.strictEqual(await page.textContent('#ff-suggest-status'), `No products match “levis 511”. Paste the product’s link instead. Fynd’s list: ${coverage}`);
     assert.strictEqual(await page.getAttribute('#fit-url', 'aria-expanded'), 'false');
     /* only products that match every word: never the "closest" */
     await page.fill('#fit-url', 'sweat zzqx');
@@ -2714,6 +2717,240 @@ const linkFromInbox = (pattern) => {
     await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
     assert.deepStrictEqual(await options(), ['SUPIMA® Cotton T-Shirt'], 'the older answer, arriving last, is dropped');
     await page.unroute('**/api/size-recommendation?brand=uniqlo&q=sweat*');
+    await context.close();
+  });
+
+  await test('a size typed with the words is read apart, in the shapes a label uses — never a model number, never out of range', async () => {
+    const { parseQuery } = require('../assets/catalog-suggest.js');
+    const read = (q) => { const p = parseQuery(q); return [p.words, p.size && p.size.label]; };
+    assert.deepStrictEqual(read('Uniqlo hoodie M'), ['Uniqlo hoodie', 'M']);
+    assert.deepStrictEqual(read('Levi’s 511 32x32'), ['Levi’s 511', '32x32'], 'the 511 is the product’s');
+    assert.deepStrictEqual(read('levis 511 W32 L30'), ['levis 511', '32x30']);
+    assert.deepStrictEqual(read('Levi 501 32/34'), ['Levi 501', '32x34']);
+    assert.deepStrictEqual(read('supima tee size L'), ['supima tee', 'L']);
+    assert.deepStrictEqual(read('hoodie xxxl'), ['hoodie', 'XXXL']);
+    assert.strictEqual(parseQuery('hoodie xxxl').size.letter, '3XL', 'in the form’s own spelling');
+    assert.deepStrictEqual(read('tee size 10'), ['tee', '10']);
+    assert.deepStrictEqual(read('Levi’s 511'), ['Levi’s 511', null], 'a number alone is never a size');
+    assert.deepStrictEqual(read('M'), ['M', null], 'a single word is what is searched');
+    assert.deepStrictEqual(read('model 10x90 shirt'), ['model 10x90 shirt', null], 'no waist of 10, no inseam of 90');
+  });
+
+  /* Find your garment: the garment form's own search, from Fynd's catalogue */
+  const refSettled = (page) => page.waitForSelector('#ffr-suggest-box:is([data-state="ready"], [data-state="empty"], [data-state="error"])');
+  const refOptions = (page) => page.$$eval('#ffr-suggest .ff-suggest-option .ff-suggest-name', (ns) => ns.map((n) => n.textContent));
+  const held = async (page) => {
+    await page.waitForSelector('#ffr-held:not([hidden]):not([data-status="checking"])');
+    return page.getAttribute('#ffr-held', 'data-status');
+  };
+
+  await test('Find your garment: "Uniqlo hoodie M" searches Fynd’s catalogue for UNIQLO hoodies with the size read apart, a match picked by keyboard fills the form, and what Fynd holds for it is the server’s check — not checked, for production’s records — with nothing compared and nothing claimed', async () => {
+    const context = await openContext();
+    const page = await context.newPage();
+    const searches = [];
+    const checks = [];
+    const compares = [];
+    page.on('request', (r) => {
+      const u = new URL(r.url());
+      if (u.pathname === '/api/size-recommendation' && u.searchParams.has('brand') && u.searchParams.has('q')) searches.push(`${u.searchParams.get('brand')}:${u.searchParams.get('q')}`);
+      if (/[?&]check=1$/.test(r.url())) checks.push(r.postDataJSON());
+      if (/[?&]compare=1/.test(r.url())) compares.push(r.url());
+    });
+    await open(page, 'index.html');
+    await page.waitForSelector('#ff-reference[data-state="signed-out"] .ffr-form #ffr-search');
+    assert.strictEqual(await page.getAttribute('#ffr-search', 'role'), 'combobox');
+    assert.strictEqual(await page.isHidden('#ffr-held'), true, 'nothing said before anything is picked');
+    await page.click('#ffr-search');
+    await page.keyboard.type('Uniqlo hoodie M', { delay: 30 });
+    await refSettled(page);
+    assert.deepStrictEqual(searches, ['uniqlo:hoodie'], 'one search, the brand named and the size read apart — neither searched as a word');
+    const offered = await refOptions(page);
+    assert.ok(offered.length > 0 && offered.every((n) => /hoodie|sweat/i.test(n)), offered.join(' | '));
+    assert.ok((await page.$$eval('#ffr-suggest .ff-suggest-meta', (ns) => ns.map((n) => n.textContent))).every((t) => t.startsWith('UNIQLO · ')), 'each says its brand, as the server listed it');
+    /* and what the catalogue says it holds, as the server said it — never more */
+    const listed = await page.evaluate(async () => Object.fromEntries((await (await fetch('/api/size-recommendation?brand=uniqlo&q=hoodie&limit=6')).json()).products.map((p) => [p.code, p.holdsText])));
+    assert.deepStrictEqual(await page.$$eval('#ffr-suggest .ff-suggest-option', (ns) => ns.map((n) => [n.dataset.code, n.querySelector('.ff-suggest-holds').textContent])),
+      Object.entries(listed).filter(([code]) => code).slice(0, offered.length));
+    assert.match(await page.textContent('#ffr-suggest-status'), /Size M read apart from the product’s name\. Fynd’s list: .*not UNIQLO’s full range\./);
+    assert.deepStrictEqual(checks, [], 'nothing checked before a pick');
+    /* picked by keyboard: the form filled from the server's listing */
+    const pickAt = offered.indexOf('Sweat Pullover Hoodie');
+    assert.ok(pickAt >= 0, offered.join(' | '));
+    for (let i = 0; i <= pickAt; i += 1) await page.keyboard.press('ArrowDown');
+    assert.strictEqual(await page.getAttribute('#ffr-search', 'aria-activedescendant'), `ffr-suggest-${pickAt}`);
+    await page.keyboard.press('Enter');
+    assert.strictEqual(await page.isHidden('#ffr-suggest-box'), true);
+    assert.strictEqual(await page.$('#ff-reference .ff-ref--visit'), null, 'Enter picks a match — it never keeps the garment by itself');
+    assert.deepStrictEqual(await page.evaluate(() => ['ffr-search', 'ffr-type', 'ffr-brand', 'ffr-product', 'ffr-size', 'ffr-line'].map((id) => document.getElementById(id).value)),
+      ['UNIQLO · Sweat Pullover Hoodie', 'hoodies', 'UNIQLO', 'https://www.uniqlo.com/us/en/products/E475378-000/00', 'M', 'unisex']);
+    /* what Fynd holds for it: the server's check of that product, and nothing else */
+    assert.strictEqual(await held(page), 'unchecked');
+    assert.deepStrictEqual(checks, [{ target: { brand: 'uniqlo', code: 'E475378-000' } }], 'the product picked, by brand and code — no garment sent');
+    assert.match(await page.textContent('#ffr-held'), /^Fynd has this product’s chart, but it hasn’t been checked, so it won’t stand in for your garment\. Add any measurements you can take, below\.Size M is from your search — check it’s the size on its label\.$/);
+    assert.deepStrictEqual(compares, [], 'nothing compared');
+    assert.strictEqual(await page.isHidden('#ff-check'), true, 'no item: nothing said about one');
+    /* kept, then the item: the same server check of the pair still decides — this unchecked hoodie can't be compared */
+    await page.click('#ffr-use');
+    await page.waitForSelector('#ff-reference[data-visit="set"] .ff-ref--visit');
+    assert.strictEqual(await checkItem(page, 'https://www.uniqlo.com/us/en/products/E475377-000/00'), 'unverified');
+    assert.strictEqual(await page.isDisabled('#fit-url-submit'), true);
+    assert.deepStrictEqual(compares, [], 'never compared on a pick');
+    await context.close();
+  });
+
+  await test('Find your garment: a brand alone lists its products for a click to choose between; "Levi’s 511 32x32" and "size 10" are read apart, unmatched, and said so — the details filled in by hand all the same', async () => {
+    const context = await openContext();
+    const page = await context.newPage();
+    const checks = [];
+    page.on('request', (r) => { if (/[?&]check=1$/.test(r.url())) checks.push(r.postDataJSON()); });
+    await open(page, 'index.html');
+    await page.waitForSelector('#ffr-search');
+    /* ambiguous: the brand alone — several products, none chosen for the shopper */
+    await page.fill('#ffr-search', 'uniqlo');
+    await refSettled(page);
+    const several = await refOptions(page);
+    assert.ok(several.length > 1, several.join(' | '));
+    assert.deepStrictEqual(checks, [], 'none picked for them');
+    await page.click('#ffr-suggest .ff-suggest-option[data-code="E475377-000"]');
+    assert.strictEqual(await page.inputValue('#ffr-search'), 'UNIQLO · Sweatshirt');
+    assert.strictEqual(await page.inputValue('#ffr-type'), 'sweatshirts');
+    assert.strictEqual(await page.inputValue('#ffr-size'), '', 'no size typed, none chosen');
+    assert.strictEqual(await held(page), 'unchecked');
+    assert.deepStrictEqual(checks, [{ target: { brand: 'uniqlo', code: 'E475377-000' } }]);
+    /* jeans by waist and inseam: the size read apart, the model number kept as words, and nothing matched in Fynd's list */
+    await page.fill('#ffr-search', 'Levi’s 511 32x32');
+    assert.strictEqual(await page.isHidden('#ffr-held'), true, 'the last product’s answer goes once the search changes');
+    await refSettled(page);
+    assert.strictEqual(await page.getAttribute('#ffr-suggest-box', 'data-state'), 'empty');
+    assert.deepStrictEqual(await refOptions(page), []);
+    assert.match(await page.textContent('#ffr-suggest-status'), /^No products match “Levi’s 511”\. Fill in the details below instead\. Waist and inseam 32x32 read apart from the product’s name\. Fynd’s list: .*not UNIQLO’s full range\.$/);
+    assert.strictEqual(await page.getAttribute('#ffr-suggest-box', 'data-size'), '32x32');
+    /* a number after "size" is a size; a size the form doesn't take is said, never chosen */
+    await page.fill('#ffr-search', 'supima tee size 10');
+    await refSettled(page);
+    assert.deepStrictEqual(await refOptions(page), ['SUPIMA® Cotton T-Shirt']);
+    await page.keyboard.press('Enter');
+    assert.strictEqual(await held(page), 'unchecked');
+    assert.match(await page.textContent('#ffr-held'), /Size 10 isn’t one this form takes — choose the size on its label\./);
+    assert.strictEqual(await page.inputValue('#ffr-size'), '', 'not chosen for them');
+    /* nothing suitable: the details by hand, as ever */
+    await page.fill('#ffr-search', 'zzqx nothing');
+    await refSettled(page);
+    assert.strictEqual(await page.getAttribute('#ffr-suggest-box', 'data-state'), 'empty');
+    await page.keyboard.press('Escape');
+    await page.selectOption('#ffr-type', 'hoodies');
+    await page.selectOption('#ffr-size', 'L');
+    await page.fill('#ffr-brand', 'Carhartt');
+    await page.fill('#ffr-product', '');
+    await page.click('#ffr-use');
+    await page.waitForSelector('#ff-reference[data-visit="set"] .ff-ref--visit');
+    assert.match(await page.textContent('.ff-ref--visit'), /Carhartt · size L/);
+    await context.close();
+  });
+
+  await test('Find your garment when things fail: the catalogue unavailable and the brand list unreachable are said, with the details by hand as the way on; a product’s check that fails is said as unknown — never as checked; an older, slower search never overwrites a newer one', async () => {
+    const context = await openContext();
+    const page = await context.newPage();
+    await open(page, 'index.html');
+    await page.waitForSelector('#ffr-search');
+    /* the catalogue answering 503 */
+    await page.route('**/api/size-recommendation?brand=uniqlo&q=*', (route) => route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'down' }) }));
+    await page.fill('#ffr-search', 'hoodie');
+    await page.waitForSelector('#ffr-suggest-box[data-state="error"]');
+    assert.strictEqual(await page.textContent('#ffr-suggest-status'), 'Search isn’t available right now. Fill in the details below instead.');
+    assert.deepStrictEqual(await refOptions(page), []);
+    await page.unroute('**/api/size-recommendation?brand=uniqlo&q=*');
+    /* a product's check that fails: said as not known — the fields stay, and nothing says checked */
+    await page.route('**/api/size-recommendation?check=1', (route) => route.fulfill({ status: 500, contentType: 'application/json', body: '{}' }));
+    await page.fill('#ffr-search', 'sweatshirt');
+    await refSettled(page);
+    await page.click('#ffr-suggest .ff-suggest-option[data-code="E475377-000"]');
+    assert.strictEqual(await held(page), 'unknown');
+    assert.strictEqual(await page.textContent('#ffr-held'), 'What Fynd holds for this product couldn’t be checked just now. You can still use it — Fynd checks again when it compares.');
+    assert.strictEqual(await page.inputValue('#ffr-brand'), 'UNIQLO');
+    await page.unroute('**/api/size-recommendation?check=1');
+    /* two searches, the first answered last: only the newer is drawn */
+    await page.route('**/api/size-recommendation?brand=uniqlo&q=sweat*', async (route) => { await new Promise((r) => setTimeout(r, 1200)); await route.continue(); });
+    const slow = page.waitForResponse((r) => /[?&]q=sweat(&|$)/.test(r.url()));
+    await page.fill('#ffr-search', 'sweat');
+    await page.waitForRequest((r) => /[?&]q=sweat(&|$)/.test(r.url()));
+    await page.fill('#ffr-search', 'supima');
+    await refSettled(page);
+    assert.deepStrictEqual(await refOptions(page), ['SUPIMA® Cotton T-Shirt']);
+    await slow;
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    assert.deepStrictEqual(await refOptions(page), ['SUPIMA® Cotton T-Shirt'], 'the older answer, arriving last, is dropped');
+    await page.unroute('**/api/size-recommendation?brand=uniqlo&q=sweat*');
+    await context.close();
+    /* Fynd's brand list unreachable: no search to offer, said, and the form all the same */
+    const context2 = await openContext();
+    const fresh = await context2.newPage();
+    await fresh.route('**/api/size-recommendation?brands=1', (route) => route.fulfill({ status: 500, contentType: 'application/json', body: '{}' }));
+    await open(fresh, 'index.html');
+    await fresh.waitForSelector('#ffr-search');
+    await fresh.fill('#ffr-search', 'hoodie');
+    await fresh.waitForSelector('#ffr-suggest-box[data-state="error"]');
+    assert.strictEqual(await fresh.textContent('#ffr-suggest-status'), 'Search isn’t available right now. Fill in the details below instead.');
+    assert.ok(await fresh.isEditable('#ffr-brand'));
+    await context2.close();
+  });
+
+  await test('Find your garment with the UNIQLO pair checked in memory: the server says so for the product picked, and the comparison goes through the existing pipeline with nothing pressed — the engine’s own size', () => asChecked(UQ_PAIR, async () => {
+    const context = await openContext();
+    const page = await context.newPage();
+    const compares = [];
+    page.on('request', (r) => { if (/[?&]compare=1/.test(r.url())) compares.push(r.postDataJSON()); });
+    await open(page, 'index.html');
+    await page.waitForSelector('#ffr-search');
+    await page.fill('#ffr-search', 'uniqlo sweatshirt M');
+    await refSettled(page);
+    await page.click('#ffr-suggest .ff-suggest-option[data-code="E475377-000"]');
+    assert.strictEqual(await held(page), 'checked');
+    assert.strictEqual((await page.textContent('#ffr-held')).split('Size')[0], 'Fynd holds checked garment measurements for this product. When it compares, it can use them for yours.');
+    assert.strictEqual(await page.inputValue('#ffr-size'), 'M');
+    await page.click('#ffr-use');
+    await page.waitForSelector('#ff-reference[data-visit="set"] .ff-ref--visit');
+    await page.fill('#fit-url', 'sweat pull');
+    await page.waitForSelector('#ff-suggest .ff-suggest-option[data-code="E475378-000"]');
+    await page.click('#ff-suggest .ff-suggest-option[data-code="E475378-000"]');
+    await page.waitForSelector('#fit-compare[data-verdict="recommended"]');
+    assert.strictEqual(compares.length, 1);
+    /* the garment sent as the shopper's fields — brand, size, product — with no verdict of its own */
+    assert.deepStrictEqual(compares[0].reference, { type: 'sweatshirts', garment: { favorite: 'perfect', line: 'men', anchor: { brand: 'UNIQLO', size: 'M', product: { name: null, url: 'https://www.uniqlo.com/us/en/products/E475377-000/00' } } } });
+    const expected = require('../api/_sizing/engine').compare(
+      Object.assign(Schema.empty(), { garments: { sweatshirts: Object.assign(Schema.emptyGarment('sweatshirts'), compares[0].reference.garment) } }),
+      require('../api/_sizing/records').byId('uniqlo-e475378-sweat-pullover-hoodie-us'));
+    assert.strictEqual((await page.textContent('#fit-compare .fit-compare-recommended')).trim(), `Recommended size: ${expected.recommended}`, 'the engine’s own answer');
+    await context.close();
+  }));
+
+  await test('the page cannot make a product verified: a garment kept with "verified" flags of its own, on production’s unchecked records, still gets no comparison and no size — the server’s check and the engine decide', async () => {
+    const context = await openContext();
+    const page = await context.newPage();
+    const compares = [];
+    page.on('request', (r) => { if (/[?&]compare=1/.test(r.url())) compares.push(r.url()); });
+    await open(page, 'index.html');
+    await page.waitForSelector('#ffr-search');
+    /* what a page could write for itself: flags no form sets */
+    await page.evaluate(() => sessionStorage.setItem('fynd:find-fit:reference', JSON.stringify({
+      type: 'sweatshirts', verified: true,
+      garment: { favorite: 'perfect', verified: true, verification: { status: 'verified' }, anchor: { brand: 'UNIQLO', size: 'M', verified: true, product: { url: 'https://www.uniqlo.com/us/en/products/E475377-000/00', verified: true } } }
+    })));
+    await page.reload();
+    await page.waitForSelector('#ff-reference[data-state]');
+    /* the badge is never drawn from what the page holds */
+    assert.strictEqual(await page.isHidden('#ffr-held'), true);
+    const checks = [];
+    page.on('request', (r) => { if (/[?&]check=1$/.test(r.url())) checks.push(r.postDataJSON()); });
+    assert.strictEqual(await checkItem(page, 'https://www.uniqlo.com/us/en/products/E475378-000/00'), 'unverified');
+    assert.strictEqual(await page.isDisabled('#fit-url-submit'), true, 'Compare fit off: the server says the item can’t be compared');
+    /* forced open and pressed: the chart, no size */
+    await page.evaluate(() => { const b = document.getElementById('fit-url-submit'); b.disabled = false; b.click(); });
+    await page.waitForSelector('#fit-compare:not([hidden]):not([data-verdict="loading"]) .fit-compare-title');
+    assert.strictEqual(await page.$$eval('#fit-compare .fit-compare-recommended, #fit-compare .fit-compare-closest, #fit-compare .fit-compare-differences', (ns) => ns.length), 0, 'no size');
+    assert.deepStrictEqual(compares, [], 'nothing compared');
+    /* and whatever the page held, no flag of its own reached the server */
+    assert.ok(checks.every((b) => !JSON.stringify(b).includes('verified')), JSON.stringify(checks));
     await context.close();
   });
 
