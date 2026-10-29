@@ -2,28 +2,37 @@
    Fynd — Find Fit: which size of an item is most likely to fit like a
    garment the shopper already owns
 
-     1  the item — a pasted product link, or a product picked in the
-        brand browser (assets/brand-browser.js calls FindFit.select) —
-        and "Check product": what Fynd holds for it, from the server,
-        before a guest is asked for a garment (checking first, below)
-     2  the reference — the garments saved on the fit profile, or one
-        described for this visit once the item can be compared
-        (assets/find-fit-reference.js)
-     →  "Compare fit" (or Enter, or a whole link pasted): the item's
-        sizing chart, from Fynd's records or the product's own page
-        (Account.sizing.chart: /api/size-recommendation?chart=, or
-        ?brand=&item= for a picked product — the server finds its
-        address itself; api/_sizing/chart.js), then the engine's own
-        comparison with the shopper's reference (assets/fit-compare.js,
-        verdict layout: /api/size-recommendation?product=&compare=1)
+   Two halves, both open from the start and given in either order:
+
+     the item     one box (#fit-url) that takes either
+                    a product link — checked as soon as it is a whole
+                    link: at once when pasted, once typing pauses
+                    otherwise — or
+                    words — a brand or an item's name, searched in the
+                    brands Find Fit lists once typing pauses
+                    (Account.sizing.catalog, api/_catalog/search.js),
+                    with matches to pick by click, tap or the arrow keys
+                    and Enter (FindFit.select, as the brand browser in
+                    assets/brand-browser.js also calls it)
+     the garment  the garments saved on the fit profile, or one described
+                  for this visit (assets/find-fit-reference.js)
+
+   As soon as there is an item, Find Fit asks the server what it holds
+   for it and whether it can be compared with the garment, if there is
+   one yet (checking first, below). When the server says the two can be
+   compared, the comparison runs on its own — the item's sizing chart
+   (Account.sizing.chart or .item: api/_sizing/chart.js), then the
+   engine's own comparison with the garment (assets/fit-compare.js) —
+   but only after something the shopper did: a profile read on its own
+   never starts one. "Compare fit" (or Enter on a link) runs it again,
+   or shows the chart of an item that can't be compared.
 
    The result leads with the verdict: a size only where the engine
-   recommends one, or a heading that says there is none and exactly why
-   — a chart nobody has checked, a body chart, no reference saved, too
-   few measurements taken the same way. The chart as published, and
-   where it came from, sit folded under "Size chart and source". Nothing
-   from the profile travels in any address; the product page stays a
-   click away, without tracking parameters.
+   recommends one, or a heading that says there is none and why. Every
+   answer is tied to the request that asked for it: an older one never
+   draws over a newer item, search or comparison. Nothing from the
+   profile travels in any address; the product page stays a click away,
+   without tracking parameters.
 
    From the Fynd browser extension (extension/), the address arrives
    carrying either a chart it read in the shopper's own browser
@@ -52,40 +61,37 @@
   const chartBox = $('fit-chart-details');
   const picked = $('ff-picked');
   const { el, safeLink, render, renderFailure, headingFor, cleanUrl } = global.SizeChart;
+  const sizingApi = () => global.Account && global.Account.sizing;
 
   let latest = 0;
   let lastAsked = '';
-  /* a product picked in the brand browser: { brand, product }, until the link changes */
+  /* a product picked from the suggestions or the brand browser:
+     { brand, product, label }, until the box says something else */
   let choice = null;
+  /* something the shopper did since the last comparison: the next answer
+     that says the two can be compared runs one */
+  let autoNext = false;
 
   /* ---------- checking first ----------
-     As soon as there is an item — and at once on "Check product" — Find
-     Fit asks the server what it holds for it and whether it can be
-     compared with the reference, if there is one yet
-     (Account.sizing.check: Fynd's records and the engine's own
-     preconditions, engine.validate — nothing fetched). When the answer
-     confirms a comparison can't happen, it is said right under the
-     item, before anything is compared, and Compare fit is turned off;
-     viewing the chart, opening the product page and editing the
-     reference stay. An answer that says the item itself holds checked
-     garment measurements asks for the garment (FindFitReference.unlock)
-     — the item alone, never a promise the two will compare: the server
-     says that when they are compared. An item that can't be compared
-     is said as such, with the chart to view where there is one, another
-     product to try, and — only as the shopper's own choice — a garment
-     to set up for future comparisons (FindFitReference.unlock('future')),
-     never compared with this item. A refused or failed check is said,
-     and leaves Compare fit as it was. */
+     As soon as there is an item Find Fit asks the server what it holds
+     for it and whether it can be compared with the garment, if there is
+     one yet (Account.sizing.check: Fynd's records and the engine's own
+     preconditions, engine.validate — nothing fetched). The answer is said
+     right under the item: ready (and compared), the garment still to
+     add, or why it can't be compared — with the chart to view where there
+     is one, its own page, and another product to try. Compare fit is off
+     only while the server says a comparison can't happen. A refused or
+     failed check is said, with Check again, and leaves Compare fit as it
+     was. */
   const checkBox = $('ff-check');
   const submitButton = $('fit-url-submit');
-  const checkProduct = $('ff-check-product');
   /* The answer is redrawn in place. Focus on one of its own controls
-     (Check again, say) would fall to the page with it, so it goes to
-     Check product instead; focus anywhere else is left where it is. */
+     (Check again, say) would fall to the page with it, so it goes back to
+     the item's box instead; focus anywhere else is left where it is. */
   function setCheck(...nodes) {
     const hadFocus = checkBox.contains(doc.activeElement);
     checkBox.replaceChildren(...nodes);
-    if (hadFocus && checkProduct) checkProduct.focus();
+    if (hadFocus) input.focus();
   }
   let blocked = false;
   /* a link the Fynd extension handed over: nothing about it is sent
@@ -97,15 +103,23 @@
     'invalid-url': 'That isn’t a product link Fynd can use',
     'blocked-address': 'Fynd doesn’t look up that address',
     'unsupported-retailer': 'Fynd doesn’t support this shop yet',
-    'missing-target': 'No checked measurements for this item',
+    'missing-target': 'We don’t have this item’s measurements yet',
     unverified: 'This item’s measurements aren’t verified yet',
     'body-only': 'This chart measures the body, not the finished garment.',
     methods: 'Measured differently from your garment',
     'missing-reference': 'Your garment’s measurements are missing',
     'general-chart': 'Only a general body-size chart for this item',
-    'target-ready': 'Fynd holds checked measurements for this item',
+    'target-ready': 'We have this item’s measurements',
     'rate-limited': 'Too many checks just now',
     'check-failed': 'This item couldn’t be checked just now'
+  };
+  /* what an answer means for the shopper, said first; the server's own
+     reasons stay one click away, under "Why?" */
+  const CHECK_PLAIN = {
+    'missing-target': 'So Fynd can’t suggest a size for it. Try another product, or view its size chart.',
+    unverified: 'So Fynd won’t suggest a size from them. Try another product, or view its size chart.',
+    'general-chart': 'It doesn’t give this item’s own measurements, so Fynd can’t suggest a size. Try another product.',
+    'body-only': 'Fynd compares finished-garment measurements, so it can’t suggest a size from this. Try another product.'
   };
   /* The engine's reasons that are about the item alone — decided before
      any reference is read (engine.js prepare): with any other, the item
@@ -126,32 +140,34 @@
     checkBox.hidden = true;
     delete checkBox.dataset.status;
     setBlocked(false);
+    progress();
   }
   /* the item as it stands: a picked product, or a whole link — or none */
   function targetNow() {
     if (quietUrl && input.value === quietUrl) return null;
-    if (choice && input.value.trim() === (choice.product.url || '')) return { brand: choice.brand.id, code: choice.product.code };
+    if (choice && input.value === choice.label) return { brand: choice.brand.id, code: choice.product.code };
     const link = readLink(input.value);
     return link.error ? null : { url: link.url };
   }
-  /* a new item or reference makes the last answer stale: it goes at
-     once, and Compare fit is back until the new one says otherwise */
-  function scheduleCheck(now) {
+  /* A new item or garment makes the last answer stale: it goes at once,
+     and Compare fit is back until the new one says otherwise. A new item
+     says it is being checked; a garment changed beside it doesn't. */
+  function scheduleCheck(now, showing) {
     clearCheck();
     global.clearTimeout(checkTimer);
-    checkTimer = global.setTimeout(runCheck, now ? 0 : 400);
+    checkTimer = global.setTimeout(() => runCheck(showing), now ? 0 : 400);
   }
-  /* explicit: asked for with "Check product", so it says it is checking */
-  async function runCheck(explicit) {
+  async function runCheck(showing) {
     const target = targetNow();
     if (!target) { clearCheck(); return; }
-    const sizing = global.Account && global.Account.sizing;
+    const sizing = sizingApi();
     if (!sizing || !sizing.check) return;
     const ask = ++checkAsk;
-    if (explicit === true) {
-      setCheck(el('p', 'size-chart-loading', 'Checking what Fynd holds for this item…'));
+    if (showing === true) {
+      setCheck(el('p', 'size-chart-loading', 'Checking this item…'));
       checkBox.dataset.status = 'checking';
       checkBox.hidden = false;
+      progress();
     }
     const reference = global.FindFitReference ? global.FindFitReference.unsaved() : null;
     const got = await sizing.check(target, reference);
@@ -187,47 +203,55 @@
     checkBox.dataset.status = status;
     checkBox.hidden = false;
     setBlocked(false);
+    progress();
   }
   function drawCheck(check, target) {
     const v = check.validation && typeof check.validation === 'object' ? check.validation : null;
     const t = check.target || {};
     const ready = itemReady(check);
-    /* the item holds checked garment measurements: the garment can be asked for */
-    if (ready && global.FindFitReference && global.FindFitReference.unlock) global.FindFitReference.unlock();
     let status = ['invalid-url', 'blocked-address', 'unsupported-retailer'].includes(t.status) ? t.status : (v && v.status) || 'missing-target';
     if (status === 'missing-target' && check.chart === 'general') status = 'general-chart';
     if (ready && v.code === 'no-reference') status = 'target-ready';
     if (status === 'target-ready') {
-      /* nothing to compare with yet: the next step, and Compare fit waits for it */
+      /* nothing to compare with yet: the garment is the next step, and Compare fit waits for it */
       const next = el('p', 'ff-check-actions');
       const go = el('a', 'btn btn-secondary ff-check-edit', 'Describe your garment');
       go.href = '#ff-step-reference';
       next.append(go, ...itemActions(check, target, t));
       setCheck(
         el('p', 'ff-check-title', CHECK_HEADING['target-ready']),
-        el('p', null, 'Next, describe a garment you own that fits you well. Whether the two can be set side by side is checked again when you compare.'),
+        el('p', null, 'Now add a garment you own that fits well, and Fynd compares the two.'),
         next);
       checkBox.dataset.status = status;
       checkBox.hidden = false;
       setBlocked(true);
+      progress();
       return;
     }
     if (check.comparable && v && v.ready) {
       setBlocked(false);
-      const lines = [el('p', 'ff-check-ok', v.explanation)];
-      setCheck(...lines);
+      setCheck(el('p', 'ff-check-ok', v.explanation));
       checkBox.dataset.status = 'ready';
       checkBox.hidden = false;
+      progress();
+      /* both halves can be compared, and the shopper asked for something since: compare */
+      if (autoNext) { autoNext = false; compareNow(true); }
       return;
     }
     const nodes = [el('p', 'ff-check-title', CHECK_HEADING[status] || CHECK_HEADING['missing-target'])];
+    const plain = CHECK_PLAIN[status];
+    if (plain) nodes.push(el('p', 'ff-check-plain', plain));
     /* the heading already says the first sentence of a body chart's explanation */
-    if (v && typeof v.explanation === 'string') nodes.push(el('p', null, v.explanation.startsWith(nodes[0].textContent) ? v.explanation.slice(nodes[0].textContent.length).trim() : v.explanation));
+    const said = v && typeof v.explanation === 'string'
+      ? (v.explanation.startsWith(nodes[0].textContent) ? v.explanation.slice(nodes[0].textContent.length).trim() : v.explanation)
+      : '';
+    const why = [];
+    if (said) why.push(el('p', null, said));
     else if (status === 'invalid-url') nodes.push(el('p', null, 'Paste the full address of a clothing product’s page.'));
     else if (status === 'blocked-address') nodes.push(el('p', null, 'Fynd only looks up public product pages.'));
     /* which retailer can't be read is not the same as which measurements are missing */
     if (t.pages && t.pages !== 'readable' && status !== 'invalid-url' && status !== 'blocked-address') {
-      nodes.push(el('p', 'ff-check-access', t.pages === 'not-permitted'
+      why.push(el('p', 'ff-check-access', t.pages === 'not-permitted'
         ? `${t.host || 'This shop'}’s terms don’t allow Fynd to read its pages.`
         : `Fynd doesn’t read ${t.host || 'this shop'}’s pages: it hasn’t confirmed their terms allow it.`));
     }
@@ -235,9 +259,16 @@
     if ((status === 'methods' || (v && v.code === 'too-few-dimensions')) && dims.length) {
       const ul = el('ul', 'ff-check-dims');
       dims.forEach((d) => { const li = el('li', null, `${DIM_WORDS[d.dim] || d.dim}: ${d.why}`); li.dataset.dim = d.dim; ul.append(li); });
-      nodes.push(ul);
+      why.push(ul);
     }
-    if (v && Array.isArray(v.next) && typeof v.next[0] === 'string') nodes.push(el('p', 'ff-check-next', v.next[v.next.length - 1]));
+    if (v && Array.isArray(v.next) && typeof v.next[0] === 'string') why.push(el('p', 'ff-check-next', v.next[v.next.length - 1]));
+    /* an answer about the item: the reasons fold away under its plain words;
+       one about the garment is the shopper's to act on, so it stays open */
+    if (why.length && plain) {
+      const fold = el('details', 'ff-check-why');
+      fold.append(el('summary', null, 'Why?'), ...why);
+      nodes.push(fold);
+    } else nodes.push(...why);
     /* what can still be done */
     const actions = el('p', 'ff-check-actions');
     actions.append(...itemActions(check, target, t));
@@ -262,25 +293,11 @@
       actions.append(another);
     }
     if (actions.childNodes.length) nodes.push(actions);
-    /* and only if they choose it: a garment for later — never a comparison with this item */
-    const reference = global.FindFitReference;
-    if (!ready && reference && reference.locked && reference.locked()) {
-      const later = el('p', 'ff-check-optional');
-      const set = el('button', 'link-btn ff-check-later', 'Set up a garment for future comparisons');
-      set.type = 'button';
-      set.addEventListener('click', () => {
-        reference.unlock('future');
-        later.remove();
-        const first = doc.getElementById('ffr-type');
-        if (first) first.focus();
-      });
-      later.append(doc.createTextNode('Optional: '), set);
-      nodes.push(later);
-    }
     setCheck(...nodes);
     checkBox.dataset.status = status;
     checkBox.hidden = false;
     setBlocked(true);
+    progress();
   }
   const DIM_WORDS = { chestWidth: 'Chest', bodyLength: 'Length', shoulderWidth: 'Shoulders', sleeveLength: 'Sleeves' };
   /* What can be done with the item itself, whatever else the answer
@@ -303,11 +320,13 @@
     }
     return out;
   }
-  /* "Try another product": the link box, empty and ready, and nothing stale left */
+  /* "Try another product": the box, empty and ready, and nothing stale left */
   function tryAnother() {
     if (choice) unselect();
     input.value = '';
+    retire();
     clearCheck();
+    closeSuggest();
     say('');
     input.focus();
   }
@@ -316,6 +335,193 @@
     if (target.brand && choice) return findItem(choice.brand, choice.product);
     return target.url ? find(target.url) : undefined;
   }
+  /* the comparison, for the item as it stands */
+  function compareNow(quiet) {
+    if (choice && input.value === choice.label) return findItem(choice.brand, choice.product, quiet);
+    const link = readLink(input.value);
+    return link.error ? undefined : find(link.url, quiet);
+  }
+  /* A different item: any comparison still on its way is for the old one,
+     so it is dropped, and a result on screen for the old one goes. */
+  function retire() {
+    latest += 1;
+    lastAsked = '';
+    if (!result.hidden && result.dataset.from !== 'extension') {
+      result.hidden = true;
+      if (global.FindFitSave) global.FindFitSave.hide();
+    }
+    submitButton.disabled = blocked;
+  }
+
+  /* ---------- where the two halves stand ----------
+     One line above both: the item, the garment, and the next step —
+     never in the way of either. */
+  const progressBox = $('ff-progress');
+  function setPill(id, text) {
+    const pill = $(id);
+    const t = pill && pill.querySelector('.ff-progress-text');
+    if (t) t.textContent = text;
+  }
+  function progress() {
+    if (!progressBox) return;
+    const status = checkBox.dataset.status;
+    const text = input.value.trim();
+    let item = 'empty';
+    if (status === 'ready' || status === 'target-ready') item = 'ready';
+    else if (status === 'checking') item = 'checking';
+    else if (status === 'check-failed' || status === 'rate-limited') item = 'error';
+    else if (status) item = 'blocked';
+    else if (targetNow()) item = 'checking';
+    else if (text) item = 'choosing';
+    const ref = global.FindFitReference;
+    const area = $('ff-reference');
+    const savedGarments = area && area.dataset.state === 'saved';
+    const garment = savedGarments || (ref && ref.current && ref.current()) ? 'ready' : 'empty';
+    progressBox.dataset.item = item;
+    progressBox.dataset.garment = garment;
+    setPill('ff-progress-item', {
+      empty: 'Item: not added yet', choosing: 'Item: pick a match or paste a link', checking: 'Item: checking…',
+      ready: 'Item: measurements found', blocked: 'Item: can’t be compared yet', error: 'Item: couldn’t be checked'
+    }[item]);
+    setPill('ff-progress-garment', garment === 'ready' ? (savedGarments ? 'Your garment: from your fit profile' : 'Your garment: added') : 'Your garment: not added yet');
+    let next = 'Add both, in any order.';
+    if (item === 'blocked') next = 'Try another product to get a size.';
+    else if (item === 'error') next = 'Check the item again in a moment.';
+    else if (item === 'checking') next = 'Checking the item…';
+    else if (item === 'ready' && garment === 'ready') next = !result.hidden && result.dataset.state === 'loading' ? 'Comparing…' : (!result.hidden ? 'Your comparison is below.' : 'Ready to compare.');
+    else if (item === 'ready') next = 'Next: add a garment you own that fits well.';
+    else if (garment === 'ready') next = 'Next: add the item you’re considering.';
+    $('ff-progress-next').textContent = next;
+  }
+
+  /* ---------- suggestions ----------
+     Words in the box are searched in the brands Find Fit lists, once
+     typing pauses: one request per pause, and only the newest answer is
+     drawn. A brand named in the words narrows the search to it. Only
+     products matching every word are offered — never the "closest"
+     ones — and a link can always be pasted instead. */
+  const suggestBox = $('ff-suggest-box');
+  const suggestList = $('ff-suggest');
+  const suggestStatus = $('ff-suggest-status');
+  const SUGGEST_WAIT = 250;
+  const SUGGEST_MAX = 6;
+  let suggestAsk = 0;
+  let suggestTimer = null;
+  let suggestions = [];
+  let active = -1;
+  let brandsKnown = null;
+  async function brandsNow() {
+    if (brandsKnown) return brandsKnown;
+    const sizing = sizingApi();
+    const got = sizing && sizing.brands ? await sizing.brands() : null;
+    const list = got && got.ok && got.data && Array.isArray(got.data.brands)
+      ? got.data.brands.filter((b) => b && typeof b.id === 'string' && typeof b.name === 'string' && b.name) : null;
+    if (list) brandsKnown = list;
+    return list || [];
+  }
+  function openSuggest() {
+    suggestBox.hidden = false;
+    input.setAttribute('aria-expanded', String(suggestions.length > 0));
+  }
+  function closeSuggest() {
+    global.clearTimeout(suggestTimer);
+    suggestAsk += 1;
+    suggestions = [];
+    active = -1;
+    suggestList.replaceChildren();
+    suggestStatus.textContent = '';
+    suggestBox.hidden = true;
+    delete suggestBox.dataset.state;
+    input.setAttribute('aria-expanded', 'false');
+    input.removeAttribute('aria-activedescendant');
+  }
+  function suggestSay(text, state) {
+    suggestStatus.textContent = text;
+    suggestBox.dataset.state = state;
+  }
+  function suggestSoon(text) {
+    global.clearTimeout(suggestTimer);
+    const mine = ++suggestAsk;
+    if (text.length < 2) { closeSuggest(); return; }
+    suggestions = [];
+    active = -1;
+    suggestList.replaceChildren();
+    openSuggest();
+    suggestSay('Searching…', 'loading');
+    suggestTimer = global.setTimeout(() => runSuggest(text, mine), SUGGEST_WAIT);
+  }
+  const escapeRe = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  async function runSuggest(text, mine) {
+    const sizing = sizingApi();
+    const brands = await brandsNow();
+    if (mine !== suggestAsk) return;
+    if (!sizing || !sizing.catalog || !brands.length) {
+      suggestSay('Search isn’t available right now. Paste the product’s link instead.', 'error');
+      return;
+    }
+    const named = brands.filter((b) => new RegExp(`(^|\\s)${escapeRe(b.name)}(\\s|$)`, 'i').test(text));
+    let words = text;
+    named.forEach((b) => { words = words.replace(new RegExp(escapeRe(b.name), 'ig'), ' '); });
+    words = words.replace(/\s+/g, ' ').trim();
+    const answers = await Promise.all((named.length ? named : brands).map((b) => sizing.catalog(b.id, { q: words, limit: SUGGEST_MAX })));
+    if (mine !== suggestAsk) return;
+    const found = [];
+    let failed = 0;
+    answers.forEach((got) => {
+      const data = got && got.ok && got.data;
+      if (!data || !Array.isArray(data.products) || !data.brand) { failed += 1; return; }
+      if (data.partial) return;
+      data.products.forEach((p) => {
+        if (p && typeof p.code === 'string' && typeof p.name === 'string' && found.length < SUGGEST_MAX) found.push({ brand: data.brand, product: p });
+      });
+    });
+    drawSuggestions(found, text, failed === answers.length);
+  }
+  const LINE_WORDS = { men: 'Men', women: 'Women', unisex: 'Unisex', kids: 'Kids', baby: 'Baby' };
+  function drawSuggestions(found, text, failed) {
+    suggestions = found;
+    active = -1;
+    input.removeAttribute('aria-activedescendant');
+    suggestList.replaceChildren(...found.map((f, i) => {
+      const li = el('li', 'ff-suggest-option');
+      li.id = `ff-suggest-${i}`;
+      li.setAttribute('role', 'option');
+      li.setAttribute('aria-selected', 'false');
+      li.dataset.code = f.product.code;
+      li.append(el('span', 'ff-suggest-name', f.product.name),
+        el('span', 'ff-suggest-meta', [f.brand.name, f.product.categoryLabel, LINE_WORDS[f.product.line]].filter(Boolean).join(' · ')));
+      if (typeof f.product.holdsText === 'string' && f.product.holdsText) li.append(el('span', 'ff-suggest-holds', f.product.holdsText));
+      /* pressed, not clicked: the box keeps focus, so nothing closes first */
+      li.addEventListener('mousedown', (event) => event.preventDefault());
+      li.addEventListener('click', () => pick(i));
+      return li;
+    }));
+    input.setAttribute('aria-expanded', String(found.length > 0));
+    if (failed) suggestSay('Search isn’t available right now. Paste the product’s link instead.', 'error');
+    else if (!found.length) suggestSay(`No products match “${text}”. Paste the product’s link instead.`, 'empty');
+    else suggestSay(`${found.length} matching product${found.length === 1 ? '' : 's'}. Not listed? Paste its link.`, 'ready');
+  }
+  function highlight(i) {
+    active = i;
+    suggestList.querySelectorAll('.ff-suggest-option').forEach((li, n) => li.setAttribute('aria-selected', String(n === i)));
+    if (i >= 0) {
+      input.setAttribute('aria-activedescendant', `ff-suggest-${i}`);
+      const li = $(`ff-suggest-${i}`);
+      if (li && li.scrollIntoView) li.scrollIntoView({ block: 'nearest' });
+    } else input.removeAttribute('aria-activedescendant');
+  }
+  function pick(i) {
+    const f = suggestions[i];
+    if (!f) return;
+    closeSuggest();
+    select(f.brand, f.product);
+  }
+
+  /* a whole link, as a shopper would paste or type it: a scheme, or a
+     www. address; anything else in the box is words to search */
+  const looksLikeLink = (text) => /^(https?:\/\/|www\.)\S+$/i.test(text) || /^[a-z0-9-]+(\.[a-z0-9-]+)+\/\S*$/i.test(text);
+  /* a link still being typed — "htt", "https:/", "www" — is not words to search */
+  const linkSoFar = (text) => /^(h(t(t(p(s?(:\/{0,2})?)?)?)?)?|w(w(w\.?)?)?)$/i.test(text) || /^(https?:|www\.)/i.test(text);
 
   /* no checked garment measurements to compare: Find Fit's own heading for it */
   const UNSUPPORTED = 'Fynd can’t compare this item yet';
@@ -341,8 +547,10 @@
 
   /* A whole http(s) link to somewhere with a name, or why not. */
   function readLink(raw) {
-    const text = String(raw || '').trim();
-    if (!text) return { error: 'Paste a link to a clothing product’s page first.' };
+    let text = String(raw || '').trim();
+    if (!text) return { error: 'Paste a product link, or search for a brand or item and pick a match.' };
+    /* an address typed without its scheme is the https page */
+    if (!/^[a-z][a-z0-9+.-]*:/i.test(text) && looksLikeLink(text)) text = `https://${text}`;
     let u;
     try { u = new URL(text); } catch (err) {
       return { error: 'That isn’t a valid product link. Paste the full address of a product page, starting with https://.' };
@@ -370,22 +578,26 @@
   }
 
   /* A pasted link: its chart, looked up by its address. */
-  function find(url) {
+  function find(url, quiet) {
     lastAsked = url;
     return lookup(url, null, 'Finding this product’s sizing chart…', 'Reading the product’s page and any size guide it links to…',
-      (sizing) => sizing.chart(url));
+      (sizing) => sizing.chart(url), quiet);
   }
 
   /* A product picked in the brand browser (assets/brand-browser.js):
      its chart, asked for by the brand and the product's code. The
      server finds the product's address itself. */
-  function findItem(brand, product) {
+  function findItem(brand, product, quiet) {
     const named = `${brand.name} · ${product.name}`;
     return lookup(product.url, Object.assign({ named }, product), named, 'Looking up this product’s sizing chart. Reading the brand’s page can take a few seconds…',
-      (sizing) => sizing.item(brand.id, product.code));
+      (sizing) => sizing.item(brand.id, product.code), quiet);
   }
 
-  async function lookup(url, product, title, waiting, request) {
+  /* quiet: started on its own, not by a press — focus stays where the
+     shopper is, and the page moves to the result only if they aren't
+     typing */
+  const typing = () => Boolean(doc.activeElement && /^(INPUT|SELECT|TEXTAREA)$/.test(doc.activeElement.tagName));
+  async function lookup(url, product, title, waiting, request, quiet) {
     const ask = ++latest;
     say('');
     result.hidden = false;
@@ -399,7 +611,8 @@
     productLink(cleanUrl(url));
     $('fit-result-title').textContent = title;
     submitButton.disabled = true;
-    if (product) result.scrollIntoView({ block: 'start', behavior: 'auto' });
+    progress();
+    if (product && !(quiet && typing())) result.scrollIntoView({ block: 'start', behavior: 'auto' });
 
     const sizing = global.Account && global.Account.sizing;
     const answer = sizing ? await request(sizing) : { ok: false, unreachable: true };
@@ -410,6 +623,7 @@
       result.dataset.state = 'error';
       $('fit-result-title').textContent = product ? product.named : 'Sizing chart unavailable';
       verdict(UNSUPPORTED, renderFailure(answer, url, { linked: true }), 'unsupported');
+      progress();
       attempted(ask);
       return;
     }
@@ -431,10 +645,12 @@
       hideChart();
       verdict(UNSUPPORTED, drawn, 'unsupported');
     }
-    $('fit-result-title').focus({ preventScroll: true });
-    result.scrollIntoView({ block: 'start', behavior: 'auto' });
+    if (!quiet) $('fit-result-title').focus({ preventScroll: true });
+    if (!(quiet && typing())) result.scrollIntoView({ block: 'start', behavior: 'auto' });
+    progress();
     /* a fallback says why it can't be compared, like any body chart */
     if (chart.status === 'ok' || chart.status === 'fallback') await compareWith(chart, ask);
+    progress();
     attempted(ask);
   }
 
@@ -453,35 +669,42 @@
     if (ask === latest && global.FindFitSave) global.FindFitSave.offer();
   }
 
-  /* A product picked in the brand browser becomes the item: named, with
-     what Fynd holds for its sizing, its own page a click away, and its
-     link in the box — until the link is changed. */
+  /* A product picked — from the suggestions or the brand browser —
+     becomes the item: named in the box, with what Fynd holds for its
+     sizing and its own page a click away, until the box says something
+     else. It is checked at once, with nothing more to press. */
   function select(brand, product) {
-    choice = { brand, product };
-    input.value = product.url || '';
+    const label = `${brand.name} · ${product.name}`;
+    choice = { brand, product, label };
+    quietUrl = null;
+    input.value = label;
+    closeSuggest();
     say('');
+    retire();
     const line = el('p', 'ff-picked-name');
-    line.append(el('strong', null, `${brand.name} · ${product.name}`));
+    line.append(el('strong', null, label));
     const page = el('a', 'guide-link ff-picked-page', 'View its page');
     page.href = `product.html?${new URLSearchParams({ brand: brand.id, item: product.code })}`;
     const clear = el('button', 'ff-picked-clear', 'Clear');
     clear.type = 'button';
-    clear.addEventListener('click', () => { unselect(); input.value = ''; input.focus(); });
+    clear.addEventListener('click', () => { unselect(); input.value = ''; retire(); clearCheck(); input.focus(); });
     const actions = el('p', 'ff-picked-actions');
     actions.append(page, clear);
     picked.replaceChildren(line, el('p', 'ff-picked-holds', product.holdsText || ''), actions);
     picked.hidden = false;
-    scheduleCheck(true);
-    $('fit-url-submit').focus();
+    autoNext = true;
+    scheduleCheck(true, true);
   }
   function unselect() {
     choice = null;
     picked.replaceChildren();
     picked.hidden = true;
-    scheduleCheck();
   }
 
   function submit() {
+    closeSuggest();
+    /* asked for now: no second, automatic comparison after this one */
+    autoNext = false;
     /* known not to be comparable: Enter shows what can still be shown —
        the item's chart, with why it isn't compared — never a comparison */
     if (blocked) {
@@ -489,7 +712,13 @@
       if (target) lookupTarget(target);
       return;
     }
-    if (choice && input.value.trim() === (choice.product.url || '')) { findItem(choice.brand, choice.product); return; }
+    if (choice && input.value === choice.label) { findItem(choice.brand, choice.product); return; }
+    const text = input.value.trim();
+    if (text && !looksLikeLink(text) && !/^[a-z][a-z0-9+.-]*:/i.test(text)) {
+      say('Pick a matching product, or paste the product’s link.');
+      input.focus();
+      return;
+    }
     const link = readLink(input.value);
     if (link.error) { say(link.error); input.focus(); return; }
     find(link.url);
@@ -499,36 +728,58 @@
     event.preventDefault();
     submit();
   });
-  /* a whole link pasted is a request; typing one is not, until Enter */
+  /* A whole link pasted is a request: its measurements are read and set
+     beside the garment at once, and it is checked too. A link typed is
+     checked once typing pauses, and read on Enter or Compare fit; words
+     are searched. */
   input.addEventListener('paste', () => {
     global.setTimeout(() => {
-      const link = readLink(input.value);
-      if (!link.error && link.url !== lastAsked) find(link.url);
+      const text = input.value.trim();
+      if (!looksLikeLink(text)) return;
+      const link = readLink(text);
+      if (link.error || link.url === lastAsked) return;
+      closeSuggest();
+      autoNext = false;
+      scheduleCheck(true, true);
+      find(link.url);
     }, 0);
   });
   input.addEventListener('input', () => {
     quietUrl = null;
     if (error.textContent) say('');
-    if (choice && input.value.trim() !== (choice.product.url || '')) unselect();
-    scheduleCheck();
-  });
-  doc.addEventListener('fynd:reference-change', () => scheduleCheck(true));
-  /* "Check product": the item, asked about now — a link that isn't one
-     is refused here, as Compare fit refuses it, and nothing is sent */
-  if (checkProduct) {
-    checkProduct.addEventListener('click', () => {
-      quietUrl = null;
+    if (choice && input.value !== choice.label) unselect();
+    retire();
+    const text = input.value.trim();
+    if (looksLikeLink(text)) {
+      closeSuggest();
+      autoNext = true;
+      scheduleCheck(false, true);
+    } else {
       global.clearTimeout(checkTimer);
-      if (!targetNow()) {
-        clearCheck();
-        say(readLink(input.value).error);
-        input.focus();
-        return;
-      }
-      say('');
-      runCheck(true);
-    });
-  }
+      clearCheck();
+      if (linkSoFar(text)) closeSuggest(); else suggestSoon(text);
+    }
+  });
+  /* the arrow keys move through the matches; Enter picks one; Escape closes them */
+  input.addEventListener('keydown', (event) => {
+    const open = !suggestBox.hidden && suggestions.length > 0;
+    if (event.key === 'ArrowDown' && open) { event.preventDefault(); highlight(active < suggestions.length - 1 ? active + 1 : 0); }
+    else if (event.key === 'ArrowUp' && open) { event.preventDefault(); highlight(active > 0 ? active - 1 : suggestions.length - 1); }
+    else if (event.key === 'Enter' && open) { event.preventDefault(); pick(active >= 0 ? active : 0); }
+    else if (event.key === 'Escape' && !suggestBox.hidden) { event.preventDefault(); closeSuggest(); }
+    /* Compare fit is off for an item that can't be compared, and a form
+       isn't sent by Enter while its button is off: Enter is taken here
+       instead, so it still shows what can be shown — the item's chart */
+    else if (event.key === 'Enter' && blocked) { event.preventDefault(); submit(); }
+  });
+  input.addEventListener('blur', () => { global.setTimeout(() => { if (doc.activeElement !== input) closeSuggest(); }, 0); });
+  /* a garment changed: the item is checked again with it — and, when the
+     shopper changed it, compared once the two can be */
+  doc.addEventListener('fynd:reference-change', (event) => {
+    if (event && event.detail && event.detail.by === 'shopper') autoNext = true;
+    scheduleCheck(true);
+    progress();
+  });
 
   /* A chart the Fynd extension read in this browser: checked, drawn as
      read from the browser and unverified, never compared. */
@@ -599,5 +850,6 @@
   fromExtension();
   global.addEventListener('hashchange', fromExtension);
 
+  progress();
   global.FindFit = { readLink, find, findItem, select, fromExtension };
 })(typeof window !== 'undefined' ? window : globalThis);

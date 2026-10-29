@@ -1868,3 +1868,75 @@ strong { font-weight: 600; }
 .ff .ff-check-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 10px; }
 .ff .ff-check-actions .btn { min-height: 44px; }
 .ff .ff-compare-btn:disabled { background: var(--color-surface-2); border-color: var(--color-surface-2); color: var(--color-text-2); cursor: not-allowed; }
+
+/* ---------- Find Fit: both halves at once ----------
+   Where the item and the garment stand, in one line above them; the
+   item's one box with its suggestions; and the wardrobe anchors. */
+.ff .ff-progress {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px 10px;
+  max-width: 980px; margin: 22px auto 0; font-size: 13.5px; color: var(--color-text-2);
+}
+.ff .ff-progress-pill {
+  display: inline-flex; align-items: center; gap: 7px; min-height: 32px; padding: 4px 12px;
+  border: 1px solid var(--color-border); border-radius: var(--r-pill); background: var(--color-surface); color: var(--color-text);
+}
+.ff .ff-progress-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--color-border); flex: none; }
+.ff .ff-progress[data-item="ready"] #ff-progress-item .ff-progress-dot,
+.ff .ff-progress[data-garment="ready"] #ff-progress-garment .ff-progress-dot { background: var(--color-success); }
+.ff .ff-progress[data-item="checking"] #ff-progress-item .ff-progress-dot { background: var(--color-accent); animation: ff-pulse 1.2s ease-in-out infinite; }
+.ff .ff-progress[data-item="blocked"] #ff-progress-item .ff-progress-dot,
+.ff .ff-progress[data-item="error"] #ff-progress-item .ff-progress-dot { background: var(--color-warning-ink); }
+.ff .ff-progress-next { flex-basis: 100%; text-align: center; color: var(--color-text-muted); }
+@keyframes ff-pulse { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .ff .ff-progress-dot { animation: none !important; } }
+
+.ff .ff-smart { position: relative; }
+.ff .ff-smart-input { width: 100%; }
+.ff .ff-suggest {
+  position: absolute; z-index: 20; top: calc(100% + 6px); left: 0; right: 0;
+  max-height: 340px; overflow-y: auto; padding: 6px;
+  border: 1px solid var(--color-border); border-radius: var(--r); background: var(--color-surface); box-shadow: var(--shadow);
+}
+.ff .ff-suggest[hidden] { display: none; }
+.ff .ff-suggest-list { list-style: none; display: flex; flex-direction: column; gap: 2px; }
+.ff .ff-suggest-option { display: flex; flex-direction: column; gap: 1px; min-height: 44px; padding: 8px 10px; border-radius: var(--r-sm); cursor: pointer; }
+.ff .ff-suggest-option:hover, .ff .ff-suggest-option[aria-selected="true"] { background: var(--color-accent-soft); }
+.ff .ff-suggest-name { font-size: 15px; font-weight: 600; color: var(--color-text); }
+.ff .ff-suggest-meta, .ff .ff-suggest-holds { font-size: 13px; color: var(--color-text-2); }
+.ff .ff-suggest-status { padding: 6px 10px 4px; font-size: 13px; color: var(--color-text-muted); }
+.ff .ff-suggest-status:empty { display: none; }
+.ff .ff-suggest[data-state="error"] .ff-suggest-status { color: var(--color-warning-ink); }
+
+/* browsing a brand: one quiet line under the item, not a second way to start */
+.ff .ff-browse { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding-top: 0; border-top: 0; }
+.ff .ff-browse-label { font-size: 13.5px; font-weight: 400; color: var(--color-text-muted); }
+.ff .ff-browse .fit-brands { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 0; }
+.ff .ff-browse .fit-brand-choice {
+  flex-direction: row; align-items: baseline; gap: 6px; min-height: 36px; padding: 4px 12px;
+  border-radius: var(--r-pill); box-shadow: none;
+}
+.ff .ff-browse .fit-brand-name { font-size: 14px; }
+.ff .ff-browse .fit-brand-meta { font-size: 12.5px; }
+
+.ff .ff-check-plain { color: var(--color-text); }
+.ff .ff-check-why { margin-top: 8px; font-size: 13.5px; color: var(--color-text-2); }
+.ff .ff-check-why > summary { cursor: pointer; font-weight: 500; color: var(--color-text); min-height: 32px; padding-block: 4px; }
+
+/* Popular Wardrobe Anchors: one row that scrolls sideways on a phone */
+.ff .ff-anchors[hidden] { display: none; }
+.ff .ff-anchors-title { font-size: 14px; font-weight: 600; color: var(--color-text); }
+.ff .ff-anchor-list {
+  display: flex; gap: 8px; margin-top: 8px; padding-bottom: 4px;
+  overflow-x: auto; scroll-snap-type: x proximity; overscroll-behavior-x: contain;
+}
+.ff .ff-anchor {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px; flex: 0 0 auto; width: 168px; min-height: 76px;
+  padding: 10px 12px; scroll-snap-align: start; text-align: left; font: inherit; cursor: pointer;
+  border: 1px solid var(--color-border); border-radius: var(--r); background: var(--color-bg-subtle); color: var(--color-text);
+}
+.ff .ff-anchor:hover { border-color: var(--color-primary); }
+.ff .ff-anchor:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.ff .ff-anchor[aria-pressed="true"] { border-color: var(--color-accent); background: var(--color-accent-soft); }
+.ff .ff-anchor-kind { font-size: 11.5px; font-weight: 600; letter-spacing: .03em; text-transform: uppercase; color: var(--color-text-muted); }
+.ff .ff-anchor-brand { font-size: 13.5px; font-weight: 600; }
+.ff .ff-anchor-name { font-size: 13.5px; color: var(--color-text-2); }
