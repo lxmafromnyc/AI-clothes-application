@@ -2966,6 +2966,8 @@ const linkFromInbox = (pattern) => {
     await open(page, 'index.html');
     /* the garment first: nothing about the item asked for */
     await describe(page, { type: 'sweatshirts', size: 'M', brand: 'UNIQLO', product: 'https://www.uniqlo.com/us/en/products/E475377-000/00' });
+    /* the line follows the garment's change event, a moment after the card is drawn */
+    await page.waitForSelector('#ff-progress[data-garment="ready"]');
     assert.deepStrictEqual(await page.$$eval('#ff-progress .ff-progress-text', (ns) => ns.map((n) => n.textContent)), ['Item: not added yet', 'Your garment: added']);
     assert.strictEqual(await page.textContent('#ff-progress-next'), 'Next: add the item you’re considering.');
     assert.strictEqual(await page.evaluate(() => document.activeElement.id), 'fit-url', 'the item’s box, next');
