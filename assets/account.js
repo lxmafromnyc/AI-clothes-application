@@ -267,6 +267,9 @@
     /* the brands Find Fit browses, one brand's products, and a chosen
        product's chart — only the brand and the product's code travel */
     brands: () => call('size-recommendation?brands=1'),
+    /* the products a shopper can pick as the garment they own: only
+       ones Fynd holds checked garment measurements for */
+    anchors: () => call('size-recommendation?anchors=1'),
     /* one page of a brand's products matching a search: only the brand,
        the words typed and the filters travel */
     catalog: (brand, query) => {

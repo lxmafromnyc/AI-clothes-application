@@ -286,7 +286,10 @@ async function test(name, fn) {
     const page = await openPage('index.html');
     await page.waitForSelector('#fit-browser[data-brands="ready"]');
     await page.waitForTimeout(300);
-    assert.deepStrictEqual(asked.slice(start), ['?brands=1'], 'only the brand list is asked for on page load');
+    await page.waitForSelector('#ff-anchors[data-state="ready"]', { state: 'attached' });
+    /* the brand list and Find Fit's wardrobe anchors (Fynd's own records,
+       nothing about the shopper or a product): no product is looked up */
+    assert.deepStrictEqual(asked.slice(start).sort(), ['?anchors=1', '?brands=1'], 'only the brand list and the anchors are asked for on page load');
     assert.strictEqual(await page.$eval('#fit-brand-dialog', (d) => d.open), false);
     assert.match(await page.textContent('.fit-brand-choice[data-brand="uniqlo"]'), /UNIQLO\s*1230 products · Browse/);
     await openUniqlo(page);

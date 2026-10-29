@@ -2576,12 +2576,22 @@ A link from any other shop can still be pasted under **Have a link to a product
 from another shop?** (closed by default). The Fynd browser extension's
 `#fynd-url=` uses the same box.
 
-**Find Fit** (`index.html`, `assets/find-fit.js`) can also take a clothing
-product's link, and its sizing chart is drawn below it (`assets/size-chart.js`,
-which the Search page's **View sizing chart** dialog uses too). A link is checked
-on the page first (a whole http(s) address with a host name); a pasted link starts
-the lookup by itself, a typed one waits for Enter or **Find sizing chart** — no
-request is made per keystroke. The result is headed by the product's brand and
+**Find Fit** (`index.html`, `assets/find-fit.js`) opens with both halves ready,
+in either order: the item considered, in one box, and the garment owned
+(`assets/find-fit-reference.js`). The box takes a product's link or words: words
+are searched in the brands Find Fit lists once typing pauses (one request per
+pause, `?brand=&q=`, only products matching every word), and a match is picked by
+click or the arrow keys and Enter. A link is checked on the page first (a whole
+http(s) address with a host name; `www.` without a scheme is read as https); a
+pasted link starts the lookup by itself, a typed one is checked once typing
+pauses and read on Enter or **Compare fit**. When the server says the item and
+the garment can be compared (`POST ?check=1`), the comparison runs on its own —
+only after something the shopper did. **Popular Wardrobe Anchors** offers, as the
+garment, only products whose records are checked and publish finished-garment
+measurements (`GET /api/size-recommendation?anchors=1`, public and read-only);
+with production's records today that list is empty and the section is hidden.
+Its sizing chart is drawn below (`assets/size-chart.js`, which the Search page's
+**View sizing chart** dialog uses too). The result is headed by the product's brand and
 name, with a **View product** link to its page (the server's canonical address,
 without tracking parameters). In view: each chart, what it measures (body or
 finished garment), its unit, and one line on where it is from — the product's

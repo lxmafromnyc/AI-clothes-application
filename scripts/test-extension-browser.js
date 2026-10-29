@@ -63,6 +63,15 @@ function serve() {
   const server = http.createServer(async (req, res) => {
     const u = new URL(req.url, 'http://127.0.0.1');
     if (u.pathname === '/api/size-recommendation') {
+      /* Find Fit's wardrobe anchors load on every visit too — Fynd's own
+         records, nothing about the shopper or the product: the real
+         records' answer, and not counted as a lookup */
+      if (u.searchParams.has('anchors')) {
+        const records = require('../api/_sizing/records');
+        const anchors = records.RECORDS.map(records.summary).filter((r) => r.comparable).map(({ id, brand, name, category, line, region, sizes, url }) => ({ id, brand, name, category, line, region, sizes, url }));
+        res.writeHead(200, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ anchors }));
+      }
       /* Find Fit's brand menu and product list load on every visit:
          answered by the real brand modules, and not counted as lookups */
       if (u.searchParams.has('brands') || (u.searchParams.has('brand') && !u.searchParams.has('item'))) {

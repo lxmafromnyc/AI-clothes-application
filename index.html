@@ -54,47 +54,67 @@
 <main id="main" class="ff">
 
   <!-- Find Fit: which size of an item is most likely to fit like a
-       garment the shopper already owns.
+       garment the shopper already owns. Both halves are open from the
+       start, in either order:
 
-         1  the reference: the garments saved on the fit profile (read
-            with the shopper's own session), or one described right here
-            for this visit, no account needed
-            (assets/find-fit-reference.js)
-         2  the item: a pasted product link, or a product picked from the
-            brand browser (assets/brand-browser.js)
-         →  Compare fit: the item's sizing chart (assets/find-fit.js,
-            /api/size-recommendation?chart= or ?brand=&item=), then the
-            engine's own comparison with the saved reference
-            (assets/fit-compare.js: /api/size-recommendation?product=
-            &compare=1, engine.compare()). A size is shown only when the
-            engine recommends one; otherwise the result says what is
-            missing. The chart itself sits under "Size chart and source".
+         the item       one box: a pasted product link, checked as soon
+                        as it is a whole link, or words searched in the
+                        brands Find Fit lists, with suggestions to pick
+                        (assets/find-fit.js); the brand browser stays a
+                        click away (assets/brand-browser.js)
+         the garment    the garments saved on the fit profile (read with
+                        the shopper's own session), or one described here
+                        for this visit, no account needed — or one picked
+                        from Popular Wardrobe Anchors, products Fynd holds
+                        checked garment measurements for
+                        (assets/find-fit-reference.js)
+         →  once both can be compared — the server says so
+            (/api/size-recommendation?check=1) — the comparison runs on
+            its own: the item's chart, then the engine's comparison with
+            the reference (assets/fit-compare.js). A size is shown only
+            when the engine recommends one; otherwise the result says what
+            is missing. "Compare fit" runs it again, or shows the chart of
+            an item that can't be compared.
          →  after the result, an offer to save a garment described here
             to a fit profile (assets/find-fit-save.js): sign in, then
             save, each the shopper's own choice -->
   <section class="container ff-hero" id="find-fit" aria-labelledby="find-fit-title">
     <h1 id="find-fit-title">Find the size that fits like your favorite clothes.</h1>
-    <p class="lead ff-lead">Start with the item you&rsquo;re considering, then a garment you own that fits well. Fynd sets their measurements side by side and suggests a size only when the measurements support one.</p>
+    <p class="lead ff-lead">Add the item you&rsquo;re considering and a garment you own that fits well &mdash; in any order. Fynd sets their measurements side by side and suggests a size when they line up.</p>
+
+    <!-- where the two halves stand, and the next step: drawn by assets/find-fit.js -->
+    <div class="ff-progress" id="ff-progress" data-item="empty" data-garment="empty">
+      <span class="ff-progress-pill" id="ff-progress-item"><span class="ff-progress-dot" aria-hidden="true"></span><span class="ff-progress-text">Item: not added yet</span></span>
+      <span class="ff-progress-pill" id="ff-progress-garment"><span class="ff-progress-dot" aria-hidden="true"></span><span class="ff-progress-text">Your garment: not added yet</span></span>
+      <span class="ff-progress-next" id="ff-progress-next">Add both, in any order.</span>
+    </div>
 
     <form class="ff-flow" id="fit-url-form" novalidate>
       <section class="ff-step" id="ff-step-target" aria-labelledby="ff-step-target-title">
         <div class="ff-step-head">
-          <span class="step-num" aria-hidden="true">1</span>
           <h2 class="ff-step-title" id="ff-step-target-title">The item you&rsquo;re considering</h2>
         </div>
         <div class="ff-target-entry" id="fit-link-alt">
-          <label class="profile-label" for="fit-url">Product link</label>
-          <input class="profile-input" type="url" id="fit-url" name="url" inputmode="url" maxlength="2000" autocomplete="off" spellcheck="false" placeholder="https://&hellip; a product page" aria-describedby="fit-url-hint fit-url-error">
-          <p class="fit-url-hint" id="fit-url-hint">Fynd compares sizes only for products it holds checked garment measurements for. For any other link it shows the size chart it can read, and says why it can&rsquo;t compare.</p>
+          <label class="sr-only" for="fit-url">The item you&rsquo;re considering: a product link, or a brand or item name</label>
+          <div class="ff-smart">
+            <input class="profile-input ff-smart-input" type="text" id="fit-url" name="url" maxlength="2000" autocomplete="off" spellcheck="false" enterkeyhint="go" placeholder="Paste product link OR search brand/item name..." role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="ff-suggest" aria-describedby="fit-url-hint fit-url-error">
+            <!-- what the words typed match, from the brands' catalogues: picked
+                 by click, tap or the arrow keys and Enter (assets/find-fit.js) -->
+            <div class="ff-suggest" id="ff-suggest-box" hidden>
+              <ul class="ff-suggest-list" id="ff-suggest" role="listbox" aria-label="Matching products"></ul>
+              <p class="ff-suggest-status" id="ff-suggest-status" role="status" aria-live="polite"></p>
+            </div>
+          </div>
+          <p class="fit-url-hint" id="fit-url-hint">We&rsquo;ll automatically extract the available size measurements for you.</p>
           <p class="form-error" id="fit-url-error" role="alert"></p>
-          <!-- asks the server what Fynd holds for the item, before a
-               garment is asked for (assets/find-fit.js, checking first) -->
-          <p class="ff-check-product-row"><button class="btn btn-secondary" type="button" id="ff-check-product">Check product</button></p>
         </div>
-        <!-- or pick one: the brands Find Fit can browse (assets/brand-browser.js);
-             a product picked there becomes the item, below -->
+        <div class="ff-picked" id="ff-picked" hidden></div>
+        <!-- whether the item can be compared, and what can still be done:
+             said with the item (assets/find-fit.js, checking first) -->
+        <div class="ff-check" id="ff-check" role="status" aria-live="polite" hidden></div>
+        <!-- or browse a brand's products (assets/brand-browser.js) -->
         <div class="fit-browser ff-browse" id="fit-browser" data-state="idle">
-          <p class="ff-browse-label" id="fit-brand-label">Or pick a product</p>
+          <span class="ff-browse-label" id="fit-brand-label">Browse</span>
           <div class="fit-brands" id="fit-brands" role="group" aria-labelledby="fit-brand-label">
             <button class="fit-brand-choice" type="button" data-brand="uniqlo" aria-haspopup="dialog" aria-controls="fit-brand-dialog">
               <span class="fit-brand-name">UNIQLO</span>
@@ -103,23 +123,22 @@
           </div>
           <p class="fit-brand-planned" id="fit-brand-planned"></p>
         </div>
-        <div class="ff-picked" id="ff-picked" hidden></div>
-        <!-- what Fynd holds for the item, and whether it can be compared
-             with the reference (assets/find-fit.js, checking first):
-             said with the item, in its own step -->
-        <div class="ff-check" id="ff-check" role="status" aria-live="polite" hidden></div>
       </section>
 
       <section class="ff-step" id="ff-step-reference" aria-labelledby="ff-step-reference-title">
         <div class="ff-step-head">
-          <span class="step-num" aria-hidden="true">2</span>
           <h2 class="ff-step-title" id="ff-step-reference-title">A garment that fits you well</h2>
         </div>
+        <!-- products Fynd holds checked garment measurements for, as the
+             garment in one click; hidden when there are none -->
+        <div class="ff-anchors" id="ff-anchors" hidden>
+          <h3 class="ff-anchors-title" id="ff-anchors-title">Popular Wardrobe Anchors</h3>
+          <div class="ff-anchor-list" role="group" aria-labelledby="ff-anchors-title"></div>
+        </div>
         <!-- the saved reference garments, or a garment described right
-             here for this visit — asked for once the item is checked:
-             drawn by assets/find-fit-reference.js -->
+             here for this visit: drawn by assets/find-fit-reference.js -->
         <div class="ff-reference" id="ff-reference" aria-live="polite">
-          <p class="ff-muted">Checking for a saved reference garment&hellip;</p>
+          <p class="ff-muted">Loading&hellip;</p>
         </div>
       </section>
 
@@ -177,7 +196,7 @@
     <button class="btn btn-secondary fit-products-more" id="fit-products-more" type="button" hidden>Show more</button>
   </dialog>
 
-  <p class="container ff-footnote">Nothing about you travels in a link. A saved fit profile is read with your own session. A garment described here without saving is kept in this tab, sent only to work out each comparison, and not stored by Fynd. <a class="guide-link" href="about.html">About Fynd</a></p>
+  <p class="container ff-footnote">Your fit information is used to calculate your comparison. Nothing is saved to an account unless you choose to save it. <a class="guide-link" href="about.html">About Fynd</a></p>
 
 </main>
 

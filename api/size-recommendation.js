@@ -27,6 +27,12 @@
                                                        (api/_sizing/chart.js); needs
                                                        no account and reads no profile
    GET ?brands=1               -> { brands, planned } the brands Find Fit can browse
+   GET ?anchors=1              -> { anchors }      the products a shopper can name as
+                                                       the garment they own and have Fynd
+                                                       use its measurements: only checked
+                                                       records that publish the finished
+                                                       garment's (records.summary
+                                                       comparable); public, read-only
    GET ?brand=<id>[&q=<words>][&category=][&line=][&inStock=1][&offset=][&limit=]
                                -> { brand, products, total, offset, limit, facets,
                                     partial, unmatched }  one page of a brand's products
@@ -310,6 +316,13 @@ async function handler(req, res) {
   /* the brands and products Find Fit browses: public, read-only */
   if (early.brands !== undefined) {
     return res.status(200).json({ brands: brands.list(), planned: brands.PLANNED });
+  }
+  /* Find Fit's wardrobe anchors: what Fynd's own records say, nothing
+     about the caller, and only a record a comparison can use */
+  if (early.anchors !== undefined) {
+    const anchors = sizing.RECORDS.map(sizing.summary).filter((s) => s.comparable)
+      .map(({ id, brand, name, category, line, region, sizes, url }) => ({ id, brand, name, category, line, region, sizes, url }));
+    return res.status(200).json({ anchors });
   }
   if (early.brand !== undefined) {
     const brand = typeof early.brand === 'string' ? brands.get(early.brand) : null;

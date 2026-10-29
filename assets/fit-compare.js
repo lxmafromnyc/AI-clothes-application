@@ -128,7 +128,7 @@
       if (!state || !state.signedIn) {
         if (verdict) {
           /* Find Fit asks for the garment right on the page */
-          const p = el('p', null, 'These finished-garment measurements are checked. Describe a garment that fits you in step 2 — no account needed — and Fynd compares every size with it.');
+          const p = el('p', null, 'These finished-garment measurements are checked. Describe a garment that fits you well — no account needed — and Fynd compares every size with it.');
           const go = el('p', 'fit-compare-action');
           go.append(safeLinkLocal('#ff-step-reference', 'Describe a garment that fits'));
           put(compare, [], [p, go], 'Add a garment that fits to compare', 'sign-in');
@@ -166,7 +166,7 @@
     if (verdict && unsaved && reason === 'needs-reference') reason = 'needs-measurements';
     if (!verdict || reason === 'no-recommendation') lines.push(NOT_ENOUGH);
     if (verdict && reason === 'body-only') lines.push(BODY_ONLY_REST);
-    else if (reason === 'needs-measurements') lines.push('Fynd compares measurements, not size labels. Add this garment’s measurements in step 2 — laid flat — or name a product Fynd holds checked measurements for.');
+    else if (reason === 'needs-measurements') lines.push('Fynd compares measurements, not size labels. Add this garment’s measurements — laid flat — or pick a product we have measurements for.');
     else if (typeof why.message === 'string' && why.message) lines.push(why.message);
     const next = Array.isArray(c.next) && typeof c.next[0] === 'string' ? c.next[0] : null;
     if (next && ACTIONABLE[reason] && reason !== 'needs-measurements') lines.push(next);
@@ -176,8 +176,8 @@
     /* too few in common: the profile helps only where the reference is what's missing (the engine says so in next) */
     if (ACTIONABLE[reason] && (reason !== 'too-few' || next)) {
       const fix = el('p', 'fit-compare-action');
-      /* on Find Fit the garment is described right there, in step 2 */
-      if (verdict && (unsaved || reason === 'needs-reference')) fix.append(safeLinkLocal('#ff-step-reference', reason === 'needs-reference' ? 'Describe a garment that fits' : 'Add its measurements in step 2'));
+      /* on Find Fit the garment is described right there, beside the item */
+      if (verdict && (unsaved || reason === 'needs-reference')) fix.append(safeLinkLocal('#ff-step-reference', reason === 'needs-reference' ? 'Describe a garment that fits' : 'Add its measurements'));
       else fix.append(safeLinkLocal(profileHref, reason === 'needs-reference' ? 'Add a garment on your fit profile' : 'Check your reference’s measurements'));
       extra.push(fix);
     }

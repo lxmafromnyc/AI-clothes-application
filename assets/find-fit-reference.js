@@ -1,5 +1,5 @@
 /* =========================================================
-   Fynd — Find Fit, step 2: the garment that fits
+   Fynd — Find Fit: the garment that fits
 
    The reference the item is compared with, in one of two places:
 
@@ -25,18 +25,17 @@
      signed-out / none   the form, or the garment described this visit
      saved               the saved garments, each with Change
 
-   The form waits for the item (data-locked): it is asked for only once
-   Find Fit's check has found the item holds checked garment
-   measurements (FindFitReference.unlock(), from assets/find-fit.js),
-   or a garment is already kept for this visit. Unlocked, it stays so
-   for the visit: changing the item never takes away what was typed.
-   Whether the two can be compared is still the server's to say.
+   The form is there from the start, beside the item: the two can be
+   given in either order, and changing the item never takes away what
+   was typed. Whether the two can be compared is still the server's to
+   say (assets/find-fit.js, checking first).
 
-   A shopper whose item can't be compared yet may still choose, as an
-   option, to set up a garment for later (FindFitReference.unlock
-   ('future')): the same form, validation and kept-for-the-visit
-   garment, under a note that says plainly the item they checked can't
-   be compared — until an item that can unlocks it the ordinary way.
+   Popular Wardrobe Anchors: products a shopper may own, offered as the
+   garment in one click — only those Fynd's records hold checked
+   finished-garment measurements for (GET ?anchors=1, records.summary
+   comparable), so none is ever offered on data nobody checked. Picking
+   one fills the form with its type, brand and product; the size on its
+   label is still the shopper's to say.
 
    Which reference a comparison uses is the size engine's to decide
    (api/_sizing/engine.js referenceEntry): the one of the item's own
@@ -48,10 +47,9 @@
                                   when no saved reference is in use
      FindFitReference.current()   this visit's garment, saved or not in use
      FindFitReference.forget()    clear this visit's garment
-     FindFitReference.unlock()    ask for the garment: the item can be compared
-     FindFitReference.unlock('future')  the shopper's own choice: a garment
-                                  for later, the item checked can't be compared
-     FindFitReference.locked()    whether the garment is still waiting for the item
+     FindFitReference.unlock()    kept for older callers: the form is always open
+     FindFitReference.locked()    false: the garment never waits for the item
+     FindFitReference.useAnchor(a)  the form, filled from one wardrobe anchor
    ========================================================= */
 
 (function (global) {
@@ -89,11 +87,13 @@
     try { return checked(JSON.parse(global.sessionStorage.getItem(KEY) || 'null')); } catch (err) { return null; }
   }
   let visit = stored();
-  /* Find Fit checks the item again whenever the reference changes */
-  const changed = () => { try { doc.dispatchEvent(new global.CustomEvent('fynd:reference-change')); } catch (err) { /* no events here */ } };
-  function keep(value) {
+  /* Find Fit checks the item again whenever the reference changes; a
+     change the shopper made says so (detail.by), so Find Fit may go on
+     to compare — a profile read on its own never starts one */
+  const changed = (by) => { try { doc.dispatchEvent(new global.CustomEvent('fynd:reference-change', { detail: { by: by || 'page' } })); } catch (err) { /* no events here */ } };
+  function keep(value, by) {
     visit = value;
-    global.setTimeout(changed, 0);
+    global.setTimeout(() => changed(by), 0);
     try {
       if (value) global.sessionStorage.setItem(KEY, JSON.stringify(value));
       else global.sessionStorage.removeItem(KEY);
@@ -103,6 +103,8 @@
   /* the shopper's state, as last read: whether a saved reference is in use */
   let savedInUse = false;
   let editing = false;
+  /* a wardrobe anchor picked: the form's starting values, until used or cancelled */
+  let prefill = null;
 
   /* ---------- the form ---------- */
 
@@ -167,7 +169,7 @@
     box.append(field('Brand', brand), brands);
     const product = a.product ? (a.product.url || a.product.name || '') : '';
     box.append(field('Product name or link (optional)', input('ffr-product', 'text', product, { maxlength: '2000', autocomplete: 'off', spellcheck: 'false' }),
-      'If Fynd holds that product’s checked measurements, it uses them.'));
+      'If we have this product’s measurements, we’ll use them.'));
     const row2 = el('div', 'ffr-row');
     row2.append(
       field('Sold as', select('ffr-line', [['not-sure', 'Not sure'], ['men', 'Men’s'], ['women', 'Women’s'], ['unisex', 'Unisex']], (g && g.line) || 'not-sure')),
@@ -198,7 +200,7 @@
     if (from) {
       const cancel = el('button', 'btn btn-secondary', 'Cancel');
       cancel.type = 'button';
-      cancel.addEventListener('click', () => { editing = false; redraw(); });
+      cancel.addEventListener('click', () => { editing = false; prefill = null; redraw(); });
       actions.append(cancel);
     }
     box.append(actions);
@@ -255,8 +257,9 @@
       showErrors(errors.map((e) => ({ id: FIELD_IDS[e.field.replace(/^garments\.[a-z]+\.(anchor\.)?/, '')] || 'ffr-brand', message: e.message })));
       return;
     }
-    keep(checked(said));
+    keep(checked(said), 'shopper');
     editing = false;
+    prefill = null;
     redraw();
     const next = doc.getElementById('fit-url');
     if (next) next.focus();
@@ -268,8 +271,8 @@
      if the shopper had nothing of their own to give */
   function missingDimensions(hasProduct) {
     return hasProduct
-      ? 'Reference garment dimensions (chest, length, shoulders, sleeve): none measured. Fynd can use this product’s published measurements only if it has a checked record for this exact product; otherwise, edit this garment to add any dimensions you can measure, laid flat.'
-      : 'No measurements entered. Edit this garment to add any dimensions you can measure, laid flat, so Fynd has a reference to compare.';
+      ? 'No measurements of your own yet. We’ll use this product’s measurements if we have them — or edit it to add any you can measure, laid flat.'
+      : 'No measurements yet. Edit it to add any you can measure, laid flat.';
   }
 
   function visitCard(value) {
@@ -286,31 +289,23 @@
     edit.addEventListener('click', () => { editing = true; redraw(); const f = doc.getElementById('ffr-brand'); if (f) f.focus(); });
     const remove = el('button', 'link-btn ff-ref-remove', 'Remove');
     remove.type = 'button';
-    remove.addEventListener('click', () => { keep(null); redraw(); const f = doc.getElementById('ffr-brand'); if (f) f.focus(); });
+    remove.addEventListener('click', () => { keep(null, 'shopper'); redraw(); const f = doc.getElementById('ffr-brand'); if (f) f.focus(); });
     actions.append(edit, remove);
     top.append(actions);
     card.append(top);
     card.append(el('p', 'ff-ref-name', [a.brand, a.size ? `size ${a.size}` : null, value.garment.line ? LINE_WORDS[value.garment.line] : null].filter(Boolean).join(' · ')));
     if (said.product) card.append(el('p', 'ff-ref-detail', said.product));
     card.append(el('p', 'ff-ref-detail', said.measurements ? `Measured: ${said.measurements}` : missingDimensions(Boolean(said.product))));
-    card.append(el('p', 'ff-ref-status', 'Not saved — kept in this tab until you close it.'));
+    card.append(el('p', 'ff-ref-status', 'Kept for this visit. Not saved to an account.'));
     return card;
   }
 
   let signedIn = false;
-  /* the garment is asked for once the item is known to be comparable (see the header) */
-  let unlocked = false;
-  /* opened by the shopper's choice, for later: the item checked can't be compared */
-  let forLater = false;
   function unsavedState() {
     const nodes = [];
-    const locked = !visit && !editing && !unlocked;
-    if (forLater && !locked) nodes.push(el('p', 'ff-reference-intro ff-reference-later', 'The product you checked can’t be compared yet: Fynd doesn’t hold checked garment measurements for it. A garment you describe here is kept for future comparisons, with products Fynd can compare.'));
     if (visit && !editing) nodes.push(visitCard(visit));
-    else if (locked) nodes.push(el('p', 'ff-reference-intro ff-reference-locked', 'Check the item first. Fynd asks for a garment you own once it holds checked garment measurements for the item.'));
-    else nodes.push(form(editing ? visit : null));
-    root.dataset.locked = locked ? 'true' : 'false';
-    root.dataset.later = forLater && !locked ? 'true' : 'false';
+    else nodes.push(form(editing ? (prefill || visit) : prefill));
+    root.dataset.locked = 'false';
     if (!signedIn) {
       const already = el('p', 'ff-muted');
       already.append(doc.createTextNode('Saved one already? '), link(setupHref(null), 'Sign in to your fit profile'), doc.createTextNode('.'));
@@ -319,6 +314,7 @@
     root.replaceChildren(...nodes);
     root.dataset.state = signedIn ? 'none' : 'signed-out';
     root.dataset.visit = visit ? 'set' : 'empty';
+    drawAnchors();
   }
 
   /* one kind's saved reference, as the shopper saved it */
@@ -338,7 +334,7 @@
     card.append(el('p', 'ff-ref-detail', said.measurements ? `Measured: ${said.measurements}` : missingDimensions(Boolean(said.product))));
     const status = el('p', 'ff-ref-status');
     status.textContent = readiness.level === 'compare'
-      ? 'Ready to compare, wherever Fynd holds an item’s checked measurements.'
+      ? 'Ready to compare.'
       : (readiness.improve[0] || readiness.label);
     card.append(status);
     return card;
@@ -372,6 +368,50 @@
     root.dataset.state = 'saved';
     root.dataset.locked = 'false';
     root.dataset.visit = visit ? 'set' : 'empty';
+    drawAnchors();
+  }
+
+  /* ---------- Popular Wardrobe Anchors ---------- */
+
+  const anchorsBox = doc.getElementById('ff-anchors');
+  const anchorList = anchorsBox && anchorsBox.querySelector('.ff-anchor-list');
+  let anchors = [];
+  /* only what the server listed, each with what a garment needs: a kind
+     the form takes, a brand, a name and its brand's https page */
+  const usable = (a) => a && typeof a.id === 'string' && KINDS.includes(a.category) && typeof a.brand === 'string' && a.brand
+    && typeof a.name === 'string' && a.name && typeof a.url === 'string' && /^https:\/\//.test(a.url);
+  function anchorCard(a) {
+    const b = el('button', 'ff-anchor');
+    b.type = 'button';
+    b.dataset.id = a.id;
+    b.append(el('span', 'ff-anchor-kind', cap(Schema.garmentOf(a.category).one)), el('span', 'ff-anchor-brand', a.brand), el('span', 'ff-anchor-name', a.name));
+    b.addEventListener('click', () => useAnchor(a));
+    return b;
+  }
+  /* shown wherever the form is the shopper's way in: not over saved garments */
+  function drawAnchors() {
+    if (!anchorsBox || !anchorList) return;
+    const show = anchors.length > 0 && root.dataset.state !== 'saved' && root.dataset.state !== 'error';
+    anchorsBox.hidden = !show;
+    if (show && anchorList.childElementCount !== anchors.length) anchorList.replaceChildren(...anchors.map(anchorCard));
+  }
+  async function loadAnchors() {
+    const sizing = global.Account && global.Account.sizing;
+    const got = sizing && sizing.anchors ? await sizing.anchors() : null;
+    anchors = got && got.ok && got.data && Array.isArray(got.data.anchors) ? got.data.anchors.filter(usable) : [];
+    if (anchorsBox) anchorsBox.dataset.state = 'ready';
+    drawAnchors();
+  }
+  /* one picked: the form, filled with what the record says — the size on
+     its label is the shopper's to choose */
+  function useAnchor(a) {
+    const line = ['men', 'women', 'unisex'].includes(a.line) ? a.line : null;
+    prefill = { type: a.category, garment: { favorite: 'perfect', line, anchor: { brand: a.brand, size: null, product: { url: a.url } } } };
+    editing = true;
+    redraw();
+    if (anchorList) anchorList.querySelectorAll('.ff-anchor').forEach((n) => n.setAttribute('aria-pressed', String(n.dataset.id === a.id)));
+    const size = doc.getElementById('ffr-size');
+    if (size) size.focus();
   }
 
   function unavailable() {
@@ -406,20 +446,15 @@
   }
 
   refresh();
+  loadAnchors();
   global.FindFitReference = {
     refresh,
     unsaved: () => (savedInUse ? null : visit),
     current: () => visit,
     forget: () => { keep(null); redraw(); },
     savedProfile: () => lastProfile,
-    unlock: (mode) => {
-      const later = mode === 'future';
-      /* an item that can be compared ends "for later" */
-      if (unlocked && (later || !forLater)) return;
-      unlocked = true;
-      forLater = later;
-      if (root.dataset.state === 'signed-out' || root.dataset.state === 'none') redraw();
-    },
-    locked: () => root.dataset.locked === 'true'
+    unlock: () => {},
+    locked: () => false,
+    useAnchor
   };
 })(typeof window !== 'undefined' ? window : globalThis);
