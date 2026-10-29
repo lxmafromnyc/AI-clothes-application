@@ -329,8 +329,10 @@ function matchProduct(anchor, pool, category) {
     try { u = new URL(product.url); } catch (err) { u = null; }
     if (u) {
       const path = u.pathname.toLowerCase();
+      /* a link to another market's page is not this region's product */
+      const market = sizingSchema.marketOf(u.pathname);
       const byUrl = same.filter((r) => (sizingSchema.OFFICIAL_HOSTS[r.brand] || []).includes(u.hostname)
-        && r.product.code && sizingSchema.codeIn(path, r.brand, r.product.code));
+        && r.product.code && sizingSchema.codeIn(path, r.brand, r.product.code) && (!market || r.region === market));
       if (byUrl.length === 1) return { record: byUrl[0], by: 'link' };
     }
   }

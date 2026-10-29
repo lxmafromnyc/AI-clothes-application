@@ -174,6 +174,20 @@ function codeIn(path, brand, code) {
   return new RegExp(`(?:^|[^a-z0-9])${form.before || ''}${own}${form.after || ''}(?:[^a-z0-9]|$)`).test(String(path).toLowerCase());
 }
 
+/* The market a brand's address names, or null: "/us/en/…", "/en_us/…",
+   "/en-gb/…" say it; an address that doesn't is not guessed. A record is
+   of one region, and a link to another market's page is not that
+   product there: its sizes, its chart, even its code can differ. */
+function marketOf(path) {
+  const parts = String(path || '').split('/').filter(Boolean).slice(0, 2);
+  for (const p of parts) {
+    const pair = /^[a-z]{2}[_-]([a-z]{2})$/i.exec(p);
+    if (pair) return pair[1].toUpperCase();
+    if (/^[a-z]{2}$/i.test(p) && !/^(en|fr|es|de|it|ja|zh|ko|pt|nl|sv|da|pl|t|p)$/i.test(p)) return p.toUpperCase();
+  }
+  return null;
+}
+
 const isPlainObject = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
 const isNumber = (v) => typeof v === 'number' && Number.isFinite(v) && v > 0;
 const isDate = (v) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(v));
@@ -403,6 +417,7 @@ module.exports = {
   OFFICIAL_HOSTS,
   officialUrl,
   codeIn,
+  marketOf,
   validate,
   isVerified,
   measurementStatus,

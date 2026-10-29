@@ -1399,12 +1399,13 @@ skips itself because Chromium would not start is a failure, not a pass. A new
 `scripts/test-*.js` has to be added to a group, or to `NOT_RUN` with its
 reason, or the run stops.
 
-`test-catalog-prices` is not a required check. It already fails one test on
-`main` (checked at `2bac8c1`): "the live shape: the endpoint the page asks
-answers instead" expects `49.9` and reads `undefined`. That is an existing
-issue, to be investigated on its own. CI still runs the suite, last, in a step
-that cannot fail the job, and reports its result as a warning. It moves back
-into the browser group once it passes.
+`test-catalog-prices` is back in the browser group. Its one failing test,
+"the live shape: the endpoint the page asks answers instead" (expected `49.9`,
+read `undefined`), was a fault in the extractor: a JSON-LD offer counted as
+the evidence that confirmed the same page's schema.org record, so a stale
+`$7.90` written for crawlers stood against the `$49.90` the page priced from,
+and nothing was written. A JSON-LD offer no longer vouches for markup.
+`NOT_RUN` is empty, so CI's known-failing step has nothing to run.
 
 Against a live deployment, with the request the interpreter produces for
 "black oversized hoodie under $80":
