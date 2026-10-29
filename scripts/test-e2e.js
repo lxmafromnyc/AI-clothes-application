@@ -2593,6 +2593,23 @@ const linkFromInbox = (pattern) => {
     await context.close();
   });
 
+  await test('Enter on an item that can\'t be compared still shows its chart: Compare fit is off, but Enter in the link box is never swallowed', async () => {
+    const context = await openContext();
+    const page = await context.newPage();
+    const charts = [];
+    page.on('request', (r) => { if (/[?&]chart=/.test(r.url())) charts.push(r.url()); });
+    await open(page, 'index.html');
+    await page.waitForSelector('#ff-reference[data-state]');
+    assert.strictEqual(await checkItem(page, 'https://www.uniqlo.com/us/en/products/E475378-000/00'), 'unverified');
+    assert.strictEqual(await page.isDisabled('#fit-url-submit'), true, 'Compare fit off');
+    await page.focus('#fit-url');
+    await page.keyboard.press('Enter');
+    await page.waitForSelector('#fit-compare[data-verdict="unsupported"]');
+    assert.strictEqual(charts.length, 1, 'the chart, read once');
+    assert.strictEqual(await page.$$eval('#fit-compare .fit-compare-recommended, #fit-compare .fit-compare-closest', (ns) => ns.length), 0, 'shown, never compared');
+    await context.close();
+  });
+
   await test('repeated checks by keyboard: Enter on Check product keeps focus there; Check again, replaced by its own answer, hands focus to Check product — never the page — through the loading state; focus moved elsewhere meanwhile is left alone', async () => {
     const context = await openContext();
     const page = await context.newPage();
@@ -2710,7 +2727,11 @@ const linkFromInbox = (pattern) => {
     /* the form's own validation, as ever */
     await page.click('#ffr-use');
     assert.strictEqual(await page.textContent('#ffr-brand-error'), 'Enter the brand on its label.');
+    /* the garment's own check: the reference change asks again a moment
+       later, so the answer already on screen can't stand in for it */
+    const rechecked = page.waitForResponse((r) => /\/api\/size-recommendation\?check=1$/.test(r.url()));
     await describe(page, CARHARTT);
+    await rechecked;
     /* checked again with the garment: this item still can't be compared, and no optional way is offered twice */
     await page.waitForFunction(() => document.getElementById('ff-check').dataset.status === 'unverified' && !document.querySelector('#ff-check .ff-check-optional'));
     assert.strictEqual(await page.isDisabled('#fit-url-submit'), true);
