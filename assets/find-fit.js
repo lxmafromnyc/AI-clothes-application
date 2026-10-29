@@ -512,6 +512,12 @@
     if (choice && input.value.trim() !== (choice.product.url || '')) unselect();
     scheduleCheck();
   });
+  /* Compare fit is off for an item that can't be compared, and a form
+     isn't sent by Enter while its button is off: Enter is taken here
+     instead, so it still shows what can be shown — the item's chart */
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' && blocked) { event.preventDefault(); submit(); }
+  });
   doc.addEventListener('fynd:reference-change', () => scheduleCheck(true));
   /* "Check product": the item, asked about now — a link that isn't one
      is refused here, as Compare fit refuses it, and nothing is sent */
