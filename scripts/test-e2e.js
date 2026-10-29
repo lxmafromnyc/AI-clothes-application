@@ -2710,7 +2710,11 @@ const linkFromInbox = (pattern) => {
     /* the form's own validation, as ever */
     await page.click('#ffr-use');
     assert.strictEqual(await page.textContent('#ffr-brand-error'), 'Enter the brand on its label.');
+    /* the garment's own check: the reference change asks again a moment
+       later, so the answer already on screen can't stand in for it */
+    const rechecked = page.waitForResponse((r) => /\/api\/size-recommendation\?check=1$/.test(r.url()));
     await describe(page, CARHARTT);
+    await rechecked;
     /* checked again with the garment: this item still can't be compared, and no optional way is offered twice */
     await page.waitForFunction(() => document.getElementById('ff-check').dataset.status === 'unverified' && !document.querySelector('#ff-check .ff-check-optional'));
     assert.strictEqual(await page.isDisabled('#fit-url-submit'), true);
