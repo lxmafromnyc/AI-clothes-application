@@ -2053,7 +2053,8 @@ function hydratingRetailer() {
   console.log('\nThrough a real browser\n');
 
   let chromium = null;
-  try { chromium = require('playwright').chromium; } catch (err) { chromium = null; }
+  /* where scripts/ci-tests.js says Playwright is, as the other browser suites read it */
+  try { chromium = require(process.env.PLAYWRIGHT_PATH || 'playwright').chromium; } catch (err) { chromium = null; }
 
   if (!chromium) {
     skipped += 29;

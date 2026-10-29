@@ -2507,6 +2507,39 @@ await test('a record\'s chart answer names each column\'s method as the record h
   assert.strictEqual(answer.verification, 'unverified', 'copied into a record is not verified');
 });
 
+section('a product\'s market');
+
+await test('a reference or a listing linked from another market is not the US record: UK, Japanese and Irish UNIQLO links match nothing — compare, recommend and search sizing alike — while the US link and a link naming no market still match', () => asChecked(UQ_PAIR, () => {
+  const SWEAT = (market) => `https://www.uniqlo.com/${market}/products/E475377-000/00`;
+  const ref = (url) => {
+    const p = Schema.empty();
+    p.garments.sweatshirts = Object.assign(Schema.emptyGarment('sweatshirts'), { favorite: 'perfect', line: 'men', anchor: { brand: 'UNIQLO', size: 'M', product: { name: null, url } } });
+    return p;
+  };
+  /* the US page, and one that names no market: the US record, as before */
+  for (const url of [SWEAT('us/en'), 'https://www.uniqlo.com/products/E475377-000/00']) {
+    assert.strictEqual(engine.matchProduct({ brand: 'UNIQLO', product: { url } }, sizing.RECORDS, 'sweatshirts').record.id, UQ_SWEAT, url);
+    const c = engine.compare(ref(url), sizing.byId(UQ_HOODIE));
+    assert.deepStrictEqual([c.status, c.reference.source, c.reference.product.id], ['ok', 'product', UQ_SWEAT], url);
+  }
+  /* another market's page: not this record, so not its measurements */
+  for (const url of [SWEAT('uk/en'), SWEAT('jp/ja'), SWEAT('eu-ie/en')]) {
+    assert.strictEqual(engine.matchProduct({ brand: 'UNIQLO', product: { url } }, sizing.RECORDS, 'sweatshirts'), null, url);
+    const c = engine.compare(ref(url), sizing.byId(UQ_HOODIE));
+    assert.deepStrictEqual([c.status, c.missing[0].code], ['insufficient', 'no-reference-measurements'], url);
+    assert.ok(!('reference' in c) && !('sizes' in c), `${url}: nothing borrowed from the US record`);
+    const r = engine.recommend(ref(url), sizing.byId(UQ_HOODIE));
+    assert.notStrictEqual(r.favorite && r.favorite.source, 'product', `${url}: recommend doesn't use the US record either`);
+    /* nor is a search listing on that market's site sized from it */
+    const fit = recommendEndpoint.fitFor(ref(SWEAT('us/en')), 'sweatshirts', [{ brand: 'UNIQLO', name: null, url }]);
+    assert.deepStrictEqual(fit.items, [], `${url}: the listing is left unsized`);
+  }
+  assert.strictEqual(recommendEndpoint.fitFor(ref(SWEAT('us/en')), 'sweatshirts', [{ brand: 'UNIQLO', name: null, url: SWEAT('us/en') }]).items.length, 1, 'the US listing still is');
+  /* the target lookup already told markets apart; it still does */
+  assert.strictEqual(charts.recordFor(charts.checkUrl(SWEAT('uk/en'))), null);
+  assert.strictEqual(charts.recordFor(charts.checkUrl(SWEAT('us/en'))).id, UQ_SWEAT);
+}));
+
 section('the shopper\'s own measurements, checked raw before anything is worked out');
 
 /* what a comparison that refused to work anything out looks like: no

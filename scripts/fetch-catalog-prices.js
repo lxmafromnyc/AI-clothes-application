@@ -1238,7 +1238,10 @@ function decide(candidates, productUrl, proven, options) {
      what makes it true. */
   const authoritative = survivors.filter((s) => !s.candidate.record || s.candidate.record.authority !== 'markup');
   if (authoritative.length < survivors.length) {
-    const backed = new Set(authoritative.map((s) => s.candidate.amount));
+    /* A json-ld offer is that same markup read another way, so it can't
+       be what confirms a markup record: one source speaking twice. It
+       stays in play itself, and is judged like any offer below. */
+    const backed = new Set(authoritative.filter((s) => !s.candidate.offer).map((s) => s.candidate.amount));
     const kept = [];
     for (const survivor of survivors) {
       const record = survivor.candidate.record;
