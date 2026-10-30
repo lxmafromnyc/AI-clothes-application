@@ -25,6 +25,10 @@
                 names), size and, where stock is known, in stock only —
                 per colour and size together where the source gives
                 stock per variant
+     sorting    featured (the list's own order, or best match first for
+                a query), name A–Z, or price either way — price only where
+                the caller says prices are current (settings.pricesKnown);
+                a product without a price goes last, never guessed
      pages      offset and limit (at most MAX_LIMIT), so a catalogue of
                 thousands is never sent, or drawn, all at once
 
@@ -41,6 +45,10 @@ const MAX_TERMS = 8;
 const DEFAULT_LIMIT = 24;
 const MAX_LIMIT = 48;
 const MAX_OFFSET = 50000;
+
+const SORTS = ['featured', 'name', 'price-asc', 'price-desc'];
+/* the orders a list can be put in, given whether its prices may be shown */
+const sortsFor = (pricesKnown) => SORTS.filter((s) => pricesKnown || !s.startsWith('price'));
 
 const STOP = new Set(['a', 'an', 'the', 'for', 'with', 'and', 'or', 'in', 'of', 'to', 'on', 'my', 'i', 'want', 'need', 'looking', 'some', 'any']);
 const SAME = { hoody: 'hoodie', hoodi: 'hoodie', tee: 'tshirt', jumper: 'sweater', trouser: 'pant', mens: 'men', womens: 'women', ladie: 'women', unisex: 'unisex' };
@@ -78,7 +86,8 @@ function factsOf(p) {
     availability: p.availability || c.availability || null,
     sizeAvailability: p.sizeAvailability || c.sizeAvailability || null,
     variants: p.variants || c.variants || null,
-    description: p.description || c.description || ''
+    description: p.description || c.description || '',
+    price: p.price || c.price || null
   };
 }
 
@@ -124,6 +133,7 @@ function readQuery(raw) {
     colour: raw && COLOUR_FAMILIES.includes(raw.colour) ? raw.colour : 'all',
     size: raw && typeof raw.size === 'string' && /^[A-Za-z0-9][A-Za-z0-9./ -]{0,11}$/.test(raw.size.trim()) ? raw.size.trim().toUpperCase() : 'all',
     inStock: Boolean(raw && (raw.inStock === '1' || raw.inStock === true)),
+    sort: raw && SORTS.includes(raw.sort) ? raw.sort : 'featured',
     offset: clampInt(raw && raw.offset, 0, MAX_OFFSET, 0),
     limit: clampInt(raw && raw.limit, 1, MAX_LIMIT, DEFAULT_LIMIT)
   };
@@ -243,6 +253,24 @@ function createIndex(products, options) {
         .sort((a, b) => (b.inName - a.inName) || (a.at - b.at))
         .map((s) => s.at);
     }
+    /* the order asked for, where the data supports it; ties keep the
+       featured order */
+    const pricesKnown = Boolean(settings && settings.pricesKnown);
+    if (!sortsFor(pricesKnown).includes(query.sort)) query.sort = 'featured';
+    if (query.sort === 'name') {
+      const at = new Map(picked.map((i, n) => [i, n]));
+      picked = picked.slice().sort((a, b) => String(list[a].name).localeCompare(String(list[b].name)) || (at.get(a) - at.get(b)));
+    } else if (query.sort.startsWith('price')) {
+      const at = new Map(picked.map((i, n) => [i, n]));
+      const amount = (i) => { const pr = facts[i].price; return pr && Number.isInteger(pr.amount) ? pr.amount : null; };
+      const dir = query.sort === 'price-asc' ? 1 : -1;
+      picked = picked.slice().sort((a, b) => {
+        const x = amount(a);
+        const y = amount(b);
+        if (x === null || y === null) return (x === null) - (y === null) || (at.get(a) - at.get(b));
+        return dir * (x - y) || (at.get(a) - at.get(b));
+      });
+    }
     const total = picked.length;
     const offset = Math.min(query.offset, total);
     return {
@@ -260,4 +288,4 @@ function createIndex(products, options) {
   return { search, facets, size: list.length };
 }
 
-module.exports = { createIndex, words, readQuery, DEFAULT_LIMIT, MAX_LIMIT, MAX_QUERY };
+module.exports = { createIndex, words, readQuery, sortsFor, SORTS, DEFAULT_LIMIT, MAX_LIMIT, MAX_QUERY };

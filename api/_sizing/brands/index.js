@@ -40,7 +40,7 @@ const get = (id) => (typeof id === 'string' ? BRANDS.find((b) => b.id === id) ||
 const list = () => BRANDS.map((b) => ({ id: b.id, name: b.name, market: b.market, count: b.products().length, coverage: b.coverage }));
 
 /* the fields a card may carry to the browser; bookkeeping stays here */
-const CARD = ['code', 'name', 'url', 'category', 'group', 'categoryLabel', 'kind', 'kindLabel', 'line', 'imageUrl', 'holds', 'holdsText', 'status', 'price', 'availability'];
+const CARD = ['code', 'name', 'url', 'category', 'group', 'categoryLabel', 'kind', 'kindLabel', 'line', 'imageUrl', 'holds', 'holdsText', 'status', 'sizeRange', 'price', 'availability'];
 const pick = (p) => Object.fromEntries(CARD.filter((k) => p[k] !== undefined).map((k) => [k, p[k]]));
 
 /* One page of a brand's products for Find Fit: the brand's own search

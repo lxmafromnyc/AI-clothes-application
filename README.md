@@ -2215,6 +2215,14 @@ check (`POST ?check=1`, `engine.validate`) with the shopper's garment before
 Compare fit is offered, and fetches the product's details (`?detail=`) for the
 picked panel — its ID, type and sizes.
 
+**What a card shows**, like a shop's grid: the photo (UNIQLO's image host
+only, else drawn artwork), the type and who it's for ("Hoodies · Men"), the
+name, the price (only while current), its size range ("Sizes XS–XXL": the
+labels it is sold in, from Fynd's record or the catalogue — never
+measurements), stock, the four facts above, and its product ID. Sizes, price
+and photos for products beyond Fynd's own five arrive only with an authorized
+catalogue; until then the grid holds those five.
+
 **How many, said plainly.** Under the status line, the popup says
 `<n> shown · <m> matching · <k> listed in all`: the page drawn, the server's
 total for the search and filters, and every product the list holds
@@ -2409,6 +2417,7 @@ Filters are offered only where the data has them:
 | Colour | the source's colour names, grouped into families (black, white, gray, navy, blue, green, beige, brown, red, pink, purple, yellow, orange); a name no family matches is found by search only, never guessed | none — Fynd holds no colour names |
 | Size | the source's size labels, or Fynd's records' sizes | the four records' sizes |
 | In stock only | the source's stock — per colour and size together where it gives stock per variant — only while current (48 hours) | none |
+| Sort by | Featured (Fynd's order, or best match first for a search) and Name A–Z always; Price low–high and high–low only while the catalogue's prices are current (48 hours), a product with no price last — on the server, so every page is in the same order | Featured, Name |
 
 **Sizing, by exact identity.** A catalogue product is matched to Fynd's
 sizing by its exact code and canonical link only. One Fynd holds a record for
