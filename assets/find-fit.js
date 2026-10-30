@@ -125,9 +125,7 @@
      any reference is read (engine.js prepare): with any other, the item
      itself holds checked garment measurements. Read from the answer,
      never worked out here. */
-  const ITEM_GAPS = ['no-record', 'category-not-covered', 'unverified-data', 'crowdsourced-data', 'body-chart-only'];
-  const itemReady = (check) => Boolean(check.target && check.target.status === 'record' && check.validation
-    && typeof check.validation.code !== 'undefined' && !ITEM_GAPS.includes(check.validation.code));
+  const itemReady = (check) => global.FyndSuggest.heldChecked(check);
   function setBlocked(on) {
     blocked = on;
     submitButton.disabled = on;
@@ -395,127 +393,26 @@
   }
 
   /* ---------- suggestions ----------
-     Words in the box are searched in the brands Find Fit lists, once
-     typing pauses: one request per pause, and only the newest answer is
-     drawn. A brand named in the words narrows the search to it. Only
-     products matching every word are offered — never the "closest"
-     ones — and a link can always be pasted instead. */
-  const suggestBox = $('ff-suggest-box');
-  const suggestList = $('ff-suggest');
-  const suggestStatus = $('ff-suggest-status');
-  const SUGGEST_WAIT = 250;
-  const SUGGEST_MAX = 6;
-  let suggestAsk = 0;
-  let suggestTimer = null;
-  let suggestions = [];
-  let active = -1;
-  let brandsKnown = null;
-  async function brandsNow() {
-    if (brandsKnown) return brandsKnown;
-    const sizing = sizingApi();
-    const got = sizing && sizing.brands ? await sizing.brands() : null;
-    const list = got && got.ok && got.data && Array.isArray(got.data.brands)
-      ? got.data.brands.filter((b) => b && typeof b.id === 'string' && typeof b.name === 'string' && b.name) : null;
-    if (list) brandsKnown = list;
-    return list || [];
-  }
-  function openSuggest() {
-    suggestBox.hidden = false;
-    input.setAttribute('aria-expanded', String(suggestions.length > 0));
-  }
-  function closeSuggest() {
-    global.clearTimeout(suggestTimer);
-    suggestAsk += 1;
-    suggestions = [];
-    active = -1;
-    suggestList.replaceChildren();
-    suggestStatus.textContent = '';
-    suggestBox.hidden = true;
-    delete suggestBox.dataset.state;
-    input.setAttribute('aria-expanded', 'false');
-    input.removeAttribute('aria-activedescendant');
-  }
-  function suggestSay(text, state) {
-    suggestStatus.textContent = text;
-    suggestBox.dataset.state = state;
-  }
-  function suggestSoon(text) {
-    global.clearTimeout(suggestTimer);
-    const mine = ++suggestAsk;
-    if (text.length < 2) { closeSuggest(); return; }
-    suggestions = [];
-    active = -1;
-    suggestList.replaceChildren();
-    openSuggest();
-    suggestSay('Searching…', 'loading');
-    suggestTimer = global.setTimeout(() => runSuggest(text, mine), SUGGEST_WAIT);
-  }
-  const escapeRe = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  async function runSuggest(text, mine) {
-    const sizing = sizingApi();
-    const brands = await brandsNow();
-    if (mine !== suggestAsk) return;
-    if (!sizing || !sizing.catalog || !brands.length) {
-      suggestSay('Search isn’t available right now. Paste the product’s link instead.', 'error');
-      return;
+     Words in the box are searched in Fynd's catalogue once typing pauses
+     (assets/catalog-suggest.js): a size typed with them is read apart,
+     only the newest answer is drawn, only products matching every word
+     are offered, what the catalogue covers is said, and a link can
+     always be pasted instead. A product picked is only its identity:
+     whether it can be compared is the check's to say. */
+  const suggest = global.FyndSuggest.attach({
+    input,
+    box: $('ff-suggest-box'),
+    list: $('ff-suggest'),
+    status: $('ff-suggest-status'),
+    idPrefix: 'ff-suggest',
+    onPick: (f) => select(f.brand, f.product),
+    say: {
+      unavailable: 'Search isn’t available right now. Paste the product’s link instead.',
+      empty: (words) => `No products match “${words}”. Paste the product’s link instead.`,
+      ready: (n) => `${n} matching product${n === 1 ? '' : 's'}. Not listed? Paste its link.`
     }
-    const named = brands.filter((b) => new RegExp(`(^|\\s)${escapeRe(b.name)}(\\s|$)`, 'i').test(text));
-    let words = text;
-    named.forEach((b) => { words = words.replace(new RegExp(escapeRe(b.name), 'ig'), ' '); });
-    words = words.replace(/\s+/g, ' ').trim();
-    const answers = await Promise.all((named.length ? named : brands).map((b) => sizing.catalog(b.id, { q: words, limit: SUGGEST_MAX })));
-    if (mine !== suggestAsk) return;
-    const found = [];
-    let failed = 0;
-    answers.forEach((got) => {
-      const data = got && got.ok && got.data;
-      if (!data || !Array.isArray(data.products) || !data.brand) { failed += 1; return; }
-      if (data.partial) return;
-      data.products.forEach((p) => {
-        if (p && typeof p.code === 'string' && typeof p.name === 'string' && found.length < SUGGEST_MAX) found.push({ brand: data.brand, product: p });
-      });
-    });
-    drawSuggestions(found, text, failed === answers.length);
-  }
-  const LINE_WORDS = { men: 'Men', women: 'Women', unisex: 'Unisex', kids: 'Kids', baby: 'Baby' };
-  function drawSuggestions(found, text, failed) {
-    suggestions = found;
-    active = -1;
-    input.removeAttribute('aria-activedescendant');
-    suggestList.replaceChildren(...found.map((f, i) => {
-      const li = el('li', 'ff-suggest-option');
-      li.id = `ff-suggest-${i}`;
-      li.setAttribute('role', 'option');
-      li.setAttribute('aria-selected', 'false');
-      li.dataset.code = f.product.code;
-      li.append(el('span', 'ff-suggest-name', f.product.name),
-        el('span', 'ff-suggest-meta', [f.brand.name, f.product.categoryLabel, LINE_WORDS[f.product.line]].filter(Boolean).join(' · ')));
-      if (typeof f.product.holdsText === 'string' && f.product.holdsText) li.append(el('span', 'ff-suggest-holds', f.product.holdsText));
-      /* pressed, not clicked: the box keeps focus, so nothing closes first */
-      li.addEventListener('mousedown', (event) => event.preventDefault());
-      li.addEventListener('click', () => pick(i));
-      return li;
-    }));
-    input.setAttribute('aria-expanded', String(found.length > 0));
-    if (failed) suggestSay('Search isn’t available right now. Paste the product’s link instead.', 'error');
-    else if (!found.length) suggestSay(`No products match “${text}”. Paste the product’s link instead.`, 'empty');
-    else suggestSay(`${found.length} matching product${found.length === 1 ? '' : 's'}. Not listed? Paste its link.`, 'ready');
-  }
-  function highlight(i) {
-    active = i;
-    suggestList.querySelectorAll('.ff-suggest-option').forEach((li, n) => li.setAttribute('aria-selected', String(n === i)));
-    if (i >= 0) {
-      input.setAttribute('aria-activedescendant', `ff-suggest-${i}`);
-      const li = $(`ff-suggest-${i}`);
-      if (li && li.scrollIntoView) li.scrollIntoView({ block: 'nearest' });
-    } else input.removeAttribute('aria-activedescendant');
-  }
-  function pick(i) {
-    const f = suggestions[i];
-    if (!f) return;
-    closeSuggest();
-    select(f.brand, f.product);
-  }
+  });
+  const closeSuggest = () => suggest.close();
 
   /* a whole link, as a shopper would paste or type it: a scheme, or a
      www. address; anything else in the box is words to search */
@@ -757,22 +654,17 @@
     } else {
       global.clearTimeout(checkTimer);
       clearCheck();
-      if (linkSoFar(text)) closeSuggest(); else suggestSoon(text);
+      if (linkSoFar(text)) closeSuggest(); else suggest.soon(text);
     }
   });
   /* the arrow keys move through the matches; Enter picks one; Escape closes them */
   input.addEventListener('keydown', (event) => {
-    const open = !suggestBox.hidden && suggestions.length > 0;
-    if (event.key === 'ArrowDown' && open) { event.preventDefault(); highlight(active < suggestions.length - 1 ? active + 1 : 0); }
-    else if (event.key === 'ArrowUp' && open) { event.preventDefault(); highlight(active > 0 ? active - 1 : suggestions.length - 1); }
-    else if (event.key === 'Enter' && open) { event.preventDefault(); pick(active >= 0 ? active : 0); }
-    else if (event.key === 'Escape' && !suggestBox.hidden) { event.preventDefault(); closeSuggest(); }
+    if (suggest.key(event)) return;
     /* Compare fit is off for an item that can't be compared, and a form
        isn't sent by Enter while its button is off: Enter is taken here
        instead, so it still shows what can be shown — the item's chart */
-    else if (event.key === 'Enter' && blocked) { event.preventDefault(); submit(); }
+    if (event.key === 'Enter' && blocked) { event.preventDefault(); submit(); }
   });
-  input.addEventListener('blur', () => { global.setTimeout(() => { if (doc.activeElement !== input) closeSuggest(); }, 0); });
   /* a garment changed: the item is checked again with it — and, when the
      shopper changed it, compared once the two can be */
   doc.addEventListener('fynd:reference-change', (event) => {

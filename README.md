@@ -2586,7 +2586,14 @@ http(s) address with a host name; `www.` without a scheme is read as https); a
 pasted link starts the lookup by itself, a typed one is checked once typing
 pauses and read on Enter or **Compare fit**. When the server says the item and
 the garment can be compared (`POST ?check=1`), the comparison runs on its own —
-only after something the shopper did. **Popular Wardrobe Anchors** offers, as the
+only after something the shopper did. The garment's form has the same search
+(**Find your garment**, `assets/catalog-suggest.js`, shared by both boxes), with
+Fynd's checked records too: a size typed with the words ("Uniqlo hoodie M",
+"Levi's 511 32x32") is read apart and never searched as a name, a product picked
+fills the fields, and what Fynd holds for it is the server's own check of that
+product (`POST ?check=1`). Suggestions come from Fynd's catalogue, not the live
+product search (`api/search.js`), which is metered per shopper; each answer says
+what the catalogue covers. **Popular Wardrobe Anchors** offers, as the
 garment, only products whose records are checked and publish finished-garment
 measurements (`GET /api/size-recommendation?anchors=1`, public and read-only);
 with production's records today that list is empty and the section is hidden.
