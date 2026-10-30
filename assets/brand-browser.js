@@ -29,8 +29,9 @@
    Searching and filtering are the server's (api/_catalog/search.js):
    what is typed is sent once typing pauses, and one page of matches
    comes back; "Show more" asks for the next page. Filters — type, who
-   it's for, colour, size, in stock — are offered only where the data has
-   them. Only the newest
+   it's for, colour, size, in stock — and the orders it can be sorted in
+   (price only while prices are current) are offered only where the data
+   has them. Only the newest
    answer is drawn. When no product matches every word typed, the
    closest are shown and the words nothing matched are named. When the
    list can't be fetched, it says so; when nothing matches, it says that.
@@ -95,6 +96,7 @@
   let colour = 'all';
   let size = 'all';
   let inStock = false;
+  let sort = 'featured';
   let asking = 0;
   let typing = null;
   /* how many answers have been drawn, so a test (or anyone) can tell the
@@ -167,10 +169,15 @@
       media.append(art(p.category));
     }
     const text = el('span', 'fit-product-text');
-    text.append(el('span', 'fit-product-kind', [p.categoryLabel, LINE_LABELS[p.line] || ''].filter(Boolean).join(' · ')),
+    text.append(el('span', 'fit-product-kind', [p.kindLabel || p.categoryLabel, LINE_LABELS[p.line] || ''].filter(Boolean).join(' · ')),
       el('span', 'fit-product-name', p.name));
     const price = money(p.price);
     if (price) text.append(el('span', 'fit-product-price', price));
+    /* the size labels it is sold in — not measurements */
+    const range = p.sizeRange;
+    if (range && typeof range.first === 'string' && typeof range.last === 'string') {
+      text.append(el('span', 'fit-product-sizes', range.count > 1 && range.first !== range.last ? `Sizes ${range.first}–${range.last}` : `Size ${range.first}`));
+    }
     if (p.availability === 'out_of_stock') text.append(el('span', 'fit-product-stock', 'Out of stock'));
     text.append(el('span', `fit-product-holds fit-product-holds--${p.holds}`, p.holdsText), facts(p.status),
       el('span', 'fit-product-code', `Product ID ${p.code}`));
@@ -274,8 +281,24 @@
       stockRow.append(b);
       rows.push(stockRow);
     }
+    /* the orders the server offers for this data: price only while
+       prices are current */
+    const sorts = ((facets && facets.sorts) || []).filter((v) => SORT_LABELS[v]);
+    if (sorts.length > 1) {
+      const r = el('div', 'fit-filter-row fit-sort-row');
+      const label = el('label', 'fit-sort-label', 'Sort by');
+      label.htmlFor = 'fit-product-sort';
+      const select = el('select', 'profile-input fit-sort');
+      select.id = 'fit-product-sort';
+      sorts.forEach((v) => { const o = el('option', null, SORT_LABELS[v]); o.value = v; select.append(o); });
+      select.value = sort;
+      select.addEventListener('change', () => { sort = select.value; ask(false); });
+      r.append(label, select);
+      rows.push(r);
+    }
     filters.replaceChildren(...rows);
   }
+  const SORT_LABELS = { featured: 'Featured', name: 'Name: A–Z', 'price-asc': 'Price: low to high', 'price-desc': 'Price: high to low' };
 
   /* one page from the server: the first for a new search, or the next */
   async function ask(append) {
@@ -283,7 +306,7 @@
     clearTimeout(typing);
     const sizing = global.Account && global.Account.sizing;
     if (append) { more.disabled = true; } else { root.dataset.state = 'loading'; dialog.dataset.state = 'loading'; }
-    const query = { q: search.value.trim(), category, line, colour, size, inStock, offset: append ? items.length : 0 };
+    const query = { q: search.value.trim(), category, line, colour, size, inStock, sort: sort === 'featured' ? 'all' : sort, offset: append ? items.length : 0 };
     const answer = sizing ? await sizing.catalog(current, query) : { ok: false };
     if (mine !== asking) return;
     if (!(answer.ok && answer.data && Array.isArray(answer.data.products) && answer.data.brand)) {
@@ -332,6 +355,7 @@
     colour = 'all';
     size = 'all';
     inStock = false;
+    sort = 'featured';
     grid.replaceChildren();
     filters.replaceChildren();
     coverage.textContent = '';

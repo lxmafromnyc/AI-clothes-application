@@ -59,7 +59,7 @@ const { SNAPSHOT } = require('./uniqlo-snapshot');
 const { photos: PHOTOS } = require('./uniqlo-photos.json');
 const feed = require('./uniqlo-feed');
 const { CATEGORIES } = require('../../_catalog/product');
-const { createIndex } = require('../../_catalog/search');
+const { createIndex, sortsFor } = require('../../_catalog/search');
 /* the colours and photos UNIQLO's image host holds for each product,
    found by scripts/find-uniqlo-images.js; absent, a product has its one photo */
 let IMAGES = {};
@@ -204,6 +204,10 @@ const licensed = (field) => feed.LOADED.state === 'loaded' && feed.LOADED.catalo
 function card(p, fresh) {
   const out = { code: p.code, name: p.name, url: p.url, category: p.category, group: p.group, categoryLabel: p.categoryLabel, kind: p.kind, kindLabel: p.kindLabel, line: p.line, imageUrl: p.imageUrl, holds: p.holds, holdsText: p.holdsText, status: Object.assign({}, p.status) };
   const c = p.catalogue;
+  /* the size labels it is sold in — Fynd's record's, else the catalogue's
+     (kept only where licensed) — as a range; labels, not measurements */
+  const sizes = p.sizeLabels || (c && c.sizes) || null;
+  if (Array.isArray(sizes) && sizes.length) out.sizeRange = { first: sizes[0], last: sizes[sizes.length - 1], count: sizes.length };
   if (c && fresh.volatile) {
     if (c.price) out.price = Object.assign({}, c.price);
     if (c.availability) out.availability = c.availability;
@@ -348,7 +352,8 @@ function notice(now) {
 function search(query, now) {
   const v = view(now);
   const stockKnown = v.fresh.served && v.fresh.volatile && licensed('stock');
-  const found = v.index.search(query, { stockKnown });
+  const pricesKnown = v.fresh.served && v.fresh.volatile && licensed('price');
+  const found = v.index.search(query, { stockKnown, pricesKnown });
   return {
     /* every product the list holds, before the query and filters, so
        the page can say how many came back of how many there are */
@@ -359,7 +364,7 @@ function search(query, now) {
     query: found.query,
     partial: found.partial,
     unmatched: found.unmatched,
-    facets: { categories: found.facets.categories, lines: found.facets.lines, colours: found.facets.colours, sizes: found.facets.sizes, inStock: stockKnown },
+    facets: { categories: found.facets.categories, lines: found.facets.lines, colours: found.facets.colours, sizes: found.facets.sizes, inStock: stockKnown, sorts: sortsFor(pricesKnown) },
     products: found.items.map((p) => card(p, v.fresh))
   };
 }

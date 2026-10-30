@@ -902,6 +902,36 @@ function inChild(env, code) {
     assert.strictEqual(r.out.noReference.body.check.comparable, false, 'comparable on its card is not a comparison: the shopper’s garment is still checked');
   });
 
+  await test('sorting: featured and name always; price only while prices are current — a product with no price goes last, never guessed', () => {
+    const none = inChild({}, browseCode(`{ name: b.browse(u, { sort: 'name' }), price: b.browse(u, { sort: 'price-asc' }), odd: b.browse(u, { sort: '<script>' }) }`));
+    assert.deepStrictEqual(none.name.facets.sorts, ['featured', 'name'], 'no catalogue: no prices to sort by');
+    assert.deepStrictEqual(none.name.products.map((p) => p.name), none.name.products.map((p) => p.name).slice().sort((a, b) => a.localeCompare(b)));
+    assert.strictEqual(none.price.query.sort, 'featured', 'a price sort with no prices is refused, not faked');
+    assert.strictEqual(none.odd.query.sort, 'featured');
+    const r = inChild(WITH, browseCode(`{ asc: b.browse(u, { sort: 'price-asc', limit: '48' }), desc: b.browse(u, { sort: 'price-desc', limit: '48' }), hoodies: b.browse(u, { sort: 'price-asc', category: 'hoodies' }) }`));
+    assert.deepStrictEqual(r.asc.facets.sorts, ['featured', 'name', 'price-asc', 'price-desc']);
+    const amounts = (list) => list.products.map((p) => (p.price ? p.price.amount : null));
+    const asc = amounts(r.asc);
+    const priced = asc.filter((a) => a !== null);
+    assert.ok(priced.length > 0 && priced.length < asc.length, 'some priced, some not');
+    assert.deepStrictEqual(asc.slice(0, priced.length), priced.slice().sort((a, b) => a - b), 'low to high');
+    assert.ok(asc.slice(priced.length).every((a) => a === null), 'no price: last');
+    const desc = amounts(r.desc).filter((a) => a !== null);
+    assert.deepStrictEqual(desc, desc.slice().sort((a, b) => b - a), 'high to low');
+    assert.ok(amounts(r.desc).slice(desc.length).every((a) => a === null), 'no price: last, either way');
+    const hoodieAmounts = amounts(r.hoodies).filter((a) => a !== null);
+    assert.deepStrictEqual(hoodieAmounts, hoodieAmounts.slice().sort((a, b) => a - b), 'sorting and a filter together');
+  });
+
+  await test('a card’s size range is the labels it is sold in — Fynd’s record’s, else the catalogue’s — and is absent where neither says', () => {
+    const r = inChild(WITH, browseCode(`Object.assign(Object.fromEntries(b.browse(u, { limit: '48' }).products.map((p) => [p.code, p.sizeRange || null])), { record: require('./api/_sizing/records').RECORDS.find((x) => x.product.code === 'E475378-000').sizes })`));
+    assert.deepStrictEqual(r['E910001-000'], { first: 'XS', last: 'XXL', count: 6 }, 'the catalogue’s labels');
+    assert.deepStrictEqual(r['E475378-000'], { first: r.record[0], last: r.record[r.record.length - 1], count: r.record.length }, 'Fynd’s record’s');
+    assert.strictEqual(r['E429066-000'], null, 'a listing with no sizes known: no range shown');
+    const off = inChild({}, browseCode(`b.browse(u, { q: 'E429066' }).products[0].sizeRange || null`));
+    assert.strictEqual(off, null);
+  });
+
   await test('a product’s detail carries the same four facts as its card', () => {
     const r = inChild(WITH, browseCode(`{ d: u.detail('E910001-000'), card: b.browse(u, { q: 'E910001' }).products[0] }`));
     assert.deepStrictEqual(r.d.status, r.card.status);

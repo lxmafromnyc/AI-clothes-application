@@ -405,6 +405,26 @@ async function test(name, fn) {
     await page.context().close();
   });
 
+  await test('cards show the size range and who it’s for; "Sort by" offers price while prices are current, and sorts on the server across pages', async () => {
+    const page = await openPage('index.html');
+    await ready(page);
+    assert.strictEqual(await page.textContent('.fit-product[data-code="E910001-000"] .fit-product-sizes'), 'Sizes XS–XXL');
+    assert.strictEqual(await page.textContent('.fit-product[data-code="E910001-000"] .fit-product-kind'), 'Hoodies · Men');
+    assert.deepStrictEqual(await page.$$eval('#fit-product-sort option', (os) => os.map((o) => [o.value, o.textContent])),
+      [['featured', 'Featured'], ['name', 'Name: A–Z'], ['price-asc', 'Price: low to high'], ['price-desc', 'Price: high to low']]);
+    await answered(page, () => page.selectOption('#fit-product-sort', 'price-desc'));
+    assert.ok(asked.some((q) => /sort=price-desc/.test(q)), 'asked of the server');
+    const prices = () => page.$$eval('.fit-product', (bs) => bs.map((b) => { const t = b.querySelector('.fit-product-price'); const m = t && /\$([\d.]+)/.exec(t.textContent); return m ? Number(m[1]) : null; }));
+    const first = (await prices()).filter((x) => x !== null);
+    assert.deepStrictEqual(first, first.slice().sort((a, b) => b - a));
+    await answered(page, () => page.click('.fit-filter[data-group="kind"][data-value="hoodies"]'));
+    const hoodies = (await prices()).filter((x) => x !== null);
+    assert.ok(hoodies.length > 1);
+    assert.deepStrictEqual(hoodies, hoodies.slice().sort((a, b) => b - a), 'the sort stays as a filter changes');
+    assert.strictEqual(await page.inputValue('#fit-product-sort'), 'price-desc');
+    await page.context().close();
+  });
+
   await test('on a phone the popup fills the screen and scrolls inside, with no sideways scroll', async () => {
     const page = await openPage('index.html', { width: 375, height: 700 });
     await ready(page);
