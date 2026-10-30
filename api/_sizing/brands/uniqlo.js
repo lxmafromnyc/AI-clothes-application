@@ -51,7 +51,7 @@
 
 'use strict';
 
-const { RECORDS, recordFrom } = require('../records');
+const { RECORDS, recordFrom, summary } = require('../records');
 const officialCharts = require('../official-charts');
 const schema = require('../schema');
 const listings = require('./uniqlo-listings.json');
@@ -82,6 +82,44 @@ const HOLDS = {
   'live-only': 'No saved chart for this product'
 };
 
+/* The narrower type inside a filter group, so hoodies can be listed
+   apart from sweatshirts: a record's own category, else the product's
+   own name ("Sweat Pullover Hoodie"), since a catalogue's category path
+   is mapped to the group as a whole. A name that says neither leaves
+   the product in the group only — never guessed into one. */
+const KINDS = { hoodies: 'Hoodies', sweatshirts: 'Sweatshirts' };
+function kindOf(p, group) {
+  if (KINDS[p.category]) return p.category;
+  if (group !== 'sweatshirts-hoodies' || typeof p.name !== 'string') return null;
+  if (/\bhood(ie|ies|ed|y)?\b/i.test(p.name)) return 'hoodies';
+  if (/\bsweatshirts?\b/i.test(p.name)) return 'sweatshirts';
+  return null;
+}
+
+/* Four separate facts about a product, never folded into one another:
+     catalogue   where it is listed: UNIQLO's authorized catalogue, or
+                 only Fynd's own list (no catalogue connected)
+     chart       the sizing chart Fynd holds: the product's own, UNIQLO's
+                 general body chart only, or none saved
+     garment     the finished garment's own measurements in Fynd's
+                 record: verified (a checked record), unverified, or none
+     comparable  whether a garment-to-garment comparison is possible at
+                 all — a checked record with garment measurements
+                 (records.summary). The shopper's reference is checked
+                 by the server again when the product is picked.
+   Being in the catalogue says nothing about sizing: a catalogue holds
+   no measurements. */
+function statusOf(p) {
+  const record = RECORDS.find((r) => r.brand === 'UNIQLO' && r.region === 'US' && r.product.code === p.code) || null;
+  const s = record ? summary(record) : null;
+  return Object.freeze({
+    catalogue: p.catalogue ? 'authorized' : 'fynd-list',
+    chart: p.holds === 'checked-chart' || p.holds === 'unchecked-chart' ? 'own' : p.holds === 'general-chart' ? 'general' : 'none',
+    garment: s && s.garmentDimensions.length ? (s.verified ? 'verified' : 'unverified') : 'none',
+    comparable: Boolean(s && s.comparable)
+  });
+}
+
 function build(withCatalogue) {
   const out = new Map();
   const add = (p) => {
@@ -91,7 +129,8 @@ function build(withCatalogue) {
     if (!p.imageUrl && PHOTOS[p.code]) p.imageUrl = PHOTOS[p.code];
     if (p.imageUrl && !(/^https:\/\/image\.uniqlo\.com\//.test(p.imageUrl) && p.imageUrl.includes(p.code.slice(1, 7)))) p.imageUrl = null;
     const [group, groupLabel] = GROUPS[p.category] || ['other', 'Other'];
-    out.set(p.code, Object.freeze(Object.assign(p, { holdsText: HOLDS[p.holds], group, categoryLabel: groupLabel })));
+    const kind = kindOf(p, group);
+    out.set(p.code, Object.freeze(Object.assign(p, { holdsText: HOLDS[p.holds], group, categoryLabel: groupLabel, kind, kindLabel: kind ? KINDS[kind] : null, status: statusOf(p) })));
   };
   RECORDS.filter((r) => r.brand === 'UNIQLO' && r.region === 'US').forEach((r) => add({
     code: r.product.code, name: r.product.name, url: r.product.url, category: r.category, line: r.line, imageUrl: null,
@@ -129,7 +168,8 @@ function build(withCatalogue) {
       const known = out.get(c.code);
       if (known) {
         /* Fynd's record of its sizes wins over the catalogue's */
-        out.set(c.code, Object.freeze(Object.assign({}, known, facts, { imageUrl: known.imageUrl || (c.images && c.images[0]) || null, sizeLabels: known.sizeLabels || c.sizes || undefined })));
+        const merged = Object.assign({}, known, facts, { imageUrl: known.imageUrl || (c.images && c.images[0]) || null, sizeLabels: known.sizeLabels || c.sizes || undefined });
+        out.set(c.code, Object.freeze(Object.assign(merged, { status: statusOf(merged) })));
         return;
       }
       const general = officialCharts.CHARTS.some((ch) => ch.market === 'US' && officialCharts.covers(ch, c));
@@ -162,7 +202,7 @@ const licensed = (field) => feed.LOADED.state === 'loaded' && feed.LOADED.catalo
 
 /* what a card shows: price and stock only while they're current */
 function card(p, fresh) {
-  const out = { code: p.code, name: p.name, url: p.url, category: p.category, group: p.group, categoryLabel: p.categoryLabel, line: p.line, imageUrl: p.imageUrl, holds: p.holds, holdsText: p.holdsText };
+  const out = { code: p.code, name: p.name, url: p.url, category: p.category, group: p.group, categoryLabel: p.categoryLabel, kind: p.kind, kindLabel: p.kindLabel, line: p.line, imageUrl: p.imageUrl, holds: p.holds, holdsText: p.holdsText, status: Object.assign({}, p.status) };
   const c = p.catalogue;
   if (c && fresh.volatile) {
     if (c.price) out.price = Object.assign({}, c.price);
@@ -234,6 +274,7 @@ function detail(code, now) {
     line: p.line,
     holds: p.holds,
     holdsText: p.holdsText,
+    status: Object.assign({}, p.status),
     colours,
     /* the colour the product's card shows, so the page opens on the same photo */
     defaultColour: ((/goods_(\d{2})_\d{6}_3x4/.exec(p.imageUrl || '') || [])[1]) || (colours[0] && colours[0].code) || null,
@@ -309,6 +350,9 @@ function search(query, now) {
   const stockKnown = v.fresh.served && v.fresh.volatile && licensed('stock');
   const found = v.index.search(query, { stockKnown });
   return {
+    /* every product the list holds, before the query and filters, so
+       the page can say how many came back of how many there are */
+    listed: v.products.length,
     total: found.total,
     offset: found.offset,
     limit: found.limit,

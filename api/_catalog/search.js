@@ -18,7 +18,9 @@
                 matched are named (`unmatched`), so "black oversized
                 hoodie" on a catalogue with no colour names says that
                 "black" matched nothing rather than pretending it did.
-     filters    category, line (a unisex product is in both men's and
+     filters    category (a group, or a narrower type inside one that
+                the brand module names, e.g. hoodies apart from
+                sweatshirts), line (a unisex product is in both men's and
                 women's), colour (by family, from the source's own colour
                 names), size and, where stock is known, in stock only —
                 per colour and size together where the source gives
@@ -100,6 +102,9 @@ function productWords(p) {
 }
 
 const groupOf = (p) => p.group || p.category;
+/* a narrower type inside a group, where the brand module named one */
+const kindOf = (p) => (p.kind && p.kind !== groupOf(p) ? p.kind : null);
+const inCategory = (p, category) => category === 'all' || groupOf(p) === category || kindOf(p) === category;
 const inLine = (p, line) => line === 'all' || p.line === line || (p.line === 'unisex' && (line === 'men' || line === 'women'));
 const IN_STOCK = new Set(['in_stock', 'limited']);
 
@@ -184,15 +189,21 @@ function createIndex(products, options) {
     const sizes = new Map();
     list.forEach((p, i) => {
       const g = groupOf(p);
-      if (!cats.has(g)) cats.set(g, { value: g, label: p.categoryLabel || g, count: 0 });
+      if (!cats.has(g)) cats.set(g, { value: g, label: p.categoryLabel || g, count: 0, kinds: new Map() });
       cats.get(g).count += 1;
+      const k = kindOf(p);
+      if (k) {
+        if (!cats.get(g).kinds.has(k)) cats.get(g).kinds.set(k, { value: k, label: p.kindLabel || k, count: 0 });
+        cats.get(g).kinds.get(k).count += 1;
+      }
       lines.set(p.line, (lines.get(p.line) || 0) + 1);
       families[i].forEach((f) => colours.set(f, (colours.get(f) || 0) + 1));
       sizeSets[i].forEach((x) => sizes.set(x, (sizes.get(x) || 0) + 1));
     });
     const rank = (v) => { const i = order.indexOf(v); return i >= 0 ? i : order.length; };
     return {
-      categories: [...cats.values()].sort((a, b) => rank(a.value) - rank(b.value)),
+      categories: [...cats.values()].sort((a, b) => rank(a.value) - rank(b.value))
+        .map((c) => Object.assign({ value: c.value, label: c.label, count: c.count }, c.kinds.size ? { kinds: [...c.kinds.values()].sort((a, b) => a.label.localeCompare(b.label)) } : {})),
       lines: [...lines.entries()].map(([value, count]) => ({ value, count })),
       colours: COLOUR_FAMILIES.filter((f) => colours.has(f)).map((value) => ({ value, count: colours.get(value) })),
       /* the sizes most products come in, in size order */
@@ -203,7 +214,7 @@ function createIndex(products, options) {
   function search(raw, settings) {
     const query = readQuery(raw);
     const stockKnown = Boolean(settings && settings.stockKnown);
-    const keep = list.map((p, i) => (query.category === 'all' || groupOf(p) === query.category)
+    const keep = list.map((p, i) => inCategory(p, query.category)
       && inLine(p, query.line)
       && offered(i, query, stockKnown));
     const parsed = words(query.q).slice(0, MAX_TERMS);

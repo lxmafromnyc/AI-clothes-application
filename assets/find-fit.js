@@ -587,13 +587,36 @@
     clear.addEventListener('click', () => { unselect(); input.value = ''; retire(); clearCheck(); input.focus(); });
     const actions = el('p', 'ff-picked-actions');
     actions.append(page, clear);
-    picked.replaceChildren(line, el('p', 'ff-picked-holds', product.holdsText || ''), actions);
+    const facts = global.BrandBrowser && global.BrandBrowser.facts ? global.BrandBrowser.facts(product.status) : null;
+    const details = el('p', 'ff-picked-detail', `Product ID ${product.code}`);
+    picked.replaceChildren(line, el('p', 'ff-picked-holds', product.holdsText || ''), ...(facts ? [facts] : []), details, actions);
     picked.hidden = false;
     autoNext = true;
     scheduleCheck(true, true);
+    pickedDetail(brand, product, details);
+  }
+  /* The picked product's own details, from the brand module
+     (?brand=&detail=, the product page's source): its sizes and where
+     they came from. Comparing waits on the server's check, never on this;
+     if it can't be had, the product ID stays and nothing is guessed. */
+  async function pickedDetail(brand, product, line) {
+    const sizing = sizingApi();
+    if (!sizing || typeof sizing.detail !== 'function') return;
+    const asked = choice;
+    const got = await sizing.detail(brand.id, product.code);
+    if (choice !== asked) return;
+    const d = got && got.ok && got.data && got.data.product;
+    if (!d || d.code !== product.code) { picked.dataset.detail = 'unavailable'; return; }
+    const parts = [`Product ID ${d.code}`];
+    if (d.categoryLabel) parts.push(d.categoryLabel);
+    if (d.sizes && Array.isArray(d.sizes.list) && d.sizes.list.length) parts.push(`Sizes ${d.sizes.list.join(', ')}`);
+    line.textContent = parts.join(' · ');
+    if (d.sizes && d.sizes.source) line.title = d.sizes.source;
+    picked.dataset.detail = 'ready';
   }
   function unselect() {
     choice = null;
+    delete picked.dataset.detail;
     picked.replaceChildren();
     picked.hidden = true;
   }
