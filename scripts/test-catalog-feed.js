@@ -800,6 +800,113 @@ function inChild(env, code) {
     assert.strictEqual(elsewhere, 5, 'only a .json file is read');
   });
 
+  section('discovery kept apart from sizing');
+
+  /* the server's check, as Find Fit asks it before Compare fit */
+  const checkCode = (prelude, posts) => `${prelude}
+      const handler = require('./api/size-recommendation');
+      const post = (body) => new Promise((resolve) => {
+        const res = { headers: {}, statusCode: 200, setHeader(k, v) { this.headers[k] = v; }, status(c) { this.statusCode = c; return this; }, json(b) { resolve({ status: this.statusCode, body: b }); return this; }, end() { resolve({ status: this.statusCode }); } };
+        handler({ method: 'POST', query: { check: '1' }, body, headers: { host: 'fynd.test' }, url: '/api/size-recommendation?check=1', socket: { remoteAddress: '203.0.113.21' } }, res);
+      });
+      const out = {};
+      for (const [name, body] of ${JSON.stringify(posts)}) out[name] = await post(body);
+      return out;`;
+  const HOODIE_REF = { type: 'hoodies', garment: { favorite: 'perfect', line: 'men', anchor: { brand: 'Carhartt', size: 'L', measurements: { unit: 'in', chestWidth: 24, bodyLength: 28, shoulderWidth: 19, sleeveLength: 25 } } } };
+
+  await test('with no catalogue connected, every card says it is not from a catalogue feed, and none is comparable: the UNIQLO records are pending review', () => {
+    const r = inChild({}, browseCode(`b.browse(u, { limit: '48' })`));
+    assert.deepStrictEqual([r.listed, r.total, r.products.length], [5, 5, 5], 'all five listed, all five returned');
+    const status = Object.fromEntries(r.products.map((p) => [p.code, p.status]));
+    assert.ok(r.products.every((p) => p.status.catalogue === 'fynd-list'), 'nothing claims to be in a catalogue');
+    assert.ok(r.products.every((p) => p.status.comparable === false));
+    ['E471808-000', 'E475378-000', 'E475377-000', 'E455365-000'].forEach((c) => assert.deepStrictEqual([status[c].chart, status[c].garment], ['own', 'unverified'], c));
+    assert.deepStrictEqual(status['E429066-000'], { catalogue: 'fynd-list', chart: 'none', garment: 'none', comparable: false }, 'a listing with no record: nothing held');
+  });
+
+  await test('hoodies are a filter of their own, apart from sweatshirts — by a record’s own category or the product’s own name, never guessed', () => {
+    const r = inChild({}, browseCode(`{ hoodies: b.browse(u, { category: 'hoodies' }), sweats: b.browse(u, { category: 'sweatshirts' }), group: b.browse(u, { category: 'sweatshirts-hoodies' }).total, facets: b.browse(u, {}).facets.categories }`));
+    assert.deepStrictEqual(r.hoodies.products.map((p) => p.code).sort(), ['E471808-000', 'E475378-000']);
+    assert.ok(r.hoodies.products.every((p) => p.kind === 'hoodies' && p.kindLabel === 'Hoodies'));
+    assert.deepStrictEqual(r.sweats.products.map((p) => p.code), ['E475377-000']);
+    assert.strictEqual(r.group, 3);
+    assert.deepStrictEqual(r.facets.find((c) => c.value === 'sweatshirts-hoodies').kinds, [{ value: 'hoodies', label: 'Hoodies', count: 2 }, { value: 'sweatshirts', label: 'Sweatshirts', count: 1 }]);
+    assert.ok(!('kinds' in r.facets.find((c) => c.value === 'tshirts')), 'no sub-type where none is named');
+  });
+
+  await test('with the catalogue connected: every product is counted, hoodies are paged to the end with none twice, and a catalogue product is never called sized', () => {
+    const r = inChild(WITH, browseCode(`(() => {
+      const first = b.browse(u, { category: 'hoodies', limit: '2' });
+      const pages = [];
+      for (let o = 0; o < first.total + 2; o += 2) pages.push(b.browse(u, { category: 'hoodies', offset: String(o), limit: '2' }).products);
+      return { first, pages, all: b.browse(u, { limit: '48' }), bulk: b.browse(u, { offset: '28', limit: '48' }), sweats: b.browse(u, { category: 'sweatshirts' }).products.map((p) => p.code) };
+    })()`));
+    assert.strictEqual(r.all.listed, 30, '25 valid catalogue products, plus four of Fynd’s own not in the feed, with E471808 shared — the sync report’s count, not a guess');
+    assert.deepStrictEqual([r.all.total, r.all.products.length], [30, 30]);
+    assert.deepStrictEqual([r.bulk.offset, r.bulk.products.length, r.bulk.total], [28, 2, 30], 'the last page');
+    const seen = r.pages.flat().map((p) => p.code);
+    assert.strictEqual(seen.length, r.first.total, 'every hoodie, page by page');
+    assert.strictEqual(new Set(seen).size, seen.length, 'none twice');
+    assert.deepStrictEqual(seen.slice().sort(), ['E471808-000', 'E475378-000', 'E910001-000', 'E910002-000', 'E910004-000', 'E910019-000', 'E910023-000']);
+    assert.ok(r.pages.flat().every((p) => /hood/i.test(p.name)), 'only hoodies');
+    assert.ok(r.pages[r.pages.length - 1].length === 0, 'past the end is empty, not an error');
+    assert.deepStrictEqual(r.sweats.sort(), ['E475377-000', 'E910003-000']);
+    const byCode = Object.fromEntries(r.all.products.map((p) => [p.code, p]));
+    /* in the catalogue, no record: listed, never sized */
+    ['E910001-000', 'E910005-000', 'E910011-000'].forEach((c) => {
+      assert.strictEqual(byCode[c].status.catalogue, 'authorized', c);
+      assert.strictEqual(byCode[c].status.garment, 'none', c);
+      assert.strictEqual(byCode[c].status.comparable, false, c);
+    });
+    assert.deepStrictEqual(byCode['E910001-000'].status.chart, 'general', 'a men’s hoodie: UNIQLO’s general body chart only');
+    assert.deepStrictEqual(byCode['E910011-000'].status.chart, 'none', 'women’s jeans: no chart at all');
+    /* in the catalogue and in Fynd's records: both said, and still not verified */
+    assert.deepStrictEqual(byCode['E471808-000'].status, { catalogue: 'authorized', chart: 'own', garment: 'unverified', comparable: false });
+    assert.deepStrictEqual(byCode['E475378-000'].status.catalogue, 'fynd-list', 'a record the feed doesn’t list is not called catalogued');
+    assert.ok(!r.all.products.some((p) => p.status.comparable), 'nothing in this catalogue is comparable');
+  });
+
+  await test('an empty search, a search nothing matches, and a missing photo are each answered plainly', () => {
+    const r = inChild(WITH, browseCode(`{ empty: b.browse(u, { q: '   ' }), none: b.browse(u, { q: 'tuxedo' }), filteredOut: b.browse(u, { category: 'hoodies', q: 'jeans' }), photo: b.browse(u, { q: 'E910105' }).products[0] }`));
+    assert.deepStrictEqual([r.empty.total, r.empty.listed, r.empty.query.q], [30, 30, ''], 'no words: the whole list');
+    assert.deepStrictEqual([r.none.total, r.none.products.length, r.none.listed, r.none.unmatched], [0, 0, 30, ['tuxedo']]);
+    assert.deepStrictEqual([r.filteredOut.total, r.filteredOut.listed], [0, 30]);
+    assert.strictEqual(r.photo.code, 'E910105-000');
+    assert.strictEqual(r.photo.imageUrl, null, 'another product’s photo is dropped, not shown');
+  });
+
+  await test('the server’s check before comparing: an unknown code, a catalogue product with no record, an unverified record — none comparable, each with its reason', () => {
+    const r = inChild(WITH, checkCode('', [
+      ['unknown', { target: { brand: 'uniqlo', code: 'E999999-000' }, reference: HOODIE_REF }],
+      ['unmatched', { target: { brand: 'uniqlo', code: 'E910002-000' }, reference: HOODIE_REF }],
+      ['unverified', { target: { brand: 'uniqlo', code: 'E475378-000' }, reference: HOODIE_REF }]
+    ]));
+    assert.deepStrictEqual([r.unknown.status, r.unknown.body.reason], [404, 'unknown-product']);
+    assert.strictEqual(r.unmatched.body.check.target.status, 'no-record');
+    assert.deepStrictEqual([r.unmatched.body.check.comparable, r.unmatched.body.check.validation.code], [false, 'no-record']);
+    assert.strictEqual(r.unverified.body.check.target.status, 'record');
+    assert.deepStrictEqual([r.unverified.body.check.comparable, r.unverified.body.check.validation.code], [false, 'unverified-data']);
+  });
+
+  await test('a valid product: a checked record with garment measurements is marked comparable on its card, and the server’s check agrees once a reference is given', () => {
+    const prelude = `const { asChecked, UQ_PAIR } = require('./scripts/fixtures/as-checked');
+      return await asChecked(UQ_PAIR, async () => {
+        const b = require('./api/_sizing/brands'); const u = b.get('uniqlo');
+        const card = b.browse(u, { q: 'E475378' }).products[0];`;
+    const r = inChild(WITH, `${checkCode(prelude, [
+      ['ready', { target: { brand: 'uniqlo', code: 'E475378-000' }, reference: { type: 'sweatshirts', garment: { favorite: 'perfect', line: 'men', anchor: { brand: 'UNIQLO', size: 'S', product: { url: 'https://www.uniqlo.com/us/en/products/E475377-000/00' } } } } }],
+      ['noReference', { target: { brand: 'uniqlo', code: 'E475378-000' } }]
+    ]).replace(/return out;$/, 'return { card, out };')} });`);
+    assert.deepStrictEqual(r.card.status, { catalogue: 'fynd-list', chart: 'own', garment: 'verified', comparable: true });
+    assert.deepStrictEqual([r.out.ready.body.check.comparable, r.out.ready.body.check.validation.status], [true, 'ready']);
+    assert.strictEqual(r.out.noReference.body.check.comparable, false, 'comparable on its card is not a comparison: the shopper’s garment is still checked');
+  });
+
+  await test('a product’s detail carries the same four facts as its card', () => {
+    const r = inChild(WITH, browseCode(`{ d: u.detail('E910001-000'), card: b.browse(u, { q: 'E910001' }).products[0] }`));
+    assert.deepStrictEqual(r.d.status, r.card.status);
+  });
+
   fs.rmSync(tmp, { recursive: true, force: true });
   console.log(`\n${passed} passed, ${failures.length} failed\n`);
   process.exit(failures.length ? 1 : 0);

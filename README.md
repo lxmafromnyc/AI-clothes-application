@@ -2199,6 +2199,27 @@ product Fynd can source:
   category page; a men's sweatshirt, hoodie or T-shirt listed there may fall
   back to UNIQLO's general men's body chart, labelled as general.
 
+**Four facts per product, never folded together.** Every card (and a picked
+product, and `?detail=`) carries the server's `status` — `catalogue`
+(`authorized`: in UNIQLO's authorized catalogue / `fynd-list`: only on Fynd's
+own list), `chart` (`own` / `general` / `none`), `garment` (`verified` /
+`unverified` / `none`: the finished garment's measurements in Fynd's record,
+verified only when the record is checked) and `comparable` (a checked record
+publishing garment measurements, `records.summary`). The card says each in
+words: *In UNIQLO's catalogue* or *Not from a catalogue feed*; *Sizing chart*,
+*General chart only* or *No sizing chart saved*; *Garment measurements
+verified / not verified*, or *No garment measurements*; *Can be compared* or
+*Can't be compared yet*. Appearing in a catalogue never makes a product sized:
+a catalogue holds no measurements. Picking a card still runs the server's
+check (`POST ?check=1`, `engine.validate`) with the shopper's garment before
+Compare fit is offered, and fetches the product's details (`?detail=`) for the
+picked panel — its ID, type and sizes.
+
+**How many, said plainly.** Under the status line, the popup says
+`<n> shown · <m> matching · <k> listed in all`: the page drawn, the server's
+total for the search and filters, and every product the list holds
+(`listed`, before any query).
+
 The list shows products with a saved chart first, 24 at a time (**Show more**).
 It can be filtered by type and by who it's for, and searched by what the
 shopper types — on the server, a page at a time (see
@@ -2242,6 +2263,17 @@ the five products above and says, above the list, that coverage is limited:
 Nothing here reads UNIQLO's website, and no catalogue — real or test — is
 committed. Fynd will not claim full-catalogue support until a real feed has
 been imported and validated.
+
+**Coverage, as checked on 30 October 2026.** No authorized feed is connected:
+there is no `api/_catalog/data/uniqlo-us.json` or status file, `FEED_HOSTS` and
+`LICENSED` are empty, and every run of **UNIQLO catalogue sync** so far
+(nine scheduled runs, 21–29 October) was skipped by its schedule gate. So the
+popup lists **5** products, and every one is returned (`listed` 5, `total` 5).
+How many UNIQLO US products exist is **not known** to Fynd: no feed has been
+delivered to count against, and nothing here reads uniqlo.com to find out.
+Once a feed is synced, its count, rejected rows and per-category coverage come
+from the sync's status file — and the popup is not called complete unless the
+feed itself says `complete` and that report has been checked against it.
 
 **Where an authorized feed could come from** (looked into 20 October 2026, from
 public listings only — none of it verified from inside a network account):
@@ -2372,7 +2404,7 @@ Filters are offered only where the data has them:
 
 | Filter | From | Without a catalogue |
 | --- | --- | --- |
-| Type | the category the adapter mapped | the five products' types |
+| Type | the category the adapter mapped; inside Sweatshirts & Hoodies, **Hoodies** and **Sweatshirts** apart (`category=hoodies`) — by a record's own category, else the product's own name ("…Hoodie"); a name saying neither stays in the group only | the five products' types (two hoodies, one sweatshirt) |
 | Men / Women / Kids | the source's gender and age words; unisex counts as both | Men / Women |
 | Colour | the source's colour names, grouped into families (black, white, gray, navy, blue, green, beige, brown, red, pink, purple, yellow, orange); a name no family matches is found by search only, never guessed | none — Fynd holds no colour names |
 | Size | the source's size labels, or Fynd's records' sizes | the four records' sizes |
@@ -2460,6 +2492,13 @@ Measured on a FIXTURE file at catalogue scale (`scripts/test-catalog-rakuten.js`
 cold start loads, checks and indexes it in about a quarter of a second. A real
 UNIQLO file's size isn't known until one is delivered; if it is many times
 that, the catalogue should move from a committed file to the KV store.
+
+**Access status:** UNKNOWN. No evidence of a partnership, approval or
+credentials was found in what could be inspected, which doesn't prove there
+is none. What was checked, what Rakuten's documentation
+says about the SFTP set-up, files and fields, what only a real UNIQLO file can
+answer, and every approval still to confirm are in
+[`api/_catalog/FEED-ACCESS.md`](api/_catalog/FEED-ACCESS.md).
 
 **Connecting it**, once Rakuten and UNIQLO USA have approved Fynd's access to
 UNIQLO's Product Catalog:

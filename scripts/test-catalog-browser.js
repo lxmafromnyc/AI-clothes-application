@@ -335,6 +335,76 @@ async function test(name, fn) {
     await page.context().close();
   });
 
+  await test('each card keeps four facts apart — in the catalogue, a sizing chart, verified garment measurements, comparable — and its product ID', async () => {
+    const page = await openPage('index.html');
+    await ready(page);
+    const factsOf = (code) => page.$$eval(`.fit-product[data-code="${code}"] .fit-product-fact`, (fs) => fs.map((f) => [f.dataset.fact, f.dataset.value, f.textContent]));
+    assert.deepStrictEqual(await factsOf('E910001-000'), [
+      ['catalogue', 'authorized', 'In UNIQLO’s catalogue'],
+      ['chart', 'general', 'General chart only'],
+      ['garment', 'none', 'No garment measurements'],
+      ['comparable', 'false', 'Can’t be compared yet']
+    ], 'in the catalogue is not sized');
+    assert.deepStrictEqual(await factsOf('E471808-000'), [
+      ['catalogue', 'authorized', 'In UNIQLO’s catalogue'],
+      ['chart', 'own', 'Sizing chart'],
+      ['garment', 'unverified', 'Garment measurements not verified'],
+      ['comparable', 'false', 'Can’t be compared yet']
+    ]);
+    assert.deepStrictEqual((await factsOf('E475378-000'))[0], ['catalogue', 'fynd-list', 'Not from a catalogue feed']);
+    assert.strictEqual(await page.textContent('.fit-product[data-code="E910001-000"] .fit-product-code'), 'Product ID E910001-000');
+    assert.strictEqual(await page.$$eval('.fit-product[data-comparable="true"]', (bs) => bs.length), 0, 'nothing here is comparable');
+    await page.context().close();
+  });
+
+  await test('the count says how many came back of how many match of how many are listed — through every page of hoodies', async () => {
+    const page = await openPage('index.html');
+    await ready(page);
+    assert.strictEqual(await page.textContent('#fit-browser-count'), '24 shown · 1230 matching · 1230 listed in all');
+    const kinds = await page.$$eval('.fit-filter[data-group="kind"]', (bs) => bs.map((b) => b.dataset.value));
+    assert.ok(kinds.indexOf('hoodies') === kinds.indexOf('sweatshirts-hoodies') + 1 && kinds.includes('sweatshirts'), kinds.join(', '));
+    await answered(page, () => page.click('.fit-filter[data-group="kind"][data-value="hoodies"]'));
+    assert.strictEqual(await page.getAttribute('.fit-filter[data-value="hoodies"]', 'aria-pressed'), 'true');
+    const hoodies = await codes(page);
+    assert.deepStrictEqual(hoodies.slice().sort(), ['E471808-000', 'E475378-000', 'E910001-000', 'E910002-000', 'E910004-000', 'E910019-000', 'E910023-000']);
+    assert.ok(asked.some((q) => /category=hoodies/.test(q)), 'asked of the server');
+    assert.strictEqual(await page.textContent('#fit-browser-count'), '7 shown · 7 matching · 1230 listed in all');
+    assert.strictEqual(await page.isHidden('#fit-products-more'), true, 'nothing more to show');
+    await answered(page, () => page.click('.fit-filter[data-group="kind"][data-value="tshirts"]'));
+    for (let shown = 24; shown < 48; shown += 24) await answered(page, () => page.click('#fit-products-more'));
+    assert.match(await page.textContent('#fit-browser-count'), /^48 shown · \d{4} matching · 1230 listed in all$/);
+    await answered(page, () => page.fill('#fit-product-search', 'tuxedo'));
+    assert.strictEqual(await page.textContent('#fit-browser-count'), '0 shown · 0 matching · 1230 listed in all');
+    await page.context().close();
+  });
+
+  await test('a photo that can’t load, or none from UNIQLO’s image host, is drawn artwork — never another picture', async () => {
+    const page = await openPage('index.html');
+    await ready(page);
+    await answered(page, () => page.fill('#fit-product-search', 'E910105'));
+    assert.strictEqual(await page.getAttribute('.fit-product[data-code="E910105-000"] .fit-product-media', 'data-image'), 'none');
+    assert.strictEqual(await page.$$eval('.fit-product[data-code="E910105-000"] img', (is) => is.length), 0);
+    await answered(page, () => page.fill('#fit-product-search', 'E910001'));
+    /* every request off this server is refused here, so the catalogue's photo fails to load */
+    await page.waitForSelector('.fit-product[data-code="E910001-000"] .fit-product-media[data-image="failed"] svg.silhouette');
+    await page.context().close();
+  });
+
+  await test('picking a product shows its four facts and its details from the brand’s own API, then the server’s check says whether it can be compared', async () => {
+    const page = await openPage('index.html');
+    await ready(page);
+    await answered(page, () => page.fill('#fit-product-search', 'E910001'));
+    await page.click('.fit-product[data-code="E910001-000"]');
+    await page.waitForSelector('#ff-picked[data-detail="ready"]');
+    assert.strictEqual(await page.textContent('#ff-picked .ff-picked-detail'), 'Product ID E910001-000 · Sweatshirts & Hoodies · Sizes XS, S, M, L, XL, XXL');
+    assert.deepStrictEqual(await page.$$eval('#ff-picked .fit-product-fact', (fs) => fs.map((f) => f.dataset.value)), ['authorized', 'general', 'none', 'false']);
+    assert.ok(asked.some((q) => /detail=E910001-000/.test(q)));
+    await page.waitForSelector('#ff-check:not([hidden])');
+    await page.waitForFunction(() => !['checking', ''].includes(document.getElementById('ff-check').dataset.status || ''));
+    assert.notStrictEqual(await page.getAttribute('#ff-check', 'data-status'), 'ready', 'a catalogue product with no record is never ready to compare');
+    await page.context().close();
+  });
+
   await test('on a phone the popup fills the screen and scrolls inside, with no sideways scroll', async () => {
     const page = await openPage('index.html', { width: 375, height: 700 });
     await ready(page);

@@ -17,7 +17,12 @@
    once one is connected, its authorized catalogue — with the brand's
    own names and photos (or drawn artwork where no photo was verified),
    and each card says what Fynd holds for its sizing — never that a
-   chart was read before it was. The list says how much of the brand's
+   chart was read before it was. Four facts are kept apart on every
+   card, from the server's own `status`: whether the product is in an
+   authorized catalogue, whether Fynd holds a sizing chart for it,
+   whether that chart's garment measurements are verified, and whether
+   it can be compared at all — so being listed is never read as being
+   sized. The list says how much of the brand's
    range it covers, and while that is only a few products, says so
    above the list.
 
@@ -83,6 +88,7 @@
   let brand = null;
   let items = [];
   let total = 0;
+  let listed = 0;
   let facets = null;
   let category = 'all';
   let line = 'all';
@@ -100,6 +106,28 @@
 
   const IMAGE_HOSTS = /^https:\/\/image\.uniqlo\.com\//;
   const LINE_LABELS = { men: 'Men', women: 'Women', unisex: 'Unisex', kids: 'Kids', baby: 'Baby' };
+  const count = $('fit-browser-count');
+  /* each fact the server states about a product, in words; `yes`, `part`
+     and `no` say how far it goes. Nothing unknown is drawn as known. */
+  const FACTS = [
+    ['catalogue', { authorized: ['yes', 'In UNIQLO’s catalogue'], 'fynd-list': ['no', 'Not from a catalogue feed'] }],
+    ['chart', { own: ['yes', 'Sizing chart'], general: ['part', 'General chart only'], none: ['no', 'No sizing chart saved'] }],
+    ['garment', { verified: ['yes', 'Garment measurements verified'], unverified: ['part', 'Garment measurements not verified'], none: ['no', 'No garment measurements'] }],
+    ['comparable', { true: ['yes', 'Can be compared'], false: ['no', 'Can’t be compared yet'] }]
+  ];
+  function facts(status) {
+    const box = el('span', 'fit-product-facts');
+    if (!status || typeof status !== 'object') return box;
+    FACTS.forEach(([fact, words]) => {
+      const said = words[String(status[fact])];
+      if (!said) return;
+      const f = el('span', `fit-product-fact fit-product-fact--${said[0]}`, said[1]);
+      f.dataset.fact = fact;
+      f.dataset.value = String(status[fact]);
+      box.append(f);
+    });
+    return box;
+  }
 
   function money(price) {
     if (!price || !Number.isInteger(price.amount) || !/^[A-Z]{3}$/.test(price.currency || '')) return '';
@@ -113,6 +141,7 @@
     const b = el('a', 'fit-product');
     b.href = `product.html?${new URLSearchParams({ brand: brand.id, item: p.code })}`;
     b.dataset.code = p.code;
+    if (p.status && typeof p.status === 'object') b.dataset.comparable = String(p.status.comparable === true);
     const chosenBrand = brand;
     b.addEventListener('click', (event) => {
       if (!global.FindFit || typeof global.FindFit.select !== 'function') return;
@@ -129,9 +158,12 @@
       img.loading = 'lazy';
       img.decoding = 'async';
       img.referrerPolicy = 'no-referrer';
-      img.addEventListener('error', () => img.replaceWith(art(p.category)), { once: true });
+      img.addEventListener('error', () => { media.dataset.image = 'failed'; img.replaceWith(art(p.category)); }, { once: true });
+      media.dataset.image = 'photo';
       media.append(img);
     } else {
+      /* no photo from UNIQLO's image host: drawn artwork, never another photo */
+      media.dataset.image = 'none';
       media.append(art(p.category));
     }
     const text = el('span', 'fit-product-text');
@@ -140,7 +172,8 @@
     const price = money(p.price);
     if (price) text.append(el('span', 'fit-product-price', price));
     if (p.availability === 'out_of_stock') text.append(el('span', 'fit-product-stock', 'Out of stock'));
-    text.append(el('span', `fit-product-holds fit-product-holds--${p.holds}`, p.holdsText));
+    text.append(el('span', `fit-product-holds fit-product-holds--${p.holds}`, p.holdsText), facts(p.status),
+      el('span', 'fit-product-code', `Product ID ${p.code}`));
     b.append(media, text);
     return b;
   }
@@ -161,6 +194,11 @@
     more.disabled = false;
     more.textContent = `Show more (${total - items.length} more)`;
     root.dataset.matching = String(total);
+    root.dataset.listed = String(listed);
+    /* how many came back, of how many match, of how many are listed */
+    count.textContent = listed
+      ? `${items.length} shown · ${total} matching · ${listed} listed in all`
+      : '';
     root.dataset.query = answer.query ? answer.query.q : '';
     const filtered = category !== 'all' || line !== 'all' || colour !== 'all' || size !== 'all' || inStock || Boolean(answer.query && answer.query.q);
     if (!total && !filtered) return say('No products to show for this brand yet.');
@@ -200,7 +238,11 @@
     const kindRow = el('div', 'fit-filter-row');
     kindRow.setAttribute('role', 'group');
     kindRow.setAttribute('aria-label', 'Type of clothing');
-    kindRow.append(chip('kind', 'all', 'All', (v) => { category = v; }), ...kinds.map((k) => chip('kind', k.value, k.label, (v) => { category = v; })));
+    /* a group, then the narrower types the server names inside it
+       (Hoodies apart from Sweatshirts) */
+    const setKind = (v) => { category = v; };
+    kindRow.append(chip('kind', 'all', 'All', setKind), ...kinds.flatMap((k) => [chip('kind', k.value, k.label, setKind)]
+      .concat((Array.isArray(k.kinds) && k.kinds.length > 1 ? k.kinds : []).map((sub) => chip('kind', sub.value, sub.label, setKind)))));
     const rows = [kindRow];
     if (lines.length > 1) {
       const lineRow = el('div', 'fit-filter-row');
@@ -252,6 +294,8 @@
       }
       items = [];
       total = 0;
+      listed = 0;
+      count.textContent = '';
       grid.replaceChildren();
       more.hidden = true;
       loadedFor = null;
@@ -262,6 +306,7 @@
     brand = data.brand;
     dialogTitle.textContent = brand.name;
     total = Number.isInteger(data.total) ? data.total : data.products.length;
+    listed = Number.isInteger(data.listed) ? data.listed : 0;
     items = append ? items.concat(data.products) : data.products;
     coverage.textContent = brand.coverage || '';
     note.textContent = brand.notice || '';
@@ -280,6 +325,8 @@
     facets = null;
     items = [];
     total = 0;
+    listed = 0;
+    count.textContent = '';
     category = 'all';
     line = 'all';
     colour = 'all';
@@ -348,5 +395,5 @@
   search.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); ask(false); } });
   start();
 
-  global.BrandBrowser = { load, open, close };
+  global.BrandBrowser = { load, open, close, facts };
 })(typeof window !== 'undefined' ? window : globalThis);
