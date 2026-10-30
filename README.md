@@ -2493,9 +2493,11 @@ cold start loads, checks and indexes it in about a quarter of a second. A real
 UNIQLO file's size isn't known until one is delivered; if it is many times
 that, the catalogue should move from a committed file to the KV store.
 
-**Access status:** not approved. What was checked, what Rakuten's documentation
+**Access status:** UNKNOWN. No evidence of a partnership, approval or
+credentials was found in what could be inspected, which doesn't prove there
+is none. What was checked, what Rakuten's documentation
 says about the SFTP set-up, files and fields, what only a real UNIQLO file can
-answer, and every approval still missing are in
+answer, and every approval still to confirm are in
 [`api/_catalog/FEED-ACCESS.md`](api/_catalog/FEED-ACCESS.md).
 
 **Connecting it**, once Rakuten and UNIQLO USA have approved Fynd's access to
