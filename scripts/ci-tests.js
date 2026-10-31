@@ -72,6 +72,7 @@ const GROUPS = {
     ['test-extension', 'the browser extension: its permissions, its copies of the shared sizing code, and the chart payload it hands to Find Fit'],
     ['test-size-eval', 'the size engine against hand-worked expectations from published charts'],
     ['test-catalog-audit', 'the catalogue audit: every card proved from its row'],
+    ['test-rakuten-preflight', "the Rakuten SFTP preflight (every setting, no credential printed) and a feed sample through the sync's own import"],
     ['test-catalog-feed', "a brand's authorized catalogue: feed import, sync, the API fetch, search, filters, pages, staleness, and each product's sizing by its exact code"],
     ['test-demo-audio', "the landing demo's sound: loudness, ducking, captions"],
     ['test-demo-film', "the landing demo film: length, order, every store frame real"]
@@ -97,7 +98,9 @@ const GROUPS = {
 
 /* Every other scripts/test-*.js, and why CI does not hold a pull request
    to it. */
-const NOT_RUN = {};
+const NOT_RUN = {
+  'test-rakuten-sftp': { why: 'starts a local OpenSSH server and adds a test user, so it needs root and openssh-server; run it by hand: sudo node scripts/test-rakuten-sftp.js' }
+};
 
 /* What a suite inherits from the shell. Nothing else: no key, no store
    URL, no provider choice. */

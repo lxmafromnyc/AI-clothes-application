@@ -109,24 +109,59 @@ These shape the sync and are **unverified** until one is delivered:
 - **Delta and category files:** whether UNIQLO's programme offers them.
 - **Licence terms:** which fields may be shown and cached, and for how long.
 
-## Open points in the current sync, to confirm once the server can be seen
+## The integration, ready for credentials (31 October 2026)
 
-- **Download path: unverified, not known to be wrong.** The workflow
-  downloads `sftp://<host>/MID_SID_mp.txt.gz` from the SFTP root. That
-  matches Rakuten's description of where main product files sit (the
-  advertiser folders hold category files). It still has to be confirmed
-  against the real directory listing before the first run. If the file isn't
-  there, the step fails plainly (curl `--fail`) rather than syncing anything
-  wrong.
-- **Files fetched:** only the full file is downloaded. The reader already
-  handles delta files, but the workflow doesn't fetch them, and category
-  files aren't read. A daily full file is enough to start; delta and
-  category files are optional and shouldn't be wired until UNIQLO is known
-  to offer them.
+Nothing below connects anywhere until the account holder sets the secrets and
+variables. None of it has been run against Rakuten.
 
-No sync code was changed for either. The catalogue and sizing architecture
-(`import.js`, `sync.js`, `store.js`, `search.js`, the sizing records and
-engine) needs no change to accept a real file.
+| Piece | Does |
+| --- | --- |
+| `scripts/rakuten-preflight.js` | Checks every setting before anything connects, and never prints a credential or its length. It checks that the user and password are set and well-formed, that the MID and SID are numbers, that the fingerprint is a SHA-256 one (any usual form), the optional `RAKUTEN_SFTP_DIR`, the licensed fields, and the host recorded in the adapter. With `--tools`, it also checks for curl with SFTP, `ssh-keyscan` and `ssh-keygen`. It names each missing piece as a secret or a variable. |
+| `scripts/rakuten-sftp.sh` | The one way Fynd talks to the SFTP server: `list <dir>` and `fetch <file> <out> [max bytes]`. It connects only to a server whose host key matches `RAKUTEN_SFTP_HOSTKEY_SHA256`, and refuses any other before a password is sent. The credential goes to curl in a file only the runner user can read, never on a command line. Paths must be plain. |
+| `scripts/rakuten-sample.js` | Validates a whole file, or the first bytes of one, through the sync's own reader and import. It checks the header's MID, and how full each field is: SKU, a UNIQLO page with a code, a photo on `image.uniqlo.com`, Class 60, size, colour, gender, age, price. It reports categories, SKUs per product, products, and rejected rows with reasons. It ends with whether a sync would accept a file like it. A sample is reported as a sample and never as a count of the whole. It writes nothing. |
+| **Rakuten feed inspection** (`.github/workflows/rakuten-feed-inspect.yml`) | Run by hand only. It runs the preflight, then lists the login directory (`~/`), the server root (`/`) and optionally one folder. If asked, it downloads the first bytes of the full or delta file and validates them. It keeps the listing and the report for 7 days, but never the sample itself. It writes nothing to the repository. |
+| **UNIQLO catalogue sync** (`catalog-sync.yml`) | Now runs the preflight first, downloads through `rakuten-sftp.sh` from `RAKUTEN_SFTP_DIR` (default `/`), and passes `RAKUTEN_UNIQLO_MID` to the sync, so a file from any other advertiser is refused. |
+
+Tests: `scripts/test-rakuten-preflight.js` (offline, in CI) and
+`scripts/test-rakuten-sftp.js`. The second runs against a real local OpenSSH
+server and needs root, so it is run by hand:
+`sudo node scripts/test-rakuten-sftp.js`.
+
+### Fixed: the host key was never actually checked
+
+The sync used to pass the fingerprint to `curl --hostpubsha256`. On the curl
+that GitHub's `ubuntu-latest` runner ships (Ubuntu 24.04, curl 8.5.0 built on
+**libssh**), that option is ignored. Against a local SFTP server, a
+deliberately wrong `--hostpubsha256` still connected once `~/.ssh/known_hosts`
+matched. With no `known_hosts` entry, even the correct value was refused.
+
+So the old step would have failed on every run, and its pin gave no
+protection. `rakuten-sftp.sh` now reads the server's keys with
+`ssh-keyscan`, keeps only a key whose SHA-256 fingerprint equals the
+configured one, and gives curl that key as its only trusted host.
+`test-rakuten-sftp.js` checks both the refusal and this curl behaviour.
+
+### Fixed: the advertiser check never ran in the workflow
+
+`sync-catalog.js` refuses a Rakuten file whose header MID isn't
+`RAKUTEN_UNIQLO_MID`. The workflow's sync step didn't pass that variable, so
+the check was skipped there. It now passes it.
+
+### Still open, for the inspection to settle
+
+- **Where the main files are.** Rakuten describes them in the SFTP root.
+  Whether that "root" is the server's `/` or the login directory (`~/`) is
+  shown by the inspection's two listings. Set `RAKUTEN_SFTP_DIR` to match
+  (`/`, `~/` or a folder under either). The default `/` stays unverified,
+  not known to be wrong. If the file isn't there, the download fails plainly
+  rather than syncing anything.
+- **Delta and category files.** The sync still fetches only the full file.
+  The reader already handles delta files, and the inspection can sample one.
+  Category files aren't read. Neither should be wired into the sync until
+  the listing shows UNIQLO's programme offers them.
+
+The catalogue and sizing architecture (`import.js`, `sync.js`, `store.js`,
+`search.js`, the sizing records and engine) is unchanged.
 
 ## What has to happen before a sync
 
@@ -149,18 +184,20 @@ checks the dashboard or Fynd's records, or asks Rakuten support.
    already there):
    - **Secrets:** `RAKUTEN_SFTP_USER`, `RAKUTEN_SFTP_PASSWORD`
    - **Variables:** `RAKUTEN_UNIQLO_MID`, `RAKUTEN_SID`,
-     `RAKUTEN_SFTP_HOSTKEY_SHA256`, `UNIQLO_FEED_LICENSED_FIELDS`
-7. **Check the server and the file** before relying on the workflow, using
-   the dashboard or a one-off SFTP listing run by the account holder:
-   - the root directory listing and the download path (see above)
-   - the file names offered
-   - the header's MID
-   - a sample of lines against UNIQLO's pages
+     `RAKUTEN_SFTP_HOSTKEY_SHA256`, `UNIQLO_FEED_LICENSED_FIELDS`, and
+     later `RAKUTEN_SFTP_DIR`
+7. **Run Rakuten feed inspection by hand**, first with no sample:
+   - The preflight must pass, naming nothing missing.
+   - The listings show the file names on offer and where they are. Set
+     `RAKUTEN_SFTP_DIR` from them.
+   - Run it again with **sample** ticked. The report must say a sync would
+     accept it, with UNIQLO USA's MID in the header.
+   - Compare a few of its products against UNIQLO's own pages.
 8. **Run `UNIQLO catalogue sync` by hand,** read the report and coverage,
    and commit the catalogue in a reviewed pull request. Only then consider
    `UNIQLO_FEED_SCHEDULE` and `UNIQLO_FEED_AUTOPR`.
 
-Until step 8, Find Fit lists the 5 products Fynd sourced itself, and says
+Until step 8 has been done and its pull request merged, Find Fit lists the 5 products Fynd sourced itself, and says
 so. UNIQLO's catalogue availability and Fynd's approval status stay
 **UNKNOWN** in this document until confirmed from authoritative account
 information or Rakuten support.

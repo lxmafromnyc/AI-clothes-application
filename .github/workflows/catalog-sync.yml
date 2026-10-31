@@ -11,11 +11,20 @@
 #       secrets   RAKUTEN_SFTP_USER, RAKUTEN_SFTP_PASSWORD
 #       variables RAKUTEN_UNIQLO_MID (UNIQLO USA's advertiser ID),
 #                 RAKUTEN_SID (Fynd's publisher channel ID),
-#                 RAKUTEN_SFTP_HOSTKEY_SHA256 (the server's host key,
-#                 base64 SHA-256, read once from the welcome email or
-#                 Rakuten support — never trusted on first use)
-#     and "aftp.linksynergy.com" recorded as the feed host in
-#     api/_catalog/sources/uniqlo-us.js (RAKUTEN.host), a reviewed change.
+#                 RAKUTEN_SFTP_HOSTKEY_SHA256 (the server's host key
+#                 fingerprint, SHA256:<base64>, from the welcome email or
+#                 Rakuten support — never trusted on first use),
+#                 RAKUTEN_SFTP_DIR (optional, default "/": where the main
+#                 files are, once "Rakuten feed inspection" has listed
+#                 the real server)
+#     and the feed host recorded in api/_catalog/sources/uniqlo-us.js
+#     (RAKUTEN.host), a reviewed change.
+#     scripts/rakuten-preflight.js checks all of it before anything
+#     connects; scripts/rakuten-sftp.sh connects only to a server whose
+#     host key matches the fingerprint (curl's own --hostpubsha256 is
+#     ignored by the libssh curl the runner ships, so it isn't relied on).
+#     Run "Rakuten feed inspection" first, to see the directory and
+#     validate a sample.
 #
 #   An HTTPS API (UNIQLO_FEED_URL, UNIQLO_FEED_TOKEN), as before.
 #
@@ -75,29 +84,33 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Download UNIQLO's Product Catalog from Rakuten (SFTP)
-        id: rakuten
+      - name: Preflight the Rakuten SFTP settings
+        id: preflight
         if: ${{ vars.RAKUTEN_UNIQLO_MID != '' }}
         env:
           RAKUTEN_SFTP_USER: ${{ secrets.RAKUTEN_SFTP_USER }}
           RAKUTEN_SFTP_PASSWORD: ${{ secrets.RAKUTEN_SFTP_PASSWORD }}
-          MID: ${{ vars.RAKUTEN_UNIQLO_MID }}
-          SID: ${{ vars.RAKUTEN_SID }}
-          HOSTKEY: ${{ vars.RAKUTEN_SFTP_HOSTKEY_SHA256 }}
+          RAKUTEN_UNIQLO_MID: ${{ vars.RAKUTEN_UNIQLO_MID }}
+          RAKUTEN_SID: ${{ vars.RAKUTEN_SID }}
+          RAKUTEN_SFTP_HOSTKEY_SHA256: ${{ vars.RAKUTEN_SFTP_HOSTKEY_SHA256 }}
+          RAKUTEN_SFTP_DIR: ${{ vars.RAKUTEN_SFTP_DIR }}
+          UNIQLO_FEED_LICENSED_FIELDS: ${{ vars.UNIQLO_FEED_LICENSED_FIELDS }}
+        run: node scripts/rakuten-preflight.js --tools --github-output
+
+      - name: Download UNIQLO's Product Catalog from Rakuten (SFTP)
+        id: rakuten
+        if: ${{ steps.preflight.outcome == 'success' }}
+        env:
+          RAKUTEN_SFTP_USER: ${{ secrets.RAKUTEN_SFTP_USER }}
+          RAKUTEN_SFTP_PASSWORD: ${{ secrets.RAKUTEN_SFTP_PASSWORD }}
+          RAKUTEN_SFTP_HOST: ${{ steps.preflight.outputs.host }}
+          RAKUTEN_SFTP_HOSTKEY_SHA256: ${{ steps.preflight.outputs.fingerprint }}
+          FEED_PATH: ${{ steps.preflight.outputs.dir }}${{ steps.preflight.outputs.full_file }}
         shell: bash
         run: |
           set -euo pipefail
-          for v in RAKUTEN_SFTP_USER RAKUTEN_SFTP_PASSWORD MID SID HOSTKEY; do
-            [ -n "${!v}" ] || { echo "::error::$v is not set, so the Rakuten feed can't be fetched."; exit 1; }
-          done
-          [[ "$MID" =~ ^[0-9]+$ && "$SID" =~ ^[0-9]+$ ]] || { echo "::error::RAKUTEN_UNIQLO_MID and RAKUTEN_SID must be numbers."; exit 1; }
-          host=$(node -e "process.stdout.write(require('./api/_catalog/sources/uniqlo-us').RAKUTEN.host || '')")
-          [ -n "$host" ] || { echo "::error::No Rakuten feed host is recorded in api/_catalog/sources/uniqlo-us.js (RAKUTEN.host), so nothing is fetched."; exit 1; }
           # the full file: every live product (Rakuten's own naming, MID_SID_mp.txt.gz)
-          curl --fail --silent --show-error --max-time 600 \
-            --hostpubsha256 "$HOSTKEY" \
-            --user "$RAKUTEN_SFTP_USER:$RAKUTEN_SFTP_PASSWORD" \
-            "sftp://$host/${MID}_${SID}_mp.txt.gz" -o "$RUNNER_TEMP/uniqlo-feed.txt.gz"
+          bash scripts/rakuten-sftp.sh fetch "$FEED_PATH" "$RUNNER_TEMP/uniqlo-feed.txt.gz"
           gunzip -f "$RUNNER_TEMP/uniqlo-feed.txt.gz"
           echo "file=$RUNNER_TEMP/uniqlo-feed.txt" >> "$GITHUB_OUTPUT"
           echo "Downloaded $(wc -l < "$RUNNER_TEMP/uniqlo-feed.txt") lines."
@@ -107,6 +120,8 @@ jobs:
           UNIQLO_FEED_URL: ${{ secrets.UNIQLO_FEED_URL }}
           UNIQLO_FEED_TOKEN: ${{ secrets.UNIQLO_FEED_TOKEN }}
           UNIQLO_FEED_LICENSED_FIELDS: ${{ vars.UNIQLO_FEED_LICENSED_FIELDS }}
+          # the sync refuses a Rakuten file from any other advertiser
+          RAKUTEN_UNIQLO_MID: ${{ vars.RAKUTEN_UNIQLO_MID }}
           MASS_REMOVAL: ${{ inputs.allow_mass_removal && '--allow-mass-removal' || '' }}
           FEED_FILE: ${{ steps.rakuten.outputs.file }}
         # bash, so pipefail keeps a refused sync red

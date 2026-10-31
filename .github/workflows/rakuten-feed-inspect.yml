@@ -1,0 +1,129 @@
+# Fynd — inspect UNIQLO's Rakuten Product Catalog before the first sync
+#
+# By hand only. With the same secrets and variables the sync uses
+# (.github/workflows/catalog-sync.yml), it:
+#
+#   1. checks every setting (scripts/rakuten-preflight.js) — and stops
+#      there, naming what's missing, until they're all set;
+#   2. connects only to a server whose host key matches
+#      RAKUTEN_SFTP_HOSTKEY_SHA256 (scripts/rakuten-sftp.sh), and lists the
+#      login directory and the server root — names, sizes and dates only —
+#      plus one folder if asked (an advertiser folder, for its category
+#      files);
+#   3. if asked, downloads the first bytes of the main file (a sample,
+#      never the whole) and validates them through the sync's own import
+#      (scripts/rakuten-sample.js): advertiser ID, fields filled, products,
+#      rejected rows and why.
+#
+# It writes nothing to the repository and imports nothing. The listing and
+# the report are kept as a short-lived artifact; the sample itself isn't
+# uploaded, since its terms aren't known until the agreement says. What it
+# shows decides RAKUTEN_SFTP_DIR, and whether the sync can be run.
+
+name: Rakuten feed inspection
+
+on:
+  workflow_dispatch:
+    inputs:
+      folder:
+        description: 'Also list this folder (e.g. the advertiser folder named by the MID); plain names only'
+        type: string
+        default: ''
+      sample:
+        description: 'Download the first bytes of the main file and validate them'
+        type: boolean
+        default: false
+      sample_file:
+        description: 'Which main file to sample'
+        type: choice
+        options: [full, delta]
+        default: full
+      sample_bytes:
+        description: 'How many bytes to download for the sample (at most 20000000)'
+        type: string
+        default: '2000000'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rakuten-feed-inspect
+  cancel-in-progress: false
+
+jobs:
+  inspect:
+    name: Inspect the Rakuten SFTP directory
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Preflight
+        id: preflight
+        env:
+          RAKUTEN_SFTP_USER: ${{ secrets.RAKUTEN_SFTP_USER }}
+          RAKUTEN_SFTP_PASSWORD: ${{ secrets.RAKUTEN_SFTP_PASSWORD }}
+          RAKUTEN_UNIQLO_MID: ${{ vars.RAKUTEN_UNIQLO_MID }}
+          RAKUTEN_SID: ${{ vars.RAKUTEN_SID }}
+          RAKUTEN_SFTP_HOSTKEY_SHA256: ${{ vars.RAKUTEN_SFTP_HOSTKEY_SHA256 }}
+          RAKUTEN_SFTP_DIR: ${{ vars.RAKUTEN_SFTP_DIR }}
+          UNIQLO_FEED_LICENSED_FIELDS: ${{ vars.UNIQLO_FEED_LICENSED_FIELDS }}
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/report"
+          node scripts/rakuten-preflight.js --tools --github-output | tee "$RUNNER_TEMP/report/preflight.txt"
+
+      - name: List the directory
+        env:
+          RAKUTEN_SFTP_USER: ${{ secrets.RAKUTEN_SFTP_USER }}
+          RAKUTEN_SFTP_PASSWORD: ${{ secrets.RAKUTEN_SFTP_PASSWORD }}
+          RAKUTEN_SFTP_HOST: ${{ steps.preflight.outputs.host }}
+          RAKUTEN_SFTP_HOSTKEY_SHA256: ${{ steps.preflight.outputs.fingerprint }}
+          FOLDER: ${{ inputs.folder }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/report/listing.txt"
+          { echo "== login directory (~/)"; bash scripts/rakuten-sftp.sh list "~/"
+            echo; echo "== server root (/)"; bash scripts/rakuten-sftp.sh list / || echo "(the root couldn't be listed)"
+          } | tee "$out"
+          if [ -n "$FOLDER" ]; then
+            [[ "$FOLDER" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "::error::folder must be a plain name"; exit 2; }
+            { echo; echo "== ~/$FOLDER/"; bash scripts/rakuten-sftp.sh list "~/$FOLDER/"; } | tee -a "$out"
+          fi
+
+      - name: Download a sample of the main file and validate it
+        if: ${{ inputs.sample }}
+        env:
+          RAKUTEN_SFTP_USER: ${{ secrets.RAKUTEN_SFTP_USER }}
+          RAKUTEN_SFTP_PASSWORD: ${{ secrets.RAKUTEN_SFTP_PASSWORD }}
+          RAKUTEN_SFTP_HOST: ${{ steps.preflight.outputs.host }}
+          RAKUTEN_SFTP_HOSTKEY_SHA256: ${{ steps.preflight.outputs.fingerprint }}
+          RAKUTEN_UNIQLO_MID: ${{ vars.RAKUTEN_UNIQLO_MID }}
+          UNIQLO_FEED_LICENSED_FIELDS: ${{ vars.UNIQLO_FEED_LICENSED_FIELDS }}
+          FEED_PATH: ${{ steps.preflight.outputs.dir }}${{ inputs.sample_file == 'delta' && steps.preflight.outputs.delta_file || steps.preflight.outputs.full_file }}
+          BYTES: ${{ inputs.sample_bytes }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$BYTES" =~ ^[0-9]{1,8}$ && "$BYTES" -gt 0 && "$BYTES" -le 20000000 ]] || { echo "::error::sample_bytes must be 1 to 20000000"; exit 2; }
+          bash scripts/rakuten-sftp.sh fetch "$FEED_PATH" "$RUNNER_TEMP/sample.gz" "$BYTES"
+          node scripts/rakuten-sample.js --file "$RUNNER_TEMP/sample.gz" --json --examples 0 > "$RUNNER_TEMP/report/sample.json" || true
+          # red when a sync would refuse a file like this
+          status=0
+          node scripts/rakuten-sample.js --file "$RUNNER_TEMP/sample.gz" | tee "$RUNNER_TEMP/report/sample.txt" || status=$?
+          rm -f "$RUNNER_TEMP/sample.gz"
+          exit "$status"
+
+      - name: Keep the listing and the report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: rakuten-feed-inspection
+          path: ${{ runner.temp }}/report/
+          retention-days: 7
+          if-no-files-found: warn
