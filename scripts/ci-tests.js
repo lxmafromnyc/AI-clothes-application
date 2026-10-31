@@ -69,6 +69,7 @@ const GROUPS = {
     ['test-stripe', 'payments and subscriptions'],
     ['test-fit-profile', 'the shopper fit profile: its schema, units, and who may read or change it'],
     ['test-sizing', 'sizing records, the size engine, /api/size-recommendation and fit feedback'],
+    ['test-measurement-methods', 'measurements compared only when genuinely comparable: the canonical method registry, every method pair, saved reference methods and their migration, labels never garments, no body fallback, per-dimension statuses, unchanged rankings'],
     ['test-fit-decision', 'the fit decision policy: OK, INSUFFICIENT_DATA or NO_MATCH with reason codes — out-of-range shoppers, missing and incompatible measurements, unverified data, conflicts, category requirements'],
     ['test-sizing-cross-brand', 'the size engine on UNIQLO records and an illustrative Everlane fixture: provenance, signed differences, units, methods, trade-offs, unverified data'],
     ['test-page-access', 'which retailer pages the sizing reader may fetch: reviewed terms, then robots.txt, and nothing otherwise'],

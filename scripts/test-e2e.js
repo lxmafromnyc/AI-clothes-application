@@ -3311,14 +3311,43 @@ const linkFromInbox = (pattern) => {
     /* the verdict layout: a recommendation, a three-step scale drawn from the engine's own words, its sources and limits */
     assert.strictEqual(await page.getAttribute('#fit-compare', 'data-verdict'), 'recommended');
     assert.strictEqual(await page.textContent('#fit-compare .fit-compare-title'), 'Compared with your reference');
-    const scale = await page.$$eval('#fit-compare .ff-scale-row', (ls) => ls.map((l) => [l.dataset.dim, l.dataset.place, l.querySelector('.is-here').textContent]));
+    /* the garment comparison: one row per compared measurement, the two
+       garments' values side by side, which way the size differs and
+       whether it is within the working tolerance — each the engine's own */
+    const scale = await page.$$eval('#fit-compare .ff-garment .ff-scale-row', (ls) => ls.map((l) => ({
+      dim: l.dataset.dim,
+      direction: l.dataset.direction,
+      similar: l.dataset.similar,
+      bars: [...l.querySelectorAll('.ff-bar-line')].map((b) => [b.querySelector('.ff-bar-label').textContent, b.querySelector('.ff-bar-value').textContent, b.querySelector('.ff-bar').classList.contains('ff-bar--reference') ? 'reference' : b.querySelector('.ff-bar').classList.contains('ff-bar--candidate') ? 'candidate' : null]),
+      diff: l.querySelector('.ff-diff').textContent,
+      similarNote: l.querySelectorAll('.ff-similar').length
+    })));
     const recRow = expected.sizes.find((x) => x.size === expected.recommended);
-    assert.deepStrictEqual(scale.map((s) => s[0]), expected.dimensionsCompared, 'one step per compared measurement');
-    scale.forEach(([dim, place]) => {
-      const { words, withinTolerance } = recRow.dimensions[dim];
-      const want = withinTolerance || /the same/.test(words) ? 'same' : /wider|longer/.test(words) ? 'more' : 'less';
-      assert.strictEqual(place, want, `${dim}: placed by the engine's own answer (${words}, within tolerance: ${withinTolerance})`);
+    assert.deepStrictEqual(scale.map((s) => s.dim), expected.dimensionsCompared, 'one row per compared measurement');
+    /* the page's own formatting, restated: quarters of an inch; a signed tenth, a true minus, no sign on nothing */
+    const quarterInches = (v) => { const q = Math.round(v * 4) / 4; const whole = Math.floor(q); const glyph = { 0: '', 0.25: '¼', 0.5: '½', 0.75: '¾' }[Math.round((q - whole) * 100) / 100]; return `${whole || !glyph ? whole : ''}${glyph} in`; };
+    const signedDiff = (v) => { const t = Math.round(v * 10) / 10; return t === 0 ? '0.0 in' : `${t > 0 ? '+' : '−'}${Math.abs(t).toFixed(1)} in`; };
+    const WORD = { girth: { less: 'Narrower', same: 'The same', more: 'Wider' }, length: { less: 'Shorter', same: 'The same', more: 'Longer' } };
+    scale.forEach((s) => {
+      const { words, withinTolerance, direction, difference, reference, candidate } = recRow.dimensions[s.dim];
+      /* which way: the engine's own direction, and the same way its signed difference and its words go */
+      assert.strictEqual(s.direction, direction, `${s.dim}: the engine's own direction`);
+      const bySign = Math.round(difference * 10) / 10 === 0 ? 'same' : difference > 0 ? 'more' : 'less';
+      assert.strictEqual(s.direction, bySign, `${s.dim}: the direction agrees with the signed difference ${difference}`);
+      assert.match(words, { same: /the same/, more: /wider|longer/, less: /narrower|shorter/ }[s.direction], `${s.dim}: the direction agrees with the engine's words (${words})`);
+      /* similar: exactly the engine's tolerance answer, said in words only when true */
+      assert.strictEqual(s.similar, String(withinTolerance === true), `${s.dim}: similar is the engine's within-tolerance answer (${withinTolerance})`);
+      assert.strictEqual(s.similarNote, withinTolerance === true ? 1 : 0);
+      /* paired measurements: the reference garment's, then the size's, each the engine's own value */
+      assert.deepStrictEqual(s.bars, [['Your garment', quarterInches(reference), 'reference'], [`Size ${expected.recommended}`, quarterInches(candidate), 'candidate']], `${s.dim}: both garments' measurements`);
+      /* the exact signed difference, named the way it goes */
+      const word = WORD[s.dim === 'chestWidth' || s.dim === 'shoulderWidth' ? 'girth' : 'length'][s.direction];
+      assert.strictEqual(s.diff, `${word}: ${signedDiff(difference)}`, `${s.dim}: the engine's signed difference`);
     });
+    /* nothing left out without its reason, and the drawing marks exactly what was compared */
+    assert.strictEqual(await page.$$eval('#fit-compare .ff-scale-skip', (ns) => ns.length), 4 - expected.dimensionsCompared.length);
+    assert.deepStrictEqual(await page.$$eval('#fit-compare .ff-garment-line.is-compared', (ns) => ns.map((n) => n.getAttribute('data-dim')).sort()), [...expected.dimensionsCompared].sort());
+    assert.match(await page.textContent('#fit-compare .ff-garment-caption'), /not how either fits your body\. Matching measurements don’t guarantee the same fit/);
     assert.match(await page.textContent('#fit-compare .ff-sources'), /^Sources: UNIQLO’s published finished-garment measurements for this item, checked against the brand’s page; your reference’s published measurements/);
     assert.strictEqual(await page.textContent('#fit-compare .ff-limits-title'), 'Limits of this comparison');
     assert.ok(!/%|confiden/i.test(await page.textContent('#fit-compare')), 'no percentage or confidence invented');
@@ -3453,6 +3482,60 @@ const linkFromInbox = (pattern) => {
     assert.ok(!/true-to-size|tshirts|garment|fit/i.test(kept), `found in browser storage: ${kept}`);
     await context.close();
   });
+
+  await test('no size without the decision, on the real pages: a label-only hoodie is a body-size estimate on the search page, never "your size"; an exact product is; and Compare names an overruled size only as closest, with no reliability', () => asChecked(UQ_PAIR.concat(['zara-00761810-basic-heavyweight-hoodie-us']), async () => {
+    const context = await openContext();
+    const page = await signedIn(context, 'lena@e2e.test');
+    const user = await users.byEmail('lena@e2e.test');
+    const tagOf = async () => {
+      await page.waitForSelector(`${NOW} .fit-panel-matched`);
+      return page.$eval(`${NOW} .grid .item-card .item-fit`, (t) => ({ text: t.textContent, cls: t.className, result: t.dataset.result }));
+    };
+    const search = async () => {
+      await listingsFor(page);
+      await open(page, 'find-clothes.html');
+      await page.fill('#ask', 'grey hoodie');
+      await page.click('#ask-form button[type="submit"]');
+    };
+    /* a brand and size label alone: an estimate from body sizes and the brand's chart, said to be one */
+    await fitProfiles.saveGuide(user.id, { garments: { hoodies: { favorite: 'perfect', line: 'men', fitGoal: 'true-to-size', anchor: { brand: 'UNIQLO', size: 'M' } } } });
+    await search();
+    let tag = await tagOf();
+    assert.strictEqual(tag.result, 'body-estimate');
+    assert.match(tag.cls, /\bitem-fit--estimate\b/);
+    assert.match(tag.text, /^Body-size estimate: [A-Z0-9]+ · low confidence — from body sizes and the brand’s size chart, not compared with a garment of yours$/);
+    assert.doesNotMatch(tag.text, /Your size|Recommended/);
+    /* the garment comparison of the same profile abstains */
+    await open(page, 'index.html');
+    await linkBox(page);
+    await page.fill('#fit-url', 'https://www.uniqlo.com/us/en/products/E475378-000/00');
+    await page.press('#fit-url', 'Enter');
+    await page.waitForSelector('#fit-compare:not([hidden]):not([data-verdict="loading"]) .fit-compare-title');
+    assert.strictEqual(await page.$$eval('#fit-compare .fit-compare-recommended, #fit-compare .fit-compare-closest, #fit-compare .ff-scale', (ns) => ns.length), 0, 'no size from a label');
+    assert.doesNotMatch(await page.textContent('#fit-compare'), /Recommended size|Body-size estimate/);
+
+    /* the exact product, by its link: a garment comparison — "your size" */
+    await fitProfiles.saveGuide(user.id, { garments: { hoodies: { favorite: 'perfect', line: 'men', fitGoal: 'true-to-size', anchor: { brand: 'UNIQLO', size: 'L', product: { url: 'https://www.uniqlo.com/us/en/products/E475378-000/00' } } } } });
+    await search();
+    tag = await tagOf();
+    assert.deepStrictEqual([tag.result, tag.text.replace(/ · .*$/, '')], ['garment-comparison', 'Your size: L']);
+    assert.match(tag.cls, /\bitem-fit--ok\b/);
+
+    /* Compare: a measured reference the engine alone would call S, the decision NO_MATCH (the chest 7 cm narrower) */
+    const zara = require('../api/_sizing/records').byId('zara-00761810-basic-heavyweight-hoodie-us');
+    const s = zara.charts.garment.sizes.S;
+    await fitProfiles.saveGuide(user.id, { garments: { hoodies: { favorite: 'perfect', anchor: { brand: null, size: null, measurements: { unit: 'cm', chestWidth: String(s.chestWidth.value - 7), bodyLength: String(s.bodyLength.value), shoulderWidth: String(s.shoulderWidth.value), sleeveLength: String(s.sleeveLength.value) } } } } });
+    await open(page, 'compare.html');
+    await page.waitForSelector('#ref-saved:not([hidden])');
+    await page.click(`[data-product="${zara.id}"]`);
+    await page.waitForSelector('#result-section:not([hidden]) .compare-tag');
+    assert.deepStrictEqual(await page.$$eval('#result-section .compare-tag', (ts) => ts.map((t) => t.textContent)), ['Closest — not recommended']);
+    assert.strictEqual(await page.isVisible('#result-reliability'), false, 'no reliability without a recommendation');
+    const summary = await page.textContent('#result-summary');
+    assert.doesNotMatch(summary, /\bS is the closest to your reference\b|Recommended/);
+    assert.match(summary, /closest size, size S/i);
+    await context.close();
+  }));
 
   await test('a hoodie search uses the hoodie reference: the matched listing is compared, the rest say nothing, and a jeans search is never sized from it', () => asChecked(UQ_PAIR, async () => {
     const context = await openContext();
@@ -3637,10 +3720,13 @@ const linkFromInbox = (pattern) => {
     await page.fill('#g-hoodies-notes', 'Roomy but not baggy');
     await saveAndWait(page);
     let stored = (await savedProfile('cora@e2e.test')).garments.hoodies;
+    /* version 6: saved with how each value was measured — the form's own method for each, under the registry it was named by */
     assert.deepStrictEqual(stored.anchor, {
       brand: 'Carhartt', size: 'L', likes: ['chest'], notes: 'Roomy but not baggy',
-      measurements: { unit: 'cm', chestWidth: 58, shoulderWidth: 50, sleeveLength: 62, bodyLength: 68 }
+      measurements: { unit: 'cm', chestWidth: 58, shoulderWidth: 50, sleeveLength: 62, bodyLength: 68 },
+      methods: { registry: 1, chestWidth: 'flat-width-armpit-to-armpit', bodyLength: 'high-point-shoulder-to-hem', shoulderWidth: 'seam-to-seam', sleeveLength: 'shoulder-seam-to-cuff' }
     });
+    assert.strictEqual((await savedProfile('cora@e2e.test')).schemaVersion, 6);
     assert.match(await page.textContent('#card-hoodies .garment-status'), /Ready to compare sizes with your reference/);
 
     /* Compare reads it, and compares a checked product */
@@ -3687,6 +3773,55 @@ const linkFromInbox = (pattern) => {
     assert.deepStrictEqual([stored.anchor, stored.favorite, stored.fitGoal], [null, null, 'oversized']);
     await open(page, 'compare.html');
     await page.waitForSelector('#ref-empty:not([hidden])');
+    await context.close();
+  }));
+
+  await test('a reference saved at version 5 reads as version 6 with every value as it was and the method its form measured each by; shown, re-saved from its card and compared by those methods', () => asChecked(UQ_PAIR, async () => {
+    const context = await openContext();
+    const page = await signedIn(context, 'mira@e2e.test');
+    const user = await users.byEmail('mira@e2e.test');
+    /* as version 5 stored it: three of four values measured on the form, no methods; a sweatshirt by label alone */
+    const measurements = { unit: 'cm', chestWidth: 58, bodyLength: 68, sleeveLength: 62, shoulderWidth: null };
+    await store.set(fitProfiles.profileKey(user.id), Object.assign(Schema.empty(), { schemaVersion: 5, garments: {
+      hoodies: { favorite: 'perfect', line: null, anchor: { brand: 'Carhartt', size: 'L', measurements: Object.assign({}, measurements) } },
+      sweatshirts: { favorite: 'perfect', line: null, anchor: { brand: 'UNIQLO', size: 'S' } }
+    } }));
+    /* the version 5 form measured each value one way: that method, named, for exactly the values held */
+    const historical = { registry: 1, chestWidth: 'flat-width-armpit-to-armpit', bodyLength: 'high-point-shoulder-to-hem', sleeveLength: 'shoulder-seam-to-cuff' };
+    let read = await savedProfile('mira@e2e.test');
+    assert.strictEqual(read.schemaVersion, 6);
+    assert.deepStrictEqual(read.garments.hoodies.anchor.measurements, measurements, 'every value as it was, the missing one still missing');
+    assert.deepStrictEqual(read.garments.hoodies.anchor.methods, historical, 'the historical methods, only for the values held');
+    assert.ok(!('methods' in read.garments.sweatshirts.anchor), 'a label is given no methods — it is never a measurement');
+
+    /* Compare shows the migrated values */
+    await open(page, 'compare.html');
+    await page.waitForSelector('#ref-saved:not([hidden])');
+    assert.match(await page.textContent('#ref-saved-list'), /Chest, flat\s*58 cm/);
+    assert.match(await page.textContent('#ref-saved-list'), /Chest, flat58 cmBody length68 cmShouldersNot measuredSleeves62 cm/, 'every migrated value, and the missing one said so');
+
+    /* the card holds them, and a save of something else keeps values and methods exactly */
+    await open(page, 'fit-profile.html?for=hoodies');
+    await page.waitForSelector('#card-hoodies');
+    /* opened, not toggled: a card with a saved reference may already show its details */
+    await page.$eval('#card-hoodies .garment-more-summary', (s) => { s.parentElement.open = true; });
+    assert.deepStrictEqual(await Promise.all(['chestWidth', 'bodyLength', 'sleeveLength', 'shoulderWidth'].map((k) => page.inputValue(`#g-hoodies-m-${k}`))), ['58', '68', '62', '']);
+    await page.fill('#g-hoodies-notes', 'Saved before methods were recorded');
+    await saveAndWait(page);
+    read = await savedProfile('mira@e2e.test');
+    assert.strictEqual(read.garments.hoodies.anchor.notes, 'Saved before methods were recorded');
+    assert.deepStrictEqual(read.garments.hoodies.anchor.measurements, measurements);
+    assert.deepStrictEqual(read.garments.hoodies.anchor.methods, historical);
+
+    /* the decision reads each value by its saved method, never relabelled to suit the product: UNIQLO
+       measures length and sleeve from the centre back, so only chest is comparable — too little, no size */
+    const decided = require('../api/_sizing/decision').decide(read, require('../api/_sizing/records').byId('uniqlo-e475378-sweat-pullover-hoodie-us'), { via: 'compare' });
+    const byDim = Object.fromEntries(decided.dimensions.map((d) => [d.dim, d]));
+    ['chestWidth', 'bodyLength', 'sleeveLength'].forEach((d) => assert.strictEqual(byDim[d].reference.method, historical[d], `${d}: read as the saved method`));
+    assert.deepStrictEqual(['chestWidth', 'bodyLength', 'sleeveLength', 'shoulderWidth'].map((d) => byDim[d].status), ['compatible', 'incompatible-method', 'incompatible-method', 'missing-reference']);
+    assert.strictEqual(decided.comparison, 'garment-to-garment');
+    assert.strictEqual(decided.outcome, 'INSUFFICIENT_DATA');
+    assert.strictEqual(decided.size, null);
     await context.close();
   }));
 

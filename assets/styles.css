@@ -693,6 +693,8 @@ strong { font-weight: 600; }
 .size-chart-source { margin-top: 12px; font-size: 13.5px; color: var(--color-text-2); overflow-wrap: anywhere; }
 .item-fit { margin-top: 6px; font-size: 13px; font-weight: 500; color: var(--color-text-2); }
 .item-fit--ok { color: var(--color-primary-ink); }
+/* a body estimate is a different kind of result from a garment comparison: plainer, never in the recommendation's ink */
+.item-fit--estimate { font-weight: 400; font-style: italic; }
 
 /* ---------- the search box ----------
    The strongest thing on every page it is on: large type, one clear
@@ -1809,16 +1811,28 @@ strong { font-weight: 600; }
 .ff .ff-verdict .fit-compare-recommended strong { display: inline-block; margin-left: 4px; padding: 2px 12px; border-radius: var(--r-pill); background: var(--color-primary); color: var(--color-text-on-primary); font-size: 22px; }
 .ff .ff-verdict .fit-compare-reference { font-weight: 500; color: var(--color-text); }
 
-/* how each measurement compares: three steps, the engine's answer marked */
-.ff .ff-scale { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; list-style: none; }
-.ff .ff-scale-row { display: grid; grid-template-columns: minmax(110px, 160px) minmax(0, 1fr); align-items: center; gap: 4px 12px; }
+/* each measurement beside the reference garment's, laid flat: the two
+   values on one scale and the signed difference — garments, never a body */
+.ff .ff-garment { margin: 12px 0 0; }
+.ff .ff-garment-drawing { display: block; width: 132px; height: auto; margin: 0 0 8px; }
+.ff .ff-garment-shape { fill: var(--color-bg-subtle); stroke: var(--color-border-strong); stroke-width: 1.5; }
+.ff .ff-garment-line { stroke-width: 3; stroke-linecap: round; }
+.ff .ff-garment-line.is-compared { stroke: var(--color-primary); }
+.ff .ff-garment-line.is-not-compared { stroke: var(--color-text-muted); stroke-dasharray: 4 4; stroke-width: 2; }
+.ff .ff-garment-caption { margin-top: 10px; font-size: 13px; color: var(--color-text-2); }
+.ff .ff-scale { display: flex; flex-direction: column; gap: 10px; margin-top: 4px; list-style: none; padding: 0; }
+.ff .ff-scale-row, .ff .ff-scale-skip { display: grid; grid-template-columns: minmax(110px, 160px) minmax(0, 1fr); align-items: start; gap: 4px 12px; }
 .ff .ff-scale-name { font-size: 14px; font-weight: 500; color: var(--color-text); }
-.ff .ff-scale-steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
-.ff .ff-scale-step {
-  padding: 5px 6px; border: 1px solid var(--color-border); border-radius: var(--r-sm);
-  background: var(--color-surface); text-align: center; font-size: 12.5px; color: var(--color-text-muted);
-}
-.ff .ff-scale-step.is-here { border-color: var(--color-accent); background: var(--color-surface); color: var(--color-accent-ink); font-weight: 600; }
+.ff .ff-bars { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.ff .ff-bar-line { display: grid; grid-template-columns: minmax(84px, auto) minmax(0, 1fr) auto; align-items: center; gap: 8px; font-size: 12.5px; color: var(--color-text-2); }
+.ff .ff-bar-track { display: block; height: 8px; border-radius: var(--r-pill); background: var(--color-bg-subtle); overflow: hidden; }
+.ff .ff-bar { display: block; height: 100%; border-radius: var(--r-pill); }
+.ff .ff-bar--reference { background: var(--color-text-muted); }
+.ff .ff-bar--candidate { background: var(--color-primary); }
+.ff .ff-bar-value { font-variant-numeric: tabular-nums; color: var(--color-text); }
+.ff .ff-diff { font-size: 13px; font-weight: 600; color: var(--color-text); }
+.ff .ff-similar { font-size: 12.5px; color: var(--color-text-2); }
+.ff .ff-skip-why { font-size: 13px; color: var(--color-text-muted); }
 .ff .ff-sources { margin-top: 12px; font-size: 13.5px; color: var(--color-text-2); }
 .ff .ff-limits { margin-top: 12px; }
 .ff .ff-limits-title { font-size: 13.5px; font-weight: 600; color: var(--color-text); }
@@ -1840,7 +1854,8 @@ strong { font-weight: 600; }
   .ff .ff-step { padding: 18px 16px; }
   .ff .ff-result-card { padding: 18px 16px; }
   .ff .ff-verdict { padding: 14px; }
-  .ff .ff-scale-row { grid-template-columns: minmax(0, 1fr); }
+  .ff .ff-scale-row, .ff .ff-scale-skip { grid-template-columns: minmax(0, 1fr); }
+  .ff .ff-bar-line { grid-template-columns: minmax(72px, auto) minmax(0, 1fr) auto; }
 }
 
 /* Find Fit: a garment described right here, and the offer to save it */

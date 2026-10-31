@@ -1129,13 +1129,15 @@ await test('the favourite T-shirt is saved with its answer and only the details 
   const { jar } = await signUp('ada@example.test');
   const { status, body } = await guide(jar, byType({ tshirts: FAVORITE() }));
   assert.strictEqual(status, 200, JSON.stringify(body));
-  assert.strictEqual(body.profile.schemaVersion, 5);
+  assert.strictEqual(body.profile.schemaVersion, 6); /* the current version: v6 records each reference measurement's method */
   assert.deepStrictEqual(body.profile.garments.tshirts, {
     anchor: {
       brand: 'UNIQLO', size: 'M',
       product: { name: null, url: 'https://www.uniqlo.com/us/en/products/E455365-000/00' },
       likes: ['shoulders', 'chest'],
-      measurements: { unit: 'in', chestWidth: 21.5, shoulderWidth: 17.5, sleeveLength: null, bodyLength: null }
+      measurements: { unit: 'in', chestWidth: 21.5, shoulderWidth: 17.5, sleeveLength: null, bodyLength: null },
+      /* the method of each measurement given, and only those (fit profile v6) */
+      methods: { registry: 1, chestWidth: 'flat-width-armpit-to-armpit', shoulderWidth: 'seam-to-seam' }
     },
     fitGoal: null, troubleZones: null, line: null, favorite: 'perfect'
   });
@@ -1230,13 +1232,13 @@ await test('the fit profile page keeps the favourite and its details unless the 
   assert.ok(!('tshirts' in gone));
 });
 
-await test('a version 4 profile reads as version 5 with every answer, T-shirt anchors included, exactly as it was', async () => {
+await test('a version 4 profile reads as the current version (6) with every answer, T-shirt anchors included, exactly as it was', async () => {
   const { jar, user } = await signUp('ada@example.test');
   const v4 = Object.assign(FULL(), { schemaVersion: 4, anchor: null, fitGoal: null, troubleZones: null,
     garments: { tshirts: { anchor: { brand: 'Nike', size: 'M' }, fitGoal: 'slim', troubleZones: [], line: 'men' }, jeans: { anchor: { brand: 'Gap', size: '32', length: '30' }, fitGoal: null, troubleZones: null, line: null } } });
   await store.set(fitProfiles.profileKey(user.id), v4);
   const { body } = await read(jar);
-  assert.strictEqual(body.profile.schemaVersion, 5);
+  assert.strictEqual(body.profile.schemaVersion, 6); /* the current version: v6 records each reference measurement's method */
   assert.deepStrictEqual(body.profile.garments, {
     tshirts: { anchor: { brand: 'Nike', size: 'M' }, fitGoal: 'slim', troubleZones: [], line: 'men', favorite: null },
     jeans: { anchor: { brand: 'Gap', size: '32', length: '30' }, fitGoal: null, troubleZones: null, line: null }
@@ -1283,6 +1285,8 @@ await test('a hoodie reference is created, read back, edited, replaced and delet
   assert.deepStrictEqual(res.body.profile.garments.hoodies.anchor, {
     brand: 'Carhartt', size: 'L', product: { name: 'Midweight hoodie', url: null }, likes: ['chest', 'sleeves'],
     measurements: { unit: 'cm', chestWidth: 62, shoulderWidth: 58.5, sleeveLength: 64, bodyLength: 72 },
+    /* how each was taken: the form's own method, under registry version 1 (fit profile v6) */
+    methods: { registry: 1, chestWidth: 'flat-width-armpit-to-armpit', shoulderWidth: 'seam-to-seam', sleeveLength: 'shoulder-seam-to-cuff', bodyLength: 'high-point-shoulder-to-hem' },
     notes: 'roomy in the body , sleeves to the wrist'
   });
   assert.deepStrictEqual((await read(jar)).body.profile.garments.hoodies, res.body.profile.garments.hoodies, 'reusable: read back the same');
@@ -1293,7 +1297,7 @@ await test('a hoodie reference is created, read back, edited, replaced and delet
   assert.strictEqual(res.body.profile.garments.hoodies.anchor.measurements.chestWidth, 63.5);
   /* replace: another hoodie altogether, in inches; nothing of the first is kept */
   res = await guide(jar, byType({ hoodies: { favorite: 'close', anchor: { brand: 'Nike', size: 'M', measurements: { unit: 'in', chestWidth: 24, bodyLength: 27, shoulderWidth: 20, sleeveLength: 25 } } } }));
-  assert.deepStrictEqual(res.body.profile.garments.hoodies.anchor, { brand: 'Nike', size: 'M', measurements: { unit: 'in', chestWidth: 24, shoulderWidth: 20, sleeveLength: 25, bodyLength: 27 } });
+  assert.deepStrictEqual(res.body.profile.garments.hoodies.anchor, { brand: 'Nike', size: 'M', measurements: { unit: 'in', chestWidth: 24, shoulderWidth: 20, sleeveLength: 25, bodyLength: 27 }, methods: { registry: 1, chestWidth: 'flat-width-armpit-to-armpit', shoulderWidth: 'seam-to-seam', sleeveLength: 'shoulder-seam-to-cuff', bodyLength: 'high-point-shoulder-to-hem' } });
   assert.strictEqual(res.body.profile.garments.hoodies.favorite, 'close');
   /* delete: the reference goes; a type with nothing else said goes with it */
   res = await guide(jar, byType({ hoodies: { favorite: null, anchor: null } }));

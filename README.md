@@ -1842,7 +1842,7 @@ its `normalise()` regardless. A stored profile looks like this:
   laid flat: `{ unit, chestWidth, shoulderWidth, sleeveLength, bodyLength }`, each by
   a stated method — chest is a flat width armpit to armpit, never a circumference;
   a chest past the flat range is refused with "about half the way around"). A
-  version 4 profile reads as version 5 with every anchor exactly as stored. A fit
+  version 4 profile reads as the current version with every anchor exactly as stored (version 6 adds each reference measurement's method). A fit
   profile page that sends a T-shirt's brand and size without the details keeps
   them; a different brand or size is a different piece, and its details go; sending
   them as `null` removes them. Any other type sent a favourite or details is refused.
@@ -3125,10 +3125,43 @@ exactly the way a reference is, are recorded and **unverified** pending an appro
 source check; until then they compare nothing. Nike and Carhartt publish body charts
 only and are never compared.
 
-For hoodies and sweatshirts, a reference of brand and size alone keeps the reading
-the evaluation set was worked out on in `recommend()` (that brand's record for the
-size); T-shirts read it only as a chest range. Bringing hoodies to the stricter rule
-means reviewing the evaluation set's hand-worked cases first.
+A brand and size alone — as the reference, or as a usual size in a brand — is a
+size label, never a garment's measurements, for every kind of top: it is read only
+as the chest range that brand's chart gives the size, labelled as such
+(`evidence-from-size-label`), and never compared garment to garment. Only the
+shopper's own garment is a reference: measured by them, or their exact product,
+found by its link or its whole name, with that product's own measurements. When a
+reference exists but can't be compared on enough measurements taken the same way,
+the decision is `INSUFFICIENT_DATA` — never a size from the body and an assumed room
+instead. The four evaluation cases that read a label as a garment were revised to
+the new outcome, each beside a `…-by-link` case that keeps the old one.
+
+**Methods** have one canonical list, `api/_sizing/methods.js` (registry version 1):
+the schema, the engine, the decision and the fit profile's form all read it, and
+`relation(dim, a, b)` is the only rule for whether two measurements compare — the
+same method, or chest's flat ↔ around conversion (× 2, always said to be an
+estimate). A saved reference records each measurement's method (fit profile
+version 6; version 5 references are migrated with the form's own methods), and an
+id the registry doesn't know is "not stated" and never compared. The decision lists
+every dimension with its status (`compatible`, `convertible-estimated`,
+`incompatible-method`, `method-not-stated`, `missing-reference`, `missing-target`,
+`unverified`, `body-vs-garment`) and a shopper's sentence for it, and the comparison
+page draws only what the decision says: a size only when `OK`, the closest — never
+called a recommendation — when `NO_MATCH`. Matching methods say two numbers measure
+the same thing; they don't promise a fit.
+
+**Result types.** Every answer is one of two kinds, never shown as the other
+(`decision.resultTypeOf`): a `garment-comparison` (the product's own garment
+measurements beside the shopper's garment) or a `body-estimate` (body measurements,
+or the body range a brand's chart gives a size label, plus assumed room). The garment
+comparison (`?compare=1`, saved or sent) is never a body estimate: with too little
+comparable garment evidence it is `INSUFFICIENT_DATA`. On the search page a body
+estimate is its own listing status (`estimate`, the size in `estimate`, `size` null),
+tagged "Body-size estimate … not compared with a garment of yours", never "Your
+size". And no field sent beside a decision names a size it didn't give: with any
+outcome but `OK` the engine's `recommended`, `alternative` and `leading` are withheld
+(`decision.heldComparison`, `decision.heldRecommendation`), its summary is the
+decision's words, and the pages say no reliability without a recommendation.
 
 ### The data
 

@@ -51,6 +51,7 @@ try {
 const Schema = require('../assets/fit-profile-schema.js');
 const sizing = require('../api/_sizing/records');
 const engine = require('../api/_sizing/engine');
+const decision = require('../api/_sizing/decision');
 const chartOf = require('../api/_sizing/chart');
 const official = require('../api/_sizing/official-charts');
 const { asChecked, UQ_PAIR } = require('./fixtures/as-checked');
@@ -71,25 +72,34 @@ const everlane = (sizes, methods) => X.asCheckedCopy(X.everlaneRecord(X.everlane
 const base = X.EVERLANE_PUBLISHED.sizes;
 
 const C = {};
+/* each answer's decision, as the server sends it beside the comparison
+   (api/size-recommendation.js: decision.decide, via "compare", the same
+   profile, record and unit) — the only authority for a size */
+const D = new Map();
+const both = (profile, record, opts) => {
+  const c = clone(engine.compare(profile, record, opts));
+  D.set(c, clone(decision.decide(profile, record, Object.assign({ via: 'compare' }, opts || {}))));
+  return c;
+};
 asChecked(UQ_PAIR, () => X.withFixtureBrand(() => {
   const hoodie = sizing.byId(X.UQ_HOODIE);
   C.checkedChart = clone(chartOf.fromRecord(hoodie));
   /* UNIQLO S beside UNIQLO's hoodie: every difference a real zero */
-  C.ok = clone(engine.compare(uniqloRef('S'), hoodie));
-  C.okCm = clone(engine.compare(uniqloRef('S'), hoodie, { unit: 'cm' }));
-  C.closest = clone(engine.compare(uniqloRef('M'), everlane(base, IF_STATED)));
-  C.closestCm = clone(engine.compare(uniqloRef('M'), everlane(base, IF_STATED), { unit: 'cm' }));
-  C.tradeoff = clone(engine.compare(uniqloRef('M'), everlane(Object.assign({}, base, { S: Object.assign({}, base.S, { chest_circumference: '43' }) }), IF_STATED)));
-  C.methods = clone(engine.compare(uniqloRef('M'), everlane(base)));
+  C.ok = both(uniqloRef('S'), hoodie);
+  C.okCm = both(uniqloRef('S'), hoodie, { unit: 'cm' });
+  C.closest = both(uniqloRef('M'), everlane(base, IF_STATED));
+  C.closestCm = both(uniqloRef('M'), everlane(base, IF_STATED), { unit: 'cm' });
+  C.tradeoff = both(uniqloRef('M'), everlane(Object.assign({}, base, { S: Object.assign({}, base.S, { chest_circumference: '43' }) }), IF_STATED));
+  C.methods = both(uniqloRef('M'), everlane(base));
   const bodyOnly = clone(hoodie);
   delete bodyOnly.charts.garment;
-  C.bodyAnswer = clone(engine.compare(uniqloRef('M'), bodyOnly));
-  C.noReference = clone(engine.compare(Schema.empty(), hoodie));
+  C.bodyAnswer = both(uniqloRef('M'), bodyOnly);
+  C.noReference = both(Schema.empty(), hoodie);
 }));
 /* production state: UNIQLO pending review */
 C.unverifiedChart = clone(chartOf.fromRecord(sizing.byId(X.UQ_HOODIE)));
-C.unverifiedAnswer = clone(engine.compare(uniqloRef('M'), sizing.byId(X.UQ_HOODIE)));
-C.noRecord = clone(engine.compare(uniqloRef('M'), null));
+C.unverifiedAnswer = both(uniqloRef('M'), sizing.byId(X.UQ_HOODIE));
+C.noRecord = both(uniqloRef('M'), null);
 /* a page's own table that doesn't say what it measures */
 C.notStatedChart = clone(chartOf.fromPage('<html><head><title>Tee</title></head><body><h1>Tee</h1><table><tr><th>Size</th><th>Chest</th><th>Length</th></tr><tr><td>S</td><td>20</td><td>27</td></tr><tr><td>M</td><td>21</td><td>28</td></tr></table></body></html>', { url: 'https://shop.example.test/p/tee', market: 'US' }));
 /* UNIQLO's general body chart, as the fallback for a page that couldn't be read */
@@ -171,7 +181,17 @@ async function test(name, fn) {
     window.__signedIn = signedIn;
     await window.FitCompare.show(chart, document.getElementById('fit-compare'), null, { verdict: true });
   }, { chart, got: got === undefined ? null : got, signedIn: !(opts && opts.signedOut) });
-  const answer = (comparison) => ({ ok: true, status: 200, data: { comparison } });
+  /* the comparison and its decision, as the server sends them; a test that
+     changes a comparison says which decision goes with it */
+  const scaleOf = (c, size) => {
+    const row = c.sizes.find((x) => x.size === size);
+    return c.dimensionsCompared.filter((d) => row.dimensions[d] && row.dimensions[d].compared).map((d) => {
+      const x = row.dimensions[d];
+      const nothing = c.unit === 'cm' ? Math.abs(x.difference) < 0.05 : Math.round(Math.abs(x.difference) * 4) === 0;
+      return [d, nothing ? 'same' : x.difference > 0 ? 'more' : 'less', String(x.withinTolerance === true)];
+    });
+  };
+  const answer = (comparison, given) => ({ ok: true, status: 200, data: { comparison, decision: given !== undefined ? given : D.get(comparison) } });
   /* what the shopper sees: heading, text, actions, and the state named */
   const seen = () => page.evaluate(() => {
     const box = document.getElementById('fit-compare');
@@ -187,7 +207,10 @@ async function test(name, fn) {
       tradeoffs: [...box.querySelectorAll('.fit-compare-tradeoffs li')].map((li) => ({ dim: li.dataset.dim, difference: Number(li.dataset.difference), text: li.textContent })),
       notCompared: [...box.querySelectorAll('.fit-compare-not-compared li')].map((li) => ({ dim: li.dataset.dim, text: li.textContent })),
       differences: [...box.querySelectorAll('.fit-compare-differences tbody tr')].map((tr) => ({ dim: tr.dataset.dim, value: Number(tr.children[1].dataset.difference), shown: tr.children[1].textContent })),
-      scale: [...box.querySelectorAll('.ff-scale-row')].map((l) => [l.dataset.dim, l.dataset.place]),
+      scale: [...box.querySelectorAll('.ff-scale-row')].map((l) => [l.dataset.dim, l.dataset.direction, l.dataset.similar]),
+      skipped: [...box.querySelectorAll('.ff-scale-skip')].map((l) => [l.dataset.dim, l.dataset.status, l.textContent]),
+      drawing: [...box.querySelectorAll('.ff-garment-line')].map((l) => [l.dataset.dim, l.getAttribute('data-status')]),
+      caption: (box.querySelector('.ff-garment-caption') || {}).textContent || null,
       sources: box.querySelector('.ff-sources') ? box.querySelector('.ff-sources').textContent : null,
       elements: box.querySelectorAll('*').length
     };
@@ -252,14 +275,14 @@ async function test(name, fn) {
     few.dimensionsShared = ['chestWidth', 'shoulderWidth'];
     few.notCompared = [{ dim: 'bodyLength', code: 'method-mismatch', why: 'measured differently — UNIQLO\'s from the centre back, yours from the top of the shoulder' }, { dim: 'sleeveLength', code: 'target-missing', why: 'UNIQLO doesn\'t publish it' }];
     few.next = [];
-    await show(C.checkedChart, answer(few));
+    await show(C.checkedChart, answer(few, D.get(C.methods)));
     let s = await seen();
     assert.deepStrictEqual([s.verdict, s.heading], ['too-few', 'Too few measurements in common to compare']);
     assert.deepStrictEqual(s.notCompared.map((x) => x.dim), ['bodyLength', 'sleeveLength']);
     assert.deepStrictEqual(s.links, [], 'nothing the shopper\'s profile could change');
     noSize(s);
     few.next = ['Add the measurements your reference is missing, laid flat, as Fynd shows.'];
-    await show(C.checkedChart, answer(few));
+    await show(C.checkedChart, answer(few, D.get(C.methods)));
     s = await seen();
     assert.deepStrictEqual(s.links.map((l) => l.href), ['fit-profile.html?from=find-fit']);
   });
@@ -324,7 +347,11 @@ async function test(name, fn) {
     assert.deepStrictEqual([s.verdict, s.heading, s.recommended], ['recommended', 'Compared with your reference', 1]);
     assert.match(s.text, /Recommended size:\s*M/);
     assert.deepStrictEqual(s.tradeoffs.map((t) => t.dim), ['bodyLength']);
-    assert.deepStrictEqual(s.scale, [['chestWidth', 'same'], ['bodyLength', 'more'], ['shoulderWidth', 'same']]);
+    /* each row is the engine's own figure as data: its direction is the sign
+       of the difference (in the unit shown), "similar" its tolerance flag */
+    assert.deepStrictEqual(s.scale, scaleOf(C.tradeoff, 'M'));
+    assert.deepStrictEqual(s.scale.map(([d]) => d), ['chestWidth', 'bodyLength', 'shoulderWidth']);
+    assert.ok(s.scale.find(([d]) => d === 'bodyLength')[2] === 'false', 'the length it misses is not called similar');
   });
 
   await test('an "ok" answer with every difference a real zero: "0.0 in", "the same", all similar — and the sources as the record says', async () => {
@@ -332,7 +359,7 @@ async function test(name, fn) {
     let s = await seen();
     assert.deepStrictEqual([s.verdict, s.recommended, s.tradeoffs.length, s.closest], ['recommended', 1, 0, null]);
     assert.deepStrictEqual(s.differences.map((d) => [d.value, d.shown]), [[0, '0.0 in'], [0, '0.0 in'], [0, '0.0 in'], [0, '0.0 in']]);
-    assert.ok(s.scale.length === 4 && s.scale.every(([, p]) => p === 'same'));
+    assert.ok(s.scale.length === 4 && s.scale.every(([, dir, similar]) => dir === 'same' && similar === 'true'), JSON.stringify(s.scale));
     assert.match(s.text, /chest width the same as your reference/);
     /* the record's own origin: UNIQLO's published table, checked (in memory, for this test) */
     assert.strictEqual(s.sources, 'Sources: UNIQLO’s published finished-garment measurements for this item, checked against the brand’s page; your reference’s published measurements (UNIQLO).');
@@ -344,14 +371,97 @@ async function test(name, fn) {
   await test('the sources follow each measurement\'s recorded origin: measured from the garment is said only where the record says so, and nothing claims a check that didn\'t happen', async () => {
     const hand = clone(C.ok);
     hand.sizes.forEach((r) => Object.values(r.dimensions).forEach((x) => { if (x.measurement) x.measurement.source.origin = 'physical-measurement'; }));
-    await show(C.checkedChart, answer(hand));
+    await show(C.checkedChart, answer(hand, D.get(C.ok)));
     let s = await seen();
     assert.match(s.sources, /^Sources: UNIQLO’s finished-garment measurements taken from the garment itself for this item, checked against its sources;/);
     const unchecked = Object.assign(clone(C.ok), { dataStatus: 'unverified' });
-    await show(C.checkedChart, answer(unchecked));
+    await show(C.checkedChart, answer(unchecked, D.get(C.ok)));
     s = await seen();
     assert.match(s.sources, /, not yet checked;/);
     assert.ok(!/checked against the brand/.test(s.sources));
+  });
+
+  console.log('\nthe decision decides what is shown');
+
+  await test('the server\'s decision is the only authority: a comparison saying "ok, S" with a NO_MATCH decision shows S as closest, never recommended', async () => {
+    const noMatch = Object.assign(clone(D.get(C.ok)), { outcome: 'NO_MATCH', size: null, alternative: null, confidence: null, closest: 'S',
+      reasons: [{ code: 'chest-outside-acceptable-range', size: 'S', differenceAroundIn: 7.9, acceptableWithinIn: 3 }],
+      messages: ['Even the closest size, size S, would be much roomier through the chest than the garment you compared it with, so Fynd isn’t suggesting a size for this product.'] });
+    assert.deepStrictEqual([C.ok.status, C.ok.recommended], ['ok', 'S'], 'the engine alone would have said S');
+    await show(C.checkedChart, answer(C.ok, noMatch));
+    const s = await seen();
+    assert.deepStrictEqual([s.verdict, s.heading, s.recommended, s.closest], ['closest-mismatch', 'No size matches your reference', 0, 'Closest size: S — not a recommendation']);
+    assert.ok(!/Recommended size/.test(s.text), s.text);
+    assert.match(s.text, /would be much roomier through the chest than the garment you compared it with/);
+  });
+
+  await test('an INSUFFICIENT_DATA decision beside an "ok" comparison draws no size at all, in the decision\'s words', async () => {
+    const insufficient = Object.assign(clone(D.get(C.ok)), { outcome: 'INSUFFICIENT_DATA', size: null, alternative: null, confidence: null, closest: null,
+      reasons: [{ code: 'conflicting-references' }], messages: ['Your chest measurement and the sizes you said fit you point to different sizes. Check them on your fit profile, and Fynd can suggest a size once they agree.'] });
+    await show(C.checkedChart, answer(C.ok, insufficient));
+    const s = await seen();
+    assert.deepStrictEqual([s.verdict, s.recommended, s.closest], ['no-recommendation', 0, null]);
+    assert.match(s.text, /point to different sizes/);
+    noSize(s);
+  });
+
+  await test('the size shown is the decision\'s, even where the engine\'s comparison named another', async () => {
+    const otherSize = Object.assign(clone(D.get(C.ok)), { size: 'M' });
+    assert.ok(C.ok.sizes.some((x) => x.size === 'M'));
+    await show(C.checkedChart, answer(C.ok, otherSize));
+    const s = await seen();
+    assert.strictEqual(s.verdict, 'recommended');
+    assert.match(s.text, /Recommended size:\s*M/);
+  });
+
+  await test('NO_MATCH or INSUFFICIENT_DATA with no words of its own, beside an "ok, S" comparison: nothing from the engine names a size — not its summary, its alternative or its reliability', async () => {
+    assert.ok(C.ok.summary && /\bS\b/.test(C.ok.summary), 'the engine’s own summary names S');
+    const bare = { closest: null, size: null, alternative: null, confidence: null, messages: [] };
+    for (const [outcome, extra, verdict] of [['NO_MATCH', { closest: 'S', reasons: [{ code: 'chest-outside-acceptable-range', size: 'S' }] }, 'closest-mismatch'], ['INSUFFICIENT_DATA', { reasons: [{ code: 'conflicting-references' }] }, 'no-recommendation']]) {
+      await show(C.checkedChart, answer(C.ok, Object.assign(clone(D.get(C.ok)), bare, { outcome }, extra)));
+      const s = await seen();
+      assert.strictEqual(s.verdict, verdict, outcome);
+      assert.strictEqual(s.recommended, 0, outcome);
+      assert.ok(!/Recommended size/.test(s.text), `${outcome}: ${s.text}`);
+      assert.ok(!s.text.includes(C.ok.summary), `${outcome}: the engine’s summary is never the reason`);
+      assert.ok(!/Reliability/.test(s.text), `${outcome}: no reliability without a recommendation`);
+      assert.ok(!/\(or [A-Z0-9]+\)|alternative/i.test(s.text), `${outcome}: no alternative size`);
+      assert.match(s.text, /No size is recommended for this item\./, outcome);
+      if (outcome === 'NO_MATCH') assert.strictEqual(s.closest, 'Closest size: S — not a recommendation');
+      else noSize(s);
+    }
+  });
+
+  await test('an OK decision naming a size the comparison doesn’t hold, or an outcome Fynd doesn’t know, draws no size — only that it couldn’t be worked out', async () => {
+    for (const given of [Object.assign(clone(D.get(C.ok)), { size: 'XXXXL' }), Object.assign(clone(D.get(C.ok)), { outcome: 'MAYBE' }), Object.assign(clone(D.get(C.ok)), { outcome: 'OK', size: null })]) {
+      await show(C.checkedChart, answer(C.ok, given));
+      const s = await seen();
+      assert.strictEqual(s.verdict, 'error', JSON.stringify([given.outcome, given.size]));
+      noSize(s);
+      assert.strictEqual(s.closest, null);
+    }
+  });
+
+  console.log('\nthe garments, laid flat — never a body');
+
+  await test('the comparison is drawn as garments: compared measurements marked on a flat top, the rest dashed with the decision\'s own reason, and a caption that it is not a fit on the body', async () => {
+    await show(C.checkedChart, answer(C.tradeoff));
+    const s = await seen();
+    const dims = D.get(C.tradeoff).dimensions;
+    /* every measurement is drawn; only the compared ones solid */
+    assert.deepStrictEqual(s.drawing.map(([d]) => d), ['chestWidth', 'bodyLength', 'shoulderWidth', 'sleeveLength']);
+    const compared = C.tradeoff.dimensionsCompared;
+    s.drawing.forEach(([d, status]) => assert.strictEqual(status === 'compared', compared.includes(d), `${d}: ${status}`));
+    /* each one not compared says why, in the decision's words, with its status */
+    const notCompared = dims.filter((x) => !compared.includes(x.dim));
+    assert.ok(notCompared.length >= 1, 'the fixture leaves a measurement out');
+    assert.deepStrictEqual(s.skipped.map(([d, status]) => [d, status]), notCompared.map((x) => [x.dim, x.status]));
+    s.skipped.forEach(([d, , text]) => assert.ok(text.includes(dims.find((x) => x.dim === d).message), text));
+    assert.match(s.caption, /not how either fits your body/);
+    assert.match(s.caption, /don’t guarantee the same fit/);
+    /* garment words only: narrower or wider, shorter or longer — never tighter or roomier */
+    assert.ok(!/Tighter|Roomier/.test(s.text), 'no on-body words');
+    assert.ok(/Narrower|Wider|Shorter|Longer|The same/.test(s.text));
   });
 
   console.log('\nchanging the answer, and answers that don\'t hold together');
@@ -383,15 +493,21 @@ async function test(name, fn) {
       answer('ok'),
       answer({ status: 'ok' }),
       answer({ status: 'wonderful', recommended: 'M' }),
-      answer(Object.assign(clone(C.ok), { recommended: 'XXXXL' })),
-      answer(Object.assign(clone(C.ok), { recommended: { size: 'M' } })),
-      answer(Object.assign(clone(C.ok), { unit: 'ft' })),
-      answer(Object.assign(clone(C.ok), { sizes: null })),
-      answer(Object.assign(clone(C.ok), { sizes: [null] })),
-      answer(Object.assign(clone(C.ok), { reference: null })),
-      answer(Object.assign(clone(C.closest), { tradeoffs: 'chest' })),
-      answer(Object.assign(clone(C.closest), { closest: 7 })),
-      answer(Object.assign(clone(C.ok), { summary: undefined }))
+      answer(Object.assign(clone(C.ok), { recommended: 'XXXXL' }), D.get(C.ok)),
+      answer(Object.assign(clone(C.ok), { recommended: { size: 'M' } }), D.get(C.ok)),
+      answer(Object.assign(clone(C.ok), { unit: 'ft' }), D.get(C.ok)),
+      answer(Object.assign(clone(C.ok), { sizes: null }), D.get(C.ok)),
+      answer(Object.assign(clone(C.ok), { sizes: [null] }), D.get(C.ok)),
+      answer(Object.assign(clone(C.ok), { reference: null }), D.get(C.ok)),
+      answer(Object.assign(clone(C.closest), { tradeoffs: 'chest' }), D.get(C.closest)),
+      answer(Object.assign(clone(C.closest), { closest: 7 }), D.get(C.closest)),
+      answer(Object.assign(clone(C.ok), { summary: undefined }), D.get(C.ok)),
+      /* the decision is the authority: none, or one that doesn't hold together, draws no size */
+      answer(clone(C.ok), null),
+      answer(clone(C.ok), { outcome: 'GREAT', size: 'S' }),
+      answer(clone(C.ok), Object.assign(clone(D.get(C.ok)), { size: 'XXXXL' })),
+      answer(clone(C.ok), Object.assign(clone(D.get(C.ok)), { size: null })),
+      answer(clone(C.closest), Object.assign(clone(D.get(C.closest)), { closest: null }))
     ];
     for (const got of broken) {
       await show(C.checkedChart, got);
@@ -410,7 +526,7 @@ async function test(name, fn) {
     odd.sizes.find((r) => r.size === 'S').dimensions.shoulderWidth.difference = undefined;
     odd.tradeoffs = odd.tradeoffs.concat([{ dim: 'waist', difference: 2, words: 'Waist: 2 in wider' }, { dim: 'chestWidth', difference: 'a lot' }, null]);
     odd.notCompared = [{ dim: 'chestWidth' }, null];
-    await show(C.checkedChart, answer(odd));
+    await show(C.checkedChart, answer(odd, D.get(C.closest)));
     const s = await seen();
     assert.strictEqual(s.verdict, 'closest-mismatch');
     assert.deepStrictEqual(s.differences.map((d) => d.dim), ['chestWidth', 'bodyLength'], 'no row for a missing difference or an unknown dimension');
@@ -421,7 +537,7 @@ async function test(name, fn) {
 
   await test('a trade-off section appears only with a trade-off it can draw: none at all, or only malformed ones, leave no empty box', async () => {
     for (const tradeoffs of [[], [{ dim: 'chestWidth', difference: 'a lot' }, { dim: 'waist', difference: 2, words: 'Waist: 2 in wider' }, null]]) {
-      await show(C.checkedChart, answer(Object.assign(clone(C.tradeoff), { tradeoffs })));
+      await show(C.checkedChart, answer(Object.assign(clone(C.tradeoff), { tradeoffs }), D.get(C.tradeoff)));
       const box = await page.evaluate(() => ({ boxes: document.querySelectorAll('#fit-compare .fit-compare-tradeoffs').length, items: document.querySelectorAll('#fit-compare .fit-compare-tradeoffs li').length, verdict: document.getElementById('fit-compare').dataset.verdict }));
       assert.deepStrictEqual(box, { boxes: 0, items: 0, verdict: 'recommended' }, JSON.stringify(tradeoffs));
     }
@@ -437,7 +553,7 @@ async function test(name, fn) {
     hostile.reference.product.brand = payload;
     hostile.summary = `${payload} summary`;
     hostile.tradeoffs[0].words = `Chest: ${payload}`;
-    await show(C.checkedChart, answer(hostile));
+    await show(C.checkedChart, answer(hostile, D.get(C.closest)));
     let s = await seen();
     assert.strictEqual(s.verdict, 'closest-mismatch');
     assert.ok(s.text.includes(payload), 'shown as the text it is');
@@ -445,7 +561,7 @@ async function test(name, fn) {
     methods.missing[0].message = payload;
     methods.notCompared[0].why = payload;
     methods.next = ['<a href="javascript:alert(1)">fix</a>'];
-    await show(C.checkedChart, answer(methods));
+    await show(C.checkedChart, answer(methods, D.get(C.methods)));
     s = await seen();
     const markup = await page.evaluate(() => ({ imgs: document.querySelectorAll('#fit-compare img').length, pwned: window.__pwned || null, hrefs: [...document.querySelectorAll('#fit-compare a')].map((a) => a.getAttribute('href')) }));
     assert.deepStrictEqual(markup, { imgs: 0, pwned: null, hrefs: ['fit-profile.html?from=find-fit'] }, 'only the renderer\'s own local link');
@@ -485,7 +601,7 @@ async function test(name, fn) {
     let s = await seen();
     assert.deepStrictEqual([s.verdict, s.recommended], ['recommended', 1]);
     const noRef = clone(C.noReference);
-    await drawWith(answer(noRef), false);
+    await drawWith(answer(noRef, D.get(C.noReference)), false);
     s = await seen();
     assert.deepStrictEqual([s.verdict, s.heading], ['needs-measurements', 'Fynd needs this garment’s measurements']);
     assert.match(s.text, /Fynd compares measurements, not size labels/);

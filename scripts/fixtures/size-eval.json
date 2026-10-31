@@ -31,22 +31,36 @@
       "id": "uq-hoodie-reference-same-product",
       "product": "uniqlo-e475378-sweat-pullover-hoodie-us",
       "profile": { "garment": { "anchor": { "brand": "UNIQLO", "size": "M" }, "fitGoal": "true-to-size", "line": "men" } },
+      "expect": { "status": "ok", "leadingAnyOf": ["M"], "alternativeAnyOf": ["S"], "confidenceAnyOf": ["low"], "method": "body-plus-ease" },
+      "rationale": "Revised (strict size labels): a brand and size alone — no product named, nothing measured — is a label, not a garment's measurements. Fynd reads UNIQLO M only as the chest range UNIQLO's body chart gives M (37 3/4 - 41 in), an estimate, and sizes from that body range plus the assumed room for a true-to-size fit; never garment against garment. M leads, S close behind; low confidence. The same shopper naming the product itself is the case below (…-by-link)."
+    },
+    {
+      "id": "uq-hoodie-reference-same-product-by-link",
+      "product": "uniqlo-e475378-sweat-pullover-hoodie-us",
+      "profile": { "garment": { "favorite": "perfect", "anchor": { "brand": "UNIQLO", "size": "M", "product": { "name": null, "url": "https://www.uniqlo.com/us/en/products/E475378-000/00" } }, "fitGoal": "true-to-size", "line": "men" } },
       "expect": { "status": "ok", "leadingAnyOf": ["M"], "alternativeAnyOf": [null], "confidenceAnyOf": ["high"], "method": "reference-garment" },
-      "rationale": "The shopper says this very hoodie fits in M. The garment measurements of M are the reference, and S and L each miss them by a full size step."
+      "rationale": "The shopper names this very hoodie, by its link, in M: its own published garment measurements of M are the reference (an exact product match), and S and L each miss them by a full size step. The expectation the label-only case had before size labels were made strict."
     },
     {
       "id": "uq-hoodie-reference-sleeves-short",
       "product": "uniqlo-e475378-sweat-pullover-hoodie-us",
       "profile": { "garment": { "anchor": { "brand": "UNIQLO", "size": "L" }, "fitGoal": "true-to-size", "troubleZones": ["sleeves-short"], "line": "men" } },
+      "expect": { "status": "ok", "leadingAnyOf": ["XL"], "alternativeAnyOf": [null], "confidenceAnyOf": ["low"], "method": "body-plus-ease" },
+      "rationale": "Revised (strict size labels): UNIQLO L alone is a label, read only as the chest range UNIQLO's body chart gives L (41 - 44 in), an estimate. With no garment known to fit, sleeves that run short are looked for in more length than the chest's pick, which moves the suggestion to XL; low confidence. Naming the product itself is the case below (…-by-link)."
+    },
+    {
+      "id": "uq-hoodie-reference-sleeves-short-by-link",
+      "product": "uniqlo-e475378-sweat-pullover-hoodie-us",
+      "profile": { "garment": { "favorite": "perfect", "anchor": { "brand": "UNIQLO", "size": "L", "product": { "name": null, "url": "https://www.uniqlo.com/us/en/products/E475378-000/00" } }, "fitGoal": "true-to-size", "troubleZones": ["sleeves-short"], "line": "men" } },
       "expect": { "status": "ok", "leadingAnyOf": ["L"], "alternativeAnyOf": [null, "XL"], "confidenceAnyOf": ["high"] },
-      "rationale": "L is the garment known to fit, sleeves included (35 3/4 in). Sleeves running short elsewhere is no reason to leave a known fit; XL would be 1 1/2 in wider through the chest."
+      "rationale": "L of this very hoodie, named by its link, is the garment known to fit, sleeves included (35 3/4 in). Sleeves running short elsewhere is no reason to leave a known fit; XL would be 1 1/2 in wider through the chest. The expectation the label-only case had before size labels were made strict."
     },
     {
       "id": "uq-hoodie-reference-from-sweatshirt",
       "product": "uniqlo-e475378-sweat-pullover-hoodie-us",
       "profile": { "brandSizes": [{ "brand": "UNIQLO", "category": "sweatshirts", "size": "M", "fit": "about-right" }], "garment": { "fitGoal": "true-to-size", "line": "men" } },
-      "expect": { "status": "ok", "leadingAnyOf": ["M"], "confidenceAnyOf": ["medium"], "method": "reference-garment" },
-      "rationale": "A UNIQLO sweatshirt in M fits; its published garment measurements equal the hoodie's M. Medium, not high: a sweatshirt is not a hoodie."
+      "expect": { "status": "ok", "leadingAnyOf": ["M"], "alternativeAnyOf": ["S"], "confidenceAnyOf": ["low"], "method": "body-plus-ease" },
+      "rationale": "Revised (strict size labels): 'UNIQLO M fits me' in sweatshirts is a usual size, a label — never another product's garment measurements standing in for the shopper's own sweatshirt. It is read only as the chest range UNIQLO's body chart gives M (37 3/4 - 41 in), an estimate, plus the assumed room for a true-to-size fit. M leads, S close behind; low confidence."
     },
     {
       "id": "nike-hoodie-chest40-true",
@@ -136,8 +150,15 @@
       "id": "conflicting-evidence",
       "product": "uniqlo-e475378-sweat-pullover-hoodie-us",
       "profile": { "chest": 34, "garment": { "anchor": { "brand": "UNIQLO", "size": "L" }, "fitGoal": "true-to-size", "line": "men" } },
+      "expect": { "status": "ok", "leadingAnyOf": ["XXS"], "alternativeAnyOf": ["XS"], "confidenceAnyOf": ["low"], "method": "body-plus-ease" },
+      "rationale": "Revised (strict size labels): UNIQLO L alone is a label, read only as the chest range UNIQLO's chart gives L (41 - 44 in). The shopper's own 34 in chest measurement is the evidence the engine sizes from, and the two disagree, so confidence is low (the decision policy, api/_sizing/decision.js, answers INSUFFICIENT_DATA \"conflicting-references\" here). Naming the product itself is the case below (…-by-link)."
+    },
+    {
+      "id": "conflicting-evidence-by-link",
+      "product": "uniqlo-e475378-sweat-pullover-hoodie-us",
+      "profile": { "chest": 34, "garment": { "favorite": "perfect", "anchor": { "brand": "UNIQLO", "size": "L", "product": { "name": null, "url": "https://www.uniqlo.com/us/en/products/E475378-000/00" } }, "fitGoal": "true-to-size", "line": "men" } },
       "expect": { "status": "ok", "leadingAnyOf": ["L"], "confidenceAnyOf": ["low"] },
-      "rationale": "The shopper says UNIQLO L fits, but measures 34 in, which UNIQLO's chart puts in XS/S. The garment known to fit leads; the disagreement makes confidence low."
+      "rationale": "The shopper names this very hoodie in L, by its link, but measures 34 in, which UNIQLO's chart puts in XS/S. The garment known to fit leads; the disagreement makes confidence low. The expectation the label-only case had before size labels were made strict."
     },
     {
       "id": "chest-in-centimetres",
@@ -215,7 +236,7 @@
     {
       "id": "per-size-uq-hoodie-reference-L",
       "product": "uniqlo-e475378-sweat-pullover-hoodie-us",
-      "profile": { "garment": { "anchor": { "brand": "UNIQLO", "size": "L" }, "fitGoal": "true-to-size", "line": "men" } },
+      "profile": { "garment": { "favorite": "perfect", "anchor": { "brand": "UNIQLO", "size": "L", "product": { "name": null, "url": "https://www.uniqlo.com/us/en/products/E475378-000/00" } }, "fitGoal": "true-to-size", "line": "men" } },
       "expect": { "basis": "garment-vs-reference", "sizes": {
         "S": { "chestWidth": "too-tight", "bodyLength": "too-short", "sleeveLength": "too-short", "shoulderWidth": "too-tight" },
         "M": { "chestWidth": "slightly-tight", "bodyLength": "slightly-short", "sleeveLength": "slightly-short", "shoulderWidth": "slightly-tight" },
@@ -223,7 +244,7 @@
         "XL": { "chestWidth": "slightly-loose", "bodyLength": "slightly-long", "sleeveLength": "about-right", "shoulderWidth": "slightly-loose" },
         "XXL": { "chestWidth": "too-loose", "bodyLength": "slightly-long", "sleeveLength": "slightly-long", "shoulderWidth": "too-loose" },
         "3XL": { "chestWidth": "too-loose", "bodyLength": "too-long", "sleeveLength": "slightly-long", "shoulderWidth": "too-loose" } } },
-      "rationale": "A known fitting garment: every dimension of every size against L (chest 25 flat, length 28, sleeve 35 3/4, shoulder 20 3/4). M: chest 3 in less around, length 1 1/4, sleeve 1 and shoulder 3/4 in less. XL: chest 3 in more around, length 3/4 more, sleeve 1/2 more (about right), shoulder 3/4 more. XXL: chest 5 1/2 around, length 1, sleeve 3/4, shoulder 1 1/2 more. 3XL: length 1 3/4, sleeve 1 1/4 more."
+      "rationale": "A known fitting garment — this very hoodie, named by its link (a brand and size alone is a label, not a garment's measurements): every dimension of every size against L (chest 25 flat, length 28, sleeve 35 3/4, shoulder 20 3/4). M: chest 3 in less around, length 1 1/4, sleeve 1 and shoulder 3/4 in less. XL: chest 3 in more around, length 3/4 more, sleeve 1/2 more (about right), shoulder 3/4 more. XXL: chest 5 1/2 around, length 1, sleeve 3/4, shoulder 1 1/2 more. 3XL: length 1 3/4, sleeve 1 1/4 more."
     },
     {
       "id": "per-size-uq-hoodie-chart-estimated-chest",

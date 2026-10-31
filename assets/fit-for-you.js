@@ -149,9 +149,16 @@
       const card = cards[item.index];
       if (!card) return;
       const tag = el('p', `item-fit item-fit--${item.status}`);
-      if (item.status === 'ok') tag.textContent = `Your size: ${item.size}${item.alternative ? ` (or ${item.alternative})` : ''} · ${item.reliability} confidence`;
-      else if (item.status === 'partial') tag.textContent = `Closest to your reference: ${item.closest} — not enough measurements to recommend`;
+      /* a size set beside the shopper's own garment, only when the server's decision says OK */
+      const decided = item.decision && typeof item.decision === 'object' ? item.decision : null;
+      if (item.status === 'ok' && decided && decided.outcome === 'OK' && item.resultType === 'garment-comparison' && item.size === decided.size) tag.textContent = `Your size: ${item.size}${item.alternative ? ` (or ${item.alternative})` : ''} · ${item.reliability} confidence`;
+      /* a body estimate: a separate kind of result, said to be one — never "your size" */
+      else if (item.status === 'estimate' && decided && decided.outcome === 'OK' && item.resultType === 'body-estimate' && item.estimate === decided.size) {
+        tag.textContent = `Body-size estimate: ${item.estimate} · ${item.reliability} confidence — from body sizes and the brand’s size chart, not compared with a garment of yours`;
+      }
+      else if (item.status === 'partial' && item.closest) tag.textContent = `Closest to your reference: ${item.closest} — not enough measurements to recommend`;
       else tag.textContent = `No size for you: ${(item.missing && item.missing[0]) || 'not enough data'}`;
+      tag.dataset.result = tag.textContent.startsWith('Your size') ? 'garment-comparison' : tag.textContent.startsWith('Body-size estimate') ? 'body-estimate' : 'none';
       if (item.summary) tag.title = item.summary;
       const bodyEl = card.querySelector('.item-body');
       (bodyEl || card).append(tag);
