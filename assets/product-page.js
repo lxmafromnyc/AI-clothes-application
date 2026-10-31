@@ -44,6 +44,15 @@
   const BRAND = /^[a-z0-9-]{2,30}$/;
   const LINES = { men: 'Men', women: 'Women', unisex: 'Unisex' };
   const RETAILERS = { uniqlo: 'UNIQLO' };
+  /* whose page this product is sold on: UNIQLO, or the merchant whose own catalogue lists it */
+  const retailerOf = () => RETAILERS[brandId] || (product && (product.retailer || product.brand)) || 'the retailer';
+  /* a photo from UNIQLO's image host, or from the hosts a merchant's
+     catalogue names for this product (product.imageHosts, from the server) */
+  const onHosts = (url, hosts) => {
+    if (typeof url !== 'string' || !Array.isArray(hosts)) return false;
+    try { const u = new URL(url); return u.protocol === 'https:' && hosts.includes(u.hostname); } catch (err) { return false; }
+  };
+  const photoOk = (url) => Boolean(url) && (IMAGE_HOST.test(url) || onHosts(url, product && product.imageHosts));
 
   const params = new URLSearchParams(global.location.search);
   const brandId = params.get('brand') || '';
@@ -62,7 +71,7 @@
   }
 
   function photo(url, alt, missing) {
-    if (!url || !IMAGE_HOST.test(url)) return null;
+    if (!photoOk(url)) return null;
     const img = el('img');
     img.src = url;
     img.alt = alt || '';
@@ -96,7 +105,7 @@
     const urls = [];
     product.colours.forEach((c) => urls.push({ url: c.image, alt: `${product.name}, ${c.label}` }));
     product.gallery.forEach((u, i) => urls.push({ url: u, alt: `${product.name}, photo ${i + 1}` }));
-    thumbs.replaceChildren(...urls.filter((u) => IMAGE_HOST.test(u.url)).map((u) => {
+    thumbs.replaceChildren(...urls.filter((u) => photoOk(u.url)).map((u) => {
       const b = el('button', 'pdp-thumb');
       b.type = 'button';
       b.dataset.src = u.url;
@@ -197,7 +206,7 @@
     if (!product.sizes) {
       box.replaceChildren();
       box.hidden = true;
-      $('pdp-sizes-note').textContent = 'Fynd doesn’t hold this product’s size list — UNIQLO’s page has it.';
+      $('pdp-sizes-note').textContent = `Fynd doesn’t hold this product’s size list — ${retailerOf()}’s page has it.`;
       return;
     }
     box.replaceChildren(...sizeButtons());
@@ -220,7 +229,7 @@
       wrap.append(el('p', null, text), el('p', 'pdp-source', `Source: ${source}`));
       return wrap;
     };
-    const retailer = el('a', 'guide-link', 'Read it on UNIQLO');
+    const retailer = el('a', 'guide-link', `Read it on ${retailerOf()}`);
     retailer.href = product.url;
     retailer.target = '_blank';
     retailer.rel = 'noopener noreferrer';
@@ -231,13 +240,13 @@
       more.append(retailer);
       describe.append(more);
     } else {
-      describe = p('Fynd doesn’t hold UNIQLO’s description or feature list for this product. ');
+      describe = p(`Fynd doesn’t hold ${retailerOf()}’s description or feature list for this product. `);
       describe.append(retailer);
     }
 
     const fitNodes = [];
     if (product.fit) fitNodes.push(sourced(`Fit: ${product.fit.words}`, product.fit.source));
-    else fitNodes.push(p('Fynd doesn’t hold UNIQLO’s fit description for this product.'));
+    else fitNodes.push(p(`Fynd doesn’t hold ${retailerOf()}’s fit description for this product.`));
     const guide = el('button', 'btn btn-secondary pdp-section-guide', 'View size measurements');
     guide.type = 'button';
     guide.addEventListener('click', openGuide);
@@ -246,14 +255,14 @@
     const materials = [];
     if (product.material) materials.push(sourced(product.material.text, product.material.source));
     else materials.push(p('Fynd doesn’t hold this product’s fabric composition.'));
-    materials.push(p('Care instructions aren’t held by Fynd — they’re on UNIQLO’s page.'));
+    materials.push(p(`Care instructions aren’t held by Fynd — they’re on ${retailerOf()}’s page.`));
 
     /* where everything on the page came from, and what Fynd doesn't hold */
     const sources = [
-      p(`Product ID ${product.code.slice(1, 7)} (${product.code}), UNIQLO ${product.market}.`),
-      p(product.recordedAt ? `Sizes, fabric and fit are from Fynd’s saved record, ${product.recordFrom || `copied from UNIQLO’s page on ${product.recordedAt}`} — not read live${product.recordVerified === false ? ', and not yet checked' : ''}.` : 'Fynd has no saved record of this product’s details; only its listing and photos.'),
+      p(brandId === 'uniqlo' ? `Product ID ${product.code.slice(1, 7)} (${product.code}), UNIQLO ${product.market}.` : `Product ID ${product.code}, ${retailerOf()} ${product.market}.`),
+      p(product.recordedAt ? `Sizes, fabric and fit are from Fynd’s saved record, ${product.recordFrom || `copied from ${retailerOf()}’s page on ${product.recordedAt}`} — not read live${product.recordVerified === false ? ', and not yet checked' : ''}.` : 'Fynd has no saved record of this product’s details; only its listing and photos.'),
       product.sizes ? p(product.sizes.stockAsOf
-        ? `Sizes from ${product.sizes.source}. Stock as the catalogue said on ${product.sizes.stockAsOf} — check UNIQLO’s page before buying.`
+        ? `Sizes from ${product.sizes.source}. Stock as the catalogue said on ${product.sizes.stockAsOf} — check ${retailerOf()}’s page before buying.`
         : `Sizes from ${product.sizes.source}. Fynd doesn’t know which sizes are in stock.`) : null,
       product.price ? p(`Price from ${product.price.source}.`) : null,
       product.catalogue ? p(product.catalogue.withheld
@@ -273,7 +282,7 @@
   }
 
   function draw() {
-    const retailerName = RETAILERS[brandId] || product.brand;
+    const retailerName = retailerOf();
     doc.title = `${product.brand} ${product.name} — Fynd`;
     $('pdp-crumb-brand').textContent = retailerName;
     $('pdp-crumb-category').textContent = product.categoryLabel || '';
@@ -285,7 +294,7 @@
     $('pdp-holds').textContent = product.holdsText || '';
     const link = $('pdp-retailer');
     /* the page itself, or the affiliate network's tracking link to it (the server checked it leads there) */
-    link.href = /^https:\/\/(www\.uniqlo\.com|click\.linksynergy\.com)\//.test(product.buyUrl || '') ? product.buyUrl : product.url;
+    link.href = /^https:\/\/(www\.uniqlo\.com|click\.linksynergy\.com)\//.test(product.buyUrl || '') || onHosts(product.buyUrl, product.pageHosts) ? product.buyUrl : product.url;
     link.textContent = `View on ${retailerName}`;
     /* a price only when the catalogue supplies a current one; otherwise
        none is held, so none is shown */
@@ -381,7 +390,7 @@
     $('pdp-guide-sizes').replaceChildren(...(product.sizes ? sizeButtons() : []));
     $('pdp-guide-sizes').hidden = !product.sizes;
     $('pdp-guide-nosizes').hidden = Boolean(product.sizes);
-    $('pdp-guide-nosizes').textContent = product.sizes ? '' : 'Fynd doesn’t hold this product’s size list, so a size is chosen on UNIQLO’s page.';
+    $('pdp-guide-nosizes').textContent = product.sizes ? '' : `Fynd doesn’t hold this product’s size list, so a size is chosen on ${retailerOf()}’s page.`;
     guideChoice();
     if (!dialog.open) dialog.showModal();
     if (chartAnswer) { show(chartAnswer); return; }

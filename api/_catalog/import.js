@@ -136,6 +136,7 @@ function fromFyndRow(row, adapter) {
   return {
     code: row.id,
     name: row.name,
+    brand: row.brand,
     url: row.url,
     category: adapter.category(row.category),
     line: adapter.line(row.gender, row.category),
@@ -157,12 +158,39 @@ const listOf = (v) => (Array.isArray(v) ? v : typeof v === 'string' ? v.split(',
 /* product-feed rows → one adapter-mapped record per product */
 function fromVariantRows(rows, adapter, rejected) {
   const groups = new Map();
+  /* duplicates are refused row by row, never merged: a second row with
+     the same row id (SKU), or the same colour and size of one product,
+     or another brand for a product already seen */
+  const ids = new Set();
+  const variantKeys = new Set();
+  /* each product's rows in the file, so a refused product names them */
+  const rowsOf = new Map();
+  const lowerText = (v) => (typeof v === 'string' ? v.trim().toLowerCase() : '');
   rows.forEach((row, index) => {
     if (!isPlain(row)) { rejected.push({ row: index + 1, error: 'not an object' }); return; }
+    /* a merchant's file says whose it is, when it says */
+    if (adapter.merchant && row.merchant !== undefined && row.merchant !== adapter.id) {
+      rejected.push({ row: index + 1, error: `a row for merchant "${String(row.merchant).slice(0, 40)}", not ${adapter.id}` });
+      return;
+    }
     const code = adapter.code(row.item_group_id) || (row.item_group_id === undefined ? adapter.code(row.id) : null);
     if (!code) { rejected.push({ row: index + 1, error: 'item_group_id (or id) is not the brand’s exact product ID' }); return; }
-    if (!groups.has(code)) groups.set(code, []);
+    const id = row.id === undefined || row.id === null ? '' : String(row.id).trim();
+    if (id && ids.has(id)) { rejected.push({ row: index + 1, code, error: `the row id (SKU) ${id.slice(0, 40)} is already used by an earlier row` }); return; }
+    const colourKey = text(row.color_code, 8) || (text(row.color, 40) ? slug(text(row.color, 40)) : null);
+    const sizeKey = text(row.size, 12);
+    const variantKey = colourKey && sizeKey ? `${code}|${colourKey}|${sizeKey.toUpperCase()}` : null;
+    if (variantKey && variantKeys.has(variantKey)) { rejected.push({ row: index + 1, code, error: `the same colour and size as an earlier row of ${code}` }); return; }
+    const earlier = groups.get(code);
+    if (earlier && lowerText(row.brand) && lowerText(earlier[0].brand) && lowerText(row.brand) !== lowerText(earlier[0].brand)) {
+      rejected.push({ row: index + 1, code, error: `a different brand from ${code}’s earlier rows` });
+      return;
+    }
+    if (id) ids.add(id);
+    if (variantKey) variantKeys.add(variantKey);
+    if (!groups.has(code)) { groups.set(code, []); rowsOf.set(code, []); }
     groups.get(code).push(row);
+    rowsOf.get(code).push(index + 1);
   });
   const out = [];
   groups.forEach((group, code) => {
@@ -173,6 +201,7 @@ function fromVariantRows(rows, adapter, rejected) {
     const prices = [];
     let was = null;
     const images = [];
+    const unreadable = new Set();
     group.forEach((row) => {
       images.push(row.image_link, ...listOf(row.additional_image_link));
       const cname = text(row.color, 40);
@@ -183,6 +212,9 @@ function fromVariantRows(rows, adapter, rejected) {
       if (ccode && size && row.availability !== undefined) variants.push({ colour: ccode, size, availability: row.availability });
       const sale = row.sale_price ? money(row.sale_price, adapter.currency) : null;
       const list = row.price ? money(row.price, adapter.currency) : null;
+      /* a price given but unreadable is dropped and said, never guessed */
+      if (row.price && !list) unreadable.add('a price that isn’t a plain amount in the market’s currency was dropped');
+      if (row.sale_price && !money(row.sale_price, adapter.currency)) unreadable.add('a sale price that isn’t a plain amount in the market’s currency was dropped');
       if (sale && list && sale.amount < list.amount) { prices.push(sale); was = Math.max(was || 0, list.amount); } else if (list) prices.push(list);
     });
     const sameCurrency = prices.every((p) => p.currency === adapter.currency);
@@ -191,9 +223,12 @@ function fromVariantRows(rows, adapter, rejected) {
     const discontinued = group.every((r) => typeof r.status === 'string' && r.status.toLowerCase() === 'discontinued');
     out.push({
       discontinued,
+      rows: rowsOf.get(code),
+      problems: [...unreadable],
       record: {
         code,
         name: first.title,
+        brand: first.brand,
         description: (group.find((r) => typeof r.description === 'string' && r.description.trim()) || {}).description,
         url: first.link,
         affiliateUrl: (group.find((r) => typeof r.affiliate_link === 'string' && r.affiliate_link) || {}).affiliate_link,
@@ -241,6 +276,10 @@ function read(body, adapter, options) {
     if (!Array.isArray(data.products)) throw new FeedError('The feed has no products list.', 'no-products');
     if (data.products.length > LIMITS.products) throw new FeedError(`The feed lists more than ${LIMITS.products} products.`, 'too-many-products');
     const source = isPlain(data.source) ? data.source : {};
+    /* a merchant's feed, when it names its merchant, names this one */
+    if (adapter.merchant && source.merchant !== undefined && source.merchant !== adapter.id) {
+      throw new FeedError(`This feed is merchant "${String(source.merchant).slice(0, 40)}"'s, not ${adapter.id}'s.`, 'wrong-merchant');
+    }
     header = {
       format: 'fynd-catalog-feed/1',
       sourceName: text(source.name, 120),
@@ -287,6 +326,8 @@ function read(body, adapter, options) {
     throw new FeedError('This isn’t a feed this import reads: a Fynd catalogue feed (format "fynd-catalog-feed") or product-feed rows.', 'unknown-format');
   }
 
+  /* a test merchant's file is test data, whatever the file says */
+  if (adapter.fixture === true) header.fixture = true;
   const licensed = licensedSet(opts.licensed, header.declaredLicensed);
   header.licensed = [...licensed].sort();
   const seen = new Set();
@@ -301,11 +342,13 @@ function read(body, adapter, options) {
       return;
     }
     const result = normalise(m.record, adapter, licensed);
-    if (result.error) { rejected.push({ row: m.index, code: result.code || null, error: result.error }); return; }
+    /* `row` is the product's place in the feed; `rows`, for a file of
+       variant rows, the file's own rows (header excluded) it came from */
+    if (result.error) { rejected.push(Object.assign({ row: m.index, code: result.code || null, error: result.error }, m.rows ? { rows: m.rows } : {})); return; }
     if (m.record.priceVaries && result.product.price) result.product.price.varies = true;
     seen.add(code);
     products.push(result.product);
-    result.problems.forEach((p) => notes.push(`${code}: ${p}`));
+    result.problems.concat(m.problems || []).forEach((p) => notes.push(`${code}: ${p}`));
   });
   return { header, products, discontinued, rejected, duplicates, notes };
 }

@@ -93,6 +93,8 @@
   let facets = null;
   let category = 'all';
   let line = 'all';
+  /* the brand, inside a merchant that lists several */
+  let vendor = 'all';
   let colour = 'all';
   let size = 'all';
   let inStock = false;
@@ -107,12 +109,20 @@
   const note = $('fit-catalog-note');
 
   const IMAGE_HOSTS = /^https:\/\/image\.uniqlo\.com\//;
+  /* a photo from UNIQLO's image host, or from the hosts a merchant's
+     catalogue names for itself (the server checked each photo against them) */
+  function photoAllowed(url) {
+    if (typeof url !== 'string') return false;
+    if (IMAGE_HOSTS.test(url)) return true;
+    const hosts = brand && brand.merchant && Array.isArray(brand.imageHosts) ? brand.imageHosts : [];
+    try { const u = new URL(url); return u.protocol === 'https:' && hosts.includes(u.hostname); } catch (err) { return false; }
+  }
   const LINE_LABELS = { men: 'Men', women: 'Women', unisex: 'Unisex', kids: 'Kids', baby: 'Baby' };
   const count = $('fit-browser-count');
   /* each fact the server states about a product, in words; `yes`, `part`
      and `no` say how far it goes. Nothing unknown is drawn as known. */
   const FACTS = [
-    ['catalogue', { authorized: ['yes', 'In UNIQLO’s catalogue'], 'fynd-list': ['no', 'Not from a catalogue feed'] }],
+    ['catalogue', { authorized: ['yes', 'In UNIQLO’s catalogue'], merchant: ['yes', 'From the merchant’s own catalogue'], 'fynd-list': ['no', 'Not from a catalogue feed'] }],
     ['chart', { own: ['yes', 'Sizing chart'], general: ['part', 'General chart only'], none: ['no', 'No sizing chart saved'] }],
     ['garment', { verified: ['yes', 'Garment measurements verified'], unverified: ['part', 'Garment measurements not verified'], none: ['no', 'No garment measurements'] }],
     ['comparable', { true: ['yes', 'Can be compared'], false: ['no', 'Can’t be compared yet'] }]
@@ -153,7 +163,7 @@
       global.FindFit.select(chosenBrand, p);
     });
     const media = el('span', 'fit-product-media');
-    if (p.imageUrl && IMAGE_HOSTS.test(p.imageUrl)) {
+    if (p.imageUrl && photoAllowed(p.imageUrl)) {
       const img = el('img');
       img.src = p.imageUrl;
       img.alt = '';
@@ -164,7 +174,7 @@
       media.dataset.image = 'photo';
       media.append(img);
     } else {
-      /* no photo from UNIQLO's image host: drawn artwork, never another photo */
+      /* no photo from the brand's own image host: drawn artwork, never another photo */
       media.dataset.image = 'none';
       media.append(art(p.category));
     }
@@ -207,7 +217,7 @@
       ? `${items.length} shown · ${total} matching · ${listed} listed in all`
       : '';
     root.dataset.query = answer.query ? answer.query.q : '';
-    const filtered = category !== 'all' || line !== 'all' || colour !== 'all' || size !== 'all' || inStock || Boolean(answer.query && answer.query.q);
+    const filtered = category !== 'all' || line !== 'all' || vendor !== 'all' || colour !== 'all' || size !== 'all' || inStock || Boolean(answer.query && answer.query.q);
     if (!total && !filtered) return say('No products to show for this brand yet.');
     if (!total) {
       return say(answer.unmatched && answer.unmatched.length && answer.query && answer.query.q
@@ -267,6 +277,12 @@
       r.append(chip(group, 'all', 'Any', set), ...values.map((v) => chip(group, v, name(v), set)));
       return r;
     };
+    /* the brands inside a merchant that lists several, by their own names */
+    const vendors = (facets && facets.vendors) || [];
+    if (vendors.length > 1) {
+      const names = Object.fromEntries(vendors.map((v) => [v.value, v.label]));
+      rows.push(row('Brand', 'vendor', vendors.map((v) => v.value), (v) => { vendor = v; }, (v) => names[v] || v));
+    }
     const colours = ((facets && facets.colours) || []).map((c) => c.value);
     const sizes = ((facets && facets.sizes) || []).map((c) => c.value);
     if (colours.length > 1) rows.push(row('Colour', 'colour', colours, (v) => { colour = v; }, (v) => v[0].toUpperCase() + v.slice(1)));
@@ -306,7 +322,7 @@
     clearTimeout(typing);
     const sizing = global.Account && global.Account.sizing;
     if (append) { more.disabled = true; } else { root.dataset.state = 'loading'; dialog.dataset.state = 'loading'; }
-    const query = { q: search.value.trim(), category, line, colour, size, inStock, sort: sort === 'featured' ? 'all' : sort, offset: append ? items.length : 0 };
+    const query = { q: search.value.trim(), category, line, vendor, colour, size, inStock, sort: sort === 'featured' ? 'all' : sort, offset: append ? items.length : 0 };
     const answer = sizing ? await sizing.catalog(current, query) : { ok: false };
     if (mine !== asking) return;
     if (!(answer.ok && answer.data && Array.isArray(answer.data.products) && answer.data.brand)) {
@@ -352,6 +368,7 @@
     count.textContent = '';
     category = 'all';
     line = 'all';
+    vendor = 'all';
     colour = 'all';
     size = 'all';
     inStock = false;

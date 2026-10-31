@@ -77,7 +77,8 @@ const GROUPS = {
     ['test-size-eval', 'the size engine against hand-worked expectations from published charts'],
     ['test-catalog-audit', 'the catalogue audit: every card proved from its row'],
     ['test-rakuten-preflight', "the Rakuten SFTP preflight (every setting, no credential printed) and a feed sample through the sync's own import"],
-    ['test-catalog-feed', "a brand's authorized catalogue: feed import, sync, the API fetch, search, filters, pages, staleness, and each product's sizing by its exact code"],
+    ['test-merchant-catalog', "a merchant's own catalogue: config, CSV and JSON import, licensed fields, validation and duplicates, the authorization's dates, Find Fit's search over it, sizing apart from listing, and that no test product can reach customers"],
+    ['test-catalog-feed',"a brand's authorized catalogue: feed import, sync, the API fetch, search, filters, pages, staleness, and each product's sizing by its exact code"],
     ['test-demo-audio', "the landing demo's sound: loudness, ducking, captions"],
     ['test-demo-film', "the landing demo film: length, order, every store frame real"]
   ],
@@ -91,7 +92,8 @@ const GROUPS = {
     ['test-catalog-prices', "the catalogue price extractor's gates: markup only confirms, the page's own data answers"],
     ['test-record-demo', "the demo recorder's tool paths and rules, and its retailer test in a browser"],
     ['test-catalog-browser', "Find Fit searching and paging an authorized catalogue in a browser, and a chosen product's page and Size Guide"],
-    ['test-catalog-rakuten', "UNIQLO's catalogue from a Rakuten Product Catalog file: reader, sync at catalogue scale, refresh, coverage, and the popup over it"],
+    ['test-merchant-browser', "a merchant's own catalogue in Find Fit and on its product page in a browser: the brand menu, photos from its own host only, brand, colour and size filters, price order, and no size from a label"],
+    ['test-catalog-rakuten',"UNIQLO's catalogue from a Rakuten Product Catalog file: reader, sync at catalogue scale, refresh, coverage, and the popup over it"],
     ['test-provider-unavailable', 'with no paid product source: OpenWeb Ninja never asked, no silent fallback, and what Find Fit and the Search page show'],
     ['test-fit-states', "Find Fit's comparison states drawn by the real renderer from real engine answers: unsupported, body-only, methods, closest-mismatch, recommended, malformed"]
   ],

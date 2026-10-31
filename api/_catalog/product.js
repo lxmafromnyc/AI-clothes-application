@@ -16,6 +16,8 @@
                      leads to `url`)
      category        one of CATEGORIES (the adapter maps the source's own)
      line            one of LINES
+     brand           a merchant's source only: one of the brands it may
+                     list (adapter.brandOf)
      — and only when the source supplies it AND the licence covers it:
      images          photos on the adapter's image host only     'images'
      colours         [{ code, name, image }]                     'colours'
@@ -239,6 +241,13 @@ function normalise(raw, adapter, licensed, options) {
   if (!LINES.includes(raw.line)) return { error: 'no line (men, women, unisex, kids or baby)', code };
   const problems = [];
   const product = Object.assign({ code, name, url, category, line: raw.line }, optional(raw, adapter, code, licensed, problems, stored));
+  /* a merchant may list only the brands it says it may (sources/merchant.js);
+     a source with no such rule keeps its products as they are */
+  if (typeof adapter.brandOf === 'function') {
+    const brand = adapter.brandOf(raw.brand);
+    if (!brand) return { error: 'a brand this merchant isn’t authorized to list (or none, where it lists several)', code };
+    product.brand = brand;
+  }
   if (raw.affiliateUrl !== undefined && raw.affiliateUrl !== null) {
     const link = affiliateLink(raw.affiliateUrl, url, adapter);
     if (link) product.affiliateUrl = link;

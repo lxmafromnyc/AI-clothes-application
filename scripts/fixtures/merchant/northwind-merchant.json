@@ -1,0 +1,21 @@
+{
+  "format": "fynd-merchant",
+  "version": 1,
+  "fixture": true,
+  "about": "FIXTURE — a test merchant for scripts/test-merchant-catalog.js and test-merchant-browser.js. No such merchant exists; every host is on the reserved .example domain and every product is invented. Never listed for customers (api/_catalog/merchants/index.js).",
+  "id": "northwind-fixture",
+  "name": "FIXTURE Northwind Apparel",
+  "market": "US",
+  "currency": "USD",
+  "brands": ["FIXTURE Northwind", "FIXTURE Harbor Supply"],
+  "productPages": { "hosts": ["www.northwind.example"], "codeInPath": true },
+  "imageHosts": ["images.northwind.example"],
+  "categories": { "Fleece": "sweatshirts-hoodies", "Workwear": "outerwear" },
+  "authorization": {
+    "grantedBy": "FIXTURE — nobody: this is test data",
+    "reference": "FIXTURE test authorization (not an agreement)",
+    "grantedAt": "2026-01-01",
+    "expiresAt": null,
+    "licensedFields": ["images", "colours", "sizes", "price", "stock", "description"]
+  }
+}
