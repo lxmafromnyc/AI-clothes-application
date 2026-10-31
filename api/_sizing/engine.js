@@ -636,13 +636,18 @@ function scoreReferenceGarment(record, shopper) {
   const { used } = comparable(record, shopper);
   const weights = dimWeights(shopper);
   const trouble = troubleSides(shopper);
+  const dims = Object.keys(used);
   return record.sizes.map((size) => {
     const row = garmentRow(record, size);
     if (!row) return null;
+    /* a size missing a measurement the others are compared on is left
+       out of the ranking, never ranked on less: a missing measurement
+       would otherwise add nothing to its cost and lift it above sizes
+       that publish it (compare() leaves the same size unranked) */
+    if (dims.some((d) => !row[d])) return null;
     let cost = 0;
     const parts = [];
-    Object.keys(used).forEach((d) => {
-      if (!row[d]) return;
+    dims.forEach((d) => {
       const { weight } = shopper.params.garment[d];
       const target = toUnits(used[d].value, ref.record.units, record.units);
       const diff = row[d].value - target;
@@ -689,6 +694,14 @@ function scoreBodyPlusEase(record, shopper) {
     if (trouble[d] !== 'short' || !dims[d] || !byChest) return;
     const pickRow = garmentRow(record, byChest.size);
     if (!pickRow[d]) return;
+    /* an optional length is used only when every ranked size publishes
+       it: a size without it would otherwise escape the penalty and rank
+       higher for missing data. Left out for all, and said. */
+    const lacking = scored.filter((s) => !garmentRow(record, s.size)[d]).map((s) => s.size);
+    if (lacking.length) {
+      shopper.notes.push(`${DIM_NAMES[d] === 'sleeves' ? 'Sleeve' : 'Body'} length wasn't used to look for more length: ${record.brand} publishes none for ${lacking.join(', ')}.`);
+      return;
+    }
     const target = pickRow[d].value + toUnits(SHORT_EXTRA, 'in', units);
     const { weight: w, tol: t } = shopper.params.garment[d];
     scored.forEach((s) => {
@@ -1249,7 +1262,20 @@ function recommend(profile, record, opts) {
     dataQuality: dataQuality(record, method, shopper),
     dataStatus: sizingSchema.isVerified(record) ? 'verified' : 'unverified',
     caveats,
-    notes: shopper.notes
+    notes: shopper.notes,
+    /* What the answer rests on, as data for the decision policy
+       (./decision.js), in the record's units: the shopper's body range
+       and where it came from, whether the evidence disagreed, and — for
+       a body chart — the chart range the leading size was scored
+       against (its own, or the size it was moved from). */
+    evidence: {
+      units: record.units,
+      body: shopper.body ? { lo: round(shopper.body.lo, 3), hi: round(shopper.body.hi, 3), source: shopper.body.source } : null,
+      conflict: Boolean(shopper.conflict),
+      aim: method === 'body-chart' && leading.parts[0] && leading.parts[0].range
+        ? { size: leading.parts[0].aim, lo: round(leading.parts[0].range.lo, 3), hi: round(leading.parts[0].range.hi, 3), estimated: Boolean(leading.parts[0].range.estimated) }
+        : null
+    }
   };
 }
 
@@ -1548,8 +1574,13 @@ function compare(profile, record, opts) {
   const rankable = sizes.filter((s) => s.score !== null);
 
   if (!dims.length || !rankable.length) {
-    return no('nothing-comparable', `Your reference and this product share no measurement taken the same way, so no size can be set beside it.`,
-      ['Add measurements to your reference on your fit profile, taken as it shows.'], { product: { brand: record.brand, name: record.product.name }, context: productContext, reference, notCompared: skipped, notes });
+    /* shared measurements, but no size publishes all of them: said as data too */
+    const incomplete = dims.length ? unranked.map((s) => s.size) : [];
+    return no('nothing-comparable', incomplete.length
+      ? `No size of this product publishes every measurement your reference shares with it (${listWords(dims.map((d) => DIM_NAMES[d]))}), so none is ranked.`
+      : `Your reference and this product share no measurement taken the same way, so no size can be set beside it.`,
+    incomplete.length ? [] : ['Add measurements to your reference on your fit profile, taken as it shows.'],
+    { product: { brand: record.brand, name: record.product.name }, context: productContext, reference, notCompared: skipped, notes, dimensionsShared: dims, unranked: incomplete });
   }
 
   const ranked = rankable.slice().sort((a, b) => a.score - b.score || record.sizes.indexOf(a.size) - record.sizes.indexOf(b.size));
@@ -1723,4 +1754,4 @@ function validate(profile, record, opts) {
   };
 }
 
-module.exports = { recommend, compare, validate, matchProduct, CATEGORY_PARAMS, TROUBLE_FACTOR, ALTERNATIVE_MARGIN, METHOD_WORDS, sizeOffset, bodyRange, contextOf };
+module.exports = { recommend, compare, validate, matchProduct, CATEGORY_PARAMS, FAMILY, TROUBLE_FACTOR, ALTERNATIVE_MARGIN, METHOD_WORDS, sizeOffset, bodyRange, contextOf };

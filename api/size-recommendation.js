@@ -55,6 +55,18 @@
    its size. Only the type asked for is read from the profile: a jeans
    search is never sized from a hoodie.
 
+   ---------------------------------------------------------
+   The decision
+   ---------------------------------------------------------
+   Whether a size is given at all is decided in one place,
+   api/_sizing/decision.js: { decision: { outcome: OK |
+   INSUFFICIENT_DATA | NO_MATCH, size, closest, reasons: [{ code, … }],
+   qualifiers, method, via, confidence, requirements } }. It rides beside
+   the engine's own answers (`recommendation`, `comparison`), which keep
+   their fields; a search listing's `status` follows it — "ok" only when
+   the decision is OK, "no-match" (no size, the closest named) when the
+   evidence is complete but no size is acceptable.
+
    Read-only: it reads the caller's own fit profile and one sizing
    record (api/_sizing), runs api/_sizing/engine.js, and changes
    nothing, so it needs no CSRF token — like reading the fit profile.
@@ -116,6 +128,8 @@ const users = require('./_users');
 const fitProfiles = require('./_fit-profile');
 const sizing = require('./_sizing/records');
 const engine = require('./_sizing/engine');
+/* the one place a size is decided: the engine's answers held to one policy */
+const decision = require('./_sizing/decision');
 const brands = require('./_sizing/brands');
 
 const ProfileSchema = require('../assets/fit-profile-schema.js');
@@ -152,20 +166,43 @@ function readItems(raw) {
    profile, else what is missing, in the words the engine gave. */
 function sizeListing(profile, record) {
   const base = { productId: record.id, product: { brand: record.brand, name: record.product.name }, verified: record.verification && record.verification.status === 'verified' };
-  const compared = engine.compare(profile, record);
-  if (compared.status === 'ok') {
-    return Object.assign(base, { status: 'ok', by: 'reference', size: compared.recommended, alternative: compared.alternative, reliability: compared.reliability, summary: compared.summary, caveats: compared.caveats });
+  /* the decision is the answer (api/_sizing/decision.js); the fields
+     beside it keep the shape this listing has always had, so a page
+     reading `status` and `size` still works — but `status` is "ok"
+     only when the decision is OK */
+  const { decision: d, detail } = decision.decideWithDetail(profile, record);
+  const withDecision = (out) => Object.assign(out, { decision: d });
+  const compared = detail.compare || engine.compare(profile, record);
+  const suggested = detail.recommend || (d.via === 'compare' ? null : engine.recommend(profile, record));
+  if (d.outcome === decision.OUTCOMES.OK) {
+    if (d.via === 'compare') {
+      return withDecision(Object.assign(base, { status: 'ok', by: 'reference', size: d.size, alternative: compared.alternative, reliability: d.confidence, summary: compared.summary, caveats: compared.caveats }));
+    }
+    /* the decision's confidence: the engine's, lowered where the policy
+       found the answer rests on an estimate (a mirrored chart edge) */
+    return withDecision(Object.assign(base, { status: 'ok', by: 'profile', size: d.size, alternative: d.alternative, reliability: d.confidence, summary: suggested.reasons[0] || null, caveats: suggested.caveats || [] }));
   }
-  if (compared.status === 'partial') {
-    return Object.assign(base, { status: 'partial', by: 'reference', size: null, closest: compared.closest, reliability: compared.reliability, summary: compared.summary, caveats: compared.caveats });
-  }
-  const suggested = engine.recommend(profile, record);
-  if (suggested.status === 'ok') {
-    return Object.assign(base, { status: 'ok', by: 'profile', size: suggested.leading, alternative: suggested.alternative ? suggested.alternative.size : null, reliability: suggested.confidence, summary: suggested.reasons[0] || null, caveats: suggested.caveats || [] });
+  if (d.outcome === decision.OUTCOMES.NO_MATCH) {
+    /* compare()'s own "closest, not recommended" keeps its shape */
+    if (d.via === 'compare' && compared.status === 'partial') {
+      return withDecision(Object.assign(base, { status: 'partial', by: 'reference', size: null, closest: compared.closest, reliability: compared.reliability, summary: compared.summary, caveats: compared.caveats }));
+    }
+    return withDecision(Object.assign(base, {
+      status: 'no-match',
+      by: d.via === 'compare' ? 'reference' : 'profile',
+      size: null,
+      closest: d.closest,
+      /* a shopper's words, chosen from the reason codes (decision.customerMessage) */
+      missing: decision.customerMessages(d, { brand: record.brand }),
+      next: []
+    }));
   }
   const said = new Set();
-  const missing = (suggested.missing || []).concat(compared.missing || []).map((m) => m.message).filter((m) => !said.has(m) && said.add(m));
-  return Object.assign(base, { status: 'insufficient', size: null, missing, next: [...new Set((suggested.next || []).concat(compared.next || []))] });
+  const engineSaid = ((suggested && suggested.missing) || []).concat(compared.missing || []).map((m) => m.message);
+  /* reasons only the policy found (a conflict, a range) are said too */
+  const policySaid = d.reasons.filter((r) => ['conflicting-references', 'measurement-out-of-supported-range', 'reference-range-too-wide'].includes(r.code)).map((r) => decision.customerMessage(r, { brand: record.brand }));
+  const missing = policySaid.concat(engineSaid).filter((m) => !said.has(m) && said.add(m));
+  return withDecision(Object.assign(base, { status: 'insufficient', size: null, missing, next: [...new Set(((suggested && suggested.next) || []).concat(compared.next || []))] }));
 }
 
 /* The search page's listings for one type: each matched to a record,
@@ -293,7 +330,7 @@ async function compareUnsaved(req, res) {
   if (read.error) return res.status(400).json(read.error);
   const profile = read.profile;
   const unit = query.unit === 'in' || query.unit === 'cm' ? query.unit : undefined;
-  return res.status(200).json({ comparison: engine.compare(profile, record, { unit }) });
+  return res.status(200).json({ comparison: engine.compare(profile, record, { unit }), decision: decision.decide(profile, record, { via: 'compare', unit }) });
 }
 
 async function handler(req, res) {
@@ -416,10 +453,10 @@ async function handler(req, res) {
        every size (engine.compare), in the unit asked for, if any */
     if (query.compare === '1') {
       const unit = query.unit === 'in' || query.unit === 'cm' ? query.unit : undefined;
-      return res.status(200).json({ comparison: engine.compare(profile || null, record, { unit }) });
+      return res.status(200).json({ comparison: engine.compare(profile || null, record, { unit }), decision: decision.decide(profile || null, record, { via: 'compare', unit }) });
     }
     const recommendation = engine.recommend(profile || null, record);
-    return res.status(200).json({ recommendation });
+    return res.status(200).json({ recommendation, decision: decision.decide(profile || null, record, { via: 'recommend' }) });
   } catch (err) {
     console.error('Size recommendation failed', err && err.message);
     return res.status(500).json({ error: 'Could not work out a size suggestion. Try again in a moment.' });
