@@ -21,7 +21,8 @@
      filters    category (a group, or a narrower type inside one that
                 the brand module names, e.g. hoodies apart from
                 sweatshirts), line (a unisex product is in both men's and
-                women's), colour (by family, from the source's own colour
+                women's), brand (`vendor`: for a merchant listing several
+                brands), colour (by family, from the source's own colour
                 names), size and, where stock is known, in stock only —
                 per colour and size together where the source gives
                 stock per variant
@@ -115,6 +116,9 @@ const groupOf = (p) => p.group || p.category;
 const kindOf = (p) => (p.kind && p.kind !== groupOf(p) ? p.kind : null);
 const inCategory = (p, category) => category === 'all' || groupOf(p) === category || kindOf(p) === category;
 const inLine = (p, line) => line === 'all' || p.line === line || (p.line === 'unisex' && (line === 'men' || line === 'women'));
+/* the brand a product names (a merchant may list several), as a filter value */
+const vendorKey = (name) => (typeof name === 'string' ? name.normalize('NFKD').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) : '');
+const inVendor = (p, vendor) => vendor === 'all' || vendorKey(p.brand) === vendor;
 const IN_STOCK = new Set(['in_stock', 'limited']);
 
 function clampInt(value, min, max, fallback) {
@@ -130,6 +134,7 @@ function readQuery(raw) {
     q,
     category: word(raw && raw.category),
     line: word(raw && raw.line),
+    vendor: word(raw && raw.vendor),
     colour: raw && COLOUR_FAMILIES.includes(raw.colour) ? raw.colour : 'all',
     size: raw && typeof raw.size === 'string' && /^[A-Za-z0-9][A-Za-z0-9./ -]{0,11}$/.test(raw.size.trim()) ? raw.size.trim().toUpperCase() : 'all',
     inStock: Boolean(raw && (raw.inStock === '1' || raw.inStock === true)),
@@ -197,7 +202,13 @@ function createIndex(products, options) {
     const lines = new Map();
     const colours = new Map();
     const sizes = new Map();
+    const vendors = new Map();
     list.forEach((p, i) => {
+      const v = vendorKey(p.brand);
+      if (v) {
+        if (!vendors.has(v)) vendors.set(v, { value: v, label: p.brand, count: 0 });
+        vendors.get(v).count += 1;
+      }
       const g = groupOf(p);
       if (!cats.has(g)) cats.set(g, { value: g, label: p.categoryLabel || g, count: 0, kinds: new Map() });
       cats.get(g).count += 1;
@@ -215,6 +226,8 @@ function createIndex(products, options) {
       categories: [...cats.values()].sort((a, b) => rank(a.value) - rank(b.value))
         .map((c) => Object.assign({ value: c.value, label: c.label, count: c.count }, c.kinds.size ? { kinds: [...c.kinds.values()].sort((a, b) => a.label.localeCompare(b.label)) } : {})),
       lines: [...lines.entries()].map(([value, count]) => ({ value, count })),
+      /* only products that name a brand (a merchant's) are counted here */
+      vendors: [...vendors.values()].sort((a, b) => a.label.localeCompare(b.label)),
       colours: COLOUR_FAMILIES.filter((f) => colours.has(f)).map((value) => ({ value, count: colours.get(value) })),
       /* the sizes most products come in, in size order */
       sizes: sortSizes([...sizes.entries()].sort((a, b) => b[1] - a[1]).slice(0, 30).map(([v]) => v)).map((value) => ({ value, count: sizes.get(value) }))
@@ -226,6 +239,7 @@ function createIndex(products, options) {
     const stockKnown = Boolean(settings && settings.stockKnown);
     const keep = list.map((p, i) => inCategory(p, query.category)
       && inLine(p, query.line)
+      && inVendor(p, query.vendor)
       && offered(i, query, stockKnown));
     const parsed = words(query.q).slice(0, MAX_TERMS);
     let picked;

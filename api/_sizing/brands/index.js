@@ -32,7 +32,12 @@
 
 const { createIndex } = require('../../_catalog/search');
 
-const BRANDS = [require('./uniqlo')];
+/* UNIQLO, then every participating merchant whose own catalogue a person
+   has listed (api/_catalog/merchants) — none yet */
+const { MERCHANTS } = require('../../_catalog/merchants');
+const { createMerchantBrand } = require('./merchant');
+
+const BRANDS = [require('./uniqlo')].concat(MERCHANTS.map(createMerchantBrand));
 
 const get = (id) => (typeof id === 'string' ? BRANDS.find((b) => b.id === id) || null : null);
 
@@ -40,7 +45,7 @@ const get = (id) => (typeof id === 'string' ? BRANDS.find((b) => b.id === id) ||
 const list = () => BRANDS.map((b) => ({ id: b.id, name: b.name, market: b.market, count: b.products().length, coverage: b.coverage }));
 
 /* the fields a card may carry to the browser; bookkeeping stays here */
-const CARD = ['code', 'name', 'url', 'category', 'group', 'categoryLabel', 'kind', 'kindLabel', 'line', 'imageUrl', 'holds', 'holdsText', 'status', 'sizeRange', 'price', 'availability'];
+const CARD = ['code', 'name', 'brand', 'url', 'category', 'group', 'categoryLabel', 'kind', 'kindLabel', 'line', 'imageUrl', 'holds', 'holdsText', 'status', 'sizeRange', 'price', 'availability'];
 const pick = (p) => Object.fromEntries(CARD.filter((k) => p[k] !== undefined).map((k) => [k, p[k]]));
 
 /* One page of a brand's products for Find Fit: the brand's own search
@@ -55,7 +60,9 @@ function browse(brand, query) {
       market: brand.market,
       coverage: brand.coverage,
       notice: brand.notice || null,
-      catalogue: typeof brand.catalogue === 'function' ? brand.catalogue() : null
+      catalogue: typeof brand.catalogue === 'function' ? brand.catalogue() : null,
+      /* a merchant's own photo hosts, for the page to load its photos from; UNIQLO's page knows its own */
+      ...(brand.merchant ? { merchant: true, imageHosts: brand.imageHosts } : {})
     },
     products: (found.products || found.items).map(pick),
     /* how many products the brand lists in all, and how many match */

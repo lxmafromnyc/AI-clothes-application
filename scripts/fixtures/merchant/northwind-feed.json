@@ -1,0 +1,592 @@
+{
+  "format": "fynd-catalog-feed",
+  "version": 1,
+  "fixture": true,
+  "source": {
+    "name": "FIXTURE Northwind Apparel — supplied by the merchant",
+    "merchant": "northwind-fixture",
+    "licence": "FIXTURE test authorization (not an agreement)",
+    "licensedFields": [
+      "images",
+      "colours",
+      "sizes",
+      "price",
+      "stock",
+      "description"
+    ]
+  },
+  "generatedAt": "2026-10-30T06:00:00Z",
+  "complete": true,
+  "products": [
+    {
+      "id": "NW-HD-1001",
+      "brand": "FIXTURE Northwind",
+      "name": "Heavyweight Pullover Hoodie",
+      "description": "A 400 gsm cotton-blend hoodie with a lined hood.",
+      "url": "https://www.northwind.example/products/NW-HD-1001",
+      "category": "Men > Tops > Fleece",
+      "gender": "men",
+      "status": "active",
+      "images": [
+        "https://images.northwind.example/p/NW-HD-1001/blk-1.jpg",
+        "https://images.northwind.example/p/NW-HD-1001/hgr-1.jpg"
+      ],
+      "colours": [
+        {
+          "code": "BLK",
+          "name": "Black",
+          "image": "https://images.northwind.example/p/NW-HD-1001/blk-1.jpg"
+        },
+        {
+          "code": "HGR",
+          "name": "Heather Grey",
+          "image": "https://images.northwind.example/p/NW-HD-1001/hgr-1.jpg"
+        }
+      ],
+      "sizes": [
+        "S",
+        "M",
+        "L",
+        "XL"
+      ],
+      "price": "68.00",
+      "availability": "in_stock",
+      "variants": [
+        {
+          "colour": "BLK",
+          "size": "S",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "BLK",
+          "size": "M",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "BLK",
+          "size": "L",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "BLK",
+          "size": "XL",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "HGR",
+          "size": "S",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "HGR",
+          "size": "M",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "HGR",
+          "size": "L",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "HGR",
+          "size": "XL",
+          "availability": "in_stock"
+        }
+      ]
+    },
+    {
+      "id": "NW-HD-1002",
+      "brand": "FIXTURE Northwind",
+      "name": "Zip-Front Fleece Hoodie",
+      "description": "A brushed-back fleece hoodie with a full-length zip.",
+      "url": "https://www.northwind.example/products/NW-HD-1002",
+      "category": "Unisex > Tops > Hoodies",
+      "gender": "unisex",
+      "status": "active",
+      "images": [
+        "https://images.northwind.example/p/NW-HD-1002/nvy-1.jpg",
+        "https://images.northwind.example/p/NW-HD-1002/oat-1.jpg"
+      ],
+      "colours": [
+        {
+          "code": "NVY",
+          "name": "Navy",
+          "image": "https://images.northwind.example/p/NW-HD-1002/nvy-1.jpg"
+        },
+        {
+          "code": "OAT",
+          "name": "Oatmeal",
+          "image": "https://images.northwind.example/p/NW-HD-1002/oat-1.jpg"
+        }
+      ],
+      "sizes": [
+        "XS",
+        "S",
+        "M",
+        "L",
+        "XL"
+      ],
+      "price": "59.00",
+      "wasPrice": "74.00",
+      "availability": "in_stock",
+      "variants": [
+        {
+          "colour": "NVY",
+          "size": "XS",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "NVY",
+          "size": "S",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "NVY",
+          "size": "M",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "NVY",
+          "size": "L",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "NVY",
+          "size": "XL",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "OAT",
+          "size": "XS",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "OAT",
+          "size": "S",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "OAT",
+          "size": "M",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "OAT",
+          "size": "L",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "OAT",
+          "size": "XL",
+          "availability": "in_stock"
+        }
+      ]
+    },
+    {
+      "id": "NW-CR-2001",
+      "brand": "FIXTURE Northwind",
+      "name": "Midweight Crewneck Sweatshirt",
+      "description": "A midweight crewneck with ribbed cuffs and hem.",
+      "url": "https://www.northwind.example/products/NW-CR-2001",
+      "category": "Women > Tops > Sweatshirts",
+      "gender": "women",
+      "status": "active",
+      "images": [
+        "https://images.northwind.example/p/NW-CR-2001/sge-1.jpg",
+        "https://images.northwind.example/p/NW-CR-2001/blk-1.jpg"
+      ],
+      "colours": [
+        {
+          "code": "SGE",
+          "name": "Sage",
+          "image": "https://images.northwind.example/p/NW-CR-2001/sge-1.jpg"
+        },
+        {
+          "code": "BLK",
+          "name": "Black",
+          "image": "https://images.northwind.example/p/NW-CR-2001/blk-1.jpg"
+        }
+      ],
+      "sizes": [
+        "XS",
+        "S",
+        "M",
+        "L"
+      ],
+      "price": "58.00",
+      "availability": "in_stock",
+      "variants": [
+        {
+          "colour": "SGE",
+          "size": "XS",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "SGE",
+          "size": "S",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "SGE",
+          "size": "M",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "SGE",
+          "size": "L",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "BLK",
+          "size": "XS",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "BLK",
+          "size": "S",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "BLK",
+          "size": "M",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "BLK",
+          "size": "L",
+          "availability": "in_stock"
+        }
+      ]
+    },
+    {
+      "id": "NW-TS-3001",
+      "brand": "FIXTURE Northwind",
+      "name": "Organic Cotton Crew Tee",
+      "description": "A 180 gsm organic cotton T-shirt.",
+      "url": "https://www.northwind.example/products/NW-TS-3001",
+      "category": "Men > Tops > T-Shirts",
+      "gender": "men",
+      "status": "active",
+      "images": [
+        "https://images.northwind.example/p/NW-TS-3001/wht-1.jpg",
+        "https://images.northwind.example/p/NW-TS-3001/blk-1.jpg",
+        "https://images.northwind.example/p/NW-TS-3001/nvy-1.jpg"
+      ],
+      "colours": [
+        {
+          "code": "WHT",
+          "name": "White",
+          "image": "https://images.northwind.example/p/NW-TS-3001/wht-1.jpg"
+        },
+        {
+          "code": "BLK",
+          "name": "Black",
+          "image": "https://images.northwind.example/p/NW-TS-3001/blk-1.jpg"
+        },
+        {
+          "code": "NVY",
+          "name": "Navy",
+          "image": "https://images.northwind.example/p/NW-TS-3001/nvy-1.jpg"
+        }
+      ],
+      "sizes": [
+        "S",
+        "M",
+        "L",
+        "XL"
+      ],
+      "price": "28.00",
+      "availability": "in_stock",
+      "variants": [
+        {
+          "colour": "WHT",
+          "size": "S",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "WHT",
+          "size": "M",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "WHT",
+          "size": "L",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "WHT",
+          "size": "XL",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "BLK",
+          "size": "S",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "BLK",
+          "size": "M",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "BLK",
+          "size": "L",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "BLK",
+          "size": "XL",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "NVY",
+          "size": "S",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "NVY",
+          "size": "M",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "NVY",
+          "size": "L",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "NVY",
+          "size": "XL",
+          "availability": "in_stock"
+        }
+      ]
+    },
+    {
+      "id": "NW-TS-3002",
+      "brand": "FIXTURE Northwind",
+      "name": "Relaxed Pocket Tee",
+      "description": "A relaxed T-shirt with a chest pocket.",
+      "url": "https://www.northwind.example/products/NW-TS-3002",
+      "category": "Women > Tops > T-Shirts",
+      "gender": "women",
+      "status": "active",
+      "images": [
+        "https://images.northwind.example/p/NW-TS-3002/rst-1.jpg",
+        "https://images.northwind.example/p/NW-TS-3002/wht-1.jpg"
+      ],
+      "colours": [
+        {
+          "code": "RST",
+          "name": "Rust",
+          "image": "https://images.northwind.example/p/NW-TS-3002/rst-1.jpg"
+        },
+        {
+          "code": "WHT",
+          "name": "White",
+          "image": "https://images.northwind.example/p/NW-TS-3002/wht-1.jpg"
+        }
+      ],
+      "sizes": [
+        "XS",
+        "S",
+        "M",
+        "L"
+      ],
+      "price": "32.00",
+      "availability": "in_stock",
+      "variants": [
+        {
+          "colour": "RST",
+          "size": "XS",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "RST",
+          "size": "S",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "RST",
+          "size": "M",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "RST",
+          "size": "L",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "WHT",
+          "size": "XS",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "WHT",
+          "size": "S",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "WHT",
+          "size": "M",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "WHT",
+          "size": "L",
+          "availability": "in_stock"
+        }
+      ]
+    },
+    {
+      "id": "NW-PT-4001",
+      "brand": "FIXTURE Northwind",
+      "name": "Straight Leg Chino",
+      "description": "A straight-leg cotton twill chino.",
+      "url": "https://www.northwind.example/products/NW-PT-4001",
+      "category": "Men > Bottoms > Pants",
+      "gender": "men",
+      "status": "active",
+      "images": [
+        "https://images.northwind.example/p/NW-PT-4001/khk-1.jpg",
+        "https://images.northwind.example/p/NW-PT-4001/nvy-1.jpg"
+      ],
+      "colours": [
+        {
+          "code": "KHK",
+          "name": "Khaki",
+          "image": "https://images.northwind.example/p/NW-PT-4001/khk-1.jpg"
+        },
+        {
+          "code": "NVY",
+          "name": "Navy",
+          "image": "https://images.northwind.example/p/NW-PT-4001/nvy-1.jpg"
+        }
+      ],
+      "sizes": [
+        "30",
+        "32",
+        "34",
+        "36"
+      ],
+      "price": "64.00",
+      "availability": "in_stock",
+      "variants": [
+        {
+          "colour": "KHK",
+          "size": "30",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "KHK",
+          "size": "32",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "KHK",
+          "size": "34",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "KHK",
+          "size": "36",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "NVY",
+          "size": "30",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "NVY",
+          "size": "32",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "NVY",
+          "size": "34",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "NVY",
+          "size": "36",
+          "availability": "in_stock"
+        }
+      ]
+    },
+    {
+      "id": "NW-HB-5001",
+      "brand": "FIXTURE Harbor Supply",
+      "name": "Harbor Canvas Work Jacket",
+      "description": "A duck-canvas chore jacket with corduroy collar.",
+      "url": "https://www.northwind.example/products/NW-HB-5001",
+      "category": "Men > Outerwear > Workwear",
+      "gender": "men",
+      "status": "active",
+      "images": [
+        "https://images.northwind.example/p/NW-HB-5001/brn-1.jpg",
+        "https://images.northwind.example/p/NW-HB-5001/olv-1.jpg"
+      ],
+      "colours": [
+        {
+          "code": "BRN",
+          "name": "Brown",
+          "image": "https://images.northwind.example/p/NW-HB-5001/brn-1.jpg"
+        },
+        {
+          "code": "OLV",
+          "name": "Olive",
+          "image": "https://images.northwind.example/p/NW-HB-5001/olv-1.jpg"
+        }
+      ],
+      "sizes": [
+        "S",
+        "M",
+        "L",
+        "XL"
+      ],
+      "price": "128.00",
+      "availability": "in_stock",
+      "variants": [
+        {
+          "colour": "BRN",
+          "size": "S",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "BRN",
+          "size": "M",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "BRN",
+          "size": "L",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "BRN",
+          "size": "XL",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "OLV",
+          "size": "S",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "OLV",
+          "size": "M",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "OLV",
+          "size": "L",
+          "availability": "in_stock"
+        },
+        {
+          "colour": "OLV",
+          "size": "XL",
+          "availability": "in_stock"
+        }
+      ]
+    }
+  ]
+}

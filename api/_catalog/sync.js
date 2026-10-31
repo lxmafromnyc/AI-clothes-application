@@ -142,6 +142,9 @@ function sync(previous, imported, adapter, options) {
     market: adapter.market,
     sourceName: header.sourceName || opts.sourceName || null,
     sourceKind: opts.sourceKind || 'file',
+    /* a merchant's own catalogue: whose, and what it authorized (only then present) */
+    merchant: opts.merchant || undefined,
+    authorization: opts.authorization || undefined,
     licence: header.licence || opts.licence || null,
     licensed: header.licensed,
     fixture: Boolean(header.fixture),

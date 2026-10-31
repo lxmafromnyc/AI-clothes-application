@@ -76,8 +76,24 @@ function load(adapter) {
       licensed: [...licensed].sort(),
       lastSuccessfulSync: new Date(synced).toISOString(),
       feedComplete: raw.feedComplete === true,
-      fixture: raw.fixture === true
+      fixture: raw.fixture === true,
+      /* a merchant's own catalogue: whose, and the authorization it was imported under */
+      merchant: typeof raw.merchant === 'string' && raw.merchant === adapter.id ? raw.merchant : null,
+      authorization: authorizationOf(raw.authorization)
     }
+  };
+}
+
+/* the authorization a merchant's catalogue records, as plain short strings only */
+function authorizationOf(a) {
+  if (!isPlain(a)) return null;
+  const str = (v) => (typeof v === 'string' ? v.slice(0, 200) : null);
+  return {
+    grantedBy: str(a.grantedBy),
+    reference: str(a.reference),
+    grantedAt: str(a.grantedAt),
+    expiresAt: str(a.expiresAt),
+    licensedFields: (Array.isArray(a.licensedFields) ? a.licensedFields : []).filter((f) => LICENSABLE.includes(f))
   };
 }
 
