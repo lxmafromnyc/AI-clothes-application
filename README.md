@@ -127,6 +127,12 @@ assets/fit-for-you.js          the search page's fit panel: which type a search 
 scripts/test-fit-profile.js    offline test of the schema, units, per-type answers, readiness, and who may read or change a profile
 scripts/test-sizing.js         offline test of the sizing records, the size engine and both of its endpoints
 scripts/sync-catalog.js        syncs a brand's catalogue from its authorized feed (a file or the API)
+scripts/rakuten-preflight.js   checks every Rakuten SFTP setting before anything connects; never prints a credential
+scripts/rakuten-sftp.sh        lists or fetches from Rakuten's SFTP server, only one whose host key matches the fingerprint
+scripts/rakuten-sample.js      validates a whole Rakuten file, or its first bytes, through the sync's own import; writes nothing
+scripts/test-rakuten-preflight.js  offline test of the preflight and the sample validator
+scripts/test-rakuten-sftp.js   the SFTP script against a throwaway local OpenSSH server and temporary account, removed however it ends (CI's root job; sudo node scripts/ci-tests.js sftp)
+scripts/fixtures/temp-sftp-server.js  that server and account: a new uniquely named account only, a kernel-allocated port, guaranteed cleanup
 scripts/test-catalog-feed.js   offline test of the catalogue: import, sync, fetch, search, staleness, and each product's sizing
 scripts/test-catalog-browser.js  Find Fit searching and paging a catalogue, and a product's page, in a real browser
 scripts/test-size-eval.js      the size engine against hand-worked expectations (scripts/fixtures/size-eval.json)
@@ -2519,12 +2525,19 @@ UNIQLO's Product Catalog:
    advertiser ID), `RAKUTEN_SID` (Fynd's publisher channel ID),
    `RAKUTEN_SFTP_HOSTKEY_SHA256` (the server's host key, from Rakuten — never
    taken on first use) and `UNIQLO_FEED_LICENSED_FIELDS`.
-3. Run **UNIQLO catalogue sync** by hand. It downloads `MID_SID_mp.txt.gz`,
+3. Run **Rakuten feed inspection** by hand (`.github/workflows/rakuten-feed-inspect.yml`):
+   it checks every setting (`scripts/rakuten-preflight.js`), lists the SFTP
+   directory and, if asked, validates a sample of the file through the sync's
+   own import (`scripts/rakuten-sample.js`). Set `RAKUTEN_SFTP_DIR` from its
+   listing. Details, and why the host key is checked through `known_hosts`
+   rather than curl's `--hostpubsha256`, are in
+   [`api/_catalog/FEED-ACCESS.md`](api/_catalog/FEED-ACCESS.md).
+4. Run **UNIQLO catalogue sync** by hand. It downloads `MID_SID_mp.txt.gz`,
    syncs it, measures coverage (`scripts/catalog-coverage.js`) and uploads the
    catalogue and report.
-4. Read the report — products, rejected rows and why, field coverage — check
+5. Read the report — products, rejected rows and why, field coverage — check
    a sample against UNIQLO's pages, and commit the catalogue in a pull request.
-5. To keep it current without anyone adding products by hand: set
+6. To keep it current without anyone adding products by hand: set
    `UNIQLO_FEED_AUTOPR` to `enabled` (each sync that changes anything opens or
    updates a pull request) and, if the terms allow a daily pull,
    `UNIQLO_FEED_SCHEDULE` to `enabled`. Prices and stock stop showing 48 hours
