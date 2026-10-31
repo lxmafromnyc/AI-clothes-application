@@ -330,6 +330,120 @@ function inChild(env, code) {
     assert.deepStrictEqual(prod, ['uniqlo']);
   });
 
+  /* ---------- the snapshot held to the reviewed authorization ---------- */
+
+  const imagesOnly = () => { const c = config(); c.authorization.licensedFields = ['images']; return c; };
+  const committedFrom = (catalogue) => () => JSON.parse(JSON.stringify(catalogue));
+
+  await test('a snapshot claiming price and stock under a config that permits only images is refused whole — nothing from it loads', () => {
+    const snapshot = readJson(path.join(tmp, 'csv.json'));
+    assert.deepStrictEqual(snapshot.licensed, ['colours', 'description', 'images', 'price', 'sizes', 'stock']);
+    assert.ok(snapshot.products.some((p) => p.price) && snapshot.products.some((p) => p.variants), 'the snapshot does carry price and stock');
+    const real = imagesOnly();
+    delete real.fixture;
+    const forged = Object.assign({}, snapshot, { fixture: false, licensed: ['images', 'price', 'stock'] });
+    const loaded = store.load(createMerchantSource(real, { committed: committedFrom(forged) }), { env: {} });
+    assert.deepStrictEqual([loaded.state, loaded.why, loaded.products.length, loaded.catalog], ['invalid', 'licence-exceeds-authorization', 0, null]);
+    /* a field no licence can cover is refused the same way */
+    const odd = Object.assign({}, forged, { licensed: ['images', 'everything'] });
+    assert.strictEqual(store.load(createMerchantSource(real, { committed: committedFrom(odd) }), { env: {} }).why, 'licence-exceeds-authorization');
+  });
+
+  await test('narrowing an existing merchant\'s authorization takes its stored catalogue out of service at once: no product, price or stock served from it', () => {
+    const snapshot = path.join(tmp, 'csv.json');
+    const browse = `
+      const b = require('./api/_sizing/brands');
+      const m = b.get('northwind-fixture');
+      const r = b.browse(m, { limit: '48' });
+      return { total: r.total, prices: r.products.filter((p) => p.price).length, stock: r.facets.inStock, notice: r.brand.notice, detail: m.detail('NW-HD-1001') };`;
+    /* as authorized when it was imported: listed, with prices */
+    const wide = inChild({ FYND_TEST_MERCHANTS: CONFIG, FYND_CATALOG_NORTHWIND_FIXTURE: snapshot }, browse);
+    assert.deepStrictEqual([wide.total, wide.prices, wide.stock], [7, 7, true]);
+    /* the same stored file, after the reviewed config is narrowed to images */
+    const narrowed = writeJson('cfg-images-only.json', imagesOnly());
+    const now = inChild({ FYND_TEST_MERCHANTS: narrowed, FYND_CATALOG_NORTHWIND_FIXTURE: snapshot }, browse);
+    assert.deepStrictEqual([now.total, now.prices, now.stock, now.detail], [0, 0, false, null]);
+    assert.strictEqual(now.notice, 'FIXTURE Northwind Apparel\'s catalogue doesn’t match its current authorization, so none of its products are shown until it is imported again.');
+  });
+
+  await test('the authorization served is always the reviewed config\'s: a snapshot\'s own metadata can\'t replace it, and another agreement or merchant is refused', () => {
+    const snapshot = Object.assign(readJson(path.join(tmp, 'csv.json')), { fixture: false });
+    const real = config();
+    delete real.fixture;
+    const load = (raw) => store.load(createMerchantSource(real, { committed: committedFrom(raw) }), { env: {} });
+    /* metadata rewritten in the file, under the same agreement: loads, but says what the config says */
+    const rewritten = load(Object.assign({}, snapshot, { authorization: Object.assign({}, snapshot.authorization, { grantedBy: 'Someone else', expiresAt: '2099-12-31', licensedFields: ['images'] }) }));
+    assert.strictEqual(rewritten.state, 'loaded');
+    assert.deepStrictEqual(rewritten.catalog.authorization, { grantedBy: real.authorization.grantedBy, reference: real.authorization.reference, grantedAt: real.authorization.grantedAt, expiresAt: null, licensedFields: real.authorization.licensedFields });
+    assert.strictEqual(rewritten.catalog.merchant, 'northwind-fixture');
+    /* imported under another agreement, or none recorded */
+    assert.strictEqual(load(Object.assign({}, snapshot, { authorization: Object.assign({}, snapshot.authorization, { reference: 'A different agreement' }) })).why, 'authorization-mismatch');
+    const unrecorded = Object.assign({}, snapshot);
+    delete unrecorded.authorization;
+    assert.strictEqual(load(unrecorded).why, 'authorization-mismatch');
+    /* another merchant's snapshot, or one that names none */
+    assert.strictEqual(load(Object.assign({}, snapshot, { merchant: 'someone-else' })).why, 'not this merchant\'s catalogue');
+    const anonymous = Object.assign({}, snapshot);
+    delete anonymous.merchant;
+    assert.strictEqual(load(anonymous).why, 'not this merchant\'s catalogue');
+  });
+
+  /* ---------- the test override, never in a deployment ---------- */
+
+  await test('in Vercel or production, FYND_CATALOG_<ID> is ignored: a committed merchant serves only its committed catalogue, never the fixture the variable names', () => {
+    const fixtureFile = path.join(tmp, 'csv.json');
+    const committed = Object.assign(readJson(fixtureFile), { fixture: false, products: readJson(fixtureFile).products.slice(0, 2) });
+    const real = config();
+    delete real.fixture;
+    const source = createMerchantSource(real, { committed: committedFrom(committed) });
+    const named = { FYND_CATALOG_NORTHWIND_FIXTURE: fixtureFile };
+    /* outside a deployment the override still works, as tests need */
+    const test = store.load(source, { env: named });
+    assert.deepStrictEqual([test.state, test.products.length, test.catalog.fixture], ['loaded', 7, true]);
+    [{ VERCEL: '1' }, { NODE_ENV: 'production' }].forEach((where) => {
+      const loaded = store.load(source, { env: Object.assign({}, named, where) });
+      assert.deepStrictEqual([loaded.state, loaded.products.length, loaded.catalog.fixture], ['loaded', 2, false], JSON.stringify(where));
+    });
+  });
+
+  await test('in Vercel or production, a fixture never loads for a committed merchant — not committed in its place, and not named by FYND_CATALOG_<ID>', () => {
+    const fixtureFile = path.join(tmp, 'csv.json');
+    const real = config();
+    delete real.fixture;
+    const named = { FYND_CATALOG_NORTHWIND_FIXTURE: fixtureFile };
+    /* the fixture committed in the merchant's place */
+    const asCommitted = createMerchantSource(real, { committed: committedFrom(readJson(fixtureFile)) });
+    /* no committed catalogue at all */
+    const none = createMerchantSource(real);
+    /* in the process's own environment, as a deployment sets it, put back after */
+    const withEnv = (vars, fn) => {
+      const saved = Object.fromEntries(Object.keys(vars).map((k) => [k, process.env[k]]));
+      Object.assign(process.env, vars);
+      try { return fn(); } finally { Object.entries(saved).forEach(([k, v]) => { if (v === undefined) delete process.env[k]; else process.env[k] = v; }); }
+    };
+    [{ VERCEL: '1' }, { NODE_ENV: 'production' }].forEach((where) => {
+      const vars = Object.assign({}, named, where);
+      const a = withEnv(vars, () => store.load(asCommitted));
+      assert.deepStrictEqual([a.state, a.why, a.products.length], ['invalid', 'fixture', 0], JSON.stringify(where));
+      const b = withEnv(vars, () => store.load(none));
+      assert.deepStrictEqual([b.state, b.products.length], ['none', 0], JSON.stringify(where));
+    });
+    /* outside a deployment the named test catalogue still loads */
+    assert.strictEqual(withEnv(named, () => store.load(none)).state, 'loaded');
+  });
+
+  await test('the same for UNIQLO: FYND_CATALOG_UNIQLO_US connects a test catalogue outside a deployment, and nothing in Vercel or production', async () => {
+    const r = await sync('uq-fixture', ['--source', 'uniqlo-us', '--file', path.join(__dirname, 'fixtures/catalog-feed/uniqlo-feed-v1.json'), '--allow-fixture', '--licensed', 'images,colours,sizes,price,stock']);
+    assert.strictEqual(r.code, 0, r.errors);
+    const ask = 'const u = require("./api/_sizing/brands").get("uniqlo"); return { connected: u.catalogue().connected, listed: u.products().length };';
+    const test = inChild({ FYND_CATALOG_UNIQLO_US: r.out }, ask);
+    assert.strictEqual(test.connected, true);
+    assert.ok(test.listed > 5);
+    [{ VERCEL: '1' }, { NODE_ENV: 'production' }].forEach((where) => {
+      assert.deepStrictEqual(inChild(Object.assign({ FYND_CATALOG_UNIQLO_US: r.out }, where), ask), { connected: false, listed: 5 }, JSON.stringify(where));
+    });
+  });
+
   /* ---------- in Find Fit's search ---------- */
 
   const TEST_ENV = { FYND_TEST_MERCHANTS: CONFIG, FYND_CATALOG_NORTHWIND_FIXTURE: path.join(tmp, 'csv.json') };

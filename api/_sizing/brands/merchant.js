@@ -227,7 +227,13 @@ function createMerchantBrand(source) {
   }
   function notice(now) {
     const fresh = freshness(now);
-    if (LOADED.state !== 'loaded') return `${config.name}'s catalogue hasn’t been imported yet.`;
+    if (LOADED.state === 'none') return `${config.name}'s catalogue hasn’t been imported yet.`;
+    /* refused as it loaded (api/_catalog/store.js): nothing from it is shown */
+    if (LOADED.state !== 'loaded') {
+      return ['licence-exceeds-authorization', 'authorization-mismatch'].includes(LOADED.why)
+        ? `${config.name}'s catalogue doesn’t match its current authorization, so none of its products are shown until it is imported again.`
+        : `${config.name}'s catalogue can’t be shown right now.`;
+    }
     if (!fresh.authorized) return `${config.name}'s authorization for Fynd to list its products isn’t current, so none are shown.`;
     if (!fresh.served) return `${config.name}'s catalogue was last updated on ${day(LOADED.catalog.lastSuccessfulSync)}, too long ago to show.`;
     if (!fresh.volatile && (licensed('price') || licensed('stock'))) return `Prices and stock aren’t shown: ${config.name}'s catalogue was last updated on ${day(LOADED.catalog.lastSuccessfulSync)}, too long ago for them to be current.`;
