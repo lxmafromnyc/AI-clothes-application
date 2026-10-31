@@ -190,7 +190,11 @@ async function launch(display, port) {
   /* everything the panel asks the network for, and every console error */
   const requests = [];
   const errors = [];
+  /* everything the panel says in its console, every level, with when:
+     its note() logs each problem as console.warn('[Fynd]', step, …) */
+  const panelLog = [];
   const watch = (page) => {
+    page.on('console', (m) => panelLog.push(`${new Date().toISOString().slice(11, 23)} ${m.type()}: ${m.text()}`));
     page.on('request', (r) => { if (!/^(chrome-extension|data|blob):/.test(r.url())) requests.push(r.url()); });
     page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
     page.on('console', (m) => { if (m.type() === 'error') errors.push(`console: ${m.text()}`); });
@@ -215,7 +219,31 @@ async function launch(display, port) {
   };
   let panel = null;
   let watched = false;
+  /* when the extension last received a press on its toolbar button:
+     background.js keeps it in session storage on every action.onClicked */
+  const pressedAt = async () => (panel ? panel.evaluate(async () => {
+    const got = await chrome.storage.session.get('fyndPressed');
+    return got.fyndPressed && got.fyndPressed.at ? got.fyndPressed.at : 0;
+  }) : 0);
+  /* the shop tab has finished loading, as Chrome itself reports it (an
+     error page too, which Playwright's goto doesn't wait for): a click
+     made before a navigation commits grants access to the page being
+     left, and the commit takes it away again */
+  const tabSettled = async (label) => {
+    if (!panel) { await shop.waitForLoadState('load').catch(() => {}); return; }
+    const until = Date.now() + 15000;
+    let calm = 0;
+    let last = null;
+    while (Date.now() < until) {
+      last = await panel.evaluate(async () => { const [t] = await chrome.tabs.query({ active: true, currentWindow: true }); return t ? t.status : null; });
+      calm = last === 'complete' ? calm + 1 : 0;
+      if (calm >= 2) return;
+      await sleep(100);
+    }
+    throw new Error(`the shop tab never finished loading ${label || ''} (Chrome says: ${last})`);
+  };
   const clickFynd = async () => {
+    const before = await pressedAt();
     let at = 'none';
     try { at = xinput(display, 'click-fynd'); } catch (err) { at = String(err.stdout || '').trim() || 'none'; }
     if (at === 'none') {
@@ -225,11 +253,49 @@ async function launch(display, port) {
     }
     panel = await panelPage();
     if (!watched) { watch(panel); watched = true; }
-    await sleep(900);
+    /* the press reached Fynd: not a fixed wait, the extension's own record */
+    const until = Date.now() + 10000;
+    let received = await pressedAt();
+    while (received <= before && Date.now() < until) { await sleep(100); received = await pressedAt(); }
+    if (received <= before) throw new Error(`Fynd never received the toolbar click at ${at} (fyndPressed unchanged since ${before || 'never'})\n        ${await diagnose('click')}`);
     return at;
   };
   const text = (sel) => panel.locator(sel).innerText();
   const shop = context.pages()[0];
+
+  /* What the panel and the page actually show, for a failure message:
+     the panel's visible sections, its status and problem, the product it
+     identified, its references (drawn, and in chrome.storage), the
+     shop page's own state, the panel's console, and a screenshot. */
+  const diagnose = async (label) => {
+    const out = { at: new Date().toISOString() };
+    try {
+      out.panel = await panel.evaluate(async () => {
+        const el = (id) => document.getElementById(id);
+        const vis = (id) => Boolean(el(id) && !el(id).hidden);
+        const storage = await chrome.storage.local.get(null);
+        const session = await chrome.storage.session.get(null).catch(() => ({}));
+        return {
+          visible: ['status', 'onboard', 'product', 'problem', 'rec', 'grant', 'confirm-kind', 'resolve'].filter(vis),
+          status: el('status') && el('status').textContent,
+          problem: vis('problem') ? { kind: el('problem').dataset.kind, title: el('problem-title').textContent, details: el('diag-text').textContent } : null,
+          product: { name: el('product-name').textContent, meta: el('product-meta').textContent },
+          chartArea: el('chart-area') ? el('chart-area').innerText.slice(0, 400) : null,
+          recTitle: el('rec-title').textContent,
+          anchorsDrawn: document.querySelectorAll('#anchor-list li').length,
+          anchorsStored: Array.isArray(storage.fyndAnchors) ? storage.fyndAnchors.map((a) => `${a.brand} ${a.category} ${a.size}`) : storage.fyndAnchors,
+          pressed: session.fyndPressed ? Object.assign({}, session.fyndPressed, { ageMs: Date.now() - session.fyndPressed.at }) : null,
+          text: document.body.innerText.slice(0, 1200)
+        };
+      });
+    } catch (err) { out.panel = `couldn’t read the panel: ${err.message}`; }
+    try {
+      out.shop = await shop.evaluate(() => ({ url: location.href, ready: document.readyState, guideOpen: Boolean(document.querySelector('dialog[open]')) }));
+    } catch (err) { out.shop = `couldn’t read the page: ${err.message}`; }
+    out.panelConsole = panelLog.slice(-25);
+    try { out.screenshot = shot(`diagnose-${label}-${Date.now()}`); } catch (err) { out.screenshot = `none: ${err.message}`; }
+    return JSON.stringify(out, null, 2).split('\n').join('\n        ');
+  };
 
   console.log(`Chromium ${(await browser.version())}, headed on Xvfb ${display}; extension ${id} loaded unpacked from extension/ as shipped.`);
 
@@ -309,7 +375,7 @@ async function launch(display, port) {
   await test('the product is identified and its closed size guide is reported — not an empty panel', async () => {
     await panel.click('#resolve-skip');
     await panel.waitForSelector('#product:not([hidden])');
-    await sleep(700);
+    await panel.waitForFunction(() => document.getElementById('product-name').textContent === 'Everyday Crew Tee' && /No size chart found/.test(document.getElementById('chart-area').innerText));
     assert.strictEqual(await text('#product-name'), 'Everyday Crew Tee');
     assert.match(await text('#product-meta'), /Northwind · 127\.0\.0\.1/);
     assert.match(await text('#chart-area'), /No size chart found on this page\. The page lists sizes XS, S, M, L, XL, XXL, but no measurements\. The page has a size guide \(“Size guide”\): open it on the page, then press Read this page\./);
@@ -320,7 +386,7 @@ async function launch(display, port) {
     await shop.click('#open-guide');
     await panel.click('#read');
     await panel.waitForSelector('#rec-title:not(:empty)');
-    await sleep(400);
+    await panel.waitForFunction(() => /Garment measurements/.test(document.getElementById('chart-area').innerText));
     const area = await text('#chart-area');
     assert.match(area, /Garment measurements · in inches · read from this page in your browser/);
     assert.match(area, /Chest width \(flat\)/);
@@ -349,7 +415,7 @@ async function launch(display, port) {
 
   await test('the test report: what was identified, every table found, the chosen chart normalised to inches, the reference and the recommendation — copied, never sent', async () => {
     await panel.click('#copy-report');
-    await sleep(300);
+    await panel.waitForFunction(() => document.getElementById('report-text').value.trim().startsWith('{'));
     const r = JSON.parse(await panel.inputValue('#report-text'));
     assert.strictEqual(r.read.how, 'button');
     assert.strictEqual(r.page.address, local('/shop/tee.html'));
@@ -366,7 +432,7 @@ async function launch(display, port) {
   await test('another page on the same site: Chrome keeps Fynd’s access for that site, so the panel follows without another click — and a body-measurement chart is never compared with a garment', async () => {
     await shop.goto(local('/shop/body-only.html'));
     await panel.waitForFunction(() => document.getElementById('product-name').textContent === 'Relaxed Tee', null, { timeout: 8000 });
-    await sleep(400);
+    await panel.waitForFunction(() => /Body measurements/.test(document.getElementById('chart-area').innerText) && document.getElementById('rec-title').textContent !== '');
     assert.match(await text('#chart-area'), /Body measurements · in inches/);
     assert.strictEqual(await text('#rec-title'), 'Not enough to compare');
     assert.match(await text('#rec-explain'), /body/i);
@@ -398,10 +464,11 @@ async function launch(display, port) {
     await shop.goto(`http://localhost:${port}/shop/grid-tee.html`);
     await panel.waitForFunction(() => document.getElementById('product-name').textContent === 'Loop Knit Tee', null, { timeout: 8000 });
     await panel.waitForSelector('#rec-title:not(:empty)');
-    await sleep(300);
+    await panel.waitForFunction(() => /Garment measurements/.test(document.getElementById('chart-area').innerText));
     assert.match(await text('#chart-area'), /Garment measurements · in centimetres · read from this page in your browser/);
+    await panel.evaluate(() => { document.getElementById('report-text').value = ''; });
     await panel.click('#copy-report');
-    await sleep(200);
+    await panel.waitForFunction(() => document.getElementById('report-text').value.trim().startsWith('{'));
     const r = JSON.parse(await panel.inputValue('#report-text'));
     const m = r.normalised.sizes.find((z) => z.size === 'M').dims;
     assert.ok(Math.abs(m.chestWidth.inches - 52 / 2.54) < 0.01, 'cm to inches');
@@ -422,10 +489,9 @@ async function launch(display, port) {
     assert.match(await text('#resolve-text'), /Estimated from 2 UNIQLO sweatshirts or hoodies in M \(Sweatshirt; Sweat Pullover Hoodie\)/);
     await panel.click('#resolve-skip');
     await shop.goto('http://www.uniqlo.com/us/en/products/E475377-000/00');
-    await sleep(600);
+    await tabSettled('UNIQLO’s product address');
     await clickFynd();
-    await panel.waitForSelector('#rec-title:not(:empty)');
-    await sleep(500);
+    await panel.waitForFunction(() => /UNIQLO US product E475377-000/.test(document.getElementById('product-meta').textContent) && document.getElementById('rec-title').textContent !== '');
     assert.match(await text('#product-meta'), /UNIQLO US product E475377-000 · Fynd holds this product’s measurements/);
     /* Fynd's record of it, as published: the UNIQLO pair is pending review */
     assert.match(await text('#chart-area'), /Fynd’s data, as published — not yet checked/);
@@ -440,7 +506,7 @@ async function launch(display, port) {
   await test('how it fit: “Too tight” in L is stored with L’s measurements and moves the recommendation', async () => {
     await panel.selectOption('#f-size', 'L');
     await panel.click('[data-outcome="too-tight"]');
-    await sleep(300);
+    await panel.waitForFunction(() => /Saved on this device/.test(document.getElementById('feedback-saved').textContent));
     assert.match(await text('#feedback-saved'), /Saved on this device: L was too tight/);
     assert.strictEqual(await text('#rec-title'), 'XL');
     const stored = await panel.evaluate(() => chrome.storage.local.get('fyndAnchors'));
@@ -451,32 +517,67 @@ async function launch(display, port) {
   });
 
   await test('pages Chrome won’t let any extension read, and pages that didn’t load: an explanation, not an empty panel', async () => {
+    /* each waits for the explanation that page should get, not for any
+       problem at all: the previous page's is still on screen until the
+       read for this one replaces it */
+    const problemIs = (title) => panel.waitForFunction((t) => !document.getElementById('problem').hidden && document.getElementById('problem-title').textContent === t, title, { timeout: 10000 })
+      .catch(async (err) => { console.log(`        state when it gave up:\n        ${await diagnose('problem')}`); throw err; });
     await shop.goto('chrome://version');
-    await sleep(400);
+    await tabSettled('chrome://version');
     await clickFynd();
-    await panel.waitForSelector('#problem:not([hidden])');
+    await problemIs('Chrome doesn’t let extensions read this page');
     assert.strictEqual(await text('#problem-title'), 'Chrome doesn’t let extensions read this page');
     const dead = await freePort();
     await shop.goto(`http://127.0.0.1:${dead}/`).catch(() => {});
-    await sleep(600);
+    await tabSettled('the page that doesn’t load');
     await clickFynd();
-    await panel.waitForSelector('#problem:not([hidden])');
+    await problemIs('This page didn’t load');
     assert.strictEqual(await text('#problem-title'), 'This page didn’t load');
     shot('11-error-page');
   });
 
   await test('the references persist: the panel reloaded reads them back, and the next product is compared without asking again', async () => {
     await panel.reload();
+    /* the reloaded panel has its references back from chrome.storage
+       before the shopper does anything else */
+    await panel.waitForFunction(() => document.querySelectorAll('#anchor-list li').length === 2 && document.getElementById('onboard').hidden);
+    const stored = await panel.evaluate(() => chrome.storage.local.get('fyndAnchors'));
+    assert.deepStrictEqual(stored.fyndAnchors.map((a) => a.category).sort(), ['sweatshirt', 'tshirt']);
     await shop.goto(local('/shop/tee.html'));
-    await sleep(500);
+    await tabSettled('the tee');
     await clickFynd();
+    /* the press was read: this product, no problem, before the guide is opened */
+    await panel.waitForFunction(() => document.getElementById('product-name').textContent === 'Everyday Crew Tee' && document.getElementById('problem').hidden)
+      .catch(async (err) => { console.log(`        state when it gave up:\n        ${await diagnose('persist-press')}`); throw err; });
     await shop.click('#open-guide');
+    await shop.waitForSelector('dialog[open]');
     await panel.click('#read');
-    await panel.waitForSelector('#rec-title:not(:empty)');
-    await sleep(300);
+    try { await panel.waitForSelector('#rec-title:not(:empty)'); } catch (err) { console.log(`        state when it gave up:\n        ${await diagnose('persist')}`); throw err; }
+    await panel.waitForFunction(() => /Garment measurements/.test(document.getElementById('chart-area').innerText));
     assert.ok(await panel.locator('#onboard').isHidden());
     assert.strictEqual(await panel.locator('#anchor-list li').count(), 2);
     assert.strictEqual(await text('#rec-title'), 'L');
+  });
+
+  await test('the panel reloaded on a page it can still read: the references come back from storage before anything is read, and Read gives the same recommendation without another click', async () => {
+    /* the tee is still open, with its guide, and Fynd still has the access the last press gave */
+    assert.ok(await shop.$('dialog[open]'), 'the size guide is still open on the page');
+    await panel.reload();
+    await panel.waitForFunction(() => document.querySelectorAll('#anchor-list li').length === 2 && document.getElementById('onboard').hidden)
+      .catch(async (err) => { console.log(`        state when it gave up:\n        ${await diagnose('reload-restore')}`); throw err; });
+    const stored = await panel.evaluate(() => chrome.storage.local.get('fyndAnchors'));
+    assert.strictEqual(stored.fyndAnchors.length, 2);
+    assert.deepStrictEqual(await panel.locator('#anchor-list li').count(), stored.fyndAnchors.length, 'every stored reference is drawn');
+    await panel.click('#read');
+    await panel.waitForFunction(() => document.getElementById('rec-title').textContent === 'L' && /Garment measurements/.test(document.getElementById('chart-area').innerText))
+      .catch(async (err) => { console.log(`        state when it gave up:\n        ${await diagnose('reload-read')}`); throw err; });
+    assert.strictEqual(await text('#product-name'), 'Everyday Crew Tee');
+    assert.strictEqual(await text('#rec-title'), 'L');
+    await panel.evaluate(() => { document.getElementById('report-text').value = ''; });
+    await panel.click('#copy-report');
+    await panel.waitForFunction(() => document.getElementById('report-text').value.trim().startsWith('{'));
+    const r = JSON.parse(await panel.inputValue('#report-text'));
+    assert.deepStrictEqual([r.read.how, r.recommendation.status, r.recommendation.size], ['button', 'ok', 'L']);
   });
 
   await test('nothing left the browser, and nothing failed in the console', async () => {
