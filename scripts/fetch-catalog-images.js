@@ -146,6 +146,14 @@ const IMAGE_TIMEOUT = 10000;    // a product photo either serves or it does not
 const SEARCH_TIMEOUT = 15000;   // one question put to the product source
 const BROWSER_TIMEOUT = 45000;  // page.goto, still capped by what is left of the render budget
 const RENDER_BUDGET = 30000;    // one page in a real browser, from launch to close
+/* the least a render can start with and still produce anything: a cold
+   Chromium launch measured 1.2 s on a development container (0.14 s
+   warm), a trivial page another 0.1–0.6 s, and a retailer's page needs a
+   load and a read on top. With less than this left, a browser is not
+   opened at all — the row's clock, not Chromium, is what ran out — and
+   that is said instead of a launch error. A floor on STARTING, never
+   extra time: nothing gets longer than its budget because of it. */
+const RENDER_FLOOR = 2500;
 const SETTLE_TIMEOUT = 6000;    // waiting for the network to go quiet after load
 const SETTLE_AFTER_SCROLL = 3000; // and again after the lazy-load walk
 const ROW_BUDGET = 120000;      // one catalogue row's whole discovery
@@ -2200,6 +2208,15 @@ function gatherInPage() {
   };
 }
 
+/* Playwright's own deadline, as it raises it: a TimeoutError, whose
+   message names the timeout. A spawn failure, a missing shared library
+   or a crash on start is none of these. */
+function launchTimedOut(err) {
+  if (!err) return false;
+  if (err.name === 'TimeoutError') return true;
+  return /^browserType\.launch: Timeout \d+ms exceeded/.test(String(err.message || ''));
+}
+
 /* One page, in a real browser, reported the same way fetchPage reports:
    candidates in priority order, or a reason there are none. */
 async function renderPage(url, within) {
@@ -2210,7 +2227,15 @@ async function renderPage(url, within) {
      ceiling, because the individual waits below cannot see each other
      and five reasonable ones in a row are not a reasonable total */
   const budget = within || budgetOf(RENDER_BUDGET);
-  if (budget.spent()) return { failed: 'there was no time left in this row to open a browser' };
+  /* Too little time to start one is the row's clock, not the browser:
+     checked against a floor rather than zero, because a budget with a
+     millisecond left is spent for every practical purpose, and launching
+     into it only turns "no time" into a launch error that reads as a
+     broken install. */
+  const left = budget.left();
+  if (left < RENDER_FLOOR) {
+    return { failed: `there was no time left to start a browser (${left} ms of this row left; a render needs at least ${RENDER_FLOOR} ms)`, ranOut: true };
+  }
 
   /* never 0: Playwright reads a timeout of 0 as "no timeout at all",
      so a budget that emptied between the check above and this line
@@ -2225,6 +2250,13 @@ async function renderPage(url, within) {
   try {
     browser = await chromium.launch(launch);
   } catch (err) {
+    /* A launch that reached its deadline is a timeout — this row's time,
+       spent — and is said as one. Anything else (no executable, a
+       missing library, a sandbox refusal) is the browser itself not
+       working here, which is a different fix and stays reported as one. */
+    if (launchTimedOut(err)) {
+      return { failed: `the browser timed out starting (${launch.timeout} ms was what this row had left for it)`, timedOut: true };
+    }
     return { failed: `Chromium would not start (${err && err.message ? err.message.split('\n')[0] : 'unknown'})`, noBrowser: true };
   }
 
@@ -3313,9 +3345,13 @@ async function resolveRowInner(row, within, diagnosis, options, tiles) {
   const rendered = await renderPage(row.productUrl, budgetOf(budget.cap(RENDER_BUDGET)));
   if (rendered.failed) {
     notes.push(`browser: ${rendered.failed}`);
-    const why = rendered.noBrowser && page.html
-      ? `nothing usable in the served markup, and ${rendered.failed}`
-      : rendered.failed;
+    /* a page that never arrived and a browser there was no time for are
+       both the clock: said together, so the record shows what each
+       half ran into rather than only the last */
+    const clock = rendered.ranOut || rendered.timedOut;
+    const why = page.html
+      ? (rendered.noBrowser || clock ? `nothing usable in the served markup, and ${rendered.failed}` : rendered.failed)
+      : (clock ? `the page ${page.failed || 'could not be read'}, and ${rendered.failed}` : rendered.failed);
     return {
       id: row.id,
       verdict: page.html || !rendered.noBrowser ? (page.html ? 'NO IMAGE FOUND' : 'UNREACHABLE') : 'UNREACHABLE',
@@ -7062,7 +7098,7 @@ if (require.main === module) {
        becoming a slow run: a clock a row carries, and a few candidates
        read at once that still answer in the order they were ranked */
     budgetOf, raceInOrder, withCeiling, request, imageFetcherFor, registrable,
-    TIMEOUT, IMAGE_TIMEOUT, SEARCH_TIMEOUT, RENDER_BUDGET, ROW_BUDGET, LANES,
+    TIMEOUT, IMAGE_TIMEOUT, SEARCH_TIMEOUT, RENDER_BUDGET, RENDER_FLOOR, ROW_BUDGET, LANES, launchTimedOut,
     /* TEMPORARY diagnostics: reporting only */
     refusalCategory, evidenceSource, tallyRefusals, pageFactsFromHtml, likelyProductRefusals
   };

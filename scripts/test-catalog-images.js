@@ -3432,6 +3432,110 @@ function walledRetailer() {
     assert.strictEqual(budget.cap(100), 100, 'a short ceiling was stretched to the budget');
   });
 
+  /* Stand-ins for Chromium, so each way a launch can end is certain
+     rather than a matter of how fast this machine is: one that records
+     it was started and then never answers (a launch that can only time
+     out), and one that dies at once (a browser that cannot run here). */
+  const fakeChromes = (() => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fynd-fake-chrome-'));
+    const started = path.join(dir, 'started');
+    const write = (name, body) => { const f = path.join(dir, name); fs.writeFileSync(f, `#!/bin/sh\n${body}\n`, { mode: 0o755 }); return f; };
+    return {
+      dir,
+      started,
+      /* its PID, which exec keeps, so the test can tell that very process is gone */
+      hangs: write('hangs', `echo $$ >> "${started}"\nexec sleep 60`),
+      dies: write('dies', `echo started >> "${started}"\necho "error while loading shared libraries: libFIXTURE.so" >&2\nexit 127`),
+      missing: path.join(dir, 'no-such-chrome'),
+      reset: () => fs.rmSync(started, { force: true }),
+      wasStarted: () => fs.existsSync(started),
+      pids: () => (fs.existsSync(started) ? fs.readFileSync(started, 'utf8').split('\n').map(Number).filter((n) => n > 0) : [])
+    };
+  })();
+  const withChrome = async (exe, fn) => {
+    const before = process.env.CHROME_PATH;
+    process.env.CHROME_PATH = exe;
+    fakeChromes.reset();
+    try { return await fn(); } finally { if (before === undefined) delete process.env.CHROME_PATH; else process.env.CHROME_PATH = before; }
+  };
+  const playwright = Boolean(extractor.loadPlaywright());
+
+  await testAsync('a row with 1 ms left — or anything under the render floor — never launches a browser, and says the clock ran out, not that Chromium is broken', async () => {
+    if (!playwright) return;
+    /* the CI failure exactly: a clock that reads 1 ms when the browser
+       stage asks — not yet spent, and far too little to start one — which
+       the old guard (spent only at 0) launched into, recording Playwright's
+       "Timeout 1ms exceeded" as "Chromium would not start" */
+    const frozenAt = (ms) => ({ left: () => ms, spent: () => ms <= 0, cap: (want) => Math.max(0, Math.min(want, ms)) });
+    for (const [label, budget] of [['exactly 1 ms', frozenAt(1)], ['50 ms', extractor.budgetOf(50)], ['just under the floor', extractor.budgetOf(extractor.RENDER_FLOOR - 200)]]) {
+      const ms = label;
+      const rendered = await withChrome(fakeChromes.hangs, () => extractor.renderPage('http://127.0.0.1:1/p/1', budget));
+      assert.match(rendered.failed, /^there was no time left to start a browser \(\d+ ms of this row left; a render needs at least \d+ ms\)$/, `${ms} ms: ${rendered.failed}`);
+      assert.strictEqual(rendered.ranOut, true, `${ms} ms`);
+      assert.ok(!rendered.noBrowser, `${ms} ms left was reported as a broken browser`);
+      assert.strictEqual(fakeChromes.wasStarted(), false, `${ms} ms left still started a browser`);
+    }
+  });
+
+  await testAsync('a launch given enough time that still reaches its deadline is reported as a timeout, within the row’s budget — not as a broken browser; its process ends with the run that started it', async () => {
+    if (!playwright) return;
+    /* in a process of its own, because Playwright does not stop a browser
+       whose launch timed out: it lives until the Node process that
+       launched it exits — which, for a discovery run, is the run */
+    fakeChromes.reset();
+    const code = `const x = require(${JSON.stringify(path.join(__dirname, 'fetch-catalog-images.js'))});
+      const started = Date.now();
+      x.renderPage('http://127.0.0.1:1/p/1', x.budgetOf(x.RENDER_FLOOR + 1000)).then((r) => {
+        process.stdout.write(JSON.stringify({ failed: r.failed, timedOut: r.timedOut || false, noBrowser: r.noBrowser || false, took: Date.now() - started }));
+        process.exit(0);
+      });`;
+    const env = Object.assign({}, process.env, { CHROME_PATH: fakeChromes.hangs });
+    const out = await execFile(process.execPath, ['-e', code], { env, timeout: 30000 });
+    const rendered = JSON.parse(out.stdout);
+    assert.strictEqual(fakeChromes.wasStarted(), true, 'with enough time, the launch is attempted');
+    assert.match(rendered.failed, /^the browser timed out starting \(\d+ ms was what this row had left for it\)$/, rendered.failed);
+    assert.strictEqual(rendered.timedOut, true);
+    assert.strictEqual(rendered.noBrowser, false, 'a deadline was reported as a broken browser');
+    assert.ok(rendered.took < extractor.RENDER_FLOOR + 1000 + 2000, `the launch outlived its budget: ${rendered.took} ms`);
+    /* the process that was started, by its own PID: gone (or a zombie
+       nobody has reaped yet) once the run that started it has ended */
+    const running = (pid) => {
+      try { process.kill(pid, 0); } catch (err) { return false; }
+      try { return fs.readFileSync(`/proc/${pid}/stat`, 'utf8').replace(/^.*\) /s, '')[0] !== 'Z'; } catch (err) { return false; }
+    };
+    const pids = fakeChromes.pids();
+    assert.ok(pids.length, 'the stand-in recorded no PID');
+    const until = Date.now() + 3000;
+    while (pids.some(running) && Date.now() < until) await new Promise((r) => setTimeout(r, 50));
+    assert.deepStrictEqual(pids.filter(running), [], 'the timed-out browser outlived the run that started it');
+  });
+
+  await testAsync('a browser that cannot run at all is still reported as one: a missing executable, or one that dies on start — never dressed up as a timeout', async () => {
+    if (!playwright) return;
+    for (const exe of [fakeChromes.missing, fakeChromes.dies]) {
+      const rendered = await withChrome(exe, () => extractor.renderPage('http://127.0.0.1:1/p/1', extractor.budgetOf(extractor.RENDER_FLOOR + 5000)));
+      assert.match(rendered.failed, /^Chromium would not start \(/, `${path.basename(exe)}: ${rendered.failed}`);
+      assert.strictEqual(rendered.noBrowser, true, path.basename(exe));
+      assert.ok(!rendered.timedOut && !rendered.ranOut, path.basename(exe));
+    }
+    assert.strictEqual(extractor.launchTimedOut(Object.assign(new Error('browserType.launch: Timeout 1ms exceeded.'), { name: 'TimeoutError' })), true);
+    assert.strictEqual(extractor.launchTimedOut(new Error('browserType.launch: Failed to launch: spawn /x ENOENT')), false);
+    assert.strictEqual(extractor.launchTimedOut(null), false);
+  });
+
+  await testAsync('a dead shop whose page read spends the row is refused by the clock on both halves — the read timed out, and no browser was started', async () => {
+    if (!playwright) return;
+    const stalled = await stallingHost();
+    try {
+      const rendered = await withChrome(fakeChromes.hangs, () => extractor.resolveRow({ id: 'x', brand: '—', name: 'Boxy Cotton Tee', productUrl: `http://127.0.0.1:${stalled.address().port}/p/553311` }, extractor.budgetOf(1500)));
+      assert.strictEqual(rendered.verdict, 'UNREACHABLE');
+      assert.match(rendered.why, /^the page timed out, and there was no time left to start a browser/, rendered.why);
+      assert.strictEqual(fakeChromes.wasStarted(), false, 'a browser was started for a row with no time left');
+    } finally {
+      stalled.shutdown();
+    }
+  });
+
   await testAsync('the earliest candidate that clears wins, not the quickest', async () => {
     /* ranked first but slow, ranked second but fast. Serially the first
        one won because it was reached first; the danger in reading them
