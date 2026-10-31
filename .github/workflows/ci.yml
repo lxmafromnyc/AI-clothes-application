@@ -11,6 +11,10 @@
 # node      the suites that need no browser (ffmpeg for test-demo-film)
 # browser   the interface, end-to-end and browser-path suites, in
 #           Playwright's Chromium
+# sftp      scripts/rakuten-sftp.sh against a real local OpenSSH server,
+#           as root: it creates a new, uniquely named temporary account
+#           and server on 127.0.0.1 and removes both however it ends. No
+#           secret and no Rakuten connection: the feed is a FIXTURE.
 #
 # A suite fails its job when it exits non-zero, prints no count, fails
 # or skips a test, or tries to reach the network.
@@ -73,6 +77,27 @@ jobs:
         if: ${{ !cancelled() }}
         continue-on-error: true
         run: node scripts/ci-tests.js known-failing
+
+  sftp:
+    name: SFTP integration (Rakuten feed path, as root)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install an OpenSSH server (not started as a service)
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends openssh-server openssh-client curl
+          sudo systemctl disable --now ssh.socket ssh.service 2>/dev/null || true
+      - name: Run the SFTP suite as root
+        run: sudo env "PATH=$PATH" node scripts/ci-tests.js sftp
+      - name: Nothing left behind
+        if: ${{ always() }}
+        run: |
+          if getent passwd | grep -q '^fyndsftp'; then echo "::error::a temporary fyndsftp account was left behind"; getent passwd | grep '^fyndsftp'; exit 1; fi
 
   real-chrome:
     name: Extension in a real Chrome (toolbar click)

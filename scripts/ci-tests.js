@@ -35,6 +35,9 @@
                                                 with real X11 input: the browser group's needs,
                                                 plus Xvfb, ImageMagick and python3 with
                                                 python-xlib and Pillow
+     sudo node scripts/ci-tests.js sftp       the SFTP integration: root, and openssh-server,
+                                                for a throwaway server and account it removes
+                                                again (not part of "required", which needs no root)
      node scripts/ci-tests.js known-failing   NOT_RUN's failing suites, on their own;
                                                 CI runs this where it cannot fail the check
    ========================================================= */
@@ -91,6 +94,10 @@ const GROUPS = {
     ['test-provider-unavailable', 'with no paid product source: OpenWeb Ninja never asked, no silent fallback, and what Find Fit and the Search page show'],
     ['test-fit-states', "Find Fit's comparison states drawn by the real renderer from real engine answers: unsupported, body-only, methods, closest-mismatch, recommended, malformed"]
   ],
+  /* root, and a local OpenSSH server: CI's "SFTP integration" job, as root */
+  sftp: [
+    ['test-rakuten-sftp', 'scripts/rakuten-sftp.sh against a real SFTP server and a new, uniquely named temporary account: host-key refusal before authentication, listing, whole and sampled fetches, and cleanup however the run ends']
+  ],
   'real-chrome': [
     ['test-fit-panel-real-chrome', 'the Fit panel end to end in a visible Chrome: the extension as shipped, a real click on its toolbar button, a reference from brand and size, a size guide opened and read, a recommendation, other pages, errors, outcomes — on invented shop pages']
   ]
@@ -98,9 +105,7 @@ const GROUPS = {
 
 /* Every other scripts/test-*.js, and why CI does not hold a pull request
    to it. */
-const NOT_RUN = {
-  'test-rakuten-sftp': { why: 'starts a local OpenSSH server and adds a test user, so it needs root and openssh-server; run it by hand: sudo node scripts/test-rakuten-sftp.js' }
-};
+const NOT_RUN = {};
 
 /* What a suite inherits from the shell. Nothing else: no key, no store
    URL, no provider choice. */
@@ -214,7 +219,7 @@ function reportNotRun() {
 
 async function main() {
   const which = process.argv[2] || 'required';
-  const choices = ['required', 'node', 'browser', 'real-chrome', 'known-failing'];
+  const choices = ['required', 'node', 'browser', 'real-chrome', 'sftp', 'known-failing'];
   if (!choices.includes(which)) {
     console.error(`usage: node scripts/ci-tests.js [${choices.join('|')}]`);
     process.exit(2);

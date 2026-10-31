@@ -122,10 +122,16 @@ variables. None of it has been run against Rakuten.
 | **Rakuten feed inspection** (`.github/workflows/rakuten-feed-inspect.yml`) | Run by hand only. It runs the preflight, then lists the login directory (`~/`), the server root (`/`) and optionally one folder. If asked, it downloads the first bytes of the full or delta file and validates them. It keeps the listing and the report for 7 days, but never the sample itself. It writes nothing to the repository. |
 | **UNIQLO catalogue sync** (`catalog-sync.yml`) | Now runs the preflight first, downloads through `rakuten-sftp.sh` from `RAKUTEN_SFTP_DIR` (default `/`), and passes `RAKUTEN_UNIQLO_MID` to the sync, so a file from any other advertiser is refused. |
 
-Tests: `scripts/test-rakuten-preflight.js` (offline, in CI) and
-`scripts/test-rakuten-sftp.js`. The second runs against a real local OpenSSH
-server and needs root, so it is run by hand:
-`sudo node scripts/test-rakuten-sftp.js`.
+Tests: `scripts/test-rakuten-preflight.js` (offline, in CI's Node job) and
+`scripts/test-rakuten-sftp.js`, which runs in its own CI job as root
+(**SFTP integration** in `ci.yml`; by hand: `sudo node scripts/ci-tests.js sftp`).
+That job never uses Rakuten or any secret. It starts a throwaway OpenSSH
+server on 127.0.0.1, on a port the kernel allocates. It creates a new,
+uniquely named account (`fyndsftp<random hex>`) with a random password and
+no login shell, and it never reuses or changes an existing account. It
+removes the server, the account and its files on success, on failure and
+on interruption. The tests check that every other account on the machine is
+unchanged.
 
 ### Fixed: the host key was never actually checked
 
