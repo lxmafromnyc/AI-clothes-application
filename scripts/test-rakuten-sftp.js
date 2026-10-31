@@ -227,6 +227,78 @@ const leftNothing = (made, before) => {
     h.stop(); /* a second stop does nothing */
   });
 
+  await test('an SFTP session still open when stop() runs: its processes are ended (TERM, then KILL), and the account goes with them — nobody else’s process touched', async () => {
+    const n = `fyndsftp${crypto.randomBytes(5).toString('hex')}`;
+    const others = server.accountsOtherThan(n);
+    const s2 = server.start({ name: n });
+    let client = null;
+    const bystanders = [spawn('sleep', ['120']), spawn('runuser', ['-u', 'nobody', '--', 'sleep', '120'])];
+    try {
+      server.put(s2, 'big.bin', crypto.randomBytes(4 * 1024 * 1024));
+      const home = path.join(s2.dir, 'client');
+      fs.mkdirSync(path.join(home, '.ssh'), { recursive: true });
+      fs.writeFileSync(path.join(home, '.ssh/known_hosts'), `[127.0.0.1]:${s2.port} ${s2.publicKey}\n`);
+      const cfg = path.join(home, 'c.cfg');
+      fs.writeFileSync(cfg, `user = "${s2.name}:${s2.password.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"\n`, { mode: 0o600 });
+      /* a download slow enough to keep the session open for minutes */
+      client = spawn('curl', ['-q', '-sS', '-K', cfg, '--limit-rate', '8k', '-o', '/dev/null', `sftp://127.0.0.1:${s2.port}/~/big.bin`], { env: { PATH: process.env.PATH, HOME: home }, stdio: 'ignore' });
+      const clientExit = new Promise((resolve) => client.on('exit', (code) => resolve(code)));
+      const until = Date.now() + 15000;
+      while (!server.processesOf(s2.uid).some((p) => p.state !== 'Z') && Date.now() < until) await new Promise((r) => setTimeout(r, 100));
+      const open = server.processesOf(s2.uid);
+      assert.ok(open.length > 0, 'a process runs as the account while the session is open');
+      const nobody = Number(sh('id', ['-u', 'nobody']).stdout.trim());
+      await new Promise((r) => setTimeout(r, 300));
+      const nobodyBefore = server.processesOf(nobody).map((p) => p.pid).sort();
+      assert.ok(nobodyBefore.length > 0, 'a bystander runs as nobody');
+      const madeAt = { name: s2.name, port: s2.port, pid: s2.pid, home: s2.home, dir: s2.dir };
+      s2.stop();
+      assert.deepStrictEqual(server.processesOf(s2.uid), [], 'no process of the account is left, zombie or not');
+      leftNothing(madeAt, others);
+      assert.notStrictEqual(await clientExit, 0, 'the open download was cut off');
+      bystanders.forEach((b) => assert.ok(alive(b.pid), `bystander ${b.pid} was signalled`));
+      assert.deepStrictEqual(server.processesOf(nobody).map((p) => p.pid).sort(), nobodyBefore, 'nobody’s processes are as they were');
+    } finally {
+      bystanders.forEach((b) => b.kill('SIGKILL'));
+      if (client) client.kill('SIGKILL');
+      try { s2.stop(); } catch (err) { /* reported by the assertions */ }
+    }
+  });
+
+  await test('a process only partly the account’s (another UID among its four) is never signalled, and stop() then throws — every time — rather than say it cleaned up', () => {
+    const n = `fyndsftp${crypto.randomBytes(5).toString('hex')}`;
+    const s3 = server.start({ name: n, timeouts: { graceMs: 300, killMs: 300 } });
+    /* real UID the account's, effective and saved UID root's: userdel counts it, and it isn't wholly the account's */
+    const mixed = spawn('setpriv', [`--ruid=${s3.uid}`, '--', 'sleep', '120'], { stdio: 'ignore' });
+    try {
+      const until = Date.now() + 5000;
+      while (!server.processesOf(s3.uid).some((p) => p.pid === mixed.pid) && Date.now() < until) sh('sleep', ['0.05']);
+      assert.ok(server.processesOf(s3.uid).some((p) => p.pid === mixed.pid), 'the mixed process counts as the account’s');
+      assert.throws(() => s3.stop(), new RegExp(`cleanup failed — processes of ${n} \\(UID ${s3.uid}\\) would not end: ${mixed.pid}.*Remove it by hand: userdel -r ${n}`));
+      assert.ok(alive(mixed.pid), 'it was never signalled');
+      assert.strictEqual(server.accountExists(n), true, 'and the account is reported, not quietly left');
+      assert.throws(() => s3.stop(), /cleanup failed/, 'a second stop() says the same');
+    } finally {
+      mixed.kill('SIGKILL');
+      const until = Date.now() + 5000;
+      while (alive(mixed.pid) && Date.now() < until) sh('sleep', ['0.05']);
+      sh('sleep', ['0.2']);
+      server.removeAccount(n);
+    }
+    assert.strictEqual(server.accountExists(n), false);
+  });
+
+  await test('a failed userdel is a failure: removeAccount throws with userdel’s own words; UID 0 and malformed names are refused outright', () => {
+    const name3 = `fyndsftp${'a'.repeat(10)}`;
+    const busy = { run: () => ({ status: 8, stderr: `userdel: user ${name3} is currently used by process 2967` }), exists: () => true };
+    assert.throws(() => server.removeAccount(name3, busy), new RegExp(`couldn’t remove the temporary account ${name3}: userdel exited 8: userdel: user ${name3} is currently used by process 2967`));
+    let deleted = false;
+    assert.doesNotThrow(() => server.removeAccount(name3, { run: () => { deleted = true; return { status: 12, stderr: 'mail spool not found' }; }, exists: () => !deleted }), 'exit 12 for a missing mail spool, with the account gone, is success');
+    assert.throws(() => server.removeAccount('root', busy), /Refusing/);
+    assert.throws(() => server.processesOf(0), /Refusing/);
+    assert.throws(() => server.endProcessesOf(0), /Refusing/);
+  });
+
   for (const [how, signal, code] of [['hold', 'SIGINT', 130], ['hold', 'SIGTERM', 143], ['hold', 'SIGHUP', 129], ['throw', null, 1], ['exit', null, 3]]) {
     await test(`${signal ? `interrupted by ${signal}` : how === 'throw' ? 'an uncaught error' : 'process.exit without stopping'}: nothing left behind, nobody else touched`, async () => {
       /* every account file, before the child made its own account */
