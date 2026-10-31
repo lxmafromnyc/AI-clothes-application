@@ -12,6 +12,8 @@
      node scripts/sync-catalog.js --source uniqlo-us --file <feed.json|.jsonl|.tsv|.csv>
      node scripts/sync-catalog.js --source uniqlo-us --file <MID_SID_mp.txt>   (Rakuten Product Catalog)
      node scripts/sync-catalog.js --source uniqlo-us --api
+     node scripts/sync-catalog.js --merchant api/_catalog/merchants/<id>.json --file <export.csv|.json>
+                                                          (a merchant's own export: api/_catalog/MERCHANTS.md)
 
    Options:
      --complete             the file lists every live product (product-feed
@@ -24,7 +26,9 @@
                             (default api/_catalog/data/<source>.json)
      --status <path>        where to record this attempt
                             (default api/_catalog/data/<source>.status.json)
-     --dry-run              check and report; write nothing
+     --report <path>        also write this attempt's report there as JSON
+                            (written on a dry run too, and when refused)
+     --dry-run              check and report; write no catalogue or status
      --allow-mass-removal   accept a complete feed that removes over half
      --allow-fixture        accept a feed marked as a fixture — only with an
                             --out outside api/_catalog/data
@@ -49,6 +53,7 @@ const { fetchFeed, redact } = require('../api/_catalog/fetch');
 const REPO = path.join(__dirname, '..');
 const DATA = path.join(REPO, 'api/_catalog/data');
 const SOURCES = { 'uniqlo-us': () => require('../api/_catalog/sources/uniqlo-us') };
+const { createMerchantSource, validateConfig } = require('../api/_catalog/sources/merchant');
 
 function args(argv) {
   const out = {};
@@ -58,7 +63,7 @@ function args(argv) {
     if (!a.startsWith('--')) throw new Error(`Unexpected argument ${a}`);
     const key = a.slice(2);
     if (flags.includes(key)) out[key] = true;
-    else if (['source', 'file', 'generated-at', 'licensed', 'out', 'status', 'now'].includes(key)) {
+    else if (['source', 'merchant', 'file', 'generated-at', 'licensed', 'out', 'status', 'report', 'now'].includes(key)) {
       if (i + 1 >= argv.length) throw new Error(`${a} needs a value`);
       out[key] = argv[i += 1];
     } else throw new Error(`Unknown option ${a}`);
@@ -81,25 +86,46 @@ async function main(argv, deps) {
   const d = Object.assign({ env: process.env, log: console.log, error: console.error }, deps || {});
   let o;
   try { o = args(argv); } catch (err) { d.error(err.message); return 2; }
-  const load = SOURCES[o.source];
-  if (!load) { d.error(`--source must be one of ${Object.keys(SOURCES).join(', ')}`); return 2; }
+  let adapter;
+  if (o.merchant !== undefined) {
+    /* a participating merchant's own export, described by its reviewed config */
+    if (o.source !== undefined) { d.error('Give one of --source or --merchant, not both'); return 2; }
+    if (o.api) { d.error('A merchant\'s catalogue is imported from the file it supplied: use --file'); return 2; }
+    const config = readJson(path.resolve(o.merchant));
+    const problems = config ? validateConfig(config) : [{ field: 'config', message: 'not a readable JSON file' }];
+    if (problems.length) { d.error(`The merchant config can't be used:\n${problems.map((p) => `  ${p.field}: ${p.message}`).join('\n')}`); return 2; }
+    adapter = createMerchantSource(config);
+  } else {
+    const load = SOURCES[o.source];
+    if (!load) { d.error(`--source must be one of ${Object.keys(SOURCES).join(', ')}, or give --merchant <config.json>`); return 2; }
+    adapter = load();
+  }
   if (Boolean(o.file) === Boolean(o.api)) { d.error('Give exactly one of --file <path> or --api'); return 2; }
-  const adapter = load();
   const out = path.resolve(o.out || path.join(DATA, adapter.catalogFile));
   const statusFile = path.resolve(o.status || path.join(DATA, `${adapter.id}.status.json`));
   const customerFacing = out.startsWith(`${DATA}${path.sep}`);
   if (o['allow-fixture'] && customerFacing) { d.error('--allow-fixture is only for an --out outside api/_catalog/data: a fixture is never a customer-facing catalogue'); return 2; }
+  /* a test merchant's catalogue is never written where customers are served from — not even its status */
+  if (adapter.fixture && (customerFacing || statusFile.startsWith(`${DATA}${path.sep}`))) { d.error(`${adapter.id} is a test merchant (a fixture): give --out and --status outside api/_catalog/data`); return 2; }
   const now = o.now ? new Date(o.now) : new Date();
   if (Number.isNaN(now.getTime())) { d.error('--now must be a date'); return 2; }
-  const licensed = (o.licensed !== undefined ? o.licensed.split(',') : adapter.LICENSED.concat(adapter.licensedFromEnv())).map((s) => s.trim()).filter(Boolean);
+  let licensed = (o.licensed !== undefined ? o.licensed.split(',') : adapter.LICENSED.concat(adapter.licensedFromEnv())).map((s) => s.trim()).filter(Boolean);
+  if (adapter.merchant) {
+    /* never more than the merchant authorized: --licensed may only narrow it */
+    const beyond = licensed.filter((f) => !adapter.LICENSED.includes(f));
+    if (beyond.length) { d.error(`--licensed asks for ${beyond.join(', ')}, which ${adapter.brand}'s authorization doesn't cover (${adapter.LICENSED.join(', ') || 'the core fields only'})`); return 2; }
+  }
   const previous = readJson(out);
-  const token = d.env[adapter.env.token];
+  const token = adapter.env.token ? d.env[adapter.env.token] : null;
 
   const record = (status) => { if (!o['dry-run']) writeAtomic(statusFile, status); };
+  /* the attempt's report, for the person who reviews it (--report) — written even on a dry run */
+  const keepReport = (body) => { if (o.report) writeAtomic(path.resolve(o.report), body); };
   const fail = (reason, message, report) => {
     const safe = redact(message, token);
     d.error(`Catalogue sync refused (${reason}): ${safe}`);
     if (report) d.log(JSON.stringify(report, null, 2));
+    keepReport({ source: adapter.id, ok: false, reason, error: safe, at: now.toISOString(), report: report || null, written: null });
     record({
       source: adapter.id,
       lastAttempt: now.toISOString(),
@@ -113,6 +139,12 @@ async function main(argv, deps) {
     });
     return 1;
   };
+
+  /* a merchant's data is used only while its authorization runs */
+  if (adapter.merchant && !adapter.authorizedAt(now)) {
+    const a = adapter.config.authorization;
+    return fail('not-authorized', `${adapter.brand}'s authorization (${a.reference}) runs from ${a.grantedAt}${a.expiresAt ? ` to ${a.expiresAt}` : ''}, which doesn't cover ${now.toISOString().slice(0, 10)}.`);
+  }
 
   let body;
   try {
@@ -148,11 +180,25 @@ async function main(argv, deps) {
     now: now.toISOString(),
     allowMassRemoval: o['allow-mass-removal'] === true,
     allowFixture: o['allow-fixture'] === true,
-    sourceKind: o.api ? 'api' : 'file'
+    sourceKind: o.api ? 'api' : 'file',
+    /* a merchant's catalogue records whose it is and what it authorized */
+    ...(adapter.merchant ? {
+      merchant: adapter.id,
+      sourceName: `${adapter.brand} — supplied by the merchant`,
+      licence: adapter.config.authorization.reference,
+      authorization: {
+        grantedBy: adapter.config.authorization.grantedBy,
+        reference: adapter.config.authorization.reference,
+        grantedAt: adapter.config.authorization.grantedAt,
+        expiresAt: adapter.config.authorization.expiresAt,
+        licensedFields: adapter.LICENSED.slice()
+      }
+    } : {})
   });
   if (!result.ok) return fail(result.reason, result.error, result.report);
 
   d.log(JSON.stringify(result.report, null, 2));
+  keepReport({ source: adapter.id, ok: true, reason: null, error: null, at: now.toISOString(), report: result.report, written: o['dry-run'] ? null : path.relative(REPO, out) });
   if (o['dry-run']) { d.log('Dry run: nothing written.'); return 0; }
   writeAtomic(out, result.catalog);
   record({
