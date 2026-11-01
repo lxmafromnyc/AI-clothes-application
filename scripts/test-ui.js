@@ -139,6 +139,7 @@ const sizingRecords = require('../api/_sizing/records');
 const { asChecked, UQ_PAIR } = require('./fixtures/as-checked');
 const X = require('./fixtures/cross-brand');
 const sizingEngine = require('../api/_sizing/engine');
+const sizingDecision = require('../api/_sizing/decision');
 const sizingEndpoint = require('../api/size-recommendation');
 
 const server = http.createServer((req, res) => {
@@ -177,7 +178,10 @@ const server = http.createServer((req, res) => {
     const id = url.searchParams.get('product');
     if (!id) return res.end(JSON.stringify({ products: sizingRecords.RECORDS.map(sizingRecords.summary) }));
     const unit = url.searchParams.get('unit') || undefined;
-    return res.end(JSON.stringify({ comparison: sizingEngine.compare(fitProfileState.profile, sizingRecords.byId(id), { includeUnverified: true, unit }) }));
+    /* beside it, the decision the real endpoint sends: the page's only authority for a recommended size */
+    const record = sizingRecords.byId(id);
+    const decided = sizingDecision.decide(fitProfileState.profile, record, { via: 'compare', unit });
+    return res.end(JSON.stringify({ comparison: sizingDecision.heldComparison(sizingEngine.compare(fitProfileState.profile, record, { includeUnverified: true, unit }), decided), decision: decided, resultType: 'garment-comparison' }));
   }
 
   if (url.pathname === '/api/fit-profile') {
@@ -3038,7 +3042,7 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
       await page.fill('#fit-url', 'https://www.uniqlo.com/us/en/products/E475378-000/00');
       await page.press('#fit-url', 'Enter');
       await page.waitForSelector('#fit-compare:not([hidden]) .fit-compare-recommended');
-      assert.strictEqual(await page.$$eval('#fit-compare .ff-scale-row', (ns) => ns.length), 4, 'the three-step scale, one row per measurement');
+      assert.strictEqual(await page.$$eval('#fit-compare .ff-scale-row', (ns) => ns.length), 4, 'one row per compared measurement, the garments side by side');
       await audit('a recommended size, its reference and how it differs');
       await page.click('#fit-compare .fit-compare-differences > summary');
       const shown = await page.$$eval('#fit-compare .fit-compare-differences tbody td:nth-child(2)', (tds) => tds.map((td) => td.textContent));
@@ -3079,7 +3083,7 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     accountState = accountReply({ extra: SIGNED_IN });
     fitProfileState = fitProfileReply(fixtureProfile);
     const page = await openPage('index.html', { viewport: { width: 1280, height: 900 } });
-    await page.route('**/api/size-recommendation?product=*', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ comparison: answer }) }));
+    await page.route('**/api/size-recommendation?product=*', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ comparison: answer, decision: sizingDecision.decide(fixtureProfile, fixture, { via: 'compare' }) }) }));
     await page.waitForSelector('#fit-browser[data-brands="ready"]', { timeout: 10000 });
     await page.evaluate(() => { document.getElementById('fit-link-alt').open = true; });
     await page.fill('#fit-url', 'https://www.uniqlo.com/us/en/products/E475378-000/00');
@@ -3109,7 +3113,7 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     /* scored with a chest tolerance twice the flat one: the same M as the flat chart */
     assert.strictEqual(aroundAnswer.recommended, 'M');
     const aroundPage = await openPage('index.html', { viewport: { width: 1280, height: 900 } });
-    await aroundPage.route('**/api/size-recommendation?product=*', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ comparison: aroundAnswer }) }));
+    await aroundPage.route('**/api/size-recommendation?product=*', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ comparison: aroundAnswer, decision: sizingDecision.decide(fixtureProfile, around, { via: 'compare' }) }) }));
     await aroundPage.waitForSelector('#fit-browser[data-brands="ready"]', { timeout: 10000 });
     await aroundPage.evaluate(() => { document.getElementById('fit-link-alt').open = true; });
     await aroundPage.fill('#fit-url', 'https://www.uniqlo.com/us/en/products/E475378-000/00');
@@ -3135,12 +3139,20 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     const base = X.EVERLANE_PUBLISHED.sizes;
     const narrowS = Object.assign({}, base, { S: Object.assign({}, base.S, { chest_circumference: '43' }) });
     const noShoulders = Object.fromEntries(Object.entries(base).map(([k, { shoulder_width: _, ...row }]) => [k, row]));
-    const answers = {
-      recommended: sizingEngine.compare(reference, table(narrowS)),
-      'closest-mismatch': sizingEngine.compare(reference, table(base)),
-      'closest-mismatch-cm': sizingEngine.compare(reference, table(base), { unit: 'cm' }),
-      'no-recommendation': sizingEngine.compare(reference, table(noShoulders))
+    /* each comparison beside its decision, as the server sends them: the
+       decision on the same reference, record and unit is the authority */
+    const decisions = {};
+    const pair = (key, record, opts) => {
+      decisions[key] = sizingDecision.decide(reference, record, Object.assign({ via: 'compare' }, opts || {}));
+      return sizingEngine.compare(reference, record, opts);
     };
+    const answers = {
+      recommended: pair('recommended', table(narrowS)),
+      'closest-mismatch': pair('closest-mismatch', table(base)),
+      'closest-mismatch-cm': pair('closest-mismatch-cm', table(base), { unit: 'cm' }),
+      'no-recommendation': pair('no-recommendation', table(noShoulders))
+    };
+    assert.deepStrictEqual(Object.values(decisions).map((d) => d.outcome), ['OK', 'NO_MATCH', 'NO_MATCH', 'INSUFFICIENT_DATA']);
     assert.deepStrictEqual([answers.recommended.status, answers.recommended.recommended, answers.recommended.tradeoffs.length], ['ok', 'M', 1]);
     assert.deepStrictEqual([answers['closest-mismatch'].status, answers['closest-mismatch'].withheld, answers['closest-mismatch'].closest], ['partial', 'outside-tolerance', 'S']);
     assert.deepStrictEqual([answers['no-recommendation'].status, answers['no-recommendation'].missing[0].code], ['insufficient', 'too-few-dimensions']);
@@ -3149,7 +3161,7 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     fitProfileState = fitProfileReply(reference);
     const showing = async (viewport, key) => {
       const page = await openPage('index.html', { viewport });
-      await page.route('**/api/size-recommendation?product=*', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ comparison: answers[key] }) }));
+      await page.route('**/api/size-recommendation?product=*', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ comparison: answers[key], decision: decisions[key] }) }));
       await page.waitForSelector('#fit-browser[data-brands="ready"]', { timeout: 10000 });
       await page.fill('#fit-url', 'https://www.uniqlo.com/us/en/products/E475378-000/00');
       await page.press('#fit-url', 'Enter');
@@ -3165,7 +3177,10 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
       assert.strictEqual(await page.textContent('#fit-compare .fit-compare-tradeoffs-title'), 'Where size M still differs');
       assert.deepStrictEqual(await page.$$eval('#fit-compare .fit-compare-tradeoffs li', (ls) => ls.map((l) => [l.dataset.dim, l.dataset.difference, l.textContent])), [['bodyLength', '3', 'Body length: 3 in longer — Fynd treats up to 1 in as similar']]);
       assert.strictEqual(await page.textContent('#fit-compare .fit-compare-tradeoffs-note'), '“Similar” uses Fynd’s working tolerances, not tested fit limits.');
-      assert.deepStrictEqual(await page.$$eval('#fit-compare .ff-scale-row', (ls) => ls.map((l) => [l.dataset.dim, l.dataset.place])), [['chestWidth', 'same'], ['bodyLength', 'more'], ['shoulderWidth', 'same']], 'the scale agrees with the trade-offs');
+      /* the scale as data: within tolerance on chest and shoulders, the length it misses longer — and not called similar */
+      const rows = await page.$$eval('#fit-compare .ff-scale-row', (ls) => ls.map((l) => [l.dataset.dim, l.dataset.similar]));
+      assert.deepStrictEqual(rows, [['chestWidth', 'true'], ['bodyLength', 'false'], ['shoulderWidth', 'true']], 'the scale agrees with the trade-offs');
+      assert.strictEqual(await page.getAttribute('#fit-compare .ff-scale-row[data-dim="bodyLength"]', 'data-direction'), 'more');
       await audit('a recommended size, with the measurement it misses');
       await page.close();
 
@@ -3225,11 +3240,14 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
   await test('Find Fit for a guest — both halves at once with the wardrobe anchors, the box’s suggestions, the item picked, the garment form with an error, the garment kept for the visit, the result, and the offer to save and its sign-in — is set in a palette ink, legible, and fits a phone', () => asChecked(UQ_PAIR, async () => {
     const Schema = require('../assets/fit-profile-schema.js');
     const reference = { type: 'hoodies', garment: { favorite: 'perfect', line: null, anchor: { brand: 'Carhartt', size: 'L', measurements: { unit: 'cm', chestWidth: 58, bodyLength: 68, shoulderWidth: 50, sleeveLength: 62 } } } };
-    const answer = sizingEngine.compare(Object.assign(Schema.empty(), { garments: { hoodies: Object.assign(Schema.emptyGarment('hoodies'), reference.garment) } }), sizingRecords.byId('uniqlo-e475378-sweat-pullover-hoodie-us'));
+    const guestProfile = Object.assign(Schema.empty(), { garments: { hoodies: Object.assign(Schema.emptyGarment('hoodies'), reference.garment) } });
+    const guestRecord = sizingRecords.byId('uniqlo-e475378-sweat-pullover-hoodie-us');
+    const answer = sizingEngine.compare(guestProfile, guestRecord);
+    const answerDecision = sizingDecision.decide(guestProfile, guestRecord, { via: 'compare' });
     accountState = accountReply({});
     for (const viewport of [{ width: 1280, height: 900 }, { width: 360, height: 740 }]) {
       const page = await openPage('index.html', { viewport });
-      await page.route('**/api/size-recommendation?product=*', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ comparison: answer }) }));
+      await page.route('**/api/size-recommendation?product=*', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ comparison: answer, decision: answerDecision }) }));
       await routeRealCheck(page);
       await page.waitForSelector('#ff-reference[data-state="signed-out"][data-locked="false"] .ffr-form', { timeout: 10000 });
       await page.waitForSelector('#ff-anchors:not([hidden]) .ff-anchor', { timeout: 10000 });

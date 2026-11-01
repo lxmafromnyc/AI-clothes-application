@@ -80,6 +80,7 @@
 
 const engine = require('./engine');
 const sizingSchema = require('./schema');
+const methods = require('./methods');
 const ProfileSchema = require('../../assets/fit-profile-schema.js');
 
 const CONTRACT = 'fynd-fit-decision/1';
@@ -215,6 +216,11 @@ function result(outcome, fields) {
     productId: f.productId || null,
     reasons,
     qualifiers,
+    /* what was set beside what: "garment-to-garment" (the shopper's own
+       garment), "body-to-body-chart", "body-plus-assumed-room", or null */
+    comparison: f.comparison || null,
+    /* garment to garment: every dimension, compared or not, and why */
+    dimensions: f.dimensions || [],
     /* what the method that answered requires, for this category */
     requirements: (requirementsFor(f.category) && f.method && requirementsFor(f.category)[f.method]) || null
   };
@@ -321,6 +327,68 @@ function recommendReasons(r, explained) {
       default: return null;
     }
   }).filter(Boolean);
+}
+
+/* ---------- each dimension, compared or not, and why ---------- */
+
+/* What one dimension's comparison is, from the engine's own check
+   (engine.validate, the same rules compare() uses):
+     compatible             both sides measured it the same way
+     convertible-estimated  chest only: a flat width and a circumference,
+                            by the stated factor — an estimate
+     incompatible-method    measured from different points; never converted
+     method-not-stated      a side doesn't say how it was taken
+     missing-reference      the shopper's reference has no such measurement
+     missing-target         the product publishes none
+     unverified             a side's measurement isn't checked
+     body-vs-garment        the product publishes only who each size is
+                            cut for: a body, never set beside a garment */
+const DIMENSION_STATUSES = ['compatible', 'convertible-estimated', 'incompatible-method', 'method-not-stated', 'missing-reference', 'missing-target', 'unverified', 'body-vs-garment'];
+const SKIP_STATUS = {
+  'method-mismatch': 'incompatible-method',
+  'method-unknown': 'method-not-stated',
+  'reference-missing': 'missing-reference',
+  'target-missing': 'missing-target',
+  'target-unverified': 'unverified',
+  'reference-unverified': 'unverified'
+};
+const DIMS = ['chestWidth', 'bodyLength', 'shoulderWidth', 'sleeveLength'];
+const requiredDims = (category) => {
+  const req = requirementsFor(category);
+  return req ? req['reference-garment'].required.target.map((t) => t.replace(/^garment\./, '')) : [];
+};
+function dimensionsFor(profile, record) {
+  const v = engine.validate(profile || null, record);
+  const required = requiredDims(record.category);
+  const side = (dim, x) => (x ? { method: x.method, kind: x.kind, status: x.status, words: methods.methodWords(dim, x.method) } : null);
+  if (v.status === 'body-only') return DIMS.map((dim) => Object.assign({ dim, required: required.includes(dim), status: 'body-vs-garment', reference: null, target: null, conversion: null }, { message: dimensionMessage({ dim, status: 'body-vs-garment' }) }));
+  const said = (d) => Object.assign(d, { message: dimensionMessage(d) });
+  return (v.dimensions || []).map((x) => said({
+    dim: x.dim,
+    required: required.includes(x.dim),
+    status: x.compared ? (x.derived ? 'convertible-estimated' : 'compatible') : SKIP_STATUS[x.code] || 'missing-target',
+    reference: side(x.dim, x.reference),
+    target: side(x.dim, x.target),
+    conversion: x.derived ? x.derived.rule : null
+  }));
+}
+
+/* one dimension's status in a shopper's words */
+const DIM_WORDS = { chestWidth: 'chest', bodyLength: 'length', shoulderWidth: 'shoulders', sleeveLength: 'sleeves' };
+function dimensionMessage(d) {
+  const name = DIM_WORDS[d.dim] || 'measurement';
+  const Name = name[0].toUpperCase() + name.slice(1);
+  switch (d.status) {
+    case 'compatible': return `${Name}: measured the same way on both, so compared.`;
+    case 'convertible-estimated': return `${Name}: measured flat on one and all the way around on the other, so compared as an estimate (twice the flat width).`;
+    case 'incompatible-method': return `${Name}: measured ${d.reference && d.reference.words ? d.reference.words : 'one way'} on your garment and ${d.target && d.target.words ? d.target.words : 'another way'} on this one — not the same measurement, so not compared.`;
+    case 'method-not-stated': return `${Name}: not compared, because it isn’t said how it was measured.`;
+    case 'missing-reference': return `${Name}: your garment has no ${name} measurement, so it isn’t compared.`;
+    case 'missing-target': return `${Name}: this product’s ${name} isn’t published, so it isn’t compared.`;
+    case 'unverified': return `${Name}: not compared, because the measurement hasn’t been checked.`;
+    case 'body-vs-garment': return `${Name}: this product’s chart describes the body each size is for, not the garment, so it can’t be set beside your garment.`;
+    default: return `${Name}: not compared.`;
+  }
 }
 
 /* ---------- a compare() answer, held to the policy ---------- */
@@ -462,7 +530,9 @@ function fromChart(chart) {
 function decideWithDetail(profile, target, opts) {
   const o = opts || {};
   const detail = { compare: null, recommend: null };
-  const done = (decision) => ({ decision, detail });
+  /* every answer also says, in a shopper's words, why it is what it is
+     (customerMessage, from the codes): what a page shows for a refusal */
+  const done = (decision) => ({ decision: Object.assign(decision, { messages: decision.outcome === OUTCOMES.OK ? [] : customerMessages(decision, { brand: target && target.brand }) }), detail });
 
   if (target && target.chart && !target.charts) return done(fromChart(target.chart));
   const record = target && target.record && !target.charts ? target.record : target;
@@ -482,35 +552,78 @@ function decideWithDetail(profile, target, opts) {
   const range = outOfRange(profile, record.category);
   if (range.length) return done(result(OUTCOMES.INSUFFICIENT_DATA, Object.assign(base, { reasons: range })));
 
-  const reasons = [];
-  /* the shopper's reference garment, compared garment with garment */
-  if (o.via !== 'recommend') {
+  /* The shopper's reference garment, compared garment with garment —
+     and, when they have one for this kind of top, nothing else: if it
+     can't be compared on enough measurements taken the same way, the
+     answer is INSUFFICIENT_DATA, never a size from their body and an
+     assumed room instead. */
+  if (o.via === 'compare' || hasReference(profile, record.category)) {
     const c = engine.compare(profile || null, record, { unit: o.unit });
     detail.compare = c;
-    if (c.status === 'ok' || c.status === 'partial') return done(fromCompare(c, record));
-    const why = compareReasons(c);
-    /* malformed input stops everything: nothing is worked out from it by either method */
-    if (o.via === 'compare' || why.some((r) => r.code === 'invalid-measurement')) {
-      return done(result(OUTCOMES.INSUFFICIENT_DATA, Object.assign(base, { method: 'reference-garment', via: 'compare', reasons: why })));
-    }
-    /* why the reference couldn't be used matters only when there is one */
-    if (hasReference(profile, record.category)) reasons.push(...why);
+    const dimensions = dimensionsFor(profile, record);
+    const decided = c.status === 'ok' || c.status === 'partial' ? fromCompare(c, record)
+      : result(OUTCOMES.INSUFFICIENT_DATA, Object.assign(base, { method: 'reference-garment', via: 'compare', reasons: compareReasons(c) }));
+    return done(Object.assign(decided, { comparison: 'garment-to-garment', dimensions }));
   }
-  /* the rest of the profile */
+  /* no reference garment: the rest of the profile — a chest measurement,
+     or a size label read only as its brand chart's chest range */
   const r = engine.recommend(profile || null, record);
   detail.recommend = r;
-  if (r.status === 'ok') {
-    const decision = fromRecommend(r, record);
-    /* a reference that existed but couldn't be compared is said, not hidden */
-    if (reasons.length) decision.qualifiers.push(reason('reference-not-comparable', { because: [...new Set(reasons.map((x) => x.code))] }));
-    return done(decision);
-  }
-  /* nothing could answer: every reason, from both methods */
-  const already = new Set(reasons.map((x) => x.code));
-  const more = recommendReasons(r, reasons.length > 0).filter((x) => !already.has(x.code));
-  return done(result(OUTCOMES.INSUFFICIENT_DATA, Object.assign(base, { via: o.via || null, reasons: reasons.concat(more) })));
+  if (r.status === 'ok') return done(Object.assign(fromRecommend(r, record), { comparison: r.method === 'body-chart' ? 'body-to-body-chart' : 'body-plus-assumed-room', dimensions: [] }));
+  return done(result(OUTCOMES.INSUFFICIENT_DATA, Object.assign(base, { via: o.via || null, reasons: recommendReasons(r, false) })));
 }
 
 const decide = (profile, target, opts) => decideWithDetail(profile, target, opts).decision;
 
-module.exports = { decide, decideWithDetail, customerMessage, customerMessages, requirementsFor, REQUIREMENTS, REASONS, OUTCOMES, CONTRACT };
+/* ---------------------------------------------------------
+   What a result is, and every field held to the decision
+   ---------------------------------------------------------
+   A result is one of two kinds, never presented as the other:
+     garment-comparison  the product's own finished-garment measurements
+                         set beside the shopper's reference garment's
+     body-estimate       an estimate from body measurements, or the body
+                         range a brand's chart gives a size label, plus
+                         the room a fit is assumed to need — no garment
+                         of the shopper's is measured in it
+   An answer sent beside a decision (the engine's comparison or
+   recommendation) keeps its per-size detail, but no field of it may name
+   a size as recommended, or rank a leader, that the decision didn't give:
+   with any outcome but OK, its recommended, alternative and leading size
+   are withheld, and its summary is the decision's own words. */
+const RESULT_TYPES = { 'garment-to-garment': 'garment-comparison', 'body-plus-assumed-room': 'body-estimate', 'body-to-body-chart': 'body-estimate' };
+const resultTypeOf = (d) => (d && RESULT_TYPES[d.comparison]) || null;
+const withheldWords = (d) => (d && Array.isArray(d.messages) && d.messages.length ? d.messages.join(' ') : 'No size is recommended for this item.');
+
+/* engine.compare()'s answer, held to its decision */
+function heldComparison(c, d) {
+  if (!c || typeof c !== 'object' || !d || d.outcome === OUTCOMES.OK) return c;
+  if (c.recommended == null && c.alternative == null) return c;
+  return Object.assign({}, c, {
+    /* still each size beside the reference — never one called recommended */
+    status: c.status === 'insufficient' ? c.status : 'partial',
+    recommended: null,
+    alternative: null,
+    closest: d.outcome === OUTCOMES.NO_MATCH ? d.closest : null,
+    withheld: 'decision',
+    summary: withheldWords(d)
+  });
+}
+
+/* engine.recommend()'s answer, held to its decision */
+function heldRecommendation(r, d) {
+  if (!r || typeof r !== 'object' || !d || d.outcome === OUTCOMES.OK || r.status !== 'ok') return r;
+  return Object.assign({}, r, {
+    status: d.outcome === OUTCOMES.NO_MATCH ? 'no-match' : 'insufficient',
+    leading: null,
+    alternative: null,
+    /* each ranks, or names, a leading size */
+    ranking: [],
+    fitBySize: [],
+    tradeoffs: [],
+    reasons: [],
+    withheld: 'decision',
+    missing: d.reasons.map((x) => ({ code: x.code, message: customerMessage(x) }))
+  });
+}
+
+module.exports = { decide, decideWithDetail, customerMessage, customerMessages, dimensionMessage, DIMENSION_STATUSES, requirementsFor, REQUIREMENTS, REASONS, OUTCOMES, CONTRACT, RESULT_TYPES, resultTypeOf, heldComparison, heldRecommendation };

@@ -133,7 +133,13 @@
 (function (global) {
   'use strict';
 
-  const SCHEMA_VERSION = 5;
+  const SCHEMA_VERSION = 6;
+  /* The version of Fynd's canonical measurement methods
+     (api/_sizing/methods.js REGISTRY_VERSION) a saved reference's
+     methods are named under. The server checks every id against that
+     registry; one it doesn't know is "not stated", and never compared. */
+  const METHODS_REGISTRY_VERSION = 1;
+  const METHOD_ID = /^[a-z][a-z-]{1,39}$/;
 
   const UNITS = ['in', 'cm'];
   const UNIT_NAME = { in: 'inches', cm: 'centimetres' };
@@ -520,8 +526,42 @@
     3: (profile) => Object.assign({}, profile, { schemaVersion: 4 }),
     /* version 5 adds the favourite T-shirt's answer and details,
        unanswered; upgrade() shapes them in */
-    4: (profile) => Object.assign({}, profile, { schemaVersion: 5 })
+    4: (profile) => Object.assign({}, profile, { schemaVersion: 5 }),
+    /* version 6 records how each of a reference garment's measurements
+       was taken. Every one saved before was entered by this form, which
+       measures each dimension one way (GARMENT_MEASURES), so that is the
+       method recorded for it — named, so a later change to the form can
+       never relabel it */
+    5: (profile) => {
+      const garments = isPlainObject(profile.garments) ? Object.fromEntries(Object.entries(profile.garments).map(([type, entry]) => {
+        const anchor = isPlainObject(entry) && isPlainObject(entry.anchor) ? entry.anchor : null;
+        if (!anchor || !isPlainObject(anchor.measurements) || isPlainObject(anchor.methods)) return [type, entry];
+        const methods = methodsFor(anchor.measurements);
+        return [type, methods ? Object.assign({}, entry, { anchor: Object.assign({}, anchor, { methods }) }) : entry];
+      })) : profile.garments;
+      return Object.assign({}, profile, { schemaVersion: 6, garments });
+    }
   };
+
+  /* the form's own method for each measurement given, under this registry
+     version; null when none is given */
+  function methodsFor(measurements) {
+    const given = GARMENT_MEASURE_KEYS.filter((key) => typeof measurements[key] === 'number' && Number.isFinite(measurements[key]));
+    if (!given.length) return null;
+    return Object.assign({ registry: METHODS_REGISTRY_VERSION }, Object.fromEntries(given.map((key) => [key, GARMENT_MEASURES[key].method])));
+  }
+
+  /* a stored methods block, shaped: its registry version and an id for
+     each measurement given, as stored — never filled in. Null with no
+     measurements. */
+  function shapeMethods(raw, measurements) {
+    if (!measurements || !isPlainObject(raw)) return null;
+    const out = { registry: Number.isInteger(raw.registry) ? raw.registry : null };
+    GARMENT_MEASURE_KEYS.forEach((key) => {
+      if (measurements[key] !== null && typeof raw[key] === 'string' && METHOD_ID.test(raw[key])) out[key] = raw[key];
+    });
+    return out;
+  }
 
   /* A stored anchor in its shape for the type: a length only where the
      type has lengths. Null when nothing in it was said. */
@@ -562,9 +602,9 @@
       if (GARMENT_MEASURE_KEYS.every((key) => measurements[key] === null)) measurements = null;
     }
     const notes = typeof raw.notes === 'string' && raw.notes ? raw.notes : null;
-    return { product, likes: likes.length ? likes : null, measurements, notes };
+    return { product, likes: likes.length ? likes : null, measurements, methods: shapeMethods(raw.methods, measurements), notes };
   }
-  const DETAIL_KEYS = ['product', 'likes', 'measurements', 'notes'];
+  const DETAIL_KEYS = ['product', 'likes', 'measurements', 'methods', 'notes'];
   const hasDetails = (d) => Boolean(d && DETAIL_KEYS.some((k) => d[k]));
 
   /* The current shape of whatever was stored, or null for something
@@ -905,7 +945,9 @@
       const text = typeof raw.notes === 'string' ? cleanText(raw.notes) : '';
       if (!text) { fail(`${at}.notes`, 'Write your notes in words, or leave them blank.'); ok = false; } else if (text.length > PRODUCT_LIMITS.notes) { fail(`${at}.notes`, `Keep your notes to ${PRODUCT_LIMITS.notes} characters.`); ok = false; } else notes = text;
     }
-    return ok ? { product, likes, measurements, notes } : null;
+    /* how each was taken: the form's own method for it, under the current
+       registry version — never what a client says it measured */
+    return ok ? { product, likes, measurements, methods: measurements ? methodsFor(measurements) : null, notes } : null;
   }
 
   /* One type's answers: only the fields that were sent, so a skipped
@@ -1262,6 +1304,7 @@
 
   const FitProfileSchema = {
     SCHEMA_VERSION,
+    METHODS_REGISTRY_VERSION,
     UNITS,
     UNIT_NAME,
     MEASUREMENTS,

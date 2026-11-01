@@ -12,7 +12,16 @@
      FitCompare.show(chart, container, stillCurrent?)   (a promise)
      FitCompare.focus(container, size)
 
-   A comparison the engine can stand behind (status "ok") is drawn
+   What is shown is the server's decision (data.decision,
+   api/_sizing/decision.js), never the comparison's own status: a size is
+   drawn as recommended only when the decision is OK, the closest only
+   when it is NO_MATCH, and no size at all otherwise — nor when the
+   decision is missing or doesn't hold together. The comparison supplies
+   the figures. The measurements are drawn as garments laid flat (a
+   diagram of where each is taken, and each size's value beside the
+   reference's), never as a body or a fit.
+
+   A comparison the decision stands behind (OK) is drawn
    compactly: the size it recommends, the reference it was set beside
    (brand and the size on its label), how that size differs in plain
    words, and — folded away — each compared dimension's signed
@@ -143,17 +152,25 @@
     }
     if (!stillCurrent()) return;
     const c = got && got.ok && got.data && got.data.comparison;
-    if (!c || typeof c !== 'object' || !['ok', 'partial', 'insufficient'].includes(c.status)) { failed(compare, verdict); return; }
+    /* the server's decision is the only authority for a size: without a
+       well-formed one, nothing is drawn as recommended */
+    const decided = decisionOf(got && got.ok && got.data && got.data.decision);
+    if (!c || typeof c !== 'object' || !['ok', 'partial', 'insufficient'].includes(c.status) || !decided) { failed(compare, verdict); return; }
     if (c.status === 'ok' || c.status === 'partial') {
       if (!wellFormed(c)) { failed(compare, verdict); return; }
-      const outcome = outcomeOf(c);
-      const lead = outcome === 'no-recommendation' ? [el('p', 'fit-compare-fallback', NOT_ENOUGH), el('p', null, c.summary)] : recommendation(c, verdict);
+      const view = viewOf(c, decided);
+      if (!view) { failed(compare, verdict); return; }
+      const outcome = view.outcome;
+      const lead = outcome === 'no-recommendation'
+        ? [el('p', 'fit-compare-fallback', NOT_ENOUGH), ...(decided.messages.length ? decided.messages : [WITHHELD]).map((t) => el('p', null, t))]
+        : recommendation(c, verdict, view, decided);
       const rest = [];
-      if (c.reliability) rest.push(`Reliability: ${c.reliability}.`);
+      /* a reliability belongs to a recommendation: none is said without one */
+      if (c.reliability && view.recommended) rest.push(`Reliability: ${c.reliability}.`);
       (c.caveats || []).slice(0, verdict ? undefined : 2).forEach((x) => rest.push(x));
       const more = el('p');
       more.append(safeLinkLocal('compare.html', 'See every size beside your reference on Compare'));
-      drawn.set(compare, { comparison: c, lead, rest, extra: [more], outcome, verdict: verdict && outcome });
+      drawn.set(compare, { comparison: c, decision: decided, lead, rest, extra: [more], outcome, verdict: verdict && outcome });
       focus(compare, null);
       return;
     }
@@ -265,8 +282,35 @@
                           measurement's tolerance (withheld
                           "outside-tolerance"): shown, never recommended
        no-recommendation  too little checked, comparable evidence */
-  const outcomeOf = (c) => (c.status === 'ok' && c.recommended ? 'recommended'
-    : c.status === 'partial' && c.withheld === 'outside-tolerance' && c.closest ? 'closest-mismatch' : 'no-recommendation');
+  const OUTCOMES = ['OK', 'NO_MATCH', 'INSUFFICIENT_DATA'];
+  /* the server's decision (api/_sizing/decision.js), checked for what this
+     page reads: its outcome, the size it names (OK only), the closest size
+     (NO_MATCH only), and its messages and dimensions as lists. Anything
+     else is no decision at all. */
+  function decisionOf(d) {
+    if (!d || typeof d !== 'object' || !OUTCOMES.includes(d.outcome)) return null;
+    if (d.outcome === 'OK' && typeof d.size !== 'string') return null;
+    if (d.outcome !== 'OK' && d.size !== null) return null;
+    if (d.outcome === 'NO_MATCH' && typeof d.closest !== 'string') return null;
+    return {
+      outcome: d.outcome,
+      size: d.outcome === 'OK' ? d.size : null,
+      closest: d.outcome === 'NO_MATCH' ? d.closest : null,
+      messages: Array.isArray(d.messages) ? d.messages.filter((m) => typeof m === 'string') : [],
+      dimensions: Array.isArray(d.dimensions) ? d.dimensions.filter((x) => x && DIM_LABEL[x.dim] && typeof x.status === 'string') : []
+    };
+  }
+  /* what to draw, from the decision alone (data-verdict in Find Fit):
+     its size when OK, the closest when NO_MATCH, none otherwise — and
+     never a size the comparison doesn't hold */
+  /* what's said when a decision gives no size and no words of its own */
+  const WITHHELD = 'No size is recommended for this item.';
+  function viewOf(c, decided) {
+    const held = (size) => c.sizes.some((s) => s.size === size);
+    if (decided.outcome === 'OK') return held(decided.size) ? { outcome: 'recommended', size: decided.size, recommended: true } : null;
+    if (decided.outcome === 'NO_MATCH') return held(decided.closest) ? { outcome: 'closest-mismatch', size: decided.closest, recommended: false } : null;
+    return { outcome: 'no-recommendation', size: null, recommended: false };
+  }
   const TITLE = { recommended: 'Compared with your reference', 'closest-mismatch': 'No size matches your reference', 'no-recommendation': NO_SIZE };
   /* Find Fit's headings when nothing is compared, by why (data-verdict):
        unsupported      no checked garment measurements for this item
@@ -348,41 +392,91 @@
     return box;
   }
 
-  /* where one compared difference falls, from the engine's own answer —
-     within its tolerance is "similar", as the trade-offs say; otherwise
-     its words — never from a threshold worked out here */
-  function placeOf(x) {
-    const said = meaning(x);
-    if (x.withinTolerance === true || /the same/.test(said)) return 'same';
-    if (/wider|longer/.test(said)) return 'more';
-    if (/narrower|shorter/.test(said)) return 'less';
-    return null;
-  }
-
-  /* each compared measurement on a three-step scale: tighter, similar,
-     roomier (shorter, similar, longer for a length) */
-  function fitScale(compared, row) {
+  /* Each measurement, set beside the reference garment's, as garments laid
+     flat — never as a body, a fit, or how the size will feel. For each
+     compared measurement: the two values on one scale, the signed
+     difference, which way it goes (the server's own `direction`, never
+     read from its words) and whether it is within the working tolerance
+     the scoring uses. For each one not compared: the decision's own
+     reason, in its words. Above them, a flat-garment drawing marks which
+     measurements were compared. */
+  const DIRECTION_WORDS = { girth: { less: 'Narrower', same: 'The same', more: 'Wider' }, length: { less: 'Shorter', same: 'The same', more: 'Longer' } };
+  const DIM_ORDER = ['chestWidth', 'bodyLength', 'shoulderWidth', 'sleeveLength'];
+  function garmentComparison(c, compared, row, size, decided) {
+    const fig = el('figure', 'ff-garment');
+    const statusOf = Object.fromEntries(decided.dimensions.map((x) => [x.dim, x]));
+    fig.append(garmentDrawing(compared, statusOf));
     const list = el('ul', 'ff-scale');
-    list.setAttribute('aria-label', 'How each measurement compares with your reference');
+    list.setAttribute('aria-label', `Size ${size} beside your reference garment, measurement by measurement`);
     compared.forEach((d) => {
       const x = row.dimensions[d];
-      const place = placeOf(x);
-      if (!place) return;
-      const words = GIRTH[d] ? ['Tighter', 'Similar', 'Roomier'] : ['Shorter', 'Similar', 'Longer'];
+      const direction = ['less', 'same', 'more'].includes(x.direction) ? x.direction : null;
+      if (!direction) return;
       const li = el('li', 'ff-scale-row');
       li.dataset.dim = d;
-      li.dataset.place = place;
+      li.dataset.direction = direction;
+      li.dataset.similar = String(x.withinTolerance === true);
       li.append(el('span', 'ff-scale-name', nameOf(d, x).replace(/^./, (ch) => ch.toUpperCase())));
-      const steps = el('span', 'ff-scale-steps');
-      ['less', 'same', 'more'].forEach((p, i) => {
-        const step = el('span', `ff-scale-step${p === place ? ' is-here' : ''}`, words[i]);
-        if (p !== place) step.setAttribute('aria-hidden', 'true');
-        steps.append(step);
+      const bars = el('span', 'ff-bars');
+      const top = Math.max(x.reference, x.candidate);
+      [['Your garment', x.reference, 'ff-bar--reference'], [`Size ${size}`, x.candidate, 'ff-bar--candidate']].forEach(([label, v, cls]) => {
+        const line = el('span', 'ff-bar-line');
+        const bar = el('span', `ff-bar ${cls}`);
+        bar.style.width = `${top > 0 ? Math.max(4, Math.round((v / top) * 100)) : 0}%`;
+        line.append(el('span', 'ff-bar-label', label), el('span', 'ff-bar-track'), el('span', 'ff-bar-value', measure(v, c.unit)));
+        line.querySelector('.ff-bar-track').append(bar);
+        bars.append(line);
       });
-      li.append(steps);
+      const words = DIRECTION_WORDS[GIRTH[d] ? 'girth' : 'length'][direction];
+      const diff = el('span', 'ff-diff', `${words}: ${signed(x.difference, c.unit)}${x.estimated ? ' (estimated)' : ''}`);
+      bars.append(diff);
+      if (x.withinTolerance === true) bars.append(el('span', 'ff-similar', 'Within Fynd’s working tolerance'));
+      li.append(bars);
       list.append(li);
     });
-    return list;
+    DIM_ORDER.filter((d) => !compared.includes(d) && statusOf[d]).forEach((d) => {
+      const li = el('li', 'ff-scale-skip');
+      li.dataset.dim = d;
+      li.dataset.status = statusOf[d].status;
+      li.append(el('span', 'ff-scale-name', DIM_LABEL[d]), el('span', 'ff-skip-why', typeof statusOf[d].message === 'string' ? statusOf[d].message : 'Not compared.'));
+      list.append(li);
+    });
+    fig.append(list);
+    fig.append(el('figcaption', 'ff-garment-caption', 'Garment measurements laid flat: how this size differs from your garment, not how either fits your body. Matching measurements don’t guarantee the same fit — fabric, stretch and cut aren’t measured.'));
+    return fig;
+  }
+
+  /* a top laid flat, with where each measurement is taken: drawn solid
+     where it was compared, dashed where it wasn't — a diagram of the
+     measurements, never of a body */
+  const SVG = 'http://www.w3.org/2000/svg';
+  const LINES = {
+    chestWidth: [62, 92, 158, 92],
+    bodyLength: [128, 44, 128, 214],
+    shoulderWidth: [70, 50, 150, 50],
+    sleeveLength: [150, 50, 206, 132]
+  };
+  function garmentDrawing(compared, statusOf) {
+    const svg = doc.createElementNS(SVG, 'svg');
+    svg.setAttribute('viewBox', '0 0 220 230');
+    svg.setAttribute('class', 'ff-garment-drawing');
+    svg.setAttribute('aria-hidden', 'true');
+    svg.setAttribute('focusable', 'false');
+    const shape = doc.createElementNS(SVG, 'path');
+    shape.setAttribute('d', 'M70 50 L94 40 Q110 52 126 40 L150 50 L210 128 L190 142 L158 104 L158 214 L62 214 L62 104 L30 142 L10 128 Z');
+    shape.setAttribute('class', 'ff-garment-shape');
+    svg.append(shape);
+    DIM_ORDER.forEach((d) => {
+      const [x1, y1, x2, y2] = LINES[d];
+      const line = doc.createElementNS(SVG, 'line');
+      [['x1', x1], ['y1', y1], ['x2', x2], ['y2', y2]].forEach(([k, v]) => line.setAttribute(k, String(v)));
+      const shown = compared.includes(d);
+      line.setAttribute('class', `ff-garment-line ${shown ? 'is-compared' : 'is-not-compared'}`);
+      line.setAttribute('data-dim', d);
+      line.setAttribute('data-status', shown ? 'compared' : (statusOf[d] ? statusOf[d].status : 'missing'));
+      svg.append(line);
+    });
+    return svg;
   }
 
   /* Where a side's measurements came from, as each one's record says
@@ -401,8 +495,8 @@
     return side === 'reference' ? 'its recorded measurements' : 'recorded finished-garment measurements';
   }
   /* where the numbers came from, and how far each side is checked */
-  function sources(c) {
-    const row = c.sizes.find((s) => s.size === (c.recommended || c.closest));
+  function sources(c, size) {
+    const row = c.sizes.find((s) => s.size === size);
     const origin = originOf(row ? Object.fromEntries(Object.entries(row.dimensions).map(([d, x]) => [d, x && x.measurement])) : null);
     const brand = c.product && typeof c.product.brand === 'string' ? c.product.brand : null;
     const item = `${brand ? `${brand}’s` : 'This item’s'} ${originWords(origin, 'item')} for this item`;
@@ -419,9 +513,9 @@
      recommendation. Either way: the reference, how that size differs,
      each measurement it misses (c.tradeoffs), and its signed
      differences folded away. */
-  function recommendation(c, verdict) {
-    const recommended = Boolean(c.recommended);
-    const size = recommended ? c.recommended : c.closest;
+  function recommendation(c, verdict, view, decided) {
+    const recommended = view.recommended;
+    const size = view.size;
     const row = (c.sizes || []).find((s) => s.size === size);
     const compared = row ? c.dimensionsCompared.filter((d) => DIM_LABEL[d] && row.dimensions[d] && row.dimensions[d].compared && typeof row.dimensions[d].difference === 'number') : [];
     const nodes = [];
@@ -435,11 +529,14 @@
       nodes.push(pick);
     }
     nodes.push(el('p', 'fit-compare-reference', `Compared with: ${referenceWords(c.reference)}.`));
-    nodes.push(el('p', null, c.summary));
+    /* a size Fynd recommends says why in the comparison's words; one it
+       doesn't, in the decision's own, from its reason codes */
+    /* never the engine's own summary for a size not recommended: it may name the size the decision didn't give */
+    (recommended ? [c.summary] : decided.messages.length ? decided.messages : [WITHHELD]).forEach((t) => nodes.push(el('p', recommended ? null : 'fit-compare-why', t)));
     if (shownTradeoffs(c).length) nodes.push(tradeoffList(c, size, recommended));
     if (compared.length) {
       nodes.push(el('p', 'fit-compare-differs', `Size ${size} against your reference: ${compared.map((d) => `${nameOf(d, row.dimensions[d])} ${meaning(row.dimensions[d])}`).join(', ')}.`));
-      if (verdict) nodes.push(fitScale(compared, row));
+      if (verdict) nodes.push(garmentComparison(c, compared, row, size, decided));
       const box = el('details', 'size-chart-details fit-compare-differences');
       box.append(el('summary', null, 'Measurement differences'));
       box.append(el('p', 'fit-compare-size-note', `Size ${size} minus your reference, in ${c.unit}: positive is larger, negative is smaller.`));
@@ -469,7 +566,7 @@
       box.append(wrap);
       nodes.push(box);
     }
-    if (verdict) nodes.push(sources(c));
+    if (verdict) nodes.push(sources(c, size));
     return nodes;
   }
 

@@ -81,6 +81,8 @@
 
 'use strict';
 
+const methods = require('./methods');
+
 const SIZING_VERSION = 2;
 
 const CATEGORIES = ['hoodies', 'sweatshirts', 'tshirts'];
@@ -125,16 +127,12 @@ const BODY_DIMENSIONS = {
 /* "not-stated": the brand publishes the value but doesn't say how it
    was taken — a column called "chest" or "chest_circumference" with no
    instruction. Kept as published, and never compared (engine.js). */
-const GARMENT_DIMENSIONS = {
-  chestWidth: { methods: ['flat-width-armpit-to-armpit', 'garment-circumference', 'not-stated'] },
-  bodyLength: { methods: ['center-back-to-hem', 'high-point-shoulder-to-hem', 'not-stated'] },
-  sleeveLength: { methods: ['center-back-to-cuff', 'shoulder-seam-to-cuff', 'not-stated'] },
-  /* "broadest-part-of-shoulders" is UNIQLO's own instruction ("the length
-     between the broadest part of the shoulders"), kept apart from
-     seam to seam when the product's table doesn't say seam to seam:
-     a drop-shoulder hoodie's broadest point need not be its seams */
-  shoulderWidth: { methods: ['seam-to-seam', 'broadest-part-of-shoulders', 'not-stated'] }
-};
+/* The methods themselves are the canonical registry's (./methods.js).
+   "broadest-part-of-shoulders" is UNIQLO's own instruction ("the length
+   between the broadest part of the shoulders"), kept apart from seam to
+   seam when the product's table doesn't say seam to seam: a
+   drop-shoulder hoodie's broadest point need not be its seams. */
+const GARMENT_DIMENSIONS = Object.fromEntries(methods.DIMENSIONS.map((d) => [d, { methods: methods.methodsOf(d) }]));
 
 /* How a record's values reached Fynd (`capture.how`). Absent reads as
    "copied-from-page", which is how every record before it was made.
@@ -357,19 +355,8 @@ function validate(record) {
      unknown         the source doesn't say how it was taken
    From the method alone, never from a column's name: a column called
    "chest_circumference" is "unknown" until its source states the method. */
-const METHOD_KINDS = {
-  'flat-width-armpit-to-armpit': 'flat',
-  'garment-circumference': 'circumference',
-  'center-back-to-hem': 'length',
-  'high-point-shoulder-to-hem': 'length',
-  'center-back-to-cuff': 'length',
-  'shoulder-seam-to-cuff': 'length',
-  'seam-to-seam': 'width',
-  'broadest-part-of-shoulders': 'width',
-  'body-circumference': 'body',
-  'not-stated': 'unknown'
-};
-const methodKind = (method) => METHOD_KINDS[method] || 'unknown';
+const METHOD_KINDS = methods.METHOD_KINDS;
+const methodKind = methods.methodKind;
 
 const isVerified = (record) => Boolean(record && record.verification && record.verification.status === 'verified');
 

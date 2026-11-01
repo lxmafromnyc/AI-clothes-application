@@ -176,19 +176,22 @@ function sizeListing(profile, record) {
   const suggested = detail.recommend || (d.via === 'compare' ? null : engine.recommend(profile, record));
   if (d.outcome === decision.OUTCOMES.OK) {
     if (d.via === 'compare') {
-      return withDecision(Object.assign(base, { status: 'ok', by: 'reference', size: d.size, alternative: compared.alternative, reliability: d.confidence, summary: compared.summary, caveats: compared.caveats }));
+      return withDecision(Object.assign(base, { status: 'ok', by: 'reference', resultType: 'garment-comparison', size: d.size, alternative: compared.alternative, reliability: d.confidence, summary: compared.summary, caveats: compared.caveats }));
     }
-    /* the decision's confidence: the engine's, lowered where the policy
+    /* a body estimate: its own result type, never a size called the
+       shopper's — `size` stays null, the estimate is `estimate`. The
+       decision's confidence: the engine's, lowered where the policy
        found the answer rests on an estimate (a mirrored chart edge) */
-    return withDecision(Object.assign(base, { status: 'ok', by: 'profile', size: d.size, alternative: d.alternative, reliability: d.confidence, summary: suggested.reasons[0] || null, caveats: suggested.caveats || [] }));
+    return withDecision(Object.assign(base, { status: 'estimate', by: 'body', resultType: 'body-estimate', size: null, estimate: d.size, alternative: d.alternative, reliability: d.confidence, summary: suggested.reasons[0] || null, caveats: suggested.caveats || [] }));
   }
   if (d.outcome === decision.OUTCOMES.NO_MATCH) {
     /* compare()'s own "closest, not recommended" keeps its shape */
     if (d.via === 'compare' && compared.status === 'partial') {
-      return withDecision(Object.assign(base, { status: 'partial', by: 'reference', size: null, closest: compared.closest, reliability: compared.reliability, summary: compared.summary, caveats: compared.caveats }));
+      return withDecision(Object.assign(base, { status: 'partial', by: 'reference', resultType: 'garment-comparison', size: null, closest: compared.closest, reliability: compared.reliability, summary: compared.summary, caveats: compared.caveats }));
     }
     return withDecision(Object.assign(base, {
       status: 'no-match',
+      resultType: decision.resultTypeOf(d),
       by: d.via === 'compare' ? 'reference' : 'profile',
       size: null,
       closest: d.closest,
@@ -202,7 +205,7 @@ function sizeListing(profile, record) {
   /* reasons only the policy found (a conflict, a range) are said too */
   const policySaid = d.reasons.filter((r) => ['conflicting-references', 'measurement-out-of-supported-range', 'reference-range-too-wide'].includes(r.code)).map((r) => decision.customerMessage(r, { brand: record.brand }));
   const missing = policySaid.concat(engineSaid).filter((m) => !said.has(m) && said.add(m));
-  return withDecision(Object.assign(base, { status: 'insufficient', size: null, missing, next: [...new Set(((suggested && suggested.next) || []).concat(compared.next || []))] }));
+  return withDecision(Object.assign(base, { status: 'insufficient', resultType: decision.resultTypeOf(d), size: null, missing, next: [...new Set(((suggested && suggested.next) || []).concat(compared.next || []))] }));
 }
 
 /* The search page's listings for one type: each matched to a record,
@@ -309,6 +312,16 @@ async function checkFirst(req, res) {
   return res.status(200).json({ check: { target: targetOut, chart, validation, comparable: Boolean(validation.ready) } });
 }
 
+/* A garment comparison's answer, wherever it's asked: the engine's every
+   size beside the reference, and the decision — the comparison held to
+   it, so no field names a size the decision didn't recommend. Never a
+   body estimate: decide() with via "compare" sets garment beside garment
+   or abstains. */
+function comparedAnswer(profile, record, unit) {
+  const d = decision.decide(profile, record, { via: 'compare', unit });
+  return { comparison: decision.heldComparison(engine.compare(profile, record, { unit }), d), decision: d, resultType: 'garment-comparison' };
+}
+
 /* A comparison with a reference garment that isn't saved (see "A
    reference not saved"): validated, used once, kept nowhere. */
 async function compareUnsaved(req, res) {
@@ -330,7 +343,7 @@ async function compareUnsaved(req, res) {
   if (read.error) return res.status(400).json(read.error);
   const profile = read.profile;
   const unit = query.unit === 'in' || query.unit === 'cm' ? query.unit : undefined;
-  return res.status(200).json({ comparison: engine.compare(profile, record, { unit }), decision: decision.decide(profile, record, { via: 'compare', unit }) });
+  return res.status(200).json(comparedAnswer(profile, record, unit));
 }
 
 async function handler(req, res) {
@@ -453,10 +466,11 @@ async function handler(req, res) {
        every size (engine.compare), in the unit asked for, if any */
     if (query.compare === '1') {
       const unit = query.unit === 'in' || query.unit === 'cm' ? query.unit : undefined;
-      return res.status(200).json({ comparison: engine.compare(profile || null, record, { unit }), decision: decision.decide(profile || null, record, { via: 'compare', unit }) });
+      return res.status(200).json(comparedAnswer(profile || null, record, unit));
     }
-    const recommendation = engine.recommend(profile || null, record);
-    return res.status(200).json({ recommendation, decision: decision.decide(profile || null, record, { via: 'recommend' }) });
+    /* held to the decision: no leading size it didn't give */
+    const d = decision.decide(profile || null, record, { via: 'recommend' });
+    return res.status(200).json({ recommendation: decision.heldRecommendation(engine.recommend(profile || null, record), d), decision: d, resultType: decision.resultTypeOf(d) });
   } catch (err) {
     console.error('Size recommendation failed', err && err.message);
     return res.status(500).json({ error: 'Could not work out a size suggestion. Try again in a moment.' });

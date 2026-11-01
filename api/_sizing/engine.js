@@ -102,6 +102,7 @@
 'use strict';
 
 const sizingSchema = require('./schema');
+const methodRegistry = require('./methods');
 const { RECORDS } = require('./records');
 const ProfileSchema = require('../../assets/fit-profile-schema.js');
 
@@ -165,8 +166,10 @@ const TOPS = {
 const TEES = Object.assign({}, TOPS, { ease: { slim: [1, 4], 'true-to-size': [4, 8], oversized: [9, 16] } });
 const CATEGORY_PARAMS = { hoodies: TOPS, sweatshirts: TOPS, tshirts: TEES };
 /* the categories where a brand and size alone, with no product or
-   measurements, are read only as a chest range */
-const STRICT_ANCHOR = { tshirts: true };
+   measurements, are read only as a chest range from the brand's chart —
+   every category: a size label is never another product's garment
+   measurements, and never the shopper's reference garment's */
+const STRICT_ANCHOR = { hoodies: true, sweatshirts: true, tshirts: true };
 /* which categories' charts may stand in for each other */
 const FAMILY = { hoodies: 'fleece', sweatshirts: 'fleece', tshirts: 'tees' };
 const CATEGORY_WORDS = { hoodies: 'hoodie', sweatshirts: 'sweatshirt', tshirts: 'T-shirt' };
@@ -320,7 +323,10 @@ const SHOPPER_MEASURED = 'shopper-measured';
    brand's own site, with the product's code in the address) or, failing
    that, by its name — only when exactly one record answers to it.
    { record, by } or null. Never a guess between two products. */
-function matchProduct(anchor, pool, category) {
+function matchProduct(anchor, pool, category, opts) {
+  /* exact: the shopper's own garment as their reference — its link, or
+     its whole name; never a name that only contains another's */
+  const exact = Boolean(opts && opts.exact);
   const product = anchor && anchor.product;
   if (!product) return null;
   const same = pool.filter((r) => r.category === category && (!anchor.brand || brandKey(r.brand) === brandKey(anchor.brand)));
@@ -340,7 +346,7 @@ function matchProduct(anchor, pool, category) {
     const key = brandKey(product.name);
     const named = same.filter((r) => {
       const own = brandKey(r.product.name);
-      return own === key || (key.length >= 8 && own.includes(key)) || (own.length >= 8 && key.includes(own));
+      return own === key || (!exact && ((key.length >= 8 && own.includes(key)) || (own.length >= 8 && key.includes(own))));
     });
     if (named.length === 1) return { record: named[0], by: 'name' };
   }
@@ -357,9 +363,18 @@ function measuredRecord(anchor, category) {
   if (!m || (m.unit !== 'in' && m.unit !== 'cm')) return null;
   const dims = {};
   const row = {};
+  /* each value's method as saved with it (anchor.methods, fit profile v6),
+     named under a registry version this code knows; a value whose saved
+     method isn't a canonical one for its dimension is "not stated" and
+     never compared. A reference saved before methods were recorded was
+     measured by the form's own methods, so those stand for it. */
+  const saved = anchor.methods && typeof anchor.methods === 'object' && !Array.isArray(anchor.methods) ? anchor.methods : null;
+  const knownVersion = saved && Number.isInteger(saved.registry) && saved.registry >= 1 && saved.registry <= methodRegistry.REGISTRY_VERSION;
   ProfileSchema.GARMENT_MEASURE_KEYS.forEach((d) => {
     if (!physical(m[d])) return;
-    dims[d] = { method: ProfileSchema.GARMENT_MEASURES[d].method };
+    const method = !saved ? ProfileSchema.GARMENT_MEASURES[d].method
+      : knownVersion && methodRegistry.isMethod(d, saved[d]) ? saved[d] : methodRegistry.NOT_STATED;
+    dims[d] = { method };
     row[d] = { value: m[d], text: String(m[d]) };
   });
   if (!Object.keys(row).length) return null;
@@ -398,15 +413,14 @@ const STATUS_WHY = {
 function inMethodOf(d, refRecord, refRow, method) {
   const own = refRecord.charts.garment.dimensions[d];
   if (!own || !refRow[d]) return null;
-  if (own.method === method) return { value: refRow[d].value, estimated: null };
-  if (d === 'chestWidth') {
-    if (own.method === 'flat-width-armpit-to-armpit' && method === 'garment-circumference') return { value: refRow[d].value * 2, estimated: 'chest around, as twice its flat width' };
-    if (own.method === 'garment-circumference' && method === 'flat-width-armpit-to-armpit') return { value: refRow[d].value / 2, estimated: 'chest flat width, as half its way around' };
-  }
-  /* a sleeve from the centre back and one from the shoulder seam differ
-     by where the shoulder seam sits, which no chart publishes (a dropped
-     shoulder moves it): not converted */
-  return null;
+  /* the canonical rule (./methods.js): the same method, or chest's stated
+     flat ↔ around conversion, called estimated. A sleeve from the centre
+     back and one from the shoulder seam differ by where the seam sits,
+     which no chart publishes: never converted. */
+  const r = methodRegistry.relation(d, own.method, method);
+  if (!r) return null;
+  if (r.relation === 'same') return { value: refRow[d].value, estimated: null };
+  return { value: refRow[d].value * r.factor, estimated: r.estimated };
 }
 
 /* One dimension's tolerance for this record, in its units. The chest's
@@ -420,18 +434,8 @@ function toleranceOf(d, record, params) {
   return toUnits(params.garment[d].tol * (around ? 2 : 1), 'in', record.units);
 }
 
-const METHOD_WORDS = {
-  'flat-width-armpit-to-armpit': 'flat, armpit to armpit',
-  'garment-circumference': 'all the way around',
-  'center-back-to-hem': 'from the centre back',
-  'high-point-shoulder-to-hem': 'from the top of the shoulder',
-  'center-back-to-cuff': 'from the centre back',
-  'shoulder-seam-to-cuff': 'from the shoulder seam',
-  'seam-to-seam': 'seam to seam',
-  'broadest-part-of-shoulders': 'across the broadest part of the shoulders',
-  'body-circumference': 'around the body',
-  'not-stated': 'by a method not stated'
-};
+/* the canonical methods' short words (./methods.js) */
+const METHOD_WORDS = methodRegistry.SHORT_WORDS;
 
 /* How much each dimension counts, from what the shopper said about the
    piece they compare with: what makes its fit good counts more; on a
@@ -494,7 +498,8 @@ function readShopper(profile, record, pool, options) {
   let favoriteRef = null;
   if (favoriteType && anchor && entry.favorite !== 'none') {
     favorite = { answer: entry.favorite || null, likes: anchor.likes || null, brand: anchor.brand || null, size: anchor.size || null, source: null, match: null };
-    const match = matchProduct(anchor, pool, category);
+    /* only this exact product's own measurements: by its link, or its whole name */
+    const match = matchProduct(anchor, pool, category, { exact: true });
     const matchedUsable = Boolean(match) && (sizingSchema.isVerified(match.record) || options.includeUnverified);
     const matchedSize = match ? sizeIn(match.record, anchor.size) : null;
     if (match && !matchedUsable) {
@@ -521,18 +526,15 @@ function readShopper(profile, record, pool, options) {
     /* its brand's chart for that size, for a chest range only — never
        another product's garment measurements */
     if (favorite.source !== 'product' && anchor.brand && anchor.size) {
-      /* T-shirts read brand and size alone only as a chest range. Hoodies
-         and sweatshirts keep the reading the evaluation set was worked out
-         on (the brand's record for that size), until that set is reviewed
-         for the stricter rule — see README, "Fit reference". */
-      claims.push(STRICT_ANCHOR[category] ? { brand: anchor.brand, size: anchor.size, category, from: 'anchor', bodyOnly: true }
-        : { brand: anchor.brand, size: anchor.size, category, from: 'anchor' });
+      /* brand and size alone: only the chest range the brand's chart
+         gives that size, never a product's garment measurements */
+      claims.push({ brand: anchor.brand, size: anchor.size, category, from: 'anchor', bodyOnly: true });
     }
-  } else if (anchor && anchor.brand && anchor.size) claims.push({ brand: anchor.brand, size: anchor.size, category, from: 'anchor' });
+  } else if (anchor && anchor.brand && anchor.size) claims.push({ brand: anchor.brand, size: anchor.size, category, from: 'anchor', bodyOnly: true });
   ((profile && profile.brandSizes) || []).forEach((b) => {
-    /* a hoodie's garment measurements say little about a T-shirt's: for
-       T-shirts, another type's size gives only a chest range */
-    if (b && b.fit === 'about-right' && b.size && CATEGORY_PARAMS[b.category]) claims.push({ brand: b.brand, size: b.size, category: b.category, from: 'usual size', bodyOnly: Boolean(STRICT_ANCHOR[category]) && b.category !== category });
+    /* a usual size in a brand is a label: a chest range from the brand's
+       chart, never another product's garment measurements */
+    if (b && b.fit === 'about-right' && b.size && CATEGORY_PARAMS[b.category]) claims.push({ brand: b.brand, size: b.size, category: b.category, from: 'usual size', bodyOnly: true });
   });
 
   const usable = (r) => (sizingSchema.isVerified(r) || options.includeUnverified) && CATEGORY_PARAMS[r.category] && r.sizeScale === scale;
@@ -1090,6 +1092,11 @@ function recommend(profile, record, opts) {
     shopper.notes.push(sharedDims.length
       ? `The ${named} shares only ${listWords(sharedDims.map((d) => DIM_NAMES[d]))} measured the same way with this product — too few to compare, so it wasn't compared.`
       : `The ${named} shares no measurement taken the same way with this product, so it wasn't compared.`);
+    /* garment against garment, or nothing: a reference that can't be
+       compared is never replaced by the shopper's body and an assumed
+       room around it */
+    const few = sharedDims.length ? tooFew(sharedDims, []) : { message: shopper.notes[shopper.notes.length - 1] };
+    return Object.assign(insufficient(record, [{ code: 'too-few-dimensions', message: few.message }], []), { notes: shopper.notes, anchor: anchorSummary(record, null, shopper) });
   }
   let method = null;
   if (shared) method = 'reference-garment';
@@ -1379,9 +1386,14 @@ function amount(v, unit) {
   return `${whole ? whole : ''}${glyph}${whole || glyph ? '' : '0'} in`;
 }
 /* "the same" when the difference rounds to nothing in the unit shown */
+/* the same difference as data, for a page to draw: "more" (this size is
+   larger), "less" (smaller) or "same" — when it rounds to nothing in the
+   unit shown, the rule differenceWords says "the same" by */
+const roundsToNothing = (diff, unit) => (unit === 'cm' ? Math.abs(diff) < 0.05 : Math.round(Math.abs(diff) * 4) === 0);
+const directionOf = (diff, unit) => (roundsToNothing(diff, unit) ? 'same' : diff > 0 ? 'more' : 'less');
 function differenceWords(d, diff, unit) {
   const w = COMPARE_WORDS[d];
-  const nothing = unit === 'cm' ? Math.abs(diff) < 0.05 : Math.round(Math.abs(diff) * 4) === 0;
+  const nothing = roundsToNothing(diff, unit);
   if (nothing) return `${w.name}: the same as your reference`;
   return `${w.name}: ${amount(diff, unit)} ${diff > 0 ? w.more : w.less}`;
 }
@@ -1458,7 +1470,7 @@ function prepare(profile, record, options) {
   const anchor = found.entry.anchor;
   const notes = [];
   let ref = null;
-  const match = matchProduct(anchor, pool, found.category);
+  const match = matchProduct(anchor, pool, found.category, { exact: true });
   const matchSize = match ? sizeIn(match.record, anchor.size) : null;
   if (match && matchSize && garmentRow(match.record, matchSize) && (sizingSchema.isVerified(match.record) || options.includeUnverified)) {
     ref = { record: match.record, size: matchSize, product: true, claim: { favorite: true } };
@@ -1558,6 +1570,7 @@ function compare(profile, record, opts) {
         withinTolerance: Math.abs(diffRecord) <= tol + EPS,
         measurement: sizingSchema.measurementOf(record, size, d),
         words: differenceWords(d, difference, unit),
+        direction: directionOf(difference, unit),
         estimated: v.estimated || null
       };
     });

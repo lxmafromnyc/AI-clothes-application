@@ -49,6 +49,8 @@
   let feedback = { consent: { store: false }, entries: [] };
   let selected = null;
   let comparison = null;
+  /* the server's decision: the only authority for a size marked recommended */
+  let decision = null;
   let showUnit = null;
   let editingFeedback = null;
   let busy = false;
@@ -172,6 +174,8 @@
       return;
     }
     comparison = result.data.comparison;
+    const d = result.data.decision;
+    decision = d && typeof d === 'object' && ['OK', 'NO_MATCH', 'INSUFFICIENT_DATA'].includes(d.outcome) ? d : null;
     renderComparison();
     renderFeedback();
   }
@@ -195,9 +199,14 @@
     show('result-section', true);
     $('result-title').textContent = `${c.product ? `${c.product.brand} ${c.product.name}` : `${product.brand} ${product.name}`}: each size`;
     const insufficient = c.status === 'insufficient';
-    $('result-summary').textContent = insufficient ? `${c.missing[0].message}${c.next && c.next.length ? ` ${c.next.join(' ')}` : ''}` : c.summary;
-    $('result-reliability').textContent = insufficient ? '' : RELIABILITY[c.reliability];
-    show('result-reliability', !insufficient);
+    /* a size is recommended only when the decision says OK; otherwise the decision's own words say why not */
+    const ok = Boolean(decision && decision.outcome === 'OK');
+    const why = decision && Array.isArray(decision.messages) ? decision.messages.filter((m) => typeof m === 'string') : [];
+    $('result-summary').textContent = insufficient ? `${c.missing[0].message}${c.next && c.next.length ? ` ${c.next.join(' ')}` : ''}`
+      : ok ? c.summary : (why.join(' ') || 'No size recommendation for this item.');
+    /* a reliability belongs to a recommendation: none is said without one */
+    $('result-reliability').textContent = insufficient || !ok ? '' : RELIABILITY[c.reliability];
+    show('result-reliability', !insufficient && ok);
     show('result-units', !insufficient);
     show('result-table-wrap', !insufficient);
     doc.querySelectorAll('input[name="showUnit"]').forEach((r) => { r.checked = r.value === c.unit; });
@@ -214,8 +223,8 @@
         const tr = el('tr');
         const head = el('th', null, s.size);
         head.scope = 'row';
-        if (s.size === c.recommended) { tr.className = 'compare-row--best'; head.append(el('span', 'compare-tag', 'Recommended')); }
-        else if (!c.recommended && s.size === c.closest) { tr.className = 'compare-row--best'; head.append(el('span', 'compare-tag', 'Closest')); }
+        if (ok && s.size === decision.size) { tr.className = 'compare-row--best'; head.append(el('span', 'compare-tag', 'Recommended')); }
+        else if (decision && decision.outcome === 'NO_MATCH' && s.size === decision.closest) { tr.className = 'compare-row--best'; head.append(el('span', 'compare-tag', 'Closest — not recommended')); }
         tr.append(head, ...DIMS.map((d) => cellFor(s.dimensions[d])));
         body.append(tr);
       });
@@ -271,7 +280,8 @@
     const pick = $('fb-size');
     pick.replaceChildren(new Option('Choose', ''), ...sizes.map((s) => new Option(s, s)));
     pick.disabled = false;
-    if (comparison && (comparison.recommended || comparison.closest)) pick.value = comparison.recommended || comparison.closest;
+    const named = decision && (decision.outcome === 'OK' ? decision.size : decision.outcome === 'NO_MATCH' ? decision.closest : null);
+    if (named) pick.value = named;
     const mine = feedback.entries.filter((e) => e.productId === selected);
     $('feedback-saved').replaceChildren(...mine.map((e) => {
       const li = el('li', 'compare-feedback-entry');
@@ -331,7 +341,7 @@
       issues: expected && expected.value === 'no' ? Array.from(doc.querySelectorAll('input[name="fbIssue"]:checked')).map((c) => c.value) : [],
       notes: $('fb-notes').value.trim() || null,
       withReference: !$('fb-reference-wrap').hidden && $('fb-reference').checked,
-      recommendedSize: comparison && comparison.recommended ? comparison.recommended : null
+      recommendedSize: decision && decision.outcome === 'OK' ? decision.size : null
     };
     if (!feedback.consent.store) {
       if (!$('fb-consent').checked) { $('fb-error').textContent = 'Tick “Keep my fit feedback on my account” to save it.'; return; }
@@ -373,6 +383,7 @@
       type = r.value;
       selected = null;
       comparison = null;
+      decision = null;
       show('result-section', false);
       show('feedback-section', false);
       renderReference();

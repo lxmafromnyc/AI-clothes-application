@@ -161,7 +161,8 @@ function holdsContract(d) {
     const profile = chestProfile(31, 'in', { fitGoal: 'oversized' });
     assert.strictEqual(engine.recommend(profile, carhartt).confidence, 'medium');
     const it = fitFor(profile, 'hoodies', [item]).items[0];
-    assert.deepStrictEqual([it.status, it.size, it.reliability, it.decision.confidence], ['ok', 'XS', 'low', 'low']);
+    /* a body estimate, its own result type: the estimated size apart from `size` */
+    assert.deepStrictEqual([it.status, it.resultType, it.size, it.estimate, it.reliability, it.decision.confidence], ['estimate', 'body-estimate', null, 'XS', 'low', 'low']);
   });
 
   await test('1b Carhartt, chest 29 in or 24.5 in: still NO_MATCH — beyond even the estimated XS range', () => {
@@ -517,7 +518,11 @@ function holdsContract(d) {
       sizing.RECORDS.forEach((r) => profiles.forEach((p) => ['compare', 'recommend', undefined].forEach((via) => {
         const d = decision.decide(p, r, { via });
         holdsContract(d);
-        if (via && d.via) assert.strictEqual(d.via, via);
+        /* with a reference garment the answer rests on it alone, whichever route asked */
+        /* a reference for this kind of top (hoodies and sweatshirts share one; a T-shirt's is its own) */
+        const family = (c) => engine.FAMILY[c];
+        const own = Object.entries(p.garments || {}).some(([c, e]) => family(c) === family(r.category) && e && e.anchor && (e.anchor.measurements || e.anchor.product));
+        if (d.via) assert.strictEqual(d.via, own || via === 'compare' ? 'compare' : 'recommend');
         seen.add(d.outcome);
       })));
       assert.deepStrictEqual([...seen].sort(), [INSUFFICIENT_DATA, NO_MATCH, OK].sort());
@@ -529,9 +534,12 @@ function holdsContract(d) {
     const { fitFor } = handler;
     const nike = sizing.byId(NIKE);
     const item = fitFor(chestProfile(39), 'hoodies', [{ brand: 'Nike', name: nike.product.name, url: nike.product.url }]).items[0];
-    assert.deepStrictEqual([item.status, item.by, item.size, item.reliability], ['ok', 'profile', 'M', engine.recommend(chestProfile(39), nike).confidence]);
+    /* body measurements only: a body estimate, never a size called the shopper's */
+    assert.deepStrictEqual([item.status, item.by, item.resultType, item.size, item.estimate, item.reliability], ['estimate', 'body', 'body-estimate', null, 'M', engine.recommend(chestProfile(39), nike).confidence]);
     assert.strictEqual(item.decision.outcome, OK);
-    assert.strictEqual(item.decision.size, item.size);
+    assert.strictEqual(item.decision.comparison, 'body-to-body-chart');
+    assert.strictEqual(decision.resultTypeOf(item.decision), 'body-estimate');
+    assert.strictEqual(item.decision.size, item.estimate);
   });
 
   out(`\n${passed} passed, ${failures.length} failed\n\n`);
