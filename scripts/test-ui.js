@@ -2847,11 +2847,11 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     const g = record.charts.garment;
     const at = size || 'S';
     await page.waitForSelector('#ffc-form', { timeout: 10000 });
-    await page.selectOption('#ffc-type', record.category);
+    await page.check(`input[name="ff-type"][value="${record.category}"]`);
     await page.fill('#ffc-brand', record.brand);
     await page.fill('#ffc-name', record.product.name);
     await page.fill('#ffc-size', at);
-    await page.check(`input[name="ffc-unit"][value="${record.units}"]`);
+    await page.check(`input[name="ff-unit"][value="${record.units}"]`);
     for (const d of Object.keys(g.dimensions)) {
       await page.fill(`#ffc-m-${d}`, String(g.sizes[at][d].value));
       await page.selectOption(`#ffc-how-${d}`, g.dimensions[d].method);
@@ -3052,12 +3052,18 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
       await audit('step 1 signed out, and step 2: the item’s form with its instructions');
       await page.fill('#ffc-m-chestWidth', '-3');
       await page.fill('#ffc-m-bodyLength', '68');
-      await page.click('#ff-submit');
+      /* pressed before it's ready, as a shopper might: each problem said where it is, your garment's too */
+      await page.click('#ff-submit', { force: true });
       await page.waitForSelector('#ffc-m-chestWidth-error.show');
       assert.strictEqual(await page.$$eval('#ffc-form .ffr-error.show', (ns) => ns.length), 3, 'the size, the chest and the length’s method, each beside its own field');
-      await audit('the item’s problems, each beside its field');
+      assert.strictEqual(await page.isVisible('#ff-garment-error'), true);
+      await audit('the item’s and your garment’s problems, each beside its field');
+      /* an explanation opened, audited too */
+      await page.click('button[aria-controls="ffc-m-chestWidth-info"]');
+      await audit('a measurement’s explanation, opened');
+      await page.click('button[aria-controls="ffc-m-chestWidth-info"]');
       await page.fill('#ffc-m-chestWidth', '56');
-      await page.check('input[name="ffc-unit"][value="in"]');
+      await page.check('input[name="ff-unit"][value="in"]');
       assert.strictEqual(await page.inputValue('#ffc-m-chestWidth'), '22.05');
       await audit('the item in inches');
       await page.close();
@@ -3264,14 +3270,12 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
       await page.waitForSelector('#ff-anchors:not([hidden]) .ff-anchor', { timeout: 10000 });
       const audit = guideAudit(page, viewport);
       await audit('both halves at once: the progress, the wardrobe anchors, the garment form and the item’s form');
-      await page.click('.ffr-measure > summary');
       await page.click('#ffr-use');
       await page.waitForSelector('#ffr-brand-error.show');
       await audit('the garment form, measurements open, with an error');
       await page.selectOption('#ffr-size', 'L');
       await page.fill('#ffr-brand', 'Carhartt');
       for (const [k, v] of Object.entries({ chestWidth: 58, bodyLength: 68, shoulderWidth: 50, sleeveLength: 62 })) await page.fill(`#ffr-m-${k}`, String(v));
-      await page.selectOption('#ffr-unit', 'cm');
       await page.click('#ffr-use');
       await page.waitForSelector('.ff-ref--visit');
       await audit('the garment kept for this visit');
@@ -3347,7 +3351,12 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     accountState = accountReply({});
     const page = await openPage('index.html');
     await page.emulateMedia({ reducedMotion: 'reduce' });
-    await page.waitForSelector('#ffc-form', { timeout: 10000 });
+    await page.waitForSelector('#ff-reference .ffr-form', { timeout: 10000 });
+    /* a garment typed in: Compare fit keeps it, then compares */
+    await page.check('input[name="ff-unit"][value="cm"]');
+    await page.selectOption('#ffr-size', 'L');
+    await page.fill('#ffr-brand', 'Carhartt');
+    for (const [k, v] of Object.entries({ chestWidth: 58, bodyLength: 68, shoulderWidth: 50, sleeveLength: 62 })) await page.fill(`#ffr-m-${k}`, String(v));
     await submitItem(page);
     await page.waitForSelector('#fit-result[data-state="done"]');
     const moving = await page.evaluate(() => [...document.querySelectorAll('#find-fit *, #fit-result *')]
