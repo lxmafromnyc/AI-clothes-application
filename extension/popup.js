@@ -14,10 +14,10 @@
      4  the chart is drawn by Fynd's own renderer (assets/size-chart.js):
         values, units and what it measures as the page gave them, read
         from the browser and not checked by Fynd
-     5  "Open in Fynd" opens Find Fit with the chart in the address
-        fragment (#fynd-chart=…), which stays in the browser; with no
-        chart, with the page's address (#fynd-url=…), so Find Fit can
-        look in Fynd's catalog of checked charts
+     5  nothing is handed to Find Fit: Find Fit takes the item's
+        measurements by hand, so the popup says to copy them into its
+        item form (the old "Open in Fynd" handover is gone until the
+        extension is brought to the new form)
 
    The popup makes no network request of its own.
 
@@ -117,27 +117,16 @@
     $('result-body').replaceChildren(...render(chart, payload.page.url, { linked: true }));
     $('other').hidden = !(found && found.list.length > 1);
     const hasChart = Boolean(payload.chart || payload.sizes.length);
-    $('open-fynd').textContent = hasChart ? 'Open in Fynd' : 'Check Fynd’s catalog';
     $('open-note').textContent = hasChart
-      ? 'Opens Find Fit with this chart. Only the chart and the product’s address go with it, in the link itself.'
-      : 'Opens Find Fit with this product’s address, to look for a chart Fynd has checked.';
+      ? 'To compare a size with a garment you own, enter its finished-garment measurements from this chart in Find Fit’s item form, with how the chart measures each one.'
+      : 'This page shows no measurements to compare. Find Fit needs a size’s finished-garment measurements, entered by hand from the product’s chart.';
     document.body.dataset.result = chart.status;
     show('result');
-  }
-
-  function openInFynd() {
-    if (!payload) return;
-    const base = `${FYND_SITE.replace(/\/$/, '')}/index.html`;
-    const url = payload.chart || payload.sizes.length
-      ? `${base}#fynd-chart=${encode(payload)}`
-      : `${base}#fynd-url=${encodeURIComponent(payload.page.url)}`;
-    chrome.tabs.create({ url });
   }
 
   $('check').addEventListener('click', check);
   $('retry').addEventListener('click', check);
   $('again').addEventListener('click', check);
   $('other-button').addEventListener('click', choose);
-  $('open-fynd').addEventListener('click', openInFynd);
   show('start');
 })();

@@ -289,21 +289,7 @@ async function launch(extDir) {
     assert.match(await again.textContent('#result .size-chart-unit'), /inches, as published/);
     assert.match(await again.textContent('#result .size-chart-method'), /^How it’s measured, in the page’s words — Sleeve length \(center back\): center back$/);
     assert.strictEqual(await again.getAttribute('#result-product a', 'href'), 'https://shop.example.test/products/FIX-HOOD-8/00', 'tied to the product’s canonical page');
-    /* accepted: only the chart travels, in the address fragment, and Find Fit draws it unverified */
-    const asked = apiAsked.length;
-    const page = await openInFynd(again);
-    await page.waitForSelector('#fit-result[data-from="extension"][data-state="ok"]');
-    assert.strictEqual(await page.textContent('#fit-result .size-chart-name'), 'Finished-garment measurements');
-    assert.match(await page.textContent('#fit-result .size-chart-method'), /center back/);
-    /* once step 1 has read the shopper's state — the moment an early check could ask — still nothing sent */
-    await page.waitForSelector('#ff-reference[data-state]');
-    await page.waitForTimeout(600);
-    assert.strictEqual(await page.isHidden('#ff-check'), true, 'no check of a link the extension handed over');
-    assert.strictEqual(apiAsked.length, asked, 'nothing was sent to Fynd’s server');
-    await page.waitForSelector('#fit-compare:not([hidden])');
-    assert.match(await page.textContent('#fit-compare'), /Fynd holds no checked garment measurements for this item/, 'read, not checked: never compared');
-    assert.strictEqual(await page.getAttribute('#fit-compare', 'data-verdict'), 'unsupported');
-    await page.close();
+    /* (handing the chart to Find Fit is deferred with the extension's other changes: Find Fit now takes its item by hand) */
     await shop.close();
     await again.close();
   });
@@ -322,7 +308,9 @@ async function launch(extDir) {
     assert.strictEqual(await popup.getAttribute('body', 'data-result'), 'unavailable');
     assert.strictEqual(await popup.textContent('#result .size-chart-status'), 'No sizing chart found on this page');
     assert.match(await popup.textContent('#result .size-chart-note'), /Open the retailer’s size guide on the page, then check again\./);
-    assert.strictEqual(await popup.textContent('#open-fynd'), 'Check Fynd’s catalog');
+    /* nothing handed to Find Fit: no button that would do nothing, and what to do instead */
+    assert.strictEqual(await popup.$('#open-fynd'), null);
+    assert.match(await popup.textContent('#open-note'), /^This page shows no measurements to compare\. Find Fit needs a size’s finished-garment measurements, entered by hand from the product’s chart\.$/);
     await shop.close();
     await popup.close();
   });
@@ -367,95 +355,20 @@ async function launch(extDir) {
     }
   });
 
-  section('into Find Fit');
+  section('nothing handed to Find Fit');
 
-  async function openInFynd(popup) {
-    const [page] = await Promise.all([context.waitForEvent('page'), popup.click('#open-fynd')]);
-    await page.waitForLoadState('domcontentloaded');
-    return page;
-  }
-
-  await test('"Open in Fynd" shows the same chart on Find Fit, labelled as read in the browser and unverified; the fragment is cleared once read', async () => {
+  await test('with a chart read, the popup offers no handover to Find Fit — no button that would do nothing — and says to enter the measurements in its item form', async () => {
     const { shop, popup } = await check('one-table.html');
-    const asked = apiAsked.length;
-    const page = await openInFynd(popup);
-    await page.waitForSelector('#fit-result[data-from="extension"][data-state="ok"]');
-    assert.strictEqual(new URL(page.url()).hash, '', 'the chart is gone from the address');
-    assert.strictEqual(await page.textContent('#fit-result-title'), 'Illustrative Brand · Illustrative Garment Tee');
-    assert.strictEqual(await page.getAttribute('#fit-result-product a', 'href'), `${site}/products/garment-tee`);
-    const rows = await page.$$eval('#fit-result tbody tr', (trs) => trs.map((tr) => [...tr.children].map((c) => c.textContent)));
-    assert.deepStrictEqual(rows, [['S', '51', '70'], ['M', '54', '72'], ['L', '57', '74']]);
-    assert.match(await page.textContent('#fit-result .size-chart-unit'), /centimetres/);
-    assert.strictEqual(await page.textContent('#fit-result .size-chart-caveat'), 'Read from the product page open in your browser. Not checked by Fynd.');
-    assert.match(await page.textContent('#fit-result .size-chart-details'), /Not verified — read automatically just now/);
-    assert.ok(!/Verified —/.test(await page.textContent('#fit-result')));
-    /* never compared: read in the browser, checked by nobody */
-    await page.waitForSelector('#fit-compare:not([hidden])');
-    assert.strictEqual(await page.textContent('#fit-compare .fit-compare-title'), 'Fynd can’t compare this item yet');
-    assert.match(await page.textContent('#fit-compare'), /hasn’t been checked, so Fynd won’t compare it[\s\S]*Fynd holds no checked garment measurements for this item/);
-    assert.strictEqual(apiAsked.length, asked, 'nothing was sent to Fynd’s server');
-    assert.strictEqual(await page.inputValue('#fit-url'), `${site}/products/garment-tee`);
-    await page.close();
+    assert.strictEqual(await popup.$('#open-fynd'), null);
+    assert.match(await popup.textContent('#open-note'), /^To compare a size with a garment you own, enter its finished-garment measurements from this chart in Find Fit’s item form, with how the chart measures each one\.$/);
     await shop.close();
     await popup.close();
   });
 
-  await test('a body chart from a size guide: Find Fit says it measures the body, not the garment, and never compares it with a garment', async () => {
-    const { shop, popup } = await check('modal-guide.html');
-    const page = await openInFynd(popup);
-    await page.waitForSelector('#fit-result[data-from="extension"]');
-    assert.strictEqual(await page.textContent('#fit-result .size-chart-kind'), 'Body measurements — the body each size fits, not the garment');
-    await page.waitForSelector('#fit-compare:not([hidden])');
-    assert.match(await page.textContent('#fit-compare'), /Fynd cannot directly compare these measurements with your reference garment\. No size recommendation is available from this chart alone\./);
-    assert.deepStrictEqual([await page.getAttribute('#fit-compare', 'data-verdict'), await page.textContent('#fit-compare .fit-compare-title')], ['body-only', 'This chart measures the body, not the finished garment.']);
-    assert.strictEqual(await page.$$eval('#fit-compare .fit-compare-recommended, #fit-compare .fit-compare-closest, #fit-compare .fit-compare-differences', (ns) => ns.length), 0);
-    await page.close();
-    await shop.close();
-    await popup.close();
-  });
 
-  await test('no chart on the page: "Check Fynd’s catalog" asks Find Fit to look the product up, as if its link were pasted', async () => {
-    const { shop, popup } = await check('guide-closed.html');
-    const asked = apiAsked.length;
-    const page = await openInFynd(popup);
-    await page.waitForFunction(() => document.getElementById('fit-result').dataset.state === 'unavailable');
-    assert.strictEqual(new URL(page.url()).hash, '');
-    await page.waitForSelector('#ff-reference[data-state]');
-    await page.waitForTimeout(600);
-    assert.strictEqual(apiAsked.length, asked + 1, 'one lookup, for this product');
-    assert.ok(decodeURIComponent(apiAsked[apiAsked.length - 1]).includes('/fixtures/guide-closed.html'));
-    await page.close();
-    await shop.close();
-    await popup.close();
-  });
 
-  await test('from the extension’s chart, "Check Fynd’s catalog" finds the product Fynd holds a record for, with that record’s own status', async () => {
-    const page = await context.newPage();
-    const Payload = require('../assets/fynd-payload');
-    const payload = Payload.validate({ v: 1, kind: Payload.KIND, readAt: '2026-10-17', page: { url: 'https://www.uniqlo.com/us/en/products/E475378-000/00', title: 'Sweat Pullover Hoodie' }, product: { name: 'Sweat Pullover Hoodie', brand: 'UNIQLO' }, sizes: [], chart: { where: 'product-page', measures: 'not-stated', unit: null, title: null, columns: ['Chest'], rows: [{ size: 'S', values: ['1'] }, { size: 'M', values: ['2'] }] } }).payload;
-    await page.goto(`${site}/index.html#fynd-chart=${Payload.encode(payload)}`);
-    await page.waitForSelector('#fit-result[data-from="extension"]');
-    await page.click('.fit-catalog');
-    await page.waitForFunction(() => document.getElementById('fit-result').dataset.state === 'ok' && !document.getElementById('fit-result').dataset.from);
-    /* the record's own status: the UNIQLO pair is pending review */
-    assert.strictEqual(await page.textContent('#fit-result .size-chart-caveat'), 'This product’s own chart, copied from UNIQLO’s page on 2026-10-10 — pending review, not yet checked.');
-    await page.close();
-  });
 
-  await test('a tampered or invented chart link is refused on Find Fit, and nothing from it is shown', async () => {
-    const page = await context.newPage();
-    const Payload = require('../assets/fynd-payload');
-    const bad = Buffer.from(JSON.stringify({ v: 1, kind: Payload.KIND, page: { url: 'javascript:alert(1)' }, chart: null })).toString('base64url');
-    for (const hash of [`#fynd-chart=${bad}`, '#fynd-chart=%%%notbase64', '#fynd-chart=e30']) {
-      await page.goto(`${site}/index.html`);
-      await page.evaluate((h) => { location.hash = h; }, hash);
-      await page.waitForFunction(() => document.getElementById('fit-result').dataset.state === 'error');
-      assert.strictEqual(await page.textContent('#fit-result-title'), 'This chart couldn’t be opened');
-      assert.strictEqual(await page.$$eval('#fit-result table', (ns) => ns.length), 0);
-      assert.strictEqual(new URL(page.url()).hash, '');
-    }
-    await page.close();
-  });
+
 
   await context.close();
 

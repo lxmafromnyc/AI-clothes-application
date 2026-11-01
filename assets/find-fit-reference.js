@@ -27,8 +27,8 @@
 
    The form is there from the start, beside the item: the two can be
    given in either order, and changing the item never takes away what
-   was typed. Whether the two can be compared is still the server's to
-   say (assets/find-fit.js, checking first).
+   was typed. Whether the two can be compared is the server's to say,
+   when Compare fit is pressed (assets/find-fit-manual.js).
 
    Find your garment: a box at the top of the form searches Fynd's
    catalogue and its checked records as the shopper types

@@ -2,14 +2,16 @@
 /* =========================================================
    Fynd — the catalogue in a real browser
 
-   Find Fit and the product page in Chromium, against the real
+   The product page in Chromium, against the real
    /api/size-recommendation handler, with an authorized-catalogue
    FIXTURE synced the way scripts/sync-catalog.js syncs one (every code
    from E910001 / E950000 and every "FIXTURE" name is invented). What a
-   shopper does: choose UNIQLO, type "black oversized hoodie", filter,
-   page through more than a thousand products a page at a time, open
-   one, and see its sizing — from Fynd's sizing pipeline by its exact
-   code, never from the catalogue.
+   shopper sees on a product's page, reached by its exact code: the
+   catalogue's price, colours, sizes and description, each said to be
+   the catalogue's, and its sizing — from Fynd's sizing pipeline by that
+   code, never from the catalogue. (Find Fit no longer browses the
+   catalogue: its item is entered by hand. Searching, filtering and
+   paging the catalogue are tested at the API in test-catalog-feed.js.)
 
    Offline: UNIQLO's pages are never read (the chart reader's transport
    refuses), and the browser can reach nothing but this server.
@@ -118,332 +120,31 @@ async function test(name, fn) {
     await page.goto(`${ORIGIN}/${file}`, { waitUntil: 'domcontentloaded' });
     return page;
   }
-  /* one change, and the newest answer for it drawn */
-  const answered = async (page, action) => {
-    const before = Number(await page.getAttribute('#fit-browser', 'data-answers')) || 0;
-    await action();
-    await page.waitForFunction((n) => Number(document.getElementById('fit-browser').dataset.answers) > n, before);
-  };
-  const codes = (page) => page.$$eval('.fit-product', (bs) => bs.map((b) => b.dataset.code));
-  /* Find Fit's brands, then UNIQLO chosen: its products open in the popup */
-  const openUniqlo = async (page) => {
-    await page.waitForSelector('#fit-browser[data-brands="ready"]');
-    await page.click('.fit-brand-choice[data-brand="uniqlo"]');
-  };
-  const ready = async (page) => { await openUniqlo(page); await page.waitForSelector('#fit-browser[data-answers="1"]'); };
+  console.log('\na product’s page, with UNIQLO’s catalogue connected');
 
-  console.log('\nFind Fit, with UNIQLO’s catalogue connected');
 
-  await test('choosing UNIQLO lists the catalogue a page at a time: 24 cards of 1,230, the source and date named, no limited-coverage notice, and never "full"', async () => {
-    const page = await openPage('index.html');
-    await ready(page);
-    assert.strictEqual(await page.$eval('#fit-brand-dialog', (d) => d.open), true, 'the products are in the popup');
-    assert.strictEqual(await page.textContent('#fit-brand-dialog-title'), 'UNIQLO');
-    assert.strictEqual((await codes(page)).length, 24);
-    assert.match(await page.textContent('#fit-browser-status'), /^Showing 24 of 1230$/);
-    assert.match(await page.textContent('#fit-coverage'), /^1230 UNIQLO US products from FIXTURE UNIQLO US feed, updated \d{4}-\d{2}-\d{2}\.$/);
-    assert.ok(!/full/i.test(await page.textContent('#fit-coverage')));
-    assert.strictEqual(await page.isHidden('#fit-catalog-note'), true);
-    assert.strictEqual(await page.$$eval('.fit-product img', (is) => is.filter((i) => !i.getAttribute('src').startsWith('https://image.uniqlo.com/')).length), 0, 'photos only from UNIQLO’s image host');
-    await page.context().close();
-  });
 
-  await test('typing "black oversized hoodie" asks the server once typing pauses, and shows the black oversized hoodies with their catalogue price', async () => {
-    const page = await openPage('index.html');
-    await ready(page);
-    asked.length = 0;
-    await answered(page, () => page.type('#fit-product-search', 'black oversized hoodie', { delay: 15 }));
-    assert.deepStrictEqual(await codes(page), ['E471808-000', 'E910001-000']);
-    assert.ok(asked.filter((q) => /q=/.test(q)).length <= 3, `asked ${asked.length} times while typing, not once a letter`);
-    assert.strictEqual(await page.textContent('#fit-browser-status'), '');
-    assert.strictEqual(await page.textContent('.fit-product[data-code="E910001-000"] .fit-product-price'), '$49.90 (was $59.90)');
-    assert.strictEqual(await page.textContent('.fit-product[data-code="E471808-000"] .fit-product-name'), 'Sweat Oversized Pullover Hoodie', 'Fynd’s own name for a product it holds a record of');
-    assert.strictEqual(await page.textContent('.fit-product[data-code="E471808-000"] .fit-product-holds'), 'Fynd has this product’s chart, not yet checked');
-    /* Enter asks at once */
-    await answered(page, async () => { await page.fill('#fit-product-search', 'parka'); await page.press('#fit-product-search', 'Enter'); });
-    assert.deepStrictEqual(await codes(page), ['E910016-000']);
-    await page.context().close();
-  });
 
-  await test('when no product matches every word, the closest are shown and the word that matched nothing is named — as text, whatever was typed', async () => {
-    const page = await openPage('index.html');
-    await ready(page);
-    await answered(page, () => page.fill('#fit-product-search', 'magenta oversized hoodie'));
-    assert.deepStrictEqual((await codes(page)).slice(0, 2), ['E471808-000', 'E910001-000']);
-    assert.match(await page.textContent('#fit-browser-status'), /No product here matches every word — nothing matched “magenta”, so the closest matches are shown\./);
-    await answered(page, () => page.fill('#fit-product-search', 'tuxedo'));
-    assert.strictEqual((await codes(page)).length, 0);
-    assert.strictEqual(await page.textContent('#fit-browser-status'), 'No products match. Nothing here matched “tuxedo”. Clear the search or choose another type.');
-    await answered(page, () => page.fill('#fit-product-search', '<img src=x onerror="window.__owned=1">'));
-    assert.strictEqual(await page.evaluate(() => window.__owned), undefined);
-    assert.strictEqual(await page.$$eval('#fit-browser img:not(.fit-product img)', (is) => is.length), 0, 'nothing typed became an element');
-    await page.context().close();
-  });
 
-  await test('"Show more" asks for the next page and adds it; the page never holds the whole catalogue', async () => {
-    const page = await openPage('index.html');
-    await ready(page);
-    asked.length = 0;
-    await answered(page, () => page.click('#fit-products-more'));
-    assert.strictEqual((await codes(page)).length, 48);
-    assert.ok(asked.some((q) => /offset=24/.test(q)), asked.join(' '));
-    assert.match(await page.textContent('#fit-browser-status'), /^Showing 48 of 1230$/);
-    assert.strictEqual(new Set(await codes(page)).size, 48, 'no card twice');
-    assert.match(await page.textContent('#fit-products-more'), /Show more \(1182 more\)/);
-    await page.context().close();
-  });
 
-  await test('filters: a type, who it’s for (kids too), and "In stock only" — each answered by the server, combinable with the search', async () => {
-    const page = await openPage('index.html');
-    await ready(page);
-    const kinds = await page.$$eval('.fit-filter[data-group="kind"]', (bs) => bs.map((b) => b.textContent));
-    assert.ok(['All', 'T-shirts', 'Sweatshirts & Hoodies', 'Outerwear', 'Jeans', 'Dresses & Skirts'].every((k) => kinds.includes(k)), kinds.join(', '));
-    assert.deepStrictEqual(await page.$$eval('.fit-filter[data-group="line"]', (bs) => bs.map((b) => b.textContent)), ['Everyone', 'Men', 'Women', 'Kids']);
-    await answered(page, () => page.click('.fit-filter[data-group="kind"]:has-text("Outerwear")'));
-    assert.deepStrictEqual(await codes(page), ['E910016-000', 'E910017-000']);
-    await answered(page, () => page.click('.fit-filter[data-group="line"]:has-text("Women")'));
-    assert.deepStrictEqual(await codes(page), ['E910017-000']);
-    await answered(page, () => page.click('.fit-filter[data-group="kind"]:has-text("Sweatshirts & Hoodies")'));
-    await answered(page, () => page.click('.fit-filter[data-group="line"]:has-text("Kids")'));
-    assert.deepStrictEqual(await codes(page), ['E910019-000']);
-    await answered(page, () => page.click('.fit-filter[data-group="line"]:has-text("Everyone")'));
-    const before = await codes(page);
-    assert.ok(before.includes('E910004-000'), 'the sold-out cropped hoodie, before filtering');
-    assert.strictEqual(await page.textContent('.fit-product[data-code="E910004-000"] .fit-product-stock'), 'Out of stock');
-    await answered(page, () => page.click('.fit-filter[data-group="stock"]'));
-    const stocked = await codes(page);
-    assert.ok(!stocked.includes('E910004-000') && stocked.length < before.length, stocked.join(' '));
-    assert.ok(!stocked.includes('E475378-000'), 'a product with no known stock isn’t called in stock');
-    await answered(page, () => page.fill('#fit-product-search', 'oversized'));
-    assert.deepStrictEqual(await codes(page), ['E471808-000', 'E910001-000', 'E910003-000'], 'E471808 is in stock by the catalogue');
-    await page.context().close();
-  });
 
-  await test('colour and size chips come from the catalogue’s own colours and sizes, and narrow the list on the server — with in stock, per colour and size together', async () => {
-    const page = await openPage('index.html');
-    await ready(page);
-    const colours = await page.$$eval('.fit-filter[data-group="colour"]', (bs) => bs.map((b) => b.textContent));
-    assert.deepStrictEqual(colours, ['Any', 'White', 'Black', 'Gray', 'Navy', 'Green', 'Beige']);
-    const sizes = await page.$$eval('.fit-filter[data-group="size"]', (bs) => bs.map((b) => b.textContent));
-    assert.ok(['Any', 'XS', 'S', 'M', 'L', 'XL', '110'].every((x) => sizes.includes(x)), sizes.join(' '));
-    await answered(page, () => page.click('.fit-filter[data-group="kind"]:has-text("Sweatshirts & Hoodies")'));
-    await answered(page, () => page.click('.fit-filter[data-group="colour"][data-value="black"]'));
-    await answered(page, () => page.click('.fit-filter[data-group="size"][data-value="XS"]'));
-    const blackXs = await codes(page);
-    assert.ok(blackXs.includes('E910001-000') && blackXs.includes('E910002-000'), blackXs.join(' '));
-    await answered(page, () => page.click('.fit-filter[data-group="stock"]'));
-    const stocked = await codes(page);
-    assert.ok(!stocked.includes('E910001-000') && stocked.includes('E910002-000'), `E910001 is sold out in black XS: ${stocked.join(' ')}`);
-    await answered(page, () => page.click('.fit-filter[data-group="colour"][data-value="all"]'));
-    assert.ok((await codes(page)).length >= stocked.length);
-    await page.context().close();
-  });
 
-  await test('only the newest answer is drawn: a slow earlier answer arriving late never replaces a later one', async () => {
-    const page = await openPage('index.html');
-    await ready(page);
-    let release;
-    const held = new Promise((r) => { release = r; });
-    await page.route(/q=hoodie/, async (route) => { await held; await route.continue(); });
-    await page.fill('#fit-product-search', 'hoodie');
-    await page.press('#fit-product-search', 'Enter');
-    await answered(page, async () => { await page.fill('#fit-product-search', 'jeans'); await page.press('#fit-product-search', 'Enter'); });
-    release();
-    await page.waitForTimeout(300);
-    assert.deepStrictEqual(await codes(page), ['E910012-000', 'E910011-000']);
-    assert.strictEqual(await page.getAttribute('#fit-browser', 'data-query'), 'jeans');
-    await page.context().close();
-  });
-
-  await test('when the catalogue can’t be fetched, Find Fit says so and offers the link box; a failed "Show more" keeps what is shown', async () => {
-    failCatalog = (u) => u.searchParams.get('brand') === 'uniqlo' && !u.searchParams.has('detail') && !u.searchParams.has('item');
-    const page = await openPage('index.html');
-    await openUniqlo(page);
-    await page.waitForSelector('#fit-browser[data-state="unavailable"]');
-    assert.match(await page.textContent('#fit-browser-status'), /couldn’t be loaded just now.*close this and paste a product’s link instead/);
-    assert.strictEqual((await codes(page)).length, 0);
-    /* closing it, the link box is right there; opening it again asks again */
-    await page.click('#fit-brand-dialog-close');
-    assert.strictEqual(await page.isVisible('#fit-link-alt'), true);
-    failCatalog = null;
-    await answered(page, () => page.click('.fit-brand-choice[data-brand="uniqlo"]'));
-    assert.strictEqual((await codes(page)).length, 24, 'a failed load is retried on the next open');
-    await page.context().close();
-    const again = await openPage('index.html');
-    await ready(again);
-    failCatalog = (u) => u.searchParams.has('offset');
-    await answered(again, () => again.click('#fit-products-more'));
-    assert.strictEqual((await codes(again)).length, 24);
-    assert.match(await again.textContent('#fit-browser-status'), /More products couldn’t be loaded just now/);
-    failCatalog = null;
-    await again.context().close();
-  });
 
   console.log('\nthe UNIQLO popup');
 
-  await test('nothing is fetched until UNIQLO is chosen; then the popup opens over Find Fit with the search box focused', async () => {
-    const start = asked.length;
-    const page = await openPage('index.html');
-    await page.waitForSelector('#fit-browser[data-brands="ready"]');
-    await page.waitForTimeout(300);
-    await page.waitForSelector('#ff-anchors[data-state="ready"]', { state: 'attached' });
-    /* the brand list and Find Fit's wardrobe anchors (Fynd's own records,
-       nothing about the shopper or a product): no product is looked up */
-    assert.deepStrictEqual(asked.slice(start).sort(), ['?anchors=1', '?brands=1'], 'only the brand list and the anchors are asked for on page load');
-    assert.strictEqual(await page.$eval('#fit-brand-dialog', (d) => d.open), false);
-    assert.match(await page.textContent('.fit-brand-choice[data-brand="uniqlo"]'), /UNIQLO\s*1230 products · Browse/);
-    await openUniqlo(page);
-    await page.waitForSelector('#fit-browser[data-answers="1"]');
-    assert.strictEqual(await page.evaluate(() => document.activeElement.id), 'fit-product-search');
-    assert.strictEqual(await page.$eval('#fit-brand-dialog', (d) => d.matches(':modal')), true, 'modal: the page behind is inert');
-    await page.context().close();
-  });
 
-  await test('Escape, the close button and a click outside each close it, focus returns to UNIQLO, and the search is kept for the next open', async () => {
-    const page = await openPage('index.html');
-    await ready(page);
-    await answered(page, () => page.fill('#fit-product-search', 'black oversized hoodie'));
-    const found = await codes(page);
-    /* Escape from the list (not the search box, where it first clears the words, as any search box does) */
-    await page.focus('#fit-brand-dialog-close');
-    await page.keyboard.press('Escape');
-    assert.strictEqual(await page.$eval('#fit-brand-dialog', (d) => d.open), false);
-    assert.strictEqual(await page.evaluate(() => document.activeElement.dataset.brand), 'uniqlo');
-    const calls = asked.length;
-    await page.click('.fit-brand-choice[data-brand="uniqlo"]');
-    assert.strictEqual(await page.inputValue('#fit-product-search'), 'black oversized hoodie');
-    assert.deepStrictEqual(await codes(page), found);
-    assert.strictEqual(asked.length, calls, 'reopening asks nothing again');
-    await page.click('#fit-brand-dialog-close');
-    assert.strictEqual(await page.$eval('#fit-brand-dialog', (d) => d.open), false);
-    await page.click('.fit-brand-choice[data-brand="uniqlo"]');
-    await page.mouse.click(5, 5);
-    assert.strictEqual(await page.$eval('#fit-brand-dialog', (d) => d.open), false, 'a click on the backdrop closes it');
-    await page.context().close();
-  });
 
-  await test('choosing a product in the popup makes it the item to compare, with Fynd’s product page a link away — Fynd, not UNIQLO', async () => {
-    const page = await openPage('index.html');
-    await ready(page);
-    const first = (await codes(page))[0];
-    await page.click(`.fit-product[data-code="${first}"]`);
-    await page.waitForSelector('#ff-picked:not([hidden])');
-    await Promise.all([page.waitForURL(/product\.html\?brand=uniqlo&item=/), page.click('#ff-picked .ff-picked-page')]);
-    assert.strictEqual(new URL(page.url()).origin, ORIGIN);
-    assert.strictEqual(new URL(page.url()).searchParams.get('item'), first);
-    await page.waitForSelector('#product[data-state="ready"]');
-    await page.context().close();
-  });
 
-  await test('each card keeps four facts apart — in the catalogue, a sizing chart, verified garment measurements, comparable — and its product ID', async () => {
-    const page = await openPage('index.html');
-    await ready(page);
-    const factsOf = (code) => page.$$eval(`.fit-product[data-code="${code}"] .fit-product-fact`, (fs) => fs.map((f) => [f.dataset.fact, f.dataset.value, f.textContent]));
-    assert.deepStrictEqual(await factsOf('E910001-000'), [
-      ['catalogue', 'authorized', 'In UNIQLO’s catalogue'],
-      ['chart', 'general', 'General chart only'],
-      ['garment', 'none', 'No garment measurements'],
-      ['comparable', 'false', 'Can’t be compared yet']
-    ], 'in the catalogue is not sized');
-    assert.deepStrictEqual(await factsOf('E471808-000'), [
-      ['catalogue', 'authorized', 'In UNIQLO’s catalogue'],
-      ['chart', 'own', 'Sizing chart'],
-      ['garment', 'unverified', 'Garment measurements not verified'],
-      ['comparable', 'false', 'Can’t be compared yet']
-    ]);
-    assert.deepStrictEqual((await factsOf('E475378-000'))[0], ['catalogue', 'fynd-list', 'Not from a catalogue feed']);
-    assert.strictEqual(await page.textContent('.fit-product[data-code="E910001-000"] .fit-product-code'), 'Product ID E910001-000');
-    assert.strictEqual(await page.$$eval('.fit-product[data-comparable="true"]', (bs) => bs.length), 0, 'nothing here is comparable');
-    await page.context().close();
-  });
 
-  await test('the count says how many came back of how many match of how many are listed — through every page of hoodies', async () => {
-    const page = await openPage('index.html');
-    await ready(page);
-    assert.strictEqual(await page.textContent('#fit-browser-count'), '24 shown · 1230 matching · 1230 listed in all');
-    const kinds = await page.$$eval('.fit-filter[data-group="kind"]', (bs) => bs.map((b) => b.dataset.value));
-    assert.ok(kinds.indexOf('hoodies') === kinds.indexOf('sweatshirts-hoodies') + 1 && kinds.includes('sweatshirts'), kinds.join(', '));
-    await answered(page, () => page.click('.fit-filter[data-group="kind"][data-value="hoodies"]'));
-    assert.strictEqual(await page.getAttribute('.fit-filter[data-value="hoodies"]', 'aria-pressed'), 'true');
-    const hoodies = await codes(page);
-    assert.deepStrictEqual(hoodies.slice().sort(), ['E471808-000', 'E475378-000', 'E910001-000', 'E910002-000', 'E910004-000', 'E910019-000', 'E910023-000']);
-    assert.ok(asked.some((q) => /category=hoodies/.test(q)), 'asked of the server');
-    assert.strictEqual(await page.textContent('#fit-browser-count'), '7 shown · 7 matching · 1230 listed in all');
-    assert.strictEqual(await page.isHidden('#fit-products-more'), true, 'nothing more to show');
-    await answered(page, () => page.click('.fit-filter[data-group="kind"][data-value="tshirts"]'));
-    for (let shown = 24; shown < 48; shown += 24) await answered(page, () => page.click('#fit-products-more'));
-    assert.match(await page.textContent('#fit-browser-count'), /^48 shown · \d{4} matching · 1230 listed in all$/);
-    await answered(page, () => page.fill('#fit-product-search', 'tuxedo'));
-    assert.strictEqual(await page.textContent('#fit-browser-count'), '0 shown · 0 matching · 1230 listed in all');
-    await page.context().close();
-  });
 
-  await test('a photo that can’t load, or none from UNIQLO’s image host, is drawn artwork — never another picture', async () => {
-    const page = await openPage('index.html');
-    await ready(page);
-    await answered(page, () => page.fill('#fit-product-search', 'E910105'));
-    assert.strictEqual(await page.getAttribute('.fit-product[data-code="E910105-000"] .fit-product-media', 'data-image'), 'none');
-    assert.strictEqual(await page.$$eval('.fit-product[data-code="E910105-000"] img', (is) => is.length), 0);
-    await answered(page, () => page.fill('#fit-product-search', 'E910001'));
-    /* every request off this server is refused here, so the catalogue's photo fails to load */
-    await page.waitForSelector('.fit-product[data-code="E910001-000"] .fit-product-media[data-image="failed"] svg.silhouette');
-    await page.context().close();
-  });
 
-  await test('picking a product shows its four facts and its details from the brand’s own API, then the server’s check says whether it can be compared', async () => {
-    const page = await openPage('index.html');
-    await ready(page);
-    await answered(page, () => page.fill('#fit-product-search', 'E910001'));
-    await page.click('.fit-product[data-code="E910001-000"]');
-    await page.waitForSelector('#ff-picked[data-detail="ready"]');
-    assert.strictEqual(await page.textContent('#ff-picked .ff-picked-detail'), 'Product ID E910001-000 · Sweatshirts & Hoodies · Sizes XS, S, M, L, XL, XXL');
-    assert.deepStrictEqual(await page.$$eval('#ff-picked .fit-product-fact', (fs) => fs.map((f) => f.dataset.value)), ['authorized', 'general', 'none', 'false']);
-    assert.ok(asked.some((q) => /detail=E910001-000/.test(q)));
-    await page.waitForSelector('#ff-check:not([hidden])');
-    await page.waitForFunction(() => !['checking', ''].includes(document.getElementById('ff-check').dataset.status || ''));
-    assert.notStrictEqual(await page.getAttribute('#ff-check', 'data-status'), 'ready', 'a catalogue product with no record is never ready to compare');
-    await page.context().close();
-  });
 
-  await test('cards show the size range and who it’s for; "Sort by" offers price while prices are current, and sorts on the server across pages', async () => {
-    const page = await openPage('index.html');
-    await ready(page);
-    assert.strictEqual(await page.textContent('.fit-product[data-code="E910001-000"] .fit-product-sizes'), 'Sizes XS–XXL');
-    assert.strictEqual(await page.textContent('.fit-product[data-code="E910001-000"] .fit-product-kind'), 'Hoodies · Men');
-    assert.deepStrictEqual(await page.$$eval('#fit-product-sort option', (os) => os.map((o) => [o.value, o.textContent])),
-      [['featured', 'Featured'], ['name', 'Name: A–Z'], ['price-asc', 'Price: low to high'], ['price-desc', 'Price: high to low']]);
-    await answered(page, () => page.selectOption('#fit-product-sort', 'price-desc'));
-    assert.ok(asked.some((q) => /sort=price-desc/.test(q)), 'asked of the server');
-    const prices = () => page.$$eval('.fit-product', (bs) => bs.map((b) => { const t = b.querySelector('.fit-product-price'); const m = t && /\$([\d.]+)/.exec(t.textContent); return m ? Number(m[1]) : null; }));
-    const first = (await prices()).filter((x) => x !== null);
-    assert.deepStrictEqual(first, first.slice().sort((a, b) => b - a));
-    await answered(page, () => page.click('.fit-filter[data-group="kind"][data-value="hoodies"]'));
-    const hoodies = (await prices()).filter((x) => x !== null);
-    assert.ok(hoodies.length > 1);
-    assert.deepStrictEqual(hoodies, hoodies.slice().sort((a, b) => b - a), 'the sort stays as a filter changes');
-    assert.strictEqual(await page.inputValue('#fit-product-sort'), 'price-desc');
-    await page.context().close();
-  });
 
-  await test('on a phone the popup fills the screen and scrolls inside, with no sideways scroll', async () => {
-    const page = await openPage('index.html', { width: 375, height: 700 });
-    await ready(page);
-    const box = await page.$eval('#fit-brand-dialog', (d) => { const r = d.getBoundingClientRect(); return { w: r.width, h: r.height, scroll: d.scrollWidth - d.clientWidth }; });
-    assert.ok(box.w >= 370 && box.h >= 690, JSON.stringify(box));
-    assert.ok(box.scroll <= 0, `${box.scroll}px sideways inside the popup`);
-    await page.context().close();
-  });
 
   console.log('\nchoosing a catalogue product');
 
-  await test('a picked card links to the product’s Fynd page by its exact code: the catalogue’s colour names, size labels, price, and per-colour stock — each said to be the catalogue’s', async () => {
-    const page = await openPage('index.html');
-    await ready(page);
-    await answered(page, () => page.fill('#fit-product-search', 'black oversized hoodie'));
-    assert.strictEqual(await page.getAttribute('.fit-product[data-code="E910001-000"]', 'href'), 'product.html?brand=uniqlo&item=E910001-000');
-    await page.click('.fit-product[data-code="E910001-000"]');
-    await page.waitForSelector('#ff-picked:not([hidden])');
-    await page.click('#ff-picked .ff-picked-page');
+  await test('a product’s Fynd page, by its exact code: the catalogue’s colour names, size labels, price, and per-colour stock — each said to be the catalogue’s', async () => {
+    const page = await openPage('product.html?brand=uniqlo&item=E910001-000');
     await page.waitForSelector('#product[data-state="ready"]');
     assert.strictEqual(await page.textContent('#pdp-name'), 'FIXTURE Oversized Sweat Hoodie');
     assert.strictEqual(await page.textContent('#pdp-price'), '$49.90$59.90');
@@ -504,8 +205,8 @@ async function test(name, fn) {
   });
 
   await test('a code the catalogue doesn’t list — discontinued, rejected, or made up — is no product', async () => {
-    const page = await openPage('index.html');
-    await ready(page);
+    const page = await openPage('product.html?brand=uniqlo&item=E910001-000');
+    await page.waitForSelector('#product[data-state="ready"]');
     for (const code of ['E910106-000', 'E910102-000', 'E999999-000']) {
       await page.goto(`${ORIGIN}/product.html?brand=uniqlo&item=${code}`);
       await page.waitForSelector('#product[data-state="unknown"]');
@@ -513,13 +214,6 @@ async function test(name, fn) {
     await page.context().close();
   });
 
-  await test('Find Fit fits a phone with the catalogue’s cards: no sideways scroll', async () => {
-    const page = await openPage('index.html', { width: 360, height: 740 });
-    await ready(page);
-    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
-    assert.ok(overflow <= 0, `${overflow}px sideways`);
-    await page.context().close();
-  });
 
   await browser.close();
   server.close();

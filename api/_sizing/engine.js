@@ -393,12 +393,61 @@ function measuredRecord(anchor, category) {
 }
 const isShopperMeasured = (record) => Boolean(record && record.verification && record.verification.status === SHOPPER_MEASURED);
 
+/* ---------------------------------------------------------
+   The item the shopper is considering, entered by hand
+   ---------------------------------------------------------
+   One size of any product, its finished-garment measurements copied by
+   the shopper from the product's own measurement chart, each with the
+   method the chart states (or "not stated", never compared). Its status
+   is its own — "shopper-entered" — never "verified": Fynd hasn't seen
+   the chart. Like a reference measured at home it is compared, its
+   reliability held to medium and a caveat said (compare()). Built only
+   from a candidate that assets/fit-candidate.js has already read. */
+const SHOPPER_ENTERED = 'shopper-entered';
+const isShopperEntered = (record) => Boolean(record && record.verification && record.verification.status === SHOPPER_ENTERED);
+function candidateRecord(candidate) {
+  if (!candidate || !CATEGORY_PARAMS[candidate.type] || (candidate.unit !== 'in' && candidate.unit !== 'cm') || typeof candidate.size !== 'string' || !candidate.size) return null;
+  const m = candidate.measurements || {};
+  const saved = candidate.methods || {};
+  const dims = {};
+  const row = {};
+  COMPARE_DIMS.forEach((d) => {
+    if (!physical(m[d])) return;
+    /* a method this registry knows for the dimension, or "not stated" */
+    const method = saved.registry === methodRegistry.REGISTRY_VERSION && methodRegistry.isMethod(d, saved[d]) ? saved[d] : methodRegistry.NOT_STATED;
+    dims[d] = { method };
+    row[d] = { value: m[d], text: String(m[d]) };
+  });
+  if (!Object.keys(row).length) return null;
+  return {
+    id: 'your-candidate',
+    brand: candidate.brand || 'This item',
+    product: { name: candidate.name || `the ${CATEGORY_WORDS[candidate.type]} you're considering` },
+    category: candidate.type,
+    units: candidate.unit,
+    sizes: [candidate.size],
+    charts: { garment: { measures: 'finished-garment', dimensions: dims, sizes: { [candidate.size]: row } } },
+    verification: { status: SHOPPER_ENTERED }
+  };
+}
+/* a record the engine may read: a sizing record that passes its schema,
+   or an item entered by hand in candidateRecord()'s own shape */
+function readableRecord(record) {
+  if (!record || typeof record !== 'object') return false;
+  if (!isShopperEntered(record)) return sizingSchema.validate(record).length === 0;
+  const g = record.charts && record.charts.garment;
+  return Boolean(CATEGORY_PARAMS[record.category] && Array.isArray(record.sizes) && record.sizes.length === 1 && g && g.sizes && g.sizes[record.sizes[0]]
+    && Object.keys(g.dimensions).every((d) => COMPARE_DIMS.includes(d) && methodRegistry.isMethod(d, g.dimensions[d].method)));
+}
+/* checked against its source, or the shopper's own — the only records compared */
+const checkedOrEntered = (record) => sizingSchema.isVerified(record) || isShopperEntered(record);
+
 /* Whether one garment dimension of a record may be compared at all: a
    verified measurement (sizingSchema.measurementStatus), or the
    shopper's own; an unverified one only for the evaluation suite.
    Crowdsourced measurements never. */
 function usableDim(record, d, includeUnverified) {
-  if (isShopperMeasured(record)) return true;
+  if (isShopperMeasured(record) || isShopperEntered(record)) return true;
   const status = sizingSchema.measurementStatus(record, d);
   return status === 'verified' || (Boolean(includeUnverified) && status === 'unverified');
 }
@@ -1438,11 +1487,11 @@ function prepare(profile, record, options) {
   const pool = checkedPool(options.records);
   const no = (code, message, next, extra) => ({ fail: { code, message, next: next || [], extra: extra || {} } });
 
-  if (!record || sizingSchema.validate(record).length) return no('no-record', 'Fynd has no sizing data for this product.');
+  if (!readableRecord(record)) return no('no-record', 'Fynd has no sizing data for this product.');
   const params = CATEGORY_PARAMS[record.category];
   if (!params) return no('category-not-covered', 'Comparisons cover hoodies, sweatshirts and T-shirts so far.');
   const productContext = contextOf(record);
-  if (!sizingSchema.isVerified(record) && !options.includeUnverified) {
+  if (!checkedOrEntered(record) && !options.includeUnverified) {
     return no('unverified-data', `This product's measurements haven't been checked against ${record.brand}'s own page yet, so Fynd won't compare them.`,
       ['Check back once its sizing has been verified.'], { product: { brand: record.brand, name: record.product.name }, context: productContext, dataStatus: 'unverified' });
   }
@@ -1608,6 +1657,8 @@ function compare(profile, record, opts) {
   let reliability = complete ? 'high' : enough ? 'medium' : 'low';
   if (!complete) caveats.push(`Compared on ${dims.map((d) => DIM_NAMES[d]).join(', ')} only — ${skipped.map((x) => `${DIM_NAMES[x.dim]}: ${x.why}`).join('; ')}.`);
   if (ref.measured) { reliability = capAt(reliability, 'medium'); caveats.push('Your reference was measured at home; a quarter inch either way changes the comparison.'); }
+  /* the same rule for the item: numbers the shopper typed in from its chart, which Fynd hasn't seen */
+  if (isShopperEntered(record)) { reliability = capAt(reliability, 'medium'); caveats.push('The item\'s measurements are the ones you entered from its chart; Fynd hasn\'t checked them against the brand.'); }
   if (dims.some((d) => used[d].estimated)) { reliability = capAt(reliability, 'medium'); caveats.push('Some differences rest on a worked-out value, not a published one.'); }
   if (found.crossCategory) { reliability = lower(reliability); caveats.push(`Your reference is a ${CATEGORY_WORDS[found.category]}, and this is a ${CATEGORY_WORDS[record.category]}.`); }
   if (favorite.answer === 'close') { reliability = lower(reliability); caveats.push('You said your reference is close to the fit you like, not exactly it.'); }
@@ -1624,7 +1675,8 @@ function compare(profile, record, opts) {
   if (tradeoffs.length) caveats.push(`${closest.size} differs from your reference by more than Fynd treats as similar on ${listWords(tradeoffs.map((t) => DIM_NAMES[t.dim]))}.`);
   caveats.push('Matching measurements don\'t guarantee the same fit or feel: fabric, stretch and cut change how a garment wears.');
 
-  const verified = sizingSchema.isVerified(record);
+  /* an item the shopper entered is theirs to compare, like their reference — never called verified */
+  const verified = checkedOrEntered(record);
   /* closest is not the same as close: when every measurement compared
      misses its tolerance, the size is shown, never recommended */
   const allOutside = tradeoffs.length === dims.length;
@@ -1633,7 +1685,8 @@ function compare(profile, record, opts) {
   const recommended = withheld ? null : closest.size;
   const named = listWords(dims.map((d) => DIM_NAMES[d]));
   const summary = recommended
-    ? `${recommended} is the closest to your reference across ${named}.`
+    /* one size entered by hand: it meets the criteria — it isn't "the closest" of others */
+    ? (isShopperEntered(record) ? `Size ${recommended} meets Fynd’s comparison criteria against your reference on ${named}.` : `${recommended} is the closest to your reference across ${named}.`)
     : withheld === 'unverified'
       ? `${closest.size} is the closest on ${named}, but this product's measurements haven't been checked, so it isn't a recommendation.`
       : `${closest.size} is the closest size, but its ${named} all differ from your reference by more than Fynd treats as similar, so it isn't a recommendation.`;
@@ -1661,7 +1714,7 @@ function compare(profile, record, opts) {
     method: 'Each size is scored by how far its measurements are from your reference, dimension by dimension — chest counts most, then lengths, then shoulders, and whatever you said matters most counts double. Only measurements taken the same way are compared.',
     caveats,
     notes,
-    dataStatus: sizingSchema.isVerified(record) ? 'verified' : 'unverified'
+    dataStatus: isShopperEntered(record) ? SHOPPER_ENTERED : sizingSchema.isVerified(record) ? 'verified' : 'unverified'
   };
 }
 
@@ -1730,7 +1783,7 @@ function validate(profile, record, opts) {
   const { ref, used, skipped, dims } = ready.ok;
   const refDims = ref.record.charts.garment.dimensions;
   const own = record.charts.garment.dimensions;
-  const side = (rec, d, spec) => (spec ? { method: spec.method, kind: sizingSchema.methodKind(spec.method), status: isShopperMeasured(rec) ? SHOPPER_MEASURED : sizingSchema.measurementStatus(rec, d) } : null);
+  const side = (rec, d, spec) => (spec ? { method: spec.method, kind: sizingSchema.methodKind(spec.method), status: isShopperMeasured(rec) ? SHOPPER_MEASURED : isShopperEntered(rec) ? SHOPPER_ENTERED : sizingSchema.measurementStatus(rec, d) } : null);
   const dimensions = COMPARE_DIMS.map((d) => {
     const skip = skipped.find((x) => x.dim === d);
     return {
@@ -1767,4 +1820,4 @@ function validate(profile, record, opts) {
   };
 }
 
-module.exports = { recommend, compare, validate, matchProduct, CATEGORY_PARAMS, FAMILY, TROUBLE_FACTOR, ALTERNATIVE_MARGIN, METHOD_WORDS, sizeOffset, bodyRange, contextOf };
+module.exports = { candidateRecord, isShopperEntered, readableRecord, SHOPPER_ENTERED, recommend, compare, validate, matchProduct, CATEGORY_PARAMS, FAMILY, TROUBLE_FACTOR, ALTERNATIVE_MARGIN, METHOD_WORDS, sizeOffset, bodyRange, contextOf };

@@ -130,6 +130,7 @@ const sizing = require('./_sizing/records');
 const engine = require('./_sizing/engine');
 /* the one place a size is decided: the engine's answers held to one policy */
 const decision = require('./_sizing/decision');
+const Candidate = require('../assets/fit-candidate.js');
 const brands = require('./_sizing/brands');
 
 const ProfileSchema = require('../assets/fit-profile-schema.js');
@@ -346,6 +347,46 @@ async function compareUnsaved(req, res) {
   return res.status(200).json(comparedAnswer(profile, record, unit));
 }
 
+/* A comparison with an item entered by hand (see "The item, entered by
+   hand"): one size's finished-garment measurements, copied by the
+   shopper from the product's own chart and read by the one shared reader
+   (assets/fit-candidate.js), set beside the shopper's garment — one sent
+   in the body for this visit, or the signed-in shopper's saved one. The
+   same engine and decision as any other comparison: a size only when the
+   decision is OK. Nothing is kept. */
+async function compareCandidate(req, res) {
+  const query = req.query || Object.fromEntries(new URL(req.url || '/', 'http://fynd.local').searchParams);
+  if (query.compare !== '1') return res.status(405).json({ error: 'Use GET.' });
+  const address = auth.addressSubject(req);
+  const gate = await limits.check('sizing:compare-unsaved', address);
+  if (!gate.allowed) {
+    res.setHeader('Retry-After', String(gate.retryAfter || 60));
+    return res.status(429).json({ error: 'Too many comparisons at once. Try again in a few minutes.', reason: 'rate-limited' });
+  }
+  await limits.note('sizing:compare-unsaved', address);
+  const body = await readJson(req);
+  const sent = body && typeof body === 'object' && !Array.isArray(body) ? body : {};
+  const read = Candidate.readCandidate(sent.candidate);
+  if (read.errors.length) return res.status(400).json({ error: read.errors[0].message, reason: 'invalid-candidate', errors: read.errors });
+  const record = engine.candidateRecord(read.candidate);
+  if (!record) return res.status(400).json({ error: 'Enter at least one measurement from the product’s chart.', reason: 'invalid-candidate', errors: [] });
+  let profile = null;
+  if (sent.reference !== undefined && sent.reference !== null) {
+    const ref = unsavedProfile(sent.reference);
+    if (ref.error) return res.status(400).json(ref.error);
+    profile = ref.profile;
+  } else {
+    const identity = await identify(req, res, users);
+    if (identity.user) {
+      const stored = await fitProfiles.read(identity.user.id);
+      if (stored.reason === 'unsupported-version') return res.status(409).json({ error: 'Your fit profile was saved by a newer version of Fynd. Reload the page.', reason: 'unsupported-version' });
+      profile = stored.profile || null;
+    }
+  }
+  const unit = query.unit === 'in' || query.unit === 'cm' ? query.unit : read.candidate.unit;
+  return res.status(200).json(Object.assign(comparedAnswer(profile, record, unit), { candidate: read.candidate }));
+}
+
 async function handler(req, res) {
   if (handledPreflight(req, res)) return;
   if (req.method !== 'GET' && req.method !== 'POST') return res.status(405).json({ error: 'Use GET.' });
@@ -355,6 +396,7 @@ async function handler(req, res) {
     try {
       const q = req.query || Object.fromEntries(new URL(req.url || '/', 'http://fynd.local').searchParams);
       if (q.check === '1') return await checkFirst(req, res);
+      if (q.candidate === '1') return await compareCandidate(req, res);
       return await compareUnsaved(req, res);
     } catch (err) {
       console.error('Size comparison failed', err && err.message);

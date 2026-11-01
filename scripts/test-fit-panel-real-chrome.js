@@ -426,7 +426,8 @@ async function launch(display, port) {
     assert.deepStrictEqual([m.chestWidth.inches, m.chestWidth.method, m.bodyLength.method, m.sleeveLength.method], [20.5, 'flat', 'hps', 'shoulder-seam']);
     assert.deepStrictEqual([r.recommendation.status, r.recommendation.size, r.recommendation.confidence], ['ok', 'L', 'low']);
     assert.strictEqual(r.reference.tier, 'same-brand');
-    assert.match(await text('#open-fynd-note'), /address after “#”, which browsers don’t send to the server/);
+    /* nothing handed to Find Fit: what to do there instead */
+    assert.match(await text('#open-fynd-note'), /enter its finished-garment measurements from this chart in Find Fit’s item form/);
   });
 
   await test('another page on the same site: Chrome keeps Fynd’s access for that site, so the panel follows without another click — and a body-measurement chart is never compared with a garment', async () => {
@@ -498,8 +499,8 @@ async function launch(display, port) {
     assert.ok(!/checked by Fynd/.test(await text('#chart-area')), 'never called checked while pending review');
     assert.strictEqual(await text('#rec-title'), 'L');
     assert.match(await text('#rec-anchor'), /Compared with your UNIQLO sweatshirt or hoodie in M/);
-    /* from Fynd's data, Find Fit would look the product up on Fynd's server: said before it happens */
-    assert.match(await text('#open-fynd-note'), /sends this product’s address \(www\.uniqlo\.com\/us\/en\/products\/E475377-000\/00\) to Fynd’s server/);
+    /* nothing handed to Find Fit, and nothing sent: what to do there instead */
+    assert.match(await text('#open-fynd-note'), /enter its finished-garment measurements from this chart in Find Fit’s item form/);
     shot('09-uniqlo-address');
   });
 

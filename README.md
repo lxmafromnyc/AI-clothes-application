@@ -2123,30 +2123,22 @@ own. Every answer carries `anchor`: where its evidence came from, how it was use
 (`garment`, `chest-range` or `not-used`), and which measurements were and weren't
 compared, and why.
 
-## Find Fit: sizing charts from a product link
+## Find Fit, and sizing charts from a product link
 
 ### Choosing a brand and a product
 
-Find Fit opens on a button for each brand it can browse
-(`GET /api/size-recommendation?brands=1`), so no link has to be pasted
-(`assets/brand-browser.js`). Choosing UNIQLO opens its products in a popup over
-the page: a modal `<dialog>` (full screen on a phone) with a search box, the
-filters the data supports, product cards and "Show more". Nothing is fetched
-until the brand is chosen; the search, filters and paging are the server's
-(`GET /api/size-recommendation?brand=uniqlo&q=…&offset=…`, `api/_catalog/search.js`),
-so the page never holds the catalogue. Closing the popup (Escape, its close
-button, or a click outside) returns focus to the brand, and reopening it keeps
-the search as it was; a list that failed to load is asked for again. A card
-opens the product's Fynd page (`product.html?brand=uniqlo&item=…`), whose Size
-Guide asks for that product's chart by brand and product code
+Find Fit no longer browses brands or catalogues: its item is entered by hand
+(see *Find Fit: the item entered by hand* below). The brand modules and the
+catalogue stay — searched, filtered and paged on the server
+(`GET /api/size-recommendation?brand=uniqlo&q=…&offset=…`, `api/_catalog/search.js`)
+— and each product keeps its Fynd page (`product.html?brand=uniqlo&item=…`), whose
+Size Guide asks for that product's chart by brand and product code
 (`GET /api/size-recommendation?brand=uniqlo&item=E475378-000`) and links to the
-product on UNIQLO.
-
-What the popup lists is whatever the brand module holds: today the five UNIQLO
-US products Fynd sourced itself (said so at the top of the popup), and, once an
-authorized catalogue feed is synced (see *UNIQLO's authorized catalogue* below), that
-catalogue — the same popup, paged, with the feed's photos, prices, colours,
-sizes and stock where its licence covers them.
+product on UNIQLO. What the catalogue lists is whatever the brand module holds:
+today the five UNIQLO US products Fynd sourced itself, and, once an authorized
+catalogue feed is synced (see *UNIQLO's authorized catalogue* below), that
+catalogue, with the feed's photos, prices, colours, sizes and stock where its
+licence covers them.
 
 The server finds the product's address in its own brand module
 (`api/_sizing/brands`) and looks it up through the same pipeline a pasted link
@@ -2631,35 +2623,42 @@ survive closing the dialog and reloading the page.
 `id`, `name`, `market`, `coverage`, `products()` and `find(code)`, and add it to
 `BRANDS` in `api/_sizing/brands/index.js`. Find Fit needs no change.
 
-### Pasting a link
+### Find Fit: the item entered by hand
 
-A link from any other shop can still be pasted under **Have a link to a product
-from another shop?** (closed by default). The Fynd browser extension's
-`#fynd-url=` uses the same box.
+**Find Fit** (`index.html`, `assets/find-fit-manual.js`) compares a garment the
+shopper owns with one size of any item they are considering, without Fynd's
+catalogue. Step 1 is the garment owned (`assets/find-fit-reference.js`: saved on
+the fit profile, or described for this visit, with its measurements laid flat;
+**Find your garment** and **Popular Wardrobe Anchors** still offer products Fynd
+holds checked records for). Step 2 is the item: brand and product name
+(optional), garment type, the size being considered, the unit (cm or in), and
+whichever of chest width, shoulder width, body length and sleeve length its
+**finished-garment** measurement chart gives — never a body-size chart — each with
+how the chart measures it, chosen from the canonical methods
+(`api/_sizing/methods.js`) or "The chart doesn't say", which is never compared.
+One reader, `assets/fit-candidate.js`, checks the item on the page and again on
+the server: numbers above zero, a method for every value, and — where the method
+is the reference form's own — the form's own plausible range (twice it for a chest
+all the way around); a blank stays missing, and nothing the client sends beyond
+the item's own fields is read. Switching the unit converts each value once from
+what was typed (cm to a tenth, inches to a hundredth), so switching back and forth
+never drifts. **Compare fit** sends both
+(`POST /api/size-recommendation?compare=1&candidate=1`; the garment in the body,
+or the signed-in shopper's saved one), and the engine sets the item beside the
+garment by the existing rules: only compatible methods, at least three of four
+measurements with the chest, the same weights and tolerances. The item is
+`shopper-entered` — assigned by the server, never verified: compared, its
+reliability held to medium as a home-measured reference's is, and said to be the
+shopper's own numbers. The server's decision alone decides what is shown: a size
+only when `OK`; when `NO_MATCH`, that the one size entered doesn't meet the
+comparison criteria (never "the closest"); and for `INSUFFICIENT_DATA` why,
+measurement by measurement. Nothing is saved unless the shopper chooses to save
+their garment afterwards.
 
-**Find Fit** (`index.html`, `assets/find-fit.js`) opens with both halves ready,
-in either order: the item considered, in one box, and the garment owned
-(`assets/find-fit-reference.js`). The box takes a product's link or words: words
-are searched in the brands Find Fit lists once typing pauses (one request per
-pause, `?brand=&q=`, only products matching every word), and a match is picked by
-click or the arrow keys and Enter. A link is checked on the page first (a whole
-http(s) address with a host name; `www.` without a scheme is read as https); a
-pasted link starts the lookup by itself, a typed one is checked once typing
-pauses and read on Enter or **Compare fit**. When the server says the item and
-the garment can be compared (`POST ?check=1`), the comparison runs on its own —
-only after something the shopper did. The garment's form has the same search
-(**Find your garment**, `assets/catalog-suggest.js`, shared by both boxes), with
-Fynd's checked records too: a size typed with the words ("Uniqlo hoodie M",
-"Levi's 511 32x32") is read apart and never searched as a name, a product picked
-fills the fields, and what Fynd holds for it is the server's own check of that
-product (`POST ?check=1`). Suggestions come from Fynd's catalogue, not the live
-product search (`api/search.js`), which is metered per shopper; each answer says
-what the catalogue covers. **Popular Wardrobe Anchors** offers, as the
-garment, only products whose records are checked and publish finished-garment
-measurements (`GET /api/size-recommendation?anchors=1`, public and read-only);
-with production's records today that list is empty and the section is hidden.
-Its sizing chart is drawn below (`assets/size-chart.js`, which the Search page's
-**View sizing chart** dialog uses too). The result is headed by the product's brand and
+### Sizing charts from a product link
+
+A product's sizing chart is drawn by `assets/size-chart.js` (the Search page's
+**View sizing chart** dialog and the product page). The result is headed by the product's brand and
 name, with a **View product** link to its page (the server's canonical address,
 without tracking parameters). In view: each chart, what it measures (body or
 finished garment), its unit, and one line on where it is from — the product's
@@ -2937,16 +2936,13 @@ the toolbar). In short:
   long as it is the guide's only garment table. A hidden garment table
   elsewhere on the page never displaces the open guide. A closed size guide is
   never opened for them, and no tab is clicked.
-- **Handover to Find Fit:** **Open in Fynd** carries the chart in Find Fit's
-  address fragment (`#fynd-chart=…`, `assets/fynd-payload.js`). That part of the
-  address never reaches a server. Find Fit validates the payload (bounded text,
-  http(s) links only, rows as wide as their columns, a number in every row),
-  draws it, and clears it from the address.
+- **Nothing handed to Find Fit:** Find Fit takes the item's measurements by
+  hand, so neither the popup nor the side panel offers an **Open in Fynd**
+  button; each says to enter the chart's finished-garment measurements in Find
+  Fit's item form instead. The old handover (`#fynd-chart=…`, `#fynd-url=…`,
+  `assets/fynd-payload.js`) is no longer read by Find Fit.
 - **Never verified:** a browser-read chart is never marked verified or
-  comparable, so the fit profile is never compared with it. **Check Fynd's
-  catalog** looks the product up the usual way.
-- **No chart on the page:** `#fynd-url=…` asks Find Fit to look the product up
-  as if its link had been pasted.
+  comparable, so the fit profile is never compared with it.
 
 This can show charts that Fynd's server can't fetch, such as a page that never
 answers the server, or a chart that is only shown once the customer opens the

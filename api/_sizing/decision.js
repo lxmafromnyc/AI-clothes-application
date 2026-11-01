@@ -117,6 +117,7 @@ const REASONS = {
   'all-compared-outside-tolerance': { outcome: 'NO_MATCH', about: 'Every compared measurement of the closest size misses its tolerance.' },
   /* qualifiers */
   'estimated-conversion': { outcome: null, about: 'A circumference was worked out as twice a flat width: an estimate, by the stated rule.' },
+  'target-entered-by-shopper': { outcome: null, about: 'The item\'s measurements were entered by the shopper from its chart; Fynd hasn\'t checked them.' },
   'estimated-chart-range': { outcome: null, about: 'The brand gives one value per size; each size\'s range is Fynd\'s estimate. `mirroredEdge`: the shopper reaches the chart only through the estimated outer half of its smallest or largest size, so confidence is low.' },
   'fit-preference-shift': { outcome: null, about: 'The brand\'s fit words and the shopper\'s fit goal moved the suggestion away from the size the chart puts them in (`chartSizes`); a preference, not an eligibility rule.' },
   'evidence-from-size-label': { outcome: null, about: 'The shopper\'s chest comes from a brand chart for a size they wear, not a measurement.' },
@@ -131,8 +132,35 @@ const REASONS = {
    customerMessage(): words chosen from the reason's code and its data
    (the closest size, which side, which way), never parsed back. */
 const sizeWord = (s) => (s ? `size ${s}` : 'any size');
+/* an item the shopper entered by hand: what's missing is theirs to add,
+   said as such — never as a brand not publishing it */
+function enteredMessage(r) {
+  switch (r.code) {
+    case 'missing-required-measurement':
+      /* a garment of theirs, but only its label: measurements, not size labels */
+      if (r.side === 'shopper' && !r.dim && r.measurement && r.measurement !== 'reference garment') return 'Fynd compares measurements, not size labels. Add your garment’s measurements, laid flat — at least the chest.';
+      if (r.side === 'shopper' && !r.dim) return 'Add the garment you own that fits well, with its measurements, so Fynd has something to compare this item with.';
+      if (r.dim === 'chestWidth' && r.side === 'shopper') return 'Every comparison needs the chest width. Measure your own garment’s chest, laid flat from armpit to armpit.';
+      if (r.dim === 'chestWidth') return 'Every comparison needs the chest width. Enter it from the product’s chart, if the chart gives it.';
+      return 'Fynd needs at least three measurements taken the same way on both garments, including the chest, to compare them. Enter more from the product’s chart.';
+    case 'incompatible-methods':
+    case 'method-not-stated':
+      return 'Some measurements weren’t taken the same way on both garments, or the chart doesn’t say how, so they can’t be compared reliably. Fynd needs at least three comparable measurements, including the chest.';
+    /* the one size entered: it failed the comparison — there is no "closest" among others */
+    case 'chest-outside-acceptable-range': {
+      const roomier = r.class ? r.class === 'too-loose' : r.differenceAroundIn > 0;
+      return `${r.size ? `Size ${r.size}` : 'This size'} would be much ${roomier ? 'roomier' : 'tighter'} through the chest than your garment — more than Fynd’s comparison allows — so it isn’t recommended.`;
+    }
+    case 'all-compared-outside-tolerance':
+      return `${r.size ? `Size ${r.size}` : 'This size'} differs noticeably from your garment on every measurement Fynd could compare, so it doesn’t meet the comparison criteria.`;
+    default:
+      return null;
+  }
+}
 function customerMessage(r, context) {
   const brand = (context && context.brand) || 'this brand';
+  const entered = context && context.entered ? enteredMessage(r) : null;
+  if (entered) return entered;
   switch (r.code) {
     case 'outside-size-range':
       return r.side === 'above-largest'
@@ -362,7 +390,7 @@ function dimensionsFor(profile, record) {
   const required = requiredDims(record.category);
   const side = (dim, x) => (x ? { method: x.method, kind: x.kind, status: x.status, words: methods.methodWords(dim, x.method) } : null);
   if (v.status === 'body-only') return DIMS.map((dim) => Object.assign({ dim, required: required.includes(dim), status: 'body-vs-garment', reference: null, target: null, conversion: null }, { message: dimensionMessage({ dim, status: 'body-vs-garment' }) }));
-  const said = (d) => Object.assign(d, { message: dimensionMessage(d) });
+  const said = (d) => Object.assign(d, { message: dimensionMessage(d, { entered: engine.isShopperEntered(record) }) });
   return (v.dimensions || []).map((x) => said({
     dim: x.dim,
     required: required.includes(x.dim),
@@ -375,16 +403,16 @@ function dimensionsFor(profile, record) {
 
 /* one dimension's status in a shopper's words */
 const DIM_WORDS = { chestWidth: 'chest', bodyLength: 'length', shoulderWidth: 'shoulders', sleeveLength: 'sleeves' };
-function dimensionMessage(d) {
+function dimensionMessage(d, context) {
   const name = DIM_WORDS[d.dim] || 'measurement';
   const Name = name[0].toUpperCase() + name.slice(1);
   switch (d.status) {
     case 'compatible': return `${Name}: measured the same way on both, so compared.`;
     case 'convertible-estimated': return `${Name}: measured flat on one and all the way around on the other, so compared as an estimate (twice the flat width).`;
     case 'incompatible-method': return `${Name}: measured ${d.reference && d.reference.words ? d.reference.words : 'one way'} on your garment and ${d.target && d.target.words ? d.target.words : 'another way'} on this one — not the same measurement, so not compared.`;
-    case 'method-not-stated': return `${Name}: not compared, because it isn’t said how it was measured.`;
+    case 'method-not-stated': return `${Name}: not compared, because it isn’t said how it was measured, so it can’t be compared reliably.`;
     case 'missing-reference': return `${Name}: your garment has no ${name} measurement, so it isn’t compared.`;
-    case 'missing-target': return `${Name}: this product’s ${name} isn’t published, so it isn’t compared.`;
+    case 'missing-target': return context && context.entered ? `${Name}: not entered for this item, so it isn’t compared.` : `${Name}: this product’s ${name} isn’t published, so it isn’t compared.`;
     case 'unverified': return `${Name}: not compared, because the measurement hasn’t been checked.`;
     case 'body-vs-garment': return `${Name}: this product’s chart describes the body each size is for, not the garment, so it can’t be set beside your garment.`;
     default: return `${Name}: not compared.`;
@@ -402,6 +430,7 @@ function fromCompare(c, record) {
   if (compared.some((d) => c.sizes.some((s) => s.dimensions[d] && s.dimensions[d].estimated))) qualifiers.push(reason('estimated-conversion', { dim: 'chestWidth' }));
   const unranked = c.sizes.filter((s) => s.unranked).map((s) => s.size);
   if (unranked.length) qualifiers.push(reason('sizes-excluded-incomplete', { sizes: unranked }));
+  if (engine.isShopperEntered(record)) qualifiers.push(reason('target-entered-by-shopper'));
 
   if (c.withheld === 'unverified') return result(OUTCOMES.INSUFFICIENT_DATA, Object.assign(base, { reasons: [reason('unverified-data', { side: 'target' })], qualifiers }));
 
@@ -532,11 +561,13 @@ function decideWithDetail(profile, target, opts) {
   const detail = { compare: null, recommend: null };
   /* every answer also says, in a shopper's words, why it is what it is
      (customerMessage, from the codes): what a page shows for a refusal */
-  const done = (decision) => ({ decision: Object.assign(decision, { messages: decision.outcome === OUTCOMES.OK ? [] : customerMessages(decision, { brand: target && target.brand }) }), detail });
+  const entered = engine.isShopperEntered(target);
+  const done = (decision) => ({ decision: Object.assign(decision, { messages: decision.outcome === OUTCOMES.OK ? [] : customerMessages(decision, { brand: target && target.brand, entered }) }), detail });
 
   if (target && target.chart && !target.charts) return done(fromChart(target.chart));
   const record = target && target.record && !target.charts ? target.record : target;
-  if (!record || typeof record !== 'object' || sizingSchema.validate(record).length) {
+  /* a sizing record, or an item the shopper entered by hand (engine.candidateRecord) */
+  if (!record || typeof record !== 'object' || !engine.readableRecord(record)) {
     const category = record && typeof record.category === 'string' ? record.category : null;
     const code = category && !requirementsFor(category) ? 'category-not-supported' : 'no-record';
     return done(result(OUTCOMES.INSUFFICIENT_DATA, { category, reasons: [reason(code)] }));
@@ -545,8 +576,10 @@ function decideWithDetail(profile, target, opts) {
   if (!requirementsFor(record.category) || !engine.CATEGORY_PARAMS[record.category]) {
     return done(result(OUTCOMES.INSUFFICIENT_DATA, Object.assign(base, { reasons: [reason('category-not-supported')] })));
   }
-  /* verification first: an unverified record gives no decision, whatever its numbers say */
-  if (!sizingSchema.isVerified(record)) {
+  /* verification first: an unverified record gives no decision, whatever its numbers say. An item
+     the shopper entered from its own chart is theirs to compare, never called verified: its
+     reliability is held to medium and the decision says it rests on their numbers (a qualifier) */
+  if (!sizingSchema.isVerified(record) && !engine.isShopperEntered(record)) {
     return done(result(OUTCOMES.INSUFFICIENT_DATA, Object.assign(base, { reasons: [reason('unverified-data', { side: 'target' })] })));
   }
   const range = outOfRange(profile, record.category);

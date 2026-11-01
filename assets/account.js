@@ -257,6 +257,10 @@
        The item is a link or a listed product; nothing is fetched to
        answer, and the reference, when sent, travels in the body only */
     check: (target, reference) => call('size-recommendation?check=1', { body: Object.assign({ target }, reference ? { reference } : {}) }),
+    /* an item entered by hand (assets/fit-candidate.js), with this
+       visit's garment or — when none is sent — the saved one: both in
+       the body, never the address, and kept nowhere */
+    compareCandidate: (candidate, reference) => call('size-recommendation?compare=1&candidate=1', { body: Object.assign({ candidate }, reference ? { reference } : {}) }),
     compareWith: (productId, reference, unit) => call(`size-recommendation?product=${encodeURIComponent(productId)}&compare=1${unit === 'in' || unit === 'cm' ? `&unit=${unit}` : ''}`, { body: { reference } }),
     /* the search page's listings, sized from one type of clothing's
        profile: only what the listings themselves say travels */

@@ -9,9 +9,10 @@
    back to another paid search on its own, and what a shopper sees says
    so honestly:
 
-     Find Fit     Fynd's own five UNIQLO products, a notice that says that
-                  is all it lists, no live-search box, and a pasted link
-                  answered from Fynd's records with no product source
+     Find Fit     the item entered by hand from its own chart: no product
+                  list, no search box, and no product source asked; a
+                  record link is still answered by /api/size-recommendation
+                  from Fynd's records alone
      Search page  the 503 that means "no source", shown as Fynd's
                   labelled sample items, never as real listings
 
@@ -272,38 +273,17 @@ async function browserTests() {
   try {
     console.log('\nin the browser, with no product source');
 
-    await test('Find Fit: the five products, the notice above them, no live-search box — and filtering asks no product source', async () => {
+    await test('Find Fit with no product source: the item is entered by hand from its own chart — no product list, no search box, and nothing asks a product source', async () => {
       hits.length = 0;
       requested.length = 0;
       const page = await openPage('index.html');
-      await page.waitForSelector('#fit-browser[data-brands="ready"]');
-      await page.click('.fit-brand-choice[data-brand="uniqlo"]');
-      await page.waitForFunction(() => document.querySelectorAll('.fit-product').length === 5);
-      assert.deepStrictEqual(await page.$$eval('.fit-product', (bs) => bs.map((b) => b.dataset.code)), FIVE);
-      assert.strictEqual(await page.isVisible('#fit-catalog-note'), true);
-      assert.match(await page.textContent('#fit-catalog-note'), /^Fynd’s own list holds only 5 UNIQLO US products — it isn’t connected to UNIQLO’s full catalogue\. For any other UNIQLO product, close this list and paste the product’s link/);
-      assert.strictEqual(await page.$('#fit-live'), null, 'no box that would only ever answer with an error');
-      assert.strictEqual(await page.$('text=Search all of UNIQLO US'), null);
-      await page.fill('#fit-product-search', 'parka');
-      await page.waitForFunction(() => /^No products match\./.test(document.getElementById('fit-browser-status').textContent));
+      await page.waitForSelector('#ffc-form');
+      assert.strictEqual(await page.$('#fit-browser, #fit-url, #fit-live'), null, 'no list, link box or live search');
+      await page.fill('#ffc-size', 'M');
+      await page.fill('#ffc-m-chestWidth', '56');
+      await page.selectOption('#ffc-how-chestWidth', 'flat-width-armpit-to-armpit');
+      await page.waitForTimeout(300);
       assert.ok(!hits.includes('/api/search'), `pages asked: ${hits.join(' ')}`);
-      assert.deepStrictEqual(requested, []);
-      await page.context().close();
-    });
-
-    await test('Find Fit: a pasted UNIQLO link gets its size chart from Fynd’s record; a link Fynd holds nothing for says so', async () => {
-      requested.length = 0;
-      const page = await openPage('index.html');
-      assert.strictEqual(await page.isVisible('#fit-url'), true, 'the link box is in view, not folded away');
-      await page.fill('#fit-url', uniqloUrl('E475378-000'));
-      await page.click('#fit-url-submit');
-      await page.waitForSelector('#fit-result[data-state="ok"]');
-      assert.ok((await page.$$('#fit-result .size-chart-name')).length > 0, 'a chart is drawn');
-      await page.fill('#fit-url', 'https://shop.example.test/products/plain-tee');
-      await page.click('#fit-url-submit');
-      await page.waitForSelector('#fit-result[data-state="unavailable"]');
-      assert.strictEqual((await page.$$('#fit-result .size-chart-name')).length, 0, 'no chart invented');
-      assert.ok(!hits.includes('/api/search'));
       assert.deepStrictEqual(requested, []);
       await page.context().close();
     });

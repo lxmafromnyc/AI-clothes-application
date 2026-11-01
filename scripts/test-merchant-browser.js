@@ -1,15 +1,15 @@
 #!/usr/bin/env node
 /* =========================================================
    Fynd — a merchant's own catalogue in a real browser
-   Find Fit and the product page in Chromium, against the real
+   A merchant's product pages in Chromium, against the real
    /api/size-recommendation handler, with the FIXTURE merchant
    (scripts/fixtures/merchant: "FIXTURE Northwind Apparel", every host on
    the reserved .example domain) imported the way
    scripts/sync-catalog.js --merchant imports one, into a temporary
-   directory. What a shopper does: choose the merchant, search, filter by
-   brand, colour and size, open a product, see its photos from the
-   merchant's own image host — and see that Fynd holds no sizing for it,
-   never a size made from a label.
+   directory. What a shopper sees on a product's page: its photos from the
+   merchant's own image host only — and that Fynd holds no sizing for it,
+   never a size made from a label. (Searching, filtering and sorting the
+   merchant's catalogue are tested at the API in test-merchant-catalog.js.)
    Offline: the merchant's "photos" are a 1-pixel image served by the
    test for its image host only; every other address is refused.
      node scripts/test-merchant-browser.js
@@ -107,73 +107,14 @@ const PIXEL = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQ
     await page.goto(`${ORIGIN}/${file}`, { waitUntil: 'domcontentloaded' });
     return page;
   }
-  const answered = async (page, action) => {
-    const before = Number(await page.getAttribute('#fit-browser', 'data-answers')) || 0;
-    await action();
-    await page.waitForFunction((n) => Number(document.getElementById('fit-browser').dataset.answers) > n, before);
-  };
-  const codes = (page) => page.$$eval('.fit-product', (bs) => bs.map((b) => b.dataset.code));
-  const openMerchant = async (page) => {
-    await page.waitForSelector('#fit-browser[data-brands="ready"]');
-    await page.click('.fit-brand-choice[data-brand="northwind-fixture"]');
-    await page.waitForSelector('#fit-browser[data-answers="1"]');
-  };
+  /* Find Fit no longer browses catalogues — its item is entered by hand — so the merchant's
+     products are reached by their own pages here; searching, filtering, sorting and the brand list
+     are tested at the API in test-merchant-catalog.js */
+  console.log('\na merchant\'s own catalogue (FIXTURE), on its products\' pages');
 
-  console.log('\nFind Fit, with a merchant\'s own catalogue (FIXTURE)');
 
-  await test('the merchant is in the brand menu beside UNIQLO, with its count, and opens onto its products with photos from its own image host', async () => {
-    const page = await openPage('index.html');
-    await page.waitForSelector('#fit-browser[data-brands="ready"]');
-    assert.deepStrictEqual(await page.$$eval('.fit-brand-choice', (bs) => bs.map((b) => b.dataset.brand)), ['uniqlo', 'northwind-fixture']);
-    assert.match(await page.textContent('.fit-brand-choice[data-brand="northwind-fixture"]'), /FIXTURE Northwind Apparel\s*7 products/);
-    await openMerchant(page);
-    assert.strictEqual((await codes(page)).length, 7);
-    assert.match(await page.textContent('#fit-coverage'), /^7 products from FIXTURE Northwind Apparel's own catalogue, updated \d{4}-\d{2}-\d{2}\.$/);
-    await page.waitForFunction(() => document.querySelectorAll('.fit-product-media[data-image="photo"] img').length === 7);
-    const srcs = await page.$$eval('.fit-product-media img', (is) => is.map((i) => i.src));
-    assert.ok(srcs.every((s) => s.startsWith('https://images.northwind.example/p/')), srcs.join(' '));
-    assert.strictEqual(await page.$$eval('.fit-product-media[data-image="failed"]', (x) => x.length), 0, 'every photo loaded');
-    await page.context().close();
-  });
 
-  await test('each card says it is from the merchant\'s catalogue and that Fynd has no sizing chart for it — listed, not sized', async () => {
-    const page = await openPage('index.html');
-    await openMerchant(page);
-    const card = '.fit-product[data-code="NW-HD-1002"]';
-    assert.strictEqual(await page.textContent(`${card} .fit-product-fact[data-fact="catalogue"]`), 'From the merchant’s own catalogue');
-    assert.strictEqual(await page.textContent(`${card} .fit-product-fact[data-fact="chart"]`), 'No sizing chart saved');
-    assert.strictEqual(await page.textContent(`${card} .fit-product-fact[data-fact="comparable"]`), 'Can’t be compared yet');
-    assert.strictEqual(await page.textContent(`${card} .fit-product-sizes`), 'Sizes XS–XL');
-    assert.strictEqual(await page.textContent(`${card} .fit-product-holds`), 'No saved chart for this product');
-    await page.context().close();
-  });
 
-  await test('search, then filter by brand, colour and size — the server\'s filters, from the catalogue\'s own facets', async () => {
-    const page = await openPage('index.html');
-    await openMerchant(page);
-    await answered(page, () => page.fill('#fit-product-search', 'tee'));
-    assert.deepStrictEqual((await codes(page)).sort(), ['NW-TS-3001', 'NW-TS-3002']);
-    await answered(page, () => page.fill('#fit-product-search', ''));
-    /* two brands in one merchant: a brand row, by their own names */
-    assert.deepStrictEqual(await page.$$eval('.fit-filter[data-group="vendor"]', (bs) => bs.map((b) => b.textContent)), ['Any', 'FIXTURE Harbor Supply', 'FIXTURE Northwind']);
-    await answered(page, () => page.click('.fit-filter[data-group="vendor"][data-value="fixture-harbor-supply"]'));
-    assert.deepStrictEqual(await codes(page), ['NW-HB-5001']);
-    await answered(page, () => page.click('.fit-filter[data-group="vendor"][data-value="all"]'));
-    await answered(page, () => page.click('.fit-filter[data-group="colour"][data-value="black"]'));
-    assert.deepStrictEqual((await codes(page)).sort(), ['NW-CR-2001', 'NW-HD-1001', 'NW-TS-3001']);
-    await answered(page, () => page.click('.fit-filter[data-group="size"][data-value="XS"]'));
-    assert.deepStrictEqual(await codes(page), ['NW-CR-2001']);
-    await page.context().close();
-  });
-
-  await test('sorted by price, low to high: the merchant\'s licensed, current prices', async () => {
-    const page = await openPage('index.html');
-    await openMerchant(page);
-    await answered(page, () => page.selectOption('#fit-product-sort', 'price-asc'));
-    assert.deepStrictEqual(await codes(page), ['NW-TS-3001', 'NW-TS-3002', 'NW-CR-2001', 'NW-HD-1002', 'NW-PT-4001', 'NW-HD-1001', 'NW-HB-5001']);
-    assert.strictEqual(await page.textContent('.fit-product[data-code="NW-TS-3001"] .fit-product-price'), '$28.00');
-    await page.context().close();
-  });
 
   await test('a product\'s page: its name and brand, the merchant\'s photos, colours and size labels, a link to the merchant\'s own page — and no size from a label', async () => {
     const page = await openPage('product.html?brand=northwind-fixture&item=NW-HD-1002');
