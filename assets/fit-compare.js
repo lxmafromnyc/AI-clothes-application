@@ -1,7 +1,7 @@
 /* =========================================================
    Fynd — what a saved fit profile can say about a chart
 
-   Shared by Find Fit (assets/find-fit.js) and the product page's Size
+   Shared by Find Fit (assets/find-fit-manual.js) and the product page's Size
    Guide (assets/product-page.js). Only a chart Fynd has checked
    finished-garment measurements for is set beside the shopper's saved
    reference garment (Account.sizing.compare: the engine's own
@@ -151,6 +151,28 @@
       got = await account.sizing.compare(chart.productId);
     }
     if (!stillCurrent()) return;
+    drawAnswer(got, compare, { verdict, unsaved, profileHref, lines });
+  }
+
+  /* An item entered by hand (assets/fit-candidate.js): one size's
+     finished-garment measurements from the product's own chart, set
+     beside the reference — this visit's garment, sent in the body, or
+     the saved one — by the same engine and decision, and drawn the same
+     way: a size only when the decision is OK. */
+  async function showCandidate(candidate, compare, current, opts) {
+    const stillCurrent = current || (() => true);
+    drawn.delete(compare);
+    const reference = opts && opts.reference;
+    const got = await global.Account.sizing.compareCandidate(candidate, reference || null);
+    if (!stillCurrent()) return;
+    drawAnswer(got, compare, { verdict: true, unsaved: reference || null, profileHref: 'fit-profile.html?from=find-fit', lines: [], candidate: true });
+  }
+
+  /* One answer from the server — the comparison and the decision beside
+     it — drawn: a size only where the decision is OK, the closest only
+     where it is NO_MATCH, and otherwise why there is none. */
+  function drawAnswer(got, compare, o) {
+    const { verdict, unsaved, profileHref, lines } = o;
     const c = got && got.ok && got.data && got.data.comparison;
     /* the server's decision is the only authority for a size: without a
        well-formed one, nothing is drawn as recommended */
@@ -160,7 +182,10 @@
       if (!wellFormed(c)) { failed(compare, verdict); return; }
       const view = viewOf(c, decided);
       if (!view) { failed(compare, verdict); return; }
-      const outcome = view.outcome;
+      /* an item entered by hand is one size: when it doesn't match it is
+         that size that fails the comparison — never "the closest" of others */
+      const outcome = o.candidate && view.outcome === 'closest-mismatch' ? 'no-match' : view.outcome;
+      view.candidate = Boolean(o.candidate);
       const lead = outcome === 'no-recommendation'
         ? [el('p', 'fit-compare-fallback', NOT_ENOUGH), ...(decided.messages.length ? decided.messages : [WITHHELD]).map((t) => el('p', null, t))]
         : recommendation(c, verdict, view, decided);
@@ -170,10 +195,13 @@
       (c.caveats || []).slice(0, verdict ? undefined : 2).forEach((x) => rest.push(x));
       const more = el('p');
       more.append(safeLinkLocal('compare.html', 'See every size beside your reference on Compare'));
-      drawn.set(compare, { comparison: c, decision: decided, lead, rest, extra: [more], outcome, verdict: verdict && outcome });
+      /* an item entered by hand is one size: there is no other to see */
+      const title = outcome === 'no-match' ? `Size ${view.size} doesn’t match your garment` : null;
+      drawn.set(compare, { comparison: c, decision: decided, lead, rest, extra: o.candidate ? [] : [more], outcome, title, verdict: verdict && outcome });
       focus(compare, null);
       return;
     }
+    if (o.candidate) { candidateInsufficient(compare, decided, c, unsaved); return; }
     /* insufficient: the engine's own reason (missing[0].code), as one of
        Find Fit's states, with only the action that can change it */
     const why = Array.isArray(c.missing) && c.missing[0] && typeof c.missing[0] === 'object' ? c.missing[0] : {};
@@ -199,6 +227,43 @@
       extra.push(fix);
     }
     put(compare, lines, extra, verdict ? HEADING[reason] : null, verdict && reason);
+  }
+
+  /* An item entered by hand that can't be compared: one of Find Fit's
+     states, by the engine's own reason (missing[0].code), said in the
+     decision's own words — then each measurement and why it was or wasn't
+     compared, the server's, never worked out here — and, where the
+     shopper's garment is what's missing, the way to add it. */
+  function candidateInsufficient(compare, decided, c, unsaved) {
+    drawn.delete(compare);
+    const why = Array.isArray(c.missing) && c.missing[0] && typeof c.missing[0] === 'object' ? c.missing[0] : {};
+    let reason = INSUFFICIENT[why.code] || 'no-recommendation';
+    /* a garment described here, with no measurements to set beside the item */
+    if (unsaved && reason === 'needs-reference') reason = 'needs-measurements';
+    const yours = reason === 'needs-reference' || reason === 'needs-measurements';
+    const said = decided.messages.length ? decided.messages : [WITHHELD];
+    /* a garment described here by its label alone: what it still needs */
+    const lines = reason === 'needs-measurements' ? ['Fynd compares measurements, not size labels. Add your garment’s measurements, laid flat — at least the chest.']
+      : reason === 'no-recommendation' ? [NOT_ENOUGH].concat(said) : said;
+    const extra = [];
+    if (!yours && decided.dimensions.length) {
+      const list = el('ul', 'ff-dims');
+      list.setAttribute('aria-label', 'Each measurement, and whether it could be compared');
+      decided.dimensions.forEach((d) => {
+        if (!d || !DIM_LABEL[d.dim] || typeof d.message !== 'string') return;
+        const li = el('li', `ff-dim ff-dim--${['compatible', 'convertible-estimated'].includes(d.status) ? 'compared' : 'not-compared'}`, d.message);
+        li.dataset.dim = d.dim;
+        li.dataset.status = typeof d.status === 'string' ? d.status : 'unknown';
+        list.append(li);
+      });
+      extra.push(list);
+    }
+    if (yours) {
+      const fix = el('p', 'fit-compare-action');
+      fix.append(safeLinkLocal('#ff-step-reference', reason === 'needs-reference' ? 'Describe a garment that fits' : 'Add its measurements'));
+      extra.push(fix);
+    }
+    put(compare, lines, extra, HEADING[reason], reason);
   }
 
   /* An answer that doesn't hold together draws nothing from it: no
@@ -297,6 +362,8 @@
       size: d.outcome === 'OK' ? d.size : null,
       closest: d.outcome === 'NO_MATCH' ? d.closest : null,
       messages: Array.isArray(d.messages) ? d.messages.filter((m) => typeof m === 'string') : [],
+      /* only the code and side of each reason: what decides which way to offer to fix it */
+      reasons: Array.isArray(d.reasons) ? d.reasons.filter((r) => r && typeof r.code === 'string').map((r) => ({ code: r.code, side: typeof r.side === 'string' ? r.side : null, dim: typeof r.dim === 'string' ? r.dim : null })) : [],
       dimensions: Array.isArray(d.dimensions) ? d.dimensions.filter((x) => x && DIM_LABEL[x.dim] && typeof x.status === 'string') : []
     };
   }
@@ -499,6 +566,13 @@
     const row = c.sizes.find((s) => s.size === size);
     const origin = originOf(row ? Object.fromEntries(Object.entries(row.dimensions).map(([d, x]) => [d, x && x.measurement])) : null);
     const brand = c.product && typeof c.product.brand === 'string' ? c.product.brand : null;
+    /* an item entered by hand: the shopper's numbers, from its chart — never called checked */
+    if (c.dataStatus === 'shopper-entered') {
+      const ref = c.reference.source === 'product'
+        ? `your reference’s ${originWords(originOf(c.reference.measurements), 'reference')}${c.reference.product && c.reference.product.brand ? ` (${c.reference.product.brand})` : ''}`
+        : 'the measurements you took of your garment at home';
+      return el('p', 'ff-sources', `Sources: the measurements you entered from this item’s chart, which Fynd hasn’t checked; ${ref}.`);
+    }
     const item = `${brand ? `${brand}’s` : 'This item’s'} ${originWords(origin, 'item')} for this item`;
     const checked = c.dataStatus !== 'verified' ? 'not yet checked'
       : origin === 'official-published' ? 'checked against the brand’s page' : 'checked against its sources';
@@ -522,6 +596,11 @@
     if (recommended) {
       const pick = el('p', 'fit-compare-recommended');
       pick.append(doc.createTextNode('Recommended size: '), el('strong', null, size));
+      nodes.push(pick);
+    } else if (view.candidate) {
+      /* the one size entered: it didn't meet the criteria — no "closest" */
+      const pick = el('p', 'fit-compare-mismatch');
+      pick.append(doc.createTextNode('Size '), el('strong', null, size), doc.createTextNode(' doesn’t meet the comparison criteria — not recommended'));
       nodes.push(pick);
     } else {
       const pick = el('p', 'fit-compare-closest');
@@ -624,7 +703,7 @@
     /* the summary (and, when recommended, the size and its differences),
        then the size being considered, then the caveats */
     const rest = d.verdict ? [limits(d.rest)] : d.rest.map((t) => el('p', null, t));
-    put(compare, [], [...d.lead, ...nodes, ...rest, ...d.extra], d.verdict ? TITLE[d.outcome] : 'Compared with your reference', d.verdict);
+    put(compare, [], [...d.lead, ...nodes, ...rest, ...d.extra], d.verdict ? (d.title || TITLE[d.outcome]) : 'Compared with your reference', d.verdict);
   }
 
   /* the caveats, as a list a shopper can scan */
@@ -649,5 +728,5 @@
     compare.hidden = false;
   }
 
-  global.FitCompare = { show, focus, whyNot, chartState, HEADING };
+  global.FitCompare = { show, showCandidate, focus, whyNot, chartState, HEADING };
 })(typeof window !== 'undefined' ? window : globalThis);

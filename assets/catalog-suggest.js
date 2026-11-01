@@ -1,7 +1,6 @@
 /* =========================================================
-   Fynd — product suggestions as a shopper types, for Find Fit's two
-   boxes: the item considered (assets/find-fit.js) and the garment owned
-   (assets/find-fit-reference.js)
+   Fynd — product suggestions as a shopper types, for Find Fit's garment
+   owned (assets/find-fit-reference.js)
 
    Where the suggestions come from — only what Fynd's server lists:
 

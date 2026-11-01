@@ -53,80 +53,41 @@
 
 <main id="main" class="ff">
 
-  <!-- Find Fit: which size of an item is most likely to fit like a
-       garment the shopper already owns. Both halves are open from the
-       start, in either order:
+  <!-- Find Fit: does one size of an item fit like a garment the shopper
+       already owns? Two halves, both on the page:
 
-         the item       one box: a pasted product link, checked as soon
-                        as it is a whole link, or words searched in the
-                        brands Find Fit lists, with suggestions to pick
-                        (assets/find-fit.js); the brand browser stays a
-                        click away (assets/brand-browser.js)
-         the garment    the garments saved on the fit profile (read with
+         your garment   the garments saved on the fit profile (read with
                         the shopper's own session), or one described here
-                        for this visit, no account needed — or one picked
-                        from Popular Wardrobe Anchors, products Fynd holds
-                        checked garment measurements for
+                        for this visit, no account needed
                         (assets/find-fit-reference.js)
-         →  once both can be compared — the server says so
-            (/api/size-recommendation?check=1) — the comparison runs on
-            its own: the item's chart, then the engine's comparison with
-            the reference (assets/fit-compare.js). A size is shown only
-            when the engine recommends one; otherwise the result says what
-            is missing. "Compare fit" runs it again, or shows the chart of
-            an item that can't be compared.
+         the item       one size of any product, its finished-garment
+                        measurements copied by hand from the product's own
+                        measurement chart, each with how the chart measures
+                        it (assets/find-fit-manual.js, read by
+                        assets/fit-candidate.js — the same reader the
+                        server uses)
+         →  "Compare fit" sends both to the server
+            (/api/size-recommendation?compare=1&candidate=1), and the
+            result is drawn by assets/fit-compare.js: a size only when the
+            server's decision is OK; otherwise what is missing, measurement
+            by measurement. Fynd's own catalogue isn't needed.
          →  after the result, an offer to save a garment described here
-            to a fit profile (assets/find-fit-save.js): sign in, then
-            save, each the shopper's own choice -->
+            to a fit profile (assets/find-fit-save.js) -->
   <section class="container ff-hero" id="find-fit" aria-labelledby="find-fit-title">
     <h1 id="find-fit-title">Find the size that fits like your favorite clothes.</h1>
-    <p class="lead ff-lead">Add the item you&rsquo;re considering and a garment you own that fits well &mdash; in any order. Fynd sets their measurements side by side and suggests a size when they line up.</p>
+    <p class="lead ff-lead">Enter the measurements of a garment you own that fits well, then the measurements of the item you&rsquo;re considering from its chart. Fynd sets them side by side and suggests a size only when they line up.</p>
 
-    <!-- where the two halves stand, and the next step: drawn by assets/find-fit.js -->
+    <!-- where the two halves stand, and the next step: drawn by assets/find-fit-manual.js -->
     <div class="ff-progress" id="ff-progress" data-item="empty" data-garment="empty">
-      <span class="ff-progress-pill" id="ff-progress-item"><span class="ff-progress-dot" aria-hidden="true"></span><span class="ff-progress-text">Item: not added yet</span></span>
       <span class="ff-progress-pill" id="ff-progress-garment"><span class="ff-progress-dot" aria-hidden="true"></span><span class="ff-progress-text">Your garment: not added yet</span></span>
-      <span class="ff-progress-next" id="ff-progress-next">Add both, in any order.</span>
+      <span class="ff-progress-pill" id="ff-progress-item"><span class="ff-progress-dot" aria-hidden="true"></span><span class="ff-progress-text">Item: not entered yet</span></span>
+      <span class="ff-progress-next" id="ff-progress-next">Add your garment, then the item.</span>
     </div>
 
-    <form class="ff-flow" id="fit-url-form" novalidate>
-      <section class="ff-step" id="ff-step-target" aria-labelledby="ff-step-target-title">
-        <div class="ff-step-head">
-          <h2 class="ff-step-title" id="ff-step-target-title">The item you&rsquo;re considering</h2>
-        </div>
-        <div class="ff-target-entry" id="fit-link-alt">
-          <label class="sr-only" for="fit-url">The item you&rsquo;re considering: a product link, or a brand or item name</label>
-          <div class="ff-smart">
-            <input class="profile-input ff-smart-input" type="text" id="fit-url" name="url" maxlength="2000" autocomplete="off" spellcheck="false" enterkeyhint="go" placeholder="Paste product link OR search brand/item name..." role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="ff-suggest" aria-describedby="fit-url-hint fit-url-error">
-            <!-- what the words typed match, from the brands' catalogues: picked
-                 by click, tap or the arrow keys and Enter (assets/find-fit.js) -->
-            <div class="ff-suggest" id="ff-suggest-box" hidden>
-              <ul class="ff-suggest-list" id="ff-suggest" role="listbox" aria-label="Matching products"></ul>
-              <p class="ff-suggest-status" id="ff-suggest-status" role="status" aria-live="polite"></p>
-            </div>
-          </div>
-          <p class="fit-url-hint" id="fit-url-hint">We&rsquo;ll automatically extract the available size measurements for you.</p>
-          <p class="form-error" id="fit-url-error" role="alert"></p>
-        </div>
-        <div class="ff-picked" id="ff-picked" hidden></div>
-        <!-- whether the item can be compared, and what can still be done:
-             said with the item (assets/find-fit.js, checking first) -->
-        <div class="ff-check" id="ff-check" role="status" aria-live="polite" hidden></div>
-        <!-- or browse a brand's products (assets/brand-browser.js) -->
-        <div class="fit-browser ff-browse" id="fit-browser" data-state="idle">
-          <span class="ff-browse-label" id="fit-brand-label">Browse</span>
-          <div class="fit-brands" id="fit-brands" role="group" aria-labelledby="fit-brand-label">
-            <button class="fit-brand-choice" type="button" data-brand="uniqlo" aria-haspopup="dialog" aria-controls="fit-brand-dialog">
-              <span class="fit-brand-name">UNIQLO</span>
-              <span class="fit-brand-meta">Browse products</span>
-            </button>
-          </div>
-          <p class="fit-brand-planned" id="fit-brand-planned"></p>
-        </div>
-      </section>
-
+    <form class="ff-flow" id="ff-form" novalidate>
       <section class="ff-step" id="ff-step-reference" aria-labelledby="ff-step-reference-title">
         <div class="ff-step-head">
+          <span class="step-num" aria-hidden="true">1</span>
           <h2 class="ff-step-title" id="ff-step-reference-title">A garment that fits you well</h2>
         </div>
         <!-- products Fynd holds checked garment measurements for, as the
@@ -142,60 +103,150 @@
         </div>
       </section>
 
+      <section class="ff-step" id="ff-step-target" aria-labelledby="ff-step-target-title">
+        <div class="ff-step-head">
+          <span class="step-num" aria-hidden="true">2</span>
+          <h2 class="ff-step-title" id="ff-step-target-title">The item you&rsquo;re considering</h2>
+        </div>
+        <p class="ff-reference-intro" id="ffc-subtitle">Enter the garment measurements from the product&rsquo;s measurement chart.</p>
+        <div class="ffc-help" id="ffc-help">
+          <p>Use the <strong>finished-garment</strong> measurements &mdash; what the garment itself measures, often called &ldquo;product measurements&rdquo; or &ldquo;garment measurements&rdquo;. Don&rsquo;t use a body-size chart: it says who a size is made for, not how big the garment is.</p>
+          <p>Copy the numbers for one size. Enter the ones the chart gives and leave the rest blank &mdash; but the chest is needed for any comparison, and Fynd needs at least three measurements taken the same way as yours.</p>
+        </div>
+        <div class="ffc-form" id="ffc-form">
+          <div class="ffr-row">
+            <div class="ffr-field">
+              <label class="profile-label" for="ffc-brand">Brand (optional)</label>
+              <input class="profile-input" type="text" id="ffc-brand" name="brand" maxlength="80" autocomplete="off" aria-describedby="ffc-brand-error">
+              <p class="form-error ffr-error" id="ffc-brand-error" role="alert"></p>
+            </div>
+            <div class="ffr-field">
+              <label class="profile-label" for="ffc-name">Product name (optional)</label>
+              <input class="profile-input" type="text" id="ffc-name" name="name" maxlength="80" autocomplete="off" aria-describedby="ffc-name-error">
+              <p class="form-error ffr-error" id="ffc-name-error" role="alert"></p>
+            </div>
+          </div>
+          <div class="ffr-row">
+            <div class="ffr-field">
+              <label class="profile-label" for="ffc-type">Garment type</label>
+              <select class="profile-input" id="ffc-type" name="type" aria-describedby="ffc-type-error">
+                <option value="hoodies">Hoodie</option>
+                <option value="sweatshirts">Sweatshirt</option>
+                <option value="tshirts">T-shirt</option>
+              </select>
+              <p class="form-error ffr-error" id="ffc-type-error" role="alert"></p>
+            </div>
+            <div class="ffr-field">
+              <label class="profile-label" for="ffc-size">Size being considered</label>
+              <input class="profile-input" type="text" id="ffc-size" name="size" maxlength="20" autocomplete="off" placeholder="Like M or 42" aria-describedby="ffc-size-error">
+              <p class="form-error ffr-error" id="ffc-size-error" role="alert"></p>
+            </div>
+          </div>
+          <fieldset class="ffc-units">
+            <legend class="profile-label">Measurement unit</legend>
+            <label class="ffc-unit"><input type="radio" name="ffc-unit" value="cm" checked> Centimetres (cm)</label>
+            <label class="ffc-unit"><input type="radio" name="ffc-unit" value="in"> Inches (in)</label>
+            <p class="ffr-hint" id="ffc-unit-hint">Switching converts the numbers already entered, so they keep their meaning.</p>
+            <p class="form-error ffr-error" id="ffc-unit-error" role="alert"></p>
+          </fieldset>
+          <div class="ffc-measures">
+            <div class="ffc-measure" data-dim="chestWidth">
+              <div class="ffr-field">
+                <label class="profile-label" for="ffc-m-chestWidth">Chest width <span class="ffc-unit-label" data-part="unit-label">(cm)</span></label>
+                <input class="profile-input" type="text" id="ffc-m-chestWidth" name="chestWidth" inputmode="decimal" autocomplete="off" aria-describedby="ffc-m-chestWidth-hint ffc-m-chestWidth-error">
+                <p class="ffr-hint" id="ffc-m-chestWidth-hint">Usually “chest” or “½ chest” on the chart. Flat means half the way around.</p>
+                <p class="form-error ffr-error" id="ffc-m-chestWidth-error" role="alert"></p>
+              </div>
+              <div class="ffr-field">
+                <label class="profile-label" for="ffc-how-chestWidth">How the chart measures it</label>
+                <select class="profile-input" id="ffc-how-chestWidth" name="how-chestWidth" aria-describedby="ffc-how-chestWidth-error">
+                  <option value="">Choose…</option>
+                  <option value="flat-width-armpit-to-armpit">Flat, armpit to armpit</option>
+                  <option value="garment-circumference">All the way around</option>
+                  <option value="not-stated">The chart doesn’t say</option>
+                </select>
+                <p class="form-error ffr-error" id="ffc-how-chestWidth-error" role="alert"></p>
+              </div>
+            </div>
+            <div class="ffc-measure" data-dim="shoulderWidth">
+              <div class="ffr-field">
+                <label class="profile-label" for="ffc-m-shoulderWidth">Shoulder width <span class="ffc-unit-label" data-part="unit-label">(cm)</span></label>
+                <input class="profile-input" type="text" id="ffc-m-shoulderWidth" name="shoulderWidth" inputmode="decimal" autocomplete="off" aria-describedby="ffc-m-shoulderWidth-hint ffc-m-shoulderWidth-error">
+                <p class="ffr-hint" id="ffc-m-shoulderWidth-hint">Usually “shoulder” or “shoulder width”.</p>
+                <p class="form-error ffr-error" id="ffc-m-shoulderWidth-error" role="alert"></p>
+              </div>
+              <div class="ffr-field">
+                <label class="profile-label" for="ffc-how-shoulderWidth">How the chart measures it</label>
+                <select class="profile-input" id="ffc-how-shoulderWidth" name="how-shoulderWidth" aria-describedby="ffc-how-shoulderWidth-error">
+                  <option value="">Choose…</option>
+                  <option value="seam-to-seam">Seam to seam</option>
+                  <option value="broadest-part-of-shoulders">Broadest part of the shoulders</option>
+                  <option value="not-stated">The chart doesn’t say</option>
+                </select>
+                <p class="form-error ffr-error" id="ffc-how-shoulderWidth-error" role="alert"></p>
+              </div>
+            </div>
+            <div class="ffc-measure" data-dim="bodyLength">
+              <div class="ffr-field">
+                <label class="profile-label" for="ffc-m-bodyLength">Body length <span class="ffc-unit-label" data-part="unit-label">(cm)</span></label>
+                <input class="profile-input" type="text" id="ffc-m-bodyLength" name="bodyLength" inputmode="decimal" autocomplete="off" aria-describedby="ffc-m-bodyLength-hint ffc-m-bodyLength-error">
+                <p class="ffr-hint" id="ffc-m-bodyLength-hint">Usually “length” or “body length”. “Back length” is usually from the centre back of the neck.</p>
+                <p class="form-error ffr-error" id="ffc-m-bodyLength-error" role="alert"></p>
+              </div>
+              <div class="ffr-field">
+                <label class="profile-label" for="ffc-how-bodyLength">How the chart measures it</label>
+                <select class="profile-input" id="ffc-how-bodyLength" name="how-bodyLength" aria-describedby="ffc-how-bodyLength-error">
+                  <option value="">Choose…</option>
+                  <option value="high-point-shoulder-to-hem">Top of the shoulder to hem</option>
+                  <option value="center-back-to-hem">Centre back of the neck to hem</option>
+                  <option value="not-stated">The chart doesn’t say</option>
+                </select>
+                <p class="form-error ffr-error" id="ffc-how-bodyLength-error" role="alert"></p>
+              </div>
+            </div>
+            <div class="ffc-measure" data-dim="sleeveLength">
+              <div class="ffr-field">
+                <label class="profile-label" for="ffc-m-sleeveLength">Sleeve length <span class="ffc-unit-label" data-part="unit-label">(cm)</span></label>
+                <input class="profile-input" type="text" id="ffc-m-sleeveLength" name="sleeveLength" inputmode="decimal" autocomplete="off" aria-describedby="ffc-m-sleeveLength-hint ffc-m-sleeveLength-error">
+                <p class="ffr-hint" id="ffc-m-sleeveLength-hint">Usually “sleeve”. A very long sleeve figure is often from the centre back of the neck.</p>
+                <p class="form-error ffr-error" id="ffc-m-sleeveLength-error" role="alert"></p>
+              </div>
+              <div class="ffr-field">
+                <label class="profile-label" for="ffc-how-sleeveLength">How the chart measures it</label>
+                <select class="profile-input" id="ffc-how-sleeveLength" name="how-sleeveLength" aria-describedby="ffc-how-sleeveLength-error">
+                  <option value="">Choose…</option>
+                  <option value="shoulder-seam-to-cuff">Shoulder seam to cuff</option>
+                  <option value="center-back-to-cuff">Centre back of the neck to cuff</option>
+                  <option value="not-stated">The chart doesn’t say</option>
+                </select>
+                <p class="form-error ffr-error" id="ffc-how-sleeveLength-error" role="alert"></p>
+              </div>
+            </div>
+          </div>
+          <p class="form-error ffr-error" id="ffc-measurements-error" role="alert"></p>
+        </div>
+      </section>
+
       <div class="ff-action">
-        <button class="btn btn-primary ff-compare-btn" type="submit" id="fit-url-submit">Compare fit</button>
+        <button class="btn btn-primary ff-compare-btn" type="submit" id="ff-submit">Compare fit</button>
       </div>
     </form>
   </section>
 
   <!-- The result: the verdict first (assets/fit-compare.js — a size only
-       when the engine recommends one), then the item, then its chart and
-       where it came from, folded away (assets/size-chart.js). -->
+       when the server's decision is OK), each measurement side by side. -->
   <section class="container fit-result ff-result" id="fit-result" aria-labelledby="fit-result-title" hidden>
     <div class="fit-result-card ff-result-card" id="fit-result-card">
       <p class="ff-result-kicker">Fit comparison</p>
-      <h2 class="fit-result-title" id="fit-result-title" tabindex="-1">Sizing chart</h2>
+      <h2 class="fit-result-title" id="fit-result-title" tabindex="-1">Your garment and the item</h2>
       <p class="fit-result-product" id="fit-result-product"></p>
       <div class="fit-compare ff-verdict" id="fit-compare" aria-live="polite" hidden></div>
       <!-- after a comparison with a garment described here, and only
            then: an offer to save it (assets/find-fit-save.js) — beside
            the result, never in its place -->
       <div class="ff-save" id="ff-save" aria-live="polite" hidden></div>
-      <details class="ff-chart" id="fit-chart-details" hidden>
-        <summary>Size chart and source</summary>
-        <div class="size-chart-body" id="fit-result-body"></div>
-      </details>
     </div>
   </section>
-
-  <!-- One brand's products, in a popup over Find Fit (assets/brand-browser.js):
-       searched, filtered and paged on the server
-       (/api/size-recommendation?brand=&q=, api/_catalog/search.js), never
-       held in the page. Picking one makes it the item to compare. -->
-  <dialog class="size-chart brand-dialog" id="fit-brand-dialog" aria-labelledby="fit-brand-dialog-title">
-    <div class="size-chart-head brand-dialog-head">
-      <div>
-        <h2 class="size-chart-title" id="fit-brand-dialog-title">UNIQLO</h2>
-        <p class="size-chart-product fit-coverage" id="fit-coverage"></p>
-      </div>
-      <button class="icon-btn size-chart-close" type="button" id="fit-brand-dialog-close" aria-label="Close the product list">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
-      </button>
-    </div>
-    <!-- How much of the brand is listed, said before anything else
-         whenever it is only the products Fynd sourced itself
-         (brand.notice), and the one other way in: a pasted link. -->
-    <p class="fit-catalog-note" id="fit-catalog-note" hidden></p>
-    <div class="fit-browser-tools">
-      <label class="sr-only" for="fit-product-search">Search this brand’s products</label>
-      <input class="profile-input fit-product-search" type="search" id="fit-product-search" placeholder="Search, e.g. hoodie" autocomplete="off" maxlength="120" enterkeyhint="search">
-      <div class="fit-filters" id="fit-product-filters"></div>
-    </div>
-    <p class="fit-browser-status" id="fit-browser-status" role="status">Loading products&hellip;</p>
-    <p class="fit-browser-count" id="fit-browser-count"></p>
-    <div class="fit-products" id="fit-products" aria-label="Products"></div>
-    <button class="btn btn-secondary fit-products-more" id="fit-products-more" type="button" hidden>Show more</button>
-  </dialog>
 
   <p class="container ff-footnote">Your fit information is used to calculate your comparison. Nothing is saved to an account unless you choose to save it. <a class="guide-link" href="about.html">About Fynd</a></p>
 
@@ -227,14 +278,13 @@
 <script src="assets/account.js"></script>
 <script src="assets/size-chart.js"></script>
 <script src="assets/sizing-tables.js"></script>
-<script src="assets/fynd-payload.js"></script>
 <script src="assets/fit-profile-schema.js"></script>
 <script src="assets/fit-compare.js"></script>
 <script src="assets/catalog-suggest.js"></script>
+<script src="assets/fit-candidate.js"></script>
 <script src="assets/find-fit-reference.js"></script>
 <script src="assets/find-fit-save.js"></script>
-<script src="assets/find-fit.js"></script>
-<script src="assets/brand-browser.js"></script>
+<script src="assets/find-fit-manual.js"></script>
 <script src="assets/app.js"></script>
 </body>
 </html>

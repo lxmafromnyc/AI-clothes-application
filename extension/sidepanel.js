@@ -540,38 +540,13 @@
     recommendNow();
   }
 
-  /* the chart in view, to Find Fit: in the address fragment only */
-  /* What "Open in Find Fit" hands over, and so what Fynd's server sees:
-       a table read from this page  → #fynd-chart=… : the chart stays in
-                                      the address fragment, never sent
-       Fynd's own data for it       → #fynd-url=…   : Find Fit looks the
-                                      product's address up on Fynd's server
-                                      (/api/size-recommendation?chart=)
-     Either way, opening Fynd's site is a visit like any other: the page
-     loads and asks Fynd's server for the visitor's account. */
-  function handover() {
-    const p = state.page;
-    if (!p) return null;
-    const base = `${FYND_SITE.replace(/\/$/, '')}/index.html`;
-    const pageIndex = p.chosen && p.chosen.startsWith('page-') ? Number(p.chosen.slice(5)) : null;
-    if (pageIndex !== null) {
-      const payload = build(p.collected, pageIndex);
-      if (payload.chart) return { url: `${base}#fynd-chart=${encode(payload)}`, sends: false };
-    }
-    const address = p.match && p.match.product ? p.match.product.canonical : (p.ref ? p.ref.url : build(p.collected, null).page.url);
-    return address ? { url: `${base}#fynd-url=${encodeURIComponent(address)}`, sends: true, address } : null;
-  }
-  function openInFynd() {
-    const h = handover();
-    if (h) chrome.tabs.create({ url: h.url });
-  }
+  /* Nothing is handed to Find Fit: it takes the item's measurements by
+     hand. With a chart in view, the panel says how to compare it there. */
   function drawHandover() {
-    const h = handover();
-    $('open-fynd').hidden = !h;
-    $('open-fynd-note').textContent = !h ? ''
-      : h.sends
-        ? `Open in Find Fit opens Fynd’s website in a new tab and sends this product’s address (${h.address.replace(/^https?:\/\//, '')}) to Fynd’s server, to show Fynd’s record of it.`
-        : 'Open in Find Fit opens Fynd’s website in a new tab with this chart in the address after “#”, which browsers don’t send to the server. The site loads as on any visit (with your Fynd account, if you’re signed in).';
+    const p = state.page;
+    $('open-fynd-note').textContent = p && p.chosen
+      ? 'To compare a size with a garment you own on Find Fit, enter its finished-garment measurements from this chart in Find Fit’s item form, with how the chart measures each one.'
+      : '';
   }
 
   /* ---------- the test report: what was read and how it compared ----------
@@ -765,7 +740,6 @@
   $('read').addEventListener('click', () => { status(''); read({ how: 'button' }); });
   $('p-category').addEventListener('change', () => { if (state.page) { state.page.category = $('p-category').value; recommendNow(); } });
   $('correct').addEventListener('click', toggleCorrect);
-  $('open-fynd').addEventListener('click', openInFynd);
   $('copy-report').addEventListener('click', copyReport);
   $('confirm-garment').addEventListener('click', () => { state.confirmedGarment = true; drawChart(); recommendNow(); });
   $('use-as-anchor').addEventListener('click', () => {

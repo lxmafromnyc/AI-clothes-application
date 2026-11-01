@@ -394,40 +394,20 @@ async function browserTests() {
   try {
     browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || '/opt/pw-browsers/chromium', args: ['--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1'] });
   } catch (err) { console.log('\nChromium could not launch here — skipping the browser half.'); server.close(); return; }
-  section('the UNIQLO popup, on the synced catalogue (Chromium)');
+  section('a synced product’s page (Chromium)');
   try {
-    await test('UNIQLO opens straight into the catalogue: 24 of 2,405, category filters, search, more pages, and a product continues into its page with its price', async () => {
+    /* Find Fit no longer browses the catalogue (its item is entered by hand); the catalogue's paging,
+       filters and search are tested at the API above. A synced product's own page still carries the
+       feed's price and its affiliate link to UNIQLO. */
+    await test('a product from the synced feed opens on its own page by its code, with its price and the affiliate link to UNIQLO', async () => {
       const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
       context.setDefaultTimeout(10000);
       await context.addInitScript((o) => { window.FINDWEAR_API = `${o}/api/interpret`; }, ORIGIN);
       await context.route((u) => !String(u).startsWith(ORIGIN), (route) => route.abort());
       const page = await context.newPage();
-      await page.goto(`${ORIGIN}/index.html`);
-      await page.waitForSelector('#fit-browser[data-brands="ready"]');
-      assert.match(await page.textContent('.fit-brand-choice[data-brand="uniqlo"]'), /2405 products/);
-      await page.click('.fit-brand-choice[data-brand="uniqlo"]');
-      await page.waitForSelector('#fit-browser[data-answers="1"]');
-      const answered = async (action) => {
-        const before = Number(await page.getAttribute('#fit-browser', 'data-answers'));
-        await action();
-        await page.waitForFunction((n) => Number(document.getElementById('fit-browser').dataset.answers) > n, before);
-      };
-      assert.strictEqual(await page.$$eval('.fit-product', (b) => b.length), 24);
-      assert.match(await page.textContent('#fit-browser-status'), /^Showing 24 of 2405$/);
-      assert.strictEqual(await page.isHidden('#fit-catalog-note'), true, 'no limited-coverage notice');
-      await answered(() => page.click('#fit-products-more'));
-      assert.strictEqual(await page.$$eval('.fit-product', (b) => b.length), 48);
-      await answered(() => page.click('.fit-filter[data-group="kind"][data-value="jeans"]'));
-      assert.match(await page.textContent('#fit-browser-status'), /of 300$/);
-      await answered(() => page.click('.fit-filter[data-group="kind"][data-value="all"]'));
-      await answered(() => page.fill('#fit-product-search', 'FIXTURE hoodies 1001'));
-      const first = await page.$eval('.fit-product', (b) => b.dataset.code);
-      assert.strictEqual(first, 'E961001-000');
-      assert.match(await page.textContent('.fit-product[data-code="E961001-000"] .fit-product-price'), /^\$39\.90$/);
-      await page.click('.fit-product[data-code="E961001-000"]');
-      await page.waitForSelector('#ff-picked:not([hidden])');
-      await Promise.all([page.waitForURL(/product\.html\?brand=uniqlo&item=E961001-000/), page.click('#ff-picked .ff-picked-page')]);
+      await page.goto(`${ORIGIN}/product.html?brand=uniqlo&item=E961001-000`);
       await page.waitForSelector('#product[data-state="ready"]');
+      assert.match(await page.textContent('#pdp-price'), /\$39\.90/);
       assert.match(await page.getAttribute('#pdp-retailer', 'href'), /^https:\/\/click\.linksynergy\.com\//);
       await context.close();
     });
