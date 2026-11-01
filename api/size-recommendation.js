@@ -140,6 +140,8 @@ const auth = require('./_auth');
 const { readJson } = require('./_body');
 const pageAccess = require('./_sizing/page-access');
 const officialCharts = require('./_sizing/official-charts');
+/* the extension's AI-assisted chart reading (POST ?parse=1): its own rules, in its own module */
+const parseChart = require('./_sizing/parse-chart');
 
 const PRODUCT_ID = /^[a-z0-9]+(?:-[a-z0-9]+){0,12}$/;
 const MAX_ITEMS = 24;
@@ -417,6 +419,7 @@ async function handler(req, res) {
   if (req.method === 'POST') {
     try {
       const q = req.query || Object.fromEntries(new URL(req.url || '/', 'http://fynd.local').searchParams);
+      if (q.parse === '1') return await parseChart(req, res);
       if (q.check === '1') return await checkFirst(req, res);
       if (q.candidate === '1') return await compareCandidate(req, res);
       return await compareUnsaved(req, res);

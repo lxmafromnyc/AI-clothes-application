@@ -2972,6 +2972,42 @@ The extension reads; Fynd's server compares. In short:
   (`api/_cors.js`, `EXTENSION_ORIGINS`). It is never taken for the site, so
   no link or redirect is built on it.
 
+**AI-assisted chart reading.** This is a fallback for size charts the
+deterministic reading can't interpret: unknown headings, two-row or merged
+headings, a method or unit stated outside the headings.
+
+- **The call:** the extension sends the table's text to
+  `POST /api/size-recommendation?parse=1`.
+- **The proposal:** Gemini proposes how to read it, through the existing
+  adapter (`api/_interpreters/gemini.js`, with the key on the server only).
+  Every claim must quote the page, and the model returns no values.
+- **The checks:** `api/_sizing/chart-ai.js` checks each claim against the
+  page with Fynd's own readers (`assets/chart-reading.js`) and recovers every
+  value from the original cells. Anything unsupported is left unresolved.
+- **The result:** a proposal the shopper must confirm, never verified. The
+  comparison then reads it through the same `readChart`, engine and decision
+  as any other chart.
+- **The limits:** signed in, JSON only, size-limited, rate-limited (20 per 10
+  minutes), counted against the plan's existing AI allowance, capped per day
+  across all shoppers, and cached for 7 days. The cache key is the table, the
+  garment type, the model, the prompt version and the schema version.
+- **Grounding:** in either reading, a unit, method or "garment measurements"
+  is filled in only from the chart's own caption or headings. Text near the
+  table is at most a suggestion. A reading with anything uncertain, and every
+  AI-assisted reading, needs the shopper's check before the comparison.
+- **On failure:** the extension keeps its own reading for the shopper to
+  correct.
+
+Details are in [`extension/README.md`](extension/README.md).
+`scripts/eval-chart-extraction.js` scores readings against hand-checked
+charts, with automatic and needs-confirmation results split. It keeps three
+things apart:
+
+- the deterministic reading;
+- the live Gemini measurement, which runs only with `--live` and a key and has
+  not been run yet;
+- a validator check with scripted answers, which measures no model.
+
 The earlier popup page (`extension/popup.*`, no longer on the toolbar) still
 shows a page's chart and says to enter it in Find Fit's item form.
 `assets/fit-anchor.js` and `assets/fit-reference-data.js`, the browser-side
@@ -2984,6 +3020,9 @@ or the site.
   and the vendor copies.
 - `scripts/test-extension-extract.js`: reading and the batch request, through
   the real handlers.
+- `scripts/test-chart-ai.js`: the AI-assisted reading offline, with Gemini
+  scripted (right, wrong, injected and malformed answers, provider failures,
+  caching, limits).
 - `scripts/test-fit-panel-browser.js`: the panel, headless, against the real
   handlers, on fixture pages.
 - `scripts/test-fit-panel-real-chrome.js`: the whole workflow in a visible

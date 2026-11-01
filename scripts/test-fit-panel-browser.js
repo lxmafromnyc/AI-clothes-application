@@ -60,6 +60,42 @@ try { ({ chromium } = require(process.env.PLAYWRIGHT_PATH || 'playwright')); } c
 const Schema = require('../assets/fit-profile-schema.js');
 const users = require('../api/_users');
 const fitProfiles = require('../api/_fit-profile');
+/* Gemini, scripted: the real /api/size-recommendation?parse=1 runs here, and its one call to
+   Google is answered by the test (a fixture's model answer, a hang or a
+   failure) — no model is reached. The key is a fake. */
+process.env.GEMINI_API_KEY = 'browser-test-key-not-real';
+const gemini = { mode: 'answer', model: null, calls: 0 };
+const realFetch = global.fetch;
+global.fetch = async (url, init) => {
+  if (!String(url).startsWith('https://generativelanguage.googleapis.com/')) return realFetch(url, init);
+  gemini.calls += 1;
+  if (gemini.mode === 'hang') return new Promise((resolve, reject) => init.signal.addEventListener('abort', () => { const e = new Error('aborted'); e.name = 'AbortError'; reject(e); }));
+  if (gemini.mode === 'fail') return { ok: false, status: 500, headers: { get: () => null }, text: async () => '{}', json: async () => ({}) };
+  return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({ candidates: [{ content: { parts: [{ text: JSON.stringify(gemini.model) }] } }], usageMetadata: { totalTokenCount: 800 } }) };
+};
+const { CASES: AI_CASES, byId: aiCase } = require('./fixtures/chart-ai/cases.js');
+const parseChart = require('../api/_sizing/parse-chart');
+/* each chart-AI fixture as a shop page: a product, and its table as the page shows it (merged cells merged) */
+function aiPage(c) {
+  const esc = (t) => String(t).replace(/[&<>]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[ch]));
+  const spans = c.table.spans || {};
+  const rows = c.table.grid.map((r, ri) => {
+    const cells = [];
+    for (let ci = 0; ci < r.length; ci++) {
+      const span = spans[`${ri},${ci}`] || 1;
+      const tag = ri === 0 || (ri === 1 && !r[0]) ? 'th' : 'td';
+      cells.push(`<${tag}${span > 1 ? ` colspan="${span}"` : ''}>${esc(r[ci])}</${tag}>`);
+      ci += span - 1;
+    }
+    return `<tr>${cells.join('')}</tr>`;
+  }).join('\n');
+  const name = { hoodies: 'Illustrative Zip Hoodie', sweatshirts: 'Illustrative Sweatshirt', tshirts: 'Illustrative Crew T-Shirt' }[c.type];
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${name}</title>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"Product","name":"${name}","brand":{"name":"Illustrative Brand"},"offers":[{"size":"S"},{"size":"M"},{"size":"L"}]}</script></head>
+<body><p>FIXTURE — invented for Fynd’s tests (${esc(c.id)}). Not a real retailer’s page.</p><h1>${name}</h1>
+${c.table.before ? `<p>${esc(c.table.before)}</p>` : ''}<table>${c.table.caption ? `<caption>${esc(c.table.caption)}</caption>` : ''}${rows}</table></body></html>`;
+}
+
 const HANDLERS = {
   '/api/auth': require('../api/auth'),
   '/api/fit-profile': require('../api/fit-profile'),
@@ -116,6 +152,8 @@ function serve() {
       hit.status = res.statusCode;
       return;
     }
+    const ai = /^\/shop\/ai\/([\w-]+)\.html$/.exec(u.pathname);
+    if (ai && aiCase(ai[1])) { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); return res.end(aiPage(aiCase(ai[1]))); }
     const m = /^\/shop\/([\w-]+\.html)$/.exec(u.pathname);
     const file = m ? FIXTURES.map((d) => path.join(d, m[1])).find((f) => fs.existsSync(f)) : null;
     if (!file) { res.writeHead(404); return res.end(); }
@@ -134,7 +172,7 @@ function copy(api, testHosts) {
     /* the test copy only: this machine's shops (?tab= reads them without a press) and its Fynd */
     manifest.host_permissions = ['http://127.0.0.1/*', 'http://localhost/*'];
     fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify(manifest, null, 2));
-    fs.writeFileSync(path.join(dir, 'config.js'), `const FYND_SITE = '${api}';\nconst FYND_API = FYND_SITE;\nconst FYND_API_TIMEOUT_MS = 1500;\n`);
+    fs.writeFileSync(path.join(dir, 'config.js'), `const FYND_SITE = '${api}';\nconst FYND_API = FYND_SITE;\nconst FYND_API_TIMEOUT_MS = 1500;\nconst FYND_AI_TIMEOUT_MS = 4000;\n`);
   }
   return dir;
 }
@@ -501,11 +539,201 @@ const TEE = { unit: 'in', chestWidth: 21.5, bodyLength: 29 };
     await close();
   });
 
+  section('the AI-assisted reading (Gemini scripted on this machine)');
+
+  const aiHits = () => hits.filter((h) => h.path === '/api/size-recommendation' && h.search === '?parse=1' && h.method === 'POST');
+  async function toMeasure(panel) {
+    await view(panel, 'product');
+    await panel.click('#confirm-product');
+    await view(panel, 'measure');
+  }
+
+  await test('a chart Fynd reads on its own takes the fast path: no AI request at all, and the review says it was read automatically', async () => {
+    await signIn({ hoodies: HOODIE });
+    const before = aiHits().length;
+    const calls = gemini.calls;
+    const { panel, close } = await open('ai/fast-path.html');
+    await toMeasure(panel);
+    await panel.click('#use-chart');
+    await view(panel, 'review');
+    assert.strictEqual(await text(panel, '#review-path'), 'Read automatically from the page.');
+    assert.strictEqual(await panel.isHidden('#review-check'), true);
+    assert.deepStrictEqual([aiHits().length - before, gemini.calls - calls], [0, 0]);
+    await close();
+  });
+
+  await test('two heading rows: Fynd asks its AI; the suggestions come back with the page’s own words, and nothing goes on until the shopper confirms them', async () => {
+    await signIn({ tshirts: { unit: 'in', chestWidth: 20.5, bodyLength: 28, sleeveLength: 8.25 } });
+    gemini.mode = 'answer';
+    gemini.model = aiCase('multi-row-header').model;
+    const before = aiHits().length;
+    const { panel, close } = await open('ai/multi-row-header.html');
+    await toMeasure(panel);
+    await panel.click('#use-chart');
+    await view(panel, 'review');
+    assert.strictEqual(aiHits().length - before, 1);
+    const sent = aiHits().slice(-1)[0];
+    assert.deepStrictEqual(Object.keys(sent.body).sort(), ['table', 'type']);
+    assert.deepStrictEqual(sent.body.table.grid[1], ['', '½ width', 'HPS', 'from shoulder seam'], 'the second heading row is sent');
+    assert.ok(sent.cookie && sent.origin === EXT_ORIGIN);
+    assert.match(await text(panel, '#review-path'), /Fynd’s AI suggested how to read this chart/);
+    const list = await texts(panel, '#review-check-list li');
+    assert.ok(list.some((t) => /“Chest ½ width” → Chest width, flat, armpit to armpit \(the page says “Chest” and “½ width”\)/.test(t)), list.join(' | '));
+    assert.deepStrictEqual(await panel.$$eval('select[data-role="method"]', (ns) => ns.map((x) => x.value)), ['flat-width-armpit-to-armpit', 'high-point-shoulder-to-hem', 'shoulder-seam-to-cuff']);
+    assert.strictEqual(await panel.inputValue('#review-unit'), 'in');
+    assert.strictEqual(await panel.isDisabled('#to-reference'), true, 'not until confirmed');
+    if (process.env.FYND_SHOTS) await panel.screenshot({ path: path.join(process.env.FYND_SHOTS, 'ai-review.png'), fullPage: true });
+    assert.match((await texts(panel, '#review-problems li')).join(' '), /Check the reading Fynd’s AI suggested, then confirm it/);
+    await panel.check('#review-check-confirm');
+    assert.deepStrictEqual(await texts(panel, '#review-problems li'), []);
+    const cmpBefore = hits.length;
+    await toResults(panel, 'tshirts');
+    await view(panel, 'results');
+    assert.strictEqual(await text(panel, '#result-size'), 'M', 'the engine decides, from the page’s own numbers');
+    assert.match(await text(panel, '#result-source'), /interpreted with Fynd’s AI and confirmed by you\. Not verified by Fynd\./);
+    const chart = hits.slice(cmpBefore).find((h) => h.method === 'POST' && h.path === '/api/size-recommendation').body.chart;
+    assert.deepStrictEqual(chart.sizes[1].provenance.chestWidth, { source: 'page-table', header: 'Chest ½ width', corrected: false, interpretedBy: 'ai' });
+    await close();
+  });
+
+  await test('a table Fynd can’t read on its own is offered as “Not read automatically”; the AI’s reading of it comes back for confirming, with what stays open', async () => {
+    gemini.mode = 'answer';
+    gemini.model = aiCase('unusual-labels').model;
+    const { panel, close } = await open('ai/unusual-labels.html');
+    await toMeasure(panel);
+    assert.strictEqual(await text(panel, '#charts .fp-kind'), 'Not read automatically');
+    await panel.click('#use-chart');
+    await view(panel, 'review');
+    const notes = (await texts(panel, '#review-check-notes li')).join(' | ');
+    assert.match(notes, /“Back”/);
+    assert.deepStrictEqual(await panel.$$eval('select[data-role="dim"]', (ns) => ns.map((x) => x.value)), ['chestWidth', 'bodyLength', 'sleeveLength']);
+    assert.deepStrictEqual(await panel.$$eval('select[data-role="method"]', (ns) => ns.map((x) => x.value)), ['flat-width-armpit-to-armpit', '', '']);
+    await close();
+  });
+
+  await test('merged headings: the collector lines a merged cell up with its columns before anything is sent', async () => {
+    gemini.mode = 'answer';
+    gemini.model = aiCase('merged-header').model;
+    const { panel, close } = await open('ai/merged-header.html');
+    await toMeasure(panel);
+    await panel.click('#use-chart');
+    await view(panel, 'review');
+    assert.deepStrictEqual(aiHits().slice(-1)[0].body.table.grid[0], ['Size', 'Chest', 'Chest', 'Length']);
+    assert.match(await text(panel, '#review-path'), /couldn’t find enough on the page/);
+    await close();
+  });
+
+  await test('text on the page aimed at the AI: the shopper sees that Fynd ignored it, and nothing it asked for is taken', async () => {
+    gemini.mode = 'answer';
+    gemini.model = aiCase('prompt-injection').model;
+    const { panel, close } = await open('ai/prompt-injection.html');
+    await toMeasure(panel);
+    await panel.click('#use-chart');
+    await view(panel, 'review');
+    assert.match((await texts(panel, '#review-check-notes li')).join(' | '), /addressed to software.*Fynd ignored it/);
+    assert.strictEqual(await panel.inputValue('#review-unit'), '', 'no unit from the injected text');
+    assert.strictEqual(await panel.$eval('select[data-role="method"][data-col="1"]', (x) => x.value), '');
+    await close();
+  });
+
+  await test('the AI unavailable, failing or too slow: Fynd keeps its own reading for the shopper to correct, and says why — never a made-up one', async () => {
+    const tryWith = async (setup, expect) => {
+      setup();
+      const { panel, close } = await open('ai/flat-vs-circumference.html');
+      await toMeasure(panel);
+      await panel.click('#use-chart');
+      await view(panel, 'review');
+      assert.match(await text(panel, '#review-path'), expect);
+      /* what made Fynd ask is still unresolved: the shopper must check its own reading before going on */
+      assert.match((await texts(panel, '#review-check-list li')).join(' '), /couldn’t read part of this chart reliably/);
+      assert.match((await texts(panel, '#review-problems li')).join(' '), /Check what Fynd marked as uncertain/);
+      /* Fynd's own reading, kept: the stated circumference, the unstated length left to choose */
+      assert.deepStrictEqual(await panel.$$eval('select[data-role="method"]', (ns) => ns.map((x) => x.value)), ['garment-circumference', '']);
+      await close();
+    };
+    const key = process.env.GEMINI_API_KEY;
+    await tryWith(() => { delete process.env.GEMINI_API_KEY; }, /AI reading isn’t available right now\. Fynd kept its own reading/);
+    process.env.GEMINI_API_KEY = key;
+    await tryWith(() => { gemini.mode = 'fail'; }, /The AI reading failed\. Fynd kept its own reading/);
+    await tryWith(() => { gemini.mode = 'answer'; gemini.model = Object.assign({}, aiCase('flat-vs-circumference').model, { verified: true }); }, /didn’t follow Fynd’s rules, so Fynd ignored it/);
+    parseChart.settings.modelTimeoutMs = 50;
+    await tryWith(() => { gemini.mode = 'hang'; }, /took too long/);
+    parseChart.settings.modelTimeoutMs = 12000;
+    await context.clearCookies();
+    await tryWith(() => { gemini.mode = 'answer'; gemini.model = aiCase('flat-vs-circumference').model; }, /Sign in to Fynd to use its AI chart reading/);
+  });
+
+  await test('REGRESSION merged heading in a real page: a colspan heading is lined up with its columns, so “Length” shows its own values — even with no AI', async () => {
+    const key = process.env.GEMINI_API_KEY;
+    delete process.env.GEMINI_API_KEY;
+    await signIn({ hoodies: HOODIE });
+    const { panel, close } = await open('ai/merged-header.html');
+    await toMeasure(panel);
+    await panel.click('#use-chart');
+    await view(panel, 'review');
+    process.env.GEMINI_API_KEY = key;
+    const lengthCol = await panel.$$eval('select[data-role="dim"]', (ns) => ns.find((x) => x.value === 'bodyLength').dataset.col);
+    assert.deepStrictEqual(await panel.$$eval(`input[data-role="value"][data-col="${lengthCol}"]`, (ns) => ns.map((x) => x.value)), ['68', '70', '72'], 'never the circumference column’s 100, 106, 112');
+    await close();
+  });
+
+  await test('REGRESSION injected unit in a real page: text near the table addressed to an AI fills in no unit — and the shopper is told it was ignored', async () => {
+    const key = process.env.GEMINI_API_KEY;
+    delete process.env.GEMINI_API_KEY;
+    const { panel, close } = await open('ai/prompt-injection.html');
+    await toMeasure(panel);
+    await panel.click('#use-chart');
+    await view(panel, 'review');
+    process.env.GEMINI_API_KEY = key;
+    assert.strictEqual(await panel.inputValue('#review-unit'), '');
+    assert.match((await texts(panel, '#review-check-notes li')).join(' '), /addressed to software/);
+    await close();
+  });
+
+  await test('a unit stated only near the table, in plain words: filled in for the shopper to check, never silently — the next step waits for the check', async () => {
+    gemini.mode = 'answer';
+    gemini.model = aiCase('nearby-text-only').model;
+    const { panel, close } = await open('ai/nearby-text-only.html');
+    await toMeasure(panel);
+    await panel.click('#use-chart');
+    await view(panel, 'review');
+    assert.strictEqual(await panel.inputValue('#review-unit'), '', 'the AI reading doesn’t fill it from nearby text');
+    assert.match((await texts(panel, '#review-check-notes li')).join(' '), /Text near the table says “All measurements in centimetres\.”/);
+    assert.strictEqual(await panel.$eval('select[data-role="method"][data-col="1"]', (x) => x.value), '');
+    await close();
+  });
+
+  await test('while the AI reads, the shopper can review it themselves instead', async () => {
+    await signIn({ hoodies: HOODIE });
+    gemini.mode = 'hang';
+    parseChart.settings.modelTimeoutMs = 3000;
+    const { panel, close } = await open('ai/fractions-ranges.html');
+    await toMeasure(panel);
+    await panel.click('#use-chart');
+    await view(panel, 'interpreting');
+    assert.match(await text(panel, '#interpreting-text'), /how some measurements are taken is written outside the headings/);
+    await panel.click('#interpreting-skip');
+    await view(panel, 'review');
+    assert.strictEqual(await text(panel, '#review-path'), 'Fynd’s own reading, without the AI. Check and correct it.');
+    parseChart.settings.modelTimeoutMs = 12000;
+    gemini.mode = 'answer';
+    await close();
+  });
+
+  await test('a body chart is never sent for an AI reading', async () => {
+    const before = aiHits().length;
+    const { panel, close } = await open('ai/body-chart.html');
+    await toMeasure(panel);
+    assert.strictEqual(await panel.isHidden('#use-chart'), true);
+    assert.strictEqual(aiHits().length, before);
+    await close();
+  });
+
   section('what the panel asks of the network');
 
-  await test('every request the panel made went to Fynd’s API, and only to its two endpoints', async () => {
+  await test('every request the panel made went to Fynd’s API, and only to its three endpoints', async () => {
     assert.ok(asked.length > 0);
-    const off = asked.filter((u) => !u.startsWith(`${API}/api/fit-profile`) && !u.startsWith(`${API}/api/size-recommendation?compare=1&candidate=1`));
+    const off = asked.filter((u) => !u.startsWith(`${API}/api/fit-profile`) && !u.startsWith(`${API}/api/size-recommendation?compare=1&candidate=1`) && u !== `${API}/api/size-recommendation?parse=1`);
     assert.deepStrictEqual(off, []);
     assert.ok(!hits.some((h) => h.path === '/api/size-recommendation' && h.method === 'GET'), 'never the catalogue lookup');
   });

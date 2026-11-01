@@ -109,9 +109,13 @@
    ---------------------------------------------------------
    Removing it
    ---------------------------------------------------------
-   Delete api/_interpreters/ and the block it is used from in
-   api/interpret.js, both marked. Nothing else refers to it: no page, no
-   endpoint, and no production default.
+   It has two consumers: the marked block in api/interpret.js, and
+   api/_sizing/parse-chart.js (the extension's AI-assisted chart reading,
+   served by api/size-recommendation.js at ?parse=1, through generateJson
+   below). To remove it, delete api/_interpreters/, that block,
+   api/_sizing/parse-chart.js and the line routing ?parse=1 to it — the
+   extension then keeps its own deterministic reading. Nothing else refers
+   to it: no page and no production default.
    ========================================================= */
 
 'use strict';
@@ -442,8 +446,72 @@ async function listModels() {
   return { ok: true, models };
 }
 
+/* -----------------------------------------------------------
+   A JSON answer to any prompt, for a second caller
+   -----------------------------------------------------------
+   api/_sizing/parse-chart.js asks Gemini to propose how to read a size chart.
+   The same endpoint, header, key handling, thinking settings and reply
+   parsing as interpret() above, with its own prompt, a caller-set
+   timeout and an output cap. Never throws; every failure is named:
+
+     not-configured  no key in the environment
+     timeout         no answer within timeoutMs (aborted)
+     unreachable     nothing answered
+     rate-limited    Google answered 429 (retryAfter in seconds, if said)
+     upstream        any other non-200
+     unparseable     the answer was not one JSON object
+   ----------------------------------------------------------- */
+async function generateJson({ systemPrompt, userText, timeoutMs, maxOutputTokens }) {
+  if (!configured()) return { ok: false, reason: 'not-configured' };
+  const name = model();
+  const three = isGemini3(name);
+  const generationConfig = { responseMimeType: 'application/json', maxOutputTokens: maxOutputTokens || 2048 };
+  if (!three) generationConfig.temperature = 0;
+  generationConfig.thinkingConfig = three ? { thinkingLevel: thinkingLevel() } : { thinkingBudget: thinkingBudget() };
+
+  let response;
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs || REQUEST_TIMEOUT);
+  try {
+    response = await fetch(`${API_ROOT}/${encodeURIComponent(name)}:generateContent`, {
+      method: 'POST',
+      signal: controller.signal,
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey() },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: String(systemPrompt || '') }] },
+        contents: [{ role: 'user', parts: [{ text: String(userText || '') }] }],
+        generationConfig
+      })
+    });
+  } catch (err) {
+    return { ok: false, reason: timedOut ? 'timeout' : 'unreachable', detail: redact(err && err.message) };
+  } finally {
+    clearTimeout(timer);
+  }
+  if (!response.ok) {
+    let detail = '';
+    try { detail = await response.text(); } catch (err) { detail = ''; }
+    const retry = Number(response.headers && typeof response.headers.get === 'function' ? response.headers.get('retry-after') : NaN);
+    return {
+      ok: false,
+      reason: response.status === 429 ? 'rate-limited' : 'upstream',
+      status: response.status,
+      retryAfter: Number.isFinite(retry) && retry > 0 ? retry : null,
+      error: errorEnvelope(detail),
+      detail: redact(detail).slice(0, 500)
+    };
+  }
+  let payload;
+  try { payload = await response.json(); } catch (err) { return { ok: false, reason: 'unparseable' }; }
+  const reading = parseReply(payload);
+  if (!reading.ok) return Object.assign(reading, { tokens: reading.usage ? reading.usage.total : 0 });
+  return { ok: true, raw: reading.raw, usage: reading.usage, tokens: reading.usage.total, model: name };
+}
+
 module.exports = {
   name: 'gemini',
+  generateJson,
   listModels,
   configured,
   interpret,

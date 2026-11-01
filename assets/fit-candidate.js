@@ -139,8 +139,10 @@
 
      Each value may carry where it came from — the page's table, its
      structured data, or the shopper — the column it was read under, and
-     whether the shopper corrected it. Recorded and returned, never
-     trusted: the item stays "shopper-entered" whatever it says. */
+     whether the shopper corrected it, and whether the column's reading
+     was proposed by Fynd's AI (interpretedBy: 'ai', confirmed by the
+     shopper). Recorded and returned, never trusted: the item stays
+     "shopper-entered" whatever it says. */
   const MAX_SIZES = 30;
   const SOURCES = ['page-table', 'page-structured-data', 'shopper'];
   const MEASURES = ['finished-garment', 'body', 'not-stated'];
@@ -156,7 +158,8 @@
     const source = SOURCES.includes(raw.source) ? raw.source : null;
     if (!source) return null;
     const header = typeof raw.header === 'string' ? clean(raw.header).slice(0, 60) || null : null;
-    return { source, header, corrected: raw.corrected === true };
+    /* the column's reading was proposed by Fynd's AI and confirmed by the shopper: recorded, never trusted */
+    return Object.assign({ source, header, corrected: raw.corrected === true }, raw.interpretedBy === 'ai' ? { interpretedBy: 'ai' } : {});
   }
   function readChart(raw) {
     const errors = [];

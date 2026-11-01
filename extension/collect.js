@@ -221,6 +221,35 @@ function fyndCollect() {
     ? Array.from(table.rows).map((tr) => Array.from(tr.cells))
     : Array.from(table.querySelectorAll('[role="row"]')).filter((r) => r.closest('table, [role="table"], [role="grid"]') === table)
       .map((r) => Array.from(r.querySelectorAll(CELL_ROLES)).filter((c) => c.closest('[role="row"]') === r)));
+  /* The table with merged cells repeated where they sit (colspan,
+     rowspan, aria-colspan, aria-rowspan). A merged heading read once
+     ("Chest" over two columns) would shift every later column one to the
+     left — a "Length" column reading the circumference column's values —
+     so both readings, deterministic and AI-assisted, use this grid. */
+  const spanOf = (cell, prop, aria, max) => {
+    const n = Number(cell[prop] || cell.getAttribute(aria)) || 1;
+    return Math.min(Math.max(n, 1), max);
+  };
+  const gridOf = (table) => {
+    const out = [];
+    rowsOf(table).slice(0, MAX_ROWS).forEach((cells, r) => {
+      out[r] = out[r] || [];
+      let c = 0;
+      cells.forEach((cell) => {
+        while (out[r][c] !== undefined) c += 1;
+        const t = text(cell, MAX_CELL);
+        const cs = spanOf(cell, 'colSpan', 'aria-colspan', MAX_COLUMNS);
+        const rs = spanOf(cell, 'rowSpan', 'aria-rowspan', 3);
+        for (let dr = 0; dr < rs && r + dr < MAX_ROWS; dr++) {
+          out[r + dr] = out[r + dr] || [];
+          for (let dc = 0; dc < cs && c + dc < MAX_COLUMNS; dc++) out[r + dr][c + dc] = t;
+        }
+        c += cs;
+      });
+    });
+    return out.map((row) => Array.from({ length: Math.min(row.length, MAX_COLUMNS) }, (_, i) => (row[i] === undefined ? '' : row[i])))
+      .filter((cells) => cells.some(Boolean));
+  };
   const tables = [];
   const found = Array.from(document.querySelectorAll('table, [role="table"], [role="grid"]'))
     .filter((t) => t.tagName === 'TABLE' || !t.closest('table'))
@@ -228,13 +257,12 @@ function fyndCollect() {
   for (const table of found) {
     if (tables.length >= MAX_TABLES) break;
     if (table.querySelector('input, select, textarea, button')) continue;
-    const rows = rowsOf(table).slice(0, MAX_ROWS)
-      .map((cells) => cells.slice(0, MAX_COLUMNS).map((cell) => text(cell, MAX_CELL)))
-      .filter((cells) => cells.some(Boolean));
+    const rows = gridOf(table);
     if (rows.length < 2) continue;
     const around = wordsBefore(table);
     tables.push({
       rows,
+      grid: rows,
       caption: text(table.tagName === 'TABLE' ? table.caption : document.getElementById(table.getAttribute('aria-labelledby') || '') || null, 160) || fold(table.getAttribute('aria-label'), 160) || null,
       before: around.before,
       heading: around.heading,

@@ -62,7 +62,11 @@
     referenceType: null,
     comparing: false,
     result: null,
-    lastProblem: null
+    lastProblem: null,
+    /* how the review in hand was read: 'deterministic', 'ai', 'ai-insufficient', 'ai-unavailable', 'skipped', 'manual' */
+    path: null,
+    aiProblem: null,
+    interpreting: 0
   };
 
   /* ---------- small helpers ---------- */
@@ -72,8 +76,8 @@
     if (text !== undefined && text !== null) n.textContent = String(text);
     return n;
   }
-  const VIEWS = ['start', 'reading', 'problem', 'product', 'measure', 'review', 'reference', 'comparing', 'results', 'error'];
-  const STEP_OF = { product: 'product', measure: 'measure', review: 'measure', reference: 'reference', comparing: 'results', results: 'results', error: 'results' };
+  const VIEWS = ['start', 'reading', 'problem', 'product', 'measure', 'interpreting', 'review', 'reference', 'comparing', 'results', 'error'];
+  const STEP_OF = { product: 'product', measure: 'measure', interpreting: 'measure', review: 'measure', reference: 'reference', comparing: 'results', results: 'results', error: 'results' };
   const ORDER = ['product', 'measure', 'reference', 'results'];
   function show(view) {
     state.view = view;
@@ -156,6 +160,10 @@
     if (!before || before.url !== state.product.url || before.name !== state.product.name) { state.type = null; state.referenceType = null; }
     state.review = null;
     state.chartIndex = null;
+    state.path = null;
+    state.aiProblem = null;
+    state.aiBase = null;
+    state.interpreting += 1;
     state.charts = X.charts(raw);
     state.result = null;
     if (!state.product.found) { problem('no-product'); return; }
@@ -203,12 +211,13 @@
   const KIND_WORDS = { 'finished-garment': 'Garment measurements', body: 'Body measurements', 'not-stated': 'Doesn’t say' };
   function drawCharts() {
     const list = state.charts ? state.charts.list : [];
+    const unread = state.charts && state.charts.unread ? state.charts.unread : [];
     const box = $('charts');
     box.replaceChildren();
     /* where this retailer keeps its garment chart, if Fynd knows (retailers.js) */
     const known = state.tab && state.tab.url && window.FyndRetailers ? window.FyndRetailers.match(state.tab.url) : null;
     const hint = known && known.retailer && known.retailer.chartHint ? ` ${known.retailer.chartHint}` : '';
-    if (!list.length) {
+    if (!list.length && !unread.length) {
       $('measure-text').textContent = `No size chart found on this page.${hint || ' If the shop keeps its chart in a size guide, open the guide on the page and read it again.'} Or enter the measurements by hand from the chart.`;
       $('use-chart').hidden = true;
       show('measure');
@@ -216,9 +225,11 @@
     }
     const usable = list.filter((c) => c.measures !== 'body');
     $('measure-text').textContent = usable.length
-      ? (list.length > 1 ? 'Fynd found more than one table. Choose the one with the garment’s own measurements.' : 'Fynd found this table on the page.')
-      : 'This page’s chart measures the body each size is for, not the garment, so Fynd can’t compare it with your garment. If the shop also has product (garment) measurements, open them on the page and read it again — or enter them by hand.';
-    $('use-chart').hidden = !usable.length;
+      ? (list.length + unread.length > 1 ? 'Fynd found more than one table. Choose the one with the garment’s own measurements.' : 'Fynd found this table on the page.')
+      : unread.length
+        ? 'Fynd found a table that looks like a size chart, but couldn’t read its headings on its own. It can ask its AI to suggest how to read it, for you to check.'
+        : 'This page’s chart measures the body each size is for, not the garment, so Fynd can’t compare it with your garment. If the shop also has product (garment) measurements, open them on the page and read it again — or enter them by hand.';
+    $('use-chart').hidden = !usable.length && !unread.length;
     const preferred = list.find((c) => c.measures === 'finished-garment') || usable[0] || null;
     list.forEach((c) => {
       const li = el('li');
@@ -240,21 +251,114 @@
       li.append(label);
       box.append(li);
     });
+    /* tables shaped like a size chart that the deterministic reading couldn't label */
+    unread.forEach((u, i) => {
+      const li = el('li');
+      const label = el('label', 'fp-option');
+      const radio = el('input');
+      radio.type = 'radio';
+      radio.name = 'chart';
+      radio.value = `u${u.rawIndex}`;
+      radio.checked = !preferred && i === 0;
+      const head = el('span', 'fp-option-head');
+      const kind = el('span', 'fp-kind', 'Not read automatically');
+      kind.dataset.kind = 'unread';
+      head.append(radio, el('span', null, u.title || `Table ${u.rawIndex + 1}`), kind);
+      label.append(head, el('span', 'fp-option-detail', `${u.sizes} sizes · ${u.columns.join(', ')}${u.inDialog ? ' · in the open size guide' : ''} · Fynd can ask its AI how to read it`));
+      li.append(label);
+      box.append(li);
+    });
     show('measure');
   }
   function useChart() {
     const picked = document.querySelector('input[name="chart"]:checked');
     if (!picked) return;
+    const tables = (state.raw && state.raw.tables) || [];
+    if (picked.value.startsWith('u')) {
+      /* a table only the AI-assisted reading can try */
+      const rawTable = tables[Number(picked.value.slice(1))];
+      state.chartIndex = null;
+      if (rawTable) interpret(rawTable, null, ['unread']);
+      return;
+    }
     const chart = state.charts.list[Number(picked.value)];
     if (!chart || chart.measures === 'body') return;
     state.chartIndex = chart.index;
-    state.review = X.startReview(chart, state.product);
+    const review = X.startReview(chart, state.product, tables[chart.rawIndex]);
+    /* the fast path: Fynd's own reading, when it is enough — no model is asked */
+    const needs = X.interpretationNeeds(review, tables[chart.rawIndex]);
+    if (needs.length && tables[chart.rawIndex]) { interpret(tables[chart.rawIndex], review, needs); return; }
+    state.review = review;
+    state.path = 'deterministic';
+    state.aiProblem = null;
     drawReview();
   }
   function manualEntry() {
     state.chartIndex = null;
+    state.path = 'manual';
+    state.aiProblem = null;
     state.review = X.emptyReview(state.product);
     if (!state.review.rows.length) state.review.rows.push({ size: '', available: null, cells: Object.fromEntries(state.review.columns.map((c) => [c.index, { raw: '', value: null, problem: 'empty', corrected: false }])) });
+    drawReview();
+  }
+
+  /* ---------- 3b. the AI-assisted reading, on Fynd's server ---------- */
+  const NEED_WORDS = {
+    unread: 'its headings aren’t ones Fynd knows',
+    'heading-rows': 'its headings run over more than one row',
+    column: 'a column’s heading isn’t one Fynd can name',
+    method: 'how some measurements are taken is written outside the headings',
+    unit: 'its unit isn’t stated where Fynd looks'
+  };
+  function aiProblemWords(p) {
+    if (!p) return 'The AI reading didn’t answer.';
+    const why = {
+      'sign-in': 'Sign in to Fynd to use its AI chart reading.',
+      'rate-limited': p.reason === 'over-limit' ? 'You’ve used your plan’s AI allowance for now.' : 'Too many chart readings just now — try again in a few minutes.',
+      'too-large': 'This table is too large for the AI reading.',
+      unsupported: 'Fynd’s AI reading can’t make out this table’s layout.',
+      unavailable: p.reason === 'ai-rate-limited' ? 'The AI reading is busy right now.' : 'The AI reading isn’t available right now.',
+      timeout: 'The AI reading took too long.',
+      offline: 'Fynd couldn’t be reached.',
+      invalid: 'Fynd couldn’t send this table.',
+      server: p.reason === 'ai-invalid-response' ? 'The AI’s answer didn’t follow Fynd’s rules, so Fynd ignored it.' : 'The AI reading failed.'
+    };
+    return why[p.kind] || 'The AI reading failed.';
+  }
+  /* base: Fynd's own reading of the chart (kept on any failure), or null for a table it couldn't read */
+  async function interpret(rawTable, base, needs) {
+    const ticket = ++state.interpreting;
+    state.aiBase = base;
+    $('interpreting-text').textContent = `Fynd read what it could, but ${needs.map((n) => NEED_WORDS[n] || n).join(', and ')}. Asking Fynd’s AI to suggest how to read it…`;
+    show('interpreting');
+    const got = await API.interpretChart(X.aiRequest(rawTable, state.type));
+    if (ticket !== state.interpreting) return;
+    if (got.ok && got.data && (got.data.status === 'proposed' || (got.data.status === 'insufficient-evidence' && (got.data.rows || []).length))) {
+      state.review = X.reviewFromInterpretation(got.data, state.product);
+      state.path = got.data.status === 'proposed' ? 'ai' : 'ai-insufficient';
+      state.aiProblem = null;
+      drawReview();
+      return;
+    }
+    if (got.ok && got.data && got.data.status === 'body-chart') {
+      /* the page's own words say body measurements: never compared, whatever anyone suggests */
+      drawCharts();
+      $('measure-text').textContent = 'This table gives body measurements — who each size is made for — not the garment’s own, so Fynd can’t compare it with your garment. Open the garment measurements on the page and read it again, or enter them by hand.';
+      return;
+    }
+    /* any failure: Fynd's own reading is kept, for the shopper to correct — never a made-up one */
+    state.aiProblem = got.ok ? { kind: 'unsupported', reason: got.data && got.data.status } : got.problem;
+    keepOwnReading('ai-unavailable');
+  }
+  function keepOwnReading(path) {
+    state.path = path;
+    if (state.aiBase) {
+      state.review = state.aiBase;
+      /* what made Fynd ask is still unresolved: the shopper checks it */
+      const why = 'Fynd couldn’t read part of this chart reliably on its own: check every column, method and the unit against the chart.';
+      if (!state.review.checks.includes(why)) state.review.checks.unshift(why);
+    }
+    else { state.review = X.emptyReview(state.product); if (!state.review.rows.length) state.review.rows.push({ size: '', available: null, cells: Object.fromEntries(state.review.columns.map((c) => [c.index, { raw: '', value: null, problem: 'empty', corrected: false }])) }); }
     drawReview();
   }
 
@@ -278,10 +382,13 @@
     $('review-text').textContent = manual
       ? 'Enter each size’s finished-garment measurements from the product’s chart — not body sizes — and how the chart measures each. Leave blank any it doesn’t give.'
       : 'Fynd read these from the page. Correct anything it got wrong, and say how the chart measures each one: Fynd compares only measurements taken the same way as your garment’s.';
-    $('review-kind').textContent = manual ? '' : r.measures === 'finished-garment'
-      ? 'The page says this table measures the garment itself.'
-      : 'The page doesn’t say whether this table measures the garment or the body.';
-    $('review-confirm-row').hidden = r.measures === 'finished-garment';
+    $('review-kind').textContent = manual ? '' : r.measures === 'finished-garment' && r.nearbyMeasures
+      ? 'Text near this table says it gives the garment’s own measurements; the chart itself doesn’t say.'
+      : r.measures === 'finished-garment'
+        ? 'The page says this table measures the garment itself.'
+        : 'The page doesn’t say whether this table measures the garment or the body.';
+    drawPath(r);
+    $('review-confirm-row').hidden = r.measures === 'finished-garment' && !r.nearbyMeasures;
     $('review-confirm').checked = r.measuresConfirmed;
     $('review-unit').value = r.unit || '';
     const table = $('review-table');
@@ -302,6 +409,14 @@
         box.append(how);
       }
       if (c.said) box.append(el('span', 'fp-col-said', `The page says: ${c.said}`));
+      if (c.nearby) { const n = el('span', 'fp-col-ai', 'Method from text near the table — check it'); n.dataset.status = 'unresolved'; box.append(n); }
+      if (c.ai) {
+        const note = el('span', 'fp-col-ai', c.ai.status === 'proposed'
+          ? (c.ai.basis === 'ai-reading' ? 'Suggested by AI' : c.ai.evidence && c.ai.evidence.method ? 'Method found by AI' : 'Read from the heading')
+          : c.ai.status === 'unresolved' ? `Not resolved: ${c.ai.reasons[0] || 'choose it yourself'}` : 'Not a measurement Fynd compares');
+        note.dataset.status = c.ai.status;
+        box.append(note);
+      }
       th.append(box);
       head.append(th);
     });
@@ -353,6 +468,50 @@
     drawReviewProblems();
     show('review');
   }
+  /* how this reading was made, and — for the AI-assisted one — each suggestion, its evidence, and what stays open */
+  const PATH_WORDS = {
+    deterministic: 'Read automatically from the page.',
+    ai: 'Fynd’s AI suggested how to read this chart. Every value below is the page’s own; check each suggestion against the chart, then confirm.',
+    'ai-insufficient': 'Fynd’s AI couldn’t find enough on the page to read this chart (no chest measurement it could show). Map the columns yourself, or enter the measurements by hand.',
+    skipped: 'Fynd’s own reading, without the AI. Check and correct it.',
+    manual: ''
+  };
+  function drawPath(r) {
+    const path = state.path || (r.source === 'shopper' ? 'manual' : 'deterministic');
+    const p = $('review-path');
+    p.dataset.path = path;
+    p.textContent = path === 'ai-unavailable'
+      ? `${aiProblemWords(state.aiProblem)} Fynd kept its own reading${state.aiBase ? '' : ' — enter the measurements by hand'}; check and correct it.`
+      : path === 'deterministic' && r.checks && r.checks.length
+        ? 'Read from the page — but part of it is uncertain: check it below.'
+        : (PATH_WORDS[path] || '');
+    const ai = r.interpretedBy === 'ai';
+    const items = [];
+    const notes = (r.notes || []).slice();
+    if (ai) {
+      const label = (c) => (c.dim ? `${X.LABELS[c.dim]}${c.method ? `, ${(METHOD_CHOICES[c.dim].find(([v]) => v === c.method) || [null, c.method])[1].toLowerCase()}` : ''}` : 'not mapped');
+      r.columns.filter((c) => c.ai && c.ai.status !== 'not-a-measurement').forEach((c) => {
+        const quotes = [c.ai.evidence.header, c.ai.evidence.method].filter(Boolean).map((e) => `“${e.text}”`);
+        items.push(`“${c.header}” → ${label(c)}${quotes.length ? ` (the page says ${quotes.join(' and ')})` : ''}`);
+        if (c.ai.suggestion) notes.push(`“${c.header}”: text near the table says “${c.ai.suggestion.text}”. Choose that method yourself only if it applies to this chart.`);
+      });
+      if (r.ai.unit && r.ai.unit.status === 'conflicting') notes.push('The page gives more than one unit: choose the right one, or correct the values.');
+      if (r.ai.unit && r.ai.unit.status === 'missing') notes.push('The chart doesn’t state its unit: choose it.');
+      if (r.ai.unit && r.ai.unit.suggestion) notes.push(`Text near the table says “${r.ai.unit.suggestion.text}”. Choose that unit only if it applies to this chart.`);
+      if (r.ai.aiSuggestsMeasures) notes.push('These may be the garment’s own measurements, but the chart doesn’t say so: confirm it below only if you’re sure.');
+      r.columns.filter((c) => c.ai && c.ai.status === 'unresolved').forEach((c) => notes.push(`“${c.header}”: ${c.ai.reasons.join(' ')}`));
+      r.ai.ambiguities.forEach((a) => notes.push(`The AI noted: ${a}`));
+      if (r.ai.ignoredText) notes.push(r.ai.ignoredText);
+    } else (r.checks || []).forEach((t) => items.push(t));
+    const box = $('review-check');
+    box.hidden = !ai && !items.length && !notes.length;
+    $('review-check-title').textContent = ai ? 'Fynd’s AI suggests:' : items.length ? 'Check before going on:' : '';
+    $('review-check-list').replaceChildren(...items.map((t) => el('li', null, t)));
+    $('review-check-notes').replaceChildren(...notes.map((t) => el('li', null, t)));
+    $('review-check-confirm-row').hidden = !ai && !items.length;
+    $('review-check-confirm-text').textContent = ai ? 'I’ve checked these suggestions against the chart on the page' : 'I’ve checked these against the chart on the page';
+    $('review-check-confirm').checked = Boolean(r.checked);
+  }
   function drawReviewProblems() {
     const problems = X.reviewProblems(state.review, state.type);
     $('review-problems').replaceChildren(...problems.map((t) => el('li', null, t)));
@@ -365,6 +524,7 @@
     if (!t || !r) return;
     if (t.id === 'review-unit') { r.unit = t.value || null; drawReviewProblems(); return; }
     if (t.id === 'review-confirm') { r.measuresConfirmed = t.checked; drawReviewProblems(); return; }
+    if (t.id === 'review-check-confirm') { r.checked = t.checked; drawReviewProblems(); return; }
     const col = r.columns.find((c) => String(c.index) === t.dataset.col);
     if (t.dataset.role === 'dim' && col) {
       const dim = t.value || null;
@@ -544,7 +704,9 @@
     }));
     $('result-reliability').textContent = ok && c.reliability ? `Reliability: ${c.reliability} — the item’s measurements are the ones you confirmed from the page; Fynd hasn’t checked them.` : '';
     $('result-caveats').replaceChildren(...(ok && Array.isArray(c.caveats) ? c.caveats : []).map((t) => el('li', null, t)));
-    $('result-source').textContent = state.review && state.review.source === 'shopper'
+    $('result-source').textContent = state.review && state.review.interpretedBy === 'ai'
+      ? `Measurements: read from ${state.product && state.product.url ? safeHost(state.product.url) : 'the page'}, interpreted with Fynd’s AI and confirmed by you${state.review.rows.some((r) => Object.values(r.cells).some((x) => x.corrected)) ? ', with your corrections' : ''}. Not verified by Fynd.`
+      : state.review && state.review.source === 'shopper'
       ? 'Measurements: entered by you from the product’s chart.'
       : `Measurements: read from ${state.product && state.product.url ? safeHost(state.product.url) : 'the page'} and confirmed by you${state.review && state.review.rows.some((r) => Object.values(r.cells).some((x) => x.corrected)) ? ', with your corrections' : ''}. Not verified by Fynd.`;
     show('results');
@@ -561,6 +723,7 @@
   $('product-form').addEventListener('submit', confirmProduct);
   $('product-reread').addEventListener('click', () => read({ how: 'retry' }));
   $('use-chart').addEventListener('click', useChart);
+  $('interpreting-skip').addEventListener('click', () => { state.interpreting += 1; state.aiProblem = null; keepOwnReading(state.aiBase ? 'skipped' : 'manual'); });
   $('measure-reread').addEventListener('click', () => read({ how: 'retry' }));
   $('manual-entry').addEventListener('click', manualEntry);
   $('v-review').addEventListener('change', onReviewChange);

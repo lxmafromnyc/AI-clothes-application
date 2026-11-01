@@ -87,10 +87,28 @@
       </div>
     </section>
 
+    <!-- ===== the deterministic reading needed help: the AI-assisted reading, on Fynd's server ===== -->
+    <section id="v-interpreting" class="fp-card" hidden aria-live="polite" aria-labelledby="interpreting-title">
+      <h2 class="fp-h2" id="interpreting-title">Reading this chart more closely</h2>
+      <p class="pop-text" id="interpreting-text"></p>
+      <p class="fp-small">Only the table’s text is sent to Fynd, whose AI suggests how to read it. Fynd checks every suggestion against the page, and you confirm it.</p>
+      <div class="fp-actions">
+        <button type="button" class="btn btn-secondary" id="interpreting-skip">Review it myself instead</button>
+      </div>
+    </section>
+
     <!-- ===== review and correct ===== -->
     <section id="v-review" class="fp-card" hidden aria-labelledby="review-title">
       <h2 class="fp-h2" id="review-title">Check the measurements</h2>
       <p class="pop-text" id="review-text">Fynd read these from the page. Correct anything it got wrong, and say how the chart measures each one: Fynd compares only measurements taken the same way as your garment’s.</p>
+      <p class="fp-note" id="review-path" data-path=""></p>
+      <!-- anything uncertain in this reading (AI suggestions, words from near the table, rows that don't line up): checked by the shopper before going on -->
+      <div class="fp-ai" id="review-check" hidden>
+        <p class="fp-small" id="review-check-title"></p>
+        <ul class="fp-list" id="review-check-list"></ul>
+        <ul class="fp-list fp-ai-notes" id="review-check-notes"></ul>
+        <label class="fp-check" id="review-check-confirm-row"><input type="checkbox" id="review-check-confirm"> <span id="review-check-confirm-text">I’ve checked these against the chart on the page</span></label>
+      </div>
       <p class="fp-note" id="review-kind"></p>
       <label class="fp-check" id="review-confirm-row" hidden><input type="checkbox" id="review-confirm"> These are the garment’s own measurements (laid flat or around the garment), not body sizes</label>
       <div class="fp-row">
@@ -160,6 +178,7 @@
   <script src="config.js"></script>
   <script src="retailers.js"></script>
   <script src="vendor/sizing-tables.js"></script>
+  <script src="vendor/chart-reading.js"></script>
   <script src="vendor/fynd-payload.js"></script>
   <script src="collect.js"></script>
   <script src="extract.js"></script>

@@ -3,7 +3,7 @@
 
    The only code in the extension that makes a request, and only to
    Fynd's own API (FYND_API, config.js; the one host the manifest grants).
-   Two calls, both existing endpoints:
+   Three calls:
 
      savedGarments()   GET  /api/fit-profile — the garments saved on the
                        shopper's fit profile, read with their own Fynd
@@ -16,6 +16,13 @@
                        own engine and decision (api/_sizing/). The answer
                        is the server's: the extension never ranks, scores
                        or recommends.
+     interpretChart(request)
+                       POST /api/size-recommendation?parse=1 — only when the deterministic
+                       reading can't interpret a chart (extract.js
+                       interpretationNeeds): the table's cell text, caption
+                       and the words before it, for Fynd's server to ask
+                       its AI for a proposal and check it against the page.
+                       The extension never calls a model itself.
 
    Every answer is { ok, status, data } or { ok: false, problem }, where
    problem.kind is one of:
@@ -23,6 +30,9 @@
      not-found    404: that garment isn't saved (any more)
      rate-limited 429: too many comparisons; retryAfter in seconds
      invalid      400: the chart didn't read; the server's own messages
+     too-large    413: the table is too large to send
+     unsupported  415/422: not something the server can read as a chart
+     unavailable  503: the AI reading isn't available (reason says why)
      timeout      no answer within TIMEOUT_MS
      offline      the request never reached Fynd
      server       Fynd answered 5xx, or something it doesn't understand
@@ -31,7 +41,7 @@
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = factory;
   /* config.js's constants are global bindings, not properties of the window */
-  else root.FyndApi = factory({ base: typeof FYND_API !== 'undefined' ? FYND_API : '', fetch: root.fetch.bind(root), timeoutMs: typeof FYND_API_TIMEOUT_MS !== 'undefined' ? FYND_API_TIMEOUT_MS : 0 });
+  else root.FyndApi = factory({ base: typeof FYND_API !== 'undefined' ? FYND_API : '', fetch: root.fetch.bind(root), timeoutMs: typeof FYND_API_TIMEOUT_MS !== 'undefined' ? FYND_API_TIMEOUT_MS : 0, aiTimeoutMs: typeof FYND_AI_TIMEOUT_MS !== 'undefined' ? FYND_AI_TIMEOUT_MS : 0 });
 })(typeof self !== 'undefined' ? self : this, function (config) {
   'use strict';
 
@@ -39,9 +49,9 @@
   const base = String(config.base || '').replace(/\/$/, '');
   const fetchFn = config.fetch;
 
-  async function request(path, init) {
+  async function request(path, init, timeoutMs) {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+    const timer = setTimeout(() => controller.abort(), timeoutMs || TIMEOUT_MS);
     let res;
     try {
       res = await fetchFn(`${base}${path}`, Object.assign({ credentials: 'include', cache: 'no-store', signal: controller.signal }, init || {}));
@@ -59,7 +69,11 @@
       : res.status === 404 ? 'not-found'
         : res.status === 429 ? 'rate-limited'
           : res.status === 400 ? 'invalid'
-            : 'server';
+            : res.status === 413 ? 'too-large'
+              : res.status === 415 || res.status === 422 ? 'unsupported'
+                : res.status === 503 ? 'unavailable'
+                  : res.status === 504 ? 'timeout'
+                    : 'server';
     const retry = Number(res.headers && res.headers.get && res.headers.get('Retry-After'));
     return {
       ok: false,
@@ -81,5 +95,13 @@
     body: JSON.stringify({ chart, referenceType })
   });
 
-  return { request, savedGarments, compareChart, TIMEOUT_MS, base };
+  /* the model has MODEL_TIMEOUT_MS on the server (api/_sizing/parse-chart.js); the panel waits a little longer */
+  const AI_TIMEOUT_MS = Math.max(TIMEOUT_MS, config.aiTimeoutMs || 20000);
+  const interpretChart = (body) => request('/api/size-recommendation?parse=1', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  }, AI_TIMEOUT_MS);
+
+  return { request, savedGarments, compareChart, interpretChart, TIMEOUT_MS, AI_TIMEOUT_MS, base };
 });
