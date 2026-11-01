@@ -52,10 +52,21 @@ function fyndCollect() {
   };
 
   /* ---- the product, from the page's own structured data ---- */
-  const product = { name: null, brand: null, code: null, sizes: [] };
+  /* `from` says where each part came from: the page's structured data
+     (JSON-LD), its meta tags, its visible heading or its size picker */
+  const product = { name: null, brand: null, code: null, sku: null, color: null, url: null, sizes: [], variants: [], from: {} };
   let fit = null;
   const isProduct = (o) => o && typeof o === 'object' && /Product/.test([].concat(o['@type'] || []).join(' '));
   const str = (v) => (typeof v === 'string' || typeof v === 'number' ? fold(v, 160) || null : null);
+  const named = (v) => str(v && typeof v === 'object' ? v.name : v);
+  const inStock = (o) => {
+    const a = o && typeof o === 'object' ? String(o.availability || '') : '';
+    return !a ? null : /InStock|LimitedAvailability|PreOrder|OnlineOnly/i.test(a) ? true : /OutOfStock|SoldOut|Discontinued/i.test(a) ? false : null;
+  };
+  const addSize = (v, from) => {
+    const x = str(v);
+    if (x && x.length <= 20 && !product.sizes.includes(x)) { product.sizes.push(x); product.from.sizes = product.from.sizes || from; }
+  };
   const scripts = Array.from(document.querySelectorAll('script[type="application/ld+json"]')).slice(0, 20);
   for (const s of scripts) {
     const raw = s.textContent || '';
@@ -65,20 +76,85 @@ function fyndCollect() {
     const items = [].concat(data && data['@graph'] ? data['@graph'] : data);
     const found = items.find(isProduct);
     if (!found) continue;
-    product.name = product.name || str(found.name);
-    const brand = found.brand;
-    product.brand = product.brand || str(brand && typeof brand === 'object' ? brand.name : brand);
-    product.code = product.code || str(found.sku) || str(found.productID) || str(found.mpn) || str(found.productGroupID);
-    const add = (v) => { const x = str(v); if (x && x.length <= 20 && !product.sizes.includes(x)) product.sizes.push(x); };
-    [].concat(found.size || []).forEach(add);
-    [].concat(found.hasVariant || []).forEach((v) => v && typeof v === 'object' && [].concat(v.size || []).forEach(add));
-    [].concat(found.offers || []).forEach((o) => o && typeof o === 'object' && [].concat(o.size || []).forEach(add));
+    if (!product.name && str(found.name)) { product.name = str(found.name); product.from.name = 'json-ld'; }
+    if (!product.brand && named(found.brand)) { product.brand = named(found.brand); product.from.brand = 'json-ld'; }
+    product.code = product.code || str(found.productGroupID) || str(found.productID) || str(found.sku) || str(found.mpn);
+    product.sku = product.sku || str(found.sku);
+    product.color = product.color || str(found.color);
+    product.url = product.url || (typeof found.url === 'string' ? webUrl(found.url) : null);
+    [].concat(found.size || []).forEach((v) => addSize(v, 'json-ld'));
+    /* each variant: its own size, colour, code and whether it's in stock */
+    const variants = [].concat(found.hasVariant || []).filter((v) => v && typeof v === 'object').slice(0, 60);
+    variants.forEach((v) => {
+      const offer = [].concat(v.offers || [])[0];
+      product.variants.push({ sku: str(v.sku), size: str([].concat(v.size || [])[0]), color: str(v.color), available: inStock(offer) });
+      [].concat(v.size || []).forEach((x) => addSize(x, 'json-ld'));
+    });
+    [].concat(found.offers || []).forEach((o) => {
+      if (!o || typeof o !== 'object') return;
+      [].concat(o.size || []).forEach((x) => addSize(x, 'json-ld'));
+      if (o.sku && (o.size || o.color)) product.variants.push({ sku: str(o.sku), size: str([].concat(o.size || [])[0]), color: str(o.color), available: inStock(o) });
+    });
     const props = [].concat(found.additionalProperty || []).filter((x) => x && typeof x === 'object');
     const fitProp = props.find((x) => /^fit$/i.test(String(x.name || '')));
     if (fitProp && !fit) fit = str(fitProp.value);
   }
+  product.variants = product.variants.slice(0, 60);
+  if (product.code) product.from.code = 'json-ld';
+  if (!product.name) {
+    const og = meta('meta[property="og:title"]');
+    const h1 = text(document.querySelector('h1'), 160);
+    product.name = og || h1 || null;
+    if (product.name) product.from.name = og ? 'meta' : 'heading';
+  }
+  if (!product.brand) {
+    const brandMeta = meta('meta[property="product:brand"]') || meta('meta[itemprop="brand"]') || meta('meta[name="brand"]');
+    const brandEl = document.querySelector('[itemprop="brand"]');
+    const b = brandMeta || (brandEl ? fold(brandEl.getAttribute('content') || brandEl.textContent, 80) : '');
+    if (b) { product.brand = b; product.from.brand = 'meta'; }
+  }
+
+  /* ---- the sizes and colour the page offers, from its own pickers ----
+     a group the page labels "size" (a fieldset's legend, a radio group's
+     or select's label) — each option's words, and whether it's on offer;
+     the colour chosen in a group labelled "colour". Nothing is clicked,
+     and no value the shopper typed is read: only the options' labels. */
+  const labelled = (el) => fold([el.getAttribute('aria-label'), el.getAttribute('name'), el.id, el.querySelector && text(el.querySelector('legend, [role="heading"]'), 40),
+    el.getAttribute('aria-labelledby') && text(document.getElementById(el.getAttribute('aria-labelledby')), 40)].filter(Boolean).join(' '), 120);
+  const SIZE_GROUP = /\bsize\b/i;
+  const COLOUR_GROUP = /\bcolou?r\b/i;
+  const LOOKS_SIZE = /^(?:[2-6]?x{0,4}[sml]|xx?s|xx?l|[2-6]xl|one size|os|\d{1,3}(?:\s*[x/×]\s*\d{1,2})?)$/i;
+  const optionWords = (el) => fold(el.getAttribute('aria-label') || el.getAttribute('data-size') || el.getAttribute('value') || el.textContent, 20);
+  const offered = (el) => !(el.disabled || el.getAttribute('aria-disabled') === 'true' || /\b(disabled|unavailable|sold-?out|out-of-stock)\b/i.test(el.className || ''));
+  const pageSizes = [];
+  const groups = Array.from(document.querySelectorAll('fieldset, [role="radiogroup"], [role="group"], [role="listbox"], select, [data-size-picker]')).slice(0, 30)
+    .filter((g) => SIZE_GROUP.test(labelled(g)) || g.hasAttribute('data-size-picker'));
+  groups.forEach((g) => {
+    const opts = g.tagName === 'SELECT' ? Array.from(g.options) : Array.from(g.querySelectorAll('input[type="radio"], [role="radio"], [role="option"], button, label')).slice(0, 40);
+    opts.forEach((o) => {
+      /* a label around its own control: the control says whether it's on offer, so it is read instead */
+      if (o.tagName === 'LABEL' && o.querySelector('input, [role="radio"], [role="option"], button')) return;
+      const label = o.tagName === 'INPUT' ? (o.id && document.querySelector(`label[for="${CSS.escape(o.id)}"]`)) || o.closest('label') : null;
+      let words = o.tagName === 'INPUT' ? fold((label && label.textContent) || o.getAttribute('value'), 20) : optionWords(o);
+      words = words.replace(/\s*\((sold out|out of stock|unavailable)\)\s*$/i, '');
+      if (!LOOKS_SIZE.test(words) || pageSizes.some((x) => x.size === words)) return;
+      pageSizes.push({ size: words, available: offered(o) });
+    });
+  });
+  Array.from(document.querySelectorAll('button[data-size], [role="radio"][data-size]')).slice(0, 40).forEach((o) => {
+    const words = fold(o.getAttribute('data-size'), 20);
+    if (LOOKS_SIZE.test(words) && !pageSizes.some((x) => x.size === words)) pageSizes.push({ size: words, available: offered(o) });
+  });
+  product.pageSizes = pageSizes.slice(0, 30);
+  if (!product.sizes.length && pageSizes.length) { pageSizes.forEach((x) => addSize(x.size, 'page')); }
   product.sizes = product.sizes.slice(0, 30);
-  if (!product.name) product.name = meta('meta[property="og:title"]') || text(document.querySelector('h1'), 160) || null;
+  if (!product.color) {
+    const colourGroup = Array.from(document.querySelectorAll('fieldset, [role="radiogroup"], [role="listbox"], [data-colour-picker], [data-color-picker]')).slice(0, 30)
+      .find((g) => COLOUR_GROUP.test(labelled(g)) || g.hasAttribute('data-colour-picker') || g.hasAttribute('data-color-picker'));
+    const chosen = colourGroup && colourGroup.querySelector('[aria-checked="true"], [aria-pressed="true"], [aria-selected="true"], input[type="radio"]:checked');
+    const words = chosen ? fold(chosen.getAttribute('aria-label') || chosen.getAttribute('title') || (chosen.id && (document.querySelector(`label[for="${CSS.escape(chosen.id)}"]`) || {}).textContent) || chosen.getAttribute('value') || chosen.textContent, 40) : '';
+    if (words) { product.color = words; product.from.color = 'page'; }
+  } else product.from.color = 'json-ld';
 
   /* ---- a fit the page states under its own "Fit" label ---- */
   if (!fit) {

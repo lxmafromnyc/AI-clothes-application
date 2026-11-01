@@ -22,7 +22,7 @@
 
 'use strict';
 
-const { isAllowed, siteOrigin } = require('./_cors');
+const { isAllowed, siteOrigin, isSiteOrigin } = require('./_cors');
 const { setCookie } = require('./_auth');
 const google = require('./_google');
 const { envReport } = require('./_env-report');
@@ -42,7 +42,7 @@ function originOfSite(req) {
     try {
       const parsed = new URL(referer);
       const candidate = `${parsed.protocol}//${parsed.host}`;
-      if (isAllowed(req, candidate)) return candidate;
+      if (isSiteOrigin(req, candidate)) return candidate;
     } catch (err) { /* an unparseable Referer is simply not used */ }
   }
   return siteOrigin(req);

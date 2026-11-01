@@ -366,25 +366,47 @@ async function compareCandidate(req, res) {
   await limits.note('sizing:compare-unsaved', address);
   const body = await readJson(req);
   const sent = body && typeof body === 'object' && !Array.isArray(body) ? body : {};
-  const read = Candidate.readCandidate(sent.candidate);
-  if (read.errors.length) return res.status(400).json({ error: read.errors[0].message, reason: 'invalid-candidate', errors: read.errors });
-  const record = engine.candidateRecord(read.candidate);
+  /* one size typed on Find Fit, or a whole chart from the extension — every size in this one request */
+  let item;
+  if (sent.chart !== undefined) {
+    const read = Candidate.readChart(sent.chart);
+    if (read.errors.length) return res.status(400).json({ error: read.errors[0].message, reason: read.reason, errors: read.errors });
+    item = { chart: read.chart };
+  } else {
+    const read = Candidate.readCandidate(sent.candidate);
+    if (read.errors.length) return res.status(400).json({ error: read.errors[0].message, reason: 'invalid-candidate', errors: read.errors });
+    item = { candidate: read.candidate };
+  }
+  const record = engine.candidateRecord(item.chart || item.candidate);
   if (!record) return res.status(400).json({ error: 'Enter at least one measurement from the product’s chart.', reason: 'invalid-candidate', errors: [] });
   let profile = null;
+  let chosen = null;
   if (sent.reference !== undefined && sent.reference !== null) {
     const ref = unsavedProfile(sent.reference);
     if (ref.error) return res.status(400).json(ref.error);
     profile = ref.profile;
   } else {
     const identity = await identify(req, res, users);
+    /* one saved garment, named by its type: only the signed-in shopper's own */
+    if (sent.referenceType !== undefined && !identity.user) {
+      return res.status(401).json({ error: 'Sign in to Fynd to compare with a garment saved on your fit profile.', reason: 'sign-in-required' });
+    }
     if (identity.user) {
       const stored = await fitProfiles.read(identity.user.id);
       if (stored.reason === 'unsupported-version') return res.status(409).json({ error: 'Your fit profile was saved by a newer version of Fynd. Reload the page.', reason: 'unsupported-version' });
       profile = stored.profile || null;
     }
+    if (sent.referenceType !== undefined) {
+      const type = typeof sent.referenceType === 'string' ? sent.referenceType : '';
+      const garment = ProfileSchema.SIZED_TYPES.includes(type) && profile && profile.garments ? profile.garments[type] : null;
+      if (!garment || !garment.anchor) return res.status(404).json({ error: 'That garment isn’t saved on your fit profile.', reason: 'reference-not-found' });
+      /* that garment alone: the comparison never reaches for another the shopper didn't choose */
+      profile = Object.assign({}, profile, { garments: { [type]: garment } });
+      chosen = { type };
+    }
   }
-  const unit = query.unit === 'in' || query.unit === 'cm' ? query.unit : read.candidate.unit;
-  return res.status(200).json(Object.assign(comparedAnswer(profile, record, unit), { candidate: read.candidate }));
+  const unit = query.unit === 'in' || query.unit === 'cm' ? query.unit : (item.chart || item.candidate).unit;
+  return res.status(200).json(Object.assign(comparedAnswer(profile, record, unit), item, chosen ? { reference: chosen } : {}));
 }
 
 async function handler(req, res) {

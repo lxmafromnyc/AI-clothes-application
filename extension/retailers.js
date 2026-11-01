@@ -6,9 +6,7 @@
    only adds what Fynd knows about one retailer:
 
      product(url)  recognises one of its product pages, and the product's
-                   own code — matched against Fynd's reference data
-                   (vendor/fit-reference-data.js) for measurements Fynd
-                   already holds for exactly that product
+                   own code
      brand         the brand its products are sold under
      chartHint     where its garment chart is, when the page shows none
 

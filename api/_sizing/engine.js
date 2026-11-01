@@ -406,27 +406,42 @@ const isShopperMeasured = (record) => Boolean(record && record.verification && r
 const SHOPPER_ENTERED = 'shopper-entered';
 const isShopperEntered = (record) => Boolean(record && record.verification && record.verification.status === SHOPPER_ENTERED);
 function candidateRecord(candidate) {
-  if (!candidate || !CATEGORY_PARAMS[candidate.type] || (candidate.unit !== 'in' && candidate.unit !== 'cm') || typeof candidate.size !== 'string' || !candidate.size) return null;
-  const m = candidate.measurements || {};
+  if (!candidate || !CATEGORY_PARAMS[candidate.type] || (candidate.unit !== 'in' && candidate.unit !== 'cm')) return null;
+  /* one size (Find Fit's form), or a whole chart (the extension: every size, one request) */
+  const entries = Array.isArray(candidate.sizes)
+    ? candidate.sizes
+    : (typeof candidate.size === 'string' && candidate.size ? [{ size: candidate.size, measurements: candidate.measurements }] : []);
+  if (!entries.length || entries.length > 30) return null;
   const saved = candidate.methods || {};
   const dims = {};
-  const row = {};
-  COMPARE_DIMS.forEach((d) => {
-    if (!physical(m[d])) return;
-    /* a method this registry knows for the dimension, or "not stated" */
-    const method = saved.registry === methodRegistry.REGISTRY_VERSION && methodRegistry.isMethod(d, saved[d]) ? saved[d] : methodRegistry.NOT_STATED;
-    dims[d] = { method };
-    row[d] = { value: m[d], text: String(m[d]) };
+  const rows = {};
+  const provenance = {};
+  const labels = [];
+  entries.forEach((e) => {
+    if (!e || typeof e.size !== 'string' || !e.size || rows[e.size]) return;
+    const m = e.measurements || {};
+    const row = {};
+    COMPARE_DIMS.forEach((d) => {
+      if (!physical(m[d])) return;
+      /* a method this registry knows for the dimension, or "not stated" */
+      if (!dims[d]) dims[d] = { method: saved.registry === methodRegistry.REGISTRY_VERSION && methodRegistry.isMethod(d, saved[d]) ? saved[d] : methodRegistry.NOT_STATED };
+      row[d] = { value: m[d], text: String(m[d]) };
+    });
+    labels.push(e.size);
+    rows[e.size] = row;
+    if (e.provenance && Object.keys(e.provenance).length) provenance[e.size] = e.provenance;
   });
-  if (!Object.keys(row).length) return null;
+  if (!labels.length || !labels.some((s) => Object.keys(rows[s]).length)) return null;
   return {
     id: 'your-candidate',
     brand: candidate.brand || 'This item',
-    product: { name: candidate.name || `the ${CATEGORY_WORDS[candidate.type]} you're considering` },
+    product: Object.assign({ name: candidate.name || `the ${CATEGORY_WORDS[candidate.type]} you're considering` }, candidate.url ? { url: candidate.url } : {}),
     category: candidate.type,
     units: candidate.unit,
-    sizes: [candidate.size],
-    charts: { garment: { measures: 'finished-garment', dimensions: dims, sizes: { [candidate.size]: row } } },
+    sizes: labels,
+    /* origin: the shopper's, never "official-published" (measurementOf's default for a catalogue
+       chart); source: the product's page, when the extension read it there */
+    charts: { garment: Object.assign({ measures: 'finished-garment', origin: SHOPPER_ENTERED, source: candidate.url || null, dimensions: dims, sizes: rows }, Object.keys(provenance).length ? { provenance } : {}) },
     verification: { status: SHOPPER_ENTERED }
   };
 }
@@ -436,7 +451,11 @@ function readableRecord(record) {
   if (!record || typeof record !== 'object') return false;
   if (!isShopperEntered(record)) return sizingSchema.validate(record).length === 0;
   const g = record.charts && record.charts.garment;
-  return Boolean(CATEGORY_PARAMS[record.category] && Array.isArray(record.sizes) && record.sizes.length === 1 && g && g.sizes && g.sizes[record.sizes[0]]
+  /* candidateRecord()'s own shape and nothing else: its id, a garment chart only — never a
+     catalogue record relabelled, whose body chart and sources a hand-entered item never has */
+  const own = record.id === 'your-candidate' && Object.keys(record.charts || {}).join() === 'garment'
+    && Object.keys(record).every((k) => ['id', 'brand', 'product', 'category', 'units', 'sizes', 'charts', 'verification'].includes(k));
+  return Boolean(own && CATEGORY_PARAMS[record.category] && Array.isArray(record.sizes) && record.sizes.length >= 1 && record.sizes.length <= 30 && g && g.sizes && record.sizes.every((s) => g.sizes[s])
     && Object.keys(g.dimensions).every((d) => COMPARE_DIMS.includes(d) && methodRegistry.isMethod(d, g.dimensions[d].method)));
 }
 /* checked against its source, or the shopper's own — the only records compared */

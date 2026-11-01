@@ -2927,147 +2927,71 @@ against real pages before retailer-specific reading is added.
 ### The Fynd browser extension
 
 `extension/` is a Manifest V3 Chrome extension. Fynd's toolbar button opens
-the Fit panel beside the product page the customer has open (below, under
-**The Fit panel and Fit Anchors**). Installation steps, permissions and tests
-are in [`extension/README.md`](extension/README.md).
+the **Fit panel** beside the product page the shopper has open. Installation,
+permissions, what is sent and the tests are in
+[`extension/README.md`](extension/README.md).
 
-The page reading and the hand-over to Find Fit described here are shared by
-the panel and by the earlier popup page (`extension/popup.*`, no longer on
-the toolbar). In short:
+The extension reads; Fynd's server compares. In short:
 
-- **When it reads the page:** only after the customer clicks Fynd's toolbar
-  button on it (`activeTab`), or on one site they chose to let Fynd read. The
-  extension asks for no site at install.
-- **Where the reading happens:** in the customer's browser. The extension reads
-  the page's tables and structured data and recognises size tables with the same
-  code the server uses (`assets/sizing-tables.js`). It shows the chart with
-  Find Fit's own renderer.
-- **Several possible charts:** the customer chooses which one, each saying what
-  it measures. One exception: within one size guide (both tables in the open
-  dialog, or in sibling tab panels), the garment's own table is picked over a
-  body or unlabelled one, even when the guide opened on its Body Size tab, so
-  long as it is the guide's only garment table. A hidden garment table
-  elsewhere on the page never displaces the open guide. A closed size guide is
-  never opened for them, and no tab is clicked.
-- **Nothing handed to Find Fit:** Find Fit takes the item's measurements by
-  hand, so neither the popup nor the side panel offers an **Open in Fynd**
-  button; each says to enter the chart's finished-garment measurements in Find
-  Fit's item form instead. The old handover (`#fynd-chart=…`, `#fynd-url=…`,
-  `assets/fynd-payload.js`) is no longer read by Find Fit.
-- **Never verified:** a browser-read chart is never marked verified or
-  comparable, so the fit profile is never compared with it.
+- **When it reads the page:** only after the shopper clicks Fynd's toolbar
+  button on it (`activeTab`). No retailer site is granted at install, and none
+  is asked for later.
+- **What it reads, in the browser:**
+  - the product: structured data first (name, brand, variants, sizes,
+    availability, colour), then what the page shows;
+  - its size tables, each labelled as measuring the finished garment, the
+    body, or not stated. The labelling uses the code the server uses
+    (`assets/sizing-tables.js`).
 
-This can show charts that Fynd's server can't fetch, such as a page that never
-answers the server, or a chart that is only shown once the customer opens the
-size guide. It doesn't get around a retailer's protections. Extraction has been
-tested on invented fixture pages only, not yet on live retailer pages.
+  A body chart is never used as the garment's, and a method the chart doesn't
+  state is never guessed (`extension/extract.js`).
+- **What the shopper confirms:** the product, the kind of garment, and every
+  value and how it is measured. A value they change is marked as corrected.
+  With no chart on the page, they can enter one by hand.
+- **The garment it is compared with:** one saved on the shopper's Fynd fit
+  profile, read with their own Fynd session (`GET /api/fit-profile`). No
+  reference data or second comparison engine ships in the extension.
+- **The comparison:** one request for every size,
+  `POST /api/size-recommendation?compare=1&candidate=1` with
+  `{ chart, referenceType }`.
+  - The chart is read by `assets/fit-candidate.js` `readChart`.
+  - `engine.candidateRecord` turns it into one shopper-entered record.
+  - It is compared and decided by the existing `engine.compare()` and
+    `decision.decide()`, exactly as Find Fit's single hand-entered size is.
 
-### The Fit panel and Fit Anchors
+  The answer is the server's: OK (a size), NO_MATCH (the closest, never
+  called a recommendation) or INSUFFICIENT_DATA (why, measurement by
+  measurement).
+- **Never verified:** every value from the page or the shopper is
+  `shopper-entered`, with its source (`page-table` or `shopper`), its column
+  heading and whether it was corrected, so reliability is at most medium.
+- **Limits:** the same rate limit as Find Fit's hand-entered comparison, with
+  a whole chart counting once. It meters no plan usage and bills nothing.
+- **The API's CORS:** allows the extension's own origin, pinned by the
+  manifest `key` to `chrome-extension://jnjodlmanmolanoodeojaeajcjdhbjdd`
+  (`api/_cors.js`, `EXTENSION_ORIGINS`). It is never taken for the site, so
+  no link or redirect is built on it.
 
-The extension's side panel (`extension/sidepanel.*`) is the shopping tool:
-
-- Click Fynd's toolbar button on a product page; the panel opens beside it
-  (`extension/background.js`).
-- It compares the product with a garment the shopper already owns and likes:
-  a **Fit Anchor**, or *reference*.
-
-Where the code lives:
-
-- **The model and comparison:** `assets/fit-anchor.js` (shared with the
-  extension as `extension/vendor/fit-anchor.js`).
-- **The reference data:** `assets/fit-reference-data.js`, generated from
-  `api/_sizing/records` by `scripts/build-fit-references.js`.
-
-Everything runs in the browser. References are kept in `chrome.storage.local`,
-and the panel makes no network request while the shopper shops. The one path
-to Fynd's server is the shopper pressing **Open in Find Fit**. That opens the
-site, and for a product Fynd holds, Find Fit sends its address to
-`/api/size-recommendation?chart=`. The panel says which, under the button. How to use it, what it reads, stores
-and sends, the retailer modules, and how it is tested are in
-[`extension/README.md`](extension/README.md). It sits beside the fit profile
-and `engine.compare()` rather than replacing them: Find Fit and Compare are
-unchanged.
-
-**A reference without a tape measure.** Brand, kind and size label are
-enough. `estimateReference()` takes the first of these that exists, and says
-which:
-
-1. **The exact product's** published garment measurements.
-2. **The same brand's products of that kind, in that size:**
-   - their median, with their spread as the range;
-   - never narrower than `oneProductSpread`, because a stand-in isn't the
-     shopper's garment.
-3. **The brand's body chart, chest only:** the body range, plus the room
-   garments of that kind have over the body in products that publish both
-   charts (at least `minEaseSpread` wide).
-4. **Other brands'** products of that kind and size label: a rough guide.
-5. **Nothing:** no dimensions are invented. The shopper can add measurements,
-   or use a product page's own chart.
-
-Measuring methods are never pooled. Every estimate keeps the products and
-sources it rests on.
-
-**An anchor keeps four things apart:**
-
-- **Known dimensions.** Finished-garment measurements, each in inches with its
-  `method`, `source` and `verified` flag. An estimate also has `low` and `high`.
-  Sources, by trust:
-  - `fynd-record`: high when Fynd has checked it, medium when not;
-  - `retailer-page` (the product's own garment chart, read from the page):
-    high;
-  - `shopper` (entered or corrected): medium;
-  - `similar-product` (the same brand's other products): low;
-  - `estimate` (a body chart or other brands): low.
-- **Reported feel.** Tight, just right or loose; short, just right or long.
-- **Inferred preference.** A range per dimension, worked out by
-  `preferred()`:
-  - "just right" keeps the reference ± a small band;
-  - "feels tight" moves the range above the reference by between ¼ in and
-    1½ in for a chest, not by one fixed amount;
-  - an estimated reference widens the range by its own spread;
-  - outcomes replace the guess where they speak.
-- **Confidence.** Worked out from the data, never from the score.
-
-**How a size is chosen (`recommend()`):**
-
-1. **Read the chart.**
-   - Values are parsed and normalised to inches.
-   - Widths become flat widths.
-   - A unit or method that has to be inferred is marked as inferred.
-   - Lengths are compared only when both sides measure them the same way. A
-     front length is the high-point-of-shoulder length; it is never a
-     centre-back length.
-2. **Check it.** Values that don't grow with size, outlying steps and
-   duplicate sizes are flagged. A problem in the main dimension stops it being
-   used.
-3. **Compare.** For each size, each dimension's miss is how far it falls
-   outside the preferred range, divided by its tolerance, plus:
-   - a small centring term;
-   - `repeatPenalty`, when the size repeats the shopper's complaint.
-
-   The misses are combined with weights for the category, the shopper's
-   priority, and `reportedBoost` on an axis they said was off.
-4. **Say how sure it is.** Every reason the confidence isn't higher is shown.
-5. **Explain.** Exact numbers only for published or measured values; "about",
-   with the range, for estimates.
-
-A body chart, sizes only, or no shared measurement give no size: the result
-is `body-chart`, `labels-only` or `insufficient`, saying what is missing.
-
-**The constants are hypotheses.** Every weight, tolerance and shift is in
-`HEURISTICS` and none has been fitted to real outcomes. Fynd claims **no
-accuracy figure**. Outcomes stay in the shopper's browser; an accuracy number
-needs outcomes collected with consent and a documented evaluation, and neither
-exists yet.
+The earlier popup page (`extension/popup.*`, no longer on the toolbar) still
+shows a page's chart and says to enter it in Find Fit's item form.
+`assets/fit-anchor.js` and `assets/fit-reference-data.js`, the browser-side
+reference model the panel used before, are no longer loaded by the extension
+or the site.
 
 **Tests:**
 
-- `scripts/test-fit-anchor.js`: the model and the data.
-- `scripts/test-fit-panel-browser.js`: the panel, headless, on fixtures.
+- `scripts/test-extension.js`: the manifest, the one route to the network,
+  and the vendor copies.
+- `scripts/test-extension-extract.js`: reading and the batch request, through
+  the real handlers.
+- `scripts/test-fit-panel-browser.js`: the panel, headless, against the real
+  handlers, on fixture pages.
 - `scripts/test-fit-panel-real-chrome.js`: the whole workflow in a visible
-  Chrome, through real clicks on the toolbar button. Its `--live` mode is the
-  check against real retailer pages; none has been run yet, because the
-  environment it was built in could not reach them.
+  Chrome, through a real click on the toolbar button. Fynd's handlers answer
+  under the production API name, with a real session cookie.
+
+Its `--live` mode reads real retailer pages. None has been run yet, because
+the environment it was built in could not reach them.
 
 ## Compare before buying (hoodies and sweatshirts)
 
