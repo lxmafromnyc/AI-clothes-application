@@ -77,9 +77,20 @@ const SITE_ORIGINS = [
   'https://lxmafromnyc.github.io'
 ];
 
+/* The Fynd extension's side panel (extension/), by its pinned ID: the
+   manifest carries the public key, so every unpacked install of this
+   repository's extension has this one origin. An extension's origin
+   can't be claimed by a page or by another extension. Only this ID —
+   never chrome-extension://* — so no other extension can call the API
+   with the shopper's session. A store-published build gets its own ID,
+   added through ALLOWED_ORIGIN like any other origin. */
+const EXTENSION_ORIGINS = [
+  'chrome-extension://jnjodlmanmolanoodeojaeajcjdhbjdd'
+];
+
 /* Origins named in configuration, plus the ones Vercel tells us about. */
 function configuredOrigins() {
-  const origins = new Set(SITE_ORIGINS);
+  const origins = new Set(SITE_ORIGINS.concat(EXTENSION_ORIGINS));
 
   String(process.env.ALLOWED_ORIGIN || '')
     .split(',')
@@ -113,6 +124,14 @@ function isSameOrigin(req, origin) {
    human pastes a URL, not on the request side. */
 function isAllowed(req, origin) {
   return isSameOrigin(req, origin) || configuredOrigins().has(origin);
+}
+
+/* An origin that is a page of Fynd's own site: one the API may answer,
+   that is also somewhere to send a shopper back to — a checkout's return,
+   a reset link, the end of signing in. The extension may call the API,
+   but it is never a site: no link or redirect is ever built on it. */
+function isSiteOrigin(req, origin) {
+  return isAllowed(req, origin) && !EXTENSION_ORIGINS.includes(origin) && !/^chrome-extension:/i.test(origin);
 }
 
 /* Applies the rules to one request.
@@ -191,7 +210,7 @@ function handledPreflight(req, res) {
    protocol-relative URL wearing a path's clothes, and is refused. */
 function siteOrigin(req) {
   const origin = trimSlash((req.headers && req.headers.origin) || '');
-  if (origin && isAllowed(req, origin)) return origin;
+  if (origin && isSiteOrigin(req, origin)) return origin;
   const host = (req.headers && req.headers.host) || '';
   if (!host) return '';
   const scheme = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(host) ? 'http' : 'https';
@@ -217,4 +236,4 @@ function returnUrl(req, path, fallback) {
   return `${origin}${safe}`;
 }
 
-module.exports = { applyCors, handledPreflight, configuredOrigins, isSameOrigin, isAllowed, siteOrigin, deploymentOrigin, returnUrl, SITE_ORIGINS };
+module.exports = { applyCors, handledPreflight, configuredOrigins, isSameOrigin, isAllowed, isSiteOrigin, EXTENSION_ORIGINS, siteOrigin, deploymentOrigin, returnUrl, SITE_ORIGINS };

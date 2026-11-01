@@ -134,7 +134,10 @@ const REASONS = {
 const sizeWord = (s) => (s ? `size ${s}` : 'any size');
 /* an item the shopper entered by hand: what's missing is theirs to add,
    said as such — never as a brand not publishing it */
-function enteredMessage(r) {
+function enteredMessage(r, context) {
+  /* a whole chart entered (the extension): "the closest" of its sizes is
+     true again, so the catalogue's own words say it */
+  const several = context && context.sizes > 1;
   switch (r.code) {
     case 'missing-required-measurement':
       /* a garment of theirs, but only its label: measurements, not size labels */
@@ -148,10 +151,12 @@ function enteredMessage(r) {
       return 'Some measurements weren’t taken the same way on both garments, or the chart doesn’t say how, so they can’t be compared reliably. Fynd needs at least three comparable measurements, including the chest.';
     /* the one size entered: it failed the comparison — there is no "closest" among others */
     case 'chest-outside-acceptable-range': {
+      if (several) return null;
       const roomier = r.class ? r.class === 'too-loose' : r.differenceAroundIn > 0;
       return `${r.size ? `Size ${r.size}` : 'This size'} would be much ${roomier ? 'roomier' : 'tighter'} through the chest than your garment — more than Fynd’s comparison allows — so it isn’t recommended.`;
     }
     case 'all-compared-outside-tolerance':
+      if (several) return null;
       return `${r.size ? `Size ${r.size}` : 'This size'} differs noticeably from your garment on every measurement Fynd could compare, so it doesn’t meet the comparison criteria.`;
     default:
       return null;
@@ -159,7 +164,7 @@ function enteredMessage(r) {
 }
 function customerMessage(r, context) {
   const brand = (context && context.brand) || 'this brand';
-  const entered = context && context.entered ? enteredMessage(r) : null;
+  const entered = context && context.entered ? enteredMessage(r, context) : null;
   if (entered) return entered;
   switch (r.code) {
     case 'outside-size-range':
@@ -562,7 +567,8 @@ function decideWithDetail(profile, target, opts) {
   /* every answer also says, in a shopper's words, why it is what it is
      (customerMessage, from the codes): what a page shows for a refusal */
   const entered = engine.isShopperEntered(target);
-  const done = (decision) => ({ decision: Object.assign(decision, { messages: decision.outcome === OUTCOMES.OK ? [] : customerMessages(decision, { brand: target && target.brand, entered }) }), detail });
+  const sizes = target && Array.isArray(target.sizes) ? target.sizes.length : 0;
+  const done = (decision) => ({ decision: Object.assign(decision, { messages: decision.outcome === OUTCOMES.OK ? [] : customerMessages(decision, { brand: target && target.brand, entered, sizes }) }), detail });
 
   if (target && target.chart && !target.charts) return done(fromChart(target.chart));
   const record = target && target.record && !target.charts ? target.record : target;

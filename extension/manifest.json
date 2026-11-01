@@ -2,8 +2,9 @@
   "manifest_version": 3,
   "name": "Fynd — Fit panel",
   "short_name": "Fynd",
-  "version": "0.3.0",
-  "description": "Opens beside the clothing product page you are on, reads its size chart when you click Fynd, and compares it with a garment you own that fits you well.",
+  "version": "0.4.0",
+  "description": "Opens beside the clothing product page you're on when you click Fynd, reads the product and its size chart for you to check, and asks Fynd to compare every size with a garment saved on your Fynd profile.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAsiUamstjRAvRQoGCbaev7OhAZ0+cQlhKyxZIAzvRIQYNxLWCAEkz4Dk/L9BDzwb4xrTN0zU6p1dAcp9TMAHsuqvkcShJMB9ZTXyK1tD28rsp6ZYi2MdXHIGDJGWHDDHXzr0XZzIO6BPLjtOS/WdL+gCWZ4bRZC/2A3YafowJzUWm9+j8ENl8mkbVK7XUy0gXhvS5IUMLrkSunGII3SZ9VdYSLgWwPgbhcGWw/ufCDNcFLbshQBCjUbNts0S1TLSjEQauMq7C2yaPTqjyNm06INup+j4Q2/myKIfIInTo9wUFWPn6XMYp2dWlnwPaAa7aQA2hQy8VWCZ7LiIkhXStuwIDAQAB",
   "action": {
     "default_title": "Open Fynd Fit — compare this product with clothes that fit you",
     "default_icon": {
@@ -31,8 +32,8 @@
     "sidePanel",
     "storage"
   ],
-  "optional_host_permissions": [
-    "https://*/*"
+  "host_permissions": [
+    "https://ai-clothes-application.vercel.app/*"
   ],
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'none'; base-uri 'none'"

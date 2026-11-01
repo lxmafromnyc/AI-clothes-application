@@ -7,191 +7,163 @@
   <link rel="stylesheet" href="popup.css">
   <link rel="stylesheet" href="sidepanel.css">
 </head>
-<body data-view="loading">
+<!-- The Fit panel (sidepanel.js): the product → its measurements,
+     confirmed → a garment saved on your Fynd profile → Fynd's own
+     comparison of every size. The panel reads the page; Fynd's server
+     compares. -->
+<body data-view="start">
   <header class="pop-head">
     <span class="pop-mark" aria-hidden="true">F</span>
     <span class="pop-brand">Fynd Fit</span>
-    <span class="fp-unit" role="group" aria-label="Units">
-      <button type="button" class="fp-chip" data-unit="in" aria-pressed="true">in</button>
-      <button type="button" class="fp-chip" data-unit="cm" aria-pressed="false">cm</button>
-    </span>
+    <ol class="fp-steps" id="steps" aria-label="Steps">
+      <li data-step="product">Product</li>
+      <li data-step="measure">Measurements</li>
+      <li data-step="reference">Your garment</li>
+      <li data-step="results">Results</li>
+    </ol>
   </header>
 
   <main class="pop-main fp-main">
-    <p class="fp-status" id="status" role="status" hidden></p>
+    <!-- ===== start ===== -->
+    <section id="v-start" class="fp-card" aria-labelledby="start-title">
+      <h1 class="pop-title" id="start-title">Compare a product with clothes that fit you</h1>
+      <p class="pop-text">Open a clothing product page, then click Fynd in Chrome’s toolbar. Fynd reads the product and its size chart; you check what it read; Fynd compares every size with a garment saved on your Fynd profile.</p>
+      <button type="button" class="btn btn-primary" id="read">Read this page</button>
+    </section>
 
-    <!-- ===== Onboarding: a garment that already fits ===== -->
-    <section id="onboard" class="fp-card" hidden aria-labelledby="onboard-title">
-      <h1 class="pop-title" id="onboard-title">Which clothes already fit you the way you like?</h1>
-      <p class="pop-text">Pick one piece you own. No tape measure and no product link needed: Fynd looks up what its brand publishes for that size.</p>
-      <form id="anchor-form" class="fp-form" novalidate>
-        <label class="fp-label" for="a-brand">Brand</label>
-        <input class="fp-input" id="a-brand" list="brands" autocomplete="off" maxlength="60" placeholder="e.g. UNIQLO" required>
-        <datalist id="brands"><option value="UNIQLO"><option value="Nike"><option value="Zara"><option value="H&amp;M"><option value="Levi’s"><option value="Gap"><option value="J.Crew"><option value="Everlane"></datalist>
+    <!-- ===== reading ===== -->
+    <section id="v-reading" class="fp-card" hidden aria-live="polite">
+      <p class="pop-text" id="reading-text">Reading the page…</p>
+    </section>
 
-        <label class="fp-label" for="a-category">What is it?</label>
-        <select class="fp-input" id="a-category" required></select>
+    <!-- ===== a page Fynd can't read, or no product on it ===== -->
+    <section id="v-problem" class="fp-card fp-problem" hidden aria-labelledby="problem-title">
+      <h2 class="fp-h2" id="problem-title"></h2>
+      <p class="pop-text" id="problem-text"></p>
+      <div class="fp-actions">
+        <button type="button" class="btn btn-secondary" id="problem-retry">Read the page again</button>
+        <button type="button" class="link-button" id="problem-manual" hidden>Enter the product by hand</button>
+      </div>
+      <details class="fp-more" id="problem-details" hidden><summary>Technical details</summary><pre class="fp-diag" id="problem-diag"></pre></details>
+    </section>
 
-        <label class="fp-label" for="a-size">Size on its label</label>
-        <input class="fp-input" id="a-size" list="sizes" autocomplete="off" maxlength="16" placeholder="e.g. M, 32x30" required>
-        <datalist id="sizes"><option value="XS"><option value="S"><option value="M"><option value="L"><option value="XL"><option value="XXL"><option value="30x30"><option value="32x30"><option value="32x32"><option value="34x32"></datalist>
-
-        <label class="fp-label" for="a-cut">Its cut, if you know it</label>
-        <select class="fp-input" id="a-cut">
-          <option value="">Not sure</option>
-          <option value="slim">Slim</option>
-          <option value="regular">Regular</option>
-          <option value="relaxed">Relaxed</option>
-          <option value="oversized">Oversized or boxy</option>
+    <!-- ===== the product, to confirm ===== -->
+    <section id="v-product" class="fp-card" hidden aria-labelledby="product-title">
+      <h2 class="fp-h2" id="product-title">Is this the product?</h2>
+      <p class="fp-note" id="product-found"></p>
+      <form id="product-form" class="fp-form" novalidate>
+        <label class="fp-label" for="p-name">Product</label>
+        <input class="fp-input" id="p-name" maxlength="80" autocomplete="off">
+        <label class="fp-label" for="p-brand">Brand</label>
+        <input class="fp-input" id="p-brand" maxlength="80" autocomplete="off">
+        <label class="fp-label" for="p-type">Kind of garment</label>
+        <select class="fp-input" id="p-type">
+          <option value="">Choose…</option>
+          <option value="hoodies">Hoodie</option>
+          <option value="sweatshirts">Sweatshirt</option>
+          <option value="tshirts">T-shirt</option>
         </select>
-
-        <fieldset class="fp-scale">
-          <legend class="fp-label">How does it fit you?</legend>
-          <label><input type="radio" name="a-fit" value="tight"> Feels tight</label>
-          <label><input type="radio" name="a-fit" value="right" checked> Just right</label>
-          <label><input type="radio" name="a-fit" value="loose"> Feels loose</label>
-        </fieldset>
-        <fieldset class="fp-scale">
-          <legend class="fp-label">And its length?</legend>
-          <label><input type="radio" name="a-length" value="short"> Feels short</label>
-          <label><input type="radio" name="a-length" value="right" checked> Just right</label>
-          <label><input type="radio" name="a-length" value="long"> Feels long</label>
-        </fieldset>
-
-        <details class="fp-more">
-          <summary>Know the exact product? (optional)</summary>
-          <label class="fp-label" for="a-url">Its product page link</label>
-          <input class="fp-input" id="a-url" type="url" maxlength="600" placeholder="https://…">
-          <p class="pop-small">Only used to find it in Fynd’s data on this computer; it isn’t sent anywhere.</p>
-        </details>
-
-        <p class="form-error fp-error" id="anchor-error" role="alert"></p>
-        <div class="pop-actions">
-          <button class="btn btn-primary" type="submit">Save this reference</button>
-          <button class="btn btn-secondary" type="button" id="anchor-cancel" hidden>Cancel</button>
+        <p class="fp-small" id="p-type-note"></p>
+        <p class="fp-label" id="p-sizes-label">Sizes on the page</p>
+        <ul class="fp-sizes" id="p-sizes" aria-labelledby="p-sizes-label"></ul>
+        <p class="fp-small" id="p-meta"></p>
+        <p class="form-error fp-error" id="product-error" role="alert"></p>
+        <div class="fp-actions">
+          <button type="submit" class="btn btn-primary" id="confirm-product">This is the product</button>
+          <button type="button" class="btn btn-secondary" id="product-reread">Read again</button>
         </div>
       </form>
     </section>
 
-    <!-- ===== What the reference's measurements rest on ===== -->
-    <section id="resolve" class="fp-card" hidden aria-labelledby="resolve-title">
-      <h1 class="pop-title" id="resolve-title">Your reference</h1>
-      <p class="pop-product" id="ref-name"></p>
-      <p class="fp-confidence" id="ref-tier"></p>
-      <p class="pop-text" id="resolve-text"></p>
-      <ul class="fp-list" id="ref-dims"></ul>
-      <details class="fp-more" id="ref-sources-box">
-        <summary>Where these numbers come from</summary>
-        <ul class="fp-list" id="ref-sources"></ul>
-      </details>
-      <div id="ref-pick" hidden>
-        <p class="fp-label">Is yours one of these? Pick it to use its own measurements.</p>
-        <ul class="fp-options" id="resolve-options"></ul>
+    <!-- ===== the size charts found ===== -->
+    <section id="v-measure" class="fp-card" hidden aria-labelledby="measure-title">
+      <h2 class="fp-h2" id="measure-title">Its measurements</h2>
+      <p class="pop-text" id="measure-text"></p>
+      <ul class="fp-options" id="charts"></ul>
+      <div class="fp-actions">
+        <button type="button" class="btn btn-primary" id="use-chart">Use this chart</button>
+        <button type="button" class="btn btn-secondary" id="measure-reread">Read the page again</button>
+        <button type="button" class="link-button" id="manual-entry">Enter the measurements by hand</button>
       </div>
-      <details class="fp-more" id="manual">
-        <summary>Enter its measurements yourself instead (optional)</summary>
-        <p class="pop-small">Lay it flat. Widths across the front, armpit to armpit or edge to edge.</p>
-        <div id="manual-fields" class="fp-manual"></div>
-        <div class="pop-actions"><button class="btn btn-secondary" type="button" id="manual-save">Use these measurements</button></div>
-      </details>
-      <div class="pop-actions"><button class="btn btn-primary" type="button" id="resolve-skip">Done — compare products with it</button></div>
     </section>
 
-    <!-- ===== The product being viewed ===== -->
-    <section id="product" class="fp-card" hidden aria-labelledby="product-title">
+    <!-- ===== review and correct ===== -->
+    <section id="v-review" class="fp-card" hidden aria-labelledby="review-title">
+      <h2 class="fp-h2" id="review-title">Check the measurements</h2>
+      <p class="pop-text" id="review-text">Fynd read these from the page. Correct anything it got wrong, and say how the chart measures each one: Fynd compares only measurements taken the same way as your garment’s.</p>
+      <p class="fp-note" id="review-kind"></p>
+      <label class="fp-check" id="review-confirm-row" hidden><input type="checkbox" id="review-confirm"> These are the garment’s own measurements (laid flat or around the garment), not body sizes</label>
       <div class="fp-row">
-        <h1 class="pop-title" id="product-title">This product</h1>
-        <button class="link-button" type="button" id="read">Read this page</button>
+        <label class="fp-label" for="review-unit">Unit</label>
+        <select class="fp-input fp-narrow" id="review-unit">
+          <option value="">Not stated — choose</option>
+          <option value="cm">Centimetres</option>
+          <option value="in">Inches</option>
+        </select>
       </div>
-      <p class="pop-product" id="product-name"></p>
-      <p class="pop-small" id="product-meta"></p>
-      <div id="problem" class="fp-problem" hidden role="alert">
-        <p class="fp-problem-title" id="problem-title"></p>
-        <p id="problem-text"></p>
-        <details class="fp-diag" id="diag">
-          <summary>Technical details</summary>
-          <pre id="diag-text"></pre>
-        </details>
-      </div>
-      <label class="fp-label" for="p-category">Kind of garment</label>
-      <select class="fp-input" id="p-category"></select>
-      <div id="grant" class="fp-note" hidden>
-        <p id="grant-text"></p>
-        <button class="btn btn-secondary" type="button" id="grant-button"></button>
-      </div>
-      <div id="chart-area"></div>
-      <ul class="pop-choices" id="chart-choices" hidden></ul>
-      <div class="pop-actions" id="chart-actions" hidden>
-        <button class="btn btn-secondary" type="button" id="correct">Correct a measurement</button>
-        <button class="btn btn-secondary" type="button" id="use-as-anchor">This fits me — use as a reference</button>
-      </div>
-      <p class="pop-small" id="open-fynd-note"></p>
-      <p class="pop-small"><button class="link-button" type="button" id="copy-report">Copy test report</button> — what Fynd read on this page and how it compared, for checking a page or reporting a problem. It is copied to your clipboard only; nothing is sent.</p>
-      <textarea class="fp-input fp-report" id="report-text" rows="8" readonly hidden aria-label="Test report"></textarea>
-      <div id="confirm-kind" class="fp-note" hidden>
-        <p>The chart doesn’t say whether it measures the garment or the body.</p>
-        <button class="btn btn-secondary" type="button" id="confirm-garment">It measures the garment</button>
+      <div class="fp-table-wrap"><table class="fp-edit-table" id="review-table"></table></div>
+      <ul class="fp-list fp-problems" id="review-problems" aria-live="polite"></ul>
+      <div class="fp-actions">
+        <button type="button" class="btn btn-primary" id="to-reference">Choose your garment</button>
+        <button type="button" class="btn btn-secondary" id="review-back">Back</button>
       </div>
     </section>
 
-    <!-- ===== The recommendation ===== -->
-    <section id="rec" class="fp-card fp-rec" hidden aria-labelledby="rec-title" aria-live="polite">
-      <p class="fp-eyebrow">Fynd Fit Recommendation</p>
-      <h2 class="fp-rec-size" id="rec-title"></h2>
-      <p class="fp-confidence" id="rec-confidence"></p>
-      <div id="rec-explain" class="fp-explain"></div>
-      <details class="fp-more" id="rec-details">
-        <summary>How Fynd compared the sizes</summary>
-        <div id="rec-table"></div>
-        <ul class="fp-list" id="rec-why"></ul>
-        <ul class="fp-list" id="rec-notes"></ul>
-      </details>
-      <p class="pop-small" id="rec-anchor"></p>
-      <p class="pop-small">A comparison of published measurements with a garment you own — not a guarantee.</p>
-    </section>
-
-    <!-- ===== How it turned out ===== -->
-    <section id="feedback" class="fp-card" hidden aria-labelledby="feedback-title">
-      <h2 class="fp-h2" id="feedback-title">Bought it? Tell Fynd how it fit</h2>
-      <label class="fp-label" for="f-size">Size you got</label>
-      <select class="fp-input" id="f-size"></select>
-      <div class="fp-outcomes" role="group" aria-label="How it fit">
-        <button type="button" class="fp-chip" data-outcome="too-tight">Too tight</button>
-        <button type="button" class="fp-chip" data-outcome="about-right">About right</button>
-        <button type="button" class="fp-chip" data-outcome="too-loose">Too loose</button>
-        <button type="button" class="fp-chip" data-outcome="too-short">Too short</button>
-        <button type="button" class="fp-chip" data-outcome="too-long">Too long</button>
+    <!-- ===== a garment saved on the Fynd profile ===== -->
+    <section id="v-reference" class="fp-card" hidden aria-labelledby="reference-title">
+      <h2 class="fp-h2" id="reference-title">Which of your garments?</h2>
+      <p class="pop-text" id="reference-text">Fynd compares every size with a garment saved on your Fynd fit profile.</p>
+      <ul class="fp-options" id="references"></ul>
+      <div class="fp-actions" id="reference-actions">
+        <button type="button" class="btn btn-primary" id="compare">Compare every size</button>
+        <button type="button" class="btn btn-secondary" id="reference-retry" hidden>Try again</button>
+        <button type="button" class="btn btn-secondary" id="reference-back">Back</button>
       </div>
-      <p class="pop-small" id="feedback-saved" role="status"></p>
+      <p class="fp-small" id="reference-links"></p>
     </section>
 
-    <!-- ===== Saved references ===== -->
-    <section id="anchors" class="fp-card" hidden aria-labelledby="anchors-title">
-      <h2 class="fp-h2" id="anchors-title">Your references</h2>
-      <ul class="fp-anchors" id="anchor-list"></ul>
-      <button class="btn btn-secondary" type="button" id="add-anchor">Add another garment that fits</button>
+    <!-- ===== comparing ===== -->
+    <section id="v-comparing" class="fp-card" hidden aria-live="polite">
+      <p class="pop-text" id="comparing-text">Comparing on Fynd…</p>
     </section>
 
-    <details class="fp-privacy">
-      <summary>What Fynd reads and sends</summary>
-      <ul class="fp-list">
-        <li>It reads a page only after you click the Fynd button in Chrome’s toolbar on it — or, on a site you chose to let Fynd read, as you move between its pages. It reads the product’s name, brand, sizes and size tables, never form fields or anything you type.</li>
-        <li>Your references and how purchases fit are kept in this browser only (Chrome’s extension storage). They are never sent anywhere.</li>
-        <li>The measurements Fynd uses for your reference ship with the extension. Looking them up sends nothing: the panel itself makes no network requests.</li>
-        <li>Only “Open in Find Fit” reaches Fynd’s server, and only when you press it. It opens Fynd’s website in a new tab, which loads like any visit (and asks for your Fynd account, if you’re signed in). A chart read from this page goes in the address after “#”, which browsers don’t send. For a product Fynd holds measurements for, it sends that product’s address to Fynd, to show Fynd’s record; the panel says which before you press it.</li>
-        <li>“Copy test report” copies what Fynd read and compared to your clipboard. It sends nothing.</li>
-      </ul>
-    </details>
+    <!-- ===== the comparison, as Fynd's server decided it ===== -->
+    <section id="v-results" class="fp-card" hidden aria-labelledby="result-title">
+      <p class="fp-eyebrow">Fynd’s comparison</p>
+      <h2 class="fp-h2" id="result-title"></h2>
+      <p class="fp-rec-size" id="result-size" hidden></p>
+      <div class="fp-explain" id="result-messages"></div>
+      <div class="fp-table-wrap"><table class="fp-compare" id="result-table"></table></div>
+      <ul class="fp-list" id="result-dims"></ul>
+      <p class="fp-small" id="result-reliability"></p>
+      <ul class="fp-list" id="result-caveats"></ul>
+      <p class="fp-small" id="result-source"></p>
+      <div class="fp-actions">
+        <button type="button" class="btn btn-secondary" id="result-measurements">Change the measurements</button>
+        <button type="button" class="btn btn-secondary" id="result-garment">Choose another garment</button>
+        <button type="button" class="link-button" id="result-reread">Read another page</button>
+      </div>
+    </section>
+
+    <!-- ===== the comparison couldn't be made ===== -->
+    <section id="v-error" class="fp-card fp-problem" hidden aria-labelledby="error-title">
+      <h2 class="fp-h2" id="error-title"></h2>
+      <p class="pop-text" id="error-text"></p>
+      <ul class="fp-list" id="error-list"></ul>
+      <div class="fp-actions">
+        <button type="button" class="btn btn-primary" id="error-retry">Try again</button>
+        <button type="button" class="btn btn-secondary" id="error-back">Back to the measurements</button>
+      </div>
+    </section>
   </main>
 
   <script src="config.js"></script>
   <script src="retailers.js"></script>
-  <script src="vendor/fit-reference-data.js"></script>
   <script src="vendor/sizing-tables.js"></script>
   <script src="vendor/fynd-payload.js"></script>
-  <script src="vendor/size-chart.js"></script>
-  <script src="vendor/fit-anchor.js"></script>
   <script src="collect.js"></script>
+  <script src="extract.js"></script>
+  <script src="api.js"></script>
   <script src="sidepanel.js"></script>
 </body>
 </html>

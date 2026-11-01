@@ -57,17 +57,23 @@ const raw = (tables, extra) => Object.assign({
 (async () => {
   section('what the extension may do');
 
-  await test('Manifest V3 with only what the Fit panel needs: no host access at install, no content scripts, a background worker that only opens the panel', () => {
+  await test('Manifest V3 with only what the Fit panel needs: Fynd’s own API the one host, no content scripts, a background worker that only opens the panel', () => {
     const m = JSON.parse(fs.readFileSync(path.join(EXT, 'manifest.json'), 'utf8'));
     assert.strictEqual(m.manifest_version, 3);
     /* activeTab + scripting: read a page only after the toolbar press;
-       sidePanel: the Fit panel; storage: references, on this device */
+       sidePanel: the Fit panel; storage: the tab pressed on, this session only */
     assert.deepStrictEqual(m.permissions, ['activeTab', 'scripting', 'sidePanel', 'storage']);
-    /* no site at install, Fynd's own included: the panel makes no request */
-    assert.strictEqual(m.host_permissions, undefined);
-    /* a site is added only when the shopper asks for that one site
-       (permissions.request with its own origin, in sidepanel.js) */
-    assert.deepStrictEqual(m.optional_host_permissions, ['https://*/*']);
+    /* one host at install: Fynd's own API, for the saved garments and the comparison — no shop's */
+    assert.deepStrictEqual(m.host_permissions, ['https://ai-clothes-application.vercel.app/*']);
+    assert.strictEqual(m.optional_host_permissions, undefined, 'no site is ever asked for: a page is read only on a toolbar press');
+    assert.strictEqual(m.optional_permissions, undefined);
+    /* the key pins the extension's ID, the one origin api/_cors.js lets in */
+    const crypto = require('crypto');
+    const id = crypto.createHash('sha256').update(Buffer.from(m.key, 'base64')).digest('hex').slice(0, 32).replace(/[0-9a-f]/g, (c) => 'abcdefghijklmnop'[parseInt(c, 16)]);
+    assert.deepStrictEqual(require('../api/_cors').EXTENSION_ORIGINS, [`chrome-extension://${id}`]);
+    const config = fs.readFileSync(path.join(EXT, 'config.js'), 'utf8');
+    assert.match(config, /const FYND_API = FYND_SITE;/);
+    assert.match(config, /const FYND_SITE = 'https:\/\/ai-clothes-application\.vercel\.app';/, 'the API the manifest grants, and no other');
     for (const key of ['content_scripts', 'externally_connectable', 'web_accessible_resources']) {
       assert.strictEqual(m[key], undefined, `${key} must not be requested`);
     }
@@ -95,14 +101,32 @@ const raw = (tables, extra) => Object.assign({
     }
   });
 
-  await test('the Fit panel: no network request at all; storage on this device only; one site at a time; nothing it reads is run', () => {
+  await test('the Fit panel: its one route to the network is api.js, to Fynd’s API alone; no storage but the session; nothing it reads is run', () => {
     const src = fs.readFileSync(path.join(EXT, 'sidepanel.js'), 'utf8');
     assert.ok(!/\bfetch\s*\(|XMLHttpRequest|sendBeacon|WebSocket|\beval\s*\(|new Function|innerHTML|insertAdjacentHTML|document\.write/.test(src));
-    assert.ok(!/storage\.sync|localStorage|sessionStorage|indexedDB|document\.cookie/.test(src), 'chrome.storage only');
-    /* the only access it asks for: the one site the shopper is on */
-    const asks = src.match(/permissions\.request\(\{ origins: \[origin\] \}\)/g) || [];
-    assert.strictEqual(asks.length, 1);
-    assert.match(src, /const origin = `\$\{new URL\(tab\.url\)\.origin\}\/\*`;/);
+    assert.ok(!/storage\.sync|storage\.local|localStorage|sessionStorage|indexedDB|document\.cookie/.test(src), 'nothing kept on the device: the shopper’s garments stay on their Fynd profile');
+    assert.ok(!/permissions\.request/.test(src), 'no site access asked for');
+    /* api.js: the only fetch in the extension, to FYND_API, two existing endpoints */
+    const api = fs.readFileSync(path.join(EXT, 'api.js'), 'utf8');
+    assert.strictEqual((api.match(/\bfetchFn\(/g) || []).length, 1);
+    assert.match(api, /fetchFn\(`\$\{base\}\$\{path\}`/);
+    assert.deepStrictEqual((api.match(/request\('([^']+)'/g) || []).map((x) => x.slice(9, -1)), ['/api/fit-profile', '/api/size-recommendation?compare=1&candidate=1']);
+    assert.ok(!/\beval\s*\(|new Function|innerHTML/.test(api));
+    for (const f of fs.readdirSync(EXT).filter((x) => x.endsWith('.js') && x !== 'api.js')) {
+      assert.ok(!/\bfetch\s*\(|XMLHttpRequest|sendBeacon|WebSocket/.test(fs.readFileSync(path.join(EXT, f), 'utf8')), `${f} makes no request`);
+    }
+    /* the panel's families are the engine's own (a hint only: the server decides) */
+    const family = /const FAMILY = (\{[^}]+\});/.exec(src)[1];
+    const engineSrc = fs.readFileSync(path.join(REPO, 'api/_sizing/engine.js'), 'utf8');
+    const ef = /const FAMILY = (\{[^}]+\});/.exec(engineSrc);
+    assert.ok(ef, 'the engine’s FAMILY');
+    const parse = (t) => Function(`return (${t});`)();
+    const mine = parse(family);
+    const theirs = parse(ef[1]);
+    Object.keys(mine).forEach((k) => assert.strictEqual(mine[k], theirs[k], k));
+    /* the shared extraction code is the site's own, and no reference data ships in the extension */
+    assert.ok(!fs.existsSync(path.join(EXT, 'vendor/fit-reference-data.js')) && !fs.existsSync(path.join(EXT, 'vendor/fit-anchor.js')), 'no second engine, no local references');
+    assert.ok(!/fit-anchor|fit-reference-data|FyndAnchor/.test(src + fs.readFileSync(path.join(EXT, 'sidepanel.html'), 'utf8')));
     /* retailer modules: product recognition only */
     const vm = require('vm');
     const sandbox = { URL };

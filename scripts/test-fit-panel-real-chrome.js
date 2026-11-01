@@ -9,33 +9,42 @@
 
      - Chromium runs headed, on a virtual display (Xvfb), with the
        extension loaded exactly as shipped from extension/ — no test copy,
-       no extra host permission, no ?tab= hook.
+       no extra host permission, no ?tab= hook, its config.js unchanged.
      - Fynd's toolbar button is clicked with a real X11 mouse click
        (scripts/real-chrome/xinput.py, via XTEST). That click is what
        Chrome turns into activeTab access and what opens the side panel;
        nothing else can stand in for it.
-     - The panel is then driven like a shopper would: create a reference
-       from brand, kind, size and fit only; open a product page; click
-       Fynd; open the page's size guide; read it; get a recommendation;
-       move to other pages; record how a purchase fit. Every request the
-       panel makes and every console error is recorded.
+     - Fynd's API is reached at its production address,
+       https://ai-clothes-application.vercel.app — Chrome is told to
+       resolve that name to this machine, where Fynd's own handlers
+       (/api/auth, /api/fit-profile, /api/size-recommendation) answer
+       over TLS with a throwaway certificate. The shopper signs in on
+       that origin as on the site, so the panel's requests carry the
+       real session cookie (SameSite=Lax; Secure), from the extension's
+       real origin, through api/_cors.js's own allow-list. Nothing
+       reaches the real Vercel deployment.
+     - The panel is then driven like a shopper would: open a product
+       page, click Fynd, confirm the product, open the page's size guide,
+       read it again, check the measurements, choose a saved garment,
+       compare every size; then other pages, a page on another site, a
+       page Chrome won't let any extension read, and signing out. Every
+       request the panel makes and every console error is recorded.
 
-   The pages (scripts/fixtures/fit-panel/shop/) are served from this
+   The shop pages (scripts/fixtures/fit-panel/shop/) are served from this
    machine. They are built like shop pages — structured product data,
    size buttons, a size guide that is a closed <dialog> with Body and
    Product tabs — but they are invented, and passing here says nothing
-   about any real retailer. One is served at UNIQLO US's product address
-   (Chrome is told to resolve www.uniqlo.com to this machine) only to
-   check that the address is recognised; it is not UNIQLO's page.
+   about any real retailer.
 
-   --live: after the same reference set-up, opens each URL given, clicks
-   Fynd, and reports what the panel read and recommended, with a
+   --live: opens each URL given, clicks Fynd, and reports what the panel
+   read (the product, the tables and what each measures), with a
    screenshot. That is the check against real retailer pages; it needs
-   network access to them, and makes no assertions about their content.
+   network access to them, compares nothing, and makes no assertions
+   about their content.
 
    Needs: Xvfb and ImageMagick's `import`, python3 with python-xlib and
-   Pillow, Playwright, and Chromium (CHROME_PATH). Screenshots go to
-   FYND_SHOTS (default: a temporary folder, printed at the end).
+   Pillow, openssl, Playwright, and Chromium (CHROME_PATH). Screenshots
+   go to FYND_SHOTS (default: a temporary folder, printed at the end).
    ========================================================= */
 
 'use strict';
@@ -45,9 +54,26 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const http = require('http');
+const https = require('https');
 const net = require('net');
 const crypto = require('crypto');
-const { spawn, execFileSync } = require('child_process');
+const { spawn, execFileSync, spawnSync } = require('child_process');
+
+process.env.AUTH_SECRET = 'real-chrome-secret-of-sufficient-length';
+delete process.env.ALLOWED_ORIGIN;
+delete process.env.RESEND_API_KEY;
+delete process.env.POSTMARK_SERVER_TOKEN;
+['warn', 'error'].forEach((level) => { const o = console[level]; console[level] = (...a) => { if (process.env.SHOW_LOGS) o(...a); }; });
+const API_HOST = 'ai-clothes-application.vercel.app';
+const API = `https://${API_HOST}`;
+const HANDLERS = {
+  '/api/auth': require('../api/auth'),
+  '/api/fit-profile': require('../api/fit-profile'),
+  '/api/size-recommendation': require('../api/size-recommendation')
+};
+const Schema = require('../assets/fit-profile-schema.js');
+const users = require('../api/_users');
+const fitProfiles = require('../api/_fit-profile');
 
 const REPO = path.join(__dirname, '..');
 const EXT = path.join(REPO, 'extension');
@@ -75,7 +101,7 @@ function missing() {
   const need = [];
   if (!chromium) need.push('Playwright (npm i -g playwright, or PLAYWRIGHT_PATH)');
   if (!fs.existsSync(CHROME)) need.push(`Chromium at ${CHROME} (CHROME_PATH)`);
-  for (const bin of ['Xvfb', 'import']) { try { execFileSync('which', [bin], { stdio: 'ignore' }); } catch (err) { need.push(bin); } }
+  for (const bin of ['Xvfb', 'import', 'openssl']) { try { execFileSync('which', [bin], { stdio: 'ignore' }); } catch (err) { need.push(bin); } }
   try { execFileSync('python3', ['-c', 'import Xlib.ext.xtest, PIL'], { stdio: 'ignore' }); } catch (err) { need.push('python3 with python-xlib and Pillow (pip install python-xlib pillow)'); }
   return need;
 }
@@ -84,19 +110,59 @@ function missing() {
 
 const freePort = () => new Promise((resolve) => { const s = net.createServer(); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => resolve(p)); }); });
 
-/* an unpacked extension's id: its absolute path, hashed, in a–p */
-const extensionId = (dir) => [...crypto.createHash('sha256').update(dir).digest('hex').slice(0, 32)].map((c) => String.fromCharCode(97 + parseInt(c, 16))).join('');
+/* the extension's id: its manifest key, hashed, in a–p (the key pins it, wherever it is loaded from) */
+const extensionId = () => {
+  const key = JSON.parse(fs.readFileSync(path.join(EXT, 'manifest.json'), 'utf8')).key;
+  return [...crypto.createHash('sha256').update(Buffer.from(key, 'base64')).digest('hex').slice(0, 32)].map((c) => String.fromCharCode(97 + parseInt(c, 16))).join('');
+};
 
 function serve() {
   const server = http.createServer((req, res) => {
     const u = new URL(req.url, 'http://x');
-    const host = String(req.headers.host || '').split(':')[0];
-    let file = null;
-    if (host === 'www.uniqlo.com' && /^\/us\/en\/products\/E475377-000\/00\/?$/.test(u.pathname)) file = path.join(SHOP, 'uniqlo-sweatshirt.html');
-    else if (u.pathname.startsWith('/shop/')) file = path.join(SHOP, path.basename(u.pathname));
+    const file = u.pathname.startsWith('/shop/') ? path.join(SHOP, path.basename(u.pathname)) : null;
     if (!file || !fs.existsSync(file)) { res.writeHead(404, { 'content-type': 'text/plain' }); return res.end('not found'); }
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
     fs.createReadStream(file).pipe(res);
+  });
+  return new Promise((r) => server.listen(0, '127.0.0.1', () => r(server)));
+}
+
+/* Fynd's API under its production name, over TLS, on this machine */
+function certificate() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fynd-cert-'));
+  const key = path.join(dir, 'key.pem');
+  const cert = path.join(dir, 'cert.pem');
+  const made = spawnSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1', '-keyout', key, '-out', cert, '-subj', '/CN=fynd-real-chrome-test', '-addext', `subjectAltName=DNS:${API_HOST}`], { encoding: 'utf8' });
+  if (made.status !== 0) throw new Error(`openssl could not make a test certificate: ${made.error ? made.error.message : made.stderr}`);
+  const pair = { key: fs.readFileSync(key), cert: fs.readFileSync(cert) };
+  fs.rmSync(dir, { recursive: true, force: true });
+  return pair;
+}
+const apiHits = [];
+function serveApi() {
+  const readBody = (req) => new Promise((resolve) => { let d = ''; req.on('data', (c) => { d += c; }); req.on('end', () => resolve(d)); req.on('error', () => resolve('')); });
+  const server = https.createServer(certificate(), async (req, res) => {
+    const u = new URL(req.url, API);
+    res.status = (c) => { res.statusCode = c; return res; };
+    res.json = (p) => { if (!res.getHeader('Content-Type')) res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(p)); return res; };
+    /* the site's sign-in, standing in for account.html: the same /api/auth, same origin */
+    if (u.pathname === '/__test/signin') {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      return res.end(`<!doctype html><title>Sign in (test)</title><p id="s">signing in…</p><script>
+        fetch('/api/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'signup', name: 'Shopper', email: ${JSON.stringify('EMAIL')}.replace('EMAIL', new URLSearchParams(location.search).get('email')), password: 'correct-horse-battery-staple', confirmPassword: 'correct-horse-battery-staple' }) })
+          .then((r) => { document.getElementById('s').textContent = 'status ' + r.status; });
+      </script>`);
+    }
+    const handler = HANDLERS[u.pathname];
+    if (!handler) { res.statusCode = 404; return res.end('{}'); }
+    const raw = req.method === 'POST' ? await readBody(req) : '';
+    if (raw) { try { req.body = JSON.parse(raw); } catch (err) { req.body = raw; } }
+    req.query = Object.fromEntries(u.searchParams);
+    const hit = { method: req.method, path: u.pathname + u.search, origin: req.headers.origin || null, cookie: /fynd_session=/.test(req.headers.cookie || ''), body: req.body || null, status: null };
+    apiHits.push(hit);
+    try { await handler(req, res); } catch (err) { if (!res.writableEnded) { res.statusCode = 500; res.end('{}'); } }
+    if (!res.writableEnded) res.end();
+    hit.status = res.statusCode;
   });
   return new Promise((r) => server.listen(0, '127.0.0.1', () => r(server)));
 }
@@ -105,9 +171,9 @@ function xinput(display, ...args) {
   return execFileSync('python3', [XINPUT, display, ...args], { encoding: 'utf8' }).trim();
 }
 
-async function launch(display, port) {
+async function launch(display, port, apiPort) {
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'fynd-profile-'));
-  const id = extensionId(EXT);
+  const id = extensionId();
   /* pinned, so its button is on the toolbar as a shopper would pin it */
   fs.mkdirSync(path.join(profile, 'Default'), { recursive: true });
   fs.writeFileSync(path.join(profile, 'Default', 'Preferences'), JSON.stringify({ extensions: { pinned_extensions: [id] } }));
@@ -121,7 +187,11 @@ async function launch(display, port) {
     /* draw on the X display, never another backend */
     '--ozone-platform=x11',
     `--load-extension=${EXT}`, `--disable-extensions-except=${EXT}`,
-    `--host-resolver-rules=MAP www.uniqlo.com:80 127.0.0.1:${port}`,
+    /* Fynd's production API name, answered here; the throwaway certificate accepted */
+    `--host-resolver-rules=MAP ${API_HOST}:443 127.0.0.1:${apiPort}, MAP localhost:${port} 127.0.0.1:${port}`,
+    '--ignore-certificate-errors',
+    /* and never through a proxy: nothing here leaves this machine */
+    '--no-proxy-server',
     'about:blank'
   ];
   const proc = spawn(CHROME, args, { env: Object.assign({}, process.env, { DISPLAY: display }), stdio: ['ignore', 'ignore', 'pipe'] });
@@ -177,10 +247,17 @@ async function launch(display, port) {
   const server = await serve();
   const port = server.address().port;
   const local = (p) => `http://127.0.0.1:${port}${p}`;
-  let launched;
-  try { launched = await launch(display, port); } catch (err) {
-    console.log(`  FAIL  Chromium starts with the extension loaded\n        ${err.message}\n\n0 passed, 1 failed`);
+  const otherSite = (p) => `http://localhost:${port}${p}`;
+  let apiServer;
+  try { apiServer = await serveApi(); } catch (err) {
+    console.log(`  FAIL  Fynd’s API starts on this machine\n        ${err.message}\n\n0 passed, 1 failed`);
     xvfb.kill(); server.close();
+    process.exit(1);
+  }
+  let launched;
+  try { launched = await launch(display, port, apiServer.address().port); } catch (err) {
+    console.log(`  FAIL  Chromium starts with the extension loaded\n        ${err.message}\n\n0 passed, 1 failed`);
+    xvfb.kill(); server.close(); apiServer.close();
     process.exit(1);
   }
   const { proc, browser, id, debug } = launched;
@@ -272,18 +349,13 @@ async function launch(display, port) {
     try {
       out.panel = await panel.evaluate(async () => {
         const el = (id) => document.getElementById(id);
-        const vis = (id) => Boolean(el(id) && !el(id).hidden);
-        const storage = await chrome.storage.local.get(null);
         const session = await chrome.storage.session.get(null).catch(() => ({}));
         return {
-          visible: ['status', 'onboard', 'product', 'problem', 'rec', 'grant', 'confirm-kind', 'resolve'].filter(vis),
-          status: el('status') && el('status').textContent,
-          problem: vis('problem') ? { kind: el('problem').dataset.kind, title: el('problem-title').textContent, details: el('diag-text').textContent } : null,
-          product: { name: el('product-name').textContent, meta: el('product-meta').textContent },
-          chartArea: el('chart-area') ? el('chart-area').innerText.slice(0, 400) : null,
-          recTitle: el('rec-title').textContent,
-          anchorsDrawn: document.querySelectorAll('#anchor-list li').length,
-          anchorsStored: Array.isArray(storage.fyndAnchors) ? storage.fyndAnchors.map((a) => `${a.brand} ${a.category} ${a.size}`) : storage.fyndAnchors,
+          view: document.body.dataset.view,
+          problem: document.body.dataset.view === 'problem' ? { title: el('problem-title').textContent, details: el('problem-diag').textContent } : null,
+          product: { name: el('p-name').value, brand: el('p-brand').value, type: el('p-type').value },
+          charts: Array.from(document.querySelectorAll('#charts .fp-option')).map((x) => x.innerText.replace(/\s+/g, ' ').slice(0, 160)),
+          reviewProblems: Array.from(document.querySelectorAll('#review-problems li')).map((x) => x.textContent),
           pressed: session.fyndPressed ? Object.assign({}, session.fyndPressed, { ageMs: Date.now() - session.fyndPressed.at }) : null,
           text: document.body.innerText.slice(0, 1200)
         };
@@ -297,31 +369,26 @@ async function launch(display, port) {
     return JSON.stringify(out, null, 2).split('\n').join('\n        ');
   };
 
-  console.log(`Chromium ${(await browser.version())}, headed on Xvfb ${display}; extension ${id} loaded unpacked from extension/ as shipped.`);
+  console.log(`Chromium ${(await browser.version())}, headed on Xvfb ${display}; extension ${id} loaded unpacked from extension/ as shipped; Fynd’s API at ${API}, answered on this machine.`);
+
+  const view = (v, ms) => panel.waitForFunction((want) => document.body.dataset.view === want, v, { timeout: ms || 10000 }).catch(async (err) => { throw new Error(`the panel never showed “${v}” (${err.message.split('\n')[0]})\n        ${await diagnose(v)}`); });
+  const texts = (sel) => panel.$$eval(sel, (ns) => ns.map((x) => x.textContent.trim()));
 
   if (LIVE) {
-    await shop.goto(local('/shop/no-chart.html'));
-    await clickFynd();
-    await panel.fill('#a-brand', 'UNIQLO');
-    await panel.selectOption('#a-category', 'tshirt');
-    await panel.fill('#a-size', 'M');
-    await panel.click('#anchor-form button[type="submit"]');
-    await panel.click('#resolve-skip');
     for (const url of LIVE) {
       console.log(`\n--- ${url}`);
       try {
         await shop.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
         await sleep(3000);
         await clickFynd();
-        await sleep(2500);
+        await panel.waitForFunction(() => !['start', 'reading'].includes(document.body.dataset.view), null, { timeout: 15000 });
+        if (await panel.evaluate(() => document.body.dataset.view === 'product')) { await panel.selectOption('#p-type', (await panel.inputValue('#p-type')) || 'tshirts'); await panel.click('#confirm-product'); await sleep(500); }
         const report = await panel.evaluate(() => ({
-          product: document.getElementById('product-name').textContent,
-          meta: document.getElementById('product-meta').textContent,
-          problem: document.getElementById('problem').hidden ? null : `${document.getElementById('problem-title').textContent} — ${document.getElementById('problem-text').textContent}`,
-          chart: document.getElementById('chart-area').innerText.slice(0, 600),
-          choices: [...document.querySelectorAll('#chart-choices .pop-choice-name')].map((x) => x.textContent),
-          recommendation: document.getElementById('rec').hidden ? null : `${document.getElementById('rec-title').textContent} · ${document.getElementById('rec-confidence').textContent}`,
-          explanation: document.getElementById('rec-explain').innerText.slice(0, 800)
+          view: document.body.dataset.view,
+          problem: document.body.dataset.view === 'problem' ? `${document.getElementById('problem-title').textContent} — ${document.getElementById('problem-text').textContent}` : null,
+          product: { name: document.getElementById('p-name').value, brand: document.getElementById('p-brand').value, type: document.getElementById('p-type').value, found: document.getElementById('product-found').textContent, sizes: [...document.querySelectorAll('#p-sizes li')].map((x) => `${x.textContent}${x.dataset.available === 'false' ? ' (not on offer)' : ''}`) },
+          measurements: document.getElementById('measure-text').textContent,
+          tables: [...document.querySelectorAll('#charts .fp-option')].map((x) => x.innerText.replace(/\s+/g, ' ').slice(0, 200))
         }));
         console.log(JSON.stringify(report, null, 2));
         console.log(`screenshot: ${shot(`live-${LIVE.indexOf(url) + 1}`)}`);
@@ -333,265 +400,181 @@ async function launch(display, port) {
     console.log(`\nrequests from the panel: ${requests.length ? requests.join(', ') : 'none'}`);
     console.log(`console errors: ${errors.length ? errors.join(' | ') : 'none'}`);
     await browser.close().catch(() => {});
-    proc.kill(); xvfb.kill(); server.close();
+    proc.kill(); xvfb.kill(); server.close(); apiServer.close();
     return;
   }
 
+  /* the shopper's saved T-shirt (invented), measured flat in inches, each method stated */
+  const TEE = { unit: 'in', chestWidth: 22, bodyLength: 28.75, shoulderWidth: 18.75, sleeveLength: 8.25 };
+  const METHODS = { registry: 1, chestWidth: 'flat-width-armpit-to-armpit', bodyLength: 'high-point-shoulder-to-hem', shoulderWidth: 'seam-to-seam', sleeveLength: 'shoulder-seam-to-cuff' };
+
+  console.log('\nsigning in to Fynd, as on the site');
+
+  await test('the shopper signs in on Fynd’s own origin: the session cookie is set in this Chrome, and a T-shirt is saved on their fit profile', async () => {
+    const email = 'real.chrome.shopper@example.test';
+    await shop.goto(`${API}/__test/signin?email=${encodeURIComponent(email)}`);
+    await shop.waitForFunction(() => /^status /.test(document.getElementById('s').textContent), null, { timeout: 10000 });
+    assert.strictEqual(await shop.textContent('#s'), 'status 200');
+    const cookies = await context.cookies(API);
+    const session = cookies.find((c) => c.name === 'fynd_session');
+    assert.ok(session, `no session cookie: ${cookies.map((c) => c.name).join(', ')}`);
+    assert.deepStrictEqual([session.sameSite, session.secure, session.httpOnly], ['Lax', true, true]);
+    const user = await users.byEmail(email);
+    const p = Schema.empty();
+    p.garments = { tshirts: Object.assign(Schema.emptyGarment('tshirts'), { favorite: 'perfect', anchor: { brand: 'Owned Brand', size: 'L', measurements: TEE, methods: METHODS } }) };
+    await fitProfiles.save(user.id, p);
+  });
+
   console.log('\nthe workflow, with a real toolbar click');
 
-  await test('a product page, a real click on Fynd’s toolbar button: the side panel opens beside the page and asks for a reference first', async () => {
+  await test('a product page, a real click on Fynd’s toolbar button: the side panel opens beside the page and reads the product', async () => {
     await shop.goto(local('/shop/tee.html'));
     await shop.bringToFront();
     shot('00-shop-before-click');
     await clickFynd();
-    await panel.waitForSelector('#onboard:not([hidden])');
-    assert.match(await text('#onboard-title'), /Which clothes already fit you the way you like\?/);
+    await view('product');
+    assert.strictEqual(await panel.inputValue('#p-name'), 'Everyday Crew Tee');
+    assert.strictEqual(await panel.inputValue('#p-brand'), 'Northwind');
+    assert.strictEqual(await panel.inputValue('#p-type'), 'tshirts');
+    assert.deepStrictEqual(await texts('#p-sizes li'), ['XS', 'S', 'M', 'L', 'XL', 'XXL']);
     /* one click, straight to the panel: no popup in between */
     const targets = await (await fetch(`http://127.0.0.1:${debug}/json/list`)).json();
     assert.ok(!targets.some((t) => /popup\.html/.test(t.url)), `a popup opened: ${targets.map((t) => t.url).join(', ')}`);
-    shot('01-panel-opened-onboarding');
+    shot('01-panel-product');
   });
 
-  await test('a reference from brand, kind, size and fit only — no link, no tape measure: measurements found, ranges and sources shown', async () => {
-    await panel.fill('#a-brand', 'UNIQLO');
-    await panel.selectOption('#a-category', 'tshirt');
-    await panel.fill('#a-size', 'M');
-    await panel.check('input[name="a-fit"][value="tight"]');
-    await panel.click('#anchor-form button[type="submit"]');
-    await panel.waitForSelector('#resolve:not([hidden])');
-    assert.match(await text('#ref-tier'), /same brand’s products/);
-    assert.match(await text('#resolve-text'), /SUPIMA® Cotton T-Shirt/);
-    assert.match(await text('#ref-dims'), /chest width: about 21½ in \(somewhere 20¾ in–22¼ in\), laid flat/);
-    await panel.click('#ref-sources-box summary');
-    const link = await panel.getAttribute('#ref-sources a', 'href');
-    assert.strictEqual(link, 'https://www.uniqlo.com/us/en/products/E455365-000/00');
-    const stored = await panel.evaluate(() => chrome.storage.local.get('fyndAnchors'));
-    assert.strictEqual(stored.fyndAnchors.length, 1);
-    assert.strictEqual(stored.fyndAnchors[0].feel.fit, 'tight');
-    assert.strictEqual(stored.fyndAnchors[0].dims.chestWidth.source, 'similar-product');
-    shot('02-reference-estimated');
+  await test('the size guide is closed: no chart found, and the panel says to open it on the page', async () => {
+    await panel.click('#confirm-product');
+    await view('measure');
+    assert.match(await panel.textContent('#measure-text'), /No size chart found on this page\. If the shop keeps its chart in a size guide, open the guide on the page and read it again\./);
+    shot('02-guide-closed');
   });
 
-  await test('the product is identified and its closed size guide is reported — not an empty panel', async () => {
-    await panel.click('#resolve-skip');
-    await panel.waitForSelector('#product:not([hidden])');
-    await panel.waitForFunction(() => document.getElementById('product-name').textContent === 'Everyday Crew Tee' && /No size chart found/.test(document.getElementById('chart-area').innerText));
-    assert.strictEqual(await text('#product-name'), 'Everyday Crew Tee');
-    assert.match(await text('#product-meta'), /Northwind · 127\.0\.0\.1/);
-    assert.match(await text('#chart-area'), /No size chart found on this page\. The page lists sizes XS, S, M, L, XL, XXL, but no measurements\. The page has a size guide \(“Size guide”\): open it on the page, then press Read this page\./);
-    shot('03-guide-closed');
-  });
-
-  await test('the shopper opens the size guide on the page and presses Read this page: the garment tab is read, not the body tab', async () => {
+  await test('the shopper opens the size guide and reads the page again: the product table is offered, the body table shown but not choosable', async () => {
     await shop.click('#open-guide');
-    await panel.click('#read');
-    await panel.waitForSelector('#rec-title:not(:empty)');
-    await panel.waitForFunction(() => /Garment measurements/.test(document.getElementById('chart-area').innerText));
-    const area = await text('#chart-area');
-    assert.match(area, /Garment measurements · in inches · read from this page in your browser/);
-    assert.match(area, /Chest width \(flat\)/);
-    const choices = await panel.locator('#chart-choices .pop-choice-name').allInnerTexts();
-    assert.ok(choices.some((c) => /Body measurements/.test(c)) && choices.some((c) => /Product measurements/.test(c)), choices.join(' | '));
-    shot('04-guide-read');
+    await panel.click('#measure-reread');
+    await view('product');
+    await panel.click('#confirm-product');
+    await view('measure');
+    const options = await panel.$$eval('#charts .fp-option', (ns) => ns.map((x) => ({ kind: x.querySelector('.fp-kind').dataset.kind, disabled: x.querySelector('input').disabled, checked: x.querySelector('input').checked })));
+    assert.deepStrictEqual(options.map((o) => o.kind).sort(), ['body', 'finished-garment']);
+    assert.ok(options.every((o) => (o.kind === 'body') === o.disabled), JSON.stringify(options));
+    assert.ok(options.find((o) => o.kind === 'finished-garment').checked);
+    shot('03-guide-read');
   });
 
-  await test('the recommendation: a size, its confidence and every reason, the differences per measurement, and what wasn’t compared', async () => {
-    const title = await text('#rec-title');
-    assert.strictEqual(title, 'L');
-    assert.match(await text('#rec-confidence'), /^Low confidence$/);
-    const explain = await text('#rec-explain');
-    assert.match(explain, /Your reference T-shirt \(UNIQLO M\) has a flat chest width of about 21½ in, somewhere between 20¾ in and 22¼ in \(estimated from the same brand’s published measurements\)\. This L measures 22 in — about what you like\./);
-    await panel.click('#rec-details summary');
-    const why = await text('#rec-why');
-    assert.match(why, /estimated from the same brand’s published measurements/);
-    assert.match(why, /estimated from one answer/);
-    const notes = await text('#rec-notes');
-    assert.match(notes, /Not compared — length: your reference’s length is measured down the centre back, this chart’s from the top of the shoulder \(front length\)/);
-    assert.match(notes, /Not compared — sleeve: your reference’s sleeve is measured from the centre back, this chart’s from the shoulder seam/);
-    const rows = await panel.locator('#rec-table tbody tr').count();
-    assert.strictEqual(rows, 6);
-    shot('05-recommendation');
+  await test('the measurements to check: inches, each method read from the headings, nothing left to fix', async () => {
+    await panel.click('#use-chart');
+    await view('review');
+    assert.strictEqual(await panel.inputValue('#review-unit'), 'in');
+    const dims = await panel.$$eval('select[data-role="dim"]', (ns) => ns.map((s) => s.value));
+    const how = await panel.$$eval('select[data-role="method"]', (ns) => ns.map((s) => s.value));
+    assert.deepStrictEqual(dims, ['chestWidth', 'bodyLength', 'sleeveLength', 'shoulderWidth']);
+    assert.deepStrictEqual(how, [METHODS.chestWidth, METHODS.bodyLength, METHODS.sleeveLength, METHODS.shoulderWidth]);
+    assert.deepStrictEqual(await texts('#review-problems li'), []);
+    shot('04-review');
   });
 
-  await test('the test report: what was identified, every table found, the chosen chart normalised to inches, the reference and the recommendation — copied, never sent', async () => {
-    await panel.click('#copy-report');
-    await panel.waitForFunction(() => document.getElementById('report-text').value.trim().startsWith('{'));
-    const r = JSON.parse(await panel.inputValue('#report-text'));
-    assert.strictEqual(r.read.how, 'button');
-    assert.strictEqual(r.page.address, local('/shop/tee.html'));
-    assert.deepStrictEqual([r.identified.name, r.identified.brand, r.identified.code, r.identified.kindUsed], ['Everyday Crew Tee', 'Northwind', 'NW-TEE-100', 'tshirt']);
-    assert.deepStrictEqual(r.identified.sizesListed, ['XS', 'S', 'M', 'L', 'XL', 'XXL']);
-    assert.ok(r.charts.some((c) => c.measures === 'body') && r.charts.some((c) => c.measures === 'finished-garment'));
-    const m = r.normalised.sizes.find((z) => z.size === 'M').dims;
-    assert.deepStrictEqual([m.chestWidth.inches, m.chestWidth.method, m.bodyLength.method, m.sleeveLength.method], [20.5, 'flat', 'hps', 'shoulder-seam']);
-    assert.deepStrictEqual([r.recommendation.status, r.recommendation.size, r.recommendation.confidence], ['ok', 'L', 'low']);
-    assert.strictEqual(r.reference.tier, 'same-brand');
-    /* nothing handed to Find Fit: what to do there instead */
-    assert.match(await text('#open-fynd-note'), /enter its finished-garment measurements from this chart in Find Fit’s item form/);
+  await test('the shopper’s saved garment, read from Fynd with their own session; one request compares every size; the server’s decision is shown as it is', async () => {
+    const before = apiHits.length;
+    await panel.click('#to-reference');
+    await panel.waitForSelector('input[name="reference"][value="tshirts"]', { timeout: 10000 }).catch(async (err) => { throw new Error(`no saved garment listed: ${err.message.split('\n')[0]}\n        ${await diagnose('reference')}`); });
+    assert.match(await panel.$eval('input[name="reference"][value="tshirts"]', (r) => r.closest('label').textContent), /Owned Brand t-shirt, size L/);
+    shot('05-garment');
+    await panel.click('#compare');
+    await view('results');
+    assert.strictEqual(await panel.textContent('#result-size'), 'L');
+    assert.strictEqual(await panel.textContent('#result-title'), 'The size that meets Fynd’s comparison criteria');
+    assert.deepStrictEqual(await panel.$$eval('#result-table tr[data-size]', (ns) => ns.map((r) => r.dataset.size)), ['XS', 'S', 'M', 'L', 'XL', 'XXL']);
+    assert.match(await panel.textContent('#result-source'), /read from 127\.0\.0\.1|read from the page/);
+    assert.match(await panel.textContent('#result-source'), /Not verified by Fynd/);
+    const mine = apiHits.slice(before).filter((h) => h.method !== 'OPTIONS');
+    assert.deepStrictEqual(mine.map((h) => [h.method, h.path, h.status]), [['GET', '/api/fit-profile', 200], ['POST', '/api/size-recommendation?compare=1&candidate=1', 200]]);
+    assert.ok(mine.every((h) => h.cookie), 'the session cookie went with both requests');
+    assert.strictEqual(mine[1].origin, `chrome-extension://${id}`);
+    assert.strictEqual(mine[1].body.chart.sizes.length, 6);
+    shot('06-results');
   });
 
-  await test('another page on the same site: Chrome keeps Fynd’s access for that site, so the panel follows without another click — and a body-measurement chart is never compared with a garment', async () => {
+  await test('another page on the same site: Read another page needs no second click — and a body chart is never offered as the garment’s', async () => {
     await shop.goto(local('/shop/body-only.html'));
-    await panel.waitForFunction(() => document.getElementById('product-name').textContent === 'Relaxed Tee', null, { timeout: 8000 });
-    await panel.waitForFunction(() => /Body measurements/.test(document.getElementById('chart-area').innerText) && document.getElementById('rec-title').textContent !== '');
-    assert.match(await text('#chart-area'), /Body measurements · in inches/);
-    assert.strictEqual(await text('#rec-title'), 'Not enough to compare');
-    assert.match(await text('#rec-explain'), /body/i);
-    shot('06-same-site-body-chart');
+    await tabSettled('body-only');
+    await panel.click('#result-reread');
+    await view('product');
+    assert.strictEqual(await panel.inputValue('#p-name'), 'Relaxed Tee');
+    await panel.click('#confirm-product');
+    await view('measure');
+    assert.strictEqual(await panel.isHidden('#use-chart'), true);
+    assert.match(await panel.textContent('#measure-text'), /measures the body each size is for, not the garment/);
+    shot('07-body-only');
   });
 
-  await test('a page on another site: access doesn’t carry over, and the panel says to click Fynd — with technical details kept, not an empty panel', async () => {
-    await shop.goto(`http://localhost:${port}/shop/no-chart.html`);
-    await panel.waitForSelector('#problem:not([hidden])', { timeout: 8000 });
-    assert.strictEqual(await text('#problem-title'), 'Click Fynd to read this page');
-    await panel.click('#diag summary');
-    const diag = await text('#diag-text');
-    assert.match(diag, /"step": "read the page"/);
-    assert.match(diag, /"kind": "no-access"/);
-    assert.match(diag, /"how": "navigated"/);
-    shot('07-other-site-needs-click');
+  await test('a page on another site: access doesn’t carry over, and the panel says to click Fynd — with technical details kept', async () => {
+    await shop.goto(otherSite('/shop/no-chart.html'));
+    await tabSettled('another site');
+    await panel.click('#measure-reread');
+    await view('problem');
+    assert.strictEqual(await panel.textContent('#problem-title'), 'Click Fynd to read this page');
+    assert.match(await panel.textContent('#problem-diag'), /"kind": "no-access"/);
+    shot('08-other-site');
   });
 
-  await test('a click on Fynd there: sizes but no chart anywhere — said so, sizes listed, nothing recommended', async () => {
+  await test('a click on Fynd there: the product read, its sizes listed, no chart — and the measurements can be entered by hand', async () => {
     await clickFynd();
-    await panel.waitForSelector('#problem[hidden]', { state: 'attached' });
-    await panel.waitForFunction(() => document.getElementById('product-name').textContent === 'Pocket Tee');
-    assert.match(await text('#chart-area'), /No size chart found on this page\. The page lists sizes S, M, L, but no measurements\./);
-    assert.strictEqual(await text('#rec-title'), 'Not enough to compare');
-    shot('08-no-chart');
+    await view('product');
+    assert.strictEqual(await panel.inputValue('#p-name'), 'Pocket Tee');
+    await panel.click('#confirm-product');
+    await view('measure');
+    assert.match(await panel.textContent('#measure-text'), /No size chart found/);
+    assert.strictEqual(await panel.isHidden('#manual-entry'), false);
+    shot('09-no-chart');
   });
 
-  await test('a chart drawn with ARIA table roles instead of a <table>, in centimetres: read, normalised to inches, and compared', async () => {
-    await shop.goto(`http://localhost:${port}/shop/grid-tee.html`);
-    await panel.waitForFunction(() => document.getElementById('product-name').textContent === 'Loop Knit Tee', null, { timeout: 8000 });
-    await panel.waitForSelector('#rec-title:not(:empty)');
-    await panel.waitForFunction(() => /Garment measurements/.test(document.getElementById('chart-area').innerText));
-    assert.match(await text('#chart-area'), /Garment measurements · in centimetres · read from this page in your browser/);
-    await panel.evaluate(() => { document.getElementById('report-text').value = ''; });
-    await panel.click('#copy-report');
-    await panel.waitForFunction(() => document.getElementById('report-text').value.trim().startsWith('{'));
-    const r = JSON.parse(await panel.inputValue('#report-text'));
-    const m = r.normalised.sizes.find((z) => z.size === 'M').dims;
-    assert.ok(Math.abs(m.chestWidth.inches - 52 / 2.54) < 0.01, 'cm to inches');
-    assert.strictEqual(r.recommendation.status, 'ok');
-    assert.strictEqual(await text('#rec-title'), r.recommendation.size);
-    shot('08b-aria-grid-cm');
-  });
-
-  await test('a second reference (a UNIQLO sweatshirt that feels tight), then UNIQLO US’s product address: recognised, and compared from the measurements Fynd holds for it', async () => {
-    await panel.click('#add-anchor');
-    await panel.fill('#a-brand', 'UNIQLO');
-    await panel.selectOption('#a-category', 'sweatshirt');
-    await panel.fill('#a-size', 'M');
-    await panel.selectOption('#a-cut', 'regular');
-    await panel.check('input[name="a-fit"][value="tight"]');
-    await panel.click('#anchor-form button[type="submit"]');
-    await panel.waitForSelector('#resolve:not([hidden])');
-    assert.match(await text('#resolve-text'), /Estimated from 2 UNIQLO sweatshirts or hoodies in M \(Sweatshirt; Sweat Pullover Hoodie\)/);
-    await panel.click('#resolve-skip');
-    await shop.goto('http://www.uniqlo.com/us/en/products/E475377-000/00');
-    await tabSettled('UNIQLO’s product address');
-    await clickFynd();
-    await panel.waitForFunction(() => /UNIQLO US product E475377-000/.test(document.getElementById('product-meta').textContent) && document.getElementById('rec-title').textContent !== '');
-    assert.match(await text('#product-meta'), /UNIQLO US product E475377-000 · Fynd holds this product’s measurements/);
-    /* Fynd's record of it, as published: the UNIQLO pair is pending review */
-    assert.match(await text('#chart-area'), /Fynd’s data, as published — not yet checked/);
-    assert.ok(!/checked by Fynd/.test(await text('#chart-area')), 'never called checked while pending review');
-    assert.strictEqual(await text('#rec-title'), 'L');
-    assert.match(await text('#rec-anchor'), /Compared with your UNIQLO sweatshirt or hoodie in M/);
-    /* nothing handed to Find Fit, and nothing sent: what to do there instead */
-    assert.match(await text('#open-fynd-note'), /enter its finished-garment measurements from this chart in Find Fit’s item form/);
-    shot('09-uniqlo-address');
-  });
-
-  await test('how it fit: “Too tight” in L is stored with L’s measurements and moves the recommendation', async () => {
-    await panel.selectOption('#f-size', 'L');
-    await panel.click('[data-outcome="too-tight"]');
-    await panel.waitForFunction(() => /Saved on this device/.test(document.getElementById('feedback-saved').textContent));
-    assert.match(await text('#feedback-saved'), /Saved on this device: L was too tight/);
-    assert.strictEqual(await text('#rec-title'), 'XL');
-    const stored = await panel.evaluate(() => chrome.storage.local.get('fyndAnchors'));
-    const hoodie = stored.fyndAnchors.find((a) => a.category === 'sweatshirt');
-    assert.strictEqual(hoodie.feedback[0].outcome, 'too-tight');
-    assert.strictEqual(hoodie.feedback[0].dims.chestWidth, 25);
-    shot('10-outcome');
-  });
-
-  await test('pages Chrome won’t let any extension read, and pages that didn’t load: an explanation, not an empty panel', async () => {
-    /* each waits for the explanation that page should get, not for any
-       problem at all: the previous page's is still on screen until the
-       read for this one replaces it */
-    const problemIs = (title) => panel.waitForFunction((t) => !document.getElementById('problem').hidden && document.getElementById('problem-title').textContent === t, title, { timeout: 10000 })
-      .catch(async (err) => { console.log(`        state when it gave up:\n        ${await diagnose('problem')}`); throw err; });
+  await test('a page Chrome won’t let any extension read: an explanation, not an empty panel', async () => {
     await shop.goto('chrome://version');
     await tabSettled('chrome://version');
     await clickFynd();
-    await problemIs('Chrome doesn’t let extensions read this page');
-    assert.strictEqual(await text('#problem-title'), 'Chrome doesn’t let extensions read this page');
-    const dead = await freePort();
-    await shop.goto(`http://127.0.0.1:${dead}/`).catch(() => {});
-    await tabSettled('the page that doesn’t load');
-    await clickFynd();
-    await problemIs('This page didn’t load');
-    assert.strictEqual(await text('#problem-title'), 'This page didn’t load');
-    shot('11-error-page');
+    await view('problem');
+    assert.strictEqual(await panel.textContent('#problem-title'), 'Chrome doesn’t let extensions read this page');
+    shot('10-restricted');
   });
 
-  await test('the references persist: the panel reloaded reads them back, and the next product is compared without asking again', async () => {
-    await panel.reload();
-    /* the reloaded panel has its references back from chrome.storage
-       before the shopper does anything else */
-    await panel.waitForFunction(() => document.querySelectorAll('#anchor-list li').length === 2 && document.getElementById('onboard').hidden);
-    const stored = await panel.evaluate(() => chrome.storage.local.get('fyndAnchors'));
-    assert.deepStrictEqual(stored.fyndAnchors.map((a) => a.category).sort(), ['sweatshirt', 'tshirt']);
+  await test('signed out of Fynd: the panel says to sign in, with a link to Fynd — never a garment made up', async () => {
+    await context.clearCookies();
     await shop.goto(local('/shop/tee.html'));
-    await tabSettled('the tee');
+    await tabSettled('tee again');
     await clickFynd();
-    /* the press was read: this product, no problem, before the guide is opened */
-    await panel.waitForFunction(() => document.getElementById('product-name').textContent === 'Everyday Crew Tee' && document.getElementById('problem').hidden)
-      .catch(async (err) => { console.log(`        state when it gave up:\n        ${await diagnose('persist-press')}`); throw err; });
+    await view('product');
+    await panel.click('#confirm-product');
+    await view('measure');
     await shop.click('#open-guide');
-    await shop.waitForSelector('dialog[open]');
-    await panel.click('#read');
-    try { await panel.waitForSelector('#rec-title:not(:empty)'); } catch (err) { console.log(`        state when it gave up:\n        ${await diagnose('persist')}`); throw err; }
-    await panel.waitForFunction(() => /Garment measurements/.test(document.getElementById('chart-area').innerText));
-    assert.ok(await panel.locator('#onboard').isHidden());
-    assert.strictEqual(await panel.locator('#anchor-list li').count(), 2);
-    assert.strictEqual(await text('#rec-title'), 'L');
+    await panel.click('#measure-reread');
+    await view('product');
+    await panel.click('#confirm-product');
+    await view('measure');
+    await panel.click('#use-chart');
+    await view('review');
+    await panel.click('#to-reference');
+    await panel.waitForFunction(() => /Sign in to Fynd/.test(document.getElementById('reference-text').textContent), null, { timeout: 10000 });
+    assert.strictEqual(await panel.getAttribute('#reference-links a', 'href'), `${API}/account.html`);
+    assert.strictEqual(await panel.$$eval('input[name="reference"]', (ns) => ns.length), 0);
+    shot('11-signed-out');
   });
 
-  await test('the panel reloaded on a page it can still read: the references come back from storage before anything is read, and Read gives the same recommendation without another click', async () => {
-    /* the tee is still open, with its guide, and Fynd still has the access the last press gave */
-    assert.ok(await shop.$('dialog[open]'), 'the size guide is still open on the page');
-    await panel.reload();
-    await panel.waitForFunction(() => document.querySelectorAll('#anchor-list li').length === 2 && document.getElementById('onboard').hidden)
-      .catch(async (err) => { console.log(`        state when it gave up:\n        ${await diagnose('reload-restore')}`); throw err; });
-    const stored = await panel.evaluate(() => chrome.storage.local.get('fyndAnchors'));
-    assert.strictEqual(stored.fyndAnchors.length, 2);
-    assert.deepStrictEqual(await panel.locator('#anchor-list li').count(), stored.fyndAnchors.length, 'every stored reference is drawn');
-    await panel.click('#read');
-    await panel.waitForFunction(() => document.getElementById('rec-title').textContent === 'L' && /Garment measurements/.test(document.getElementById('chart-area').innerText))
-      .catch(async (err) => { console.log(`        state when it gave up:\n        ${await diagnose('reload-read')}`); throw err; });
-    assert.strictEqual(await text('#product-name'), 'Everyday Crew Tee');
-    assert.strictEqual(await text('#rec-title'), 'L');
-    await panel.evaluate(() => { document.getElementById('report-text').value = ''; });
-    await panel.click('#copy-report');
-    await panel.waitForFunction(() => document.getElementById('report-text').value.trim().startsWith('{'));
-    const r = JSON.parse(await panel.inputValue('#report-text'));
-    assert.deepStrictEqual([r.read.how, r.recommendation.status, r.recommendation.size], ['button', 'ok', 'L']);
-  });
-
-  await test('nothing left the browser, and nothing failed in the console', async () => {
-    assert.deepStrictEqual(requests, [], `the panel made requests: ${requests.join(', ')}`);
-    assert.deepStrictEqual(errors.filter((e) => !/Receiving end does not exist/.test(e)), []);
+  await test('the panel asked nothing of any host but Fynd’s API, and nothing failed in the console', async () => {
+    const off = requests.filter((u) => !u.startsWith(`${API}/api/fit-profile`) && !u.startsWith(`${API}/api/size-recommendation?compare=1&candidate=1`));
+    assert.deepStrictEqual(off, [], `the panel made other requests: ${off.join(', ')}`);
+    assert.ok(requests.length >= 3);
+    assert.deepStrictEqual(errors.filter((e) => !/Receiving end does not exist|401 \(Unauthorized\)/.test(e)), []);
   });
 
   await browser.close().catch(() => {});
   proc.kill();
   xvfb.kill();
   server.close();
+  apiServer.close();
   console.log(`\nscreenshots: ${SHOTS}`);
-  console.log('These pages are invented and served from this machine: this shows the extension’s own workflow in a real Chrome, not compatibility with any real retailer.');
+  console.log('These pages are invented and served from this machine, and Fynd’s API answers here under its production name: this shows the extension’s own workflow in a real Chrome, not compatibility with any real retailer or the live deployment.');
   console.log(`\n${passed} passed, ${failures.length} failed`);
   process.exit(failures.length ? 1 : 0);
 })().catch((err) => { console.error(err); process.exit(1); });
