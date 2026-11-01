@@ -2,6 +2,13 @@
    size-chart styles), widened to the side panel Chrome gives it. Every
    colour is a token. */
 
+/* the site's accent and warning tokens (assets/styles.css), which popup.css doesn't carry */
+:root {
+  --color-accent-ink: #3553C6;
+  --color-accent-soft: #EEF1FC;
+  --color-warning: #B7852D;
+}
+
 body { width: auto; min-width: 300px; max-height: none; }
 .fp-main { display: grid; gap: 14px; padding: 14px; }
 .pop-head { position: sticky; top: 0; z-index: 2; flex-wrap: wrap; background: var(--color-bg); }
@@ -72,3 +79,13 @@ body { width: auto; min-width: 300px; max-height: none; }
 .fp-compare tr[data-pick="recommended"] td, .fp-compare tr[data-pick="recommended"] th { background: var(--color-accent-soft); font-weight: 600; }
 .fp-compare tr[data-pick="closest"] td, .fp-compare tr[data-pick="closest"] th { background: var(--color-warning-soft); }
 .fp-compare caption { text-align: left; font-size: 12.5px; color: var(--color-text-muted); padding-bottom: 4px; }
+
+/* the AI-assisted reading: suggestions to confirm, never decisions */
+.fp-ai { display: grid; gap: 8px; padding: 10px 12px; border: 1px dashed var(--color-border-strong); border-radius: 10px; background: var(--color-bg-subtle); }
+.fp-ai[hidden] { display: none; }
+.fp-ai-notes li { color: var(--color-warning-ink); }
+.fp-note[data-path="ai"], .fp-note[data-path="ai-insufficient"] { background: var(--color-accent-soft); color: var(--color-accent-ink); }
+.fp-note[data-path="ai-unavailable"] { background: var(--color-warning-soft); color: var(--color-warning-ink); }
+.fp-col-ai { font-weight: 400; font-size: 11.5px; color: var(--color-accent-ink); }
+.fp-col-ai[data-status="unresolved"] { color: var(--color-warning-ink); }
+.fp-kind[data-kind="unread"] { background: var(--color-bg-subtle); color: var(--color-text-2); }

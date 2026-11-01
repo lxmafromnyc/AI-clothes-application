@@ -3,9 +3,10 @@
    Fynd — copy the shared sizing code into the browser extension
 
    Chrome loads an unpacked extension from its own folder only, so the
-   extension carries copies of three files the site and server use:
+   extension carries copies of four files the site and server use:
 
      assets/sizing-tables.js   how a size table is recognised and labelled
+     assets/chart-reading.js   how a chart's headings and cells are read
      assets/fynd-payload.js    the chart payload, checked both ways
      assets/size-chart.js      how a chart is drawn
 
@@ -22,7 +23,7 @@ const fs = require('fs');
 const path = require('path');
 
 const REPO = path.join(__dirname, '..');
-const SHARED = ['sizing-tables.js', 'fynd-payload.js', 'size-chart.js'];
+const SHARED = ['sizing-tables.js', 'chart-reading.js', 'fynd-payload.js', 'size-chart.js'];
 
 function sync() {
   fs.mkdirSync(path.join(REPO, 'extension/vendor'), { recursive: true });

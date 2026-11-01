@@ -76,6 +76,7 @@ const GROUPS = {
     ['test-page-access', 'which retailer pages the sizing reader may fetch: reviewed terms, then robots.txt, and nothing otherwise'],
     ['test-fit-anchor', 'the Fit Anchor comparison: units, methods, broken charts, categories, fit preferences, outcomes and confidence'],
     ['test-extension', 'the browser extension: its permissions (Fynd’s API the one host), its one route to the network, its copies of the shared sizing code, and the chart payload it hands to Find Fit'],
+    ['test-chart-ai', 'the AI-assisted chart reading offline, Gemini SCRIPTED (a check of Fynd’s validation, not a measurement of any model): regressions for the merged-heading and injected-unit misreadings, no wrong automatic reading, fast path vs AI path, grounding in the chart’s own words, every value from the page’s own cells, evidence checked against the page, units never inferred, body charts never the garment’s, prompt injection, malformed answers, provider failures, caching, sign-in, rate limit and AI allowance — and a confirmed reading through the existing engine'],
     ['test-extension-extract', 'the extension’s reading and its one request: product, columns, methods only as stated, values, body against garment, corrections and provenance; every size compared in one request by the existing engine, saved garments by session, 401/404/429, the extension’s CORS origin, and api.js failures'],
     ['test-size-eval', 'the size engine against hand-worked expectations from published charts'],
     ['test-catalog-audit', 'the catalogue audit: every card proved from its row'],
@@ -88,7 +89,7 @@ const GROUPS = {
   browser: [
     ['test-ui', 'the interface: the search box, its progress and allowance, palette, contrast, pricing and account pages'],
     ['test-e2e', 'the whole sign-in flow in a real browser, against the real handlers'],
-    ['test-fit-panel-browser', "the extension's Fit panel in Chromium against Fynd's real handlers: product, charts (garment, body, unlabelled, none), review and corrections, saved garments, one batch comparison, and each failure — signed out, none saved, 401, 400, 429, 5xx, timeout"],
+    ['test-fit-panel-browser', "the extension's Fit panel in Chromium against Fynd's real handlers: product, charts (garment, body, unlabelled, none), review and corrections, saved garments, one batch comparison, each failure — signed out, none saved, 401, 400, 429, 5xx, timeout — and the AI-assisted chart reading (Gemini scripted): fast path, suggestions to confirm, unavailable, skipped"],
     ['test-extension-browser', 'the unpacked browser extension in Chromium, on fixture pages, handing its charts to Find Fit'],
     ['test-cross-origin', 'the GitHub Pages copy calling the API across origins: preflights, cross-site cookies, logout, checkout'],
     ['test-catalog-images', "the catalogue image extractor's gates, including its browser path"],

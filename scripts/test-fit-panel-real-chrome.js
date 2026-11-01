@@ -463,7 +463,7 @@ async function launch(display, port, apiPort) {
     shot('03-guide-read');
   });
 
-  await test('the measurements to check: inches, each method read from the headings, nothing left to fix', async () => {
+  await test('the measurements to check: each method read from the headings; the unit and “the garment’s own measurements” stated only in the paragraph above the table, so the shopper confirms both before going on', async () => {
     await panel.click('#use-chart');
     await view('review');
     assert.strictEqual(await panel.inputValue('#review-unit'), 'in');
@@ -471,6 +471,11 @@ async function launch(display, port, apiPort) {
     const how = await panel.$$eval('select[data-role="method"]', (ns) => ns.map((s) => s.value));
     assert.deepStrictEqual(dims, ['chestWidth', 'bodyLength', 'sleeveLength', 'shoulderWidth']);
     assert.deepStrictEqual(how, [METHODS.chestWidth, METHODS.bodyLength, METHODS.sleeveLength, METHODS.shoulderWidth]);
+    /* this page says "in inches" and "the garment's own measurements" only above the table, not in it */
+    assert.match((await texts('#review-check-list li')).join(' '), /The unit \(inches\) comes from text near the table/);
+    assert.strictEqual(await panel.isDisabled('#to-reference'), true, 'not until checked');
+    await panel.check('#review-confirm');
+    await panel.check('#review-check-confirm');
     assert.deepStrictEqual(await texts('#review-problems li'), []);
     shot('04-review');
   });
@@ -554,6 +559,8 @@ async function launch(display, port, apiPort) {
     await view('measure');
     await panel.click('#use-chart');
     await view('review');
+    await panel.check('#review-confirm');
+    await panel.check('#review-check-confirm');
     await panel.click('#to-reference');
     await panel.waitForFunction(() => /Sign in to Fynd/.test(document.getElementById('reference-text').textContent), null, { timeout: 10000 });
     assert.strictEqual(await panel.getAttribute('#reference-links a', 'href'), `${API}/account.html`);

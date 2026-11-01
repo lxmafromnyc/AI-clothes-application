@@ -1332,7 +1332,7 @@ const bodyOf = (call) => JSON.parse(call.options.body);
 
   console.log('\nthe experiment stays removable');
 
-  test('nothing in api/ refers to Gemini outside the marked block', () => {
+  test('nothing in api/ refers to Gemini outside its two consumers: the marked block in api/interpret.js, and api/_sizing/parse-chart.js', () => {
     const fs = require('fs');
     const path = require('path');
     const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -1342,12 +1342,15 @@ const bodyOf = (call) => JSON.parse(call.options.body);
     });
     const offenders = walk(path.join(__dirname, '..', 'api'))
       .filter((file) => file !== path.join(__dirname, '..', 'api', 'interpret.js'))
+      /* the extension's AI-assisted chart reading: Gemini through this adapter,
+         and a 503 without a key — nothing else depends on it */
+      .filter((file) => file !== path.join(__dirname, '..', 'api', '_sizing', 'parse-chart.js'))
       .filter((file) => /gemini/i.test(fs.readFileSync(file, 'utf8')))
       /* the env report names the variable so a 503 can be explained; it
          holds no logic and reading a state is not a dependency */
       .filter((file) => path.basename(file) !== '_env-report.js');
     assert.deepStrictEqual(offenders, [],
-      'removing api/_interpreters/ must not break anything but api/interpret.js');
+      'removing api/_interpreters/ must not break anything but api/interpret.js and api/_sizing/parse-chart.js');
   });
 
   test('nothing under assets/ knows a second provider exists', () => {

@@ -64,7 +64,7 @@ one extension origin Fynd's API accepts (`api/_cors.js`, `EXTENSION_ORIGINS`).
 | `activeTab` + `scripting` | To read the page you clicked Fynd on, once per click. No page is read without a click, and no content script runs on any site. |
 | `sidePanel` | The Fit panel. |
 | `storage` | Only `storage.session`: which tab the toolbar was clicked on, so the panel can read it as it opens. It is cleared when Chrome closes. Nothing is kept on disk. |
-| host `https://ai-clothes-application.vercel.app/*` | Fynd's own API, for your saved garments and the comparison. This is the only host. No retailer's site is ever requested. |
+| host `https://ai-clothes-application.vercel.app/*` | Fynd's own API, for your saved garments, the comparison and the AI-assisted chart reading. This is the only host. No retailer's site and no AI provider is ever requested. |
 
 There are no optional permissions and no remote code. The content security
 policy allows only the extension's own scripts.
@@ -81,7 +81,9 @@ policy allows only the extension's own scripts.
 Form fields you've typed into are never read, and nothing on the page is
 clicked or changed.
 
-**Sent to Fynd (`extension/api.js`, the only code that makes requests):**
+**Sent to Fynd (`extension/api.js`, the only code that makes requests).** The
+first two below always happen; the third only when a chart needs the
+AI-assisted reading (next section):
 
 1. `GET /api/fit-profile`: your saved garments, with your Fynd session cookie.
 2. `POST /api/size-recommendation?compare=1&candidate=1` with this body:
@@ -128,6 +130,108 @@ clicked or changed.
   401 `sign-in-required`. For a garment type you haven't saved it answers
   404 `reference-not-found`.
 
+## Automatic, or checked by you
+
+A reading is **automatic** only when Fynd read everything from the chart
+itself and nothing is uncertain:
+
+- the unit, each method and "garment measurements" are stated in the chart's
+  own caption or headings;
+- the rows line up with the headings;
+- the reading is complete.
+
+Anything else is shown for you to check, and you can't go on until you tick
+**I've checked these against the chart on the page**. That covers:
+
+- a unit, method or "garment measurements" stated only in text near the
+  table. That text may be about something else, or written to mislead;
+- rows that don't line up with their headings;
+- a part Fynd couldn't read on its own;
+- every AI-assisted reading.
+
+Text near the table that is addressed to software is not used at all.
+Spotting it relies on keywords, so it is only one layer: nothing depends on
+it. Merged heading cells are expanded before anything is read, so a column
+always reads its own values.
+
+## When Fynd asks its AI to read a chart
+
+Most charts are read **deterministically**, in your browser, by Fynd's own
+rules (`assets/sizing-tables.js`, `assets/chart-reading.js`,
+`extract.js`). No model is involved. That is the fast path.
+
+Fynd asks its AI only when a table is plainly a size chart (a column of
+sizes, numbers beside it) that it can't interpret reliably, and the page has
+words its own reading didn't use (`extract.js` `interpretationNeeds`):
+
+- headings it doesn't know ("Pit to Pit", "Back", "Arm"), so it can't read
+  the table at all;
+- headings spread over two rows, or a merged heading cell;
+- a measuring method written outside the headings (for example in a note
+  above the table);
+- a unit written somewhere its own reading doesn't look.
+
+A body chart is never sent. When a method or unit simply isn't on the page,
+no model is asked either: you choose it.
+
+**What is sent:** `POST /api/size-recommendation?parse=1` to Fynd's own server, with the
+table's cell text, its caption and the words just before it. Nothing about
+you, and nothing else from the page. The extension never calls a model, and
+holds no key.
+
+**What Fynd's server does** (`api/_sizing/parse-chart.js`,
+`api/_sizing/chart-ai.js`):
+
+1. **Checks the caller.** You must be signed in, the request must be JSON,
+   and the body is at most 12,000 characters. The limit is 20 per 10 minutes.
+   Each model call counts against your plan's existing AI allowance (the same
+   one Fynd's search interpreter uses). There is a daily ceiling across all
+   shoppers (`PARSE_CHART_DAILY_MODEL_CALLS`). Each request makes one call,
+   with no retry, a 12-second timeout and at most 2,048 output tokens.
+2. **Asks Gemini to propose a reading.** The proposal covers which rows are
+   headings, which column holds sizes, each column's measurement and method,
+   the unit, and what the table measures. Every claim must quote the exact
+   words on the page, and the model returns **no values**.
+3. **Checks every part of the proposal against the page,** with Fynd's own
+   deterministic readers:
+   - each quote must really be on the page, where it says;
+   - a measurement must agree with what its heading names, and is never a
+     body measurement (waist, hips…);
+   - a method must be stated by the quoted words, by Fynd's own reading;
+   - a unit or method is filled in only when the chart's own caption or
+     headings state it. One stated only in text near the table comes back as
+     a suggestion you choose yourself. A unit is never inferred from the size
+     of the numbers, never taken against the page, and never converted;
+   - a body chart stays a body chart, and a chart that doesn't say what it
+     measures stays unconfirmed until you confirm it;
+   - page text addressed to software ("ignore previous instructions…") is
+     never evidence;
+   - an answer with any extra field (a value, "verified", a recommendation) is
+     refused whole.
+4. **Recovers every value** from the original cell, through Fynd's own
+   parser.
+5. **Sends back a proposal.** Anything it couldn't support is left
+   unresolved, with the reason. The answer is never "verified" and carries no
+   size.
+
+**What you see:** the panel says "Reading this chart more closely" while
+waiting, and you can choose **Review it myself instead**. Then each suggestion
+is shown with the page's own words. **You must tick "I've checked these
+suggestions"** before continuing. Values from an AI-assisted reading are sent
+marked `interpretedBy: "ai"`, and the comparison reads them through the same
+`readChart`, engine and decision as any other chart.
+
+**If the AI reading fails** (not signed in, unavailable, rate-limited, too
+slow, an answer that broke the rules, a table it can't make out), the panel
+says why and keeps **Fynd's own reading** for you to correct. A table Fynd
+couldn't read at all falls back to entering the measurements by hand. No size
+is ever made up.
+
+Repeated charts are cached on the server for 7 days. The cache key is the
+table's text, the garment type, the model, the prompt version and the answer
+schema's version, never you. A cached answer is
+checked again on every use and spends no allowance.
+
 ## What the panel shows
 
 | State | What you see |
@@ -159,7 +263,7 @@ and confirmed by you (with your corrections, if any), or entered by you, and
 | `config.js` | `FYND_SITE` / `FYND_API`: Fynd's address |
 | `collect.js` | Runs in the page on your click (`scripting.executeScript`). Returns the product and the tables |
 | `extract.js` | The product, the columns, the methods (only as the chart states them), the values, the review, and the chart that is sent |
-| `api.js` | The two requests, their 15-second timeout, and the failures they name |
+| `api.js` | The three requests (saved garments, the comparison, the AI-assisted reading), their timeouts, and the failures they name |
 | `sidepanel.html` / `.js` / `.css` | The panel and its states |
 | `retailers.js` | Recognises known shops' product addresses and where their chart is kept. These are hints only, and no measurements are stored |
 | `vendor/` | Copies of the site's shared table reader and payload code (`scripts/sync-extension.js` keeps them identical) |
@@ -170,6 +274,8 @@ and confirmed by you (with your corrections, if any), or entered by you, and
 | Suite | What it covers |
 |---|---|
 | `node scripts/test-extension.js` | Permissions, the one network route, the vendor copies, the engine's families |
+| `node scripts/test-chart-ai.js` | The AI-assisted reading offline, with Gemini scripted: the fast path, the validator on right, wrong, injected and malformed answers, provider failures, caching, sign-in, the rate limit and the AI allowance |
+| `node scripts/eval-chart-extraction.js [--live]` | Accuracy against hand-checked readings of 13 invented charts, scored separately for:<br>• the deterministic reading<br>• the live AI-assisted reading (only with `--live` and a key)<br>• a validator check with scripted answers, which is **not** a model measurement<br>Every reading is split into automatic and needs-confirmation |
 | `node scripts/test-extension-extract.js` | Reading, corrections and provenance in Node. The batch request through the real handler: per-size results equal to comparing each size alone, the server's refusals, saved garments by session (401/404), the rate limit, the extension's CORS origin, and every `api.js` failure |
 | `node scripts/test-fit-panel-browser.js` | The panel in headless Chromium against Fynd's real handlers on this machine: every state and failure above, on fixture pages (`scripts/fixtures/extension-panel/`, `scripts/fixtures/fit-panel/`) |
 | `node scripts/test-fit-panel-real-chrome.js` | A visible Chrome on Xvfb, the extension as shipped, a real toolbar click, and Fynd's handlers answering under the production API name over TLS with a real session cookie |
@@ -210,3 +316,12 @@ five minutes:
   sees it. On a host that streams it to `api/_body.js`, a request over
   10,000 characters is cut off; a full 30-size chart with provenance is about
   12 kB.
+- **AI-assisted reading, needs a key:** it needs `GEMINI_API_KEY` on the
+  server. Without one, `/api/size-recommendation?parse=1` answers "unavailable" and the panel
+  keeps Fynd's own reading.
+- **AI-assisted reading, accuracy unknown:** its accuracy with a real model
+  has not been measured. The environment it was built in had no Gemini key.
+  Run `node scripts/eval-chart-extraction.js --live` with one; the 13
+  invented charts there are a test set, not a benchmark.
+- **The cache:** it is shared only when Fynd's store is (Upstash/KV).
+  Without it, each server instance keeps its own.

@@ -34,9 +34,9 @@
    ========================================================= */
 
 (function (root, factory) {
-  if (typeof module === 'object' && module.exports) module.exports = factory(require('./vendor/fynd-payload.js'));
-  else root.FyndExtract = factory(root.FyndPayload);
-})(typeof self !== 'undefined' ? self : this, function (Payload) {
+  if (typeof module === 'object' && module.exports) module.exports = factory(require('./vendor/fynd-payload.js'), require('./vendor/chart-reading.js'), require('./vendor/sizing-tables.js'));
+  else root.FyndExtract = factory(root.FyndPayload, root.FyndChartReading, root.FyndSizingTables);
+})(typeof self !== 'undefined' ? self : this, function (Payload, Reading, Tables) {
   'use strict';
 
   const DIMS = ['chestWidth', 'shoulderWidth', 'bodyLength', 'sleeveLength'];
@@ -101,10 +101,22 @@
   /* ---------- the size tables ---------- */
   function charts(raw) {
     const found = Payload.candidates(raw || {});
+    const read = new Set(found.list.map((c) => c.index));
     return {
       confident: found.confident,
+      /* tables shaped like a size chart (a column of sizes, numbers beside
+         it) that the deterministic reader couldn't label: unknown headings,
+         headings over two rows. Only the AI-assisted reading is offered for them. */
+      unread: ((raw && raw.tables) || []).slice(0, 12).map((t, rawIndex) => ({ t, rawIndex }))
+        .filter(({ t, rawIndex }) => !read.has(rawIndex) && Reading.gridShape(t.grid || t.rows))
+        .map(({ t, rawIndex }) => {
+          const grid = t.grid || t.rows;
+          const shape = Reading.gridShape(grid);
+          return { rawIndex, title: clean(t.caption || t.heading || '', 80) || null, inDialog: Boolean(t.inDialog), visible: Boolean(t.visible), columns: grid[0].filter((h, i) => i !== shape.sizeColumn && h).map((h) => clean(h, 40)), sizes: shape.bodyRows.length };
+        }),
       list: found.list.map((c, i) => ({
         index: i,
+        rawIndex: c.index,
         measures: c.chart.measures,
         unit: c.chart.unit,
         title: c.chart.title || c.heading || null,
@@ -118,46 +130,11 @@
     };
   }
 
-  /* which measurement a column is, only when its heading plainly says so */
-  function dimOf(header) {
-    /* the heading's own measurement, not where it's measured from: "Front length (from high point of
-       shoulder)" is a length, "Length (shoulder to hem)" too — brackets and "from …" are the method */
-    const full = String(header || '').toLowerCase();
-    const core = full.replace(/\([^)]*\)|\[[^\]]*\]/g, ' ').replace(/\b(from|measured)\b.*$/, ' ').trim();
-    const h = core || full;
-    if (/\b(height|weight|waist|hips?|seat|inseam|outseam|rise|thigh|knee|neck|hem|armhole|opening)\b/.test(h)) return null;
-    if (/\bsleeves?\b/.test(h)) return 'sleeveLength';
-    if (/\bshoulders?\b/.test(h)) return 'shoulderWidth';
-    if (/\b(chest|bust|pit[\s-]*to[\s-]*pit|armpit|body width)\b/.test(h)) return 'chestWidth';
-    if (/\blength\b/.test(h)) return 'bodyLength';
-    return null;
-  }
-
-  /* the canonical method a column's own words state — or null: never a guess */
-  function methodSaid(dim, words) {
-    const w = String(words || '').toLowerCase();
-    if (!w) return null;
-    if (dim === 'chestWidth') {
-      if (/circumference|all (the way )?around/.test(w)) return 'garment-circumference';
-      if (/\bhalf\b|½|1\/2|laid flat|measured flat|\bflat\b|pit[\s-]*to[\s-]*pit|armpit[\s-]*to[\s-]*armpit|body width/.test(w)) return 'flat-width-armpit-to-armpit';
-      return null;
-    }
-    if (dim === 'bodyLength') {
-      if (/cent(er|re)[\s-]*back|back length|length \(back\)/.test(w)) return 'center-back-to-hem';
-      if (/\bhps\b|high(est)?[\s-]*point|from (the )?shoulder/.test(w)) return 'high-point-shoulder-to-hem';
-      return null;
-    }
-    if (dim === 'sleeveLength') {
-      if (/cent(er|re)[\s-]*back/.test(w)) return 'center-back-to-cuff';
-      if (/shoulder seam|from (the )?shoulder/.test(w)) return 'shoulder-seam-to-cuff';
-      return null;
-    }
-    if (dim === 'shoulderWidth') {
-      if (/seam[\s-]*to[\s-]*seam/.test(w)) return 'seam-to-seam';
-      return null;
-    }
-    return null;
-  }
+  /* which measurement a heading is, and the method its words state: the shared,
+     deterministic readers (assets/chart-reading.js) — the server checks a model's
+     proposals with the same ones */
+  const dimOf = Reading.dimOf;
+  const methodSaid = Reading.methodSaid;
 
   function planColumns(chart) {
     const used = new Set();
@@ -171,22 +148,46 @@
     });
   }
 
-  /* one cell: a number (21, 21.5, 21,5, 21 1/2, 21½) — or not: a range is ambiguous */
-  const FRACTIONS = { '¼': 0.25, '½': 0.5, '¾': 0.75, '⅛': 0.125, '⅜': 0.375, '⅝': 0.625, '⅞': 0.875 };
+  /* one cell: a number (21, 21.5, 21,5, 21 1/2, 21½) — or not: a range is ambiguous (assets/chart-reading.js) */
   function parseValue(text) {
-    const t = clean(text, 40).replace(/\s*(cm|in|inches|")\.?$/i, '').trim();
-    if (!t) return { value: null, problem: 'empty' };
-    if (/\d\s*[-–—~]\s*\d|\bto\b/.test(t)) return { value: null, problem: 'range' };
-    let m = t.match(/^(\d{1,3})(?:[.,](\d{1,2}))?\s*([¼½¾⅛⅜⅝⅞])?$/);
-    if (m) return { value: Number(`${m[1]}.${m[2] || 0}`) + (m[3] ? FRACTIONS[m[3]] : 0), problem: null };
-    m = t.match(/^(\d{1,3})\s+(\d)\/(\d{1,2})$/);
-    if (m && Number(m[3]) > 0 && Number(m[2]) < Number(m[3])) return { value: Number(m[1]) + Number(m[2]) / Number(m[3]), problem: null };
-    return { value: null, problem: 'not-a-number' };
+    const p = Reading.parseCell(text);
+    return { value: p.value, problem: p.problem };
   }
 
   /* ---------- the review: what the shopper sees and corrects ---------- */
   /* from one labelled chart: each size's cell for each mapped column */
-  function startReview(chart, product) {
+  /* Where each part of Fynd's own reading came from. Only the chart itself —
+     its caption and its headings — is ground for filling something in
+     automatically. A unit, a method or a "garment measurements" claim that
+     comes only from text near the table (a paragraph above it, which may be
+     about something else, or written to mislead) is kept as a proposal the
+     shopper confirms. Text addressed to software is not used at all. */
+  function grounding(chart, plan, rawTable) {
+    if (!rawTable) return null;
+    const caption = String(rawTable.caption || '');
+    const before = String(rawTable.before || '');
+    const aimed = Reading.aimedAtSoftware(before) || Reading.aimedAtSoftware(caption);
+    const chartWords = `${Reading.aimedAtSoftware(caption) ? '' : caption} ${(chart.columns || []).join(' ')}`;
+    const ownMethods = chart.columns ? Tables.methodsOf(chart.columns, Reading.aimedAtSoftware(caption) ? '' : caption) : null;
+    /* the rows the deterministic reading used */
+    const grid = rawTable.rows || rawTable.grid || [];
+    const shape = Reading.gridShape(grid);
+    /* rows that don't line up with the headings: any heading row narrower than the data
+       (a merged heading cell read once shifts every later column) */
+    const extent = (r) => r.reduce((w, c, i) => (c ? i + 1 : w), 0);
+    const dataWidth = shape ? Math.max(...shape.bodyRows.map((ri) => extent(grid[ri]))) : 0;
+    const ragged = Boolean(shape) && grid.slice(0, shape.headerRows).some((r) => r.length < dataWidth || extent(r) < dataWidth);
+    return {
+      aimed,
+      ragged,
+      unit: chart.unit === 'cm' || chart.unit === 'in' ? (Tables.unitOf(chartWords) === chart.unit ? 'chart' : 'nearby') : null,
+      measures: chart.measures === 'finished-garment' ? (Tables.kindOf(chartWords, chart.columns || []) === 'finished-garment' ? 'chart' : 'nearby') : null,
+      methods: Object.fromEntries(plan.filter((c) => c.dim && c.method).map((c) => [c.index,
+        methodSaid(c.dim, `${c.header} ${(ownMethods && ownMethods[c.index]) || ''}`) === c.method ? 'chart' : 'nearby']))
+    };
+  }
+
+  function startReview(chart, product, rawTable) {
     const plan = planColumns(chart);
     const rows = (chart.rows || []).map((row) => {
       const cells = {};
@@ -198,14 +199,42 @@
       const offered = product && product.sizes ? product.sizes.find((s) => s.size === row.size) : null;
       return { size: clean(row.size, 20), cells, available: offered ? offered.available : null };
     });
+    const g = grounding(chart, plan, rawTable);
+    const checks = [];
+    const notes = [];
+    let unit = chart.unit === 'in' || chart.unit === 'cm' ? chart.unit : null;
+    let measuresConfirmed = chart.measures === 'finished-garment';
+    let nearbyMeasures = false;
+    if (g) {
+      if (g.aimed) notes.push('Text near this table is addressed to software, not shoppers. Fynd didn’t use it.');
+      if (g.unit === 'nearby') {
+        if (g.aimed) unit = null;
+        else checks.push(`The unit (${unit === 'cm' ? 'centimetres' : 'inches'}) comes from text near the table, not the chart itself.`);
+      }
+      /* "garment measurements" only from nearby text: the shopper confirms it, as for a chart that doesn't say */
+      if (g.measures === 'nearby') { measuresConfirmed = false; nearbyMeasures = true; }
+      plan.forEach((c) => {
+        if (g.methods[c.index] !== 'nearby') return;
+        if (g.aimed) { c.method = null; return; }
+        c.nearby = true;
+        checks.push(`How “${c.header}” is measured comes from text near the table, not the chart itself.`);
+      });
+      if (g.ragged) checks.push('The chart’s rows don’t line up with its headings: check that each column’s values are under the right heading.');
+    }
     return {
       source: 'page-table',
       measures: chart.measures,
-      measuresConfirmed: chart.measures === 'finished-garment',
-      unit: chart.unit === 'in' || chart.unit === 'cm' ? chart.unit : null,
+      measuresConfirmed,
+      unit,
       unitSaid: chart.unit,
       columns: plan,
-      rows
+      rows,
+      /* "garment measurements" said only near the table, not by the chart: the shopper confirms it */
+      nearbyMeasures,
+      /* anything uncertain, for the shopper to check before continuing; none: the automatic path */
+      checks,
+      checked: false,
+      notes
     };
   }
 
@@ -244,10 +273,93 @@
           const cell = row.cells[c.index];
           if (!cell || typeof cell.value !== 'number') return;
           measurements[c.dim] = cell.value;
-          provenance[c.dim] = { source: review.source === 'shopper' || (cell.corrected && !cell.raw) ? 'shopper' : 'page-table', header: c.header, corrected: Boolean(cell.corrected) };
+          provenance[c.dim] = Object.assign({ source: review.source === 'shopper' || (cell.corrected && !cell.raw) ? 'shopper' : 'page-table', header: c.header, corrected: Boolean(cell.corrected) }, review.interpretedBy === 'ai' ? { interpretedBy: 'ai' } : {});
         });
         return { size: row.size, measurements, provenance };
       }).filter((s) => Object.keys(s.measurements).length)
+    };
+  }
+
+  /* ---------- when the deterministic reading needs help ---------- */
+  /* Why a chart Fynd read can't be interpreted reliably on its own: [] means
+     the fast path — no model is asked. A body chart is never sent: no reading
+     could make it the garment's. */
+  const METHOD_HINT = /\b(flat|half|around|circumference|cent(?:er|re)|back|hps|high[\s-]*point|shoulder|seam|armpit|pit|cuff|hem)\b|½|1\/2/i;
+  function interpretationNeeds(review, rawTable) {
+    if (!review || review.measures === 'body') return [];
+    const out = [];
+    const grid = rawTable && (rawTable.grid || rawTable.rows);
+    const shape = grid ? Reading.gridShape(grid) : null;
+    const words = `${(rawTable && rawTable.caption) || ''} ${(rawTable && rawTable.before) || ''}`;
+    const cols = review.columns.filter((c) => c.dim);
+    /* a second heading row (its size cell empty) the deterministic reader skips */
+    if (shape && shape.headerRows > 1) out.push('heading-rows');
+    /* rows that don't line up with the headings */
+    if (review.checks && review.checks.some((t) => /don’t line up/.test(t))) out.push('structure');
+    /* a measurement-like column whose heading Fynd can't name */
+    if (review.columns.some((c) => !c.dim && /\b(chest|pit|width|length|sleeve|shoulder|back|arm|body|across)\b/i.test(c.header))) out.push('column');
+    /* a method the headings don't state, when the page's other words might */
+    if (cols.some((c) => !c.method) && METHOD_HINT.test(words)) out.push('method');
+    /* a unit only where Fynd's own reading didn't look: a later heading row, or earlier text */
+    if (!review.unit && review.unitSaid !== 'both' && (out.includes('heading-rows') || String((rawTable && rawTable.before) || '').length > 120)) out.push('unit');
+    return out;
+  }
+
+  /* what is sent to Fynd's server for the AI-assisted reading: the table's
+     cell text, caption and the words before it — nothing else from the page,
+     and nothing about the shopper */
+  const MAX_AI_CHARS = 9000;
+  function aiRequest(rawTable, type) {
+    const grid = ((rawTable && (rawTable.grid || rawTable.rows)) || []).slice(0, 43).map((r) => r.slice(0, 12).map((c) => clean(c, 60)));
+    const body = { table: { grid, caption: clean(rawTable && rawTable.caption, 160), before: clean(rawTable && rawTable.before, 300) }, type: type || null };
+    while (JSON.stringify(body).length > MAX_AI_CHARS && body.table.grid.length > 4) body.table.grid.pop();
+    return body;
+  }
+
+  /* The server's checked proposal (api/_sizing/parse-chart.js) as a review: every
+     value is the page's own cell as Fynd parsed it; each mapping is a
+     suggestion the shopper must confirm (checked); anything the server
+     couldn't support stays unmapped, with its reason. */
+  function reviewFromInterpretation(result, product) {
+    const columns = (result.columns || []).map((c) => ({
+      index: c.col,
+      header: c.header,
+      dim: c.dim || null,
+      method: c.method || null,
+      said: null,
+      ai: { status: c.status, basis: c.basis, reasons: c.reasons || [], evidence: c.evidence || {}, uncertain: Boolean(c.uncertain), suggestion: c.suggestion || null }
+    }));
+    const rows = (result.rows || []).map((r) => {
+      const offered = product && product.sizes ? product.sizes.find((s) => s.size === r.size) : null;
+      const cells = {};
+      columns.forEach((c) => {
+        const x = r.cells && r.cells[c.index];
+        cells[c.index] = x ? { raw: clean(x.raw, 40), value: typeof x.value === 'number' ? x.value : null, problem: x.problem || null, corrected: false } : { raw: '', value: null, problem: 'empty', corrected: false };
+      });
+      return { size: clean(r.size, 20), cells, available: offered ? offered.available : null };
+    });
+    return {
+      source: 'page-table',
+      interpretedBy: 'ai',
+      measures: result.measures,
+      measuresConfirmed: result.measures === 'finished-garment',
+      unit: result.unit && (result.unit.value === 'cm' || result.unit.value === 'in') ? result.unit.value : null,
+      unitSaid: result.unit ? result.unit.status : null,
+      columns,
+      rows,
+      /* every AI suggestion is checked by the shopper: an AI-assisted reading is never automatic */
+      checks: columns.filter((c) => c.ai.status === 'proposed' || c.ai.suggestion).map((c) => `“${c.header}”`).concat(result.unit && result.unit.suggestion ? ['the unit'] : []),
+      checked: false,
+      notes: [],
+      ai: {
+        status: result.status,
+        cached: Boolean(result.cached),
+        unit: result.unit || null,
+        aiSuggestsMeasures: result.aiSuggestsMeasures || null,
+        unresolved: result.unresolved || [],
+        ambiguities: result.ambiguities || [],
+        ignoredText: result.ignoredText || null
+      }
     };
   }
 
@@ -255,6 +367,13 @@
   function reviewProblems(review, type) {
     const out = [];
     if (!type) out.push('Choose what kind of garment this is.');
+    if (review.interpretedBy === 'ai' && !review.checked) out.push('Check the reading Fynd’s AI suggested, then confirm it.');
+    else if (review.checks && review.checks.length && !review.checked) out.push('Check what Fynd marked as uncertain against the chart, then confirm it.');
+    if (review.ai && review.ai.unit && review.ai.unit.status === 'conflicting' && !review.unit) out.push('The page gives more than one unit: say which these measurements are in.');
+    /* values marked in the cells themselves ("56 cm", "22 in") in two units, or against the chart's: never converted */
+    const marks = new Set();
+    review.columns.filter((c) => c.dim).forEach((c) => review.rows.forEach((r) => { const cell = r.cells[c.index]; const u = cell && !cell.corrected ? Reading.parseCell(cell.raw).unit : null; if (u) marks.add(u); }));
+    if (marks.size > 1 || (marks.size === 1 && review.unit && !marks.has(review.unit))) out.push('Some values are marked in centimetres and others in inches. Fynd never converts them: correct them, or enter the chart by hand in one unit.');
     if (review.measures === 'body') out.push('This chart measures the body, not the garment: Fynd can’t compare it with your garment.');
     else if (!review.measuresConfirmed) out.push('Confirm these are the garment’s own measurements (laid flat or around the garment), not body sizes.');
     if (!review.unit) out.push('Say whether the chart is in centimetres or inches.');
@@ -272,5 +391,11 @@
     return out;
   }
 
-  return { DIMS, LABELS, TYPES, pageUrl, detectProduct, guessType, charts, dimOf, methodSaid, planColumns, parseValue, startReview, emptyReview, buildChart, reviewProblems };
+  /* an AI-assisted or uncertain reading is never automatic */
+  /* automatic: read from the chart itself, complete, and nothing uncertain — the only reading that needs no check */
+  const isAutomatic = (review) => Boolean(review) && review.source === 'page-table' && review.interpretedBy !== 'ai'
+    && !(review.checks && review.checks.length) && review.measuresConfirmed && Boolean(review.unit)
+    && review.columns.some((c) => c.dim) && review.columns.filter((c) => c.dim).every((c) => c.method);
+
+  return { isAutomatic, DIMS, LABELS, TYPES, pageUrl, detectProduct, guessType, charts, dimOf, methodSaid, planColumns, parseValue, startReview, emptyReview, buildChart, reviewProblems, interpretationNeeds, aiRequest, reviewFromInterpretation, MAX_AI_CHARS };
 });
