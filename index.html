@@ -75,160 +75,179 @@
             to a fit profile (assets/find-fit-save.js) -->
   <section class="container ff-hero" id="find-fit" aria-labelledby="find-fit-title">
     <h1 id="find-fit-title">Find the size that fits like your favorite clothes.</h1>
-    <p class="lead ff-lead">Enter the measurements of a garment you own that fits well, then the measurements of the item you&rsquo;re considering from its chart. Fynd sets them side by side and suggests a size only when they line up.</p>
-
-    <!-- where the two halves stand, and the next step: drawn by assets/find-fit-manual.js -->
-    <div class="ff-progress" id="ff-progress" data-item="empty" data-garment="empty">
-      <span class="ff-progress-pill" id="ff-progress-garment"><span class="ff-progress-dot" aria-hidden="true"></span><span class="ff-progress-text">Your garment: not added yet</span></span>
-      <span class="ff-progress-pill" id="ff-progress-item"><span class="ff-progress-dot" aria-hidden="true"></span><span class="ff-progress-text">Item: not entered yet</span></span>
-      <span class="ff-progress-next" id="ff-progress-next">Add your garment, then the item.</span>
-    </div>
+    <p class="lead ff-lead">Compare a garment you own with the one you&rsquo;re considering, measurement by measurement. Fynd suggests a size only when they line up.</p>
 
     <form class="ff-flow" id="ff-form" novalidate>
-      <section class="ff-step" id="ff-step-reference" aria-labelledby="ff-step-reference-title">
-        <div class="ff-step-head">
-          <span class="step-num" aria-hidden="true">1</span>
-          <h2 class="ff-step-title" id="ff-step-reference-title">A garment that fits you well</h2>
-        </div>
-        <!-- products Fynd holds checked garment measurements for, as the
-             garment in one click; hidden when there are none -->
-        <div class="ff-anchors" id="ff-anchors" hidden>
-          <h3 class="ff-anchors-title" id="ff-anchors-title">Popular Wardrobe Anchors</h3>
-          <div class="ff-anchor-list" role="group" aria-labelledby="ff-anchors-title"></div>
-        </div>
-        <!-- the saved reference garments, or a garment described right
-             here for this visit: drawn by assets/find-fit-reference.js -->
-        <div class="ff-reference" id="ff-reference" aria-live="polite">
-          <p class="ff-muted">Loading&hellip;</p>
-        </div>
-      </section>
+      <!-- what's being compared, and in which unit: both forms follow these (assets/find-fit-manual.js) -->
+      <div class="ff-setup">
+        <fieldset class="ff-type" id="ff-type">
+          <legend class="ff-setup-label">What are you shopping for?</legend>
+          <div class="ff-type-options">
+            <label class="ff-type-card"><input type="radio" name="ff-type" value="hoodies" checked><span class="ff-type-body"><span class="ff-type-name">Hoodie</span><span class="ff-type-sub">Pullover or zip, with a hood</span></span></label>
+            <label class="ff-type-card"><input type="radio" name="ff-type" value="sweatshirts"><span class="ff-type-body"><span class="ff-type-name">Sweatshirt</span><span class="ff-type-sub">Crew neck, no hood</span></span></label>
+          </div>
+        </fieldset>
+        <fieldset class="ff-units" id="ff-units" aria-describedby="ff-unit-hint">
+          <legend class="ff-setup-label">Units</legend>
+          <div class="choices">
+            <label class="choice"><input type="radio" name="ff-unit" value="cm" checked><span>cm</span></label>
+            <label class="choice"><input type="radio" name="ff-unit" value="in"><span>in</span></label>
+          </div>
+          <p class="ff-units-hint" id="ff-unit-hint">For both garments. Switching converts what you&rsquo;ve entered.</p>
+          <p class="form-error ffr-error" id="ff-unit-error" role="alert"></p>
+        </fieldset>
+      </div>
 
-      <section class="ff-step" id="ff-step-target" aria-labelledby="ff-step-target-title">
-        <div class="ff-step-head">
-          <span class="step-num" aria-hidden="true">2</span>
-          <h2 class="ff-step-title" id="ff-step-target-title">The item you&rsquo;re considering</h2>
-        </div>
-        <p class="ff-reference-intro" id="ffc-subtitle">Enter the garment measurements from the product&rsquo;s measurement chart.</p>
-        <div class="ffc-help" id="ffc-help">
-          <p>Use the <strong>finished-garment</strong> measurements &mdash; what the garment itself measures, often called &ldquo;product measurements&rdquo; or &ldquo;garment measurements&rdquo;. Don&rsquo;t use a body-size chart: it says who a size is made for, not how big the garment is.</p>
-          <p>Copy the numbers for one size. Enter the ones the chart gives and leave the rest blank &mdash; but the chest is needed for any comparison, and Fynd needs at least three measurements taken the same way as yours.</p>
-        </div>
-        <div class="ffc-form" id="ffc-form">
-          <div class="ffr-row">
-            <div class="ffr-field">
-              <label class="profile-label" for="ffc-brand">Brand (optional)</label>
-              <input class="profile-input" type="text" id="ffc-brand" name="brand" maxlength="80" autocomplete="off" aria-describedby="ffc-brand-error">
-              <p class="form-error ffr-error" id="ffc-brand-error" role="alert"></p>
-            </div>
-            <div class="ffr-field">
-              <label class="profile-label" for="ffc-name">Product name (optional)</label>
-              <input class="profile-input" type="text" id="ffc-name" name="name" maxlength="80" autocomplete="off" aria-describedby="ffc-name-error">
-              <p class="form-error ffr-error" id="ffc-name-error" role="alert"></p>
+      <!-- where the two halves stand, and the next step: drawn by assets/find-fit-manual.js -->
+      <div class="ff-progress" id="ff-progress" data-item="empty" data-garment="empty">
+        <span class="ff-progress-pill" id="ff-progress-garment"><span class="ff-progress-dot" aria-hidden="true"></span><span class="ff-progress-text">Your garment: not added yet</span></span>
+        <span class="ff-progress-pill" id="ff-progress-item"><span class="ff-progress-dot" aria-hidden="true"></span><span class="ff-progress-text">Item: not entered yet</span></span>
+      </div>
+
+      <div class="ff-columns">
+        <section class="ff-step ff-col" id="ff-step-reference" aria-labelledby="ff-step-reference-title">
+          <div class="ff-col-head">
+            <h2 class="ff-step-title" id="ff-step-reference-title"><span class="ff-step-num">01</span> · A garment you own</h2>
+            <p class="ff-col-desc">Use a garment that fits the way you like.</p>
+          </div>
+          <!-- products Fynd holds checked garment measurements for, as the
+               garment in one click; hidden when there are none -->
+          <div class="ff-anchors" id="ff-anchors" hidden>
+            <h3 class="ff-anchors-title" id="ff-anchors-title">Popular Wardrobe Anchors</h3>
+            <div class="ff-anchor-list" role="group" aria-labelledby="ff-anchors-title"></div>
+          </div>
+          <!-- the saved reference garments, or a garment described right
+               here for this visit: drawn by assets/find-fit-reference.js -->
+          <div class="ff-reference" id="ff-reference" aria-live="polite">
+            <p class="ff-muted">Loading&hellip;</p>
+          </div>
+          <p class="form-error ffr-error" id="ff-garment-error" role="alert"></p>
+        </section>
+
+        <section class="ff-step ff-col" id="ff-step-target" aria-labelledby="ff-step-target-title">
+          <div class="ff-col-head">
+            <h2 class="ff-step-title" id="ff-step-target-title"><span class="ff-step-num">02</span> · The item you&rsquo;re considering</h2>
+            <p class="ff-col-desc" id="ffc-subtitle">Enter the finished-garment measurements from the retailer&rsquo;s chart.
+              <button class="ff-info" type="button" aria-expanded="false" aria-controls="ffc-help" aria-label="About finished-garment measurements">i</button></p>
+            <div class="ff-info-text" id="ffc-help" hidden>
+              <p>Use the <strong>finished-garment</strong> measurements &mdash; what the garment itself measures, often called &ldquo;product measurements&rdquo;. Not a body-size chart: that says who a size is made for, not how big the garment is.</p>
+              <p>Enter the numbers for one size, and leave blank any the chart doesn&rsquo;t give. The chest is needed for any comparison, and Fynd needs at least three measurements taken the same way as yours.</p>
             </div>
           </div>
-          <div class="ffr-row">
-            <div class="ffr-field">
-              <label class="profile-label" for="ffc-type">Garment type</label>
-              <select class="profile-input" id="ffc-type" name="type" aria-describedby="ffc-type-error">
-                <option value="hoodies">Hoodie</option>
-                <option value="sweatshirts">Sweatshirt</option>
-                <option value="tshirts">T-shirt</option>
-              </select>
-              <p class="form-error ffr-error" id="ffc-type-error" role="alert"></p>
-            </div>
-            <div class="ffr-field">
-              <label class="profile-label" for="ffc-size">Size being considered</label>
-              <input class="profile-input" type="text" id="ffc-size" name="size" maxlength="20" autocomplete="off" placeholder="Like M or 42" aria-describedby="ffc-size-error">
-              <p class="form-error ffr-error" id="ffc-size-error" role="alert"></p>
-            </div>
-          </div>
-          <fieldset class="ffc-units">
-            <legend class="profile-label">Measurement unit</legend>
-            <label class="ffc-unit"><input type="radio" name="ffc-unit" value="cm" checked> Centimetres (cm)</label>
-            <label class="ffc-unit"><input type="radio" name="ffc-unit" value="in"> Inches (in)</label>
-            <p class="ffr-hint" id="ffc-unit-hint">Switching converts the numbers already entered, so they keep their meaning.</p>
-            <p class="form-error ffr-error" id="ffc-unit-error" role="alert"></p>
-          </fieldset>
-          <div class="ffc-measures">
-            <div class="ffc-measure" data-dim="chestWidth">
+          <div class="ffc-form" id="ffc-form">
+            <div class="ffr-row">
               <div class="ffr-field">
-                <label class="profile-label" for="ffc-m-chestWidth">Chest width <span class="ffc-unit-label" data-part="unit-label">(cm)</span></label>
-                <input class="profile-input" type="text" id="ffc-m-chestWidth" name="chestWidth" inputmode="decimal" autocomplete="off" aria-describedby="ffc-m-chestWidth-hint ffc-m-chestWidth-error">
-                <p class="ffr-hint" id="ffc-m-chestWidth-hint">Usually “chest” or “½ chest” on the chart. Flat means half the way around.</p>
-                <p class="form-error ffr-error" id="ffc-m-chestWidth-error" role="alert"></p>
+                <label class="profile-label" for="ffc-brand">Brand <span class="ff-optional">optional</span></label>
+                <input class="profile-input" type="text" id="ffc-brand" name="brand" maxlength="80" autocomplete="off" aria-describedby="ffc-brand-error">
+                <p class="form-error ffr-error" id="ffc-brand-error" role="alert"></p>
               </div>
               <div class="ffr-field">
+                <label class="profile-label" for="ffc-name">Product name <span class="ff-optional">optional</span></label>
+                <input class="profile-input" type="text" id="ffc-name" name="name" maxlength="80" autocomplete="off" aria-describedby="ffc-name-error">
+                <p class="form-error ffr-error" id="ffc-name-error" role="alert"></p>
+              </div>
+            </div>
+            <div class="ffr-row">
+              <div class="ffr-field">
+                <label class="profile-label" for="ffc-size">Size being considered</label>
+                <input class="profile-input" type="text" id="ffc-size" name="size" maxlength="20" autocomplete="off" placeholder="Like M or 42" aria-describedby="ffc-size-error">
+                <p class="form-error ffr-error" id="ffc-size-error" role="alert"></p>
+              </div>
+            </div>
+            <div class="ff-measures" role="group" aria-label="The item’s measurements">
+            <div class="ff-mrow" data-dim="chestWidth">
+              <div class="ff-mfield">
+                <div class="ff-mlabel">
+                  <label class="profile-label" for="ffc-m-chestWidth">Chest width</label>
+                  <button class="ff-info" type="button" aria-expanded="false" aria-controls="ffc-m-chestWidth-info" aria-label="About chest width">i</button>
+                </div>
+                <span class="measure"><input class="profile-input" type="text" id="ffc-m-chestWidth" name="chestWidth" inputmode="decimal" autocomplete="off" data-measure aria-describedby="ffc-m-chestWidth-info ffc-m-chestWidth-error"><span class="measure-unit" data-part="unit-label">cm</span></span>
+                <p class="ff-info-text" id="ffc-m-chestWidth-info" hidden>Usually “chest” or “½ chest” on the chart. Flat means straight across, half the way around; a chart that gives the whole way around says so.</p>
+                <p class="form-error ffr-error" id="ffc-m-chestWidth-error" role="alert"></p>
+              </div>
+              <div class="ff-mmethod">
                 <label class="profile-label" for="ffc-how-chestWidth">How the chart measures it</label>
-                <select class="profile-input" id="ffc-how-chestWidth" name="how-chestWidth" aria-describedby="ffc-how-chestWidth-error">
-                  <option value="">Choose…</option>
-                  <option value="flat-width-armpit-to-armpit">Flat, armpit to armpit</option>
-                  <option value="garment-circumference">All the way around</option>
-                  <option value="not-stated">The chart doesn’t say</option>
-                </select>
+                <span class="select-wrap"><select class="profile-input profile-select" id="ffc-how-chestWidth" name="how-chestWidth" aria-describedby="ffc-how-chestWidth-error">
+                    <option value="">Choose…</option>
+                    <option value="flat-width-armpit-to-armpit">Flat, armpit to armpit</option>
+                    <option value="garment-circumference">All the way around</option>
+                    <option value="not-stated">The chart doesn’t say</option>
+                  </select></span>
                 <p class="form-error ffr-error" id="ffc-how-chestWidth-error" role="alert"></p>
               </div>
             </div>
-            <div class="ffc-measure" data-dim="shoulderWidth">
-              <div class="ffr-field">
-                <label class="profile-label" for="ffc-m-shoulderWidth">Shoulder width <span class="ffc-unit-label" data-part="unit-label">(cm)</span></label>
-                <input class="profile-input" type="text" id="ffc-m-shoulderWidth" name="shoulderWidth" inputmode="decimal" autocomplete="off" aria-describedby="ffc-m-shoulderWidth-hint ffc-m-shoulderWidth-error">
-                <p class="ffr-hint" id="ffc-m-shoulderWidth-hint">Usually “shoulder” or “shoulder width”.</p>
+            <div class="ff-mrow" data-dim="shoulderWidth">
+              <div class="ff-mfield">
+                <div class="ff-mlabel">
+                  <label class="profile-label" for="ffc-m-shoulderWidth">Shoulder width</label>
+                  <button class="ff-info" type="button" aria-expanded="false" aria-controls="ffc-m-shoulderWidth-info" aria-label="About shoulder width">i</button>
+                </div>
+                <span class="measure"><input class="profile-input" type="text" id="ffc-m-shoulderWidth" name="shoulderWidth" inputmode="decimal" autocomplete="off" data-measure aria-describedby="ffc-m-shoulderWidth-info ffc-m-shoulderWidth-error"><span class="measure-unit" data-part="unit-label">cm</span></span>
+                <p class="ff-info-text" id="ffc-m-shoulderWidth-info" hidden>Usually “shoulder” or “shoulder width”: across the back, seam to seam, unless the chart says otherwise.</p>
                 <p class="form-error ffr-error" id="ffc-m-shoulderWidth-error" role="alert"></p>
               </div>
-              <div class="ffr-field">
+              <div class="ff-mmethod">
                 <label class="profile-label" for="ffc-how-shoulderWidth">How the chart measures it</label>
-                <select class="profile-input" id="ffc-how-shoulderWidth" name="how-shoulderWidth" aria-describedby="ffc-how-shoulderWidth-error">
-                  <option value="">Choose…</option>
-                  <option value="seam-to-seam">Seam to seam</option>
-                  <option value="broadest-part-of-shoulders">Broadest part of the shoulders</option>
-                  <option value="not-stated">The chart doesn’t say</option>
-                </select>
+                <span class="select-wrap"><select class="profile-input profile-select" id="ffc-how-shoulderWidth" name="how-shoulderWidth" aria-describedby="ffc-how-shoulderWidth-error">
+                    <option value="">Choose…</option>
+                    <option value="seam-to-seam">Seam to seam</option>
+                    <option value="broadest-part-of-shoulders">Broadest part of the shoulders</option>
+                    <option value="not-stated">The chart doesn’t say</option>
+                  </select></span>
                 <p class="form-error ffr-error" id="ffc-how-shoulderWidth-error" role="alert"></p>
               </div>
             </div>
-            <div class="ffc-measure" data-dim="bodyLength">
-              <div class="ffr-field">
-                <label class="profile-label" for="ffc-m-bodyLength">Body length <span class="ffc-unit-label" data-part="unit-label">(cm)</span></label>
-                <input class="profile-input" type="text" id="ffc-m-bodyLength" name="bodyLength" inputmode="decimal" autocomplete="off" aria-describedby="ffc-m-bodyLength-hint ffc-m-bodyLength-error">
-                <p class="ffr-hint" id="ffc-m-bodyLength-hint">Usually “length” or “body length”. “Back length” is usually from the centre back of the neck.</p>
+            <div class="ff-mrow" data-dim="bodyLength">
+              <div class="ff-mfield">
+                <div class="ff-mlabel">
+                  <label class="profile-label" for="ffc-m-bodyLength">Body length</label>
+                  <button class="ff-info" type="button" aria-expanded="false" aria-controls="ffc-m-bodyLength-info" aria-label="About body length">i</button>
+                </div>
+                <span class="measure"><input class="profile-input" type="text" id="ffc-m-bodyLength" name="bodyLength" inputmode="decimal" autocomplete="off" data-measure aria-describedby="ffc-m-bodyLength-info ffc-m-bodyLength-error"><span class="measure-unit" data-part="unit-label">cm</span></span>
+                <p class="ff-info-text" id="ffc-m-bodyLength-info" hidden>Usually “length” or “body length”. “Back length” is usually measured from the centre back of the neck.</p>
                 <p class="form-error ffr-error" id="ffc-m-bodyLength-error" role="alert"></p>
               </div>
-              <div class="ffr-field">
+              <div class="ff-mmethod">
                 <label class="profile-label" for="ffc-how-bodyLength">How the chart measures it</label>
-                <select class="profile-input" id="ffc-how-bodyLength" name="how-bodyLength" aria-describedby="ffc-how-bodyLength-error">
-                  <option value="">Choose…</option>
-                  <option value="high-point-shoulder-to-hem">Top of the shoulder to hem</option>
-                  <option value="center-back-to-hem">Centre back of the neck to hem</option>
-                  <option value="not-stated">The chart doesn’t say</option>
-                </select>
+                <span class="select-wrap"><select class="profile-input profile-select" id="ffc-how-bodyLength" name="how-bodyLength" aria-describedby="ffc-how-bodyLength-error">
+                    <option value="">Choose…</option>
+                    <option value="high-point-shoulder-to-hem">Top of the shoulder to hem</option>
+                    <option value="center-back-to-hem">Centre back of the neck to hem</option>
+                    <option value="not-stated">The chart doesn’t say</option>
+                  </select></span>
                 <p class="form-error ffr-error" id="ffc-how-bodyLength-error" role="alert"></p>
               </div>
             </div>
-            <div class="ffc-measure" data-dim="sleeveLength">
-              <div class="ffr-field">
-                <label class="profile-label" for="ffc-m-sleeveLength">Sleeve length <span class="ffc-unit-label" data-part="unit-label">(cm)</span></label>
-                <input class="profile-input" type="text" id="ffc-m-sleeveLength" name="sleeveLength" inputmode="decimal" autocomplete="off" aria-describedby="ffc-m-sleeveLength-hint ffc-m-sleeveLength-error">
-                <p class="ffr-hint" id="ffc-m-sleeveLength-hint">Usually “sleeve”. A very long sleeve figure is often from the centre back of the neck.</p>
+            <div class="ff-mrow" data-dim="sleeveLength">
+              <div class="ff-mfield">
+                <div class="ff-mlabel">
+                  <label class="profile-label" for="ffc-m-sleeveLength">Sleeve length</label>
+                  <button class="ff-info" type="button" aria-expanded="false" aria-controls="ffc-m-sleeveLength-info" aria-label="About sleeve length">i</button>
+                </div>
+                <span class="measure"><input class="profile-input" type="text" id="ffc-m-sleeveLength" name="sleeveLength" inputmode="decimal" autocomplete="off" data-measure aria-describedby="ffc-m-sleeveLength-info ffc-m-sleeveLength-error"><span class="measure-unit" data-part="unit-label">cm</span></span>
+                <p class="ff-info-text" id="ffc-m-sleeveLength-info" hidden>Usually “sleeve”. A very long sleeve figure is often measured from the centre back of the neck, not the shoulder seam.</p>
                 <p class="form-error ffr-error" id="ffc-m-sleeveLength-error" role="alert"></p>
               </div>
-              <div class="ffr-field">
+              <div class="ff-mmethod">
                 <label class="profile-label" for="ffc-how-sleeveLength">How the chart measures it</label>
-                <select class="profile-input" id="ffc-how-sleeveLength" name="how-sleeveLength" aria-describedby="ffc-how-sleeveLength-error">
-                  <option value="">Choose…</option>
-                  <option value="shoulder-seam-to-cuff">Shoulder seam to cuff</option>
-                  <option value="center-back-to-cuff">Centre back of the neck to cuff</option>
-                  <option value="not-stated">The chart doesn’t say</option>
-                </select>
+                <span class="select-wrap"><select class="profile-input profile-select" id="ffc-how-sleeveLength" name="how-sleeveLength" aria-describedby="ffc-how-sleeveLength-error">
+                    <option value="">Choose…</option>
+                    <option value="shoulder-seam-to-cuff">Shoulder seam to cuff</option>
+                    <option value="center-back-to-cuff">Centre back of the neck to cuff</option>
+                    <option value="not-stated">The chart doesn’t say</option>
+                  </select></span>
                 <p class="form-error ffr-error" id="ffc-how-sleeveLength-error" role="alert"></p>
               </div>
             </div>
+            </div>
+            <p class="form-error ffr-error" id="ffc-measurements-error" role="alert"></p>
           </div>
-          <p class="form-error ffr-error" id="ffc-measurements-error" role="alert"></p>
-        </div>
-      </section>
+        </section>
+      </div>
 
       <div class="ff-action">
-        <button class="btn btn-primary ff-compare-btn" type="submit" id="ff-submit">Compare fit</button>
+        <button class="btn btn-primary ff-compare-btn" type="submit" id="ff-submit" aria-describedby="ff-submit-note">Compare fit</button>
+        <p class="ff-submit-note" id="ff-submit-note" aria-live="polite">Add your garment, then the item.</p>
       </div>
     </form>
   </section>

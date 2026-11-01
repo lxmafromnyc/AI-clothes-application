@@ -2627,22 +2627,35 @@ survive closing the dialog and reloading the page.
 
 **Find Fit** (`index.html`, `assets/find-fit-manual.js`) compares a garment the
 shopper owns with one size of any item they are considering, without Fynd's
-catalogue. Step 1 is the garment owned (`assets/find-fit-reference.js`: saved on
-the fit profile, or described for this visit, with its measurements laid flat;
-**Find your garment** and **Popular Wardrobe Anchors** still offer products Fynd
-holds checked records for). Step 2 is the item: brand and product name
-(optional), garment type, the size being considered, the unit (cm or in), and
-whichever of chest width, shoulder width, body length and sleeve length its
-**finished-garment** measurement chart gives — never a body-size chart — each with
-how the chart measures it, chosen from the canonical methods
-(`api/_sizing/methods.js`) or "The chart doesn't say", which is never compared.
+catalogue. It is laid out desktop first: on top, **What are you shopping for?**
+(Hoodie or Sweatshirt — the types Fynd compares today; the type decides which
+measurements are asked for and is the garment form's default) and one cm/in
+choice for both garments; beneath, two balanced columns. **01 · A garment you
+own** (`assets/find-fit-reference.js`: saved on the fit profile, or described for
+this visit, its measurements laid flat in rows that say how the form measures
+each; **Find your garment** and **Popular Wardrobe Anchors** still offer products
+Fynd holds checked records for). **02 · The item you're considering**: brand and
+product name (optional), the size being considered, and whichever of chest width,
+shoulder width, body length and sleeve length its **finished-garment** measurement
+chart gives — never a body-size chart — each with how the chart measures it,
+chosen beside it from the canonical methods (`api/_sizing/methods.js`) or "The
+chart doesn't say", which is never compared. Short explanations sit behind small
+information buttons (`.ff-info`): opened by click, tap, Enter or Space, closed by
+the same, Escape or a click elsewhere, never on hover alone; each field points at
+its explanation, so a screen reader hears it either way. One wide **Compare fit**
+beneath both columns looks unavailable (`aria-disabled`) and says what is missing
+until both garments are there; pressed anyway, it says each problem beside its
+field and sends nothing. A garment typed in but not yet kept is kept first by its
+own form's checks. While a comparison runs the button is busy and can't send twice;
+the result appears beneath the forms, as wide as them.
 One reader, `assets/fit-candidate.js`, checks the item on the page and again on
 the server: numbers above zero, a method for every value, and — where the method
 is the reference form's own — the form's own plausible range (twice it for a chest
 all the way around); a blank stays missing, and nothing the client sends beyond
-the item's own fields is read. Switching the unit converts each value once from
-what was typed (cm to a tenth, inches to a hundredth), so switching back and forth
-never drifts. **Compare fit** sends both
+the item's own fields is read. Switching the unit converts every value in both
+forms once from what was typed (cm to a tenth, inches to a hundredth), so
+switching back and forth never drifts; a kept garment opened again in the other
+unit is shown converted from its own value, which it keeps until saved again. **Compare fit** sends both
 (`POST /api/size-recommendation?compare=1&candidate=1`; the garment in the body,
 or the signed-in shopper's saved one), and the engine sets the item beside the
 garment by the existing rules: only compatible methods, at least three of four

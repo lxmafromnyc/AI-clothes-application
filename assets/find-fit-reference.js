@@ -123,7 +123,14 @@
     const wrap = el('div', 'ffr-field');
     const label = el('label', 'profile-label', labelText);
     label.htmlFor = control.id;
-    wrap.append(label, control);
+    /* a select drawn as the site's own, its arrow in the palette — as the item's are */
+    let shown = control;
+    if (control.tagName === 'SELECT') {
+      control.classList.add('profile-select');
+      shown = el('span', 'select-wrap');
+      shown.append(control);
+    }
+    wrap.append(label, shown);
     if (hint) {
       const p = el('p', 'ffr-hint', hint);
       p.id = `${control.id}-hint`;
@@ -147,6 +154,59 @@
     });
     return s;
   }
+  /* a short explanation behind a small, keyboard-reachable info button —
+     opened and closed by assets/find-fit-manual.js, read by screen readers
+     either way (the control points at it) */
+  function info(id, label, text) {
+    const b = el('button', 'ff-info', 'i');
+    b.type = 'button';
+    b.setAttribute('aria-expanded', 'false');
+    b.setAttribute('aria-controls', id);
+    b.setAttribute('aria-label', label);
+    const p = el('p', 'ff-info-text', text);
+    p.id = id;
+    p.hidden = true;
+    return [b, p];
+  }
+  /* what the shopper is shopping for, and the unit, chosen at the top of Find Fit */
+  const topChoice = (name, fallback) => { const r = doc.querySelector(`input[name="${name}"]:checked`); return r ? r.value : fallback; };
+  /* the kinds Find Fit compares for now — a garment kept as another keeps its own */
+  const FIND_FIT_KINDS = ['hoodies', 'sweatshirts'].filter((k) => KINDS.includes(k));
+
+  /* One measurement, as the item's are drawn beside it: its label and an
+     info button, the value with its unit in the box, and — never hidden —
+     how this form measures it (one way: GARMENT_MEASURES). */
+  function measureRow(k, value) {
+    const spec = Schema.GARMENT_MEASURES[k];
+    const row = el('div', 'ff-mrow');
+    row.dataset.dim = k;
+    const id = `ffr-m-${k}`;
+    const fieldBox = el('div', 'ff-mfield');
+    const head = el('div', 'ff-mlabel');
+    /* the item's own words for each, so both columns say the same */
+    const label = el('label', 'profile-label', (global.FitCandidate && global.FitCandidate.LABELS[k]) || spec.label);
+    label.htmlFor = id;
+    const [button, text] = info(`${id}-info`, `How to measure: ${label.textContent.toLowerCase()}`, spec.how);
+    head.append(label, button);
+    const box = el('span', 'measure');
+    const control = input(id, 'text', value, { inputmode: 'decimal', autocomplete: 'off', 'data-measure': '', 'aria-describedby': `${id}-method ${id}-info ${id}-error` });
+    box.append(control, el('span', 'measure-unit', ''));
+    box.lastChild.dataset.part = 'unit-label';
+    const err = el('p', 'form-error ffr-error');
+    err.id = `${id}-error`;
+    err.setAttribute('role', 'alert');
+    fieldBox.append(head, box, text, err);
+    const method = el('div', 'ff-mmethod');
+    const words = global.FitCandidate ? (global.FitCandidate.METHODS[k].find((m) => m.id === spec.method) || {}).label : null;
+    method.append(el('p', 'profile-label', 'Measured'));
+    const fixed = el('p', 'ff-method-fixed', words || spec.how);
+    fixed.id = `${id}-method`;
+    fixed.dataset.method = spec.method;
+    method.append(fixed);
+    row.append(fieldBox, method);
+    return row;
+  }
+
   function input(id, type, value, attrs) {
     const i = el('input', 'profile-input');
     i.id = id;
@@ -163,13 +223,15 @@
     const box = el('div', 'ffr-form');
     box.setAttribute('role', 'group');
     box.setAttribute('aria-labelledby', 'ffr-form-title');
-    const title = el('p', 'ffr-title', 'Describe a garment you own that fits the way you like. No account needed.');
+    /* the column's own heading says what this is; this names the group for screen readers */
+    const title = el('p', 'ffr-title sr-only', 'Describe a garment you own that fits the way you like. No account needed.');
     title.id = 'ffr-form-title';
     box.append(title, finder());
 
     const row = el('div', 'ffr-row');
     row.append(
-      field('Type', select('ffr-type', KINDS.map((k) => [k, cap(Schema.garmentOf(k).one)]), from ? from.type : KINDS[0])),
+      field('Type', select('ffr-type', FIND_FIT_KINDS.concat(from && from.type && !FIND_FIT_KINDS.includes(from.type) ? [from.type] : []).map((k) => [k, cap(Schema.garmentOf(k).one)]),
+        from ? from.type : (FIND_FIT_KINDS.includes(topChoice('ff-type', 'hoodies')) ? topChoice('ff-type', 'hoodies') : FIND_FIT_KINDS[0]))),
       field('Size on its label', select('ffr-size', [['', 'Choose…']].concat(Schema.LETTER_SIZES.map((s) => [s, s])), a.size || ''))
     );
     box.append(row);
@@ -179,8 +241,16 @@
     Schema.ANCHOR_BRANDS.forEach((b) => { const o = el('option'); o.value = b; brands.append(o); });
     box.append(field('Brand', brand), brands);
     const product = a.product ? (a.product.url || a.product.name || '') : '';
-    box.append(field('Product name or link (optional)', input('ffr-product', 'text', product, { maxlength: '2000', autocomplete: 'off', spellcheck: 'false' }),
-      'If we have this product’s measurements, we’ll use them.'));
+    const productField = field('Product name or link (optional)', input('ffr-product', 'text', product, { maxlength: '2000', autocomplete: 'off', spellcheck: 'false' }));
+    const [productInfo, productText] = info('ffr-product-info', 'About the product name or link', 'If Fynd holds checked measurements for this exact product, it uses them for your garment.');
+    /* the label and its information button on one line */
+    const productLabel = productField.querySelector('label');
+    const productHead = el('div', 'ff-mlabel');
+    productLabel.before(productHead);
+    productHead.append(productLabel, productInfo);
+    productField.querySelector('input').after(productText);
+    productField.querySelector('input').setAttribute('aria-describedby', 'ffr-product-info');
+    box.append(productField);
     const row2 = el('div', 'ffr-row');
     row2.append(
       field('Sold as', select('ffr-line', [['not-sure', 'Not sure'], ['men', 'Men’s'], ['women', 'Women’s'], ['unisex', 'Unisex']], (g && g.line) || 'not-sure')),
@@ -188,17 +258,20 @@
     );
     box.append(row2);
 
-    /* the four measurements: only if the shopper can lay it flat and measure it */
-    const more = el('details', 'ffr-measure');
-    if (a.measurements) more.open = true;
-    more.append(el('summary', null, 'Add its measurements (optional)'));
-    more.append(el('p', 'ffr-hint', 'Only if you can lay it flat and measure it. Leave any you can’t take blank.'));
-    more.append(field('Unit', select('ffr-unit', [['in', 'Inches'], ['cm', 'Centimetres']], m.unit || 'in')));
-    const grid = el('div', 'ffr-grid');
-    Schema.GARMENT_MEASURE_KEYS.forEach((k) => {
-      const spec = Schema.GARMENT_MEASURES[k];
-      grid.append(field(spec.label, input(`ffr-m-${k}`, 'text', m[k], { inputmode: 'decimal', autocomplete: 'off' }), spec.how));
-    });
+    /* the four measurements, laid flat, in the unit chosen at the top of
+       Find Fit (kept in step by assets/find-fit-manual.js); any can be left
+       blank — nothing is filled in */
+    const more = el('div', 'ffr-measure');
+    const moreHead = el('div', 'ff-mlabel ffr-measure-head');
+    const [measureInfo, measureText] = info('ffr-measure-info', 'About measuring your garment', 'Lay it flat and measure it as each line says. Leave blank any you can’t take: Fynd compares only what both garments share, and needs at least three including the chest.');
+    moreHead.append(el('p', 'ffr-measure-title', 'Its measurements, laid flat'), measureInfo);
+    more.append(moreHead, measureText);
+    const unit = input('ffr-unit', 'hidden', m.unit || topChoice('ff-unit', 'cm'));
+    more.append(unit);
+    const grid = el('div', 'ff-measures');
+    /* in the item's order, row for row */
+    const order = global.FitCandidate ? global.FitCandidate.DIMS.filter((k) => Schema.GARMENT_MEASURE_KEYS.includes(k)) : Schema.GARMENT_MEASURE_KEYS;
+    order.forEach((k) => grid.append(measureRow(k, m[k])));
     more.append(grid);
     box.append(more);
 
