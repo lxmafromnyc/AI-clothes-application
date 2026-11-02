@@ -274,7 +274,7 @@ async function browserTests() {
   try {
     console.log('\nin the browser, with no product source');
 
-    await test('Find Fit with no product source: the item is entered by hand from its own chart — no product list, no search box, and nothing asks a product source', async () => {
+    await test('Find Fit with no product source: the item is entered by hand from its own chart — no product list, and nothing asks a product source until a search is asked for', async () => {
       hits.length = 0;
       requested.length = 0;
       const page = await openPage('index.html');

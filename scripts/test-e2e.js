@@ -1407,13 +1407,13 @@ const linkFromInbox = (pattern) => {
     assert.strictEqual((await page.textContent('#find-fit-title')).trim(), 'Find the size that fits like your favorite clothes.');
     /* the two questions */
     assert.deepStrictEqual(await page.$$eval('.ff-col .ff-step-title', (hs) => hs.map((h) => h.textContent.replace(/\s+/g, ' ').trim())), ['01 · Which clothes already fit you the way you like?', '02 · What are you thinking of buying?']);
-    /* what a shopper sees first: the garment's search, its type and size — and the item's link. Nothing else (the brand is with the optional details) */
+    /* what a shopper sees first: the garment's search, its type and size — and the item's search and link. Nothing else (the brand is with the optional details) */
     /* Playwright's own visibility: a closed <details> keeps its content's boxes in some Chromium builds */
     const visible = [];
     for (const handle of await page.$$('#ff-form input:not([type=hidden]), #ff-form select')) {
       if (await handle.isVisible()) visible.push(await handle.getAttribute('id'));
     }
-    assert.deepStrictEqual(visible, ['ffr-search', 'ffr-type', 'ffr-size', 'ffi-link']);
+    assert.deepStrictEqual(visible, ['ffr-search', 'ffr-type', 'ffr-size', 'ffs-q', 'ffi-link']);
     assert.strictEqual(await page.isVisible('#ffi-link-go'), true);
     assert.match(await page.textContent('#ffi-ext-tip'), /Fynd Chrome extension reads it in your browser/);
     /* the fallbacks: folded, one click away — the unit only while something is typed by hand */

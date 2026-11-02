@@ -125,7 +125,25 @@
         <section class="ff-step ff-col" id="ff-step-target" aria-labelledby="ff-step-target-title">
           <div class="ff-col-head">
             <h2 class="ff-step-title" id="ff-step-target-title"><span class="ff-step-num">02</span> · What are you thinking of buying?</h2>
-            <p class="ff-col-desc" id="ffc-subtitle">Paste the product&rsquo;s link. Fynd finds its sizes and measurements.</p>
+            <p class="ff-col-desc" id="ffc-subtitle">Search for it, or paste the product&rsquo;s link. Fynd finds its sizes and measurements.</p>
+          </div>
+          <!-- the item found by searching for it: real listings, 20 at a
+               time, Load more from the server, and picking one hands its
+               link to the lookup below (assets/find-fit-search.js) -->
+          <div class="ffs" id="ffs">
+            <!-- not a <form>: this sits inside Find Fit's own form, and a
+                 form can't hold another. Enter and the button both search. -->
+            <div class="ffs-form" id="ffs-form" role="search">
+              <label class="profile-label" for="ffs-q">Search for the product</label>
+              <div class="ffi-link-row">
+                <input class="profile-input" type="search" id="ffs-q" name="q" maxlength="200" autocomplete="off" placeholder="Levi&rsquo;s 501 jeans, black oversized hoodie&hellip;" aria-describedby="ffs-status">
+                <button class="btn btn-secondary" type="button" id="ffs-go">Search</button>
+              </div>
+            </div>
+            <p class="ffs-status" id="ffs-status" role="status" aria-live="polite"></p>
+            <ul class="ffs-results" id="ffs-results" aria-label="Products found"></ul>
+            <button class="btn btn-secondary ffs-more" type="button" id="ffs-more" hidden>Load more</button>
+            <p class="ffr-hint ffs-note" id="ffs-note"></p>
           </div>
           <!-- the product from its link: identified, its sizes and garment
                measurements found, and only what's uncertain shown to check
@@ -331,6 +349,9 @@
 <script src="assets/find-fit-reference.js"></script>
 <script src="assets/find-fit-save.js"></script>
 <script src="assets/find-fit-item.js"></script>
+<script src="assets/interpret.js"></script>
+<script src="assets/search.js"></script>
+<script src="assets/find-fit-search.js"></script>
 <script src="assets/find-fit-manual.js"></script>
 <script src="assets/app.js"></script>
 </body>

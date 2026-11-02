@@ -691,6 +691,10 @@ module.exports = {
      naming one would attribute a product to the wrong shop. */
   defaultRetailer: null,
   configured: () => Boolean(process.env.SERPAPI_API_KEY),
+  /* One page only. The light engine's paging has not been checked
+     against a live answer, so Load more is not offered over it rather
+     than offered over a request that might answer page 1 again. */
+  paginates: false,
   search,
   account,
   /* exported for scripts/test-serpapi.js, probe-serpapi.js and bench-serpapi.js */

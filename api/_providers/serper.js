@@ -367,15 +367,23 @@ async function apiPost(url, body, timeout) {
   return payload;
 }
 
+/* Load more (api/_providers/pages.js): Serper's own `page` for the same
+   question. Only page 2 onwards carries it, so a first page is sent
+   exactly as it always was. */
+function withPage(body, options) {
+  const page = Math.max(1, Math.min(Math.floor(Number(options && options.page) || 1), 10));
+  return page > 1 ? Object.assign(body, { page }) : body;
+}
+
 async function search(intent, options) {
   const wanted = Math.min(Math.max(Number(options && options.limit) || 12, 1), 100);
 
-  const payload = await apiPost(SEARCH_URL, {
+  const payload = await apiPost(SEARCH_URL, withPage({
     q: queryFrom(intent) || 'clothing',
     gl: text(process.env.SERPER_COUNTRY) || 'us',
     hl: text(process.env.SERPER_LANGUAGE) || 'en',
     num: Math.min(wanted * OVERFETCH, API_LIMIT_MAX)
-  }, legTimeout(options && options.deadline,
+  }, options), legTimeout(options && options.deadline,
     options && options.organicInFlight ? ORGANIC_RESERVE_MS : SHOPPING_RESERVE_MS, REQUEST_TIMEOUT));
 
   const results = resultsFrom(payload);
@@ -499,12 +507,12 @@ async function searchOrganic(intent, options) {
 
   /* the same phrase the shopping search is given, built by the same
      function, so the two endpoints are asked the same question */
-  const payload = await apiPost(WEB_SEARCH_URL, {
+  const payload = await apiPost(WEB_SEARCH_URL, withPage({
     q: queryFrom(intent) || 'clothing',
     gl: text(process.env.SERPER_COUNTRY) || 'us',
     hl: text(process.env.SERPER_LANGUAGE) || 'en',
     num: Math.min(wanted * OVERFETCH, API_LIMIT_MAX)
-  }, legTimeout(options && options.deadline, ORGANIC_RESERVE_MS, REQUEST_TIMEOUT));
+  }, options), legTimeout(options && options.deadline, ORGANIC_RESERVE_MS, REQUEST_TIMEOUT));
 
   const results = organicFrom(payload);
   const main = results.map(toOrganicRecord).filter(Boolean);
@@ -521,6 +529,9 @@ module.exports = {
   name: 'serper',
   configured,
   search,
+  /* both endpoints take `page` (withPage), so Load more asks Serper for
+     its next page rather than repeating the first */
+  paginates: true,
   /* Not part of the contract every adapter must meet, which is name +
      configured + search. Catalogue discovery and /api/search both ask
      for it, by name, only when search() came back naming no shop; no

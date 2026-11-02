@@ -22,6 +22,17 @@
                       show and nothing to stand in for it — the page
                       says what ran out and when it comes back.
 
+   Pages: find(intent, limit, attached, { paginate: true }) asks for a
+   first page that can be continued, and find(null, null, null,
+   { cursor }) asks the server for the NEXT page of that same search
+   (api/search.js, "Pages"). An answer carries `page`, `hasMore` and
+   `nextCursor`; a cursor page adds two states of its own:
+
+     expired          the cursor is gone (30 minutes, or never valid):
+                      search again to see more
+     busy             that page is already being fetched, or the
+                      caller is asking for pages too fast
+
    Endpoint: derived from the interpreter endpoint, so one meta tag
    configures both. Override separately if needed:
 
@@ -52,6 +63,8 @@
   const NOTHING = 'The product search ran but returned nothing that could be verified for this request.';
   const TIMED_OUT = 'The product search found items but could not confirm their prices in time, so no live results are shown right now.';
   const OVER_LIMIT = 'You have used the live product searches your plan allows for this period.';
+  const EXPIRED = 'These results have expired. Search again to see more.';
+  const BUSY = 'Too many pages at once. Wait a moment and try again.';
 
   const answer = (state, extra) => Object.assign({ source: null, products: [], notice: null, state }, extra || {});
 
@@ -59,7 +72,9 @@
      contents travel: nothing on the server can read one yet, and sending
      megabytes to be discarded would spend the shopper's bandwidth and
      put their photos somewhere for no purpose. */
-  async function find(intent, limit, attached) {
+  async function find(intent, limit, attached, options) {
+    const o = options || {};
+    const cursor = typeof o.cursor === 'string' && o.cursor ? o.cursor : null;
     let response;
     try {
       const controller = new AbortController();
@@ -71,11 +86,11 @@
            shopper's own plan. The plan itself is never sent from here:
            the server reads it from the session. */
         credentials: 'include',
-        body: JSON.stringify({
+        body: JSON.stringify(cursor ? { cursor } : Object.assign({
           intent: intent || {},
           limit: limit || 12,
           attachments: Array.isArray(attached) ? attached : []
-        }),
+        }, o.paginate ? { paginate: true } : {})),
         signal: controller.signal
       });
       clearTimeout(timer);
@@ -96,8 +111,13 @@
     /* Out of allowance. Distinct from an outage on purpose: this is
        about the shopper's plan and has an answer — wait for the reset,
        or move up a plan — where an outage has neither. */
+    if (cursor && (response.status === 410 || response.status === 409)) {
+      return answer(response.status === 410 ? 'expired' : 'busy', { notice: response.status === 410 ? EXPIRED : BUSY });
+    }
     if (response.status === 429) {
       const detail = await response.json().catch(() => ({}));
+      /* pacing on Load more, not the plan's allowance */
+      if (detail && detail.reason === 'rate-limited') return answer('busy', { notice: BUSY });
       return answer('limit', {
         notice: OVER_LIMIT,
         usage: detail.usage || null,
@@ -115,11 +135,18 @@
     try {
       const data = await response.json();
       const products = Array.isArray(data.products) ? data.products : [];
+      /* only present on a paginated answer */
+      const paging = typeof data.page === 'number' ? {
+        page: data.page,
+        hasMore: Boolean(data.hasMore && data.nextCursor),
+        nextCursor: typeof data.nextCursor === 'string' ? data.nextCursor : null,
+        pagination: data.pagination || null
+      } : {};
       if (!products.length) {
         /* the source answered but had nothing verifiable for this request */
-        return answer('empty', { source: data.source || null, notice: NOTHING, rejected: data.rejected || null, usage: data.usage || null });
+        return answer('empty', Object.assign({ source: data.source || null, notice: NOTHING, rejected: data.rejected || null, usage: data.usage || null }, paging));
       }
-      return { source: data.source || 'provider', products, notice: null, state: 'ok', usage: data.usage || null };
+      return Object.assign({ source: data.source || 'provider', products, notice: null, state: 'ok', usage: data.usage || null }, paging);
     } catch (err) {
       return answer('unavailable', { notice: FAILED });
     }
