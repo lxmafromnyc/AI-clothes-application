@@ -27,7 +27,10 @@
      max_price         number, ceiling
      sort_by           BEST_MATCH | TOP_RATED | LOWEST_PRICE | HIGHEST_PRICE
 
-   Parameters deliberately left alone: page, product_condition, stores,
+     page              1.., the result page; sent only for Load more
+                       (page 2 onwards), so a first page is unchanged
+
+   Parameters deliberately left alone: product_condition, stores,
    free_returns, free_shipping, on_sale, shoprs, return_filters. The
    interpreter does not produce intent for any of them, and setting one
    without the shopper asking would narrow their results on our guess.
@@ -219,6 +222,9 @@ function region() {
 /* The one /search request, as /api/search makes it. Exported so the
    probe sends this request rather than one of its own: a probe that
    works then means the search's own request works. */
+/* the page asked for: 1 unless the caller names a later one */
+const pageOf = (options) => Math.max(1, Math.min(Math.floor(Number(options && options.page) || 1), 10));
+
 function searchRequest(intent, options) {
   const wanted = Math.min(Math.max(Number(options && options.limit) || 12, 1), 100);
   const where = region();
@@ -233,6 +239,10 @@ function searchRequest(intent, options) {
      happens where the catalogue is, not after the fact. */
   if (intent && intent.minPrice) params.set('min_price', String(intent.minPrice));
   if (intent && intent.maxPrice) params.set('max_price', String(intent.maxPrice));
+  /* Load more (api/_providers/pages.js): the source's own next page of
+     the same search. Page 1 is sent exactly as it always was. */
+  const page = pageOf(options);
+  if (page > 1) params.set('page', String(page));
   return { url: SEARCH_URL, params, wanted, region: where };
 }
 
@@ -1205,6 +1215,9 @@ module.exports = {
   defaultRetailer: null,
   /* a key, and a subscription the deployment says is active */
   configured: () => Boolean(apiKey()) && subscriptionActive(),
+  /* /search takes `page` (searchRequest), so Load more asks for the
+     source's next page rather than repeating the first */
+  paginates: true,
   subscriptionActive,
   search,
   searchRequest,

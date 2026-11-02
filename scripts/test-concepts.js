@@ -670,10 +670,14 @@ async function main() {
     }
   });
 
-  await test('the fit guide loads neither the interpreter nor the search, and the retired Discover address loads nothing at all', () => {
+  await test('Find Fit loads the reader and the search only for its own product search, which never calls the AI interpreter; the retired Discover address loads nothing at all', () => {
     const scriptsOf = (file) => [...fs.readFileSync(path.join(__dirname, '..', file), 'utf8').matchAll(/<script[^>]*src="([^"]+)"/g)].map((m) => m[1]);
     const guide = scriptsOf('index.html');
-    assert.ok(!guide.some((src) => /interpret|search/.test(src)), guide.join(', '));
+    assert.deepStrictEqual(guide.filter((src) => /interpret|search/.test(src)), ['assets/interpret.js', 'assets/search.js', 'assets/find-fit-search.js'], guide.join(', '));
+    /* the words are read on the page (localInterpret), never sent to the model */
+    const own = fs.readFileSync(path.join(__dirname, '..', 'assets', 'find-fit-search.js'), 'utf8');
+    assert.ok(/Interpreter\.localInterpret/.test(own));
+    assert.ok(!/\.interpret\(/.test(own), 'Find Fit\u2019s search calls the AI interpreter');
     assert.deepStrictEqual(scriptsOf('discover.html'), []);
   });
 

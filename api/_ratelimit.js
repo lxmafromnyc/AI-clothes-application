@@ -50,6 +50,10 @@ const LIMITS = {
   /* asking the AI to propose how to read a chart: signed in, and each one
      spends model credit — a few per product page at most, so a low ceiling */
   'sizing:parse-chart': { max: 20, windowSeconds: 60 * 10 },
+  /* Load more on a product search already paid for (api/search.js): not
+     a search of its own, but each page is a provider request, so it is
+     paced per caller — far above a shopper browsing, far below a loop */
+  'search:more': { max: 40, windowSeconds: 60 * 10 },
   /* anonymous product counters: a page sends a handful per comparison */
   'metrics': { max: 120, windowSeconds: 60 * 10 }
 };

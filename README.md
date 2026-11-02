@@ -937,6 +937,97 @@ decides which adapter runs from `PRODUCT_SOURCE`. Unset, or naming an adapter
 whose credentials are missing, and the endpoint answers 503 and the interface
 says plainly that no product source is connected.
 
+### Find Fit's product search
+
+**Why there used to be only five products.** Find Fit's product search read
+only Fynd's own catalogue (`GET /api/size-recommendation?brand=uniqlo&q=`,
+`assets/catalog-suggest.js`). Its one brand module holds exactly five
+hand-sourced UNIQLO US products (`api/_sizing/brands/uniqlo.js`), because no
+authorized catalogue feed is connected — so whatever a shopper typed, those
+five were the whole inventory, at most six suggestions, with no paging. The
+live product search (`/api/search`) existed only on the Search page
+(`find-clothes.html`), 12 results, one page.
+
+**What it searches now.** Step 02 of Find Fit has its own search box, which
+asks two sources at once:
+
+| Source | What it holds | Cost |
+|---|---|---|
+| `/api/search`, with `paginate: true` | live listings from the connected product source (`PRODUCT_SOURCE`: OpenWeb Ninja, Serper or SerpApi — Google Shopping and, for Serper, retailers' own pages), through the same verification gate, garment filter and caches as the Search page | one of the plan's **live product searches** per new search (3 a day on Free, as on the Search page); Load more is not one |
+| Fynd's own list (`?brand=&q=`) | the catalogue Find Fit already browses — today five UNIQLO products; any merchant or authorized feed once connected. Only products matching every word | free, unmetered |
+
+It is **not** every retailer on the internet: it is what the connected source
+indexes and what Fynd's own list holds, and the page says so under the results.
+With no product source connected, only Fynd's own list is searched, and the
+page says that too.
+
+The words are read by the page's own reader (`Interpreter.localInterpret`,
+`assets/interpret.js`), so a Find Fit search never calls the AI interpreter and
+spends no AI tokens. Every card shows only what the source returned: name,
+brand when given, photo, price, retailer and the retailer's own link.
+
+**Picking a result** fills the link box and calls `FindFitItem.lookUp()` — the
+lookup a pasted link runs. A listing from a shop Fynd can't read from its
+server (most of them, today) gets the existing "unavailable" answer, with the
+extension and hand entry as the ways on; it is never presented as
+fit-analysable. Searching, browsing and picking ask for no comparison:
+comparing is still only what the existing flow does once both halves are
+ready, with its own rate limits (`sizing:*`) and, for AI chart reading, the AI
+allowance.
+
+**Pages ("Load more").** `POST /api/search` with `{ intent, limit, paginate:
+true }` answers as before plus:
+
+```json
+{ "page": 1, "hasMore": true, "nextCursor": "…",
+  "pagination": { "supported": true, "pageSize": 20, "maxPages": 5, "repeatedRemoved": 0 } }
+```
+
+`POST /api/search { "cursor": "…" }` answers the next page in the same shape.
+
+- **A real next page.** The cursor asks the same source that answered page 1
+  for its next page of the same search: OpenWeb Ninja's `page` and Serper's
+  `page` (both endpoints). Page 1 is sent exactly as before.
+- **Held on the server.** The cursor is a random id in the store
+  (`api/_providers/pages.js`); the intent, page size, source, page number and
+  what has been shown stay server-side, so a request can't edit the cursor
+  into another search, a bigger page or another source. Anything sent beside
+  it is ignored.
+- **No repeats.** Products already shown — by their link without tracking
+  parameters, or by retailer and title — are dropped from later pages, and
+  within a page.
+- **What it costs.** A cursor page is **not** charged as another search: the
+  shopper paid for the search on page 1. Provider cost is bounded instead: at
+  most **5 pages** per paid search; each cursor is single use (a second click
+  on the same one answers 409, an expired or unknown one 410) and lives 30
+  minutes; and the `search:more` rate limit allows 40 pages per caller per 10
+  minutes (429 `rate-limited`, apart from the plan's `over-limit`). A shopper
+  whose allowance ran out can still browse the pages of a search already paid
+  for, but can't start a new one.
+- **Endings.** More is offered only when the source answered with at least a
+  full page (before the gate), inside the 5-page depth, and only from a source
+  that declares `paginates: true`. A short or empty page ends the list. A
+  source can still answer a full page and then an empty next one; the page
+  then says "No new products on that page" and that it's the end. **SerpApi** declares `false` (its
+  light engine's paging hasn't been checked against a live answer), so over
+  SerpApi there is one page and no Load more. A page that fails upstream (502)
+  gives its cursor back, so Load more can be tried again.
+- **Unchanged without `paginate`.** The Search page's requests carry no
+  `paginate`, and are answered exactly as before, with no page fields.
+
+**Deployment.** Cursors live in the same store as metering (`api/_store.js`).
+With Redis (`KV_REST_API_URL`/`KV_REST_API_TOKEN`, as metering already
+requires in production) they work across instances; on the in-memory store a
+Load more that lands on another instance answers 410 and the page says to
+search again. No new environment variable or key: provider keys stay
+server-side as before.
+
+**Tested by** `scripts/test-search-pages.js` (the handler on a stand-in source
+with a generated inventory: different queries, pages, cursors, endings,
+metering, the adapters' `page` parameters) and
+`scripts/test-find-fit-search-browser.js` (the page in Chromium against the
+real handlers).
+
 ### OpenWeb Ninja (the provider Fynd runs on)
 
 [Real-Time Product Search](https://www.openwebninja.com/api/real-time-product-search)
@@ -2653,8 +2744,17 @@ The page asks for two things and does the rest (`index.html`,
 
 **02 · What are you thinking of buying?**
 
-Paste its link. `GET ?chart=<link>` (`api/_sizing/chart.js`) answers in one of
-these ways:
+**Search for it** (`assets/find-fit-search.js`), or paste its link. A search
+("Levi's 501 jeans", "black oversized hoodie") shows real listings from the
+connected product source, 20 at a time with **Load more**, and any product on
+Fynd's own list that matches every word, labelled as such. **Check its fit** on
+a listing puts its link in the link box and runs the same lookup a pasted link
+does — nothing after that is new. See
+[Find Fit's product search](#find-fit-product-search) for where results come
+from, what it costs and what it can't do.
+
+The link, pasted or picked: `GET ?chart=<link>` (`api/_sizing/chart.js`)
+answers in one of these ways:
 
 | What Fynd holds | What the shopper does |
 |---|---|
@@ -2684,7 +2784,8 @@ is OK, and the sources say where each side's numbers came from.
   screenshots and tables in [`docs/find-fit-redesign/`](docs/find-fit-redesign/README.md)):
   - a returning shopper goes from 9 inputs to 2 (the link and the tick);
   - a first-time shopper goes from 15 to 6;
-  - the page opens with 4 controls instead of 26.
+  - the page opens with 4 controls instead of 26 (5 since the item's search
+    box was added).
 
   The 2-input flow is also asserted in `test-e2e`.
 

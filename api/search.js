@@ -50,6 +50,23 @@
      read off its own page by discovery's price and image gates before
      it reaches the verification gate below. See recordsFrom().
 
+   Pages ("Load more")
+     A request with `paginate: true` is answered with `page`, `hasMore`
+     and, when there is more, `nextCursor`. Sending `{ cursor }` back
+     asks the SAME source for its NEXT page of the SAME search — the
+     intent, page size and source are held on the server under the
+     cursor (api/_providers/pages.js), never re-read from the request.
+     Products shown on an earlier page are not shown again.
+
+     A cursor page is not charged as another search: the shopper paid
+     for this search on page 1, and Load more is browsing it. It is held
+     to provider-cost limits instead — at most pages.MAX_PAGES pages per
+     paid search, each cursor single-use and unguessable, 30 minutes of
+     life, and the `search:more` rate limit per caller
+     (api/_ratelimit.js). Only a source that declares `paginates: true`
+     is offered more than one page; any other answers hasMore: false.
+     A request without `paginate` is answered exactly as before.
+
    Caching
      Both halves of a search are cached in api/_cache.js: the records a
      search produced, for 30 minutes, and each product's offer, for two
@@ -79,6 +96,9 @@ const { envReport } = require('./_env-report');
 const meter = require('./_meter');
 const cache = require('./_cache');
 const { SEARCHES } = require('./_plans');
+const pages = require('./_providers/pages');
+const limits = require('./_ratelimit');
+const { PROVIDERS } = require('./_providers/product-source');
 
 const MAX_LIMIT = 24;
 const DEFAULT_LIMIT = 12;
@@ -185,13 +205,16 @@ function readBody(req) {
    the same verification gate. Any other failure is thrown as it always
    was. The answer says which source it came from and, when it fell
    back, from what and why. */
-async function searchWithFallback(primary, intent, limit, stats, deadline) {
-  const chain = providerChain(primary);
+async function searchWithFallback(primary, intent, limit, stats, deadline, paging) {
+  const page = paging && paging.page > 1 ? paging.page : 1;
+  /* a later page is asked of the source that answered page 1, and only
+     of it: another source's "page 2" is a different list */
+  const chain = page > 1 ? [primary] : providerChain(primary);
   let refused = null;
   for (let at = 0; at < chain.length; at += 1) {
     const provider = chain[at];
     try {
-      const found = await findProducts(provider, intent, limit, stats, deadline);
+      const found = await findProducts(provider, intent, limit, stats, deadline, page);
       return Object.assign(found, {
         provider: provider.name,
         fellBackFrom: refused
@@ -231,7 +254,8 @@ async function searchWithFallback(primary, intent, limit, stats, deadline) {
    what their own pages proved; a listing whose page proved nothing goes
    to the gate as it came and is refused there. A failed organic search
    is recorded and the shopping batch is answered as it was. */
-async function recordsFrom(provider, intent, limit, deadline) {
+async function recordsFrom(provider, intent, limit, deadline, page) {
+  const at = page > 1 ? { page } : {};
   const hasOrganic = typeof provider.searchOrganic === 'function';
   const started = Date.now();
   const timing = {};
@@ -255,7 +279,7 @@ async function recordsFrom(provider, intent, limit, deadline) {
      request it did not need to finish in the background, unread. */
   let early = null;
   if (hasOrganic && deadline) {
-    early = provider.searchOrganic(intent, { limit, deadline }).then(
+    early = provider.searchOrganic(intent, Object.assign({ limit, deadline }, at)).then(
       (value) => { timing.organicMs = Date.now() - started; return { value }; },
       (error) => { timing.organicMs = Date.now() - started; return { error }; }
     );
@@ -275,7 +299,7 @@ async function recordsFrom(provider, intent, limit, deadline) {
   let batch;
   let productTimeout = null;
   try {
-    batch = await provider.search(intent, { limit, deadline, organicInFlight: Boolean(early) });
+    batch = await provider.search(intent, Object.assign({ limit, deadline, organicInFlight: Boolean(early) }, at));
   } catch (err) {
     timing.productSearchMs = Date.now() - started;
     if (!hasOrganic || !(timedOut(err) || early)) throw err;
@@ -306,7 +330,7 @@ async function recordsFrom(provider, intent, limit, deadline) {
       if (settled.error) throw settled.error;
       found = settled.value;
     } else {
-      found = await provider.searchOrganic(intent, { limit, deadline });
+      found = await provider.searchOrganic(intent, Object.assign({ limit, deadline }, at));
       timing.organicMs = Date.now() - started;
     }
     const listings = Array.from(found || []);
@@ -346,9 +370,11 @@ function ownStage(stage, run) {
   }
 }
 
-async function findProducts(provider, intent, limit, stats, deadline) {
-  /* whatever this adapter says changes its results beyond the intent */
-  const context = typeof provider.cacheContext === 'function' ? provider.cacheContext() : {};
+async function findProducts(provider, intent, limit, stats, deadline, page) {
+  /* whatever this adapter says changes its results beyond the intent; a
+     later page is its own entry, and page 1 keeps the key it always had */
+  const own = typeof provider.cacheContext === 'function' ? provider.cacheContext() : {};
+  const context = page > 1 ? Object.assign({}, own, { page }) : own;
   const key = cache.searchKey({ provider: provider.name, intent, limit, context });
 
   const cached = await cache.readSearch(key, stats);
@@ -356,7 +382,7 @@ async function findProducts(provider, intent, limit, stats, deadline) {
   let storeable = false;
 
   if (!payload) {
-    const run = await cache.coalesce(key, () => recordsFrom(provider, intent, limit, deadline));
+    const run = await cache.coalesce(key, () => recordsFrom(provider, intent, limit, deadline, page));
     payload = run.value;
     /* the request that made the provider call writes the entry; a
        follower would only write the same thing over the top of it */
@@ -457,15 +483,18 @@ async function runSearch(body, options) {
   const budgetMs = o.budgetMs || requestBudget();
   const deadline = o.deadline || startedAt + budgetMs;
   const b = body && typeof body === 'object' ? body : {};
-  const intent = shapeIntent(b.intent);
+  /* a cursor page brings its own intent and page size, from the server */
+  const intent = o.intent || shapeIntent(b.intent);
   const attachments = shapeAttachments(b.attachments);
-  const limit = limitOf(b.limit);
+  const limit = o.limit || limitOf(b.limit);
+  const paginate = Boolean(o.paginate || b.paginate === true);
+  const page = paginate && Number(o.page) > 1 ? Math.floor(Number(o.page)) : 1;
 
   const cacheStats = cache.counters();
 
   let found;
   try {
-    found = await searchWithFallback(provider, intent, limit, cacheStats, deadline);
+    found = await searchWithFallback(provider, intent, limit, cacheStats, deadline, { page });
   } catch (err) {
     /* A stage of ours failed on an answer the provider did give: that is
        not the source being unavailable, and is not reported as if it
@@ -544,9 +573,42 @@ async function runSearch(body, options) {
     };
   }
 
-  const compose = (usage) => composeBody(found, { provider, limit, attachments, budgetMs, startedAt, deadline, cacheStats }, usage);
+  /* Pages: what this page adds to the ones before it. Applied only to a
+     paginated request, so the search page's answer is what it was. */
+  let paging = null;
+  if (paginate) {
+    const fresh = pages.unseen(found.products, o.seen, limit);
+    found = Object.assign({}, found, { products: fresh.products });
+    const answered = PROVIDERS[found.provider] || provider;
+    const supported = pages.supports(answered);
+    paging = {
+      page,
+      pageSize: limit,
+      /* more is offered only from a source that pages, only when it
+         answered with at least a full page (a short page is its last),
+         and inside the depth one paid search may be browsed */
+      hasMore: supported && page < pages.MAX_PAGES && Array.isArray(found.records) && found.records.length >= limit,
+      supported,
+      maxPages: pages.MAX_PAGES,
+      repeatedRemoved: fresh.repeated,
+      seen: fresh.seen
+    };
+  }
 
-  return { status: 200, found, intent, limit, compose };
+  const compose = (usage) => {
+    const answer = composeBody(found, { provider, limit, attachments, budgetMs, startedAt, deadline, cacheStats }, usage);
+    if (paging) {
+      Object.assign(answer, {
+        page: paging.page,
+        hasMore: paging.hasMore,
+        nextCursor: null,
+        pagination: { supported: paging.supported, pageSize: paging.pageSize, maxPages: paging.maxPages, repeatedRemoved: paging.repeatedRemoved }
+      });
+    }
+    return answer;
+  };
+
+  return { status: 200, found, intent, limit, paging, compose };
 }
 
 /* Whether a search that showed nothing did so because the offer lookups
@@ -654,9 +716,15 @@ module.exports = async function handler(req, res) {
      left costs no quota. Counted after it answers, so a search that
      failed upstream is not charged to them. */
   const { identity, state, blocked } = await meter.guard(req, res, SEARCHES);
+  const body = await readBody(req);
+
+  /* Load more on a search already paid for: see "Pages" above */
+  if (typeof body.cursor === 'string' && body.cursor) {
+    return nextPage(req, res, body.cursor, { identity, state, provider, startedAt, budgetMs, deadline });
+  }
+
   if (blocked) return meter.overLimit(res, state);
 
-  const body = await readBody(req);
   const outcome = await runSearch(body, { provider, startedAt, budgetMs, deadline });
   if (outcome.status !== 200) return res.status(outcome.status).json(outcome.body);
 
@@ -664,8 +732,83 @@ module.exports = async function handler(req, res) {
      the gate then makes of the records: the quota was spent either way,
      and it is the shopper's one search either way. */
   const after = await meter.spend(identity, SEARCHES, 1);
-  return res.status(200).json(outcome.compose(meter.report(after || state)));
+  const answer = outcome.compose(meter.report(after || state));
+  if (outcome.paging && outcome.paging.hasMore) {
+    answer.nextCursor = await issueCursor(outcome, 2);
+    if (!answer.nextCursor) answer.hasMore = false;
+  }
+  return res.status(200).json(answer);
 };
+
+/* The cursor for the page after this one, or null when the store could
+   not keep it — in which case no more is offered rather than a Load
+   more that could only fail. */
+async function issueCursor(outcome, nextPageNumber) {
+  try {
+    return await pages.issue({
+      provider: outcome.found.provider,
+      intent: outcome.intent,
+      limit: outcome.limit,
+      page: nextPageNumber,
+      seen: outcome.paging.seen
+    });
+  } catch (err) {
+    console.error('Could not keep a search cursor.', err && err.message);
+    return null;
+  }
+}
+
+/* One later page of a paid search. Not metered as a search; held to
+   the cursor's own limits and the `search:more` rate limit instead. */
+async function nextPage(req, res, cursor, context) {
+  const { identity, state, startedAt, budgetMs, deadline } = context;
+  const gate = await limits.check('search:more', identity.subject);
+  if (!gate.allowed) {
+    if (typeof res.setHeader === 'function') res.setHeader('Retry-After', String(gate.retryAfter || 60));
+    return res.status(429).json({ error: 'Too many pages at once. Try again in a few minutes.', reason: 'rate-limited', retryAfter: gate.retryAfter || 60 });
+  }
+
+  let taken;
+  try {
+    taken = await pages.take(cursor);
+  } catch (err) {
+    console.error('Could not read a search cursor.', err && err.message);
+    return res.status(503).json({ error: 'More results are not available right now. Search again to see more.', reason: 'cursor-unavailable' });
+  }
+  if (taken.refused === 'in-use') {
+    return res.status(409).json({ error: 'That page is already loading.', reason: 'cursor-in-use' });
+  }
+  if (taken.refused) {
+    return res.status(410).json({ error: 'These results have expired. Search again to see more.', reason: 'cursor-expired' });
+  }
+  await limits.note('search:more', identity.subject);
+
+  const held = taken.state;
+  const provider = PROVIDERS[held.provider];
+  if (!provider || !provider.configured() || !pages.supports(provider) || !(held.page > 1) || held.page > pages.MAX_PAGES) {
+    return res.status(410).json({ error: 'These results have expired. Search again to see more.', reason: 'cursor-expired' });
+  }
+
+  const outcome = await runSearch({}, {
+    provider, startedAt, budgetMs, deadline,
+    intent: shapeIntent(held.intent),
+    limit: limitOf(held.limit),
+    paginate: true,
+    page: held.page,
+    seen: held.seen
+  });
+  if (outcome.status !== 200) {
+    /* nothing was shown, so the shopper may try this page again */
+    await pages.giveBack(cursor, held).catch(() => {});
+    return res.status(outcome.status).json(outcome.body);
+  }
+  const answer = outcome.compose(meter.report(state));
+  if (outcome.paging.hasMore) {
+    answer.nextCursor = await issueCursor(outcome, held.page + 1);
+    if (!answer.nextCursor) answer.hasMore = false;
+  }
+  return res.status(200).json(answer);
+}
 
 module.exports.shapeIntent = shapeIntent;
 module.exports.shapeAttachments = shapeAttachments;
