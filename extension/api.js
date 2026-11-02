@@ -3,7 +3,7 @@
 
    The only code in the extension that makes a request, and only to
    Fynd's own API (FYND_API, config.js; the one host the manifest grants).
-   Three calls:
+   Four calls:
 
      savedGarments()   GET  /api/fit-profile — the garments saved on the
                        shopper's fit profile, read with their own Fynd
@@ -16,6 +16,9 @@
                        own engine and decision (api/_sizing/). The answer
                        is the server's: the extension never ranks, scores
                        or recommends.
+     metrics(events)   POST /api/size-recommendation?metrics=1 — anonymous
+                       counters of how much work a comparison took (event
+                       names and two numbers; never under Do Not Track)
      interpretChart(request)
                        POST /api/size-recommendation?parse=1 — only when the deterministic
                        reading can't interpret a chart (extract.js
@@ -103,5 +106,16 @@
     body: JSON.stringify(body)
   }, AI_TIMEOUT_MS);
 
-  return { request, savedGarments, compareChart, interpretChart, TIMEOUT_MS, AI_TIMEOUT_MS, base };
+  /* anonymous product counters (api/_metrics.js): event names from a fixed list, two
+     numbers, nothing identifying — and nothing at all under Do Not Track or Global
+     Privacy Control. Fire and forget: a counter never holds up the panel */
+  const nav = (typeof navigator !== 'undefined' && navigator) || {};
+  const metricsOff = nav.doNotTrack === '1' || nav.globalPrivacyControl === true || config.metrics === false;
+  const metrics = (events) => (metricsOff || !events.length ? Promise.resolve(null) : request('/api/size-recommendation?metrics=1', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ events: events.slice(0, 20).map((e) => Object.assign({ surface: 'extension' }, e)) })
+  }).catch(() => null));
+
+  return { request, savedGarments, compareChart, interpretChart, metrics, metricsOff, TIMEOUT_MS, AI_TIMEOUT_MS, base };
 });

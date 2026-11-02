@@ -159,7 +159,8 @@ function serveApi() {
     if (raw) { try { req.body = JSON.parse(raw); } catch (err) { req.body = raw; } }
     req.query = Object.fromEntries(u.searchParams);
     const hit = { method: req.method, path: u.pathname + u.search, origin: req.headers.origin || null, cookie: /fynd_session=/.test(req.headers.cookie || ''), body: req.body || null, status: null };
-    apiHits.push(hit);
+    /* the anonymous counters are kept apart: they never stand in for a comparison */
+    if (u.search !== '?metrics=1') apiHits.push(hit);
     try { await handler(req, res); } catch (err) { if (!res.writableEnded) { res.statusCode = 500; res.end('{}'); } }
     if (!res.writableEnded) res.end();
     hit.status = res.statusCode;
@@ -569,7 +570,7 @@ async function launch(display, port, apiPort) {
   });
 
   await test('the panel asked nothing of any host but Fynd’s API, and nothing failed in the console', async () => {
-    const off = requests.filter((u) => !u.startsWith(`${API}/api/fit-profile`) && !u.startsWith(`${API}/api/size-recommendation?compare=1&candidate=1`));
+    const off = requests.filter((u) => !u.startsWith(`${API}/api/fit-profile`) && !u.startsWith(`${API}/api/size-recommendation?compare=1&candidate=1`) && u !== `${API}/api/size-recommendation?metrics=1`);
     assert.deepStrictEqual(off, [], `the panel made other requests: ${off.join(', ')}`);
     assert.ok(requests.length >= 3);
     assert.deepStrictEqual(errors.filter((e) => !/Receiving end does not exist|401 \(Unauthorized\)/.test(e)), []);

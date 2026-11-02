@@ -114,6 +114,7 @@ const section = (s) => console.log(`\n${s}`);
 
 /* ---------- this machine's Fynd: the shops' pages, and the API ---------- */
 const hits = [];        /* every API request: what the server saw */
+const counted = [];     /* the anonymous counters (?metrics=1), kept apart so they never stand in for a comparison */
 const faults = [];      /* one-shot answers in place of the handler: { path, status, body, headers, delayMs } */
 function adapt(res) {
   res.status = (code) => { res.statusCode = code; return res; };
@@ -136,8 +137,9 @@ function serve() {
       if (body !== undefined) req.body = body;
       req.query = Object.fromEntries(u.searchParams);
       const hit = { method: req.method, path: u.pathname, search: u.search, host: req.headers.host, origin: req.headers.origin || null, cookie: /fynd_session=/.test(req.headers.cookie || ''), body: body === undefined ? null : body, status: null };
-      hits.push(hit);
-      const fault = faults.findIndex((f) => f.path === u.pathname && (!f.method || f.method === req.method));
+      const isCounter = u.search === '?metrics=1';
+      (isCounter ? counted : hits).push(hit);
+      const fault = isCounter ? -1 : faults.findIndex((f) => f.path === u.pathname && (!f.method || f.method === req.method));
       if (fault >= 0 && req.method !== 'OPTIONS') {
         const f = faults.splice(fault, 1)[0];
         if (f.delayMs) await new Promise((r) => setTimeout(r, f.delayMs));
@@ -731,9 +733,12 @@ const TEE = { unit: 'in', chestWidth: 21.5, bodyLength: 29 };
 
   section('what the panel asks of the network');
 
-  await test('every request the panel made went to Fynd’s API, and only to its three endpoints', async () => {
+  await test('every request the panel made went to Fynd’s API, and only to its endpoints — the anonymous counters carrying nothing but event names and two numbers', async () => {
+    assert.ok(counted.length > 0, 'the panel counts its work');
+    counted.forEach((h) => (h.body.events || []).forEach((e) => assert.deepStrictEqual(Object.keys(e).filter((k) => !['name', 'surface', 'value'].includes(k)), [])));
+    assert.ok(counted.some((h) => h.body.events.some((e) => e.name === 'manual_inputs' && e.surface === 'extension')));
     assert.ok(asked.length > 0);
-    const off = asked.filter((u) => !u.startsWith(`${API}/api/fit-profile`) && !u.startsWith(`${API}/api/size-recommendation?compare=1&candidate=1`) && u !== `${API}/api/size-recommendation?parse=1`);
+    const off = asked.filter((u) => !u.startsWith(`${API}/api/fit-profile`) && !u.startsWith(`${API}/api/size-recommendation?compare=1&candidate=1`) && u !== `${API}/api/size-recommendation?parse=1` && u !== `${API}/api/size-recommendation?metrics=1`);
     assert.deepStrictEqual(off, []);
     assert.ok(!hits.some((h) => h.path === '/api/size-recommendation' && h.method === 'GET'), 'never the catalogue lookup');
   });

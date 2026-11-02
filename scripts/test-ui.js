@@ -460,6 +460,18 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
   kindLabel: n.querySelector('.attachment-kind') ? n.querySelector('.attachment-kind').textContent : null
 })));
 
+
+/* Find Fit's hand-entry fallbacks are folded until a shopper wants them;
+   these tests of what those forms do open them first, as a shopper would
+   (each the first time it appears) */
+const openFallbacks = (target) => target.addInitScript(() => {
+  const open = () => ['ff-manual', 'ffr-manual', 'ffr-details'].forEach((id) => {
+    const d = document.getElementById(id);
+    if (d && !d.dataset.testOpened) { d.dataset.testOpened = '1'; d.open = true; }
+  });
+  document.addEventListener('DOMContentLoaded', () => { open(); new MutationObserver(open).observe(document.body, { childList: true, subtree: true }); });
+});
+
 (async () => {
   await new Promise((r) => server.listen(PORT, r));
   let browser;
@@ -480,6 +492,7 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
   const openPage = async (file, options) => {
     const opts = options || {};
     const page = await browser.newPage();
+    await openFallbacks(page);
     if (opts.viewport) await page.setViewportSize(opts.viewport);
     /* apiOverride: false leaves the page to find its API the way a real
        visitor's page does — from its own origin and its meta tag */
@@ -1153,6 +1166,7 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     const held = deferred();
     stubs.search = { hold: held.held };
     const still = await browser.newPage();
+    await openFallbacks(still);
     await still.emulateMedia({ reducedMotion: 'reduce' });
     await still.addInitScript(() => {
       window.FINDWEAR_API = 'http://127.0.0.1:8899/api/interpret';
@@ -1734,6 +1748,7 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
     const search = deferred();
     stubs.search = { hold: search.held, reply: answerWith(pieces(8)) };
     const page = await browser.newPage();
+    await openFallbacks(page);
     await page.emulateMedia({ reducedMotion: 'reduce' });
     await page.addInitScript(() => {
       window.FINDWEAR_API = 'http://127.0.0.1:8899/api/interpret';
@@ -2258,6 +2273,7 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
 
     reset();
     const still = await browser.newPage();
+    await openFallbacks(still);
     await still.emulateMedia({ reducedMotion: 'reduce' });
     await still.addInitScript(() => {
       window.FINDWEAR_API = 'http://127.0.0.1:8899/api/interpret';

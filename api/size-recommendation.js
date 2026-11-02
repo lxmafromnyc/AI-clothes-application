@@ -26,6 +26,8 @@
                                                        read from its brand's own page
                                                        (api/_sizing/chart.js); needs
                                                        no account and reads no profile
+   POST ?metrics=1 { events }  -> { ok }             anonymous daily counters of how much
+                                                       work a comparison took (api/_metrics.js)
    GET ?brands=1               -> { brands, planned } the brands Find Fit can browse
    GET ?anchors=1              -> { anchors }      the products a shopper can name as
                                                        the garment they own and have Fynd
@@ -142,6 +144,8 @@ const pageAccess = require('./_sizing/page-access');
 const officialCharts = require('./_sizing/official-charts');
 /* the extension's AI-assisted chart reading (POST ?parse=1): its own rules, in its own module */
 const parseChart = require('./_sizing/parse-chart');
+/* anonymous, aggregate product counters (POST ?metrics=1): see api/_metrics.js */
+const metrics = require('./_metrics');
 
 const PRODUCT_ID = /^[a-z0-9]+(?:-[a-z0-9]+){0,12}$/;
 const MAX_ITEMS = 24;
@@ -282,6 +286,9 @@ async function checkFirst(req, res) {
     host: checked.host,
     brand: checked.brand,
     name: record ? record.product.name : null,
+    /* the kind of garment, when Fynd's record says it: a page needn't ask */
+    category: record ? record.category : null,
+    line: record && record.line ? record.line : null,
     /* may Fynd read this retailer's pages at all — from the reviewed list only */
     pages: access.allowed ? 'readable' : access.reason
   };
@@ -420,6 +427,7 @@ async function handler(req, res) {
     try {
       const q = req.query || Object.fromEntries(new URL(req.url || '/', 'http://fynd.local').searchParams);
       if (q.parse === '1') return await parseChart(req, res);
+      if (q.metrics === '1') return await metrics.handler(req, res);
       if (q.check === '1') return await checkFirst(req, res);
       if (q.candidate === '1') return await compareCandidate(req, res);
       return await compareUnsaved(req, res);

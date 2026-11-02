@@ -144,7 +144,9 @@
      shopper). Recorded and returned, never trusted: the item stays
      "shopper-entered" whatever it says. */
   const MAX_SIZES = 30;
-  const SOURCES = ['page-table', 'page-structured-data', 'shopper'];
+  /* fynd-record: Fynd's own copy of the brand's published chart, not yet checked
+     against it — offered on Find Fit for the shopper to check, never "verified" */
+  const SOURCES = ['page-table', 'page-structured-data', 'shopper', 'fynd-record'];
   const MEASURES = ['finished-garment', 'body', 'not-stated'];
   function pageAddress(raw) {
     if (typeof raw !== 'string' || !raw || raw.length > 2000) return null;

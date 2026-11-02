@@ -1,13 +1,18 @@
 # Fynd — AI clothing finder
 
-Fynd finds the fit. The home page, **Find Fit**, takes one thing: a link to a
-clothing product from any shop. Fynd reads that product's page — and the size
-guide it links to — on its own server, and shows the sizing chart there and then:
-its sizes and measurements exactly as published, their unit, whether they
-describe the body or the garment, where they came from, and a short note on what
-they do and don't tell you. A saved **fit profile** adds a comparison with a
-garment the shopper owns, where the chart supports one. See
-[Find Fit: sizing charts from a product link](#find-fit-sizing-charts-from-a-product-link).
+Fynd finds the fit. The home page, **Find Fit**, asks two questions: *which
+clothes already fit you the way you like?* and *what are you thinking of
+buying?* Fynd does the rest where its data allows:
+
+- it identifies the product from its link;
+- it finds its sizes and garment measurements;
+- it reads how each is measured and in what unit;
+- it compares every size with the shopper's garment on its own server;
+- it suggests a size only when the evidence holds.
+
+Typing measurements is the fallback. The **Chrome extension** does the same
+from the product page itself. See
+[Find Fit: two questions](#find-fit-two-questions-fynd-does-the-measuring).
 
 The Search page (keyword search across the product source) is still there,
 reached from the footer; each of its results can open the same sizing chart.
@@ -53,7 +58,7 @@ cards, with every detail open, and the search page's fit panel are audited too.
 
 | Page | File | What it does |
 | --- | --- | --- |
-| Find Fit (home) | `index.html` | Paste a clothing product's link; its sizing chart appears on the page, with its source, what it measures and a note, and a fit-profile comparison where supported. `index.html#guide`, the old fit guide's address, goes to the fit profile |
+| Find Fit (home) | `index.html` | Which clothes already fit you (a saved garment, one found by name or link, or measured), and what you're buying (its link, or by hand). Every size is compared on the server. `index.html#guide`, the old fit guide's address, goes to the fit profile |
 | Search | `find-clothes.html` | Describe what you want in your own words, and say what kind of clothing it is ("Shopping for"); results are followed by how your fit profile was used. The demo film of four real searches sits under the box |
 | Pricing | `pricing.html` | The three plans, which one you are on, and the way to change it |
 | Account | `account.html` | Sign in with Google or email; your plan, usage and subscription |
@@ -2623,7 +2628,65 @@ survive closing the dialog and reloading the page.
 `id`, `name`, `market`, `coverage`, `products()` and `find(code)`, and add it to
 `BRANDS` in `api/_sizing/brands/index.js`. Find Fit needs no change.
 
+### Find Fit: two questions, Fynd does the measuring
+
+The page asks for two things and does the rest (`index.html`,
+`assets/find-fit-reference.js`, `assets/find-fit-item.js`,
+`assets/find-fit-manual.js`, all on existing APIs):
+
+**01 · Which clothes already fit you the way you like?**
+
+- **Saved garments.** These are the fit profile's own; there is no second
+  profile system.
+  - The one of the item's kind is chosen automatically. For a hoodie or
+    sweatshirt, the other can stand in.
+  - One of another family is shown but can't be chosen.
+  - With several saved, the shopper can pick another.
+- **Find it by name or link** (`catalog-suggest.js`, `POST ?check=1`):
+  - a found product fills in its kind and brand, so the size on its label is
+    the only question;
+  - its checked garment measurements, where Fynd holds them, stand in for the
+    shopper's (the engine's `referenceEntry`).
+- **Its measurements, laid flat**, behind "Or enter its measurements". A
+  garment with measurements needs no brand or size. Kept for the visit in
+  `sessionStorage`, as before, and saved only with the shopper's explicit yes.
+
+**02 · What are you thinking of buying?**
+
+Paste its link. `GET ?chart=<link>` (`api/_sizing/chart.js`) answers in one of
+these ways:
+
+| What Fynd holds | What the shopper does |
+|---|---|
+| **A checked record:** verified garment measurements | Nothing. Every size is compared at once (`?product=<id>&compare=1`). |
+| **A garment chart:** Fynd's own unchecked copy of the brand's page, or the page itself, with every column's measurement, method and unit known | One tick: "These match the size chart on the product page". The values are one click away. Every size is then compared in one request (`?compare=1&candidate=1` with `{ chart }`, the extension's batch endpoint), as the shopper's confirmed numbers, never verified. |
+| **A chart that is incomplete, body-only, or unreadable from the server** (no retailer is cleared for server reading today) | Said so, with the **extension** (which reads the page in the shopper's browser) or **hand entry** as the ways on. |
+
+The kind of garment comes from Fynd's record or the product's name and is asked
+only when neither says. Units come with the chart. When both halves are ready,
+whether by Fynd or by the shopper's tick, the comparison runs without another
+click. By hand, **Compare fit** is still the shopper's.
+
+**The result** leads with the recommended size, then why, then each measurement
+beside the garment's, then the caveats and sources. Every size's signed
+differences are folded beneath. A size appears only when the server's decision
+is OK, and the sources say where each side's numbers came from.
+
+**Counting the work** (`assets/fit-metrics.js`, `api/_metrics.js`,
+`scripts/fit-metrics-report.js`):
+
+- **What is counted:** anonymous daily totals of named events from a fixed list,
+  plus the shopper's distinct manual inputs and the seconds to a result.
+- **What is never sent:** nothing identifying, and no product, size or link.
+  Nothing at all is sent under Do Not Track or Global Privacy Control.
+- **The key metric:** manual inputs per successful comparison. A returning
+  shopper with a saved garment needs two: the link and the tick (tested in
+  `test-e2e`).
+
 ### Find Fit: the item entered by hand
+
+This is the fallback, behind "No link, or Fynd couldn't read it?". Its own kind
+and unit choices appear only while it is open.
 
 **Find Fit** (`index.html`, `assets/find-fit-manual.js`) compares a garment the
 shopper owns with one size of any item they are considering, without Fynd's

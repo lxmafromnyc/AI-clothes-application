@@ -110,7 +110,7 @@ const raw = (tables, extra) => Object.assign({
     const api = fs.readFileSync(path.join(EXT, 'api.js'), 'utf8');
     assert.strictEqual((api.match(/\bfetchFn\(/g) || []).length, 1);
     assert.match(api, /fetchFn\(`\$\{base\}\$\{path\}`/);
-    assert.deepStrictEqual((api.match(/request\('([^']+)'/g) || []).map((x) => x.slice(9, -1)), ['/api/fit-profile', '/api/size-recommendation?compare=1&candidate=1', '/api/size-recommendation?parse=1']);
+    assert.deepStrictEqual((api.match(/request\('([^']+)'/g) || []).map((x) => x.slice(9, -1)), ['/api/fit-profile', '/api/size-recommendation?compare=1&candidate=1', '/api/size-recommendation?parse=1', '/api/size-recommendation?metrics=1']);
     /* the AI-assisted reading goes through Fynd's server: no model, provider or key in the extension */
     for (const f of fs.readdirSync(EXT).filter((x) => /\.(js|json|html)$/.test(x))) {
       assert.ok(!/generativelanguage|googleapis|openai\.com|anthropic\.com|GEMINI|api[_-]?key/i.test(fs.readFileSync(path.join(EXT, f), 'utf8')), `${f} names no model provider or key`);

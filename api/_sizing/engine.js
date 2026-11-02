@@ -447,6 +447,18 @@ function candidateRecord(candidate) {
 }
 /* a record the engine may read: a sizing record that passes its schema,
    or an item entered by hand in candidateRecord()'s own shape */
+/* Where a shopper-entered item's numbers came from, by their recorded provenance:
+   'fynd-record' (Fynd's own unchecked copy of the brand's chart), 'page' (read
+   from the product page), or 'shopper' (typed, or mixed). Words only. */
+function enteredFrom(record) {
+  const prov = record && record.charts && record.charts.garment && record.charts.garment.provenance;
+  const sources = prov ? Object.values(prov).flatMap((bySize) => Object.values(bySize || {}).map((p) => p && p.source)) : [];
+  if (!sources.length) return 'shopper';
+  if (sources.every((x) => x === 'fynd-record')) return 'fynd-record';
+  if (sources.every((x) => x === 'page-table' || x === 'page-structured-data')) return 'page';
+  return 'shopper';
+}
+
 function readableRecord(record) {
   if (!record || typeof record !== 'object') return false;
   if (!isShopperEntered(record)) return sizingSchema.validate(record).length === 0;
@@ -1677,7 +1689,16 @@ function compare(profile, record, opts) {
   if (!complete) caveats.push(`Compared on ${dims.map((d) => DIM_NAMES[d]).join(', ')} only — ${skipped.map((x) => `${DIM_NAMES[x.dim]}: ${x.why}`).join('; ')}.`);
   if (ref.measured) { reliability = capAt(reliability, 'medium'); caveats.push('Your reference was measured at home; a quarter inch either way changes the comparison.'); }
   /* the same rule for the item: numbers the shopper typed in from its chart, which Fynd hasn't seen */
-  if (isShopperEntered(record)) { reliability = capAt(reliability, 'medium'); caveats.push('The item\'s measurements are the ones you entered from its chart; Fynd hasn\'t checked them against the brand.'); }
+  if (isShopperEntered(record)) {
+    reliability = capAt(reliability, 'medium');
+    /* said as where the numbers came from (their provenance, never trusted for anything else) */
+    const from = enteredFrom(record);
+    caveats.push(from === 'fynd-record'
+      ? 'The item\'s measurements are Fynd\'s copy of the brand\'s published chart, which you checked against the product page; Fynd hasn\'t verified them.'
+      : from === 'page'
+        ? 'The item\'s measurements were read from the product page and confirmed by you; Fynd hasn\'t checked them against the brand.'
+        : 'The item\'s measurements are the ones you entered from its chart; Fynd hasn\'t checked them against the brand.');
+  }
   if (dims.some((d) => used[d].estimated)) { reliability = capAt(reliability, 'medium'); caveats.push('Some differences rest on a worked-out value, not a published one.'); }
   if (found.crossCategory) { reliability = lower(reliability); caveats.push(`Your reference is a ${CATEGORY_WORDS[found.category]}, and this is a ${CATEGORY_WORDS[record.category]}.`); }
   if (favorite.answer === 'close') { reliability = lower(reliability); caveats.push('You said your reference is close to the fit you like, not exactly it.'); }
@@ -1733,7 +1754,9 @@ function compare(profile, record, opts) {
     method: 'Each size is scored by how far its measurements are from your reference, dimension by dimension — chest counts most, then lengths, then shoulders, and whatever you said matters most counts double. Only measurements taken the same way are compared.',
     caveats,
     notes,
-    dataStatus: isShopperEntered(record) ? SHOPPER_ENTERED : sizingSchema.isVerified(record) ? 'verified' : 'unverified'
+    dataStatus: isShopperEntered(record) ? SHOPPER_ENTERED : sizingSchema.isVerified(record) ? 'verified' : 'unverified',
+    /* for a shopper-entered item: where its numbers came from, so a page says it the same way */
+    enteredFrom: isShopperEntered(record) ? enteredFrom(record) : null
   };
 }
 

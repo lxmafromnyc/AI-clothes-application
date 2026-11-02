@@ -116,6 +116,15 @@
   let editing = false;
   /* a wardrobe anchor picked: the form's starting values, until used or cancelled */
   let prefill = null;
+  /* how this visit's garment was found, for the anonymous counters: 'search' | 'link' | 'manual' */
+  let pickedHow = null;
+  let visitHow = null;
+  /* the item's kind, once Find Fit knows it (assets/find-fit-item.js) */
+  let itemType = null;
+  const itemKind = () => itemType || (global.FindFitItem && global.FindFitItem.type ? global.FindFitItem.type() : null);
+  /* the saved garment the shopper chose, or null for Fynd's own choice */
+  let chosenKind = null;
+  const FAMILY = { hoodies: 'fleece', sweatshirts: 'fleece', tshirts: 'tees' };
 
   /* ---------- the form ---------- */
 
@@ -228,10 +237,14 @@
     title.id = 'ffr-form-title';
     box.append(title, finder());
 
+    /* the one question after a product is found: the size on its label. The
+       kind of garment is asked only while nothing else says it */
     const row = el('div', 'ffr-row');
+    const typeField = field('Type', select('ffr-type', FIND_FIT_KINDS.concat(from && from.type && !FIND_FIT_KINDS.includes(from.type) ? [from.type] : []).map((k) => [k, cap(Schema.garmentOf(k).one)]),
+      from ? from.type : (itemKind() && FIND_FIT_KINDS.includes(itemKind()) ? itemKind() : FIND_FIT_KINDS.includes(topChoice('ff-type', 'hoodies')) ? topChoice('ff-type', 'hoodies') : FIND_FIT_KINDS[0])));
+    typeField.id = 'ffr-type-field';
     row.append(
-      field('Type', select('ffr-type', FIND_FIT_KINDS.concat(from && from.type && !FIND_FIT_KINDS.includes(from.type) ? [from.type] : []).map((k) => [k, cap(Schema.garmentOf(k).one)]),
-        from ? from.type : (FIND_FIT_KINDS.includes(topChoice('ff-type', 'hoodies')) ? topChoice('ff-type', 'hoodies') : FIND_FIT_KINDS[0]))),
+      typeField,
       field('Size on its label', select('ffr-size', [['', 'Choose…']].concat(Schema.LETTER_SIZES.map((s) => [s, s])), a.size || ''))
     );
     box.append(row);
@@ -240,6 +253,11 @@
     brands.id = 'ffr-brands';
     Schema.ANCHOR_BRANDS.forEach((b) => { const o = el('option'); o.value = b; brands.append(o); });
     box.append(field('Brand', brand), brands);
+    /* the rest is optional, and folded away: filled in from a product found, or left at its default */
+    const details = el('details', 'ffr-more');
+    details.id = 'ffr-details';
+    if (a.product || (g && (g.line || g.favorite === 'close'))) details.open = true;
+    details.append(el('summary', 'ffr-more-summary', 'Product, and how it fits (optional)'));
     const product = a.product ? (a.product.url || a.product.name || '') : '';
     const productField = field('Product name or link (optional)', input('ffr-product', 'text', product, { maxlength: '2000', autocomplete: 'off', spellcheck: 'false' }));
     const [productInfo, productText] = info('ffr-product-info', 'About the product name or link', 'If Fynd holds checked measurements for this exact product, it uses them for your garment.');
@@ -250,18 +268,23 @@
     productHead.append(productLabel, productInfo);
     productField.querySelector('input').after(productText);
     productField.querySelector('input').setAttribute('aria-describedby', 'ffr-product-info');
-    box.append(productField);
+    details.append(productField);
     const row2 = el('div', 'ffr-row');
     row2.append(
       field('Sold as', select('ffr-line', [['not-sure', 'Not sure'], ['men', 'Men’s'], ['women', 'Women’s'], ['unisex', 'Unisex']], (g && g.line) || 'not-sure')),
       field('How it fits', select('ffr-favorite', [['perfect', 'Just how I like'], ['close', 'Close to how I like']], (g && g.favorite) || 'perfect'))
     );
-    box.append(row2);
+    details.append(row2);
+    box.append(details);
 
     /* the four measurements, laid flat, in the unit chosen at the top of
        Find Fit (kept in step by assets/find-fit-manual.js); any can be left
        blank — nothing is filled in */
-    const more = el('div', 'ffr-measure');
+    /* the fallback: its measurements, taken at home — open only when they're already there */
+    const more = el('details', 'ffr-measure');
+    more.id = 'ffr-manual';
+    if (a.measurements) more.open = true;
+    more.append(el('summary', 'ffr-more-summary', 'Or enter its measurements, laid flat'));
     const moreHead = el('div', 'ff-mlabel ffr-measure-head');
     const [measureInfo, measureText] = info('ffr-measure-info', 'About measuring your garment', 'Lay it flat and measure it as each line says. Leave blank any you can’t take: Fynd compares only what both garments share, and needs at least three including the chest.');
     moreHead.append(el('p', 'ffr-measure-title', 'Its measurements, laid flat'), measureInfo);
@@ -308,7 +331,7 @@
     label.htmlFor = 'ffr-search';
     const smart = el('div', 'ff-smart');
     const search = input('ffr-search', 'text', '', {
-      placeholder: 'Search brand, item and size — e.g. Uniqlo hoodie M', maxlength: '200', autocomplete: 'off', spellcheck: 'false',
+      placeholder: 'Brand and item, or paste its link — e.g. Uniqlo hoodie M', maxlength: '2000', autocomplete: 'off', spellcheck: 'false',
       role: 'combobox', 'aria-autocomplete': 'list', 'aria-expanded': 'false', 'aria-controls': 'ffr-suggest', 'aria-describedby': 'ffr-search-hint'
     });
     const box = el('div', 'ff-suggest');
@@ -342,8 +365,22 @@
         ready: (n) => `${n} matching product${n === 1 ? '' : 's'}. Not listed? Fill in the details below.`
       }
     });
-    search.addEventListener('input', () => { pickAsk += 1; held.hidden = true; suggest.soon(search.value); });
-    search.addEventListener('keydown', (e) => suggest.key(e));
+    search.addEventListener('input', () => {
+      pickAsk += 1;
+      held.hidden = true;
+      /* a new search: what the last product said about its kind no longer stands */
+      const tf = doc.getElementById('ffr-type-field');
+      if (tf) tf.hidden = false;
+      pickedHow = null;
+      if (/^https?:\/\//i.test(search.value.trim())) { suggest.soon(''); return; }
+      suggest.soon(search.value);
+    });
+    search.addEventListener('keydown', (e) => {
+      /* a link: Fynd looks the product up itself */
+      if (e.key === 'Enter' && /^https?:\/\//i.test(search.value.trim())) { e.preventDefault(); useLink(search.value.trim(), search, held); return; }
+      suggest.key(e);
+    });
+    search.addEventListener('paste', () => global.setTimeout(() => { if (/^https?:\/\/\S+\.\S+/i.test(search.value.trim())) useLink(search.value.trim(), search, held); }, 0));
     return wrap;
   }
 
@@ -356,10 +393,50 @@
     if (v.code === 'category-not-covered') return ['not-covered', 'Fynd doesn’t compare this kind of garment yet.'];
     return ['none', 'Fynd holds no measurements for this product. Add any measurements you can take, below.'];
   }
+  /* a link pasted: the server says which product it is (POST ?check=1 —
+     nothing is fetched to answer), and that is used as a pick */
+  async function useLink(url, search, held) {
+    const mine = ++pickAsk;
+    held.dataset.status = 'checking';
+    held.replaceChildren(el('p', null, 'Looking up that link…'));
+    held.hidden = false;
+    const sizing = global.Account && global.Account.sizing;
+    const got = sizing && sizing.check ? await sizing.check({ url }, null) : null;
+    if (mine !== pickAsk) return;
+    const t = got && got.ok && got.data && got.data.check && got.data.check.target;
+    if (!t || t.status === 'invalid-url' || t.status === 'blocked-address') {
+      held.dataset.status = 'none';
+      held.replaceChildren(el('p', null, 'That doesn’t look like a product page’s address.'));
+      return;
+    }
+    if (t.status === 'record') {
+      pickedHow = 'link';
+      await usePicked({ brand: { id: null, name: t.brand }, product: { name: t.name, url: t.url, category: t.category, line: t.line, code: null } }, null, search, held, got);
+      return;
+    }
+    /* not a product Fynd knows: kept as the product, and its measurements are the way on */
+    const set = (id, value) => { const n = doc.getElementById(id); if (n) n.value = value; };
+    set('ffr-product', t.url || url);
+    if (t.brand) set('ffr-brand', t.brand);
+    pickedHow = 'link';
+    held.dataset.status = 'none';
+    held.replaceChildren(el('p', null, `Fynd holds no measurements for this product${t.brand ? ` from ${t.brand}` : ''}. Choose the size on its label and, if you can, enter its measurements below.`));
+    const manualBox = doc.getElementById('ffr-manual');
+    if (manualBox) manualBox.open = true;
+  }
+
   /* a match picked: the fields filled from what the server listed, then the server asked what it holds */
-  async function usePicked(f, size, search, held) {
+  async function usePicked(f, size, search, held, already) {
+    if (!already) pickedHow = 'search';
     const set = (id, value) => { const n = doc.getElementById(id); if (n && value !== null && value !== undefined) n.value = value; };
-    if (KINDS.includes(f.product.category)) set('ffr-type', f.product.category);
+    if (KINDS.includes(f.product.category)) {
+      set('ffr-type', f.product.category);
+      /* the product says what kind it is: not asked */
+      const tf = doc.getElementById('ffr-type-field');
+      if (tf) tf.hidden = true;
+    }
+    const details = doc.getElementById('ffr-details');
+    if (details) details.open = false;
     set('ffr-brand', f.brand.name);
     set('ffr-product', f.product.url);
     if (['men', 'women', 'unisex'].includes(f.product.line)) set('ffr-line', f.product.line);
@@ -379,13 +456,15 @@
     const mine = ++pickAsk;
     const sizing = global.Account && global.Account.sizing;
     const target = f.brand.id && f.product.code ? { brand: f.brand.id, code: f.product.code } : { url: f.product.url };
-    const got = sizing && sizing.check ? await sizing.check(target, null) : null;
+    const got = already || (sizing && sizing.check ? await sizing.check(target, null) : null);
     if (mine !== pickAsk) return;
     const check = got && got.ok && got.data && got.data.check;
     const [status, text] = check && typeof check === 'object' ? heldSay(check)
       : ['unknown', 'What Fynd holds for this product couldn’t be checked just now. You can still use it — Fynd checks again when it compares.'];
     held.dataset.status = status;
     held.replaceChildren(el('p', null, text), ...lines);
+    /* nothing Fynd can stand in with: its measurements are the way on */
+    if (status !== 'checked') { const manualBox = doc.getElementById('ffr-manual'); if (manualBox) manualBox.open = true; }
     const next = doc.getElementById('ffr-size');
     if (next && !next.value) next.focus();
   }
@@ -428,14 +507,20 @@
   function apply() {
     const said = read();
     const missing = [];
-    if (!said.garment.anchor.brand) missing.push({ id: 'ffr-brand', message: 'Enter the brand on its label.' });
-    if (!said.garment.anchor.size) missing.push({ id: 'ffr-size', message: 'Choose the size on its label.' });
+    const a2 = said.garment.anchor;
+    /* measurements of its own need nothing else; a product needs the size on its
+       label; with neither, the brand and size are all Fynd has to go on */
+    if (!a2.measurements) {
+      if (!a2.size) missing.push({ id: 'ffr-size', message: 'Choose the size on its label.' });
+      if (!a2.brand && !a2.product) missing.push({ id: 'ffr-brand', message: 'Enter the brand on its label, find the product above, or enter its measurements.' });
+    }
     if (missing.length) { showErrors(missing); return; }
     const { errors } = Schema.normaliseGuide({ garments: { [said.type]: said.garment } });
     if (errors.length) {
       showErrors(errors.map((e) => ({ id: FIELD_IDS[e.field.replace(/^garments\.[a-z]+\.(anchor\.)?/, '')] || 'ffr-brand', message: e.message })));
       return;
     }
+    visitHow = pickedHow || 'manual';
     keep(checked(said), 'shopper');
     editing = false;
     prefill = null;
@@ -496,15 +581,40 @@
     drawAnchors();
   }
 
-  /* one kind's saved reference, as the shopper saved it */
-  function referenceCard(kind, entry, readiness) {
+  /* the saved garment Fynd would choose for the item: the same kind, else the
+     same family (a hoodie for a sweatshirt) — never one of another family */
+  function autoKind(profile) {
+    const kinds = savedKinds(profile || lastProfile || {});
+    const want = itemKind();
+    if (!want) return kinds[0] || null;
+    return kinds.find((k) => k === want) || kinds.find((k) => FAMILY[k] === FAMILY[want]) || null;
+  }
+  const chosen = () => (chosenKind && lastProfile && savedKinds(lastProfile).includes(chosenKind) ? chosenKind : autoKind());
+
+  /* one kind's saved reference, as the shopper saved it — a choice when there are several */
+  function referenceCard(kind, entry, readiness, many) {
     const g = Schema.garmentOf(kind);
     const a = entry.anchor || {};
     const said = Schema.describeFavorite(entry) || {};
     const card = el('li', `ff-ref ff-ref--${readiness.level}`);
     card.dataset.kind = kind;
+    const want = itemKind();
+    const other = Boolean(want) && FAMILY[want] !== FAMILY[kind];
+    card.dataset.chosen = String(chosen() === kind);
+    if (other) card.dataset.other = 'true';
     const top = el('div', 'ff-ref-top');
-    top.append(el('span', 'ff-ref-kind', cap(g.one)));
+    if (many) {
+      const label = el('label', 'ff-ref-pick');
+      const radio = el('input');
+      radio.type = 'radio';
+      radio.name = 'ffr-saved';
+      radio.value = kind;
+      radio.checked = chosen() === kind;
+      radio.disabled = other;
+      radio.addEventListener('change', () => { chosenKind = kind; if (global.FyndMetrics) global.FyndMetrics.manualInput('ffr-saved'); redraw(); changed('shopper'); });
+      label.append(radio, el('span', 'ff-ref-kind', cap(g.one)));
+      top.append(label);
+    } else top.append(el('span', 'ff-ref-kind', cap(g.one)));
     top.append(link(setupHref(kind), 'Change', 'guide-link ff-ref-change'));
     card.append(top);
     const label = [a.brand, a.size ? `size ${a.size}` : null, entry.line ? LINE_WORDS[entry.line] : null].filter(Boolean).join(' · ');
@@ -512,9 +622,10 @@
     if (said.product) card.append(el('p', 'ff-ref-detail', said.product));
     card.append(el('p', 'ff-ref-detail', said.measurements ? `Measured: ${said.measurements}` : missingDimensions(Boolean(said.product))));
     const status = el('p', 'ff-ref-status');
-    status.textContent = readiness.level === 'compare'
-      ? 'Ready to compare.'
-      : (readiness.improve[0] || readiness.label);
+    status.textContent = other
+      ? `A different kind of garment from the ${Schema.garmentOf(want).one} you’re considering: not compared with it.`
+      : chosen() === kind && want ? 'Compared with the item.'
+        : readiness.level === 'compare' ? 'Ready to compare.' : (readiness.improve[0] || readiness.label);
     card.append(status);
     return card;
   }
@@ -532,8 +643,10 @@
   function saved(profile) {
     const listed = savedKinds(profile);
     const list = el('ul', 'ff-refs');
-    listed.forEach((kind) => list.append(referenceCard(kind, profile.garments[kind], Schema.readiness(profile, kind))));
-    const note = el('p', 'ff-muted', 'Fynd compares an item with your reference of the same kind — for a hoodie or sweatshirt, the other can stand in, and the result says so.');
+    listed.forEach((kind) => list.append(referenceCard(kind, profile.garments[kind], Schema.readiness(profile, kind), listed.length > 1)));
+    const note = el('p', 'ff-muted', listed.length > 1
+      ? 'Fynd picks the garment of the item’s kind — for a hoodie or sweatshirt, the other can stand in, and the result says so. Choose another if you like.'
+      : 'Fynd compares an item with your reference of the same kind — for a hoodie or sweatshirt, the other can stand in, and the result says so.');
     const missing = KINDS.filter((k) => !listed.includes(k));
     const more = el('p', 'ff-muted');
     if (missing.length) {
@@ -624,9 +737,29 @@
     changed();
   }
 
+  /* the item's kind known or changed: the matching saved garment is chosen, unless the shopper chose */
+  doc.addEventListener('fynd:item-change', (event) => {
+    const t = event && event.detail ? event.detail.type : null;
+    if (t === itemType) return;
+    itemType = t;
+    if (lastProfile && savedKinds(lastProfile).length) saved(lastProfile);
+    else { const tf = doc.getElementById('ffr-type'); if (tf && t && !visit && [...tf.options].some((o) => o.value === t) && !(doc.getElementById('ffr-held') && !doc.getElementById('ffr-held').hidden)) tf.value = t; }
+  });
+  /* the first time the shopper touches the garment half */
+  let startedOnce = false;
+  root.addEventListener('input', () => { if (!startedOnce && global.FyndMetrics) { startedOnce = true; global.FyndMetrics.event('reference_started'); } });
+
   refresh();
   loadAnchors();
   global.FindFitReference = {
+    /* the garment a comparison uses: { source: 'saved', type, garment, isDefault } or { source: 'visit', type, garment, how } */
+    choice: () => {
+      if (savedInUse && lastProfile) {
+        const kind = chosen();
+        return kind ? { source: 'saved', type: kind, garment: lastProfile.garments[kind], isDefault: kind === autoKind() } : null;
+      }
+      return visit ? { source: 'visit', type: visit.type, garment: visit.garment, how: visitHow || 'manual' } : null;
+    },
     refresh,
     unsaved: () => (savedInUse ? null : visit),
     current: () => visit,

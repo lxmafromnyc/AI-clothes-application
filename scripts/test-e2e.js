@@ -289,7 +289,9 @@ const server = http.createServer(async (req, res) => {
   const anchoring = url.pathname === '/api/size-recommendation' && url.searchParams.has('anchors');
   /* an item entered by hand, compared */
   const byHand = url.pathname === '/api/size-recommendation' && url.searchParams.get('candidate') === '1';
-  if (url.pathname.startsWith('/api/')) apiHits.push(browsing ? '/api/size-recommendation (browse)' : checking ? '/api/size-recommendation (check)' : anchoring ? '/api/size-recommendation (anchors)' : byHand ? '/api/size-recommendation (candidate)' : url.pathname);
+  /* the anonymous product counters (api/_metrics.js), named apart from every lookup and comparison */
+  const counting = url.pathname === '/api/size-recommendation' && url.searchParams.get('metrics') === '1';
+  if (url.pathname.startsWith('/api/')) apiHits.push(browsing ? '/api/size-recommendation (browse)' : checking ? '/api/size-recommendation (check)' : anchoring ? '/api/size-recommendation (anchors)' : byHand ? '/api/size-recommendation (candidate)' : counting ? '/api/size-recommendation (metrics)' : url.pathname);
   const handler = HANDLERS[url.pathname];
 
   if (handler) {
@@ -412,6 +414,24 @@ const linkFromInbox = (pattern) => {
       window.FINDWEAR_API = `${origin}/api/interpret`;
       window.FINDWEAR_SEARCH_API = `${origin}/api/search`;
     }, ORIGIN);
+
+    /* Find Fit's hand-entry fallbacks — the item's one-size form, your
+       garment's measurements and its optional details — are folded away
+       until a shopper wants them. The tests of what those forms do open
+       them first, as a shopper would, each the first time it appears
+       (byHand: false leaves the page as a shopper first sees it). */
+    if (!options || options.byHand !== false) {
+      await context.addInitScript(() => {
+        const open = () => ['ff-manual', 'ffr-manual', 'ffr-details'].forEach((id) => {
+          const d = document.getElementById(id);
+          if (d && !d.dataset.testOpened) { d.dataset.testOpened = '1'; d.open = true; }
+        });
+        document.addEventListener('DOMContentLoaded', () => {
+          open();
+          new MutationObserver(open).observe(document.body, { childList: true, subtree: true });
+        });
+      });
+    }
 
     /* Short, so a selector that is never going to appear reports itself
        in seconds rather than after the default half-minute. */
@@ -855,7 +875,7 @@ const linkFromInbox = (pattern) => {
     providerCalls.length = 0;
     await open(page, 'discover.html');
     await page.waitForURL(/\/index\.html$/);
-    await page.waitForSelector('#ff-form #ffc-form');
+    await page.waitForSelector('#ff-form #ffi-link');
     assert.strictEqual((await page.textContent('.nav-links a[aria-current="page"]')).trim(), 'Find Fit');
     assert.deepStrictEqual(apiHits.filter((p) => p === '/api/search' || p === '/api/interpret'), [], 'the old address reached a search endpoint');
     assert.deepStrictEqual(providerCalls, [], 'the old address reached a product source or AI provider');
@@ -1343,7 +1363,7 @@ const linkFromInbox = (pattern) => {
     await page.selectOption('#ffr-type', g.type);
     await page.selectOption('#ffr-size', g.size);
     await page.fill('#ffr-brand', g.brand);
-    if (g.product) await page.fill('#ffr-product', g.product);
+    if (g.product) { await page.evaluate(() => { document.getElementById('ffr-details').open = true; }); await page.fill('#ffr-product', g.product); }
     if (g.measurements) {
       /* the unit is chosen once, at the top, before the values are typed: switching after would convert them */
       await page.check(`input[name="ff-unit"][value="${g.measurements.unit}"]`);
@@ -1378,22 +1398,32 @@ const linkFromInbox = (pattern) => {
   const byHandAsked = () => apiHits.filter((p) => p === '/api/size-recommendation (candidate)').length;
   const SAME_ITEM = { type: 'hoodies', brand: 'AnyBrand', name: 'Heavy Hood', size: 'L', unit: 'cm', measurements: { chestWidth: 58, bodyLength: 68, shoulderWidth: 50, sleeveLength: 62 } };
 
-  await test('Find Fit, desktop first: what you’re shopping for and the unit on top, then your garment and the item side by side in balanced columns, one Compare fit — and no product link, search, brand browser or catalogue on the page', async () => {
-    const context = await openContext();
+  await test('Find Fit, two questions: which clothes fit you, and what you’re buying — side by side, the item by its link first, every hand-entry form folded away until wanted, and one Compare button', async () => {
+    const context = await openContext({ byHand: false });
     const page = await context.newPage();
     await page.setViewportSize({ width: 1440, height: 900 });
     await open(page, 'index.html');
     await page.waitForSelector('#ff-reference[data-state="signed-out"] .ffr-form');
     assert.strictEqual((await page.textContent('#find-fit-title')).trim(), 'Find the size that fits like your favorite clothes.');
-    /* top: the garment type, as large choices — only those Fynd compares today — and the unit for both */
-    assert.strictEqual((await page.textContent('#ff-type legend')).trim(), 'What are you shopping for?');
-    assert.deepStrictEqual(await page.$$eval('input[name="ff-type"]', (rs) => rs.map((r) => [r.value, r.checked, r.closest('label').querySelector('.ff-type-name').textContent])), [['hoodies', true, 'Hoodie'], ['sweatshirts', false, 'Sweatshirt']]);
-    assert.ok(await page.$$eval('.ff-type-card', (cs) => cs.every((c) => c.getBoundingClientRect().height >= 64 && c.getBoundingClientRect().width >= 180)), 'large click targets');
+    /* the two questions */
+    assert.deepStrictEqual(await page.$$eval('.ff-col .ff-step-title', (hs) => hs.map((h) => h.textContent.replace(/\s+/g, ' ').trim())), ['01 · Which clothes already fit you the way you like?', '02 · What are you thinking of buying?']);
+    /* what a shopper sees first: the garment's search, its type and size, its brand — and the item's link. Nothing else */
+    /* Playwright's own visibility: a closed <details> keeps its content's boxes in some Chromium builds */
+    const visible = [];
+    for (const handle of await page.$$('#ff-form input:not([type=hidden]), #ff-form select')) {
+      if (await handle.isVisible()) visible.push(await handle.getAttribute('id'));
+    }
+    assert.deepStrictEqual(visible, ['ffr-search', 'ffr-type', 'ffr-size', 'ffr-brand', 'ffi-link']);
+    assert.strictEqual(await page.isVisible('#ffi-link-go'), true);
+    assert.match(await page.textContent('#ffi-ext-tip'), /Fynd Chrome extension reads it in your browser/);
+    /* the fallbacks: folded, one click away — the unit only while something is typed by hand */
+    assert.deepStrictEqual(await page.$$eval('#ff-manual, #ffr-details, #ffr-manual', (ds) => ds.map((d) => [d.id, d.open])), [['ffr-details', false], ['ffr-manual', false], ['ff-manual', false]]);
+    assert.strictEqual(await page.isHidden('#ff-units-strip'), true);
+    await page.click('#ff-manual > summary');
+    /* the unit, for what is typed: shown once the fallback is open */
+    await page.waitForSelector('#ff-units-strip:not([hidden])');
     assert.deepStrictEqual(await page.$$eval('input[name="ff-unit"]', (rs) => rs.map((r) => [r.value, r.checked])), [['cm', true], ['in', false]]);
-    assert.ok(await page.evaluate(() => document.getElementById('ff-units').getBoundingClientRect().bottom < document.getElementById('ff-step-reference').getBoundingClientRect().top), 'the unit above both forms');
-    /* the two columns: their headings and words */
-    assert.deepStrictEqual(await page.$$eval('.ff-col .ff-step-title', (hs) => hs.map((h) => h.textContent.replace(/\s+/g, ' ').trim())), ['01 · A garment you own', '02 · The item you’re considering']);
-    assert.deepStrictEqual(await page.$$eval('.ff-col-desc', (ps) => ps.map((p) => p.textContent.replace(/\s+/g, ' ').trim())), ['Use a garment that fits the way you like.', 'Enter the finished-garment measurements from the retailer’s chart. i']);
+    assert.deepStrictEqual(await page.$$eval('input[name="ff-type"]', (rs) => rs.map((r) => [r.value, r.checked, r.closest('label').querySelector('.ff-type-name').textContent])), [['hoodies', true, 'Hoodie'], ['sweatshirts', false, 'Sweatshirt']]);
     /* balanced, side by side, within a comfortable width, nothing sideways */
     const box = await page.evaluate(() => {
       const r = (id) => document.getElementById(id).getBoundingClientRect();
@@ -1404,41 +1434,207 @@ const linkFromInbox = (pattern) => {
     assert.ok(Math.abs(box.ref.width - box.item.width) <= 2, `balanced (${box.ref.width} vs ${box.item.width})`);
     assert.ok(box.flow.width <= 1120 && box.flow.width >= 900, `a comfortable width (${box.flow.width})`);
     assert.ok(box.scroll <= 0, 'no sideways scroll');
-    /* the item's fields, each labelled; units in the boxes; how each is measured beside it, never hidden */
+    /* the item by hand, opened: each field labelled; units in the boxes; how each is measured beside it */
     const labels = await page.$$eval('#ffc-form label.profile-label', (ls) => ls.map((l) => l.textContent.replace(/\s+/g, ' ').trim()));
     assert.deepStrictEqual(labels, ['Brand optional', 'Product name optional', 'Size being considered',
       'Chest width', 'How the chart measures it', 'Shoulder width', 'How the chart measures it', 'Body length', 'How the chart measures it', 'Sleeve length', 'How the chart measures it']);
     assert.deepStrictEqual(await page.$$eval('#ffc-form .measure-unit', (ns) => ns.map((n) => n.textContent)), ['cm', 'cm', 'cm', 'cm']);
     assert.ok(await page.$$eval('#ffc-form select[id^="ffc-how-"]', (ss) => ss.length === 4 && ss.every((x) => x.offsetParent)), 'every method selector visible');
-    assert.deepStrictEqual(await page.$$eval('#ffc-how-sleeveLength option', (os) => os.map((o) => o.value)), ['', 'shoulder-seam-to-cuff', 'center-back-to-cuff', 'not-stated']);
-    /* each method's words on the page are the shared module's own, for every measurement */
     assert.ok(await page.evaluate(() => window.FitCandidate.DIMS.every((d) => JSON.stringify([...document.querySelectorAll(`#ffc-how-${d} option`)].slice(1).map((o) => [o.value, o.textContent])) === JSON.stringify(window.FitCandidate.METHODS[d].map((m) => [m.id, m.label])))), 'the page and assets/fit-candidate.js say the same');
-    /* your garment's rows are the item's, row for row: the same words, the same order, its fixed method said beside each */
+    /* your garment's measurements, opened: the item's rows, row for row, its fixed method beside each */
+    await page.click('#ffr-manual > summary');
     assert.deepStrictEqual(await page.$$eval('#ff-reference .ff-mrow', (rs) => rs.map((r) => [r.dataset.dim, r.querySelector('label').textContent, r.querySelector('.ff-method-fixed').dataset.method])), [
       ['chestWidth', 'Chest width', 'flat-width-armpit-to-armpit'], ['shoulderWidth', 'Shoulder width', 'seam-to-seam'],
       ['bodyLength', 'Body length', 'high-point-shoulder-to-hem'], ['sleeveLength', 'Sleeve length', 'shoulder-seam-to-cuff']]);
-    assert.deepStrictEqual(await page.$$eval('#ff-step-target .ff-mrow', (rs) => rs.map((r) => r.dataset.dim)), ['chestWidth', 'shoulderWidth', 'bodyLength', 'sleeveLength']);
     const rowHeights = await page.$$eval('.ff-mrow .profile-input', (is) => [...new Set(is.map((i) => Math.round(i.getBoundingClientRect().height)))]);
     assert.deepStrictEqual(rowHeights, [44], 'one input height in both forms');
-    /* the garment's type follows what you're shopping for, while it is being filled in */
+    /* the garment's type follows the item's, while it is being filled in */
     assert.strictEqual(await page.inputValue('#ffr-type'), 'hoodies');
-    assert.deepStrictEqual(await page.$$eval('#ffr-type option', (os) => os.map((o) => o.value)), ['hoodies', 'sweatshirts']);
     await page.check('input[name="ff-type"][value="sweatshirts"]');
     assert.strictEqual(await page.inputValue('#ffr-type'), 'sweatshirts');
-    /* Compare fit: never looking available while something it needs is missing, and saying what */
+    /* one Compare button: never looking available while something it needs is missing, and saying what */
     assert.deepStrictEqual(await page.$$eval('#find-fit button[type="submit"]', (bs) => bs.map((b) => b.textContent.trim())), ['Compare fit']);
     assert.strictEqual(await page.getAttribute('#ff-submit', 'aria-disabled'), 'true');
-    assert.strictEqual(await page.textContent('#ff-submit-note'), 'Add your garment and the item’s measurements to compare.');
+    assert.strictEqual(await page.textContent('#ff-submit-note'), 'Choose your garment, and paste the item’s link — or enter it by hand.');
     const geo = await page.evaluate(() => ({ button: document.getElementById('ff-submit').getBoundingClientRect(), cols: document.querySelector('.ff-columns').getBoundingClientRect() }));
     assert.ok(geo.button.top > geo.cols.bottom && geo.button.width >= 480, 'one wide button beneath both forms');
-    /* the discovery flow is gone, not hidden */
+    /* no brand browser or catalogue on the page */
     assert.strictEqual(await page.$('#fit-url, #fit-browser, #fit-brands, #fit-brand-dialog, #ff-suggest, #ff-check, #ff-picked, #fit-link-alt, #ffc-type'), null);
-    const text = await page.textContent('#find-fit');
-    assert.doesNotMatch(text, /product link|brand or item name|automatically extract|Browse|5 products|T-shirt/i);
     assert.deepStrictEqual(await page.evaluate(() => [typeof window.FindFit, typeof window.BrandBrowser]), ['undefined', 'undefined']);
     assert.ok(!apiHits.includes('/api/size-recommendation (browse)'), 'no brand list asked for');
     assert.deepStrictEqual(await page.$$eval('#ff-progress .ff-progress-text', (ns) => ns.map((n) => n.textContent)), ['Your garment: not added yet', 'Item: not entered yet']);
     assert.strictEqual(await page.isHidden('#fit-result'), true);
+    await context.close();
+  });
+
+  /* ---------- the redesigned flow: Fynd does the measuring ---------- */
+  const ZARA_HOODIE = 'https://www.zara.com/us/en/basic-heavyweight-hoodie-p00761810.html';
+  const UQ_HOODIE_LINK = 'https://www.uniqlo.com/us/en/products/E475378-000/00';
+  const SHOULDER_WAY = { registry: 1, chestWidth: 'flat-width-armpit-to-armpit', bodyLength: 'high-point-shoulder-to-hem', shoulderWidth: 'seam-to-seam', sleeveLength: 'shoulder-seam-to-cuff' };
+  const itemFound = (page) => page.waitForSelector('#ffi-found[data-state]:not([data-state="loading"])');
+  const resultDone = (page) => page.waitForFunction(() => document.getElementById('fit-result').dataset.state === 'done', null, { timeout: 15000 });
+  /* only the shopper's own changes count as manual inputs (assets/fit-metrics.js) */
+  const lastEffort = (page) => page.evaluate(() => window.FyndMetrics.last());
+
+  await test('a returning shopper: the saved hoodie is chosen for a hoodie, the T-shirt marked a different kind; a pasted link finds every size and the measurements, one tick confirms them, and every size is compared in one request — two manual inputs in all', async () => {
+    const context = await openContext({ byHand: false });
+    const page = await signedIn(context, 'returning@e2e.test');
+    const p = Schema.empty();
+    p.garments = {
+      hoodies: Object.assign(Schema.emptyGarment('hoodies'), { favorite: 'perfect', anchor: { brand: 'UNIQLO', size: 'L', measurements: { unit: 'cm', chestWidth: 63, bodyLength: 70.5, shoulderWidth: 54, sleeveLength: 65 }, methods: SHOULDER_WAY } }),
+      tshirts: Object.assign(Schema.emptyGarment('tshirts'), { favorite: 'perfect', anchor: { brand: 'Gap', size: 'M', measurements: { unit: 'in', chestWidth: 21, bodyLength: 28 }, methods: { registry: 1, chestWidth: SHOULDER_WAY.chestWidth, bodyLength: SHOULDER_WAY.bodyLength } } })
+    };
+    await fitProfiles.save((await users.byEmail('returning@e2e.test')).id, p);
+    const posted = [];
+    page.on('request', (r) => { if (r.method() === 'POST' && /candidate=1/.test(r.url())) posted.push(r.postDataJSON()); });
+    await open(page, 'index.html');
+    await page.waitForSelector('#ff-reference[data-state="saved"]');
+    assert.strictEqual(await page.isVisible('#ffr-search'), false, 'a saved garment: no form to fill');
+    await page.fill('#ffi-link', ZARA_HOODIE);
+    await page.click('#ffi-link-go');
+    await itemFound(page);
+    /* found: the product, its sizes, Fynd's unchecked copy said so, the kind from its record — the one thing asked is the check */
+    assert.strictEqual(await page.getAttribute('#ffi-found', 'data-state'), 'assisted');
+    assert.match(await page.textContent('#ffi-found .ffi-name'), /Zara · BASIC HEAVYWEIGHT HOODIE/);
+    assert.deepStrictEqual(await page.$$eval('#ffi-found .ffi-sizes li', (ls) => ls.map((l) => l.textContent)), ['S', 'M', 'L', 'XL', 'XXL']);
+    assert.match(await page.textContent('#ffi-found .ffi-status'), /from its own copy of the product page — not yet checked by Fynd\. Check them against the chart/);
+    assert.strictEqual(await page.$('#ffi-type'), null, 'the kind is not asked: Fynd’s record says it');
+    /* the saved hoodie chosen for it; the T-shirt can't be */
+    assert.deepStrictEqual(await page.$$eval('#ff-reference .ff-ref', (ns) => ns.map((n) => [n.dataset.kind, n.dataset.chosen, n.dataset.other || ''])), [['hoodies', 'true', ''], ['tshirts', 'false', 'true']]);
+    assert.strictEqual(await page.isDisabled('#ff-reference input[value="tshirts"]'), true);
+    assert.strictEqual(posted.length, 0, 'nothing compared before the check');
+    assert.strictEqual(await page.getAttribute('#ff-submit', 'aria-disabled'), 'true');
+    /* the check, and nothing else: compared at once */
+    await page.check('#ffi-confirm');
+    await resultDone(page);
+    assert.strictEqual(await page.getAttribute('#fit-compare', 'data-verdict'), 'recommended');
+    assert.strictEqual((await page.textContent('#fit-compare .fit-compare-recommended')).trim(), 'Recommended size: M');
+    /* one request: every size, the saved garment named by its kind — never sent */
+    assert.strictEqual(posted.length, 1);
+    assert.deepStrictEqual(Object.keys(posted[0]).sort(), ['chart', 'referenceType']);
+    assert.strictEqual(posted[0].referenceType, 'hoodies');
+    assert.deepStrictEqual(posted[0].chart.sizes.map((x) => x.size), ['S', 'M', 'L', 'XL', 'XXL']);
+    assert.strictEqual(posted[0].chart.sizes[1].provenance.chestWidth.source, 'fynd-record');
+    /* the result: the size, why, each measurement — and every size folded beneath it */
+    assert.match(await page.textContent('#fit-compare'), /Fynd’s own copy of the product page, which you checked/);
+    assert.match(await page.textContent('#fit-compare .ff-every summary'), /Every size beside your garment \(5\)/);
+    assert.strictEqual(await page.$$eval('#fit-compare .ff-every tbody tr', (rs) => rs.length), 5);
+    assert.deepStrictEqual(await lastEffort(page).then((x) => x.manualInputs), 2, 'the link and the check');
+    await context.close();
+  });
+
+  await test('a product Fynd holds checked measurements for: found from its link and compared at once — nothing to check, nothing to type for the item — through the record path, every size', () => asChecked(UQ_PAIR, async () => {
+    const context = await openContext({ byHand: false });
+    const page = await context.newPage();
+    const posted = [];
+    page.on('request', (r) => { if (r.method() === 'POST' && /size-recommendation\?product=/.test(r.url())) posted.push({ url: r.url(), body: r.postDataJSON() }); });
+    await open(page, 'index.html');
+    await page.waitForSelector('#ff-reference .ffr-form');
+    /* a guest: their garment by its measurements (the fallback), kept for this visit */
+    await page.click('#ffr-manual > summary');
+    for (const [k, v] of Object.entries({ chestWidth: 59, bodyLength: 68, shoulderWidth: 51, sleeveLength: 62 })) await page.fill(`#ffr-m-${k}`, String(v));
+    await page.click('#ffr-use');
+    await page.waitForSelector('#ff-reference[data-visit="set"] .ff-ref--visit');
+    await page.fill('#ffi-link', UQ_HOODIE_LINK);
+    await page.click('#ffi-link-go');
+    await itemFound(page);
+    assert.strictEqual(await page.getAttribute('#ffi-found', 'data-state'), 'automatic');
+    assert.match(await page.textContent('#ffi-found .ffi-status'), /checked garment measurements for every size\. Nothing to enter/);
+    assert.strictEqual(await page.$('#ffi-confirm'), null, 'nothing to check');
+    await resultDone(page);
+    assert.strictEqual(posted.length, 1, 'compared at once, once');
+    assert.match(posted[0].url, /\?product=uniqlo-e475378-sweat-pullover-hoodie-us&compare=1$/);
+    assert.strictEqual(posted[0].body.reference.type, 'hoodies');
+    assert.ok(['recommended', 'too-few', 'closest-mismatch', 'no-recommendation', 'methods'].includes(await page.getAttribute('#fit-compare', 'data-verdict')));
+    await context.close();
+  }));
+
+  await test('a guest finds their own garment by pasting its link: the product named, its kind and brand filled, the size on its label the only question — and the item by its link', () => asChecked(UQ_PAIR, async () => {
+    const context = await openContext({ byHand: false });
+    const page = await context.newPage();
+    await open(page, 'index.html');
+    await page.waitForSelector('#ff-reference .ffr-form');
+    await page.fill('#ffr-search', UQ_HOODIE_LINK);
+    await page.keyboard.press('Enter');
+    await page.waitForSelector('#ffr-held:not([hidden]):not([data-status="checking"])');
+    assert.strictEqual(await page.getAttribute('#ffr-held', 'data-status'), 'checked');
+    assert.strictEqual(await page.isHidden('#ffr-type-field'), true, 'the kind isn’t asked');
+    assert.strictEqual(await page.inputValue('#ffr-brand'), 'UNIQLO');
+    await page.selectOption('#ffr-size', 'M');
+    await page.click('#ffr-use');
+    await page.waitForSelector('#ff-reference[data-visit="set"] .ff-ref--visit');
+    assert.match(await page.textContent('.ff-ref--visit'), /UNIQLO · size M/);
+    await context.close();
+  }));
+
+  await test('a link Fynd can’t read: an unreviewed retailer, or a body-only chart — said so, with the extension and hand entry as the ways on; nothing compared, no size made up', () => asChecked([], async () => {
+    const context = await openContext({ byHand: false });
+    const page = await context.newPage();
+    await open(page, 'index.html');
+    await page.waitForSelector('#ff-reference .ffr-form');
+    await page.fill('#ffi-link', 'https://shop.example.com/products/plain-hoodie');
+    await page.click('#ffi-link-go');
+    await itemFound(page);
+    assert.strictEqual(await page.getAttribute('#ffi-found', 'data-state'), 'unavailable');
+    assert.match(await page.textContent('#ffi-found .ffi-ways'), /Use the Fynd extension on the product page/);
+    assert.match(await page.textContent('#ff-progress'), /can’t be read from its link/);
+    await page.click('#ffi-found .ffi-ways button');
+    assert.strictEqual(await page.$eval('#ff-manual', (d) => d.open), true, 'hand entry, one click away');
+    await page.click('#ff-manual > summary');
+    await page.fill('#ffi-link', 'https://www.carhartt.com/product/K121/loose-fit-midweight-sweatshirt');
+    await page.click('#ffi-link-go');
+    await itemFound(page);
+    assert.strictEqual(await page.getAttribute('#ffi-found', 'data-state'), 'body-only');
+    assert.match(await page.textContent('#ffi-found .ffi-status'), /only a body-size chart/);
+    assert.strictEqual(await page.isHidden('#fit-result'), true);
+    await context.close();
+  }));
+
+  await test('the anonymous counters: only names from a fixed list and two numbers reach Fynd, kept as daily totals — and a comparison’s manual inputs are among them', async () => {
+    const before = await require('../api/_metrics').summary(require('../api/_metrics').day());
+    const done = (before.site.comparison_completed || { count: 0 }).count;
+    const context = await openContext({ byHand: false });
+    const page = await signedIn(context, 'counted@e2e.test');
+    const p = Schema.empty();
+    p.garments = { hoodies: Object.assign(Schema.emptyGarment('hoodies'), { favorite: 'perfect', anchor: { brand: 'UNIQLO', size: 'L', measurements: { unit: 'cm', chestWidth: 63, bodyLength: 70.5, shoulderWidth: 54, sleeveLength: 65 }, methods: SHOULDER_WAY } }) };
+    await fitProfiles.save((await users.byEmail('counted@e2e.test')).id, p);
+    await open(page, 'index.html');
+    await page.waitForSelector('#ff-reference[data-state="saved"]');
+    await page.fill('#ffi-link', ZARA_HOODIE);
+    await page.click('#ffi-link-go');
+    await itemFound(page);
+    await page.check('#ffi-confirm');
+    await resultDone(page);
+    await page.waitForTimeout(1200);
+    const after = await require('../api/_metrics').summary(require('../api/_metrics').day());
+    assert.strictEqual(after.site.comparison_completed.count, done + 1);
+    assert.ok(after.site.manual_inputs.count >= 1 && after.site.reference_ready_saved.count >= 1 && after.site.extraction_assisted.count >= 1);
+    /* the endpoint refuses anything else */
+    const bad = await context.request.post(`${ORIGIN}/api/size-recommendation?metrics=1`, { data: { events: [{ name: 'comparison_completed', url: 'https://x' }] } });
+    assert.strictEqual(bad.status(), 400);
+    const unknown = await context.request.post(`${ORIGIN}/api/size-recommendation?metrics=1`, { data: { events: [{ name: 'shopper_email' }] } });
+    assert.strictEqual(unknown.status(), 400);
+    await context.close();
+  });
+
+  await test('the redesigned flow on a 360px phone: one column, the link and what was found readable, the result fits — nothing sideways', async () => {
+    const context = await openContext({ byHand: false });
+    const page = await signedIn(context, 'phone-returning@e2e.test');
+    const p = Schema.empty();
+    p.garments = { hoodies: Object.assign(Schema.emptyGarment('hoodies'), { favorite: 'perfect', anchor: { brand: 'UNIQLO', size: 'L', measurements: { unit: 'cm', chestWidth: 63, bodyLength: 70.5, shoulderWidth: 54, sleeveLength: 65 }, methods: SHOULDER_WAY } }) };
+    await fitProfiles.save((await users.byEmail('phone-returning@e2e.test')).id, p);
+    await page.setViewportSize({ width: 360, height: 780 });
+    await open(page, 'index.html');
+    await page.waitForSelector('#ff-reference[data-state="saved"]');
+    await page.fill('#ffi-link', ZARA_HOODIE);
+    await page.click('#ffi-link-go');
+    await itemFound(page);
+    await page.check('#ffi-confirm');
+    await resultDone(page);
+    const scroll = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+    assert.ok(scroll <= 0, `no sideways scroll (${scroll})`);
+    const cols = await page.evaluate(() => [document.getElementById('ff-step-reference').getBoundingClientRect(), document.getElementById('ff-step-target').getBoundingClientRect()]);
+    assert.ok(cols[0].bottom <= cols[1].top + 1, 'garment, then item');
     await context.close();
   });
 
@@ -1659,16 +1855,17 @@ const linkFromInbox = (pattern) => {
     await open(page, 'index.html');
     await page.waitForSelector('#ff-reference .ffr-form');
     await enterItem(page, SAME_ITEM);
-    /* typed, not kept: a garment with a brand but no size doesn't read */
+    /* typed, not kept: a garment whose chest isn't a number doesn't read (its own measurements need no size) */
     await page.fill('#ffr-brand', 'Carhartt');
-    for (const [k, v] of Object.entries({ chestWidth: 58, bodyLength: 68, shoulderWidth: 50, sleeveLength: 62 })) await page.fill(`#ffr-m-${k}`, String(v));
+    for (const [k, v] of Object.entries({ chestWidth: 'wide', bodyLength: 68, shoulderWidth: 50, sleeveLength: 62 })) await page.fill(`#ffr-m-${k}`, String(v));
     assert.strictEqual(await page.getAttribute('#ff-submit', 'aria-disabled'), 'false', 'a garment being entered can be compared');
     const asked = byHandAsked();
     await page.click('#ff-submit');
-    await page.waitForSelector('#ffr-size-error.show');
+    await page.waitForSelector('#ffr-m-chestWidth-error.show');
     assert.strictEqual(byHandAsked(), asked, 'nothing sent');
     assert.strictEqual(await page.isHidden('#fit-result'), true);
-    /* given its size: kept, then compared, with nothing else pressed */
+    /* corrected, with its size: kept, then compared, with nothing else pressed */
+    await page.fill('#ffr-m-chestWidth', '58');
     await page.selectOption('#ffr-size', 'L');
     await compareByHand(page);
     assert.strictEqual(byHandAsked(), asked + 1);
@@ -1749,7 +1946,7 @@ const linkFromInbox = (pattern) => {
     const asked = byHandAsked();
     await page.click('#ff-submit', { force: true });
     await page.waitForSelector('#ff-garment-error.show');
-    assert.match(await page.textContent('#ff-garment-error'), /^Add a garment you own first/);
+    assert.match(await page.textContent('#ff-garment-error'), /^Choose a garment you own first/);
     assert.strictEqual(await page.evaluate(() => document.activeElement.id), 'ffr-brand', 'focus on your garment’s form');
     assert.strictEqual(byHandAsked(), asked, 'nothing sent');
     assert.strictEqual(await page.isHidden('#fit-result'), true);
@@ -1846,7 +2043,7 @@ const linkFromInbox = (pattern) => {
     await unlockWith(page);
     /* the form says what's wrong, in the profile's own words, and keeps nothing until it reads */
     await page.click('#ffr-use');
-    assert.strictEqual(await page.textContent('#ffr-brand-error'), 'Enter the brand on its label.');
+    assert.strictEqual(await page.textContent('#ffr-brand-error'), 'Enter the brand on its label, find the product above, or enter its measurements.');
     assert.strictEqual(await page.getAttribute('#ffr-brand', 'aria-invalid'), 'true');
     await page.selectOption('#ffr-size', 'L');
     await page.fill('#ffr-brand', 'Carhartt');
@@ -1897,7 +2094,12 @@ const linkFromInbox = (pattern) => {
     const context = await openContext();
     const page = await context.newPage();
     const posted = [];
-    page.on('request', (r) => { if (r.method() === 'POST' && /size-recommendation/.test(r.url())) posted.push({ url: r.url(), body: r.postDataJSON() }); });
+    const counters = [];
+    page.on('request', (r) => {
+      if (r.method() !== 'POST' || !/size-recommendation/.test(r.url())) return;
+      /* the anonymous counters go apart: they must carry nothing of the shopper's */
+      (/[?&]metrics=1$/.test(r.url()) ? counters : posted).push({ url: r.url(), body: r.postDataJSON() });
+    });
     await open(page, 'index.html');
     await unlockWith(page);
     await describe(page, { type: 'sweatshirts', size: 'M', brand: 'UNIQLO', product: 'https://www.uniqlo.com/us/en/products/E475377-000/00?colorDisplayCode=09' });
@@ -1911,6 +2113,12 @@ const linkFromInbox = (pattern) => {
     assert.strictEqual((await page.textContent('#fit-compare .fit-compare-recommended')).trim(), `Recommended size: ${expected.recommended}`, 'the engine\'s own answer');
     /* the one comparison that carried the garment: a POST, the garment and the item in its body, nothing in the address */
     assert.strictEqual(posted.length, 1);
+    /* and the counters: event names and two numbers, nothing else — no garment, product, size or link */
+    counters.forEach((c) => {
+      assert.deepStrictEqual(Object.keys(c.body), ['events']);
+      c.body.events.forEach((e) => assert.ok(Object.keys(e).every((k) => ['name', 'surface', 'value'].includes(k)) && (e.value === undefined || typeof e.value === 'number'), JSON.stringify(e)));
+      assert.doesNotMatch(JSON.stringify(c.body), /UNIQLO|uniqlo|sweatshirt|"M"/);
+    });
     assert.match(posted[0].url, /\/api\/size-recommendation\?compare=1&candidate=1$/);
     assert.deepStrictEqual(posted[0].body.reference.type, 'sweatshirts');
     assert.strictEqual(posted[0].body.reference.garment.anchor.product.url, 'https://www.uniqlo.com/us/en/products/E475377-000/00', 'the link kept without its tracking');
@@ -2139,6 +2347,7 @@ const linkFromInbox = (pattern) => {
     await page.selectOption('#ffr-type', 'hoodies');
     await page.selectOption('#ffr-size', 'L');
     await page.fill('#ffr-brand', 'Carhartt');
+    await page.evaluate(() => { document.getElementById('ffr-details').open = true; });
     await page.fill('#ffr-product', '');
     await page.click('#ffr-use');
     await page.waitForSelector('#ff-reference[data-visit="set"] .ff-ref--visit');
@@ -2459,7 +2668,7 @@ const linkFromInbox = (pattern) => {
     await enterItem(bare, UQ_HOODIE_L);
     await bare.click('#ff-submit', { force: true });
     await bare.waitForSelector('#ff-garment-error.show');
-    assert.match(await bare.textContent('#ff-garment-error'), /^Add a garment you own first/);
+    assert.match(await bare.textContent('#ff-garment-error'), /^Choose a garment you own first/);
     assert.strictEqual(await bare.isHidden('#fit-result'), true, 'no size, and no comparison asked for');
     await bareContext.close();
     await context.close();
