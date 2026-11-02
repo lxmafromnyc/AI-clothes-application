@@ -1765,7 +1765,8 @@ const linkFromInbox = (pattern) => {
     await page.fill('#ffc-m-bodyLength', '');
     await page.selectOption('#ffc-how-shoulderWidth', 'seam-to-seam');
     await page.click('#ff-submit', { force: true });
-    await page.waitForSelector('#ffc-m-chestWidth-error.show');
+    /* the error box is already showing the last check's words: wait for this check's, not for the box */
+    await page.waitForFunction(() => /should be between/.test(document.getElementById('ffc-m-chestWidth-error').textContent));
     assert.match(await page.textContent('#ffc-m-chestWidth-error'), /should be between 40 and 102 cm for a hoodie\. If the chart gives the chest all the way around, choose that method\./);
     assert.strictEqual(byHandAsked(), before, 'nothing sent while the item doesn’t read');
     assert.strictEqual(await page.isHidden('#fit-result'), true);
