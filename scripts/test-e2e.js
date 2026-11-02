@@ -1407,13 +1407,13 @@ const linkFromInbox = (pattern) => {
     assert.strictEqual((await page.textContent('#find-fit-title')).trim(), 'Find the size that fits like your favorite clothes.');
     /* the two questions */
     assert.deepStrictEqual(await page.$$eval('.ff-col .ff-step-title', (hs) => hs.map((h) => h.textContent.replace(/\s+/g, ' ').trim())), ['01 · Which clothes already fit you the way you like?', '02 · What are you thinking of buying?']);
-    /* what a shopper sees first: the garment's search, its type and size, its brand — and the item's link. Nothing else */
+    /* what a shopper sees first: the garment's search, its type and size — and the item's link. Nothing else (the brand is with the optional details) */
     /* Playwright's own visibility: a closed <details> keeps its content's boxes in some Chromium builds */
     const visible = [];
     for (const handle of await page.$$('#ff-form input:not([type=hidden]), #ff-form select')) {
       if (await handle.isVisible()) visible.push(await handle.getAttribute('id'));
     }
-    assert.deepStrictEqual(visible, ['ffr-search', 'ffr-type', 'ffr-size', 'ffr-brand', 'ffi-link']);
+    assert.deepStrictEqual(visible, ['ffr-search', 'ffr-type', 'ffr-size', 'ffi-link']);
     assert.strictEqual(await page.isVisible('#ffi-link-go'), true);
     assert.match(await page.textContent('#ffi-ext-tip'), /Fynd Chrome extension reads it in your browser/);
     /* the fallbacks: folded, one click away — the unit only while something is typed by hand */
@@ -1520,6 +1520,25 @@ const linkFromInbox = (pattern) => {
     assert.match(await page.textContent('#fit-compare .ff-every summary'), /Every size beside your garment \(5\)/);
     assert.strictEqual(await page.$$eval('#fit-compare .ff-every tbody tr', (rs) => rs.length), 5);
     assert.deepStrictEqual(await lastEffort(page).then((x) => x.manualInputs), 2, 'the link and the check');
+    await context.close();
+  });
+
+  await test('a first-time guest: their hoodie’s measurements, the product’s link and one tick — compared without pressing “Use this garment” or Compare, six manual inputs in all, the garment kept for the visit', async () => {
+    const context = await openContext({ byHand: false });
+    const page = await context.newPage();
+    await open(page, 'index.html');
+    await page.waitForSelector('#ff-reference .ffr-form');
+    await page.click('#ffr-manual > summary');
+    for (const [k, v] of Object.entries({ chestWidth: 63, shoulderWidth: 54, bodyLength: 70.5, sleeveLength: 65 })) await page.fill(`#ffr-m-${k}`, String(v));
+    await page.fill('#ffi-link', ZARA_HOODIE);
+    await page.click('#ffi-link-go');
+    await itemFound(page);
+    await page.check('#ffi-confirm');
+    await resultDone(page);
+    assert.strictEqual((await page.textContent('#fit-compare .fit-compare-recommended')).trim(), 'Recommended size: M');
+    await page.waitForSelector('#ff-reference[data-visit="set"] .ff-ref--visit');
+    assert.match(await page.textContent('.ff-ref--visit'), /Kept for this visit\. Not saved to an account\./);
+    assert.strictEqual((await lastEffort(page)).manualInputs, 6, 'four measurements, the link, the tick');
     await context.close();
   });
 
@@ -2329,7 +2348,7 @@ const linkFromInbox = (pattern) => {
     await refSettled(page);
     assert.strictEqual(await page.getAttribute('#ffr-suggest-box', 'data-state'), 'empty');
     assert.deepStrictEqual(await refOptions(page), []);
-    assert.match(await page.textContent('#ffr-suggest-status'), /^No products match “Levi’s 511”\. Fill in the details below instead\. Waist and inseam 32x32 read apart from the product’s name\. Fynd’s list: .*not UNIQLO’s full range\.$/);
+    assert.match(await page.textContent('#ffr-suggest-status'), /^No products match “Levi’s 511”\. Enter its measurements below instead\. Waist and inseam 32x32 read apart from the product’s name\. Fynd’s list: .*not UNIQLO’s full range\.$/);
     assert.strictEqual(await page.getAttribute('#ffr-suggest-box', 'data-size'), '32x32');
     /* a number after "size" is a size; a size the form doesn't take is said, never chosen */
     await page.fill('#ffr-search', 'supima tee size 10');
@@ -2346,6 +2365,8 @@ const linkFromInbox = (pattern) => {
     await page.keyboard.press('Escape');
     await page.selectOption('#ffr-type', 'hoodies');
     await page.selectOption('#ffr-size', 'L');
+    /* the brand is with the optional details, folded after the earlier pick */
+    await page.evaluate(() => { document.getElementById('ffr-details').open = true; });
     await page.fill('#ffr-brand', 'Carhartt');
     await page.evaluate(() => { document.getElementById('ffr-details').open = true; });
     await page.fill('#ffr-product', '');
@@ -2364,7 +2385,7 @@ const linkFromInbox = (pattern) => {
     await page.route('**/api/size-recommendation?brand=uniqlo&q=*', (route) => route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'down' }) }));
     await page.fill('#ffr-search', 'hoodie');
     await page.waitForSelector('#ffr-suggest-box[data-state="error"]');
-    assert.strictEqual(await page.textContent('#ffr-suggest-status'), 'Search isn’t available right now. Fill in the details below instead.');
+    assert.strictEqual(await page.textContent('#ffr-suggest-status'), 'Search isn’t available right now. Enter its measurements below instead.');
     assert.deepStrictEqual(await refOptions(page), []);
     await page.unroute('**/api/size-recommendation?brand=uniqlo&q=*');
     /* a product's check that fails: said as not known — the fields stay, and nothing says checked */
@@ -2397,7 +2418,7 @@ const linkFromInbox = (pattern) => {
     await fresh.waitForSelector('#ffr-search');
     await fresh.fill('#ffr-search', 'hoodie');
     await fresh.waitForSelector('#ffr-suggest-box[data-state="error"]');
-    assert.strictEqual(await fresh.textContent('#ffr-suggest-status'), 'Search isn’t available right now. Fill in the details below instead.');
+    assert.strictEqual(await fresh.textContent('#ffr-suggest-status'), 'Search isn’t available right now. Enter its measurements below instead.');
     assert.ok(await fresh.isEditable('#ffr-brand'));
     await context2.close();
   });

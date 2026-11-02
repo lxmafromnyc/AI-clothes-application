@@ -222,7 +222,7 @@
       card.push(d);
     }
     if ((state === 'automatic' || state === 'assisted') && (!item.type || item.typeFrom === 'shopper')) card.push(typeChooser());
-    else if (item.type && (state === 'automatic' || state === 'assisted')) card.push(el('p', 'ffr-hint ffi-kind', `${TYPE_WORDS[item.type]}${item.typeFrom === 'name' ? ', from its name' : ''}.`));
+    else if (item.type && (state === 'automatic' || state === 'assisted')) card.push(el('p', 'ffr-hint ffi-kind', `Kind: ${TYPE_WORDS[item.type].toLowerCase()} — ${item.typeFrom === 'name' ? 'from its name' : 'from Fynd’s record'}.`));
     if (state === 'assisted') {
       const label = el('label', 'fp-check ffi-confirm');
       const cb = el('input');

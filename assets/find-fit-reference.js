@@ -252,12 +252,13 @@
     const brands = el('datalist');
     brands.id = 'ffr-brands';
     Schema.ANCHOR_BRANDS.forEach((b) => { const o = el('option'); o.value = b; brands.append(o); });
-    box.append(field('Brand', brand), brands);
-    /* the rest is optional, and folded away: filled in from a product found, or left at its default */
+    /* the rest is optional, and folded away: filled in from a product found, or left at its default —
+       the brand too, which only a garment with neither a product nor measurements needs */
     const details = el('details', 'ffr-more');
     details.id = 'ffr-details';
-    if (a.product || (g && (g.line || g.favorite === 'close'))) details.open = true;
-    details.append(el('summary', 'ffr-more-summary', 'Product, and how it fits (optional)'));
+    if (a.product || (a.brand && !a.measurements) || (g && (g.line || g.favorite === 'close'))) details.open = true;
+    details.append(el('summary', 'ffr-more-summary', 'Brand, product, and how it fits (optional)'));
+    details.append(field('Brand', brand), brands);
     const product = a.product ? (a.product.url || a.product.name || '') : '';
     const productField = field('Product name or link (optional)', input('ffr-product', 'text', product, { maxlength: '2000', autocomplete: 'off', spellcheck: 'false' }));
     const [productInfo, productText] = info('ffr-product-info', 'About the product name or link', 'If Fynd holds checked measurements for this exact product, it uses them for your garment.');
@@ -287,7 +288,8 @@
     more.append(el('summary', 'ffr-more-summary', 'Or enter its measurements, laid flat'));
     const moreHead = el('div', 'ff-mlabel ffr-measure-head');
     const [measureInfo, measureText] = info('ffr-measure-info', 'About measuring your garment', 'Lay it flat and measure it as each line says. Leave blank any you can’t take: Fynd compares only what both garments share, and needs at least three including the chest.');
-    moreHead.append(el('p', 'ffr-measure-title', 'Its measurements, laid flat'), measureInfo);
+    /* the disclosure's own summary names it; here, only how to take them */
+    moreHead.append(el('p', 'ffr-measure-how', 'Lay it flat and measure it as each line says.'), measureInfo);
     more.append(moreHead, measureText);
     const unit = input('ffr-unit', 'hidden', m.unit || topChoice('ff-unit', 'cm'));
     more.append(unit);
@@ -347,7 +349,7 @@
     status.setAttribute('aria-live', 'polite');
     box.append(list, status);
     smart.append(search, box);
-    const hint = el('p', 'ffr-hint', 'Not listed? Fill in the details below.');
+    const hint = el('p', 'ffr-hint', 'Not listed? Enter its measurements below instead.');
     hint.id = 'ffr-search-hint';
     const held = el('div', 'ffr-held');
     held.id = 'ffr-held';
@@ -360,9 +362,9 @@
       input: search, box, list, status, idPrefix: 'ffr-suggest', anchors: true,
       onPick: (f, size) => usePicked(f, size, search, held),
       say: {
-        unavailable: 'Search isn’t available right now. Fill in the details below instead.',
-        empty: (words) => `No products match “${words}”. Fill in the details below instead.`,
-        ready: (n) => `${n} matching product${n === 1 ? '' : 's'}. Not listed? Fill in the details below.`
+        unavailable: 'Search isn’t available right now. Enter its measurements below instead.',
+        empty: (words) => `No products match “${words}”. Enter its measurements below instead.`,
+        ready: (n) => `${n} matching product${n === 1 ? '' : 's'}. Not listed? Enter its measurements below.`
       }
     });
     search.addEventListener('input', () => {
@@ -512,7 +514,12 @@
        label; with neither, the brand and size are all Fynd has to go on */
     if (!a2.measurements) {
       if (!a2.size) missing.push({ id: 'ffr-size', message: 'Choose the size on its label.' });
-      if (!a2.brand && !a2.product) missing.push({ id: 'ffr-brand', message: 'Enter the brand on its label, find the product above, or enter its measurements.' });
+      if (!a2.brand && !a2.product) {
+        missing.push({ id: 'ffr-brand', message: 'Enter the brand on its label, find the product above, or enter its measurements.' });
+        /* the brand is folded with the optional details: shown where its problem is said */
+        const d = doc.getElementById('ffr-details');
+        if (d) d.open = true;
+      }
     }
     if (missing.length) { showErrors(missing); return; }
     const { errors } = Schema.normaliseGuide({ garments: { [said.type]: said.garment } });

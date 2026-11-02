@@ -2679,9 +2679,14 @@ is OK, and the sources say where each side's numbers came from.
   plus the shopper's distinct manual inputs and the seconds to a result.
 - **What is never sent:** nothing identifying, and no product, size or link.
   Nothing at all is sent under Do Not Track or Global Privacy Control.
-- **The key metric:** manual inputs per successful comparison. A returning
-  shopper with a saved garment needs two: the link and the tick (tested in
-  `test-e2e`).
+- **The key metric:** manual inputs per successful comparison. Measured
+  against `main` with the same tasks (`scripts/find-fit-walkthrough.js`;
+  screenshots and tables in [`docs/find-fit-redesign/`](docs/find-fit-redesign/README.md)):
+  - a returning shopper goes from 9 inputs to 2 (the link and the tick);
+  - a first-time shopper goes from 15 to 6;
+  - the page opens with 4 controls instead of 26.
+
+  The 2-input flow is also asserted in `test-e2e`.
 
 ### Find Fit: the item entered by hand
 

@@ -225,7 +225,8 @@
     return read.candidate.measurements.chestWidth ? 'ready' : 'no-chest';
   }
   /* the garment form, filled in but not yet kept: Compare fit uses it */
-  const formFilled = () => Boolean($('ffr-use')) && ['ffr-brand', 'ffr-size'].some((id) => $(id) && $(id).value.trim());
+  /* anything typed that could make a garment: a brand, a size, a product, or a measurement */
+  const formFilled = () => Boolean($('ffr-use')) && ['ffr-brand', 'ffr-size', 'ffr-product', 'ffr-m-chestWidth', 'ffr-m-shoulderWidth', 'ffr-m-bodyLength', 'ffr-m-sleeveLength'].some((id) => $(id) && $(id).value.trim());
   function garmentState() {
     const ref = global.FindFitReference;
     if (refArea && refArea.dataset.state === 'saved') return ref && ref.choice && !ref.choice() ? 'mismatch' : 'saved';
@@ -292,8 +293,9 @@
   let autoDone = '';
   function maybeCompare() {
     if (busy || !usingLink() || itemState() !== 'ready') return;
+    /* a garment typed but not yet kept counts: comparing keeps it first, by the form's own checks */
     const g = garmentState();
-    if (g !== 'saved' && g !== 'ready') return;
+    if (g !== 'saved' && g !== 'ready' && g !== 'filled') return;
     const ref = global.FindFitReference && global.FindFitReference.choice ? global.FindFitReference.choice() : null;
     const sig = JSON.stringify([Item().source(), Item().type(), ref && ref.type, ref && ref.source]);
     if (sig === autoDone) return;
@@ -339,7 +341,11 @@
     submit.textContent = 'Comparing…';
     submit.setAttribute('aria-busy', 'true');
     try {
-      if (garment === 'filled' && !(await keepTypedGarment())) return;
+      if (garment === 'filled' && !(await keepTypedGarment())) {
+        /* the garment didn't read: its own fields say why; the shopper fixes it and compares */
+        autoDone = '';
+        return;
+      }
       const ref = global.FindFitReference.choice();
       if (!ref) return;
       const ask = ++latest;

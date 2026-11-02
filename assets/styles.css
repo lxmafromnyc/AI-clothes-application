@@ -2032,7 +2032,13 @@ strong { font-weight: 600; }
 
 /* ---------- Find Fit, two questions: Fynd does the measuring ---------- */
 /* the unit strip: only while something is typed by hand */
-.ff .ff-setup--units { display: block; padding: 14px 20px; }
+/* one compact line: the unit, its choice, and what switching does */
+.ff .ff-setup--units { display: block; padding: 10px 16px; box-shadow: none; }
+.ff .ff-setup--units .ff-units { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; }
+.ff .ff-setup--units .ff-setup-label { float: left; margin: 0; font-size: 14px; }
+.ff .ff-setup--units .choices { display: inline-flex; gap: 6px; }
+.ff .ff-setup--units .ff-units-hint { margin: 0; font-size: 13px; }
+.ff .ffr-measure-how { font-size: 13.5px; color: var(--color-text-2); }
 .ff .ff-setup--units[hidden] { display: none; }
 /* the item's link, and what Fynd found from it */
 .ff .ffi-link { display: grid; gap: 6px; }
