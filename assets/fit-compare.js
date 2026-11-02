@@ -168,6 +168,44 @@
     drawAnswer(got, compare, { verdict: true, unsaved: reference || null, profileHref: 'fit-profile.html?from=find-fit', lines: [], candidate: true });
   }
 
+  /* An answer already fetched — a whole chart or a record, every size —
+     drawn exactly as the others (Find Fit's link path), with every size's
+     differences folded away beneath it */
+  function showAnswer(got, compare, opts) {
+    const o = opts || {};
+    drawn.delete(compare);
+    drawAnswer(got, compare, { verdict: true, unsaved: o.unsaved || null, profileHref: 'fit-profile.html?from=find-fit', lines: [], candidate: Boolean(o.single), everySize: !o.single });
+  }
+  /* every size the engine set beside the reference: its signed difference per
+     compared measurement, the ones within tolerance marked — figures only, the
+     decision above is the only verdict */
+  function everySize(c, decided) {
+    const d = el('details', 'ff-every');
+    const dims = c.dimensionsCompared.filter((x) => DIM_LABEL[x]);
+    d.append(el('summary', null, `Every size beside your garment (${c.sizes.length})`));
+    const t = el('table', 'ff-every-table');
+    const head = el('tr');
+    head.append(el('th', null, 'Size'), ...dims.map((x) => el('th', null, DIM_LABEL[x])));
+    const thead = el('thead');
+    thead.append(head);
+    const tbody = el('tbody');
+    c.sizes.forEach((sz) => {
+      if (!sz || typeof sz.size !== 'string') return;
+      const tr = el('tr');
+      if (decided.outcome === 'OK' && sz.size === decided.size) tr.dataset.pick = 'recommended';
+      tr.append(el('th', null, sz.size), ...dims.map((x) => {
+        const v = sz.dimensions && sz.dimensions[x];
+        const td = el('td', null, v && v.compared ? signed(v.difference, c.unit) : '—');
+        if (v && v.withinTolerance) td.dataset.within = 'true';
+        return td;
+      }));
+      tbody.append(tr);
+    });
+    t.append(el('caption', null, `This size minus your garment, in ${c.unit === 'in' ? 'inches' : 'centimetres'}; in bold, within Fynd’s tolerance.`), thead, tbody);
+    d.append(t);
+    return d;
+  }
+
   /* One answer from the server — the comparison and the decision beside
      it — drawn: a size only where the decision is OK, the closest only
      where it is NO_MATCH, and otherwise why there is none. */
@@ -193,8 +231,8 @@
       /* a reliability belongs to a recommendation: none is said without one */
       if (c.reliability && view.recommended) rest.push(`Reliability: ${c.reliability}.`);
       (c.caveats || []).slice(0, verdict ? undefined : 2).forEach((x) => rest.push(x));
-      const more = el('p');
-      more.append(safeLinkLocal('compare.html', 'See every size beside your reference on Compare'));
+      const more = o.everySize ? everySize(c, decided) : el('p');
+      if (!o.everySize) more.append(safeLinkLocal('compare.html', 'See every size beside your reference on Compare'));
       /* an item entered by hand is one size: there is no other to see */
       const title = outcome === 'no-match' ? `Size ${view.size} doesn’t match your garment` : null;
       drawn.set(compare, { comparison: c, decision: decided, lead, rest, extra: o.candidate ? [] : [more], outcome, title, verdict: verdict && outcome });
@@ -571,7 +609,12 @@
       const ref = c.reference.source === 'product'
         ? `your reference’s ${originWords(originOf(c.reference.measurements), 'reference')}${c.reference.product && c.reference.product.brand ? ` (${c.reference.product.brand})` : ''}`
         : 'the measurements you took of your garment at home';
-      return el('p', 'ff-sources', `Sources: the measurements you entered from this item’s chart, which Fynd hasn’t checked; ${ref}.`);
+      const item = c.enteredFrom === 'fynd-record'
+        ? `${brand ? `${brand}’s` : 'the brand’s'} published measurements, from Fynd’s own copy of the product page, which you checked — not verified by Fynd`
+        : c.enteredFrom === 'page'
+          ? 'the measurements read from the product page and confirmed by you, which Fynd hasn’t checked'
+          : 'the measurements you entered from this item’s chart, which Fynd hasn’t checked';
+      return el('p', 'ff-sources', `Sources: ${item}; ${ref}.`);
     }
     const item = `${brand ? `${brand}’s` : 'This item’s'} ${originWords(origin, 'item')} for this item`;
     const checked = c.dataStatus !== 'verified' ? 'not yet checked'
@@ -728,5 +771,5 @@
     compare.hidden = false;
   }
 
-  global.FitCompare = { show, showCandidate, focus, whyNot, chartState, HEADING };
+  global.FitCompare = { show, showCandidate, showAnswer, focus, whyNot, chartState, HEADING };
 })(typeof window !== 'undefined' ? window : globalThis);

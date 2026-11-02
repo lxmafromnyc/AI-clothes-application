@@ -258,6 +258,7 @@ async function browserTests() {
 
   async function openPage(file) {
     const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+    await openFallbacks(context);
     context.setDefaultTimeout(8000);
     await context.addInitScript((origin) => {
       window.FINDWEAR_API = `${origin}/api/interpret`;
@@ -311,6 +312,18 @@ async function browserTests() {
     server.close();
   }
 }
+
+
+/* Find Fit's hand-entry fallbacks are folded until a shopper wants them;
+   these tests of what those forms do open them first, as a shopper would
+   (each the first time it appears) */
+const openFallbacks = (target) => target.addInitScript(() => {
+  const open = () => ['ff-manual', 'ffr-manual', 'ffr-details'].forEach((id) => {
+    const d = document.getElementById(id);
+    if (d && !d.dataset.testOpened) { d.dataset.testOpened = '1'; d.open = true; }
+  });
+  document.addEventListener('DOMContentLoaded', () => { open(); new MutationObserver(open).observe(document.body, { childList: true, subtree: true }); });
+});
 
 (async () => {
   await nodeTests();

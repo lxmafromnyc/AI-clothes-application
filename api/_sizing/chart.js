@@ -582,6 +582,9 @@ function fromRecord(record, checked) {
       verification: sizingSchema.isVerified(record) ? 'verified' : 'unverified',
       retrievedAt: chart.retrievedAt || record.retrievedAt,
       columns: keys.map((k) => chart.dimensions[k].label || k),
+      /* each column's measurement, in the engine's own names, so a page can build a
+         comparison from it without reading a heading (Find Fit's link path) */
+      dims: keys,
       methods: keys.map((k) => engine.METHOD_WORDS[chart.dimensions[k].method] || null),
       /* each column's method as the record holds it (schema.js), so a
          reader can tell a flat width from a circumference, a body
@@ -596,6 +599,7 @@ function fromRecord(record, checked) {
     status: 'ok',
     from: 'fynd-record',
     productId: record.id,
+    category: record.category,
     product: { brand: record.brand, name: record.product.name, code: record.product.code || null },
     retailer: record.brand,
     source: { title: record.product.pageTitle || record.product.name, url: record.product.url, kind: 'product-page', retrievedAt: record.retrievedAt },

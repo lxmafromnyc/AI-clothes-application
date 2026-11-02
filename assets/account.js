@@ -261,6 +261,12 @@
        visit's garment or — when none is sent — the saved one: both in
        the body, never the address, and kept nowhere */
     compareCandidate: (candidate, reference) => call('size-recommendation?compare=1&candidate=1', { body: Object.assign({ candidate }, reference ? { reference } : {}) }),
+    /* every size of a whole chart in one request (the extension's batch
+       comparison): the chart, and either this visit's garment or the type
+       of a saved one — both in the body, kept nowhere */
+    compareChart: (chart, ref) => call('size-recommendation?compare=1&candidate=1', { body: Object.assign({ chart }, ref || {}) }),
+    /* anonymous, aggregate product counters (assets/fit-metrics.js) */
+    metrics: (events) => call('size-recommendation?metrics=1', { body: { events } }),
     compareWith: (productId, reference, unit) => call(`size-recommendation?product=${encodeURIComponent(productId)}&compare=1${unit === 'in' || unit === 'cm' ? `&unit=${unit}` : ''}`, { body: { reference } }),
     /* the search page's listings, sized from one type of clothing's
        profile: only what the listings themselves say travels */

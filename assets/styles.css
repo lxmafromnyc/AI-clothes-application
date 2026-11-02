@@ -2029,3 +2029,63 @@ strong { font-weight: 600; }
 .ff .ffr-held[data-status="checked"] { border-color: var(--color-accent-line); background: var(--color-accent-soft); }
 .ff .ffr-held[data-status="unchecked"], .ff .ffr-held[data-status="body-only"], .ff .ffr-held[data-status="none"], .ff .ffr-held[data-status="not-covered"], .ff .ffr-held[data-status="unknown"] { border-color: var(--color-warning-line); background: var(--color-warning-soft); }
 .ff .ffr-held-size { color: var(--color-text-2); }
+
+/* ---------- Find Fit, two questions: Fynd does the measuring ---------- */
+/* the unit strip: only while something is typed by hand */
+/* one compact line: the unit, its choice, and what switching does */
+.ff .ff-setup--units { display: block; padding: 10px 16px; box-shadow: none; }
+.ff .ff-setup--units .ff-units { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; }
+.ff .ff-setup--units .ff-setup-label { float: left; margin: 0; font-size: 14px; }
+.ff .ff-setup--units .choices { display: inline-flex; gap: 6px; }
+.ff .ff-setup--units .ff-units-hint { margin: 0; font-size: 13px; }
+.ff .ffr-measure-how { font-size: 13.5px; color: var(--color-text-2); }
+.ff .ff-setup--units[hidden] { display: none; }
+/* the item's link, and what Fynd found from it */
+.ff .ffi-link { display: grid; gap: 6px; }
+.ff .ffi-link-row { display: flex; gap: 8px; }
+.ff .ffi-link-row .profile-input { flex: 1; min-width: 0; }
+.ff .ffi-found { display: grid; gap: 10px; padding: 14px 16px; border: 1px solid var(--color-border); border-radius: var(--r); background: var(--color-bg-subtle); }
+.ff .ffi-found[hidden] { display: none; }
+.ff .ffi-found[data-state="automatic"], .ff .ffi-found[data-state="assisted"] { border-color: var(--color-accent-line); background: var(--color-accent-soft); }
+.ff .ffi-found[data-state="unavailable"], .ff .ffi-found[data-state="body-only"], .ff .ffi-found[data-state="incomplete"], .ff .ffi-found[data-state="error"] { border-color: var(--color-warning-line); background: var(--color-warning-soft); }
+.ff .ffi-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.ff .ffi-name { font-size: 16px; font-weight: 600; color: var(--color-text); overflow-wrap: anywhere; }
+.ff .ffi-status { font-size: 14px; color: var(--color-text-2); }
+.ff .ffi-sizes { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.ff .ffi-sizes li { padding: 2px 9px; border: 1px solid var(--color-border-strong); border-radius: 999px; font-size: 13px; background: var(--color-bg); color: var(--color-text); }
+.ff .ffi-why { margin: 0; padding-left: 18px; font-size: 14px; color: var(--color-warning-ink); }
+.ff .ffi-ways { font-size: 14px; color: var(--color-text-2); }
+.ff .ffi-confirm { display: flex; gap: 8px; align-items: flex-start; font-size: 14.5px; font-weight: 600; color: var(--color-text); }
+.ff .ffi-details > summary, .ff .ffr-more > summary, .ff .ff-manual > summary { cursor: pointer; font-size: 14px; font-weight: 600; color: var(--color-text); }
+.ff .ffi-values { width: 100%; margin-top: 8px; border-collapse: collapse; font-size: 13px; background: var(--color-bg); }
+.ff .ffi-values caption { text-align: left; padding: 4px 0; color: var(--color-text-muted); }
+.ff .ffi-values th, .ff .ffi-values td { padding: 4px 6px; border-bottom: 1px solid var(--color-border); text-align: left; vertical-align: top; }
+.ff .ffi-method { display: block; font-weight: 400; color: var(--color-text-muted); }
+.ff .ffi-type { display: grid; gap: 6px; max-width: 260px; }
+/* the fallbacks, folded until wanted */
+.ff .ff-manual { display: grid; gap: 14px; padding-top: 14px; border-top: 1px solid var(--color-border); }
+.ff .ff-manual:not([open]) { gap: 0; }
+.ff .ff-manual .ff-type { margin: 0; padding: 0; border: 0; min-width: 0; }
+.ff .ff-manual > summary { color: var(--color-text-2); }
+.ff .ffr-more { display: grid; gap: 10px; }
+.ff .ffr-more > summary { color: var(--color-text-2); font-weight: 500; }
+.ff details.ffr-measure > summary { color: var(--color-text-2); font-weight: 500; }
+/* a saved garment, chosen */
+.ff .ff-ref-pick { display: inline-flex; gap: 8px; align-items: center; cursor: pointer; }
+.ff .ff-ref[data-chosen="true"] { border-color: var(--color-accent-line); background: var(--color-accent-soft); }
+.ff .ff-ref[data-other="true"] { opacity: .75; }
+.ff .ff-ref[data-other="true"] .ff-ref-status { color: var(--color-warning-ink); }
+@media (max-width: 560px) {
+  .ff .ffi-link-row { flex-direction: column; }
+  /* stacked: the box keeps its own height (flex: 1 would size it along the column) */
+  .ff .ffi-link-row .profile-input { flex: none; }
+}
+/* every size beside the garment, folded beneath the verdict */
+.ff .ff-every > summary { cursor: pointer; font-size: 14px; font-weight: 600; color: var(--color-text); }
+.ff .ff-every-table { width: 100%; margin-top: 8px; border-collapse: collapse; font-size: 13.5px; }
+.ff .ff-every-table caption { text-align: left; padding: 4px 0; color: var(--color-text-muted); }
+.ff .ff-every-table th, .ff .ff-every-table td { padding: 5px 8px; border-bottom: 1px solid var(--color-border); text-align: left; }
+.ff .ff-every-table td[data-within="true"] { font-weight: 600; color: var(--color-text); }
+.ff .ff-every-table tr[data-pick="recommended"] th, .ff .ff-every-table tr[data-pick="recommended"] td { background: var(--color-bg); }
+/* a field the page has answered for itself (the kind of a product found) */
+.ff .ffr-field[hidden] { display: none; }

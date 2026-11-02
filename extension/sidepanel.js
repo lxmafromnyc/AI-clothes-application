@@ -69,6 +69,18 @@
     interpreting: 0
   };
 
+  /* ---------- how much work this took (anonymous counters, api.js metrics) ---------- */
+  const touched = new Set();
+  let openedAt = Date.now();
+  const track = (...names) => { if (API.metrics) API.metrics(names.map((n) => (typeof n === 'string' ? { name: n } : n))); };
+  ['v-product', 'v-review', 'v-reference', 'v-measure'].forEach((id) => {
+    const view = document.getElementById(id);
+    if (!view) return;
+    const count = (e) => { const t = e.target; if (e.isTrusted && t && t.matches && t.matches('input, select, textarea')) touched.add(`${id}:${t.id || t.name || (t.dataset && `${t.dataset.role}-${t.dataset.row}-${t.dataset.col}`)}`); };
+    view.addEventListener('input', count);
+    view.addEventListener('change', count);
+  });
+
   /* ---------- small helpers ---------- */
   function el(tag, cls, text) {
     const n = document.createElement(tag);
@@ -135,6 +147,7 @@
   async function read(opts) {
     const o = opts || {};
     const ticket = ++state.reading;
+    if (o.how !== 'retry') { touched.clear(); openedAt = Date.now(); track('session_start', 'candidate_started'); }
     show('reading');
     let tab = null;
     try { tab = await targetTab(o.tabId); } catch (err) { note('find the tab', err); }
@@ -218,12 +231,14 @@
     const known = state.tab && state.tab.url && window.FyndRetailers ? window.FyndRetailers.match(state.tab.url) : null;
     const hint = known && known.retailer && known.retailer.chartHint ? ` ${known.retailer.chartHint}` : '';
     if (!list.length && !unread.length) {
+      track('extraction_unavailable');
       $('measure-text').textContent = `No size chart found on this page.${hint || ' If the shop keeps its chart in a size guide, open the guide on the page and read it again.'} Or enter the measurements by hand from the chart.`;
       $('use-chart').hidden = true;
       show('measure');
       return;
     }
     const usable = list.filter((c) => c.measures !== 'body');
+    if (!usable.length && !unread.length) track('extraction_body_only');
     $('measure-text').textContent = usable.length
       ? (list.length + unread.length > 1 ? 'Fynd found more than one table. Choose the one with the garment’s own measurements.' : 'Fynd found this table on the page.')
       : unread.length
@@ -291,6 +306,7 @@
     state.review = review;
     state.path = 'deterministic';
     state.aiProblem = null;
+    track(X.isAutomatic(review) ? 'extraction_automatic' : 'extraction_assisted');
     drawReview();
   }
   function manualEntry() {
@@ -334,6 +350,7 @@
     const got = await API.interpretChart(X.aiRequest(rawTable, state.type));
     if (ticket !== state.interpreting) return;
     if (got.ok && got.data && (got.data.status === 'proposed' || (got.data.status === 'insufficient-evidence' && (got.data.rows || []).length))) {
+      track('extraction_ai_assisted');
       state.review = X.reviewFromInterpretation(got.data, state.product);
       state.path = got.data.status === 'proposed' ? 'ai' : 'ai-insufficient';
       state.aiProblem = null;
@@ -346,6 +363,7 @@
       $('measure-text').textContent = 'This table gives body measurements — who each size is made for — not the garment’s own, so Fynd can’t compare it with your garment. Open the garment measurements on the page and read it again, or enter them by hand.';
       return;
     }
+    track(state.aiBase ? 'extraction_assisted' : 'extraction_unavailable');
     /* any failure: Fynd's own reading is kept, for the shopper to correct — never a made-up one */
     state.aiProblem = got.ok ? { kind: 'unsupported', reason: got.data && got.data.status } : got.problem;
     keepOwnReading('ai-unavailable');
@@ -622,13 +640,19 @@
     state.referenceType = picked.value;
     const chart = X.buildChart(state.review, state.product, state.type);
     state.comparing = true;
+    track('candidate_ready', 'candidate_ready_extension', 'comparison_started', 'reference_ready', 'reference_ready_saved');
     $('comparing-text').textContent = `Comparing ${chart.sizes.length} size${chart.sizes.length === 1 ? '' : 's'} with your ${TYPE_WORDS[state.referenceType].toLowerCase()} on Fynd…`;
     show('comparing');
     let got;
     try { got = await API.compareChart(chart, state.referenceType); } finally { state.comparing = false; }
-    if (!got.ok) { compareError(got.problem); return; }
+    if (!got.ok) { compareError(got.problem); track('result_error'); return; }
     state.result = got.data;
     drawResults(got.data);
+    const outcome = got.data.decision && got.data.decision.outcome;
+    track('comparison_completed', outcome === 'OK' ? 'result_ok' : outcome === 'NO_MATCH' ? 'result_no_match' : 'result_insufficient',
+      { name: 'manual_inputs', value: touched.size }, { name: 'seconds_to_result', value: Math.round((Date.now() - openedAt) / 1000) });
+    touched.clear();
+    openedAt = Date.now();
   }
   function compareError(p) {
     const say = {
