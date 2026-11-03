@@ -1022,6 +1022,39 @@ Load more that lands on another instance answers 410 and the page says to
 search again. No new environment variable or key: provider keys stay
 server-side as before.
 
+#### Step 01: searching for the garment you own
+
+Step 01's box ("Find your garment") used to search only Fynd's own list —
+the five UNIQLO products in `api/_sizing/brands/uniqlo.js` and the checked
+records (`assets/catalog-suggest.js`) — so "Nike" answered "No products
+match". It now also has **Search shops**: the same live search as step 02
+(`FyndLiveSearch.create` in `assets/find-fit-search.js`, one module for
+both), with the same `/api/search` request, 20 a page, server-held Load
+more, metering (one live product search per new search, none per page) and
+no AI. Typing still shows Fynd's own list as before, free and labelled; Enter
+with nothing from it offered searches the shops. A size typed with the words
+("Nike hoodie M") is read apart and filled in as the label's size.
+
+**A listing is a product's identity, never its measurements.** Picking one
+("This is mine") asks Fynd's own records about that exact product
+(`POST /api/size-recommendation?check=1` with its link; nothing is fetched):
+
+| What Fynd holds for that exact product | What happens |
+|---|---|
+| A **checked** record (an exact link to the brand's own page for a record that is verified) | Said so; its published garment measurements in the label's size stand in for the shopper's, by the engine's existing rule |
+| A record not yet checked, a body-only chart, or **nothing** | Said plainly: "Fynd doesn't have verified measurements for this exact garment yet" — and that it won't use a general brand chart or another model's measurements. The listing is kept as the product (link and, only if the listing names one, brand); the hand measurements open; **"Use this garment" refuses until measurements are entered** |
+
+What a comparison then uses is decided only by the engine
+(`api/_sizing/engine.js` `prepare`): an exact match (`matchProduct`, exact
+mode) to a **verified** record in the label's size, or the shopper's own
+measurements, held to the method rules — never a brand-level chart, never
+another model. A garment kept is saved with the existing save
+(`assets/find-fit-save.js`, the fit profile's own shape: brand, size, product
+link, measurements), and a saved garment is shown and used as before.
+
+The extension reads charts for the item being considered; it has no way to
+set the garment you own, so for that the fallback is measuring it laid flat.
+
 **Tested by** `scripts/test-search-pages.js` (the handler on a stand-in source
 with a generated inventory: different queries, pages, cursors, endings,
 metering, the adapters' `page` parameters) and
@@ -2734,6 +2767,10 @@ The page asks for two things and does the rest (`index.html`,
   - One of another family is shown but can't be chosen.
   - With several saved, the shopper can pick another.
 - **Find it by name or link** (`catalog-suggest.js`, `POST ?check=1`):
+  - typing shows matches from Fynd's own list (free);
+  - **Search shops** (or Enter when the list offers nothing) searches real
+    listings across retailers with the item's own live search — see
+    [Step 01: searching for the garment you own](#step-01-searching-for-the-garment-you-own);
   - a found product fills in its kind and brand, so the size on its label is
     the only question;
   - its checked garment measurements, where Fynd holds them, stand in for the

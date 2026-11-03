@@ -41,6 +41,21 @@
    whether a product's measurements stand in for theirs is the size
    engine's to decide when it compares (engine.js referenceEntry).
 
+   Search shops: the same box, with Search shops (or Enter when nothing
+   on Fynd's list is offered), searches real listings across retailers
+   through the item's own search (assets/find-fit-search.js:
+   /api/search, 20 a page, Load more from the server, one live product
+   search per new search and none per page; no AI). A listing is only a
+   product's identity — never measurements. Picking one asks the server
+   what it holds for that exact product (POST ?check=1 by its link):
+   a checked record of it is used as any found product is; anything else
+   is said plainly ("no verified measurements for this exact garment"),
+   the hand measurements open, and the garment can't be used until they
+   are entered — no brand chart, no other model's measurements, nothing
+   guessed. The engine's own rule (engine.js prepare: an exact, verified
+   record in the label's size, or the shopper's own measurements) is what
+   any comparison then uses.
+
    Popular Wardrobe Anchors: products a shopper may own, offered as the
    garment in one click — only those Fynd's records hold checked
    finished-garment measurements for (GET ?anchors=1, records.summary
@@ -119,6 +134,9 @@
   /* how this visit's garment was found, for the anonymous counters: 'search' | 'link' | 'manual' */
   let pickedHow = null;
   let visitHow = null;
+  /* a listing picked from the live search that Fynd holds no checked
+     record of: usable only with the shopper's own measurements */
+  let needsMeasures = false;
   /* the item's kind, once Find Fit knows it (assets/find-fit-item.js) */
   let itemType = null;
   const itemKind = () => itemType || (global.FindFitItem && global.FindFitItem.type ? global.FindFitItem.type() : null);
@@ -349,26 +367,78 @@
     status.setAttribute('aria-live', 'polite');
     box.append(list, status);
     smart.append(search, box);
-    const hint = el('p', 'ffr-hint', 'Not listed? Enter its measurements below instead.');
+    /* the live search across shops: the item's own search, used for this garment */
+    const row = el('div', 'ffr-find-row');
+    const go = el('button', 'btn btn-secondary ffr-live-go', 'Search shops');
+    go.type = 'button';
+    go.id = 'ffr-live-go';
+    row.append(smart, go);
+    const hint = el('p', 'ffr-hint', 'Type to see Fynd’s own list, or press Search shops to look across retailers. Not found? Enter its measurements below.');
     hint.id = 'ffr-search-hint';
     const held = el('div', 'ffr-held');
     held.id = 'ffr-held';
     held.setAttribute('role', 'status');
     held.setAttribute('aria-live', 'polite');
     held.hidden = true;
-    wrap.append(label, smart, hint, held);
+    const liveBox = el('div', 'ffs ffr-live');
+    liveBox.id = 'ffr-live';
+    const liveStatus = el('p', 'ffs-status');
+    liveStatus.id = 'ffr-live-status';
+    liveStatus.setAttribute('role', 'status');
+    liveStatus.setAttribute('aria-live', 'polite');
+    const liveList = el('ul', 'ffs-results');
+    liveList.id = 'ffr-live-results';
+    liveList.setAttribute('aria-label', 'Products found across shops');
+    const liveMore = el('button', 'btn btn-secondary ffs-more', 'Load more');
+    liveMore.type = 'button';
+    liveMore.id = 'ffr-live-more';
+    liveMore.hidden = true;
+    const liveNote = el('p', 'ffr-hint ffs-note');
+    liveNote.id = 'ffr-live-note';
+    liveBox.append(liveStatus, liveList, liveMore, liveNote);
+    wrap.append(label, row, hint, held, liveBox);
     if (!global.FyndSuggest) { wrap.hidden = true; return wrap; }
+    /* made on first use: the search module loads after this one */
+    let live = null;
+    let liveSize = null;
+    const liveSearch = () => {
+      const Live = global.FyndLiveSearch;
+      if (!Live) return;
+      if (!live) {
+        live = Live.create({
+          input: search, go: null, list: liveList, status: liveStatus, more: liveMore, note: liveNote, box: liveBox,
+          enterSearches: false,
+          pickLabel: 'This is mine',
+          fallback: 'Enter its measurements below',
+          coverageTail: 'A listing is only the product: Fynd uses measurements for your garment only when it holds verified ones for that exact product, or you enter your own.',
+          onPick: (picked) => {
+            if (picked.from === 'catalogue') {
+              const p = picked.product;
+              pickedHow = 'search';
+              usePicked({ brand: { id: p.brandId || null, name: p.brandName }, product: p }, liveSize, search, held, null, true);
+            } else useListing(picked.product, liveSize, search, held);
+          }
+        });
+      }
+      suggest.close();
+      /* a size typed with the words is read apart, as Fynd's list reads it */
+      const parsed = global.FyndSuggest.parseQuery(search.value);
+      liveSize = parsed.size;
+      live.submit(parsed.words);
+    };
+    go.addEventListener('click', liveSearch);
     const suggest = global.FyndSuggest.attach({
       input: search, box, list, status, idPrefix: 'ffr-suggest', anchors: true,
       onPick: (f, size) => usePicked(f, size, search, held),
       say: {
-        unavailable: 'Search isn’t available right now. Enter its measurements below instead.',
-        empty: (words) => `No products match “${words}”. Enter its measurements below instead.`,
-        ready: (n) => `${n} matching product${n === 1 ? '' : 's'}. Not listed? Enter its measurements below.`
+        unavailable: 'Fynd’s list isn’t available right now. Press Search shops, or enter its measurements below.',
+        empty: (words) => `Nothing on Fynd’s list matches “${words}”. Press Search shops (or Enter) to look across retailers, or enter its measurements below.`,
+        ready: (n) => `${n} on Fynd’s list. Not listed? Press Search shops, or enter its measurements below.`
       }
     });
     search.addEventListener('input', () => {
       pickAsk += 1;
+      needsMeasures = false;
       held.hidden = true;
       /* a new search: what the last product said about its kind no longer stands */
       const tf = doc.getElementById('ffr-type-field');
@@ -380,7 +450,9 @@
     search.addEventListener('keydown', (e) => {
       /* a link: Fynd looks the product up itself */
       if (e.key === 'Enter' && /^https?:\/\//i.test(search.value.trim())) { e.preventDefault(); useLink(search.value.trim(), search, held); return; }
-      suggest.key(e);
+      if (suggest.key(e)) return;
+      /* Enter with nothing on Fynd's list offered: search the shops */
+      if (e.key === 'Enter' && search.value.trim().length >= 2) { e.preventDefault(); liveSearch(); }
     });
     search.addEventListener('paste', () => global.setTimeout(() => { if (/^https?:\/\/\S+\.\S+/i.test(search.value.trim())) useLink(search.value.trim(), search, held); }, 0));
     return wrap;
@@ -428,8 +500,9 @@
   }
 
   /* a match picked: the fields filled from what the server listed, then the server asked what it holds */
-  async function usePicked(f, size, search, held, already) {
+  async function usePicked(f, size, search, held, already, fromLive) {
     if (!already) pickedHow = 'search';
+    needsMeasures = false;
     const set = (id, value) => { const n = doc.getElementById(id); if (n && value !== null && value !== undefined) n.value = value; };
     if (KINDS.includes(f.product.category)) {
       set('ffr-type', f.product.category);
@@ -465,10 +538,66 @@
       : ['unknown', 'What Fynd holds for this product couldn’t be checked just now. You can still use it — Fynd checks again when it compares.'];
     held.dataset.status = status;
     held.replaceChildren(el('p', null, text), ...lines);
-    /* nothing Fynd can stand in with: its measurements are the way on */
-    if (status !== 'checked') { const manualBox = doc.getElementById('ffr-manual'); if (manualBox) manualBox.open = true; }
+    /* nothing Fynd can stand in with: its measurements are the way on —
+       and, for a pick from the live search, the only way on */
+    if (status !== 'checked') {
+      const manualBox = doc.getElementById('ffr-manual');
+      if (manualBox) manualBox.open = true;
+      if (fromLive) needsMeasures = true;
+    }
     const next = doc.getElementById('ffr-size');
     if (next && !next.value) next.focus();
+  }
+
+  /* the kind of garment, only from a listing's own name */
+  function kindFromName(name) {
+    const n = String(name || '').toLowerCase();
+    if (/\bhood(ie|y|ed)\b/.test(n)) return 'hoodies';
+    if (/\bsweat ?shirt\b|\bcrew ?neck\b/.test(n)) return 'sweatshirts';
+    if (/\bt-?shirt\b|\btee\b/.test(n)) return 'tshirts';
+    return null;
+  }
+
+  /* A listing picked from the live search: who sells it and what it's
+     called — nothing about its measurements. Fynd asks its own records
+     about that exact product (POST ?check=1, by its link; nothing is
+     fetched). A record of it is used as any found product is. Anything
+     else keeps the listing as the product and needs the shopper's own
+     measurements: no brand chart, no other model's numbers. */
+  async function useListing(p, size, search, held) {
+    const mine = ++pickAsk;
+    pickedHow = 'search';
+    needsMeasures = false;
+    held.dataset.status = 'checking';
+    held.replaceChildren(el('p', null, 'Checking what Fynd holds for this exact product…'));
+    held.hidden = false;
+    const sizing = global.Account && global.Account.sizing;
+    const got = sizing && sizing.check ? await sizing.check({ url: p.productUrl }, null) : null;
+    if (mine !== pickAsk) return;
+    const t = got && got.ok && got.data && got.data.check && got.data.check.target;
+    if (t && t.status === 'record') {
+      await usePicked({ brand: { id: null, name: t.brand }, product: { name: t.name, url: t.url, category: t.category, line: t.line, code: null } }, size, search, held, got, true);
+      return;
+    }
+    const set = (id, value) => { const n = doc.getElementById(id); if (n && value !== null && value !== undefined) n.value = value; };
+    set('ffr-product', p.productUrl);
+    /* the brand only when the listing names one: a shop is not a brand */
+    set('ffr-brand', p.brand || '');
+    const kind = kindFromName(p.name);
+    if (kind && FIND_FIT_KINDS.includes(kind)) set('ffr-type', kind);
+    if (size && size.kind === 'letter' && Schema.LETTER_SIZES.includes(size.letter)) set('ffr-size', size.letter);
+    search.value = [p.brand, p.name].filter(Boolean).join(' · ');
+    needsMeasures = true;
+    held.dataset.status = 'listing';
+    const brandWords = p.brand ? `a general ${p.brand} size chart` : 'a general size chart';
+    held.replaceChildren(
+      el('p', null, `Fynd doesn’t have verified measurements for this exact garment yet, so the listing can’t stand in for yours — and Fynd won’t use ${brandWords} or another model’s measurements instead.`),
+      el('p', null, 'To use it as your garment, measure it laid flat below: the chest and at least two more. (The Fynd extension reads size charts for the item you’re buying, not for a garment you already own.)')
+    );
+    const manualBox = doc.getElementById('ffr-manual');
+    if (manualBox) manualBox.open = true;
+    const first = doc.querySelector('#ffr-manual input[data-measure]');
+    if (first) first.focus();
   }
 
   /* what the form says, in the profile's own shape */
@@ -510,6 +639,11 @@
     const said = read();
     const missing = [];
     const a2 = said.garment.anchor;
+    if (needsMeasures && !a2.measurements) {
+      const manualBox = doc.getElementById('ffr-manual');
+      if (manualBox) manualBox.open = true;
+      missing.push({ id: 'ffr-m-chestWidth', message: 'Fynd has no verified measurements for this exact garment. Enter its measurements, laid flat, to use it as yours.' });
+    }
     /* measurements of its own need nothing else; a product needs the size on its
        label; with neither, the brand and size are all Fynd has to go on */
     if (!a2.measurements) {
@@ -528,6 +662,7 @@
       return;
     }
     visitHow = pickedHow || 'manual';
+    needsMeasures = false;
     keep(checked(said), 'shopper');
     editing = false;
     prefill = null;

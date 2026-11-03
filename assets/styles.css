@@ -2062,6 +2062,10 @@ strong { font-weight: 600; }
 .ff .ffi-values th, .ff .ffi-values td { padding: 4px 6px; border-bottom: 1px solid var(--color-border); text-align: left; vertical-align: top; }
 .ff .ffi-method { display: block; font-weight: 400; color: var(--color-text-muted); }
 /* Find Fit: the item found by searching (assets/find-fit-search.js) */
+.ff .ffr-find-row { display: flex; gap: 8px; align-items: flex-start; }
+.ff .ffr-find-row .ff-smart { flex: 1; min-width: 0; }
+.ff .ffr-live { margin-top: 8px; }
+.ff .ffr-live .ffs-results { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
 .ff .ffs { display: grid; gap: 10px; }
 .ff .ffs-form { display: grid; gap: 6px; }
 .ff .ffs-status { margin: 0; font-size: 14px; color: var(--color-text-2); }
@@ -2085,7 +2089,8 @@ strong { font-weight: 600; }
 .ff .ffs-more[hidden] { display: none; }
 .ff .ffs-note:empty { display: none; }
 @media (max-width: 560px) {
-  .ff .ffs-results { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ff .ffr-find-row { flex-direction: column; align-items: stretch; }
+  .ff .ffs-results, .ff .ffr-live .ffs-results { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .ff .ffs-more { justify-self: stretch; }
 }
 .ff .ffi-type { display: grid; gap: 6px; max-width: 260px; }

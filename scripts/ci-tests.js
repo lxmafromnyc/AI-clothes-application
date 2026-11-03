@@ -62,7 +62,7 @@ const GROUPS = {
     ['test-search', "the page's own reader and catalogue ranking, when no interpreter answers"],
     ['test-bench-messy-live', "the benchmark's requests and grading, through the real handlers on stand-ins"],
     ['test-cache', 'the search and offer caches, and what they may not change'],
-    ['test-search-pages', "product discovery past Fynd's own five products: different requests reach the source, Load more fetches the source's next page through a server-held cursor (single use, tied to who paid, five pages at most), nothing repeats across pages, endings and failures, a new search metered once and Load more not, no fit-analysis or AI allowance touched"],
+    ['test-search-pages', "product discovery past Fynd's own five products: different requests reach the source, Load more fetches the source's next page through a server-held cursor (single use, tied to who paid, five pages at most), nothing repeats across pages, endings and failures, a new search metered once and Load more not, no fit-analysis or AI allowance touched; a listing kept as the garment owned brings no measurements — only the exact checked product, or the shopper's own"],
     ['test-serper', 'the Serper fallback and its links'],
     ['test-serpapi', 'the SerpApi adapter, its links and its costs'],
     ['test-live-organic', "the Serper fallback end to end: organic results, read off the retailers' own pages"],
@@ -101,7 +101,7 @@ const GROUPS = {
     ['test-merchant-browser', "a merchant's own catalogue in Find Fit and on its product page in a browser: the brand menu, photos from its own host only, brand, colour and size filters, price order, and no size from a label"],
     ['test-catalog-rakuten',"UNIQLO's catalogue from a Rakuten Product Catalog file: reader, sync at catalogue scale, refresh, coverage, and the popup over it"],
     ['test-provider-unavailable', 'with no paid product source: OpenWeb Ninja never asked, no silent fallback, and what Find Fit and the Search page show'],
-    ['test-find-fit-search-browser', "Find Fit's product search in Chromium against the real /api/search and /api/size-recommendation: 20 listings from the source, Load more from the server with no repeats and one request per click, a new search resetting, empty, failure and end states, Fynd's own list labelled, a pick handed to the existing link lookup, no AI or comparison asked, Load more not metered, phone width"],
+    ['test-find-fit-search-browser', "Find Fit's product search in Chromium against the real /api/search and /api/size-recommendation: 20 listings from the source, Load more from the server with no repeats and one request per click, a new search resetting, empty, failure and end states, Fynd's own list labelled, a pick handed to the existing link lookup, no AI or comparison asked, Load more not metered, phone width — and step 01's Search shops: live listings for the garment owned, Load more, a listing without a checked record refused until measured, a checked record compared and saved"],
     ['test-fit-states', "Find Fit's comparison states drawn by the real renderer from real engine answers: unsupported, body-only, methods, closest-mismatch, recommended, malformed"]
   ],
   /* root, and a local OpenSSH server: CI's "SFTP integration" job, as root */

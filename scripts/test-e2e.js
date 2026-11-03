@@ -2349,7 +2349,7 @@ const linkFromInbox = (pattern) => {
     await refSettled(page);
     assert.strictEqual(await page.getAttribute('#ffr-suggest-box', 'data-state'), 'empty');
     assert.deepStrictEqual(await refOptions(page), []);
-    assert.match(await page.textContent('#ffr-suggest-status'), /^No products match “Levi’s 511”\. Enter its measurements below instead\. Waist and inseam 32x32 read apart from the product’s name\. Fynd’s list: .*not UNIQLO’s full range\.$/);
+    assert.match(await page.textContent('#ffr-suggest-status'), /^Nothing on Fynd’s list matches “Levi’s 511”\. Press Search shops \(or Enter\) to look across retailers, or enter its measurements below\. Waist and inseam 32x32 read apart from the product’s name\. Fynd’s list: .*not UNIQLO’s full range\.$/);
     assert.strictEqual(await page.getAttribute('#ffr-suggest-box', 'data-size'), '32x32');
     /* a number after "size" is a size; a size the form doesn't take is said, never chosen */
     await page.fill('#ffr-search', 'supima tee size 10');
@@ -2386,7 +2386,7 @@ const linkFromInbox = (pattern) => {
     await page.route('**/api/size-recommendation?brand=uniqlo&q=*', (route) => route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'down' }) }));
     await page.fill('#ffr-search', 'hoodie');
     await page.waitForSelector('#ffr-suggest-box[data-state="error"]');
-    assert.strictEqual(await page.textContent('#ffr-suggest-status'), 'Search isn’t available right now. Enter its measurements below instead.');
+    assert.strictEqual(await page.textContent('#ffr-suggest-status'), 'Fynd’s list isn’t available right now. Press Search shops, or enter its measurements below.');
     assert.deepStrictEqual(await refOptions(page), []);
     await page.unroute('**/api/size-recommendation?brand=uniqlo&q=*');
     /* a product's check that fails: said as not known — the fields stay, and nothing says checked */
@@ -2419,7 +2419,7 @@ const linkFromInbox = (pattern) => {
     await fresh.waitForSelector('#ffr-search');
     await fresh.fill('#ffr-search', 'hoodie');
     await fresh.waitForSelector('#ffr-suggest-box[data-state="error"]');
-    assert.strictEqual(await fresh.textContent('#ffr-suggest-status'), 'Search isn’t available right now. Enter its measurements below instead.');
+    assert.strictEqual(await fresh.textContent('#ffr-suggest-status'), 'Fynd’s list isn’t available right now. Press Search shops, or enter its measurements below.');
     assert.ok(await fresh.isEditable('#ffr-brand'));
     await context2.close();
   });
