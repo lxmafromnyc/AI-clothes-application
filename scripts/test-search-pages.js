@@ -29,6 +29,9 @@
                  pages; no fit-analysis or AI allowance is touched
      unchanged   a request without `paginate` is answered exactly as it
                  was, with no page fields
+     step 01     a listing kept as the garment owned brings no
+                 measurements: only the exact, checked product in the
+                 label's size, or the shopper's own, stand in
 
    Usage: node scripts/test-search-pages.js
    ========================================================= */
@@ -448,6 +451,58 @@ const FYND_FIVE = ['Sweat Oversized Pullover Hoodie', 'Sweat Pullover Hoodie', '
     assert.strictEqual(require('../api/_providers/serpapi').paginates, false);
     assert.strictEqual(pages.supports(require('../api/_providers/serpapi')), false);
   });
+
+  console.log('\na listing as the garment you own (step 01)');
+
+  /* What step 01 sends when a listing is kept: its brand, the label's
+     size and the listing's link — and measurements only if the shopper
+     entered them. The engine decides what stands in, by its own rule. */
+  const { asChecked, UQ_PAIR } = require('./fixtures/as-checked');
+  const engine = require('../api/_sizing/engine');
+  const records = require('../api/_sizing/records');
+  const Schema = require('../assets/fit-profile-schema.js');
+  const owning = (anchor) => Object.assign(Schema.empty(), { garments: { sweatshirts: Object.assign(Schema.emptyGarment('sweatshirts'), { favorite: 'perfect', line: 'men', anchor }) } });
+  const ITEM = 'uniqlo-e475378-sweat-pullover-hoodie-us';
+
+  await test('a listing Fynd holds no record of brings no measurements: another model of the same brand is never borrowed', () => asChecked(UQ_PAIR, () => {
+    /* a shop's listing of a UNIQLO sweatshirt, not UNIQLO's own page for the checked one */
+    const listing = owning({ brand: 'UNIQLO', size: 'M', product: { url: 'https://www.shop.example/p/uniqlo-sweatshirt-grey' } });
+    const v = engine.validate(listing, records.byId(ITEM));
+    assert.strictEqual(v.code, 'no-reference-measurements');
+    assert.strictEqual(v.canRecommend, false);
+    /* a brand and a size alone: no brand chart stands in either */
+    const bare = engine.validate(owning({ brand: 'UNIQLO', size: 'M' }), records.byId(ITEM));
+    assert.ok(['no-reference', 'no-reference-measurements'].includes(bare.code), bare.code);
+    assert.strictEqual(bare.canRecommend, false);
+  }));
+
+  await test('the exact product, checked, in the label’s size: its verified measurements stand in', () => asChecked(UQ_PAIR, () => {
+    const exact = owning({ brand: 'UNIQLO', size: 'M', product: { url: 'https://www.uniqlo.com/us/en/products/E475377-000/00' } });
+    const v = engine.validate(exact, records.byId(ITEM));
+    assert.strictEqual(v.ready, true, JSON.stringify(v));
+    assert.ok(engine.compare(exact, records.byId(ITEM)).recommended);
+  }));
+
+  await test('the exact product, not yet checked: its measurements do not stand in', () => {
+    const exact = owning({ brand: 'UNIQLO', size: 'M', product: { url: 'https://www.uniqlo.com/us/en/products/E475377-000/00' } });
+    const item = records.byId(ITEM);
+    /* the item checked, the reference left as production holds it */
+    return asChecked([ITEM], () => {
+      assert.strictEqual(engine.validate(exact, item).code, 'no-reference-measurements');
+    });
+  });
+
+  await test('a listing with the shopper’s own measurements is compared on those, through the same engine', () => asChecked(UQ_PAIR, () => {
+    const mine = owning({ brand: 'Nike', size: 'L', product: { url: 'https://www.shop.example/p/0-0-0' }, measurements: { unit: 'cm', chestWidth: 60, bodyLength: 70, shoulderWidth: 54, sleeveLength: 61 } });
+    const { answers, errors } = Schema.normaliseGuide({ garments: { sweatshirts: mine.garments.sweatshirts } });
+    assert.deepStrictEqual(errors, []);
+    const profile = Object.assign(Schema.empty(), { garments: { sweatshirts: answers.garments.sweatshirts } });
+    const v = engine.validate(profile, records.byId(ITEM));
+    /* the engine reads the shopper's numbers, and holds them to its own
+       method rules (here UNIQLO measures length from the centre back) */
+    assert.notStrictEqual(v.code, 'no-reference-measurements');
+    assert.ok(v.dimensions.length && v.dimensions.every((d) => d.reference && d.reference.status === 'shopper-measured'), JSON.stringify(v.dimensions));
+  }));
 
   console.log(`\n${passed} passed, ${failures.length} failed`);
   process.exit(failures.length ? 1 : 0);
