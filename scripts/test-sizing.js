@@ -612,7 +612,7 @@ await test('with consent, an entry of fixed choices is kept; anything else is re
   assert.strictEqual((await feedback(jar, { action: 'consent', consent: { store: true } })).status, 200);
   const added = await feedback(jar, { action: 'add', entry: Object.assign(ENTRY(), { note: 'my chest is 40', email: 'x@y.z' }) });
   assert.strictEqual(added.status, 200, JSON.stringify(added.body));
-  assert.deepStrictEqual(Object.keys(added.body.entry).sort(), ['areas', 'asExpected', 'brand', 'category', 'createdAt', 'id', 'issues', 'notes', 'overall', 'productId', 'recommendedSize', 'reference', 'sizeTried']);
+  assert.deepStrictEqual(Object.keys(added.body.entry).sort(), ['areas', 'asExpected', 'brand', 'category', 'createdAt', 'id', 'issues', 'notes', 'overall', 'product', 'productId', 'recommendedSize', 'reference', 'referenceType', 'sizeTried']);
   assert.ok(!JSON.stringify(added.body).includes('my chest is 40'), 'free text is dropped');
   for (const [entry, field] of [
     [Object.assign(ENTRY(), { productId: 'made-up' }), 'productId'],
@@ -662,6 +662,92 @@ await test('one account\'s feedback is never another\'s, and an entry can be del
   const gone = await feedback(ada.jar, { action: 'delete-all' });
   assert.strictEqual(gone.body.deleted, true);
   assert.strictEqual(await store.get(fitFeedback.key(ada.user.id)), null);
+});
+
+/* A product Fynd holds no record for — a pasted link, or a page the
+   extension read — named by its own link, with the size on its label and
+   the five answers a buyer gives: just right, or too tight / loose /
+   short / long (too-narrow, too-wide, too-short, too-long). */
+const LINKED = () => ({
+  product: { url: 'https://shop.example.com/products/heavy-hoodie?utm_source=mail&colour=navy#reviews', brand: 'Northwind', name: 'Heavyweight Hoodie' },
+  category: 'hoodies', sizeTried: 'L', recommendedSize: 'L', asExpected: false, issues: ['too-narrow', 'too-short'], referenceType: 'hoodies', withReference: true
+});
+
+await test('a product Fynd has no record of is kept by its own cleaned link, size label and the garment it was compared with', async () => {
+  const { jar, user } = await signUp('ada@example.test');
+  await fitProfiles.save(user.id, profileWith({ favorite: 'perfect', anchor: { brand: 'UNIQLO', size: 'M', measurements: { unit: 'in', chestWidth: 22, bodyLength: 27, sleeveLength: 24, shoulderWidth: 19 } }, fitGoal: 'true-to-size', line: 'men' }));
+  await feedback(jar, { action: 'consent', consent: { store: true } });
+  const added = await feedback(jar, { action: 'add', entry: LINKED() });
+  assert.strictEqual(added.status, 200, JSON.stringify(added.body));
+  const e = added.body.entry;
+  assert.strictEqual(e.product.url, 'https://shop.example.com/products/heavy-hoodie?colour=navy', 'tracking and fragment dropped, the product\'s own query kept');
+  assert.strictEqual(e.productId, fitFeedback.linkId(e.product.url));
+  assert.ok(/^url:[0-9a-f]{24}$/.test(e.productId));
+  assert.strictEqual(e.brand, 'Northwind');
+  assert.strictEqual(e.product.name, 'Heavyweight Hoodie');
+  assert.strictEqual(e.category, 'hoodies');
+  assert.strictEqual(e.sizeTried, 'L');
+  assert.deepStrictEqual(e.issues, ['too-narrow', 'too-short']);
+  assert.strictEqual(e.referenceType, 'hoodies');
+  assert.deepStrictEqual(e.reference, { category: 'hoodies', brand: 'UNIQLO', size: 'M', product: null, measurements: { unit: 'in', chestWidth: 22, bodyLength: 27, sleeveLength: 24, shoulderWidth: 19 } }, 'the exact saved garment, as it was');
+  /* the same product and size told again updates that entry, whatever tracking the link carries */
+  const again = await feedback(jar, { action: 'add', entry: Object.assign(LINKED(), { product: { url: 'https://shop.example.com/products/heavy-hoodie?colour=navy&gclid=1' }, asExpected: true, issues: [] }) });
+  assert.strictEqual(again.body.updated, true);
+  assert.strictEqual(again.body.entry.id, e.id);
+  /* another size is another entry */
+  const other = await feedback(jar, { action: 'add', entry: Object.assign(LINKED(), { sizeTried: 'XL', asExpected: true, issues: [] }) });
+  assert.notStrictEqual(other.body.entry.id, e.id);
+  assert.strictEqual((await readFeedback(jar)).body.feedback.entries.length, 2);
+  /* an update keeps the product's link and kind: the request can't move it */
+  const upd = await feedback(jar, { action: 'update', id: e.id, entry: { asExpected: false, issues: ['too-long'], product: { url: 'https://elsewhere.example.org/x' }, category: 'tshirts' } });
+  assert.strictEqual(upd.status, 200, JSON.stringify(upd.body));
+  assert.strictEqual(upd.body.entry.product.url, e.product.url);
+  assert.strictEqual(upd.body.entry.category, 'hoodies');
+  assert.deepStrictEqual(upd.body.entry.issues, ['too-long']);
+  assert.strictEqual(upd.body.entry.referenceType, 'hoodies', 'an update that doesn\'t name the garment keeps it');
+  assert.ok(upd.body.entry.reference && upd.body.entry.reference.brand === 'UNIQLO', 'and its snapshot');
+});
+
+await test('a link-named entry is refused without a public link, a kind of garment, or a size label — and "just right" can\'t also be tight', async () => {
+  const { jar } = await signUp('ada@example.test');
+  await feedback(jar, { action: 'consent', consent: { store: true } });
+  for (const [entry, field] of [
+    [Object.assign(LINKED(), { product: { url: 'http://localhost/hoodie' } }), 'product.url'],
+    [Object.assign(LINKED(), { product: { url: 'https://10.0.0.1/hoodie' } }), 'product.url'],
+    [Object.assign(LINKED(), { product: { url: 'javascript:alert(1)' } }), 'product.url'],
+    [Object.assign(LINKED(), { product: null }), 'productId'],
+    [Object.assign(LINKED(), { category: 'jeans' }), 'category'],
+    [Object.assign(LINKED(), { sizeTried: '' }), 'sizeTried'],
+    [Object.assign(LINKED(), { sizeTried: 'a size label far too long' }), 'sizeTried'],
+    [Object.assign(LINKED(), { productId: 'url:000000000000000000000000' }), 'productId'],
+    [Object.assign(LINKED(), { referenceType: 'jeans' }), 'referenceType'],
+    [Object.assign(LINKED(), { product: { url: 'https://shop.example.com/p', name: 'x'.repeat(200) } }), 'product.name'],
+    [Object.assign(LINKED(), { asExpected: true, issues: ['too-wide'] }), 'issues'],
+    [Object.assign(LINKED(), { asExpected: false, issues: ['baggy'] }), 'issues']
+  ]) {
+    const r = await feedback(jar, { action: 'add', entry });
+    assert.strictEqual(r.status, 400, field);
+    assert.ok(r.body.errors.some((x) => x.field === field), `${field}: ${JSON.stringify(r.body.errors)}`);
+  }
+  assert.strictEqual((await readFeedback(jar)).body.feedback.entries.length, 0);
+  /* a refused link is the one error: nothing else is blamed for it */
+  const refused = await feedback(jar, { action: 'add', entry: Object.assign(LINKED(), { product: { url: 'http://127.0.0.1:8080/shop/tee.html' } }) });
+  assert.deepStrictEqual(refused.body.errors.map((x) => x.field), ['product.url']);
+  /* no saved garment of that kind: kept, with no reference made up */
+  const none = await feedback(jar, { action: 'add', entry: LINKED() });
+  assert.strictEqual(none.status, 200);
+  assert.strictEqual(none.body.entry.reference, null);
+  /* still consent-gated, CSRF-checked and 401 signed out, like every entry */
+  const bea = await signUp('bea@example.test');
+  assert.strictEqual((await feedback(bea.jar, { action: 'add', entry: LINKED() })).status, 409);
+  assert.strictEqual((await feedback(jar, { action: 'add', entry: LINKED() }, { omitCsrf: true })).status, 403);
+  assert.strictEqual((await feedback({}, { action: 'add', entry: LINKED() })).status, 401);
+});
+
+await test('summarise counts link-named products per product and size, like records', () => {
+  const id = fitFeedback.linkId('https://shop.example.com/p');
+  const s = fitFeedback.summarise([{ consent: { improve: true }, entries: [{ productId: id, sizeTried: 'L', asExpected: false, issues: ['too-narrow'] }] }]);
+  assert.deepStrictEqual([s[0].productId, s[0].size, s[0].issues['too-narrow'], s[0].enough], [id, 'L', 1, false]);
 });
 
 await test('deleting the fit profile deletes the fit feedback too', async () => {

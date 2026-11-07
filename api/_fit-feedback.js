@@ -20,6 +20,24 @@
                       their own saved profile at that moment — never sent
                       by the page
 
+   The product is one of two kinds:
+     productId         a product Fynd holds a sizing record for; the size
+                       must be one of the record's
+     product           { url, brand?, name? } — any other product, named by
+                       its own link (a pasted link, or the page the
+                       extension read), with `category` the kind of
+                       garment. The link is cleaned the way the chart
+                       lookup cleans it (api/_sizing/chart.js checkUrl):
+                       tracking parameters and fragment dropped, no
+                       private address. Its id is "url:" and a hash of
+                       that link, so the same product is the same entry.
+                       The size is the label the shopper picked from the
+                       sizes they compared; with no record to hold it to,
+                       it is kept as a short label and nothing more.
+   referenceType       optional: which saved garment the comparison used
+                       (the extension and Find Fit name it), so the
+                       reference snapshot is that garment, not a guess
+
    One entry per product and size: telling it again for the same size
    updates that entry. A change never moves an entry to another product
    or size; that is a new entry. No photo and no body measurement.
@@ -48,6 +66,7 @@
 const crypto = require('crypto');
 const store = require('./_store');
 const sizing = require('./_sizing/records');
+const { checkUrl } = require('./_sizing/chart');
 
 const VERSION = 1;
 const LIMIT = 100;
@@ -57,6 +76,9 @@ const key = (userId) => `fitfeedback:${userId}`;
 const OVERALL = ['too-small', 'right', 'too-large'];
 const ISSUES = ['too-wide', 'too-narrow', 'too-long', 'too-short'];
 const NOTES_LIMIT = 500;
+const CATEGORIES = ['hoodies', 'sweatshirts', 'tshirts'];
+const LABEL_LIMIT = 16;
+const TEXT_LIMIT = 120;
 /* the areas a top can be told about, and the words for each */
 const AREAS = {
   chest: ['tight', 'right', 'loose'],
@@ -111,14 +133,25 @@ function normaliseEntry(input) {
   const fail = (field, message) => errors.push({ field, message });
   const e = isPlainObject(input) ? input : {};
 
-  const record = typeof e.productId === 'string' ? sizing.byId(e.productId) : null;
-  if (!record) fail('productId', 'Choose a product Fynd has sizing for.');
-  const sizeTried = typeof e.sizeTried === 'string' ? e.sizeTried.trim() : '';
-  if (record && !record.sizes.includes(sizeTried)) fail('sizeTried', `Choose one of ${record ? record.sizes.join(', ') : 'its sizes'}.`);
+  /* a product Fynd has a record for, or one named by its own link */
+  const linked = e.productId === undefined || e.productId === null || (typeof e.productId === 'string' && e.productId.startsWith('url:'))
+    ? linkedProduct(e, fail) : null;
+  const record = linked ? null : typeof e.productId === 'string' ? sizing.byId(e.productId) : null;
+  if (!record && !linked && !errors.length) fail('productId', 'Choose a product Fynd has sizing for, or give the product\'s link.');
+  const sizeTried = typeof e.sizeTried === 'string' ? cleanText(e.sizeTried) : '';
+  if (record && !record.sizes.includes(sizeTried)) fail('sizeTried', `Choose one of ${record.sizes.join(', ')}.`);
+  if (linked && !validLabel(sizeTried)) fail('sizeTried', 'Say which size you bought, as its label says.');
   let recommended = null;
   if (e.recommendedSize !== undefined && e.recommendedSize !== null) {
     if (record && record.sizes.includes(e.recommendedSize)) recommended = e.recommendedSize;
-    else fail('recommendedSize', 'The suggested size must be one of the product\'s sizes.');
+    else if (linked && typeof e.recommendedSize === 'string' && validLabel(cleanText(e.recommendedSize))) recommended = cleanText(e.recommendedSize);
+    /* no product to hold it to: that is the one error, not a second */
+    else if (record || linked) fail('recommendedSize', 'The suggested size must be one of the product\'s sizes.');
+  }
+  let referenceType = null;
+  if (e.referenceType !== undefined && e.referenceType !== null) {
+    if (!CATEGORIES.includes(e.referenceType)) fail('referenceType', `The garment compared with is one of ${CATEGORIES.join(', ')}.`);
+    else referenceType = e.referenceType;
   }
   /* how it fitted: as expected or not (and what was off), or the first
      form's overall answer — at least one of them */
@@ -165,9 +198,12 @@ function normaliseEntry(input) {
   return {
     entry: {
       id: crypto.randomBytes(9).toString('base64url'),
-      productId: record.id,
-      brand: record.brand,
-      category: record.category,
+      productId: record ? record.id : linked.id,
+      brand: record ? record.brand : linked.brand,
+      category: record ? record.category : linked.category,
+      /* a product named by its link keeps the link and the words the page gave it */
+      product: record ? null : { url: linked.url, name: linked.name },
+      referenceType,
       sizeTried,
       recommendedSize: recommended,
       asExpected,
@@ -182,16 +218,46 @@ function normaliseEntry(input) {
   };
 }
 
+const validLabel = (t) => typeof t === 'string' && t.length > 0 && t.length <= LABEL_LIMIT;
+const shortText = (raw) => {
+  if (raw === undefined || raw === null || raw === '') return null;
+  if (typeof raw !== 'string') return undefined;
+  const t = cleanText(raw);
+  return t.length > TEXT_LIMIT ? undefined : t || null;
+};
+const linkId = (url) => `url:${crypto.createHash('sha256').update(url).digest('hex').slice(0, 24)}`;
+
+/* A product Fynd holds no record for, named by its own link: the link
+   cleaned as the chart lookup cleans it, the kind of garment, and the
+   brand and name only as the page or the shopper gave them. */
+function linkedProduct(e, fail) {
+  const p = isPlainObject(e.product) ? e.product : null;
+  if (!p) { fail('productId', 'Choose a product Fynd has sizing for, or give the product\'s link.'); return null; }
+  const checked = checkUrl(p.url);
+  if (checked.error) { fail('product.url', 'That isn\'t a product page\'s address.'); return null; }
+  const id = linkId(checked.url);
+  if (typeof e.productId === 'string' && e.productId !== id) { fail('productId', 'The product\'s id doesn\'t match its link.'); return null; }
+  if (!CATEGORIES.includes(e.category)) { fail('category', `Say what kind of garment it is: ${CATEGORIES.join(', ')}.`); return null; }
+  const brand = shortText(p.brand);
+  const name = shortText(p.name);
+  if (brand === undefined) fail('product.brand', `Keep the brand to ${TEXT_LIMIT} characters.`);
+  if (name === undefined) fail('product.name', `Keep the product's name to ${TEXT_LIMIT} characters.`);
+  if (brand === undefined || name === undefined) return null;
+  return { id, url: checked.url, brand, name, category: e.category };
+}
+
 /* The fit reference an entry was compared against, as the shopper's own
    profile holds it now: the favourite piece of the product's type (or
    the other fleece top's). Null when there is none. A copy, so a later
    change to the reference never rewrites what this feedback was about. */
 const FAMILY = { hoodies: 'fleece', sweatshirts: 'fleece', tshirts: 'tees' };
-function referenceSnapshot(profile, category) {
+function referenceSnapshot(profile, category, referenceType) {
   const garments = (profile && profile.garments) || {};
   const usable = (c) => Boolean(garments[c] && garments[c].favorite !== 'none' && garments[c].anchor
     && (garments[c].anchor.measurements || garments[c].anchor.product));
-  const cat = usable(category) ? category : Object.keys(FAMILY).find((c) => c !== category && FAMILY[c] === FAMILY[category] && usable(c));
+  /* the garment the comparison named, when the shopper's profile still holds it */
+  const cat = referenceType ? (usable(referenceType) ? referenceType : null)
+    : usable(category) ? category : Object.keys(FAMILY).find((c) => c !== category && FAMILY[c] === FAMILY[category] && usable(c));
   if (!cat) return null;
   const a = garments[cat].anchor;
   return { category: cat, brand: a.brand || null, size: a.size || null, product: a.product || null, measurements: a.measurements || null };
@@ -208,7 +274,7 @@ async function add(userId, input, options) {
   }
   const { entry, errors } = normaliseEntry(input);
   if (errors.length) return { errors };
-  if (isPlainObject(input) && input.withReference === true) entry.reference = referenceSnapshot(options && options.profile, entry.category);
+  if (isPlainObject(input) && input.withReference === true) entry.reference = referenceSnapshot(options && options.profile, entry.category, entry.referenceType);
   const same = current.entries.find((x) => x.productId === entry.productId && x.sizeTried === entry.sizeTried);
   if (same) {
     Object.assign(entry, { id: same.id, createdAt: same.createdAt, updatedAt: new Date().toISOString() });
@@ -235,9 +301,15 @@ async function update(userId, id, input, options) {
   if ((e.productId !== undefined && e.productId !== existing.productId) || (e.sizeTried !== undefined && e.sizeTried !== existing.sizeTried)) {
     return { errors: [{ field: 'sizeTried', message: 'Feedback stays with the product and size it was given for. For another size, add new feedback.' }] };
   }
-  const { entry, errors } = normaliseEntry(Object.assign({}, e, { productId: existing.productId, sizeTried: existing.sizeTried }));
+  /* a product named by its link stays that product: its link and kind come from the entry, not the request */
+  const fixed = existing.product && existing.product.url
+    ? { productId: existing.productId, sizeTried: existing.sizeTried, category: existing.category, product: { url: existing.product.url, brand: existing.brand, name: existing.product.name } }
+    : { productId: existing.productId, sizeTried: existing.sizeTried };
+  /* the garment compared stays named unless the request names another */
+  if (e.referenceType === undefined) fixed.referenceType = existing.referenceType || null;
+  const { entry, errors } = normaliseEntry(Object.assign({}, e, fixed));
   if (errors.length) return { errors };
-  entry.reference = e.withReference === true ? referenceSnapshot(options && options.profile, entry.category)
+  entry.reference = e.withReference === true ? referenceSnapshot(options && options.profile, entry.category, entry.referenceType)
     : e.withReference === false ? null : existing.reference || null;
   Object.assign(entry, { id: existing.id, createdAt: existing.createdAt, updatedAt: new Date().toISOString() });
   const entries = current.entries.map((x) => (x.id === id ? entry : x));
@@ -296,4 +368,4 @@ async function removeAll(userId) {
   return true;
 }
 
-module.exports = { read, setConsent, add, update, removeEntry, removeAll, normaliseEntry, referenceSnapshot, summarise, key, OVERALL, ISSUES, AREAS, LIMIT, AGGREGATE_MINIMUM, NOTES_LIMIT };
+module.exports = { read, setConsent, add, update, removeEntry, removeAll, normaliseEntry, referenceSnapshot, summarise, linkId, key, OVERALL, ISSUES, AREAS, CATEGORIES, LIMIT, AGGREGATE_MINIMUM, NOTES_LIMIT };
