@@ -27,6 +27,16 @@
                        its AI for a proposal and check it against the page.
                        The extension never calls a model itself.
 
+     feedback.*        how a size fit once bought, kept with the fit
+                       profile's existing feedback (api/_fit-feedback.js):
+                       GET  /api/account          — signed in? and the CSRF
+                                                    token every change carries
+                       GET  /api/fit-profile?part=feedback
+                       POST /api/fit-profile { action: "feedback-consent" |
+                                               "feedback-add" }
+                       Only after the shopper opens "Bought it? Tell Fynd
+                       how it fit" under a result and saves.
+
    Every answer is { ok, status, data } or { ok: false, problem }, where
    problem.kind is one of:
      sign-in      401: not signed in to Fynd in this browser
@@ -117,5 +127,41 @@
     body: JSON.stringify({ events: events.slice(0, 20).map((e) => Object.assign({ surface: 'extension' }, e)) })
   }).catch(() => null));
 
-  return { request, savedGarments, compareChart, interpretChart, metrics, metricsOff, TIMEOUT_MS, AI_TIMEOUT_MS, base };
+  /* How a size fit, once bought: the fit profile's own feedback. A change
+     carries the CSRF token /api/account hands a signed-in session, as the
+     site's own pages do (assets/account.js); a stale token is fetched again
+     once. */
+  let csrf = null;
+  async function account() {
+    const got = await request('/api/account', { method: 'GET' });
+    csrf = got.ok && got.data && typeof got.data.csrfToken === 'string' ? got.data.csrfToken : null;
+    return got;
+  }
+  async function signedIn() {
+    const got = await account();
+    return Boolean(got.ok && got.data && got.data.signedIn && csrf);
+  }
+  async function changeProfile(body) {
+    if (!csrf) await account();
+    if (!csrf) return { ok: false, status: 401, problem: { kind: 'sign-in', message: 'Sign in to Fynd.', reason: null, errors: [], retryAfter: null } };
+    const send = () => request('/api/fit-profile', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Fynd-CSRF': csrf },
+      body: JSON.stringify(body)
+    });
+    let got = await send();
+    if (!got.ok && got.status === 403 && got.problem.reason === 'csrf') {
+      await account();
+      if (csrf) got = await send();
+    }
+    return got;
+  }
+  const feedback = {
+    signedIn,
+    read: () => request('/api/fit-profile?part=feedback', { method: 'GET' }),
+    consent: () => changeProfile({ action: 'feedback-consent', consent: { store: true } }),
+    add: (entry) => changeProfile({ action: 'feedback-add', entry })
+  };
+
+  return { request, savedGarments, compareChart, interpretChart, metrics, metricsOff, feedback, TIMEOUT_MS, AI_TIMEOUT_MS, base };
 });

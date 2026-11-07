@@ -3478,6 +3478,28 @@ separate consent allows de-identified use to improve product data; nothing uses 
 yet, and when something does it may read only counts per product and size, from
 at least ten accounts. Feedback does not change suggestions yet.
 
+**After a purchase, from any comparison.** Under a Find Fit result and under
+the extension's Fit panel result, **Bought it? Tell Fynd how it fit**
+(`assets/fit-feedback-form.js`, copied into `extension/vendor/`) asks for the
+size bought — one of the sizes just compared, the recommended one first — and
+how it fit, in the buyer's words: **Just right**, or any of **Too tight**,
+**Too loose**, **Too short**, **Too long** (kept as `asExpected: true`, or
+`issues` `too-narrow`, `too-wide`, `too-short`, `too-long`). It saves through
+the same `feedback-add` above, with the same consent, CSRF and 401 rules, and
+asks nothing until it is opened. A product Fynd holds a record for is named by
+its id; **any other product by its own link** (`product: { url, brand, name }`
+and `category`): the server cleans the link as the chart lookup does
+(`checkUrl`: no tracking, no fragment, no private address) and names it
+`url:<hash>`, so the same product and size told again updates its entry. The
+size of a link-named product is kept as the label the buyer chose (at most 16
+characters); there is no record to hold it to. When the comparison used a
+garment saved on the fit profile, the entry says which (`referenceType`) and the
+server copies that garment as it is now (`reference`); a garment described only
+for the visit isn't on the profile, so none is kept. An item typed by hand with
+no link has nothing to tie the feedback to, and isn't offered the form. The
+extension reads `GET /api/account` for the CSRF token, as the site's pages do —
+no new endpoint, host or store.
+
 ### Evaluation
 
 `scripts/fixtures/size-eval.json` holds 23 cases — profiles against the six

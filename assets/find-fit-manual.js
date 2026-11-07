@@ -271,6 +271,7 @@
     if (!result.hidden && !busy) {
       result.hidden = true;
       if (global.FindFitSave) global.FindFitSave.hide();
+      hideFeedback();
     }
     progress();
   }
@@ -331,6 +332,37 @@
     metrics.event(ref && ref.source === 'saved' ? 'reference_ready_saved' : `reference_ready_${(ref && ref.how) || 'manual'}`);
   }
 
+  /* After a comparison that set sizes beside the garment: "Bought it? Tell
+     Fynd how it fit" (assets/fit-feedback-form.js), saved through the fit
+     profile's own feedback. Only the sizes the server compared are offered;
+     the size it recommended, when the decision was OK, is the default. */
+  const feedbackBox = $('ff-feedback');
+  const Feedback = global.FitFeedbackForm;
+  function hideFeedback() { if (feedbackBox) { feedbackBox.replaceChildren(); feedbackBox.hidden = true; } }
+  const feedbackApi = {
+    signedIn: async () => {
+      const A = global.Account;
+      if (!A.state()) await A.load();
+      const st = A.state();
+      return Boolean(st && st.signedIn);
+    },
+    read: async () => asProblem(await global.Account.fitProfile.feedback.read()),
+    consent: async () => asProblem(await global.Account.fitProfile.feedback.consent({ store: true })),
+    add: async (entry) => asProblem(await global.Account.fitProfile.feedback.add(entry))
+  };
+  function asProblem(r) {
+    if (r && r.ok) return r;
+    return { ok: false, problem: { kind: r && r.status === 401 ? 'sign-in' : 'server', errors: (r && r.data && Array.isArray(r.data.errors)) ? r.data.errors : [] } };
+  }
+  function offerFeedback(got, ctx) {
+    if (!feedbackBox || !Feedback || !global.Account) return;
+    const c = got && got.ok && got.data && got.data.comparison;
+    const d = got && got.ok && got.data && got.data.decision;
+    const sizes = c && Array.isArray(c.sizes) ? c.sizes.map((x) => x && x.size).filter((x) => typeof x === 'string') : [];
+    if (!sizes.length) { hideFeedback(); return; }
+    Feedback.mount(feedbackBox, Object.assign({ sizes, recommendedSize: d && d.outcome === 'OK' ? d.size : null }, ctx), feedbackApi, { signInHref: 'account.html' });
+  }
+
   /* the item from its link: every size, one request */
   async function compareLink() {
     const garment = garmentState();
@@ -352,6 +384,7 @@
       const item = Item();
       const product = item.product() || {};
       if (global.FindFitSave) global.FindFitSave.hide();
+      hideFeedback();
       result.hidden = false;
       result.dataset.state = 'loading';
       $('fit-result-product').textContent = `${[product.brand, product.name].filter(Boolean).join(' · ') || 'The item'} — every size`;
@@ -374,6 +407,12 @@
       }
       if (ask !== latest) return;
       global.FitCompare.showAnswer(got, compare, { unsaved: ref.source === 'visit' ? reference : null });
+      offerFeedback(got, {
+        productId: src.mode === 'record' ? src.productId : null,
+        product: src.mode === 'chart' && src.chart ? { url: src.chart.url, brand: product.brand, name: product.name } : null,
+        category: item.type(),
+        referenceType: ref.source === 'saved' ? ref.type : null
+      });
       result.dataset.state = 'done';
       metrics.completed(outcomeOf(compare.dataset.verdict));
       if (global.FindFitSave) global.FindFitSave.offer();
@@ -407,6 +446,7 @@
       const ask = ++latest;
       const candidate = read.candidate;
       if (global.FindFitSave) global.FindFitSave.hide();
+      hideFeedback();
       result.hidden = false;
       result.dataset.state = 'loading';
       $('fit-result-product').textContent = itemWords(candidate);
@@ -420,8 +460,14 @@
       metrics.event('comparison_started');
       metrics.event('candidate_ready_manual');
       noteReference(global.FindFitReference && global.FindFitReference.choice ? global.FindFitReference.choice() : null);
-      await global.FitCompare.showCandidate(candidate, compare, () => ask === latest, reference ? { reference } : {});
+      const got = await global.FitCompare.showCandidate(candidate, compare, () => ask === latest, reference ? { reference } : {});
       if (ask === latest) {
+        const chosen = !reference && global.FindFitReference && global.FindFitReference.choice ? global.FindFitReference.choice() : null;
+        offerFeedback(got, {
+          product: candidate.url ? { url: candidate.url, brand: candidate.brand, name: candidate.name } : null,
+          category: candidate.type,
+          referenceType: chosen && chosen.source === 'saved' ? chosen.type : null
+        });
         metrics.completed(outcomeOf(compare.dataset.verdict));
         result.dataset.state = 'done';
         if (global.FindFitSave) global.FindFitSave.offer();

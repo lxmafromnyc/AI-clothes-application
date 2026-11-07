@@ -89,3 +89,25 @@ body { width: auto; min-width: 300px; max-height: none; }
 .fp-col-ai { font-weight: 400; font-size: 11.5px; color: var(--color-accent-ink); }
 .fp-col-ai[data-status="unresolved"] { color: var(--color-warning-ink); }
 .fp-kind[data-kind="unread"] { background: var(--color-bg-subtle); color: var(--color-text-2); }
+
+/* "Bought it? Tell Fynd how it fit" (vendor/fit-feedback-form.js), under a
+   result: the same rules as the site's (assets/styles.css) */
+.fp-feedback { margin-top: 12px; }
+.fp-feedback[hidden] { display: none; }
+.fyf { border: 1px solid var(--color-border); border-radius: var(--r, 12px); background: var(--color-surface); padding: 0 16px; }
+.fyf-summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; font-weight: 600; color: var(--color-text); }
+.fyf-body { padding-bottom: 14px; }
+.fyf-form { display: grid; gap: 10px; }
+.fyf-note { font-size: 14px; color: var(--color-text-2, var(--color-text-muted)); }
+.fyf-label { font-size: 13.5px; font-weight: 600; color: var(--color-text); }
+.fyf-select { min-height: 44px; max-width: 220px; padding: 6px 10px; border: 1px solid var(--color-border-strong, var(--color-border)); border-radius: 10px; font: inherit; background: var(--color-bg); color: var(--color-text); }
+.fyf-choices { border: 0; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.fyf-choices legend { margin-bottom: 6px; }
+.fyf-choice { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 12px; border: 1px solid var(--color-border); border-radius: 999px; font-size: 14px; color: var(--color-text); cursor: pointer; }
+.fyf-choice:has(input:checked) { border-color: var(--color-accent, var(--color-text)); font-weight: 600; }
+.fyf-consent { display: flex; gap: 8px; align-items: flex-start; font-size: 13.5px; color: var(--color-text); }
+.fyf-save { justify-self: start; min-height: 44px; }
+.fyf-status { font-size: 13.5px; color: var(--color-text-2, var(--color-text-muted)); }
+.fyf-status:empty { display: none; }
+.fyf-error { color: var(--color-warning-ink, var(--color-warning)); }
+.fyf-done { color: var(--color-text); font-weight: 600; }

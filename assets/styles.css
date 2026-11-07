@@ -2121,3 +2121,25 @@ strong { font-weight: 600; }
 .ff .ff-every-table tr[data-pick="recommended"] th, .ff .ff-every-table tr[data-pick="recommended"] td { background: var(--color-bg); }
 /* a field the page has answered for itself (the kind of a product found) */
 .ff .ffr-field[hidden] { display: none; }
+
+/* "Bought it? Tell Fynd how it fit" (assets/fit-feedback-form.js): under a
+   Find Fit result (the extension's panel repeats these in sidepanel.css) */
+.ff-feedback { margin-top: 14px; }
+.ff-feedback[hidden] { display: none; }
+.fyf { border: 1px solid var(--color-border); border-radius: var(--r, 12px); background: var(--color-surface); padding: 0 16px; }
+.fyf-summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; font-weight: 600; color: var(--color-text); }
+.fyf-body { padding-bottom: 14px; }
+.fyf-form { display: grid; gap: 10px; }
+.fyf-note { font-size: 14px; color: var(--color-text-2, var(--color-text-muted)); }
+.fyf-label { font-size: 13.5px; font-weight: 600; color: var(--color-text); }
+.fyf-select { min-height: 44px; max-width: 220px; padding: 6px 10px; border: 1px solid var(--color-border-strong, var(--color-border)); border-radius: 10px; font: inherit; background: var(--color-bg); color: var(--color-text); }
+.fyf-choices { border: 0; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.fyf-choices legend { margin-bottom: 6px; }
+.fyf-choice { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 12px; border: 1px solid var(--color-border); border-radius: 999px; font-size: 14px; color: var(--color-text); cursor: pointer; }
+.fyf-choice:has(input:checked) { border-color: var(--color-accent, var(--color-text)); font-weight: 600; }
+.fyf-consent { display: flex; gap: 8px; align-items: flex-start; font-size: 13.5px; color: var(--color-text); }
+.fyf-save { justify-self: start; min-height: 44px; }
+.fyf-status { font-size: 13.5px; color: var(--color-text-2, var(--color-text-muted)); }
+.fyf-status:empty { display: none; }
+.fyf-error { color: var(--color-warning-ink, var(--color-warning)); }
+.fyf-done { color: var(--color-text); font-weight: 600; }

@@ -106,11 +106,14 @@ const raw = (tables, extra) => Object.assign({
     assert.ok(!/\bfetch\s*\(|XMLHttpRequest|sendBeacon|WebSocket|\beval\s*\(|new Function|innerHTML|insertAdjacentHTML|document\.write/.test(src));
     assert.ok(!/storage\.sync|storage\.local|localStorage|sessionStorage|indexedDB|document\.cookie/.test(src), 'nothing kept on the device: the shopper’s garments stay on their Fynd profile');
     assert.ok(!/permissions\.request/.test(src), 'no site access asked for');
-    /* api.js: the only fetch in the extension, to FYND_API, two existing endpoints */
+    /* api.js: the only fetch in the extension, to FYND_API, existing endpoints only — the
+       account (for the CSRF token) and the fit profile's feedback are the site's own */
     const api = fs.readFileSync(path.join(EXT, 'api.js'), 'utf8');
     assert.strictEqual((api.match(/\bfetchFn\(/g) || []).length, 1);
     assert.match(api, /fetchFn\(`\$\{base\}\$\{path\}`/);
-    assert.deepStrictEqual((api.match(/request\('([^']+)'/g) || []).map((x) => x.slice(9, -1)), ['/api/fit-profile', '/api/size-recommendation?compare=1&candidate=1', '/api/size-recommendation?parse=1', '/api/size-recommendation?metrics=1']);
+    assert.deepStrictEqual((api.match(/request\('([^']+)'/g) || []).map((x) => x.slice(9, -1)), ['/api/fit-profile', '/api/size-recommendation?compare=1&candidate=1', '/api/size-recommendation?parse=1', '/api/size-recommendation?metrics=1', '/api/account', '/api/fit-profile', '/api/fit-profile?part=feedback']);
+    /* the feedback form it shares with the site makes no request of its own */
+    assert.ok(!/\bfetch\s*\(|XMLHttpRequest|sendBeacon|WebSocket|innerHTML/.test(fs.readFileSync(path.join(EXT, 'vendor/fit-feedback-form.js'), 'utf8')));
     /* the AI-assisted reading goes through Fynd's server: no model, provider or key in the extension */
     for (const f of fs.readdirSync(EXT).filter((x) => /\.(js|json|html)$/.test(x))) {
       assert.ok(!/generativelanguage|googleapis|openai\.com|anthropic\.com|GEMINI|api[_-]?key/i.test(fs.readFileSync(path.join(EXT, f), 'utf8')), `${f} names no model provider or key`);
@@ -144,6 +147,23 @@ const raw = (tables, extra) => Object.assign({
     assert.strictEqual(sandbox.R.match('https://www.nike.com/t/sportswear-premium-essentials-mens-t-shirt-KvYyYtT6/IH1121-491').product.code, 'IH1121');
     assert.strictEqual(sandbox.R.match('https://www.nike.com/w/mens-tops-t-shirts').product, null);
     assert.ok(sandbox.R.RETAILERS.every((r) => r.liveChecked === false), 'no module claims live-checked until it is');
+  });
+
+  await test('“Bought it?”: the entry names a record by its id, any other product by its link, only a size compared, and just right never beside a problem', () => {
+    const F = require(path.join(REPO, 'assets/fit-feedback-form.js'));
+    assert.deepStrictEqual(F.CHOICES.map((c) => c.label), ['Just right', 'Too tight', 'Too loose', 'Too short', 'Too long']);
+    const rec = { productId: 'uniqlo-e475378-sweat-pullover-hoodie-us', sizes: ['S', 'M', 'L'], recommendedSize: 'M', referenceType: 'hoodies' };
+    assert.deepStrictEqual(F.entryOf(rec, 'L', ['too-narrow', 'too-short']).entry,
+      { productId: rec.productId, sizeTried: 'L', asExpected: false, issues: ['too-narrow', 'too-short'], recommendedSize: 'M', referenceType: 'hoodies', withReference: true });
+    const link = { productId: 'your-candidate', product: { url: 'https://shop.example.test/p/1', brand: ' Brand ', name: 'Hoodie' }, category: 'hoodies', sizes: ['M'] };
+    assert.deepStrictEqual(F.entryOf(link, 'M', ['just-right']).entry,
+      { product: { url: 'https://shop.example.test/p/1', brand: 'Brand', name: 'Hoodie' }, category: 'hoodies', sizeTried: 'M', asExpected: true, issues: [] });
+    assert.ok(F.entryOf(link, 'XL', ['just-right']).error, 'a size not compared');
+    assert.ok(F.entryOf(link, 'M', []).error, 'nothing said');
+    assert.ok(F.entryOf(link, 'M', ['just-right', 'too-long']).error, 'just right and too long');
+    assert.strictEqual(F.target({ product: { url: 'javascript:alert(1)' }, category: 'hoodies' }), null);
+    assert.strictEqual(F.target({ product: { url: 'https://x.example/p' }, category: 'jeans' }), null);
+    assert.strictEqual(F.target({ productId: 'your-candidate' }), null, 'typed by hand, no link: nothing to tie it to');
   });
 
   await test('the collector reads no form field and skips any table holding one', () => {

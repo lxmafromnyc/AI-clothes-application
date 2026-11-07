@@ -60,6 +60,7 @@ try { ({ chromium } = require(process.env.PLAYWRIGHT_PATH || 'playwright')); } c
 const Schema = require('../assets/fit-profile-schema.js');
 const users = require('../api/_users');
 const fitProfiles = require('../api/_fit-profile');
+const fitFeedback = require('../api/_fit-feedback');
 /* Gemini, scripted: the real /api/size-recommendation?parse=1 runs here, and its one call to
    Google is answered by the test (a fixture's model answer, a hang or a
    failure) — no model is reached. The key is a fake. */
@@ -98,6 +99,7 @@ ${c.table.before ? `<p>${esc(c.table.before)}</p>` : ''}<table>${c.table.caption
 
 const HANDLERS = {
   '/api/auth': require('../api/auth'),
+  '/api/account': require('../api/account'),
   '/api/fit-profile': require('../api/fit-profile'),
   '/api/size-recommendation': require('../api/size-recommendation')
 };
@@ -305,6 +307,71 @@ const TEE = { unit: 'in', chestWidth: 21.5, bodyLength: 29 };
     assert.deepStrictEqual([sent.chart.measures, sent.chart.unit, sent.chart.type, sent.chart.sizes.length], ['finished-garment', 'cm', 'hoodies', 4]);
     assert.deepStrictEqual(sent.chart.sizes[2].provenance.chestWidth, { source: 'page-table', header: 'Chest (½)', corrected: false });
     assert.strictEqual(sent.chart.url, 'https://shop.example.test/products/heavyweight-hoodie', 'the canonical address, no tracking');
+    await close();
+  });
+
+  await test('after a purchase: “Bought it?” keeps how it fit — on the fit profile’s own feedback, with this page’s product, the size bought and the saved garment compared', async () => {
+    const user = await signIn({ hoodies: HOODIE });
+    const { panel, close } = await open('variants-hoodie.html');
+    await toReview(panel);
+    await toResults(panel);
+    await view(panel, 'results');
+    const before = hits.length;
+    /* closed, it asks nothing */
+    assert.strictEqual(await panel.isVisible('#result-feedback summary'), true);
+    assert.strictEqual(hits.length, before);
+    await panel.click('#result-feedback summary');
+    await panel.waitForSelector('#result-feedback form');
+    /* the sizes compared, the one the decision chose first */
+    assert.deepStrictEqual(await panel.$$eval('#result-feedback select option', (ns) => ns.map((o) => o.value)), ['S', 'M', 'L', 'XL']);
+    assert.strictEqual(await panel.inputValue('#result-feedback select'), 'L');
+    assert.deepStrictEqual(await texts(panel, '#result-feedback .fyf-choice'), ['Just right', 'Too tight', 'Too loose', 'Too short', 'Too long']);
+    /* nothing chosen: said, nothing sent */
+    await panel.click('#result-feedback .fyf-save');
+    assert.match(await text(panel, '#result-feedback .fyf-status'), /Say how it fit/);
+    /* just right and a problem exclude each other */
+    await panel.check('#result-feedback input[value="just-right"]');
+    await panel.check('#result-feedback input[value="too-narrow"]');
+    assert.strictEqual(await panel.isChecked('#result-feedback input[value="just-right"]'), false);
+    await panel.check('#result-feedback input[value="too-short"]');
+    /* consent first: without the tick, nothing is kept */
+    await panel.click('#result-feedback .fyf-save');
+    assert.match(await text(panel, '#result-feedback .fyf-status'), /Tick “Keep my fit feedback/);
+    assert.strictEqual(await fitFeedback.read(user.id).then((r) => r.entries.length), 0);
+    await panel.check('#result-feedback .fyf-consent input');
+    await panel.click('#result-feedback .fyf-save');
+    await panel.waitForFunction(() => /Saved: how size L fit/.test(document.querySelector('#result-feedback .fyf-status').textContent));
+    const kept = (await fitFeedback.read(user.id)).entries;
+    assert.strictEqual(kept.length, 1);
+    const e = kept[0];
+    assert.deepStrictEqual([e.product.url, e.brand, e.product.name, e.category, e.sizeTried, e.recommendedSize, e.asExpected, e.issues.join(), e.referenceType],
+      ['https://shop.example.test/products/heavyweight-hoodie', 'Illustrative Outfitters', 'Illustrative Heavyweight Hoodie', 'hoodies', 'L', 'L', false, 'too-narrow,too-short', 'hoodies']);
+    assert.deepStrictEqual(e.reference && e.reference.measurements, HOODIE, 'the exact saved garment, copied on the server');
+    /* what reached Fynd: the account (for the CSRF token), the feedback read, the consent and the entry — all with the session, from the extension */
+    const mine = hits.slice(before).filter((h) => h.method !== 'OPTIONS');
+    assert.deepStrictEqual(mine.map((h) => [h.method, h.path + h.search, h.body && h.body.action, h.status]),
+      [['GET', '/api/account', null, 200], ['GET', '/api/fit-profile?part=feedback', null, 200], ['POST', '/api/fit-profile', 'feedback-consent', 200], ['POST', '/api/fit-profile', 'feedback-add', 200]]);
+    assert.ok(mine.every((h) => h.cookie));
+    /* told again for the same size: updated, not doubled */
+    await panel.check('#result-feedback input[value="just-right"]');
+    await panel.click('#result-feedback .fyf-save');
+    await panel.waitForFunction(() => /Updated: how size L fit/.test(document.querySelector('#result-feedback .fyf-status').textContent));
+    assert.strictEqual((await fitFeedback.read(user.id)).entries.length, 1);
+    assert.strictEqual((await fitFeedback.read(user.id)).entries[0].asExpected, true);
+    await close();
+  });
+
+  await test('after a purchase, signed out by then: “Bought it?” says to sign in on Fynd, and keeps nothing', async () => {
+    await signIn({ hoodies: HOODIE });
+    const { panel, close } = await open('variants-hoodie.html');
+    await toReview(panel);
+    await toResults(panel);
+    await view(panel, 'results');
+    await context.clearCookies();
+    await panel.click('#result-feedback summary');
+    await panel.waitForSelector('#result-feedback .fyf-note a');
+    assert.match(await text(panel, '#result-feedback'), /Sign in to Fynd to keep how it fit/);
+    assert.match(await panel.getAttribute('#result-feedback .fyf-note a', 'href'), /\/account\.html$/);
     await close();
   });
 
@@ -738,7 +805,7 @@ const TEE = { unit: 'in', chestWidth: 21.5, bodyLength: 29 };
     counted.forEach((h) => (h.body.events || []).forEach((e) => assert.deepStrictEqual(Object.keys(e).filter((k) => !['name', 'surface', 'value'].includes(k)), [])));
     assert.ok(counted.some((h) => h.body.events.some((e) => e.name === 'manual_inputs' && e.surface === 'extension')));
     assert.ok(asked.length > 0);
-    const off = asked.filter((u) => !u.startsWith(`${API}/api/fit-profile`) && !u.startsWith(`${API}/api/size-recommendation?compare=1&candidate=1`) && u !== `${API}/api/size-recommendation?parse=1` && u !== `${API}/api/size-recommendation?metrics=1`);
+    const off = asked.filter((u) => !u.startsWith(`${API}/api/fit-profile`) && u !== `${API}/api/account` && !u.startsWith(`${API}/api/size-recommendation?compare=1&candidate=1`) && u !== `${API}/api/size-recommendation?parse=1` && u !== `${API}/api/size-recommendation?metrics=1`);
     assert.deepStrictEqual(off, []);
     assert.ok(!hits.some((h) => h.path === '/api/size-recommendation' && h.method === 'GET'), 'never the catalogue lookup');
   });

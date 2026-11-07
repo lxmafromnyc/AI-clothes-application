@@ -1520,6 +1520,21 @@ const linkFromInbox = (pattern) => {
     assert.match(await page.textContent('#fit-compare .ff-every summary'), /Every size beside your garment \(5\)/);
     assert.strictEqual(await page.$$eval('#fit-compare .ff-every tbody tr', (rs) => rs.length), 5);
     assert.deepStrictEqual(await lastEffort(page).then((x) => x.manualInputs), 2, 'the link and the check');
+    /* after buying: how it fit, kept with this product's link, the size bought and the saved hoodie compared */
+    assert.strictEqual(await page.isVisible('#ff-feedback summary'), true);
+    await page.click('#ff-feedback summary');
+    await page.waitForSelector('#ff-feedback form');
+    assert.deepStrictEqual(await page.$$eval('#ff-feedback select option', (ns) => ns.map((o) => o.value)), ['S', 'M', 'L', 'XL', 'XXL']);
+    assert.strictEqual(await page.inputValue('#ff-feedback select'), 'M', 'the recommended size first');
+    await page.check('#ff-feedback input[value="too-long"]');
+    await page.check('#ff-feedback .fyf-consent input');
+    await page.click('#ff-feedback .fyf-save');
+    await page.waitForFunction(() => /Saved: how size M fit/.test(document.querySelector('#ff-feedback .fyf-status').textContent));
+    const kept = (await require('../api/_fit-feedback').read((await users.byEmail('returning@e2e.test')).id)).entries;
+    assert.strictEqual(kept.length, 1);
+    assert.deepStrictEqual([kept[0].category, kept[0].sizeTried, kept[0].recommendedSize, kept[0].asExpected, kept[0].issues.join(), kept[0].referenceType, kept[0].reference.brand],
+      ['hoodies', 'M', 'M', false, 'too-long', 'hoodies', 'UNIQLO']);
+    assert.ok(/^https:\/\/www\.zara\.com\//.test(kept[0].product.url), kept[0].product.url);
     await context.close();
   });
 
@@ -1539,6 +1554,13 @@ const linkFromInbox = (pattern) => {
     await page.waitForSelector('#ff-reference[data-visit="set"] .ff-ref--visit');
     assert.match(await page.textContent('.ff-ref--visit'), /Kept for this visit\. Not saved to an account\./);
     assert.strictEqual((await lastEffort(page)).manualInputs, 6, 'four measurements, the link, the tick');
+    /* "Bought it?" for a guest: says to sign in, asks nothing of the feedback endpoint */
+    const fbAsked = [];
+    page.on('request', (r) => { if (/fit-profile/.test(r.url())) fbAsked.push(r.url()); });
+    await page.click('#ff-feedback summary');
+    await page.waitForSelector('#ff-feedback .fyf-note a[href="account.html"]');
+    assert.match(await page.textContent('#ff-feedback'), /Sign in to Fynd to keep how it fit/);
+    assert.deepStrictEqual(fbAsked, []);
     await context.close();
   });
 
@@ -1565,6 +1587,8 @@ const linkFromInbox = (pattern) => {
     assert.match(posted[0].url, /\?product=uniqlo-e475378-sweat-pullover-hoodie-us&compare=1$/);
     assert.strictEqual(posted[0].body.reference.type, 'hoodies');
     assert.ok(['recommended', 'too-few', 'closest-mismatch', 'no-recommendation', 'methods'].includes(await page.getAttribute('#fit-compare', 'data-verdict')));
+    /* "Bought it?" is offered only beside sizes the server compared: none here, so none */
+    if (await page.getAttribute('#fit-compare', 'data-verdict') === 'too-few') assert.strictEqual(await page.isHidden('#ff-feedback'), true);
     await context.close();
   }));
 
@@ -1650,6 +1674,11 @@ const linkFromInbox = (pattern) => {
     await itemFound(page);
     await page.check('#ffi-confirm');
     await resultDone(page);
+    /* "Bought it?" opened on the phone: its choices wrap, nothing sideways, each a full tap target */
+    await page.click('#ff-feedback summary');
+    await page.waitForSelector('#ff-feedback form');
+    const taps = await page.$$eval('#ff-feedback .fyf-choice, #ff-feedback .fyf-save, #ff-feedback select', (ns) => ns.map((n) => n.getBoundingClientRect().height));
+    assert.ok(taps.every((h) => h >= 44), `tap targets ${taps.join(', ')}`);
     const scroll = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
     assert.ok(scroll <= 0, `no sideways scroll (${scroll})`);
     const cols = await page.evaluate(() => [document.getElementById('ff-step-reference').getBoundingClientRect(), document.getElementById('ff-step-target').getBoundingClientRect()]);
@@ -1730,6 +1759,8 @@ const linkFromInbox = (pattern) => {
     assert.strictEqual(await page.$$eval('#fit-compare a[href="compare.html"]', (as) => as.length), 0, 'one size entered: no other to see');
     /* the offer to save the garment described here, after the result */
     await page.waitForSelector('#ff-save:not([hidden])');
+    /* typed by hand with no link: nothing to tie a purchase's feedback to, so it isn't offered */
+    assert.strictEqual(await page.isHidden('#ff-feedback'), true);
     /* changing the item retires the result */
     await page.fill('#ffc-m-chestWidth', '59');
     assert.strictEqual(await page.isHidden('#fit-result'), true, 'no result left for numbers no longer there');
