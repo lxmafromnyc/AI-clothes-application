@@ -166,6 +166,7 @@
     const got = await global.Account.sizing.compareCandidate(candidate, reference || null);
     if (!stillCurrent()) return;
     drawAnswer(got, compare, { verdict: true, unsaved: reference || null, profileHref: 'fit-profile.html?from=find-fit', lines: [], candidate: true });
+    return got;
   }
 
   /* An answer already fetched — a whole chart or a record, every size —

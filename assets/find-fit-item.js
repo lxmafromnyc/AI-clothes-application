@@ -25,7 +25,8 @@
                  which reads it in the shopper's own browser, or hand entry
 
    The kind of garment comes from Fynd's record or the product's own name;
-   it is asked only when neither says. Units come with the chart. Nothing
+   it is asked only when neither says, and either is shown with Change,
+   so the shopper can correct it. Units come with the chart. Nothing
    is typed that Fynd already knows.
 
      FindFitItem.state()    'none' | 'loading' | one of the above | 'error'
@@ -179,7 +180,7 @@
     if (state === 'none') { box.hidden = true; box.replaceChildren(); return; }
     box.hidden = false;
     box.dataset.state = state;
-    if (state === 'loading') { box.replaceChildren(el('p', 'ffi-status', 'Looking up the product…')); return; }
+    if (state === 'loading') { box.replaceChildren(el('p', 'ffi-status', 'Checking the link…')); return; }
     if (state === 'error') { box.replaceChildren(el('p', 'ffi-status', 'Fynd couldn’t look up that link just now. Try again in a moment.'), ways()); return; }
     const card = [];
     const name = [item.product.brand, item.product.name].filter(Boolean).join(' · ');
@@ -221,8 +222,15 @@
       d.append(el('summary', null, `The measurements: ${words}, in ${item.summary.unit === 'in' ? 'inches' : 'centimetres'}`), valuesTable(item.summary));
       card.push(d);
     }
-    if ((state === 'automatic' || state === 'assisted') && (!item.type || item.typeFrom === 'shopper')) card.push(typeChooser());
-    else if (item.type && (state === 'automatic' || state === 'assisted')) card.push(el('p', 'ffr-hint ffi-kind', `Kind: ${TYPE_WORDS[item.type].toLowerCase()} — ${item.typeFrom === 'name' ? 'from its name' : 'from Fynd’s record'}.`));
+    if ((state === 'automatic' || state === 'assisted') && (!item.type || item.typeFrom === 'shopper' || item.typeOpen)) card.push(typeChooser());
+    else if (item.type && (state === 'automatic' || state === 'assisted')) {
+      const kind = el('p', 'ffr-hint ffi-kind', `Kind: ${TYPE_WORDS[item.type].toLowerCase()} — ${item.typeFrom === 'name' ? 'from its name' : 'from Fynd’s record'}. `);
+      const change = el('button', 'link-btn ffi-kind-change', 'Change');
+      change.type = 'button';
+      change.addEventListener('click', () => { item.typeOpen = true; draw(); const s = $('ffi-type'); if (s) s.focus(); });
+      kind.append(change);
+      card.push(kind);
+    }
     if (state === 'assisted') {
       const label = el('label', 'fp-check ffi-confirm');
       const cb = el('input');
@@ -275,15 +283,31 @@
 
   /* the unit strip: only while something is typed by hand (here, or the garment's measurements) */
   const strip = $('ff-units-strip');
-  function syncStrip() {
+  /* it sits inside the hand-entry form being filled in — the one opened last —
+     so the choice is beside the numbers it applies to; with none open, it is hidden */
+  const stripHome = strip ? strip.parentNode : null;
+  const stripBefore = strip ? strip.nextSibling : null;
+  let lastOpened = null;
+  function placeStrip(into) {
+    if (!strip) return;
+    if (into && into.open) lastOpened = into.id;
+    const last = lastOpened && doc.getElementById(lastOpened);
+    const target = last && last.open ? last : [manual, doc.getElementById('ffr-manual')].find((d) => d && d.open);
+    if (target) {
+      const summary = target.querySelector(':scope > summary');
+      if (strip.parentNode !== target) (summary || target.firstChild).after(strip);
+    } else if (strip.parentNode !== stripHome) stripHome.insertBefore(strip, stripBefore);
+  }
+  function syncStrip(into) {
     if (!strip) return;
     strip.hidden = !((manual && manual.open) || Boolean(doc.querySelector('#ffr-manual[open]')));
+    placeStrip(into);
   }
   doc.addEventListener('toggle', (e) => {
     if (!e.target) return;
-    if (e.target.id === 'ffr-manual') syncStrip();
+    if (e.target.id === 'ffr-manual') syncStrip(e.target);
     /* the item's own hand entry opened or closed: which item is compared changes */
-    if (e.target.id === 'ff-manual') { syncStrip(); changed('shopper'); }
+    if (e.target.id === 'ff-manual') { syncStrip(e.target); changed('shopper'); }
   }, true);
   syncStrip();
 

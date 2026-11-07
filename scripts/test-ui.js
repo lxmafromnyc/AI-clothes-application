@@ -2864,6 +2864,7 @@ const openFallbacks = (target) => target.addInitScript(() => {
     const at = size || 'S';
     await page.waitForSelector('#ffc-form', { timeout: 10000 });
     await page.check(`input[name="ff-type"][value="${record.category}"]`);
+    await page.evaluate(() => { document.getElementById('ffc-more').open = true; });
     await page.fill('#ffc-brand', record.brand);
     await page.fill('#ffc-name', record.product.name);
     await page.fill('#ffc-size', at);
@@ -3078,6 +3079,8 @@ const openFallbacks = (target) => target.addInitScript(() => {
       await page.click('button[aria-controls="ffc-m-chestWidth-info"]');
       await audit('a measurement’s explanation, opened');
       await page.click('button[aria-controls="ffc-m-chestWidth-info"]');
+      /* typed in centimetres once they're chosen (nothing is assumed), then shown in inches */
+      await page.check('input[name="ff-unit"][value="cm"]');
       await page.fill('#ffc-m-chestWidth', '56');
       await page.check('input[name="ff-unit"][value="in"]');
       assert.strictEqual(await page.inputValue('#ffc-m-chestWidth'), '22.05');
@@ -3289,8 +3292,10 @@ const openFallbacks = (target) => target.addInitScript(() => {
       await page.click('#ffr-use');
       await page.waitForSelector('#ffr-brand-error.show');
       await audit('the garment form, measurements open, with an error');
+      await page.selectOption('#ffr-type', 'hoodies');
       await page.selectOption('#ffr-size', 'L');
       await page.fill('#ffr-brand', 'Carhartt');
+      await page.check('input[name="ff-unit"][value="cm"]');
       for (const [k, v] of Object.entries({ chestWidth: 58, bodyLength: 68, shoulderWidth: 50, sleeveLength: 62 })) await page.fill(`#ffr-m-${k}`, String(v));
       await page.click('#ffr-use');
       await page.waitForSelector('.ff-ref--visit');
@@ -3529,7 +3534,8 @@ const openFallbacks = (target) => target.addInitScript(() => {
       const rgbOf = (token) => { probe.style.color = `var(${token})`; return getComputedStyle(probe).color; };
       const primary = rgbOf('--color-primary');
       const out = {
-        cta: getComputedStyle(document.querySelector('.btn-primary')).backgroundColor === primary,
+        /* a primary button as such: Find Fit's own waits greyed until it can compare */
+        cta: (() => { const b = document.createElement('button'); b.className = 'btn btn-primary'; document.body.appendChild(b); const ok = getComputedStyle(b).backgroundColor === primary; b.remove(); return ok; })(),
         mark: getComputedStyle(document.querySelector('.brand-mark')).backgroundColor === primary,
         current: getComputedStyle(document.querySelector('.nav-links a[aria-current="page"]'), '::after').backgroundColor === primary,
         progress: getComputedStyle(document.querySelector('.ff-progress-dot')).backgroundColor === rgbOf('--color-border'),

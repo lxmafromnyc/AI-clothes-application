@@ -86,6 +86,11 @@ first two below always happen; the third only when a chart needs the
 AI-assisted reading (next section):
 
 1. `GET /api/fit-profile`: your saved garments, with your Fynd session cookie.
+   (Only if you open **Bought it? Tell Fynd how it fit** under a result and
+   save: `GET /api/account` for the CSRF token, `GET /api/fit-profile?part=feedback`,
+   and `POST /api/fit-profile` with `feedback-consent` / `feedback-add` — the
+   page's link, its brand and name, the kind of garment, the size you bought,
+   how it fit, and which of your saved garments was compared. Nothing else.)
 2. `POST /api/size-recommendation?compare=1&candidate=1` with this body:
 
    ```json
@@ -248,6 +253,7 @@ checked again on every use and spends no allowance.
 | OK | The size that meets Fynd's comparison criteria, every size's differences, reliability and caveats |
 | NO_MATCH | "No size meets Fynd's comparison criteria", and the closest size, marked *not a recommendation* |
 | INSUFFICIENT_DATA | Why, measurement by measurement. No size is shown |
+| Any result with sizes | **Bought it? Tell Fynd how it fit**, closed: opened, the size bought (the compared sizes, the recommended one first) and Just right / Too tight / Too loose / Too short / Too long, saved on your Fynd fit profile's feedback with this page's link and the saved garment compared. Signed out, it says to sign in on Fynd |
 | 401 / 404 / 429 / 400 / 5xx / timeout | What happened and what to do. Nothing is shown as compared |
 
 The results always say where the measurements came from: read from the page

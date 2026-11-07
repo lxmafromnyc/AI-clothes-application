@@ -68,12 +68,14 @@ const API_HOST = 'ai-clothes-application.vercel.app';
 const API = `https://${API_HOST}`;
 const HANDLERS = {
   '/api/auth': require('../api/auth'),
+  '/api/account': require('../api/account'),
   '/api/fit-profile': require('../api/fit-profile'),
   '/api/size-recommendation': require('../api/size-recommendation')
 };
 const Schema = require('../assets/fit-profile-schema.js');
 const users = require('../api/_users');
 const fitProfiles = require('../api/_fit-profile');
+const fitFeedback = require('../api/_fit-feedback');
 
 const REPO = path.join(__dirname, '..');
 const EXT = path.join(REPO, 'extension');
@@ -492,7 +494,7 @@ async function launch(display, port, apiPort) {
     assert.strictEqual(await panel.textContent('#result-size'), 'L');
     assert.strictEqual(await panel.textContent('#result-title'), 'The size that meets Fynd’s comparison criteria');
     assert.deepStrictEqual(await panel.$$eval('#result-table tr[data-size]', (ns) => ns.map((r) => r.dataset.size)), ['XS', 'S', 'M', 'L', 'XL', 'XXL']);
-    assert.match(await panel.textContent('#result-source'), /read from 127\.0\.0\.1|read from the page/);
+    assert.match(await panel.textContent('#result-source'), /read from shop\.northwind\.example\.test/);
     assert.match(await panel.textContent('#result-source'), /Not verified by Fynd/);
     const mine = apiHits.slice(before).filter((h) => h.method !== 'OPTIONS');
     assert.deepStrictEqual(mine.map((h) => [h.method, h.path, h.status]), [['GET', '/api/fit-profile', 200], ['POST', '/api/size-recommendation?compare=1&candidate=1', 200]]);
@@ -500,6 +502,33 @@ async function launch(display, port, apiPort) {
     assert.strictEqual(mine[1].origin, `chrome-extension://${id}`);
     assert.strictEqual(mine[1].body.chart.sizes.length, 6);
     shot('06-results');
+  });
+
+  await test('after a purchase: “Bought it? Tell Fynd how it fit” in the same panel — consent, then the entry, kept on the fit profile’s feedback with this page’s link, the size bought and the saved T-shirt', async () => {
+    const before = apiHits.length;
+    await panel.click('#result-feedback summary');
+    await panel.waitForSelector('#result-feedback form', { timeout: 10000 });
+    assert.deepStrictEqual(await panel.$$eval('#result-feedback select option', (ns) => ns.map((o) => o.value)), ['XS', 'S', 'M', 'L', 'XL', 'XXL']);
+    assert.strictEqual(await panel.inputValue('#result-feedback select'), 'L', 'the size the decision chose, first');
+    assert.deepStrictEqual(await texts('#result-feedback .fyf-choice'), ['Just right', 'Too tight', 'Too loose', 'Too short', 'Too long']);
+    await panel.check('#result-feedback input[value="too-wide"]');
+    await panel.check('#result-feedback .fyf-consent input');
+    shot('06b-feedback');
+    await panel.click('#result-feedback .fyf-save');
+    await panel.waitForFunction(() => /Saved: how size L fit/.test(document.querySelector('#result-feedback .fyf-status').textContent), null, { timeout: 10000 });
+    const user = await users.byEmail('real.chrome.shopper@example.test');
+    const kept = (await fitFeedback.read(user.id)).entries;
+    assert.strictEqual(kept.length, 1);
+    const e = kept[0];
+    assert.deepStrictEqual([e.category, e.brand, e.product.name, e.sizeTried, e.recommendedSize, e.asExpected, e.issues.join(), e.referenceType, e.reference && e.reference.brand],
+      ['tshirts', 'Northwind', 'Everyday Crew Tee', 'L', 'L', false, 'too-wide', 'tshirts', 'Owned Brand']);
+    assert.strictEqual(e.product.url, 'https://shop.northwind.example.test/products/everyday-crew-tee', 'the page’s canonical link, tracking dropped');
+    const mine = apiHits.slice(before).filter((h) => h.method !== 'OPTIONS');
+    assert.deepStrictEqual(mine.map((h) => [h.method, h.path, h.body && h.body.action, h.status]),
+      [['GET', '/api/account', null, 200], ['GET', '/api/fit-profile?part=feedback', null, 200], ['POST', '/api/fit-profile', 'feedback-consent', 200], ['POST', '/api/fit-profile', 'feedback-add', 200]]);
+    assert.ok(mine.every((h) => h.cookie), 'the real session cookie on every request');
+    assert.ok(mine.filter((h) => h.method === 'POST').every((h) => h.origin === `chrome-extension://${id}`), 'from the extension’s own origin');
+    shot('06c-feedback-saved');
   });
 
   await test('another page on the same site: Read another page needs no second click — and a body chart is never offered as the garment’s', async () => {
@@ -570,7 +599,7 @@ async function launch(display, port, apiPort) {
   });
 
   await test('the panel asked nothing of any host but Fynd’s API, and nothing failed in the console', async () => {
-    const off = requests.filter((u) => !u.startsWith(`${API}/api/fit-profile`) && !u.startsWith(`${API}/api/size-recommendation?compare=1&candidate=1`) && u !== `${API}/api/size-recommendation?metrics=1`);
+    const off = requests.filter((u) => !u.startsWith(`${API}/api/fit-profile`) && u !== `${API}/api/account` && !u.startsWith(`${API}/api/size-recommendation?compare=1&candidate=1`) && u !== `${API}/api/size-recommendation?metrics=1`);
     assert.deepStrictEqual(off, [], `the panel made other requests: ${off.join(', ')}`);
     assert.ok(requests.length >= 3);
     assert.deepStrictEqual(errors.filter((e) => !/Receiving end does not exist|401 \(Unauthorized\)/.test(e)), []);

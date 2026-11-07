@@ -733,6 +733,16 @@
       : state.review && state.review.source === 'shopper'
       ? 'Measurements: entered by you from the product’s chart.'
       : `Measurements: read from ${state.product && state.product.url ? safeHost(state.product.url) : 'the page'} and confirmed by you${state.review && state.review.rows.some((r) => Object.values(r.cells).some((x) => x.corrected)) ? ', with your corrections' : ''}. Not verified by Fynd.`;
+    /* after a purchase: how it fit, kept with this page's product, the size bought and the saved garment compared */
+    if (window.FitFeedbackForm) {
+      window.FitFeedbackForm.mount($('result-feedback'), {
+        product: state.product ? { url: state.product.url, brand: state.product.brand, name: state.product.name } : null,
+        category: state.type,
+        sizes: sizes.map((x) => x.size).filter((x) => typeof x === 'string'),
+        recommendedSize: ok ? d.size : null,
+        referenceType: state.referenceType
+      }, API.feedback, { signInHref: `${SITE}/account.html`, newTab: true });
+    }
     show('results');
   }
 
