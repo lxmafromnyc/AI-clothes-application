@@ -87,10 +87,10 @@ const MINE = { chestWidth: '63', shoulderWidth: '54', bodyLength: '70.5', sleeve
     if (!after) {
       await itemByHand(page, act);
       await shot('item-typed');
-      await act.click('#ff-submit', 'Compare fit');
+      await act.click('#ff-submit', 'Compare sizes');
     } else {
       await act.fill('#ffi-link', ZARA, 'item link');
-      await act.click('#ffi-link-go', 'Find it');
+      await act.click('#ffi-link-go', 'Check link');
       await page.waitForSelector('#ffi-found[data-state="assisted"]');
       await shot('product-found');
       await act.check('#ffi-confirm', 'tick: these match the chart');
@@ -106,13 +106,13 @@ const MINE = { chestWidth: '63', shoulderWidth: '54', bodyLength: '70.5', sleeve
       await shot('garment-kept');
       await itemByHand(page, act);
       await shot('item-typed');
-      await act.click('#ff-submit', 'Compare fit');
+      await act.click('#ff-submit', 'Compare sizes');
     } else {
       await act.click('#ffr-manual > summary', 'Or enter its measurements');
       for (const [k, v] of Object.entries(MINE)) await act.fill(`#ffr-m-${k}`, v, `garment ${k}`);
       await shot('garment-measured');
       await act.fill('#ffi-link', ZARA, 'item link');
-      await act.click('#ffi-link-go', 'Find it');
+      await act.click('#ffi-link-go', 'Check link');
       await page.waitForSelector('#ffi-found[data-state="assisted"]');
       await shot('product-found');
       await act.check('#ffi-confirm', 'tick: these match the chart');

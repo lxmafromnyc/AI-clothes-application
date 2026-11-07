@@ -25,6 +25,12 @@
      signed-out / none   the form, or the garment described this visit
      saved               the saved garments, each with Change
 
+   Which of those it is, is said first, above everything else in the
+   section (#ff-ref-account): the saved garment in use; signed in with
+   none saved yet; or signed out, with a way to sign in for one saved
+   before. A returning shopper never has to wonder whether to type
+   their garment again.
+
    The form is there from the start, beside the item: the two can be
    given in either order, and changing the item never takes away what
    was typed. Whether the two can be compared is the server's to say,
@@ -258,8 +264,10 @@
     /* the one question after a product is found: the size on its label. The
        kind of garment is asked only while nothing else says it */
     const row = el('div', 'ffr-row');
-    const typeField = field('Type', select('ffr-type', FIND_FIT_KINDS.concat(from && from.type && !FIND_FIT_KINDS.includes(from.type) ? [from.type] : []).map((k) => [k, cap(Schema.garmentOf(k).one)]),
-      from ? from.type : (itemKind() && FIND_FIT_KINDS.includes(itemKind()) ? itemKind() : FIND_FIT_KINDS.includes(topChoice('ff-type', 'hoodies')) ? topChoice('ff-type', 'hoodies') : FIND_FIT_KINDS[0])));
+    /* the kind: from the garment kept, the item's own kind, or the kind chosen for the item by hand —
+       otherwise the shopper's to choose, never assumed */
+    const typeField = field('Type', select('ffr-type', [['', 'Choose…']].concat(FIND_FIT_KINDS.concat(from && from.type && !FIND_FIT_KINDS.includes(from.type) ? [from.type] : []).map((k) => [k, cap(Schema.garmentOf(k).one)])),
+      from ? from.type : (itemKind() && FIND_FIT_KINDS.includes(itemKind()) ? itemKind() : FIND_FIT_KINDS.includes(topChoice('ff-type', null)) ? topChoice('ff-type', null) : '')));
     typeField.id = 'ffr-type-field';
     row.append(
       typeField,
@@ -309,7 +317,8 @@
     /* the disclosure's own summary names it; here, only how to take them */
     moreHead.append(el('p', 'ffr-measure-how', 'Lay it flat and measure it as each line says.'), measureInfo);
     more.append(moreHead, measureText);
-    const unit = input('ffr-unit', 'hidden', m.unit || topChoice('ff-unit', 'cm'));
+    /* the unit: the garment's own, or the one chosen at the top — never assumed */
+    const unit = input('ffr-unit', 'hidden', m.unit || topChoice('ff-unit', ''));
     more.append(unit);
     const grid = el('div', 'ff-measures');
     /* in the item's order, row for row */
@@ -319,7 +328,8 @@
     box.append(more);
 
     const actions = el('div', 'ffr-actions');
-    const use = el('button', 'btn btn-primary ffr-use', 'Use this garment');
+    /* secondary: Compare fit keeps a garment typed here by itself, so it is the page's one primary action */
+    const use = el('button', 'btn btn-secondary ffr-use', 'Use this garment');
     use.type = 'button';
     use.id = 'ffr-use';
     use.addEventListener('click', apply);
@@ -351,7 +361,7 @@
     label.htmlFor = 'ffr-search';
     const smart = el('div', 'ff-smart');
     const search = input('ffr-search', 'text', '', {
-      placeholder: 'Brand and item, or paste its link — e.g. Uniqlo hoodie M', maxlength: '2000', autocomplete: 'off', spellcheck: 'false',
+      placeholder: 'Brand and product — e.g. Uniqlo hoodie M', maxlength: '2000', autocomplete: 'off', spellcheck: 'false',
       role: 'combobox', 'aria-autocomplete': 'list', 'aria-expanded': 'false', 'aria-controls': 'ffr-suggest', 'aria-describedby': 'ffr-search-hint'
     });
     const box = el('div', 'ff-suggest');
@@ -373,7 +383,7 @@
     go.type = 'button';
     go.id = 'ffr-live-go';
     row.append(smart, go);
-    const hint = el('p', 'ffr-hint', 'Type to see Fynd’s own list, or press Search shops to look across retailers. Not found? Enter its measurements below.');
+    const hint = el('p', 'ffr-hint', 'Pick it from Fynd’s list as you type, or press Search shops. Can’t find it? Enter its measurements below.');
     hint.id = 'ffr-search-hint';
     const held = el('div', 'ffr-held');
     held.id = 'ffr-held';
@@ -655,7 +665,16 @@
         if (d) d.open = true;
       }
     }
+    if (!said.type) missing.unshift({ id: 'ffr-type', message: 'Choose whether it’s a hoodie or a sweatshirt.' });
     if (missing.length) { showErrors(missing); return; }
+    /* measurements need the unit they were taken in: chosen at the top, never assumed */
+    if (a2.measurements && !a2.measurements.unit) {
+      const err = doc.getElementById('ff-unit-error');
+      if (err) { err.textContent = 'Choose cm or in for the measurements you typed.'; err.classList.add('show'); }
+      const radio = doc.querySelector('input[name="ff-unit"]');
+      if (radio) radio.focus();
+      return;
+    }
     const { errors } = Schema.normaliseGuide({ garments: { [said.type]: said.garment } });
     if (errors.length) {
       showErrors(errors.map((e) => ({ id: FIELD_IDS[e.field.replace(/^garments\.[a-z]+\.(anchor\.)?/, '')] || 'ffr-brand', message: e.message })));
@@ -667,8 +686,9 @@
     editing = false;
     prefill = null;
     redraw();
-    const next = doc.getElementById('fit-url');
-    if (next) next.focus();
+    /* on to the item, when it hasn't been given yet */
+    const next = doc.getElementById('ffi-link');
+    if (next && !next.value && !(global.FindFitItem && global.FindFitItem.state() !== 'none')) next.focus();
   }
 
   /* ---------- drawing ---------- */
@@ -706,17 +726,30 @@
     return card;
   }
 
+  /* ---------- the account line, atop the section ---------- */
+  const accountBox = doc.getElementById('ff-ref-account');
+  function drawAccount(state) {
+    if (!accountBox) return;
+    accountBox.dataset.state = state;
+    if (state === 'signed-out') {
+      accountBox.replaceChildren(el('span', null, 'Saved a garment with Fynd before?'), link(setupHref(null), 'Sign in to use it', 'btn btn-secondary btn-sm ff-ref-signin'));
+    } else if (state === 'none') {
+      accountBox.replaceChildren(el('span', null, visit
+        ? 'No garment saved on your fit profile yet. After comparing, you can save this one for next time.'
+        : 'No garment saved on your fit profile yet. Add one below — after comparing, you can save it for next time.'));
+    } else if (state === 'saved') {
+      accountBox.replaceChildren(el('span', null, 'Using your saved garment from your fit profile. Nothing to enter.'));
+    } else { accountBox.hidden = true; accountBox.replaceChildren(); return; }
+    accountBox.hidden = false;
+  }
+
   let signedIn = false;
   function unsavedState() {
     const nodes = [];
     if (visit && !editing) nodes.push(visitCard(visit));
     else nodes.push(form(editing ? (prefill || visit) : prefill));
     root.dataset.locked = 'false';
-    if (!signedIn) {
-      const already = el('p', 'ff-muted');
-      already.append(doc.createTextNode('Saved one already? '), link(setupHref(null), 'Sign in to your fit profile'), doc.createTextNode('.'));
-      nodes.push(already);
-    }
+    drawAccount(signedIn ? 'none' : 'signed-out');
     root.replaceChildren(...nodes);
     root.dataset.state = signedIn ? 'none' : 'signed-out';
     root.dataset.visit = visit ? 'set' : 'empty';
@@ -787,8 +820,8 @@
     const list = el('ul', 'ff-refs');
     listed.forEach((kind) => list.append(referenceCard(kind, profile.garments[kind], Schema.readiness(profile, kind), listed.length > 1)));
     const note = el('p', 'ff-muted', listed.length > 1
-      ? 'Fynd picks the garment of the item’s kind — for a hoodie or sweatshirt, the other can stand in, and the result says so. Choose another if you like.'
-      : 'Fynd compares an item with your reference of the same kind — for a hoodie or sweatshirt, the other can stand in, and the result says so.');
+      ? 'Fynd uses the one that matches the item’s kind (a hoodie and a sweatshirt can stand in for each other). Choose another if you like.'
+      : 'A hoodie and a sweatshirt can stand in for each other; the result says when one does.');
     const missing = KINDS.filter((k) => !listed.includes(k));
     const more = el('p', 'ff-muted');
     if (missing.length) {
@@ -799,6 +832,7 @@
       });
     }
     root.replaceChildren(list, note, ...(missing.length ? [more] : []));
+    drawAccount('saved');
     root.dataset.state = 'saved';
     root.dataset.locked = 'false';
     root.dataset.visit = visit ? 'set' : 'empty';
@@ -852,6 +886,7 @@
     const p = el('p', 'ff-reference-intro');
     p.append(doc.createTextNode('Your saved garments couldn’t be loaded just now. '), link(setupHref(null), 'Open your fit profile'), doc.createTextNode('.'));
     root.replaceChildren(p);
+    drawAccount('error');
     root.dataset.state = 'error';
   }
 
@@ -868,6 +903,9 @@
       const state = account.state();
       signedIn = Boolean(state && state.signedIn);
     }
+    /* the header's account link, where a shopper looks for it: "Sign in" while signed out */
+    const navAccount = doc.querySelector('.nav-links a[href="account.html"]');
+    if (navAccount) navAccount.textContent = signedIn ? 'Account' : 'Sign in';
     if (!signedIn) { unsavedState(); changed(); return; }
     const got = await account.fitProfile.read();
     if (ask !== asked) return;

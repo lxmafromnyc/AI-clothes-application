@@ -54,144 +54,118 @@
 <main id="main" class="ff">
 
   <!-- Find Fit: does one size of an item fit like a garment the shopper
-       already owns? Two halves, both on the page:
+       already owns? One card, two sections, one action:
 
-         your garment   the garments saved on the fit profile (read with
+         Your garment   the garments saved on the fit profile (read with
                         the shopper's own session), or one described here
                         for this visit, no account needed
-                        (assets/find-fit-reference.js)
-         the item       its link: identified, every size and its
+                        (assets/find-fit-reference.js). Whether a saved one
+                        is in use, or signing in would bring one, is said
+                        first (#ff-ref-account).
+         The item       its link: identified, every size and its
                         finished-garment measurements found where Fynd holds
-                        them, only what's uncertain shown to check
-                        (assets/find-fit-item.js) — or, as the fallback, one
-                        size's measurements copied by hand from the product's
-                        chart (assets/find-fit-manual.js, read by
-                        assets/fit-candidate.js — the same reader the server
-                        uses). The extension is the fastest way: it reads the
-                        product page in the shopper's own browser.
-         →  "Compare fit" sends both to the server
-            (/api/size-recommendation?compare=1&candidate=1), and the
-            result is drawn by assets/fit-compare.js: a size only when the
-            server's decision is OK; otherwise what is missing, measurement
-            by measurement. Fynd's own catalogue isn't needed.
+                        or can read them, only what's uncertain shown to
+                        check (assets/find-fit-item.js) — or, folded away as
+                        the fallback, one size's measurements copied by hand
+                        from the product's chart (assets/find-fit-manual.js,
+                        read by assets/fit-candidate.js — the same reader the
+                        server uses). The extension is the other way in: it
+                        reads the product page in the shopper's own browser.
+         →  "Compare sizes", right under the item, with what is still
+            missing listed beside it (#ff-progress). It sends both to the
+            server (/api/size-recommendation?compare=1&candidate=1), and
+            the result is drawn by assets/fit-compare.js: a size only when
+            the server's decision is OK; otherwise what is missing,
+            measurement by measurement.
          →  after the result, an offer to save a garment described here
             to a fit profile (assets/find-fit-save.js) -->
   <section class="container ff-hero" id="find-fit" aria-labelledby="find-fit-title">
-    <h1 id="find-fit-title">Find the size that fits like your favorite clothes.</h1>
-    <p class="lead ff-lead">Tell Fynd which clothes already fit you, and what you&rsquo;re thinking of buying. Fynd finds the measurements, compares every size, and suggests one only when they line up.</p>
+    <h1 id="find-fit-title">Find the size closest to the clothes you love.</h1>
+    <p class="lead ff-lead">Compare a new hoodie or sweatshirt with one you already own.</p>
 
     <form class="ff-flow" id="ff-form" novalidate>
-      <!-- the unit for measurements typed by hand, in either half: shown only
-           while a hand-entry form is open (assets/find-fit-item.js) — a link
-           or the extension brings its own unit -->
+      <!-- the unit for measurements typed by hand, in either section: shown
+           only while a hand-entry form is open (assets/find-fit-item.js), and
+           never chosen for the shopper — a link or the extension brings its
+           own unit -->
       <div class="ff-setup ff-setup--units" id="ff-units-strip" hidden>
         <fieldset class="ff-units" id="ff-units" aria-describedby="ff-unit-hint">
-          <legend class="ff-setup-label">Units for what you type</legend>
+          <legend class="ff-setup-label">Measurements are in</legend>
           <div class="choices">
-            <label class="choice"><input type="radio" name="ff-unit" value="cm" checked><span>cm</span></label>
+            <label class="choice"><input type="radio" name="ff-unit" value="cm"><span>cm</span></label>
             <label class="choice"><input type="radio" name="ff-unit" value="in"><span>in</span></label>
           </div>
-          <p class="ff-units-hint" id="ff-unit-hint">For both garments. Switching converts what you&rsquo;ve entered.</p>
+          <p class="ff-units-hint" id="ff-unit-hint">For everything you type. Switching converts it.</p>
           <p class="form-error ffr-error" id="ff-unit-error" role="alert"></p>
         </fieldset>
       </div>
 
-      <!-- where the two halves stand, and the next step: drawn by assets/find-fit-manual.js -->
-      <div class="ff-progress" id="ff-progress" data-item="empty" data-garment="empty">
-        <span class="ff-progress-pill" id="ff-progress-garment"><span class="ff-progress-dot" aria-hidden="true"></span><span class="ff-progress-text">Your garment: not added yet</span></span>
-        <span class="ff-progress-pill" id="ff-progress-item"><span class="ff-progress-dot" aria-hidden="true"></span><span class="ff-progress-text">Item: not entered yet</span></span>
-      </div>
+      <section class="ff-step" id="ff-step-reference" aria-labelledby="ff-step-reference-title">
+        <div class="ff-step-head">
+          <p class="ff-step-kicker" aria-hidden="true">Step 1</p>
+          <h2 class="ff-step-title" id="ff-step-reference-title">Your garment</h2>
+          <p class="ff-step-desc">A hoodie or sweatshirt you own that fits the way you like.</p>
+        </div>
+        <!-- signed in with a saved garment, signed in without one, or signed
+             out: said here first (assets/find-fit-reference.js) -->
+        <div class="ff-ref-account" id="ff-ref-account" role="status" hidden></div>
+        <!-- products Fynd holds checked garment measurements for, as the
+             garment in one click; hidden when there are none -->
+        <div class="ff-anchors" id="ff-anchors" hidden>
+          <h3 class="ff-anchors-title" id="ff-anchors-title">Own one of these?</h3>
+          <div class="ff-anchor-list" role="group" aria-labelledby="ff-anchors-title"></div>
+        </div>
+        <!-- the saved reference garments, or a garment described right
+             here for this visit: drawn by assets/find-fit-reference.js -->
+        <div class="ff-reference" id="ff-reference" aria-live="polite">
+          <p class="ff-muted">Loading&hellip;</p>
+        </div>
+        <p class="form-error ffr-error" id="ff-garment-error" role="alert"></p>
+      </section>
 
-      <div class="ff-columns">
-        <section class="ff-step ff-col" id="ff-step-reference" aria-labelledby="ff-step-reference-title">
-          <div class="ff-col-head">
-            <h2 class="ff-step-title" id="ff-step-reference-title"><span class="ff-step-num">01</span> · Which clothes already fit you the way you like?</h2>
-            <p class="ff-col-desc">Pick one you&rsquo;ve saved, or find it by name or link. Measuring it yourself is the last resort.</p>
+      <section class="ff-step" id="ff-step-target" aria-labelledby="ff-step-target-title">
+        <div class="ff-step-head">
+          <p class="ff-step-kicker" aria-hidden="true">Step 2</p>
+          <h2 class="ff-step-title" id="ff-step-target-title">The item you&rsquo;re considering</h2>
+        </div>
+        <!-- the product from its link: identified, its sizes and garment
+             measurements found where Fynd can, and only what's uncertain
+             shown to check (assets/find-fit-item.js) -->
+        <div class="ffi-link" id="ffi-link-box">
+          <label class="ffi-link-label" for="ffi-link">Paste a product link</label>
+          <div class="ffi-link-row">
+            <input class="profile-input" type="url" id="ffi-link" name="product-link" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://" aria-describedby="ffi-link-error ffi-link-hint">
+            <button class="btn btn-secondary" type="button" id="ffi-link-go">Check link</button>
           </div>
-          <!-- products Fynd holds checked garment measurements for, as the
-               garment in one click; hidden when there are none -->
-          <div class="ff-anchors" id="ff-anchors" hidden>
-            <h3 class="ff-anchors-title" id="ff-anchors-title">Popular Wardrobe Anchors</h3>
-            <div class="ff-anchor-list" role="group" aria-labelledby="ff-anchors-title"></div>
-          </div>
-          <!-- the saved reference garments, or a garment described right
-               here for this visit: drawn by assets/find-fit-reference.js -->
-          <div class="ff-reference" id="ff-reference" aria-live="polite">
-            <p class="ff-muted">Loading&hellip;</p>
-          </div>
-          <p class="form-error ffr-error" id="ff-garment-error" role="alert"></p>
-        </section>
+          <p class="form-error ffr-error" id="ffi-link-error" role="alert"></p>
+          <p class="ffr-hint" id="ffi-link-hint">Fynd checks whether it can read the product&rsquo;s size chart. Not every shop&rsquo;s can be read.</p>
+          <p class="ffi-ext" id="ffi-ext-tip">Already on the product page? <a class="guide-link" href="https://github.com/lxmafromnyc/AI-clothes-application/tree/main/extension#install-it-locally">Use the Fynd extension.</a></p>
+        </div>
+        <div class="ffi-found" id="ffi-found" aria-live="polite" hidden></div>
 
-        <section class="ff-step ff-col" id="ff-step-target" aria-labelledby="ff-step-target-title">
-          <div class="ff-col-head">
-            <h2 class="ff-step-title" id="ff-step-target-title"><span class="ff-step-num">02</span> · What are you thinking of buying?</h2>
-            <p class="ff-col-desc" id="ffc-subtitle">Search for it, or paste the product&rsquo;s link. Fynd finds its sizes and measurements.</p>
+        <!-- the fallback: one size's measurements typed from the product's
+             chart (assets/find-fit-manual.js). Nothing is chosen for the
+             shopper: the kind, the size, the unit and each method are theirs -->
+        <details class="ff-manual" id="ff-manual">
+          <summary class="ff-manual-summary">Can&rsquo;t use a link? Enter the measurements yourself</summary>
+          <p class="ff-col-desc">Copy one size from the retailer&rsquo;s chart of <strong>garment</strong> measurements.
+            <button class="ff-info" type="button" aria-expanded="false" aria-controls="ffc-help" aria-label="About garment measurements">i</button></p>
+          <div class="ff-info-text" id="ffc-help" hidden>
+            <p>Use the <strong>finished-garment</strong> measurements &mdash; what the garment itself measures, often called &ldquo;product measurements&rdquo;. Not a body-size chart: that says who a size is made for, not how big the garment is.</p>
+            <p>Leave blank any the chart doesn&rsquo;t give. The chest is needed for any comparison, and Fynd needs at least three measurements taken the same way as yours.</p>
           </div>
-          <!-- the item found by searching for it: real listings, 20 at a
-               time, Load more from the server, and picking one hands its
-               link to the lookup below (assets/find-fit-search.js) -->
-          <div class="ffs" id="ffs">
-            <!-- not a <form>: this sits inside Find Fit's own form, and a
-                 form can't hold another. Enter and the button both search. -->
-            <div class="ffs-form" id="ffs-form" role="search">
-              <label class="profile-label" for="ffs-q">Search for the product</label>
-              <div class="ffi-link-row">
-                <input class="profile-input" type="search" id="ffs-q" name="q" maxlength="200" autocomplete="off" placeholder="Levi&rsquo;s 501 jeans, black oversized hoodie&hellip;" aria-describedby="ffs-status">
-                <button class="btn btn-secondary" type="button" id="ffs-go">Search</button>
-              </div>
+          <fieldset class="ff-type" id="ff-type">
+            <legend class="ff-setup-label">What kind of garment?</legend>
+            <div class="ff-type-options">
+              <label class="ff-type-card"><input type="radio" name="ff-type" value="hoodies"><span class="ff-type-body"><span class="ff-type-name">Hoodie</span><span class="ff-type-sub">Pullover or zip, with a hood</span></span></label>
+              <label class="ff-type-card"><input type="radio" name="ff-type" value="sweatshirts"><span class="ff-type-body"><span class="ff-type-name">Sweatshirt</span><span class="ff-type-sub">Crew neck, no hood</span></span></label>
             </div>
-            <p class="ffs-status" id="ffs-status" role="status" aria-live="polite"></p>
-            <ul class="ffs-results" id="ffs-results" aria-label="Products found"></ul>
-            <button class="btn btn-secondary ffs-more" type="button" id="ffs-more" hidden>Load more</button>
-            <p class="ffr-hint ffs-note" id="ffs-note"></p>
-          </div>
-          <!-- the product from its link: identified, its sizes and garment
-               measurements found, and only what's uncertain shown to check
-               (assets/find-fit-item.js) -->
-          <div class="ffi-link" id="ffi-link-box">
-            <label class="profile-label" for="ffi-link">Product link</label>
-            <div class="ffi-link-row">
-              <input class="profile-input" type="url" id="ffi-link" name="product-link" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://…" aria-describedby="ffi-link-error ffi-ext-tip">
-              <button class="btn btn-secondary" type="button" id="ffi-link-go">Find it</button>
-            </div>
-            <p class="form-error ffr-error" id="ffi-link-error" role="alert"></p>
-            <p class="ffr-hint" id="ffi-ext-tip">On the product page already? The <a class="guide-link" href="https://github.com/lxmafromnyc/AI-clothes-application/tree/main/extension#install-it-locally">Fynd Chrome extension</a> reads it in your browser, with no link to copy.</p>
-          </div>
-          <div class="ffi-found" id="ffi-found" aria-live="polite" hidden></div>
-
-          <!-- the fallback: one size's measurements typed from the product's
-               chart (assets/find-fit-manual.js) -->
-          <details class="ff-manual" id="ff-manual">
-            <summary class="ff-manual-summary">No link, or Fynd couldn&rsquo;t read it? Enter one size&rsquo;s measurements by hand</summary>
-            <fieldset class="ff-type" id="ff-type">
-              <legend class="ff-setup-label">What kind of garment?</legend>
-              <div class="ff-type-options">
-                <label class="ff-type-card"><input type="radio" name="ff-type" value="hoodies" checked><span class="ff-type-body"><span class="ff-type-name">Hoodie</span><span class="ff-type-sub">Pullover or zip, with a hood</span></span></label>
-                <label class="ff-type-card"><input type="radio" name="ff-type" value="sweatshirts"><span class="ff-type-body"><span class="ff-type-name">Sweatshirt</span><span class="ff-type-sub">Crew neck, no hood</span></span></label>
-              </div>
-            </fieldset>
-            <p class="ff-col-desc">Copy the finished-garment measurements from the retailer&rsquo;s chart.
-              <button class="ff-info" type="button" aria-expanded="false" aria-controls="ffc-help" aria-label="About finished-garment measurements">i</button></p>
-            <div class="ff-info-text" id="ffc-help" hidden>
-              <p>Use the <strong>finished-garment</strong> measurements &mdash; what the garment itself measures, often called &ldquo;product measurements&rdquo;. Not a body-size chart: that says who a size is made for, not how big the garment is.</p>
-              <p>Enter the numbers for one size, and leave blank any the chart doesn&rsquo;t give. The chest is needed for any comparison, and Fynd needs at least three measurements taken the same way as yours.</p>
-            </div>
+            <p class="form-error ffr-error" id="ff-type-error" role="alert"></p>
+          </fieldset>
           <div class="ffc-form" id="ffc-form">
             <div class="ffr-row">
               <div class="ffr-field">
-                <label class="profile-label" for="ffc-brand">Brand <span class="ff-optional">optional</span></label>
-                <input class="profile-input" type="text" id="ffc-brand" name="brand" maxlength="80" autocomplete="off" aria-describedby="ffc-brand-error">
-                <p class="form-error ffr-error" id="ffc-brand-error" role="alert"></p>
-              </div>
-              <div class="ffr-field">
-                <label class="profile-label" for="ffc-name">Product name <span class="ff-optional">optional</span></label>
-                <input class="profile-input" type="text" id="ffc-name" name="name" maxlength="80" autocomplete="off" aria-describedby="ffc-name-error">
-                <p class="form-error ffr-error" id="ffc-name-error" role="alert"></p>
-              </div>
-            </div>
-            <div class="ffr-row">
-              <div class="ffr-field">
-                <label class="profile-label" for="ffc-size">Size being considered</label>
+                <label class="profile-label" for="ffc-size">Size</label>
                 <input class="profile-input" type="text" id="ffc-size" name="size" maxlength="20" autocomplete="off" placeholder="Like M or 42" aria-describedby="ffc-size-error">
                 <p class="form-error ffr-error" id="ffc-size-error" role="alert"></p>
               </div>
@@ -283,14 +257,34 @@
             </div>
             </div>
             <p class="form-error ffr-error" id="ffc-measurements-error" role="alert"></p>
+            <details class="ffr-more ffc-more" id="ffc-more">
+              <summary class="ffr-more-summary">Brand and product name (optional)</summary>
+              <div class="ffr-row">
+                <div class="ffr-field">
+                  <label class="profile-label" for="ffc-brand">Brand</label>
+                  <input class="profile-input" type="text" id="ffc-brand" name="brand" maxlength="80" autocomplete="off" aria-describedby="ffc-brand-error">
+                  <p class="form-error ffr-error" id="ffc-brand-error" role="alert"></p>
+                </div>
+                <div class="ffr-field">
+                  <label class="profile-label" for="ffc-name">Product name</label>
+                  <input class="profile-input" type="text" id="ffc-name" name="name" maxlength="80" autocomplete="off" aria-describedby="ffc-name-error">
+                  <p class="form-error ffr-error" id="ffc-name-error" role="alert"></p>
+                </div>
+              </div>
+            </details>
           </div>
-          </details>
-        </section>
-      </div>
+        </details>
+      </section>
 
+      <!-- the one action, right under the item: what is still needed, then
+           the button (assets/find-fit-manual.js draws both) -->
       <div class="ff-action">
-        <button class="btn btn-primary ff-compare-btn" type="submit" id="ff-submit" aria-describedby="ff-submit-note">Compare fit</button>
-        <p class="ff-submit-note" id="ff-submit-note" aria-live="polite">Choose your garment, then the item.</p>
+        <div class="ff-progress" id="ff-progress" data-item="empty" data-garment="empty" aria-label="What Compare sizes needs">
+          <span class="ff-progress-pill" id="ff-progress-garment"><span class="ff-progress-dot" aria-hidden="true"></span><span class="ff-progress-text">Your garment: not added yet</span></span>
+          <span class="ff-progress-pill" id="ff-progress-item"><span class="ff-progress-dot" aria-hidden="true"></span><span class="ff-progress-text">Item: not entered yet</span></span>
+        </div>
+        <button class="btn btn-primary ff-compare-btn" type="submit" id="ff-submit" aria-describedby="ff-submit-note">Compare sizes</button>
+        <p class="ff-submit-note" id="ff-submit-note" aria-live="polite">Add your garment, then paste the item&rsquo;s link.</p>
       </div>
     </form>
   </section>

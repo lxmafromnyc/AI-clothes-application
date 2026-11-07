@@ -23,7 +23,11 @@
    both garments are there; pressed anyway, it shows where, and sends
    nothing. While a comparison runs it is busy, so it can't be sent twice.
 
-   Units: one choice, at the top, for both garments. Each measurement
+   Units: one choice, at the top, for both garments, and never made for
+   the shopper: until they choose, a hand-entered item can't be read and
+   a hand-measured garment can't be kept. A value typed before the choice
+   takes the unit then chosen; one drawn from a garment already kept
+   brings its own, which becomes the choice. Each measurement
    remembers what was typed and in which unit; switching shows each one
    converted once from what was typed (centimetres to a tenth, inches to a
    hundredth), never converted again from a converted value, so switching
@@ -102,6 +106,8 @@
         source = { value: Number(input.value), unit: unitOf(input) };
         typed.set(input, source);
       }
+      /* typed before any unit was chosen: it was meant in the one chosen now */
+      if (source && !source.unit && to) { source.unit = to; return; }
       /* a value that isn't a number yet is left exactly as typed */
       if (source && source.unit && to) input.value = display(Candidate.convertValue(source.value, source.unit, to));
     });
@@ -114,6 +120,11 @@
   /* the garment's form, drawn or redrawn: shown in the chosen unit */
   function syncReferenceUnit() {
     const hidden = $('ffr-unit');
+    /* a garment kept with its own unit, and none chosen yet: its unit is the choice — the shopper's own, not a guess */
+    if (hidden && hidden.value && !unitNow()) {
+      const radio = form.querySelector(`input[name="ff-unit"][value="${hidden.value}"]`);
+      if (radio) { radio.checked = true; shownUnit = hidden.value; }
+    }
     const to = unitNow();
     if (hidden && to && hidden.value !== to) {
       convertBoxes([...refArea.querySelectorAll('input[data-measure]')], to);
@@ -123,6 +134,8 @@
   }
   form.querySelectorAll('input[name="ff-unit"]').forEach((r) => r.addEventListener('change', () => {
     const to = unitNow();
+    const unitError = $('ff-unit-error');
+    if (unitError) { unitError.textContent = ''; unitError.classList.remove('show'); }
     convertBoxes(measures(), to);
     if ($('ffr-unit')) $('ffr-unit').value = to;
     shownUnit = to;
@@ -131,7 +144,8 @@
   }));
   if (refArea && global.MutationObserver) {
     /* the unit only: the form takes the top choice of type as its own default when drawn, and the shopper may change it */
-    new global.MutationObserver(() => { syncReferenceUnit(); progress(); }).observe(refArea, { childList: true, subtree: true });
+    /* a redrawn garment form takes the unit choice with it if it held it: put back beside what is typed */
+    new global.MutationObserver(() => { if (Item() && Item().syncStrip) Item().syncStrip(); syncReferenceUnit(); progress(); }).observe(refArea, { childList: true, subtree: true });
   }
   labelUnits();
 
@@ -173,6 +187,9 @@
     DIMS.forEach((d) => { measurements[d] = v(`ffc-m-${d}`); methods[d] = v(`ffc-how-${d}`) || null; });
     return { type: typeNow(), brand: v('ffc-brand'), name: v('ffc-name'), size: v('ffc-size'), unit: unitNow(), measurements, methods };
   }
+  /* the reader speaks for every kind it knows; this form offers two */
+  const SAID = { type: 'Choose whether it’s a hoodie or a sweatshirt.' };
+  const say = (e) => SAID[e.field] || e.message;
   const FIELD = (field) => {
     if (field.startsWith('measurements.')) return `ffc-m-${field.slice(13)}`;
     if (field.startsWith('methods.')) return `ffc-how-${field.slice(8)}`;
@@ -188,11 +205,13 @@
     let first = null;
     if (garmentMissing) {
       const err = $('ff-garment-error');
-      err.textContent = 'Choose a garment you own first: find it by name or link and choose its size, or enter its measurements — then “Use this garment”.';
+      err.textContent = 'Add your garment first: find it and choose the size on its label, or enter its measurements.';
       err.classList.add('show');
       first = $('ffr-brand') || $('ff-step-reference');
     }
-    errors.forEach(({ field, message }) => {
+    errors.forEach((e) => {
+      const { field } = e;
+      const message = say(e);
       const id = FIELD(field);
       const err = $(`${id}-error`);
       if (err && !err.textContent) { err.textContent = message; err.classList.add('show'); }
@@ -209,7 +228,10 @@
     const t = $(id) && $(id).querySelector('.ff-progress-text');
     if (t) t.textContent = text;
   }
+  /* the first thing a hand-entered item still needs, in the reader's own words */
+  let itemProblem = null;
   function itemState() {
+    itemProblem = null;
     if (usingLink()) {
       const st = linkState();
       if (st === 'loading') return 'looking';
@@ -220,7 +242,7 @@
     const anyValue = DIMS.some((d) => r.measurements[d] && r.measurements[d].trim());
     if (!anyValue && !(r.size || '').trim()) return 'empty';
     const read = Candidate.readCandidate(r);
-    if (read.errors.length) return 'incomplete';
+    if (read.errors.length) { itemProblem = say(read.errors[0]); return 'incomplete'; }
     /* every comparison needs the chest: without it the item can't be compared */
     return read.candidate.measurements.chestWidth ? 'ready' : 'no-chest';
   }
@@ -243,20 +265,20 @@
     setPill('ff-progress-garment', garment === 'saved' ? 'Your garment: from your fit profile' : garment === 'mismatch' ? 'Your garment: none of this kind saved' : garment === 'ready' ? 'Your garment: added' : garment === 'filled' ? 'Your garment: being entered' : 'Your garment: not added yet');
     setPill('ff-progress-item', { empty: 'Item: not entered yet', incomplete: 'Item: still being entered', 'no-chest': 'Item: chest width needed', ready: usingLink() ? 'Item: every size found' : 'Item: ready', looking: 'Item: looking it up', 'needs-check': 'Item: check the measurements', 'needs-type': 'Item: say what kind it is', cannot: 'Item: can’t be read from its link' }[item]);
     const ready = garment !== 'empty' && garment !== 'mismatch' && item === 'ready';
-    submit.textContent = busy ? submit.textContent : usingLink() ? 'Compare every size' : BUTTON_TEXT;
+    submit.textContent = busy ? submit.textContent : BUTTON_TEXT;
     let next;
     if (busy) next = 'Comparing…';
     else if (garment === 'mismatch') next = 'Your saved garments are a different kind from this item. Add one of its kind on your fit profile.';
-    else if (item === 'looking') next = 'Looking up the product…';
-    else if (item === 'needs-check') next = 'Check the measurements Fynd found against the product page’s chart.';
-    else if (item === 'needs-type') next = 'Say what kind of garment the item is.';
-    else if (item === 'cannot') next = 'Fynd couldn’t read this item from its link: use the Fynd extension on its page, or enter one size by hand.';
+    else if (item === 'looking') next = 'Checking the link…';
+    else if (item === 'needs-check') next = 'Tick the box once the measurements match the size chart on the product page.';
+    else if (item === 'needs-type') next = 'Say whether the item is a hoodie or a sweatshirt.';
+    else if (item === 'cannot') next = 'Fynd can’t read this item from its link. Use the Fynd extension on its page, or enter the measurements yourself.';
     else if (ready) next = !result.hidden && result.dataset.state === 'done' ? 'Your comparison is below.' : 'Ready to compare.';
-    else if (garment === 'empty' && item !== 'ready') next = 'Choose your garment, and paste the item’s link — or enter it by hand.';
-    else if (garment === 'empty') next = 'Next: add a garment you own that fits well.';
+    else if (garment === 'empty' && item !== 'ready') next = 'Add your garment, then paste the item’s link.';
+    else if (garment === 'empty') next = 'Now add your garment: find it, or enter its measurements.';
     else if (item === 'no-chest') next = 'Enter the item’s chest width — every comparison needs it.';
-    else if (item === 'incomplete') next = 'Finish the item’s details: each value needs how the chart measures it.';
-    else next = 'Next: paste the item’s link — or enter its measurements by hand.';
+    else if (item === 'incomplete') next = `For the item: ${itemProblem || 'finish its measurements.'}`;
+    else next = 'Now paste the item’s link — or enter its measurements yourself.';
     note.textContent = next;
     /* never looking available while something it needs is missing */
     submit.setAttribute('aria-disabled', String(!ready || busy));

@@ -2758,8 +2758,19 @@ The page asks for two things and does the rest (`index.html`,
 `assets/find-fit-reference.js`, `assets/find-fit-item.js`,
 `assets/find-fit-manual.js`, all on existing APIs):
 
-**01 · Which clothes already fit you the way you like?**
+The page is one card in one column under "Find the size closest to the clothes
+you love.": **Step 1 · Your garment**, then **Step 2 · The item you're
+considering**, then **Compare sizes** right after them, with what it still needs
+listed beside it (the button looks unavailable until then). Optional details and
+every hand-entry form are folded away until wanted. While signed out, the
+header's account link reads **Sign in**.
 
+**Your garment**
+
+- **Where the shopper stands, said first** (`#ff-ref-account`): signed in with a
+  saved garment ("Using your saved garment … Nothing to enter"), signed in with
+  none saved yet, or signed out ("Saved a garment with Fynd before? Sign in to
+  use it", to the fit profile, which signs in and links back).
 - **Saved garments.** These are the fit profile's own; there is no second
   profile system.
   - The one of the item's kind is chosen automatically. For a hoodie or
@@ -2779,18 +2790,15 @@ The page asks for two things and does the rest (`index.html`,
   garment with measurements needs no brand or size. Kept for the visit in
   `sessionStorage`, as before, and saved only with the shopper's explicit yes.
 
-**02 · What are you thinking of buying?**
+**The item you're considering**
 
-**Search for it** (`assets/find-fit-search.js`), or paste its link. A search
-("Levi's 501 jeans", "black oversized hoodie") shows real listings from the
-connected product source, 20 at a time with **Load more**, and any product on
-Fynd's own list that matches every word, labelled as such. **Check its fit** on
-a listing puts its link in the link box and runs the same lookup a pasted link
-does — nothing after that is new. See
-[Find Fit's product search](#find-fit-product-search) for where results come
-from, what it costs and what it can't do.
+One primary input: **Paste a product link** (with **Check link**; pasting runs
+it too). Beneath it: "Already on the product page? Use the Fynd extension." No
+product search competes with the link here; the live search
+(`assets/find-fit-search.js`) is used only to find the garment the shopper
+owns. The page says plainly that not every shop's chart can be read.
 
-The link, pasted or picked: `GET ?chart=<link>` (`api/_sizing/chart.js`)
+The link: `GET ?chart=<link>` (`api/_sizing/chart.js`)
 answers in one of these ways:
 
 | What Fynd holds | What the shopper does |
@@ -2799,8 +2807,8 @@ answers in one of these ways:
 | **A garment chart:** Fynd's own unchecked copy of the brand's page, or the page itself, with every column's measurement, method and unit known | One tick: "These match the size chart on the product page". The values are one click away. Every size is then compared in one request (`?compare=1&candidate=1` with `{ chart }`, the extension's batch endpoint), as the shopper's confirmed numbers, never verified. |
 | **A chart that is incomplete, body-only, or unreadable from the server** (no retailer is cleared for server reading today) | Said so, with the **extension** (which reads the page in the shopper's browser) or **hand entry** as the ways on. |
 
-The kind of garment comes from Fynd's record or the product's name and is asked
-only when neither says. Units come with the chart. When both halves are ready,
+The kind of garment comes from Fynd's record or the product's name, is shown
+with **Change**, and is asked only when neither says. Units come with the chart. When both halves are ready,
 whether by Fynd or by the shopper's tick, the comparison runs without another
 click. By hand, **Compare fit** is still the shopper's.
 
@@ -2820,16 +2828,20 @@ is OK, and the sources say where each side's numbers came from.
   against `main` with the same tasks (`scripts/find-fit-walkthrough.js`;
   screenshots and tables in [`docs/find-fit-redesign/`](docs/find-fit-redesign/README.md)):
   - a returning shopper goes from 9 inputs to 2 (the link and the tick);
-  - a first-time shopper goes from 15 to 6;
-  - the page opens with 4 controls instead of 26 (5 since the item's search
-    box was added).
+  - a first-time shopper goes from 15 to 7 (6 before the unit of hand-taken
+    measurements was asked rather than assumed);
+  - the page opens with 4 controls instead of 26.
 
   The 2-input flow is also asserted in `test-e2e`.
 
 ### Find Fit: the item entered by hand
 
-This is the fallback, behind "No link, or Fynd couldn't read it?". Its own kind
-and unit choices appear only while it is open.
+This is the fallback, behind "Can't use a link? Enter the measurements
+yourself". Its kind and the cm/in choice appear only while it is open, and
+neither is chosen for the shopper: until they are, Compare fit says what is
+missing and sends nothing. The unit choice sits inside whichever hand-entry form
+is open (this one, or your garment's measurements) and applies to both. The
+brand and product name are folded away as optional.
 
 **Find Fit** (`index.html`, `assets/find-fit-manual.js`) compares a garment the
 shopper owns with one size of any item they are considering, without Fynd's
