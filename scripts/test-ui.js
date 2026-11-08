@@ -465,7 +465,7 @@ const chips = (page) => page.$$eval('.attachment', (ns) => ns.map((n) => ({
    these tests of what those forms do open them first, as a shopper would
    (each the first time it appears) */
 const openFallbacks = (target) => target.addInitScript(() => {
-  const open = () => ['ff-manual', 'ffr-manual', 'ffr-details'].forEach((id) => {
+  const open = () => ['ffr-add', 'ff-manual', 'ffr-manual', 'ffr-details'].forEach((id) => {
     const d = document.getElementById(id);
     if (d && !d.dataset.testOpened) { d.dataset.testOpened = '1'; d.open = true; }
   });
@@ -3105,6 +3105,7 @@ const openFallbacks = (target) => target.addInitScript(() => {
       await page.waitForSelector('#fit-compare:not([hidden]) .fit-compare-recommended');
       assert.strictEqual(await page.$$eval('#fit-compare .ff-scale-row', (ns) => ns.length), 4, 'one row per compared measurement, the garments side by side');
       await audit('a recommended size, its reference and how it differs');
+      if (!(await page.$eval('#fit-compare .ff-how', (d) => d.open))) await page.click('#fit-compare .ff-how > summary');
       await page.click('#fit-compare .fit-compare-differences > summary');
       const shown = await page.$$eval('#fit-compare .fit-compare-differences tbody td:nth-child(2)', (tds) => tds.map((td) => td.textContent));
       assert.ok(shown.length === 4 && shown.every((t) => /^([+\u2212]\d+\.\d|0\.0) in$/.test(t)), JSON.stringify(shown));
@@ -3142,10 +3143,11 @@ const openFallbacks = (target) => target.addInitScript(() => {
     await page.route('**/api/size-recommendation?compare=1&candidate=1', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ comparison: answer, decision: sizingDecision.decide(fixtureProfile, fixture, { via: 'compare' }) }) }));
     await page.waitForSelector('#ffc-form', { timeout: 10000 });
     await submitItem(page);
-    await page.waitForSelector('#fit-compare .fit-compare-differences');
+    await page.waitForSelector('#fit-compare .fit-compare-differences', { state: 'attached' });
     assert.strictEqual(await page.textContent('#fit-compare .fit-compare-reference'), 'Compared with: Carhartt L (measured at home).');
     assert.strictEqual(await page.textContent('#fit-compare .fit-compare-differs'),
       'Size M against your reference: chest width 2 cm wider, garment length 1 cm shorter, shoulder width 1 cm wider, sleeve length the same as your reference.');
+    if (!(await page.$eval('#fit-compare .ff-how', (d) => d.open))) await page.click('#fit-compare .ff-how > summary');
     await page.click('#fit-compare .fit-compare-differences > summary');
     const rows = await page.$$eval('#fit-compare .fit-compare-differences tbody tr', (trs) => trs.map((tr) => [...tr.children].map((c) => c.textContent)));
     assert.deepStrictEqual(rows, [
@@ -3170,8 +3172,9 @@ const openFallbacks = (target) => target.addInitScript(() => {
     await aroundPage.route('**/api/size-recommendation?compare=1&candidate=1', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ comparison: aroundAnswer, decision: sizingDecision.decide(fixtureProfile, around, { via: 'compare' }) }) }));
     await aroundPage.waitForSelector('#ffc-form', { timeout: 10000 });
     await submitItem(aroundPage);
-    await aroundPage.waitForSelector('#fit-compare .fit-compare-differences');
+    await aroundPage.waitForSelector('#fit-compare .fit-compare-differences', { state: 'attached' });
     assert.match(await aroundPage.textContent('#fit-compare .fit-compare-differs'), /^Size M against your reference: chest circumference 4 cm wider, /);
+    if (!(await aroundPage.$eval('#fit-compare .ff-how', (d) => d.open))) await aroundPage.click('#fit-compare .ff-how > summary');
     await aroundPage.click('#fit-compare .fit-compare-differences > summary');
     const chestRow = await aroundPage.$eval('#fit-compare .fit-compare-differences tbody tr[data-dim="chestWidth"]', (tr) => [...tr.children].map((c) => c.textContent));
     assert.deepStrictEqual(chestRow, ['Chest circumference', '+4.0 cm', '4 cm wider (estimated)']);
@@ -3250,6 +3253,7 @@ const openFallbacks = (target) => target.addInitScript(() => {
         'Shoulders: 1 in narrower — Fynd treats up to ¾ in as similar'
       ]);
       /* the signed differences stay, as explanation */
+      if (!(await page.$eval('#fit-compare .ff-how', (d) => d.open))) await page.click('#fit-compare .ff-how > summary');
       await page.click('#fit-compare .fit-compare-differences > summary');
       assert.deepStrictEqual(await page.$$eval('#fit-compare .fit-compare-differences tbody td:nth-child(2)', (tds) => tds.map((td) => td.textContent)), ['−2.5 in', '+1.8 in', '−1.0 in']);
       await audit('the size entered, missing every tolerance, with its differences opened');

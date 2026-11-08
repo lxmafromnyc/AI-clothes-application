@@ -422,7 +422,7 @@ const linkFromInbox = (pattern) => {
        (byHand: false leaves the page as a shopper first sees it). */
     if (!options || options.byHand !== false) {
       await context.addInitScript(() => {
-        const open = () => ['ff-manual', 'ffr-manual', 'ffr-details'].forEach((id) => {
+        const open = () => ['ffr-add', 'ff-manual', 'ffr-manual', 'ffr-details'].forEach((id) => {
           const d = document.getElementById(id);
           if (d && !d.dataset.testOpened) { d.dataset.testOpened = '1'; d.open = true; }
         });
@@ -1409,10 +1409,16 @@ const linkFromInbox = (pattern) => {
     const page = await context.newPage();
     await page.setViewportSize({ width: 1440, height: 900 });
     await open(page, 'index.html');
-    await page.waitForSelector('#ff-reference[data-state="signed-out"] .ffr-form');
+    await page.waitForSelector('#ff-reference[data-state="signed-out"] #ffr-add');
     assert.strictEqual((await page.textContent('#find-fit-title')).trim(), 'Find the size closest to the clothes you love.');
     assert.strictEqual((await page.textContent('#find-fit .ff-lead')).trim(), 'Compare a new hoodie or sweatshirt with one you already own.');
-    assert.deepStrictEqual(await page.$$eval('#ff-form .ff-step-kicker', (ns) => ns.map((n) => n.textContent)), ['Step 1', 'Step 2']);
+    /* one workspace, not a questionnaire: no numbered steps; a first-time shopper's one way in to the garment is "Add a garment you love", the setup behind it */
+    assert.strictEqual(await page.$('.ff-step-kicker, .ff-step-num'), null);
+    assert.strictEqual((await page.textContent('#ffr-add > summary')).trim(), '+Add a garment you love');
+    assert.strictEqual(await page.$eval('#ffr-add', (d) => d.open), false, 'the setup is folded until asked for');
+    assert.ok(await page.$eval('#ffr-add', (d) => d.contains(document.getElementById('ffr-search')) && d.contains(document.getElementById('ffr-type')) && d.contains(document.getElementById('ffr-size'))));
+    await page.click('#ffr-add > summary');
+    await page.waitForSelector('#ff-reference .ffr-form');
     /* signing in, easy to find in the header: the account link says so while signed out */
     assert.strictEqual((await page.textContent('.nav-links a[href="account.html"]')).trim(), 'Sign in');
     /* two plain section headings, no step numbers */
@@ -1432,7 +1438,10 @@ const linkFromInbox = (pattern) => {
     assert.strictEqual(await page.$('#ffs, #ffs-q'), null, 'no product search competing with the link');
     assert.strictEqual(await page.textContent('label[for="ffi-link"]'), 'Paste a product link');
     assert.strictEqual((await page.textContent('#ffi-link-go')).trim(), 'Check link');
-    assert.strictEqual((await page.textContent('#ffi-ext-tip')).trim(), 'Already on the product page? Use the Fynd extension.');
+    /* before any link is checked, Check link is the one primary action; Compare sizes waits */
+    assert.strictEqual(await page.getAttribute('#ff-form', 'data-link-action'), 'primary');
+    assert.strictEqual(await page.$eval('#ff-submit', (b) => b.classList.contains('is-waiting')), true);
+    assert.strictEqual((await page.textContent('#ffi-ext-tip')).trim(), 'Already shopping? Use the Fynd Chrome extension.');
     /* the garment's kind: not assumed */
     assert.strictEqual(await page.inputValue('#ffr-type'), '');
     /* one primary action: keeping a typed garment is secondary, as Compare fit keeps it too */
@@ -1528,6 +1537,8 @@ const linkFromInbox = (pattern) => {
     assert.strictEqual(await page.isDisabled('#ff-reference input[value="tshirts"]'), true);
     assert.strictEqual(posted.length, 0, 'nothing compared before the check');
     assert.strictEqual(await page.getAttribute('#ff-submit', 'aria-disabled'), 'true');
+    /* one primary at a time: a chart found, Check link steps back; Compare sizes stays inactive until the check */
+    assert.deepStrictEqual(await page.evaluate(() => [document.getElementById('ff-form').dataset.linkAction, document.getElementById('ffi-link-go').textContent, document.getElementById('ff-submit').classList.contains('is-waiting')]), ['secondary', 'Check link', true]);
     /* the check, and nothing else: compared at once */
     await page.check('#ffi-confirm');
     await resultDone(page);
@@ -1566,6 +1577,8 @@ const linkFromInbox = (pattern) => {
     const context = await openContext({ byHand: false });
     const page = await context.newPage();
     await open(page, 'index.html');
+    await page.waitForSelector('#ffr-add');
+    if (!(await page.$eval('#ffr-add', (d) => d.open))) await page.click('#ffr-add > summary');
     await page.waitForSelector('#ff-reference .ffr-form');
     await page.click('#ffr-manual > summary');
     /* the unit is asked, never assumed: no choice made for the shopper */
@@ -1597,6 +1610,8 @@ const linkFromInbox = (pattern) => {
     const posted = [];
     page.on('request', (r) => { if (r.method() === 'POST' && /size-recommendation\?product=/.test(r.url())) posted.push({ url: r.url(), body: r.postDataJSON() }); });
     await open(page, 'index.html');
+    await page.waitForSelector('#ffr-add');
+    if (!(await page.$eval('#ffr-add', (d) => d.open))) await page.click('#ffr-add > summary');
     await page.waitForSelector('#ff-reference .ffr-form');
     /* a guest: their garment by its measurements (the fallback), its kind and unit theirs to say, kept for this visit */
     await page.click('#ffr-manual > summary');
@@ -1625,6 +1640,8 @@ const linkFromInbox = (pattern) => {
     const context = await openContext({ byHand: false });
     const page = await context.newPage();
     await open(page, 'index.html');
+    await page.waitForSelector('#ffr-add');
+    if (!(await page.$eval('#ffr-add', (d) => d.open))) await page.click('#ffr-add > summary');
     await page.waitForSelector('#ff-reference .ffr-form');
     await page.fill('#ffr-search', UQ_HOODIE_LINK);
     await page.keyboard.press('Enter');
@@ -1643,6 +1660,8 @@ const linkFromInbox = (pattern) => {
     const context = await openContext({ byHand: false });
     const page = await context.newPage();
     await open(page, 'index.html');
+    await page.waitForSelector('#ffr-add');
+    if (!(await page.$eval('#ffr-add', (d) => d.open))) await page.click('#ffr-add > summary');
     await page.waitForSelector('#ff-reference .ffr-form');
     await page.fill('#ffi-link', 'https://shop.example.com/products/plain-hoodie');
     await page.click('#ffi-link-go');
@@ -2727,8 +2746,11 @@ const linkFromInbox = (pattern) => {
     assert.match(await page.textContent('#fit-compare .ff-sources'), /^Sources: the measurements you entered from this item’s chart, which Fynd hasn’t checked; your reference’s published measurements/);
     assert.strictEqual(await page.textContent('#fit-compare .ff-limits-title'), 'Limits of this comparison');
     assert.ok(!/%|confiden/i.test(await page.textContent('#fit-compare')), 'no percentage or confidence invented');
+    /* the engine's own reliability, beside the size it recommends */
+    assert.match(await page.textContent('#fit-compare .ff-confidence'), /^Reliability: (high|medium|low)$/);
     /* folded away until asked for */
     assert.strictEqual(await page.$eval('#fit-compare .fit-compare-differences', (d) => d.open), false);
+    if (!(await page.$eval('#fit-compare .ff-how', (d) => d.open))) await page.click('#fit-compare .ff-how > summary');
     await page.click('#fit-compare .fit-compare-differences > summary');
     const rows = await page.$$eval('#fit-compare .fit-compare-differences tbody tr', (trs) => trs.map((tr) => ({ dim: tr.dataset.dim, diff: Number(tr.children[1].dataset.difference), shown: tr.children[1].textContent })));
     const row = expected.sizes.find((x) => x.size === expected.recommended);

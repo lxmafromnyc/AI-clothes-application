@@ -75,7 +75,14 @@
   function changed(by) {
     try { doc.dispatchEvent(new global.CustomEvent('fynd:item-change', { detail: { type: item ? item.type : null, state, by: by || 'page' } })); } catch (err) { /* no events here */ }
   }
-  function set(next, by) { state = next; draw(); changed(by); }
+  /* Check link says when it is at work: busy, and said so, while the chart is looked up */
+  const GO_TEXT = go.textContent;
+  function syncGo() {
+    const loading = state === 'loading';
+    go.textContent = loading ? 'Checking…' : GO_TEXT;
+    go.setAttribute('aria-busy', String(loading));
+  }
+  function set(next, by) { state = next; syncGo(); draw(); changed(by); }
 
   /* ---------- from the server's chart answer to what can be compared ---------- */
   function fromAnswer(c, url) {

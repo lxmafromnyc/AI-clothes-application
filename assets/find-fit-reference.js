@@ -701,12 +701,31 @@
       : 'No measurements yet. Edit it to add any you can measure, laid flat.';
   }
 
+  /* a small drawing of the garment's kind, for its card: decoration only */
+  const GLYPH = {
+    hoodies: 'M12 9c0-3 2.5-5 6-5s6 2 6 5l7 3 3 9-5 2-2-5v17H11V18l-2 5-5-2 3-9 7-3Zm3 0c0 2 1.5 4 3 4s3-2 3-4',
+    sweatshirts: 'M13 6h10l8 4 3 11-5 2-2-6v19H11V17l-2 6-5-2 3-11 6-4Zm0 0c1 3 3 4 5 4s4-1 5-4',
+    tshirts: 'M13 6h10l9 5-3 6-4-2v21H11V15l-4 2-3-6 9-5Zm0 0c1 3 3 4 5 4s4-1 5-4'
+  };
+  function glyph(kind) {
+    const wrap = el('span', 'ff-ref-icon');
+    wrap.setAttribute('aria-hidden', 'true');
+    const svg = doc.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 36 40');
+    const path = doc.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', GLYPH[kind] || GLYPH.sweatshirts);
+    svg.append(path);
+    wrap.append(svg);
+    return wrap;
+  }
+
   function visitCard(value) {
     const g = Schema.garmentOf(value.type);
     const a = value.garment.anchor;
     const said = Schema.describeFavorite(value.garment) || {};
     const card = el('div', 'ff-ref ff-ref--visit');
     card.dataset.kind = value.type;
+    card.append(glyph(value.type));
     const top = el('div', 'ff-ref-top');
     top.append(el('span', 'ff-ref-kind', `${cap(g.one)} · this visit`));
     const actions = el('span', 'ff-ref-actions');
@@ -732,22 +751,45 @@
     if (!accountBox) return;
     accountBox.dataset.state = state;
     if (state === 'signed-out') {
-      accountBox.replaceChildren(el('span', null, 'Saved a garment with Fynd before?'), link(setupHref(null), 'Sign in to use it', 'btn btn-secondary btn-sm ff-ref-signin'));
+      accountBox.replaceChildren(el('span', null, 'Saved a garment with Fynd before?'), link(setupHref(null), 'Sign in to use it', 'guide-link ff-ref-signin'));
     } else if (state === 'none') {
       accountBox.replaceChildren(el('span', null, visit
         ? 'No garment saved on your fit profile yet. After comparing, you can save this one for next time.'
         : 'No garment saved on your fit profile yet. Add one below — after comparing, you can save it for next time.'));
-    } else if (state === 'saved') {
-      accountBox.replaceChildren(el('span', null, 'Using your saved garment from your fit profile. Nothing to enter.'));
     } else { accountBox.hidden = true; accountBox.replaceChildren(); return; }
     accountBox.hidden = false;
   }
 
+  /* the wardrobe anchors live with the form they fill: put back in their
+     own place before the section is redrawn, so a redraw never loses them */
+  const anchorsHome = doc.getElementById('ff-anchors');
+  const anchorsAfter = anchorsHome ? anchorsHome.nextSibling : null;
+  function homeAnchors() {
+    if (anchorsHome && anchorsAfter && anchorsHome.nextSibling !== anchorsAfter) anchorsAfter.before(anchorsHome);
+  }
+  /* "Add a garment you love": the one way in when there is none yet;
+     the form, the anchors and every detail behind it */
+  let addOpen = false;
+  function addGarment(content) {
+    const add = el('details', 'ffr-add');
+    add.id = 'ffr-add';
+    add.open = addOpen || editing || Boolean(prefill);
+    const summary = el('summary', 'ffr-add-summary');
+    summary.append(el('span', 'ffr-add-plus', '+'), el('span', null, 'Add a garment you love'));
+    add.append(summary);
+    if (anchorsHome) add.append(anchorsHome);
+    add.append(content);
+    add.addEventListener('toggle', () => { addOpen = add.open; });
+    return add;
+  }
+
   let signedIn = false;
   function unsavedState() {
+    homeAnchors();
     const nodes = [];
     if (visit && !editing) nodes.push(visitCard(visit));
-    else nodes.push(form(editing ? (prefill || visit) : prefill));
+    else if (editing) nodes.push(form(prefill || visit));
+    else nodes.push(addGarment(form(prefill)));
     root.dataset.locked = 'false';
     drawAccount(signedIn ? 'none' : 'signed-out');
     root.replaceChildren(...nodes);
@@ -773,6 +815,7 @@
     const said = Schema.describeFavorite(entry) || {};
     const card = el('li', `ff-ref ff-ref--${readiness.level}`);
     card.dataset.kind = kind;
+    card.append(glyph(kind));
     const want = itemKind();
     const other = Boolean(want) && FAMILY[want] !== FAMILY[kind];
     card.dataset.chosen = String(chosen() === kind);
@@ -831,7 +874,8 @@
         more.append(link(setupHref(kind), Schema.garmentOf(kind).one));
       });
     }
-    root.replaceChildren(list, note, ...(missing.length ? [more] : []));
+    homeAnchors();
+    root.replaceChildren(list, ...(listed.length > 1 ? [note] : []), ...(missing.length ? [more] : []));
     drawAccount('saved');
     root.dataset.state = 'saved';
     root.dataset.locked = 'false';
@@ -885,6 +929,7 @@
   function unavailable() {
     const p = el('p', 'ff-reference-intro');
     p.append(doc.createTextNode('Your saved garments couldn’t be loaded just now. '), link(setupHref(null), 'Open your fit profile'), doc.createTextNode('.'));
+    homeAnchors();
     root.replaceChildren(p);
     drawAccount('error');
     root.dataset.state = 'error';

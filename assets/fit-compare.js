@@ -641,6 +641,12 @@
       const pick = el('p', 'fit-compare-recommended');
       pick.append(doc.createTextNode('Recommended size: '), el('strong', null, size));
       nodes.push(pick);
+      /* on Find Fit, the engine's own reliability beside the size it recommends — said only with a recommendation */
+      if (verdict && typeof c.reliability === 'string' && c.reliability) {
+        const conf = el('p', 'ff-confidence', `Reliability: ${c.reliability}`);
+        conf.dataset.level = c.reliability;
+        nodes.push(conf);
+      }
     } else if (view.candidate) {
       /* the one size entered: it didn't meet the criteria — no "closest" */
       const pick = el('p', 'fit-compare-mismatch');
@@ -747,7 +753,18 @@
     /* the summary (and, when recommended, the size and its differences),
        then the size being considered, then the caveats */
     const rest = d.verdict ? [limits(d.rest)] : d.rest.map((t) => el('p', null, t));
-    put(compare, [], [...d.lead, ...nodes, ...rest, ...d.extra], d.verdict ? (d.title || TITLE[d.outcome]) : 'Compared with your reference', d.verdict);
+    if (d.verdict) {
+      /* Find Fit: the size, its confidence and each measurement first; the
+         sentence restating them, the table of differences, the sources and
+         the limits folded beneath — all still there, nothing reworded */
+      const FOLD = ['fit-compare-differs', 'fit-compare-differences', 'ff-sources'];
+      const folded = (n) => n.classList && FOLD.some((k) => n.classList.contains(k));
+      const how = el('details', 'ff-how');
+      how.append(el('summary', null, 'How Fynd worked this out'), ...d.lead.filter(folded), ...rest);
+      put(compare, [], [...d.lead.filter((n) => !folded(n)), ...nodes, how, ...d.extra], d.title || TITLE[d.outcome], d.verdict);
+      return;
+    }
+    put(compare, [], [...d.lead, ...nodes, ...rest, ...d.extra], 'Compared with your reference', d.verdict);
   }
 
   /* the caveats, as a list a shopper can scan */
