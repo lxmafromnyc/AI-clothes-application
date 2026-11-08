@@ -2845,6 +2845,37 @@ is OK, and the sources say where each side's numbers came from.
 
   The 2-input flow is also asserted in `test-e2e`.
 
+### A garment measured more than one way
+
+Retailers measure the same dimension differently: Zara measures length from the
+top of the shoulder and sleeves from the shoulder seam, as Fynd's form does;
+UNIQLO measures both from the centre back of the neck. Those can't be converted,
+so a garment measured only one way could never be compared with the other.
+
+- **Alternates** (`assets/fit-profile-schema.js` `ALTERNATE_MEASURES`, profile
+  version 7): a saved or this-visit garment may also keep length from the centre
+  back, sleeve from the centre back, and shoulders at the broadest point — one of
+  each, in its measurements' unit, each held to its own method's range. The
+  garment's own measurements and methods are untouched; a version 6 profile
+  upgrades with nothing changed.
+- **Selection** (`api/_sizing/select-measurements.js`): before every comparison
+  (Find Fit, saved garments, the extension, Search listings), the saved
+  measurement taken exactly the way the product's chart measures is handed to the
+  engine — the alternate where the chart uses its method, the garment's own
+  otherwise. Nothing is converted or estimated, and the decision and the
+  comparison read the same selected measurements. With no alternates the
+  profile passes through unchanged. The engine is unchanged; the decision's
+  range check now reads each value's range by the method it was taken by.
+- **Asked for only when it helps:** when a comparison stops at "too few in
+  common", the answer carries `measurementRequest` — only the dimensions the
+  chart measures by an alternate method, and only if they would meet the
+  engine's own rule (three, the chest among them). Find Fit and the extension
+  show each with how to measure it, save it (`POST /api/fit-profile
+  { action: "alternates" }` for a saved garment, or this visit's garment), and
+  compare again; the answer then says which were used (`alternatesUsed`).
+- Re-saving the same garment from a page that never showed them keeps them; a
+  new unit or a different garment drops them.
+
 ### Find Fit: the item entered by hand
 
 This is the fallback, behind "Can't use a link? Enter the measurements

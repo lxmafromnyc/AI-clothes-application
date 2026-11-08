@@ -133,7 +133,7 @@
 (function (global) {
   'use strict';
 
-  const SCHEMA_VERSION = 6;
+  const SCHEMA_VERSION = 7;
   /* The version of Fynd's canonical measurement methods
      (api/_sizing/methods.js REGISTRY_VERSION) a saved reference's
      methods are named under. The server checks every id against that
@@ -377,6 +377,46 @@
     const m = GARMENT_MEASURES[key];
     return ((g && g.sleeves === 'long') ? m.longRange : m.range)[unit];
   };
+  /* Another legitimate way to measure the same dimension of the same
+     garment, kept beside the form's own measurement — never instead of
+     it, never converted from it. Retailers differ: UNIQLO measures length
+     and sleeve from the centre back of the neck, Zara from the shoulder.
+     A saved garment may hold one of each of these, asked for only when a
+     product's chart uses that method (api/_sizing/select-measurements.js)
+     and stored as { dimension, method, value } in the measurements' own
+     unit. Only these three, each with its own plausible range: a sleeve
+     from the centre back runs across half the back as well. */
+  const ALTERNATE_MEASURES = {
+    bodyLength: {
+      method: 'center-back-to-hem', label: 'Length from the centre back',
+      how: 'Lay it flat, face down. From the centre of the back of the neck, where the collar meets the body, straight down to the hem.',
+      range: { in: [16, 38], cm: [40, 97] },
+      longRange: { in: [16, 38], cm: [40, 97] }
+    },
+    sleeveLength: {
+      method: 'center-back-to-cuff', label: 'Sleeve from the centre back',
+      how: 'Lay it flat, face down, the sleeve straight out. From the centre of the back of the neck, across the shoulder and down the sleeve to the end of the cuff.',
+      range: { in: [8, 26], cm: [20, 66] },
+      longRange: { in: [24, 46], cm: [60, 117] }
+    },
+    shoulderWidth: {
+      method: 'broadest-part-of-shoulders', label: 'Shoulders at the broadest point',
+      how: 'Lay it flat, face down. Straight across the back at the widest part of the shoulders — not seam to seam.',
+      range: { in: [12, 30], cm: [30, 76] },
+      longRange: { in: [12, 32], cm: [30, 82] }
+    }
+  };
+  const ALTERNATE_KEYS = Object.keys(ALTERNATE_MEASURES);
+  const MAX_ALTERNATES = ALTERNATE_KEYS.length;
+  /* the plausible range for one value as the method it was taken by measures it, or null for a method the profile doesn't take */
+  const methodRange = (garmentId, key, method, unit) => {
+    if (GARMENT_MEASURES[key] && method === GARMENT_MEASURES[key].method) return measureRange(garmentId, key, unit);
+    const alt = ALTERNATE_MEASURES[key];
+    if (!alt || alt.method !== method) return null;
+    const g = GARMENTS.find((x) => x.id === garmentId);
+    return ((g && g.sleeves === 'long') ? alt.longRange : alt.range)[unit] || null;
+  };
+
   /* notes: what the shopper likes about its fit, in their own words —
      the only free text in the profile, kept short and never logged */
   const PRODUCT_LIMITS = { name: 80, url: 300, notes: 200 };
@@ -540,7 +580,11 @@
         return [type, methods ? Object.assign({}, entry, { anchor: Object.assign({}, anchor, { methods }) }) : entry];
       })) : profile.garments;
       return Object.assign({}, profile, { schemaVersion: 6, garments });
-    }
+    },
+    /* version 7 lets a saved garment keep alternate measurements
+       (ALTERNATE_MEASURES). None was taken before, so nothing changes:
+       every garment keeps its measurements and methods as they were */
+    6: (profile) => Object.assign({}, profile, { schemaVersion: 7 })
   };
 
   /* the form's own method for each measurement given, under this registry
@@ -602,9 +646,20 @@
       if (GARMENT_MEASURE_KEYS.every((key) => measurements[key] === null)) measurements = null;
     }
     const notes = typeof raw.notes === 'string' && raw.notes ? raw.notes : null;
-    return { product, likes: likes.length ? likes : null, measurements, methods: shapeMethods(raw.methods, measurements), notes };
+    return { product, likes: likes.length ? likes : null, measurements, methods: shapeMethods(raw.methods, measurements), alternates: shapeAlternates(raw.alternates, measurements), notes };
   }
-  const DETAIL_KEYS = ['product', 'likes', 'measurements', 'methods', 'notes'];
+  /* stored alternates, as stored: each a known dimension with its one
+     alternate method and a number — never filled in, never re-derived.
+     Null without measurements (their unit) or with none. */
+  function shapeAlternates(raw, measurements) {
+    if (!measurements || !Array.isArray(raw)) return null;
+    const seen = new Set();
+    const out = raw.filter((a) => isPlainObject(a) && ALTERNATE_MEASURES[a.dimension] && a.method === ALTERNATE_MEASURES[a.dimension].method
+      && typeof a.value === 'number' && Number.isFinite(a.value) && a.value > 0 && !seen.has(a.dimension) && seen.add(a.dimension))
+      .map((a) => ({ dimension: a.dimension, method: a.method, value: a.value }));
+    return out.length ? out : null;
+  }
+  const DETAIL_KEYS = ['product', 'likes', 'measurements', 'methods', 'alternates', 'notes'];
   const hasDetails = (d) => Boolean(d && DETAIL_KEYS.some((k) => d[k]));
 
   /* The current shape of whatever was stored, or null for something
@@ -743,6 +798,8 @@
     const m = a.measurements;
     const measured = m ? GARMENT_MEASURE_KEYS.filter((key) => m[key] !== null && m[key] !== undefined)
       .map((key) => `${GARMENT_MEASURES[key].label} ${formatNumber(m[key])} ${m.unit}`) : [];
+    /* and any taken another way, said by how they were taken */
+    if (m && Array.isArray(a.alternates)) a.alternates.forEach((x) => { const spec = ALTERNATE_MEASURES[x.dimension]; if (spec && typeof x.value === 'number') measured.push(`${spec.label} ${formatNumber(x.value)} ${m.unit}`); });
     if (!answer && !product && !likes.length && !measured.length) return null;
     return {
       answer,
@@ -945,9 +1002,39 @@
       const text = typeof raw.notes === 'string' ? cleanText(raw.notes) : '';
       if (!text) { fail(`${at}.notes`, 'Write your notes in words, or leave them blank.'); ok = false; } else if (text.length > PRODUCT_LIMITS.notes) { fail(`${at}.notes`, `Keep your notes to ${PRODUCT_LIMITS.notes} characters.`); ok = false; } else notes = text;
     }
+    const alternates = blank(raw.alternates) ? null : readAlternates(raw.alternates, measurements, at, (field, message) => { fail(field, message); ok = false; }, garment);
     /* how each was taken: the form's own method for it, under the current
        registry version — never what a client says it measured */
-    return ok ? { product, likes, measurements, methods: measurements ? methodsFor(measurements) : null, notes } : null;
+    return ok ? { product, likes, measurements, methods: measurements ? methodsFor(measurements) : null, alternates, notes } : null;
+  }
+
+  /* Alternate measurements, as sent: [{ dimension, value }], each one of
+     ALTERNATE_MEASURES, in the garment's measurements' unit, within the
+     range of the method it names — the method is the dimension's one
+     alternate, never what a client says (a method sent must be that one).
+     One per dimension; none without the garment's own measurements. */
+  function readAlternates(raw, measurements, at, fail, garment) {
+    if (!Array.isArray(raw)) { fail(`${at}.alternates`, 'Send alternate measurements as a list.'); return null; }
+    if (!raw.length) return null;
+    if (!measurements) { fail(`${at}.alternates`, 'Add the garment’s own measurements, laid flat, before any taken another way.'); return null; }
+    if (raw.length > MAX_ALTERNATES) { fail(`${at}.alternates`, `At most ${MAX_ALTERNATES} alternate measurements.`); return null; }
+    const out = [];
+    const seen = new Set();
+    raw.forEach((a, i) => {
+      const where = `${at}.alternates.${i}`;
+      const spec = isPlainObject(a) ? ALTERNATE_MEASURES[a.dimension] : null;
+      if (!spec) { fail(where, `Choose one of: ${ALTERNATE_KEYS.map((k) => ALTERNATE_MEASURES[k].label.toLowerCase()).join(', ')}.`); return; }
+      if (!blank(a.method) && a.method !== spec.method) { fail(`${where}.method`, `${spec.label} is measured one way only.`); return; }
+      if (seen.has(a.dimension)) { fail(where, `${spec.label} is given twice.`); return; }
+      seen.add(a.dimension);
+      const read = readNumber(a.value);
+      if (read.blank || !read.ok) { fail(`${where}.value`, `Enter the ${spec.label.toLowerCase()} as a number, like 31 or 31.5.`); return; }
+      const value = round1(read.value);
+      const [min, max] = methodRange(garment.id, a.dimension, spec.method, measurements.unit);
+      if (value < min || value > max) { fail(`${where}.value`, `${spec.label} should be between ${min} and ${max} ${measurements.unit} for a ${garment.one}.`); return; }
+      out.push({ dimension: a.dimension, method: spec.method, value });
+    });
+    return out.length ? out : null;
   }
 
   /* One type's answers: only the fields that were sent, so a skipped
@@ -1321,6 +1408,9 @@
     GARMENT_MEASURES,
     GARMENT_MEASURE_KEYS,
     measureRange,
+    ALTERNATE_MEASURES,
+    ALTERNATE_KEYS,
+    methodRange,
     PRODUCT_LIMITS,
     LETTER_SIZES,
     WAIST_SIZES,

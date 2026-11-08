@@ -2941,6 +2941,225 @@ await test('the existing outcomes are unchanged for valid data: ok, partial with
   workedOutNothing(engine.compare(withRef(REF_CM), unchecked), 'unverified-data');
 });
 
+/* ---------- alternate measurements: the same dimension, measured another legitimate way ---------- */
+section('alternate measurements (assets/fit-profile-schema.js ALTERNATE_MEASURES, api/_sizing/select-measurements.js)');
+const Select = require('../api/_sizing/select-measurements');
+/* its own copy helper, so this block depends on no other test block */
+const cloneOf = (x) => JSON.parse(JSON.stringify(x));
+const decisionLayer = require('../api/_sizing/decision');
+const OWN = { unit: 'in', chestWidth: 23, bodyLength: 27.5, shoulderWidth: 20, sleeveLength: 25 };
+const CB = [{ dimension: 'bodyLength', value: 27 }, { dimension: 'sleeveLength', value: 34.5 }];
+const ALL3 = CB.concat([{ dimension: 'shoulderWidth', value: 21 }]);
+const guideOf = (alternates, measurements, type) => Schema.normaliseGuide({ garments: { [type || 'hoodies']: { favorite: 'perfect', line: 'men', anchor: Object.assign({ brand: 'Carhartt', size: 'L', measurements: measurements === undefined ? OWN : measurements }, alternates === undefined ? {} : { alternates }) } } });
+const altProfile = (category, alternates) => {
+  const p = Schema.empty();
+  const { answers, errors } = guideOf(alternates, OWN, category);
+  assert.deepStrictEqual(errors, []);
+  p.garments = Schema.mergeGarments({}, answers.garments);
+  return p;
+};
+const UQ_IDS = [UQ_HOODIE, UQ_SWEAT, 'uniqlo-e471808-sweat-oversized-pullover-hoodie-us'];
+const ZARA_IDS = sizing.RECORDS.filter((r) => r.brand === 'Zara' && r.category === 'hoodies').map((r) => r.id);
+const compared = (profile, record) => engine.compare(Select.select(profile, record).profile, record, { includeUnverified: true });
+
+await test('each of the three alternates is kept with its one method, in the garment’s own unit, as entered; nothing else changes', () => {
+  const { answers, errors } = guideOf(ALL3);
+  assert.deepStrictEqual(errors, []);
+  const a = answers.garments.hoodies.anchor;
+  assert.deepStrictEqual(a.alternates, [
+    { dimension: 'bodyLength', method: 'center-back-to-hem', value: 27 },
+    { dimension: 'sleeveLength', method: 'center-back-to-cuff', value: 34.5 },
+    { dimension: 'shoulderWidth', method: 'broadest-part-of-shoulders', value: 21 }]);
+  assert.deepStrictEqual(a.measurements, OWN, 'the garment’s own measurements, untouched');
+  assert.deepStrictEqual(a.methods, { registry: 1, chestWidth: 'flat-width-armpit-to-armpit', bodyLength: 'high-point-shoulder-to-hem', shoulderWidth: 'seam-to-seam', sleeveLength: 'shoulder-seam-to-cuff' });
+  const cm = guideOf([{ dimension: 'sleeveLength', value: 88 }], { unit: 'cm', chestWidth: 58, bodyLength: 70, shoulderWidth: 51, sleeveLength: 63 });
+  assert.deepStrictEqual([cm.errors, cm.answers.garments.hoodies.anchor.alternates[0].value], [[], 88]);
+});
+
+await test('duplicate, unknown, mis-methoded, out-of-range, non-numeric and orphaned alternates are each refused with the field named — each held to its own method’s range', () => {
+  const fields = (r) => r.errors.map((e) => e.field);
+  assert.deepStrictEqual(fields(guideOf([{ dimension: 'sleeveLength', value: 34 }, { dimension: 'sleeveLength', value: 35 }])), ['garments.hoodies.anchor.alternates.1']);
+  assert.deepStrictEqual(fields(guideOf([{ dimension: 'chestWidth', value: 46 }])), ['garments.hoodies.anchor.alternates.0']);
+  assert.deepStrictEqual(fields(guideOf([{ dimension: 'sleeveLength', method: 'shoulder-seam-to-cuff', value: 34 }])), ['garments.hoodies.anchor.alternates.0.method']);
+  assert.deepStrictEqual(fields(guideOf([{ dimension: 'sleeveLength', value: 60 }])), ['garments.hoodies.anchor.alternates.0.value']);
+  assert.deepStrictEqual(fields(guideOf([{ dimension: 'sleeveLength', value: 'long' }])), ['garments.hoodies.anchor.alternates.0.value']);
+  assert.deepStrictEqual(fields(guideOf([{ dimension: 'sleeveLength', value: 34 }], null)), ['garments.hoodies.anchor.alternates']);
+  assert.deepStrictEqual(fields(guideOf('sleeve 34')), ['garments.hoodies.anchor.alternates']);
+  /* a centre-back sleeve of 35 in is fine; the same number as a seam-to-cuff sleeve is not */
+  assert.deepStrictEqual(guideOf([{ dimension: 'sleeveLength', value: 35 }]).errors, []);
+  assert.deepStrictEqual(fields(guideOf(undefined, Object.assign({}, OWN, { sleeveLength: 35 }))), ['garments.hoodies.anchor.measurements.sleeveLength']);
+  /* a T-shirt's short sleeve from the centre back has its own, shorter range */
+  assert.deepStrictEqual(Schema.methodRange('tshirts', 'sleeveLength', 'center-back-to-cuff', 'in'), [8, 26]);
+  assert.strictEqual(Schema.methodRange('hoodies', 'sleeveLength', 'not-a-method', 'in'), null);
+});
+
+await test('migration: a version 6 profile becomes 7 with every garment exactly as it was; stored alternates are re-shaped, never filled in', () => {
+  const v6 = { schemaVersion: 6, garments: { hoodies: { favorite: 'perfect', line: 'men', anchor: { brand: 'Zara', size: 'M', measurements: { unit: 'cm', chestWidth: 58, bodyLength: 68, sleeveLength: null, shoulderWidth: null }, methods: { registry: 1, chestWidth: 'flat-width-armpit-to-armpit', bodyLength: 'high-point-shoulder-to-hem' } } } } };
+  const up = Schema.upgrade(v6);
+  assert.strictEqual(up.schemaVersion, 7);
+  assert.deepStrictEqual(up.garments.hoodies.anchor.measurements, v6.garments.hoodies.anchor.measurements);
+  assert.deepStrictEqual(up.garments.hoodies.anchor.methods, v6.garments.hoodies.anchor.methods);
+  assert.ok(!('alternates' in up.garments.hoodies.anchor));
+  const stored = Schema.upgrade({ schemaVersion: 7, garments: { hoodies: { anchor: { brand: 'A', size: 'L', measurements: OWN, alternates: [
+    { dimension: 'sleeveLength', method: 'center-back-to-cuff', value: 34 }, { dimension: 'sleeveLength', method: 'center-back-to-cuff', value: 36 },
+    { dimension: 'bodyLength', method: 'high-point-shoulder-to-hem', value: 27 }, { dimension: 'chestWidth', method: 'x', value: 1 }] } } } });
+  assert.deepStrictEqual(stored.garments.hoodies.anchor.alternates, [{ dimension: 'sleeveLength', method: 'center-back-to-cuff', value: 34 }]);
+});
+
+await test('with no alternates, every comparison is exactly what it was: select() hands back the very profile, and the engine’s answer is unchanged, record by record', () => {
+  const p = altProfile('hoodies');
+  sizing.RECORDS.forEach((r) => {
+    const s = Select.select(p, r);
+    assert.strictEqual(s.profile, p, r.id);
+    assert.deepStrictEqual(s.used, [], r.id);
+    assert.deepStrictEqual(engine.compare(s.profile, r, { includeUnverified: true }), engine.compare(p, r, { includeUnverified: true }), r.id);
+  });
+});
+
+await test('Zara: measured as the form measures, compared as before — alternates never chosen, never asked for', () => {
+  ZARA_IDS.forEach((id) => {
+    const r = sizing.byId(id);
+    const plain = compared(altProfile('hoodies'), r);
+    assert.notStrictEqual(plain.status, 'insufficient', id);
+    assert.strictEqual(Select.request(plain, Select.select(altProfile('hoodies'), r), r), null, id);
+    const s = Select.select(altProfile('hoodies', ALL3), r);
+    assert.deepStrictEqual(s.used, [], `${id}: the garment’s own measurements match Zara’s chart`);
+    assert.deepStrictEqual(compared(altProfile('hoodies', ALL3), r), plain, id);
+  });
+});
+
+await test('the three UNIQLO garment charts: too few in common without alternates, with exactly the missing ones asked for; with them, all four compared, each by the chart’s own method', () => {
+  UQ_IDS.forEach((id) => {
+    const r = sizing.byId(id);
+    const plainSel = Select.select(altProfile(r.category), r);
+    const plain = engine.compare(plainSel.profile, r, { includeUnverified: true });
+    assert.strictEqual(plain.missing[0].code, 'too-few-dimensions', id);
+    const ask = Select.request(plain, plainSel, r);
+    const oversized = /oversized/.test(id);
+    assert.deepStrictEqual(ask.dimensions.map((d) => [d.dimension, d.method]).sort(), [
+      ['bodyLength', 'center-back-to-hem'],
+      ...(oversized ? [['shoulderWidth', 'broadest-part-of-shoulders']] : []),
+      ['sleeveLength', 'center-back-to-cuff']], id);
+    assert.ok(ask.dimensions.every((d) => d.how && d.label && Array.isArray(d.range)), id);
+    assert.deepStrictEqual([ask.garmentType, ask.unit, ask.retailer], [r.category, 'in', 'UNIQLO'], id);
+    const s = Select.select(altProfile(r.category, ALL3), r);
+    const done = engine.compare(s.profile, r, { includeUnverified: true });
+    assert.notStrictEqual(done.status, 'insufficient', id);
+    assert.deepStrictEqual(done.dimensionsCompared.slice().sort(), ['bodyLength', 'chestWidth', 'shoulderWidth', 'sleeveLength'], id);
+    /* the value the engine read for each is the one measured that way */
+    const anchor = s.profile.garments[r.category].anchor;
+    s.used.forEach((u) => {
+      assert.strictEqual(anchor.methods[u.dimension], r.charts.garment.dimensions[u.dimension].method, id);
+      assert.strictEqual(anchor.measurements[u.dimension], ALL3.find((a) => a.dimension === u.dimension).value, id);
+    });
+  });
+});
+
+await test('mixed methods: each dimension takes the measurement taken the chart’s way — an alternate where it uses that method, the garment’s own where it uses the form’s — never a converted one', () => {
+  const r = cloneOf(sizing.byId(UQ_HOODIE));
+  r.charts.garment.dimensions.sleeveLength.method = 'shoulder-seam-to-cuff';
+  const s = Select.select(altProfile('hoodies', ALL3), r);
+  assert.deepStrictEqual(s.used, [{ dimension: 'bodyLength', method: 'center-back-to-hem' }]);
+  const a = s.profile.garments.hoodies.anchor;
+  assert.deepStrictEqual([a.measurements.bodyLength, a.methods.bodyLength, a.measurements.sleeveLength, a.methods.sleeveLength, a.measurements.shoulderWidth, a.methods.shoulderWidth],
+    [27, 'center-back-to-hem', 25, 'shoulder-seam-to-cuff', 20, 'seam-to-seam']);
+  /* a chart measuring some other way: nothing chosen, nothing converted */
+  const other = cloneOf(sizing.byId(UQ_HOODIE));
+  other.charts.garment.dimensions.bodyLength.method = 'not-stated';
+  other.charts.garment.dimensions.sleeveLength.method = 'not-stated';
+  assert.deepStrictEqual(Select.select(altProfile('hoodies', ALL3), other).used, []);
+  /* the profile handed in is never changed */
+  const before = JSON.stringify(altProfile('hoodies', ALL3));
+  const given = altProfile('hoodies', ALL3);
+  Select.select(given, sizing.byId(UQ_HOODIE));
+  assert.strictEqual(JSON.stringify(given), before);
+});
+
+await test('nothing is asked for that cannot help: not when the chest isn’t shared, not when it’s already kept, not for a reference read from Fynd’s own checked record, not when the comparison already works', () => {
+  const noChest = cloneOf(sizing.byId(UQ_HOODIE));
+  noChest.charts.garment.dimensions.chestWidth.method = 'not-stated';
+  const s1 = Select.select(altProfile('hoodies'), noChest);
+  const c1 = engine.compare(s1.profile, noChest, { includeUnverified: true });
+  assert.strictEqual(c1.missing[0].code, 'too-few-dimensions');
+  assert.strictEqual(Select.request(c1, s1, noChest), null, 'three shared would still lack the chest');
+  /* one of the two kept already: only the other is asked for */
+  const s2 = Select.select(altProfile('hoodies', [CB[0]]), sizing.byId(UQ_HOODIE));
+  const c2 = engine.compare(s2.profile, sizing.byId(UQ_HOODIE), { includeUnverified: true });
+  if (c2.status === 'insufficient') assert.deepStrictEqual(Select.request(c2, s2, sizing.byId(UQ_HOODIE)).dimensions.map((d) => d.dimension), ['sleeveLength']);
+  else assert.strictEqual(Select.request(c2, s2, sizing.byId(UQ_HOODIE)), null);
+  /* a different reason altogether */
+  assert.strictEqual(Select.request({ status: 'insufficient', missing: [{ code: 'unverified-data' }] }, s1, noChest), null);
+  assert.strictEqual(Select.request({ status: 'ok' }, s1, noChest), null);
+});
+
+await test('the endpoint: a hand-entered UNIQLO-way item with a garment for this visit — too few, the request in its own field; with the alternates, compared, the decision and the comparison reading the same measurements, and which were used said', async () => {
+  const candidate = { type: 'hoodies', size: 'L', unit: 'in', measurements: { chestWidth: '23', shoulderWidth: '20', bodyLength: '27', sleeveLength: '34.5' },
+    methods: { registry: 1, chestWidth: 'flat-width-armpit-to-armpit', shoulderWidth: 'seam-to-seam', bodyLength: 'center-back-to-hem', sleeveLength: 'center-back-to-cuff' } };
+  const ask = (alternates) => call(recommendEndpoint, { method: 'POST', url: '/api/size-recommendation?compare=1&candidate=1', query: { compare: '1', candidate: '1' },
+    body: { candidate, reference: { type: 'hoodies', garment: { favorite: 'perfect', line: 'men', anchor: Object.assign({ brand: 'Carhartt', size: 'L', measurements: OWN }, alternates ? { alternates } : {}) } } } });
+  const first = await ask();
+  assert.strictEqual(first.status, 200);
+  assert.notStrictEqual(first.body.decision.outcome, 'OK');
+  assert.deepStrictEqual(first.body.measurementRequest.dimensions.map((d) => d.dimension), ['bodyLength', 'sleeveLength']);
+  assert.ok(!('alternatesUsed' in first.body));
+  const second = await ask(CB);
+  assert.strictEqual(second.status, 200);
+  assert.strictEqual(second.body.decision.outcome, 'OK', JSON.stringify(second.body.decision.reasons || second.body.decision));
+  assert.strictEqual(second.body.decision.size, 'L');
+  assert.deepStrictEqual(second.body.alternatesUsed, [{ dimension: 'bodyLength', method: 'center-back-to-hem' }, { dimension: 'sleeveLength', method: 'center-back-to-cuff' }]);
+  assert.ok(!('measurementRequest' in second.body));
+  /* the centre-back sleeve of 34.5 in is held to its own range, so the decision doesn't call it out of range */
+  assert.ok(!(second.body.decision.reasons || []).some((x) => x.code === 'measurement-out-of-supported-range'));
+});
+
+await test('a saved garment: alternates added through the fit profile, merged into that garment only, validated, signed in only — then used by a comparison of the saved garment', async () => {
+  const add = (jar, body, o) => call(profileEndpoint, Object.assign({ jar, body: Object.assign({ action: 'alternates' }, body) }, o || {}));
+  assert.strictEqual((await add({}, { type: 'hoodies', alternates: CB })).status, 401);
+  const { jar, user } = await signUp('alts@example.test');
+  assert.strictEqual((await add(jar, { type: 'hoodies', alternates: CB })).status, 400, 'no saved garment to add to');
+  await fitProfiles.saveGuide(user.id, { garments: { hoodies: { favorite: 'perfect', line: 'men', anchor: { brand: 'Carhartt', size: 'L', measurements: OWN } },
+    tshirts: { favorite: 'perfect', line: 'men', anchor: { brand: 'Gap', size: 'M' } } } });
+  const before = await fitProfiles.read(user.id);
+  assert.strictEqual((await add(jar, { type: 'hoodies', alternates: CB }, { omitCsrf: true })).status, 403, 'a change carries the CSRF token');
+  const bad = await add(jar, { type: 'hoodies', alternates: [{ dimension: 'sleeveLength', value: 70 }] });
+  assert.deepStrictEqual([bad.status, bad.body.errors[0].field], [400, 'garments.hoodies.anchor.alternates.0.value']);
+  const ok = await add(jar, { type: 'hoodies', alternates: CB });
+  assert.strictEqual(ok.status, 200);
+  const after = await fitProfiles.read(user.id);
+  assert.deepStrictEqual(after.profile.garments.hoodies.anchor.alternates.map((a) => [a.dimension, a.method, a.value]), [['bodyLength', 'center-back-to-hem', 27], ['sleeveLength', 'center-back-to-cuff', 34.5]]);
+  assert.deepStrictEqual(after.profile.garments.hoodies.anchor.measurements, before.profile.garments.hoodies.anchor.measurements);
+  assert.deepStrictEqual(after.profile.garments.tshirts, before.profile.garments.tshirts, 'every other garment as it was');
+  /* adding one again replaces that one, keeps the other */
+  await add(jar, { type: 'hoodies', alternates: [{ dimension: 'sleeveLength', value: 35 }] });
+  assert.deepStrictEqual((await fitProfiles.read(user.id)).profile.garments.hoodies.anchor.alternates.map((a) => [a.dimension, a.value]), [['bodyLength', 27], ['sleeveLength', 35]]);
+  /* and the saved garment is compared with them, named by its type */
+  const candidate = { type: 'hoodies', size: 'L', unit: 'in', measurements: { chestWidth: '23', shoulderWidth: '20', bodyLength: '27', sleeveLength: '35' },
+    methods: { registry: 1, chestWidth: 'flat-width-armpit-to-armpit', shoulderWidth: 'seam-to-seam', bodyLength: 'center-back-to-hem', sleeveLength: 'center-back-to-cuff' } };
+  const got = await call(recommendEndpoint, { jar, method: 'POST', url: '/api/size-recommendation?compare=1&candidate=1', query: { compare: '1', candidate: '1' }, body: { candidate, referenceType: 'hoodies' } });
+  assert.deepStrictEqual([got.status, got.body.decision.outcome, got.body.alternatesUsed.length], [200, 'OK', 2]);
+});
+
+await test('re-saving the same garment from a page that never showed its alternates keeps them; a new unit, a different garment, or an explicit empty list does not', async () => {
+  const { user } = await signUp('keep@example.test');
+  const garment = (anchor) => ({ favorite: 'perfect', line: 'men', anchor });
+  await fitProfiles.saveGuide(user.id, { garments: { hoodies: garment({ brand: 'Carhartt', size: 'L', measurements: OWN, alternates: CB }) } });
+  const alts = async () => ((await fitProfiles.read(user.id)).profile.garments.hoodies || {}).anchor.alternates || null;
+  /* the fit profile page's full save, its anchor without alternates */
+  const page = async (anchor) => { const p = (await fitProfiles.read(user.id)).profile; p.garments.hoodies = Object.assign({}, p.garments.hoodies, { anchor }); delete p.createdAt; delete p.updatedAt; return fitProfiles.save(user.id, p); };
+  await page({ brand: 'Carhartt', size: 'L', measurements: Object.assign({}, OWN, { chestWidth: 23.5 }) });
+  assert.strictEqual((await alts()).length, 2, 'the same garment, one value corrected: kept');
+  await fitProfiles.saveGuide(user.id, { garments: { hoodies: garment({ brand: 'Carhartt', size: 'L', measurements: OWN }) } });
+  assert.strictEqual((await alts()).length, 2, 'the guide re-sending it without them: kept');
+  await page({ brand: 'Carhartt', size: 'L', measurements: { unit: 'cm', chestWidth: 58, bodyLength: 70, shoulderWidth: 51, sleeveLength: 63 } });
+  assert.strictEqual(await alts(), null, 'a new unit: they meant inches, so they go');
+  await fitProfiles.saveGuide(user.id, { garments: { hoodies: garment({ brand: 'Carhartt', size: 'L', measurements: OWN, alternates: CB }) } });
+  await page({ brand: 'Nike', size: 'L', measurements: OWN });
+  assert.strictEqual(await alts(), null, 'another garment: they go');
+  await fitProfiles.saveGuide(user.id, { garments: { hoodies: garment({ brand: 'Carhartt', size: 'L', measurements: OWN, alternates: CB }) } });
+  await fitProfiles.saveGuide(user.id, { garments: { hoodies: garment({ brand: 'Carhartt', size: 'L', measurements: OWN, alternates: [] }) } });
+  assert.strictEqual(await alts(), null, 'an empty list clears them');
+});
+
 await test('no measurement, size, product or feedback answer appears in the logs', () => {
   const all = logged.join('\n');
   assert.ok(all.length > 0, 'something was logged, or this proves nothing');

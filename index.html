@@ -290,6 +290,10 @@
       <h2 class="fit-result-title" id="fit-result-title" tabindex="-1">Your garment and the item</h2>
       <p class="fit-result-product" id="fit-result-product"></p>
       <div class="fit-compare ff-verdict" id="fit-compare" aria-live="polite" hidden></div>
+      <!-- when the product's chart measures a dimension another way than
+           the garment was measured, and measuring it that way would let it
+           compare: asked for here (assets/find-fit-measure-more.js) -->
+      <div class="ff-measure-more" id="ff-measure-more" aria-live="polite" hidden></div>
       <!-- after a comparison with a garment described here, and only
            then: an offer to save it (assets/find-fit-save.js) — beside
            the result, never in its place -->
@@ -337,6 +341,7 @@
 <script src="assets/fit-metrics.js"></script>
 <script src="assets/find-fit-reference.js"></script>
 <script src="assets/find-fit-save.js"></script>
+<script src="assets/find-fit-measure-more.js"></script>
 <script src="assets/fit-feedback-form.js"></script>
 <script src="assets/find-fit-item.js"></script>
 <script src="assets/interpret.js"></script>

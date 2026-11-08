@@ -297,6 +297,7 @@
     if (!result.hidden && !busy) {
       result.hidden = true;
       if (global.FindFitSave) global.FindFitSave.hide();
+      if (global.FindFitMeasureMore) global.FindFitMeasureMore.hide();
       hideFeedback();
     }
     progress();
@@ -410,6 +411,7 @@
       const item = Item();
       const product = item.product() || {};
       if (global.FindFitSave) global.FindFitSave.hide();
+      if (global.FindFitMeasureMore) global.FindFitMeasureMore.hide();
       hideFeedback();
       result.hidden = false;
       result.dataset.state = 'loading';
@@ -433,6 +435,7 @@
       }
       if (ask !== latest) return;
       global.FitCompare.showAnswer(got, compare, { unsaved: ref.source === 'visit' ? reference : null });
+      if (global.FindFitMeasureMore) global.FindFitMeasureMore.show(got && got.ok ? got.data : null);
       offerFeedback(got, {
         productId: src.mode === 'record' ? src.productId : null,
         product: src.mode === 'chart' && src.chart ? { url: src.chart.url, brand: product.brand, name: product.name } : null,
@@ -472,6 +475,7 @@
       const ask = ++latest;
       const candidate = read.candidate;
       if (global.FindFitSave) global.FindFitSave.hide();
+      if (global.FindFitMeasureMore) global.FindFitMeasureMore.hide();
       hideFeedback();
       result.hidden = false;
       result.dataset.state = 'loading';
@@ -488,6 +492,7 @@
       noteReference(global.FindFitReference && global.FindFitReference.choice ? global.FindFitReference.choice() : null);
       const got = await global.FitCompare.showCandidate(candidate, compare, () => ask === latest, reference ? { reference } : {});
       if (ask === latest) {
+        if (global.FindFitMeasureMore) global.FindFitMeasureMore.show(got && got.ok ? got.data : null);
         const chosen = !reference && global.FindFitReference && global.FindFitReference.choice ? global.FindFitReference.choice() : null;
         offerFeedback(got, {
           product: candidate.url ? { url: candidate.url, brand: candidate.brand, name: candidate.name } : null,

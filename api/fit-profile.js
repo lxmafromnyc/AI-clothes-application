@@ -186,6 +186,21 @@ module.exports = async function handler(req, res) {
     }
   }
 
+  /* alternate measurements for one saved garment (see api/_fit-profile.js addAlternates) */
+  if (action === 'alternates') {
+    try {
+      const { profile, errors } = await fitProfiles.addAlternates(userId, String(body.type || ''), body.alternates);
+      if (errors.length) {
+        const stale = errors.some((e) => e.field === 'schemaVersion');
+        return res.status(stale ? 409 : 400).json({ error: errors[0].message, reason: stale ? 'unsupported-version' : 'invalid', errors });
+      }
+      return res.status(200).json({ profile, storage: storage(), saved: true });
+    } catch (err) {
+      console.error('Fit profile save failed', err && err.message);
+      return res.status(500).json({ error: 'Could not save your fit profile. Try again in a moment.' });
+    }
+  }
+
   if (action.startsWith('feedback-')) return feedbackAction(res, userId, action, body);
 
   return res.status(400).json({ error: 'Unknown action.', reason: 'unknown-action' });

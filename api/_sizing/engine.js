@@ -1863,3 +1863,6 @@ function validate(profile, record, opts) {
 }
 
 module.exports = { candidateRecord, isShopperEntered, readableRecord, SHOPPER_ENTERED, recommend, compare, validate, matchProduct, CATEGORY_PARAMS, FAMILY, TROUBLE_FACTOR, ALTERNATIVE_MARGIN, METHOD_WORDS, sizeOffset, bodyRange, contextOf };
+/* read by ./select-measurements.js, which chooses a saved garment's measurements for a chart: the same reference and the same eligibility rule */
+module.exports.referenceEntry = referenceEntry;
+module.exports.enoughToRecommend = enoughToRecommend;

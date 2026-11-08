@@ -2247,3 +2247,14 @@ strong { font-weight: 600; }
   .ff .ff-result-card { padding: 18px 16px; }
   .ff .ff-verdict { padding: 16px; }
 }
+
+/* Find Fit: the garment measured another way, asked for only when it helps */
+.ff .ff-measure-more[hidden] { display: none; }
+.ff .ff-measure-more { margin-top: 14px; }
+.ff .ff-more-form { display: grid; gap: 12px; padding: 16px 18px; border: 1.5px dashed var(--color-border-strong); border-radius: 14px; background: var(--color-surface); }
+.ff .ff-more-title { font-size: 16px; font-weight: 600; color: var(--color-text); }
+.ff .ff-more-why { font-size: 14px; color: var(--color-text-2); }
+.ff .ff-more-field { display: grid; gap: 4px; max-width: 420px; }
+.ff .ff-more-field .measure { max-width: 200px; }
+.ff .ff-more-save { justify-self: start; min-height: 44px; }
+.ff .ff-more-used { font-size: 13.5px; color: var(--color-text-2); }

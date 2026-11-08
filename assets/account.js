@@ -231,6 +231,8 @@
        only that type travels, and the server keeps everything else in
        the profile as it is */
     answerGuide: (answers) => call('fit-profile', { body: { action: 'guide', answers } }),
+    /* a saved garment's measurements taken another way, merged into that garment only */
+    addAlternates: (type, alternates) => call('fit-profile', { body: { action: 'alternates', type, alternates } }),
     remove: () => call('fit-profile', { body: { action: 'delete' } }),
     /* how a size actually fitted (api/_fit-feedback.js): kept only with
        consent, one entry per product and size */

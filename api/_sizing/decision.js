@@ -279,9 +279,13 @@ function outOfRange(profile, category) {
     const entry = profile && profile.garments && profile.garments[type];
     const a = entry && entry.anchor && entry.anchor.measurements;
     if (!a || (a.unit !== 'in' && a.unit !== 'cm')) return;
+    /* each value held to the range of the method it was taken by: a sleeve from the centre back is longer than one from the seam */
+    const taken = entry.anchor.methods && typeof entry.anchor.methods === 'object' ? entry.anchor.methods : {};
     ProfileSchema.GARMENT_MEASURE_KEYS.forEach((k) => {
       if (!physical(a[k])) return;
-      const range = ProfileSchema.measureRange(type, k, a.unit);
+      const method = typeof taken[k] === 'string' ? taken[k] : ProfileSchema.GARMENT_MEASURES[k].method;
+      /* a method the profile holds no range for keeps the form's range, as before: nothing goes unchecked */
+      const range = ProfileSchema.methodRange(type, k, method, a.unit) || ProfileSchema.measureRange(type, k, a.unit);
       if (range && (a[k] < range[0] || a[k] > range[1])) out.push(reason('measurement-out-of-supported-range', { side: 'shopper', measurement: `reference.${k}`, garment: type, value: a[k], unit: a.unit, range }));
     });
   });

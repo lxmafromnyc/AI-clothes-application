@@ -162,6 +162,11 @@
     consent: () => changeProfile({ action: 'feedback-consent', consent: { store: true } }),
     add: (entry) => changeProfile({ action: 'feedback-add', entry })
   };
+  /* A saved garment's measurement taken another way (centre back, broadest
+     shoulders), added when a chart measures that way: POST /api/fit-profile
+     { action: "alternates", type, alternates: [{ dimension, value }] } — the
+     server validates and merges it into that garment only. */
+  const addAlternates = (type, alternates) => changeProfile({ action: 'alternates', type, alternates });
 
-  return { request, savedGarments, compareChart, interpretChart, metrics, metricsOff, feedback, TIMEOUT_MS, AI_TIMEOUT_MS, base };
+  return { request, savedGarments, compareChart, interpretChart, metrics, metricsOff, feedback, addAlternates, TIMEOUT_MS, AI_TIMEOUT_MS, base };
 });

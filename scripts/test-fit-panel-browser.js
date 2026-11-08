@@ -375,6 +375,38 @@ const TEE = { unit: 'in', chestWidth: 21.5, bodyLength: 29 };
     await close();
   });
 
+  await test('a chart measuring length and sleeve from the centre back: too few in common with a garment measured from the shoulder — the panel asks for exactly those two, with how to measure them, saves them to the saved garment and compares again', async () => {
+    const user = await signIn({ hoodies: HOODIE });
+    const { panel, close } = await open('centre-back-hoodie.html');
+    await toReview(panel);
+    assert.deepStrictEqual(await panel.$$eval('select[data-role="method"]', (ns) => ns.map((s) => s.value)), [FORM.chestWidth, FORM.shoulderWidth, 'center-back-to-hem', 'center-back-to-cuff']);
+    await toResults(panel);
+    await view(panel, 'results');
+    assert.strictEqual(await text(panel, '#result-title'), 'Fynd can’t compare these sizes reliably');
+    assert.strictEqual(await panel.isVisible('#result-more .fp-more-form'), true);
+    assert.deepStrictEqual(await panel.$$eval('#result-more input', (ns) => ns.map((i) => i.dataset.dimension)), ['bodyLength', 'sleeveLength']);
+    assert.match(await text(panel, '#result-more'), /centre of the back of the neck/);
+    /* out of its own range: refused in the panel, nothing sent */
+    const before = hits.length;
+    await panel.fill('#more-bodyLength', '66');
+    await panel.fill('#more-sleeveLength', '300');
+    await panel.click('#result-more button[type="submit"]');
+    assert.match(await text(panel, '#result-more .fp-error'), /Sleeve from the centre back should be a number between/);
+    assert.strictEqual(hits.slice(before).filter((h) => h.method === 'POST').length, 0);
+    await panel.fill('#more-sleeveLength', '84');
+    await panel.click('#result-more button[type="submit"]');
+    await panel.waitForFunction(() => document.getElementById('result-title').textContent === 'The size that meets Fynd’s comparison criteria', null, { timeout: 8000 });
+    assert.strictEqual(await text(panel, '#result-size'), 'L');
+    assert.match(await text(panel, '#result-more'), /Compared using your length from the centre back and sleeve from the centre back/);
+    /* saved once to that garment, through the fit profile, with the session and its CSRF token; then compared once */
+    const posts = hits.slice(before).filter((h) => h.method === 'POST').map((h) => [h.path + (h.search || ''), h.body && h.body.action, h.status]);
+    assert.deepStrictEqual(posts, [['/api/fit-profile', 'alternates', 200], ['/api/size-recommendation?compare=1&candidate=1', undefined, 200]]);
+    const stored = (await fitProfiles.read(user.id)).profile.garments.hoodies.anchor;
+    assert.deepStrictEqual(stored.alternates, [{ dimension: 'bodyLength', method: 'center-back-to-hem', value: 66 }, { dimension: 'sleeveLength', method: 'center-back-to-cuff', value: 84 }]);
+    assert.deepStrictEqual(stored.measurements, HOODIE, 'its own measurements as they were');
+    await close();
+  });
+
   await test('another product read in the same panel: what was chosen for the last one doesn’t carry over; the same one read again keeps it', async () => {
     const { shop, panel, close } = await open('variants-hoodie.html');
     await view(panel, 'product');

@@ -1129,7 +1129,7 @@ await test('the favourite T-shirt is saved with its answer and only the details 
   const { jar } = await signUp('ada@example.test');
   const { status, body } = await guide(jar, byType({ tshirts: FAVORITE() }));
   assert.strictEqual(status, 200, JSON.stringify(body));
-  assert.strictEqual(body.profile.schemaVersion, 6); /* the current version: v6 records each reference measurement's method */
+  assert.strictEqual(body.profile.schemaVersion, 7); /* the current version: v6 records each reference measurement's method; v7 lets a garment keep measurements taken another way */
   assert.deepStrictEqual(body.profile.garments.tshirts, {
     anchor: {
       brand: 'UNIQLO', size: 'M',
@@ -1238,7 +1238,7 @@ await test('a version 4 profile reads as the current version (6) with every answ
     garments: { tshirts: { anchor: { brand: 'Nike', size: 'M' }, fitGoal: 'slim', troubleZones: [], line: 'men' }, jeans: { anchor: { brand: 'Gap', size: '32', length: '30' }, fitGoal: null, troubleZones: null, line: null } } });
   await store.set(fitProfiles.profileKey(user.id), v4);
   const { body } = await read(jar);
-  assert.strictEqual(body.profile.schemaVersion, 6); /* the current version: v6 records each reference measurement's method */
+  assert.strictEqual(body.profile.schemaVersion, 7); /* the current version: v6 records each reference measurement's method; v7 lets a garment keep measurements taken another way */
   assert.deepStrictEqual(body.profile.garments, {
     tshirts: { anchor: { brand: 'Nike', size: 'M' }, fitGoal: 'slim', troubleZones: [], line: 'men', favorite: null },
     jeans: { anchor: { brand: 'Gap', size: '32', length: '30' }, fitGoal: null, troubleZones: null, line: null }
