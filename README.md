@@ -2758,19 +2758,30 @@ The page asks for two things and does the rest (`index.html`,
 `assets/find-fit-reference.js`, `assets/find-fit-item.js`,
 `assets/find-fit-manual.js`, all on existing APIs):
 
-The page is one card in one column under "Find the size closest to the clothes
-you love.": **Step 1 · Your garment**, then **Step 2 · The item you're
-considering**, then **Compare sizes** right after them, with what it still needs
-listed beside it (the button looks unavailable until then). Optional details and
-every hand-entry form are folded away until wanted. While signed out, the
-header's account link reads **Sign in**.
+The page is one workspace, not a questionnaire: no numbered steps and no card
+around it. Under "Find the size closest to the clothes you love." come the
+garment you love (a compact card with a drawing of its kind), the product link as
+the focal point, and **Compare sizes**, quiet (dashed) until both garments are
+ready and then the page's one solid action, with one line saying what is still
+needed. Every setup and detail is folded away until asked for. While signed out,
+the header's account link reads **Sign in**.
+
+**The result** leads with the size, the engine's own **Reliability** beside it
+(shown only with a recommendation), which garment it was compared with, the
+engine's one-line summary and each measurement side by side. The sentence
+restating the differences, the table of signed differences, the sources and the
+limits are folded under **How Fynd worked this out**, unchanged.
 
 **Your garment**
 
-- **Where the shopper stands, said first** (`#ff-ref-account`): signed in with a
-  saved garment ("Using your saved garment … Nothing to enter"), signed in with
-  none saved yet, or signed out ("Saved a garment with Fynd before? Sign in to
-  use it", to the fit profile, which signs in and links back).
+- **A saved garment is the starting point:** its card shows its kind, brand,
+  labelled size and measurements, with **Change**; nothing is asked again.
+- **None yet:** one action, **Add a garment you love** (`#ffr-add`), which
+  reveals the setup: Fynd's list and Search shops, the kind and labelled size,
+  the wardrobe anchors, optional details and hand measurements.
+- **Signed out:** one quiet line, "Saved a garment with Fynd before? Sign in to
+  use it" (to the fit profile, which signs in and links back). Signed in with
+  none saved, the line says so.
 - **Saved garments.** These are the fit profile's own; there is no second
   profile system.
   - The one of the item's kind is chosen automatically. For a hoodie or
@@ -2793,7 +2804,7 @@ header's account link reads **Sign in**.
 **The item you're considering**
 
 One primary input: **Paste a product link** (with **Check link**; pasting runs
-it too). Beneath it: "Already on the product page? Use the Fynd extension." No
+it too). Beneath it: "Already shopping? Use the Fynd Chrome extension." No
 product search competes with the link here; the live search
 (`assets/find-fit-search.js`) is used only to find the garment the shopper
 owns. The page says plainly that not every shop's chart can be read.

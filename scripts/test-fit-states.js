@@ -572,7 +572,12 @@ async function test(name, fn) {
 
   await test('the keyboard reaches the actions and opens the differences', async () => {
     await show(C.checkedChart, answer(C.closest));
-    await page.focus('#fit-compare .fit-compare-differences > summary');
+    /* the working-out is folded under the size: opened by keyboard, then the differences inside it */
+    await page.focus('#fit-compare .ff-how > summary');
+    await page.keyboard.press('Enter');
+    assert.strictEqual(await page.$eval('#fit-compare .ff-how', (d) => d.open), true);
+    await page.keyboard.press('Tab');
+    assert.strictEqual(await page.evaluate(() => document.activeElement && document.activeElement.matches('#fit-compare .fit-compare-differences > summary')), true, 'the next stop is the differences');
     await page.keyboard.press('Enter');
     assert.strictEqual(await page.$eval('#fit-compare .fit-compare-differences', (d) => d.open), true);
     await page.keyboard.press('Tab');

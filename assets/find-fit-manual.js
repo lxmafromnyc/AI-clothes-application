@@ -282,6 +282,10 @@
     note.textContent = next;
     /* never looking available while something it needs is missing */
     submit.setAttribute('aria-disabled', String(!ready || busy));
+    /* one primary action at a time: Check link until a chart is found (or
+       while it is being looked up), then Compare sizes once it can compare */
+    const st = linkState();
+    form.dataset.linkAction = st === 'loading' ? 'loading' : (st === 'automatic' || st === 'assisted' || ready) ? 'secondary' : 'primary';
     submit.classList.toggle('is-waiting', !ready && !busy);
   }
 

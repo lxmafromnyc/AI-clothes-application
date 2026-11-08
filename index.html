@@ -101,11 +101,7 @@
       </div>
 
       <section class="ff-step" id="ff-step-reference" aria-labelledby="ff-step-reference-title">
-        <div class="ff-step-head">
-          <p class="ff-step-kicker" aria-hidden="true">Step 1</p>
-          <h2 class="ff-step-title" id="ff-step-reference-title">Your garment</h2>
-          <p class="ff-step-desc">A hoodie or sweatshirt you own that fits the way you like.</p>
-        </div>
+        <h2 class="ff-step-title" id="ff-step-reference-title">Your garment</h2>
         <!-- signed in with a saved garment, signed in without one, or signed
              out: said here first (assets/find-fit-reference.js) -->
         <div class="ff-ref-account" id="ff-ref-account" role="status" hidden></div>
@@ -124,22 +120,19 @@
       </section>
 
       <section class="ff-step" id="ff-step-target" aria-labelledby="ff-step-target-title">
-        <div class="ff-step-head">
-          <p class="ff-step-kicker" aria-hidden="true">Step 2</p>
-          <h2 class="ff-step-title" id="ff-step-target-title">The item you&rsquo;re considering</h2>
-        </div>
+        <h2 class="ff-step-title sr-only" id="ff-step-target-title">The item you&rsquo;re considering</h2>
         <!-- the product from its link: identified, its sizes and garment
              measurements found where Fynd can, and only what's uncertain
              shown to check (assets/find-fit-item.js) -->
         <div class="ffi-link" id="ffi-link-box">
           <label class="ffi-link-label" for="ffi-link">Paste a product link</label>
           <div class="ffi-link-row">
-            <input class="profile-input" type="url" id="ffi-link" name="product-link" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://" aria-describedby="ffi-link-error ffi-link-hint">
+            <input class="profile-input" type="url" id="ffi-link" name="product-link" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://shop.example.com/product" aria-describedby="ffi-link-error ffi-link-hint">
             <button class="btn btn-secondary" type="button" id="ffi-link-go">Check link</button>
           </div>
           <p class="form-error ffr-error" id="ffi-link-error" role="alert"></p>
-          <p class="ffr-hint" id="ffi-link-hint">Fynd checks whether it can read the product&rsquo;s size chart. Not every shop&rsquo;s can be read.</p>
-          <p class="ffi-ext" id="ffi-ext-tip">Already on the product page? <a class="guide-link" href="https://github.com/lxmafromnyc/AI-clothes-application/tree/main/extension#install-it-locally">Use the Fynd extension.</a></p>
+          <p class="ffr-hint" id="ffi-link-hint">Fynd checks whether it can read that product&rsquo;s size chart &mdash; not every shop&rsquo;s can be.</p>
+          <p class="ffi-ext" id="ffi-ext-tip">Already shopping? <a class="guide-link" href="https://github.com/lxmafromnyc/AI-clothes-application/tree/main/extension#install-it-locally">Use the Fynd Chrome extension.</a></p>
         </div>
         <div class="ffi-found" id="ffi-found" aria-live="polite" hidden></div>
 
@@ -147,7 +140,7 @@
              chart (assets/find-fit-manual.js). Nothing is chosen for the
              shopper: the kind, the size, the unit and each method are theirs -->
         <details class="ff-manual" id="ff-manual">
-          <summary class="ff-manual-summary">Can&rsquo;t use a link? Enter the measurements yourself</summary>
+          <summary class="ff-manual-summary">No link? Enter its measurements yourself</summary>
           <p class="ff-col-desc">Copy one size from the retailer&rsquo;s chart of <strong>garment</strong> measurements.
             <button class="ff-info" type="button" aria-expanded="false" aria-controls="ffc-help" aria-label="About garment measurements">i</button></p>
           <div class="ff-info-text" id="ffc-help" hidden>
@@ -279,11 +272,11 @@
       <!-- the one action, right under the item: what is still needed, then
            the button (assets/find-fit-manual.js draws both) -->
       <div class="ff-action">
-        <div class="ff-progress" id="ff-progress" data-item="empty" data-garment="empty" aria-label="What Compare sizes needs">
+        <div class="ff-progress sr-only" id="ff-progress" data-item="empty" data-garment="empty" aria-label="What Compare sizes needs">
           <span class="ff-progress-pill" id="ff-progress-garment"><span class="ff-progress-dot" aria-hidden="true"></span><span class="ff-progress-text">Your garment: not added yet</span></span>
           <span class="ff-progress-pill" id="ff-progress-item"><span class="ff-progress-dot" aria-hidden="true"></span><span class="ff-progress-text">Item: not entered yet</span></span>
         </div>
-        <button class="btn btn-primary ff-compare-btn" type="submit" id="ff-submit" aria-describedby="ff-submit-note">Compare sizes</button>
+        <button class="btn btn-primary ff-compare-btn is-waiting" type="submit" id="ff-submit" aria-disabled="true" aria-describedby="ff-submit-note">Compare sizes</button>
         <p class="ff-submit-note" id="ff-submit-note" aria-live="polite">Add your garment, then paste the item&rsquo;s link.</p>
       </div>
     </form>

@@ -205,7 +205,7 @@ const FYND_FIVE = ['Sweat Oversized Pullover Hoodie', 'Sweat Pullover Hoodie', '
       const page = await openPage();
       assert.strictEqual(await page.$('#ffs, #ffs-q, #ffs-go, #ffs-results'), null, 'no item search on the page');
       assert.strictEqual(await page.textContent('label[for="ffi-link"]'), 'Paste a product link');
-      assert.match(await page.textContent('#ffi-ext-tip'), /^Already on the product page\? Use the Fynd extension\.$/);
+      assert.match(await page.textContent('#ffi-ext-tip'), /^Already shopping\? Use the Fynd Chrome extension\.$/);
       /* the shared search is still there for the garment owned */
       assert.deepStrictEqual(await page.evaluate(() => [typeof window.FyndLiveSearch, typeof window.FindFitSearch]), ['object', 'undefined']);
       assert.deepStrictEqual(page.errors, []);
@@ -217,6 +217,9 @@ const FYND_FIVE = ['Sweat Oversized Pullover Hoodie', 'Sweat Pullover Hoodie', '
 
     const refLive = (page) => page.$$eval('#ffr-live-results .ffs-card[data-from="live"] .ffs-name', (ns) => ns.map((n) => n.textContent));
     const refSearch = async (page, text, how) => {
+      /* the garment's setup is behind "Add a garment you love" */
+      await page.waitForSelector('#ffr-add');
+      if (!(await page.$eval('#ffr-add', (d) => d.open))) await page.click('#ffr-add > summary');
       await page.waitForSelector('#ffr-search');
       await page.fill('#ffr-search', text);
       if (how === 'enter') {
