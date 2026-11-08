@@ -992,6 +992,18 @@
     savedProfile: () => lastProfile,
     unlock: () => {},
     locked: () => false,
-    useAnchor
+    useAnchor,
+    /* this visit's garment, with measurements taken another way merged in
+       (one per dimension), held to the profile's own validator: { ok, errors } */
+    addAlternates: (type, list) => {
+      if (!visit || visit.type !== type || !visit.garment.anchor || !visit.garment.anchor.measurements) return { ok: false, errors: [{ message: 'Describe your garment’s measurements first.' }] };
+      const kept = (visit.garment.anchor.alternates || []).filter((a) => !list.some((g) => g.dimension === a.dimension)).map((a) => ({ dimension: a.dimension, value: a.value }));
+      const garment = Object.assign({}, visit.garment, { anchor: Object.assign({}, visit.garment.anchor, { alternates: kept.concat(list) }) });
+      const { answers, errors } = Schema.normaliseGuide({ garments: { [type]: garment } });
+      if (errors.length) return { ok: false, errors };
+      keep(checked({ type, garment: answers.garments[type] }), 'page');
+      redraw();
+      return { ok: true, errors: [] };
+    }
   };
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -688,6 +688,7 @@
     $('result-size').textContent = ok ? d.size : noMatch ? `Closest: ${d.closest} — not a recommendation` : '';
     const messages = ok ? [c.summary].filter((t) => typeof t === 'string') : (Array.isArray(d.messages) && d.messages.length ? d.messages : ['Fynd doesn’t have enough comparable measurements to suggest a size.']);
     $('result-messages').replaceChildren(...messages.map((t) => el('p', null, t)));
+    drawMeasureMore(data);
     /* every size, as the engine set it beside the garment: never a pick the decision didn't make */
     const table = $('result-table');
     if (sizes.length) {
@@ -744,6 +745,66 @@
       }, API.feedback, { signInHref: `${SITE}/account.html`, newTab: true });
     }
     show('results');
+  }
+
+  /* The garment measured another way: asked for only when the server says
+     this chart measures a dimension by a method the saved garment lacks,
+     and that adding it would make a comparison possible
+     (api/_sizing/select-measurements.js). Saved to that garment on Fynd,
+     then compared again. Which ones a comparison used is said too. */
+  const MEASURED_WORDS = { 'center-back-to-hem': 'length from the centre back', 'center-back-to-cuff': 'sleeve from the centre back', 'broadest-part-of-shoulders': 'shoulders at the broadest point' };
+  function drawMeasureMore(data) {
+    const box = $('result-more');
+    const ask = data && data.measurementRequest;
+    const used = data && Array.isArray(data.alternatesUsed) ? data.alternatesUsed : [];
+    if (!ask || !Array.isArray(ask.dimensions) || !ask.dimensions.length) {
+      box.replaceChildren(...(used.length ? [el('p', 'fp-small', `Compared using your ${used.map((u) => MEASURED_WORDS[u.method] || u.dimension).join(' and ')}, measured the way this chart measures.`)] : []));
+      box.hidden = !used.length;
+      return;
+    }
+    const unit = ask.unit === 'cm' ? 'cm' : 'in';
+    const form = el('form', 'fp-more-form');
+    form.noValidate = true;
+    form.append(el('p', 'fp-more-title', `Measure ${ask.dimensions.length === 1 ? 'one more thing' : `${ask.dimensions.length} more things`} to compare`),
+      el('p', 'fp-small', `${ask.retailer || 'This shop'} measures ${ask.dimensions.length === 1 ? 'this' : 'these'} differently from your saved garment. Measure your garment this way, laid flat:`));
+    ask.dimensions.forEach((x) => {
+      const id = `more-${x.dimension}`;
+      const field = el('div', 'fp-more-field');
+      const label = el('label', null, x.label);
+      label.htmlFor = id;
+      const input = el('input');
+      Object.assign(input, { id, type: 'text', inputMode: 'decimal', autocomplete: 'off' });
+      input.dataset.dimension = x.dimension;
+      field.append(label, el('p', 'fp-small', x.how), input, el('span', 'fp-small', ` ${unit}`));
+      form.append(field);
+    });
+    const error = el('p', 'fp-error');
+    error.setAttribute('role', 'alert');
+    const save = el('button', 'btn btn-primary', 'Save to my garment and compare again');
+    save.type = 'submit';
+    form.append(error, save);
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const list = [];
+      for (const x of ask.dimensions) {
+        const v = Number(String($(`more-${x.dimension}`).value).trim());
+        if (!Number.isFinite(v) || v <= 0 || (Array.isArray(x.range) && (v < x.range[0] || v > x.range[1]))) {
+          error.textContent = `${x.label} should be a number${Array.isArray(x.range) ? ` between ${x.range[0]} and ${x.range[1]} ${unit}` : ''}.`;
+          $(`more-${x.dimension}`).focus();
+          return;
+        }
+        list.push({ dimension: x.dimension, value: v });
+      }
+      save.disabled = true;
+      save.textContent = 'Saving…';
+      const got = await API.addAlternates(ask.garmentType, list);
+      save.disabled = false;
+      save.textContent = 'Save to my garment and compare again';
+      if (!got.ok) { error.textContent = (got.problem && got.problem.message) || 'Fynd couldn’t save that just now.'; return; }
+      compare();
+    });
+    box.replaceChildren(form);
+    box.hidden = false;
   }
 
   /* ---------- wiring ---------- */

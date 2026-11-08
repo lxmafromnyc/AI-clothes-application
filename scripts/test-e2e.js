@@ -1708,6 +1708,82 @@ const linkFromInbox = (pattern) => {
     await context.close();
   });
 
+  /* an item measured the UNIQLO way: length and sleeve from the centre back of the neck */
+  const CENTRE_BACK_ITEM = { chestWidth: [23, 'flat-width-armpit-to-armpit'], shoulderWidth: [20, 'seam-to-seam'], bodyLength: [27, 'center-back-to-hem'], sleeveLength: [34.5, 'center-back-to-cuff'] };
+  const enterCentreBack = async (page) => {
+    await page.click('#ff-manual > summary');
+    await page.check('input[name="ff-type"][value="hoodies"]');
+    await page.fill('#ffc-size', 'L');
+    await page.check('input[name="ff-unit"][value="in"]');
+    for (const [k, [v, how]] of Object.entries(CENTRE_BACK_ITEM)) { await page.fill(`#ffc-m-${k}`, String(v)); await page.selectOption(`#ffc-how-${k}`, how); }
+    await page.click('#ff-submit');
+    await resultDone(page);
+  };
+
+  await test('a chart measuring the other way: a guest’s garment measured from the shoulder has too few in common — Find Fit asks for exactly the centre-back length and sleeve, says how, keeps them for the visit and compares again', async () => {
+    const context = await openContext({ byHand: false });
+    const page = await context.newPage();
+    const posted = [];
+    page.on('request', (r) => { if (r.method() === 'POST' && /candidate=1/.test(r.url())) posted.push(r.postDataJSON()); });
+    await open(page, 'index.html');
+    await page.waitForSelector('#ffr-add');
+    await page.click('#ffr-add > summary');
+    await page.selectOption('#ffr-type', 'hoodies');
+    await page.selectOption('#ffr-size', 'L');
+    await page.click('#ffr-manual > summary');
+    await page.check('input[name="ff-unit"][value="in"]');
+    for (const [k, v] of Object.entries({ chestWidth: 23, shoulderWidth: 20, bodyLength: 27.5, sleeveLength: 25 })) await page.fill(`#ffr-m-${k}`, String(v));
+    await page.click('#ffr-use');
+    await page.waitForSelector('.ff-ref--visit');
+    /* nothing asked for in advance */
+    assert.strictEqual(await page.$('#ff-more-bodyLength'), null);
+    await enterCentreBack(page);
+    assert.strictEqual(await page.getAttribute('#fit-compare', 'data-verdict'), 'too-few');
+    assert.deepStrictEqual(await page.$$eval('#ff-measure-more input', (ns) => ns.map((i) => i.dataset.dimension)), ['bodyLength', 'sleeveLength']);
+    assert.match(await page.textContent('#ff-measure-more'), /From the centre of the back of the neck/);
+    /* out of its own range: said beside it, nothing sent */
+    const sent = posted.length;
+    await page.fill('#ff-more-bodyLength', '27');
+    await page.fill('#ff-more-sleeveLength', '80');
+    await page.click('.ff-more-save');
+    assert.match(await page.textContent('#ff-more-sleeveLength-error'), /between 24 and 46 in/);
+    assert.strictEqual(posted.length, sent);
+    await page.fill('#ff-more-sleeveLength', '34.5');
+    await page.click('.ff-more-save');
+    await page.waitForFunction(() => document.getElementById('fit-compare').dataset.verdict === 'recommended', null, { timeout: 15000 });
+    assert.strictEqual((await page.textContent('#fit-compare .fit-compare-recommended')).trim(), 'Recommended size: L');
+    assert.match(await page.textContent('#ff-measure-more'), /Compared using your length from the centre back and sleeve from the centre back/);
+    /* kept with this visit's garment, its own measurements unchanged, and said on its card */
+    const kept = await page.evaluate(() => JSON.parse(sessionStorage.getItem('fynd:find-fit:reference')).garment.anchor);
+    assert.deepStrictEqual(kept.alternates, [{ dimension: 'bodyLength', method: 'center-back-to-hem', value: 27 }, { dimension: 'sleeveLength', method: 'center-back-to-cuff', value: 34.5 }]);
+    assert.deepStrictEqual([kept.measurements.bodyLength, kept.measurements.sleeveLength], [27.5, 25]);
+    assert.match(await page.textContent('.ff-ref--visit'), /Length from the centre back 27 in · Sleeve from the centre back 34\.5 in/);
+    assert.deepStrictEqual(posted[posted.length - 1].reference.garment.anchor.alternates.map((a) => a.dimension), ['bodyLength', 'sleeveLength']);
+    await context.close();
+  });
+
+  await test('the same for a saved garment: the measurements asked for are saved to it on the fit profile — nothing else in it changes — and the comparison uses them', async () => {
+    const context = await openContext({ byHand: false });
+    const page = await signedIn(context, 'centreback@e2e.test');
+    const p = Schema.empty();
+    p.garments = { hoodies: Object.assign(Schema.emptyGarment('hoodies'), { favorite: 'perfect', line: 'men', anchor: { brand: 'Carhartt', size: 'L', measurements: { unit: 'in', chestWidth: 23, shoulderWidth: 20, bodyLength: 27.5, sleeveLength: 25 }, methods: { registry: 1, chestWidth: 'flat-width-armpit-to-armpit', shoulderWidth: 'seam-to-seam', bodyLength: 'high-point-shoulder-to-hem', sleeveLength: 'shoulder-seam-to-cuff' } } }) };
+    const { id } = await users.byEmail('centreback@e2e.test');
+    await fitProfiles.save(id, p);
+    await open(page, 'index.html');
+    await page.waitForSelector('#ff-reference[data-state="saved"]');
+    await enterCentreBack(page);
+    assert.strictEqual(await page.getAttribute('#fit-compare', 'data-verdict'), 'too-few');
+    await page.fill('#ff-more-bodyLength', '27');
+    await page.fill('#ff-more-sleeveLength', '34.5');
+    await page.click('.ff-more-save');
+    await page.waitForFunction(() => document.getElementById('fit-compare').dataset.verdict === 'recommended', null, { timeout: 15000 });
+    const saved = (await fitProfiles.read(id)).profile.garments.hoodies;
+    assert.deepStrictEqual(saved.anchor.alternates.map((a) => [a.dimension, a.method, a.value]), [['bodyLength', 'center-back-to-hem', 27], ['sleeveLength', 'center-back-to-cuff', 34.5]]);
+    assert.deepStrictEqual([saved.anchor.brand, saved.anchor.size, saved.line, saved.anchor.measurements.sleeveLength], ['Carhartt', 'L', 'men', 25]);
+    assert.match(await page.textContent('#ff-reference .ff-ref'), /Sleeve from the centre back 34\.5 in/);
+    await context.close();
+  });
+
   await test('the redesigned flow on a 360px phone: one column, the link and what was found readable, the result fits — nothing sideways', async () => {
     const context = await openContext({ byHand: false });
     const page = await signedIn(context, 'phone-returning@e2e.test');
@@ -3119,7 +3195,8 @@ const linkFromInbox = (pattern) => {
       measurements: { unit: 'cm', chestWidth: 58, shoulderWidth: 50, sleeveLength: 62, bodyLength: 68 },
       methods: { registry: 1, chestWidth: 'flat-width-armpit-to-armpit', bodyLength: 'high-point-shoulder-to-hem', shoulderWidth: 'seam-to-seam', sleeveLength: 'shoulder-seam-to-cuff' }
     });
-    assert.strictEqual((await savedProfile('cora@e2e.test')).schemaVersion, 6);
+    /* saved at the current version: 7 lets a garment keep alternates, and this one has none */
+    assert.strictEqual((await savedProfile('cora@e2e.test')).schemaVersion, 7);
     assert.match(await page.textContent('#card-hoodies .garment-status'), /Ready to compare sizes with your reference/);
 
     /* Compare reads it, and compares a checked product */
@@ -3182,7 +3259,7 @@ const linkFromInbox = (pattern) => {
     /* the version 5 form measured each value one way: that method, named, for exactly the values held */
     const historical = { registry: 1, chestWidth: 'flat-width-armpit-to-armpit', bodyLength: 'high-point-shoulder-to-hem', sleeveLength: 'shoulder-seam-to-cuff' };
     let read = await savedProfile('mira@e2e.test');
-    assert.strictEqual(read.schemaVersion, 6);
+    assert.strictEqual(read.schemaVersion, 7);
     assert.deepStrictEqual(read.garments.hoodies.anchor.measurements, measurements, 'every value as it was, the missing one still missing');
     assert.deepStrictEqual(read.garments.hoodies.anchor.methods, historical, 'the historical methods, only for the values held');
     assert.ok(!('methods' in read.garments.sweatshirts.anchor), 'a label is given no methods — it is never a measurement');

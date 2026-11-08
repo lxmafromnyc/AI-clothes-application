@@ -145,7 +145,9 @@ const DEVELOPER = /\b(engine|policy|reason code|record|registry|validate|undefin
       hoodies: { favorite: 'perfect', line: 'men', anchor: { brand: 'Zara', size: 'M', measurements: { unit: 'cm', chestWidth: 66, bodyLength: null, sleeveLength: 65, shoulderWidth: null } } },
       tshirts: { anchor: { brand: 'Nike', size: 'L' } } } };
     const up = Schema.upgrade(v5);
-    assert.strictEqual(up.schemaVersion, 6);
+    /* through version 6 (methods named) to the current one; version 7 adds no alternates to anything */
+    assert.strictEqual(up.schemaVersion, Schema.SCHEMA_VERSION);
+    assert.strictEqual(up.garments.hoodies.anchor.alternates, undefined);
     assert.deepStrictEqual(up.garments.hoodies.anchor.methods, { registry: 1, chestWidth: 'flat-width-armpit-to-armpit', sleeveLength: 'shoulder-seam-to-cuff' });
     assert.deepStrictEqual(up.garments.hoodies.anchor.measurements, v5.garments.hoodies.anchor.measurements, 'every value as it was');
     assert.deepStrictEqual(up.garments.tshirts.anchor, { brand: 'Nike', size: 'L' });

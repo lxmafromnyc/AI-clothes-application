@@ -95,6 +95,7 @@ async function save(userId, input) {
         const sentAnchor = entry.anchor && typeof entry.anchor === 'object' ? entry.anchor : null;
         if (a && b && sentAnchor && a.brand === b.brand && a.size === b.size) {
           ['product', 'likes', 'measurements', 'notes'].forEach((k) => { if (b[k] && !has(sentAnchor, k)) a[k] = b[k]; });
+          carryAlternates(a, b, sentAnchor);
         }
       });
     }
@@ -128,9 +129,56 @@ async function saveGuide(userId, input) {
     if (Object.prototype.hasOwnProperty.call(answers, field)) profile[field] = answers[field];
   });
   if (Object.prototype.hasOwnProperty.call(answers, 'garments')) {
+    const before = profile.garments || {};
     profile.garments = Schema.mergeGarments(profile.garments, answers.garments);
+    /* a page that re-sends a garment without its alternates (it never showed them) can't erase them */
+    const sent = input && input.garments && typeof input.garments === 'object' ? input.garments : {};
+    Object.keys(profile.garments).forEach((id) => {
+      const raw = sent[id] && typeof sent[id] === 'object' ? sent[id].anchor : null;
+      const now = profile.garments[id].anchor;
+      const was = before[id] && before[id].anchor;
+      if (raw && typeof raw === 'object' && now && was && now.brand === was.brand && now.size === was.size) carryAlternates(now, was, raw);
+    });
   }
 
+  return { profile: await write(userId, profile, existing), errors: [] };
+}
+
+/* Alternate measurements belong to the garment they were taken on, in
+   its measurements' unit: kept when a page re-saves the same garment
+   (same brand and size — checked by the caller) in the same unit without
+   mentioning them; dropped when its unit changes, and replaced or
+   cleared only when the page sends them. */
+function carryAlternates(now, before, sentAnchor) {
+  if (!before.alternates || Object.prototype.hasOwnProperty.call(sentAnchor, 'alternates')) return;
+  if (now.measurements && before.measurements && now.measurements.unit === before.measurements.unit) now.alternates = before.alternates;
+}
+
+/* Alternate measurements for one saved garment, asked for when a
+   product's chart measures that way (api/_sizing/select-measurements.js):
+   [{ dimension, value }], merged over any it has — one per dimension —
+   and the whole garment held to the fit profile's own validator again.
+   Nothing else in the profile changes. { profile, errors }. */
+async function addAlternates(userId, type, list) {
+  if (!userId) return { profile: null, errors: [{ field: 'profile', message: 'Sign in first.' }] };
+  if (!Schema.SIZED_TYPES.includes(type)) return { profile: null, errors: [{ field: 'type', message: 'Choose a hoodie, sweatshirt or T-shirt.' }] };
+  if (!Array.isArray(list) || !list.length) return { profile: null, errors: [{ field: `garments.${type}.anchor.alternates`, message: 'Send at least one measurement.' }] };
+  const existing = await store.get(profileKey(userId));
+  if (isNewer(existing)) return { profile: null, errors: NEWER };
+  const profile = existing && Schema.upgrade(existing);
+  const entry = profile && profile.garments && profile.garments[type];
+  if (!entry || !entry.anchor || !entry.anchor.measurements) {
+    return { profile: null, errors: [{ field: `garments.${type}.anchor.measurements`, message: 'That garment has no saved measurements to add to.' }] };
+  }
+  const given = list.filter((a) => a && typeof a === 'object');
+  const kept = (entry.anchor.alternates || []).filter((a) => !given.some((g) => g.dimension === a.dimension)).map((a) => ({ dimension: a.dimension, value: a.value }));
+  const garment = Object.assign({}, entry, { anchor: Object.assign({}, entry.anchor, { alternates: kept.concat(given.map((a) => ({ dimension: a.dimension, method: a.method, value: a.value }))) }) });
+  ['createdAt', 'updatedAt'].forEach((k) => delete garment[k]);
+  const { answers, errors } = Schema.normaliseGuide({ garments: { [type]: garment } });
+  if (errors.length) return { profile: null, errors };
+  delete profile.createdAt;
+  delete profile.updatedAt;
+  profile.garments = Schema.mergeGarments(profile.garments, answers.garments);
   return { profile: await write(userId, profile, existing), errors: [] };
 }
 
@@ -140,4 +188,5 @@ async function remove(userId) {
   return true;
 }
 
-module.exports = { read, save, saveGuide, remove, profileKey };
+module.exports = {
+  addAlternates, read, save, saveGuide, remove, profileKey };

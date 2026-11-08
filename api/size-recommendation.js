@@ -132,6 +132,7 @@ const sizing = require('./_sizing/records');
 const engine = require('./_sizing/engine');
 /* the one place a size is decided: the engine's answers held to one policy */
 const decision = require('./_sizing/decision');
+const selectMeasurements = require('./_sizing/select-measurements');
 const Candidate = require('../assets/fit-candidate.js');
 const brands = require('./_sizing/brands');
 
@@ -171,7 +172,8 @@ function readItems(raw) {
    ("partial"), that is the answer, never overruled by a looser reading
    of the same reference — else a suggestion from the rest of the type's
    profile, else what is missing, in the words the engine gave. */
-function sizeListing(profile, record) {
+function sizeListing(given, record) {
+  const profile = selectMeasurements.select(given, record).profile;
   const base = { productId: record.id, product: { brand: record.brand, name: record.product.name }, verified: record.verification && record.verification.status === 'verified' };
   /* the decision is the answer (api/_sizing/decision.js); the fields
      beside it keep the shape this listing has always had, so a page
@@ -304,7 +306,7 @@ async function checkFirst(req, res) {
       profile = stored.profile || null;
     }
   }
-  const validation = record ? engine.validate(profile, record)
+  const validation = record ? engine.validate(selectMeasurements.select(profile, record).profile, record)
     : {
       status: 'missing-target',
       ready: false,
@@ -328,8 +330,17 @@ async function checkFirst(req, res) {
    body estimate: decide() with via "compare" sets garment beside garment
    or abstains. */
 function comparedAnswer(profile, record, unit) {
-  const d = decision.decide(profile, record, { via: 'compare', unit });
-  return { comparison: decision.heldComparison(engine.compare(profile, record, { unit }), d), decision: d, resultType: 'garment-comparison' };
+  /* the saved garment's measurements taken the way this chart measures, where it has them —
+     the same selected profile to the decision and the comparison (./_sizing/select-measurements.js) */
+  const selected = selectMeasurements.select(profile, record);
+  const d = decision.decide(selected.profile, record, { via: 'compare', unit });
+  const compared = engine.compare(selected.profile, record, { unit });
+  const out = { comparison: decision.heldComparison(compared, d), decision: d, resultType: 'garment-comparison' };
+  if (selected.used.length) out.alternatesUsed = selected.used;
+  /* asked for only when measuring another way would make a comparison possible */
+  const ask = selectMeasurements.request(compared, selected, record);
+  if (ask) out.measurementRequest = ask;
+  return out;
 }
 
 /* A comparison with a reference garment that isn't saved (see "A
