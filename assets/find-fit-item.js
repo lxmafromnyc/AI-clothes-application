@@ -62,6 +62,13 @@
   let state = 'none';
   let item = null;     /* { product, sizes, type, typeFrom, source, unit, summary, checked } */
   let ask = 0;
+  /* the link being looked up, or last looked up for the item shown: the
+     same link is never asked for twice (a paste fires both paste and
+     input; a click of Check link may follow) */
+  let askedUrl = null;
+  /* the link box reopened over a found item (Edit) */
+  let linkOpen = false;
+  const linkBox = $('ffi-link-box');
 
   /* the kind of garment, only from the product's own name (as the extension reads it) */
   function guessType(name) {
@@ -86,7 +93,10 @@
 
   /* ---------- from the server's chart answer to what can be compared ---------- */
   function fromAnswer(c, url) {
-    const product = { brand: (c.product && c.product.brand) || c.retailer || null, name: (c.product && c.product.name) || null, url };
+    /* the address the server read, cleaned (api/_sizing/chart.js checkUrl): the
+       item's identity when Fynd holds no product id for it */
+    const canonical = c.source && typeof c.source.url === 'string' && /^https?:/.test(c.source.url) ? c.source.url : url;
+    const product = { brand: (c.product && c.product.brand) || c.retailer || null, name: (c.product && c.product.name) || null, url, canonical };
     const charts = Array.isArray(c.charts) ? c.charts : [];
     const garment = charts.find((x) => x.measures === 'finished-garment');
     const type = TYPES.includes(c.category) ? c.category : guessType(product.name);
@@ -183,20 +193,47 @@
     return p;
   }
 
+  /* found: the item compares from what was found, so the link box folds away */
+  const found = () => state === 'automatic' || state === 'assisted';
+  /* the hand-entry fallback is offered only once the link has actually
+     failed to give the item — or while the shopper is already using it */
+  const FAILED = ['error', 'unavailable', 'body-only', 'incomplete'];
+  function syncChrome() {
+    if (linkBox) linkBox.hidden = found() && !linkOpen;
+    if (manual) manual.hidden = !(FAILED.includes(state) || manual.open);
+  }
+
   function draw() {
+    syncChrome();
     if (state === 'none') { box.hidden = true; box.replaceChildren(); return; }
     box.hidden = false;
     box.dataset.state = state;
-    if (state === 'loading') { box.replaceChildren(el('p', 'ffi-status', 'Checking the link…')); return; }
+    if (state === 'loading') {
+      const p = el('p', 'ffi-status ffi-loading', 'Looking up the product…');
+      p.setAttribute('role', 'status');
+      box.replaceChildren(p);
+      return;
+    }
     if (state === 'error') { box.replaceChildren(el('p', 'ffi-status', 'Fynd couldn’t look up that link just now. Try again in a moment.'), ways()); return; }
     const card = [];
     const name = [item.product.brand, item.product.name].filter(Boolean).join(' · ');
     const head = el('div', 'ffi-head');
+    /* found: a compact confirmation — checkmark, the name Fynd read, Edit */
+    if (found()) {
+      const tick = el('span', 'ffi-tick', '✓');
+      tick.setAttribute('aria-hidden', 'true');
+      head.append(tick);
+      head.dataset.found = 'true';
+    }
     head.append(el('p', 'ffi-name', name || 'This product'));
-    const clear = el('button', 'link-btn ffi-clear', 'Not this one');
-    clear.type = 'button';
-    clear.addEventListener('click', () => { reset('shopper'); linkInput.value = ''; linkInput.focus(); });
-    head.append(clear);
+    if (!linkOpen) {
+      const edit = el('button', 'link-btn ffi-edit', 'Edit');
+      edit.type = 'button';
+      edit.id = 'ffi-edit';
+      edit.setAttribute('aria-label', 'Change the item you’re considering');
+      edit.addEventListener('click', () => { linkOpen = true; draw(); linkInput.focus(); linkInput.select(); });
+      head.append(edit);
+    }
     card.push(head);
     if (item.sizes.length) card.push(chips(item.sizes));
     const status = el('p', 'ffi-status');
@@ -211,7 +248,8 @@
     } else if (state === 'incomplete') {
       status.textContent = 'Fynd found a chart for this product, but can’t read it reliably enough to compare:';
     } else {
-      status.textContent = item.note || 'Fynd can’t read this product’s page from its server.';
+      /* the server's note may come as several sentences */
+      status.textContent = (Array.isArray(item.note) ? item.note.filter((t) => typeof t === 'string').join(' ') : item.note) || 'Fynd can’t read this product’s page from its server.';
     }
     status.dataset.state = state;
     card.push(status);
@@ -252,41 +290,74 @@
     box.replaceChildren(...card.filter(Boolean));
   }
 
-  function reset(by) { ask += 1; item = null; set('none', by); }
+  /* a reset retires any lookup still on its way: its answer is for another link */
+  function reset(by) { ask += 1; askedUrl = null; item = null; set('none', by); }
 
   /* ---------- the lookup ---------- */
   const URLISH = /^https?:\/\/[^\s]+\.[^\s]+/i;
-  async function lookUp() {
+  /* explicit: Check link or Enter, which say when the address isn't one, and
+     may ask again for a link whose lookup failed. A link pasted or typed is
+     looked up by itself, once, and nothing is said about a half-typed one */
+  async function lookUp(explicit) {
+    global.clearTimeout(typingTimer);
+    /* always the box's value now, never one captured when the lookup was scheduled */
     const url = linkInput.value.trim();
     const err = $('ffi-link-error');
-    err.textContent = '';
-    err.classList.remove('show');
     if (!URLISH.test(url)) {
+      if (explicit !== true) return;
       err.textContent = 'Paste the product page’s full address, starting https://';
       err.classList.add('show');
       linkInput.setAttribute('aria-invalid', 'true');
       linkInput.focus();
       return;
     }
+    /* this link is being looked up, or is the item shown: not asked again —
+       unless its lookup failed and the shopper asks once more */
+    if (url === askedUrl && (state === 'loading' || !(explicit === true && FAILED.includes(state)))) {
+      /* the same found item, its link left as it was: folded back to it */
+      if (linkOpen && found()) { linkOpen = false; draw(); }
+      return;
+    }
+    err.textContent = '';
+    err.classList.remove('show');
     linkInput.removeAttribute('aria-invalid');
     metrics.event('candidate_started');
     const mine = ++ask;
+    askedUrl = url;
     item = null;
     set('loading', 'shopper');
     const sizing = global.Account && global.Account.sizing;
-    const got = sizing ? await sizing.chart(url) : null;
-    if (mine !== ask) return;
+    let got = null;
+    try { got = sizing ? await sizing.chart(url) : null; } catch (e) { got = null; }
+    /* a newer link, or a reset, since: this answer is for something no longer asked */
+    if (mine !== ask || linkInput.value.trim() !== url) return;
     const c = got && got.ok && got.data && got.data.chart;
     if (!c || typeof c !== 'object') { set('error', 'shopper'); metrics.event('extraction_unavailable'); return; }
     item = fromAnswer(c, url);
     metrics.event({ automatic: 'extraction_automatic', assisted: 'extraction_assisted', 'body-only': 'extraction_body_only' }[item.state] || 'extraction_unavailable');
-    if (item.state === 'automatic' || item.state === 'assisted') metrics.event('candidate_ready_link');
+    if (item.state === 'automatic' || item.state === 'assisted') { metrics.event('candidate_ready_link'); linkOpen = false; }
     set(item.state, 'shopper');
   }
-  go.addEventListener('click', lookUp);
-  linkInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); lookUp(); } });
-  linkInput.addEventListener('input', () => { metrics.manualInput('ffi-link'); if (state !== 'none' && state !== 'loading') reset('shopper'); });
-  linkInput.addEventListener('paste', () => global.setTimeout(() => { if (URLISH.test(linkInput.value.trim())) lookUp(); }, 0));
+  let typingTimer = null;
+  go.addEventListener('click', () => lookUp(true));
+  linkInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); lookUp(true); } });
+  linkInput.addEventListener('input', () => {
+    metrics.manualInput('ffi-link');
+    const url = linkInput.value.trim();
+    /* a different link from the one asked for: what was found, or is being found, no longer stands */
+    if (state !== 'none' && url !== askedUrl) reset('shopper');
+    const err = $('ffi-link-error');
+    if (err.textContent) { err.textContent = ''; err.classList.remove('show'); linkInput.removeAttribute('aria-invalid'); }
+    /* typed: looked up once the typing pauses on a whole address */
+    global.clearTimeout(typingTimer);
+    if (URLISH.test(url)) typingTimer = global.setTimeout(() => lookUp(false), 600);
+  });
+  /* pasted: looked up at once, from the value the paste left (the input event comes first) */
+  linkInput.addEventListener('paste', () => global.setTimeout(() => lookUp(false), 0));
+  /* Escape while editing a found item: back to it, unchanged */
+  linkInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && linkOpen && found() && linkInput.value.trim() === askedUrl) { linkOpen = false; draw(); const b = $('ffi-edit'); if (b) b.focus(); }
+  });
 
   /* the unit strip: only while something is typed by hand (here, or the garment's measurements) */
   const strip = $('ff-units-strip');
@@ -314,9 +385,10 @@
     if (!e.target) return;
     if (e.target.id === 'ffr-manual') syncStrip(e.target);
     /* the item's own hand entry opened or closed: which item is compared changes */
-    if (e.target.id === 'ff-manual') { syncStrip(e.target); changed('shopper'); }
+    if (e.target.id === 'ff-manual') { syncChrome(); syncStrip(e.target); changed('shopper'); }
   }, true);
   syncStrip();
+  syncChrome();
 
   const ready = () => {
     if (manual && manual.open) return false;
@@ -331,6 +403,13 @@
     type: () => (item ? item.type : null),
     product: () => (item ? item.product : null),
     sizes: () => (item ? item.sizes : []),
+    /* the item's stable identity: Fynd's product id where it holds a record,
+       else the address the server read — never one made up */
+    identity: () => {
+      if (!item || !item.source) return null;
+      if (item.source.mode === 'record' && item.source.productId) return `record:${item.source.productId}`;
+      return item.product && item.product.canonical ? `url:${item.product.canonical}` : null;
+    },
     lookUp,
     syncStrip
   };

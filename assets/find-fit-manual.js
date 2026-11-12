@@ -205,9 +205,9 @@
     let first = null;
     if (garmentMissing) {
       const err = $('ff-garment-error');
-      err.textContent = 'Add your garment first: find it and choose the size on its label, or enter its measurements.';
+      err.textContent = 'Add your garment: search for it and pick its size, or enter its measurements manually.';
       err.classList.add('show');
-      first = $('ffr-brand') || $('ff-step-reference');
+      first = $('ffr-search') || $('ffr-brand') || $('ff-step-reference');
     }
     errors.forEach((e) => {
       const { field } = e;
@@ -253,6 +253,8 @@
     const ref = global.FindFitReference;
     if (refArea && refArea.dataset.state === 'saved') return ref && ref.choice && !ref.choice() ? 'mismatch' : 'saved';
     if (ref && ref.current && ref.current()) return 'ready';
+    /* found by search, its size still to pick: nothing to compare yet */
+    if (ref && ref.picking && ref.picking()) return 'empty';
     return formFilled() ? 'filled' : 'empty';
   }
   let busy = false;
@@ -273,12 +275,13 @@
     else if (item === 'needs-check') next = 'Tick the box once the measurements match the size chart on the product page.';
     else if (item === 'needs-type') next = 'Say whether the item is a hoodie or a sweatshirt.';
     else if (item === 'cannot') next = 'Fynd can’t read this item from its link. Use the Fynd extension on its page, or enter the measurements yourself.';
+    else if (ready && !result.hidden && result.dataset.state === 'error') next = 'The comparison didn’t go through. Press Compare sizes to try again.';
     else if (ready) next = !result.hidden && result.dataset.state === 'done' ? 'Your comparison is below.' : 'Ready to compare.';
-    else if (garment === 'empty' && item !== 'ready') next = 'Add your garment, then paste the item’s link.';
-    else if (garment === 'empty') next = 'Now add your garment: find it, or enter its measurements.';
+    else if (garment === 'empty' && item !== 'ready') next = 'Paste the item’s link, then find your garment.';
+    else if (garment === 'empty') next = 'Now find your garment and pick its size.';
     else if (item === 'no-chest') next = 'Enter the item’s chest width — every comparison needs it.';
     else if (item === 'incomplete') next = `For the item: ${itemProblem || 'finish its measurements.'}`;
-    else next = 'Now paste the item’s link — or enter its measurements yourself.';
+    else next = 'Now paste the item’s link.';
     note.textContent = next;
     /* never looking available while something it needs is missing */
     submit.setAttribute('aria-disabled', String(!ready || busy));
@@ -294,6 +297,10 @@
   /* anything changed: a result for what was there before goes */
   function stale() {
     latest += 1;
+    /* whatever was compared, or failed, before no longer stands: the same
+       two selections may be compared again */
+    autoDone = '';
+    failedKey = '';
     if (!result.hidden && !busy) {
       result.hidden = true;
       if (global.FindFitSave) global.FindFitSave.hide();
@@ -302,8 +309,11 @@
     }
     progress();
   }
-  form.addEventListener('input', (event) => { if (event.target.closest('#ff-step-target')) stale(); else progress(); });
-  form.addEventListener('change', (event) => { if (event.target.closest('#ff-step-target')) stale(); else progress(); });
+  /* the link box speaks through the item's own events (fynd:item-change): a
+     keystroke, or leaving the box, changes nothing until the item does */
+  const changesItem = (t) => Boolean(t.closest('#ff-step-target')) && t.id !== 'ffi-link';
+  form.addEventListener('input', (event) => { if (changesItem(event.target)) stale(); else progress(); });
+  form.addEventListener('change', (event) => { if (changesItem(event.target)) stale(); else progress(); });
   /* the shopper changed their garment: a result for the old one goes. A
      change the page made itself — the account read after signing in, say
      — leaves the result, and any offer to save, where they are */
@@ -317,18 +327,47 @@
     maybeCompare();
   });
   /* Fynd did the work, or the shopper confirmed what it found: compare at once,
-     once for each item and garment — by hand, Compare fit is still the shopper's */
+     once for each item and garment — by hand, Compare sizes is still the shopper's.
+
+     Which comparison: the item by its stable identity (Fynd's product id, or
+     the address the server read when it holds none — FindFitItem.identity)
+     and its kind, beside the garment kept — saved, by its kind; this
+     visit's, by its product, label size and measurements. One comparison
+     per key: claimed while it runs (inFlightKey), done once it answered
+     (autoDone), or failed (failedKey) — a failure is retried by Compare
+     sizes, never in a loop. Any change by the shopper (stale) clears both. */
   let autoDone = '';
+  let failedKey = '';
+  let inFlightKey = '';
+  function compareKey() {
+    const item = Item();
+    const id = item && item.identity ? item.identity() : null;
+    const ref = global.FindFitReference && global.FindFitReference.choice ? global.FindFitReference.choice() : null;
+    if (!id || !ref || !ref.garment) return null;
+    const a = ref.garment.anchor || {};
+    const garment = ref.source === 'saved' ? ['saved', ref.type]
+      : ['visit', ref.type, a.product ? (a.product.url || a.product.name || null) : null, a.brand || null, a.size || null, a.measurements || null, a.alternates || null];
+    return JSON.stringify([id, item.type(), garment]);
+  }
+  /* a garment typed by hand but not yet kept: the comparison keeps it first,
+     by the form's own checks (keepTypedGarment) — its key is the item's until then */
+  function typedKey() {
+    const item = Item();
+    const id = item && item.identity ? item.identity() : null;
+    return id ? JSON.stringify([id, item.type(), 'typed']) : null;
+  }
   function maybeCompare() {
     if (busy || !usingLink() || itemState() !== 'ready') return;
-    /* a garment typed but not yet kept counts: comparing keeps it first, by the form's own checks */
     const g = garmentState();
     if (g !== 'saved' && g !== 'ready' && g !== 'filled') return;
-    const ref = global.FindFitReference && global.FindFitReference.choice ? global.FindFitReference.choice() : null;
-    const sig = JSON.stringify([Item().source(), Item().type(), ref && ref.type, ref && ref.source]);
-    if (sig === autoDone) return;
-    autoDone = sig;
-    global.setTimeout(() => { if (form.requestSubmit) form.requestSubmit(); else submit.click(); }, 0);
+    const key = g === 'filled' ? typedKey() : compareKey();
+    if (!key || key === autoDone || key === failedKey || key === inFlightKey) return;
+    inFlightKey = key;
+    global.setTimeout(() => {
+      /* still the same two, and nothing running: compare them */
+      if (busy || (garmentState() === 'filled' ? typedKey() : compareKey()) !== key) { if (inFlightKey === key) inFlightKey = ''; maybeCompare(); return; }
+      if (form.requestSubmit) form.requestSubmit(); else submit.click();
+    }, 0);
   }
 
   function itemWords(c) {
@@ -393,7 +432,7 @@
   /* the item from its link: every size, one request */
   async function compareLink() {
     const garment = garmentState();
-    if (garment === 'empty' || garment === 'mismatch' || itemState() !== 'ready') { progress(); if (garment === 'empty') showErrors([], true); return; }
+    if (garment === 'empty' || garment === 'mismatch' || itemState() !== 'ready') { inFlightKey = ''; progress(); if (garment === 'empty') showErrors([], true); return; }
     clearErrors();
     busy = true;
     submit.disabled = true;
@@ -401,12 +440,15 @@
     submit.setAttribute('aria-busy', 'true');
     try {
       if (garment === 'filled' && !(await keepTypedGarment())) {
-        /* the garment didn't read: its own fields say why; the shopper fixes it and compares */
-        autoDone = '';
+        /* the garment didn't read: its own fields say why; the shopper fixes it and
+           compares — never asked again by itself while it still doesn't read */
+        failedKey = typedKey() || '';
         return;
       }
       const ref = global.FindFitReference.choice();
       if (!ref) return;
+      const key = compareKey();
+      inFlightKey = key || '';
       const ask = ++latest;
       const item = Item();
       const product = item.product() || {};
@@ -427,13 +469,30 @@
       const sizing = global.Account.sizing;
       const src = item.source();
       const reference = { type: ref.type, garment: ref.garment };
-      let got;
-      if (src.mode === 'record') {
-        got = ref.source === 'saved' && ref.isDefault ? await sizing.compare(src.productId) : await sizing.compareWith(src.productId, reference);
-      } else {
-        got = await sizing.compareChart(Object.assign({}, src.chart, { type: item.type() }), ref.source === 'saved' ? { referenceType: ref.type } : { reference });
+      let got = null;
+      try {
+        if (src.mode === 'record') {
+          got = ref.source === 'saved' && ref.isDefault ? await sizing.compare(src.productId) : await sizing.compareWith(src.productId, reference);
+        } else {
+          got = await sizing.compareChart(Object.assign({}, src.chart, { type: item.type() }), ref.source === 'saved' ? { referenceType: ref.type } : { reference });
+        }
+      } catch (err) { got = null; }
+      /* the selections changed while it ran: this answer is for something no longer chosen */
+      if (ask !== latest) { result.hidden = true; delete result.dataset.state; return; }
+      if (!got || !got.ok) {
+        /* failed: said so, never shown as a comparison, and Compare sizes tries again */
+        failedKey = key || '';
+        if (got) global.FitCompare.showAnswer(got, compare, { unsaved: ref.source === 'visit' ? reference : null });
+        else {
+          compare.replaceChildren(el('h3', 'fit-compare-title', 'The comparison didn’t go through'), el('p', null, 'Fynd couldn’t reach its sizing service just now. Press Compare sizes to try again.'));
+          compare.dataset.verdict = 'error';
+        }
+        result.dataset.state = 'error';
+        metrics.completed('error');
+        return;
       }
-      if (ask !== latest) return;
+      autoDone = key || '';
+      failedKey = '';
       global.FitCompare.showAnswer(got, compare, { unsaved: ref.source === 'visit' ? reference : null });
       if (global.FindFitMeasureMore) global.FindFitMeasureMore.show(got && got.ok ? got.data : null);
       offerFeedback(got, {
@@ -447,9 +506,12 @@
       if (global.FindFitSave) global.FindFitSave.offer();
     } finally {
       busy = false;
+      inFlightKey = '';
       submit.disabled = false;
       submit.removeAttribute('aria-busy');
       progress();
+      /* a change made while it ran: compared now */
+      global.setTimeout(maybeCompare, 0);
     }
   }
 
@@ -500,8 +562,8 @@
           referenceType: chosen && chosen.source === 'saved' ? chosen.type : null
         });
         metrics.completed(outcomeOf(compare.dataset.verdict));
-        result.dataset.state = 'done';
-        if (global.FindFitSave) global.FindFitSave.offer();
+        result.dataset.state = got && got.ok ? 'done' : 'error';
+        if (got && got.ok && global.FindFitSave) global.FindFitSave.offer();
       }
     } finally {
       busy = false;

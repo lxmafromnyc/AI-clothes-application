@@ -42,8 +42,11 @@
    A product picked fills the fields below — type, brand, product, fit
    line, and a letter size the form takes — and is then checked on the
    server (POST ?check=1, the product as the item): what Fynd holds for
-   it is said from that answer alone. Picking proves nothing: the fields
-   stay the shopper's to change, "Use this garment" still keeps it, and
+   it is said from that answer alone. Its sizes are then shown under the
+   search — only those Fynd's data lists for it — and picking one keeps
+   the garment through the same checks "Use this garment" runs. The type,
+   the size on its label and the measurements wait behind "Can't find
+   your garment? Enter measurements manually". Picking proves nothing:
    whether a product's measurements stand in for theirs is the size
    engine's to decide when it compares (engine.js referenceEntry).
 
@@ -257,9 +260,35 @@
     box.setAttribute('role', 'group');
     box.setAttribute('aria-labelledby', 'ffr-form-title');
     /* the column's own heading says what this is; this names the group for screen readers */
-    const title = el('p', 'ffr-title sr-only', 'Describe a garment you own that fits the way you like. No account needed.');
+    const title = el('p', 'ffr-title sr-only', 'Find a garment you own that fits the way you like. No account needed.');
     title.id = 'ffr-form-title';
-    box.append(title, finder());
+    const find = finder();
+    box.append(title, find);
+    /* the garment found: its sizes, as Fynd's own data lists them, right under the search */
+    const findRow = find.querySelector('.ffr-find-row');
+    if (findRow && !find.hidden) findRow.after(pickArea()); else box.append(pickArea());
+    /* the products Fynd holds checked measurements for, as one-click picks */
+    if (anchorsHome) box.append(anchorsHome);
+
+    /* the hand-entry fallback — the kind, the size on its label, the
+       measurements — behind one link, and folded away until wanted */
+    const manualLink = el('button', 'link-btn ffr-manual-link', 'Can’t find your garment? Enter measurements manually');
+    manualLink.type = 'button';
+    manualLink.id = 'ffr-manual-link';
+    manualLink.setAttribute('aria-controls', 'ffr-manual-area');
+    manualLink.setAttribute('aria-expanded', 'false');
+    manualLink.addEventListener('click', () => {
+      revealManual(true);
+      const first = doc.getElementById('ffr-type-field') && !doc.getElementById('ffr-type-field').hidden ? doc.getElementById('ffr-type') : doc.getElementById('ffr-size');
+      if (first) first.focus();
+    });
+    box.append(manualLink);
+    const area = el('div', 'ffr-manual-area');
+    area.id = 'ffr-manual-area';
+    area.hidden = true;
+    area.setAttribute('role', 'group');
+    area.setAttribute('aria-label', 'Your garment, entered by hand');
+    box.append(area);
 
     /* the one question after a product is found: the size on its label. The
        kind of garment is asked only while nothing else says it */
@@ -273,7 +302,7 @@
       typeField,
       field('Size on its label', select('ffr-size', [['', 'Choose…']].concat(Schema.LETTER_SIZES.map((s) => [s, s])), a.size || ''))
     );
-    box.append(row);
+    area.append(row);
     const brand = input('ffr-brand', 'text', a.brand, { maxlength: String(Schema.LIMITS.brandLength), autocomplete: 'off', list: 'ffr-brands', spellcheck: 'false' });
     const brands = el('datalist');
     brands.id = 'ffr-brands';
@@ -302,7 +331,7 @@
       field('How it fits', select('ffr-favorite', [['perfect', 'Just how I like'], ['close', 'Close to how I like']], (g && g.favorite) || 'perfect'))
     );
     details.append(row2);
-    box.append(details);
+    area.append(details);
 
     /* the four measurements, laid flat, in the unit chosen at the top of
        Find Fit (kept in step by assets/find-fit-manual.js); any can be left
@@ -325,22 +354,32 @@
     const order = global.FitCandidate ? global.FitCandidate.DIMS.filter((k) => Schema.GARMENT_MEASURE_KEYS.includes(k)) : Schema.GARMENT_MEASURE_KEYS;
     order.forEach((k) => grid.append(measureRow(k, m[k])));
     more.append(grid);
-    box.append(more);
+    area.append(more);
 
     const actions = el('div', 'ffr-actions');
-    /* secondary: Compare fit keeps a garment typed here by itself, so it is the page's one primary action */
+    /* by hand only: a garment found and its size picked is kept by the pick itself */
     const use = el('button', 'btn btn-secondary ffr-use', 'Use this garment');
     use.type = 'button';
     use.id = 'ffr-use';
     use.addEventListener('click', apply);
     actions.append(use);
+    area.append(actions);
     if (from) {
-      const cancel = el('button', 'btn btn-secondary', 'Cancel');
+      /* editing a kept garment: back to it, unchanged */
+      const cancel = el('button', 'btn btn-secondary ffr-cancel', 'Cancel');
       cancel.type = 'button';
-      cancel.addEventListener('click', () => { editing = false; prefill = null; redraw(); });
-      actions.append(cancel);
+      cancel.addEventListener('click', () => { editing = false; prefill = null; pick = null; pickAsk += 1; redraw(); });
+      const cancelRow = el('div', 'ffr-actions ffr-cancel-row');
+      cancelRow.append(cancel);
+      box.append(cancelRow);
     }
-    box.append(actions);
+    /* open from the start when what it holds can't be shown any other way:
+       measurements of its own, or a garment kept with no product to pick sizes from */
+    if (a.measurements || (from && !pick)) {
+      area.hidden = false;
+      manualLink.hidden = true;
+      manualLink.setAttribute('aria-expanded', 'true');
+    }
     /* Enter applies the garment here, never the item's form around it —
        except in the search box, where Enter picks a match */
     box.addEventListener('keydown', (e) => {
@@ -352,16 +391,145 @@
     return box;
   }
 
+  /* ---------- the garment found, and its sizes ----------
+     After a product is picked, its sizes are shown as buttons right under
+     the search — only the sizes Fynd's own data lists for that product:
+     its checked record (GET ?anchors=1, `sizes`) or the brand's product
+     page (GET ?brand=&detail=, `sizes.list`). None is ever made up: with
+     none listed, the size is the shopper's to choose by hand. A size the
+     fit profile can't keep (FitProfileSchema.LETTER_SIZES) is shown, and
+     said so, but can't be picked. Picking a size keeps the garment at
+     once, through the same checks "Use this garment" runs (apply). */
+
+  /* the pick: { url, name, brand, sizes: [label] | null, status: 'loading' | 'ready' | 'none' } */
+  let pick = null;
+  const PICK_KEY = 'fynd:find-fit:reference-pick';
+  /* the pick behind this visit's garment, for its card and for Edit: kept beside it, never in it */
+  let visitPick = (() => { try { const v = JSON.parse(global.sessionStorage.getItem(PICK_KEY) || 'null'); return v && typeof v.url === 'string' ? v : null; } catch (err) { return null; } })();
+  function keepPick(value) {
+    visitPick = value;
+    try { if (value) global.sessionStorage.setItem(PICK_KEY, JSON.stringify(value)); else global.sessionStorage.removeItem(PICK_KEY); } catch (err) { /* this page only */ }
+  }
+  const sameUrl = (x, y) => {
+    const n = (u) => String(u || '').trim().replace(/[?#].*$/, '').replace(/\/+$/, '').toLowerCase();
+    return Boolean(x && y) && n(x) === n(y);
+  };
+  /* a size label as the fit profile writes it ("2XL" is its "XXL"), or null when it can't keep it */
+  const LABEL_FORM = { '2XL': 'XXL', XXXL: '3XL' };
+  const keepable = (label) => {
+    const up = String(label || '').trim().toUpperCase();
+    const form = LABEL_FORM[up] || up;
+    return Schema.LETTER_SIZES.includes(form) ? form : null;
+  };
+  /* the sizes Fynd's data lists for one product, or null */
+  async function sizesFor(product, brandId) {
+    await anchorsReady;
+    const record = anchors.find((x) => sameUrl(x.url, product.url));
+    if (record && Array.isArray(record.sizes) && record.sizes.length) return record.sizes.filter((x) => typeof x === 'string' && x);
+    const sizing = global.Account && global.Account.sizing;
+    if (brandId && product.code && sizing && sizing.detail) {
+      const got = await sizing.detail(brandId, product.code);
+      const list = got && got.ok && got.data && got.data.product && got.data.product.sizes && got.data.product.sizes.list;
+      if (Array.isArray(list) && list.length) return list.filter((x) => typeof x === 'string' && x);
+    }
+    return null;
+  }
+  /* a product picked: its sizes looked up, and drawn when they come — unless another pick came since */
+  async function startPick(product, brandName, brandId) {
+    const mine = pickAsk;
+    pick = { url: product.url, name: product.name || null, brand: brandName || null, sizes: null, status: 'loading' };
+    drawPick();
+    let list = null;
+    try { list = await sizesFor(product, brandId); } catch (err) { list = null; }
+    if (mine !== pickAsk || !pick || !sameUrl(pick.url, product.url)) return;
+    pick.sizes = list;
+    pick.status = list ? 'ready' : 'none';
+    drawPick();
+    /* no sizes listed: the size on its label is chosen by hand */
+    if (!list) revealManual(false);
+  }
+  function pickArea() {
+    const wrap = el('div', 'ffr-pick');
+    wrap.id = 'ffr-pick';
+    wrap.hidden = true;
+    wrap.setAttribute('aria-live', 'polite');
+    global.setTimeout(drawPick, 0);
+    return wrap;
+  }
+  function drawPick() {
+    const wrap = doc.getElementById('ffr-pick');
+    if (!wrap) return;
+    drawAnchors();
+    const hint = doc.getElementById('ffr-search-hint');
+    if (hint) hint.hidden = Boolean(pick);
+    if (global.FindFitManual && global.FindFitManual.progress) global.FindFitManual.progress();
+    if (!pick) { wrap.hidden = true; wrap.replaceChildren(); return; }
+    wrap.hidden = false;
+    wrap.dataset.status = pick.status;
+    const nodes = [];
+    if (pick.status === 'loading') nodes.push(el('p', 'ffr-hint', 'Finding its sizes…'));
+    else if (pick.status === 'none') nodes.push(el('p', 'ffr-hint', 'Fynd doesn’t list this garment’s sizes. Choose the size on its label below.'));
+    else {
+      nodes.push(el('p', 'ffr-pick-label', 'Which size do you own?'));
+      const list = el('div', 'ffr-sizes');
+      list.setAttribute('role', 'group');
+      list.setAttribute('aria-label', 'Sizes it comes in');
+      const kept = visit && visit.garment && visit.garment.anchor && visit.garment.anchor.product && sameUrl(visit.garment.anchor.product.url, pick.url) ? visit.garment.anchor.size : null;
+      let unkeepable = false;
+      [...new Set(pick.sizes)].forEach((label) => {
+        const form = keepable(label);
+        const b = el('button', 'ffr-size-pill', label);
+        b.type = 'button';
+        b.dataset.size = label;
+        if (!form) {
+          b.disabled = true;
+          b.title = 'Fynd can’t compare this size yet';
+          unkeepable = true;
+        } else {
+          b.setAttribute('aria-pressed', String(Boolean(editing && kept === form)));
+          b.addEventListener('click', () => chooseSize(form, b));
+        }
+        list.append(b);
+      });
+      nodes.push(list);
+      if (unkeepable) nodes.push(el('p', 'ffr-hint', 'Sizes shown greyed out can’t be compared yet — enter that garment’s measurements manually instead.'));
+    }
+    wrap.replaceChildren(...nodes);
+  }
+  /* a size picked: the garment is kept at once, by the form's own checks */
+  function chooseSize(form, button) {
+    const size = doc.getElementById('ffr-size');
+    if (!size) return;
+    size.value = form;
+    const wrap = doc.getElementById('ffr-pick');
+    if (wrap) wrap.querySelectorAll('.ffr-size-pill').forEach((b) => { if (!b.disabled) b.setAttribute('aria-pressed', String(b === button)); });
+    if (global.FyndMetrics) global.FyndMetrics.manualInput('ffr-size');
+    apply();
+  }
+  /* the hand-entry fields shown; `measure` opens the measurements too */
+  function revealManual(measure) {
+    const area = doc.getElementById('ffr-manual-area');
+    const linkBtn = doc.getElementById('ffr-manual-link');
+    if (area) area.hidden = false;
+    if (linkBtn) { linkBtn.hidden = true; linkBtn.setAttribute('aria-expanded', 'true'); }
+    if (measure) { const m = doc.getElementById('ffr-manual'); if (m && !m.open) m.open = true; }
+  }
+  /* anything that opens one of its folds shows the hand-entry fields */
+  doc.addEventListener('toggle', (e) => {
+    if (e.target && (e.target.id === 'ffr-manual' || e.target.id === 'ffr-details') && e.target.open) revealManual(false);
+  }, true);
+
   /* ---------- Find your garment ---------- */
 
   let pickAsk = 0;
   function finder() {
     const wrap = el('div', 'ffr-find');
-    const label = el('label', 'profile-label', 'Find your garment');
+    /* the card's own heading says what this is: the label is for screen readers */
+    const label = el('label', 'profile-label sr-only', 'Search a garment you own');
     label.htmlFor = 'ffr-search';
     const smart = el('div', 'ff-smart');
     const search = input('ffr-search', 'text', '', {
-      placeholder: 'Brand and product — e.g. Uniqlo hoodie M', maxlength: '2000', autocomplete: 'off', spellcheck: 'false',
+      placeholder: 'Search a brand & item you own, e.g. Uniqlo Hoodie', maxlength: '2000', autocomplete: 'off', spellcheck: 'false',
       role: 'combobox', 'aria-autocomplete': 'list', 'aria-expanded': 'false', 'aria-controls': 'ffr-suggest', 'aria-describedby': 'ffr-search-hint'
     });
     const box = el('div', 'ff-suggest');
@@ -383,7 +551,7 @@
     go.type = 'button';
     go.id = 'ffr-live-go';
     row.append(smart, go);
-    const hint = el('p', 'ffr-hint', 'Pick it from Fynd’s list as you type, or press Search shops. Can’t find it? Enter its measurements below.');
+    const hint = el('p', 'ffr-hint', 'Pick it from Fynd’s list as you type, or press Search shops.');
     hint.id = 'ffr-search-hint';
     const held = el('div', 'ffr-held');
     held.id = 'ffr-held';
@@ -450,6 +618,9 @@
       pickAsk += 1;
       needsMeasures = false;
       held.hidden = true;
+      /* a new search: the last garment's sizes no longer stand */
+      pick = null;
+      drawPick();
       /* a new search: what the last product said about its kind no longer stands */
       const tf = doc.getElementById('ffr-type-field');
       if (tf) tf.hidden = false;
@@ -499,6 +670,8 @@
       return;
     }
     /* not a product Fynd knows: kept as the product, and its measurements are the way on */
+    pick = null;
+    drawPick();
     const set = (id, value) => { const n = doc.getElementById(id); if (n) n.value = value; };
     set('ffr-product', t.url || url);
     if (t.brand) set('ffr-brand', t.brand);
@@ -539,6 +712,8 @@
     held.replaceChildren(el('p', null, 'Checking what Fynd holds for this product…'), ...lines);
     held.hidden = false;
     const mine = ++pickAsk;
+    /* its sizes, from Fynd's data, looked up beside the check */
+    startPick(f.product, f.brand.name, f.brand.id);
     const sizing = global.Account && global.Account.sizing;
     const target = f.brand.id && f.product.code ? { brand: f.brand.id, code: f.product.code } : { url: f.product.url };
     const got = already || (sizing && sizing.check ? await sizing.check(target, null) : null);
@@ -548,15 +723,13 @@
       : ['unknown', 'What Fynd holds for this product couldn’t be checked just now. You can still use it — Fynd checks again when it compares.'];
     held.dataset.status = status;
     held.replaceChildren(el('p', null, text), ...lines);
-    /* nothing Fynd can stand in with: its measurements are the way on —
-       and, for a pick from the live search, the only way on */
-    if (status !== 'checked') {
-      const manualBox = doc.getElementById('ffr-manual');
-      if (manualBox) manualBox.open = true;
-      if (fromLive) needsMeasures = true;
+    /* nothing Fynd can stand in with: for a pick from the live search, its
+       measurements are the only way on, so they open; otherwise they wait
+       behind "Enter measurements manually", and the held line says so */
+    if (status !== 'checked' && fromLive) {
+      needsMeasures = true;
+      revealManual(true);
     }
-    const next = doc.getElementById('ffr-size');
-    if (next && !next.value) next.focus();
   }
 
   /* the kind of garment, only from a listing's own name */
@@ -589,6 +762,8 @@
       await usePicked({ brand: { id: null, name: t.brand }, product: { name: t.name, url: t.url, category: t.category, line: t.line, code: null } }, size, search, held, got, true);
       return;
     }
+    pick = null;
+    drawPick();
     const set = (id, value) => { const n = doc.getElementById(id); if (n && value !== null && value !== undefined) n.value = value; };
     set('ffr-product', p.productUrl);
     /* the brand only when the listing names one: a shop is not a brand */
@@ -604,8 +779,7 @@
       el('p', null, `Fynd doesn’t have verified measurements for this exact garment yet, so the listing can’t stand in for yours — and Fynd won’t use ${brandWords} or another model’s measurements instead.`),
       el('p', null, 'To use it as your garment, measure it laid flat below: the chest and at least two more. (The Fynd extension reads size charts for the item you’re buying, not for a garment you already own.)')
     );
-    const manualBox = doc.getElementById('ffr-manual');
-    if (manualBox) manualBox.open = true;
+    revealManual(true);
     const first = doc.querySelector('#ffr-manual input[data-measure]');
     if (first) first.focus();
   }
@@ -633,6 +807,7 @@
     let first = null;
     list.forEach(({ id, message }) => {
       const target = doc.getElementById(id) || doc.getElementById('ffr-brand');
+      if (target.closest('#ffr-manual-area')) revealManual(false);
       const err = doc.getElementById(`${target.id}-error`);
       if (err && !err.textContent) { err.textContent = message; err.classList.add('show'); }
       target.setAttribute('aria-invalid', 'true');
@@ -682,6 +857,10 @@
     }
     visitHow = pickedHow || 'manual';
     needsMeasures = false;
+    const kept = said.garment.anchor.product;
+    keepPick(pick && pick.status !== 'loading' && kept && kept.url && sameUrl(kept.url, pick.url)
+      ? { url: pick.url, name: pick.name, brand: pick.brand, sizes: pick.sizes } : null);
+    pick = null;
     keep(checked(said), 'shopper');
     editing = false;
     prefill = null;
@@ -729,17 +908,41 @@
     const top = el('div', 'ff-ref-top');
     top.append(el('span', 'ff-ref-kind', `${cap(g.one)} · this visit`));
     const actions = el('span', 'ff-ref-actions');
+    /* found by search: the product's own name and the size picked */
+    const named = visitPick && a.product && a.product.url && sameUrl(visitPick.url, a.product.url) && visitPick.name ? visitPick : null;
     const edit = el('button', 'link-btn ff-ref-edit', 'Edit');
     edit.type = 'button';
-    edit.addEventListener('click', () => { editing = true; redraw(); const f = doc.getElementById('ffr-brand'); if (f) f.focus(); });
+    edit.setAttribute('aria-label', 'Change your garment or its size');
+    edit.addEventListener('click', () => {
+      editing = true;
+      pickAsk += 1;
+      /* its sizes again, to change the size — or the search, to change the garment */
+      pick = named ? { url: named.url, name: named.name, brand: named.brand, sizes: named.sizes || null, status: named.sizes && named.sizes.length ? 'ready' : 'none' } : null;
+      redraw();
+      const search = doc.getElementById('ffr-search');
+      if (search && named) search.value = [named.brand || a.brand, named.name].filter(Boolean).join(' · ');
+      global.setTimeout(() => {
+        const pressed = doc.querySelector('#ffr-pick .ffr-size-pill[aria-pressed="true"]');
+        const f = pressed || (named ? search : doc.getElementById('ffr-brand')) || search;
+        if (f) f.focus();
+      }, 0);
+    });
     const remove = el('button', 'link-btn ff-ref-remove', 'Remove');
     remove.type = 'button';
-    remove.addEventListener('click', () => { keep(null, 'shopper'); redraw(); const f = doc.getElementById('ffr-brand'); if (f) f.focus(); });
+    remove.addEventListener('click', () => { keep(null, 'shopper'); keepPick(null); pick = null; redraw(); const f = doc.getElementById('ffr-search') || doc.getElementById('ffr-brand'); if (f) f.focus(); });
     actions.append(edit, remove);
     top.append(actions);
     card.append(top);
-    card.append(el('p', 'ff-ref-name', [a.brand, a.size ? `size ${a.size}` : null, value.garment.line ? LINE_WORDS[value.garment.line] : null].filter(Boolean).join(' · ')));
-    if (said.product) card.append(el('p', 'ff-ref-detail', said.product));
+    if (named) {
+      const tick = el('span', 'ff-ref-tick', '✓');
+      tick.setAttribute('aria-hidden', 'true');
+      const name = el('p', 'ff-ref-name', [named.brand || a.brand, named.name].filter(Boolean).join(' · '));
+      name.prepend(tick);
+      card.append(name, el('p', 'ff-ref-size', [a.size ? `Size ${a.size}` : null, value.garment.line ? LINE_WORDS[value.garment.line] : null].filter(Boolean).join(' · ')));
+    } else {
+      card.append(el('p', 'ff-ref-name', [a.brand, a.size ? `size ${a.size}` : null, value.garment.line ? LINE_WORDS[value.garment.line] : null].filter(Boolean).join(' · ')));
+      if (said.product) card.append(el('p', 'ff-ref-detail', said.product));
+    }
     card.append(el('p', 'ff-ref-detail', said.measurements ? `Measured: ${said.measurements}` : missingDimensions(Boolean(said.product))));
     card.append(el('p', 'ff-ref-status', 'Kept for this visit. Not saved to an account.'));
     return card;
@@ -750,9 +953,8 @@
   function drawAccount(state) {
     if (!accountBox) return;
     accountBox.dataset.state = state;
-    if (state === 'signed-out') {
-      accountBox.replaceChildren(el('span', null, 'Saved a garment with Fynd before?'), link(setupHref(null), 'Sign in to use it', 'guide-link ff-ref-signin'));
-    } else if (state === 'none') {
+    /* signed out: nothing above the search — Sign in is in the header */
+    if (state === 'none') {
       accountBox.replaceChildren(el('span', null, visit
         ? 'No garment saved on your fit profile yet. After comparing, you can save this one for next time.'
         : 'No garment saved on your fit profile yet. Add one below — after comparing, you can save it for next time.'));
@@ -767,29 +969,13 @@
   function homeAnchors() {
     if (anchorsHome && anchorsAfter && anchorsHome.nextSibling !== anchorsAfter) anchorsAfter.before(anchorsHome);
   }
-  /* "Add a garment you love": the one way in when there is none yet;
-     the form, the anchors and every detail behind it */
-  let addOpen = false;
-  function addGarment(content) {
-    const add = el('details', 'ffr-add');
-    add.id = 'ffr-add';
-    add.open = addOpen || editing || Boolean(prefill);
-    const summary = el('summary', 'ffr-add-summary');
-    summary.append(el('span', 'ffr-add-plus', '+'), el('span', null, 'Add a garment you love'));
-    add.append(summary);
-    if (anchorsHome) add.append(anchorsHome);
-    add.append(content);
-    add.addEventListener('toggle', () => { addOpen = add.open; });
-    return add;
-  }
-
   let signedIn = false;
   function unsavedState() {
     homeAnchors();
     const nodes = [];
     if (visit && !editing) nodes.push(visitCard(visit));
     else if (editing) nodes.push(form(prefill || visit));
-    else nodes.push(addGarment(form(prefill)));
+    else nodes.push(form(prefill));
     root.dataset.locked = 'false';
     drawAccount(signedIn ? 'none' : 'signed-out');
     root.replaceChildren(...nodes);
@@ -903,11 +1089,17 @@
   /* shown wherever the form is the shopper's way in: not over saved garments */
   function drawAnchors() {
     if (!anchorsBox || !anchorList) return;
-    const show = anchors.length > 0 && root.dataset.state !== 'saved' && root.dataset.state !== 'error';
+    const show = anchors.length > 0 && root.dataset.state !== 'saved' && root.dataset.state !== 'error'
+      && !(visit && !editing) && !pick;
     anchorsBox.hidden = !show;
     if (show && anchorList.childElementCount !== anchors.length) anchorList.replaceChildren(...anchors.map(anchorCard));
   }
+  let anchorsDone = null;
+  const anchorsReady = new Promise((resolve) => { anchorsDone = resolve; });
   async function loadAnchors() {
+    try { await loadAnchorList(); } finally { anchorsDone(); }
+  }
+  async function loadAnchorList() {
     const sizing = global.Account && global.Account.sizing;
     const got = sizing && sizing.anchors ? await sizing.anchors() : null;
     anchors = got && got.ok && got.data && Array.isArray(got.data.anchors) ? got.data.anchors.filter(usable) : [];
@@ -920,10 +1112,18 @@
     const line = ['men', 'women', 'unisex'].includes(a.line) ? a.line : null;
     prefill = { type: a.category, garment: { favorite: 'perfect', line, anchor: { brand: a.brand, size: null, product: { url: a.url } } } };
     editing = true;
+    pickAsk += 1;
+    pickedHow = 'search';
+    const sizes = Array.isArray(a.sizes) ? a.sizes.filter((x) => typeof x === 'string' && x) : [];
+    pick = { url: a.url, name: a.name, brand: a.brand, sizes: sizes.length ? sizes : null, status: sizes.length ? 'ready' : 'none' };
     redraw();
+    const search = doc.getElementById('ffr-search');
+    if (search) search.value = `${a.brand} · ${a.name}`;
     if (anchorList) anchorList.querySelectorAll('.ff-anchor').forEach((n) => n.setAttribute('aria-pressed', String(n.dataset.id === a.id)));
-    const size = doc.getElementById('ffr-size');
-    if (size) size.focus();
+    global.setTimeout(() => {
+      const first = doc.querySelector('#ffr-pick .ffr-size-pill:not([disabled])') || doc.getElementById('ffr-size');
+      if (first) first.focus();
+    }, 0);
   }
 
   function unavailable() {
@@ -949,8 +1149,7 @@
       signedIn = Boolean(state && state.signedIn);
     }
     /* the header's account link, where a shopper looks for it: "Sign in" while signed out */
-    const navAccount = doc.querySelector('.nav-links a[href="account.html"]');
-    if (navAccount) navAccount.textContent = signedIn ? 'Account' : 'Sign in';
+    doc.querySelectorAll('.nav-links a[href="account.html"], .footer-links a[href="account.html"]').forEach((n) => { n.textContent = signedIn ? 'Account' : 'Sign in'; });
     if (!signedIn) { unsavedState(); changed(); return; }
     const got = await account.fitProfile.read();
     if (ask !== asked) return;
@@ -988,11 +1187,13 @@
     refresh,
     unsaved: () => (savedInUse ? null : visit),
     current: () => visit,
-    forget: () => { keep(null); redraw(); },
+    forget: () => { keep(null); keepPick(null); redraw(); },
     savedProfile: () => lastProfile,
     unlock: () => {},
     locked: () => false,
     useAnchor,
+    /* a garment found by search whose size is still to be picked: not yet a garment to compare */
+    picking: () => Boolean(pick) && !((doc.getElementById('ffr-size') || {}).value),
     /* this visit's garment, with measurements taken another way merged in
        (one per dimension), held to the profile's own validator: { ok, errors } */
     addAlternates: (type, list) => {

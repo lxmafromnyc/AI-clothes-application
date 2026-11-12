@@ -217,9 +217,7 @@ const FYND_FIVE = ['Sweat Oversized Pullover Hoodie', 'Sweat Pullover Hoodie', '
 
     const refLive = (page) => page.$$eval('#ffr-live-results .ffs-card[data-from="live"] .ffs-name', (ns) => ns.map((n) => n.textContent));
     const refSearch = async (page, text, how) => {
-      /* the garment's setup is behind "Add a garment you love" */
-      await page.waitForSelector('#ffr-add');
-      if (!(await page.$eval('#ffr-add', (d) => d.open))) await page.click('#ffr-add > summary');
+      /* the garment's one search, at the top of its card */
       await page.waitForSelector('#ffr-search');
       await page.fill('#ffr-search', text);
       if (how === 'enter') {
@@ -243,6 +241,10 @@ const FYND_FIVE = ['Sweat Oversized Pullover Hoodie', 'Sweat Pullover Hoodie', '
         how: Object.fromEntries(Object.keys(g.dimensions).map((d) => [d, g.dimensions[d].method])) };
     };
     const compareWithItem = async (page, it) => {
+      /* the item's hand entry is offered once a link has failed to give it */
+      await page.fill('#ffi-link', 'https://shop.example.com/products/plain-hoodie');
+      await page.press('#ffi-link', 'Enter');
+      await page.waitForSelector('#ff-manual:not([hidden])');
       await page.click('#ff-manual > summary');
       await page.waitForSelector('#ffc-form');
       await page.check(`input[name="ff-type"][value="${it.type}"]`);
@@ -391,7 +393,9 @@ const FYND_FIVE = ['Sweat Oversized Pullover Hoodie', 'Sweat Pullover Hoodie', '
       /* the size read apart from the words, the product the record's own page */
       assert.strictEqual(await page.inputValue('#ffr-size'), 'M');
       assert.strictEqual(await page.inputValue('#ffr-brand'), 'UNIQLO');
-      await page.click('#ffr-use');
+      /* its sizes, from the record; M picked keeps it */
+      await page.waitForSelector('#ffr-pick[data-status="ready"] .ffr-size-pill[data-size="M"]');
+      await page.click('#ffr-pick .ffr-size-pill[data-size="M"]');
       await page.waitForSelector('#ff-reference[data-visit="set"] .ff-ref--visit');
       const sent = [];
       page.on('request', (r) => { if (/[?&]compare=1/.test(r.url())) sent.push(r.postDataJSON()); });
