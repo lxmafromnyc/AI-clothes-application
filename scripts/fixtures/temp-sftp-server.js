@@ -53,6 +53,7 @@ const SSHD = ['/usr/sbin/sshd', '/usr/bin/sshd'].find((p) => fs.existsSync(p)) |
 const NOLOGIN = ['/usr/sbin/nologin', '/sbin/nologin', '/bin/false'].find((p) => fs.existsSync(p));
 const ACCOUNT_FILES = ['/etc/passwd', '/etc/shadow', '/etc/group', '/etc/gshadow', '/etc/subuid', '/etc/subgid'];
 const NAME = /^fyndsftp[0-9a-f]{10}$/;
+const PENALTIES_OFF = 'PerSourcePenalties no';
 
 const run = (cmd, args, opts) => spawnSync(cmd, args, Object.assign({ encoding: 'utf8' }, opts || {}));
 const have = (cmd) => run('sh', ['-c', `command -v ${cmd}`]).status === 0;
@@ -134,6 +135,14 @@ function freePort() {
   const port = Number(probe.stdout);
   if (!Number.isInteger(port) || port <= 0) throw new Error('No free port could be allocated');
   return port;
+}
+/* this sshd's OpenSSH [major, minor], or null; `sshd -V` (or, where -V is
+   unknown, the usage it prints instead) names it */
+function opensshVersion() {
+  if (!SSHD) return null;
+  const v = run(SSHD, ['-V']);
+  const m = /OpenSSH_(\d+)\.(\d+)/.exec(`${v.stderr}${v.stdout}`);
+  return m ? [Number(m[1]), Number(m[2])] : null;
 }
 const listening = (port) => run(process.execPath, ['-e', `const c=require('net').connect(${port},'127.0.0.1');c.on('connect',()=>{process.exit(0)});c.on('error',()=>process.exit(1));`]).status === 0;
 
@@ -232,17 +241,30 @@ function start(options) {
 
     fs.mkdirSync('/run/sshd', { recursive: true, mode: 0o755 });
     handle.log = path.join(state.dir, 'sshd.log');
+    const config = path.join(state.dir, 'sshd_config');
+    handle.config = config;
+    const writeConfig = (port, penaltiesOff) => fs.writeFileSync(config, [
+      `Port ${port}`, 'ListenAddress 127.0.0.1', `HostKey ${key}`, `PidFile ${path.join(state.dir, 'sshd.pid')}`,
+      `AllowUsers ${name}`, 'PermitRootLogin no', 'PubkeyAuthentication no', 'PasswordAuthentication yes',
+      'KbdInteractiveAuthentication yes', 'UsePAM yes', 'DisableForwarding yes', 'PermitTTY no',
+      'Subsystem sftp internal-sftp', 'ForceCommand internal-sftp', 'LogLevel VERBOSE',
+      ...(penaltiesOff ? [PENALTIES_OFF] : []), ''
+    ].join('\n'), { mode: 0o600 });
+    /* OpenSSH 9.8+ refuses a source address once its PerSourcePenalties
+       pass 15s, and this test earns them from 127.0.0.1 by design: every
+       listening() probe and ssh-keyscan connection (1s each, no
+       authentication) and every refused login (5s). Left on, the server
+       stops answering partway through the run. So they're switched off
+       wherever sshd knows the keyword; an older sshd has no penalties,
+       and would refuse the keyword. */
+    writeConfig(22, true); /* only checked (-t), never bound */
+    const check = run(SSHD, ['-t', '-f', config]);
+    handle.penaltiesOff = check.status === 0 || !/PerSourcePenalties/.test(`${check.stderr}${check.stdout}`);
     /* the kernel's free port; another process could take it before sshd
        binds, so try a few */
     for (let attempt = 0; attempt < 5 && !handle.port; attempt += 1) {
       const port = freePort();
-      const config = path.join(state.dir, 'sshd_config');
-      fs.writeFileSync(config, [
-        `Port ${port}`, 'ListenAddress 127.0.0.1', `HostKey ${key}`, `PidFile ${path.join(state.dir, 'sshd.pid')}`,
-        `AllowUsers ${name}`, 'PermitRootLogin no', 'PubkeyAuthentication no', 'PasswordAuthentication yes',
-        'KbdInteractiveAuthentication yes', 'UsePAM yes', 'DisableForwarding yes', 'PermitTTY no',
-        'Subsystem sftp internal-sftp', 'ForceCommand internal-sftp', 'LogLevel VERBOSE', ''
-      ].join('\n'), { mode: 0o600 });
+      writeConfig(port, handle.penaltiesOff);
       state.server = spawn(SSHD, ['-D', '-e', '-f', config], { stdio: ['ignore', 'ignore', fs.openSync(handle.log, 'a')] });
       for (let i = 0; i < 50 && state.server.exitCode === null && !listening(port); i += 1) run('sleep', ['0.1']);
       if (state.server.exitCode === null && listening(port)) handle.port = port;
@@ -266,4 +288,4 @@ function put(handle, rel, data) {
   return file;
 }
 
-module.exports = { start, put, missing, createAccount, removeAccount, endProcessesOf, processesOf, accountExists, groupExists, accountsOtherThan, freePort, listening, NAME };
+module.exports = { start, put, missing, createAccount, removeAccount, endProcessesOf, processesOf, accountExists, groupExists, accountsOtherThan, freePort, listening, opensshVersion, NAME, PENALTIES_OFF };
