@@ -2258,3 +2258,58 @@ strong { font-weight: 600; }
 .ff .ff-more-field .measure { max-width: 200px; }
 .ff .ff-more-save { justify-self: start; min-height: 44px; }
 .ff .ff-more-used { font-size: 13.5px; color: var(--color-text-2); }
+
+/* ---------- Find Fit: two cards ----------
+   The item first, then the garment it is compared against: each a white,
+   rounded card with a subtle border and its own plain title. Once each is
+   found it folds into a one-line confirmation with Edit, and the
+   comparison runs by itself. */
+.ff .ff-flow { gap: 20px; }
+.ff .ff-step {
+  gap: 14px; padding: 22px 22px 24px;
+  border: 1px solid var(--color-border); border-radius: 20px; background: var(--color-surface);
+}
+.ff .ff-step-title { font-size: 17px; font-weight: 650; letter-spacing: -.01em; text-transform: none; color: var(--color-text); }
+.ff .ffi-link[hidden], .ff .ff-manual[hidden], .ff .ffr-pick[hidden], .ff .ffr-manual-area[hidden], .ff .ffr-manual-link[hidden] { display: none; }
+.ff .ffi-link-label { font-size: 14px; font-weight: 500; letter-spacing: 0; text-align: left; color: var(--color-text-2); }
+.ff .ffi-ext { text-align: left; }
+
+/* the item found: a compact confirmation */
+.ff .ffi-head { align-items: center; }
+.ff .ffi-head[data-found="true"] { justify-content: flex-start; }
+.ff .ffi-head[data-found="true"] .ffi-name { flex: 1; min-width: 0; }
+.ff .ffi-tick, .ff .ff-ref-tick {
+  display: inline-grid; place-items: center; flex: none; width: 24px; height: 24px; border-radius: 50%;
+  background: var(--color-primary); color: var(--color-text-on-primary); font-size: 13px; font-weight: 700; line-height: 1;
+}
+.ff .ff-ref-tick { width: 20px; height: 20px; margin-right: 8px; font-size: 11px; vertical-align: 2px; }
+.ff .ffi-edit, .ff .ff-ref-edit { font-size: 14px; font-weight: 600; }
+.ff .ffi-loading { color: var(--color-text-2); }
+
+/* the garment: one search, then the sizes it comes in */
+.ff .ffr-form { display: flex; flex-direction: column; gap: 14px; }
+.ff .ffr-find .ff-smart .profile-input { min-height: 52px; font-size: 16px; border-radius: 14px; }
+.ff .ffr-find-row .btn { min-height: 52px; border-radius: 14px; }
+.ff .ffr-pick { display: grid; gap: 10px; }
+.ff .ffr-find > .ffr-pick { margin: 8px 0 4px; }
+.ff .ffr-pick-label { font-size: 14px; font-weight: 600; color: var(--color-text); }
+.ff .ffr-sizes { display: flex; flex-wrap: wrap; gap: 8px; }
+.ff .ffr-size-pill {
+  min-width: 56px; min-height: 44px; padding: 0 16px;
+  border: 1px solid var(--color-border-strong); border-radius: var(--r-pill); background: var(--color-surface);
+  font: inherit; font-size: 15px; font-weight: 600; color: var(--color-text); cursor: pointer;
+  transition: border-color .15s ease, background-color .15s ease, color .15s ease;
+}
+.ff .ffr-size-pill:hover:not([disabled]) { border-color: var(--color-text); }
+.ff .ffr-size-pill:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.ff .ffr-size-pill[aria-pressed="true"] { border-color: var(--color-primary); background: var(--color-primary); color: var(--color-text-on-primary); }
+.ff .ffr-size-pill[disabled] { opacity: .4; cursor: not-allowed; text-decoration: line-through; }
+.ff .ffr-manual-link { justify-self: start; align-self: flex-start; font-size: 14px; font-weight: 500; color: var(--color-text-2); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--color-border-strong); }
+.ff .ffr-manual-area { display: flex; flex-direction: column; gap: 14px; padding: 18px; border-radius: 16px; background: var(--color-bg-subtle); }
+.ff .ffr-cancel-row { justify-content: flex-start; }
+.ff .ff-ref-size { margin-top: 2px; font-size: 14px; color: var(--color-text-2); }
+.ff .ff-anchors { gap: 8px; }
+@media (max-width: 560px) {
+  .ff .ff-step { padding: 18px 16px 20px; border-radius: 16px; }
+  .ff .ffr-manual-area { padding: 14px; }
+}
